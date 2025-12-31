@@ -1,0 +1,11 @@
+.{
+    .name = .archerdb,
+    .version = "0.0.1",
+    .fingerprint = 0xdc16eaee39f57e07,
+    .minimum_zig_version = "0.15.2",
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

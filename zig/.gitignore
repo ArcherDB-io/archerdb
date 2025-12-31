@@ -1,0 +1,6 @@
+# Ignore everything except download scripts
+*
+!.gitignore
+!download.sh
+!download.ps1
+!download.win.ps1
