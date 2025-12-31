@@ -4,13 +4,28 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const git_commit = b.option(
+        []const u8,
+        "git-commit",
+        "The git commit hash",
+    ) orelse blk: {
+        const result = b.run(&.{ "git", "rev-parse", "--short", "HEAD" });
+        break :blk std.mem.trimRight(u8, result, "\n");
+    };
+
+    const options = b.addOptions();
+    options.addOption(?[]const u8, "git_commit", git_commit);
+
+    const exe_module = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    exe_module.addImport("options", options.createModule());
+
     const exe = b.addExecutable(.{
         .name = "archerdb",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/main.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
+        .root_module = exe_module,
     });
 
     b.installArtifact(exe);
@@ -25,12 +40,15 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run archerdb");
     run_step.dependOn(&run_cmd.step);
 
+    const test_module = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    test_module.addImport("options", options.createModule());
+
     const exe_unit_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/main.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
+        .root_module = test_module,
     });
 
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
