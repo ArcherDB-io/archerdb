@@ -216,7 +216,7 @@ delete_entities = 0x03,  // New operation code
 
 ## Files Modified Summary
 
-**Total Files Changed:** 9 of 36 specification files  
+**Total Files Changed:** 9 of 31 specification files  
 **Total Lines Changed:** ~150 lines modified/added  
 **Total Scenarios Added:** ~12 new scenarios  
 **Total Requirements Added:** ~5 new requirements  

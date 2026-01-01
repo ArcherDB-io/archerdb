@@ -219,7 +219,7 @@ The system SHALL track client sessions for request idempotency and duplicate det
 
 #### Scenario: Deterministic LRU eviction
 
-- **WHEN** client table is full (`clients_max` reached)
+- **WHEN** client session table is full (`client_sessions_max` reached)
 - **THEN** the client with lowest `last_request_op` number SHALL be evicted
 - **AND** `last_request_op` is the op number when client last sent a request
 - **AND** this implements LRU (Least Recently Used) eviction policy
@@ -279,7 +279,24 @@ The system SHALL support two modes of catching up: WAL repair and state sync.
   ```
 - **AND** during state sync, replica cannot serve requests
 - **AND** cluster remains available (other replicas serve traffic)
-- **AND** operators should monitor `archerdb_vsr_state_sync_duration_seconds` histogram
+- **AND** operators should monitor:
+  - `archerdb_vsr_state_sync_duration_seconds`: Histogram of state sync time
+  - `archerdb_vsr_view_changes_total`: Count of view changes
+  - `archerdb_vsr_view_change_duration_seconds`: Histogram of time to complete view change
+  - `archerdb_vsr_quorum_available`: Gauge (1 = quorum, 0 = no quorum)
+  - `archerdb_vsr_replica_lag_ops`: Gauge per replica
+
+### Requirement: Checkpoint-Gated Admission Control
+
+The system SHALL prevent WAL wrapping by throttling client requests if the background index checkpoint falls behind.
+
+#### Scenario: Checkpoint backpressure
+- **WHEN** the current WAL head is approaching the oldest un-checkpointed operation
+- **AND** `wal_head - index_checkpoint_op > (journal_slot_count * 0.75)` (e.g., > 6144 slots)
+- **THEN** the primary SHALL apply exponential backpressure to client requests
+- **AND** if gap reaches `journal_slot_count - pipeline_max`, the primary SHALL HALT new operations
+- **AND** return `checkpoint_lag_backpressure` (209) error to clients
+- **AND** this ensures the WAL never overwrites operations that haven't been persisted to the index checkpoint.
 
 ### Requirement: Clock Synchronization
 
@@ -303,6 +320,7 @@ The system SHALL implement Byzantine-fault-tolerant clock synchronization using 
 
 - **WHEN** primary assigns timestamps
 - **THEN** it SHALL use `max(cluster_time, previous_timestamp)`
+- **AND** `previous_timestamp` SHALL be initialized to the highest timestamp in the canonical log during view change
 - **AND** timestamps are only assigned by the primary
 - **AND** backups receive timestamp via prepare message
 
@@ -313,7 +331,8 @@ The system SHALL implement Byzantine-fault-tolerant clock synchronization using 
   1. Detect: No time interval where >= quorum_replication clocks agree
   2. Log critical alert: "Clock synchronization failed - no quorum intersection"
   3. Primary behavior:
-     - Continue using `max(local_clock + max_drift_tolerance, previous_timestamp)`
+     - Continue using `max(local_clock + max_drift_tolerance, previous_timestamp + 1)`
+     - Incrementing by 1ns ensures strict monotonicity even if local clock is stalled or behind
      - Increment metric: `archerdb_clock_sync_failures_total`
      - Log each affected timestamp assignment
   4. The system continues operating with degraded clock accuracy
@@ -355,7 +374,7 @@ The system SHALL handle network partitions safely to prevent split-brain scenari
 - **AND** the primary is in the minority partition (cannot reach quorum)
 - **THEN** the primary SHALL:
   1. Continue attempting to replicate (messages will time out)
-  2. After `view_change_timeout` (default: 3 seconds) without quorum responses:
+  2. After `view_change_timeout` (default: 2 seconds, ~3 seconds total failover) without quorum responses:
      - Recognize it cannot commit new operations
      - Return `cluster_unavailable` to clients
      - Continue trying to reach replicas
@@ -476,6 +495,7 @@ The system SHALL persist VSR protocol state in the superblock for crash recovery
   - `replica_id: u128` - This replica's identifier
   - `members: Members` - Cluster membership configuration
   - `commit_max: u64` - Maximum committed operation
+  - `commit_timestamp_max: u64` - Timestamp of latest committed operation (for monotonicity)
   - `sync_op_min/max: u64` - State sync tracking
   - `log_view: u32` - Last normal view
   - `view: u32` - Current view
@@ -722,6 +742,64 @@ The system SHALL document realistic throughput and latency targets for cross-ava
 - **AND** "batched throughput" assumes 10,000 events per batch
 - **AND** "sequential throughput" is individual writes waiting for commit
 - **AND** cross-region deployment is NOT recommended (use async replication)
+
+### Requirement: Cross-Region Replication (v2 - OUT OF SCOPE)
+
+Cross-region replication is NOT included in v1 scope due to complexity. This section documents the v1 disaster recovery strategy and planned v2 features.
+
+#### Scenario: v1 disaster recovery strategy
+
+- **WHEN** operating ArcherDB v1 with cross-region durability requirements
+- **THEN** operators SHALL use S3/GCS backup for disaster recovery:
+  ```
+  v1 DR Architecture:
+  ┌─────────────────────────────────────┐
+  │           Primary Region            │
+  │  ┌─────┐  ┌─────┐  ┌─────┐         │
+  │  │ R1  │  │ R2  │  │ R3  │         │
+  │  └──┬──┘  └──┬──┘  └──┬──┘         │
+  │     │        │        │            │
+  │     └────────┼────────┘            │
+  │              │                     │
+  │       ┌──────▼──────┐              │
+  │       │  S3 Backup  │──────────────┼──► Cross-Region
+  │       └─────────────┘              │    S3 Replication
+  └─────────────────────────────────────┘
+  ```
+- **AND** RPO (Recovery Point Objective) = backup frequency (default: 60 seconds)
+- **AND** RTO (Recovery Time Objective) = restore time + index rebuild (see ttl-retention spec)
+- **AND** S3 cross-region replication provides geographic durability
+
+#### Scenario: v1 DR recovery procedure
+
+- **WHEN** primary region becomes unavailable
+- **THEN** recovery procedure SHALL be:
+  1. Provision new cluster in DR region
+  2. Restore from latest S3 backup: `archerdb restore --from-s3=s3://backup-bucket`
+  3. Update DNS/load balancer to point to DR region
+  4. Accept that transactions since last backup are lost (RPO)
+- **AND** estimated RTO for 1B entities: 60-90 minutes (see ttl-retention RTO targets)
+
+#### Scenario: v2 planned features (informational)
+
+- **WHEN** planning v2 cross-region features
+- **THEN** the following are under consideration:
+  1. **Async log shipping**: Primary region ships committed prepares to follower region
+  2. **Read-only followers**: Cross-region replicas that serve read queries only
+  3. **Geo-sharding**: Partition entities by geography for multi-region writes
+  4. **Active-active**: Conflict resolution for concurrent writes (complex)
+- **AND** these features will be specified in a separate v2 proposal
+- **AND** v1 users should plan around S3 backup DR
+
+#### Scenario: Why cross-region VSR is not supported
+
+- **WHEN** evaluating cross-region synchronous replication
+- **THEN** it is NOT supported because:
+  1. Cross-region latency (50-200ms) makes quorum commits slow
+  2. Network partitions between regions cause frequent view changes
+  3. VSR assumes same-region latency for liveness detection
+  4. Write throughput would be limited to ~10-50 sequential ops/sec
+- **AND** async replication (v2) is the correct approach for cross-region
 
 ### Requirement: Replica Replacement Procedure
 

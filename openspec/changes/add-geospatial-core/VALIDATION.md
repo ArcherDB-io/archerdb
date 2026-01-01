@@ -1,8 +1,8 @@
 # OpenSpec Validation Report
 
-**Change:** add-geospatial-core
-**Date:** 2025-12-31 (Updated after Dual-Cycle Ultra-Rigorous Review)
-**Status:** ✅ COMPLETE - ALL 27 ISSUES RESOLVED - PRODUCTION READY
+**Change:** add-geospatial-core  
+**Date:** 2025-12-31 (Updated after Dual-Cycle Review)  
+**Status:** ✅ COMPLETE (spec-set internally consistent after updates)
 
 ---
 
@@ -22,7 +22,7 @@
 ✅ ## Impact section present
 ✅ ## Decisions Made section present
 
-### Spec Files (36 total)
+### Spec Files (31 total)
 ✅ client-protocol - 11 requirements, 30 scenarios (2.7:1 ratio) - UPDATED (fixed batch size)
 ✅ data-model - 8 requirements, 20 scenarios (2.5:1 ratio) - UPDATED (fixed coordinate validation)
 ✅ hybrid-memory - 13 requirements, 43 scenarios (3.3:1 ratio) - UPDATED (fixed index memory math)
@@ -36,12 +36,9 @@
 ✅ testing-simulation - 12 requirements, 35 scenarios (2.9:1 ratio)
 ✅ **constants** - 10 requirements, 18 scenarios - NEW (centralized constants)
 ✅ **interfaces** - 8 requirements, 12 scenarios - NEW (inter-component contracts)
-✅ **deployment** - 12 requirements, 33 scenarios - NEW (TigerBeetle deployment patterns)
 ✅ **ci-cd** - 12 requirements, 35 scenarios - NEW (comprehensive CI/CD pipeline)
-✅ **monitoring** - 16 requirements, 46 scenarios - NEW (StatsD metrics and alerting)
 ✅ **configuration** - 14 requirements, 42 scenarios - NEW (CLI-only configuration)
 ✅ **api-versioning** - 13 requirements, 38 scenarios - NEW (compatibility and upgrades)
-✅ **health-checks** - 16 requirements, 46 scenarios - NEW (comprehensive health monitoring)
 ✅ **licensing** - 12 requirements, 28 scenarios - NEW (legal strategy and compliance)
 ✅ **compliance** - 18 requirements, 52 scenarios - NEW (GDPR and regulatory requirements)
 ✅ **data-portability** - 16 requirements, 44 scenarios - NEW (import/export and migration tools)
@@ -122,7 +119,7 @@
 
 ## Summary
 
-**Total Requirements:** 290+ requirements across 36 capabilities
+**Total Requirements:** 290+ requirements across 31 capabilities  
 **Total Scenarios:** 830+ scenarios (exceptional coverage)
 **Total Tasks:** 240+ implementation tasks
 **Total Spec Lines:** ~6,500+ lines of detailed requirements
@@ -173,7 +170,7 @@ All OpenSpec requirements met:
 
 **Status:** ✅ **APPROVED FOR IMMEDIATE IMPLEMENTATION** (After Ultra-Rigorous 3-Pass Review)
 
-This change is production-ready for implementation. All architectural decisions have been made, all critical bugs have been fixed, all ambiguities have been resolved, and the implementation path is crystal clear.
+This change is ready for implementation. (Note: the `openspec` CLI was not available in this repo environment during this update; consistency was validated by cross-reading the spec files directly.)
 
 ### What Changed After Ultra-Rigorous Review:
 
@@ -186,7 +183,7 @@ This change is production-ready for implementation. All architectural decisions 
 6. ✅ Added TTL overflow protection (year 2400+ edge case)
 
 **Important Enhancements (8):**
-7. ✅ Updated memory calculations (48GB → 64GB for TTL field)
+7. ✅ Updated memory calculations (64GB → 128GB for 64-byte aligned IndexEntry)
 8. ✅ Clarified S2 cell server-side computation (security)
 9. ✅ Distinguished VSR vs Index checkpoint types
 10. ✅ Added explicit DELETE operation (GDPR right to erasure)
@@ -228,7 +225,7 @@ This change is production-ready for implementation. All architectural decisions 
 
 **Mathematical Validation:**
 - Performance: 1M events/sec @ 8.9% disk utilization ✓
-- Memory: 64GB for 1B entities (40-byte entries) ✓
+- Memory: 128GB for 1B entities (64-byte entries) ✓
 - Query results: 81k events fits in 10MB message ✓
 - Failover: <3s with all optimizations ✓
 
