@@ -175,6 +175,30 @@ The system SHALL provide abstract block-based storage for the LSM tree with cach
 - **WHEN** inserting into a full cache set
 - **THEN** the cache MUST evict a victim entry using a deterministic policy (e.g., per-set LRU)
 - **AND** entries referenced by in-flight I/O MUST NOT be evicted until the I/O completes
+
+#### Scenario: Block cache sizing guidance
+
+- **WHEN** configuring grid cache size
+- **THEN** operators SHOULD use the following formula:
+  ```
+  cache_size_bytes = concurrent_queries × avg_blocks_per_query × block_size
+
+  Example calculation:
+  - concurrent_queries = 100 (max_concurrent_queries)
+  - avg_blocks_per_query = 20 (radius query touching ~20 LSM blocks)
+  - block_size = 64KB
+
+  cache_size = 100 × 20 × 64KB = 128MB (minimum)
+
+  Recommended sizing:
+  - Light workload: 512MB (default)
+  - Medium workload: 1GB
+  - Heavy read workload: 2-4GB
+  - Analytics/large queries: 4-8GB
+  ```
+- **AND** cache memory is in addition to index memory (~91.5GB for 1B entities)
+- **AND** total RAM = index_memory + cache_size + OS overhead (~4GB)
+- **AND** the `--cache-grid` CLI flag configures this value
 #### Scenario: Grid repair protocol
 
 - **WHEN** a replica detects a corrupted block (checksum mismatch)
@@ -582,8 +606,8 @@ The system SHALL document expected write amplification to enable capacity planni
   # Total bytes written to disk (including compaction)
   archerdb_lsm_disk_bytes_written_total counter
 
-  # Current write amplification (sliding window)
-  archerdb_lsm_write_amplification gauge
+  # Current write amplification ratio (sliding window) - disk_bytes/user_bytes
+  archerdb_lsm_write_amplification_ratio gauge
 
   # Compaction bytes read/written per level
   archerdb_lsm_compaction_bytes_read_total{level="N"} counter

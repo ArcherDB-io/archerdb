@@ -1,6 +1,8 @@
-# Commercial and Cost Management Specification
+# Commercial and Cost Management (Project) Specification
 
 This specification defines cost optimization strategies, commercial licensing models, and operational economics for ArcherDB.
+
+**Scope note:** This is a project/process specification (commercial strategy and cost-management roadmap). Requirements in this file apply to the ArcherDB project and maintainers, not runtime database behavior.
 
 ---
 
@@ -8,12 +10,12 @@ This specification defines cost optimization strategies, commercial licensing mo
 
 ### Requirement: Cost-Optimized Storage Architecture
 
-The system SHALL implement cost-effective storage strategies balancing performance and economics.
+The ArcherDB project SHALL implement cost-effective storage strategies balancing performance and economics.
 
 #### Scenario: Storage tier optimization
 
 - **WHEN** managing data storage costs
-- **THEN** system SHALL support:
+- **THEN** the project SHALL support:
   - Hot data on high-performance NVMe storage
   - Warm data on cost-effective SSD storage
   - Cold data on object storage (S3, GCS)
@@ -25,7 +27,7 @@ The system SHALL implement cost-effective storage strategies balancing performan
 #### Scenario: Compression strategies
 
 - **WHEN** optimizing storage costs
-- **THEN** system SHALL implement:
+- **THEN** the project SHALL implement:
   - Location data compression algorithms
   - Temporal and spatial data deduplication
   - Adaptive compression based on data patterns
@@ -36,12 +38,12 @@ The system SHALL implement cost-effective storage strategies balancing performan
 
 ### Requirement: Compute Resource Optimization
 
-The system SHALL optimize compute resource usage for cost efficiency.
+The ArcherDB project SHALL optimize compute resource usage for cost efficiency.
 
 #### Scenario: CPU utilization optimization
 
 - **WHEN** managing compute costs
-- **THEN** system SHALL provide:
+- **THEN** the project SHALL provide:
   - CPU usage monitoring and alerting
   - Query optimization to reduce CPU cycles
   - Background task scheduling optimization
@@ -53,7 +55,7 @@ The system SHALL optimize compute resource usage for cost efficiency.
 #### Scenario: Memory efficiency
 
 - **WHEN** optimizing memory usage
-- **THEN** system SHALL implement:
+- **THEN** the project SHALL implement:
   - Static memory allocation to prevent over-provisioning
   - Memory pool sharing across operations
   - Cache size optimization based on workload
@@ -64,12 +66,12 @@ The system SHALL optimize compute resource usage for cost efficiency.
 
 ### Requirement: Cloud Cost Management
 
-The system SHALL provide tools for managing cloud infrastructure costs.
+The ArcherDB project SHALL provide tools for managing cloud infrastructure costs.
 
 #### Scenario: Instance type optimization
 
 - **WHEN** deploying in cloud environments
-- **THEN** system SHALL provide:
+- **THEN** the project SHALL provide:
   - Instance type recommendations based on workload
   - Cost-performance analysis tools
   - Auto-scaling configuration guidance
@@ -81,7 +83,7 @@ The system SHALL provide tools for managing cloud infrastructure costs.
 #### Scenario: Network cost optimization
 
 - **WHEN** managing network costs
-- **THEN** system SHALL implement:
+- **THEN** the project SHALL implement:
   - Data compression for inter-region transfers
   - Efficient batching to reduce request overhead
   - CDN integration for global data access
@@ -92,12 +94,12 @@ The system SHALL provide tools for managing cloud infrastructure costs.
 
 ### Requirement: Usage-Based Cost Tracking
 
-The system SHALL provide detailed cost tracking and attribution capabilities.
+The ArcherDB project SHALL provide detailed cost tracking and attribution capabilities.
 
 #### Scenario: Resource usage metering
 
 - **WHEN** tracking resource consumption
-- **THEN** system SHALL measure:
+- **THEN** the project SHALL measure:
   - CPU core-hours consumed
   - Memory GB-hours used
   - Storage GB-months consumed
@@ -109,7 +111,7 @@ The system SHALL provide detailed cost tracking and attribution capabilities.
 #### Scenario: Cost allocation
 
 - **WHEN** allocating costs
-- **THEN** system SHALL support:
+- **THEN** the project SHALL support:
   - Per-tenant cost attribution
   - Per-application cost tracking
   - Per-operation cost calculation
@@ -120,12 +122,12 @@ The system SHALL provide detailed cost tracking and attribution capabilities.
 
 ### Requirement: Commercial Licensing Model
 
-The system SHALL support flexible commercial licensing options.
+The ArcherDB project SHALL support flexible commercial licensing options.
 
 #### Scenario: Open core licensing
 
 - **WHEN** implementing commercial features
-- **THEN** system SHALL provide:
+- **THEN** the project SHALL provide:
   - Apache 2.0 licensed core functionality
   - Commercial extensions for enterprise features
   - Clear separation between open source and commercial
@@ -148,12 +150,12 @@ The system SHALL support flexible commercial licensing options.
 
 ### Requirement: Cost-Benefit Analysis Tools
 
-The system SHALL provide tools for evaluating ArcherDB's cost-effectiveness.
+The ArcherDB project SHALL provide tools for evaluating ArcherDB's cost-effectiveness.
 
 #### Scenario: Total cost of ownership calculator
 
 - **WHEN** comparing deployment options
-- **THEN** system SHALL provide:
+- **THEN** the project SHALL provide:
   - Infrastructure cost modeling
   - Operational cost estimation
   - Performance vs cost trade-off analysis
@@ -165,7 +167,7 @@ The system SHALL provide tools for evaluating ArcherDB's cost-effectiveness.
 #### Scenario: Performance per dollar metrics
 
 - **WHEN** measuring cost efficiency
-- **THEN** system SHALL track:
+- **THEN** the project SHALL track:
   - Operations per dollar metrics
   - Latency per cost benchmarks
   - Throughput per dollar analysis
@@ -176,12 +178,12 @@ The system SHALL provide tools for evaluating ArcherDB's cost-effectiveness.
 
 ### Requirement: Operational Cost Optimization
 
-The system SHALL implement operational practices that minimize ongoing costs.
+The ArcherDB project SHALL implement operational practices that minimize ongoing costs.
 
 #### Scenario: Automated cost optimization
 
 - **WHEN** optimizing operational costs
-- **THEN** system SHALL provide:
+- **THEN** the project SHALL provide:
   - Automated resource scaling
   - Intelligent data tiering
   - Query optimization recommendations
@@ -193,7 +195,7 @@ The system SHALL implement operational practices that minimize ongoing costs.
 #### Scenario: Cost monitoring and alerting
 
 - **WHEN** monitoring cost trends
-- **THEN** system SHALL alert on:
+- **THEN** the project SHALL alert on:
   - Unexpected cost increases
   - Inefficient resource utilization
   - Performance degradation impacting costs
@@ -204,12 +206,12 @@ The system SHALL implement operational practices that minimize ongoing costs.
 
 ### Requirement: Multi-Cloud Cost Management
 
-The system SHALL support cost optimization across multiple cloud providers.
+The ArcherDB project SHALL support cost optimization across multiple cloud providers.
 
 #### Scenario: Cross-cloud deployment
 
 - **WHEN** deploying across cloud providers
-- **THEN** system SHALL support:
+- **THEN** the project SHALL support:
   - Provider-agnostic deployment tools
   - Cost comparison across providers
   - Hybrid cloud configurations
@@ -221,7 +223,7 @@ The system SHALL support cost optimization across multiple cloud providers.
 #### Scenario: Cost arbitrage
 
 - **WHEN** optimizing for cost arbitrage
-- **THEN** system SHALL provide:
+- **THEN** the project SHALL provide:
   - Real-time pricing monitoring
   - Automated workload migration
   - Spot instance utilization
@@ -232,19 +234,19 @@ The system SHALL support cost optimization across multiple cloud providers.
 
 ### Requirement: Commercial Support Model
 
-The system SHALL provide structured commercial support offerings.
+The ArcherDB project SHALL provide structured commercial support offerings.
 
 #### Scenario: Support tiers
 
 - **WHEN** offering commercial support
-- **THEN** system SHALL provide:
+- **THEN** the project SHALL provide:
   - Community support (free, best effort)
   - Standard support (paid, response time SLAs)
-  - Premium support (dedicated resources, proactive monitoring)
-  - Enterprise support (white-glove service, custom development)
-  - Emergency support (24/7, immediate response)
+  - Professional support (paid, phone support, faster response SLAs)
+  - Enterprise support (white-glove service, custom development, 24/7 options)
   - Training and consulting services
 - **AND** support tiers SHALL match customer needs
+- **CLARIFICATION**: Pricing MAY be published alongside tiers (example: Standard $500/month, Professional $2,000/month, Enterprise $10,000+/month).
 
 #### Scenario: Service level agreements
 
@@ -253,6 +255,7 @@ The system SHALL provide structured commercial support offerings.
   - Response time guarantees
   - Resolution time commitments
   - Availability guarantees
+  - Severity level definitions and escalation paths
   - Escalation procedures
   - Communication channels
   - Support coverage hours
@@ -260,12 +263,12 @@ The system SHALL provide structured commercial support offerings.
 
 ### Requirement: Pricing Model
 
-The system SHALL implement transparent and predictable pricing structures.
+The ArcherDB project SHALL implement transparent and predictable pricing structures.
 
 #### Scenario: Consumption-based pricing
 
 - **WHEN** implementing pricing models
-- **THEN** system SHALL support:
+- **THEN** the project SHALL support:
   - Per-operation pricing for API calls
   - Per-GB pricing for data storage
   - Per-hour pricing for compute resources
@@ -277,7 +280,7 @@ The system SHALL implement transparent and predictable pricing structures.
 #### Scenario: Cost predictability
 
 - **WHEN** ensuring cost predictability
-- **THEN** system SHALL provide:
+- **THEN** the project SHALL provide:
   - Usage estimation tools
   - Cost calculators and simulators
   - Budget alerts and controls
@@ -320,12 +323,12 @@ The system SHALL implement transparent and predictable pricing structures.
 
 ### Requirement: Cost Optimization Guarantees
 
-The system SHALL provide guaranteed cost savings and optimization features.
+The ArcherDB project SHALL provide guaranteed cost savings and optimization features.
 
 #### Scenario: TCO reduction guarantee
 
 - **WHEN** guaranteeing cost reductions
-- **THEN** system SHALL provide:
+- **THEN** the project SHALL provide:
   - **60% TCO Reduction**: Guaranteed vs traditional geospatial databases
   - **Performance per Dollar**: Industry-leading efficiency metrics
   - **Operational Simplicity**: Reduced DevOps overhead and support costs
@@ -346,7 +349,7 @@ The system SHALL provide guaranteed cost savings and optimization features.
 
 ### Requirement: Enterprise Procurement Support
 
-The system SHALL support enterprise purchasing processes and compliance.
+The ArcherDB project SHALL support enterprise purchasing processes and compliance.
 
 #### Scenario: Enterprise agreements
 
@@ -370,42 +373,14 @@ The system SHALL support enterprise purchasing processes and compliance.
   - **Migration Case Studies**: Real-world migration success stories
 - **AND** documentation SHALL support enterprise purchasing decisions
 
-### Requirement: Commercial Support Model
-
-The system SHALL provide tiered commercial support offerings.
-
-#### Scenario: Support tier structure
-
-- **WHEN** structuring commercial support
-- **THEN** tiers SHALL include:
-  - **Community Support**: Free, best-effort support via GitHub and forums
-  - **Standard Support**: $500/month, email support with 24-hour response
-  - **Professional Support**: $2,000/month, phone support with 4-hour response
-  - **Enterprise Support**: $10,000+/month, 24/7 support with dedicated engineer
-  - **Custom Support**: Tailored support packages for large deployments
-- **AND** support SHALL match customer needs and scale with deployment size
-
-#### Scenario: Support SLAs and guarantees
-
-- **WHEN** defining support SLAs
-- **THEN** guarantees SHALL include:
-  - **Response Times**: Defined response times based on severity levels
-  - **Resolution Times**: Target resolution times for different issue types
-  - **Escalation Procedures**: Clear paths for issue escalation
-  - **Success Metrics**: Support quality and satisfaction measurements
-  - **Continuous Improvement**: Regular review and improvement of support processes
-- **AND** SLAs SHALL be contractual and enforceable
-
 ### Requirement: Financial Compliance
 
-The system SHALL support financial compliance and audit requirements.
-
-The system SHALL support financial compliance and audit requirements.
+The ArcherDB project SHALL support financial compliance and audit requirements.
 
 #### Scenario: Cost reporting and auditing
 
 - **WHEN** providing financial reporting
-- **THEN** system SHALL support:
+- **THEN** the project SHALL support:
   - Detailed cost breakdown reports
   - Audit trails for cost changes
   - Compliance with financial regulations
@@ -417,7 +392,7 @@ The system SHALL support financial compliance and audit requirements.
 #### Scenario: Budget management
 
 - **WHEN** implementing budget controls
-- **THEN** system SHALL provide:
+- **THEN** the project SHALL provide:
   - Budget setting and enforcement
   - Real-time budget monitoring
   - Cost center allocation
@@ -428,12 +403,12 @@ The system SHALL support financial compliance and audit requirements.
 
 ### Requirement: Economic Value Demonstration
 
-The system SHALL provide tools to demonstrate and measure economic value.
+The ArcherDB project SHALL provide tools to demonstrate and measure economic value.
 
 #### Scenario: Value measurement
 
 - **WHEN** measuring business value
-- **THEN** system SHALL track:
+- **THEN** the project SHALL track:
   - Performance improvements vs legacy systems
   - Cost reductions achieved
   - Time-to-market improvements
@@ -445,7 +420,7 @@ The system SHALL provide tools to demonstrate and measure economic value.
 #### Scenario: ROI analysis
 
 - **WHEN** calculating return on investment
-- **THEN** system SHALL provide:
+- **THEN** the project SHALL provide:
   - Cost-benefit analysis frameworks
   - Migration cost calculators
   - Performance improvement metrics
@@ -456,12 +431,12 @@ The system SHALL provide tools to demonstrate and measure economic value.
 
 ### Requirement: Marketplace Integration
 
-The system SHALL integrate with cloud marketplaces and procurement systems.
+The ArcherDB project SHALL integrate with cloud marketplaces and procurement systems.
 
 #### Scenario: Cloud marketplace listings
 
 - **WHEN** distributing through marketplaces
-- **THEN** system SHALL support:
+- **THEN** the project SHALL support:
   - AWS Marketplace integration
   - Google Cloud Marketplace integration
   - Azure Marketplace integration
@@ -473,7 +448,7 @@ The system SHALL integrate with cloud marketplaces and procurement systems.
 #### Scenario: Procurement compliance
 
 - **WHEN** supporting enterprise procurement
-- **THEN** system SHALL provide:
+- **THEN** the project SHALL provide:
   - Standard contract templates
   - Compliance certifications
   - Security assessments

@@ -70,7 +70,7 @@ The system SHALL support packing multiple independent batches into a single VSR 
 - **THEN** each batch SHALL be executed sequentially
 - **AND** timestamps SHALL be distributed across batches deterministically
 - **AND** replies SHALL be encoded in same multi-batch format
-- **AND** the `MultiBatchExecutor` MUST truncate results and set a `partial_result` flag if the aggregate response body exceeds `message_body_size_max` (10MB)
+- **AND** the `MultiBatchExecutor` MUST truncate results and set a `partial_result` flag if the aggregate response body exceeds `message_body_size_max` (~10MB; i.e. `message_size_max - message_header_size`)
 - **AND** this forces the client to use pagination cursors to fetch remaining data
 
 ### Requirement: S2 Spatial Indexing
@@ -605,6 +605,29 @@ The system SHALL support finding all entities within an arbitrary polygon.
   4. Scan for records in those ID ranges
   5. Post-filter using precise point-in-polygon test
 
+#### Scenario: Polygon basic validation
+
+- **WHEN** validating polygon input during input_valid()
+- **THEN** the system SHALL check:
+  1. **Empty polygon**: If vertex_count == 0, return error `polygon_empty` (113)
+  2. **Too few vertices**: If vertex_count < 3 (after removing duplicates), return error `polygon_too_simple` (108)
+  3. **Degenerate polygon**: If all vertices are collinear (zero area), return error `polygon_degenerate` (112)
+  4. **Too many vertices**: If vertex_count > 10,000, return error `polygon_too_complex` (101)
+- **AND** validation order SHALL be: empty → too few → degenerate → too many → self-intersecting
+- **AND** collinearity detection uses signed area calculation:
+  ```
+  Collinearity check (zero area detection):
+  area = 0
+  for i in 0..n-1:
+    j = (i + 1) % n
+    area += vertices[i].x * vertices[j].y
+    area -= vertices[j].x * vertices[i].y
+  area = abs(area) / 2
+
+  if area < epsilon (1e-10 in normalized coordinates):
+    return DEGENERATE
+  ```
+
 #### Scenario: Anti-meridian polygon handling
 
 - **WHEN** a polygon crosses the anti-meridian (180° longitude)
@@ -1000,7 +1023,7 @@ The system SHALL enforce limits on batch sizes to prevent memory exhaustion and 
 - **THEN** the system SHALL:
   - Enforce maximum message size of 10MB (header + body)
   - Return error `invalid_data_size` if exceeded
-  - Allow ~78,000 events at 128 bytes each (theoretical max)
+  - Allow ~81,000 events at 128 bytes each (practical limit with header overhead)
 
 #### Scenario: Multi-batch limits
 

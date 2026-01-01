@@ -1,6 +1,8 @@
-# Risk Management and Mitigation Specification
+# Risk Management and Mitigation (Project) Specification
 
 This specification defines the risk assessment, mitigation strategies, and contingency planning for ArcherDB development and deployment.
+
+**Scope note:** This is a project/process specification (risk management and mitigation planning). Requirements in this file apply to the ArcherDB project and maintainers, not runtime database behavior.
 
 ---
 
@@ -8,7 +10,7 @@ This specification defines the risk assessment, mitigation strategies, and conti
 
 ### Requirement: Risk Assessment Framework
 
-The system SHALL establish a comprehensive framework for identifying, assessing, and managing project risks.
+The ArcherDB project SHALL establish a comprehensive framework for identifying, assessing, and managing project risks.
 
 #### Scenario: Risk identification process
 
@@ -34,7 +36,7 @@ The system SHALL establish a comprehensive framework for identifying, assessing,
 
 ### Requirement: Technical Risk Mitigation
 
-The system SHALL implement strategies to mitigate technical risks throughout development.
+The ArcherDB project SHALL implement strategies to mitigate technical risks throughout development.
 
 #### Scenario: Architecture complexity risk
 
@@ -71,7 +73,7 @@ The system SHALL implement strategies to mitigate technical risks throughout dev
 
 ### Requirement: Business Risk Mitigation
 
-The system SHALL implement strategies to mitigate business and market risks.
+The ArcherDB project SHALL implement strategies to mitigate business and market risks.
 
 #### Scenario: Market adoption risk
 
@@ -108,7 +110,7 @@ The system SHALL implement strategies to mitigate business and market risks.
 
 ### Requirement: Team and Execution Risk Mitigation
 
-The system SHALL implement strategies to mitigate team-related risks and ensure execution success.
+The ArcherDB project SHALL implement strategies to mitigate team-related risks and ensure execution success.
 
 #### Scenario: Team expertise risk
 
@@ -145,7 +147,7 @@ The system SHALL implement strategies to mitigate team-related risks and ensure 
 
 ### Requirement: Operational Risk Mitigation
 
-The system SHALL implement strategies to mitigate operational deployment and maintenance risks.
+The ArcherDB project SHALL implement strategies to mitigate operational deployment and maintenance risks.
 
 #### Scenario: Production deployment risk
 
@@ -182,7 +184,7 @@ The system SHALL implement strategies to mitigate operational deployment and mai
 
 ### Requirement: External Risk Mitigation
 
-The system SHALL implement strategies to mitigate external environmental risks.
+The ArcherDB project SHALL implement strategies to mitigate external environmental risks.
 
 #### Scenario: Technology ecosystem risk
 
@@ -219,7 +221,7 @@ The system SHALL implement strategies to mitigate external environmental risks.
 
 ### Requirement: Risk Monitoring and Response
 
-The system SHALL implement continuous risk monitoring and response mechanisms.
+The ArcherDB project SHALL implement continuous risk monitoring and response mechanisms.
 
 #### Scenario: Risk monitoring framework
 
@@ -245,7 +247,7 @@ The system SHALL implement continuous risk monitoring and response mechanisms.
 
 ### Requirement: Risk Quantification and Prioritization
 
-The system SHALL quantify risks and prioritize mitigation efforts.
+The ArcherDB project SHALL quantify risks and prioritize mitigation efforts.
 
 #### Scenario: Risk quantification
 
@@ -271,7 +273,7 @@ The system SHALL quantify risks and prioritize mitigation efforts.
 
 ### Requirement: Contingency Planning
 
-The system SHALL develop detailed contingency plans for critical risks.
+The ArcherDB project SHALL develop detailed contingency plans for critical risks.
 
 #### Scenario: Critical risk contingencies
 
@@ -297,7 +299,7 @@ The system SHALL develop detailed contingency plans for critical risks.
 
 ### Requirement: Risk Communication
 
-The system SHALL establish clear risk communication processes and responsibilities.
+The ArcherDB project SHALL establish clear risk communication processes and responsibilities.
 
 #### Scenario: Internal risk communication
 
@@ -323,7 +325,7 @@ The system SHALL establish clear risk communication processes and responsibiliti
 
 ### Requirement: Risk Management Integration
 
-The system SHALL integrate risk management into all project processes.
+The ArcherDB project SHALL integrate risk management into all project processes.
 
 #### Scenario: Risk-aware planning
 
@@ -349,7 +351,7 @@ The system SHALL integrate risk management into all project processes.
 
 ### Requirement: Risk Management Maturity
 
-The system SHALL continuously improve risk management processes and capabilities.
+The ArcherDB project SHALL continuously improve risk management processes and capabilities.
 
 #### Scenario: Process improvement
 

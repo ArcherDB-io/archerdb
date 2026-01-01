@@ -1,6 +1,8 @@
-# Success Metrics and KPIs Specification
+# Success Metrics and KPIs (Project) Specification
 
 This specification defines the key performance indicators, success metrics, and measurement frameworks for ArcherDB development and adoption.
+
+**Scope note:** This is a project/process specification (how success is defined and measured). Requirements in this file apply to the ArcherDB project and maintainers, not runtime database behavior.
 
 ---
 
@@ -8,7 +10,7 @@ This specification defines the key performance indicators, success metrics, and 
 
 ### Requirement: Technical Success Metrics
 
-The system SHALL define quantitative measures of technical achievement and performance.
+The ArcherDB project SHALL define quantitative measures of technical achievement and performance.
 
 #### Scenario: Performance KPIs (Month 12)
 
@@ -34,7 +36,7 @@ The system SHALL define quantitative measures of technical achievement and perfo
 
 ### Requirement: Business Success Metrics
 
-The system SHALL define measures of business adoption and market success.
+The ArcherDB project SHALL define measures of business adoption and market success.
 
 #### Scenario: Adoption KPIs (Month 18)
 
@@ -60,7 +62,7 @@ The system SHALL define measures of business adoption and market success.
 
 ### Requirement: Community Success Metrics
 
-The system SHALL define measures of community health and engagement.
+The ArcherDB project SHALL define measures of community health and engagement.
 
 #### Scenario: Community Health KPIs
 
@@ -86,7 +88,7 @@ The system SHALL define measures of community health and engagement.
 
 ### Requirement: Development Velocity Metrics
 
-The system SHALL define measures of development efficiency and productivity.
+The ArcherDB project SHALL define measures of development efficiency and productivity.
 
 #### Scenario: Engineering Productivity KPIs
 
@@ -112,7 +114,7 @@ The system SHALL define measures of development efficiency and productivity.
 
 ### Requirement: Operational Success Metrics
 
-The system SHALL define measures of operational excellence and reliability.
+The ArcherDB project SHALL define measures of operational excellence and reliability.
 
 #### Scenario: Production Reliability KPIs
 
@@ -138,7 +140,7 @@ The system SHALL define measures of operational excellence and reliability.
 
 ### Requirement: Customer Success Metrics
 
-The system SHALL define measures of customer satisfaction and success.
+The ArcherDB project SHALL define measures of customer satisfaction and success.
 
 #### Scenario: Customer Satisfaction KPIs
 
@@ -164,7 +166,7 @@ The system SHALL define measures of customer satisfaction and success.
 
 ### Requirement: Innovation and Learning Metrics
 
-The system SHALL define measures of technological innovation and organizational learning.
+The ArcherDB project SHALL define measures of technological innovation and organizational learning.
 
 #### Scenario: Innovation KPIs
 
@@ -190,7 +192,7 @@ The system SHALL define measures of technological innovation and organizational 
 
 ### Requirement: Financial Success Metrics
 
-The system SHALL define comprehensive financial performance indicators.
+The ArcherDB project SHALL define comprehensive financial performance indicators.
 
 #### Scenario: Revenue and Profitability KPIs
 
@@ -216,7 +218,7 @@ The system SHALL define comprehensive financial performance indicators.
 
 ### Requirement: Strategic Alignment Metrics
 
-The system SHALL define measures of strategic goal achievement.
+The ArcherDB project SHALL define measures of strategic goal achievement.
 
 #### Scenario: Market Leadership KPIs
 
@@ -242,7 +244,7 @@ The system SHALL define measures of strategic goal achievement.
 
 ### Requirement: Success Metrics Framework
 
-The system SHALL establish a comprehensive framework for tracking and reporting success.
+The ArcherDB project SHALL establish a comprehensive framework for tracking and reporting success.
 
 #### Scenario: Metrics Collection Framework
 
@@ -268,7 +270,7 @@ The system SHALL establish a comprehensive framework for tracking and reporting 
 
 ### Requirement: Success Criteria Definition
 
-The system SHALL define clear success criteria for different project phases and milestones.
+The ArcherDB project SHALL define clear success criteria for different project phases and milestones.
 
 #### Scenario: Phase-gate Success Criteria
 
@@ -294,7 +296,7 @@ The system SHALL define clear success criteria for different project phases and 
 
 ### Requirement: Continuous Improvement Framework
 
-The system SHALL implement mechanisms for continuous improvement based on success metrics.
+The ArcherDB project SHALL implement mechanisms for continuous improvement based on success metrics.
 
 #### Scenario: Metrics-Driven Improvement
 
@@ -320,7 +322,7 @@ The system SHALL implement mechanisms for continuous improvement based on succes
 
 ### Requirement: Success Metrics Governance
 
-The system SHALL establish governance for success metrics definition and management.
+The ArcherDB project SHALL establish governance for success metrics definition and management.
 
 #### Scenario: Metrics Ownership
 
@@ -346,7 +348,7 @@ The system SHALL establish governance for success metrics definition and managem
 
 ### Requirement: Success Communication Strategy
 
-The system SHALL develop strategies for communicating success internally and externally.
+The ArcherDB project SHALL develop strategies for communicating success internally and externally.
 
 #### Scenario: Internal Success Communication
 

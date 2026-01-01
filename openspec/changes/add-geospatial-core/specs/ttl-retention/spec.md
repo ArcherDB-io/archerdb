@@ -215,6 +215,13 @@ The system SHALL provide an explicit cleanup function for applications to trigge
   2. For each entry, check if expired
   3. Remove expired entries from index
   4. Return count of entries removed
+- **AND** cleanup_expired goes through VSR consensus (all replicas apply same cleanup)
+- **AND** three-phase execution applies:
+  1. **input_valid()**: Validate batch_size parameter
+  2. **prepare()**: Assign timestamp (used for expiration comparison)
+  3. **prefetch()**: No-op (index is in RAM)
+  4. **commit()**: Scan index, remove entries where `current_time >= event_timestamp + ttl_ns`
+- **AND** all replicas receive the same timestamp, ensuring deterministic cleanup results
 
 #### Scenario: Cleanup operation code
 

@@ -1,6 +1,8 @@
-# Team Resources and Planning Specification
+# Team Resources and Planning (Project) Specification
 
 This specification defines the team composition, resource requirements, and staffing plan for ArcherDB development and operations.
+
+**Scope note:** This is a project/process specification (staffing, budgeting, execution). Requirements in this file apply to the ArcherDB project and maintainers, not runtime database behavior.
 
 ---
 
@@ -8,7 +10,7 @@ This specification defines the team composition, resource requirements, and staf
 
 ### Requirement: Team Size and Composition Planning
 
-The system SHALL define the required team composition for successful implementation and long-term maintenance.
+The ArcherDB project SHALL define the required team composition for successful implementation and long-term maintenance.
 
 #### Scenario: Development team requirements
 
@@ -35,7 +37,7 @@ The system SHALL define the required team composition for successful implementat
 
 ### Requirement: Resource Planning by Phase
 
-The system SHALL define resource requirements for each development phase with realistic timelines.
+The ArcherDB project SHALL define resource requirements for each development phase with realistic timelines.
 
 #### Scenario: Phase 1 resource requirements (Months 1-3: Core Foundation)
 
@@ -100,7 +102,7 @@ The system SHALL define resource requirements for each development phase with re
 
 ### Requirement: Budget and Cost Planning
 
-The system SHALL define the financial resources required for successful implementation.
+The ArcherDB project SHALL define the financial resources required for successful implementation.
 
 #### Scenario: Development budget planning
 
@@ -127,7 +129,7 @@ The system SHALL define the financial resources required for successful implemen
 
 ### Requirement: Hiring and Training Strategy
 
-The system SHALL define the strategy for building and maintaining the required team expertise.
+The ArcherDB project SHALL define the strategy for building and maintaining the required team expertise.
 
 #### Scenario: Hiring requirements
 
@@ -152,7 +154,7 @@ The system SHALL define the strategy for building and maintaining the required t
 
 ### Requirement: Team Productivity and Velocity Planning
 
-The system SHALL define realistic productivity expectations and measurement.
+The ArcherDB project SHALL define realistic productivity expectations and measurement.
 
 #### Scenario: Velocity planning
 
@@ -178,7 +180,7 @@ The system SHALL define realistic productivity expectations and measurement.
 
 ### Requirement: Remote Work and Collaboration Planning
 
-The system SHALL define the remote work strategy and collaboration requirements.
+The ArcherDB project SHALL define the remote work strategy and collaboration requirements.
 
 #### Scenario: Remote work requirements
 
@@ -205,7 +207,7 @@ The system SHALL define the remote work strategy and collaboration requirements.
 
 ### Requirement: Team Health and Sustainability Planning
 
-The system SHALL plan for team well-being and long-term sustainability.
+The ArcherDB project SHALL plan for team well-being and long-term sustainability.
 
 #### Scenario: Work-life balance
 
@@ -231,7 +233,7 @@ The system SHALL plan for team well-being and long-term sustainability.
 
 ### Requirement: Contingency Planning for Team Changes
 
-The system SHALL plan for team member changes and knowledge continuity.
+The ArcherDB project SHALL plan for team member changes and knowledge continuity.
 
 #### Scenario: Knowledge continuity
 
@@ -257,7 +259,7 @@ The system SHALL plan for team member changes and knowledge continuity.
 
 ### Requirement: Vendor and Contractor Management
 
-The system SHALL define the use of external contractors and vendors.
+The ArcherDB project SHALL define the use of external contractors and vendors.
 
 #### Scenario: Contractor usage guidelines
 
@@ -283,7 +285,7 @@ The system SHALL define the use of external contractors and vendors.
 
 ### Requirement: Team Communication and Decision Making
 
-The system SHALL define communication protocols and decision-making processes.
+The ArcherDB project SHALL define communication protocols and decision-making processes.
 
 #### Scenario: Communication protocols
 
@@ -309,7 +311,7 @@ The system SHALL define communication protocols and decision-making processes.
 
 ### Requirement: Resource Allocation and Prioritization
 
-The system SHALL define how resources are allocated across competing priorities.
+The ArcherDB project SHALL define how resources are allocated across competing priorities.
 
 #### Scenario: Priority setting
 
@@ -335,7 +337,7 @@ The system SHALL define how resources are allocated across competing priorities.
 
 ### Requirement: Performance and Development Metrics
 
-The system SHALL track team and project performance metrics.
+The ArcherDB project SHALL track team and project performance metrics.
 
 #### Scenario: Individual performance metrics
 

@@ -110,13 +110,13 @@ The system SHALL expose metrics for write throughput, read latency, and cluster 
 - **WHEN** exposing query metrics
 - **THEN** result size distribution SHALL be tracked:
   ```
-  # HELP archerdb_query_result_size Query result size histogram
-  # TYPE archerdb_query_result_size histogram
-  archerdb_query_result_size_bucket{operation="query_radius",le="10"} 10000
-  archerdb_query_result_size_bucket{operation="query_radius",le="100"} 50000
-  archerdb_query_result_size_bucket{operation="query_radius",le="1000"} 70000
-  archerdb_query_result_size_bucket{operation="query_radius",le="10000"} 74000
-  archerdb_query_result_size_bucket{operation="query_radius",le="+Inf"} 75000
+  # HELP archerdb_query_result_events Number of events returned per query
+  # TYPE archerdb_query_result_events histogram
+  archerdb_query_result_events_bucket{operation="query_radius",le="10"} 10000
+  archerdb_query_result_events_bucket{operation="query_radius",le="100"} 50000
+  archerdb_query_result_events_bucket{operation="query_radius",le="1000"} 70000
+  archerdb_query_result_events_bucket{operation="query_radius",le="10000"} 74000
+  archerdb_query_result_events_bucket{operation="query_radius",le="+Inf"} 75000
   ```
 
 ### Requirement: Replication Metrics

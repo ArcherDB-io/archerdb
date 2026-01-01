@@ -448,7 +448,7 @@ The system SHALL support two modes of catching up: WAL repair and state sync.
   - `archerdb_vsr_view_changes_total`: Count of view changes
   - `archerdb_vsr_view_change_duration_seconds`: Histogram of time to complete view change
   - `archerdb_vsr_quorum_available`: Gauge (1 = quorum, 0 = no quorum)
-  - `archerdb_vsr_replica_lag_ops`: Gauge per replica
+  - `archerdb_vsr_replication_lag_ops`: Gauge per replica
 
 ### Requirement: Checkpoint-Gated Admission Control
 

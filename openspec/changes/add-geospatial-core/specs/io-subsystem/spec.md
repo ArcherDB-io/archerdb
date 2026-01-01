@@ -98,16 +98,17 @@ The system SHALL implement a message bus for replica-to-replica and client-to-re
 - **AND** client connections SHALL be tracked in `clients` hashmap
 - **AND** different buffer sizes MAY apply
 
-### Requirement: Message Framing
+### Requirement: TCP Stream Deframing
 
-The system SHALL implement reliable message framing over TCP streams.
+The system SHALL reassemble TCP streams into complete protocol messages.
 
-#### Scenario: Header-first parsing
+#### Scenario: Deframe per client protocol
 
-- **WHEN** receiving data
-- **THEN** the 256-byte header SHALL be parsed first
-- **AND** header checksum SHALL be validated before trusting size field
-- **AND** body is received based on `header.size - 256`
+- **WHEN** receiving data from a TCP stream
+- **THEN** the receiver SHALL deframe messages using the framing rules defined in `specs/client-protocol/spec.md`
+- **AND** it SHALL parse the 256-byte header first
+- **AND** it SHALL validate the header checksum before trusting the size field
+- **AND** it SHALL receive the body bytes based on `header.size - message_header_size`
 
 #### Scenario: Message buffer ring
 

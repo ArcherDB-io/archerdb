@@ -1,6 +1,8 @@
-# Community and Ecosystem Specification
+# Community and Ecosystem (Project) Specification
 
 This specification defines ArcherDB's community building, ecosystem development, and long-term growth strategy.
+
+**Scope note:** This is a project/process specification (governance, documentation, ecosystem). Requirements in this file apply to the ArcherDB project and maintainers, not runtime database behavior.
 
 ---
 
@@ -8,12 +10,12 @@ This specification defines ArcherDB's community building, ecosystem development,
 
 ### Requirement: Open Source Community Governance
 
-The system SHALL establish clear governance structures for community participation.
+The ArcherDB project SHALL establish clear governance structures for community participation.
 
 #### Scenario: Contribution guidelines
 
 - **WHEN** accepting community contributions
-- **THEN** system SHALL provide:
+- **THEN** the project SHALL provide:
   - Clear contribution guidelines and processes
   - Code of conduct for community interactions
   - Contributor license agreement process
@@ -25,7 +27,7 @@ The system SHALL establish clear governance structures for community participati
 #### Scenario: Decision-making processes
 
 - **WHEN** making project decisions
-- **THEN** system SHALL implement:
+- **THEN** the project SHALL implement:
   - Transparent decision-making processes
   - RFC (Request for Comments) process for major changes
   - Community voting for non-technical decisions
@@ -36,12 +38,12 @@ The system SHALL establish clear governance structures for community participati
 
 ### Requirement: Documentation and Learning Resources
 
-The system SHALL provide comprehensive resources for community adoption and learning.
+The ArcherDB project SHALL provide comprehensive resources for community adoption and learning.
 
 #### Scenario: Documentation strategy
 
 - **WHEN** providing documentation
-- **THEN** system SHALL offer:
+- **THEN** the project SHALL offer:
   - Comprehensive API documentation
   - Step-by-step getting started guides
   - Architecture and design documentation
@@ -54,7 +56,7 @@ The system SHALL provide comprehensive resources for community adoption and lear
 #### Scenario: Educational content
 
 - **WHEN** supporting community learning
-- **THEN** system SHALL provide:
+- **THEN** the project SHALL provide:
   - Structured learning paths for different roles
   - Hands-on tutorials and workshops
   - Certification programs
@@ -65,12 +67,12 @@ The system SHALL provide comprehensive resources for community adoption and lear
 
 ### Requirement: Ecosystem Development
 
-The system SHALL foster a rich ecosystem of tools, integrations, and extensions.
+The ArcherDB project SHALL foster a rich ecosystem of tools, integrations, and extensions.
 
 #### Scenario: Third-party integrations
 
 - **WHEN** encouraging ecosystem growth
-- **THEN** system SHALL support:
+- **THEN** the project SHALL support:
   - Well-documented integration APIs
   - SDKs for popular programming languages
   - Connectors for common data platforms
@@ -82,7 +84,7 @@ The system SHALL foster a rich ecosystem of tools, integrations, and extensions.
 #### Scenario: Tool ecosystem
 
 - **WHEN** building developer tools
-- **THEN** system SHALL enable:
+- **THEN** the project SHALL enable:
   - GUI administration tools
   - Monitoring and visualization dashboards
   - Data migration and ETL tools
@@ -93,12 +95,12 @@ The system SHALL foster a rich ecosystem of tools, integrations, and extensions.
 
 ### Requirement: Community Communication Channels
 
-The system SHALL establish effective channels for community interaction and support.
+The ArcherDB project SHALL establish effective channels for community interaction and support.
 
 #### Scenario: Communication platforms
 
 - **WHEN** facilitating community interaction
-- **THEN** system SHALL provide:
+- **THEN** the project SHALL provide:
   - GitHub Discussions for technical discussions
   - Discord/Slack community servers
   - Mailing lists for announcements
@@ -110,7 +112,7 @@ The system SHALL establish effective channels for community interaction and supp
 #### Scenario: Support structures
 
 - **WHEN** providing community support
-- **THEN** system SHALL offer:
+- **THEN** the project SHALL offer:
   - Community forum with expert moderation
   - GitHub issue tracking and management
   - Stack Overflow style Q&A platform
@@ -121,12 +123,12 @@ The system SHALL establish effective channels for community interaction and supp
 
 ### Requirement: Event and Conference Strategy
 
-The system SHALL participate in and sponsor community events to build awareness.
+The ArcherDB project SHALL participate in and sponsor community events to build awareness.
 
 #### Scenario: Conference participation
 
 - **WHEN** participating in conferences
-- **THEN** system SHALL:
+- **THEN** the project SHALL:
   - Submit talks and presentations
   - Sponsor relevant conferences
   - Host workshops and training sessions
@@ -138,7 +140,7 @@ The system SHALL participate in and sponsor community events to build awareness.
 #### Scenario: Community events
 
 - **WHEN** organizing community events
-- **THEN** system SHALL host:
+- **THEN** the project SHALL host:
   - Virtual meetups and webinars
   - Hackathons and coding challenges
   - User conferences and summits
@@ -149,12 +151,12 @@ The system SHALL participate in and sponsor community events to build awareness.
 
 ### Requirement: Partnership and Collaboration
 
-The system SHALL establish partnerships to accelerate ecosystem growth.
+The ArcherDB project SHALL establish partnerships to accelerate ecosystem growth.
 
 #### Scenario: Technology partnerships
 
 - **WHEN** forming technology partnerships
-- **THEN** system SHALL collaborate with:
+- **THEN** the project SHALL collaborate with:
   - Cloud service providers for hosted offerings
   - GIS software vendors for integration
   - Data platform companies for connectivity
@@ -166,7 +168,7 @@ The system SHALL establish partnerships to accelerate ecosystem growth.
 #### Scenario: Standards participation
 
 - **WHEN** participating in standards
-- **THEN** system SHALL contribute to:
+- **THEN** the project SHALL contribute to:
   - Open Geospatial Consortium (OGC) standards
   - Cloud Native Computing Foundation (CNCF)
   - Database interoperability standards
@@ -177,12 +179,12 @@ The system SHALL establish partnerships to accelerate ecosystem growth.
 
 ### Requirement: Community Growth Metrics
 
-The system SHALL track and optimize community health and growth metrics.
+The ArcherDB project SHALL track and optimize community health and growth metrics.
 
 #### Scenario: Community metrics
 
 - **WHEN** measuring community health
-- **THEN** system SHALL track:
+- **THEN** the project SHALL track:
   - GitHub stars, forks, and watchers
   - Contributor count and activity
   - Issue and PR response times
@@ -195,7 +197,7 @@ The system SHALL track and optimize community health and growth metrics.
 #### Scenario: Growth optimization
 
 - **WHEN** optimizing community growth
-- **THEN** system SHALL:
+- **THEN** the project SHALL:
   - Identify and address community pain points
   - Improve onboarding and contribution processes
   - Enhance documentation based on user feedback
@@ -206,12 +208,12 @@ The system SHALL track and optimize community health and growth metrics.
 
 ### Requirement: Diversity and Inclusion
 
-The system SHALL promote diversity and inclusion in the community.
+The ArcherDB project SHALL promote diversity and inclusion in the community.
 
 #### Scenario: Inclusive practices
 
 - **WHEN** building community culture
-- **THEN** system SHALL implement:
+- **THEN** the project SHALL implement:
   - Code of conduct enforcement
   - Diversity scholarships for events
   - Inclusive language in documentation
@@ -224,7 +226,7 @@ The system SHALL promote diversity and inclusion in the community.
 #### Scenario: Accessibility support
 
 - **WHEN** designing community resources
-- **THEN** system SHALL ensure:
+- **THEN** the project SHALL ensure:
   - Web accessibility standards compliance
   - Screen reader compatibility
   - Keyboard navigation support
@@ -236,12 +238,12 @@ The system SHALL promote diversity and inclusion in the community.
 
 ### Requirement: Sustainability Planning
 
-The system SHALL plan for long-term community and project sustainability.
+The ArcherDB project SHALL plan for long-term community and project sustainability.
 
 #### Scenario: Project sustainability
 
 - **WHEN** planning for long-term success
-- **THEN** system SHALL establish:
+- **THEN** the project SHALL establish:
   - Governance succession planning
   - Funding models for maintenance
   - Intellectual property protection
@@ -253,7 +255,7 @@ The system SHALL plan for long-term community and project sustainability.
 #### Scenario: Community succession
 
 - **WHEN** planning community continuity
-- **THEN** system SHALL develop:
+- **THEN** the project SHALL develop:
   - Leadership pipelines and mentoring
   - Knowledge transfer processes
   - Documentation of institutional knowledge
@@ -264,12 +266,12 @@ The system SHALL plan for long-term community and project sustainability.
 
 ### Requirement: Commercial Community Balance
 
-The system SHALL balance open source community needs with commercial interests.
+The ArcherDB project SHALL balance open source community needs with commercial interests.
 
 #### Scenario: Community-first approach
 
 - **WHEN** balancing community and commercial
-- **THEN** system SHALL prioritize:
+- **THEN** the project SHALL prioritize:
   - Open source development and releases
   - Community contribution and feedback
   - Transparent decision-making processes
@@ -281,7 +283,7 @@ The system SHALL balance open source community needs with commercial interests.
 #### Scenario: Commercial participation
 
 - **WHEN** involving commercial entities
-- **THEN** system SHALL ensure:
+- **THEN** the project SHALL ensure:
   - Equal treatment of all contributors
   - Transparent commercial involvement
   - Community benefit from commercial activities
@@ -292,12 +294,12 @@ The system SHALL balance open source community needs with commercial interests.
 
 ### Requirement: Community Recognition and Rewards
 
-The system SHALL recognize and reward community contributions and achievements.
+The ArcherDB project SHALL recognize and reward community contributions and achievements.
 
 #### Scenario: Contribution recognition
 
 - **WHEN** acknowledging contributions
-- **THEN** system SHALL provide:
+- **THEN** the project SHALL provide:
   - Public recognition in release notes
   - Contributor spotlight features
   - Hall of fame for major contributors
@@ -309,7 +311,7 @@ The system SHALL recognize and reward community contributions and achievements.
 #### Scenario: Incentive programs
 
 - **WHEN** encouraging participation
-- **THEN** system SHALL offer:
+- **THEN** the project SHALL offer:
   - Swag and merchandise for contributors
   - Travel sponsorships for events
   - Feature naming opportunities
@@ -320,12 +322,12 @@ The system SHALL recognize and reward community contributions and achievements.
 
 ### Requirement: Crisis Management
 
-The system SHALL prepare for and manage community crises effectively.
+The ArcherDB project SHALL prepare for and manage community crises effectively.
 
 #### Scenario: Crisis response planning
 
 - **WHEN** preparing for crises
-- **THEN** system SHALL develop:
+- **THEN** the project SHALL develop:
   - Crisis communication protocols
   - Incident response procedures
   - Stakeholder notification processes
@@ -337,7 +339,7 @@ The system SHALL prepare for and manage community crises effectively.
 #### Scenario: Community conflict resolution
 
 - **WHEN** managing conflicts
-- **THEN** system SHALL implement:
+- **THEN** the project SHALL implement:
   - Clear conflict resolution processes
   - Mediation and arbitration procedures
   - Code of conduct enforcement
@@ -348,12 +350,12 @@ The system SHALL prepare for and manage community crises effectively.
 
 ### Requirement: International Community Support
 
-The system SHALL support international and multilingual community participation.
+The ArcherDB project SHALL support international and multilingual community participation.
 
 #### Scenario: Multilingual support
 
 - **WHEN** supporting global community
-- **THEN** system SHALL provide:
+- **THEN** the project SHALL provide:
   - Documentation in multiple languages
   - International community forums
   - Localized event scheduling
@@ -365,7 +367,7 @@ The system SHALL support international and multilingual community participation.
 #### Scenario: Regional communities
 
 - **WHEN** building regional presence
-- **THEN** system SHALL establish:
+- **THEN** the project SHALL establish:
   - Regional user groups and meetups
   - Localized documentation and resources
   - Regional ambassadors and champions
@@ -376,12 +378,12 @@ The system SHALL support international and multilingual community participation.
 
 ### Requirement: Community Feedback Integration
 
-The system SHALL systematically collect and integrate community feedback.
+The ArcherDB project SHALL systematically collect and integrate community feedback.
 
 #### Scenario: Feedback collection
 
 - **WHEN** gathering community input
-- **THEN** system SHALL use:
+- **THEN** the project SHALL use:
   - Regular community surveys and polls
   - User interviews and focus groups
   - Feature request and issue analysis
@@ -393,7 +395,7 @@ The system SHALL systematically collect and integrate community feedback.
 #### Scenario: Feedback integration
 
 - **WHEN** incorporating community feedback
-- **THEN** system SHALL:
+- **THEN** the project SHALL:
   - Analyze feedback for patterns and priorities
   - Communicate how feedback influences decisions
   - Implement high-priority community requests

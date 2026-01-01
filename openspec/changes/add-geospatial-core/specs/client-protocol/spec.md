@@ -198,7 +198,6 @@ The system SHALL use a simple framing protocol for client messages over TCP conn
   [Header (256 bytes)]
   [Body (variable, up to message_size_max)]
   ```
-- **AND** header contains message metadata (operation, size, checksum)
 - **AND** header contains message metadata (operation, size, checksums)
 - **AND** body contains the payload (batch of GeoEvents or query parameters)
 
@@ -431,7 +430,7 @@ The system SHALL return structured error responses using TigerBeetle-style statu
   ├─ message: [256]u8       # UTF-8 error message (null-terminated)
   └─ reserved3: [40]u8      # Reserved for future use (padding to 320)
   ```
-- **AND** total = 1+1+1+1+4+8+2+6+256+40 = 320 bytes
+- **AND** total = 1+1+1+1+4+8+2+2+2+2+256+40 = 320 bytes (status through reserved3)
 - **AND** this is distinct from QueryResponseHeader (32 bytes for successful queries)
 
 #### Scenario: Partial batch failures
@@ -631,6 +630,24 @@ The system SHALL encode batches of GeoEvents directly in the message body with z
   ```
 - **AND** events SHALL be packed contiguously
 - **AND** total size = 8 + (count × 128) bytes
+
+#### Scenario: Write operation response format
+
+- **WHEN** a write operation (insert_events, upsert_events, delete_entities) completes successfully
+- **THEN** the response body SHALL be (32 bytes, 16-byte aligned):
+  ```
+  WriteResponse (32 bytes):
+  ├─ status: u8             # 0 = ok, non-zero = partial failure
+  ├─ reserved1: [7]u8       # Padding
+  ├─ events_processed: u32  # Number of events successfully processed
+  ├─ events_failed: u32     # Number of events that failed validation
+  ├─ timestamp_assigned: u64 # Timestamp assigned by VSR prepare (nanoseconds)
+  ├─ reserved2: [8]u8       # Padding to 32 bytes
+  ```
+- **AND** status = 0 indicates all events processed successfully
+- **AND** events_failed > 0 indicates some events failed coordinate/format validation
+- **AND** timestamp_assigned is the consensus timestamp from VSR prepare phase
+- **AND** for delete_entities: events_processed = entities deleted, events_failed = entities not found
 
 #### Scenario: Query parameter encoding
 

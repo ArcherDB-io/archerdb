@@ -103,7 +103,7 @@ The system SHALL validate performance scaling across cluster configurations.
 
 - **WHEN** validating memory scaling
 - **THEN** validation SHALL measure:
-  - **128GB Limit**: Performance with 1B entities in 128GB RAM (96GB index + OS/cache)
+  - **128GB Limit**: Performance with 1B entities in 128GB RAM (~91.5GB index + cache/OS overhead)
   - **Memory Efficiency**: 64 bytes per entity index overhead (cache-line aligned)
   - **Working Set**: Performance with datasets larger than RAM
   - **Memory Pressure**: Behavior under memory allocation pressure
