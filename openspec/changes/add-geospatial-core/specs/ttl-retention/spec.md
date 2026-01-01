@@ -1,0 +1,443 @@
+# TTL and Data Retention Specification
+
+## ADDED Requirements
+
+### Requirement: Per-Entry Time-to-Live (TTL)
+
+The system SHALL support configurable time-to-live on individual GeoEvent records for automatic expiration.
+
+#### Scenario: TTL field in GeoEvent
+
+- **WHEN** a GeoEvent is created
+- **THEN** it SHALL contain a `ttl_seconds: u32` field (4 bytes)
+- **AND** `ttl_seconds = 0` means the event never expires (infinite retention)
+- **AND** `ttl_seconds > 0` means the event expires after that many seconds from its timestamp
+
+#### Scenario: Expiration calculation with overflow protection
+
+- **WHEN** determining if an event is expired
+- **THEN** the calculation SHALL be:
+  ```zig
+  const event_timestamp = @as(u64, @truncate(event.id));  // Lower 64 bits
+  const current_time = clock.now_synchronized();
+  
+  // Protect against overflow (edge case for timestamps near maxInt(u64))
+  const ttl_ns = @as(u64, event.ttl_seconds) * 1_000_000_000;
+  const is_expired = if (event.ttl_seconds == 0) {
+      false; // Never expires
+  } else if (ttl_ns > maxInt(u64) - event_timestamp) {
+      false; // Overflow would occur, treat as never expires (effectively infinite)
+  } else {
+      const expiration_time = event_timestamp + ttl_ns;
+      current_time >= expiration_time;
+  };
+  ```
+- **AND** overflow protection handles edge cases where timestamp + TTL exceeds u64 range
+- **AND** this is theoretically possible for timestamps near year 2554 with 136-year TTL
+- **AND** overflow is treated as "never expires" (safe default)
+
+#### Scenario: Default TTL behavior
+
+- **WHEN** a client does not specify TTL
+- **THEN** `ttl_seconds` SHALL default to 0 (never expires)
+- **AND** this is the safe default (avoid accidental data loss)
+
+### Requirement: Lazy Expiration on Lookup
+
+The system SHALL check for expiration during RAM index lookups and remove expired entries.
+
+#### Scenario: UUID lookup with expired entry
+
+- **GIVEN** an entity exists in the RAM index
+- **AND** its event has expired (current_time >= expiration_time)
+- **WHEN** `lookup(entity_id)` is called
+- **THEN** the system SHALL:
+  1. Detect expiration
+  2. Atomically remove entry from RAM index using conditional removal:
+     - Only remove if timestamp matches the expired timestamp checked
+     - If timestamp changed, a concurrent upsert occurred (skip removal)
+     - This prevents race condition where fresh data is deleted
+  3. Return null (entity not found)
+  4. Increment metrics: `archerdb_index_expirations_total`
+
+#### Scenario: Atomic expiration removal (race protection)
+
+- **WHEN** removing an expired entry during lookup
+- **THEN** the system SHALL perform conditional removal:
+  ```zig
+  const expired_entry = index.lookup(entity_id);
+  if (expired_entry != null and is_expired(expired_entry)) {
+      const expired_timestamp = expired_entry.timestamp;
+      // Atomic: only remove if timestamp hasn't changed
+      if (index.remove_if_timestamp_matches(entity_id, expired_timestamp)) {
+          // Successfully removed expired entry
+      } else {
+          // Timestamp changed - concurrent upsert occurred, entry is fresh
+      }
+  }
+  ```
+- **AND** this prevents deleting freshly inserted data from concurrent upserts
+
+#### Scenario: Lookup with non-expired entry
+
+- **GIVEN** an entity exists and is not expired
+- **WHEN** `lookup(entity_id)` is called
+- **THEN** the system SHALL:
+  1. Return the IndexEntry normally
+  2. Client proceeds with disk read
+  3. No expiration check needed on disk read (index is authoritative)
+
+### Requirement: Expiration During Upsert
+
+The system SHALL handle expiration during index upsert operations.
+
+#### Scenario: Upsert with expired old entry
+
+- **GIVEN** an entity exists in RAM index with expired event
+- **WHEN** `upsert(entity_id, new_offset, new_timestamp)` is called
+- **THEN** the system SHALL:
+  - Check if old entry is expired
+  - If expired, treat as new insert (no LWW comparison needed)
+  - If not expired, perform normal LWW comparison
+  - Update index with new entry
+
+#### Scenario: Upsert with new TTL
+
+- **WHEN** a new event is inserted via upsert
+- **THEN** the index SHALL store:
+  ```zig
+  IndexEntry {
+      entity_id: u128,
+      file_offset: u64,
+      timestamp: u64,
+      ttl_seconds: u32,  // Store TTL for expiration checks
+  }
+  ```
+- **AND** IndexEntry grows from 32 bytes to 36 bytes (update capacity calculations)
+
+### Requirement: Compaction-Based Cleanup
+
+The system SHALL discard expired events during LSM compaction and NOT copy them forward.
+
+#### Scenario: Copy-forward with expiration check
+
+- **WHEN** LSM compaction reads an old event from a table
+- **THEN** the system SHALL:
+  1. Calculate if event is expired (current_time >= event.timestamp + event.ttl_seconds)
+  2. If expired: Skip event (do not copy to new table)
+  3. If not expired: Check liveness in RAM index
+  4. If live (index points to this offset): Copy forward
+  5. If not live (superseded by newer event): Skip event
+
+#### Scenario: Latest value expiration
+
+- **WHEN** the latest value for an entity expires
+- **THEN** it SHALL be discarded during compaction
+- **AND** the entity effectively disappears from the system
+- **AND** RAM index cleanup (via lookup or explicit cleanup) removes the entry
+
+#### Scenario: Compaction metrics
+
+- **WHEN** compaction completes
+- **THEN** metrics SHALL track:
+  ```
+  archerdb_compaction_events_expired_total - Events discarded due to TTL
+  archerdb_compaction_events_superseded_total - Events discarded due to newer version
+  archerdb_compaction_events_copied_total - Events copied forward (still live)
+  ```
+
+### Requirement: Automatic Periodic Cleanup
+
+The system SHALL periodically scan the RAM index to remove expired entries automatically.
+
+#### Scenario: Background cleanup task
+
+- **WHEN** TTL expiration is enabled (any event has ttl_seconds > 0)
+- **THEN** a background task SHALL:
+  - Run every 5 minutes (configurable via `--ttl-cleanup-interval-ms`)
+  - Scan a batch of index entries (default: 1,000,000 entries per run)
+  - Check each entry for expiration
+  - Remove expired entries from index
+  - Log cleanup statistics
+
+#### Scenario: Incremental scanning
+
+- **WHEN** background cleanup runs
+- **THEN** it SHALL:
+  - Track last scanned position in index
+  - Resume from last position on next run
+  - Wrap around to beginning when end reached
+  - Complete full index scan every `(total_entries / batch_size) × interval` time
+
+#### Scenario: Scan position persistence
+
+- **WHEN** the system restarts
+- **THEN** TTL cleanup scan position SHALL:
+  - Reset to position 0 (beginning of index) on restart
+  - NOT be persisted to superblock (not worth the complexity)
+  - Complete a full scan cycle before returning to previous position
+- **AND** this is acceptable because:
+  - Cleanup is idempotent (re-scanning entries is harmless)
+  - Full scan cycle time is bounded (hours, not days)
+  - No correctness impact (just slightly more CPU usage after restart)
+  - Avoids superblock bloat for non-critical state
+
+#### Scenario: Scan position after index rebuild
+
+- **WHEN** RAM index is rebuilt from disk (cold start)
+- **THEN** TTL scan position SHALL be reset to 0
+- **AND** expired entries are already filtered during rebuild (see Cold Start with TTL)
+- **AND** first cleanup pass may be faster (fewer expired entries)
+
+#### Scenario: Cleanup impact
+
+- **WHEN** background cleanup executes
+- **THEN** it SHALL:
+  - Use minimal CPU (scan during idle time)
+  - Not block lookups or upserts (concurrent read access)
+  - Complete scan batch within 100ms
+  - Not impact database performance
+
+### Requirement: Explicit Cleanup API
+
+The system SHALL provide an explicit cleanup function for applications to trigger expiration cleanup on-demand.
+
+#### Scenario: Cleanup operation
+
+- **WHEN** a client calls `cleanup_expired()` operation
+- **THEN** the system SHALL:
+  1. Scan the entire RAM index (or a batch of entries)
+  2. For each entry, check if expired
+  3. Remove expired entries from index
+  4. Return count of entries removed
+
+#### Scenario: Cleanup operation code
+
+- **WHEN** defining operation codes
+- **THEN** add to client protocol:
+  ```
+  cleanup_expired = 0x30,  // Admin operation
+  ```
+
+#### Scenario: Cleanup request body
+
+- **WHEN** encoding cleanup_expired request
+- **THEN** body MAY contain:
+  ```zig
+  CleanupRequest {
+      batch_size: u32,     // Number of index entries to scan (0 = scan all)
+      reserved: [60]u8,    // Padding to 64 bytes
+  }
+  ```
+
+#### Scenario: Cleanup response
+
+- **WHEN** cleanup completes
+- **THEN** response SHALL contain:
+  ```zig
+  CleanupResponse {
+      entries_scanned: u64,
+      entries_removed: u64,
+      reserved: [48]u8,
+  }
+  ```
+
+#### Scenario: Incremental cleanup
+
+- **WHEN** cleanup is called with `batch_size > 0`
+- **THEN** the system SHALL:
+  - Scan only the specified number of index entries
+  - Return after scanning batch_size entries
+  - Client can call again to continue cleanup (amortized over time)
+  - This prevents long pauses in production
+
+### Requirement: Global TTL Configuration (Optional)
+
+The system MAY support a global default TTL configuration for convenience.
+
+#### Scenario: Global TTL at format time
+
+- **WHEN** formatting a cluster
+- **THEN** a global default TTL MAY be configured:
+  ```
+  archerdb format --default-ttl-days=30
+  ```
+- **AND** this becomes the default when clients omit ttl_seconds
+- **AND** clients can override with per-event TTL
+- **AND** `--default-ttl-days=0` means infinite (no expiration)
+
+#### Scenario: Per-event TTL override
+
+- **WHEN** inserting events
+- **THEN** clients SHALL be able to:
+  - Use global default: set `event.ttl_seconds = 0` (server applies default)
+  - Override with specific TTL: set `event.ttl_seconds = 86400` (1 day)
+  - Explicitly never expire: set `event.ttl_seconds = maxInt(u32)` (136 years, effectively infinite)
+
+### Requirement: Index Entry Size Update
+
+The system SHALL update IndexEntry to include TTL for expiration checking.
+
+#### Scenario: Updated IndexEntry structure
+
+- **WHEN** IndexEntry is defined
+- **THEN** it SHALL be:
+  ```zig
+  pub const IndexEntry = struct {
+      entity_id: u128,      // 16 bytes
+      file_offset: u64,     // 8 bytes
+      timestamp: u64,       // 8 bytes (for LWW and expiration)
+      ttl_seconds: u32,     // 4 bytes (for expiration checking)
+      reserved: u32,        // 4 bytes (alignment to 8-byte boundary)
+  };  // Total: 40 bytes
+  ```
+
+#### Scenario: Index capacity recalculation
+
+- **WHEN** calculating index memory requirements
+- **THEN** the formula SHALL be updated:
+  ```
+  Old: 1.43B slots × 32 bytes = 45.7GB
+  New: 1.43B slots × 40 bytes = 57.2GB (rounded to 64GB for safety)
+  ```
+- **AND** recommended hardware specs SHALL be updated to 64-128GB RAM
+
+### Requirement: TTL Validation
+
+The system SHALL validate TTL values during insertion.
+
+#### Scenario: TTL range validation
+
+- **WHEN** validating TTL values
+- **THEN** the system SHALL accept:
+  - `ttl_seconds = 0` (never expires)
+  - `1 <= ttl_seconds <= maxInt(u32)` (1 second to 136 years)
+- **AND** no validation error for any u32 value
+
+#### Scenario: TTL with imported events
+
+- **WHEN** an event has `flags.imported = true`
+- **AND** `ttl_seconds > 0`
+- **THEN** expiration SHALL be calculated from the imported timestamp:
+  ```
+  expiration = event.timestamp_imported + (ttl_seconds * 1_000_000_000)
+  ```
+- **AND** old imported events may already be expired upon insertion
+- **AND** expired imported events SHALL be rejected with error `event_already_expired`
+
+### Requirement: Expiration Metrics
+
+The system SHALL track expiration-related metrics for monitoring.
+
+#### Scenario: Expiration counters
+
+- **WHEN** exposing TTL metrics
+- **THEN** the following SHALL be included:
+  ```
+  # Events expired during lookup
+  archerdb_index_expirations_total counter
+
+  # Events expired during compaction
+  archerdb_compaction_events_expired_total counter
+
+  # Events explicitly cleaned up via cleanup_expired()
+  archerdb_cleanup_entries_removed_total counter
+
+  # Current expired entry count estimate
+  archerdb_index_expired_entries_estimate gauge
+  ```
+
+### Requirement: Retention Policy Documentation
+
+The system SHALL document retention strategies for different use cases.
+
+#### Scenario: Retention strategy examples
+
+- **WHEN** configuring retention
+- **THEN** documentation SHALL provide examples:
+  - **Real-time tracking**: `ttl_seconds = 3600` (1 hour - only care about current locations)
+  - **Historical analytics**: `ttl_seconds = 2_592_000` (30 days)
+  - **Compliance/audit**: `ttl_seconds = 31_536_000` (1 year)
+  - **Infinite retention**: `ttl_seconds = 0` (never expire, manual cleanup)
+
+#### Scenario: Mixed retention per entity type
+
+- **WHEN** different entity types have different retention needs
+- **THEN** applications SHALL:
+  - Set different TTL per event based on entity type
+  - Example: Delivery trucks (7 days), personal vehicles (24 hours), infrastructure sensors (infinite)
+  - Use `group_id` to categorize, `ttl_seconds` to expire
+
+### Requirement: Disk Space Reclamation
+
+The system SHALL reclaim disk space occupied by expired events through LSM compaction.
+
+#### Scenario: Space reclamation rate
+
+- **WHEN** running with TTL-based expiration
+- **THEN** disk usage SHALL stabilize at:
+  ```
+  steady_state_size ≈ active_entities × avg_updates_per_ttl_window × 128 bytes
+
+  Example: 1B entities, 30-day TTL, 1 update/hour:
+  = 1B × (30 days × 24 hours) × 128 bytes
+  = 92TB (requires larger disk or more aggressive compaction)
+
+  Example: 1B entities, 1-hour TTL, 1 update/5min:
+  = 1B × 12 updates × 128 bytes
+  = 1.5TB (manageable)
+  ```
+
+#### Scenario: Compaction frequency
+
+- **WHEN** TTL is enabled
+- **THEN** compaction SHOULD run more frequently to reclaim space
+- **AND** compaction trigger MAY be adjusted based on disk usage
+- **AND** target: reclaim expired data within 2× TTL window
+
+### Requirement: Cold Start with TTL
+
+The system SHALL handle expired entries during index rebuild on cold start.
+
+#### Scenario: Rebuild skips expired events
+
+- **WHEN** rebuilding RAM index from data log
+- **THEN** the system SHALL:
+  1. Read each GeoEvent from disk
+  2. Calculate if expired (current_time >= event.timestamp + ttl_seconds)
+  3. If expired: skip (do not insert into index)
+  4. If not expired: upsert into index
+- **AND** this automatically builds a clean index (no expired entries)
+
+#### Scenario: Rebuild performance with TTL
+
+- **WHEN** rebuilding with short TTLs (e.g., 1 hour)
+- **THEN** rebuild SHALL be faster (fewer entries to insert)
+- **AND** most old events are skipped
+- **AND** only recent events are indexed
+
+### Requirement: TTL and Backup/Restore
+
+The system SHALL handle TTL during backup and restore operations.
+
+#### Scenario: Backup includes expired events but filters deleted
+
+- **WHEN** backing up closed log blocks to S3
+- **THEN** events SHALL be backed up based on type:
+  - **Expired events** (ttl expired but not deleted): Backed up (preserves complete history)
+  - **Deleted events** (flags.deleted=true): NOT backed up (GDPR erasure requirement)
+  - **Active events**: Backed up normally
+- **AND** backup occurs AFTER compaction
+- **AND** compaction removes deleted tombstones before backup
+- **AND** ensures GDPR "right to erasure" is honored in backup storage
+- **AND** expired events can be filtered during restore (not re-indexed)
+
+#### Scenario: Restore with TTL filtering
+
+- **WHEN** restoring from backup
+- **THEN** the system MAY optionally filter expired events:
+  ```
+  archerdb restore --from-s3=bucket://backup --skip-expired
+  ```
+- **AND** only non-expired events are restored to data file
+- **AND** this reduces restore time and disk usage
