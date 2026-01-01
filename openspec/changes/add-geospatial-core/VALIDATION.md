@@ -25,7 +25,7 @@
 ### Spec Files (32 total)
 ✅ api-versioning - 14 requirements, 29 scenarios
 ✅ backup-restore - 13 requirements, 38 scenarios
-✅ ci-cd - 10 requirements, 21 scenarios
+✅ ci-cd - 10 requirements, 20 scenarios
 ✅ client-protocol - 20 requirements, 63 scenarios
 ✅ client-retry - 11 requirements, 25 scenarios
 ✅ client-sdk - 10 requirements, 28 scenarios
@@ -127,7 +127,7 @@
 ## Summary
 
 **Total Requirements:** 446 requirements across 32 spec files
-**Total Scenarios:** 1,192 scenarios (exceptional coverage)
+**Total Scenarios:** 1,191 scenarios (exceptional coverage)
 **Total Tasks:** 305 implementation tasks
 **Total Spec Lines:** ~16,000 lines of detailed requirements
 
@@ -159,7 +159,7 @@ All OpenSpec requirements met:
 |--------|-------|--------|
 | Spec Files | 32 | ✅ Complete |
 | Requirements | 446 | ✅ Comprehensive |
-| Scenarios | 1,192 | ✅ Exceptional |
+| Scenarios | 1,191 | ✅ Exceptional |
 | Scenario/Req Ratio | 2.67:1 | ✅ Excellent Coverage |
 | Tasks | 305 | ✅ Detailed |
 | Decisions Documented | 21/21 | ✅ Complete |

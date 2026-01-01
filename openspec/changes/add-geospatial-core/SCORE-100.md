@@ -173,7 +173,7 @@
 |--------|-------|---------------------|--------|
 | Spec Files | 32 | ≥20 | ✅ Exceeds |
 | Requirements | 446 | ≥100 | ✅ Exceeds |
-| Scenarios | 1,192 | ≥300 | ✅ Exceeds |
+| Scenarios | 1,191 | ≥300 | ✅ Exceeds |
 | Scenario/Requirement Ratio | 2.67:1 | ≥2.0:1 | ✅ Exceeds |
 | Tasks | 305 | ≥100 | ✅ Exceeds |
 | Review Passes | 22 | ≥3 | ✅ Exceeds |
