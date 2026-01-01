@@ -907,6 +907,47 @@ The system SHALL document realistic throughput and latency targets for cross-ava
 - **AND** "sequential throughput" is individual writes waiting for commit
 - **AND** cross-region deployment is NOT recommended (use async replication)
 
+### Requirement: Replica Replacement Procedure
+
+The system SHALL support replacing a failed replica with a new one.
+
+#### Scenario: Replace failed replica
+
+- **WHEN** a replica has permanently failed
+- **THEN** the operator SHALL follow this procedure:
+  1. **Remove failed replica** (if not already done):
+     - Follow Emergency Replica Removal if needed
+  2. **Provision replacement**:
+     - Same hardware requirements as failed replica
+     - Same replica index as failed replica
+  3. **Bootstrap replacement**:
+     - If data file intact: copy to new hardware, start
+     - If data file lost: format new, let it state sync
+  4. **Update configuration**:
+     - Update `--addresses` with new IP (same replica index)
+     - Rolling restart if IP changed
+  5. **Verification**:
+     - Verify replacement has synced completely
+     - Verify cluster health restored
+
+#### Scenario: Replace with data recovery
+
+- **WHEN** replacing replica AND data file can be recovered
+- **THEN** recovery is faster:
+  - Copy data file to new hardware
+  - Start replica (it will replay WAL to catch up)
+  - Catch-up time: seconds to minutes (WAL replay only)
+- **AND** this is preferred when disk is recoverable
+
+#### Scenario: Replace without data
+
+- **WHEN** replacing replica AND data file is unrecoverable
+- **THEN** full state sync is required:
+  - Format new replica with same cluster ID
+  - Start replica (triggers full state sync)
+  - Sync time: minutes (full checkpoint download)
+- **AND** cluster remains available during sync
+
 ---
 
 ## Non-Goals and Future Work
@@ -960,46 +1001,3 @@ Estimated RTO for 1B entities: 60-90 minutes (see backup-restore RTO targets).
 - **Active-active**: Conflict resolution for concurrent writes (complex)
 
 These features will be specified in a separate v2 proposal.
-
----
-
-### Requirement: Replica Replacement Procedure
-
-The system SHALL support replacing a failed replica with a new one.
-
-#### Scenario: Replace failed replica
-
-- **WHEN** a replica has permanently failed
-- **THEN** the operator SHALL follow this procedure:
-  1. **Remove failed replica** (if not already done):
-     - Follow Emergency Replica Removal if needed
-  2. **Provision replacement**:
-     - Same hardware requirements as failed replica
-     - Same replica index as failed replica
-  3. **Bootstrap replacement**:
-     - If data file intact: copy to new hardware, start
-     - If data file lost: format new, let it state sync
-  4. **Update configuration**:
-     - Update `--addresses` with new IP (same replica index)
-     - Rolling restart if IP changed
-  5. **Verification**:
-     - Verify replacement has synced completely
-     - Verify cluster health restored
-
-#### Scenario: Replace with data recovery
-
-- **WHEN** replacing replica AND data file can be recovered
-- **THEN** recovery is faster:
-  - Copy data file to new hardware
-  - Start replica (it will replay WAL to catch up)
-  - Catch-up time: seconds to minutes (WAL replay only)
-- **AND** this is preferred when disk is recoverable
-
-#### Scenario: Replace without data
-
-- **WHEN** replacing replica AND data file is unrecoverable
-- **THEN** full state sync is required:
-  - Format new replica with same cluster ID
-  - Start replica (triggers full state sync)
-  - Sync time: minutes (full checkpoint download)
-- **AND** cluster remains available during sync
