@@ -206,3 +206,21 @@ All open questions have been answered. See `DECISIONS.md` for complete Architect
 - **Subscriptions:** Deferred to v2+ (polling only)
 - **Performance:** 1M events/sec per node, <500μs UUID lookups, <3s failover
 - **Limits:** 1B entities per node, 5M events/sec cluster, 81k result sets (message-size bounded)
+
+## Non-Goals / Out of Scope (v1)
+
+The following features are explicitly **NOT** in scope for v1:
+
+1. **Cross-Region Synchronous Replication**: VSR assumes same-region latency; cross-region would limit throughput to ~10-50 ops/sec. Use S3 backup for geographic durability (see `specs/replication/spec.md` Non-Goals section).
+
+2. **H3 Spatial Indexing**: S2-only for v1. H3 may be added in v2+ if there is demand.
+
+3. **Real-Time Subscriptions/Streaming**: Polling-only in v1. Pub/sub streaming may be added in v2+.
+
+4. **Dynamic Cluster Membership**: Static membership only. Adding/removing replicas requires cluster restart.
+
+5. **Multi-Tenancy**: Single-tenant deployments only. Multi-tenant isolation may be added in v2+.
+
+6. **SQL or GeoJSON Query Interface**: Custom binary protocol only. Higher-level query languages may be added via separate gateway services.
+
+For rationale on each non-goal, see the relevant spec file or DECISIONS.md.

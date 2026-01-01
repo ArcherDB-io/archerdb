@@ -14,7 +14,7 @@
 | Criterion | Weight | Score | Evidence |
 |-----------|--------|-------|----------|
 | All required files present | 2 | 2 | proposal.md, tasks.md, design.md, DECISIONS.md, ERRATA.md, VALIDATION.md |
-| Spec directory structure correct | 2 | 2 | 31+ spec files properly organized under specs/ |
+| Spec directory structure correct | 2 | 2 | 32 spec files properly organized under specs/ |
 | Cross-references valid | 2 | 2 | TigerBeetle references, inter-spec links verified |
 | No orphaned specs | 2 | 2 | All specs connected to proposal |
 | Version/metadata present | 2 | 2 | Wire format versioning in data-model spec |
@@ -27,7 +27,7 @@
 
 | Criterion | Weight | Score | Evidence |
 |-----------|--------|-------|----------|
-| SHALL/MUST normative language | 2 | 2 | Consistent use throughout all 310+ requirements |
+| SHALL/MUST normative language | 2 | 2 | Consistent use throughout all 446 requirements |
 | Requirements are testable | 2 | 2 | Each has specific, measurable criteria |
 | Requirements are atomic | 2 | 2 | Single concern per requirement |
 | No ambiguous wording | 2 | 2 | ERRATA resolved all 15 ambiguities |
@@ -41,7 +41,7 @@
 
 | Criterion | Weight | Score | Evidence |
 |-----------|--------|-------|----------|
-| Min 1 scenario per requirement | 2 | 2 | All 310+ requirements have scenarios |
+| Min 1 scenario per requirement | 2 | 2 | All 446 requirements have scenarios |
 | WHEN/THEN structure | 2 | 2 | 100% compliance with format |
 | Edge cases covered | 2 | 2 | Pole queries, anti-meridian, empty batches, zero radius |
 | Error scenarios included | 2 | 2 | Complete error code taxonomy |
@@ -129,7 +129,7 @@
 | Code examples included | 2 | 2 | Zig code throughout specs |
 | Decision rationale documented | 2 | 2 | DECISIONS.md with 21 architectural decisions |
 | Trade-offs explained | 2 | 2 | S2 level selection, write amplification analysis |
-| Implementation order clear | 2 | 2 | tasks.md with 240+ ordered tasks |
+| Implementation order clear | 2 | 2 | tasks.md with 305 ordered tasks |
 
 **Category Score: 10/10**
 
@@ -139,8 +139,8 @@
 
 | Criterion | Weight | Score | Evidence |
 |-----------|--------|-------|----------|
-| Issues systematically tracked | 2 | 2 | 34 issues across 3 review cycles |
-| All issues resolved | 2 | 2 | 100% fix rate documented |
+| Issues systematically tracked | 2 | 2 | 61 issues across 22 review cycles |
+| All issues resolved | 2 | 2 | 100% fix rate documented (61/61) |
 | Cross-spec consistency verified | 2 | 2 | VALIDATION.md comprehensive check |
 | Edge cases validated | 2 | 2 | Pole queries, anti-meridian, zero radius |
 | Mathematical proofs provided | 2 | 2 | Memory, batch, timing calculations validated |
@@ -171,13 +171,14 @@
 
 | Metric | Value | Excellence Threshold | Status |
 |--------|-------|---------------------|--------|
-| Spec Files | 31 | ≥20 | ✅ Exceeds |
-| Requirements | 310+ | ≥100 | ✅ Exceeds |
-| Scenarios | 860+ | ≥300 | ✅ Exceeds |
-| Scenario/Requirement Ratio | 2.8:1 | ≥2.0:1 | ✅ Exceeds |
-| Review Passes | 9 | ≥3 | ✅ Exceeds |
-| Issues Found | 34 | N/A | Thoroughness |
-| Issues Resolved | 34 (100%) | 100% | ✅ Complete |
+| Spec Files | 32 | ≥20 | ✅ Exceeds |
+| Requirements | 446 | ≥100 | ✅ Exceeds |
+| Scenarios | 1,192 | ≥300 | ✅ Exceeds |
+| Scenario/Requirement Ratio | 2.67:1 | ≥2.0:1 | ✅ Exceeds |
+| Tasks | 305 | ≥100 | ✅ Exceeds |
+| Review Passes | 22 | ≥3 | ✅ Exceeds |
+| Issues Found | 61 | N/A | Thoroughness |
+| Issues Resolved | 61 (100%) | 100% | ✅ Complete |
 | Compile-time Validations | 15+ | ≥5 | ✅ Exceeds |
 | Decision Records | 21 | ≥10 | ✅ Exceeds |
 

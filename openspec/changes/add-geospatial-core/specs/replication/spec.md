@@ -907,63 +907,61 @@ The system SHALL document realistic throughput and latency targets for cross-ava
 - **AND** "sequential throughput" is individual writes waiting for commit
 - **AND** cross-region deployment is NOT recommended (use async replication)
 
-### Requirement: Cross-Region Replication (v2 - OUT OF SCOPE)
+---
 
-Cross-region replication is NOT included in v1 scope due to complexity. This section documents the v1 disaster recovery strategy and planned v2 features.
+## Non-Goals and Future Work
 
-#### Scenario: v1 disaster recovery strategy
+### Cross-Region Synchronous Replication (Out of Scope for v1)
 
-- **WHEN** operating ArcherDB v1 with cross-region durability requirements
-- **THEN** operators SHALL use S3/GCS backup for disaster recovery:
-  ```
-  v1 DR Architecture:
-  ┌─────────────────────────────────────┐
-  │           Primary Region            │
-  │  ┌─────┐  ┌─────┐  ┌─────┐         │
-  │  │ R1  │  │ R2  │  │ R3  │         │
-  │  └──┬──┘  └──┬──┘  └──┬──┘         │
-  │     │        │        │            │
-  │     └────────┼────────┘            │
-  │              │                     │
-  │       ┌──────▼──────┐              │
-  │       │  S3 Backup  │──────────────┼──► Cross-Region
-  │       └─────────────┘              │    S3 Replication
-  └─────────────────────────────────────┘
-  ```
-- **AND** RPO (Recovery Point Objective) = backup frequency (default: 60 seconds)
-- **AND** RTO (Recovery Time Objective) = restore time + index rebuild (see ttl-retention spec)
-- **AND** S3 cross-region replication provides geographic durability
+Cross-region synchronous replication is **NOT** included in v1 scope. This section documents the rationale and the v1 disaster recovery strategy.
 
-#### Scenario: v1 DR recovery procedure
+**Why cross-region VSR is not supported in v1:**
+1. Cross-region latency (50-200ms) makes quorum commits slow
+2. Network partitions between regions cause frequent view changes
+3. VSR assumes same-region latency for liveness detection
+4. Write throughput would be limited to ~10-50 sequential ops/sec
 
-- **WHEN** primary region becomes unavailable
-- **THEN** recovery procedure SHALL be:
-  1. Provision new cluster in DR region
-  2. Restore from latest S3 backup: `archerdb restore --from-s3=s3://backup-bucket`
-  3. Update DNS/load balancer to point to DR region
-  4. Accept that transactions since last backup are lost (RPO)
-- **AND** estimated RTO for 1B entities: 60-90 minutes (see ttl-retention RTO targets)
+**v1 Disaster Recovery Strategy:**
 
-#### Scenario: v2 planned features (informational)
+For cross-region durability in v1, operators should use S3/GCS backup:
 
-- **WHEN** planning v2 cross-region features
-- **THEN** the following are under consideration:
-  1. **Async log shipping**: Primary region ships committed prepares to follower region
-  2. **Read-only followers**: Cross-region replicas that serve read queries only
-  3. **Geo-sharding**: Partition entities by geography for multi-region writes
-  4. **Active-active**: Conflict resolution for concurrent writes (complex)
-- **AND** these features will be specified in a separate v2 proposal
-- **AND** v1 users should plan around S3 backup DR
+```
+v1 DR Architecture:
+┌─────────────────────────────────────┐
+│           Primary Region            │
+│  ┌─────┐  ┌─────┐  ┌─────┐         │
+│  │ R1  │  │ R2  │  │ R3  │         │
+│  └──┬──┘  └──┬──┘  └──┬──┘         │
+│     │        │        │            │
+│     └────────┼────────┘            │
+│              │                     │
+│       ┌──────▼──────┐              │
+│       │  S3 Backup  │──────────────┼──► Cross-Region
+│       └─────────────┘              │    S3 Replication
+└─────────────────────────────────────┘
+```
 
-#### Scenario: Why cross-region VSR is not supported
+- **RPO** (Recovery Point Objective) = backup frequency (default: 60 seconds)
+- **RTO** (Recovery Time Objective) = restore time + index rebuild (see backup-restore spec)
+- S3 cross-region replication provides geographic durability
 
-- **WHEN** evaluating cross-region synchronous replication
-- **THEN** it is NOT supported because:
-  1. Cross-region latency (50-200ms) makes quorum commits slow
-  2. Network partitions between regions cause frequent view changes
-  3. VSR assumes same-region latency for liveness detection
-  4. Write throughput would be limited to ~10-50 sequential ops/sec
-- **AND** async replication (v2) is the correct approach for cross-region
+**v1 DR Recovery Procedure:**
+1. Provision new cluster in DR region
+2. Restore from latest S3 backup: `archerdb restore --from-s3=s3://backup-bucket`
+3. Update DNS/load balancer to point to DR region
+4. Accept that transactions since last backup are lost (RPO)
+
+Estimated RTO for 1B entities: 60-90 minutes (see backup-restore RTO targets).
+
+**v2 Planned Features (informational):**
+- **Async log shipping**: Primary region ships committed prepares to follower region
+- **Read-only followers**: Cross-region replicas that serve read queries only
+- **Geo-sharding**: Partition entities by geography for multi-region writes
+- **Active-active**: Conflict resolution for concurrent writes (complex)
+
+These features will be specified in a separate v2 proposal.
+
+---
 
 ### Requirement: Replica Replacement Procedure
 
