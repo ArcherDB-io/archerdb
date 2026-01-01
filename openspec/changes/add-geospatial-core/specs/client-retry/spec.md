@@ -11,7 +11,7 @@ The system SHALL implement automatic retry logic with exponential backoff in all
 - **WHEN** a client operation is submitted
 - **THEN** the SDK SHALL automatically retry on transient errors
 - **AND** retry is enabled by default (applications can opt-out if needed)
-- **AND** retry preserves idempotency (same client_id + request_id)
+- **AND** retry preserves idempotency (same client_id + request)
 
 #### Scenario: Retryable error classification
 
@@ -129,7 +129,7 @@ The system SHALL ensure retries are safe by preserving idempotency guarantees.
 
 - **WHEN** retrying a failed operation
 - **THEN** the SDK SHALL:
-  - Use same `client_id` and `request_id` for all retry attempts
+  - Use same `client_id` and `request` for all retry attempts
   - Server deduplicates via client sessions
   - If request already executed, server returns cached response
   - No double-execution of operations

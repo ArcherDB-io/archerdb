@@ -22,7 +22,8 @@ The system SHALL implement Viewstamped Replication (VSR) with Flexible Paxos quo
 
 - **WHEN** a cluster is configured
 - **THEN** it SHALL support 1-6 active replicas plus 0-4 standby replicas
-- **AND** replica count MUST be odd for optimal quorum (1, 3, 5)
+- **AND** replica count SHOULD be odd for majority-style quorums (1, 3, 5)
+- **AND** even replica counts (e.g., 6) MAY be used, but quorum settings MUST be explicitly validated (Flexible Paxos intersection rule)
 - **AND** cluster_id (u128) SHALL uniquely identify the cluster
 
 #### Scenario: Flexible Paxos quorums
@@ -162,6 +163,169 @@ The system SHALL handle primary failures through view changes with state transfe
 - **AND** StartView contains the canonical log suffix
 - **AND** backups replace their log suffix with primary's version
 - **AND** all replicas transition to normal status
+
+### Requirement: View Change Sequence Diagram
+
+The system SHALL follow the view change protocol as illustrated.
+
+#### Scenario: View change sequence (mermaid)
+
+- **WHEN** documenting view change flow
+- **THEN** the following sequence diagram SHALL apply:
+  ```mermaid
+  sequenceDiagram
+      autonumber
+      participant R0 as Replica 0 (Old Primary)
+      participant R1 as Replica 1 (New Primary)
+      participant R2 as Replica 2 (Backup)
+
+      Note over R0,R2: PHASE 1: Failure Detection
+      R0-xR1: Ping timeout (Primary unresponsive)
+      R0-xR2: Ping timeout
+
+      Note over R0,R2: PHASE 2: StartViewChange
+      R1->>R1: Increment view, enter view_change status
+      R1->>R2: StartViewChange(view=2)
+      R2->>R2: Increment view, enter view_change status
+      R2->>R1: StartViewChange(view=2)
+
+      Note over R1,R2: Quorum reached (2/3 replicas)
+
+      Note over R0,R2: PHASE 3: DoViewChange
+      R1->>R1: Send DoViewChange to self (new primary)
+      R2->>R1: DoViewChange(view=2, log_view=1, op=100, commit=98)
+
+      Note over R1: PHASE 4: Log Selection (CTRL Protocol)
+      R1->>R1: Select log with highest (log_view, op)
+      R1->>R1: Check present/nack bitsets
+      R1->>R1: Truncate if quorum nacks entry
+      R1->>R1: Keep and repair if not nacked
+
+      Note over R0,R2: PHASE 5: StartView
+      R1->>R2: StartView(view=2, canonical_log_suffix)
+      R1->>R0: StartView(view=2, canonical_log_suffix)
+      R2->>R2: Replace log suffix, enter normal status
+      R0->>R0: Replace log suffix, enter normal status
+
+      Note over R0,R2: PHASE 6: Resume Operations
+      R1->>R1: Resume as new primary
+      R1->>R2: Prepare(view=2, op=101, ...)
+      R2->>R1: PrepareOk(view=2, op=101)
+  ```
+
+#### Scenario: View change timing breakdown
+
+- **WHEN** analyzing view change latency
+- **THEN** the timing breakdown SHALL be:
+  ```
+  VIEW CHANGE TIMING BREAKDOWN (Target: < 3 seconds total)
+  ═════════════════════════════════════════════════════════
+
+  Phase                        │ Duration    │ Notes
+  ─────────────────────────────┼─────────────┼─────────────────────────
+  Failure detection            │ 200-500ms   │ 2-3 missed pings
+  StartViewChange collection   │ 50-200ms    │ Network RTT + processing
+  DoViewChange collection      │ 50-200ms    │ Network RTT + processing
+  Log selection (CTRL)         │ 10-50ms     │ CPU-bound, fast
+  StartView broadcast          │ 50-200ms    │ Network RTT
+  Resume operations            │ 10-50ms     │ Pipeline restart
+  ─────────────────────────────┼─────────────┼─────────────────────────
+  TOTAL                        │ 370-1200ms  │ p99 target: < 2s
+
+  Worst-case additions:
+  - Log repair needed: +100-500ms (fetch missing prepares)
+  - Cross-region: +200-500ms RTT overhead
+  - Heavy load: +100-200ms queue draining
+  ```
+
+### Requirement: Checkpoint Coordination Sequence Diagram
+
+The system SHALL coordinate index checkpoints with the VSR commit pipeline.
+
+#### Scenario: Checkpoint coordination sequence (mermaid)
+
+- **WHEN** documenting checkpoint coordination
+- **THEN** the following sequence diagram SHALL apply:
+  ```mermaid
+  sequenceDiagram
+      autonumber
+      participant VSR as VSR Replica
+      participant SM as State Machine
+      participant Idx as RAM Index
+      participant Chk as Checkpoint Writer
+      participant LSM as LSM Storage
+
+      Note over VSR,LSM: Normal operation: ops 1-1000
+      loop Every operation
+          VSR->>SM: commit(op, timestamp, body)
+          SM->>Idx: upsert(entity_id, latest_id, ttl)
+          Idx->>Idx: Mark page dirty in bitset
+          SM->>LSM: write(event_batch)
+      end
+
+      Note over VSR,LSM: Checkpoint trigger at op 1000
+      VSR->>VSR: op 1000 = checkpoint_interval
+      VSR->>SM: prepare_checkpoint()
+      SM->>Idx: checkpoint.start()
+
+      Note over Idx,Chk: Incremental checkpoint
+      Idx->>Chk: get_dirty_pages()
+      Chk->>Chk: Snapshot dirty bitset
+      Idx->>Idx: Clear dirty bitset (new epoch)
+
+      par Background checkpoint write
+          Chk->>LSM: write_checkpoint_header(op=1000, hash)
+          loop For each dirty page
+              Chk->>LSM: write_page(page_num, data)
+          end
+          Chk->>LSM: fsync()
+          Chk->>VSR: checkpoint_complete(op=1000)
+      and Continue operations (ops 1001+)
+          VSR->>SM: commit(op=1001, ...)
+          SM->>Idx: upsert(...) // marks new dirty pages
+      end
+
+      Note over VSR,LSM: Checkpoint completion
+      VSR->>VSR: update superblock.checkpoint_op = 1000
+      VSR->>VSR: Can now recycle WAL slots < 1000
+  ```
+
+#### Scenario: Checkpoint backpressure sequence
+
+- **WHEN** checkpoint falls behind WAL head
+- **THEN** the following sequence SHALL occur:
+  ```mermaid
+  sequenceDiagram
+      autonumber
+      participant C as Client
+      participant P as Primary
+      participant Idx as Index Checkpoint
+      participant WAL as WAL (8192 slots)
+
+      Note over C,WAL: Normal: checkpoint at op 1000, WAL head at 5000
+      C->>P: insert_events(batch)
+      P->>P: Check: WAL_head - checkpoint_op < threshold
+      P->>WAL: Prepare(op=5001)
+
+      Note over C,WAL: Backpressure: checkpoint stuck at 1000, WAL at 7000
+      C->>P: insert_events(batch)
+      P->>P: Check: 7000 - 1000 = 6000 > 6144 (75% threshold)
+      P->>P: Apply backpressure delay
+
+      Note over Idx: Checkpoint writer is slow/stuck
+      Idx--xIdx: I/O bottleneck or large dirty set
+
+      Note over C,WAL: Critical: WAL about to wrap
+      C->>P: insert_events(batch)
+      P->>P: Check: 8000 - 1000 = 7000 > 8192 - 256
+      P->>C: Error: checkpoint_lag_backpressure (209)
+
+      Note over C,WAL: Recovery: checkpoint catches up
+      Idx->>P: checkpoint_complete(op=5000)
+      P->>P: Update checkpoint_op = 5000
+      C->>P: insert_events(batch)
+      P->>WAL: Prepare(op=8001) // OK, gap is now 3001
+  ```
 
 ### Requirement: Commit Pipeline
 

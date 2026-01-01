@@ -30,7 +30,7 @@ The system SHALL implement a hybrid memory architecture where the primary index 
     - Operating system buffers
     - Query result buffers (~1GB)
     - Grid cache (~4-16GB)
- - **Minimum RAM: 96GB** (for testing/development only, NOT production)
+  - **Minimum RAM: 96GB** (for testing/development only, NOT production)
 - **AND** SSD usage for "latest value only" is approximately 128GB (1B entities × 128 bytes/event)
 - **AND** historical retention multiplies SSD usage by updates-per-entity (see ttl-retention)
 - **AND** this maintains O(1) cache line access (1 line fetch per probe) unlike 40-byte entries which cause 62.5% split-loads
@@ -482,7 +482,7 @@ The system SHALL specify minimum and recommended hardware for meeting performanc
 - **WHEN** deploying for development or small-scale production
 - **THEN** minimum hardware SHALL be:
   - **CPU:** 8 cores, x86-64 with AES-NI
-  - **RAM:** 32GB (supports ~500M entities)
+  - **RAM:** 32GB (configure `max_entities` accordingly; ~250-300M entities practical with 64-byte index entries + OS headroom)
   - **Disk:** 500GB NVMe SSD (>2GB/s sequential, <200μs latency)
   - **Network:** 1Gbps
 

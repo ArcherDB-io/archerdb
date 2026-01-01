@@ -140,8 +140,41 @@ The system SHALL provide abstract block-based storage for the LSM tree with cach
 - **AND** `block_size` MUST be a multiple of `sector_size` (4096)
 - **AND** `block_size` MUST be ≤ `message_size_max`
 
-#### Scenario: Block cache
-...
+#### Scenario: Block cache structure
+
+- **WHEN** the grid is initialized
+- **THEN** it SHALL include a set-associative cache:
+  - Key: block address (u64)
+  - Stored: checksum (u128) for the cached block
+  - Value: pointer to an immutable block buffer
+  - 16-way set-associative (configurable)
+  - Coherency tracking for checkpoint visibility
+- **AND** cache entries MUST be allocated from pre-allocated memory (no runtime allocation in steady state)
+
+#### Scenario: Block cache lookup (address + checksum)
+
+- **WHEN** reading a block via `BlockReference { address, checksum }`
+- **THEN** the cache lookup SHALL:
+  1. Locate a candidate entry by `address`
+  2. Compare cached `checksum` to the expected `BlockReference.checksum`
+  3. If equal: return cached block (cache hit)
+  4. If different: treat as miss and evict/overwrite the stale entry (address reuse defense)
+- **AND** this prevents returning an unrelated block when a freed address is later reused
+
+#### Scenario: Block cache miss path
+
+- **WHEN** a block is not present in cache (or checksum mismatches)
+- **THEN** the system SHALL:
+  1. Read the block from disk by `address`
+  2. Verify the block checksum equals the expected checksum
+  3. If verification succeeds: insert the block into cache and return it
+  4. If verification fails: trigger the grid repair protocol
+
+#### Scenario: Block cache eviction policy
+
+- **WHEN** inserting into a full cache set
+- **THEN** the cache MUST evict a victim entry using a deterministic policy (e.g., per-set LRU)
+- **AND** entries referenced by in-flight I/O MUST NOT be evicted until the I/O completes
 #### Scenario: Grid repair protocol
 
 - **WHEN** a replica detects a corrupted block (checksum mismatch)
@@ -152,13 +185,6 @@ The system SHALL provide abstract block-based storage for the LSM tree with cach
   4. The repairing replica verifies the received block checksum
   5. If valid, it overwrites the corrupted block locally
 - **AND** this ensures self-healing of the grid zone without full state sync
-
-- **WHEN** the grid is initialized
-- **THEN** it SHALL include a set-associative cache:
-  - Key: block address (u64)
-  - Value: block pointer
-  - 16-way set-associative (configurable)
-  - Coherency tracking for checkpoint visibility
 
 #### Scenario: Read/Write IOPS limits
 

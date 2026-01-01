@@ -62,6 +62,7 @@ The system SHALL define a clear interface between the VSR replication layer and 
 - **THEN** the following SHALL be defined:
   ```zig
   pub const Operation = enum(u16) {
+      register = 0x00,
       insert_events = 0x01,
       upsert_events = 0x02,
       delete_entities = 0x03,  // GDPR right to erasure

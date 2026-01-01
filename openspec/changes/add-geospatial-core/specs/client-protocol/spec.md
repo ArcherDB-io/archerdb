@@ -13,7 +13,7 @@ The system SHALL use a custom binary protocol for client-server communication to
   - Zero-copy message passing where possible
   - Fixed-size headers for predictable parsing
   - Batch-oriented API (amortize network/consensus costs)
-  - Direct mapping to VSR message format
+  - Direct mapping to VSR/TigerBeetle-style framing (fixed header + body)
 
 #### Scenario: Performance characteristics
 
@@ -28,6 +28,164 @@ The system SHALL use a custom binary protocol for client-server communication to
   - Server: `const events = @as([*]GeoEvent, @ptrCast(message.body))` - zero-copy cast
   - No parsing, no intermediate objects, no heap allocation
 
+### Requirement: Wire Encoding
+
+The system SHALL define a portable wire encoding for all multi-byte fields in headers and bodies.
+
+#### Scenario: Endianness and integer representation
+
+- **WHEN** encoding any multi-byte integer field in the client protocol header or body
+- **THEN** it SHALL be encoded in little-endian byte order
+- **AND** signed integers SHALL use two's complement representation
+- **AND** all official SDKs SHALL follow this encoding regardless of host architecture
+- **AND** big-endian platforms are not supported for zero-copy decoding; SDKs on such platforms MUST byteswap or refuse with a clear error
+
+### Requirement: Exact Header Byte Layout
+
+The system SHALL define a precise byte-level layout for the 256-byte message header with explicit field offsets.
+
+#### Scenario: Header field offset table
+
+- **WHEN** constructing or parsing a message header
+- **THEN** fields SHALL be located at these exact byte offsets:
+  ```
+  ┌─────────────────────────────────────────────────────────────────┐
+  │                    MESSAGE HEADER (256 bytes)                    │
+  ├──────────┬───────┬───────────────────────────────────────────────┤
+  │  Offset  │ Size  │ Field Name                                    │
+  ├──────────┼───────┼───────────────────────────────────────────────┤
+  │   0      │  16   │ checksum: u128 (Aegis-128L MAC of bytes 16-255) │
+  │  16      │  16   │ checksum_padding: u128 (reserved for u256)    │
+  │  32      │  16   │ checksum_body: u128 (Aegis-128L MAC of body)  │
+  │  48      │  16   │ checksum_body_padding: u128 (reserved)        │
+  │  64      │  16   │ nonce_reserved: u128 (future AEAD)            │
+  │  80      │  16   │ cluster: u128 (cluster identifier)            │
+  │  96      │   4   │ size: u32 (total message size in bytes)       │
+  │ 100      │   4   │ magic: u32 (0x41524348 = "ARCH")              │
+  │ 104      │   2   │ version: u16 (protocol version, currently 1)  │
+  │ 106      │   2   │ operation: u16 (operation code)               │
+  │ 108      │   4   │ timeout_ms: u32 (client timeout hint)         │
+  │ 112      │  16   │ client_id: u128 (client UUID)                 │
+  │ 128      │   8   │ request: u64 (request number for idempotency) │
+  │ 136      │   8   │ view: u64 (current view, responses only)      │
+  │ 144      │   8   │ op: u64 (operation number, responses only)    │
+  │ 152      │   8   │ commit: u64 (commit number, responses only)   │
+  │ 160      │  96   │ reserved: [96]u8 (must be zero)               │
+  └──────────┴───────┴───────────────────────────────────────────────┘
+  Total: 256 bytes (16-byte aligned for u128 fields)
+  ```
+- **AND** all u128 fields start at 16-byte aligned offsets (0, 16, 32, 48, 64, 80, 112)
+- **AND** all u64 fields start at 8-byte aligned offsets (128, 136, 144, 152)
+- **AND** all u32 fields start at 4-byte aligned offsets (96, 100, 108)
+- **AND** reserved bytes MUST be zero on send and ignored on receive
+
+#### Scenario: Checksum computation order
+
+- **WHEN** computing the header checksum
+- **THEN** the algorithm SHALL be:
+  ```zig
+  // Step 1: Zero the checksum field
+  header.checksum = 0;
+
+  // Step 2: Compute MAC over bytes 16-255 (everything after checksum field)
+  const checksum_input = header_bytes[16..256];
+  header.checksum = aegis128l_mac(checksum_input, cluster_key);
+
+  // Step 3: Body checksum is computed separately
+  header.checksum_body = aegis128l_mac(body_bytes, cluster_key);
+  ```
+- **AND** cluster_key is derived from the cluster UUID using HKDF
+- **AND** checksum_padding fields are included in checksum computation but are always zero
+
+#### Scenario: Field byte order verification test vectors
+
+- **WHEN** validating protocol compliance
+- **THEN** these test vectors SHALL pass:
+  ```
+  # Little-endian u32 encoding for magic number
+  magic = 0x41524348 ("ARCH")
+  wire bytes at offset 100: [0x48, 0x43, 0x52, 0x41]
+
+  # Little-endian u16 encoding for version = 1
+  version = 0x0001
+  wire bytes at offset 104: [0x01, 0x00]
+
+  # Little-endian u128 encoding for cluster_id
+  cluster_id = 0x0102030405060708090a0b0c0d0e0f10
+  wire bytes at offset 80: [0x10, 0x0f, 0x0e, 0x0d, 0x0c, 0x0b, 0x0a, 0x09,
+                            0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01]
+  ```
+
+### Requirement: UUID Batch Query Wire Format
+
+The system SHALL define precise wire format for batch UUID lookups.
+
+#### Scenario: query_uuid_batch request encoding
+
+- **WHEN** encoding a batch UUID lookup request
+- **THEN** the body SHALL be structured as:
+  ```
+  ┌─────────────────────────────────────────────────────────────────┐
+  │              QUERY_UUID_BATCH REQUEST BODY                       │
+  ├──────────┬───────┬───────────────────────────────────────────────┤
+  │  Offset  │ Size  │ Field                                         │
+  ├──────────┼───────┼───────────────────────────────────────────────┤
+  │   0      │   4   │ count: u32 (number of UUIDs, max 10000)       │
+  │   4      │   4   │ reserved: u32 (must be zero)                  │
+  │   8      │  16   │ entity_ids[0]: u128                           │
+  │  24      │  16   │ entity_ids[1]: u128                           │
+  │  ...     │  ...  │ ...                                           │
+  │ 8+16*N   │  16   │ entity_ids[N-1]: u128                         │
+  └──────────┴───────┴───────────────────────────────────────────────┘
+  Total body size: 8 + (count × 16) bytes
+  ```
+- **AND** maximum count is 10,000 UUIDs per request
+- **AND** duplicate UUIDs are allowed (will return duplicate results)
+
+#### Scenario: query_uuid_batch response encoding
+
+- **WHEN** encoding a batch UUID lookup response
+- **THEN** the body SHALL be structured as:
+  ```
+  ┌─────────────────────────────────────────────────────────────────┐
+  │              QUERY_UUID_BATCH RESPONSE BODY                      │
+  ├──────────┬───────┬───────────────────────────────────────────────┤
+  │  Offset  │ Size  │ Field                                         │
+  ├──────────┼───────┼───────────────────────────────────────────────┤
+  │   0      │   4   │ found_count: u32 (entities found)             │
+  │   4      │   4   │ not_found_count: u32 (entities not in index)  │
+  │   8      │   8   │ reserved: [8]u8 (must be zero)                │
+  │  16      │ 2*N   │ not_found_indices: [N]u16 (packed array)      │
+  │ 16+2*N   │ pad   │ padding to 16-byte alignment                  │
+  │ aligned  │ 128*M │ events[0..M]: [M]GeoEvent (found entities)    │
+  └──────────┴───────┴───────────────────────────────────────────────┘
+  Where N = not_found_count, M = found_count
+  ```
+- **AND** not_found_indices contains the 0-based indices of UUIDs not found
+- **AND** events are ordered matching the request order (skipping not-found)
+
+### Requirement: Query Response Alignment
+
+The system SHALL ensure all query responses have proper memory alignment for zero-copy access.
+
+#### Scenario: GeoEvent array alignment in response
+
+- **WHEN** constructing query response bodies containing GeoEvent arrays
+- **THEN** the GeoEvent array SHALL start at a 16-byte aligned offset within the body
+- **AND** this enables direct `@ptrCast` to `[*]GeoEvent` without copying
+- **AND** QueryResponseHeader is padded to ensure alignment:
+  ```
+  QueryResponseHeader size: 32 bytes (naturally 16-byte aligned)
+  GeoEvent array starts at body offset 32 (16-byte aligned)
+  ```
+
+#### Scenario: Padding byte values
+
+- **WHEN** padding is required for alignment
+- **THEN** padding bytes SHALL be 0x00 (not 0xFF)
+- **AND** receivers MUST ignore padding byte values
+- **AND** senders MUST write 0x00 for deterministic checksums
+
 ### Requirement: Message Framing
 
 The system SHALL use a simple framing protocol for client messages over TCP connections.
@@ -41,21 +199,29 @@ The system SHALL use a simple framing protocol for client messages over TCP conn
   [Body (variable, up to message_size_max)]
   ```
 - **AND** header contains message metadata (operation, size, checksum)
+- **AND** header contains message metadata (operation, size, checksums)
 - **AND** body contains the payload (batch of GeoEvents or query parameters)
 
 #### Scenario: Header fields
 
 - **WHEN** constructing a client message header
-- **THEN** it SHALL contain:
+- **THEN** it SHALL contain (within 256 bytes):
+  - `checksum: u128` - Aegis-128L MAC of the header bytes after this field
+  - `checksum_padding: u128` - Reserved for u256 checksum upgrades
+  - `checksum_body: u128` - Aegis-128L MAC of the body (MAC of empty body is valid)
+  - `checksum_body_padding: u128` - Reserved for u256 checksum upgrades
+  - `nonce_reserved: u128` - Reserved for future AEAD encryption
+  - `cluster: u128` - Cluster identifier (reject if mismatched)
+  - `size: u32` - Total message size (header + body)
   - `magic: u32` - Protocol magic number (0x41524348 = "ARCH")
   - `version: u16` - Protocol version (1)
-  - `operation: u16` - Operation code (insert, query_uuid, query_radius, etc.)
-  - `size: u32` - Total message size (header + body)
-  - `checksum: u128` - Aegis-128L MAC of entire message
-  - `client_id: u128` - Client session UUID (for idempotency)
-  - `request_id: u64` - Client-assigned request ID (for matching responses)
+  - `operation: u16` - Operation code (register, insert_events, query_uuid, query_radius, etc.)
   - `timeout_ms: u32` - Client timeout hint
+  - `client_id: u128` - Client UUID (for idempotency)
+  - `request: u64` - Client-assigned request number (for matching responses + deduplication)
   - `reserved: [remaining]u8` - Zero-filled reserved space
+- **AND** header checksum SHALL be verified before trusting `size`
+- **AND** body checksum SHALL be verified after receiving the body bytes
 
 #### Scenario: Maximum message size
 
@@ -92,6 +258,7 @@ The system SHALL define operation codes for all client operations matching the q
 
 - **WHEN** defining admin operation codes
 - **THEN** the following SHALL be supported:
+  - `register` (0x00) - Establish or resume client session (handshake)
   - `ping` (0x20) - Liveness check
   - `get_status` (0x21) - Cluster status query
   - `cleanup_expired` (0x30) - Explicit TTL expiration cleanup
@@ -105,7 +272,7 @@ The system SHALL use a request-response pattern with exactly-once semantics via 
 - **WHEN** a client connects
 - **THEN** it MUST generate a unique `client_id` (UUID v4)
 - **AND** the server SHALL track this session for idempotency
-- **AND** duplicate requests (same client_id + request_id) SHALL return cached response
+- **AND** duplicate requests (same client_id + request) SHALL return cached response
 
 #### Scenario: Request flow
 
@@ -113,15 +280,16 @@ The system SHALL use a request-response pattern with exactly-once semantics via 
 - **THEN** the flow SHALL be:
   1. Client encodes operation + payload into message
   2. Client sends framed message over TCP
-  3. Server validates checksum and operation
-  4. Server routes to VSR state machine
-  5. Server sends response with matching request_id
-  6. Client matches response via request_id
+  3. Server validates header checksum and `cluster` before trusting `size`
+  4. Server receives body bytes and validates `checksum_body`
+  5. Server routes to VSR state machine
+  6. Server sends response with matching request
+  7. Client matches response via request
 
 #### Scenario: Timeout handling
 
 - **WHEN** a client request times out
-- **THEN** the client MAY retry with same request_id
+- **THEN** the client MAY retry with the same request
 - **AND** the server SHALL deduplicate via client session
 - **AND** the server SHALL return the cached result if already executed
 
@@ -135,7 +303,7 @@ The system SHALL manage client sessions with explicit limits and eviction polici
 - **THEN** the system SHALL:
   - Support maximum `client_sessions_max` concurrent sessions (default: 10,000)
   - Each session identified by unique `client_id` (u128)
-  - Session tracks: last request_id, cached response, last activity timestamp
+  - Session tracks: last request, cached response, last activity timestamp
 
 #### Scenario: Session eviction policy
 
@@ -178,16 +346,16 @@ The system SHALL manage client sessions with explicit limits and eviction polici
 - **WHEN** a client session is evicted (capacity or timeout)
 - **THEN** the following idempotency implications apply:
   1. **Cached response is lost**: The server no longer remembers the last response
-  2. **Request ID reset is required**: Client MUST start new request_id sequence
+  2. **Request number reset is required**: Client MUST start a new request sequence
   3. **Duplicate risk window**: During transition, same logical request might execute twice
 - **AND** client SDK SHALL handle this safely:
   ```
   Client Session Eviction Recovery:
   1. Receive `session_expired` error
   2. Generate NEW client_id (u128 UUID)
-  3. Reset request_id counter to 0
+  3. Reset request counter to 0
   4. Re-register with new client_id
-  5. Retry the failed request with new (client_id, request_id=0)
+  5. Retry the failed request with new (client_id, request=0)
   ```
 
 #### Scenario: Idempotency guarantees with eviction
@@ -322,7 +490,7 @@ The system SHALL define a specific handshake sequence for establishing client co
      - mTLS: Server verifies client certificate
      - Server verifies cluster ID in certificate (if encoded)
   3. Client → Server: Register request (operation=0x00)
-     - Header: magic, version, operation=register, client_id
+     - Header: cluster, magic/version, operation=register, client_id, request=0, checksums
      - Body: empty or client metadata
   4. Server → Client: Register response
      - If new client_id: session created, status=ok
@@ -338,14 +506,19 @@ The system SHALL define a specific handshake sequence for establishing client co
 - **THEN** the message SHALL contain:
   ```
   Header (256 bytes):
+  ├─ checksum: u128 = MAC of the header bytes after this field
+  ├─ checksum_padding: u128 = reserved
+  ├─ checksum_body: u128 = MAC of empty body
+  ├─ checksum_body_padding: u128 = reserved
+  ├─ nonce_reserved: u128 = zeros
+  ├─ cluster: u128 = client-configured cluster_id
+  ├─ size: u32 = 256 (header only, no body)
   ├─ magic: u32 = 0x41524348 ("ARCH")
   ├─ version: u16 = 1
   ├─ operation: u16 = 0x00 (register)
-  ├─ size: u32 = 256 (header only, no body)
-  ├─ checksum: u128 = MAC of remaining header
-  ├─ client_id: u128 = client-generated UUID
-  ├─ request_id: u64 = 0 (first request)
   ├─ timeout_ms: u32 = 5000 (handshake timeout)
+  ├─ client_id: u128 = client-generated UUID
+  ├─ request: u64 = 0 (first request)
   └─ reserved: [remaining]u8 = zeros
 
   Body: empty (register has no body)
@@ -357,13 +530,19 @@ The system SHALL define a specific handshake sequence for establishing client co
 - **THEN** the response SHALL contain:
   ```
   Header (256 bytes):
+  ├─ checksum: u128
+  ├─ checksum_padding: u128
+  ├─ checksum_body: u128
+  ├─ checksum_body_padding: u128
+  ├─ nonce_reserved: u128
+  ├─ cluster: u128 = echoed from request
+  ├─ size: u32 = 256 + body_size
   ├─ magic: u32 = 0x41524348
   ├─ version: u16 = 1
   ├─ operation: u16 = 0x00 (register)
-  ├─ size: u32 = 256 + body_size
-  ├─ checksum: u128
+  ├─ timeout_ms: u32 = 0 (ignored in responses)
   ├─ client_id: u128 = echoed from request
-  ├─ request_id: u64 = 0
+  ├─ request: u64 = 0
 
   Body (32 bytes):
   ├─ status: u8 = ok (0) or error code
@@ -598,3 +777,219 @@ The system SHALL support protocol version negotiation for future compatibility.
 - **THEN** servers MAY support both v1 and v2 simultaneously
 - **AND** clients specify version in every message header
 - **AND** breaking changes require major version bump
+
+### Requirement: Wire Format Migration Procedures
+
+The system SHALL define explicit procedures for migrating between protocol versions.
+
+#### Scenario: Version upgrade procedure (v1 → v2)
+
+- **WHEN** upgrading the cluster from protocol v1 to v2
+- **THEN** the migration procedure SHALL be:
+  ```
+  PROTOCOL VERSION UPGRADE PROCEDURE (v1 → v2)
+  ════════════════════════════════════════════
+
+  PHASE 1: Preparation (no downtime)
+  ─────────────────────────────────────────
+  1. Verify all clients support v2 (SDK version check)
+  2. Update client SDKs to v2-capable version (supports both v1 and v2)
+  3. Configure clients with version_preference=v1 (continue using v1)
+  4. Monitor: All clients should report v1 in metrics
+
+  PHASE 2: Server Upgrade (rolling restart)
+  ─────────────────────────────────────────
+  5. For each replica in order (standby first, primary last):
+     a. Stop replica gracefully
+     b. Upgrade binary to v2-capable version
+     c. Start replica with --protocol-versions=1,2
+     d. Wait for state sync to complete
+     e. Verify replica healthy in cluster
+  6. Cluster now accepts both v1 and v2 clients
+
+  PHASE 3: Client Migration (gradual)
+  ─────────────────────────────────────────
+  7. Update client configurations: version_preference=v2
+  8. Monitor: Clients should start reporting v2 in metrics
+  9. Track v1 client count → should decrease to 0
+
+  PHASE 4: Cleanup (optional, enables v2-only features)
+  ─────────────────────────────────────────
+  10. Once all clients are v2:
+      a. Restart replicas with --protocol-versions=2
+      b. v1 clients will receive version_not_supported error
+      c. Enable v2-only features if any
+  ```
+- **AND** rollback is possible at any phase by reversing steps
+- **AND** mixed v1/v2 operation is supported indefinitely
+
+#### Scenario: Version downgrade procedure (emergency)
+
+- **WHEN** emergency downgrade from v2 to v1 is required
+- **THEN** the procedure SHALL be:
+  ```
+  EMERGENCY DOWNGRADE PROCEDURE
+  ═════════════════════════════
+
+  WARNING: Only possible if v2 data is backward-compatible with v1
+
+  1. Update all clients to version_preference=v1
+  2. Wait for in-flight v2 requests to complete (monitor metrics)
+  3. Rolling restart replicas with --protocol-versions=1
+  4. Verify all clients reconnect successfully
+
+  IF v2 introduced incompatible wire format changes:
+  - Downgrade is NOT possible without data migration
+  - Restore from pre-upgrade backup instead
+  ```
+
+#### Scenario: Version compatibility matrix
+
+- **WHEN** determining version compatibility
+- **THEN** the following matrix SHALL apply:
+  ```
+  ┌─────────────────────────────────────────────────────────────────┐
+  │              CLIENT/SERVER VERSION COMPATIBILITY                 │
+  ├──────────────┬──────────────┬──────────────┬────────────────────┤
+  │ Client       │ Server       │ Compatible?  │ Notes              │
+  ├──────────────┼──────────────┼──────────────┼────────────────────┤
+  │ v1           │ v1 only      │ ✓ Yes        │ Normal operation   │
+  │ v1           │ v1,v2        │ ✓ Yes        │ Server accepts v1  │
+  │ v1           │ v2 only      │ ✗ No         │ version_not_supported │
+  │ v2           │ v1 only      │ ✗ No         │ version_not_supported │
+  │ v2           │ v1,v2        │ ✓ Yes        │ Server accepts v2  │
+  │ v2           │ v2 only      │ ✓ Yes        │ Normal operation   │
+  └──────────────┴──────────────┴──────────────┴────────────────────┘
+  ```
+
+### Requirement: Client-Side Batching Best Practices
+
+The system SHALL document optimal batching strategies for client SDKs.
+
+#### Scenario: Optimal batch size selection
+
+- **WHEN** configuring client batch sizes
+- **THEN** the following guidelines SHALL apply:
+  ```
+  ┌─────────────────────────────────────────────────────────────────┐
+  │              BATCH SIZE SELECTION GUIDE                          │
+  ├─────────────────────┬───────────────────────────────────────────┤
+  │ Scenario            │ Recommended Batch Size                    │
+  ├─────────────────────┼───────────────────────────────────────────┤
+  │ High-throughput     │ 5,000 - 10,000 events                     │
+  │ ingestion           │ Maximizes consensus amortization          │
+  ├─────────────────────┼───────────────────────────────────────────┤
+  │ Low-latency         │ 100 - 500 events                          │
+  │ real-time tracking  │ Balances latency vs throughput            │
+  ├─────────────────────┼───────────────────────────────────────────┤
+  │ Interactive         │ 1 - 50 events                             │
+  │ applications        │ Minimizes perceived latency               │
+  ├─────────────────────┼───────────────────────────────────────────┤
+  │ Bulk import         │ 10,000 events (maximum)                   │
+  │ (historical data)   │ Maximum throughput, latency unimportant   │
+  └─────────────────────┴───────────────────────────────────────────┘
+  ```
+
+#### Scenario: Time-based batching
+
+- **WHEN** accumulating events for batching
+- **THEN** SDKs SHOULD implement time-based flushing:
+  ```zig
+  const BatchConfig = struct {
+      max_events: u32 = 1000,        // Flush when batch reaches this size
+      max_wait_ms: u32 = 100,        // Flush after this delay even if not full
+      min_events: u32 = 1,           // Minimum events before flushing
+  };
+
+  // Batch is flushed when ANY condition is met:
+  // 1. batch.len >= max_events
+  // 2. time_since_first_event >= max_wait_ms
+  // 3. client.flush() called explicitly
+  ```
+- **AND** max_wait_ms prevents indefinite buffering for low-rate producers
+- **AND** max_events prevents memory exhaustion for high-rate producers
+
+#### Scenario: Connection pooling recommendations
+
+- **WHEN** implementing client connection pools
+- **THEN** the following configuration SHALL be recommended:
+  ```
+  ┌─────────────────────────────────────────────────────────────────┐
+  │              CONNECTION POOL SIZING                              │
+  ├─────────────────────┬───────────────────────────────────────────┤
+  │ Workload            │ Connections per Replica                   │
+  ├─────────────────────┼───────────────────────────────────────────┤
+  │ Light (< 1K ops/s)  │ 1 connection                              │
+  │ Medium (1K-10K/s)   │ 2-4 connections                           │
+  │ Heavy (10K-100K/s)  │ 8-16 connections                          │
+  │ Extreme (> 100K/s)  │ 32 connections max                        │
+  └─────────────────────┴───────────────────────────────────────────┘
+
+  Notes:
+  - More connections = more parallelism but more server resources
+  - Pipeline depth of 4-8 per connection is typically optimal
+  - Monitor client_sessions_active metric to tune
+  ```
+
+#### Scenario: Backpressure handling
+
+- **WHEN** clients receive backpressure signals
+- **THEN** they SHALL implement exponential backoff:
+  ```
+  Backpressure Response Strategy:
+  ────────────────────────────────
+  Error Code             │ Action
+  ───────────────────────┼─────────────────────────────────
+  too_many_queries       │ Wait 10-100ms, retry with backoff
+  resource_exhausted     │ Wait 100-1000ms, reduce batch size
+  cluster_unavailable    │ Wait 1-10s, reconnect to different replica
+  view_change_in_progress│ Wait 100-500ms, retry same request
+  not_primary            │ Reconnect to new primary immediately
+  timeout                │ Retry with same request number (idempotent)
+
+  Exponential Backoff Formula:
+  delay = min(base_delay × 2^attempt, max_delay) + jitter
+  where jitter = random(0, delay × 0.1)
+  ```
+
+### Requirement: Rate Limiting
+
+The system SHALL implement server-side rate limiting to prevent abuse.
+
+#### Scenario: Per-client rate limits
+
+- **WHEN** enforcing rate limits per client session
+- **THEN** the following limits SHALL apply:
+  ```
+  ┌─────────────────────────────────────────────────────────────────┐
+  │              PER-CLIENT RATE LIMITS                              │
+  ├─────────────────────┬───────────────────────────────────────────┤
+  │ Limit Type          │ Default Value                             │
+  ├─────────────────────┼───────────────────────────────────────────┤
+  │ Requests/second     │ 1,000 (configurable)                      │
+  │ Events/second       │ 100,000 (configurable)                    │
+  │ Queries/second      │ 100 (spatial queries are expensive)       │
+  │ New sessions/minute │ 10 per IP (prevent session exhaustion)    │
+  └─────────────────────┴───────────────────────────────────────────┘
+  ```
+- **AND** exceeding limits returns `resource_exhausted` with retry_after_ms hint
+- **AND** limits are configurable via `--rate-limit-*` flags
+
+#### Scenario: Global rate limiting
+
+- **WHEN** protecting cluster-wide resources
+- **THEN** the following global limits SHALL apply:
+  ```
+  ┌─────────────────────────────────────────────────────────────────┐
+  │              GLOBAL RATE LIMITS (per node)                       │
+  ├─────────────────────┬───────────────────────────────────────────┤
+  │ Limit Type          │ Default Value                             │
+  ├─────────────────────┼───────────────────────────────────────────┤
+  │ Total requests/sec  │ 50,000 (hardware dependent)               │
+  │ Total events/sec    │ 1,000,000 (write throughput target)       │
+  │ Concurrent queries  │ 100 (memory bounded)                      │
+  │ Pending writes      │ 1,000 (pipeline depth)                    │
+  └─────────────────────┴───────────────────────────────────────────┘
+  ```
+- **AND** when global limits are reached, new requests receive `too_many_queries`
+- **AND** existing in-flight requests are not affected

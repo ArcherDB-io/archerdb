@@ -31,6 +31,107 @@ The system SHALL use command-line arguments exclusively for configuration, follo
   - `--data-file=path` - Data file path
 - **AND** flags SHALL use kebab-case naming
 
+### Requirement: Single-Tenant Architecture
+
+The system SHALL operate as a single-tenant database where each cluster serves one project/application.
+
+#### Scenario: Tenancy model
+
+- **WHEN** deploying ArcherDB
+- **THEN** the architecture SHALL be single-tenant:
+  ```
+  ┌─────────────────────────────────────────────────────────────────┐
+  │                SINGLE-TENANT ARCHITECTURE MODEL                  │
+  ├─────────────────────────────────────────────────────────────────┤
+  │                                                                  │
+  │   ┌─────────────────┐    ┌─────────────────┐                    │
+  │   │   Project A     │    │   Project B     │                    │
+  │   │   Application   │    │   Application   │                    │
+  │   └────────┬────────┘    └────────┬────────┘                    │
+  │            │                      │                              │
+  │            ▼                      ▼                              │
+  │   ┌─────────────────┐    ┌─────────────────┐                    │
+  │   │  ArcherDB       │    │  ArcherDB       │                    │
+  │   │  Cluster A      │    │  Cluster B      │                    │
+  │   │  (3-5 replicas) │    │  (3-5 replicas) │                    │
+  │   └─────────────────┘    └─────────────────┘                    │
+  │                                                                  │
+  │   Each project gets its own dedicated ArcherDB cluster.          │
+  │   Data is fully isolated at the infrastructure level.            │
+  └─────────────────────────────────────────────────────────────────┘
+  ```
+- **AND** multi-tenancy within a single cluster is NOT supported
+- **AND** data isolation is enforced at the cluster level
+
+#### Scenario: Single-tenant rationale
+
+- **WHEN** understanding the single-tenant design decision
+- **THEN** the rationale SHALL be:
+  ```
+  WHY SINGLE-TENANT?
+  ═══════════════════
+
+  1. PERFORMANCE ISOLATION
+     - No noisy neighbor effects
+     - Predictable latency SLAs
+     - Full resource dedication
+
+  2. SECURITY ISOLATION
+     - No cross-tenant data leakage possible
+     - Simpler security model
+     - Clear blast radius for incidents
+
+  3. OPERATIONAL SIMPLICITY
+     - No tenant ID in every query
+     - No complex quota management
+     - Easier capacity planning
+
+  4. COMPLIANCE
+     - Clear data residency per cluster
+     - Simpler audit trails
+     - Easier GDPR data isolation
+
+  5. TIGHERBEETLE HERITAGE
+     - Follows TigerBeetle's proven model
+     - One database = one ledger
+     - Deterministic resource allocation
+  ```
+
+#### Scenario: Multi-project deployment pattern
+
+- **WHEN** running multiple projects on shared infrastructure
+- **THEN** the deployment pattern SHALL be:
+  ```
+  MULTI-PROJECT DEPLOYMENT
+  ════════════════════════
+
+  Option A: Kubernetes/Container Orchestration
+  ────────────────────────────────────────────
+  - Deploy each ArcherDB cluster as a StatefulSet
+  - Use namespaces for project isolation
+  - Resource limits per StatefulSet
+
+  Option B: Dedicated VMs
+  ────────────────────────
+  - 3-5 VMs per project
+  - Complete network isolation
+  - Simpler but more expensive
+
+  Sizing guidance:
+  - Small project (< 10M entities): 3-node cluster, 32GB RAM each
+  - Medium project (10M-100M): 3-node cluster, 64GB RAM each
+  - Large project (100M-1B): 5-node cluster, 128GB RAM each
+  ```
+
+#### Scenario: Cross-project queries
+
+- **WHEN** a user needs to query across multiple projects
+- **THEN** the system SHALL:
+  - NOT support cross-cluster queries natively
+  - Recommend application-level aggregation
+  - Suggest data export/import for analytics use cases
+- **AND** this is intentional for isolation guarantees
+
 ### Requirement: Cluster Configuration
 
 The system SHALL require explicit cluster configuration at startup time.
@@ -198,7 +299,7 @@ The system SHALL provide comprehensive logging configuration options.
   - `cluster` - Cluster ID
   - `replica` - Replica index
   - `operation` - Current operation (if applicable)
-  - `request_id` - Client request correlation ID
+  - `request` - Client request number (for correlation/idempotency)
 - **AND** fields SHALL be consistent across all log entries
 
 ### Requirement: Metrics Configuration

@@ -183,7 +183,7 @@ All decisions follow TigerBeetle's proven patterns for maximum performance and o
   6. Spherical geometry utilities - ~1000-2000 LOC
 - Defer complex geodesics and advanced operations
 - **Risk Mitigation**: Allow C bindings to s2geometry as fallback during initial development
-- **Validation**: Golden vectors from Python s2geometry ensure correctness
+- **Validation**: Golden vectors generated via a pinned external S2 reference (Go `github.com/golang/geo/s2`) ensure correctness
 
 **Tasks:** See `tasks.md` section 12 (S2 Integration)
 
@@ -235,7 +235,7 @@ All decisions follow TigerBeetle's proven patterns for maximum performance and o
 
 **Hardware Assumptions:**
 - CPU: 16+ cores with AES-NI
-- RAM: 64-128GB
+- RAM: 128GB (recommended for 1B entities + OS/cache headroom)
 - Storage: NVMe SSD (>3GB/s sequential, <100μs latency)
 - Network: 10Gbps between replicas (same region)
 
@@ -247,7 +247,7 @@ All decisions follow TigerBeetle's proven patterns for maximum performance and o
 **Decision:** Approved limits
 
 **Storage Limits:**
-- **Max entities per node:** 1 billion (limited by ~48GB RAM index)
+- **Max entities per node:** 1 billion (limited by ~92GB RAM index at 64 bytes/entry and 0.70 load factor)
 - **Max data file size:** 16TB (u64 offsets)
 - **Max total events:** ~137 billion events per node
 - **Cluster capacity:** `node_count × 1_billion` entities
@@ -259,7 +259,7 @@ All decisions follow TigerBeetle's proven patterns for maximum performance and o
 - **Max concurrent connections:** 10,000 per node
 
 **Query Limits:**
-- **Max result set:** 100,000 records (require pagination beyond)
+- **Max result set:** 81,000 records (message-size bounded; require pagination beyond)
 - **Max polygon vertices:** 10,000
 - **Max radius:** 1,000 km (prevent full-scan abuse)
 - **Max message size:** 10MB
@@ -315,13 +315,13 @@ All decisions follow TigerBeetle's proven patterns for maximum performance and o
 
 ### Minimum Hardware (Development / Small-Scale)
 - **CPU:** 8 cores, x86-64 with AES-NI
-- **RAM:** 32GB (supports ~500M entities)
+- **RAM:** 32GB (configure `max_entities` accordingly; ~250-300M entities practical with 64-byte index entries + OS headroom)
 - **Disk:** 500GB NVMe SSD (>2GB/s, <200μs)
 - **Network:** 1Gbps
 
 ### Recommended Hardware (1B Entities)
 - **CPU:** 16+ cores, x86-64 with AES-NI (AVX2 preferred)
-- **RAM:** 64-128GB (48GB index + 16-80GB cache)
+- **RAM:** 128GB (≈96GB for index + ≈32GB for caching/OS)
 - **Disk:** 1TB+ NVMe SSD (>3GB/s, <100μs)
 - **Network:** 10Gbps between replicas
 
@@ -418,7 +418,7 @@ Based on these decisions, the implementation order is (from `tasks.md`):
 - Exponential backoff: 100ms, 200ms, 400ms, 800ms, 1600ms
 - Max 5 retries (6 attempts total)
 - Retry only transient errors (timeout, view_change, not_primary)
-- Preserve idempotency (same request_id)
+- Preserve idempotency (same request number)
 - Automatic primary discovery after view change
 
 **Implementation:** See `specs/client-retry/spec.md`

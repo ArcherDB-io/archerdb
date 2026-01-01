@@ -148,6 +148,142 @@ The system SHALL dynamically select S2 cell levels based on query area size for 
 - **AND** min/max levels SHALL be clamped so that `0 <= min_level <= max_level <= s2_cover_max_level`
 - **AND** this produces efficient cell ranges without over-decomposition
 
+### Requirement: S2 Level Tuning Decision Table
+
+The system SHALL provide explicit guidance for selecting S2 parameters based on use case.
+
+#### Scenario: Radius-based level selection decision table
+
+- **WHEN** selecting S2 levels for radius queries
+- **THEN** the following decision table SHALL apply:
+  ```
+  ┌─────────────────────────────────────────────────────────────────────────────────────┐
+  │                     S2 LEVEL SELECTION FOR RADIUS QUERIES                            │
+  ├──────────────────┬────────────┬────────────┬────────────┬───────────────────────────┤
+  │ Query Radius     │ min_level  │ max_level  │ max_cells  │ Use Case                  │
+  ├──────────────────┼────────────┼────────────┼────────────┼───────────────────────────┤
+  │ 1-10 m           │ 18         │ 18         │ 4          │ Indoor/room-level lookup  │
+  │ 10-100 m         │ 16         │ 18         │ 8          │ Building/venue search     │
+  │ 100-500 m        │ 15         │ 18         │ 12         │ Block/neighborhood        │
+  │ 500m-2 km        │ 13         │ 17         │ 16         │ District/campus           │
+  │ 2-10 km          │ 11         │ 15         │ 16         │ City district             │
+  │ 10-50 km         │ 9          │ 13         │ 16         │ Metro area                │
+  │ 50-200 km        │ 7          │ 11         │ 16         │ Regional                  │
+  │ 200-1000 km      │ 5          │ 9          │ 16         │ State/country             │
+  └──────────────────┴────────────┴────────────┴────────────┴───────────────────────────┘
+
+  Selection algorithm:
+  min_level = max(0, min(18, floor(log2(7842000 / radius_meters))))
+  max_level = min(min_level + 4, 18)
+  max_cells = radius_meters < 500 ? (radius_meters < 100 ? 4 : 8) : 16
+  ```
+
+#### Scenario: Polygon-based level selection decision table
+
+- **WHEN** selecting S2 levels for polygon queries
+- **THEN** the following decision table SHALL apply:
+  ```
+  ┌─────────────────────────────────────────────────────────────────────────────────────┐
+  │                     S2 LEVEL SELECTION FOR POLYGON QUERIES                           │
+  ├──────────────────┬────────────┬────────────┬────────────┬───────────────────────────┤
+  │ Polygon Area     │ min_level  │ max_level  │ max_cells  │ Use Case                  │
+  ├──────────────────┼────────────┼────────────┼────────────┼───────────────────────────┤
+  │ < 1 km²          │ 16         │ 18         │ 16         │ Building footprint        │
+  │ 1-10 km²         │ 14         │ 18         │ 16         │ Neighborhood zone         │
+  │ 10-100 km²       │ 12         │ 16         │ 16         │ District boundary         │
+  │ 100-1000 km²     │ 10         │ 14         │ 16         │ City boundary             │
+  │ 1000-10000 km²   │ 8          │ 12         │ 16         │ County/region             │
+  │ > 10000 km²      │ 6          │ 10         │ 16         │ State/province            │
+  └──────────────────┴────────────┴────────────┴────────────┴───────────────────────────┘
+
+  Selection algorithm (using bounding box area as proxy):
+  area_km2 = bounding_box_area(polygon)
+  min_level = max(0, min(18, floor(log2(500000000 / area_km2) / 2)))
+  max_level = min(min_level + 4, 18)
+  ```
+
+#### Scenario: Use-case specific tuning recommendations
+
+- **WHEN** tuning S2 parameters for specific workloads
+- **THEN** the following recommendations SHALL apply:
+  ```
+  ┌─────────────────────────────────────────────────────────────────────────────────────┐
+  │                     USE CASE TUNING RECOMMENDATIONS                                  │
+  ├─────────────────────────┬─────────────────────────────────────────────────────────────┤
+  │ Use Case                │ Recommended Configuration                                  │
+  ├─────────────────────────┼─────────────────────────────────────────────────────────────┤
+  │ Fleet Tracking          │ min_level=12, max_level=16, max_cells=16                   │
+  │ (vehicles in city)      │ Optimized for 1-5km typical query radius                   │
+  ├─────────────────────────┼─────────────────────────────────────────────────────────────┤
+  │ Delivery/Logistics      │ min_level=14, max_level=18, max_cells=12                   │
+  │ (last-mile)             │ Optimized for 100m-1km radius, dense urban areas           │
+  ├─────────────────────────┼─────────────────────────────────────────────────────────────┤
+  │ Real-time Rideshare     │ min_level=15, max_level=18, max_cells=8                    │
+  │ (nearby drivers)        │ Optimized for <500m radius, fast response                  │
+  ├─────────────────────────┼─────────────────────────────────────────────────────────────┤
+  │ IoT Sensors             │ min_level=16, max_level=18, max_cells=4                    │
+  │ (dense fixed locations) │ Optimized for precise location, small areas                │
+  ├─────────────────────────┼─────────────────────────────────────────────────────────────┤
+  │ Wildlife Tracking       │ min_level=8, max_level=12, max_cells=16                    │
+  │ (large territories)     │ Optimized for 10-100km ranges, sparse data                 │
+  ├─────────────────────────┼─────────────────────────────────────────────────────────────┤
+  │ Maritime/Aviation       │ min_level=6, max_level=10, max_cells=16                    │
+  │ (continental scale)     │ Optimized for 100-1000km ranges                            │
+  └─────────────────────────┴─────────────────────────────────────────────────────────────┘
+  ```
+
+#### Scenario: Performance impact of S2 level choices
+
+- **WHEN** understanding performance trade-offs
+- **THEN** the following guidance SHALL apply:
+  ```
+  S2 LEVEL SELECTION TRADE-OFFS
+  ═════════════════════════════
+
+  Lower min_level (larger cells):
+  ✓ Fewer cells in covering → fewer range scans
+  ✓ Better for large areas
+  ✗ More false positives → more post-filtering CPU
+  ✗ May include irrelevant data in scan
+
+  Higher min_level (smaller cells):
+  ✓ Tighter covering → fewer false positives
+  ✓ Less post-filtering work
+  ✗ More cells → more range scans
+  ✗ Can cause covering to hit max_cells limit
+
+  Optimal strategy:
+  ─────────────────
+  1. For small queries (< 1km): Use high min_level (15-18), low max_cells (4-8)
+  2. For medium queries (1-10km): Use mid min_level (11-14), medium max_cells (12-16)
+  3. For large queries (> 10km): Use low min_level (6-10), high max_cells (16)
+  4. Monitor: archerdb_query_post_filter_ratio should be < 2.0
+     (ratio of scanned events to returned events)
+  ```
+
+#### Scenario: S2 tuning metrics
+
+- **WHEN** monitoring S2 covering efficiency
+- **THEN** the following metrics SHALL be exposed:
+  ```
+  # Number of S2 cells generated per query
+  archerdb_query_s2_cells_count histogram
+    Labels: query_type={radius|polygon}, level={min_level}
+
+  # Ratio of events scanned to events returned (false positive ratio)
+  archerdb_query_post_filter_ratio histogram
+    Labels: query_type={radius|polygon}
+
+  # Query covering generation time
+  archerdb_query_s2_covering_duration_seconds histogram
+    Labels: query_type={radius|polygon}
+
+  Target values:
+  - s2_cells_count: median < 8, p99 < 16
+  - post_filter_ratio: median < 1.5, p99 < 5.0
+  - covering_duration: median < 100μs, p99 < 1ms
+  ```
+
 ### Requirement: S2 Implementation Validation
 
 The system SHALL validate S2 implementation using deterministic invariants and golden vectors derived from a reference implementation.
@@ -206,17 +342,18 @@ The system SHALL validate S2 implementation using deterministic invariants and g
 - **AND** the golden vectors MUST cover these levels:
   - `[0, 1, 5, 10, 15, s2_cover_max_level (18), s2_cell_level (30)]`
 
-#### Scenario: Golden vector generator command (External Python/Go)
+#### Scenario: Golden vector generator command (tooling-only)
 
 - **WHEN** regenerating S2 golden vectors
 - **THEN** the repository SHALL provide a generator tool at:
-  - `tools/s2_golden_gen/main.py` (or similar script)
-- **AND** the generator MUST use a trusted reference S2 implementation (e.g., Python `s2geometry` or Go `golang/geo`)
+  - `tools/s2_golden_gen/main.zig`
+- **AND** the generator MUST compute `cell_id` values using an independent, pinned reference S2 implementation (NOT ArcherDB’s Zig S2)
 - **AND** the generator MUST NOT introduce C++ build dependencies for the core database
+- **AND** C++ is permitted for tooling-only if it is isolated (e.g., containerized) and pinned for reproducibility
 - **AND** the generator MUST be deterministic:
   - Same input flags MUST produce byte-for-byte identical output
 - **AND** the standard regeneration command SHALL be:
-  - `python3 tools/s2_golden_gen/main.py --out testdata/s2/golden_vectors_v1.tsv --seed 1 --random 1024 --levels 0,1,5,10,15,18,30`
+  - `zig run tools/s2_golden_gen/main.zig -- --out testdata/s2/golden_vectors_v1.tsv --seed 1 --random 1024 --levels 0,1,5,10,15,18,30`
 - **AND** the generated file MUST include comment headers with:
   - generator identity and version
   - reference S2 library module version

@@ -134,7 +134,7 @@ ArcherDB occupies a unique position in the geospatial database market by combini
 | WAL (Headers + Prepares) | Dual-ring circular buffer | Crash recovery, hash-chained prepares for linearizability |
 | Client Replies Zone | `clients_max * message_size_max` | Cached responses for idempotency |
 | Grid Zone (LSM) | Unbounded | Block storage for LSM tree, manifest log, geo data |
-| RAM Pointer Index | ~48GB for 1B records | UUID -> Offset mapping for O(1) entity lookups |
+| RAM Pointer Index | ~92GB for 1B entities | UUID -> latest composite ID mapping for O(1) entity lookups |
 
 ### Key Design Decisions
 
@@ -150,7 +150,8 @@ ArcherDB occupies a unique position in the geospatial database market by combini
 ## Impact
 
 - **Affected specs**: None (new capabilities)
-- **New spec files** (17 total):
+- **New spec files** (32 total):
+  - `specs/api-versioning/spec.md` - Protocol and format versioning policy
   - `specs/implementation-guide/spec.md` - **CRITICAL**: TigerBeetle reference implementation mapping, file-by-file guide, attribution requirements
   - `specs/data-model/spec.md` - GeoEvent structure (with TTL field), block headers, ID generation
   - `specs/storage-engine/spec.md` - Data file zones, LSM tree, checkpoints (→ TigerBeetle `src/storage.zig`)
@@ -159,8 +160,9 @@ ArcherDB occupies a unique position in the geospatial database market by combini
   - `specs/memory-management/spec.md` - Static allocation, pools, intrusive structures (→ TigerBeetle `src/stdx.zig`)
   - `specs/io-subsystem/spec.md` - io_uring, message bus, TCP configuration (→ TigerBeetle `src/io/`)
   - `specs/testing-simulation/spec.md` - VOPR simulator, fault injection (→ TigerBeetle `src/testing/`)
-  - `specs/hybrid-memory/spec.md` - Index-on-RAM (40-byte entries with TTL), capacity limits, hardware requirements
+  - `specs/hybrid-memory/spec.md` - Index-on-RAM (64-byte entries), checkpointing/rebuild, capacity limits, hardware requirements
   - `specs/client-protocol/spec.md` - Custom binary protocol, SDK requirements, error codes
+  - `specs/client-sdk/spec.md` - Cross-language SDK behavior and semantics
   - `specs/security/spec.md` - mTLS authentication, certificate management, audit logging
   - `specs/observability/spec.md` - Prometheus metrics, structured logging, health checks
   - `specs/constants/spec.md` - Central constants (checkpoint_interval=256, s2_level=30, batch_max=10K)
@@ -168,11 +170,24 @@ ArcherDB occupies a unique position in the geospatial database market by combini
   - `specs/ttl-retention/spec.md` - Per-entry TTL, lazy expiration, cleanup API, compaction-based garbage collection
   - `specs/backup-restore/spec.md` - S3 backup, point-in-time restore, RPO<1min/RTO~20min
   - `specs/client-retry/spec.md` - Automatic retry, exponential backoff, primary discovery, idempotency
+  - `specs/configuration/spec.md` - Configuration file/flags and validation
+  - `specs/performance-validation/spec.md` - Benchmark and performance validation methodology
+  - `specs/profiling/spec.md` - Profiling hooks and tooling expectations
+  - `specs/developer-tools/spec.md` - Developer CLI and testdata generators
+  - `specs/data-portability/spec.md` - Export/import formats and migration support
+  - `specs/ci-cd/spec.md` - Build, test, and reproducibility requirements
+  - `specs/compliance/spec.md` - Compliance and audit considerations
+  - `specs/licensing/spec.md` - Licensing policy and attribution requirements
+  - `specs/commercial/spec.md` - Commercial/enterprise strategy (non-technical)
+  - `specs/community/spec.md` - Community strategy (non-technical)
+  - `specs/risk-management/spec.md` - Risk register and mitigations
+  - `specs/success-metrics/spec.md` - Success criteria and KPIs
+  - `specs/team-resources/spec.md` - Resourcing, roadmap, and execution planning
 - **Affected code**:
   - `src/main.zig` - CLI commands for database operations
   - New files: `src/geo_event.zig`, `src/storage/`, `src/lsm/`, `src/vsr/`, `src/io/`, `src/query/`
 - **Dependencies**:
-  - S2 geometry library (C bindings or Zig port)
+  - S2 core implementation (pure Zig); pinned reference implementation may be used for tooling-only golden vectors
   - io_uring (Linux 5.5+), kqueue (macOS), IOCP (Windows)
   - AES-NI hardware acceleration (required)
 - **Breaking changes**: None (greenfield implementation)
@@ -186,8 +201,8 @@ All open questions have been answered. See `DECISIONS.md` for complete Architect
 - **Security:** mTLS authentication, all-or-nothing authorization
 - **Observability:** Prometheus metrics + structured logging (Zig std.log)
 - **Cluster:** Static membership, support 3/5/6 replicas
-- **S2 Integration:** Pure Zig implementation (no C++ dependencies)
+- **S2 Integration:** Pure Zig core implementation (no C++ in core; tooling may use a pinned reference)
 - **H3 Support:** Deferred to v2+ (S2 only for MVP)
 - **Subscriptions:** Deferred to v2+ (polling only)
 - **Performance:** 1M events/sec per node, <500μs UUID lookups, <3s failover
-- **Limits:** 1B entities per node, 5M events/sec cluster, 100k result sets
+- **Limits:** 1B entities per node, 5M events/sec cluster, 81k result sets (message-size bounded)

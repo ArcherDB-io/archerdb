@@ -147,7 +147,7 @@
 ## 12. S2 Integration
 
 - [ ] 12.1 Evaluate S2 options and memory requirements
-- [ ] 12.2 Create `tools/s2_golden_gen` python script using `s2geometry` package for validation vectors
+- [ ] 12.2 Implement `tools/s2_golden_gen/main.zig` to generate `testdata/s2/golden_vectors_v1.tsv` using an independent, pinned reference S2 implementation (tooling-only)
 - [ ] 12.3 Implement pure Zig lat_lon_to_cell_id(lat, lon, level) -> u64
 - [ ] 12.4 Implement/integrate cell_id_to_lat_lon(cell_id) -> (lat, lon)
 - [ ] 12.5 Implement/integrate RegionCoverer for polygon -> cell ranges
@@ -348,6 +348,263 @@
 - 15.x (Client Protocol), 16.x (Security), 17.x (Observability) can be done in parallel after 13.x
 - 14.x (testing) can start once core VSR is in place
 - SDK skeletons (15.7-15.10) can be developed in parallel
+
+---
+
+## Implementation Phases
+
+The implementation SHALL proceed in ordered phases with explicit entry/exit criteria.
+
+### Phase 0: Foundation (Tasks 1.x, 2.x, 4.x)
+**Entry Criteria:** Repository initialized, Zig toolchain installed
+**Exit Criteria:** All struct layouts compile, comptime tests pass, memory allocators work
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ PHASE 0: FOUNDATION                                              │
+├─────────────────────────────────────────────────────────────────┤
+│ Parallel Track A       │ Parallel Track B      │ Duration      │
+├─────────────────────────┼───────────────────────┼───────────────┤
+│ 1.1-1.8 Core Types     │ 4.1-4.6 Checksums    │ Week 1        │
+│ 2.1-2.9 Memory Mgmt    │ 12.1-12.2 S2 Setup   │ Week 2        │
+└─────────────────────────┴───────────────────────┴───────────────┘
+
+Exit Gate:
+- [ ] GeoEvent: @sizeOf == 128, @alignOf == 16
+- [ ] BlockHeader: @sizeOf == 256, dual checksum verified
+- [ ] Aegis-128L: Known-answer tests pass
+- [ ] StaticAllocator: State machine transitions verified
+```
+
+### Phase 1: Storage Layer (Tasks 5.x, 6.x, 7.x)
+**Entry Criteria:** Phase 0 complete
+**Exit Criteria:** Data file can be formatted, written, and read; LSM tables functional
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ PHASE 1: STORAGE LAYER                                           │
+├─────────────────────────────────────────────────────────────────┤
+│ Sequential             │ Depends On            │ Duration      │
+├─────────────────────────┼───────────────────────┼───────────────┤
+│ 5.1-5.5 I/O Ring       │ Phase 0              │ Week 3        │
+│ 6.1-6.10 Data File     │ 5.x                  │ Week 4        │
+│ 7.1-7.12 Grid & LSM    │ 6.x                  │ Week 5-6      │
+└─────────────────────────┴───────────────────────┴───────────────┘
+
+Exit Gate:
+- [ ] io_uring: 100K IOPS on NVMe benchmark
+- [ ] Superblock: 4-copy redundant write verified
+- [ ] WAL: 8192 slots circular write verified
+- [ ] LSM: Compaction L0→L1 works correctly
+```
+
+### Phase 2: Consensus Protocol (Tasks 8.x, 9.x, 10.x, 11.x)
+**Entry Criteria:** Phase 1 complete
+**Exit Criteria:** 3-node cluster can reach consensus, view changes work
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ PHASE 2: CONSENSUS PROTOCOL                                      │
+├─────────────────────────────────────────────────────────────────┤
+│ Sequential             │ Depends On            │ Duration      │
+├─────────────────────────┼───────────────────────┼───────────────┤
+│ 8.1-8.8 VSR Core       │ Phase 1              │ Week 7-8      │
+│ 9.1-9.6 View Changes   │ 8.x                  │ Week 9        │
+│ 10.1-10.9 State Sync   │ 9.x                  │ Week 10       │
+│ 11.1-11.8 Pipeline     │ 10.x                 │ Week 11       │
+└─────────────────────────┴───────────────────────┴───────────────┘
+
+Exit Gate:
+- [ ] 3-node: Prepare/PrepareOk/Commit cycle works
+- [ ] View change: Primary failure triggers view change < 3s
+- [ ] State sync: Lagging replica catches up via checkpoint
+- [ ] Pipeline: Commit stages execute deterministically
+```
+
+### Phase 3: Index & Query (Tasks 3.x, 12.x, 13.x)
+**Entry Criteria:** Phase 2 complete
+**Exit Criteria:** UUID lookup works, radius/polygon queries return correct results
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ PHASE 3: INDEX & QUERY                                           │
+├─────────────────────────────────────────────────────────────────┤
+│ Parallel Track A       │ Parallel Track B      │ Duration      │
+├─────────────────────────┼───────────────────────┼───────────────┤
+│ 3.1-3.17 Hybrid Memory │ 12.3-12.8 S2 Impl    │ Week 12-13    │
+│ 13.1-13.6 State Machine│ 13.7-13.12 Queries   │ Week 14-15    │
+└─────────────────────────┴───────────────────────┴───────────────┘
+
+Exit Gate:
+- [ ] Index: O(1) lookup latency < 500μs p99
+- [ ] S2: Golden vector tests pass (deterministic)
+- [ ] Radius query: Post-filter ratio < 2.0
+- [ ] Polygon query: Self-intersection detection works
+```
+
+### Phase 4: Client Interface (Tasks 15.x, 16.x, 17.x, 18.x)
+**Entry Criteria:** Phase 3 complete
+**Exit Criteria:** Client can connect, authenticate, and execute all operations
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ PHASE 4: CLIENT INTERFACE                                        │
+├─────────────────────────────────────────────────────────────────┤
+│ Parallel Track A       │ Parallel Track B      │ Duration      │
+├─────────────────────────┼───────────────────────┼───────────────┤
+│ 15.1-15.6 Protocol     │ 16.1-16.10 Security  │ Week 16-17    │
+│ 17.1-17.13 Observability│ 18.1-18.7 CLI       │ Week 18       │
+└─────────────────────────┴───────────────────────┴───────────────┘
+
+Exit Gate:
+- [ ] Protocol: Zig SDK can execute all operations
+- [ ] TLS: mTLS handshake verified
+- [ ] Metrics: Prometheus endpoint returns valid metrics
+- [ ] CLI: `archerdb format` and `archerdb start` work
+```
+
+### Phase 5: Testing & Validation (Tasks 14.x, 19.x)
+**Entry Criteria:** Phase 4 complete
+**Exit Criteria:** VOPR simulator passes 10M+ ops, performance targets met
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ PHASE 5: TESTING & VALIDATION                                    │
+├─────────────────────────────────────────────────────────────────┤
+│ Sequential             │ Depends On            │ Duration      │
+├─────────────────────────┼───────────────────────┼───────────────┤
+│ 14.1-14.12 Simulator   │ Phase 4              │ Week 19-20    │
+│ 19.1-19.11 Benchmarks  │ 14.x                 │ Week 21-22    │
+└─────────────────────────┴───────────────────────┴───────────────┘
+
+Exit Gate:
+- [ ] VOPR: 10M+ operations with no invariant violations
+- [ ] Write: 1M events/sec per node achieved
+- [ ] Lookup: < 500μs p99 verified
+- [ ] Failover: < 3s view change verified
+```
+
+### Phase 6: Production Readiness (Tasks 20.x-36.x)
+**Entry Criteria:** Phase 5 complete
+**Exit Criteria:** Production deployment checklist complete
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ PHASE 6: PRODUCTION READINESS                                    │
+├─────────────────────────────────────────────────────────────────┤
+│ Parallel Tracks        │ Priority              │ Duration      │
+├─────────────────────────┼───────────────────────┼───────────────┤
+│ 26.x Licensing         │ High (legal blocker) │ Week 23       │
+│ 27.x Compliance        │ High (GDPR)          │ Week 23-24    │
+│ 28.x-31.x Ecosystem    │ Medium               │ Week 24-26    │
+│ 32.x-36.x Operations   │ Medium               │ Week 25-26    │
+└─────────────────────────┴───────────────────────┴───────────────┘
+
+Exit Gate:
+- [ ] Licensing: Apache 2.0 headers in all files
+- [ ] GDPR: Right to erasure verified end-to-end
+- [ ] Docs: Getting started guide tested
+- [ ] Ops: Runbook covers common failure scenarios
+```
+
+---
+
+## Requirement Traceability Matrix
+
+Cross-reference between specifications and implementation tasks.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                        REQUIREMENT TRACEABILITY MATRIX                               │
+├───────────────────────────────┬─────────────────────────┬───────────────────────────┤
+│ Specification                 │ Key Requirements        │ Implementation Tasks      │
+├───────────────────────────────┼─────────────────────────┼───────────────────────────┤
+│ data-model/spec.md            │ GeoEvent (128 bytes)    │ 1.2, 1.3, 1.4             │
+│                               │ Composite ID (u128)     │ 1.6                       │
+│                               │ Nanodegree coords       │ 1.7, 1.8                  │
+├───────────────────────────────┼─────────────────────────┼───────────────────────────┤
+│ storage-engine/spec.md        │ Superblock (4-copy)     │ 6.2, 6.3, 6.4             │
+│                               │ WAL (8192 slots)        │ 6.5, 6.6                  │
+│                               │ LSM Tree                │ 7.8, 7.9, 7.10, 7.11      │
+│                               │ Grid/Block Cache        │ 7.1, 7.2, 7.3             │
+├───────────────────────────────┼─────────────────────────┼───────────────────────────┤
+│ hybrid-memory/spec.md         │ RAM Index (64B entry)   │ 3.1, 3.2, 3.3, 3.4        │
+│                               │ LWW Semantics           │ 3.6, 3.7                  │
+│                               │ Incremental Checkpoint  │ 3.8, 3.9, 3.10, 3.11      │
+│                               │ LSM-Aware Rebuild       │ 3.13, 3.14                │
+├───────────────────────────────┼─────────────────────────┼───────────────────────────┤
+│ replication/spec.md           │ VSR Core                │ 8.1-8.8                   │
+│                               │ View Changes            │ 9.1-9.6                   │
+│                               │ State Sync              │ 10.5, 10.6                │
+│                               │ Client Sessions         │ 10.1-10.4                 │
+│                               │ Commit Pipeline         │ 11.1-11.8                 │
+├───────────────────────────────┼─────────────────────────┼───────────────────────────┤
+│ query-engine/spec.md          │ Three-Phase Model       │ 13.1-13.5                 │
+│                               │ S2 Integration          │ 12.3-12.8                 │
+│                               │ UUID Lookup             │ 13.7                      │
+│                               │ Radius Query            │ 13.8                      │
+│                               │ Polygon Query           │ 13.9                      │
+│                               │ Post-Filter             │ 13.11                     │
+├───────────────────────────────┼─────────────────────────┼───────────────────────────┤
+│ client-protocol/spec.md       │ Binary Protocol         │ 15.1, 15.2                │
+│                               │ 256B Header             │ 8.1                       │
+│                               │ Batch Operations        │ 15.6                      │
+│                               │ Rate Limiting           │ (implemented in 13.x)     │
+├───────────────────────────────┼─────────────────────────┼───────────────────────────┤
+│ security/spec.md              │ mTLS                    │ 16.1-16.7                 │
+│                               │ Certificate Reload      │ 16.9                      │
+├───────────────────────────────┼─────────────────────────┼───────────────────────────┤
+│ observability/spec.md         │ Prometheus Metrics      │ 17.1-17.8                 │
+│                               │ Structured Logging      │ 17.9-17.11                │
+│                               │ Health Endpoints        │ 17.12                     │
+├───────────────────────────────┼─────────────────────────┼───────────────────────────┤
+│ ttl-retention/spec.md         │ TTL on GeoEvent         │ 1.2 (flags), 13.x         │
+│                               │ Lazy Expiration         │ 3.5, 3.6                  │
+│                               │ Compaction Cleanup      │ 7.11                      │
+├───────────────────────────────┼─────────────────────────┼───────────────────────────┤
+│ testing-simulation/spec.md    │ VOPR Simulator          │ 14.1-14.3                 │
+│                               │ Fault Injection         │ 14.4-14.7                 │
+│                               │ Two-Phase Testing       │ 14.8                      │
+│                               │ Workload Generators     │ 14.10                     │
+├───────────────────────────────┼─────────────────────────┼───────────────────────────┤
+│ compliance/spec.md            │ GDPR Right to Erasure   │ 27.2 (delete_entities)    │
+│                               │ Audit Trails            │ 27.8                      │
+├───────────────────────────────┼─────────────────────────┼───────────────────────────┤
+│ configuration/spec.md         │ CLI-Only Config         │ 18.1-18.7                 │
+│                               │ Single-Tenant           │ (architectural decision)  │
+└───────────────────────────────┴─────────────────────────┴───────────────────────────┘
+```
+
+---
+
+## Critical Path
+
+The minimum set of tasks required for a functional system.
+
+```
+CRITICAL PATH (Minimum Viable Product)
+══════════════════════════════════════
+
+Week 1-2:   1.2→1.3→1.6 (GeoEvent struct, composite ID)
+            ↓
+Week 3-4:   4.1→5.1→6.1→6.2→6.5 (Checksum, I/O, Data File)
+            ↓
+Week 5-6:   7.8→7.9→7.11 (LSM tables, compaction)
+            ↓
+Week 7-9:   8.1→8.5→8.6→8.7→9.1→9.4 (VSR prepare/commit, view change)
+            ↓
+Week 10-11: 11.1→11.5 (Commit pipeline, execute stage)
+            ↓
+Week 12-14: 3.1→3.5→3.6→12.3→13.7→13.8 (Index, S2, queries)
+            ↓
+Week 15-16: 15.1→15.2→18.1→18.2 (Protocol, CLI)
+            ↓
+Week 17-18: 14.1→14.8→19.2→19.3 (Simulator, benchmarks)
+
+MVP Deliverable: Single-tenant cluster with insert, lookup, radius query
+```
+
+---
 
 ## 26.x Licensing and Legal Implementation
 - [ ] 26.1 Implement Apache 2.0 license headers in all source files

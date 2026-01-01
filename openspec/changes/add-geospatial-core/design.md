@@ -81,16 +81,17 @@ pub const GeoEvent = extern struct {
     id: u128,              // [S2 Cell (64) | Timestamp (64)]
     entity_id: u128,       // UUID for "who"
     correlation_id: u128,  // UUID for "what trip/session"
+    user_data: u128,       // Opaque application metadata (sidecar DB FK)
     lat_nano: i64,         // Latitude in nanodegrees
     lon_nano: i64,         // Longitude in nanodegrees
+    group_id: u64,         // Fleet/region grouping
     altitude_mm: i32,      // Altitude in millimeters
     velocity_mms: u32,     // Speed in mm/s
+    ttl_seconds: u32,      // Time-to-live in seconds (0 = never expires)
+    accuracy_mm: u32,      // Accuracy radius in millimeters
     heading_cdeg: u16,     // Direction in centidegrees (0-36000)
-    accuracy_mm: u16,      // GPS accuracy radius
     flags: GeoEventFlags,  // packed struct(u16) with padding bits
-    reserved: [2]u8,       // Padding for alignment
-    group_id: u64,         // Fleet/region grouping
-    reserved2: [24]u8,     // Future expansion, init to zero
+    reserved: [20]u8,      // Future expansion, MUST be zero
 
     comptime {
         assert(@sizeOf(GeoEvent) == 128);
