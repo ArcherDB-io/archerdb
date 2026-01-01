@@ -45,7 +45,7 @@ To provide the fastest, most reliable geospatial database for applications requi
 
 ### Runtime Dependencies
 
-- **Hardware:** AES-NI support (required), NVMe SSD, 64GB+ RAM
+- **Hardware:** AES-NI support (required), NVMe SSD, 128GB+ RAM
 - **Operating System:** Linux 5.5+ (io_uring), macOS 12+, Windows Server 2022+
 - **Network:** 10Gbps+ between replicas for optimal performance
 

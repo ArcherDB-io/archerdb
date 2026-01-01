@@ -205,23 +205,25 @@ The system SHALL provide comprehensive logging configuration options.
 
 The system SHALL configure metrics export through command-line options.
 
-#### Scenario: StatsD configuration
+#### Scenario: Prometheus metrics endpoint configuration
 
 - **WHEN** enabling metrics
 - **THEN** system SHALL support:
-  - `--experimental` - Enable experimental features
-  - `--statsd=host:port` - StatsD agent address
-  - `--statsd-prefix=namespace` - Metrics namespace (default: archerdb)
-- **AND** metrics SHALL be disabled by default for performance
+  - `--metrics-enabled=true|false` (default: true)
+  - `--metrics-port=9091` (default: 9091)
+  - `--metrics-bind=127.0.0.1|0.0.0.0` (default: 127.0.0.1)
+  - `--metrics-token=<secret>` (optional bearer token)
+  - `--metrics-tls-cert=<path>` and `--metrics-tls-key=<path>` (optional TLS)
+- **AND** this MUST be consistent with `observability/spec.md` (Prometheus text format)
+- **AND** the secure default is enabled + localhost bind
 
 #### Scenario: Metrics filtering
 
 - **WHEN** configuring metrics export
-- **THEN** system SHALL support:
-  - `--metrics-interval=seconds` - Metrics reporting interval
-  - `--metrics-tags=key1:value1,key2:value2` - Additional tags
-  - `--metrics-histogram-buckets=buckets` - Histogram bucket configuration
-- **AND** metrics SHALL have minimal performance impact
+- **THEN** the system SHALL:
+  - Expose a Prometheus scrape endpoint (pull model)
+  - Avoid per-scrape expensive recomputation (cache metrics for short window)
+  - Keep scrape latency bounded (<100ms p99) as specified in `observability/spec.md`
 
 ### Requirement: Security Configuration
 
@@ -337,12 +339,11 @@ The system SHALL support limited runtime configuration changes.
 #### Scenario: Configuration persistence
 
 - **WHEN** persisting configuration
-- **THEN** system SHALL:
-  - Store active configuration in data file headers
-  - Validate configuration compatibility on startup
-  - Provide configuration export/import commands
-  - Support configuration snapshots for debugging
-- **AND** configuration SHALL be reconstructable from running system
+- **THEN** the system SHALL:
+  - Persist immutable format-time configuration in the superblock (cluster id, replica_count, format version, capacity limits)
+  - Validate at startup that runtime CLI flags are compatible with the on-disk superblock configuration
+  - Provide `--show-config` / `--dump-config` output for debugging (no export/import commands)
+- **AND** ArcherDB remains CLI-only (no config files) per this specification
 
 ### Requirement: Environment-Specific Configuration
 
@@ -733,8 +734,8 @@ The system SHALL provide documented procedures for common emergency scenarios.
      - Index growth exceeding allocation?
      - Memory leak (check version, report bug)?
   4. **If index too large**:
-     - Index size = entity_count × 40 bytes
-     - 1B entities = ~57GB index
+     - Index size = entity_count × 64 bytes
+     - 1B entities = ~91.5GB index (128GB RAM recommended)
      - Consider TTL to reduce active entities
      - Consider sharding (multiple clusters)
   5. **Long-term fix**:

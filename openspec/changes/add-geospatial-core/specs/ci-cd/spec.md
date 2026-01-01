@@ -142,7 +142,7 @@ The system SHALL automate release processes following semantic versioning.
 
 - **WHEN** creating a release
 - **THEN** automation SHALL:
-  - Build binaries for all supported platforms
+  - **Build Reproducibility**: Verify that CI-built binaries are bit-for-bit identical to local builds
   - Create GitHub releases with checksums
   - Update package managers (npm, PyPI, Maven, etc.)
   - Generate changelog and release notes

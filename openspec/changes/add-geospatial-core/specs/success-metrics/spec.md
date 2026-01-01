@@ -16,7 +16,7 @@ The system SHALL define quantitative measures of technical achievement and perfo
 - **THEN** KPIs SHALL include:
   - **Throughput Achievement**: Sustained 1M events/sec per node (100% of target)
   - **Latency Achievement**: <500μs p99 UUID lookup latency (100% of target)
-  - **Memory Efficiency**: 64GB RAM limit for 1B entities (100% of target)
+  - **Memory Efficiency**: 128GB RAM recommended for 1B entities (100% of target)
   - **Scalability Achievement**: 5M events/sec across 5-node cluster (100% of target)
   - **Reliability Achievement**: 99.999% uptime in production testing (100% of target)
 - **AND** achievement SHALL be measured against quantitative targets

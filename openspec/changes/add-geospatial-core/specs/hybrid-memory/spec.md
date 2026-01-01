@@ -10,60 +10,57 @@ The system SHALL implement a hybrid memory architecture where the primary index 
 
 - **WHEN** the system is configured
 - **THEN** it SHALL maintain two tiers:
-  - **RAM Tier**: Primary index mapping `entity_id -> record_location`
-  - **SSD Tier**: Full 128-byte GeoEvent records in append-only log
+  - **RAM Tier**: Primary index mapping `entity_id -> latest GeoEvent ID (u128)`
+  - **SSD Tier**: Full 128-byte GeoEvent records stored in the storage engine (LSM/Grid)
 - **AND** index lookups SHALL be pure RAM operations (no disk I/O)
-- **AND** data retrieval SHALL require exactly one disk read
+- **AND** data retrieval SHALL be performed by composite-ID lookup in the storage engine
+- **AND** lookup performance SHOULD be optimized via block cache and prefetch (see storage-engine + query-engine)
 
 #### Scenario: Memory efficiency
 
 - **WHEN** storing 1 billion entities
 - **THEN** RAM usage calculation SHALL be:
-  - Index entry size: 40 bytes (includes ttl_seconds field)
+  - Index entry size: 64 bytes (Cache Line Aligned)
   - Target load factor: 0.70
   - Required capacity: 1B / 0.70 = ~1.43 billion slots
-  - Base RAM usage: 1.43B × 40 bytes = ~57.2GB
-  - **Recommended RAM: 80-96GB** (includes headroom for:)
+  - Base RAM usage: 1.43B × 64 bytes = ~91.5GB
+  - **Recommended RAM: 128GB** (includes headroom for:)
     - Hash table performance degradation near capacity
     - Memory fragmentation overhead
     - Operating system buffers
     - Query result buffers (~1GB)
     - Grid cache (~4-16GB)
-  - **Minimum RAM: 64GB** (for testing/development only, NOT production)
-- **AND** SSD usage SHALL be approximately 128GB (1B entities × 128 bytes/event)
-- **AND** this is ~2x more memory-efficient than storing full records in RAM (128GB vs 64GB)
-- **WARNING**: 64GB is the absolute minimum for 1B entities. Production deployments should use 96GB+ to avoid performance degradation at high load factors.
+ - **Minimum RAM: 96GB** (for testing/development only, NOT production)
+- **AND** SSD usage for "latest value only" is approximately 128GB (1B entities × 128 bytes/event)
+- **AND** historical retention multiplies SSD usage by updates-per-entity (see ttl-retention)
+- **AND** this maintains O(1) cache line access (1 line fetch per probe) unlike 40-byte entries which cause 62.5% split-loads
+- **WARNING**: 128GB is the recommended RAM for 1B entities to ensure consistent latency.
 
 ### Requirement: Index Entry Structure
 
-The system SHALL use a compact index entry format optimized for cache efficiency and LWW conflict resolution.
+The system SHALL use a 64-byte aligned index entry format optimized for CPU cache efficiency and SIMD operations.
 
 #### Scenario: Index entry fields
 
 - **WHEN** an index entry is defined
 - **THEN** it SHALL contain:
   ```
-  IndexEntry (40 bytes):
-  ├─ entity_id: u128      # Key: UUID of the entity
-  ├─ file_offset: u64     # Value: Byte offset in data file
-  ├─ timestamp: u64       # For LWW conflict resolution
-  ├─ ttl_seconds: u32     # For expiration checking (0 = never expires)
-  ├─ reserved: u32        # Padding to 8-byte boundary
+  IndexEntry (64 bytes - 1 Cache Line):
+  ├─ entity_id: u128      # 16 bytes (Key)
+  ├─ latest_id: u128      # 16 bytes (Value: Composite ID)
+  ├─ ttl_seconds: u32     # 4 bytes
+  ├─ reserved: u32        # 4 bytes (Padding)
+  ├─ padding: [24]u8      # 24 bytes (Reserved for flags/tags/generations)
   ```
-- **AND** entries SHALL be 8-byte aligned for cache efficiency
-- **AND** total size is 40 bytes (fits within a single 64-byte cache line on x86)
+- **AND** entries SHALL be 64-byte aligned
+- **AND** this ensures `entry[i]` never straddles two cache lines
+- **AND** allows for future extensions (tags, secondary IDs, dirty bits) without breaking alignment
 
-#### Scenario: Alternative compact entry
+#### Scenario: Alternative compact entry (deferred)
 
 - **WHEN** memory is constrained
-- **THEN** a 24-byte entry MAY be used:
-  ```
-  CompactIndexEntry (24 bytes):
-  ├─ entity_id: u128      # Key: UUID of the entity
-  ├─ file_offset: u48     # 256TB addressable (packed)
-  ├─ timestamp_delta: u16 # Delta from base timestamp
-  ```
-- **AND** this reduces RAM usage to ~32GB for 1B entities
+- **THEN** a compact entry format MAY be designed in a future version
+- **AND** v1 uses the fixed 64-byte IndexEntry for performance determinism
 
 ### Requirement: Primary Index Implementation
 
@@ -87,14 +84,22 @@ The system SHALL implement the primary index as a hash map optimized for concurr
 
 - **WHEN** calculating index capacity
 - **THEN** `capacity = ceil(expected_entities / 0.7)`
-- **AND** capacity SHALL be rounded to power of 2 for fast modulo
+- **AND** capacity is NOT required to be power of 2 (wyhash provides good distribution)
+- **AND** if power-of-2 is preferred for fast modulo, use next power of 2:
+  - 1B entities / 0.7 = 1.43B slots → round up to 2^31 = 2.147B slots
+  - Memory increases from 91.5GB to 137GB
+  - Effective load factor decreases from 0.7 to 0.47
 - **AND** this is calculated at compile time from configuration
+- **RECOMMENDATION**: Use exact capacity (1.43B) for memory efficiency; modern CPUs handle
+  non-power-of-2 modulo efficiently via compiler optimization (multiply by reciprocal)
 
-#### Scenario: Memory layout
+#### Scenario: Memory layout and Huge Pages
 
 - **WHEN** laying out index memory
 - **THEN** entries SHALL be stored in contiguous array
 - **AND** array SHALL be page-aligned for huge page support
+- **AND** system MUST use Huge Pages (Transparent Huge Pages or Explicit) for the primary index
+- **AND** this reduces TLB misses for random access in the 90GB+ index structure
 - **AND** NUMA-aware allocation SHOULD be used on multi-socket systems
 
 ### Requirement: Last-Write-Wins (LWW) Upsert
@@ -103,13 +108,17 @@ The system SHALL handle concurrent updates using Last-Write-Wins semantics based
 
 #### Scenario: Upsert operation
 
-- **WHEN** `upsert(entity_id, offset, timestamp, ttl_seconds)` is called
+- **WHEN** `upsert(entity_id, latest_id, ttl_seconds)` is called
 - **THEN** the system SHALL:
   1. Compute hash slot for entity_id
   2. If slot empty: insert new entry
   3. If slot occupied with same entity_id:
-     - If `new_timestamp > existing_timestamp`: update offset, timestamp, and ttl_seconds
-     - Else: ignore (existing record is newer)
+     - Compute timestamps from IDs:
+       - `new_timestamp = @as(u64, @truncate(latest_id))`
+       - `existing_timestamp = @as(u64, @truncate(existing.latest_id))`
+     - If `new_timestamp > existing_timestamp`: update latest_id and ttl_seconds
+     - If `new_timestamp < existing_timestamp`: ignore (existing record is newer)
+     - If timestamps equal: the entry with higher `latest_id` wins (deterministic tie-break)
   4. If slot occupied with different entity_id: probe next slot (linear probing)
 
 ### Requirement: Maximum Probe Length Limit
@@ -150,69 +159,52 @@ The system SHALL enforce a maximum probe length to prevent infinite loops and pe
 
 ### Requirement: Index Checkpointing
 
-The system SHALL periodically checkpoint the RAM index to disk for crash recovery. This is SEPARATE from VSR checkpoints.
+The system SHALL periodically checkpoint the RAM index to disk using an incremental dirty-page strategy to avoid I/O saturation.
 
 **IMPORTANT:** There are TWO checkpoint mechanisms that must be coordinated:
 1. **VSR Checkpoint** (storage-engine) - Every 256 operations, persists LSM state + superblock
-2. **Index Checkpoint** (hybrid-memory) - Every 60 seconds, persists RAM index to disk
+2. **Index Checkpoint** (hybrid-memory) - Continuous background process, persists RAM index to disk
+
+#### Scenario: Incremental checkpointing via dirty tracking
+
+- **WHEN** the index is modified
+- **THEN** the system SHALL track dirty pages:
+  - Divide index into fixed-size pages (e.g., 64KB or 1MB)
+  - Maintain a `dirty_pages: DynamicBitSet`
+  - Mark page dirty on upsert/delete
+- **AND** a background task SHALL continuously flush dirty pages to disk:
+  - Scan bitset for dirty pages
+  - Write dirty pages to the index checkpoint file
+  - Clear dirty bits after write confirms
+  - Update checkpoint metadata (max_op, commit_max) atomically
+- **AND** this "trickle" checkpointing prevents massive I/O spikes (writing 90GB+ at once)
+- **AND** typical churn (1M ops/sec = ~0.1% index change/sec) fits easily within disk bandwidth
 
 #### Scenario: Checkpoint coordination
 
-- **WHEN** index checkpoint is written
+- **WHEN** index checkpoint metadata is updated
 - **THEN** it SHALL record correlation with VSR checkpoint:
   - `vsr_checkpoint_op: u64` - The VSR checkpoint op number at index checkpoint time
   - `vsr_commit_max: u64` - The commit_max at index checkpoint time
 - **AND** on recovery, the system SHALL:
   1. Load VSR checkpoint first (authoritative state)
   2. Load index checkpoint
-  3. If `index.vsr_checkpoint_op > vsr.checkpoint_op`:
-     - Index is AHEAD of VSR state (VSR checkpoint was lost/corrupted)
-     - Discard index checkpoint, rebuild from data file
-  4. If `index.vsr_checkpoint_op <= vsr.checkpoint_op`:
-     - Index is valid, replay WAL from `index.wal_position` to current
-- **AND** this ensures index never references data that VSR hasn't persisted
-
-#### Scenario: Index checkpoint trigger (time-based)
-
-- **WHEN** index checkpointing is triggered
-- **THEN** it SHALL occur:
-  - Every 60 seconds (time-based, NOT operation-based)
-  - During graceful shutdown
-  - On explicit admin command
-- **AND** checkpointing SHALL NOT block normal operations
-- **AND** this is INDEPENDENT of VSR checkpoint timing (every 256 ops)
-
-#### Scenario: Non-blocking checkpoint mechanism
-
-- **WHEN** index checkpoint runs concurrently with operations
-- **THEN** the system SHALL use a snapshot-based approach:
-  1. **Snapshot phase** (< 1ms): Atomically capture index metadata (entry count, high-water timestamp, WAL position)
-  2. **Scan phase** (milliseconds to seconds): Iterate through index entries sequentially
-  3. **Write phase**: Write captured entries to temp file, call `fsync()` on temp file
-  4. **Finalize phase**: Atomic rename temp file to final location, `fsync()` parent directory
-- **AND** fsync ensures data is durable before rename makes checkpoint visible
-- **AND** WAL position is captured at snapshot phase start (conservative - ensures no data loss)
-- **AND** concurrent lookups continue normally during all phases
-- **AND** concurrent upserts continue normally:
-  - Entries modified AFTER snapshot may appear in checkpoint (acceptable - LWW ensures correctness)
-  - Entries modified AFTER snapshot may NOT appear (acceptable - WAL replay covers them)
-  - No locking required - eventual consistency within checkpoint interval
-- **AND** this is safe because:
-  - WAL position recorded at snapshot time ensures replay covers any missed entries
-  - Checkpoint is a "best effort" snapshot, not a transaction boundary
-  - Recovery always replays WAL from checkpoint position forward
+  3. **Replay Strategy**:
+     - If `index.vsr_checkpoint_op` is close to `vsr.checkpoint_op` (within WAL retention):
+       - Replay VSR prepares from `index.vsr_checkpoint_op + 1` from the **WAL** (Journal)
+     - If WAL has wrapped (gap > 80s):
+       - Replay from **LSM** (Data File) if possible (slower) OR
+       - Trigger full index rebuild
+- **AND** increasing `journal_slot_count` to 8192 ensures WAL covers the 60s checkpoint interval
 
 #### Scenario: Checkpoint duration SLA
 
-- **WHEN** checkpoint runs on a 1B entity index (~57GB)
-- **THEN** duration SHALL be bounded by sequential write speed:
-  ```
-  checkpoint_duration = index_size / disk_write_speed
-  Example: 57GB / 3GB/s = ~19 seconds
-  ```
-- **AND** checkpoint runs in background (does not block operations)
-- **AND** if checkpoint takes longer than interval (60s), next checkpoint is skipped
-- **AND** log warning: "Checkpoint taking longer than interval - consider faster disk"
+- **WHEN** running incremental checkpoint
+- **THEN** it SHALL NOT block operations
+- **AND** it SHALL keep up with write rate
+- **AND** assuming 1M writes/sec (64MB/sec index churn):
+  - Disk write rate required: >64MB/s (trivial for NVMe)
+  - Write amplification is low (only dirty pages written)
 
 #### Scenario: Checkpoint format
 
@@ -225,59 +217,41 @@ The system SHALL periodically checkpoint the RAM index to disk for crash recover
   │   ├─ version: u16
   │   ├─ entry_count: u64
   │   ├─ timestamp_high_water: u64
-  │   ├─ wal_position: u64        # Position in WAL at checkpoint time
   │   ├─ vsr_checkpoint_op: u64   # VSR checkpoint op for coordination
   │   ├─ vsr_commit_max: u64      # VSR commit_max for validation
   │   ├─ header_checksum: u128    # Aegis-128L of header (after this field)
-  │   ├─ body_checksum: u128      # Aegis-128L of all entries
+  │   ├─ body_checksum: u128      # Aegis-128L of all entries (merkle root or similar)
   │   └─ padding
-  └─ entries (N x 40 bytes):      # IndexEntry is 40 bytes
-      ├─ IndexEntry[0]
-      ├─ IndexEntry[1]
-      └─ ...
-
-  On checkpoint load:
-  1. Verify header_checksum
-  2. Verify body_checksum covers all entries
-  3. If either fails: log error, trigger full index rebuild from WAL
+  └─ pages (Sparse/Incremental):
+      ├─ Page[0] (64KB)
+      ├─ ...
   ```
-
-#### Scenario: Checkpoint atomicity
-
-- **WHEN** writing checkpoint to disk
-- **THEN** it SHALL be written to a temporary file first
-- **AND** then atomically renamed to final location
-- **AND** previous checkpoint SHALL be kept until new one is verified
-- **AND** this ensures crash-safe checkpoint updates
-
-#### Scenario: Incremental checkpoint
-
-- **WHEN** full checkpoint is too expensive
-- **THEN** incremental checkpoints MAY be used:
-  - Track dirty entries since last checkpoint
-  - Write only changed entries with position markers
-  - Merge incrementals during recovery
-- **AND** this reduces checkpoint I/O for large indexes
 
 ### Requirement: Cold Start Index Rebuild
 
-The system SHALL rebuild the RAM index from the data log on cold start if checkpoint is missing or corrupt.
+The system SHALL rebuild the RAM index from persisted GeoEvents on cold start if checkpoint is missing or corrupt.
 
 #### Scenario: Rebuild trigger
 
 - **WHEN** the system starts
 - **THEN** it SHALL:
   1. Attempt to load latest valid checkpoint
-  2. If checkpoint valid: load and replay WAL from checkpoint position
-  3. If checkpoint missing/corrupt: full rebuild from data log
+  2. If checkpoint valid: load and replay VSR prepares from `index.vsr_checkpoint_op` from WAL
+  3. If WAL missing required ops (gap > WAL retention): attempt scan from LSM
+  4. If all else fails: full rebuild by scanning persisted GeoEvents
 
 #### Scenario: Full rebuild process
 
 - **WHEN** performing full index rebuild
 - **THEN** the system SHALL:
-  1. Scan data log sequentially from beginning
-  2. For each GeoEvent: `upsert(entity_id, offset, timestamp)`
-  3. LWW ensures only latest location per entity is indexed
+  1. Use **LSM-Aware Rebuild** strategy (Newest-to-Oldest):
+     - Iterate LSM levels from L0 (newest) to L_max (oldest).
+     - Maintain a temporary `seen_entities` bitset/filter (approx 128MB for 1B entities).
+  2. For each GeoEvent encountered:
+     - If `entity_id` is already in `seen_entities`: Skip (we already have the latest version).
+     - If `event.flags.deleted = true`: Mark in `seen_entities` (entity is deleted), do NOT insert.
+     - Else: Insert into RAM index (`upsert`), Mark in `seen_entities`.
+  3. This ensures tombstones correctly hide older versions without requiring deletions from the index.
   4. Log progress every 1M records
 - **AND** rebuild SHALL use sequential I/O for maximum throughput
 
@@ -298,15 +272,6 @@ The system SHALL rebuild the RAM index from the data log on cold start if checkp
 - **AND** this is the WORST CASE (checkpoint corrupted)
 - **AND** normal cold start with valid checkpoint: < 5 minutes (checkpoint + partial WAL replay)
 - **AND** operators should monitor checkpoint integrity to avoid 2-hour cold starts
-
-#### Scenario: Partial replay
-
-- **WHEN** checkpoint is valid but stale
-- **THEN** the system SHALL:
-  1. Load checkpoint into RAM
-  2. Seek to `wal_position` in data log
-  3. Replay only records after checkpoint
-- **AND** this minimizes cold start time
 
 ### Requirement: Index Memory Management
 
@@ -330,12 +295,20 @@ The system SHALL manage index memory according to static allocation discipline.
 
 - **WHEN** an entity is deleted (if supported)
 - **THEN** index slot SHALL be marked as tombstone
-- **AND** tombstones SHALL be reclaimed during compaction
+- **AND** tombstones SHALL be reclaimed during index maintenance (rehash/rebuild), not LSM compaction
 - **AND** slot can be reused for new entities
 
-### Requirement: Index Sharding (Future Scale-Out)
+### Requirement: Index Sharding (Internal Concurrency)
 
-The system SHALL support optional index sharding for distributed deployments.
+The system SHALL support logical index sharding to reduce cache contention and enable parallel maintenance.
+
+#### Scenario: Internal sharding
+- **WHEN** initializing the primary index
+- **THEN** it SHALL be partitioned into `shard_count` logical shards (e.g., 256)
+- **AND** `shard_id = hash(entity_id) % shard_count`
+- **AND** each shard maintains its own lock (if multi-threaded) or simply logical separation
+- **AND** this reduces cache line contention during high-throughput upserts
+- **AND** it enables parallel processing for background tasks (e.g., checkpoint scanning)
 
 #### Scenario: Shard key
 
@@ -413,7 +386,8 @@ The system SHALL track index statistics for monitoring and capacity planning.
   - `last_checkpoint_time: u64` - Timestamp of last checkpoint
   - `last_checkpoint_entries: u64` - Entries in last checkpoint
   - `checkpoint_duration_ns: u64` - Time taken for last checkpoint
-  - `wal_position: u64` - WAL position at last checkpoint
+  - `vsr_checkpoint_op: u64` - VSR checkpoint op recorded in index checkpoint
+  - `vsr_commit_max: u64` - VSR commit_max recorded in index checkpoint
 
 ### Requirement: Hot-Warm-Cold Data Tiering (Future)
 
@@ -449,7 +423,7 @@ The system SHALL enforce hard limits on entity counts and storage capacity.
 
 - **WHEN** configuring the system
 - **THEN** the maximum SHALL be 1 billion entities per node
-- **AND** this is limited by RAM index capacity (~64GB at 40 bytes/entry with TTL field)
+- **AND** this is limited by RAM index capacity (~91.5GB at 64 bytes/entry with 0.7 load factor)
 - **AND** exceeding this requires scaling to multiple nodes or sharding
 
 #### Scenario: Index capacity calculation
@@ -462,9 +436,9 @@ The system SHALL enforce hard limits on entity counts and storage capacity.
 
   Example for 1B entities:
   capacity = 1,000,000,000 / 0.70 = ~1,428,571,428 slots
-  memory = 1,428,571,428 × 40 bytes = ~57.2GB (rounded to 64GB for safety)
+  memory = 1,428,571,428 × 64 bytes = ~91.5GB (rounded to 96GB/128GB)
   ```
-- **AND** IndexEntry is EXACTLY 40 bytes (see Index Entry Structure requirement above)
+- **AND** IndexEntry is EXACTLY 64 bytes (see Index Entry Structure requirement above)
 
 #### Scenario: Data file size limit
 
@@ -495,7 +469,7 @@ The system SHALL enforce hard limits on entity counts and storage capacity.
 - **WHEN** planning deployment capacity
 - **THEN** operators SHALL:
   - Configure `max_entities` at format time based on expected scale
-  - Pre-allocate index memory: `max_entities / 0.70 × 40 bytes` (IndexEntry is 40 bytes with TTL)
+  - Pre-allocate index memory: `max_entities / 0.70 × 64 bytes` (IndexEntry is 64 bytes with padding)
   - Reserve disk space: `expected_total_events × 128 bytes`
   - Plan for ~10-20% overhead for superblock, WAL, LSM metadata
 
@@ -517,7 +491,7 @@ The system SHALL specify minimum and recommended hardware for meeting performanc
 - **WHEN** deploying for 1 billion entity scale
 - **THEN** recommended hardware SHALL be:
   - **CPU:** 16+ cores, x86-64 with AES-NI (AVX2 preferred)
-  - **RAM:** 64-128GB (48GB for index + 16-80GB for caching)
+  - **RAM:** 128GB (96GB for index + 32GB for caching/OS)
   - **Disk:** 1TB+ NVMe SSD (>3GB/s sequential, <100μs latency)
   - **Network:** 10Gbps between replicas (same region)
 
@@ -526,6 +500,6 @@ The system SHALL specify minimum and recommended hardware for meeting performanc
 - **WHEN** targeting maximum throughput (1M+ events/sec)
 - **THEN** high-performance hardware SHALL be:
   - **CPU:** 32+ cores, latest x86-64 (Intel Sapphire Rapids or AMD Zen 4)
-  - **RAM:** 128-256GB (ECC recommended)
+  - **RAM:** 256GB (ECC recommended)
   - **Disk:** 2TB+ NVMe Gen4/Gen5 (>5GB/s, Optane or high-endurance)
   - **Network:** 25-100Gbps (for cross-region replication)

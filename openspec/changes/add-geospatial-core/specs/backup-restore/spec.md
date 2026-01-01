@@ -15,6 +15,8 @@ The system SHALL support backing up closed log blocks to object storage (S3, GCS
   3. Verify upload succeeded
   4. Log backup completion with block address and sequence number
 - **AND** "closed block" means an LSM grid block that has been written to disk and is no longer mutable
+- **AND** blocks are uploaded as-is (no event-level filtering in v1)
+- **AND** this includes tombstones (`flags.deleted = true`) which are required to prevent data resurrection on restore
 
 #### Scenario: Backup configuration
 
@@ -29,7 +31,27 @@ The system SHALL support backing up closed log blocks to object storage (S3, GCS
     --backup-credentials=~/.aws/credentials
   ```
 
-#### Scenario: Backup file naming
+#### Scenario: Backup encryption
+
+- **WHEN** uploading blocks to object storage
+- **THEN** the system SHALL:
+  - Enable Server-Side Encryption (SSE) by default (e.g., SSE-S3 or SSE-KMS)
+  - Support configuring KMS key IDs via `--backup-kms-key-id`
+  - Ensure data is encrypted in transit using TLS
+- **AND** this ensures compliance with GDPR and security best practices for data in the cloud.
+
+#### Scenario: Backup mandatory mode halt timeout
+
+- **WHEN** `backup-mode=mandatory` is enabled
+- **AND** writes are halted due to backup queue exhaustion
+- **AND** the halt persists for > `--backup-mandatory-halt-timeout` (default: 1 hour)
+- **THEN** the system SHALL:
+  1. Transition to "emergency-bypass" state
+  2. Automatically switch to `best-effort` mode
+  3. Log CRITICAL alert: "Backup mandatory mode HALT TIMEOUT exceeded - switching to best-effort to restore availability"
+  4. Resume writes
+  5. Increment metric: `archerdb_backup_mandatory_bypass_total`
+- **AND** this prevents permanent cluster freezes if S3 is indefinitely unreachable.
 
 - **WHEN** uploading blocks to object storage
 - **THEN** files SHALL be named:
@@ -111,7 +133,7 @@ The system SHALL support two distinct backup operating modes with different dura
   - Require ALL blocks to be successfully backed up before release
   - Apply write backpressure if backup queue exceeds soft limit (50 blocks)
   - HALT writes entirely if backup queue exceeds hard limit (100 blocks)
-  - NEVER release blocks without confirmed backup upload
+  - NEVER release blocks without confirmed backup upload (unless emergency bypass timeout is exceeded)
   - Resume writes only after backup queue drains below soft limit
 - **AND** when writes are halted:
   - Return `backup_required` error (code 207) to clients
@@ -154,7 +176,7 @@ The system SHALL support two distinct backup operating modes with different dura
     - First drain existing backup queue below soft limit
     - Then enable mandatory semantics
     - Log: "Backup mode changed to mandatory"
-- **AND** mode changes are NOT persisted across restarts (use config file)
+- **AND** mode changes are NOT persisted across restarts (must be set via CLI flags on restart)
 
 ### Requirement: Asynchronous Backup
 
@@ -249,7 +271,10 @@ The system SHALL support restoring data from object storage backups to a specifi
   3. Verify each block checksum
   4. Write blocks to local data file
   5. Optionally filter expired events (if --skip-expired)
+     - Tombstones (`flags.deleted = true`) MUST NOT be filtered (they prevent resurrection)
   6. Build RAM index from restored blocks
+     - If `flags.deleted = true`: delete entity from index
+     - Else: upsert entity in index (LWW)
   7. Write superblock with restore metadata
 
 #### Scenario: Restore with TTL filtering
@@ -308,6 +333,15 @@ The system SHALL support configurable retention policies for backups in object s
   --backup-retention-days=90  # Keep backups for 90 days
   --backup-retention-blocks=10000  # OR keep last 10K blocks
   ```
+
+#### Scenario: GDPR erasure guidance for backups
+
+- **WHEN** ArcherDB is used to store personal location data
+- **AND** operators must support "right to erasure" requests
+- **THEN** operators SHALL ensure that `backup-retention-days` DOES NOT exceed the organization's GDPR erasure window (typically 30 days)
+- **AND** this ensures that deleted data is physically removed from immutable object storage within the legal timeframe
+- **AND** v1 does not rewrite historical backup blocks; erasure is achieved exclusively via object expiration policy
+- **AND** operators SHOULD configure `--backup-retention-days=30` (or less) for production clusters handling personal data
 
 #### Scenario: Retention enforcement
 
@@ -398,6 +432,14 @@ The system SHALL expose metrics for backup health monitoring.
 
   # Backup upload latency
   archerdb_backup_upload_latency_seconds histogram
+
+  # Current Recovery Point Objective (seconds since oldest un-backed-up block was written)
+  # In mandatory mode: should stay below RPO target
+  # In best-effort mode: may grow unbounded if S3 unreachable
+  archerdb_backup_rpo_current_seconds gauge
+
+  # Blocks abandoned without backup (best-effort mode, Free Set pressure)
+  archerdb_backup_blocks_abandoned_total counter
   ```
 
 ### Requirement: Restore Validation

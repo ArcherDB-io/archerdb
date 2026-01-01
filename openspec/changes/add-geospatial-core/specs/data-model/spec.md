@@ -30,14 +30,18 @@ The system SHALL store geospatial events in a fixed-size 128-byte `extern struct
   - `user_data: u128` (16 bytes) - Opaque application metadata (sidecar database FK)
   - `lat_nano: i64` (8 bytes) - Latitude in nanodegrees
   - `lon_nano: i64` (8 bytes) - Longitude in nanodegrees
+  - `group_id: u64` (8 bytes) - Fleet/region grouping identifier
   - `altitude_mm: i32` (4 bytes) - Altitude in millimeters above WGS84
   - `velocity_mms: u32` (4 bytes) - Speed in millimeters per second
-  - `group_id: u64` (8 bytes) - Fleet/region grouping identifier
   - `ttl_seconds: u32` (4 bytes) - Time-to-live in seconds (0 = never expires)
+  - `accuracy_mm: u32` (4 bytes) - GPS accuracy radius in millimeters
   - `heading_cdeg: u16` (2 bytes) - Heading in centidegrees (0-36000)
-  - `accuracy_mm: u16` (2 bytes) - GPS accuracy radius in millimeters
   - `flags: GeoEventFlags` (2 bytes) - Packed status bitmask
-  - `reserved: [22]u8` (22 bytes) - Reserved for future use (must be zero)
+  - `reserved: [20]u8` (20 bytes) - Reserved for future use (must be zero)
+  
+  **ALIGNMENT NOTE**: Fields are ordered largest-to-smallest within each alignment class
+  (u128s first, then u64s, then u32s, then u16s) to avoid padding. The u32 `accuracy_mm`
+  comes before the u16 `heading_cdeg` to maintain 4-byte alignment at offset 100.
 
 ### Requirement: Packed Flags Structure
 
@@ -95,10 +99,11 @@ The system SHALL wrap batches of GeoEvent records in blocks with a 256-byte head
   - `reserved_frame: [7]u8` - Frame-level reserved bytes
   - `address: u64` - Grid block address (1-based, 0 is sentinel)
   - `snapshot: u64` - Snapshot ID for MVCC visibility
+  - `padding: u64` - Explicit padding for 16-byte alignment of u128 fields
   - `min_id: u128` - Minimum GeoEvent ID in block (skip-scan hint)
   - `max_id: u128` - Maximum GeoEvent ID in block (skip-scan hint)
   - `count: u32` - Number of valid GeoEvent records
-  - `reserved: [36]u8` - Reserved for future use
+  - `reserved: [76]u8` - Reserved for future use
 
 ### Requirement: Fixed-Point Coordinates
 
@@ -128,7 +133,12 @@ The system SHALL use integer fixed-point representation for all coordinates and 
 - **WHEN** velocity is stored
 - **THEN** it SHALL be in millimeters per second as u32 (max ~4,295 km/s)
 - **WHEN** accuracy is stored
-- **THEN** it SHALL be in millimeters as u16 (max ~65 meters radius)
+- **THEN** it SHALL be in millimeters as u32 (max ~4,295 km radius)
+- **AND** u32 is used instead of u16 to support:
+  - Low-accuracy GPS receivers (100m+ CEP)
+  - Cell tower triangulation (500m+ accuracy)
+  - IP geolocation (1km+ accuracy)
+  - Typical GPS accuracy (1-10m) fits easily within u32
 
 ### Requirement: Space-Major Composite ID
 
@@ -203,3 +213,86 @@ The system SHALL validate all struct layouts at compile time using Zig's comptim
   - For extern structs: sum of field sizes equals struct size
   - For packed structs: bit size equals byte size * 8
   - All u128 fields are 16-byte aligned
+
+### Requirement: Schema Versioning
+
+The system SHALL support forward-compatible schema evolution for GeoEvent and other wire-format structures.
+
+#### Scenario: Schema version identification
+
+- **WHEN** GeoEvent format may change in future versions
+- **THEN** the schema version SHALL be tracked via:
+  1. **Wire format version**: Stored in superblock metadata (cluster-wide)
+  2. **Reserved bytes**: High byte of `reserved` field MAY encode per-event features
+- **AND** version 0 = initial release format (this specification)
+- **AND** version is NOT stored per-event (all events in a cluster share same format)
+
+#### Scenario: Reserved field usage policy
+
+- **WHEN** adding new fields in future versions
+- **THEN** they SHALL be allocated from the `reserved: [20]u8` field:
+  ```
+  Version 0 (current): reserved: [20]u8 = all zeros
+  Version 1 (example): reserved: [16]u8, new_field: u32
+  Version 2 (example): reserved: [12]u8, new_field: u32, another: u32
+  ```
+- **AND** new fields SHALL have zero as their default value
+- **AND** zero value SHALL mean "not specified" or "use default"
+- **AND** struct size remains exactly 128 bytes
+
+#### Scenario: Forward compatibility (old client → new server)
+
+- **WHEN** an older client sends events to a newer server
+- **THEN** the server SHALL:
+  1. Accept events with reserved bytes = 0
+  2. Interpret missing fields as default values
+  3. Process events normally
+- **AND** no error is returned to older client
+- **AND** older clients continue working after server upgrade
+
+#### Scenario: Backward compatibility (new client → old server)
+
+- **WHEN** a newer client sends events to an older server
+- **THEN** the older server SHALL:
+  1. Validate reserved bytes are zero (if it doesn't understand them)
+  2. If non-zero reserved bytes: return error `unknown_event_format`
+  3. If all reserved bytes zero: process normally
+- **AND** this prevents data corruption from unrecognized fields
+- **AND** clients must downgrade or servers must upgrade to resolve
+
+#### Scenario: Mixed-version cluster prohibition
+
+- **WHEN** forming a VSR cluster
+- **THEN** all replicas MUST run the same ArcherDB version
+- **AND** mixed versions are NOT supported (causes state divergence)
+- **AND** rolling upgrades require:
+  1. Stop replica, upgrade binary, restart
+  2. Wait for state sync to complete
+  3. Repeat for each replica
+- **AND** downtime is minimized but not eliminated
+
+#### Scenario: Wire format version in superblock
+
+- **WHEN** storing wire format version
+- **THEN** superblock SHALL include:
+  ```zig
+  pub const SuperblockHeader = struct {
+      // ... existing fields ...
+      wire_format_version: u16,    // Current: 0
+      wire_format_min: u16,        // Minimum compatible version
+      // ... remaining fields ...
+  };
+  ```
+- **AND** replica refuses to start if `wire_format_version > supported_version`
+- **AND** replica refuses to start if `wire_format_min > current_version`
+
+#### Scenario: Breaking changes procedure
+
+- **WHEN** a breaking change to GeoEvent format is required
+- **THEN** the procedure SHALL be:
+  1. Increment `wire_format_version` in new release
+  2. Document migration path in release notes
+  3. Provide migration tool if data conversion needed
+  4. Support previous version for at least 2 major releases
+- **AND** breaking changes are avoided whenever possible
+- **AND** reserved fields provide 20 bytes of expansion room

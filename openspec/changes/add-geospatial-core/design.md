@@ -39,7 +39,7 @@ We are building a high-performance geospatial database inspired by TigerBeetle's
 - **Time range filters**: Optional filtering by timestamp on any spatial query
 - **Strong consistency**: VSR consensus ensures linearizable operations across replicas
 
-Target hardware: Cluster of 3-5 nodes, each with 64GB+ RAM, NVMe SSD (1TB+), AES-NI support.
+Target hardware: Cluster of 3-5 nodes, each with 128GB+ RAM, NVMe SSD (1TB+), AES-NI support.
 
 ## Goals / Non-Goals
 
@@ -120,13 +120,14 @@ pub const GeoEvent = extern struct {
 
 ### Decision 3: S2 over H3 for Spatial Indexing
 
-**What**: Use Google S2 library for spatial cell IDs.
+**What**: Use a pure Zig port of the Google S2 library for spatial cell IDs.
 
 **Why**:
 - Perfect hierarchy via bit-shifting (parent = truncate 2 bits)
 - Hilbert curve creates contiguous integer ranges for bounding boxes
 - Used by production systems (MongoDB, CockroachDB)
 - 64-bit cell ID fits naturally in our composite key
+- **Pure Zig Port**: Ensures bit-for-bit identical results across all platforms, preventing replica divergence that could occur with C/C++ math library variations.
 
 **Alternatives considered**:
 - H3 (Uber): Better for hexagonal smoothing/analytics, but imperfect hierarchy
@@ -154,7 +155,7 @@ lat_float = @as(f64, @floatFromInt(lat_nano)) / 1_000_000_000.0;
 
 **Why**:
 - Storing full 128-byte structs in RAM for 1B records = 128GB (too expensive)
-- Storing only 32-byte index entries = ~48GB (fits in commodity server)
+- Storing 64-byte index entries (cache-line aligned) = ~91.5GB (requires 128GB RAM server)
 - NVMe random read latency (~100μs) is acceptable for point queries
 - Sequential scans for range queries leverage full disk bandwidth
 
@@ -162,16 +163,19 @@ lat_float = @as(f64, @floatFromInt(lat_nano)) / 1_000_000_000.0;
 ```zig
 const IndexEntry = struct {
     entity_id: u128,    // Key: UUID of the entity
-    file_offset: u64,   // Value: Byte offset in data file
-    timestamp: u64,     // For LWW conflict resolution
-};  // 32 bytes
+    latest_id: u128,    // Value: Composite ID [S2 Cell (u64) | Timestamp (u64)]
+    ttl_seconds: u32,   // TTL for expiration checks
+    reserved: u32,      // Alignment padding
+    padding: [24]u8,    // Reserved for future extensions (64 bytes total)
+};  // 64 bytes (Cache Line Aligned)
 ```
 
 **Key Properties**:
 - O(1) lookup via hash map with open addressing
 - LWW (Last-Write-Wins) for out-of-order GPS packet handling
-- Index checkpoint + WAL replay for crash recovery
-- Full rebuild from data log if checkpoint is corrupt
+- Index checkpoint + VSR journal replay for crash recovery
+- Full rebuild by scanning persisted GeoEvents if checkpoint is corrupt
+- **128GB RAM**: Recommended for 1B entities to ensure consistent latency and OS headroom.
 
 ### Decision 6: Viewstamped Replication (VSR) with Flexible Paxos
 

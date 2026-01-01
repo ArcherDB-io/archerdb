@@ -103,16 +103,26 @@ The system SHALL define a clear interface between the query engine and the hybri
           entity_id: u128,
       ) ?IndexEntry;
 
-      /// Insert or update entity (LWW semantics)
-      /// If entity exists and new_timestamp <= old_timestamp, no-op
+      /// Insert or update entity's "latest" pointer (LWW semantics).
+      ///
+      /// The ordering key is the GeoEvent timestamp encoded in the GeoEvent ID low 64 bits.
+      /// If entity exists and new_timestamp <= old_timestamp, this is a no-op.
+      ///
       /// Returns: true if inserted/updated, false if timestamp too old
       pub fn upsert(
           self: *PrimaryIndex,
           entity_id: u128,
-          file_offset: u64,
-          timestamp: u64,
+          latest_id: u128,
           ttl_seconds: u32,
       ) !bool;
+
+      /// Conditionally remove an entry (used for TTL lazy expiration race protection).
+      /// Returns: true if removed, false if not found or latest_id changed concurrently.
+      pub fn remove_if_id_matches(
+          self: *PrimaryIndex,
+          entity_id: u128,
+          expected_latest_id: u128,
+      ) bool;
 
       /// Delete entity from index (GDPR compliance)
       /// Returns: true if deleted, false if not found
@@ -130,11 +140,11 @@ The system SHALL define a clear interface between the query engine and the hybri
 
   pub const IndexEntry = struct {
       entity_id: u128,
-      file_offset: u64,
-      timestamp: u64,
+      latest_id: u128,   // Composite key [S2 Cell (u64) | Timestamp (u64)]
       ttl_seconds: u32,  // For expiration checking
       reserved: u32,     // Alignment padding
-  };  // 40 bytes total
+      padding: [24]u8,   // Reserve to 64 bytes (Cache Line Aligned)
+  };  // 64 bytes total
 
   pub const IndexStats = struct {
       entry_count: u64,
@@ -163,31 +173,33 @@ The system SHALL define a clear interface between the query engine and storage e
 - **THEN** the following interface SHALL be implemented:
   ```zig
   pub const Storage = struct {
-      /// Read exactly one GeoEvent from disk
-      /// Synchronous read (blocks until complete)
-      /// Returns: error if read fails or checksum invalid
-      pub fn read_event(
+      /// Point lookup: get GeoEvent by composite ID (LSM key).
+      /// Returns: true if found, false if not found.
+      pub fn get_event_by_id(
           self: *Storage,
-          file_offset: u64,
+          snapshot_id: u64,
+          id: u128,
           event: *GeoEvent,
-      ) !void;
+      ) !bool;
 
-      /// Read multiple GeoEvents (range scan)
-      /// Asynchronous read with callback
-      pub fn read_events_async(
+      /// Range scan by composite ID (used by spatial queries after S2→ID range decomposition).
+      /// Writes up to `limit` results into output_buffer.
+      pub fn scan_events_by_id_range_async(
           self: *Storage,
           callback: *const fn (completion: *Completion) void,
-          start_offset: u64,
-          count: u32,
+          snapshot_id: u64,
+          range_start_id: u128,
+          range_end_id: u128,
+          limit: u32,
           output_buffer: []GeoEvent,
       ) void;
 
-      /// Write batch of events (append-only)
-      /// Returns: file offset where batch was written
-      pub fn write_events(
+      /// Insert a batch of events into the storage engine (LSM write path).
+      /// The storage engine is responsible for WAL durability and eventual compaction.
+      pub fn put_events(
           self: *Storage,
           events: []const GeoEvent,
-      ) !u64;
+      ) !void;
 
       /// Sync data to disk (fsync)
       pub fn sync(self: *Storage) !void;
@@ -241,8 +253,9 @@ The system SHALL define a clear interface to S2 spatial indexing functions.
 
       /// Cover polygon with cells (RegionCoverer)
       /// Returns: fixed-size array of cell ranges (bounded by s2_max_cells)
-      /// Uses static allocation - no runtime memory allocation
+      /// Uses static allocation via scratch buffer (must be at least s2_scratch_size)
       pub fn cover_polygon(
+          scratch: []u8,
           vertices: []const LatLon,
           min_level: u8,
           max_level: u8,
@@ -250,8 +263,9 @@ The system SHALL define a clear interface to S2 spatial indexing functions.
 
       /// Cover circle (radius query)
       /// Returns: fixed-size array of cell ranges (bounded by s2_max_cells)
-      /// Uses static allocation - no runtime memory allocation
+      /// Uses static allocation via scratch buffer (must be at least s2_scratch_size)
       pub fn cover_cap(
+          scratch: []u8,
           center_lat_nano: i64,
           center_lon_nano: i64,
           radius_mm: u32,

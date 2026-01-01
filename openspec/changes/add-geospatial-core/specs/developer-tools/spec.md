@@ -38,6 +38,17 @@ The system SHALL provide comprehensive development environment setup and configu
 
 The system SHALL provide comprehensive debugging and diagnostic capabilities.
 
+#### Scenario: Data file inspection tool
+- **WHEN** inspecting on-disk data
+- **THEN** the system SHALL provide a CLI tool `archerdb inspect`:
+  - Summarize superblock state
+  - List LSM tables and their metadata
+  - Dump specific blocks by address
+  - Verify checksums of any part of the data file
+  - Extract specific GeoEvents by composite ID or range
+- **AND** this tool SHALL work on closed data files (offline mode)
+- **AND** it SHALL support JSON output for script integration
+
 #### Scenario: Runtime debugging
 
 - **WHEN** debugging running applications
@@ -229,6 +240,24 @@ The system SHALL provide integrated code quality and analysis tools.
   - Coverage goals and thresholds
   - CI/CD coverage enforcement
 - **AND** code coverage SHALL be comprehensive
+
+### Requirement: Deterministic Testdata Generators
+
+The system SHALL provide deterministic generators for any testdata that must match external reference implementations.
+
+#### Scenario: S2 golden vector generator tool
+
+- **WHEN** validating ArcherDB’s pure Zig S2 implementation
+- **THEN** the repository SHALL include a generator tool:
+  - Path: `tools/s2_golden_gen/`
+  - Output: `testdata/s2/golden_vectors_v1.tsv`
+- **AND** the generator SHALL:
+  - Use a pinned, external reference S2 implementation (not ArcherDB’s implementation)
+  - Be deterministic given fixed flags (seed, count, levels)
+  - Emit the reference module version in the output header for traceability
+- **AND** the generator SHALL be runnable with:
+  - `zig run tools/s2_golden_gen/main.zig -- --out testdata/s2/golden_vectors_v1.tsv --seed 1 --random 1024 --levels 0,1,5,10,15,18,30`
+- **AND** the output file format MUST match `specs/query-engine/spec.md` (Golden vector file location and format)
 
 ### Requirement: Deployment and Orchestration Tools
 

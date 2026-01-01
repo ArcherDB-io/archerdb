@@ -61,8 +61,8 @@ The system SHALL use a simple framing protocol for client messages over TCP conn
 
 - **WHEN** enforcing message limits
 - **THEN** `message_size_max` SHALL be 10MB (header + body)
-- **AND** maximum body size is `message_size_max - 256 bytes (header)` = ~10.49MB
-- **AND** theoretical maximum events = 10.49MB / 128 bytes = ~81,920 events
+- **AND** maximum body size is `message_size_max - 256 bytes (header)` = ~10.0MB
+- **AND** theoretical maximum events = 10MB / 128 bytes = ~81,918 events
 - **BUT** practical limit is 10,000 events per batch (enforced by query engine for memory management)
 - **AND** clients exceeding 10,000 events receive `too_much_data` error
 - **AND** clients exceeding 10MB total size receive `invalid_data_size` error
@@ -133,7 +133,7 @@ The system SHALL manage client sessions with explicit limits and eviction polici
 
 - **WHEN** tracking client sessions
 - **THEN** the system SHALL:
-  - Support maximum `client_sessions_max` concurrent sessions (default: 128)
+  - Support maximum `client_sessions_max` concurrent sessions (default: 10,000)
   - Each session identified by unique `client_id` (u128)
   - Session tracks: last request_id, cached response, last activity timestamp
 
@@ -204,13 +204,18 @@ The system SHALL manage client sessions with explicit limits and eviction polici
   | upsert_events  | YES         | Always safe            | LWW semantics are idempotent  |
   | delete_entities| YES         | Always safe            | Deleting again is no-op       |
   ```
+
+**⚠️ WARNING: `insert_events` is NOT idempotent and should be avoided in production!**
+
 - **AND** `insert_events` after eviction MAY create duplicate events if:
   - Original request was committed before eviction
   - Client retries with new session after eviction
   - Server doesn't recognize retry (no cached response)
-- **AND** applications using `insert_events` SHOULD:
-  - Use application-level deduplication (e.g., by event UUID)
-  - OR prefer `upsert_events` for natural idempotency
+- **AND** applications SHOULD:
+  - **USE `upsert_events` BY DEFAULT** - it is always safe to retry
+  - Only use `insert_events` when duplicate detection is mandatory at DB level
+  - If using `insert_events`: implement application-level deduplication
+- **AND** SDK default operation SHOULD be `upsert_events`, not `insert_events`
 
 #### Scenario: Client-side eviction detection
 
@@ -252,7 +257,9 @@ The system SHALL return structured error responses using TigerBeetle-style statu
   ├─ view: u32              # Current view number (8-byte aligned with above)
   ├─ retry_after_ms: u64    # Suggested wait before retry (0 if not applicable)
   ├─ message_len: u16       # Length of error message (max 256)
-  ├─ reserved2: [6]u8       # Padding to 8-byte alignment
+  ├─ version_min: u16       # Minimum supported protocol version (for negotiation)
+  ├─ version_max: u16       # Maximum supported protocol version
+  ├─ reserved2: [2]u8       # Padding to 8-byte alignment (reduced from 6)
   ├─ message: [256]u8       # UTF-8 error message (null-terminated)
   └─ reserved3: [40]u8      # Reserved for future use (padding to 320)
   ```
@@ -390,7 +397,7 @@ The system SHALL define a specific handshake sequence for establishing client co
 
 - **WHEN** server receives register with mismatched cluster_id (from cert)
 - **THEN** the server SHALL:
-  - Respond with `status = cluster_mismatch` (new error code)
+  - Respond with `status = cluster_mismatch` (208)
   - Log security event: "Client attempted connection to wrong cluster"
   - Close connection
 - **AND** this prevents accidental cross-cluster connections
@@ -457,7 +464,7 @@ The system SHALL encode batches of GeoEvents directly in the message body with z
   ├─ radius_mm: u32         # Radius in millimeters
   ├─ start_time: u64        # Optional time range start (0 = no filter)
   ├─ end_time: u64          # Optional time range end (0 = no filter)
-  ├─ limit: u32             # Max results (0 = default 100k)
+  ├─ limit: u32             # Max results (0 = default query_result_max = 81,000)
   ├─ reserved: [20]u8       # Padding to 64 bytes
   ```
 
@@ -543,10 +550,12 @@ The system SHALL use a comprehensive error code enum based on TigerBeetle's taxo
   - `entity_not_found = 105` - UUID lookup found no matching entity
   - `event_already_expired = 106` - Imported event's TTL has already expired
   - `query_timeout = 107` - Query exceeded CPU time budget
-  - `polygon_too_simple = 108` - Polygon has fewer than 3 vertices
+  - `polygon_too_simple = 108` - Polygon has fewer than 3 distinct vertices (duplicates removed)
   - `polygon_self_intersecting = 109` - Polygon edges cross each other
   - `radius_zero = 110` - Zero radius requires exact coordinate match (use uuid query)
   - `polygon_too_large = 111` - Polygon appears to wrap around world (malformed input)
+  - `polygon_degenerate = 112` - Polygon has collinear points (zero area)
+  - `polygon_empty = 113` - Polygon vertex array is empty (0 vertices provided)
 
 #### Scenario: Cluster error codes
 
@@ -561,6 +570,7 @@ The system SHALL use a comprehensive error code enum based on TigerBeetle's taxo
   - `resource_exhausted = 206` - Internal resource pool exhausted (message buffers, etc.)
   - `backup_required = 207` - Writes halted pending backup (backup-mandatory mode)
   - `cluster_mismatch = 208` - Client certificate cluster ID doesn't match server
+  - `checkpoint_lag_backpressure = 209` - Writes halted because index checkpoint is lagging too far behind WAL head
 
 ### Requirement: Protocol Versioning
 

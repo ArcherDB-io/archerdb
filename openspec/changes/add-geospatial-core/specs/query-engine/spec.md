@@ -70,6 +70,8 @@ The system SHALL support packing multiple independent batches into a single VSR 
 - **THEN** each batch SHALL be executed sequentially
 - **AND** timestamps SHALL be distributed across batches deterministically
 - **AND** replies SHALL be encoded in same multi-batch format
+- **AND** the `MultiBatchExecutor` MUST truncate results and set a `partial_result` flag if the aggregate response body exceeds `message_body_size_max` (10MB)
+- **AND** this forces the client to use pagination cursors to fetch remaining data
 
 ### Requirement: S2 Spatial Indexing
 
@@ -125,13 +127,13 @@ The system SHALL dynamically select S2 cell levels based on query area size for 
 
   For radius query:
   min_level = floor(log2(7842 km / radius_km))
-  clamped to range [0, 30]
+  clamped to range [0, 18] (max query level)
 
   Examples:
-  - radius = 100 km → level 6 (cells ~120 km)
-  - radius = 10 km  → level 10 (cells ~7.6 km)
-  - radius = 1 km   → level 13 (cells ~950 m)
-  - radius = 100 m  → level 17 (cells ~60 m)
+  - radius = 100 km → level 6 (log2(78.42) ≈ 6.29)
+  - radius = 10 km  → level 9 (log2(784.2) ≈ 9.61)
+  - radius = 1 km   → level 12 (log2(7842) ≈ 12.93)
+  - radius = 100 m  → level 16 (log2(78420) ≈ 16.25)
   ```
 - **AND** lower levels (larger cells) for larger areas
 - **AND** higher levels (smaller cells) for smaller areas
@@ -141,43 +143,84 @@ The system SHALL dynamically select S2 cell levels based on query area size for 
 - **WHEN** decomposing a query region into cells
 - **THEN** RegionCoverer SHALL use:
   - `min_level`: Calculated from query area (see above)
-  - `max_level`: min(min_level + 4, 18) - Never go finer than storage level
+  - `max_level`: `min(min_level + 4, s2_cover_max_level)` (default `s2_cover_max_level = 18`)
   - `max_cells`: 16 (default) - Limit query complexity
+- **AND** min/max levels SHALL be clamped so that `0 <= min_level <= max_level <= s2_cover_max_level`
 - **AND** this produces efficient cell ranges without over-decomposition
 
 ### Requirement: S2 Implementation Validation
 
-The system SHALL validate S2 implementation using known test vectors.
+The system SHALL validate S2 implementation using deterministic invariants and golden vectors derived from a reference implementation.
 
-#### Scenario: S2 coordinate conversion test vectors
+#### Scenario: S2 cell ID invariants (structure + hierarchy)
 
-- **WHEN** validating S2 implementation
-- **THEN** the following conversions SHALL produce exact results:
-  ```
-  # Test vectors for lat/lon → S2 cell ID at level 30
+- **WHEN** validating S2 cell ID computation
+- **THEN** the implementation MUST satisfy these invariants for a set of test coordinates:
+  - For any valid (lat, lon, level): `cell_id != 0`
+  - `0 <= face(cell_id) <= 5`
+  - `level(cell_id) == level` (where `level()` extracts the level encoded in the cell id)
+  - `get_parent(cell_id)` reduces level by exactly 1
+  - `get_children(parent)` returns 4 children whose parent is exactly `parent`
+  - For points at the exact poles (`lat=±90°`): any longitude value MUST produce a valid `cell_id` and MUST not crash (longitude is semantically degenerate)
 
-  # Equator/Prime Meridian (0°, 0°)
-  lat_nano=0, lon_nano=0 → cell_id=0x1000000000000000
+#### Scenario: S2 golden vectors (exact IDs, repo-controlled)
 
-  # Statue of Liberty (40.689247°, -74.044502°)
-  lat_nano=40689247000, lon_nano=-74044502000 → cell_id=0x89c25a11XXXXXXXXXX
+- **WHEN** validating the pure Zig S2 implementation against a reference
+- **THEN** the project MUST maintain a golden-vector file checked into the repo which contains:
+  - Input tuples `(lat_nano, lon_nano, level)`
+  - Expected outputs for `cell_id` (u64)
+- **AND** unit tests MUST assert exact equality between:
+  - `S2.lat_lon_to_cell_id(lat_nano, lon_nano, level)` and the golden `cell_id`
+- **AND** golden vectors MUST be generated from a single authoritative reference implementation (e.g. Google's S2 library) and updated only intentionally
+- **AND** the spec forbids placeholder values (no `XXXXXXXX` / partial IDs) because they make validation non-actionable
 
-  # Eiffel Tower (48.858844°, 2.294351°)
-  lat_nano=48858844000, lon_nano=2294351000 → cell_id=0x47a0e9XXXXXXXXXX
+#### Scenario: Golden vector file location and format
 
-  # Tokyo Tower (35.658584°, 139.745433°)
-  lat_nano=35658584000, lon_nano=139745433000 → cell_id=0x6488d3XXXXXXXXXX
+- **WHEN** storing S2 golden vectors in the repository
+- **THEN** the file path SHALL be:
+  - `testdata/s2/golden_vectors_v1.tsv`
+- **AND** the file format SHALL be:
+  - UTF-8 text, LF newlines
+  - Optional comment lines starting with `#` (ignored by parser)
+  - One header row exactly:
+    - `lat_nano\tlon_nano\tlevel\tcell_id_hex`
+  - One data row per vector with fields:
+    - `lat_nano`: signed decimal i64 nanodegrees
+    - `lon_nano`: signed decimal i64 nanodegrees
+    - `level`: unsigned decimal u8 in `[0..30]`
+    - `cell_id_hex`: lower-case hex u64 formatted as `0x%016x`
+- **AND** the dataset MUST NOT contain duplicates on the key `(lat_nano, lon_nano, level)`
+- **AND** rows SHOULD be sorted by `(level, lat_nano, lon_nano)` for stable diffs
 
-  # Sydney Opera House (-33.856784°, 151.215297°)
-  lat_nano=-33856784000, lon_nano=151215297000 → cell_id=0x31d67aXXXXXXXXXX
+#### Scenario: Golden vector coverage requirements
 
-  # North Pole (90°, 0°)
-  lat_nano=90000000000, lon_nano=0 → cell_id=0x2bffffffffffffff
+- **WHEN** generating `golden_vectors_v1.tsv`
+- **THEN** it MUST include:
+  - A fixed “edge case” set of coordinates (at all levels listed below):
+    - (0°, 0°), (0°, +180°), (0°, -180°)
+    - (+90°, 0°), (-90°, 0°)
+    - (+89.999999999°, 0°), (-89.999999999°, 0°)
+    - (0°, +179.999999999°), (0°, -179.999999999°)
+    - (+45°, +45°), (-45°, -45°)
+  - A pseudo-random set of at least 1024 coordinates generated from a fixed seed (see generator scenario)
+- **AND** the golden vectors MUST cover these levels:
+  - `[0, 1, 5, 10, 15, s2_cover_max_level (18), s2_cell_level (30)]`
 
-  # South Pole (-90°, 0°)
-  lat_nano=-90000000000, lon_nano=0 → cell_id=0x0800000000000001
-  ```
-- **AND** X's represent implementation-dependent lower bits (verify face/level match)
+#### Scenario: Golden vector generator command (External Python/Go)
+
+- **WHEN** regenerating S2 golden vectors
+- **THEN** the repository SHALL provide a generator tool at:
+  - `tools/s2_golden_gen/main.py` (or similar script)
+- **AND** the generator MUST use a trusted reference S2 implementation (e.g., Python `s2geometry` or Go `golang/geo`)
+- **AND** the generator MUST NOT introduce C++ build dependencies for the core database
+- **AND** the generator MUST be deterministic:
+  - Same input flags MUST produce byte-for-byte identical output
+- **AND** the standard regeneration command SHALL be:
+  - `python3 tools/s2_golden_gen/main.py --out testdata/s2/golden_vectors_v1.tsv --seed 1 --random 1024 --levels 0,1,5,10,15,18,30`
+- **AND** the generated file MUST include comment headers with:
+  - generator identity and version
+  - reference S2 library module version
+  - seed and parameters used
 
 #### Scenario: S2 distance calculation test vectors
 
@@ -226,7 +269,7 @@ The system SHALL validate S2 implementation using known test vectors.
   ```
   # North Pole exact (S2 handles pole singularity)
   Point: (lat: 90°, lon: 0°)
-  Cell ID (level 30): 0x3FFFFFFFFFFFFFFX (face 0 center)
+  Cell ID (level 30): Valid cell id at requested level (no crash)
   Note: Longitude is meaningless at exact pole (any value is valid)
 
   # North Pole radius query (100km radius)
@@ -237,7 +280,7 @@ The system SHALL validate S2 implementation using known test vectors.
 
   # South Pole exact
   Point: (lat: -90°, lon: 0°)
-  Cell ID (level 30): 0xBFFFFFFFFFFFFFFX (face 5 center)
+  Cell ID (level 30): Valid cell id at requested level (no crash)
 
   # South Pole radius query (50km radius)
   Center: (lat: -90°, lon: 0°)
@@ -266,15 +309,64 @@ The system SHALL validate S2 implementation using known test vectors.
 - **AND** longitude degeneracy at poles SHALL be handled correctly
 - **AND** S2's cube-face projection naturally handles polar regions
 
-#### Scenario: Pole edge cases
+#### Scenario: S2 internal math determinism
 
-- **WHEN** handling pole-specific edge cases
-- **THEN** the system SHALL:
-  1. **Exact pole coordinates**: Accept any longitude value at lat=±90°
-  2. **Pole-containing circles**: Radius queries centered at pole work normally
-  3. **Pole-crossing polygons**: Polygons containing a pole are valid
-  4. **Pole-touching polygons**: Polygons with vertex at exact pole are valid
-- **AND** implementation SHALL use S2's robust pole handling (not naive lat/lon math)
+- **WHEN** implementing S2 geometry functions in Zig
+- **THEN** all internal calculations SHALL:
+  - Use fixed-point arithmetic for coordinate transformations where possible
+  - OR use strictly deterministic floating-point operations (avoiding platform-specific math library functions)
+  - MUST pass golden vector tests on all supported platforms (Linux, macOS, Windows) with bit-for-bit identical results
+  - **REASON**: Non-deterministic results would cause state divergence across replicas, leading to cluster-wide "hash-chain mismatch" panics.
+
+#### Scenario: S2 platform independence (CRITICAL)
+
+- **WHEN** implementing S2 geometry for cross-platform determinism
+- **THEN** the implementation SHALL address these specific risks:
+  ```
+  IEEE 754 Floating-Point Determinism Analysis:
+
+  | Operation | IEEE 754 Exact? | S2 Usage | Risk Level |
+  |-----------|-----------------|----------|------------|
+  | +, -, ×, ÷ | Yes | Heavy | Low |
+  | sin, cos | NO | lat/lon→point | HIGH |
+  | atan2 | NO | point→lat/lon | HIGH |
+  | sqrt | Usually exact | Distance | Medium |
+  ```
+- **AND** transcendental functions (sin, cos, atan2) are NOT bit-exact across:
+  - x86 vs ARM vs RISC-V processors
+  - Different libc implementations (glibc vs musl vs macOS)
+  - Compiler optimization levels (-O2 vs -O3)
+- **AND** to ensure bit-exact results, the implementation SHALL:
+  1. Use software-implemented trigonometry (not libc/intrinsics)
+  2. Use identical polynomial approximations on all platforms
+  3. Verify with golden vectors including edge cases:
+     - Poles: (±90°, any longitude)
+     - Anti-meridian: (any lat, ±180°)
+     - Cell boundaries at all 31 levels
+  4. Document that ALL replicas MUST use the same ArcherDB binary version
+- **AND** if bit-exact S2 cannot be achieved in pure Zig:
+  - Option A: Use C bindings to Google's S2 with identical build flags
+  - Option B: Use integer-only S2 approximation (accuracy trade-off)
+  - Option C: Defer S2 computation to primary, replicas verify hash only
+
+#### Scenario: S2 cross-replica verification
+
+- **WHEN** a replica receives a prepare with GeoEvents
+- **THEN** each replica SHALL:
+  1. Independently compute `s2_cell_id` from `lat_nano`, `lon_nano`
+  2. Construct composite ID: `id = (s2_cell_id << 64) | timestamp_ns`
+  3. Compare computed ID with prepare message ID
+  4. If mismatch: PANIC with "S2 cell ID divergence detected"
+- **AND** this runtime check catches S2 non-determinism in production
+- **AND** metric: `archerdb_s2_verification_failures_total` (should always be 0)
+
+#### Scenario: TTL Determinism in Queries
+
+- **WHEN** checking if an event is expired during query execution (radius, polygon, lookup)
+- **THEN** the system SHALL use the **consensus timestamp** of the operation (assigned by the primary during Prepare phase).
+- **AND** the system SHALL NOT use `clock.now_synchronized()` or any local wall clock during execution.
+- **AND** `state_machine.commit()` receives the timestamp; this value MUST be passed down to the query engine filter logic.
+- **AND** this ensures that a query executing on Replica A (fast) and Replica B (slow) produces identical results even if an event expires in the interim.
 
 ### Requirement: UUID Lookup Query
 
@@ -285,9 +377,10 @@ The system SHALL support O(1) lookup of the latest location for a specific entit
 - **GIVEN** an entity with UUID `entity_id` exists in the index
 - **WHEN** `get_latest(entity_id)` is called
 - **THEN** the system SHALL:
-  1. Look up offset in RAM index (O(1) hash lookup)
-  2. Read 128 bytes from disk at that offset (pread)
-  3. Return the full GeoEvent struct
+  1. Look up IndexEntry in RAM index (O(1) hash lookup)
+  2. Extract `latest_id` (composite ID) from IndexEntry
+  3. Fetch the GeoEvent via storage point-lookup by ID (`get_event_by_id(latest_id)`)
+  4. Return the full GeoEvent struct
 - **AND** latency SHALL be less than 1ms at p99
 
 #### Scenario: Entity not found
@@ -299,8 +392,8 @@ The system SHALL support O(1) lookup of the latest location for a specific entit
 #### Scenario: Prefetch for lookup
 
 - **WHEN** prefetching for lookup operations
-- **THEN** the system SHALL enqueue entity_ids for prefetch
-- **AND** cache blocks containing those records
+- **THEN** the system SHALL enqueue `latest_id` values for prefetch
+- **AND** cache blocks containing the corresponding GeoEvents
 
 ### Requirement: Radius Query
 
@@ -418,7 +511,7 @@ The system SHALL support finding all entities within an arbitrary polygon.
 - **WHEN** a polygon appears to wrap around the entire world
 - **THEN** the system SHALL:
   - Detect: polygon bounds span > 350° of longitude without valid crossing
-  - Return error `polygon_too_large` (new error code)
+  - Return error `polygon_too_large` (error code 111)
   - Log warning: "Polygon appears to wrap around world - likely malformed input"
 - **AND** legitimate global queries should use multiple smaller polygons
 
@@ -589,13 +682,16 @@ The system SHALL assign unique deterministic timestamps to each event in a batch
 
 - **WHEN** an event has `flags.imported = true`
 - **THEN** the client-provided timestamp SHALL be used
-- **AND** `event.timestamp < prepare_timestamp` MUST be true
+- **AND** the imported timestamp SHALL be encoded in the GeoEvent ID low 64 bits:
+  - `timestamp_ns = @as(u64, @truncate(event.id))`
+- **AND** `timestamp_ns < prepare_timestamp` MUST be true
 - **AND** imported events do not advance prepare_timestamp
 
 #### Scenario: Timestamp validation
 
 - **WHEN** a non-imported event is received
-- **THEN** `event.timestamp` MUST equal 0 (server assigns timestamp)
+- **THEN** the GeoEvent ID low 64 bits MUST be zero (server assigns timestamp during prepare):
+  - `@as(u64, @truncate(event.id)) == 0`
 - **AND** error `timestamp_must_be_zero` if non-zero
 
 ### Requirement: Performance SLAs
@@ -649,9 +745,9 @@ The system SHALL meet aggressive performance targets matching TigerBeetle-class 
 
 - **WHEN** primary fails and view change occurs
 - **THEN** the system SHALL achieve:
-  - < 3 seconds to elect new primary and resume operations
-  - < 1 second for failure detection (via aggressive heartbeats)
-  - < 2 seconds for view change protocol execution
+  - ≤ 3 seconds to elect new primary and resume operations
+  - ≤ 1 second for failure detection (via aggressive heartbeats)
+  - ≤ 2 seconds for view change protocol execution
 - **AND** this requires all TigerBeetle optimizations:
   - Ping every 200-500ms for fast failure detection
   - CTRL protocol for efficient log reconciliation
@@ -695,10 +791,11 @@ The system SHALL enforce limits on query result sets to prevent resource exhaust
   ```
   QueryRequest {
     query_type: u8,        // radius=1, polygon=2, cell_range=3
-    flags: u8,             // bit 0: has_cursor, bit 1: ascending
+    flags: u8,             // bit 0: has_cursor, bit 1: ascending, bit 2: has_group_id
     reserved: u16,
     limit: u32,            // max results (default: 81000, max: 81000)
     cursor_id: u128,       // if has_cursor=1, return results after this ID
+    group_id: u64,         // if has_group_id=1, only return results matching this group
     // ... query-specific fields
   }
   ```
@@ -707,7 +804,8 @@ The system SHALL enforce limits on query result sets to prevent resource exhaust
   QueryResponse {
     count: u32,            // number of results returned
     has_more: u8,          // 1 if more results available
-    reserved: [3]u8,
+    partial_result: u8,    // 1 if response was truncated due to message size limit
+    reserved: [2]u8,
     // followed by count × GeoEvent structs
   }
   ```
@@ -715,7 +813,10 @@ The system SHALL enforce limits on query result sets to prevent resource exhaust
 #### Scenario: Pagination ordering guarantee
 
 - **WHEN** paginating through results
-- **THEN** results SHALL be ordered by composite ID (s2_cell << 64 | timestamp)
+- **THEN** results SHALL be ordered by:
+  1. `s2_cell` (primary)
+  2. `timestamp` (secondary)
+  3. `entity_id` (final tie-breaker for deterministic ordering)
 - **AND** each page returns the next 81,000 IDs in order
 - **AND** cursor_id ensures no duplicates or gaps between pages
 - **AND** concurrent writes during pagination may cause results to appear in later pages
@@ -785,28 +886,27 @@ The system SHALL support explicit entity deletion for compliance with data prote
      c. If found: Create tombstone GeoEvent:
         - entity_id: target entity UUID
         - flags.deleted: true
-        - timestamp: deletion timestamp (from VSR prepare)
-        - id: SENTINEL_TOMBSTONE_ID (see below)
-        - lat_nano, lon_nano: 0 (ignored - tombstones excluded from spatial queries)
+        - deletion timestamp is assigned by VSR prepare and encoded in the GeoEvent ID low 64 bits
+        - lat_nano, lon_nano: 0 (tombstone has no meaningful location)
         - All other numeric fields: zero
-     d. Append tombstone to LSM log (append-only, no in-place modification)
-     e. Upsert tombstone into RAM index (supersedes old entry via LWW)
+     d. Persist tombstone via normal storage write path (append-only / LSM write)
+     e. Remove entity from RAM index (`index.delete(entity_id)`)
   2. Return count deleted and count not found
 - **AND** tombstone is a regular GeoEvent with flags.deleted=true
 - **AND** append-only storage is preserved (LSM integrity maintained)
-- **AND** compaction will skip BOTH old events AND tombstones
+- **AND** compaction MUST retain tombstones until older versions are fully eliminated (see storage-engine tombstone handling)
 
-#### Scenario: Tombstone sentinel ID (spatial query exclusion)
+#### Scenario: Tombstone exclusion from spatial queries (Live Entity Filter)
 
-- **WHEN** creating a tombstone GeoEvent
-- **THEN** the `id` field SHALL use SENTINEL_TOMBSTONE_ID:
-  ```
-  SENTINEL_TOMBSTONE_ID = 0x0000000000000000_FFFFFFFFFFFFFFFF
-  // S2 cell = 0 (invalid cell), timestamp = maxInt(u64)
-  ```
-- **AND** spatial queries SHALL explicitly exclude sentinel cell 0 from covering
-- **AND** this prevents tombstones from appearing in spatial query results
-- **AND** tombstones are still findable via entity_id lookup (RAM index)
+- **WHEN** executing radius or polygon queries
+- **THEN** the query engine SHALL filter results against the RAM index:
+  1. For each candidate record from the LSM scan:
+     a. Perform a lookup in the RAM index for the record's `entity_id`
+     b. If `entity_id` is NOT found in the RAM index: DISCARD (Entity is either logically deleted or the record is a duplicate/older version that has been superseded and the index entry was reclaimed after compaction).
+     c. If `RAM_index[entity_id].latest_id` has `flags.deleted = true`: DISCARD
+     d. If `RAM_index[entity_id].latest_id` is different from the record's `id` AND the query is for "latest only" (no time filter): DISCARD
+  2. This "Live Entity Filter" ensures that logically deleted entities do not appear in spatial results, even if their historical records still exist in the LSM tree.
+- **AND** this filtering is mandatory for strong consistency and GDPR compliance.
 
 #### Scenario: Delete operation code
 
@@ -842,16 +942,20 @@ The system SHALL support explicit entity deletion for compliance with data prote
 - **THEN** it SHALL follow three-phase model:
   1. **input_valid()**: Validate batch format (count + UUID array), check count <= 10,000
   2. **prepare()**: Assign timestamp for audit trail (deletion timestamp)
-  3. **prefetch()**: No-op (index-only operation, no disk I/O needed)
-  4. **commit()**: For each entity_id, call `index.delete(entity_id)`, mark on-disk event flags.deleted=true if found
+  3. **prefetch()**: No-op (no read prefetch required)
+  4. **commit()**:
+     - For each entity_id, write a tombstone GeoEvent via storage write path
+     - For each entity_id, call `index.delete(entity_id)` (RAM index update)
+     - No in-place modification of existing on-disk events is permitted
 
 #### Scenario: Delete and compaction
 
-- **WHEN** LSM compaction reads a deleted event (flags.deleted = true)
-- **THEN** it SHALL NOT copy the event forward
+- **WHEN** LSM compaction encounters tombstones (`flags.deleted = true`)
+- **THEN** it SHALL follow the tombstone retention rules in `storage-engine/spec.md`:
+  - Tombstones MAY need to be copied forward until all older versions are removed
+  - Once safe, tombstones MAY be dropped and older versions MUST be absent
 - **AND** disk space is reclaimed through compaction
-- **AND** deletion is eventually permanent (after compaction cycle)
-- **AND** flags.deleted bit indicates event should be garbage collected
+- **AND** deletion becomes permanent once the deletion has been compacted past all older versions
 
 #### Scenario: GDPR compliance
 
@@ -920,3 +1024,15 @@ The system SHALL support high concurrency for client operations.
   - If pool exhausted: queue query until buffer available
   - This ensures bounded memory usage under load
 - **AND** result buffers are returned to pool after response sent to client
+
+#### Scenario: S2 scratch buffer pool exhaustion
+
+- **WHEN** all S2 scratch buffers are in use (pool exhausted)
+- **AND** a new polygon or radius query requires a scratch buffer
+- **THEN** the system SHALL:
+  - Queue the query until a scratch buffer becomes available
+  - Apply backpressure via the concurrent query limit (queries share result and scratch pools)
+  - Return `too_many_queries` error if queue depth exceeds threshold (default: 1000)
+  - Log warning: "S2 scratch pool exhaustion - consider reducing max_concurrent_queries or increasing pool size"
+- **AND** `s2_scratch_pool_size` SHOULD equal or exceed `max_concurrent_queries`
+- **AND** if `s2_scratch_pool_size < max_concurrent_queries`, some queries will be queued

@@ -113,7 +113,20 @@ The system SHALL define constants for the VSR consensus protocol.
 - **THEN** the following SHALL be defined:
   ```zig
   /// Number of slots in the journal (WAL ring buffer)
-  pub const journal_slot_count = 1024;
+  /// MUST be large enough to hold history between checkpoints (60s index checkpoint)
+  /// At 100 batches/sec (1M events/sec / 10k batch), we need >6000 slots.
+  /// 8192 slots provides ~81 seconds of history at peak load.
+  ///
+  /// WAL DISK USAGE CLARIFICATION:
+  /// - Headers ring: 8192 * 256 bytes = ~2MB
+  /// - Prepares ring: 8192 * message_size_max = 8192 * 10MB = ~82GB
+  /// - This 82GB is REQUIRED for the WAL to function correctly at peak load
+  /// - If disk space is constrained:
+  ///   - Reduce message_size_max to 1MB (still allows ~7,800 events/batch)
+  ///   - This reduces WAL prepares to ~8GB
+  ///   - OR reduce journal_slot_count (sacrifices recovery window)
+  /// - Production recommendation: 100GB+ NVMe with 82GB WAL + LSM data
+  pub const journal_slot_count = 8192;
 
   /// Operations between checkpoints (CRITICAL: referenced everywhere)
   /// Must satisfy: journal_slot_count >= pipeline_max + 2 * checkpoint_interval
@@ -125,7 +138,7 @@ The system SHALL define constants for the VSR consensus protocol.
   /// Verify journal sizing
   comptime {
       assert(journal_slot_count >= pipeline_max + 2 * checkpoint_interval);
-      // 1024 >= 256 + 2 * 256 = 768 ✓
+      // 8192 >= 256 + 2 * 256 = 768 ✓
   }
   ```
 
@@ -145,13 +158,26 @@ The system SHALL define constants for the VSR consensus protocol.
 
   /// Maximum client sessions tracked for idempotency (VSR client session table)
   /// Distinct from clients_max: sessions persist across connections for deduplication
-  pub const client_sessions_max = 128;
+  pub const client_sessions_max = 10_000;
 
   /// Maximum concurrent grid read IOPS (bounds disk read parallelism)
   pub const grid_iops_read_max = 128;
 
   /// Maximum concurrent grid write IOPS (bounds disk write parallelism)
   pub const grid_iops_write_max = 64;
+
+  /// Maximum messages in the message pool
+  /// Calculation: pipeline_max * 2 + clients_max + (replica_count * 2) + margin
+  /// Conservative: 10,000 clients + 1,000 for internal ops = 11,000
+  pub const messages_max = 11_000;
+
+  /// CLARIFICATION: MessagePool does NOT allocate messages_max * message_size_max memory!
+  /// Following TigerBeetle's pattern:
+  /// - MessagePool allocates messages_max * message_header_size for headers
+  /// - Body buffers are allocated from a separate buffer pool or on-demand
+  /// - message_size_max is a VALIDATION limit, not an allocation size
+  /// - Actual RAM for MessagePool: ~11,000 * 256 bytes (headers) + body buffer pool
+  /// - Body buffer pool: configurable, typically ~1GB for concurrent I/O
 
   /// Default quorum settings (for 5-node cluster)
   /// User can override at format time
@@ -176,11 +202,32 @@ The system SHALL define constants for S2 spatial indexing.
   /// Higher = more precise covering, more scan ranges
   pub const s2_max_cells = 16;
 
-  /// Minimum S2 cell level for covering
-  pub const s2_min_level = 10;
+  /// Minimum S2 cell level for query covering (coarse cell ranges)
+  pub const s2_cover_min_level = 10;
 
-  /// Maximum S2 cell level for covering
-  pub const s2_max_level = s2_cell_level;
+  /// Maximum S2 cell level for query covering (cap for RegionCoverer)
+  /// Note: storage indexing uses s2_cell_level=30, but covering is capped for performance.
+  pub const s2_cover_max_level = 18;
+
+  /// Covering max-level slack relative to selected min_level
+  pub const s2_cover_level_slack = 4;
+
+  /// S2 scratch buffer size for polygon covering
+  /// S2 RegionCoverer requires working memory for complex polygons.
+  /// 1MB is sufficient for 10k vertices.
+  pub const s2_scratch_size = 1 * 1024 * 1024; // 1MB
+
+  /// S2 scratch buffer pool size
+  /// Matches max_concurrent_queries to allow parallel decomposition
+  pub const s2_scratch_pool_size = 100;
+
+  /// Maximum concurrent spatial queries (radius, polygon)
+  /// Limits memory usage: max_concurrent_queries × message_size_max = 1GB
+  /// UUID lookups are NOT subject to this limit (O(1) memory)
+  pub const max_concurrent_queries = 100;
+
+  /// Query queue depth before rejecting with too_many_queries
+  pub const query_queue_max = 1000;
   ```
 
 ### Requirement: Query Limits
@@ -225,11 +272,11 @@ The system SHALL define capacity limits for the entire system.
   /// Index capacity (slots allocated)
   pub const index_capacity = @divFloor(entities_max_per_node * 100, 70); // ~1.43B slots
 
-  /// Index entry size (includes ttl_seconds field)
-  pub const index_entry_size = 40; // bytes
+  /// Index entry size (includes ttl_seconds field + padding for alignment)
+  pub const index_entry_size = 64; // bytes (Cache Line Aligned)
 
-  /// Index memory requirement (40 bytes per slot)
-  pub const index_memory_bytes = index_capacity * index_entry_size; // ~57.2GB
+  /// Index memory requirement (64 bytes per slot)
+  pub const index_memory_bytes = index_capacity * index_entry_size; // ~91.5GB
 
   /// Maximum data file size (u64 offset limit)
   pub const data_file_size_max = 16 * 1024 * 1024 * 1024 * 1024; // 16TB
@@ -247,7 +294,7 @@ The system SHALL define timing constants for heartbeats and timeouts.
 - **WHEN** defining timing constants
 - **THEN** the following SHALL be defined:
   ```zig
-  /// Ping interval for liveness detection (aggressive for <3s failover)
+  /// Ping interval for liveness detection (aggressive for ≤3s failover)
   pub const ping_interval_ms = 250; // 250ms
 
   /// Ping timeout (missed pings before view change)
@@ -261,6 +308,14 @@ The system SHALL define timing constants for heartbeats and timeouts.
 
   /// Index checkpoint interval (time-based)
   pub const index_checkpoint_interval_ms = 60_000; // 1 minute
+
+  /// Backup mandatory mode halt timeout (default: 1 hour)
+  /// If writes are halted waiting for backup for longer than this,
+  /// system switches to best-effort mode to restore availability
+  pub const backup_mandatory_halt_timeout_ms = 3_600_000; // 1 hour
+
+  /// Session timeout (inactive sessions may be evicted)
+  pub const session_timeout_ms = 60_000; // 1 minute
   ```
 
 ### Requirement: Hardware Assumptions
@@ -279,8 +334,8 @@ The system SHALL document hardware assumptions for performance targets.
 
   /// Expected memory characteristics
   pub const ram_gb_min = 32;
-  pub const ram_gb_recommended = 64;
-  pub const ram_gb_high_perf = 128;
+  pub const ram_gb_recommended = 128; // Upgraded for 64-byte aligned index
+  pub const ram_gb_high_perf = 256;
 
   /// Expected disk characteristics (for performance claims)
   pub const disk_sequential_read_gbps = 3; // 3 GB/s
@@ -329,10 +384,10 @@ The system SHALL validate all constants at compile time to prevent invalid confi
       const expected_index_capacity = @divFloor(entities_max_per_node * 100, @as(u64, @intFromFloat(index_load_factor * 100)));
       assert(index_capacity >= expected_index_capacity);
 
-      // Verify ping timeout achieves <3s failover target
+      // Verify ping timeout achieves ≤3s failover target
       const failover_detection_ms = ping_interval_ms * ping_timeout_count;
       const failover_total_ms = failover_detection_ms + view_change_timeout_ms;
-      assert(failover_total_ms <= 3000); // <3s target
+      assert(failover_total_ms <= 3000); // ≤3s target (exactly 3s with current values)
 
       // NEW: Verify superblock_copies is even (required for quorum reads)
       assert(superblock_copies % 2 == 0);

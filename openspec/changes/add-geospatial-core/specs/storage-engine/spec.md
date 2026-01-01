@@ -61,12 +61,15 @@ The system SHALL maintain multiple redundant copies of the superblock for crash 
   - `vsr_state: VSRState` - Full VSR protocol state
   - `checkpoint_state: CheckpointState` - LSM checkpoint metadata
 
-#### Scenario: Hash-chained superblocks
+#### Scenario: Superblock copy management (Slot Alternation)
 
-- **WHEN** writing a new superblock
-- **THEN** `parent` field SHALL contain checksum of previous superblock
-- **AND** this creates a hash chain for integrity verification
-- **AND** sequence number SHALL be strictly monotonically increasing
+- **WHEN** writing superblocks
+- **THEN** the system SHALL alternate between two logical slots:
+  - Slot A: Copies 0, 2, 4
+  - Slot B: Copies 1, 3, 5
+- **AND** it SHALL write Slot A on even checkpoints and Slot B on odd checkpoints
+- **AND** this ensures that if a crash occurs during a superblock write, the other slot remains valid and points to the previous stable state.
+- **AND** this provides defense against torn writes or power failure during the metadata update.
 
 #### Scenario: Quorum reads
 
@@ -104,6 +107,7 @@ The system SHALL maintain a circular WAL with separate rings for headers and pre
 - **THEN** `journal_size_headers = journal_slot_count * @sizeOf(Header.Prepare)`
 - **AND** `journal_size_prepares = journal_slot_count * message_size_max`
 - **AND** total `journal_size = journal_size_headers + journal_size_prepares`
+- **NOTE**: With `journal_slot_count = 8192` and 10MB message size, `wal_prepares` uses ~82GB of disk space.
 
 #### Scenario: Slot addressing
 
@@ -137,6 +141,17 @@ The system SHALL provide abstract block-based storage for the LSM tree with cach
 - **AND** `block_size` MUST be ≤ `message_size_max`
 
 #### Scenario: Block cache
+...
+#### Scenario: Grid repair protocol
+
+- **WHEN** a replica detects a corrupted block (checksum mismatch)
+- **THEN** it SHALL:
+  1. Identify the block address and expected checksum
+  2. Broadcast a `grid_repair_request` to other replicas
+  3. Replicas with the valid block (matching checksum) SHALL respond with `grid_repair_response`
+  4. The repairing replica verifies the received block checksum
+  5. If valid, it overwrites the corrupted block locally
+- **AND** this ensures self-healing of the grid zone without full state sync
 
 - **WHEN** the grid is initialized
 - **THEN** it SHALL include a set-associative cache:
@@ -245,7 +260,8 @@ The system SHALL implement a Log-Structured Merge Tree with configurable levels 
 
 - **WHEN** calculating level capacity
 - **THEN** level i can hold up to `growth_factor^(i+1)` tables
-- **AND** level 0 is the in-memory mutable table
+- **AND** level 0 consists of small on-disk tables flushed from memory
+- **AND** the in-memory mutable table is the "MemTable" (pre-Level 0)
 
 #### Scenario: Table structure
 
@@ -303,17 +319,22 @@ The system SHALL perform background compaction to merge tables and reclaim space
 
 - **WHEN** compaction reads an event with `flags.deleted = true` (tombstone)
 - **THEN** the system SHALL:
-  1. Check if the tombstone has been replicated to all living events (no older version exists)
-  2. If tombstone is the latest for this entity AND older events are compacted out: discard tombstone
-  3. If older events may still exist in lower levels: copy tombstone forward
-  4. Keep tombstone until a full compaction pass has propagated it to all levels
-- **AND** tombstones are NOT backed up to S3 (GDPR compliance)
+  1. Check if the tombstone is at the **maximum LSM level** (`lsm_levels - 1`).
+  2. If it is NOT at the maximum level: it MUST be copied forward to the next level during compaction (to keep hiding older versions).
+  3. If it IS at the maximum level: it MAY be discarded IF no older versions exist in the same level (which is guaranteed in leveled compaction).
+  4. Discarding a tombstone only happens when it "reaches the bottom" of the LSM tree.
+- **AND** tombstones are backed up as part of normal block backup (they prevent resurrection on restore)
+- **AND** GDPR erasure in object-storage backups is achieved via backup retention and/or purge policy (see backup-restore/spec.md)
 - **AND** metrics SHALL track `archerdb_compaction_tombstones_removed_total`
 
 #### Scenario: Expired event handling during compaction
 
-- **WHEN** compaction reads an event with expired TTL (current_time >= timestamp + ttl_seconds)
+- **WHEN** compaction reads an event with expired TTL (current_time >= event_timestamp + ttl_seconds)
 - **THEN** the system SHALL:
+  0. Compute event timestamp from the GeoEvent ID low 64 bits:
+     - `event_timestamp_ns = @as(u64, @truncate(event.id))`
+     - `ttl_ns = @as(u64, event.ttl_seconds) * 1_000_000_000`
+     - expired iff `event.ttl_seconds != 0` and `current_time >= event_timestamp_ns + ttl_ns`
   1. Discard the event (do not copy forward)
   2. If this was the latest event for the entity: entity effectively disappears
   3. RAM index cleanup occurs lazily on lookup or via background cleanup

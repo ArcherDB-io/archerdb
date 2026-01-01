@@ -104,7 +104,7 @@ All decisions follow TigerBeetle's proven patterns for maximum performance and o
 **Configuration:**
 - Endpoint: `http://<node-ip>:9091/metrics`
 - Format: Prometheus text format
-- Binding: All interfaces (configurable to localhost only)
+- Binding: Localhost `127.0.0.1` by default (security best practice), configurable to `0.0.0.0`
 
 **Implementation:** See `specs/observability/spec.md`
 
@@ -174,12 +174,16 @@ All decisions follow TigerBeetle's proven patterns for maximum performance and o
 - Full control over performance optimizations
 
 **Implementation Scope:**
-- Core algorithms only (~2000 LOC):
-  1. Lat/lon → S2 Cell ID (Hilbert curve projection)
-  2. Cell hierarchy (bit-shifting)
-  3. RegionCoverer (polygon → cell ranges)
-  4. Basic point-in-polygon (ray casting)
+- Core algorithms (~5000-10000 LOC estimated, revised from initial 2000 LOC estimate):
+  1. Lat/lon → S2 Cell ID (Hilbert curve projection) - ~1000 LOC
+  2. Cell hierarchy (bit-shifting) - ~200 LOC
+  3. RegionCoverer (polygon → cell ranges) - ~2000-3000 LOC
+  4. Basic point-in-polygon (ray casting) - ~500 LOC
+  5. Cap covering (radius → cell ranges) - ~1000 LOC
+  6. Spherical geometry utilities - ~1000-2000 LOC
 - Defer complex geodesics and advanced operations
+- **Risk Mitigation**: Allow C bindings to s2geometry as fallback during initial development
+- **Validation**: Golden vectors from Python s2geometry ensure correctness
 
 **Tasks:** See `tasks.md` section 12 (S2 Integration)
 
@@ -398,8 +402,8 @@ Based on these decisions, the implementation order is (from `tasks.md`):
 - Even latest values can expire (entity disappears)
 
 **Impact:**
-- IndexEntry grows from 32 to 40 bytes
-- RAM requirement increases from 48GB to 64GB (1B entities)
+- IndexEntry remains 64 bytes (cache-line aligned) to maintain alignment performance
+- RAM requirement increases from ~91.5GB to ~96GB (1B entities) for overhead
 - GeoEvent struct updated (uses 4 bytes of reserved space)
 
 **Implementation:** See `specs/ttl-retention/spec.md`

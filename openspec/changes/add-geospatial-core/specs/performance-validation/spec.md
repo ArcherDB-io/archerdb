@@ -103,8 +103,8 @@ The system SHALL validate performance scaling across cluster configurations.
 
 - **WHEN** validating memory scaling
 - **THEN** validation SHALL measure:
-  - **64GB Limit**: Performance with 1B entities in 64GB RAM
-  - **Memory Efficiency**: 40 bytes per entity index overhead
+  - **128GB Limit**: Performance with 1B entities in 128GB RAM (96GB index + OS/cache)
+  - **Memory Efficiency**: 64 bytes per entity index overhead (cache-line aligned)
   - **Working Set**: Performance with datasets larger than RAM
   - **Memory Pressure**: Behavior under memory allocation pressure
   - **GC Impact**: Memory management overhead in static allocation model
@@ -172,7 +172,7 @@ The system SHALL validate performance on target hardware configurations.
 - **THEN** validation SHALL confirm:
   - **AES-NI Support**: Required for cryptographic operations
   - **NVMe Performance**: 3GB/s+ sequential I/O capability
-  - **RAM Capacity**: 64GB+ for full dataset indexing
+  - **RAM Capacity**: 128GB+ for full dataset indexing (1B entities)
   - **Network Bandwidth**: 10Gbps+ for cluster communication
   - **CPU Performance**: Sufficient cores and cache for concurrent operations
 - **AND** hardware validation SHALL ensure production readiness

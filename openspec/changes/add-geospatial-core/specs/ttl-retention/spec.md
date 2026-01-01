@@ -19,7 +19,10 @@ The system SHALL support configurable time-to-live on individual GeoEvent record
 - **THEN** the calculation SHALL be:
   ```zig
   const event_timestamp = @as(u64, @truncate(event.id));  // Lower 64 bits
-  const current_time = clock.now_synchronized();
+  // CRITICAL: Use consensus timestamp during query execution (from state_machine.commit()),
+  // NOT clock.now_synchronized(). Wall clock may differ across replicas.
+  // For background cleanup tasks, clock.now_synchronized() is acceptable.
+  const current_time = consensus_timestamp; // or clock.now_synchronized() for background tasks
   
   // Protect against overflow (edge case for timestamps near maxInt(u64))
   const ttl_ns = @as(u64, event.ttl_seconds) * 1_000_000_000;
@@ -54,8 +57,8 @@ The system SHALL check for expiration during RAM index lookups and remove expire
 - **THEN** the system SHALL:
   1. Detect expiration
   2. Atomically remove entry from RAM index using conditional removal:
-     - Only remove if timestamp matches the expired timestamp checked
-     - If timestamp changed, a concurrent upsert occurred (skip removal)
+     - Only remove if latest_id matches the expired latest_id checked
+     - If latest_id changed, a concurrent upsert occurred (skip removal)
      - This prevents race condition where fresh data is deleted
   3. Return null (entity not found)
   4. Increment metrics: `archerdb_index_expirations_total`
@@ -67,12 +70,12 @@ The system SHALL check for expiration during RAM index lookups and remove expire
   ```zig
   const expired_entry = index.lookup(entity_id);
   if (expired_entry != null and is_expired(expired_entry)) {
-      const expired_timestamp = expired_entry.timestamp;
-      // Atomic: only remove if timestamp hasn't changed
-      if (index.remove_if_timestamp_matches(entity_id, expired_timestamp)) {
+      const expired_latest_id = expired_entry.latest_id;
+      // Atomic: only remove if latest_id hasn't changed
+      if (index.remove_if_id_matches(entity_id, expired_latest_id)) {
           // Successfully removed expired entry
       } else {
-          // Timestamp changed - concurrent upsert occurred, entry is fresh
+          // latest_id changed - concurrent upsert occurred, entry is fresh
       }
   }
   ```
@@ -84,8 +87,8 @@ The system SHALL check for expiration during RAM index lookups and remove expire
 - **WHEN** `lookup(entity_id)` is called
 - **THEN** the system SHALL:
   1. Return the IndexEntry normally
-  2. Client proceeds with disk read
-  3. No expiration check needed on disk read (index is authoritative)
+  2. Query engine proceeds with storage lookup by composite ID (`latest_id`)
+  3. No expiration check needed during storage lookup (index is authoritative)
 
 ### Requirement: Expiration During Upsert
 
@@ -94,7 +97,7 @@ The system SHALL handle expiration during index upsert operations.
 #### Scenario: Upsert with expired old entry
 
 - **GIVEN** an entity exists in RAM index with expired event
-- **WHEN** `upsert(entity_id, new_offset, new_timestamp)` is called
+- **WHEN** `upsert(entity_id, new_latest_id, ttl_seconds)` is called
 - **THEN** the system SHALL:
   - Check if old entry is expired
   - If expired, treat as new insert (no LWW comparison needed)
@@ -108,12 +111,12 @@ The system SHALL handle expiration during index upsert operations.
   ```zig
   IndexEntry {
       entity_id: u128,
-      file_offset: u64,
-      timestamp: u64,
+      latest_id: u128,
       ttl_seconds: u32,  // Store TTL for expiration checks
   }
   ```
-- **AND** IndexEntry grows from 32 bytes to 36 bytes (update capacity calculations)
+- **AND** IndexEntry is EXACTLY 64 bytes (see Index Entry Structure requirement above)
+- **AND** this matches hardware cache lines for optimal performance
 
 ### Requirement: Compaction-Based Cleanup
 
@@ -123,10 +126,12 @@ The system SHALL discard expired events during LSM compaction and NOT copy them 
 
 - **WHEN** LSM compaction reads an old event from a table
 - **THEN** the system SHALL:
-  1. Calculate if event is expired (current_time >= event.timestamp + event.ttl_seconds)
+  1. Calculate if event is expired using the GeoEvent ID low 64 bits as the timestamp:
+     - `event_timestamp_ns = @as(u64, @truncate(event.id))`
+     - expired iff `current_time >= event_timestamp_ns + (u64(ttl_seconds) * 1_000_000_000)`
   2. If expired: Skip event (do not copy to new table)
   3. If not expired: Check liveness in RAM index
-  4. If live (index points to this offset): Copy forward
+  4. If live (index.latest_id == event.id): Copy forward
   5. If not live (superseded by newer event): Skip event
 
 #### Scenario: Latest value expiration
@@ -285,11 +290,11 @@ The system SHALL update IndexEntry to include TTL for expiration checking.
   ```zig
   pub const IndexEntry = struct {
       entity_id: u128,      // 16 bytes
-      file_offset: u64,     // 8 bytes
-      timestamp: u64,       // 8 bytes (for LWW and expiration)
+      latest_id: u128,      // 16 bytes (composite ID, timestamp in low 64 bits)
       ttl_seconds: u32,     // 4 bytes (for expiration checking)
-      reserved: u32,        // 4 bytes (alignment to 8-byte boundary)
-  };  // Total: 40 bytes
+      reserved: u32,        // 4 bytes (alignment)
+      padding: [24]u8,      // 24 bytes (alignment to 64 bytes)
+  };  // Total: 64 bytes (Cache Line Aligned)
   ```
 
 #### Scenario: Index capacity recalculation
@@ -297,10 +302,9 @@ The system SHALL update IndexEntry to include TTL for expiration checking.
 - **WHEN** calculating index memory requirements
 - **THEN** the formula SHALL be updated:
   ```
-  Old: 1.43B slots × 32 bytes = 45.7GB
-  New: 1.43B slots × 40 bytes = 57.2GB (rounded to 64GB for safety)
+  1.43B slots × 64 bytes = ~91.5GB (rounded to 96GB/128GB for safety)
   ```
-- **AND** recommended hardware specs SHALL be updated to 64-128GB RAM
+- **AND** recommended hardware specs SHALL be updated to 128GB RAM
 
 ### Requirement: TTL Validation
 
@@ -320,7 +324,8 @@ The system SHALL validate TTL values during insertion.
 - **AND** `ttl_seconds > 0`
 - **THEN** expiration SHALL be calculated from the imported timestamp:
   ```
-  expiration = event.timestamp_imported + (ttl_seconds * 1_000_000_000)
+  const timestamp_ns = @as(u64, @truncate(event.id));
+  expiration = timestamp_ns + (ttl_seconds * 1_000_000_000)
   ```
 - **AND** old imported events may already be expired upon insertion
 - **AND** expired imported events SHALL be rejected with error `event_already_expired`
@@ -401,13 +406,20 @@ The system SHALL handle expired entries during index rebuild on cold start.
 
 #### Scenario: Rebuild skips expired events
 
-- **WHEN** rebuilding RAM index from data log
+- **WHEN** rebuilding the RAM index from persisted GeoEvents (cold start)
 - **THEN** the system SHALL:
-  1. Read each GeoEvent from disk
-  2. Calculate if expired (current_time >= event.timestamp + ttl_seconds)
-  3. If expired: skip (do not insert into index)
-  4. If not expired: upsert into index
+  1. Use **LSM-Aware Rebuild** strategy for performance:
+     - Scan LSM tables from newest level (Level 0) to oldest (Level 6).
+     - Maintain an in-memory bitset of `entity_id` values already indexed.
+     - For each table in the level:
+       - Read each GeoEvent.
+       - Calculate if expired using the GeoEvent ID low 64 bits as the timestamp.
+       - If `entity_id` is NOT in the bitset AND NOT expired:
+         - If `flags.deleted = true`: mark `entity_id` as "deleted" in bitset, do NOT insert into index.
+         - Else: insert into index (`upsert(entity_id, event.id, event.ttl_seconds)`), add `entity_id` to bitset.
+  2. This strategy ensures that for 137 billion historical records, only the most recent version of each of the 1 billion entities is processed, significantly reducing RTO.
 - **AND** this automatically builds a clean index (no expired entries)
+- **AND** the bitset is only needed during the rebuild process and is discarded after.
 
 #### Scenario: Rebuild performance with TTL
 
@@ -416,21 +428,59 @@ The system SHALL handle expired entries during index rebuild on cold start.
 - **AND** most old events are skipped
 - **AND** only recent events are indexed
 
+#### Scenario: Index rebuild RTO targets
+
+- **WHEN** planning for cold start recovery time
+- **THEN** rebuild duration SHALL be bounded by:
+  ```
+  | Entity Count | LSM Size | Index Blocks | Expected RTO |
+  |--------------|----------|--------------|--------------|
+  | 1M           | ~1 GB    | ~100 MB      | < 1 minute   |
+  | 10M          | ~10 GB   | ~1 GB        | < 3 minutes  |
+  | 100M         | ~100 GB  | ~10 GB       | < 15 minutes |
+  | 1B           | ~1 TB    | ~100 GB      | < 60 minutes |
+  ```
+- **AND** these targets assume:
+  - NVMe SSD with 3+ GB/s sequential read
+  - LSM-Aware rebuild (newest levels first)
+  - 16+ CPU cores for parallel index insertion
+- **AND** actual rebuild reads only index blocks + newest values, NOT all historical events
+
+#### Scenario: Rebuild progress reporting
+
+- **WHEN** index rebuild is in progress
+- **THEN** the system SHALL:
+  1. Log progress every 10 million entities processed
+  2. Report estimated time remaining based on current throughput
+  3. Expose metrics:
+     - `archerdb_index_rebuild_entities_processed_total`
+     - `archerdb_index_rebuild_progress_percent`
+     - `archerdb_index_rebuild_duration_seconds`
+  4. Mark replica status as "rebuilding" in cluster health
+
+#### Scenario: Replica availability during rebuild
+
+- **WHEN** a replica is rebuilding its index
+- **THEN** it SHALL:
+  - NOT accept client queries (return `replica_rebuilding` error)
+  - NOT participate in quorum until rebuild complete
+  - Receive and buffer incoming prepares (if WAL space allows)
+  - Join cluster as normal replica once rebuild completes
+- **AND** cluster remains available if quorum exists among other replicas
+
 ### Requirement: TTL and Backup/Restore
 
 The system SHALL handle TTL during backup and restore operations.
 
-#### Scenario: Backup includes expired events but filters deleted
+#### Scenario: Backup and deletion/TTL interaction
 
-- **WHEN** backing up closed log blocks to S3
-- **THEN** events SHALL be backed up based on type:
-  - **Expired events** (ttl expired but not deleted): Backed up (preserves complete history)
-  - **Deleted events** (flags.deleted=true): NOT backed up (GDPR erasure requirement)
-  - **Active events**: Backed up normally
-- **AND** backup occurs AFTER compaction
-- **AND** compaction removes deleted tombstones before backup
-- **AND** ensures GDPR "right to erasure" is honored in backup storage
-- **AND** expired events can be filtered during restore (not re-indexed)
+- **WHEN** backing up immutable storage blocks to object storage
+- **THEN** backups SHALL include:
+  - Active events
+  - Expired events (unless filtered during restore)
+  - Tombstones (`flags.deleted = true`) required to prevent resurrection on restore
+- **AND** v1 does not attempt to retroactively remove already-backed-up deleted history
+- **AND** GDPR erasure in backups is achieved via backup retention and/or purge policy (see backup-restore/spec.md + compliance/spec.md)
 
 #### Scenario: Restore with TTL filtering
 
@@ -441,3 +491,4 @@ The system SHALL handle TTL during backup and restore operations.
   ```
 - **AND** only non-expired events are restored to data file
 - **AND** this reduces restore time and disk usage
+- **AND** tombstones MUST be honored during restore/index rebuild (deleted entities remain deleted)

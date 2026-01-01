@@ -4,16 +4,20 @@
 
 - [ ] 1.1 Create `src/constants.zig` with all compile-time configuration
   - sector_size, block_size, message_size_max
-  - journal_slot_count, checkpoint_interval, pipeline_max
+  - journal_slot_count (8192), checkpoint_interval, pipeline_max
   - lsm_levels, lsm_growth_factor, lsm_compaction_ops
   - clients_max, replicas_max (6 active + 4 standby)
+  - s2_scratch_size (1MB), s2_scratch_pool_size (100)
+  - index_entry_size (64 bytes - cache line aligned)
 - [ ] 1.2 Create `src/geo_event.zig` with 128-byte `GeoEvent` extern struct
 - [ ] 1.3 Add comptime assertions: @sizeOf == 128, @alignOf == 16, no_padding()
 - [ ] 1.4 Create `GeoEventFlags` as packed struct(u16) with padding bits
 - [ ] 1.5 Create 256-byte `BlockHeader` extern struct with dual checksums
 - [ ] 1.6 Implement `pack_id(s2_cell, timestamp) -> u128` helper
 - [ ] 1.7 Implement coordinate conversion (nanodegrees <-> float)
-- [ ] 1.8 Write comptime tests for struct layout
+- [ ] 1.8 Write comptime tests for struct layout (including u32 accuracy_mm)
+- [ ] 1.9 Implement `ScratchBufferPool` for concurrent S2 operations
+- [ ] 1.10 Add `partial_result` handling to `MultiBatchExecutor`
 
 ## 2. Memory Management
 
@@ -30,20 +34,22 @@
 ## 3. Hybrid Memory (Index-on-RAM)
 
 - [ ] 3.1 Create `src/index/primary_index.zig` with hash map structure
-- [ ] 3.2 Define IndexEntry struct (32 bytes: entity_id + offset + timestamp)
+- [ ] 3.2 Define IndexEntry struct (64 bytes: entity_id + latest_id + ttl_seconds + reserved + padding)
 - [ ] 3.3 Implement open addressing with linear probing
-- [ ] 3.4 Pre-allocate index capacity at startup (no runtime resize)
+- [ ] 3.4 Pre-allocate index capacity at startup (no runtime resize, requires 128GB RAM for 1B entities)
 - [ ] 3.5 Implement `lookup(entity_id) -> ?IndexEntry` O(1) lookup
-- [ ] 3.6 Implement `upsert(entity_id, offset, timestamp)` with LWW semantics
+- [ ] 3.6 Implement `upsert(entity_id, latest_id, ttl_seconds)` with LWW semantics (timestamp derived from latest_id)
 - [ ] 3.7 Handle out-of-order timestamps (older records don't update index)
-- [ ] 3.8 Create `src/index/checkpoint.zig` for index persistence
-- [ ] 3.9 Implement checkpoint format (header + entries array)
-- [ ] 3.10 Implement atomic checkpoint write (temp file + rename)
-- [ ] 3.11 Implement checkpoint loading on startup
-- [ ] 3.12 Implement full index rebuild from data log
-- [ ] 3.13 Implement partial replay (checkpoint + WAL tail)
-- [ ] 3.14 Add index statistics (entry_count, load_factor, collision_count)
-- [ ] 3.15 Write tests for LWW ordering and checkpoint/rebuild
+- [ ] 3.8 Create `src/index/checkpoint.zig` for incremental persistence
+- [ ] 3.9 Implement incremental checkpoint format (header + sparse page array)
+- [ ] 3.10 Implement dirty page tracking with bitset
+- [ ] 3.11 Implement background "trickle" checkpointing task
+- [ ] 3.12 Implement checkpoint loading and VSR coordination on startup
+- [ ] 3.13 Implement **LSM-Aware Rebuild** strategy (scan newest to oldest with bitset)
+- [ ] 3.14 Implement full index rebuild fallback (if new strategy fails)
+- [ ] 3.15 Implement partial replay (checkpoint + WAL tail)
+- [ ] 3.16 Add index statistics (entry_count, load_factor, collision_count)
+- [ ] 3.17 Write tests for LWW ordering and checkpoint/rebuild
 
 ## 4. Checksums & Integrity
 
@@ -74,7 +80,7 @@
 - [ ] 6.3 Implement hash-chained superblock writes with sequence numbers
 - [ ] 6.4 Implement quorum read for superblock recovery
 - [ ] 6.5 Create dual-ring WAL (headers + prepares)
-- [ ] 6.6 Implement journal slot addressing and circular wraparound
+- [ ] 6.6 Implement journal slot addressing and circular wraparound (8192 slots)
 - [ ] 6.7 Implement client replies zone
 - [ ] 6.8 Add Direct I/O with O_DIRECT and O_DSYNC flags
 - [ ] 6.9 Implement sector alignment validation for all I/O
@@ -140,12 +146,14 @@
 
 ## 12. S2 Integration
 
-- [ ] 12.1 Evaluate S2 options: C bindings vs Zig port
-- [ ] 12.2 Implement/integrate lat_lon_to_cell_id(lat, lon, level) -> u64
-- [ ] 12.3 Implement/integrate cell_id_to_lat_lon(cell_id) -> (lat, lon)
-- [ ] 12.4 Implement/integrate RegionCoverer for polygon -> cell ranges
-- [ ] 12.5 Implement/integrate Cap covering for radius queries
-- [ ] 12.6 Write tests validating cell hierarchy
+- [ ] 12.1 Evaluate S2 options and memory requirements
+- [ ] 12.2 Create `tools/s2_golden_gen` python script using `s2geometry` package for validation vectors
+- [ ] 12.3 Implement pure Zig lat_lon_to_cell_id(lat, lon, level) -> u64
+- [ ] 12.4 Implement/integrate cell_id_to_lat_lon(cell_id) -> (lat, lon)
+- [ ] 12.5 Implement/integrate RegionCoverer for polygon -> cell ranges
+- [ ] 12.6 Implement/integrate Cap covering for radius queries
+- [ ] 12.7 Create scratch buffer pool for S2 polygon operations
+- [ ] 12.8 Write tests validating cell hierarchy and memory usage
 
 ## 13. Query Engine
 
@@ -156,8 +164,8 @@
 - [ ] 13.5 Implement commit() for deterministic execution
 - [ ] 13.6 Create multi-batch encoding/decoding with trailer
 - [ ] 13.7 Implement UUID lookup query (uses hybrid memory index)
-- [ ] 13.8 Implement radius query with S2 Cap covering
-- [ ] 13.9 Implement polygon query with S2 RegionCoverer
+- [ ] 13.8 Implement radius query with S2 Cap covering (using scratch buffer)
+- [ ] 13.9 Implement polygon query with S2 RegionCoverer (using scratch buffer)
 - [ ] 13.10 Implement skip-scan with block header min/max filtering
 - [ ] 13.11 Implement post-filter for precise geometry tests
 - [ ] 13.12 Write query integration tests

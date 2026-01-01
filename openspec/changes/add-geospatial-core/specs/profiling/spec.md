@@ -71,6 +71,7 @@ The system SHALL provide system-level performance diagnostics and bottleneck ide
 - **WHEN** analyzing I/O performance
 - **THEN** system SHALL monitor:
   - Disk read/write throughput and latency
+  - **io_uring completion latency** (submission to completion time)
   - I/O operation queue depths
   - Cache hit/miss ratios for data blocks
   - Storage device utilization patterns

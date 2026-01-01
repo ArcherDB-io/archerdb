@@ -193,39 +193,19 @@ The system SHALL expose memory, disk, and I/O utilization metrics.
 
 - **WHEN** exposing memory metrics
 - **THEN** the following SHALL be included:
-  ```
-  # HELP archerdb_memory_allocated_bytes Total memory allocated
-  # TYPE archerdb_memory_allocated_bytes gauge
-  archerdb_memory_allocated_bytes 68719476736
-
-  # HELP archerdb_memory_used_bytes Memory currently in use
-  # TYPE archerdb_memory_used_bytes gauge
-  archerdb_memory_used_bytes 51539607552
-
-  # HELP archerdb_index_entries Current entity count in primary index
-  # TYPE archerdb_index_entries gauge
-  archerdb_index_entries 1000000000
-
-  # HELP archerdb_index_capacity Maximum index capacity
-  # TYPE archerdb_index_capacity gauge
-  archerdb_index_capacity 1428571428
-
-  # HELP archerdb_index_load_factor Index load factor (0.0 to 1.0)
-  # TYPE archerdb_index_load_factor gauge
-  archerdb_index_load_factor 0.70
-
-  # HELP archerdb_index_utilization_ratio Index utilization ratio (entries/capacity, 0.0 to 1.0)
-  # TYPE archerdb_index_utilization_ratio gauge
-  archerdb_index_utilization_ratio 0.70
-  ```
+  - `archerdb_memory_allocated_bytes`: Total memory allocated
+  - `archerdb_memory_used_bytes`: Memory currently in use
+  - `archerdb_index_entries`: Current entity count in primary index
+  - `archerdb_index_capacity`: Maximum index capacity
+  - `archerdb_index_load_factor`: Index load factor (0.0 to 1.0)
 
 #### Scenario: Index capacity alerts
 
 - **WHEN** monitoring index capacity
 - **THEN** operators SHOULD configure alerts:
-  - Warning: `archerdb_index_utilization_ratio > 0.80` (80% full)
-  - Critical: `archerdb_index_utilization_ratio > 0.90` (90% full)
-  - Emergency: `archerdb_index_utilization_ratio > 0.95` (95% full - near capacity)
+  - Warning: `archerdb_index_load_factor > 0.80` (80% full)
+  - Critical: `archerdb_index_load_factor > 0.90` (90% full)
+  - Emergency: `archerdb_index_load_factor > 0.95` (95% full - near capacity)
 
 #### Scenario: Disk metrics
 
@@ -471,3 +451,56 @@ The system SHALL provide a simple health check endpoint for load balancers.
 - **THEN** the system SHALL provide:
   - `/health/live` - Process is running (always 200 unless crashed)
   - `/health/ready` - Replica is ready to serve requests (200 if primary or healthy backup)
+
+### Requirement: Server-Side Graceful Degradation
+
+The system SHALL degrade gracefully under resource pressure rather than crashing.
+
+#### Scenario: Memory pressure response
+
+- **WHEN** memory usage approaches configured limits
+- **THEN** the system SHALL:
+  - At 80% index capacity: Log warning, increment `archerdb_index_capacity_warning_total`
+  - At 90% index capacity: Log critical, start rejecting new entity inserts
+  - At 95% index capacity: Reject all writes except updates to existing entities
+- **AND** reads SHALL continue to be served
+- **AND** compaction SHALL be prioritized to free space
+
+#### Scenario: Disk I/O pressure response
+
+- **WHEN** NVMe latency exceeds p99 targets (>100μs)
+- **THEN** the system SHALL:
+  - Log warning with latency percentiles
+  - Increment `archerdb_io_latency_exceeded_total`
+  - Continue operating (do NOT fail requests due to slow I/O)
+- **AND** operators should investigate disk health
+- **AND** metric: `archerdb_io_latency_seconds{quantile="0.99"}` histogram
+
+#### Scenario: CPU pressure response
+
+- **WHEN** request processing queues grow
+- **THEN** the system SHALL:
+  - Enforce `query_queue_max` limit (default: 1000 pending queries)
+  - Return `too_many_queries` for new queries when queue full
+  - Prioritize VSR protocol messages over client queries
+  - Log warning: "Query queue depth exceeded threshold"
+- **AND** the system SHALL NOT slow down consensus operations
+
+#### Scenario: Network pressure response
+
+- **WHEN** network bandwidth or latency is constrained
+- **THEN** the system SHALL:
+  - Continue VSR protocol operation (priority messages)
+  - Apply backpressure to client requests (slower responses)
+  - NOT fail silently (return errors rather than hanging)
+- **AND** `archerdb_client_timeout_total` tracks client-visible timeouts
+
+#### Scenario: Degradation state reporting
+
+- **WHEN** the system is in degraded state
+- **THEN** the `/health/ready` endpoint SHALL:
+  - Return HTTP 503 with degradation reason
+  - Response: `{"status": "degraded", "reason": "memory_pressure", "index_usage": 0.92}`
+- **AND** metrics SHALL indicate degradation:
+  - `archerdb_health_status{status="degraded"}` = 1
+  - `archerdb_health_status{status="healthy"}` = 0

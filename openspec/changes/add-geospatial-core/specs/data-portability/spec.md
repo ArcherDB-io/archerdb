@@ -15,6 +15,7 @@ The system SHALL support multiple export formats for data portability and GDPR c
 - **WHEN** exporting location data
 - **THEN** JSON format SHALL be supported:
   - Human-readable location records
+  - **Schema versioning included in metadata**
   - Complete metadata preservation
   - Nested object structure for complex data
   - Standard JSON formatting (RFC 8259)

@@ -21,7 +21,7 @@ ArcherDB's specification underwent three comprehensive review passes with the hi
 
 | Metric | Value |
 |--------|-------|
-| **Specification Files Reviewed** | 36 files |
+| **Specification Files Reviewed** | 31 files |
 | **Requirements Analyzed** | 290+ requirements |
 | **Scenarios Analyzed** | 830+ scenarios |
 | **Lines of Specification** | ~6,500+ lines |
@@ -93,10 +93,10 @@ ArcherDB's specification underwent three comprehensive review passes with the hi
 **Fix Applied:**
 ```zig
 // BEFORE:
-pub fn upsert(self: *PrimaryIndex, entity_id: u128, file_offset: u64, timestamp: u64) !bool;
+pub fn upsert(self: *PrimaryIndex, entity_id: u128, latest_id: u128) !bool;
 
 // AFTER:
-pub fn upsert(self: *PrimaryIndex, entity_id: u128, file_offset: u64, timestamp: u64, ttl_seconds: u32) !bool;
+pub fn upsert(self: *PrimaryIndex, entity_id: u128, latest_id: u128, ttl_seconds: u32) !bool;
 ```
 
 ---
@@ -109,8 +109,8 @@ pub fn upsert(self: *PrimaryIndex, entity_id: u128, file_offset: u64, timestamp:
 **Fix Applied:**
 Added atomic conditional removal:
 ```zig
-// Only remove if timestamp matches (no concurrent upsert occurred)
-if (index.remove_if_timestamp_matches(entity_id, expired_timestamp)) {
+// Only remove if latest_id matches (no concurrent upsert occurred)
+if (index.remove_if_id_matches(entity_id, expired_latest_id)) {
     // Successfully removed expired entry
 }
 ```
@@ -514,7 +514,7 @@ assert(query_result_max * geo_event_size + 1024 < message_body_size_max);
 ### Strengths
 
 ✅ **Exceptional Architecture** - TigerBeetle patterns expertly applied  
-✅ **Comprehensive Coverage** - 36 specs, all aspects covered  
+✅ **Comprehensive Coverage** - 31 specs, core aspects covered  
 ✅ **Performance Realism** - Claims validated mathematically  
 ✅ **Strong Foundations** - VSR, memory, data structures all sound  
 ✅ **Excellent Documentation** - Clear requirements with scenarios  
@@ -596,7 +596,7 @@ assert(query_result_max * geo_event_size + 1024 < message_body_size_max);
 
 | Aspect | ArcherDB Spec | Industry Standard | Assessment |
 |--------|---------------|-------------------|------------|
-| **Completeness** | 36 specs, 290+ requirements | Typical: 10-20 specs | ⭐⭐⭐⭐⭐ Exceptional |
+| **Completeness** | 31 specs, 290+ requirements | Typical: 10-20 specs | ⭐⭐⭐⭐⭐ Exceptional |
 | **Technical Depth** | Algorithm-level detail | Typical: API-level | ⭐⭐⭐⭐⭐ Excellent |
 | **Safety Focus** | Compile-time validation, panic on corruption | Typical: Runtime checks | ⭐⭐⭐⭐⭐ Excellent |
 | **Performance Rigor** | Validated calculations | Typical: Aspirational | ⭐⭐⭐⭐⭐ Excellent |
