@@ -56,10 +56,18 @@
 - [ ] F0.3.5 Implement `pack_id(s2_cell, timestamp) -> u128` helper
 - [ ] F0.3.6 Write comptime layout tests
 
+### F0.4 Constants Configuration
+- [ ] F0.4.1 Review TigerBeetle's `src/constants.zig` for values to keep/modify
+- [ ] F0.4.2 Add geospatial constants: `s2_cell_level`, `s2_cover_max_cells`, `s2_scratch_size`
+- [ ] F0.4.3 Add index constants: `index_entry_size` (64 bytes), `index_capacity`
+- [ ] F0.4.4 Add TTL constants: `ttl_check_interval`, `ttl_batch_size`
+- [ ] F0.4.5 Verify all comptime assertions pass with new constants
+
 **Exit Criteria:**
 - [ ] `zig build` succeeds with renamed entry points
 - [ ] All team members pass VSR knowledge check
 - [ ] GeoEvent struct compiles with correct layout
+- [ ] Constants compile with all comptime assertions passing
 
 ---
 
@@ -129,10 +137,20 @@
 - [ ] F2.3.3 Expose index metrics to Prometheus endpoint
 - [ ] F2.3.4 Add alert thresholds for tombstone ratio
 
+### F2.4 TTL Implementation
+- [ ] F2.4.1 Create `src/ttl.zig` (NEW FILE - not in TigerBeetle)
+- [ ] F2.4.2 Implement lazy TTL expiration check during lookups
+- [ ] F2.4.3 Implement background TTL scanner with configurable batch size
+- [ ] F2.4.4 Integrate TTL checks with compaction (skip expired during compaction)
+- [ ] F2.4.5 Add TTL metrics: `expired_count`, `expiration_rate`, `avg_ttl_remaining`
+- [ ] F2.4.6 Implement TTL tombstone generation for expired entries
+- [ ] F2.4.7 Write TTL tests (lazy expiration, background scan, compaction integration)
+
 **Exit Criteria:**
 - [ ] UUID lookups complete in <500μs p99
 - [ ] Index survives crash/restart via checkpoint
 - [ ] Tombstone monitoring working
+- [ ] TTL expiration verified (lazy + background)
 
 ---
 
@@ -295,7 +313,7 @@ rather than "build from scratch."
   - index_entry_size (64 bytes - cache line aligned)
 - [ ] 1.2 Create `src/geo_event.zig` with 128-byte `GeoEvent` extern struct
 - [ ] 1.3 Add comptime assertions: @sizeOf == 128, @alignOf == 16, no_padding()
-- [ ] 1.4 Create `GeoEventFlags` as packed struct(u16) with padding bits
+- [ ] 1.4 Create `GeoEventFlags` as packed struct(u32) with padding bits
 - [ ] 1.5 Create 256-byte `BlockHeader` extern struct with dual checksums
 - [ ] 1.6 Implement `pack_id(s2_cell, timestamp) -> u128` helper
 - [ ] 1.7 Implement coordinate conversion (nanodegrees <-> float)
@@ -536,7 +554,12 @@ rather than "build from scratch."
 - [ ] 19.10 Test all TigerBeetle optimizations for failover
 - [ ] 19.11 Validate replication lag (target: <10ms same region)
 
-## Dependencies
+## Dependencies (SUPERSEDED - Reference Only)
+
+> **Note:** This dependency graph is for the build-from-scratch approach.
+> For the fork approach, see F-phase dependencies (F0→F1→F2→F3→F4→F5 is strictly sequential).
+> Sections 20.x-25.x were planned placeholders; in the fork approach, these concerns are
+> addressed by TigerBeetle's existing infrastructure or covered in F5 (Production Hardening).
 
 ```
 1.x Core Types (no deps)
@@ -635,7 +658,12 @@ rather than "build from scratch."
 
 ---
 
-## Implementation Phases
+## Implementation Phases (SUPERSEDED - Reference Only)
+
+> **⚠️ SUPERSEDED:** These phases were designed for the build-from-scratch approach.
+> The project now uses the **TigerBeetle Fork Strategy** (Phases F0-F5 above).
+> Keep this section as reference for understanding WHAT needs to be built, but
+> refer to F-phases for HOW to implement using the fork approach.
 
 The implementation SHALL proceed in ordered phases with explicit entry/exit criteria.
 
@@ -793,9 +821,70 @@ Exit Gate:
 
 ---
 
-## Requirement Traceability Matrix
+## Requirement Traceability Matrix (Fork Approach)
 
-Cross-reference between specifications and implementation tasks.
+Cross-reference between specifications and F-phase implementation tasks.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                   FORK APPROACH TRACEABILITY MATRIX                                  │
+├───────────────────────────────┬─────────────────────────┬───────────────────────────┤
+│ Specification                 │ Key Requirements        │ F-Phase Tasks             │
+├───────────────────────────────┼─────────────────────────┼───────────────────────────┤
+│ data-model/spec.md            │ GeoEvent (128 bytes)    │ F0.3.1, F0.3.2, F0.3.3    │
+│                               │ Composite ID (u128)     │ F0.3.5                    │
+│                               │ GeoEventFlags (u32)     │ F0.3.4                    │
+├───────────────────────────────┼─────────────────────────┼───────────────────────────┤
+│ storage-engine/spec.md        │ Superblock              │ (KEEP from TigerBeetle)   │
+│                               │ WAL                     │ (KEEP from TigerBeetle)   │
+│                               │ LSM Tree                │ (ADAPT for GeoEvent)      │
+├───────────────────────────────┼─────────────────────────┼───────────────────────────┤
+│ hybrid-memory/spec.md         │ RAM Index (64B entry)   │ F2.1.1, F2.1.2, F2.1.3    │
+│                               │ LWW Semantics           │ F2.1.6, F2.1.7            │
+│                               │ Incremental Checkpoint  │ F2.2.1-F2.2.6             │
+│                               │ TTL Expiration          │ F2.4.1-F2.4.7             │
+├───────────────────────────────┼─────────────────────────┼───────────────────────────┤
+│ replication/spec.md           │ VSR Core                │ (KEEP from TigerBeetle)   │
+│                               │ View Changes            │ (KEEP from TigerBeetle)   │
+│                               │ State Sync              │ (KEEP from TigerBeetle)   │
+│                               │ Client Sessions         │ (KEEP from TigerBeetle)   │
+├───────────────────────────────┼─────────────────────────┼───────────────────────────┤
+│ query-engine/spec.md          │ Three-Phase Model       │ F1.1.3, F1.1.4, F1.1.5    │
+│                               │ S2 Integration          │ F3.1.1-F3.1.6             │
+│                               │ UUID Lookup             │ F2.1.5 (via RAM index)    │
+│                               │ Radius Query            │ F3.3.2                    │
+│                               │ Polygon Query           │ F3.3.3                    │
+├───────────────────────────────┼─────────────────────────┼───────────────────────────┤
+│ client-protocol/spec.md       │ Binary Protocol         │ (ADAPT from TigerBeetle)  │
+│                               │ Operation Codes         │ F1.2.1, F1.2.2            │
+│                               │ Batch Operations        │ (KEEP from TigerBeetle)   │
+├───────────────────────────────┼─────────────────────────┼───────────────────────────┤
+│ security/spec.md              │ mTLS                    │ F5.4.1-F5.4.3 (reuse TB)  │
+├───────────────────────────────┼─────────────────────────┼───────────────────────────┤
+│ observability/spec.md         │ Prometheus Metrics      │ F5.2.1-F5.2.3             │
+│                               │ Health Endpoints        │ F5.2.4                    │
+├───────────────────────────────┼─────────────────────────┼───────────────────────────┤
+│ ttl-retention/spec.md         │ TTL on GeoEvent         │ F0.3.4 (flags), F2.4.x    │
+│                               │ Lazy Expiration         │ F2.4.2                    │
+│                               │ Compaction Cleanup      │ F2.4.4                    │
+├───────────────────────────────┼─────────────────────────┼───────────────────────────┤
+│ testing-simulation/spec.md    │ VOPR Simulator          │ F4.1.1-F4.1.4 (adapt TB)  │
+│                               │ Fault Injection         │ (KEEP from TigerBeetle)   │
+│                               │ Workload Generators     │ F4.1.2                    │
+├───────────────────────────────┼─────────────────────────┼───────────────────────────┤
+│ implementation-guide/spec.md  │ Fork Strategy           │ F0.1.1 (Day 1 commands)   │
+│                               │ TigerBeetle Attribution │ F5.5.5                    │
+└───────────────────────────────┴─────────────────────────┴───────────────────────────┘
+```
+
+---
+
+## Requirement Traceability Matrix (Reference - Build From Scratch)
+
+> **⚠️ SUPERSEDED:** This matrix is for the build-from-scratch approach.
+> See the Fork Approach matrix above for current task mappings.
+
+Cross-reference between specifications and implementation tasks (old numbering).
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────────┐
@@ -861,32 +950,77 @@ Cross-reference between specifications and implementation tasks.
 
 ---
 
-## Critical Path
+## Critical Path (Fork Approach)
 
-The minimum set of tasks required for a functional system.
+The minimum set of tasks required for a functional system using the TigerBeetle fork approach.
 
 ```
-CRITICAL PATH (Minimum Viable Product)
-══════════════════════════════════════
+CRITICAL PATH (Fork MVP) - 38 Weeks Total
+═════════════════════════════════════════
 
-Week 1-2:   1.2→1.3→1.6 (GeoEvent struct, composite ID)
+Phase F0 (Weeks 1-6): Foundation
+────────────────────────────────
+F0.1.1→F0.1.5 Fork & verify TigerBeetle builds/tests
             ↓
-Week 3-4:   4.1→5.1→6.1→6.2→6.5 (Checksum, I/O, Data File)
+F0.2.1→F0.2.6 Team ramp-up (VSR understanding - DO NOT SKIP)
             ↓
-Week 5-6:   7.8→7.9→7.11 (LSM tables, compaction)
+F0.3.1→F0.3.6 GeoEvent struct (128B, replaces Account)
             ↓
-Week 7-9:   8.1→8.5→8.6→8.7→9.1→9.4 (VSR prepare/commit, view change)
-            ↓
-Week 10-11: 11.1→11.5 (Commit pipeline, execute stage)
-            ↓
-Week 12-14: 3.1→3.5→3.6→12.3→13.7→13.8 (Index, S2, queries)
-            ↓
-Week 15-16: 15.1→15.2→18.1→18.2 (Protocol, CLI)
-            ↓
-Week 17-18: 14.1→14.8→19.2→19.3 (Simulator, benchmarks)
+F0.4.1→F0.4.5 Constants configuration
 
-MVP Deliverable: Single-tenant cluster with insert, lookup, radius query
+Phase F1 (Weeks 7-14): State Machine Replacement
+────────────────────────────────────────────────
+F1.1.1→F1.1.7 geo_state_machine.zig (prepare/prefetch/commit/compact/open)
+            ↓
+F1.2.1→F1.2.3 Operation enum modification
+            ↓
+F1.3.1→F1.3.4 Single-node verification
+
+Phase F2 (Weeks 15-20): RAM Index
+────────────────────────────────
+F2.1.1→F2.1.7 ram_index.zig (Robin Hood, 64B IndexEntry)
+            ↓
+F2.2.1→F2.2.6 Index checkpointing
+            ↓
+F2.4.1→F2.4.7 TTL implementation
+
+Phase F3 (Weeks 21-26): S2 Geometry
+───────────────────────────────────
+F3.1.1→F3.1.6 S2 library integration
+            ↓
+F3.2.1→F3.2.5 Golden vector determinism validation (CRITICAL)
+            ↓
+F3.3.1→F3.3.6 Spatial query implementation
+
+Phase F4 (Weeks 27-32): Replication Testing
+───────────────────────────────────────────
+F4.1.1→F4.1.4 VOPR adaptation
+            ↓
+F4.2.1→F4.2.6 Cluster testing (3-node, 5-node, partitions)
+            ↓
+F4.3.1→F4.3.4 Safety verification (10M+ ops)
+
+Phase F5 (Weeks 33-38): Production Hardening
+────────────────────────────────────────────
+F5.1.1→F5.1.6 Performance validation
+            ↓
+F5.2.1→F5.2.5 Observability
+            ↓
+F5.5.5 TigerBeetle attribution (legal requirement)
+
+MVP Deliverable: Distributed geospatial cluster with insert, lookup, radius/polygon queries
 ```
+
+### Critical Milestones
+
+| Week | Milestone | Blocker If Missed |
+|------|-----------|-------------------|
+| 6 | GeoEvent compiles, team understands VSR | Can't proceed to state machine |
+| 14 | Single-node writes/reads work | Can't proceed to index |
+| 20 | UUID lookups <500μs | Query performance unvalidated |
+| 26 | S2 golden vectors pass | Non-deterministic replication |
+| 32 | VOPR 10M+ ops pass | Safety unverified |
+| 38 | Performance targets met | Not production ready |
 
 ---
 
