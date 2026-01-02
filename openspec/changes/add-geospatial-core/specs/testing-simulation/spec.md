@@ -91,7 +91,7 @@ The system SHALL use a two-phase testing approach: safety phase followed by live
 
 - **WHEN** the safety phase runs
 - **THEN** faults SHALL be injected aggressively
-- **AND** cluster may become unavailable
+- **AND** cluster MAY become unavailable
 - **AND** invariants SHALL be checked continuously
 - **AND** no data corruption or inconsistency is tolerated
 
@@ -387,7 +387,7 @@ The system SHALL include comprehensive test scenarios for geospatial operations.
   - Minimum polygon (3 vertices - triangle)
   - Maximum polygon (10,000 vertices)
   - Concave polygons
-  - Self-intersecting polygons (should reject or correct)
+  - Self-intersecting polygons (SHALL reject or correct)
   - Polygon crossing anti-meridian
   - Polygon containing a pole
   - Very thin "sliver" polygons (numerical precision test)
@@ -399,8 +399,8 @@ The system SHALL include comprehensive test scenarios for geospatial operations.
 - **THEN** test cases SHALL include:
   - Exactly ±90,000,000,000 nanodegrees latitude (boundary)
   - Exactly ±180,000,000,000 nanodegrees longitude (boundary)
-  - One nanodegree beyond valid range (should reject)
-  - NaN-equivalent patterns in i64 (should reject)
+  - One nanodegree beyond valid range (SHALL reject)
+  - NaN-equivalent patterns in i64 (SHALL reject)
   - Altitude extremes (Mariana Trench to Everest + margin)
 
 ### Requirement: TTL Testing Scenarios
@@ -439,7 +439,7 @@ The system SHALL include test scenarios for security features.
   - Certificate rotation via SIGHUP during TLS handshake
   - Client with revoked certificate (if CRL/OCSP enabled)
   - Mismatched cluster ID in certificate
-  - Self-signed certificate (should reject in production mode)
+  - Self-signed certificate (SHALL reject in production mode)
   - Expired CA certificate
 
 #### Scenario: Rate limiting validation
@@ -450,3 +450,12 @@ The system SHALL include test scenarios for security features.
   - Slow loris attack (slow request sending)
   - Large batch near message_size_max
   - Concurrent queries exceeding CPU budget
+
+### Related Specifications
+
+- See `specs/replication/spec.md` for VSR protocol to be tested (view changes, state sync)
+- See `specs/storage-engine/spec.md` for storage fault injection targets (superblock, WAL, grid)
+- See `specs/query-engine/spec.md` for query operations to be tested deterministically
+- See `specs/hybrid-memory/spec.md` for index concurrency testing requirements
+- See `specs/error-codes/spec.md` for error scenarios to test
+- See `specs/observability/spec.md` for metrics to verify during simulation

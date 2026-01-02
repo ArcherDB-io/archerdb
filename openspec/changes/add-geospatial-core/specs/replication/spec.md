@@ -30,9 +30,30 @@ The system SHALL implement Viewstamped Replication (VSR) with Flexible Paxos quo
 
 - **WHEN** quorums are configured
 - **THEN** `quorum_replication + quorum_view_change > replica_count` MUST hold
-- **AND** `quorum_replication` can be < majority for lower latency
-- **AND** `quorum_view_change` can be > majority for safety
+- **AND** `1 <= quorum_replication <= replica_count` MUST hold
+- **AND** `1 <= quorum_view_change <= replica_count` MUST hold
+- **AND** for `replica_count = 1`, quorums MUST be `quorum_replication = 1` and `quorum_view_change = 1`
+- **AND** `quorum_replication` MAY be < majority for lower latency
+- **AND** `quorum_view_change` MAY be > majority for safety
 - **AND** quorum intersection property ensures consistency
+
+#### Scenario: Quorum configuration table for all replica counts
+
+- **WHEN** configuring quorums for specific replica counts
+- **THEN** the following valid configurations SHALL be used:
+
+| Replica Count | Valid Quorum Configs (qr, qvc) | Recommended | Notes |
+|---------------|-------------------------------|-------------|-------|
+| 1 | (1, 1) | (1, 1) | No fault tolerance |
+| 3 | (2, 2), (2, 3), (3, 2), (3, 3) | (2, 2) | Tolerates 1 failure; (2,2) balances latency/safety |
+| 5 | (3, 3), (3, 4), (4, 3), (3, 5), (5, 3) | (3, 3) | Tolerates 2 failures; (3,3) is default |
+| 6 | (3, 4), (4, 3), (4, 4), (3, 5), (5, 3) | (4, 3) | Tolerates 2 failures; (4,3) for lower write latency |
+
+- **AND** validation rule: For each config, verify `qr + qvc > replica_count`
+  - Example for 6 replicas: 4 + 3 = 7 > 6 ✓
+  - Invalid for 6 replicas: (3, 3) because 3 + 3 = 6, NOT > 6 ✗
+- **AND** defaults (3, 3) work for 1-5 replicas but MUST be overridden for 6-replica clusters
+- **AND** the system SHALL reject format attempts where `qr + qvc ≤ replica_count`
 
 #### Scenario: Primary selection
 
@@ -59,6 +80,7 @@ The system SHALL use a fixed 256-byte message header with dual checksums for all
   - `view: u32` - Current view number
   - `command: Command` - Protocol command type
   - `replica: u8` - Sending replica index
+- **AND** this VSR header applies to inter-replica traffic only; the client-facing header is specified in `specs/client-protocol/spec.md`
 
 #### Scenario: Protocol commands
 
@@ -443,7 +465,7 @@ The system SHALL support two modes of catching up: WAL repair and state sync.
   ```
 - **AND** during state sync, replica cannot serve requests
 - **AND** cluster remains available (other replicas serve traffic)
-- **AND** operators should monitor:
+- **AND** operators SHALL monitor:
   - `archerdb_vsr_state_sync_duration_seconds`: Histogram of state sync time
   - `archerdb_vsr_view_changes_total`: Count of view changes
   - `archerdb_vsr_view_change_duration_seconds`: Histogram of time to complete view change
@@ -502,7 +524,7 @@ The system SHALL implement Byzantine-fault-tolerant clock synchronization using 
   4. The system continues operating with degraded clock accuracy
   5. Operations remain linearizable (timestamps still monotonic)
 - **AND** this is a DEGRADED state requiring operator intervention
-- **AND** operator should investigate: NTP misconfiguration, hardware clock drift, network partitions
+- **AND** operator SHALL investigate: NTP misconfiguration, hardware clock drift, network partitions
 
 #### Scenario: Clock outlier detection
 
@@ -866,7 +888,7 @@ The system SHALL document realistic throughput and latency targets for cross-ava
   - At 1M events/sec: ~22 TB/day = ~$220/day per replica link
   - With 3 replicas: ~$440/day cross-AZ transfer cost
   ```
-- **AND** operators SHOULD factor bandwidth costs into deployment planning
+- **AND** operators SHALL factor bandwidth costs into deployment planning
 - **AND** same-AZ deployment eliminates cross-AZ transfer costs
 
 #### Scenario: Recommended deployment configurations
@@ -948,6 +970,379 @@ The system SHALL support replacing a failed replica with a new one.
   - Sync time: minutes (full checkpoint download)
 - **AND** cluster remains available during sync
 
+### Requirement: Byzantine Failure Detection and Recovery
+
+The system SHALL detect and recover from Byzantine failures including clock skew, corrupted messages, and malicious replicas.
+
+#### Scenario: Clock skew detection (Marzullo's algorithm)
+
+- **WHEN** replicas exchange ping/pong messages for clock synchronization
+- **THEN** the system SHALL use Marzullo's algorithm to detect Byzantine clocks:
+  1. Collect clock samples from all replicas (via ping/pong)
+  2. Build interval array: `[local_time - rtt/2, local_time + rtt/2]` per replica
+  3. Find intersection of f+1 intervals (where f = max Byzantine replicas)
+  4. Reject outliers outside the intersection
+- **AND** if fewer than f+1 replicas provide consistent intervals:
+  - Log critical error: "Byzantine clock skew detected"
+  - Refuse to start (cannot trust time)
+  - Operator must investigate and fix system clocks
+
+#### Scenario: Maximum tolerable clock skew
+
+- **WHEN** operating with clock skew between replicas
+- **THEN** the system SHALL tolerate:
+  - Maximum skew: ±500ms between any two replicas
+  - If skew > 500ms: Marzullo's algorithm rejects outlier
+  - If skew > 1000ms: Cluster refuses to operate
+- **AND** operators SHALL use NTP or PTP for clock synchronization
+- **AND** clock skew is monitored via metric: `archerdb_clock_skew_ms{replica="<id>"}`
+
+#### Scenario: Corrupted message detection
+
+- **WHEN** a replica receives a message
+- **THEN** it SHALL validate checksums:
+  1. Verify `checksum` (header MAC)
+  2. Verify `checksum_body` (body MAC)
+  3. If either fails: drop message, increment `archerdb_checksum_failures_total`
+  4. Do NOT respond to corrupted messages
+- **AND** corruption is assumed to be network/storage, not malicious
+- **AND** persistent corruption triggers replica panic (safety over liveness)
+
+#### Scenario: Hash chain break detection
+
+- **WHEN** receiving a Prepare message
+- **THEN** the system SHALL verify:
+  - `prepare.parent == checksum(journal[op-1])`
+  - If mismatch in same view: PANIC (fork detected)
+  - If mismatch in new view: acceptable (view change)
+- **AND** hash chain break indicates:
+  - Byzantine primary (forking prepares)
+  - Data corruption
+  - Implementation bug
+- **AND** panic ensures safety (halt rather than diverge)
+
+#### Scenario: Malicious primary detection
+
+- **WHEN** a primary sends conflicting prepares (fork)
+- **THEN** backups SHALL detect via hash chain:
+  - Backup receives prepare with op=N
+  - Later receives different prepare with op=N (same slot, different content)
+  - Hash chain check fails: `new_prepare.parent != old_prepare.parent`
+  - Backup triggers view change immediately
+- **AND** new view excludes the Byzantine primary
+- **AND** this prevents split-brain
+
+#### Scenario: Network partition scenarios
+
+- **WHEN** network partition isolates replicas
+- **THEN** the system SHALL handle various partition scenarios:
+
+  **Scenario A: Primary isolated**
+  - Primary: Cannot reach quorum_replication backups
+  - Primary: Stops accepting writes, returns `cluster_unavailable`
+  - Backups: Detect missing heartbeats, trigger view change
+  - Backups: Elect new primary, resume operations
+  - Result: Availability maintained (backups have quorum)
+
+  **Scenario B: Minority partition (1 out of 3)**
+  - Isolated replica: Cannot participate in quorum
+  - Isolated replica: Transitions to recovering mode
+  - Majority partition (2 replicas): Continue operating
+  - Result: Availability maintained
+
+  **Scenario C: Split-brain partition (2+2 out of 4 replicas)**
+  - Neither partition has quorum (need 3 for quorum_view_change)
+  - Both partitions: Cannot elect new primary
+  - Both partitions: Refuse writes, return `cluster_unavailable`
+  - Result: Cluster unavailable until partition heals
+  - **This is CORRECT behavior** (safety over availability)
+
+#### Scenario: Partition healing
+
+- **WHEN** network partition heals
+- **THEN** isolated replicas SHALL:
+  1. Reconnect to majority partition
+  2. Receive current view number via ping
+  3. If behind: trigger state sync (request_headers, request_prepare)
+  4. Replay missing prepares from other replicas
+  5. Catch up to commit_max
+  6. Resume normal operation
+- **AND** healing time: <10 seconds (depends on lag)
+
+#### Scenario: Asymmetric partition (A→B works, B→A fails)
+
+- **WHEN** replica A can send to B, but B cannot send to A
+- **THEN** the system SHALL:
+  - A sends Prepare, B receives it
+  - B sends PrepareOk, but A does NOT receive it
+  - A: Timeout waiting for PrepareOk from B
+  - A: Counts B as unresponsive (missing from quorum)
+  - If A cannot reach quorum: trigger view change
+- **AND** asymmetric partitions are treated as full partitions
+
+#### Scenario: Cascading view changes (flapping)
+
+- **WHEN** network is unstable causing repeated view changes
+- **THEN** the system SHALL:
+  - Detect flapping: >3 view changes within 30 seconds
+  - Increase heartbeat timeout exponentially (backoff)
+  - Log warning: "Network instability detected - view flapping"
+  - Continue operating but with degraded performance
+- **AND** exponential backoff prevents perpetual view changes
+- **AND** metric: `archerdb_view_flapping_detected_total`
+
+#### Scenario: All replicas down (total cluster failure)
+
+- **WHEN** all replicas crash simultaneously (power loss, catastrophe)
+- **THEN** recovery procedure SHALL be:
+  1. Restore power/infrastructure
+  2. Start all replicas simultaneously
+  3. Each replica reads its superblock (quorum read)
+  4. Replicas exchange VSR state via ping
+  5. Replica with highest (view, op) becomes primary
+  6. Other replicas sync state from primary
+  7. Cluster resumes operation
+- **AND** recovery time: <60 seconds (depends on state sync)
+- **AND** no data loss if superblocks intact
+
+#### Scenario: Quorum loss (majority replicas failed)
+
+- **WHEN** quorum is lost (e.g., 2 out of 3 replicas down)
+- **THEN** the remaining replica(s) SHALL:
+  - Refuse writes (cannot achieve quorum)
+  - Return `cluster_unavailable` to clients
+  - Serve stale reads (if configured, see backup-restore spec)
+  - Wait for quorum to be restored
+- **AND** this ensures safety (no split-brain)
+- **AND** operator must restore failed replicas
+
+#### Scenario: Slow replica degradation
+
+- **WHEN** a replica is slow (disk degradation, CPU saturation)
+- **THEN** the system SHALL:
+  - Primary: Timeout waiting for PrepareOk from slow replica
+  - Primary: Continue if quorum_replication reached (slow replica excluded)
+  - Slow replica: Falls behind in op_number
+  - Slow replica: Eventually triggers state sync to catch up
+- **AND** slow replicas do NOT block fast path
+- **AND** metric: `archerdb_replica_lag_operations{replica="<id>"}`
+
+#### Scenario: Thundering herd on primary election
+
+- **WHEN** primary fails and multiple replicas timeout simultaneously
+- **THEN** view change SHALL be coordinated:
+  - All backups increment view and send StartViewChange
+  - New primary (view % replica_count) receives quorum_view_change messages
+  - New primary sends DoViewChange request
+  - Backups respond with log state
+  - New primary selects canonical log and broadcasts StartView
+  - Only one primary elected (deterministic: view % replica_count)
+- **AND** no thundering herd (election is deterministic, not race-based)
+
+#### Scenario: Replica crash during view change
+
+- **WHEN** a replica crashes during active view change
+- **THEN** the system SHALL:
+  - Other replicas: Continue view change protocol
+  - If crashed replica was new primary: view change stalls
+  - If view change stalls: timeout triggers new view change (view+1)
+  - Eventually succeeds when a healthy replica becomes primary
+- **AND** bounded liveness: view change completes within (max_timeouts × heartbeat_timeout)
+
+#### Scenario: Concurrent view changes (view racing)
+
+- **WHEN** multiple replicas trigger view changes to different views
+- **THEN** the system SHALL:
+  - Each replica tracks highest view seen
+  - Replicas converge to highest view number
+  - View with quorum_view_change messages wins
+  - Lower views are abandoned
+- **AND** protocol guarantees eventual convergence
+
+#### Scenario: State sync during high write rate
+
+- **WHEN** a lagging replica syncs while writes continue
+- **THEN** the system SHALL:
+  - Replica requests headers for missing ops
+  - Primary sends headers (small, fast)
+  - Replica requests prepares for required ops
+  - Primary sends prepares (larger, slower)
+  - Replica replays prepares to catch up
+  - If replica falls further behind during sync: request checkpoint
+- **AND** sync does NOT pause cluster writes
+- **AND** sync uses separate message channel (doesn't block writes)
+
+#### Scenario: Maximum replication lag tolerance
+
+- **WHEN** a backup falls behind
+- **THEN** the system SHALL tolerate:
+  - Lag < `journal_slot_count` ops: repair via WAL (request_headers/request_prepare)
+  - Lag >= `journal_slot_count` ops: full state sync required (checkpoint + recent prepares)
+  - With `journal_slot_count=8192` and 1M ops/sec: ~8 seconds of lag tolerable
+- **AND** lag beyond WAL requires expensive checkpoint transfer
+- **AND** metric: `archerdb_state_sync_checkpoint_triggered_total`
+
+### Requirement: Non-Byzantine Fault Model
+
+The system SHALL clarify the fault model and which Byzantine failures are NOT tolerated.
+
+#### Scenario: Tolerated faults
+
+- **WHEN** defining the fault model
+- **THEN** the system SHALL tolerate:
+  - **Crash failures**: Replica halts (clean or hard crash)
+  - **Network failures**: Partitions, delays, drops, reordering
+  - **Clock skew**: ±500ms (detected and rejected beyond this)
+  - **Storage corruption**: Detected via checksums, triggers panic
+  - **Slow replicas**: Timeouts exclude from quorum
+- **AND** these are the **only** tolerated faults
+
+#### Scenario: NOT tolerated Byzantine behaviors
+
+- **WHEN** defining Byzantine threats
+- **THEN** the system SHALL **NOT** tolerate:
+  - **Arbitrary state corruption**: Replicas lie about state
+  - **Malicious replicas**: Actively attack protocol
+  - **Colluding replicas**: Multiple replicas cooperate to violate safety
+  - **Silent data corruption**: Writes succeed but data is wrong
+- **AND** TigerBeetle's VSR is **NOT** BFT (Byzantine Fault Tolerant)
+- **AND** defense against Byzantine failures:
+  - Checksums (detect corruption)
+  - Hash chains (detect forks)
+  - Clock sync (detect skew)
+  - Panic on invariant violations (halt rather than propagate corruption)
+- **AND** operators MUST secure replica infrastructure (physical and network access)
+
+#### Scenario: Security perimeter assumption
+
+- **WHEN** deploying the cluster
+- **THEN** the security model SHALL assume:
+  - **Trusted replicas**: All replicas run authenticated code
+  - **Secured network**: mTLS between replicas prevents MITM
+  - **Physical security**: Attacker cannot directly modify replica state
+  - **Operator trust**: Operators have legitimate access
+- **AND** if these assumptions are violated:
+  - Cluster may behave incorrectly
+  - Data integrity may be compromised
+  - Operator must investigate and remediate
+- **AND** BFT (Byzantine Fault Tolerance) is a **non-goal** for v1
+
+### Requirement: Rare Error Scenarios and Edge Cases
+
+The system SHALL handle rare but possible error conditions in VSR protocol execution.
+
+#### Scenario: Corrupt StartView message during view change
+
+- **WHEN** new primary broadcasts StartView to complete view change
+- **AND** StartView message is corrupted in transit (checksum fails)
+- **THEN** receiving backup SHALL:
+  1. Detect checksum mismatch (header or body)
+  2. Drop the corrupt StartView message
+  3. NOT transition to new view
+  4. Continue in view_change status
+  5. Eventually timeout waiting for StartView (view_change_timeout)
+  6. Trigger new view change to view+1
+- **AND** this ensures safety (don't accept corrupt view state)
+- **AND** metric: `archerdb_corrupt_messages_total{command="start_view"}`
+
+#### Scenario: Checkpoint corruption during write
+
+- **WHEN** writing a checkpoint to disk
+- **AND** power loss occurs mid-write (torn write)
+- **THEN** on recovery:
+  1. Read all checkpoint copies (superblock quorum read)
+  2. Each copy has sequence number and checksum
+  3. Find highest sequence with valid checksum
+  4. If all copies corrupted: use previous checkpoint (sequence-1)
+  5. If no valid checkpoint: rebuild from WAL or panic
+- **AND** superblock redundancy (6 copies) makes total loss extremely rare
+- **AND** metric: `archerdb_checkpoint_corruption_total`
+
+#### Scenario: Grid block repair failure (all replicas missing block)
+
+- **WHEN** a replica needs grid block B for compaction
+- **AND** replica sends request_blocks message to all other replicas
+- **AND** NO replica has block B (all report "block not found")
+- **THEN** the requesting replica SHALL:
+  1. Log critical error: "Grid block {} missing on all replicas", block_addr
+  2. Mark block as permanently lost
+  3. Trigger operational alert (data loss)
+  4. If block was for active query: return error to client
+  5. If block was for compaction: skip this block, continue
+- **AND** this indicates:
+  - Disk corruption on all replicas (extremely rare)
+  - Or logic bug (block address never existed)
+- **AND** prevention: Regular scrubbing, block checksum verification
+
+#### Scenario: WAL prepare repair impossible (op too old)
+
+- **WHEN** backup needs prepare at op=N for state sync
+- **AND** op=N has been overwritten in WAL (journal wrapped)
+- **AND** op=N is not in any replica's WAL
+- **THEN** the system SHALL:
+  1. Backup requests checkpoint (full state transfer)
+  2. Primary sends latest checkpoint
+  3. Backup loads checkpoint (expensive)
+  4. Backup replays prepares from checkpoint_op to commit_max
+  5. Backup catches up
+- **AND** this is expensive but ensures eventual consistency
+- **AND** metric: `archerdb_checkpoint_transfers_total`
+
+#### Scenario: Duplicate Prepare detection (hash chain intact)
+
+- **WHEN** a backup receives duplicate Prepare for same op
+- **AND** both prepares have identical content (not a fork)
+- **THEN** the backup SHALL:
+  1. Detect duplicate: `journal[op] already exists with same checksum`
+  2. Ignore duplicate (idempotent)
+  3. Send PrepareOk again (replica may have lost previous PrepareOk)
+  4. Increment metric: `archerdb_duplicate_prepares_total`
+- **AND** this is normal during network retransmissions
+
+#### Scenario: PrepareOk timeout (backup unreachable)
+
+- **WHEN** primary sends Prepare to backup
+- **AND** backup does NOT respond with PrepareOk within timeout (5s default)
+- **THEN** primary SHALL:
+  1. Count backup as unresponsive for this prepare
+  2. If quorum_replication reached without this backup: continue
+  3. If quorum NOT reached: retry sending Prepare
+  4. After max retries (3): exclude backup from quorum count
+  5. If quorum still not reachable: trigger view change
+- **AND** metric: `archerdb_prepare_timeouts_total{replica="<id>"}`
+
+#### Scenario: Client session eviction during request
+
+- **WHEN** a client sends request
+- **AND** its session is evicted (too many concurrent sessions)
+- **THEN** the system SHALL:
+  1. Primary detects session_id not in active sessions
+  2. Return error: `session_expired` (204)
+  3. Client receives error, creates new session
+  4. Client retries request with new session
+- **AND** eviction policy: LRU (least recently used sessions)
+- **AND** metric: `archerdb_session_evictions_total`
+
+#### Scenario: Message size exceeded during multi-batch encoding
+
+- **WHEN** encoding multi-batch reply
+- **AND** aggregate response exceeds message_size_max
+- **THEN** the system SHALL:
+  1. Truncate results at message boundary
+  2. Set `partial_result = true` in reply header
+  3. Include batch_count of successfully encoded batches
+  4. Client SHALL page remaining results with pagination cursor
+- **AND** this is already specified in query-engine spec, reinforced here
+
+### Related Specifications
+
+- See `specs/error-codes/spec.md` for VSR error code enumeration (201-209)
+- See `specs/observability/spec.md` for VSR metrics (view, op_number, view_changes)
+- See `specs/storage-engine/spec.md` for WAL and superblock structures
+- See `specs/testing-simulation/spec.md` for network partition and crash fault injection
+- See `specs/security/spec.md` for mTLS authentication between replicas
+- See `specs/backup-restore/spec.md` for disaster recovery procedures
+
 ---
 
 ## Non-Goals and Future Work
@@ -964,7 +1359,7 @@ Cross-region synchronous replication is **NOT** included in v1 scope. This secti
 
 **v1 Disaster Recovery Strategy:**
 
-For cross-region durability in v1, operators should use S3/GCS backup:
+For cross-region durability in v1, operators SHALL use S3/GCS backup:
 
 ```
 v1 DR Architecture:

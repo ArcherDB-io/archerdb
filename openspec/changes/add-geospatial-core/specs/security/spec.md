@@ -221,7 +221,7 @@ The system SHALL support certificate rotation without service interruption.
   1. Generate new certificates for all replicas (signed by same CA)
   2. Rotate one replica at a time (rolling update)
   3. Wait for health check to pass before rotating next replica
-  4. All replicas should complete rotation within certificate overlap window
+  4. All replicas SHALL complete rotation within certificate overlap window
 - **AND** VSR continues operating throughout (no view changes needed)
 
 #### Scenario: Emergency certificate revocation
@@ -397,7 +397,7 @@ The system SHALL use a cluster ID to prevent cross-cluster communication acciden
 #### Scenario: Cluster ID in certificates
 
 - **WHEN** issuing certificates for a cluster
-- **THEN** the CA SHOULD:
+- **THEN** the CA SHALL:
   - Encode cluster ID in certificate (e.g., SAN URI: `archerdb://cluster-<uuid>`)
   - Allow server to verify peer belongs to same cluster
   - Prevent accidental connection to wrong cluster
@@ -545,3 +545,12 @@ The system SHALL follow industry security standards for database systems.
   - Security best practices (key rotation, access control)
   - Threat model (what ArcherDB protects against)
   - Incident response procedures (compromise detection, recovery)
+
+### Related Specifications
+
+- See `specs/client-protocol/spec.md` for client connection and authentication flow
+- See `specs/replication/spec.md` for replica-to-replica mTLS and cluster_id verification
+- See `specs/error-codes/spec.md` for authentication error codes (400-499 range)
+- See `specs/observability/spec.md` for authentication metrics and audit logging
+- See `specs/configuration/spec.md` for TLS configuration flags and certificate paths
+- See `specs/io-subsystem/spec.md` for TCP connection security (TLS integration)

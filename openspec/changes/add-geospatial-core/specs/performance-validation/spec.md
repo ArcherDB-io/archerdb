@@ -395,3 +395,10 @@ The system SHALL establish a framework for ongoing performance optimization.
   - **Optimization Cost**: Effort and resources invested in optimizations
   - **ROI Analysis**: Return on investment for optimization efforts
 - **AND** tracking SHALL quantify optimization effectiveness
+
+### Related Specifications
+
+- See `specs/query-engine/spec.md` for performance SLA targets
+- See `specs/testing-simulation/spec.md` for VOPR performance testing
+- See `specs/observability/spec.md` for performance metrics
+- See `specs/profiling/spec.md` for detailed profiling tools

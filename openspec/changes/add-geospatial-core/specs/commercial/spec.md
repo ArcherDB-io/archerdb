@@ -259,7 +259,7 @@ The ArcherDB project SHALL provide structured commercial support offerings.
   - Escalation procedures
   - Communication channels
   - Support coverage hours
-- **AND** SLAs SHALL be clearly documented and enforceable
+- **AND** SLAs SHALL be documented in service agreements with specific response times (Critical: 1hr, High: 4hr, Normal: 24hr) and financial remedies for violations
 
 ### Requirement: Pricing Model
 
@@ -456,3 +456,68 @@ The ArcherDB project SHALL integrate with cloud marketplaces and procurement sys
   - Sub-processor lists
   - Audit report access
 - **AND** procurement compliance SHALL meet enterprise requirements
+
+### Requirement: Cost Metrics Implementation Hooks
+
+The system SHALL expose cost tracking metrics via the observability interface for operational cost monitoring.
+
+#### Scenario: Cost tracking API implementation
+
+- **WHEN** implementing cost tracking in `src/observability.zig`
+- **THEN** the following metrics SHALL be exported via Prometheus endpoint:
+  ```zig
+  // In src/observability.zig
+  pub const CostMetrics = struct {
+      storage_bytes_used: prometheus.Gauge,
+      storage_bytes_allocated: prometheus.Gauge,
+      index_memory_bytes: prometheus.Gauge,
+      query_cpu_seconds_total: prometheus.Counter,
+      operations_total: prometheus.Counter,
+      network_bytes_transferred: prometheus.Counter,
+      grid_cache_bytes: prometheus.Gauge,
+  };
+  ```
+- **AND** metrics SHALL be updated in real-time during operation execution
+- **AND** cost-per-operation SHALL be calculable from these metrics
+
+#### Scenario: Resource usage metering implementation
+
+- **WHEN** implementing resource metering in `src/state_machine.zig`
+- **THEN** each operation SHALL record:
+  ```zig
+  // In src/state_machine.zig commit() phase
+  fn commit(...) usize {
+      const start_cpu = getCpuTime();
+      const result = executeOperation(...);
+      const cpu_elapsed = getCpuTime() - start_cpu;
+
+      observability.recordOperation(.{
+          .operation = operation,
+          .cpu_seconds = cpu_elapsed,
+          .bytes_processed = result.bytes_written,
+      });
+
+      return result.bytes_written;
+  }
+  ```
+- **AND** metering overhead SHALL be <1% of operation latency
+- **AND** metering SHALL not affect deterministic execution
+
+#### Scenario: Cost allocation by tenant
+
+- **WHEN** tracking costs per tenant (via group_id)
+- **THEN** observability SHALL export:
+  ```zig
+  // Prometheus metrics with group_id label
+  operations_by_group{group_id="fleet_123", operation="insert"} 1000000
+  storage_bytes_by_group{group_id="fleet_123"} 5000000000
+  ```
+- **AND** cost attribution SHALL be queryable via Prometheus queries
+- **AND** this enables chargeback/showback models
+
+### Related Specifications
+
+- See `specs/observability/spec.md` for usage metering and cost tracking metrics
+- See `specs/configuration/spec.md` for resource optimization settings
+- See `specs/licensing/spec.md` for commercial licensing strategy
+- **IMPLEMENTATION**: See `src/observability.zig` for metric definitions and `src/state_machine.zig` for operation metering hooks

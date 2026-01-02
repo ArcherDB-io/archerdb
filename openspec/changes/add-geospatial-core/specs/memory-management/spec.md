@@ -41,21 +41,23 @@ The system SHALL use a state-machine allocator that enforces strict allocation d
 
 ### Requirement: Message Pool
 
-The system SHALL pre-allocate all messages at startup and reuse them via reference counting.
+The system SHALL pre-allocate message metadata and header storage at startup and reuse them via reference counting.
 
 #### Scenario: Pool initialization
 
 - **WHEN** the MessagePool is initialized
-- **THEN** it SHALL allocate `messages_max` message buffers
-- **AND** all buffers SHALL be sector-aligned (`constants.sector_size`)
-- **AND** buffer size SHALL be `constants.message_size_max`
+- **THEN** it SHALL allocate `messages_max` Message objects
+- **AND** Message headers SHALL be pre-allocated (`messages_max * constants.message_header_size`)
+- **AND** it SHALL NOT allocate `messages_max * constants.message_size_max` bytes
+- **AND** large, sector-aligned message buffers (header + body) SHALL come from a separate bounded pool/arena to avoid per-client 10MB buffering
+- **AND** exhaustion of large buffers SHALL apply backpressure (block/stop-reading) rather than allocating at runtime
 
 #### Scenario: Message structure
 
 - **WHEN** a Message is defined
 - **THEN** it SHALL contain:
-  - `header: *Header` - Pointer to header in buffer
-  - `buffer: *align(sector_size) [message_size_max]u8` - The buffer
+  - `header: *align(16) Header` - Pointer to header storage (u128-aligned)
+  - `body: []align(sector_size) u8` - Slice into an acquired large buffer (may be empty for header-only state)
   - `references: u32` - Reference count
   - `link: FreeList.Link` - Intrusive free list link
 
@@ -79,6 +81,28 @@ The system SHALL pre-allocate all messages at startup and reuse them via referen
   - Pipeline depth
   - Connection send queues
 - **AND** this ensures no deadlock from message exhaustion
+
+### Requirement: Large Buffer Pool (Header + Body)
+
+The system SHALL manage a bounded pool/arena of large, sector-aligned message buffers to support Direct I/O and zero-copy networking without allocating `clients_max * message_size_max` memory.
+
+#### Scenario: Buffer pool invariants
+
+- **WHEN** large buffers are allocated
+- **THEN** each buffer SHALL be:
+  - `constants.message_size_max` bytes
+  - aligned to `constants.sector_size`
+  - safe for Direct I/O (sector-aligned size and alignment)
+- **AND** the total number/bytes of large buffers SHALL be bounded (configured to fit the RAM budget)
+
+#### Scenario: Backpressure on exhaustion
+
+- **WHEN** no large buffers are available
+- **THEN** the system SHALL apply backpressure:
+  - stop reading from client sockets (let TCP window apply)
+  - defer accepting new connections if necessary
+  - block internal producers with bounded waits
+- **AND** the system SHALL NOT allocate new buffers at runtime in `static` allocator state
 
 ### Requirement: Intrusive Data Structures
 
@@ -256,8 +280,8 @@ The system SHALL calculate all memory sizes at compile time for determinism and 
 - **WHEN** calculating sizes
 - **THEN** these relationships SHALL hold:
   - `message_size_max % sector_size == 0`
-  - `client_replies_size = clients_max * message_size_max`
-  - `journal_size = journal_slot_count * (header_size + message_size_max)`
+  - `client_replies_size_bytes = clients_max * message_size_max` (on disk; data file zone)
+  - `journal_size_bytes = journal_slot_count * (header_size + message_size_max)` (on disk; data file zone)
   - `block_size % sector_size == 0`
 
 #### Scenario: Capacity validation
@@ -267,3 +291,12 @@ The system SHALL calculate all memory sizes at compile time for determinism and 
   - Message pool is large enough for all subsystems
   - Journal slots support pipeline + checkpoint requirements
   - Node pool can hold max manifest entries
+
+### Related Specifications
+
+- See `specs/hybrid-memory/spec.md` for index memory allocation and StaticAllocator usage
+- See `specs/storage-engine/spec.md` for LSM NodePool and TableMemory requirements
+- See `specs/replication/spec.md` for MessagePool usage in VSR message handling
+- See `specs/io-subsystem/spec.md` for zero-copy message passing and buffer management
+- See `specs/constants/spec.md` for memory capacity constants (clients_max, pipeline_max)
+- See `specs/query-engine/spec.md` for query result buffer allocation

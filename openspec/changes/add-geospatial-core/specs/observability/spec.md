@@ -202,7 +202,7 @@ The system SHALL expose memory, disk, and I/O utilization metrics.
 #### Scenario: Index capacity alerts
 
 - **WHEN** monitoring index capacity
-- **THEN** operators SHOULD configure alerts:
+- **THEN** operators SHALL configure alerts:
   - Warning: `archerdb_index_load_factor > 0.80` (80% full)
   - Critical: `archerdb_index_load_factor > 0.90` (90% full)
   - Emergency: `archerdb_index_load_factor > 0.95` (95% full - near capacity)
@@ -277,6 +277,87 @@ The system SHALL expose LSM tree compaction and table statistics.
   archerdb_lsm_compaction_latency_seconds_bucket{le="1.0"} 80
   archerdb_lsm_compaction_latency_seconds_bucket{le="5.0"} 120
   archerdb_lsm_compaction_latency_seconds_bucket{le="+Inf"} 125
+
+  # HELP archerdb_lsm_compaction_bytes_moved_total Bytes moved during compaction
+  # TYPE archerdb_lsm_compaction_bytes_moved_total counter
+  archerdb_lsm_compaction_bytes_moved_total{level="0"} 10737418240
+  archerdb_lsm_compaction_bytes_moved_total{level="1"} 85899345920
+
+  # HELP archerdb_lsm_level_size_bytes Current size of each LSM level
+  # TYPE archerdb_lsm_level_size_bytes gauge
+  archerdb_lsm_level_size_bytes{level="0"} 10485760
+  archerdb_lsm_level_size_bytes{level="1"} 83886080
+  archerdb_lsm_level_size_bytes{level="2"} 671088640
+
+  # HELP archerdb_lsm_write_amplification_ratio Write amplification (bytes_written / bytes_user_data)
+  # TYPE archerdb_lsm_write_amplification_ratio gauge
+  archerdb_lsm_write_amplification_ratio 12.5
+  ```
+
+#### Scenario: Grid cache metrics
+
+- **WHEN** exposing grid cache metrics
+- **THEN** the following SHALL be included:
+  ```
+  # HELP archerdb_grid_cache_hits_total Cache hits for block reads
+  # TYPE archerdb_grid_cache_hits_total counter
+  archerdb_grid_cache_hits_total 4500000
+
+  # HELP archerdb_grid_cache_misses_total Cache misses requiring disk read
+  # TYPE archerdb_grid_cache_misses_total counter
+  archerdb_grid_cache_misses_total 500000
+
+  # HELP archerdb_grid_cache_hit_ratio Cache hit rate (derived: hits / (hits + misses))
+  # TYPE archerdb_grid_cache_hit_ratio gauge
+  archerdb_grid_cache_hit_ratio 0.90
+
+  # HELP archerdb_grid_cache_evictions_total Block evictions from cache
+  # TYPE archerdb_grid_cache_evictions_total counter
+  archerdb_grid_cache_evictions_total 450000
+
+  # HELP archerdb_grid_cache_size_bytes Current cache size
+  # TYPE archerdb_grid_cache_size_bytes gauge
+  archerdb_grid_cache_size_bytes 4294967296
+  ```
+
+#### Scenario: Journal (WAL) metrics
+
+- **WHEN** exposing journal metrics
+- **THEN** the following SHALL be included:
+  ```
+  # HELP archerdb_journal_slot_usage Current journal slot usage
+  # TYPE archerdb_journal_slot_usage gauge
+  archerdb_journal_slot_usage 2048
+
+  # HELP archerdb_journal_wraparounds_total Journal wraparound count
+  # TYPE archerdb_journal_wraparounds_total counter
+  archerdb_journal_wraparounds_total 150
+
+  # HELP archerdb_journal_repair_total Repair operations (request_prepare, request_headers)
+  # TYPE archerdb_journal_repair_total counter
+  archerdb_journal_repair_total 12
+  ```
+
+#### Scenario: Free set utilization metrics
+
+- **WHEN** exposing free set metrics
+- **THEN** the following SHALL be included:
+  ```
+  # HELP archerdb_free_set_blocks_free Free blocks available
+  # TYPE archerdb_free_set_blocks_free gauge
+  archerdb_free_set_blocks_free 15000000
+
+  # HELP archerdb_free_set_blocks_reserved Reserved but not yet acquired
+  # TYPE archerdb_free_set_blocks_reserved gauge
+  archerdb_free_set_blocks_reserved 50000
+
+  # HELP archerdb_free_set_blocks_acquired Acquired (in use)
+  # TYPE archerdb_free_set_blocks_acquired gauge
+  archerdb_free_set_blocks_acquired 1000000
+
+  # HELP archerdb_free_set_utilization Free set capacity utilization (0.0-1.0)
+  # TYPE archerdb_free_set_utilization gauge
+  archerdb_free_set_utilization 0.062
   ```
 
 ### Requirement: Error Metrics
@@ -420,18 +501,165 @@ The system SHALL support log file rotation to prevent unbounded disk usage.
   - Open new log file
   - Continue logging without message loss
 
-### Requirement: Distributed Tracing (Future)
+### Requirement: Distributed Tracing
 
-The system SHALL reserve support for distributed tracing in future versions.
+The system SHALL support distributed tracing for request flow visibility using W3C Trace Context standard.
 
-#### Scenario: Trace ID propagation (deferred)
+#### Scenario: Trace context format
 
-- **WHEN** implementing distributed tracing (v2+)
-- **THEN** the system MAY:
-  - Accept trace IDs in message headers (W3C Trace Context)
-  - Propagate trace IDs through VSR messages
-  - Export spans to OpenTelemetry collectors
-  - Include trace IDs in logs for correlation
+- **WHEN** implementing distributed tracing
+- **THEN** the system SHALL use W3C Trace Context format:
+  - **trace_id**: u128 (16 bytes) - Globally unique trace identifier
+  - **span_id**: u64 (8 bytes) - Current span identifier
+  - **parent_span_id**: u64 (8 bytes) - Parent span for nested operations (0 if root)
+  - **trace_flags**: u8 - Sampled flag (0x01 = sampled, 0x00 = not sampled)
+- **AND** trace context SHALL be included in message reserved fields for zero-overhead propagation
+
+#### Scenario: Client-initiated traces
+
+- **WHEN** a client request enters the system
+- **AND** client provides trace context in request header
+- **THEN** the system SHALL:
+  1. Extract trace_id and parent_span_id from client request
+  2. Generate new span_id for this operation
+  3. Propagate trace context through all internal operations
+  4. Include trace context in response header
+- **AND** if client does NOT provide trace context:
+  - Generate new trace_id (random u128)
+  - Set parent_span_id = 0 (root trace)
+  - Generate span_id for this operation
+
+#### Scenario: Trace propagation through VSR
+
+- **WHEN** a request flows through VSR consensus
+- **THEN** trace context SHALL propagate:
+  1. **Client → Primary**: Request includes trace context
+  2. **Primary → Backups**: Prepare message includes trace context
+  3. **Backups → Primary**: PrepareOk includes same trace context
+  4. **Primary → Client**: Reply includes trace context
+- **AND** each VSR message SHALL create a child span:
+  - Primary prepare phase: span_id = generate(), parent = client_span_id
+  - Backup replication: span_id = generate(), parent = prepare_span_id
+  - Commit phase: span_id = generate(), parent = prepare_span_id
+
+#### Scenario: Span lifecycle
+
+- **WHEN** creating a span
+- **THEN** the span SHALL record:
+  - **start_timestamp_ns**: u64 - Span start time (CLOCK_MONOTONIC)
+  - **end_timestamp_ns**: u64 - Span end time
+  - **duration_ns**: u64 - Calculated as end - start
+  - **operation_name**: string - e.g., "insert", "query_uuid", "vsr.prepare"
+  - **attributes**: Key-value pairs (entity_id, batch_size, error_code, etc.)
+  - **status**: OK, ERROR, or UNSET
+- **AND** spans SHALL be completed before returning to client
+
+#### Scenario: Trace sampling
+
+- **WHEN** deciding whether to trace a request
+- **THEN** the system SHALL:
+  - Always trace if client sets trace_flags = 0x01 (sampled)
+  - If client does NOT provide trace context:
+    - Sample based on `--trace-sample-rate` (default: 0.01 = 1%)
+    - Always sample error responses (status 5xx)
+    - Always sample slow operations (>10x p50 latency)
+- **AND** unsampled traces SHALL still propagate trace_id (for log correlation) but not export spans
+
+#### Scenario: Span attributes for operations
+
+- **WHEN** recording span attributes
+- **THEN** the following SHALL be included per operation type:
+  - **All operations**:
+    - `db.system`: "archerdb"
+    - `db.operation`: "insert", "query_uuid", "query_radius", "query_polygon"
+    - `net.peer.ip`: client IP address
+    - `net.peer.port`: client port
+  - **Insert operations**:
+    - `db.batch_size`: number of events in batch
+    - `db.bytes_written`: total bytes written
+  - **Query operations**:
+    - `db.query.type`: "uuid", "radius", "polygon"
+    - `db.query.result_count`: number of events returned
+    - `db.query.partial_result`: true/false
+  - **Radius queries**:
+    - `db.query.radius_meters`: query radius
+    - `db.query.center_lat`: center latitude
+    - `db.query.center_lon`: center longitude
+  - **VSR operations**:
+    - `vsr.view`: current view number
+    - `vsr.op`: operation number
+    - `vsr.is_primary`: true/false
+    - `vsr.quorum_size`: replication quorum
+
+#### Scenario: Error span attributes
+
+- **WHEN** an operation encounters an error
+- **THEN** the span SHALL include:
+  - `error`: true
+  - `error.type`: error code name (e.g., "invalid_coordinates")
+  - `error.code`: numeric error code
+  - `error.message`: human-readable error message
+  - `error.stack`: stack trace (if available)
+- **AND** span status SHALL be set to ERROR
+
+#### Scenario: Log correlation
+
+- **WHEN** logging with active trace context
+- **THEN** log entries SHALL include:
+  - `trace_id`: 32-character hex string (u128)
+  - `span_id`: 16-character hex string (u64)
+- **AND** log format (JSON):
+  ```json
+  {
+    "timestamp": "2026-01-02T12:34:56.789Z",
+    "level": "INFO",
+    "message": "Query executed",
+    "trace_id": "0123456789abcdef0123456789abcdef",
+    "span_id": "fedcba9876543210",
+    "operation": "query_radius",
+    "duration_ms": 42.5
+  }
+  ```
+- **AND** this enables querying logs by trace_id to see full request flow
+
+#### Scenario: Trace export (optional)
+
+- **WHEN** exporting traces to external systems
+- **THEN** the system MAY support:
+  - **OTLP (OpenTelemetry Protocol)**: Export spans to OpenTelemetry Collector
+  - **Jaeger**: Export spans directly to Jaeger
+  - **Zipkin**: Export spans in Zipkin format
+- **AND** export SHALL be configured via `--trace-exporter` flag:
+  - `--trace-exporter=none` (default, traces in logs only)
+  - `--trace-exporter=otlp --trace-otlp-endpoint=http://collector:4317`
+  - `--trace-exporter=jaeger --trace-jaeger-endpoint=http://jaeger:14268`
+- **AND** span export SHALL be async (non-blocking)
+- **AND** export failures SHALL NOT impact request processing
+
+#### Scenario: Trace performance overhead
+
+- **WHEN** tracing is enabled
+- **THEN** performance overhead SHALL be minimal:
+  - Sampled traces: <1% latency overhead
+  - Unsampled traces: <0.1% latency overhead (trace_id propagation only)
+  - Memory: Pre-allocated span buffer pool (no runtime allocation)
+  - CPU: Span creation and attribute assignment is ~50ns
+- **AND** trace context propagation uses message reserved fields (zero serialization cost)
+
+#### Scenario: Trace context in message headers
+
+- **WHEN** encoding trace context in client protocol messages
+- **THEN** it SHALL use the `reserved` field in message header (256-byte header):
+  ```
+  Offset 160-191 (32 bytes reserved):
+  ├─ trace_id: u128 (16 bytes)
+  ├─ span_id: u64 (8 bytes)
+  ├─ parent_span_id: u64 (8 bytes)
+  └─ trace_flags: u8 (1 byte)
+     reserved_padding: [7]u8
+  ```
+- **AND** if trace_id = 0, tracing is disabled for this request
+- **AND** this enables zero-cost tracing when disabled (no extra fields, no parsing)
 
 ### Requirement: Health Check Endpoint
 
@@ -451,6 +679,16 @@ The system SHALL provide a simple health check endpoint for load balancers.
 - **THEN** the system SHALL provide:
   - `/health/live` - Process is running (always 200 unless crashed)
   - `/health/ready` - Replica is ready to serve requests (200 if primary or healthy backup)
+
+### Related Specifications
+
+- See `specs/error-codes/spec.md` for error metrics and logging level requirements
+- See `specs/query-engine/spec.md` for operation-specific metrics and performance SLAs
+- See `specs/replication/spec.md` for VSR metrics (view, op_number, view_changes)
+- See `specs/storage-engine/spec.md` for storage metrics (disk usage, compaction)
+- See `specs/hybrid-memory/spec.md` for index metrics (load_factor, lookups, collisions)
+- See `specs/client-protocol/spec.md` for trace context wire format
+- See `specs/security/spec.md` for authentication metrics and audit logging
 
 ### Requirement: Server-Side Graceful Degradation
 
@@ -473,7 +711,7 @@ The system SHALL degrade gracefully under resource pressure rather than crashing
   - Log warning with latency percentiles
   - Increment `archerdb_io_latency_exceeded_total`
   - Continue operating (do NOT fail requests due to slow I/O)
-- **AND** operators should investigate disk health
+- **AND** operators SHALL investigate disk health
 - **AND** metric: `archerdb_io_latency_seconds{quantile="0.99"}` histogram
 
 #### Scenario: CPU pressure response

@@ -446,9 +446,6 @@ The system SHALL validate all constants at compile time to prevent invalid confi
       // NEW: Verify S2 cell level is in valid range
       assert(s2_cell_level >= 1 and s2_cell_level <= 30);
 
-      // NEW: Verify index entry size matches struct (catch struct changes)
-      assert(@sizeOf(IndexEntry) == index_entry_size);
-
       // NEW: Verify message size is sector-aligned for Direct I/O
       assert(message_size_max % sector_size == 0);
 
@@ -495,7 +492,7 @@ The system SHALL allow runtime configuration to override select constants while 
 
 - **WHEN** formatting a new cluster
 - **THEN** the following MAY be configured:
-  - `replica_count` (3, 5, or 6)
+  - `replica_count` (1, 3, 5, or 6)
   - `quorum_replication` (must satisfy Flexible Paxos)
   - `quorum_view_change` (must satisfy Flexible Paxos)
   - `entities_max` (must not exceed `entities_max_per_node`)
@@ -517,3 +514,12 @@ The system SHALL allow runtime configuration to override select constants while 
   - `block_size` (breaks disk format)
   - `s2_cell_level` (breaks spatial indexing)
   - `journal_slot_count` (breaks disk format)
+
+### Related Specifications
+
+- See `specs/data-model/spec.md` for GeoEvent and BlockHeader size requirements (geo_event_size, block_header_size)
+- See `specs/storage-engine/spec.md` for block_size, sector_size, and journal_slot_count usage
+- See `specs/replication/spec.md` for quorum configuration and Flexible Paxos intersection property
+- See `specs/query-engine/spec.md` for batch_events_max, query_result_max, and s2_cover_max_level
+- See `specs/hybrid-memory/spec.md` for index_entry_size, index_capacity, and shard_count
+- See `specs/memory-management/spec.md` for clients_max, pipeline_max usage in pool sizing

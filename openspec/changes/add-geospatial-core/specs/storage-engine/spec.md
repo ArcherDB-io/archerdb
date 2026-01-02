@@ -179,7 +179,7 @@ The system SHALL provide abstract block-based storage for the LSM tree with cach
 #### Scenario: Block cache sizing guidance
 
 - **WHEN** configuring grid cache size
-- **THEN** operators SHOULD use the following formula:
+- **THEN** operators SHALL use the following formula:
   ```
   cache_size_bytes = concurrent_queries × avg_blocks_per_query × block_size
 
@@ -641,3 +641,13 @@ The system SHALL maintain min/max ID metadata in block headers to enable skippin
 - **THEN** the block body SHALL NOT be read
 - **AND** the scan SHALL proceed to the next block
 - **AND** only the 256-byte header is needed for this decision
+
+### Related Specifications
+
+- See `specs/data-model/spec.md` for GeoEvent and BlockHeader structure definitions
+- See `specs/replication/spec.md` for WAL usage in VSR consensus protocol
+- See `specs/hybrid-memory/spec.md` for index checkpoint coordination
+- See `specs/query-engine/spec.md` for LSM tree usage in query execution
+- See `specs/constants/spec.md` for block_size, sector_size, and journal_slot_count
+- See `specs/io-subsystem/spec.md` for Direct I/O and io_uring integration
+- See `specs/error-codes/spec.md` for storage error codes (503 corruption_detected, 208 storage_unavailable)

@@ -371,3 +371,8 @@ The ArcherDB project SHALL develop strategies for communicating success internal
   - **Partner Communications**: Success metrics shared with strategic partners
   - **Media Relations**: Press releases and media coverage of major achievements
 - **AND** external communication SHALL build credibility and awareness
+
+### Related Specifications
+
+- See `specs/observability/spec.md` for technical metrics and monitoring
+- See `specs/team-resources/spec.md` for team performance metrics

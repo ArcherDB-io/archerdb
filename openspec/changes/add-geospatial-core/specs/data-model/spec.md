@@ -296,3 +296,199 @@ The system SHALL support forward-compatible schema evolution for GeoEvent and ot
   4. Support previous version for at least 2 major releases
 - **AND** breaking changes are avoided whenever possible
 - **AND** reserved fields provide 20 bytes of expansion room
+
+### Requirement: Comprehensive Input Validation
+
+The system SHALL validate all GeoEvent fields systematically during input_valid() phase before any processing occurs.
+
+#### Scenario: Validation execution order
+
+- **WHEN** validating a GeoEvent
+- **THEN** validation SHALL occur in this order:
+  1. **Syntactic validation**: Field presence, type correctness, size limits
+  2. **Range validation**: Numeric field boundaries
+  3. **Semantic validation**: Cross-field constraints, coordinate validity
+  4. **Server-side computation**: S2 cell ID generation from coordinates
+- **AND** validation SHALL stop at first error (fail-fast)
+- **AND** error response SHALL indicate which validation phase failed
+
+#### Scenario: Coordinate range validation
+
+- **WHEN** validating lat_nano and lon_nano
+- **THEN** the system SHALL enforce:
+  ```zig
+  // Latitude validation
+  if (geo_event.lat_nano < -90_000_000_000 or geo_event.lat_nano > 90_000_000_000) {
+      return error{ .code = .invalid_coordinates, .field = "lat_nano", .value = geo_event.lat_nano };
+  }
+
+  // Longitude validation
+  if (geo_event.lon_nano < -180_000_000_000 or geo_event.lon_nano > 180_000_000_000) {
+      return error{ .code = .invalid_coordinates, .field = "lon_nano", .value = geo_event.lon_nano };
+  }
+  ```
+- **AND** boundary values (±90°, ±180°) are VALID (inclusive ranges)
+- **AND** NaN or infinity (if somehow encoded) are INVALID
+
+#### Scenario: Altitude range validation
+
+- **WHEN** validating altitude_mm
+- **THEN** the system SHALL:
+  - Allow full i32 range: [-2,147,483,648 to +2,147,483,647] millimeters
+  - This represents [-2,147 km to +2,147 km]
+  - Dead Sea (-430m) and Mt. Everest (+8,848m) are well within range
+  - ISS altitude (~408 km) is within range
+  - Karman line (100 km space boundary) is within range
+- **AND** no explicit validation needed (i32 type enforces bounds)
+
+#### Scenario: Velocity range validation
+
+- **WHEN** validating velocity_mms
+- **THEN** the system SHALL:
+  - Allow full u32 range: [0 to 4,294,967,295] mm/s
+  - This represents [0 to ~4,295 km/s]
+  - Walking speed (~1.4 m/s) to hypersonic (~Mach 5, 1.7 km/s) are valid
+  - Orbital velocity (~7.8 km/s) exceeds max but unlikely use case
+- **AND** negative velocities are prevented by u32 type
+- **AND** no explicit validation needed
+
+#### Scenario: Accuracy range validation
+
+- **WHEN** validating accuracy_mm
+- **THEN** the system SHALL:
+  - Allow full u32 range: [0 to 4,294,967,295] millimeters
+  - This represents [0 to ~4,295 km]
+  - GPS accuracy (1-10m) to cell tower triangulation (500m+) are valid
+  - IP geolocation (1km+) is valid
+  - accuracy_mm = 0 means "unknown accuracy" (not "perfect accuracy")
+- **AND** applications SHALL interpret 0 as "accuracy not specified"
+
+#### Scenario: Heading range validation
+
+- **WHEN** validating heading_cdeg
+- **THEN** the system SHALL enforce:
+  ```zig
+  if (geo_event.heading_cdeg > 36000) {
+      return error{ .code = .invalid_heading, .field = "heading_cdeg", .value = geo_event.heading_cdeg };
+  }
+  ```
+- **AND** valid range is [0, 36000] centidegrees = [0°, 360°]
+- **AND** 0 = North, 9000 = East, 18000 = South, 27000 = West
+- **AND** heading_cdeg = 36000 is INVALID (ambiguous with 0)
+- **AND** heading_cdeg = 65535 (u16 max) is INVALID (wraps around)
+
+#### Scenario: TTL range validation
+
+- **WHEN** validating ttl_seconds
+- **THEN** the system SHALL:
+  - Allow full u32 range: [0 to 4,294,967,295] seconds
+  - ttl_seconds = 0 means "never expires" (infinite retention)
+  - ttl_seconds = 1 means "expire in 1 second"
+  - Max TTL (~136 years) is acceptable for long-term archival
+- **AND** no explicit validation needed
+- **AND** overflow protection is handled during expiration calculation (see ttl-retention spec)
+
+#### Scenario: UUID validation
+
+- **WHEN** validating entity_id, correlation_id, or user_data (u128 fields)
+- **THEN** the system SHALL:
+  - Accept any u128 value (including 0)
+  - entity_id = 0 is VALID (though unusual)
+  - No format validation (not required to be RFC 4122 UUID)
+- **AND** applications SHOULD use properly generated UUIDs (UUIDv4 or UUIDv7)
+- **AND** collision probability for random u128 is negligible (~10^-38)
+
+#### Scenario: Reserved fields validation
+
+- **WHEN** validating reserved field (20 bytes)
+- **THEN** the system SHALL enforce:
+  ```zig
+  for (geo_event.reserved) |byte| {
+      if (byte != 0) {
+          return error{ .code = .reserved_field_nonzero, .offset = @offsetOf(GeoEvent, "reserved") };
+      }
+  }
+  ```
+- **AND** non-zero reserved bytes are REJECTED
+- **AND** this ensures forward compatibility (future features can use these bytes)
+
+#### Scenario: Flags validation
+
+- **WHEN** validating flags field
+- **THEN** the system SHALL:
+  - Enforce padding bits are zero:
+    ```zig
+    if (geo_event.flags.padding != 0) {
+        return error{ .code = .flags_padding_nonzero };
+    }
+    ```
+  - Allow any combination of boolean flags (linked, imported, stationary, etc.)
+  - No semantic validation of flag combinations
+- **AND** future flags can use padding bits (currently must be zero)
+
+#### Scenario: Batch validation
+
+- **WHEN** validating a batch of GeoEvents
+- **THEN** the system SHALL:
+  1. Validate batch size ≤ batch_events_max (10,000)
+  2. Validate total batch bytes ≤ message_body_size_max
+  3. Validate each event sequentially
+  4. Return error on first invalid event with event index
+- **AND** partial batches are NOT accepted (all-or-nothing validation)
+- **AND** error context includes: `batch_index`, `event_index`, `field`, `value`
+
+#### Scenario: Validation error context format
+
+- **WHEN** validation fails
+- **THEN** the error SHALL include:
+  ```zig
+  ValidationError {
+      error_code: ErrorCode,
+      field_name: []const u8,     // e.g., "lat_nano"
+      provided_value: ?i64,       // Actual value (if applicable)
+      expected_range: ?[]const u8, // e.g., "[-90000000000, 90000000000]"
+      event_index: ?u32,          // Index in batch (if applicable)
+  }
+  ```
+- **AND** this enables precise error reporting to clients
+
+#### Scenario: Server-side S2 cell computation (security)
+
+- **WHEN** validating and processing a GeoEvent
+- **THEN** the system SHALL:
+  1. Validate lat_nano and lon_nano first
+  2. Compute s2_cell_id from coordinates: `s2_cell_id = S2.lat_lon_to_cell_id(lat_nano, lon_nano, 30)`
+  3. Construct composite ID: `id = (s2_cell_id << 64) | timestamp_ns`
+  4. **OVERWRITE** any client-provided ID value
+  5. This prevents clients from corrupting the spatial index
+- **AND** clients MUST NOT pre-compute IDs (server is authoritative)
+- **AND** this is enforced during input_valid() phase
+
+#### Scenario: Cross-field validation
+
+- **WHEN** validating semantically related fields
+- **THEN** the system SHALL check:
+  - If `flags.stationary = true`, velocity_mms SHOULD be 0 (warning, not error)
+  - If `flags.deleted = true`, event is a tombstone (other fields may be ignored)
+  - If `flags.low_accuracy = true`, accuracy_mm SHOULD be > 10,000 (10m threshold)
+- **AND** these are soft validations (log warnings, do not reject)
+
+#### Scenario: Deterministic validation
+
+- **WHEN** validation executes on multiple replicas
+- **THEN** all replicas MUST produce identical validation results:
+  - Same error code
+  - Same decision (accept/reject)
+  - Deterministic S2 cell computation
+- **AND** this is ensured by:
+  - Fixed-point arithmetic (no floats)
+  - Identical validation order
+  - Pure functions (no external state)
+- **AND** non-deterministic validation causes VSR divergence
+
+### Related Specifications
+
+- See `specs/error-codes/spec.md` for complete validation error code enumeration
+- See `specs/query-engine/spec.md` for input_valid() phase execution
+- See `specs/ttl-retention/spec.md` for TTL overflow protection during expiration
+- See `specs/client-protocol/spec.md` for wire format validation

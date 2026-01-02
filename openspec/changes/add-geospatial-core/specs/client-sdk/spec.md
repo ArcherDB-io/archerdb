@@ -419,3 +419,10 @@ The SDK SHALL maintain compatibility with server versions.
   - Minor versions: New features, backward compatible
   - Major versions: Breaking changes, requires code updates
 - **AND** SDK SHALL follow semantic versioning (SemVer)
+
+### Related Specifications
+
+- See `specs/client-protocol/spec.md` for wire format and message encoding
+- See `specs/client-retry/spec.md` for retry logic and exponential backoff
+- See `specs/error-codes/spec.md` for error handling in SDKs
+- See `specs/api-versioning/spec.md` for SDK version compatibility requirements

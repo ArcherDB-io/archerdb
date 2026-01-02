@@ -6,6 +6,13 @@
 
 The system SHALL use a custom binary protocol for client-server communication to maximize performance and minimize serialization overhead.
 
+#### Scenario: Scope of this specification
+
+- **WHEN** interpreting protocol requirements in this file
+- **THEN** they SHALL apply to **client-facing** TCP connections (SDK ↔ replica)
+- **AND** inter-replica VSR messages are specified separately in `specs/replication/spec.md`
+- **AND** both protocols use fixed-size 256-byte headers and share checksum primitives, but header field layouts and semantics MAY differ
+
 #### Scenario: Protocol design philosophy
 
 - **WHEN** designing the client protocol
@@ -1179,3 +1186,13 @@ The system SHALL implement server-side rate limiting to prevent abuse.
   ```
 - **AND** when global limits are reached, new requests receive `too_many_queries`
 - **AND** existing in-flight requests are not affected
+
+### Related Specifications
+
+- See `specs/error-codes/spec.md` for complete error code enumeration and error response format
+- See `specs/data-model/spec.md` for GeoEvent wire format and validation rules
+- See `specs/query-engine/spec.md` for operation semantics and multi-batch processing
+- See `specs/client-retry/spec.md` for client-side retry logic and primary discovery
+- See `specs/replication/spec.md` for VSR protocol and session management
+- See `specs/security/spec.md` for mTLS authentication requirements
+- See `specs/observability/spec.md` for trace context propagation in message headers

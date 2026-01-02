@@ -260,3 +260,9 @@ The system SHALL collect CI/CD metrics for pipeline optimization.
   - All documentation validation passing
   - Cross-platform compatibility confirmed
 - **AND** quality gates SHALL prevent merging of substandard code
+
+### Related Specifications
+
+- See `specs/testing-simulation/spec.md` for VOPR simulation testing requirements
+- See `specs/performance-validation/spec.md` for benchmark validation in CI
+- See `specs/configuration/spec.md` for build configuration validation

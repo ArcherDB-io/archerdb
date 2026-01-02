@@ -53,7 +53,7 @@ The system SHALL operate as a single-tenant database where each cluster serves o
   │   ┌─────────────────┐    ┌─────────────────┐                    │
   │   │  ArcherDB       │    │  ArcherDB       │                    │
   │   │  Cluster A      │    │  Cluster B      │                    │
-  │   │  (3-5 replicas) │    │  (3-5 replicas) │                    │
+  │   │  (1-6 replicas) │    │  (1-6 replicas) │                    │
   │   └─────────────────┘    └─────────────────┘                    │
   │                                                                  │
   │   Each project gets its own dedicated ArcherDB cluster.          │
@@ -141,7 +141,7 @@ The system SHALL require explicit cluster configuration at startup time.
 - **WHEN** formatting a cluster
 - **THEN** cluster SHALL be identified by:
   - `--cluster=id` - 128-bit cluster identifier (hex or decimal)
-  - `--replica-count=N` - Number of replicas (3, 5, or 6)
+  - `--replica-count=N` - Number of replicas (1, 3, 5, or 6)
   - Cluster ID 0 SHALL be reserved for testing
 - **AND** cluster configuration SHALL be immutable after format
 
@@ -204,7 +204,7 @@ The system SHALL provide storage-related configuration options.
 
 ### Requirement: Development vs Production Modes
 
-The system SHALL clearly distinguish development and production configurations.
+The system SHALL distinguish development and production configurations through separate config files (`archerdb.dev.conf` vs `archerdb.prod.conf`) and startup mode flags.
 
 #### Scenario: Development mode
 
@@ -215,7 +215,7 @@ The system SHALL clearly distinguish development and production configurations.
   - Relaxed TLS requirements (`--tls-required=false`)
   - Verbose logging (`--log-level=debug`)
   - Development defaults SHALL prioritize ease of use
-- **AND** development mode SHALL be clearly indicated in logs
+- **AND** development mode SHALL be indicated in startup logs with "WARNING: Development mode enabled - NOT for production" banner
 
 ### Requirement: Standalone Mode
 
@@ -459,7 +459,7 @@ The system SHALL provide configuration patterns for different environments.
   - Verbose logging and debugging features
   - Local filesystem storage paths
   - Quick startup configurations
-- **AND** development configuration SHALL be clearly marked
+- **AND** development configuration SHALL be marked with `[DEV]` prefix in configuration file and startup logs
 
 #### Scenario: Production configuration
 
@@ -617,8 +617,8 @@ The system SHALL support zero-downtime rolling upgrades for version updates.
   3. Start replica (it will sync from other replicas)
   4. If multiple replicas affected: rollback in reverse order
   5. If data format changed: restore from pre-upgrade backup
-- **AND** rollback within minor version is always safe
-- **AND** rollback across major versions may require backup restore
+- **AND** rollback within minor version SHALL be safe
+- **AND** rollback across major versions MAY require backup restore
 
 #### Scenario: Canary upgrade pattern
 
@@ -651,7 +651,7 @@ The system SHALL provide documented procedures for common emergency scenarios.
 
 #### Scenario: Runbook - Quorum Loss
 
-- **WHEN** cluster loses quorum (fewer than (n/2)+1 replicas available)
+- **WHEN** the cluster cannot satisfy the configured quorums (e.g., fewer than `quorum_replication` active replicas available to commit, or fewer than `quorum_view_change` active replicas available to complete a view change)
 - **THEN** the operator SHALL follow this runbook:
   1. **Assess situation**:
      - Check which replicas are down (`archerdb status` or metrics)
@@ -663,9 +663,9 @@ The system SHALL provide documented procedures for common emergency scenarios.
      - Cluster will automatically recover when partition heals
      - NO manual intervention needed if connectivity restored
   3. **If hardware failure (multiple replicas)**:
-     - If 2 of 3 replicas down: cluster is unavailable
-     - If 2 of 5 replicas down: cluster still has quorum (3/5)
-     - If 3 of 5 replicas down: cluster is unavailable
+     - Determine `replica_count`, `quorum_replication`, and `quorum_view_change` for this cluster
+     - With default 3-node majority-style quorums (2/3): if 2 of 3 replicas are down, the cluster is unavailable
+     - With default 5-node majority-style quorums (3/5): if 2 of 5 replicas are down, the cluster can still commit (3/5); if 3 of 5 are down, it cannot
   4. **Emergency recovery (last resort)**:
      - If quorum cannot be restored AND data loss is acceptable:
      - Stop all replicas
@@ -843,3 +843,11 @@ The system SHALL provide documented procedures for common emergency scenarios.
      - Increase server RAM
      - Right-size based on expected entity count
      - Set up memory alerting at 80%, 90% usage
+
+### Related Specifications
+
+- See `specs/constants/spec.md` for all default configuration values and compile-time constants
+- See `specs/replication/spec.md` for cluster configuration (replica_count, quorums)
+- See `specs/security/spec.md` for TLS configuration flags and certificate paths
+- See `specs/observability/spec.md` for metrics endpoint and logging configuration
+- See `specs/error-codes/spec.md` for configuration validation error codes

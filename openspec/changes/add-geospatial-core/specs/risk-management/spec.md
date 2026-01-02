@@ -374,3 +374,8 @@ The ArcherDB project SHALL continuously improve risk management processes and ca
   - **Accountability**: Clear responsibility for risk management
   - **Continuous Improvement**: Ongoing commitment to risk management excellence
 - **AND** risk culture SHALL support effective risk management
+
+### Related Specifications
+
+- See `specs/team-resources/spec.md` for team-related execution risks
+- See `specs/success-metrics/spec.md` for risk impact on success criteria

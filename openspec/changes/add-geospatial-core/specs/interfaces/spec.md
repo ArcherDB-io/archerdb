@@ -538,3 +538,11 @@ The system SHALL define how configuration is accessed.
   - Replica ID: 0 <= replica_id < replica_count
   - TLS: if tls_required, all cert paths must be valid
   - File paths: data_file_path must exist (or parent dir writable)
+
+### Related Specifications
+
+- See `specs/data-model/spec.md` for core data structure interfaces
+- See `specs/storage-engine/spec.md` for storage layer interface contracts
+- See `specs/query-engine/spec.md` for state machine interface requirements
+- See `specs/replication/spec.md` for VSR protocol interfaces
+- See `specs/implementation-guide/spec.md` for interface implementation patterns

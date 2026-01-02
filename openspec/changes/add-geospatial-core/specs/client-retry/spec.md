@@ -203,7 +203,7 @@ The system SHALL track retry-related metrics in client SDKs for debugging.
 #### Scenario: Client-side retry metrics
 
 - **WHEN** SDKs perform retries
-- **THEN** they SHOULD expose metrics (if language ecosystem supports):
+- **THEN** they SHALL expose metrics (if language ecosystem supports):
   ```
   archerdb_client_retries_total counter
   archerdb_client_retry_exhausted_total counter
@@ -213,7 +213,7 @@ The system SHALL track retry-related metrics in client SDKs for debugging.
 #### Scenario: Retry logging
 
 - **WHEN** retries occur
-- **THEN** SDKs SHOULD log (at debug level):
+- **THEN** SDKs SHALL log (at debug level):
   - Retry attempt number
   - Error that triggered retry
   - Backoff delay
@@ -292,3 +292,10 @@ The system SHALL ensure all official SDKs implement identical retry behavior.
 - **THEN** the Zig SDK SHALL be the reference
 - **AND** other SDKs SHALL match its behavior exactly
 - **AND** any deviation must be documented and justified
+
+### Related Specifications
+
+- See `specs/error-codes/spec.md` for retriable vs non-retriable error classification
+- See `specs/client-protocol/spec.md` for client request/response protocol
+- See `specs/replication/spec.md` for primary discovery and view changes
+- See `specs/query-engine/spec.md` for partial_result flag handling

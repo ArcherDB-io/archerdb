@@ -31,7 +31,7 @@ The system SHALL be licensed under Apache License 2.0 to maximize adoption and c
 
 ### Requirement: TigerBeetle Attribution
 
-The system SHALL properly attribute TigerBeetle as the foundational technology and reference implementation.
+The system SHALL attribute TigerBeetle as the foundational technology through code comments, documentation, and copyright notices as specified in Apache 2.0 License requirements.
 
 #### Scenario: Code attribution
 
@@ -126,7 +126,7 @@ The system SHALL protect ArcherDB's intellectual property while enabling communi
   - Allow relicensing under Apache 2.0 terms
   - Protect against intellectual property disputes
   - Be signed by all significant contributors
-- **AND** CLA process SHALL be clearly documented
+- **AND** CLA process SHALL be documented in CONTRIBUTING.md with step-by-step signing instructions and electronic signature support
 
 ### Requirement: Trademark and Branding
 
@@ -222,7 +222,7 @@ The system SHALL implement comprehensive intellectual property protection and co
   - **Clean Room Procedures**: Isolated development for sensitive algorithms
   - **Confidentiality Training**: Employee training on trade secret protection
   - **Exit Procedures**: Confidentiality obligations in employment contracts
-- **AND** trade secrets SHALL be identified and protected appropriately
+- **AND** trade secrets SHALL be identified in a confidential registry and protected using access controls, NDAs, and clean room procedures (as specified in scenarios above)
 
 ### Requirement: Patent Strategy
 
@@ -397,7 +397,7 @@ The system SHALL comply with international copyright laws and treaties.
   - Country-specific copyright formalities
   - Digital rights management considerations
   - Cross-border license validity
-- **AND** international copyright SHALL be properly managed
+- **AND** international copyright SHALL be managed through Berne Convention compliance, WIPO treaty obligations, and country-specific copyright formalities (as specified above)
 
 ### Requirement: Legal Review Process
 
@@ -425,3 +425,9 @@ The system SHALL implement legal review processes for significant changes and re
   - Security vulnerability status reviewed
   - Patent obligations satisfied
 - **AND** checklist SHALL be automated where possible
+
+### Related Specifications
+
+- See `specs/implementation-guide/spec.md` for TigerBeetle attribution requirements
+- See `specs/ci-cd/spec.md` for automated license compliance checks
+- See `specs/client-sdk/spec.md` for SDK licensing strategy

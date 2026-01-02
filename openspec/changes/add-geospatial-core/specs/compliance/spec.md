@@ -358,7 +358,7 @@ The system SHALL provide comprehensive privacy policy and transparency informati
   - Data retention periods and deletion procedures
   - International transfer information
   - Contact information for privacy inquiries
-- **AND** privacy policy SHALL be clear, concise, and accessible
+- **AND** privacy policy SHALL be written at ≤8th grade reading level (Flesch-Kincaid score ≥60) and accessible via public URL
 
 #### Scenario: Transparency reporting
 
@@ -398,7 +398,7 @@ The system SHALL implement continuous compliance monitoring and auditing capabil
   - Breach incidents and responses
   - DPIA assessments and updates
   - Compliance training records
-- **AND** audit trails SHALL be tamper-proof and retained appropriately
+- **AND** audit trails SHALL be tamper-proof (append-only, checksummed) and retained for minimum 7 years (GDPR Article 5.1.e, financial audit requirements)
 
 ### Requirement: Regulatory Reporting
 
@@ -426,3 +426,9 @@ The system SHALL support regulatory reporting requirements for location data pro
   - Privacy shield or similar frameworks
   - Industry-specific certifications
 - **AND** certifications SHALL be maintained and renewed
+
+### Related Specifications
+
+- See `specs/security/spec.md` for data protection and encryption requirements
+- See `specs/ttl-retention/spec.md` for GDPR right to erasure implementation
+- See `specs/observability/spec.md` for audit logging and compliance monitoring

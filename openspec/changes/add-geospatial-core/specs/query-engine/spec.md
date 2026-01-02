@@ -326,7 +326,7 @@ The system SHALL validate S2 implementation using deterministic invariants and g
     - `level`: unsigned decimal u8 in `[0..30]`
     - `cell_id_hex`: lower-case hex u64 formatted as `0x%016x`
 - **AND** the dataset MUST NOT contain duplicates on the key `(lat_nano, lon_nano, level)`
-- **AND** rows SHOULD be sorted by `(level, lat_nano, lon_nano)` for stable diffs
+- **AND** rows SHALL be sorted by `(level, lat_nano, lon_nano)` for stable diffs
 
 #### Scenario: Golden vector coverage requirements
 
@@ -443,8 +443,8 @@ The system SHALL validate S2 implementation using deterministic invariants and g
   Contains North Pole: YES
   Note: S2 handles pole-containing polygons correctly
   ```
-- **AND** longitude degeneracy at poles SHALL be handled correctly
-- **AND** S2's cube-face projection naturally handles polar regions
+- **AND** longitude degeneracy at poles SHALL be handled by S2's cube-face projection (all longitudes converge at ±90° latitude but S2 cells remain well-defined)
+- **AND** S2's cube-face projection naturally handles polar regions without special cases
 
 #### Scenario: S2 internal math determinism
 
@@ -495,7 +495,7 @@ The system SHALL validate S2 implementation using deterministic invariants and g
   3. Compare computed ID with prepare message ID
   4. If mismatch: PANIC with "S2 cell ID divergence detected"
 - **AND** this runtime check catches S2 non-determinism in production
-- **AND** metric: `archerdb_s2_verification_failures_total` (should always be 0)
+- **AND** metric: `archerdb_s2_verification_failures_total` (SHALL always be 0)
 
 #### Scenario: TTL Determinism in Queries
 
@@ -673,7 +673,7 @@ The system SHALL support finding all entities within an arbitrary polygon.
   - Detect: polygon bounds span > 350° of longitude without valid crossing
   - Return error `polygon_too_large` (error code 111)
   - Log warning: "Polygon appears to wrap around world - likely malformed input"
-- **AND** legitimate global queries should use multiple smaller polygons
+- **AND** legitimate global queries SHALL use multiple smaller polygons
 
 #### Scenario: Self-intersecting polygon detection
 
@@ -777,7 +777,7 @@ The system SHALL perform precise geometric tests after the coarse S2 cell filter
 #### Scenario: Integer-only computation preference
 
 - **WHEN** post-filter calculations are performed
-- **THEN** they SHOULD use fixed-point arithmetic where possible
+- **THEN** the system SHALL use fixed-point arithmetic where possible
 - **AND** floating-point conversions SHALL only occur at final output stage
 
 ### Requirement: Input Validation
@@ -1194,5 +1194,203 @@ The system SHALL support high concurrency for client operations.
   - Apply backpressure via the concurrent query limit (queries share result and scratch pools)
   - Return `too_many_queries` error if queue depth exceeds threshold (default: 1000)
   - Log warning: "S2 scratch pool exhaustion - consider reducing max_concurrent_queries or increasing pool size"
-- **AND** `s2_scratch_pool_size` SHOULD equal or exceed `max_concurrent_queries`
+- **AND** `s2_scratch_pool_size` SHALL equal or exceed `max_concurrent_queries`
 - **AND** if `s2_scratch_pool_size < max_concurrent_queries`, some queries will be queued
+
+### Requirement: Error Handling and Propagation
+
+The system SHALL implement comprehensive error handling with clear propagation semantics through all execution phases.
+
+#### Scenario: Error handling phase responsibilities
+
+- **WHEN** errors occur during query execution
+- **THEN** each phase SHALL handle errors as follows:
+  - **input_valid() phase**: Syntactic and semantic validation errors (100-199 range)
+  - **prepare() phase**: Timestamp assignment errors (rare, typically OK)
+  - **prefetch() phase**: Async I/O errors, cache misses (200-299 state errors)
+  - **commit() phase**: Execution errors, resource exhaustion (300-399 resource errors)
+- **AND** errors SHALL be detected as early as possible (fail-fast principle)
+
+#### Scenario: Validation error propagation
+
+- **WHEN** input_valid() returns an error
+- **THEN** the system SHALL:
+  1. NOT call prepare/prefetch/commit phases
+  2. Return error immediately to client via reply message
+  3. Include error context (field name, actual value, expected range)
+  4. Log validation error at DEBUG level (not ERROR - client input issue)
+  5. Increment metric: `archerdb_validation_errors_total{error_code="<name>"}`
+- **AND** validation errors are NEVER retriable (client must fix input)
+
+#### Scenario: Multi-batch error propagation
+
+- **WHEN** a multi-batch message contains 5 batches
+- **AND** batch 3 encounters validation error (invalid_coordinates)
+- **THEN** the system SHALL:
+  1. Execute input_valid() for all 5 batches first (validate entire message)
+  2. If ANY batch fails validation:
+     - Stop processing immediately (fail-fast)
+     - Return error response for first failed batch
+     - Mark remaining batches as skipped
+     - Set `partial_result = true` in reply header
+  3. Encode multi-batch reply with:
+     - No results for batches 1-2 (skipped due to batch 3 failure)
+     - Error reply for batch 3 (error_code, context)
+     - No results for batches 4-5 (skipped)
+- **AND** this ensures transactional semantics (all-or-nothing validation)
+
+#### Scenario: Multi-batch partial execution on resource exhaustion
+
+- **WHEN** a multi-batch executes successfully for batches 1-3
+- **AND** batch 4 encounters resource error (too_many_events, message_body_too_large)
+- **THEN** the system SHALL:
+  1. Commit results for batches 1-3 (already executed successfully)
+  2. Return success replies for batches 1-3
+  3. Return error reply for batch 4 (error_code, context)
+  4. Skip batch 5 (not executed)
+  5. Set `partial_result = true` in reply header
+  6. Client SHALL retry batch 4-5 in a new message
+- **AND** this provides graceful degradation (partial progress vs all-or-nothing failure)
+
+#### Scenario: Prefetch I/O error handling
+
+- **WHEN** prefetch() encounters storage error (checksum_mismatch, storage_unavailable)
+- **THEN** the system SHALL:
+  1. Invoke prefetch callback with error status
+  2. Mark operation as failed
+  3. Skip commit() phase for this operation
+  4. Return error to client (mapped from storage error)
+  5. Log storage error at ERROR level
+  6. Increment metric: `archerdb_storage_errors_total{error_type="<type>"}`
+- **AND** storage corruption errors (checksum_mismatch) SHALL panic the replica
+- **AND** retriable storage errors (storage_unavailable) return `storage_unavailable` to client
+
+#### Scenario: Commit phase error handling
+
+- **WHEN** commit() encounters an error during execution
+- **THEN** the system SHALL:
+  1. Log error at ERROR level with full context
+  2. Return error to client via reply message
+  3. Increment error metric: `archerdb_query_errors_total{operation="<op>",error_code="<code>"}`
+  4. Mark operation as completed (even if error - no retry at VSR level)
+  5. Ensure deterministic error (all replicas must produce same error)
+- **AND** non-deterministic errors (e.g., malloc failure) SHALL panic the replica
+
+#### Scenario: Error determinism across replicas
+
+- **WHEN** the same operation executes on multiple replicas
+- **THEN** all replicas MUST produce identical errors:
+  - Same error code
+  - Same error context (entity_id, field values)
+  - Same decision (success/failure)
+- **AND** this is ensured by:
+  - Deterministic input validation
+  - Fixed-point arithmetic (no floats)
+  - Identical S2 library behavior
+  - Deterministic timestamp assignment
+- **AND** if replicas diverge on errors, VSR will detect via hash chain mismatch
+
+#### Scenario: VSR layer error mapping
+
+- **WHEN** VSR layer produces an error
+- **THEN** it SHALL be mapped to client-facing error codes:
+  ```
+  VSR Error → Client Error Code
+  ═══════════════════════════════════
+  Primary unreachable → cluster_unavailable (201)
+  Quorum not available → cluster_unavailable (201)
+  View change triggered → view_change_in_progress (202)
+  This replica not primary → not_primary (203)
+  Session expired → session_expired (204)
+  Duplicate request → duplicate_request (205)
+  Pipeline full → pipeline_full (308)
+  ```
+- **AND** all VSR errors are retriable (client should retry on different replica or wait)
+
+#### Scenario: Panic vs error return decision
+
+- **WHEN** deciding between panic and error return
+- **THEN** the system SHALL:
+  - **Panic**: Data corruption, invariant violation, non-deterministic error, impossible state
+  - **Error Return**: Invalid input, resource exhaustion, retriable failures, expected conditions
+- **AND** panic triggers:
+  - Checksum mismatch on read
+  - Assertion failure
+  - Reached @unreachable code
+  - Hash chain break in same view
+  - malloc/alloc failure (should never happen with StaticAllocator)
+- **AND** error return triggers:
+  - Invalid coordinates, TTL overflow, empty batch (client input)
+  - Entity not found, cluster unavailable (state)
+  - Too many events, result set too large (resource)
+
+#### Scenario: Error context encoding
+
+- **WHEN** encoding error context for client response
+- **THEN** the context SHALL include:
+  - **For validation errors**: field name, provided value, valid range
+    ```
+    invalid_coordinates:
+      field: "lat_nano"
+      provided: 95000000000  # 95°
+      valid_range: [-90000000000, 90000000000]
+    ```
+  - **For state errors**: entity_id, operation attempted
+    ```
+    entity_not_found:
+      entity_id: "01234567-89ab-cdef-0123-456789abcdef"
+      operation: "query_uuid"
+    ```
+  - **For resource errors**: current value, limit, metric
+    ```
+    too_many_events:
+      batch_size: 15000
+      batch_events_max: 10000
+      message: "Batch exceeds maximum event count"
+    ```
+
+#### Scenario: Error logging levels
+
+- **WHEN** logging errors
+- **THEN** the system SHALL use appropriate log levels:
+  - **DEBUG**: Validation errors (client input issues)
+  - **INFO**: Retriable errors (cluster_unavailable, view_change_in_progress)
+  - **WARN**: Resource exhaustion (too_many_queries, memory_exhausted)
+  - **ERROR**: Storage errors, unexpected failures
+  - **CRITICAL**: Data corruption, invariant violations
+- **AND** DEBUG/INFO errors do NOT page on-call engineers
+- **AND** WARN errors trigger low-priority alerts
+- **AND** ERROR/CRITICAL errors page immediately
+
+#### Scenario: Client SDK error handling expectations
+
+- **WHEN** a client SDK receives an error response
+- **THEN** it SHALL:
+  1. Parse error code from response header
+  2. Check `ErrorCode.is_retriable(error_code)`
+  3. If retriable: apply exponential backoff and retry
+  4. If not retriable: return error to application immediately
+  5. For `not_primary` error: rotate connection pool to next replica
+  6. For `partial_result` flag: check which batches succeeded/failed
+  7. Extract and surface error context to application
+- **AND** SDKs SHALL provide typed error objects (not raw error codes)
+- **AND** SDKs SHALL log retries at DEBUG level
+
+#### Scenario: Graceful degradation strategy
+
+- **WHEN** the system encounters resource constraints
+- **THEN** it SHALL gracefully degrade rather than fail completely:
+  - **Memory pressure**: Queue queries, return `too_many_queries` only when queue full
+  - **Disk full**: Accept reads, reject writes with `disk_full`
+  - **CPU saturation**: Apply query CPU budget, reject queries exceeding budget
+  - **Network partition**: Continue serving reads from replicas with quorum
+- **AND** graceful degradation ensures partial availability over complete failure
+
+### Related Specifications
+
+- See `specs/error-codes/spec.md` for complete error code enumeration and metadata
+- See `specs/client-protocol/spec.md` for error response wire format
+- See `specs/client-retry/spec.md` for client-side retry semantics
+- See `specs/replication/spec.md` for VSR error conditions and view changes
+- See `specs/storage-engine/spec.md` for storage layer error handling
+- See `specs/observability/spec.md` for error metrics and logging requirements

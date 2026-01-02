@@ -403,7 +403,7 @@ The system SHALL reclaim disk space occupied by expired events through LSM compa
 #### Scenario: Compaction frequency
 
 - **WHEN** TTL is enabled
-- **THEN** compaction SHOULD run more frequently to reclaim space
+- **THEN** compaction SHALL run more frequently to reclaim space
 - **AND** compaction trigger MAY be adjusted based on disk usage
 - **AND** target: reclaim expired data within 2× TTL window
 
@@ -431,7 +431,7 @@ The system SHALL handle expired entries during index rebuild on cold start.
 #### Scenario: Rebuild performance with TTL
 
 - **WHEN** rebuilding with short TTLs (e.g., 1 hour)
-- **THEN** rebuild SHALL be faster (fewer entries to insert)
+- **THEN** rebuild time SHALL be reduced proportionally to expired ratio (e.g., 50% expired = 50% faster rebuild)
 - **AND** most old events are skipped
 - **AND** only recent events are indexed
 
@@ -499,3 +499,175 @@ The system SHALL handle TTL during backup and restore operations.
 - **AND** only non-expired events are restored to data file
 - **AND** this reduces restore time and disk usage
 - **AND** tombstones MUST be honored during restore/index rebuild (deleted entities remain deleted)
+
+### Requirement: End-to-End TTL Flow Diagram
+
+The system SHALL implement TTL expiration through coordinated interaction across multiple layers.
+
+#### Scenario: Complete TTL lifecycle (Mermaid diagram)
+
+- **WHEN** understanding TTL end-to-end flow
+- **THEN** the following sequence diagram SHALL illustrate all interactions:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Client
+    participant QueryEngine as Query Engine
+    participant Index as RAM Index
+    participant Storage as LSM Storage
+    participant Compaction as LSM Compaction
+
+    Note over Client,Compaction: PHASE 1: Event Insertion with TTL
+
+    Client->>QueryEngine: insert_events(entity_id, lat, lon, ttl_seconds=3600)
+    QueryEngine->>QueryEngine: input_valid() - validate ttl_seconds
+    QueryEngine->>QueryEngine: prepare() - assign timestamp
+    QueryEngine->>Index: upsert(entity_id, latest_id, ttl_seconds)
+    Note over Index: Store in 64-byte entry:<br/>entity_id, latest_id, ttl_seconds
+    Index->>QueryEngine: upsert complete
+    QueryEngine->>Storage: write_event(GeoEvent with ttl_seconds=3600)
+    Storage->>QueryEngine: write complete
+    QueryEngine->>Client: OK
+
+    Note over Client,Compaction: PHASE 2: UUID Lookup (Before Expiration)
+
+    Client->>QueryEngine: query_uuid(entity_id)
+    QueryEngine->>Index: lookup(entity_id)
+    Index->>Index: Check expiration:<br/>current_time < expiration_time
+    Index->>QueryEngine: Return IndexEntry (not expired)
+    QueryEngine->>Storage: fetch_by_id(latest_id)
+    Storage->>QueryEngine: Return GeoEvent
+    QueryEngine->>Client: Return event data
+
+    Note over Client,Compaction: PHASE 3: UUID Lookup (After Expiration)
+
+    Client->>QueryEngine: query_uuid(entity_id) [1 hour later]
+    QueryEngine->>Index: lookup(entity_id)
+    Index->>Index: Check expiration:<br/>current_time >= expiration_time (EXPIRED!)
+    Index->>Index: remove_if_id_matches(entity_id, latest_id)
+    Note over Index: Atomic removal protects<br/>against concurrent upserts
+    Index->>QueryEngine: Return null (entity not found)
+    QueryEngine->>Client: entity_not_found error
+    Note over Storage: Event still in LSM storage<br/>(lazy deletion)
+
+    Note over Client,Compaction: PHASE 4: Background Cleanup
+
+    QueryEngine->>QueryEngine: cleanup_expired() operation
+    QueryEngine->>Index: scan for expired entries
+    Index->>QueryEngine: List of expired entity_ids
+    QueryEngine->>Index: Remove expired entries (batch)
+    Note over Index: Index cleaned,<br/>but storage still contains events
+
+    Note over Client,Compaction: PHASE 5: LSM Compaction Garbage Collection
+
+    Compaction->>Compaction: Start level compaction
+    Compaction->>Storage: Read block (multiple GeoEvents)
+    Storage->>Compaction: Return events
+    loop For each event in block
+        Compaction->>Compaction: Check:<br/>current_time >= event_timestamp + ttl_ns?
+        alt Event expired
+            Compaction->>Compaction: Discard event (don't write to new block)
+        else Event not expired
+            Compaction->>Compaction: Write to new block
+        end
+    end
+    Compaction->>Storage: Write compacted block (expired events removed)
+    Note over Storage: Physical deletion complete
+
+    Note over Client,Compaction: PHASE 6: GDPR Deletion (Tombstone)
+
+    Client->>QueryEngine: delete_entities(entity_id)
+    QueryEngine->>Index: delete(entity_id)
+    Index->>QueryEngine: Deleted from index
+    QueryEngine->>Storage: write_event(flags.deleted=true, ttl_seconds=0)
+    Note over Storage: Tombstone prevents<br/>resurrection on restore
+    Storage->>QueryEngine: Tombstone written
+    QueryEngine->>Client: OK (entity deleted)
+
+    Note over Client,Compaction: Future compaction will remove all history
+```
+
+#### Scenario: TTL interaction points across specs
+
+- **WHEN** implementing TTL feature
+- **THEN** the following specs interact:
+
+```
+┌────────────────────────────────────────────────────────────────────┐
+│                    TTL CROSS-SPEC INTERACTION MAP                  │
+├──────────────────┬─────────────────────────────────────────────────┤
+│ Spec             │ TTL Responsibility                              │
+├──────────────────┼─────────────────────────────────────────────────┤
+│ data-model       │ Define ttl_seconds field (u32, 4 bytes)        │
+│                  │ Validate ttl_seconds range                      │
+│                  │ Define overflow protection logic                │
+├──────────────────┼─────────────────────────────────────────────────┤
+│ query-engine     │ Execute input_valid() TTL validation            │
+│                  │ Calculate expiration during commit()            │
+│                  │ Implement cleanup_expired() operation           │
+├──────────────────┼─────────────────────────────────────────────────┤
+│ hybrid-memory    │ Store ttl_seconds in IndexEntry (64 bytes)     │
+│                  │ Check expiration during lookup()                │
+│                  │ Atomically remove expired entries               │
+│                  │ Protect against race conditions                 │
+├──────────────────┼─────────────────────────────────────────────────┤
+│ storage-engine   │ Store GeoEvent with ttl_seconds on disk         │
+│                  │ Implement compaction-based GC                   │
+│                  │ Discard expired events during compaction        │
+│                  │ Preserve tombstones (flags.deleted=true)        │
+├──────────────────┼─────────────────────────────────────────────────┤
+│ ttl-retention    │ Define lazy expiration policy                   │
+│ (this spec)      │ Define cleanup_expired() API                    │
+│                  │ Define GDPR deletion with tombstones            │
+│                  │ Define restore with TTL filtering               │
+├──────────────────┼─────────────────────────────────────────────────┤
+│ error-codes      │ ttl_overflow error code                         │
+│                  │ entity_not_found (for expired lookups)          │
+├──────────────────┼─────────────────────────────────────────────────┤
+│ backup-restore   │ Backup includes expired events                  │
+│                  │ Restore can optionally skip expired             │
+│                  │ Honor tombstones during restore                 │
+└──────────────────┴─────────────────────────────────────────────────┘
+```
+
+#### Scenario: TTL performance characteristics
+
+- **WHEN** analyzing TTL performance impact
+- **THEN** the following characteristics SHALL apply:
+
+```
+TTL PERFORMANCE PROFILE
+═══════════════════════
+
+Operation: Index Upsert with TTL
+- Storage overhead: +4 bytes (ttl_seconds in IndexEntry)
+- CPU overhead: Negligible (1 field copy)
+- Latency impact: <1% (adds ~50ns)
+
+Operation: Index Lookup with Expiration Check
+- CPU overhead: ~100ns (timestamp arithmetic + comparison)
+- Latency impact: <5% for hot path (expires ~1% of lookups)
+- False positive rate: 0% (deterministic calculation)
+
+Operation: Background Cleanup
+- Frequency: Configurable (default: every 60 seconds)
+- Index scan: O(n) where n = entity_count
+- Throughput: ~10M entities/sec scan rate
+- Impact: Amortized over scan interval (minimal)
+
+Operation: LSM Compaction GC
+- Overhead: +1 comparison per event during compaction
+- Latency impact: <2% (compaction already CPU-bound)
+- Throughput: Unchanged (maintains compaction rate)
+- Storage savings: Depends on TTL distribution (10-80% typical)
+```
+
+### Related Specifications
+
+- See `specs/data-model/spec.md` for GeoEvent ttl_seconds field definition
+- See `specs/hybrid-memory/spec.md` for lazy expiration during index lookup
+- See `specs/storage-engine/spec.md` for LSM compaction-based garbage collection
+- See `specs/query-engine/spec.md` for TTL expiration checks during query execution
+- See `specs/error-codes/spec.md` for TTL-related error codes (ttl_overflow)
+- See `specs/backup-restore/spec.md` for TTL filtering during restore operations

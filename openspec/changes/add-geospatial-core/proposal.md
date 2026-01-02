@@ -150,7 +150,7 @@ ArcherDB occupies a unique position in the geospatial database market by combini
 ## Impact
 
 - **Affected specs**: None (new capabilities)
-- **New spec files** (32 total):
+- **New spec files** (33 total - UPDATED in Iteration 1):
   - `specs/api-versioning/spec.md` - Protocol and format versioning policy
   - `specs/implementation-guide/spec.md` - **CRITICAL**: TigerBeetle reference implementation mapping, file-by-file guide, attribution requirements
   - `specs/data-model/spec.md` - GeoEvent structure (with TTL field), block headers, ID generation
@@ -166,6 +166,7 @@ ArcherDB occupies a unique position in the geospatial database market by combini
   - `specs/security/spec.md` - mTLS authentication, certificate management, audit logging
   - `specs/observability/spec.md` - Prometheus metrics, structured logging, health checks
   - `specs/constants/spec.md` - Central constants (checkpoint_interval=256, s2_level=30, batch_max=10K)
+  - `specs/error-codes/spec.md` - **NEW (Iteration 1)**: Centralized error code enumeration with 54 error codes, retry semantics, propagation rules
   - `specs/interfaces/spec.md` - Inter-component interfaces (state machine, index, storage, S2, etc.)
   - `specs/ttl-retention/spec.md` - Per-entry TTL, lazy expiration, cleanup API, compaction-based garbage collection
   - `specs/backup-restore/spec.md` - S3 backup, point-in-time restore, RPO<1min/RTO~20min
@@ -194,7 +195,7 @@ ArcherDB occupies a unique position in the geospatial database market by combini
 
 ## Decisions Made
 
-All open questions have been answered. See `DECISIONS.md` for complete Architecture Decision Record.
+All open questions have been answered. See `DECISIONS.md` for the Architecture Decision Record.
 
 **Summary:**
 - **Client Protocol:** Custom binary (like TigerBeetle) with official SDKs for Zig, Java, Go, Python, Node.js

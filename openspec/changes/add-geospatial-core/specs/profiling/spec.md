@@ -315,3 +315,8 @@ The system SHALL support custom profiling and monitoring extensions.
   - Automated analysis pipeline creation
   - Analysis result integration with monitoring
 - **AND** custom tools SHALL leverage built-in infrastructure
+
+### Related Specifications
+
+- See `specs/observability/spec.md` for performance metrics and monitoring infrastructure
+- See `specs/performance-validation/spec.md` for benchmark profiling methodology

@@ -273,7 +273,7 @@ The system SHALL provide development and testing deployment tools.
   - Service discovery for development
   - Configuration management
   - Log aggregation and monitoring
-- **AND** local orchestration SHALL be simple to use
+- **AND** local orchestration SHALL require ≤3 commands to start a 3-node development cluster (format, start replica×3)
 
 #### Scenario: Cloud development environments
 
@@ -341,7 +341,7 @@ The system SHALL support collaborative development workflows.
   - Knowledge base integration
   - Expert consultation tools
   - Incident response coordination
-- **AND** collaboration SHALL be efficient and secure
+- **AND** collaboration tools SHALL support mTLS-authenticated remote access with <5 second session establishment time
 
 ### Requirement: Performance Benchmarking Suite
 
@@ -510,3 +510,9 @@ The system SHALL provide code generation tools to accelerate development.
   - Testing framework integration
   - Documentation structure creation
 - **AND** scaffolding SHALL follow best practices
+
+### Related Specifications
+
+- See `specs/client-sdk/spec.md` for SDK testing and development tools
+- See `specs/observability/spec.md` for monitoring dashboard requirements
+- See `specs/query-engine/spec.md` for query debugging capabilities

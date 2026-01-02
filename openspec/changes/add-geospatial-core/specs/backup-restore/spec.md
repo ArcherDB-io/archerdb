@@ -53,6 +53,8 @@ The system SHALL support backing up closed log blocks to object storage (S3, GCS
   5. Increment metric: `archerdb_backup_mandatory_bypass_total`
 - **AND** this prevents permanent cluster freezes if S3 is indefinitely unreachable.
 
+#### Scenario: Backup file naming convention
+
 - **WHEN** uploading blocks to object storage
 - **THEN** files SHALL be named:
   ```
@@ -341,7 +343,7 @@ The system SHALL support configurable retention policies for backups in object s
 - **THEN** operators SHALL ensure that `backup-retention-days` DOES NOT exceed the organization's GDPR erasure window (typically 30 days)
 - **AND** this ensures that deleted data is physically removed from immutable object storage within the legal timeframe
 - **AND** v1 does not rewrite historical backup blocks; erasure is achieved exclusively via object expiration policy
-- **AND** operators SHOULD configure `--backup-retention-days=30` (or less) for production clusters handling personal data
+- **AND** operators SHALL configure `--backup-retention-days=30` (or less) for production clusters handling personal data
 
 #### Scenario: Retention enforcement
 
@@ -492,3 +494,11 @@ The system SHALL define recovery time objectives for disaster recovery scenarios
   - Typical: <60 seconds for moderate write rates
   - Under sustained high load (1M events/sec): may increase to 2-5 minutes
   - **RPO: <1 minute typical, <5 minutes under sustained peak load**
+
+### Related Specifications
+
+- See `specs/storage-engine/spec.md` for checkpoint format and superblock structure
+- See `specs/replication/spec.md` for VSR checkpoint coordination
+- See `specs/ttl-retention/spec.md` for TTL filtering during restore
+- See `specs/hybrid-memory/spec.md` for index rebuild after restore
+- See `specs/observability/spec.md` for backup monitoring metrics

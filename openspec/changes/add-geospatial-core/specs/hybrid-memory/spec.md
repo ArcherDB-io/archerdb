@@ -2,6 +2,17 @@
 
 ## ADDED Requirements
 
+### Requirement: IndexEntry Size and Alignment
+
+The system SHALL ensure the in-memory index entry layout matches the declared constants to prevent accidental layout drift and performance regressions.
+
+#### Scenario: IndexEntry size validation
+
+- **WHEN** `IndexEntry` is compiled
+- **THEN** `@sizeOf(IndexEntry)` MUST equal `constants.index_entry_size` (64 bytes)
+- **AND** `@alignOf(IndexEntry)` MUST be at least 16 bytes (for u128 alignment)
+- **AND** the verification MUST live in the index module (to avoid import cycles in `src/constants.zig`)
+
 ### Requirement: Aerospike-Style Index-on-RAM Architecture
 
 The system SHALL implement a hybrid memory architecture where the primary index resides entirely in RAM while data records are stored on SSD, enabling O(1) lookups with minimal memory footprint.
@@ -132,7 +143,7 @@ The system SHALL enforce a maximum probe length to prevent infinite loops and pe
 - **AND** if probe length exceeds this limit during lookup, return null (not found)
 - **AND** if probe length exceeds this limit during insert, return error `index_degraded`
 - **AND** `index_degraded` error SHALL trigger operational alert
-- **AND** operator should rebuild index with larger capacity or better hash function
+- **AND** operator SHALL rebuild index with larger capacity or better hash function
 
 #### Scenario: Probe length monitoring
 
@@ -271,7 +282,7 @@ The system SHALL rebuild the RAM index from persisted GeoEvents on cold start if
   - **Total: ~2 hours for complete cold start**
 - **AND** this is the WORST CASE (checkpoint corrupted)
 - **AND** normal cold start with valid checkpoint: < 5 minutes (checkpoint + partial WAL replay)
-- **AND** operators should monitor checkpoint integrity to avoid 2-hour cold starts
+- **AND** operators SHALL monitor checkpoint integrity to avoid 2-hour cold starts
 
 ### Requirement: Index Memory Management
 
@@ -289,7 +300,8 @@ The system SHALL manage index memory according to static allocation discipline.
 - **WHEN** index reaches capacity
 - **THEN** the system SHALL reject new entities
 - **AND** error `index_capacity_exceeded` SHALL be returned
-- **AND** capacity MUST be configured appropriately at startup
+- **AND** capacity MUST be configured using `capacity = ceil(expected_entities / 0.7)` at startup (as specified in Capacity calculation scenario above)
+- **AND** operators SHALL provision for peak entity count, not average count
 
 #### Scenario: Memory reclamation
 
@@ -415,6 +427,496 @@ The system SHALL support tiered storage for cost optimization at extreme scale.
 - **AND** latency is higher (acceptable for historical queries)
 - **AND** this enables cost-effective long-term retention
 
+### Requirement: Thread-Safety and Concurrency Model
+
+The system SHALL support concurrent read access with lock-free algorithms and explicit memory ordering guarantees.
+
+#### Scenario: Index concurrency model
+
+- **WHEN** multiple threads access the index
+- **THEN** the system SHALL support:
+  - **Multiple concurrent readers** (lookups)
+  - **Single writer at a time** (upserts managed by VSR commit phase)
+  - **Read-during-write safety** (readers see consistent snapshots)
+- **AND** this model is based on VSR's single-threaded commit phase execution
+- **AND** lookup operations from query prefetch phase are concurrent (across different VSR operations in pipeline)
+
+#### Scenario: Atomic lookup operations
+
+- **WHEN** `lookup(entity_id)` is called concurrently from multiple threads
+- **THEN** the lookup SHALL:
+  - Use atomic loads with `@atomicLoad(.Acquire)` semantics
+  - Read the `IndexEntry` as a complete atomic unit (compiler guarantees 64-byte aligned reads)
+  - Never observe torn writes (partial entity_id, partial latest_id)
+  - Complete without blocking other lookups
+- **AND** Zig's `@atomicLoad` ensures:
+  - Memory ordering: Acquire semantics (reads after acquire see writes before release)
+  - Atomicity: 64-byte aligned reads are atomic on x86-64 (within cache line)
+- **AND** implementation SHALL use:
+  ```zig
+  const entry = @atomicLoad(*IndexEntry, entry_ptr, .Acquire);
+  ```
+
+#### Scenario: Atomic upsert operations
+
+- **WHEN** `upsert(entity_id, latest_id, ttl_seconds)` is called
+- **THEN** the upsert SHALL:
+  - Be serialized through VSR commit phase (single-threaded state machine execution)
+  - Use atomic stores with `@atomicStore(.Release)` semantics after modification
+  - Use compare-and-swap (CAS) for conditional updates (LWW timestamp check)
+  - Ensure memory ordering: Release semantics (writes before release visible after acquire)
+- **AND** implementation SHALL use:
+  ```zig
+  // Inside VSR commit phase (single-threaded):
+  if (new_timestamp > existing.timestamp) {
+      var new_entry = IndexEntry{
+          .entity_id = entity_id,
+          .latest_id = latest_id,
+          .ttl_seconds = ttl_seconds,
+          // ...
+      };
+      @atomicStore(*IndexEntry, entry_ptr, new_entry, .Release);
+  }
+  ```
+
+#### Scenario: Memory ordering guarantees
+
+- **WHEN** an upsert completes on one thread
+- **AND** a lookup executes on a different thread
+- **THEN** the memory ordering guarantee SHALL be:
+  - **Write (upsert):** `.Release` fence ensures all writes visible
+  - **Read (lookup):** `.Acquire` fence ensures all writes before release are seen
+  - **Visibility:** If lookup observes updated `entity_id`, it MUST observe updated `latest_id`
+- **AND** this prevents:
+  - Reordering of `entity_id` and `latest_id` writes
+  - Torn reads (partial updates)
+  - Stale reads after writes
+
+#### Scenario: Cache coherence protocol
+
+- **WHEN** multiple CPU cores access index entries
+- **THEN** the system SHALL rely on x86-64 cache coherence (MESI protocol):
+  - **Modified:** Core has exclusive write access, cache line dirty
+  - **Exclusive:** Core has exclusive access, cache line clean
+  - **Shared:** Multiple cores have read-only access
+  - **Invalid:** Cache line is stale, must be reloaded
+- **AND** 64-byte cache line alignment ensures:
+  - Each `IndexEntry` is self-contained within one cache line
+  - No false sharing between adjacent entries
+  - Atomic cache line reads/writes
+
+#### Scenario: False sharing prevention
+
+- **WHEN** multiple threads update adjacent index entries
+- **THEN** false sharing SHALL be prevented by:
+  - 64-byte `IndexEntry` size matches cache line size
+  - Entries are 64-byte aligned (@alignOf(IndexEntry) = 64)
+  - No two entries share a cache line
+- **AND** this ensures:
+  - Updates to entry[i] do not invalidate cache line for entry[i+1]
+  - Concurrent lookups on different entities do not cause cache thrashing
+
+#### Scenario: Lock-free hash map traversal
+
+- **WHEN** performing linear probing during lookup
+- **THEN** the traversal SHALL be lock-free:
+  - No mutexes or spinlocks acquired
+  - Uses only atomic loads (@atomicLoad)
+  - Bounded by `max_probe_length = 1024`
+  - Can proceed concurrently with other lookups
+- **AND** if entry is being updated during probe:
+  - Lookup sees either old or new value (both valid)
+  - No intermediate/torn state visible
+  - LWW semantics ensure consistency
+
+#### Scenario: Concurrent lookup performance
+
+- **WHEN** N threads perform concurrent lookups
+- **THEN** the system SHALL achieve:
+  - Linear scalability up to N=16 threads (core count dependent)
+  - No lock contention (lock-free reads)
+  - Cache line bouncing only on actual conflicts (same entity_id)
+  - Throughput: ~10M lookups/sec per 8-core node (assuming 64-byte entries, cache-resident)
+
+#### Scenario: Read-during-write consistency
+
+- **WHEN** a lookup executes while an upsert is in progress
+- **THEN** the lookup SHALL observe:
+  - Either the complete old entry (before upsert)
+  - Or the complete new entry (after upsert)
+  - Never a partially updated entry (torn read)
+- **AND** this is guaranteed by:
+  - Atomic 64-byte loads (@atomicLoad)
+  - Release/Acquire memory ordering
+  - x86-64 cache coherence
+
+#### Scenario: Thundering herd prevention
+
+- **WHEN** many threads lookup the same entity_id concurrently
+- **THEN** the system SHALL:
+  - Allow all lookups to proceed in parallel (no serialization)
+  - Each lookup independently hashes and probes
+  - Cache line sharing is acceptable (read-only access)
+  - No thread blocks waiting for others
+
+#### Scenario: ABA problem prevention
+
+- **WHEN** using compare-and-swap (CAS) for upserts
+- **THEN** the system SHALL prevent ABA problem by:
+  - CAS is only used within single-threaded VSR commit phase
+  - No concurrent CAS on same entry from multiple threads
+  - Timestamp monotonicity provides natural version counter
+- **AND** ABA cannot occur because:
+  - Only one thread (VSR commit) modifies index
+  - Readers never modify, so A→B→A transition impossible
+
+#### Scenario: Consistency under crash
+
+- **WHEN** the system crashes during index modification
+- **THEN** consistency SHALL be maintained by:
+  - Index checkpoint is independent of data file
+  - VSR WAL (journal) is authoritative
+  - On recovery: load checkpoint + replay WAL
+  - Replayed operations are deterministic (same result)
+- **AND** torn writes to index are acceptable:
+  - WAL replay will reconstruct correct state
+  - Checkpoint is best-effort (not mandatory for correctness)
+
+### Requirement: Memory Barriers and Fences
+
+The system SHALL use explicit memory barriers where atomic operations are insufficient.
+
+#### Scenario: Store-Release barrier
+
+- **WHEN** an upsert commits
+- **THEN** a store-release barrier SHALL ensure:
+  - All writes to `IndexEntry` fields are visible
+  - No reordering of writes past the barrier
+  - Implemented via `@atomicStore(.Release)`
+- **AND** this guarantees subsequent reads on other threads see complete update
+
+#### Scenario: Load-Acquire barrier
+
+- **WHEN** a lookup reads an entry
+- **THEN** a load-acquire barrier SHALL ensure:
+  - All writes before the corresponding release are visible
+  - No reordering of reads before the barrier
+  - Implemented via `@atomicLoad(.Acquire)`
+- **AND** this prevents reading stale data
+
+#### Scenario: SeqCst for critical operations
+
+- **WHEN** strict ordering is required (e.g., index metadata updates)
+- **THEN** SeqCst (sequentially consistent) atomics MAY be used:
+  - `@atomicStore(.SeqCst)` for writes
+  - `@atomicLoad(.SeqCst)` for reads
+- **AND** this provides total ordering across all threads (stronger than Acquire/Release)
+- **AND** use sparingly (performance cost ~2-3x higher than Acquire/Release)
+
+#### Scenario: Full memory fence
+
+- **WHEN** a full memory fence is required (rare)
+- **THEN** use `@fence(.SeqCst)` to ensure:
+  - All memory operations before fence complete
+  - All memory operations after fence start after fence
+- **AND** this is typically NOT needed due to atomic operations with memory ordering
+
+### Requirement: Thread-Local State
+
+The system SHALL avoid shared mutable state where possible by using thread-local caches.
+
+#### Scenario: Thread-local hash state
+
+- **WHEN** computing hash(entity_id)
+- **THEN** each thread MAY maintain thread-local hash state
+- **AND** this avoids contention on shared hash state
+- **AND** wyhash/xxhash3 are stateless (no TLS needed)
+
+#### Scenario: Thread-local statistics
+
+- **WHEN** tracking lookup/upsert counts
+- **THEN** each thread SHALL maintain thread-local counters
+- **AND** aggregate statistics computed by summing thread-local counters
+- **AND** this avoids atomic increment overhead on hot path
+
+### Requirement: Concurrency Edge Cases and Liveness
+
+The system SHALL prevent concurrency edge cases including reader starvation, livelock, and priority inversion.
+
+#### Scenario: Reader starvation prevention
+
+- **WHEN** continuous upsert operations occur
+- **THEN** the system SHALL ensure readers are not starved:
+  - VSR commit phase is single-threaded (no writer parallelism)
+  - Lookups from prefetch phase run concurrently (different VSR ops)
+  - No lock contention between readers
+  - Readers never wait for writers (lock-free reads)
+- **AND** reader starvation CANNOT occur because:
+  - No locks acquired by readers
+  - Writers don't block readers
+  - VSR pipeline ensures fairness across operations
+
+#### Scenario: Writer starvation prevention
+
+- **WHEN** continuous lookup operations occur
+- **THEN** writers SHALL NOT be starved because:
+  - VSR commit phase executes regardless of lookup load
+  - Commit phase has dedicated thread (single-threaded state machine)
+  - Lookups don't interfere with commit execution
+  - No shared locks between commit and lookup
+- **AND** write throughput is independent of read load
+
+#### Scenario: Livelock prevention (CAS retry loops)
+
+- **WHEN** using compare-and-swap (CAS) for conditional updates
+- **THEN** the system SHALL prevent livelock:
+  - CAS is only used within single-threaded VSR commit phase
+  - No concurrent CAS from multiple threads (no retry contention)
+  - If CAS was multi-threaded (hypothetical):
+    - Max retry count: 3 attempts
+    - Exponential backoff: 1μs, 2μs, 4μs
+    - After max retries: yield to OS scheduler
+- **AND** livelock CANNOT occur in current design (single-threaded commit)
+
+#### Scenario: Priority inversion prevention
+
+- **WHEN** multiple operations compete for resources
+- **THEN** priority inversion SHALL be prevented by:
+  - No locks held across I/O operations (lock-free design)
+  - No priority-based scheduling (FIFO operation processing)
+  - All operations have equal priority in VSR pipeline
+- **AND** high-priority operations can't be blocked by low-priority operations
+
+#### Scenario: Deadlock impossibility proof
+
+- **WHEN** analyzing potential deadlocks
+- **THEN** deadlocks are IMPOSSIBLE because:
+  - **No locks:** Lock-free index design (atomic ops only)
+  - **No circular wait:** Single-threaded commit phase (no threads waiting on each other)
+  - **No hold-and-wait:** Operations complete atomically (no partial completion)
+- **AND** this is verified by design (lock-free + single-threaded = no deadlock)
+
+#### Scenario: Memory consistency under concurrent load
+
+- **WHEN** N threads perform concurrent lookups during upsert
+- **THEN** memory consistency SHALL be guaranteed:
+  - All lookups see sequentially consistent state
+  - Either all fields from old entry OR all fields from new entry
+  - Never mixed state (partial old, partial new)
+  - Guaranteed by:
+    - 64-byte atomic loads (cache line atomicity)
+    - Release/Acquire memory ordering
+    - x86-64 cache coherence (MESI)
+
+#### Scenario: Race condition: Concurrent lookup during upsert
+
+- **GIVEN** thread A is upserting entity E
+- **AND** thread B is looking up entity E concurrently
+- **WHEN** both operations execute simultaneously
+- **THEN** thread B SHALL observe:
+  - **Case 1:** Old value (upsert hasn't completed)
+  - **Case 2:** New value (upsert completed)
+  - **Never:** Torn read (partial old, partial new)
+- **AND** both outcomes are correct (eventual consistency)
+- **AND** LWW semantics ensure convergence
+
+#### Scenario: Race condition: Concurrent TTL expiration check
+
+- **GIVEN** entity E exists with TTL expiring "right now"
+- **AND** thread A checks expiration (finds expired, attempts remove)
+- **AND** thread B upserts new value for E concurrently
+- **WHEN** both operations race
+- **THEN** the system SHALL:
+  - Use conditional removal: `remove_if_id_matches(entity_id, expired_latest_id)`
+  - If latest_id changed: removal fails (fresh data wins)
+  - If latest_id matches: removal succeeds (expired data removed)
+- **AND** this prevents removing fresh data (already specified, reinforced here)
+
+#### Scenario: Memory model: Sequential consistency guarantee
+
+- **WHEN** operations execute across multiple threads
+- **THEN** the memory model SHALL provide sequential consistency:
+  - There exists a total order of all operations
+  - Each thread's operations appear in program order
+  - All threads agree on the order of operations
+- **AND** this is achieved via:
+  - VSR commit phase serialization (total order)
+  - Atomic operations with Acquire/Release ordering
+  - x86-64 TSO (Total Store Order) memory model
+
+#### Scenario: Concurrent index checkpoint and lookup
+
+- **WHEN** background checkpoint task writes index pages
+- **AND** concurrent lookups access the same pages
+- **THEN** the system SHALL:
+  - Checkpoint reads index entries atomically (@atomicLoad)
+  - Lookups read index entries atomically (@atomicLoad)
+  - No interference between checkpoint and lookup
+  - Both can proceed concurrently
+- **AND** checkpoint sees consistent snapshot (may be slightly stale)
+
+#### Scenario: Liveness guarantee under concurrent load
+
+- **WHEN** system is under maximum concurrent load
+- **THEN** liveness SHALL be guaranteed:
+  - All operations eventually complete (no infinite loops)
+  - Bounded wait time: p99 latency < 10ms (index operations)
+  - No operation can be delayed indefinitely
+  - Progress guarantee: At least one thread makes progress
+- **AND** this is ensured by lock-free algorithms (wait-free for readers)
+
+### Requirement: Formal Concurrency Correctness Proof
+
+The system SHALL provide formal reasoning about concurrency correctness properties to enable verification.
+
+#### Scenario: Linearizability proof sketch
+
+- **WHEN** proving index operations are linearizable
+- **THEN** the proof SHALL establish:
+  ```
+  Linearizability Proof (Index Operations)
+  ═══════════════════════════════════════
+
+  Theorem: All index operations (lookup, upsert) are linearizable.
+
+  Proof sketch:
+  1. Sequential specification:
+     - lookup(k) returns latest value for key k, or null
+     - upsert(k,v) updates key k to value v (LWW if concurrent)
+
+  2. Linearization points:
+     - lookup: @atomicLoad of IndexEntry (single atomic operation)
+     - upsert: @atomicStore of IndexEntry (single atomic operation)
+
+  3. Real-time ordering:
+     - If upsert(k,v1) completes before lookup(k) starts:
+       → lookup MUST see v1 (or later value)
+     - Guaranteed by Acquire/Release semantics
+
+  4. Total order construction:
+     - Order operations by their linearization points (atomic load/store)
+     - x86-64 TSO memory model provides total order of stores
+     - Acquire/Release fences ensure visibility
+
+  5. Sequential consistency:
+     - For any execution, there exists a sequential ordering
+     - That respects program order within each thread
+     - Matches observable behavior
+
+  ∴ Index operations are linearizable. QED.
+  ```
+
+#### Scenario: Deadlock-freedom proof
+
+- **WHEN** proving system is deadlock-free
+- **THEN** the proof SHALL establish:
+  ```
+  Deadlock-Freedom Proof
+  ═════════════════════
+
+  Theorem: The system cannot deadlock.
+
+  Proof by contradiction:
+  Assume deadlock occurs (circular wait).
+
+  For deadlock, need all 4 Coffman conditions:
+  1. Mutual exclusion: Resources held exclusively
+  2. Hold and wait: Thread holds R1, waits for R2
+  3. No preemption: Resources can't be forcibly taken
+  4. Circular wait: T1→T2→...→T1
+
+  ArcherDB design violations:
+  1. ✗ No locks (lock-free index, atomic operations only)
+     → Mutual exclusion does NOT hold
+
+  2. ✗ Single-threaded commit phase (no concurrent writers)
+     → Hold-and-wait does NOT hold
+
+  3. ✗ Operations complete atomically (no partial state)
+     → No preemption is irrelevant (nothing to preempt)
+
+  4. ✗ No threads waiting on each other
+     → Circular wait CANNOT form
+
+  Since condition 1 is violated (no locks), deadlock is impossible.
+
+  ∴ System is deadlock-free. QED.
+  ```
+
+#### Scenario: Starvation-freedom proof
+
+- **WHEN** proving system is starvation-free
+- **THEN** the proof SHALL establish:
+  ```
+  Starvation-Freedom Proof
+  ═══════════════════════
+
+  Theorem: No operation starves (all eventually complete).
+
+  Reader starvation:
+  - Readers use lock-free atomic loads
+  - No waiting for locks or other threads
+  - Bounded probe length (max 1024 iterations)
+  - ∴ Readers complete in O(1) time, cannot starve
+
+  Writer starvation:
+  - Writers execute in VSR commit phase (single-threaded)
+  - VSR pipeline ensures FIFO ordering
+  - No priority inversion (all ops equal priority)
+  - Pipeline depth bounded (pipeline_max = 1024)
+  - ∴ Writers complete within bounded time, cannot starve
+
+  ∴ System is starvation-free. QED.
+  ```
+
+#### Scenario: Memory model correctness (TLA+ sketch)
+
+- **WHEN** formally verifying memory model
+- **THEN** a TLA+ specification sketch SHALL include:
+  ```
+  TLA+ Model Sketch (Index Concurrency)
+  ═════════════════════════════════════
+
+  MODULE IndexConcurrency
+
+  VARIABLES
+    index,          \* Map from entity_id to IndexEntry
+    readers,        \* Set of active reader threads
+    writer_state    \* VSR commit phase state
+
+  Init ==
+    /\ index = [e \in EntityID |-> NULL]
+    /\ readers = {}
+    /\ writer_state = "idle"
+
+  ReadOperation(thread, entity_id) ==
+    /\ thread \in readers
+    /\ \E entry \in IndexEntry :
+        entry = index[entity_id]  \* Atomic read
+    /\ UNCHANGED <<index, writer_state>>
+
+  WriteOperation(entity_id, new_value) ==
+    /\ writer_state = "commit"  \* Only in commit phase
+    /\ index' = [index EXCEPT ![entity_id] = new_value]
+    /\ UNCHANGED <<readers, writer_state>>
+
+  Invariants:
+    TypeOK == index \in [EntityID -> IndexEntry \cup {NULL}]
+
+    Linearizability ==
+      \A op1, op2 \in Operations :
+        RealTimeBefore(op1, op2) =>
+          LinearizationOrder(op1, op2)
+
+    NoTornReads ==
+      \A thread \in readers :
+        ReadValue(thread) \in {OldEntry, NewEntry}
+        /\ ReadValue(thread) \notin PartialEntry
+
+  THEOREM Spec => []Linearizability /\ []NoTornReads
+  ```
+- **AND** full TLA+ model would be developed during formal verification phase (if required)
+
 ### Requirement: Entity and Capacity Limits
 
 The system SHALL enforce hard limits on entity counts and storage capacity.
@@ -503,3 +1005,13 @@ The system SHALL specify minimum and recommended hardware for meeting performanc
   - **RAM:** 256GB (ECC recommended)
   - **Disk:** 2TB+ NVMe Gen4/Gen5 (>5GB/s, Optane or high-endurance)
   - **Network:** 25-100Gbps (for cross-region replication)
+
+### Related Specifications
+
+- See `specs/data-model/spec.md` for IndexEntry structure and GeoEvent format
+- See `specs/storage-engine/spec.md` for LSM storage and checkpoint coordination
+- See `specs/query-engine/spec.md` for index lookup during queries
+- See `specs/ttl-retention/spec.md` for lazy TTL expiration in index
+- See `specs/constants/spec.md` for index_entry_size and capacity constants
+- See `specs/memory-management/spec.md` for StaticAllocator and memory discipline
+- See `specs/implementation-guide/spec.md` for linear probing hash map algorithm

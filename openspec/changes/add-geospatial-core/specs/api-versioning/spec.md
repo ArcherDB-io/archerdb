@@ -42,7 +42,7 @@ The system SHALL provide clear API stability guarantees and deprecation policies
   - **Experimental** - May change, no compatibility guarantees
   - **Deprecated** - Will be removed in future version
   - **Internal** - Not part of public API, may change anytime
-- **AND** stability levels SHALL be clearly documented
+- **AND** stability levels SHALL be documented in API documentation with explicit badges (Stable/Beta/Experimental/Deprecated/Internal)
 
 #### Scenario: Breaking changes
 
@@ -158,7 +158,7 @@ The system SHALL provide clear upgrade procedures and rollback guidance.
 - **AND** zero-downtime upgrades SHALL be supported for minor/patch versions
 - **AND** major version upgrades MAY require brief downtime (documented per release)
 - **AND** mixed-version cluster operation is supported for 24-72 hours max
-- **AND** downgrade is supported within compatibility window (typically 1 major version)
+- **AND** downgrade is supported within the compatibility window (1 major version)
 
 #### Scenario: Upgrade failure and rollback
 
@@ -340,7 +340,7 @@ The system SHALL communicate version changes and compatibility through community
 
 ### Requirement: Experimental Features
 
-The system SHALL clearly mark experimental features with compatibility disclaimers.
+The system SHALL mark experimental features with explicit `@experimental` annotations in code and `[EXPERIMENTAL]` badges in documentation.
 
 #### Scenario: Experimental feature management
 
@@ -389,3 +389,10 @@ The system SHALL enforce version compatibility rules at runtime.
   - Log version-related access patterns
   - Monitor feature usage by version
 - **AND** feature access SHALL be controlled by version negotiation
+
+### Related Specifications
+
+- See `specs/client-protocol/spec.md` for protocol version field in message header
+- See `specs/data-model/spec.md` for wire_format_version in GeoEvent structure
+- See `specs/error-codes/spec.md` for unsupported_version error code (6)
+- See `specs/configuration/spec.md` for version compatibility validation

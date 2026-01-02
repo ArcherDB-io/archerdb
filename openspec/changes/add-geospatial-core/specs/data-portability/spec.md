@@ -57,7 +57,7 @@ The system SHALL support efficient bulk export of large location datasets.
   - Entity ID range filtering
   - Pagination for large result sets
   - Resume capability for interrupted exports
-- **AND** range export SHALL be efficient for large datasets
+- **AND** range export SHALL achieve >100MB/sec throughput for sequential scans on NVMe storage
 
 #### Scenario: Parallel export processing
 
@@ -274,7 +274,7 @@ The system SHALL support incremental loading and updating of location data.
   - Conflict resolution strategies
   - Partial update capabilities
   - Rollback on loading failures
-- **AND** delta loading SHALL be efficient for frequent updates
+- **AND** delta loading SHALL process incremental updates at >50K events/sec to support near-real-time synchronization
 
 #### Scenario: Upsert operations
 
@@ -369,7 +369,7 @@ The system SHALL provide programmatic APIs for data import/export operations.
   - Compression and optimization
   - Connection management and cleanup
   - Error recovery and reconnection
-- **AND** streaming SHALL be efficient and scalable
+- **AND** streaming SHALL support >1000 concurrent connections with <100MB RAM per connection overhead
 
 ### Requirement: Third-Party Integration
 
@@ -510,3 +510,9 @@ The system SHALL provide data quality assessment and profiling capabilities.
   - Issue tracking and resolution
   - Quality improvement workflows
 - **AND** quality improvement SHALL be iterative and measurable
+
+### Related Specifications
+
+- See `specs/data-model/spec.md` for GeoEvent export format
+- See `specs/query-engine/spec.md` for bulk data export operations
+- See `specs/backup-restore/spec.md` for backup/restore data formats

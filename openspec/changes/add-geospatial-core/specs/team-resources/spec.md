@@ -296,7 +296,7 @@ The ArcherDB project SHALL define communication protocols and decision-making pr
   - **Communication Tools**: Appropriate tools for different communication types
   - **Response Expectations**: Clear timelines for different communication types
   - **Meeting Culture**: Efficient, focused meetings with clear agendas
-- **AND** communication SHALL be clear, respectful, and efficient
+- **AND** communication SHALL follow code of conduct guidelines with <24 hour response time for urgent issues
 
 #### Scenario: Decision-making framework
 
@@ -360,3 +360,8 @@ The ArcherDB project SHALL track team and project performance metrics.
   - **Delivery Metrics**: Feature completion, release frequency, deployment success
   - **Risk Indicators**: Blocker resolution time, dependency management
 - **AND** project health SHALL be monitored continuously
+
+### Related Specifications
+
+- See `specs/success-metrics/spec.md` for team performance KPIs and metrics
+- See `specs/risk-management/spec.md` for team-related risk mitigation

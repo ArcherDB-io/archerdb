@@ -23,7 +23,8 @@ The system SHALL use Linux io_uring for all asynchronous I/O operations on Linux
 - **WHEN** the I/O subsystem is initialized on Linux
 - **THEN** an io_uring instance SHALL be created
 - **AND** Linux 5.5+ SHALL be required (for OP_ACCEPT support)
-- **AND** submission queue and completion queue SHALL be sized appropriately
+- **AND** submission queue depth SHALL equal `grid_iops_read_max + grid_iops_write_max` (default: 192 entries)
+- **AND** completion queue depth SHALL equal 2× submission queue depth (default: 384 entries) to handle batched completions
 
 #### Scenario: Operation submission
 
@@ -37,7 +38,8 @@ The system SHALL use Linux io_uring for all asynchronous I/O operations on Linux
 - **WHEN** completions are available
 - **THEN** CQEs (Completion Queue Entries) SHALL be processed
 - **AND** callbacks SHALL be invoked for completed operations
-- **AND** errors SHALL be propagated appropriately
+- **AND** errors SHALL be propagated to callbacks with original error code (EAGAIN, EIO, etc.) without translation
+- **AND** callback SHALL receive completion.result containing errno value or 0 on success
 
 #### Scenario: Operation cancellation
 
@@ -102,10 +104,12 @@ The system SHALL implement a message bus for replica-to-replica and client-to-re
 
 The system SHALL reassemble TCP streams into complete protocol messages.
 
-#### Scenario: Deframe per client protocol
+#### Scenario: Deframe per connection type
 
 - **WHEN** receiving data from a TCP stream
-- **THEN** the receiver SHALL deframe messages using the framing rules defined in `specs/client-protocol/spec.md`
+- **THEN** the receiver SHALL deframe messages as `256-byte header + body`
+- **AND** for **client** connections it SHALL follow `specs/client-protocol/spec.md`
+- **AND** for **replica** connections it SHALL follow `specs/replication/spec.md`
 - **AND** it SHALL parse the 256-byte header first
 - **AND** it SHALL validate the header checksum before trusting the size field
 - **AND** it SHALL receive the body bytes based on `header.size - message_header_size`
@@ -131,8 +135,11 @@ The system SHALL configure TCP sockets for optimal performance and reliability.
 #### Scenario: Buffer sizing
 
 - **WHEN** TCP buffers are configured
-- **THEN** send buffer = `send_queue_max * message_size_max`
-- **AND** receive buffer SHALL be appropriately sized
+- **THEN** the system SHALL size kernel socket buffers proportionally to `send_queue_max` and expected message sizes
+- **AND** it MUST tolerate OS clamping and MUST NOT assume the kernel buffers can hold `send_queue_max` full messages
+- **AND** buffer sizing MUST avoid unbounded kernel memory use at `clients_max`
+- **AND** receive buffer SHALL be sized to `message_size_max` (10MB) to accept largest possible message
+- **AND** send buffer SHALL be sized to `send_queue_max * message_size_max` (but kernel will clamp to wmem_max)
 - **AND** `SO_RCVBUFFORCE`/`SO_SNDBUFFORCE` SHALL be tried first (privileged)
 
 #### Scenario: TCP options
@@ -202,7 +209,7 @@ The system SHALL abstract I/O operations for cross-platform support.
 
 - **WHEN** running on macOS
 - **THEN** kqueue or alternative SHALL be used
-- **AND** Direct I/O may have limitations
+- **AND** Direct I/O MAY have limitations
 - **AND** development/testing is supported
 
 #### Scenario: Windows implementation
@@ -228,7 +235,7 @@ The system SHALL use function pointer callbacks for async I/O completion.
 - **WHEN** an operation completes
 - **THEN** the registered callback SHALL be invoked
 - **AND** callback executes in I/O thread context
-- **AND** callback may submit new I/O operations
+- **AND** callback MAY submit new I/O operations
 
 ### Requirement: I/O Timeouts
 
@@ -247,3 +254,12 @@ The system SHALL support absolute timeouts for I/O operations.
 - **THEN** the operation callback receives timeout error
 - **AND** any in-progress kernel work is cancelled
 - **AND** resources are cleaned up appropriately
+
+### Related Specifications
+
+- See `specs/replication/spec.md` for message bus usage in VSR protocol (Prepare, PrepareOk, Commit)
+- See `specs/storage-engine/spec.md` for Direct I/O requirements (O_DIRECT, sector alignment)
+- See `specs/client-protocol/spec.md` for client connection handling and TCP configuration
+- See `specs/memory-management/spec.md` for MessagePool and zero-copy message passing
+- See `specs/error-codes/spec.md` for I/O error codes and timeout handling
+- See `specs/observability/spec.md` for I/O performance metrics (disk read/write latency)
