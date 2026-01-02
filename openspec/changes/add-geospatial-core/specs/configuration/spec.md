@@ -541,7 +541,7 @@ The system SHALL support graceful shutdown with proper resource cleanup and data
 
 - **WHEN** shutdown is requested during view change
 - **THEN** the system SHALL:
-  - Wait for view change to complete (up to view_change_timeout)
+  - Wait for view change to complete (up to `view_change_timeout_ms`)
   - If view change completes: proceed with graceful shutdown
   - If view change times out: proceed with shutdown (cluster will elect new primary)
   - Log: "Shutting down during view change - other replicas will handle failover"

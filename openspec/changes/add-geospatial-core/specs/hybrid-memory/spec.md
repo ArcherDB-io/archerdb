@@ -304,7 +304,7 @@ The system SHALL support logical index sharding to reduce cache contention and e
 
 #### Scenario: Internal sharding
 - **WHEN** initializing the primary index
-- **THEN** it SHALL be partitioned into `shard_count` logical shards (e.g., 256)
+- **THEN** it SHALL be partitioned into `shard_count` logical shards (default: 256)
 - **AND** `shard_id = hash(entity_id) % shard_count`
 - **AND** each shard maintains its own lock (if multi-threaded) or simply logical separation
 - **AND** this reduces cache line contention during high-throughput upserts

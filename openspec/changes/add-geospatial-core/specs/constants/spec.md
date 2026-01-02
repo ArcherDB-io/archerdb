@@ -101,6 +101,28 @@ The system SHALL define storage-related constants for data file organization.
 
   /// Operations before in-memory table flush
   pub const lsm_compaction_ops = 32;
+
+  /// Base size threshold for Level 0 compaction trigger
+  /// Formula: level triggers at level_size_base × lsm_growth_factor^level
+  /// 64MB = 1024 blocks × 64KB per block
+  pub const level_size_base = 64 * 1024 * 1024; // 64MB
+
+  /// Maximum value blocks per LSM table
+  /// Each table = 1 index block + N value blocks
+  /// With 1024 total blocks per table (64MB): value_block_count_max = 1023
+  pub const value_block_count_max = 1023;
+
+  /// Level 0 compaction trigger (number of L0 tables before compaction starts)
+  pub const lsm_l0_compaction_trigger = 4;
+
+  /// Level 0 slowdown trigger (begin adding write latency)
+  pub const lsm_l0_slowdown_trigger = 8;
+
+  /// Level 0 stop trigger (halt writes until compaction catches up)
+  pub const lsm_l0_stop_trigger = 12;
+
+  /// Idle compaction timeout (trigger background compaction during low load)
+  pub const compaction_idle_timeout_ms = 60_000; // 60 seconds
   ```
 
 ### Requirement: VSR and Replication Constants
@@ -278,6 +300,11 @@ The system SHALL define capacity limits for the entire system.
   /// Index memory requirement (64 bytes per slot)
   pub const index_memory_bytes = index_capacity * index_entry_size; // ~91.5GB
 
+  /// Number of logical shards for index partitioning
+  /// shard_id = hash(entity_id) % shard_count
+  /// Reduces cache line contention during high-throughput upserts
+  pub const shard_count = 256;
+
   /// Maximum data file size (u64 offset limit)
   pub const data_file_size_max = 16 * 1024 * 1024 * 1024 * 1024; // 16TB
 
@@ -314,8 +341,32 @@ The system SHALL define timing constants for heartbeats and timeouts.
   /// system switches to best-effort mode to restore availability
   pub const backup_mandatory_halt_timeout_ms = 3_600_000; // 1 hour
 
+  /// Backup queue soft limit (begin write backpressure)
+  pub const backup_queue_soft_limit = 50;
+
+  /// Backup queue capacity (normal operating limit)
+  pub const backup_queue_capacity = 100;
+
+  /// Backup queue hard limit (apply strong backpressure or release without backup)
+  /// In best-effort mode: 200 blocks before backpressure
+  /// In mandatory mode: uses backup_queue_capacity (100) as hard limit
+  pub const backup_queue_hard_limit = 200;
+
   /// Session timeout (inactive sessions may be evicted)
   pub const session_timeout_ms = 60_000; // 1 minute
+
+  /// Maximum clock drift before marking replica as outlier
+  /// Used in Marzullo's algorithm for clock synchronization
+  /// Replicas with drift > clock_drift_max are excluded from clock samples
+  pub const clock_drift_max_ms = 10_000; // 10 seconds
+
+  /// Clock failure timeout (all clocks divergent condition)
+  /// If no quorum can be formed even with outlier exclusion for this duration
+  pub const clock_failure_timeout_ms = 60_000; // 60 seconds
+
+  /// Normal heartbeat timeout (derived: ping_interval_ms * ping_timeout_count)
+  /// When this expires on a backup, it triggers view change
+  pub const normal_heartbeat_timeout_ms = ping_interval_ms * ping_timeout_count; // 1000ms
   ```
 
 ### Requirement: Hardware Assumptions
@@ -404,6 +455,35 @@ The system SHALL validate all constants at compile time to prevent invalid confi
       // NEW: Verify query results fit in message
       const max_result_bytes = query_result_max * geo_event_size;
       assert(max_result_bytes + 1024 < message_body_size_max); // 1024 = overhead
+
+      // Verify LSM table structure: 1 index block + value blocks = level_size_base
+      assert(level_size_base == (1 + value_block_count_max) * block_size);
+
+      // Verify LSM configuration ranges
+      assert(lsm_levels >= 1 and lsm_levels <= 63);
+      assert(lsm_growth_factor > 1);
+      assert(lsm_compaction_ops > 0);
+
+      // Verify Level 0 trigger ordering: compaction < slowdown < stop
+      assert(lsm_l0_compaction_trigger < lsm_l0_slowdown_trigger);
+      assert(lsm_l0_slowdown_trigger < lsm_l0_stop_trigger);
+
+      // Verify backup queue limit ordering: soft < capacity < hard
+      assert(backup_queue_soft_limit < backup_queue_capacity);
+      assert(backup_queue_capacity < backup_queue_hard_limit);
+
+      // Verify S2 cell level hierarchy (query covering <= storage level)
+      assert(s2_cover_max_level <= s2_cell_level);
+      assert(s2_cover_min_level < s2_cover_max_level);
+
+      // Verify shard count is power of 2 (efficient modulo via bitmask)
+      assert(shard_count > 0 and (shard_count & (shard_count - 1)) == 0);
+
+      // Verify heartbeat timeout derivation is consistent
+      assert(normal_heartbeat_timeout_ms == ping_interval_ms * ping_timeout_count);
+
+      // Verify clock failure timeout > clock drift threshold
+      assert(clock_failure_timeout_ms > clock_drift_max_ms);
   }
   ```
 

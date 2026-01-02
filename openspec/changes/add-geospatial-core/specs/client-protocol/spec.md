@@ -116,6 +116,36 @@ The system SHALL define a precise byte-level layout for the 256-byte message hea
                             0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01]
   ```
 
+### Requirement: UUID Single Query Wire Format
+
+The system SHALL define precise wire format for single UUID lookups.
+
+#### Scenario: query_uuid request encoding
+
+- **WHEN** encoding a single UUID lookup request
+- **THEN** the body SHALL be structured as:
+  ```
+  QueryUuidRequest (32 bytes):
+  ├─ entity_id: u128       # UUID to look up
+  ├─ reserved: [16]u8      # Padding to 32 bytes (must be zero)
+  ```
+- **AND** total body size is exactly 32 bytes
+- **AND** this is more efficient than query_uuid_batch for single lookups
+
+#### Scenario: query_uuid response encoding
+
+- **WHEN** encoding a single UUID lookup response
+- **THEN** the body SHALL be structured as:
+  ```
+  QueryUuidResponse (variable):
+  ├─ status: u8            # 0 = found, 105 = entity_not_found
+  ├─ reserved1: [15]u8     # Padding to 16-byte alignment
+  ├─ event: GeoEvent       # 128 bytes (only if status = 0)
+  ```
+- **AND** total body size is 16 bytes if not found, 144 bytes if found
+- **AND** status = 0 (ok) means entity was found and event is included
+- **AND** status = 105 (entity_not_found) means entity does not exist
+
 ### Requirement: UUID Batch Query Wire Format
 
 The system SHALL define precise wire format for batch UUID lookups.
@@ -141,6 +171,7 @@ The system SHALL define precise wire format for batch UUID lookups.
   ```
 - **AND** maximum count is 10,000 UUIDs per request
 - **AND** duplicate UUIDs are allowed (will return duplicate results)
+- **AND** count = 0 (empty batch) is valid: returns empty response with found_count=0, not_found_count=0
 
 #### Scenario: query_uuid_batch response encoding
 
@@ -315,7 +346,7 @@ The system SHALL manage client sessions with explicit limits and eviction polici
 
 #### Scenario: Session timeout
 
-- **WHEN** a session is inactive for > `session_timeout` (default: 60 seconds)
+- **WHEN** a session is inactive for > `session_timeout_ms` (default: 60,000ms = 60 seconds)
 - **THEN** the system MAY evict the session proactively
 - **AND** client receives `session_expired` on next request
 - **AND** client generates new client_id and retries
@@ -435,13 +466,21 @@ The system SHALL return structured error responses using TigerBeetle-style statu
 
 #### Scenario: Partial batch failures
 
-- **WHEN** a batch contains multiple operations and some fail
-- **THEN** the response SHALL include:
-  - `status_per_event: []u8` - Array of status codes (one per input event)
-  - **AND** batch is atomic: all succeed or all fail (no partial commits)
-  - **AND** first failure status is returned as primary error
-  - **AND** per-event status codes identify which event caused the batch to fail
-  - **AND** events after the first failure show `not_processed` status
+- **WHEN** a batch contains multiple operations and some fail validation
+- **THEN** the response body SHALL be (variable size):
+  ```
+  BatchWriteResponse (variable size, 8-byte aligned):
+  ├─ header: WriteResponse      # 32 bytes (status, counts, timestamp)
+  ├─ status_per_event: [N]u8    # N = original event count from request
+  ├─ padding: [P]u8             # Padding to 8-byte alignment
+  ```
+- **AND** header.status contains the first failing error code
+- **AND** status_per_event[i] contains:
+  - `ok` (0) for events that passed validation
+  - Error code for the failing event
+  - `not_processed` (255) for events after the first failure
+- **AND** batch is atomic: all succeed or all fail (no partial commits)
+- **AND** total body size = 32 + N + P bytes (where P = padding to 8-byte boundary)
 - **CLARIFICATION**: Per-event status exists for debugging, NOT for partial success. If any event fails validation, the entire batch is rejected. This matches TigerBeetle's batch semantics.
 
 ### Requirement: Multi-Language SDK Support
@@ -616,20 +655,23 @@ The system SHALL use persistent TCP connections with connection pooling.
 
 The system SHALL encode batches of GeoEvents directly in the message body with zero-copy optimization.
 
-#### Scenario: Insert batch encoding
+#### Scenario: Insert/Upsert batch encoding
 
-- **WHEN** encoding an insert_events batch
+- **WHEN** encoding an insert_events or upsert_events batch
 - **THEN** the message body SHALL be:
   ```
-  [count: u32]              # Number of events in batch
-  [reserved: u32]           # Alignment padding
-  [event_1: GeoEvent]       # 128 bytes
-  [event_2: GeoEvent]       # 128 bytes
-  ...
-  [event_N: GeoEvent]       # 128 bytes
+  EventBatch (variable size):
+  ├─ count: u32             # Number of events in batch (max 10,000)
+  ├─ reserved: u32          # Alignment padding (must be zero)
+  ├─ events[0]: GeoEvent    # 128 bytes
+  ├─ events[1]: GeoEvent    # 128 bytes
+  ├─ ...
+  └─ events[N-1]: GeoEvent  # 128 bytes
   ```
-- **AND** events SHALL be packed contiguously
+- **AND** events SHALL be packed contiguously with no gaps
 - **AND** total size = 8 + (count × 128) bytes
+- **AND** insert_events and upsert_events use identical wire format
+- **AND** only semantic difference: insert fails on duplicate, upsert uses LWW
 
 #### Scenario: Write operation response format
 
@@ -654,35 +696,62 @@ The system SHALL encode batches of GeoEvents directly in the message body with z
 - **WHEN** encoding a query_radius operation
 - **THEN** the message body SHALL contain:
   ```
-  QueryRadius (64 bytes):
-  ├─ lat_nano: i64          # Center latitude
-  ├─ lon_nano: i64          # Center longitude
-  ├─ radius_mm: u32         # Radius in millimeters
-  ├─ start_time: u64        # Optional time range start (0 = no filter)
-  ├─ end_time: u64          # Optional time range end (0 = no filter)
-  ├─ limit: u32             # Max results (0 = default query_result_max = 81,000)
-  ├─ reserved: [20]u8       # Padding to 64 bytes
+  QueryRadius (80 bytes, 16-byte aligned):
+  ├─ lat_nano: i64          # Center latitude (8 bytes)
+  ├─ lon_nano: i64          # Center longitude (8 bytes)
+  ├─ radius_mm: u32         # Radius in millimeters (4 bytes)
+  ├─ limit: u32             # Max results per page (0 = default 81,000) (4 bytes)
+  ├─ start_time: u64        # Optional time range start (0 = no filter) (8 bytes)
+  ├─ end_time: u64          # Optional time range end (0 = no filter) (8 bytes)
+  ├─ after_cursor: u128     # Pagination cursor (0 = first page) (16 bytes)
+  ├─ group_id: u64          # Optional group filter (0 = all groups) (8 bytes)
+  ├─ reserved: [16]u8       # Padding to 80 bytes (8+8+4+4+8+8+16+8+16=80)
   ```
+- **AND** for first query, set `after_cursor = 0`
+- **AND** for pagination, set `after_cursor = cursor_id` from previous response
+- **AND** set `group_id = 0` to query all groups, or specific value to filter
 
 #### Scenario: Polygon query encoding
 
 - **WHEN** encoding a query_polygon operation
 - **THEN** the message body SHALL contain:
   ```
-  [vertex_count: u32]       # Number of polygon vertices
-  [start_time: u64]         # Optional time filter
-  [end_time: u64]           # Optional time filter
-  [limit: u32]              # Max results
-  [reserved: u32]           # Padding
-  [vertices: []LatLon]      # Array of (lat_nano, lon_nano) pairs
+  QueryPolygon (variable size):
+  Header (64 bytes, 16-byte aligned):
+  ├─ vertex_count: u32      # Number of polygon vertices (max 10,000) (4 bytes)
+  ├─ limit: u32             # Max results per page (0 = default 81,000) (4 bytes)
+  ├─ start_time: u64        # Optional time range start (0 = no filter) (8 bytes)
+  ├─ end_time: u64          # Optional time range end (0 = no filter) (8 bytes)
+  ├─ after_cursor: u128     # Pagination cursor from previous response (0 = first page) (16 bytes)
+  ├─ group_id: u64          # Optional group filter (0 = all groups) (8 bytes)
+  ├─ reserved: [16]u8       # Padding to 64 bytes (4+4+8+8+16+8=48, +16 reserved=64)
 
-  Where LatLon is:
-  struct {
-    lat_nano: i64,
-    lon_nano: i64,
-  }  // 16 bytes
+  Vertex Array:
+  ├─ vertices[0]: LatLon    # First vertex (16 bytes)
+  ├─ vertices[1]: LatLon    # Second vertex (16 bytes)
+  ├─ ...
+  └─ vertices[N-1]: LatLon  # Last vertex (16 bytes)
+
+  Where LatLon is (16 bytes, 8-byte aligned):
+  ├─ lat_nano: i64          # Latitude in nanodegrees
+  └─ lon_nano: i64          # Longitude in nanodegrees
   ```
-- **AND** maximum vertex_count SHALL be 10,000
+- **AND** total body size = 64 + (vertex_count × 16) bytes
+- **AND** maximum vertex_count SHALL be 10,000 (polygon_vertices_max)
+- **AND** polygon is automatically closed (last vertex connects to first)
+- **AND** for first query, set `after_cursor = 0`
+- **AND** for pagination, set `after_cursor = cursor_id` from previous response
+
+#### Scenario: Time range filter semantics
+
+- **WHEN** querying with start_time and/or end_time filters
+- **THEN** the time range SHALL use half-open interval semantics [start_time, end_time)
+- **AND** events are included where: `event.timestamp >= start_time` (inclusive start)
+- **AND** events are excluded where: `event.timestamp >= end_time` (exclusive end)
+- **AND** this allows non-overlapping adjacent time ranges (e.g., [0, 100) then [100, 200))
+- **AND** when `start_time = 0`, no lower bound filter is applied
+- **AND** when `end_time = 0`, no upper bound filter is applied
+- **AND** when both are 0, all events matching spatial criteria are returned
 
 ### Requirement: Response Encoding
 
@@ -717,6 +786,82 @@ The system SHALL encode query results as arrays of GeoEvents with metadata.
 - **AND** `total_count` SHALL be 0
 - **AND** no event data is included in body
 
+### Requirement: Delete Operation Format
+
+The system SHALL define precise wire format for entity deletion (GDPR compliance).
+
+#### Scenario: delete_entities request encoding
+
+- **WHEN** encoding a delete_entities request
+- **THEN** the message body SHALL be structured as:
+  ```
+  DeleteRequest:
+  ├─ count: u32             # Number of entity UUIDs to delete
+  ├─ reserved: u32          # Alignment padding
+  ├─ entity_ids: [count]u128  # Array of entity UUIDs to delete
+  ```
+- **AND** total size = 8 + (count × 16) bytes
+- **AND** maximum count is 10,000 entities per request (batch_events_max / 16 * 128 ≈ 80K, limited for consistency)
+- **AND** duplicate entity IDs are allowed (second delete is no-op)
+- **AND** count = 0 (empty delete) is valid: returns success with events_processed=0
+- **AND** response uses standard WriteResponse format (events_processed = deleted, events_failed = not found)
+
+### Requirement: Admin Operation Formats
+
+The system SHALL define precise wire formats for admin operations (ping, get_status).
+
+#### Scenario: ping request/response format
+
+- **WHEN** sending a ping request
+- **THEN** the request body SHALL be empty (0 bytes)
+- **AND** the response body SHALL be empty (0 bytes)
+- **AND** success is indicated by `status = ok` in response header
+- **AND** ping does NOT go through VSR consensus (handled directly by replica)
+- **AND** ping is used for connection keepalive and primary discovery
+
+#### Scenario: get_status request/response format
+
+- **WHEN** sending a get_status request
+- **THEN** the request body SHALL be empty (0 bytes)
+- **AND** the response body SHALL be (64 bytes):
+  ```
+  StatusResponse (64 bytes):
+  ├─ status: u8             # 0 = ok
+  ├─ is_primary: u8         # 1 if this replica is current primary
+  ├─ replica_id: u8         # This replica's ID (0-5)
+  ├─ primary_id: u8         # Current primary's replica ID
+  ├─ replica_count: u8      # Total replicas in cluster
+  ├─ reserved1: [3]u8       # Padding to 8-byte alignment
+  ├─ view: u64              # Current VSR view number
+  ├─ op: u64                # Latest committed operation number
+  ├─ commit_timestamp: u64  # Timestamp of latest commit (nanoseconds)
+  ├─ entity_count: u64      # Current entity count in index
+  ├─ index_capacity: u64    # Maximum entity capacity
+  ├─ reserved2: [16]u8      # Padding to 64 bytes (total: 5+3+8+8+8+8+8+16=64)
+  ```
+- **AND** get_status does NOT go through VSR consensus (read-only local state)
+- **AND** values may be slightly stale on non-primary replicas
+
+#### Scenario: cleanup_expired request/response format
+
+- **WHEN** sending a cleanup_expired request
+- **THEN** the request body SHALL be (64 bytes):
+  ```
+  CleanupRequest (64 bytes, 8-byte aligned):
+  ├─ batch_size: u32         # Number of index entries to scan (0 = scan all) (4 bytes)
+  ├─ reserved: [60]u8        # Padding to 64 bytes (must be zero)
+  ```
+- **AND** the response body SHALL be (64 bytes):
+  ```
+  CleanupResponse (64 bytes, 8-byte aligned):
+  ├─ entries_scanned: u64    # Number of index entries examined (8 bytes)
+  ├─ entries_removed: u64    # Number of expired entries cleaned up (8 bytes)
+  ├─ reserved: [48]u8        # Padding to 64 bytes
+  ```
+- **AND** cleanup_expired DOES go through VSR consensus (all replicas apply same cleanup deterministically)
+- **AND** VSR assigns the timestamp used for expiration comparison (ensuring identical cleanup across replicas)
+- **NOTE:** See ttl-retention/spec.md for incremental cleanup patterns and operational guidance
+
 ### Requirement: Error Code Taxonomy
 
 The system SHALL use a comprehensive error code enum based on TigerBeetle's taxonomy, extended for geospatial operations.
@@ -733,6 +878,11 @@ The system SHALL use a comprehensive error code enum based on TigerBeetle's taxo
   - `session_expired = 5` - Client session was evicted
   - `timeout = 6` - Operation timed out
   - `not_primary = 7` - Node is not the current primary (redirect)
+  - `unknown_event_format = 8` - Reserved bytes non-zero (unrecognized wire format version)
+  - `connection_failed = 9` - Client failed to establish connection to any replica
+  - `batch_full = 10` - SDK-side batch buffer is at capacity
+  - `version_not_supported = 11` - Protocol version not supported by server
+  - `not_processed = 255` - Sentinel: event not processed (in batch, appears after first failure)
 
 #### Scenario: Geospatial error codes
 
@@ -752,6 +902,9 @@ The system SHALL use a comprehensive error code enum based on TigerBeetle's taxo
   - `polygon_too_large = 111` - Polygon appears to wrap around world (malformed input)
   - `polygon_degenerate = 112` - Polygon has collinear points (zero area)
   - `polygon_empty = 113` - Polygon vertex array is empty (0 vertices provided)
+  - `id_must_not_be_zero = 114` - ID field cannot be zero (reserved sentinel value)
+  - `id_must_not_be_int_max = 115` - ID field cannot be max int value (reserved sentinel)
+  - `timestamp_must_be_zero = 116` - Timestamp field must be zero for server-assigned timestamps
 
 #### Scenario: Cluster error codes
 
@@ -767,6 +920,8 @@ The system SHALL use a comprehensive error code enum based on TigerBeetle's taxo
   - `backup_required = 207` - Writes halted pending backup (backup-mandatory mode)
   - `cluster_mismatch = 208` - Client certificate cluster ID doesn't match server
   - `checkpoint_lag_backpressure = 209` - Writes halted because index checkpoint is lagging too far behind WAL head
+  - `index_degraded = 210` - Hash probe length exceeded threshold, index needs rebuild
+  - `replica_rebuilding = 211` - Replica is rebuilding index from storage, cannot serve queries
 
 ### Requirement: Protocol Versioning
 

@@ -413,7 +413,7 @@ The system SHALL define clear policies for when compaction is triggered.
 
 #### Scenario: Time-based compaction trigger
 
-- **WHEN** no compaction has occurred for `compaction_idle_timeout` (default: 60 seconds)
+- **WHEN** no compaction has occurred for `compaction_idle_timeout_ms` (default: 60,000ms = 60 seconds)
 - **AND** there are tables eligible for compaction
 - **THEN** background compaction SHALL run
 - **AND** this ensures steady-state cleanup even under low write load

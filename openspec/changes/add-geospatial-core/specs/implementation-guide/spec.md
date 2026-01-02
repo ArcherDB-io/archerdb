@@ -373,11 +373,13 @@ The system SHALL reuse TigerBeetle's constant naming conventions and values wher
 - **WHEN** defining constants
 - **THEN** use TigerBeetle's naming pattern:
   ```zig
-  // TigerBeetle style (from src/constants.zig)
-  pub const message_size_max = 10 * 1024 * 1024;
-  pub const journal_slot_count = 1024;
-  pub const pipeline_max = 256;
-  pub const checkpoint_interval = 256;
+  // TigerBeetle naming style (from src/constants.zig)
+  // NOTE: ArcherDB values differ - see constants/spec.md for authoritative values
+  // Example: ArcherDB uses journal_slot_count = 8192 (not 1024) for 60s checkpoint support
+  pub const message_size_max = 10 * 1024 * 1024;  // Same as TigerBeetle
+  pub const journal_slot_count = 8192;             // ArcherDB: 8192 (TigerBeetle: 1024)
+  pub const pipeline_max = 256;                    // Same as TigerBeetle
+  pub const checkpoint_interval = 256;             // Same as TigerBeetle
   ```
 - **AND** use snake_case with descriptive suffixes
 - **AND** include comments explaining derivation

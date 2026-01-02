@@ -144,7 +144,7 @@ The system SHALL dynamically select S2 cell levels based on query area size for 
 - **THEN** RegionCoverer SHALL use:
   - `min_level`: Calculated from query area (see above)
   - `max_level`: `min(min_level + 4, s2_cover_max_level)` (default `s2_cover_max_level = 18`)
-  - `max_cells`: 16 (default) - Limit query complexity
+  - `s2_max_cells`: 16 (default) - Limit query complexity
 - **AND** min/max levels SHALL be clamped so that `0 <= min_level <= max_level <= s2_cover_max_level`
 - **AND** this produces efficient cell ranges without over-decomposition
 

@@ -131,8 +131,8 @@ The system SHALL support two distinct backup operating modes with different dura
 - **WHEN** `--backup-mode=mandatory` is configured
 - **THEN** the system SHALL:
   - Require ALL blocks to be successfully backed up before release
-  - Apply write backpressure if backup queue exceeds soft limit (50 blocks)
-  - HALT writes entirely if backup queue exceeds hard limit (100 blocks)
+  - Apply write backpressure if backup queue exceeds `backup_queue_soft_limit` (50 blocks)
+  - HALT writes entirely if backup queue exceeds `backup_queue_capacity` (100 blocks in mandatory mode)
   - NEVER release blocks without confirmed backup upload (unless emergency bypass timeout is exceeded)
   - Resume writes only after backup queue drains below soft limit
 - **AND** when writes are halted:
@@ -211,7 +211,7 @@ The system SHALL perform backups asynchronously without blocking database operat
 
 #### Scenario: Backup queue overflow prevention (deadlock avoidance)
 
-- **WHEN** backup queue reaches capacity (100 pending blocks)
+- **WHEN** backup queue reaches `backup_queue_capacity` (100 pending blocks)
 - **AND** a new block needs to be queued for backup
 - **THEN** the system SHALL:
   1. Log critical alert: "Backup queue full - blocks at risk"
@@ -225,7 +225,7 @@ The system SHALL perform backups asynchronously without blocking database operat
 #### Scenario: Free Set exhaustion during backup backlog
 
 - **WHEN** Free Set runs low on blocks (< 10% capacity)
-- **AND** backup queue has > 50 pending blocks
+- **AND** backup queue has > `backup_queue_soft_limit` pending blocks
 - **THEN** the system SHALL:
   1. Calculate: can checkpoint complete with current free blocks?
   2. If YES: proceed normally, backup will catch up
@@ -475,11 +475,13 @@ The system SHALL define recovery time objectives for disaster recovery scenarios
 - **WHEN** restoring from S3 backup
 - **THEN** recovery time SHALL be:
   - Download time: `(data_size / network_bandwidth)`
-  - Index rebuild: `(data_size / disk_bandwidth)`
-  - Example for 1TB data on 10Gbps network + 3GB/s disk:
+  - Index rebuild: `(entity_count / index_insertion_rate)` + disk read time
+  - Example for 1TB data (1B entities) on 10Gbps network + 3GB/s NVMe:
     - Download: ~14 minutes
-    - Rebuild: ~6 minutes
-    - **Total RTO: ~20 minutes**
+    - Disk read: ~6 minutes
+    - Index rebuild (1B entities): ~40-60 minutes (see ttl-retention/spec.md for targets)
+    - **Total RTO: 60-90 minutes for 1B entities**
+  - NOTE: Index rebuild is the bottleneck, not data transfer
 
 #### Scenario: Recovery point objective
 

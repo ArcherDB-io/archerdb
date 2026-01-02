@@ -123,7 +123,7 @@ The system SHALL handle primary failures through view changes with state transfe
 
 #### Scenario: View change trigger
 
-- **WHEN** a backup's `normal_heartbeat_timeout` expires
+- **WHEN** a backup's `normal_heartbeat_timeout_ms` expires (default: 1,000ms)
 - **THEN** it SHALL send StartViewChange to all replicas
 - **AND** increment its view number
 - **AND** transition to view_change status
@@ -506,7 +506,7 @@ The system SHALL implement Byzantine-fault-tolerant clock synchronization using 
 
 #### Scenario: Clock outlier detection
 
-- **WHEN** a single replica's clock diverges by > `clock_drift_max` (default: 10 seconds)
+- **WHEN** a single replica's clock diverges by > `clock_drift_max_ms` (default: 10,000ms = 10 seconds)
 - **THEN** the system SHALL:
   1. Mark that replica as clock-outlier
   2. Exclude its clock samples from Marzullo's algorithm
@@ -518,7 +518,7 @@ The system SHALL implement Byzantine-fault-tolerant clock synchronization using 
 #### Scenario: Complete clock failure (all clocks divergent)
 
 - **WHEN** no quorum can be formed even with outlier exclusion
-- **AND** condition persists for > `clock_failure_timeout` (default: 60 seconds)
+- **AND** condition persists for > `clock_failure_timeout_ms` (default: 60,000ms = 60 seconds)
 - **THEN** the system SHALL:
   1. Enter "clock-degraded" state
   2. Use primary's local clock only (best-effort timestamps)
@@ -538,7 +538,7 @@ The system SHALL handle network partitions safely to prevent split-brain scenari
 - **AND** the primary is in the minority partition (cannot reach quorum)
 - **THEN** the primary SHALL:
   1. Continue attempting to replicate (messages will time out)
-  2. After `view_change_timeout` (default: 2 seconds, ~3 seconds total failover) without quorum responses:
+  2. After `view_change_timeout_ms` (default: 2,000ms = 2 seconds, ~3 seconds total failover) without quorum responses:
      - Recognize it cannot commit new operations
      - Return `cluster_unavailable` to clients
      - Continue trying to reach replicas
