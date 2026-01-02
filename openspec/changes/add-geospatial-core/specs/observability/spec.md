@@ -198,6 +198,8 @@ The system SHALL expose memory, disk, and I/O utilization metrics.
   - `archerdb_index_entries`: Current entity count in primary index
   - `archerdb_index_capacity`: Maximum index capacity
   - `archerdb_index_load_factor`: Index load factor (0.0 to 1.0)
+  - `archerdb_index_tombstone_count`: Number of tombstone slots (if delete supported)
+  - `archerdb_index_tombstone_ratio`: Ratio of tombstones to total slots (0.0-1.0)
 
 #### Scenario: Index capacity alerts
 
@@ -206,6 +208,15 @@ The system SHALL expose memory, disk, and I/O utilization metrics.
   - Warning: `archerdb_index_load_factor > 0.80` (80% full)
   - Critical: `archerdb_index_load_factor > 0.90` (90% full)
   - Emergency: `archerdb_index_load_factor > 0.95` (95% full - near capacity)
+
+#### Scenario: Index tombstone alerts
+
+- **WHEN** monitoring index tombstone accumulation (if delete supported)
+- **THEN** operators SHALL configure alerts:
+  - Warning: `archerdb_index_tombstone_ratio > 0.10` (10% tombstones)
+  - Critical: `archerdb_index_tombstone_ratio > 0.30` (30% tombstones - maintenance required)
+- **AND** high tombstone ratio causes increased probe lengths and wasted memory
+- **AND** see hybrid-memory/spec.md for maintenance procedure
 
 #### Scenario: Disk metrics
 

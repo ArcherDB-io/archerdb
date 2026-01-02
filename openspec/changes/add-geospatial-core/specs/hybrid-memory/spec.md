@@ -391,6 +391,38 @@ The system SHALL track index statistics for monitoring and capacity planning.
   - `collision_count: u64` - Hash collisions encountered
   - `avg_probe_length: f32` - Average probes per lookup
 
+#### Scenario: Tombstone statistics (if delete supported)
+
+- **WHEN** tombstone stats are queried
+- **THEN** the system SHALL report:
+  - `tombstone_count: u64` - Current number of tombstones in index
+  - `tombstone_ratio: f32` - tombstone_count / (entry_count + tombstone_count)
+- **AND** metrics SHALL be exposed:
+  ```
+  # Number of tombstone slots in the index
+  archerdb_index_tombstone_count gauge
+
+  # Ratio of tombstones to total slots (0.0-1.0)
+  archerdb_index_tombstone_ratio gauge
+  ```
+- **AND** alert thresholds SHALL be:
+  - `tombstone_ratio > 0.1`: Warning - consider scheduling maintenance
+  - `tombstone_ratio > 0.3`: Critical - index degradation, maintenance required
+- **AND** high tombstone ratio indicates:
+  - Increased probe lengths during lookup
+  - Wasted memory (tombstones occupy slots)
+  - Need for index rebuild/rehash
+
+#### Scenario: Index maintenance trigger (tombstone cleanup)
+
+- **WHEN** tombstone_ratio exceeds 0.3
+- **THEN** the operator SHALL schedule index maintenance:
+  1. During low-traffic window (recommended)
+  2. Rolling restart of replicas (one at a time)
+  3. Each replica rebuilds index on restart (tombstones reclaimed)
+- **AND** the system does NOT automatically trigger maintenance in v1
+- **AND** future versions MAY support online index rehash
+
 #### Scenario: Checkpoint statistics
 
 - **WHEN** checkpoint stats are queried
@@ -1005,6 +1037,82 @@ The system SHALL specify minimum and recommended hardware for meeting performanc
   - **RAM:** 256GB (ECC recommended)
   - **Disk:** 2TB+ NVMe Gen4/Gen5 (>5GB/s, Optane or high-endurance)
   - **Network:** 25-100Gbps (for cross-region replication)
+
+### Requirement: Memory-Mapped Index Fallback (Optional)
+
+The system MAY support a memory-mapped index mode for deployments with limited RAM.
+
+#### Scenario: Mmap index mode configuration
+
+- **WHEN** configured with `--index-mode=mmap`
+- **THEN** the index SHALL:
+  - Memory-map the index file instead of loading into RAM
+  - Rely on OS page cache for hot entries
+  - Accept higher lookup latency (p99: 1-5ms vs <500μs)
+  - Support larger datasets with less RAM (32GB sufficient for 1B entities)
+- **AND** this mode trades latency for reduced RAM requirements
+
+#### Scenario: Mmap index file format
+
+- **WHEN** using mmap index mode
+- **THEN** the index file format SHALL be:
+  ```
+  ┌─────────────────────────────────────────────────────────────────┐
+  │                    MMAP INDEX FILE FORMAT                        │
+  ├──────────┬───────────────────────────────────────────────────────┤
+  │  Header  │ Magic (8B) + Version (4B) + Capacity (8B) + Count (8B)│
+  │          │ + Load factor (4B) + Checksum (16B) + Reserved (16B)  │
+  ├──────────┼───────────────────────────────────────────────────────┤
+  │  Entries │ IndexEntry[0..capacity] (64 bytes each)               │
+  │          │ Same layout as RAM index for compatibility            │
+  └──────────┴───────────────────────────────────────────────────────┘
+  ```
+- **AND** file is pre-allocated to full capacity at startup
+- **AND** entries are updated in-place with fsync on checkpoint
+
+#### Scenario: Mmap index performance characteristics
+
+- **WHEN** operating in mmap index mode
+- **THEN** performance characteristics SHALL be:
+  | Metric | RAM Index | Mmap Index (cold) | Mmap Index (warm) |
+  |--------|-----------|-------------------|-------------------|
+  | Lookup p50 | <100μs | 500μs-2ms | <200μs |
+  | Lookup p99 | <500μs | 2-10ms | <1ms |
+  | Upsert | <50μs | 100-500μs | <100μs |
+  | RAM required (1B) | 96GB | ~4GB (cache) | ~32GB (cache) |
+- **AND** performance depends heavily on working set locality
+- **AND** sequential scans benefit from OS read-ahead
+
+#### Scenario: Mmap index use cases
+
+- **WHEN** selecting index mode
+- **THEN** mmap mode is appropriate for:
+  - Development and testing environments
+  - Cost-sensitive deployments with latency tolerance
+  - Cold data clusters with infrequent access
+  - Deployments where 128GB RAM is cost-prohibitive
+- **AND** RAM mode remains recommended for production with SLA requirements
+
+#### Scenario: Mmap index limitations
+
+- **WHEN** using mmap index mode
+- **THEN** the following limitations SHALL apply:
+  - Cannot meet <500μs p99 latency SLA
+  - Higher variance in query latency
+  - Sensitive to OS memory pressure
+  - May experience page fault storms under load
+- **AND** operators SHOULD provision adequate page cache (30-50% of index size)
+
+#### Scenario: Mmap to RAM mode migration
+
+- **WHEN** migrating from mmap to RAM mode
+- **THEN** the operator SHALL:
+  1. Stop the replica gracefully
+  2. Update configuration: `--index-mode=ram`
+  3. Ensure sufficient RAM is available (128GB for 1B entities)
+  4. Start replica (index loads from checkpoint or rebuilds)
+- **AND** migration requires downtime for the individual replica
+- **AND** rolling migration across cluster maintains availability
 
 ### Related Specifications
 

@@ -559,6 +559,115 @@ The system SHALL distinguish between TigerBeetle-borrowed patterns (marked with 
   - Follow Zig style but NOT TigerBeetle style (different domain)
   - Test extensively (this is custom code without TigerBeetle's battle-testing)
 
+#### Scenario: S2 Reference Implementation and Test Vectors
+
+- **WHEN** developing the Zig S2 implementation
+- **THEN** the following reference sources SHALL be used:
+  ```
+  PRIMARY REFERENCE: Google S2 Geometry Library (C++)
+  Repository: https://github.com/google/s2geometry
+  Version: Pin to specific tagged release (e.g., v0.10.0)
+
+  SECONDARY REFERENCE: Go S2 Library
+  Repository: https://github.com/golang/geo
+  Path: s2/
+
+  WHY THESE REFERENCES:
+  - C++ is the original, authoritative implementation
+  - Go port is well-tested and easier to read than C++
+  - Both produce identical results for same inputs
+  ```
+- **AND** test vectors SHALL be extracted from reference implementations
+- **AND** bit-for-bit compatibility is REQUIRED for consensus safety
+
+#### Scenario: S2 Test Vector Generation
+
+- **WHEN** creating S2 test vectors
+- **THEN** the following process SHALL be used:
+  1. **Create test vector generator** (tooling, not core):
+     ```
+     tools/s2_golden_gen/
+     ├── main.go           # Uses golang/geo/s2
+     ├── generate.go       # Generates test cases
+     └── README.md         # Documents vector format
+     ```
+  2. **Generate comprehensive test vectors**:
+     ```
+     testdata/s2/
+     ├── cell_id_vectors.tsv        # lat,lon,level → cell_id
+     ├── cell_bounds_vectors.tsv    # cell_id → lat_lo,lon_lo,lat_hi,lon_hi
+     ├── hilbert_curve_vectors.tsv  # position ↔ cell ordering
+     ├── covering_vectors.tsv       # region → cell_ids[]
+     ├── distance_vectors.tsv       # point,point → distance_meters
+     └── containment_vectors.tsv    # cell,cell → relationship
+     ```
+  3. **Vector format** (TSV for simplicity):
+     ```
+     # cell_id_vectors.tsv
+     # lat_deg  lon_deg  level  expected_cell_id
+     37.7749   -122.4194  30    0x89283082948a948f
+     51.5074   -0.1278    30    0x48761cb4e8e87a8f
+     -33.8688  151.2093   30    0x31e0bc9e8d6c7a8f
+     ```
+
+#### Scenario: S2 Zig Implementation Testing
+
+- **WHEN** implementing S2 in Zig
+- **THEN** testing SHALL follow this progression:
+  1. **Unit tests** (immediate feedback):
+     ```zig
+     test "cell_id from lat/lon matches reference" {
+         const vectors = @embedFile("testdata/s2/cell_id_vectors.tsv");
+         for (parseVectors(vectors)) |v| {
+             const actual = S2.cellIdFromLatLon(v.lat, v.lon, v.level);
+             try std.testing.expectEqual(v.expected, actual);
+         }
+     }
+     ```
+  2. **Property-based tests** (edge cases):
+     - Cell ID round-trip: `cellIdFromLatLon(latLonFromCellId(id)) == id`
+     - Hierarchy: `parent(child(id)) == id`
+     - Containment: `cell.contains(point) == pointInCell(point, cell)`
+  3. **Fuzz testing** (unknown unknowns):
+     - Random lat/lon inputs
+     - Boundary conditions (poles, antimeridian, equator)
+     - Degenerate polygons (self-intersecting, very small, very large)
+
+#### Scenario: S2 Cross-Validation During Development
+
+- **WHEN** developing S2 algorithms
+- **THEN** cross-validation SHALL be performed:
+  ```
+  DEVELOPMENT WORKFLOW:
+
+  1. Implement algorithm in Zig
+  2. Run against golden vectors (must pass 100%)
+  3. Generate random test cases
+  4. Run same cases through Go reference (via test harness)
+  5. Compare results bit-for-bit
+  6. Investigate ANY discrepancy (no tolerance)
+
+  CONTINUOUS VALIDATION:
+  - CI runs all golden vector tests
+  - Nightly: regenerate vectors from latest reference, diff
+  - Pre-release: full cross-validation suite
+  ```
+- **AND** any discrepancy is a blocking bug (consensus safety)
+
+#### Scenario: S2 Algorithm Sources
+
+- **WHEN** porting specific S2 algorithms
+- **THEN** reference these authoritative sources:
+  | Algorithm | C++ Reference | Go Reference | Notes |
+  |-----------|---------------|--------------|-------|
+  | Cell ID encoding | `s2cell_id.cc` | `cellid.go` | Hilbert curve core |
+  | Lat/Lon conversion | `s2latlng.cc` | `latlng.go` | Fixed-point conversion |
+  | Region Coverer | `s2region_coverer.cc` | `regioncoverer.go` | Most complex |
+  | Cap (radius) | `s2cap.cc` | `cap.go` | Used for radius queries |
+  | Polygon | `s2polygon.cc` | `polygon.go` | Used for polygon queries |
+  | Point containment | `s2contains_point_query.cc` | `containspointquery.go` | Post-filter |
+- **AND** study both C++ and Go when implementing (different clarity tradeoffs)
+
 #### Scenario: Hybrid Memory Index (PARTIALLY from TigerBeetle)
 
 - **WHEN** implementing RAM index
@@ -1335,6 +1444,593 @@ PHASE 5 (Operations):
   └─ Validation layer on top of everything
 ```
 
+### Requirement: Capacity Planning Guide
+
+The system SHALL provide comprehensive capacity planning guidance for production deployments.
+
+#### Scenario: RAM capacity planning
+
+- **WHEN** planning RAM requirements
+- **THEN** operators SHALL use:
+  ```
+  RAM SIZING FORMULA
+  ══════════════════
+
+  Components:
+  1. Index RAM = entity_count × 1.43 (70% fill) × 64 bytes
+  2. WAL buffers = pipeline_slots × message_size_max × 2
+  3. LSM cache = configurable (recommend 4-8GB)
+  4. OS overhead = 4-8GB
+
+  Formula:
+    total_ram = index_ram + wal_buffers + lsm_cache + os_overhead
+
+  Examples:
+  | Entities | Index RAM | WAL (4KB msg) | LSM Cache | OS  | Total    |
+  |----------|-----------|---------------|-----------|-----|----------|
+  | 10M      | 0.9GB     | 64MB          | 4GB       | 4GB | 9GB      |
+  | 100M     | 9.1GB     | 64MB          | 8GB       | 4GB | 22GB     |
+  | 500M     | 45.8GB    | 64MB          | 8GB       | 8GB | 62GB     |
+  | 1B       | 91.5GB    | 64MB          | 8GB       | 8GB | 108GB    |
+
+  RECOMMENDATION: 128GB RAM for 1B entities (safety margin)
+  ```
+- **AND** for mmap index mode (reduced RAM):
+  ```
+  RAM (mmap mode) = wal_buffers + lsm_cache + os_cache_target
+
+  Example: 32GB RAM with mmap supports 1B entities (higher latency)
+  ```
+
+#### Scenario: Disk capacity planning
+
+- **WHEN** planning disk requirements
+- **THEN** operators SHALL use:
+  ```
+  DISK SIZING FORMULA
+  ═══════════════════
+
+  Components:
+  1. LSM data = entity_count × avg_versions × 128 bytes
+  2. WAL zone = wal_size (fixed, typically 512MB-1GB)
+  3. Superblock = 8MB (4 copies × 2MB each)
+  4. Compaction headroom = 2.0× multiplier
+
+  Formula:
+    min_disk = (lsm_data + wal_zone + superblock) × 2.0
+
+  For TTL workloads (see ttl-retention/spec.md):
+    lsm_data = entity_count × updates_per_ttl_window × 128 bytes
+
+  Examples (no TTL, avg 10 versions per entity):
+  | Entities | LSM Data | WAL   | Total  | With 2× Headroom |
+  |----------|----------|-------|--------|------------------|
+  | 10M      | 12.8GB   | 1GB   | 14GB   | 28GB             |
+  | 100M     | 128GB    | 1GB   | 130GB  | 260GB            |
+  | 1B       | 1.28TB   | 1GB   | 1.3TB  | 2.6TB            |
+
+  Examples (1-hour TTL, 1 update/5min = 12 updates):
+  | Entities | LSM Data | Total  | With 2× Headroom |
+  |----------|----------|--------|------------------|
+  | 100M     | 153GB    | 155GB  | 310GB            |
+  | 1B       | 1.5TB    | 1.5TB  | 3TB              |
+  ```
+
+#### Scenario: Network capacity planning
+
+- **WHEN** planning network requirements
+- **THEN** operators SHALL consider:
+  ```
+  NETWORK SIZING
+  ══════════════
+
+  Intra-cluster (replica-to-replica):
+  - Bandwidth: writes × replication_factor × message_overhead
+  - Example: 100K events/sec × 3 replicas × 256 bytes = 77MB/s
+  - REQUIREMENT: 1Gbps minimum, 10Gbps recommended
+
+  Client-to-cluster:
+  - Bandwidth: writes × 256 bytes + reads × response_size
+  - Latency: <1ms for intra-DC, <50ms for cross-DC primary
+  - REQUIREMENT: Client SDK handles replica discovery
+
+  Cross-region (if standby cluster):
+  - Async replication: eventual consistency stream
+  - Bandwidth: write_throughput × compression_ratio
+  ```
+
+#### Scenario: CPU capacity planning
+
+- **WHEN** planning CPU requirements
+- **THEN** operators SHALL consider:
+  ```
+  CPU SIZING
+  ══════════
+
+  VSR processing: 1-2 cores (consensus, message handling)
+  Query processing: 2-4 cores (S2 calculations, polygon containment)
+  Compaction: 1-2 cores (background, can burst higher)
+  I/O completion: 1 core (io_uring completion handling)
+
+  MINIMUM: 8 cores (dedicated server)
+  RECOMMENDED: 16+ cores for 1B entity scale
+
+  NOTE: ArcherDB is more I/O and memory bound than CPU bound.
+  Modern CPUs with good single-thread performance preferred.
+  ```
+
+### Requirement: Disaster Recovery Runbook
+
+The system SHALL provide a comprehensive disaster recovery runbook.
+
+#### Scenario: Single replica failure recovery
+
+- **WHEN** a single replica fails (hardware failure, disk corruption)
+- **THEN** recovery procedure SHALL be:
+  ```
+  SINGLE REPLICA FAILURE RECOVERY
+  ════════════════════════════════
+
+  IMPACT: Cluster remains available (quorum intact for 3+ replicas)
+
+  STEPS:
+  1. DETECT: Monitor alerts for replica_status != "normal"
+  2. ASSESS: Check if failure is recoverable (restart) or requires replacement
+  3. ATTEMPT RESTART:
+     $ archerdb start --data-file=/path/to/data.archerdb
+     - If starts successfully: replica rejoins, catches up via VSR
+     - If data corruption detected: proceed to step 4
+  4. REPLACE REPLICA (if restart fails):
+     a. Provision new hardware (same spec or better)
+     b. Format new data file:
+        $ archerdb format --data-file=/new/path/data.archerdb \
+            --cluster-id=<existing-cluster-id> \
+            --replica-index=<failed-replica-index> \
+            --replica-count=<total-replicas>
+     c. Start replica:
+        $ archerdb start --data-file=/new/path/data.archerdb \
+            --addresses=<peer-addresses>
+     d. Replica will sync from peers via state sync
+  5. VERIFY: Check archerdb_replica_status == "normal"
+
+  RTO: 15-60 minutes (depends on data size for state sync)
+  ```
+
+#### Scenario: Quorum loss recovery
+
+- **WHEN** quorum is lost (majority of replicas unavailable)
+- **THEN** recovery procedure SHALL be:
+  ```
+  QUORUM LOSS RECOVERY (CRITICAL)
+  ═══════════════════════════════
+
+  IMPACT: Cluster is UNAVAILABLE for writes. Reads may work from surviving replicas.
+
+  PRIORITY: Restore quorum ASAP. Every minute of downtime = data loss risk.
+
+  STEPS:
+  1. ASSESS: Identify which replicas are available
+     $ archerdb status --addresses=<all-replica-addresses>
+  2. CLASSIFY FAILURE:
+     a. Network partition: Restore network connectivity (fastest)
+     b. Multiple hardware failures: Replace replicas
+     c. Datacenter outage: Wait or failover to DR site
+  3. RESTORE QUORUM:
+     - For 3-replica cluster: need 2 replicas
+     - For 5-replica cluster: need 3 replicas
+  4. IF RESTORING FAILED REPLICAS:
+     - Follow "Single replica failure recovery" for each
+     - Start with replicas that have most recent data (highest commit_op)
+  5. VERIFY: archerdb_cluster_status == "available"
+
+  WARNING: Do NOT manually edit data files. Use only archerdb tools.
+
+  RTO: Minutes (network) to hours (hardware replacement)
+  RPO: Zero (VSR consensus ensures committed data survives)
+  ```
+
+#### Scenario: Full cluster restoration from backup
+
+- **WHEN** entire cluster must be restored from backup
+- **THEN** recovery procedure SHALL be:
+  ```
+  FULL CLUSTER RESTORE FROM BACKUP
+  ═════════════════════════════════
+
+  USE CASE: Total datacenter loss, all replicas unrecoverable
+
+  PREREQUISITES:
+  - S3/object storage backup available (see backup-restore/spec.md)
+  - New hardware provisioned (3-5 nodes)
+  - Network connectivity configured
+
+  STEPS:
+  1. IDENTIFY LATEST BACKUP:
+     $ archerdb backup list --bucket=s3://your-backup-bucket
+     - Note most recent consistent snapshot timestamp
+  2. RESTORE TO FIRST NODE:
+     $ archerdb restore \
+         --from-s3=s3://your-backup-bucket/snapshot-<timestamp> \
+         --to-data-file=/path/to/data.archerdb \
+         --replica-index=0
+     - This creates data file from backup
+  3. START FIRST REPLICA:
+     $ archerdb start --data-file=/path/to/data.archerdb --addresses=<self>
+     - Single replica runs in degraded mode
+  4. RESTORE REMAINING REPLICAS:
+     - Repeat steps 2-3 for replica-index 1, 2, etc.
+     - Each replica will sync and form quorum
+  5. VERIFY CLUSTER HEALTH:
+     $ archerdb status
+     - All replicas should show "normal"
+     - Check archerdb_commit_sequence matches across replicas
+
+  RTO: 60-90 minutes for 1B entities (see backup-restore/spec.md for breakdown)
+  RPO: Time since last backup (configure backup frequency accordingly)
+  ```
+
+#### Scenario: Data corruption detection and recovery
+
+- **WHEN** data corruption is detected (checksum mismatch)
+- **THEN** recovery procedure SHALL be:
+  ```
+  DATA CORRUPTION RECOVERY
+  ═════════════════════════
+
+  DETECTION: archerdb logs "checksum mismatch" or replica diverges
+
+  STEPS:
+  1. STOP AFFECTED REPLICA:
+     $ archerdb stop --graceful
+  2. RUN INTEGRITY CHECK:
+     $ archerdb verify --data-file=/path/to/data.archerdb
+     - Reports corrupted blocks and extent of damage
+  3. ASSESS OPTIONS:
+     a. Minor corruption (few blocks): Replica can recover via state sync
+     b. Major corruption: Replace replica from backup or peer
+  4. FOR MINOR CORRUPTION:
+     $ archerdb repair --data-file=/path/to/data.archerdb
+     - Marks corrupted blocks as invalid
+     - Replica fetches missing data from peers on restart
+  5. FOR MAJOR CORRUPTION:
+     - Follow "Single replica failure recovery" (full replacement)
+  6. INVESTIGATE ROOT CAUSE:
+     - Check disk health (SMART data)
+     - Check for memory errors (ECC logs)
+     - Consider hardware replacement even if repair succeeds
+  ```
+
+### Requirement: Upgrade Path Documentation
+
+The system SHALL document safe upgrade procedures between versions.
+
+#### Scenario: Minor version upgrade (patch)
+
+- **WHEN** upgrading between patch versions (e.g., 1.0.0 → 1.0.1)
+- **THEN** upgrade procedure SHALL be:
+  ```
+  PATCH VERSION UPGRADE
+  ═════════════════════
+
+  COMPATIBILITY: Patch versions are always backward compatible.
+  DOWNTIME: Zero (rolling restart)
+
+  STEPS:
+  1. VERIFY CLUSTER HEALTH:
+     $ archerdb status
+     - All replicas must be "normal"
+  2. UPGRADE ONE REPLICA AT A TIME:
+     For each replica (start with backups, primary last):
+     a. Stop replica:
+        $ archerdb stop --graceful
+     b. Replace binary:
+        $ cp archerdb-1.0.1 /usr/local/bin/archerdb
+     c. Start replica:
+        $ archerdb start --data-file=/path/to/data.archerdb
+     d. Wait for replica to rejoin:
+        $ archerdb status (wait for "normal")
+     e. Proceed to next replica
+  3. VERIFY CLUSTER VERSION:
+     $ archerdb version --cluster
+     - All replicas should report new version
+
+  ROLLBACK: Reverse process with old binary (same procedure)
+  ```
+
+#### Scenario: Minor version upgrade (feature)
+
+- **WHEN** upgrading between minor versions (e.g., 1.0.x → 1.1.0)
+- **THEN** upgrade procedure SHALL be:
+  ```
+  MINOR VERSION UPGRADE
+  ═════════════════════
+
+  COMPATIBILITY: Minor versions maintain wire protocol compatibility.
+  DATA FORMAT: May include new features requiring format migration.
+
+  PRE-UPGRADE:
+  1. READ RELEASE NOTES for breaking changes
+  2. CREATE BACKUP:
+     $ archerdb backup create --to-s3=s3://your-bucket/pre-upgrade
+  3. TEST UPGRADE in staging environment
+
+  UPGRADE STEPS:
+  1. ENTER UPGRADE MODE (if data format changed):
+     $ archerdb upgrade prepare --version=1.1.0
+     - Cluster continues operating in compatibility mode
+  2. ROLLING RESTART (same as patch upgrade):
+     - Stop, upgrade binary, start each replica
+  3. COMPLETE UPGRADE:
+     $ archerdb upgrade complete
+     - Enables new features, applies format migrations
+
+  ROLLBACK:
+  - If upgrade prepare: $ archerdb upgrade cancel
+  - If upgrade complete: Restore from backup (cannot downgrade format)
+  ```
+
+#### Scenario: Major version upgrade
+
+- **WHEN** upgrading between major versions (e.g., 1.x → 2.x)
+- **THEN** upgrade procedure SHALL be:
+  ```
+  MAJOR VERSION UPGRADE
+  ═════════════════════
+
+  COMPATIBILITY: Major versions may break wire protocol or data format.
+  DOWNTIME: Planned maintenance window required.
+
+  PRE-UPGRADE (weeks before):
+  1. REVIEW release notes and migration guide
+  2. TEST in staging with production-like data
+  3. PLAN maintenance window (estimate: 1-2 hours for 1B entities)
+  4. NOTIFY stakeholders
+
+  UPGRADE STEPS:
+  1. CREATE FULL BACKUP:
+     $ archerdb backup create --to-s3=s3://your-bucket/pre-v2-upgrade
+  2. STOP ALL CLIENTS:
+     - Drain client connections
+     - Confirm write traffic = 0
+  3. STOP CLUSTER:
+     $ archerdb stop --all-replicas
+  4. RUN MIGRATION:
+     $ archerdb migrate --from-version=1.x --to-version=2.x \
+         --data-file=/path/to/data.archerdb
+     - This rewrites data file in new format
+  5. UPGRADE BINARIES on all nodes
+  6. START CLUSTER:
+     $ archerdb start (on each replica)
+  7. VERIFY health and run smoke tests
+  8. RESUME CLIENT TRAFFIC
+
+  ROLLBACK: Restore from pre-upgrade backup to previous version
+  ```
+
+#### Scenario: Client SDK version compatibility
+
+- **WHEN** upgrading server or client SDK
+- **THEN** compatibility matrix SHALL be:
+  ```
+  SDK COMPATIBILITY MATRIX
+  ════════════════════════
+
+  | Server Version | SDK 1.0.x | SDK 1.1.x | SDK 2.0.x |
+  |----------------|-----------|-----------|-----------|
+  | Server 1.0.x   | ✓         | ✓         | ✗         |
+  | Server 1.1.x   | ✓         | ✓         | ✗         |
+  | Server 2.0.x   | ✗         | ✗         | ✓         |
+
+  RULE: SDK minor version must be ≤ server minor version within same major.
+  RECOMMENDATION: Upgrade server first, then clients.
+  ```
+
+### Requirement: Operational Runbook
+
+The system SHALL provide an operational runbook for day-to-day operations.
+
+#### Scenario: Health check procedures
+
+- **WHEN** performing routine health checks
+- **THEN** operators SHALL verify:
+  ```
+  DAILY HEALTH CHECK CHECKLIST
+  ════════════════════════════
+
+  □ Cluster status:
+    $ archerdb status
+    Expected: All replicas "normal", primary elected
+
+  □ Replication lag:
+    $ curl -s localhost:9090/metrics | grep archerdb_replication_lag
+    Expected: < 1000 operations
+
+  □ Disk usage:
+    $ curl -s localhost:9090/metrics | grep archerdb_disk
+    Expected: < 80% (alert threshold)
+
+  □ Memory usage:
+    $ curl -s localhost:9090/metrics | grep archerdb_memory
+    Expected: Stable (no growth trend)
+
+  □ Compaction health:
+    $ curl -s localhost:9090/metrics | grep archerdb_compaction_debt
+    Expected: < 0.3 (warning threshold)
+
+  □ Error rates:
+    $ curl -s localhost:9090/metrics | grep archerdb_errors_total
+    Expected: No unexpected errors
+
+  □ Backup status:
+    $ archerdb backup list --bucket=s3://your-bucket | head -5
+    Expected: Recent backup within SLA
+  ```
+
+#### Scenario: Common troubleshooting procedures
+
+- **WHEN** troubleshooting common issues
+- **THEN** operators SHALL follow:
+  ```
+  TROUBLESHOOTING GUIDE
+  ═════════════════════
+
+  ISSUE: High query latency (p99 > target)
+  ─────────────────────────────────────────
+  1. Check disk I/O: iostat -x 1
+     - If await > 10ms: Disk bottleneck
+     - Action: Check for compaction storms, disk health
+  2. Check memory pressure: free -h
+     - If swap > 0: Memory pressure
+     - Action: Reduce LSM cache or add RAM
+  3. Check CPU: top -p $(pgrep archerdb)
+     - If CPU > 90%: Processing bottleneck
+     - Action: Profile queries, check S2 calculation complexity
+
+  ISSUE: Replica not joining cluster
+  ──────────────────────────────────
+  1. Check network connectivity:
+     $ nc -zv <peer-address> <port>
+  2. Check logs for auth/handshake errors:
+     $ journalctl -u archerdb | grep -i error
+  3. Verify cluster-id matches:
+     $ archerdb info --data-file=<path>
+  4. Check firewall rules allow bidirectional traffic
+
+  ISSUE: Write throughput degradation
+  ───────────────────────────────────
+  1. Check compaction backlog:
+     archerdb_lsm_level0_tables gauge
+     - If > 8: Compaction falling behind
+  2. Check WAL utilization:
+     archerdb_wal_utilization gauge
+     - If > 80%: WAL pressure
+  3. Check for network issues between replicas:
+     archerdb_message_roundtrip_ms histogram
+
+  ISSUE: Backup taking too long
+  ─────────────────────────────
+  1. Check network bandwidth to S3:
+     $ iperf3 -c <s3-endpoint>
+  2. Check concurrent backup operations (only 1 should run)
+  3. Consider incremental backup if full backup too slow
+  ```
+
+#### Scenario: Maintenance window procedures
+
+- **WHEN** performing scheduled maintenance
+- **THEN** procedures SHALL be:
+  ```
+  MAINTENANCE WINDOW PROCEDURES
+  ═════════════════════════════
+
+  PRE-MAINTENANCE:
+  1. Notify stakeholders (24h advance for non-emergency)
+  2. Create backup:
+     $ archerdb backup create --to-s3=s3://bucket/pre-maintenance
+  3. Document current cluster state:
+     $ archerdb status > pre-maintenance-status.txt
+
+  DURING MAINTENANCE:
+  - For rolling operations (upgrades, restarts):
+    - Process one replica at a time
+    - Wait for replica to rejoin before proceeding
+    - Keep quorum at all times
+  - For full-stop operations:
+    - Stop all clients first
+    - Stop replicas in order: backups first, primary last
+    - Perform maintenance
+    - Start replicas in reverse order: primary first
+
+  POST-MAINTENANCE:
+  1. Verify cluster health:
+     $ archerdb status
+  2. Run smoke tests:
+     $ archerdb test connectivity
+  3. Check metrics for anomalies
+  4. Document changes made
+  5. Notify stakeholders of completion
+  ```
+
+#### Scenario: Scaling operations
+
+- **WHEN** scaling cluster resources
+- **THEN** procedures SHALL be:
+  ```
+  SCALING PROCEDURES
+  ══════════════════
+
+  VERTICAL SCALING (larger hardware):
+  ───────────────────────────────────
+  1. For each replica (rolling):
+     a. Stop replica
+     b. Migrate data file to new hardware:
+        $ rsync -av /old/path/data.archerdb new-server:/new/path/
+     c. Start on new hardware
+     d. Remove old replica from cluster config
+  NOTE: VSR static membership means same replica index on new hardware
+
+  HORIZONTAL SCALING (NOT SUPPORTED in v1):
+  ─────────────────────────────────────────
+  - Cluster size is fixed at format time (3, 5, or 6 replicas)
+  - To change cluster size: Full backup → Format new cluster → Restore
+  - Future versions may support dynamic membership
+
+  STORAGE SCALING:
+  ────────────────
+  - Add larger disk, migrate data file, update paths
+  - Or use LVM to extend existing volume (if supported by filesystem)
+  ```
+
+#### Scenario: On-call response procedures
+
+- **WHEN** responding to alerts on-call
+- **THEN** procedures SHALL be:
+  ```
+  ON-CALL RESPONSE GUIDE
+  ══════════════════════
+
+  ALERT: replica_down
+  ────────────────────
+  Severity: WARNING (if quorum intact), CRITICAL (if quorum at risk)
+  Response:
+  1. Check if replica is reachable (network)
+  2. Check if process is running (systemctl status archerdb)
+  3. Check logs for crash reason
+  4. Restart replica if safe, escalate if repeated failures
+
+  ALERT: disk_usage_high (>80%)
+  ─────────────────────────────
+  Severity: WARNING at 80%, CRITICAL at 90%
+  Response:
+  1. Check compaction debt ratio
+  2. If high: Wait for compaction to catch up, or reduce write rate
+  3. If normal: Investigate data growth pattern
+  4. Plan capacity expansion if trend continues
+
+  ALERT: replication_lag_high
+  ───────────────────────────
+  Severity: WARNING at 1000 ops, CRITICAL at 10000 ops
+  Response:
+  1. Check slow replica health (disk, network, CPU)
+  2. Check for network partition between replicas
+  3. If one replica: May need replacement
+  4. If all replicas: Primary may be overloaded
+
+  ALERT: compaction_debt_critical (>0.5)
+  ──────────────────────────────────────
+  Severity: CRITICAL
+  Response:
+  1. Check disk space (compaction needs headroom)
+  2. Reduce write rate if possible (client throttling)
+  3. Consider manual compaction trigger if tooling supports
+  4. Plan for capacity expansion
+
+  ESCALATION:
+  - SEV1 (cluster down): Immediate page to on-call engineer
+  - SEV2 (degraded): Page within 15 minutes
+  - SEV3 (warning): Address during business hours
+  ```
+
 ### Related Specifications
 
 - See `specs/replication/spec.md` for complete VSR protocol (Marzullo's, Flexible Paxos, CTRL)
@@ -1342,3 +2038,6 @@ PHASE 5 (Operations):
 - See `specs/query-engine/spec.md` for S2 RegionCoverer usage in queries
 - See `specs/hybrid-memory/spec.md` for linear probing hash map implementation
 - See `specs/constants/spec.md` for algorithm configuration parameters
+- See `specs/backup-restore/spec.md` for backup/restore procedures and RTO/RPO targets
+- See `specs/ttl-retention/spec.md` for TTL-aware capacity planning
+- See `specs/observability/spec.md` for metrics and alerting configuration

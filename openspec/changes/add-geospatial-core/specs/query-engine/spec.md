@@ -1305,7 +1305,7 @@ The system SHALL implement comprehensive error handling with clear propagation s
   Duplicate request → duplicate_request (205)
   Pipeline full → pipeline_full (308)
   ```
-- **AND** all VSR errors are retriable (client should retry on different replica or wait)
+- **AND** all VSR errors are retriable (client SHALL retry on different replica or wait)
 
 #### Scenario: Panic vs error return decision
 

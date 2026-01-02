@@ -407,6 +407,49 @@ The system SHALL reclaim disk space occupied by expired events through LSM compa
 - **AND** compaction trigger MAY be adjusted based on disk usage
 - **AND** target: reclaim expired data within 2× TTL window
 
+#### Scenario: Disk sizing formula with TTL bloat headroom
+
+- **WHEN** planning storage capacity for TTL workloads
+- **THEN** operators SHALL provision disk using:
+  ```
+  min_disk_size = steady_state_size × compaction_headroom_factor
+
+  Where:
+    steady_state_size = entity_count × avg_updates_per_ttl_window × 128 bytes
+    compaction_headroom_factor = 2.0 (minimum)
+
+  Formula:
+    min_disk_size = (entity_count × updates_per_ttl × 128) × 2.0
+  ```
+- **AND** the 2.0× headroom accounts for:
+  - Compaction requires temporary space for new tables before deleting old ones
+  - Peak bloat during burst ingestion (e.g., fleet onboarding)
+  - Safety margin for compaction falling behind temporarily
+- **AND** examples:
+  ```
+  | Entities | TTL    | Update Rate | Steady State | Min Disk (2×) |
+  |----------|--------|-------------|--------------|---------------|
+  | 1B       | 1 hour | 1/5min      | 1.5TB        | 3TB           |
+  | 1B       | 24 hr  | 1/min       | 17TB         | 34TB          |
+  | 1B       | 30 day | 1/hour      | 92TB         | 184TB         |
+  | 100M     | 7 day  | 1/hour      | 2.1TB        | 4.2TB         |
+  ```
+- **AND** if `archerdb_compaction_debt_ratio > 0.3`, consider 3× headroom
+
+#### Scenario: TTL burst ingestion (compaction storm prevention)
+
+- **WHEN** a large batch of entities is onboarded simultaneously with the same TTL
+- **THEN** operators SHALL be aware:
+  - All events expire at approximately the same time
+  - This creates a "TTL cliff" where many events become eligible for GC simultaneously
+  - Compaction load spikes when processing expired data
+- **AND** mitigation strategies include:
+  - Stagger onboarding over time (spread TTL expiration)
+  - Use slightly varied TTLs (±10%) to smooth expiration curve
+  - Increase compaction parallelism before expected expiration cliff
+  - Monitor `archerdb_compaction_debt_ratio` proactively
+- **AND** the system does NOT automatically handle TTL cliffs in v1 (see non-goals)
+
 ### Requirement: Cold Start with TTL
 
 The system SHALL handle expired entries during index rebuild on cold start.
@@ -662,6 +705,38 @@ Operation: LSM Compaction GC
 - Throughput: Unchanged (maintains compaction rate)
 - Storage savings: Depends on TTL distribution (10-80% typical)
 ```
+
+### Non-Goals (v1)
+
+The following TTL-related optimizations are explicitly out of scope for v1:
+
+#### Non-Goal: TTL-aware compaction prioritization
+
+- **WHAT**: Automatically prioritizing compaction of levels/tables with high expired data ratios
+- **WHY deferred**:
+  - Adds significant complexity to compaction scheduler
+  - Requires tracking expired data ratio per table (additional metadata)
+  - Standard leveled compaction is sufficient for most workloads
+  - Operators can manually trigger compaction via tooling if needed
+- **FUTURE**: May be added in v2 based on production experience with TTL-heavy workloads
+
+#### Non-Goal: Automatic TTL cliff mitigation
+
+- **WHAT**: Automatically spreading compaction work when detecting upcoming TTL expiration cliffs
+- **WHY deferred**:
+  - Requires predicting future expiration patterns
+  - Adds complexity to compaction scheduling
+  - Operators can use monitoring (`archerdb_compaction_debt_ratio`) and manual intervention
+- **MITIGATION for v1**: Document best practices for staggering TTLs during bulk onboarding
+
+#### Non-Goal: Per-level TTL statistics
+
+- **WHAT**: Tracking precise expired byte counts per LSM level for fine-grained capacity planning
+- **WHY deferred**:
+  - Sampling-based estimates (via compaction runs) are sufficient for alerting
+  - Precise tracking requires scanning all data periodically
+  - Adds CPU overhead for marginal benefit
+- **ALTERNATIVE for v1**: Use `archerdb_compaction_debt_ratio` gauge for overall health
 
 ### Related Specifications
 

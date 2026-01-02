@@ -438,6 +438,44 @@ The system SHALL define clear policies for when compaction is triggered.
   - Log warning: "Write stall - compaction cannot keep up"
 - **AND** this prevents unbounded Level 0 growth
 
+#### Scenario: Compaction backpressure alert (TTL bloat detection)
+
+- **WHEN** monitoring compaction health
+- **THEN** the system SHALL expose metric `archerdb_compaction_debt_ratio` gauge:
+  ```
+  compaction_debt_ratio = expired_bytes_estimate / total_lsm_bytes
+  ```
+- **AND** the estimate is calculated during compaction by sampling:
+  - Track `expired_events_discarded` and `events_copied` per compaction run
+  - `expired_ratio = expired_events_discarded / (expired_events_discarded + events_copied)`
+  - Exponential moving average across compaction runs
+- **AND** alert thresholds SHALL be:
+  - `compaction_debt_ratio > 0.3`: Warning - compaction falling behind
+  - `compaction_debt_ratio > 0.5`: Critical - immediate operator attention required
+- **AND** high debt ratio indicates:
+  - TTL expiration rate exceeds compaction throughput
+  - Storage bloat is accumulating
+  - Consider: increasing compaction parallelism, reducing write rate, or adding storage
+
+#### Scenario: Compaction debt metrics
+
+- **WHEN** exposing compaction health metrics
+- **THEN** the following SHALL be available:
+  ```
+  # Ratio of expired data in LSM (0.0-1.0)
+  archerdb_compaction_debt_ratio gauge
+
+  # Estimated bytes of expired data not yet reclaimed
+  archerdb_compaction_expired_bytes_estimate gauge
+
+  # Total bytes in LSM tree
+  archerdb_lsm_total_bytes gauge
+
+  # Compaction throughput (bytes/sec)
+  archerdb_compaction_throughput_bytes gauge
+  ```
+- **AND** operators can use these to predict when disk will fill
+
 ### Requirement: Checkpoint State
 
 The system SHALL maintain checkpoint metadata in the superblock for crash recovery.
