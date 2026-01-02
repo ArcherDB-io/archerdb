@@ -101,8 +101,9 @@
 ### F1.3 Single-Node Verification
 - [ ] F1.3.1 Single-node writes work (GeoEvent → LSM)
 - [ ] F1.3.2 UUID lookup returns correct data
-- [ ] F1.3.3 Existing TigerBeetle tests adapted and passing
-- [ ] F1.3.4 Basic client SDK (Zig) can connect and execute operations
+- [ ] F1.3.3 Implement query_latest (latest N events by timestamp, LSM scan)
+- [ ] F1.3.4 Existing TigerBeetle tests adapted and passing
+- [ ] F1.3.5 Basic client SDK (Zig) can connect and execute operations
 
 **Exit Criteria:**
 - [ ] Can write and read GeoEvents on single node
@@ -189,7 +190,6 @@
 - [ ] F3.3.4 Implement skip-scan with block header min/max filtering
 - [ ] F3.3.5 Implement post-filter for precise geometry tests
 - [ ] F3.3.6 Create scratch buffer pool for S2 polygon operations
-- [ ] F3.3.7 Implement query_latest (latest N events by timestamp, LSM scan)
 
 **Exit Criteria:**
 - [ ] Golden vector tests pass (deterministic S2)
@@ -869,7 +869,7 @@ Cross-reference between specifications and F-phase implementation tasks.
 │                               │ UUID Lookup             │ F2.1.5 (via RAM index)    │
 │                               │ Radius Query            │ F3.3.2                    │
 │                               │ Polygon Query           │ F3.3.3                    │
-│                               │ Latest Query            │ F3.3.7                    │
+│                               │ Latest Query            │ F1.3.3 (temporal, not S2) │
 ├───────────────────────────────┼─────────────────────────┼───────────────────────────┤
 │ compliance/spec.md            │ GDPR Entity Deletion    │ F2.5.1-F2.5.6             │
 ├───────────────────────────────┼─────────────────────────┼───────────────────────────┤
@@ -992,7 +992,7 @@ F1.1.1→F1.1.7 geo_state_machine.zig (prepare/prefetch/commit/compact/open)
             ↓
 F1.2.1→F1.2.3 Operation enum modification
             ↓
-F1.3.1→F1.3.4 Single-node verification
+F1.3.1→F1.3.5 Single-node verification (includes query_latest)
 
 Phase F2 (Weeks 15-20): RAM Index
 ────────────────────────────────
