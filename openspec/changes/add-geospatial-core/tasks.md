@@ -146,11 +146,20 @@
 - [ ] F2.4.6 Implement TTL tombstone generation for expired entries
 - [ ] F2.4.7 Write TTL tests (lazy expiration, background scan, compaction integration)
 
+### F2.5 Entity Deletion (GDPR)
+- [ ] F2.5.1 Implement `delete_entity` in geo_state_machine.zig (uses F1.2.1 operation)
+- [ ] F2.5.2 Remove entity from RAM index on delete
+- [ ] F2.5.3 Generate LSM tombstones for all entity events (cascading delete)
+- [ ] F2.5.4 Ensure deterministic deletion order across replicas
+- [ ] F2.5.5 Add deletion metrics: `entities_deleted`, `deletion_latency`
+- [ ] F2.5.6 Write GDPR deletion tests (verify data erasure end-to-end)
+
 **Exit Criteria:**
 - [ ] UUID lookups complete in <500μs p99
 - [ ] Index survives crash/restart via checkpoint
 - [ ] Tombstone monitoring working
 - [ ] TTL expiration verified (lazy + background)
+- [ ] GDPR delete verified (data erased, replicas consistent)
 
 ---
 
@@ -180,6 +189,7 @@
 - [ ] F3.3.4 Implement skip-scan with block header min/max filtering
 - [ ] F3.3.5 Implement post-filter for precise geometry tests
 - [ ] F3.3.6 Create scratch buffer pool for S2 polygon operations
+- [ ] F3.3.7 Implement query_latest (latest N events by timestamp, LSM scan)
 
 **Exit Criteria:**
 - [ ] Golden vector tests pass (deterministic S2)
@@ -203,7 +213,7 @@
 - [ ] F4.2.1 Test 3-replica cluster with GeoEvent operations
 - [ ] F4.2.2 Test 5-replica cluster with GeoEvent operations
 - [ ] F4.2.3 Test 6-replica cluster with GeoEvent operations (max supported)
-- [ ] F4.2.4 Test view change scenarios (primary failure)
+- [ ] F4.2.4 Test view change scenarios (primary failure, target: <3s failover)
 - [ ] F4.2.5 Test network partition scenarios
 - [ ] F4.2.6 Test crash recovery scenarios
 - [ ] F4.2.7 Test state sync for lagging replicas
@@ -859,6 +869,9 @@ Cross-reference between specifications and F-phase implementation tasks.
 │                               │ UUID Lookup             │ F2.1.5 (via RAM index)    │
 │                               │ Radius Query            │ F3.3.2                    │
 │                               │ Polygon Query           │ F3.3.3                    │
+│                               │ Latest Query            │ F3.3.7                    │
+├───────────────────────────────┼─────────────────────────┼───────────────────────────┤
+│ compliance/spec.md            │ GDPR Entity Deletion    │ F2.5.1-F2.5.6             │
 ├───────────────────────────────┼─────────────────────────┼───────────────────────────┤
 │ client-protocol/spec.md       │ Binary Protocol         │ (ADAPT from TigerBeetle)  │
 │                               │ Operation Codes         │ F1.2.1, F1.2.2            │
@@ -1003,7 +1016,7 @@ Phase F4 (Weeks 27-32): Replication Testing
 ───────────────────────────────────────────
 F4.1.1→F4.1.4 VOPR adaptation
             ↓
-F4.2.1→F4.2.6 Cluster testing (3-node, 5-node, partitions)
+F4.2.1→F4.2.7 Cluster testing (3/5/6-node, partitions, view change)
             ↓
 F4.3.1→F4.3.4 Safety verification (10M+ ops)
 
