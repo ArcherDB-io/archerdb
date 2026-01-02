@@ -31,7 +31,9 @@ We are building a high-performance geospatial database inspired by TigerBeetle's
 
 **Do NOT reinvent patterns that TigerBeetle has already proven. Reuse and adapt.**
 
---- The system must handle 1 billion+ location records with support for:
+---
+
+The system must handle 1 billion+ location records with support for:
 
 - **Radius queries**: Find entities within X meters of a point
 - **Polygon queries**: Find entities within an arbitrary geopolygon
@@ -339,9 +341,13 @@ Not applicable - greenfield implementation.
 8. **Testing**: VOPR simulator, fault injection
 9. **Client SDK**: Binary protocol, session management
 
-## Open Questions
+## Resolved Questions
 
-1. **Client Protocol**: Custom binary (like TigerBeetle) or gRPC?
-2. **S2 Integration**: C bindings or Zig port of core algorithms?
-3. **Cluster Configuration**: Support reconfiguration or fixed membership?
-4. **Monitoring**: Metrics export format (Prometheus, StatsD)?
+All architectural questions have been resolved. See `proposal.md` "Decisions Made" section for authoritative answers.
+
+| Question | Resolution |
+|----------|------------|
+| **Client Protocol** | Custom binary (like TigerBeetle) with official SDKs for Zig, Java, Go, Python, Node.js |
+| **S2 Integration** | Pure Zig core implementation (no C++ in core; tooling may use pinned reference) |
+| **Cluster Configuration** | Static membership only; support 3/5/6 replicas |
+| **Monitoring** | Prometheus metrics + structured logging (Zig std.log) |
