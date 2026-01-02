@@ -4,6 +4,246 @@
 
 ---
 
+## CRITICAL: Implementation Strategy
+
+### Requirement: Fork TigerBeetle (Do Not Build From Scratch)
+
+The system SHALL be implemented by **forking TigerBeetle**, not by building from scratch. This decision is non-negotiable and critical for project success.
+
+#### Scenario: Strategic rationale
+
+- **WHEN** beginning ArcherDB implementation
+- **THEN** engineers MUST understand why forking is mandatory:
+  1. **Risk Reduction**: VSR consensus took TigerBeetle 5+ years to perfect; reimplementing it introduces unnecessary risk
+  2. **Time Savings**: ~70% of codebase is reusable, reducing timeline from 18+ months to 6-9 months
+  3. **Battle-Tested Code**: TigerBeetle's storage engine, I/O layer, and replication are production-proven
+  4. **Specification Alignment**: These specs were written to be compatible with TigerBeetle's architecture
+  5. **Licensing**: TigerBeetle is Apache 2.0 licensed, permitting commercial forks
+
+#### Scenario: Getting started (Day 1)
+
+- **WHEN** an engineering team begins implementation
+- **THEN** the first steps SHALL be:
+  ```bash
+  # Step 1: Fork TigerBeetle
+  git clone https://github.com/tigerbeetle/tigerbeetle.git archerdb
+  cd archerdb
+
+  # Step 2: Verify build works
+  zig build
+  ./zig-out/bin/tigerbeetle version
+
+  # Step 3: Run existing tests to establish baseline
+  zig build test
+
+  # Step 4: Run VOPR simulator to understand testing approach
+  zig build vopr
+
+  # Step 5: Study the codebase (allow 2-4 weeks for team ramp-up)
+  # Focus areas: src/vsr/replica.zig, src/tigerbeetle.zig, src/lsm/
+  ```
+- **AND** the team SHALL NOT begin modifications until all members can:
+  - Explain VSR message flow (Prepare → PrepareOk → Commit)
+  - Describe the checkpoint sequence (grid → fsync → superblock → fsync)
+  - Understand the state machine interface (prepare/prefetch/commit phases)
+
+### Requirement: Component Classification (Keep vs Replace vs Add)
+
+The system SHALL clearly classify which TigerBeetle components to keep, replace, or add.
+
+#### Scenario: Components to KEEP unchanged (~70% of codebase)
+
+- **WHEN** identifying reusable components
+- **THEN** the following SHALL be kept with minimal or no modifications:
+
+  | Component | TigerBeetle Files | Why Keep |
+  |-----------|-------------------|----------|
+  | **VSR Consensus** | `src/vsr/replica.zig`, `journal.zig`, `clock.zig` | Core distributed consensus - extremely complex, proven correct |
+  | **Storage Engine** | `src/storage.zig`, `src/vsr/superblock.zig`, `src/vsr/free_set.zig` | Crash-safe storage with slot alternation |
+  | **LSM Tree** | `src/lsm/*.zig` | Compaction, manifest, tables - domain agnostic |
+  | **I/O Layer** | `src/io/linux.zig`, `darwin.zig`, `windows.zig` | io_uring/kqueue/IOCP - highly optimized |
+  | **Message Pool** | `src/message_pool.zig` | Zero-allocation messaging |
+  | **Client Sessions** | `src/vsr/client_sessions.zig` | Idempotency tracking |
+  | **VOPR Simulator** | `src/simulator.zig`, `src/testing/*.zig` | Deterministic testing framework |
+  | **Stdx Utilities** | `src/stdx.zig` | Intrusive data structures |
+
+- **AND** modifications to these components SHALL require explicit justification documented in code comments
+
+#### Scenario: Components to REPLACE (~20% of codebase)
+
+- **WHEN** identifying components requiring replacement
+- **THEN** the following SHALL be replaced entirely:
+
+  | TigerBeetle Component | ArcherDB Replacement | Key Changes |
+  |----------------------|---------------------|-------------|
+  | `src/tigerbeetle.zig` | `src/archerdb.zig` | GeoEvent state machine instead of Account/Transfer |
+  | `src/state_machine.zig` | `src/geo_state_machine.zig` | Geospatial operations, S2 integration |
+  | Account struct (128 bytes) | GeoEvent struct (128 bytes) | Same size, different fields |
+  | Transfer struct | Query structs | Radius, polygon, UUID queries |
+  | `src/clients/*` | `src/clients/*` | New API, same connection logic |
+
+- **AND** replacement components MUST maintain the same interfaces expected by VSR layer
+
+#### Scenario: Components to ADD (~10% of codebase)
+
+- **WHEN** identifying new components
+- **THEN** the following SHALL be added:
+
+  | New Component | Purpose | Complexity |
+  |--------------|---------|------------|
+  | `src/ram_index.zig` | O(1) entity lookup index (64GB for 1B entities) | Medium |
+  | `src/s2/` | S2 geometry library (port or FFI) | High |
+  | `src/s2_index.zig` | Spatial index for range queries | Medium |
+  | `src/ttl.zig` | TTL expiration tracking | Low |
+  | Golden vector tests | S2 determinism validation | Medium |
+
+### Requirement: State Machine Interface Preservation
+
+The system SHALL preserve TigerBeetle's state machine interface to minimize VSR layer changes.
+
+#### Scenario: State machine contract
+
+- **WHEN** implementing the GeoEvent state machine
+- **THEN** it MUST implement the same interface as TigerBeetle's state machine:
+
+  ```zig
+  // This interface is defined by TigerBeetle's VSR layer and MUST be preserved
+  pub const StateMachine = struct {
+      // Called during prepare phase - validate operations, compute deterministic results
+      pub fn prepare(self: *StateMachine, operation: Operation, input: []const u8) !void;
+
+      // Called during prefetch phase - load required data from storage
+      pub fn prefetch(self: *StateMachine) !void;
+
+      // Called during commit phase - apply operation to state (MUST be deterministic)
+      pub fn commit(self: *StateMachine) void;
+
+      // Called to compact state (checkpoint)
+      pub fn compact(self: *StateMachine, callback: CompactCallback) void;
+
+      // Called on replica startup to open/recover state
+      pub fn open(self: *StateMachine, callback: OpenCallback) void;
+  };
+  ```
+
+- **AND** the `Operation` enum SHALL be modified to include geospatial operations:
+
+  ```zig
+  pub const Operation = enum(u8) {
+      // Infrastructure operations (KEEP from TigerBeetle)
+      reserved = 0,
+      root = 1,
+      register = 2,
+
+      // Geospatial operations (REPLACE TigerBeetle's financial ops)
+      upsert_events = 128,    // was: create_accounts
+      query_uuid = 129,       // was: create_transfers
+      query_uuid_batch = 130, // was: lookup_accounts
+      query_radius = 131,     // was: lookup_transfers
+      query_polygon = 132,    // NEW
+      query_latest = 133,     // NEW
+      delete_entity = 134,    // NEW (GDPR)
+      get_status = 135,       // NEW (admin)
+  };
+  ```
+
+### Requirement: Implementation Phases
+
+The system SHALL be implemented in clearly defined phases.
+
+#### Scenario: Phase 1 - Fork and Foundation (Weeks 1-6)
+
+- **WHEN** beginning Phase 1
+- **THEN** deliverables SHALL be:
+  1. Forked repository with renamed entry points
+  2. GeoEvent struct defined (128 bytes, matching layout requirements)
+  3. Basic state machine compiling (no functionality yet)
+  4. Team has completed TigerBeetle codebase study
+  5. Development environment and CI/CD established
+- **AND** success criteria: `zig build` succeeds, team can explain VSR flow
+
+#### Scenario: Phase 2 - State Machine Replacement (Weeks 7-14)
+
+- **WHEN** beginning Phase 2
+- **THEN** deliverables SHALL be:
+  1. GeoEvent state machine with upsert operation
+  2. Single-node writes working (no replication testing yet)
+  3. UUID lookup queries working
+  4. Basic client SDK (one language)
+- **AND** success criteria: Can write and read GeoEvents on single node
+
+#### Scenario: Phase 3 - RAM Index Integration (Weeks 15-20)
+
+- **WHEN** beginning Phase 3
+- **THEN** deliverables SHALL be:
+  1. RAM index implementation with Robin Hood hashing
+  2. Index checkpointing integrated with superblock
+  3. O(1) entity lookups verified
+  4. Tombstone tracking (if delete supported)
+- **AND** success criteria: UUID lookups complete in <500μs p99
+
+#### Scenario: Phase 4 - S2 Geometry Integration (Weeks 21-26)
+
+- **WHEN** beginning Phase 4
+- **THEN** deliverables SHALL be:
+  1. S2 library integrated (port or FFI)
+  2. Golden vector tests passing (bit-exact determinism)
+  3. Radius queries working
+  4. Polygon queries working
+- **AND** success criteria: Spatial queries return correct results, all replicas agree
+
+#### Scenario: Phase 5 - Replication Testing (Weeks 27-32)
+
+- **WHEN** beginning Phase 5
+- **THEN** deliverables SHALL be:
+  1. 3-replica and 5-replica clusters tested
+  2. VOPR simulator adapted for GeoEvent operations
+  3. View change scenarios passing
+  4. Network partition scenarios passing
+  5. Crash recovery scenarios passing
+- **AND** success criteria: VOPR finds no safety violations in 10M+ operations
+
+#### Scenario: Phase 6 - Production Hardening (Weeks 33-38)
+
+- **WHEN** beginning Phase 6
+- **THEN** deliverables SHALL be:
+  1. Performance benchmarks meeting targets
+  2. Observability (metrics, tracing, logging) complete
+  3. Client SDKs for primary languages
+  4. Documentation and runbooks
+  5. Security review completed
+- **AND** success criteria: Ready for beta deployment
+
+### Requirement: Common Pitfalls to Avoid
+
+The system documentation SHALL warn against common implementation mistakes.
+
+#### Scenario: Pitfalls that WILL cause failure
+
+- **WHEN** implementing ArcherDB
+- **THEN** engineers MUST avoid these critical mistakes:
+
+  | Pitfall | Why It's Fatal | Prevention |
+  |---------|----------------|------------|
+  | Modifying VSR consensus logic | Breaks correctness proofs, introduces subtle bugs | Treat `src/vsr/replica.zig` as read-only |
+  | Non-deterministic state machine | Causes replica divergence, cluster-wide panic | Use consensus timestamps, validate S2 with golden vectors |
+  | Runtime memory allocation in hot paths | Latency spikes, potential OOM | Follow TigerBeetle's static allocation discipline |
+  | Changing message header layout | Breaks wire protocol compatibility | Keep 256-byte header structure |
+  | Skipping VOPR testing | Ships bugs that only manifest under network partitions | Run VOPR with millions of operations before release |
+  | Using floating-point in consensus path | Non-determinism across CPU architectures | S2 must be bit-exact; use integer math or validated FP |
+
+#### Scenario: Warning signs during development
+
+- **WHEN** development is proceeding
+- **THEN** these warning signs indicate problems:
+  - "Let's simplify the VSR protocol" → NO, it's correct as designed
+  - "We don't need the simulator" → YES YOU DO, consensus bugs are invisible without it
+  - "This works on my machine" → Test on 3+ replicas with fault injection
+  - "We can optimize this later" → Follow TigerBeetle's patterns from day one
+  - "Let's use a different hash function" → Ensure identical hashing across all replicas
+
+---
+
 ## ADDED Requirements
 
 ### Requirement: TigerBeetle as Reference Implementation
