@@ -1,8 +1,292 @@
 # Tasks: Add Geospatial Core
 
+## CRITICAL: Implementation Strategy - Fork TigerBeetle
+
+> **DO NOT BUILD FROM SCRATCH.** This project SHALL be implemented by forking TigerBeetle.
+> See `specs/implementation-guide/spec.md` for complete rationale and instructions.
+
+### Fork Strategy Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    TIGERBEETLE FORK STRATEGY                                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   KEEP (~70%)              REPLACE (~20%)           ADD (~10%)              │
+│   ─────────────            ──────────────           ────────────            │
+│   ✅ src/vsr/*             🔄 src/tigerbeetle.zig   ➕ src/ram_index.zig    │
+│   ✅ src/lsm/*             🔄 src/state_machine.zig ➕ src/s2/*             │
+│   ✅ src/io/*              🔄 src/clients/*         ➕ src/s2_index.zig     │
+│   ✅ src/storage.zig       🔄 Account → GeoEvent    ➕ src/ttl.zig          │
+│   ✅ src/message_pool.zig  🔄 Transfer → Query      ➕ Golden vector tests  │
+│   ✅ src/simulator.zig                                                       │
+│   ✅ src/stdx.zig                                                            │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Phase F0: Fork & Foundation (Weeks 1-6)
+
+**Goal:** Fork TigerBeetle, establish development environment, team ramp-up
+
+### F0.1 Repository Setup
+- [ ] F0.1.1 Fork TigerBeetle: `git clone https://github.com/tigerbeetle/tigerbeetle.git archerdb`
+- [ ] F0.1.2 Rename project references (tigerbeetle → archerdb)
+- [ ] F0.1.3 Verify build: `zig build` succeeds
+- [ ] F0.1.4 Run existing tests: `zig build test` passes
+- [ ] F0.1.5 Run VOPR simulator: `zig build vopr` works
+- [ ] F0.1.6 Set up CI/CD pipeline for forked repository
+- [ ] F0.1.7 Document all modifications in CHANGELOG.md
+
+### F0.2 Team Ramp-Up (CRITICAL - Do Not Skip)
+- [ ] F0.2.1 All engineers read `src/vsr/replica.zig` thoroughly
+- [ ] F0.2.2 All engineers can explain VSR message flow (Prepare → PrepareOk → Commit)
+- [ ] F0.2.3 All engineers can describe checkpoint sequence (grid → fsync → superblock → fsync)
+- [ ] F0.2.4 All engineers understand state machine interface (prepare/prefetch/commit)
+- [ ] F0.2.5 Document team's understanding in internal wiki
+- [ ] F0.2.6 Identify TigerBeetle patterns that will be reused verbatim
+
+### F0.3 GeoEvent Struct Definition
+- [ ] F0.3.1 Create `src/geo_event.zig` with 128-byte `GeoEvent` extern struct
+- [ ] F0.3.2 Match TigerBeetle's Account struct size (128 bytes) for compatibility
+- [ ] F0.3.3 Add comptime assertions: `@sizeOf == 128`, `@alignOf == 16`, `no_padding()`
+- [ ] F0.3.4 Define `GeoEventFlags` as packed struct(u32)
+- [ ] F0.3.5 Implement `pack_id(s2_cell, timestamp) -> u128` helper
+- [ ] F0.3.6 Write comptime layout tests
+
+**Exit Criteria:**
+- [ ] `zig build` succeeds with renamed entry points
+- [ ] All team members pass VSR knowledge check
+- [ ] GeoEvent struct compiles with correct layout
+
+---
+
+## Phase F1: State Machine Replacement (Weeks 7-14)
+
+**Goal:** Replace TigerBeetle's Account/Transfer state machine with GeoEvent
+
+### F1.1 State Machine Core
+- [ ] F1.1.1 Create `src/archerdb.zig` (copy structure from `src/tigerbeetle.zig`)
+- [ ] F1.1.2 Create `src/geo_state_machine.zig` implementing StateMachine interface
+- [ ] F1.1.3 Implement `prepare()` for GeoEvent validation
+- [ ] F1.1.4 Implement `prefetch()` for async I/O (initially empty)
+- [ ] F1.1.5 Implement `commit()` for deterministic execution
+- [ ] F1.1.6 Implement `compact()` for checkpoint integration
+- [ ] F1.1.7 Implement `open()` for recovery
+
+### F1.2 Operation Enum Modification
+- [ ] F1.2.1 Modify Operation enum in message header:
+  ```zig
+  upsert_events = 128,    // was: create_accounts
+  query_uuid = 129,       // was: create_transfers
+  query_uuid_batch = 130, // was: lookup_accounts
+  query_radius = 131,     // was: lookup_transfers
+  query_polygon = 132,    // NEW
+  query_latest = 133,     // NEW
+  delete_entity = 134,    // NEW (GDPR)
+  ```
+- [ ] F1.2.2 Update all switch statements handling operations
+- [ ] F1.2.3 Update client protocol documentation
+
+### F1.3 Single-Node Verification
+- [ ] F1.3.1 Single-node writes work (GeoEvent → LSM)
+- [ ] F1.3.2 UUID lookup returns correct data
+- [ ] F1.3.3 Existing TigerBeetle tests adapted and passing
+- [ ] F1.3.4 Basic client SDK (Zig) can connect and execute operations
+
+**Exit Criteria:**
+- [ ] Can write and read GeoEvents on single node
+- [ ] State machine passes adapted TigerBeetle tests
+
+---
+
+## Phase F2: RAM Index Integration (Weeks 15-20)
+
+**Goal:** Add O(1) entity lookup index (Aerospike pattern)
+
+### F2.1 RAM Index Implementation
+- [ ] F2.1.1 Create `src/ram_index.zig` (NEW FILE - not in TigerBeetle)
+- [ ] F2.1.2 Define 64-byte `IndexEntry` extern struct (cache-line aligned)
+- [ ] F2.1.3 Implement Robin Hood hashing with linear probing
+- [ ] F2.1.4 Pre-allocate index at startup (no runtime resize)
+- [ ] F2.1.5 Implement `lookup(entity_id) -> ?IndexEntry` O(1)
+- [ ] F2.1.6 Implement `upsert(entity_id, event)` with LWW semantics
+- [ ] F2.1.7 Handle out-of-order timestamps correctly
+
+### F2.2 Index Checkpointing
+- [ ] F2.2.1 Create `src/index/checkpoint.zig`
+- [ ] F2.2.2 Implement dirty page tracking with bitset
+- [ ] F2.2.3 Integrate checkpoint with superblock sequence
+- [ ] F2.2.4 Implement incremental checkpoint (only dirty pages)
+- [ ] F2.2.5 Implement checkpoint loading on startup
+- [ ] F2.2.6 Implement full index rebuild fallback (scan LSM newest→oldest)
+
+### F2.3 Index Statistics & Monitoring
+- [ ] F2.3.1 Add `entry_count`, `load_factor`, `collision_count` stats
+- [ ] F2.3.2 Add `tombstone_count`, `tombstone_ratio` (if delete supported)
+- [ ] F2.3.3 Expose index metrics to Prometheus endpoint
+- [ ] F2.3.4 Add alert thresholds for tombstone ratio
+
+**Exit Criteria:**
+- [ ] UUID lookups complete in <500μs p99
+- [ ] Index survives crash/restart via checkpoint
+- [ ] Tombstone monitoring working
+
+---
+
+## Phase F3: S2 Geometry Integration (Weeks 21-26)
+
+**Goal:** Add spatial indexing for radius/polygon queries
+
+### F3.1 S2 Library Integration
+- [ ] F3.1.1 Evaluate S2 options: pure Zig port vs C++ FFI vs Rust FFI
+- [ ] F3.1.2 Create `src/s2/` directory structure
+- [ ] F3.1.3 Implement `lat_lon_to_cell_id(lat, lon, level) -> u64`
+- [ ] F3.1.4 Implement `cell_id_to_lat_lon(cell_id) -> (lat, lon)`
+- [ ] F3.1.5 Implement `RegionCoverer` for polygon → cell ranges
+- [ ] F3.1.6 Implement `Cap` covering for radius queries
+
+### F3.2 Determinism Validation (CRITICAL)
+- [ ] F3.2.1 Create `tools/s2_golden_gen/` using reference S2 implementation
+- [ ] F3.2.2 Generate `testdata/s2/golden_vectors_v1.tsv` (1000+ test cases)
+- [ ] F3.2.3 Implement golden vector validation in CI
+- [ ] F3.2.4 Verify bit-exact results across all replicas
+- [ ] F3.2.5 Document floating-point handling strategy
+
+### F3.3 Spatial Query Implementation
+- [ ] F3.3.1 Create `src/s2_index.zig` for spatial lookups
+- [ ] F3.3.2 Implement radius query (S2 Cap covering + LSM scan)
+- [ ] F3.3.3 Implement polygon query (S2 RegionCoverer + LSM scan)
+- [ ] F3.3.4 Implement skip-scan with block header min/max filtering
+- [ ] F3.3.5 Implement post-filter for precise geometry tests
+- [ ] F3.3.6 Create scratch buffer pool for S2 polygon operations
+
+**Exit Criteria:**
+- [ ] Golden vector tests pass (deterministic S2)
+- [ ] Radius query returns correct results
+- [ ] Polygon query returns correct results
+- [ ] All replicas produce identical query results
+
+---
+
+## Phase F4: Replication Testing (Weeks 27-32)
+
+**Goal:** Verify distributed correctness with VOPR simulator
+
+### F4.1 VOPR Adaptation
+- [ ] F4.1.1 Adapt VOPR simulator for GeoEvent operations
+- [ ] F4.1.2 Create GeoEvent workload generators (random, clustered, adversarial)
+- [ ] F4.1.3 Add spatial query operations to VOPR test scenarios
+- [ ] F4.1.4 Implement S2 determinism checks in VOPR invariants
+
+### F4.2 Cluster Testing
+- [ ] F4.2.1 Test 3-replica cluster with GeoEvent operations
+- [ ] F4.2.2 Test 5-replica cluster with GeoEvent operations
+- [ ] F4.2.3 Test view change scenarios (primary failure)
+- [ ] F4.2.4 Test network partition scenarios
+- [ ] F4.2.5 Test crash recovery scenarios
+- [ ] F4.2.6 Test state sync for lagging replicas
+
+### F4.3 Safety Verification
+- [ ] F4.3.1 Run VOPR with 1M+ operations - no invariant violations
+- [ ] F4.3.2 Run VOPR with 10M+ operations - no invariant violations
+- [ ] F4.3.3 Verify linearizability of all operations
+- [ ] F4.3.4 Verify index consistency across replicas after view changes
+
+**Exit Criteria:**
+- [ ] VOPR passes 10M+ operations with no safety violations
+- [ ] View change completes in <3 seconds
+- [ ] All replicas converge to identical state
+
+---
+
+## Phase F5: Production Hardening (Weeks 33-38)
+
+**Goal:** Complete production readiness
+
+### F5.1 Performance Validation
+- [ ] F5.1.1 Benchmark write throughput (target: 1M events/sec per node)
+- [ ] F5.1.2 Benchmark UUID lookup latency (target: <500μs p99)
+- [ ] F5.1.3 Benchmark radius query (target: <50ms p99)
+- [ ] F5.1.4 Benchmark polygon query (target: <100ms p99)
+- [ ] F5.1.5 Memory usage validation at 1M, 10M, 100M, 1B entities
+- [ ] F5.1.6 Verify replication lag <10ms same region
+
+### F5.2 Observability
+- [ ] F5.2.1 Prometheus metrics endpoint working
+- [ ] F5.2.2 All VSR metrics exposed (TigerBeetle's + index metrics)
+- [ ] F5.2.3 Structured logging implemented
+- [ ] F5.2.4 Health check endpoints (`/health/live`, `/health/ready`)
+- [ ] F5.2.5 Grafana dashboard created
+
+### F5.3 Client SDKs
+- [ ] F5.3.1 Zig SDK complete (reference implementation)
+- [ ] F5.3.2 Java SDK skeleton
+- [ ] F5.3.3 Go SDK skeleton
+- [ ] F5.3.4 Python SDK skeleton
+- [ ] F5.3.5 Node.js SDK skeleton
+- [ ] F5.3.6 Cross-language wire format compatibility tests
+
+### F5.4 Security
+- [ ] F5.4.1 mTLS for client connections (reuse TigerBeetle's implementation)
+- [ ] F5.4.2 mTLS for replica-to-replica connections
+- [ ] F5.4.3 Certificate reload via SIGHUP
+- [ ] F5.4.4 Security audit completed
+
+### F5.5 Documentation & Operations
+- [ ] F5.5.1 Getting started guide
+- [ ] F5.5.2 Operations runbook
+- [ ] F5.5.3 Disaster recovery procedures
+- [ ] F5.5.4 Capacity planning guide
+- [ ] F5.5.5 TigerBeetle attribution documented (Apache 2.0 requirement)
+
+**Exit Criteria:**
+- [ ] All performance targets met
+- [ ] Security review passed
+- [ ] Documentation complete
+- [ ] Ready for beta deployment
+
+---
+
+## Component Mapping: TigerBeetle → ArcherDB
+
+| TigerBeetle File | Action | ArcherDB File | Notes |
+|------------------|--------|---------------|-------|
+| `src/tigerbeetle.zig` | REPLACE | `src/archerdb.zig` | GeoEvent state machine |
+| `src/state_machine.zig` | REPLACE | `src/geo_state_machine.zig` | Geospatial operations |
+| `src/vsr/replica.zig` | KEEP | `src/vsr/replica.zig` | DO NOT MODIFY |
+| `src/vsr/journal.zig` | KEEP | `src/vsr/journal.zig` | DO NOT MODIFY |
+| `src/vsr/clock.zig` | KEEP | `src/vsr/clock.zig` | DO NOT MODIFY |
+| `src/vsr/superblock.zig` | KEEP | `src/vsr/superblock.zig` | Minor: add index checkpoint |
+| `src/vsr/free_set.zig` | KEEP | `src/vsr/free_set.zig` | DO NOT MODIFY |
+| `src/vsr/client_sessions.zig` | KEEP | `src/vsr/client_sessions.zig` | DO NOT MODIFY |
+| `src/lsm/*.zig` | KEEP | `src/lsm/*.zig` | Adapt for GeoEvent |
+| `src/storage.zig` | KEEP | `src/storage.zig` | DO NOT MODIFY |
+| `src/io/linux.zig` | KEEP | `src/io/linux.zig` | DO NOT MODIFY |
+| `src/message_pool.zig` | KEEP | `src/message_pool.zig` | DO NOT MODIFY |
+| `src/simulator.zig` | KEEP | `src/simulator.zig` | Adapt test scenarios |
+| `src/stdx.zig` | KEEP | `src/stdx.zig` | DO NOT MODIFY |
+| N/A | ADD | `src/ram_index.zig` | O(1) entity lookup |
+| N/A | ADD | `src/s2/*.zig` | S2 geometry library |
+| N/A | ADD | `src/s2_index.zig` | Spatial index |
+| N/A | ADD | `src/ttl.zig` | TTL tracking |
+| `src/clients/*` | REPLACE | `src/clients/*` | New API, keep connection logic |
+
+---
+
+## Original Tasks (Reference - Build From Scratch)
+
+The following sections contain the original detailed task breakdown. These remain useful
+as a reference for WHAT needs to be implemented, but the HOW is now "adapt from TigerBeetle"
+rather than "build from scratch."
+
+---
+
 ## 1. Core Types & Constants
 
-- [ ] 1.1 Create `src/constants.zig` with all compile-time configuration
+- [ ] 1.1 Update `src/constants.zig` with all compile-time configuration
   - sector_size, block_size, message_size_max
   - journal_slot_count (8192), checkpoint_interval, pipeline_max
   - lsm_levels, lsm_growth_factor, lsm_compaction_ops
