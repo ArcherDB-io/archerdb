@@ -14,12 +14,12 @@
 │                                                                              │
 │   KEEP (~70%)              REPLACE (~20%)           ADD (~10%)              │
 │   ─────────────            ──────────────           ────────────            │
-│   ✅ src/vsr/*             🔄 src/tigerbeetle.zig   ➕ src/ram_index.zig    │
-│   ✅ src/lsm/*             🔄 src/state_machine.zig ➕ src/s2/*             │
-│   ✅ src/io/*              🔄 src/clients/*         ➕ src/s2_index.zig     │
-│   ✅ src/storage.zig       🔄 Account → GeoEvent    ➕ src/ttl.zig          │
-│   ✅ src/message_pool.zig  🔄 Transfer → Query      ➕ Golden vector tests  │
-│   ✅ src/simulator.zig                                                       │
+│   ✅ src/vsr/*             🔄 src/tigerbeetle.zig   ➕ src/geo_event.zig    │
+│   ✅ src/lsm/*             🔄 src/state_machine.zig ➕ src/ram_index.zig    │
+│   ✅ src/io/*              🔄 src/clients/*         ➕ src/s2/*             │
+│   ✅ src/storage.zig       🔄 (Account→GeoEvent)    ➕ src/s2_index.zig     │
+│   ✅ src/message_pool.zig  🔄 (Transfer→Query)      ➕ src/ttl.zig          │
+│   ✅ src/simulator.zig                              ➕ Golden vector tests  │
 │   ✅ src/stdx.zig                                                            │
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -32,7 +32,7 @@
 **Goal:** Fork TigerBeetle, establish development environment, team ramp-up
 
 ### F0.1 Repository Setup
-- [ ] F0.1.1 Fork TigerBeetle: `git clone https://github.com/tigerbeetle/tigerbeetle.git archerdb`
+- [ ] F0.1.1 Fork TigerBeetle on GitHub, then clone: `git clone https://github.com/YOUR_ORG/tigerbeetle.git archerdb`
 - [ ] F0.1.2 Rename project references (tigerbeetle → archerdb)
 - [ ] F0.1.3 Verify build: `zig build` succeeds
 - [ ] F0.1.4 Run existing tests: `zig build test` passes
@@ -159,7 +159,7 @@
 **Goal:** Add spatial indexing for radius/polygon queries
 
 ### F3.1 S2 Library Integration
-- [ ] F3.1.1 Evaluate S2 options: pure Zig port vs C++ FFI vs Rust FFI
+- [ ] F3.1.1 Implement pure Zig S2 core (decision: no C++ in core; see design.md)
 - [ ] F3.1.2 Create `src/s2/` directory structure
 - [ ] F3.1.3 Implement `lat_lon_to_cell_id(lat, lon, level) -> u64`
 - [ ] F3.1.4 Implement `cell_id_to_lat_lon(cell_id) -> (lat, lon)`
@@ -202,10 +202,11 @@
 ### F4.2 Cluster Testing
 - [ ] F4.2.1 Test 3-replica cluster with GeoEvent operations
 - [ ] F4.2.2 Test 5-replica cluster with GeoEvent operations
-- [ ] F4.2.3 Test view change scenarios (primary failure)
-- [ ] F4.2.4 Test network partition scenarios
-- [ ] F4.2.5 Test crash recovery scenarios
-- [ ] F4.2.6 Test state sync for lagging replicas
+- [ ] F4.2.3 Test 6-replica cluster with GeoEvent operations (max supported)
+- [ ] F4.2.4 Test view change scenarios (primary failure)
+- [ ] F4.2.5 Test network partition scenarios
+- [ ] F4.2.6 Test crash recovery scenarios
+- [ ] F4.2.7 Test state sync for lagging replicas
 
 ### F4.3 Safety Verification
 - [ ] F4.3.1 Run VOPR with 1M+ operations - no invariant violations
@@ -240,11 +241,14 @@
 - [ ] F5.2.5 Grafana dashboard created
 
 ### F5.3 Client SDKs
+> **Note:** SDK skeleton work can start in parallel with F2-F4 once wire format is stable (after F1.3).
+> Only F5.3.1 (Zig reference) and F5.3.6 (compatibility tests) are strictly F5 dependencies.
+
 - [ ] F5.3.1 Zig SDK complete (reference implementation)
-- [ ] F5.3.2 Java SDK skeleton
-- [ ] F5.3.3 Go SDK skeleton
-- [ ] F5.3.4 Python SDK skeleton
-- [ ] F5.3.5 Node.js SDK skeleton
+- [ ] F5.3.2 Java SDK skeleton (can parallelize after F1.3)
+- [ ] F5.3.3 Go SDK skeleton (can parallelize after F1.3)
+- [ ] F5.3.4 Python SDK skeleton (can parallelize after F1.3)
+- [ ] F5.3.5 Node.js SDK skeleton (can parallelize after F1.3)
 - [ ] F5.3.6 Cross-language wire format compatibility tests
 
 ### F5.4 Security
@@ -286,6 +290,7 @@
 | `src/message_pool.zig` | KEEP | `src/message_pool.zig` | DO NOT MODIFY |
 | `src/simulator.zig` | KEEP | `src/simulator.zig` | Adapt test scenarios |
 | `src/stdx.zig` | KEEP | `src/stdx.zig` | DO NOT MODIFY |
+| N/A | ADD | `src/geo_event.zig` | GeoEvent struct (128B) |
 | N/A | ADD | `src/ram_index.zig` | O(1) entity lookup |
 | N/A | ADD | `src/s2/*.zig` | S2 geometry library |
 | N/A | ADD | `src/s2_index.zig` | Spatial index |
@@ -981,6 +986,8 @@ Phase F2 (Weeks 15-20): RAM Index
 F2.1.1→F2.1.7 ram_index.zig (Robin Hood, 64B IndexEntry)
             ↓
 F2.2.1→F2.2.6 Index checkpointing
+            ↓
+F2.3.x (parallel) Index statistics & monitoring
             ↓
 F2.4.1→F2.4.7 TTL implementation
 
