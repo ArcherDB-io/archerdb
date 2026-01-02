@@ -221,7 +221,7 @@ The system SHALL track retry-related metrics in client SDKs for debugging.
 
 ### Requirement: Circuit Breaker (Optional)
 
-The system MAY implement circuit breaker pattern to prevent cascading failures.
+The system SHALL implement circuit breaker pattern to prevent cascading failures.
 
 #### Scenario: Circuit breaker states
 

@@ -390,7 +390,7 @@ The system SHALL support restoring from any replica's backup, preferring the mos
 
 ### Requirement: Backup Compression (Optional)
 
-The system MAY support compressing blocks before upload to reduce storage costs.
+The system SHALL support compressing blocks before upload to reduce storage costs.
 
 #### Scenario: Compression option
 

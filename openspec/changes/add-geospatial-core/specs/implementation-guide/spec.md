@@ -278,7 +278,7 @@ The system SHALL contribute improvements back to TigerBeetle when applicable.
 
 ### Requirement: TigerBeetle Team Consultation
 
-The system SHOULD maintain communication with TigerBeetle team during implementation.
+The system SHALL maintain communication with TigerBeetle team during implementation.
 
 #### Scenario: Design validation
 

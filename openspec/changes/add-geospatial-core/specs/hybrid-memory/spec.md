@@ -391,7 +391,7 @@ The system SHALL track index statistics for monitoring and capacity planning.
 
 ### Requirement: Hot-Warm-Cold Data Tiering (Future)
 
-The system MAY support tiered storage for cost optimization at extreme scale.
+The system SHALL support tiered storage for cost optimization at extreme scale.
 
 #### Scenario: Tier definitions
 

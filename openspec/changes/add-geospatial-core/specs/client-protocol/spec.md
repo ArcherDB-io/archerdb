@@ -293,6 +293,20 @@ The system SHALL define operation codes for all client operations matching the q
   - `get_status` (0x21) - Cluster status query
   - `cleanup_expired` (0x30) - Explicit TTL expiration cleanup
 
+#### Scenario: Reserved operation code ranges
+
+- **WHEN** allocating operation codes for future extensions
+- **THEN** the following ranges SHALL be reserved:
+  - `0x00` - Session/handshake operations (register)
+  - `0x01-0x0F` - Write operations (insert, upsert, delete, future mutations)
+  - `0x10-0x1F` - Query operations (uuid, radius, polygon, future spatial queries)
+  - `0x20-0x2F` - Admin/status operations (ping, get_status, future diagnostics)
+  - `0x30-0x3F` - Maintenance operations (cleanup_expired, future compaction triggers)
+  - `0x40-0xEF` - Reserved for future use (MUST return `invalid_operation` error)
+  - `0xF0-0xFF` - Reserved for internal/debug operations (not exposed to clients)
+- **AND** new operations MUST be allocated within their semantic range
+- **AND** unknown operation codes MUST return `invalid_operation` (2) error
+
 ### Requirement: Request/Response Pattern
 
 The system SHALL use a request-response pattern with exactly-once semantics via client sessions.
@@ -871,9 +885,9 @@ The system SHALL use a comprehensive error code enum based on TigerBeetle's taxo
 - **WHEN** defining general error codes
 - **THEN** the following SHALL be included:
   - `ok = 0` - Success
-  - `too_much_data = 1` - Batch exceeds message_size_max
+  - `too_much_data = 1` - Batch exceeds batch_events_max (10,000 events)
   - `invalid_operation = 2` - Unknown or malformed operation code
-  - `invalid_data_size = 3` - Message size doesn't match expected format
+  - `invalid_data_size = 3` - Message exceeds message_size_max (10MB) or size doesn't match expected format
   - `checksum_mismatch = 4` - Message checksum verification failed
   - `session_expired = 5` - Client session was evicted
   - `timeout = 6` - Operation timed out

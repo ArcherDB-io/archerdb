@@ -265,7 +265,7 @@ The system SHALL provide an explicit cleanup function for applications to trigge
 
 ### Requirement: Global TTL Configuration (Optional)
 
-The system MAY support a global default TTL configuration for convenience.
+The system SHALL support a global default TTL configuration for convenience.
 
 #### Scenario: Global TTL at format time
 
