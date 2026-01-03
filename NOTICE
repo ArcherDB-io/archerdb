@@ -1,0 +1,53 @@
+ArcherDB
+Copyright 2024-2025 ArcherDB Contributors
+
+This product is a derivative work of TigerBeetle, and includes software
+developed at TigerBeetle, Inc. (https://tigerbeetle.com/).
+
+================================================================================
+TigerBeetle
+Copyright 2020-2024 TigerBeetle, Inc.
+https://github.com/tigerbeetle/tigerbeetle
+
+TigerBeetle is licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at:
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+================================================================================
+
+ACKNOWLEDGMENTS
+
+ArcherDB is built on top of the excellent work by the TigerBeetle team.
+We are grateful for their contributions to the open source community, including:
+
+- The deterministic simulation testing framework (VOPR)
+- The Viewstamped Replication consensus protocol implementation
+- The LSM-tree storage engine optimized for financial workloads
+- The client SDK implementations (Go, Node.js, Python, Java, .NET, Zig)
+
+For more information about TigerBeetle, visit:
+- Website: https://tigerbeetle.com/
+- Documentation: https://docs.tigerbeetle.com/
+- GitHub: https://github.com/tigerbeetle/tigerbeetle
+
+================================================================================
+MODIFICATIONS
+
+ArcherDB extends TigerBeetle's core with geospatial capabilities for
+fleet tracking, logistics, and real-time location applications:
+
+- GeoEvent state machine for location data (replacing Account/Transfer)
+- S2 geometry indexing for spatial queries
+- RAM-based entity index for O(1) latest-position lookups
+- Specialized query operations (radius, polygon, entity history)
+- Client SDK extensions for geospatial operations
+
+See the CHANGELOG for detailed modification history.
+================================================================================
