@@ -468,6 +468,37 @@ pub fn remaining_ttl_seconds(
     return remaining_ns / ns_per_second;
 }
 
+/// Result of a tombstone batch operation.
+pub const TombstoneBatchResult = struct {
+    /// Number of tombstones generated.
+    count: u64,
+    /// Timestamp used for all tombstones in this batch.
+    batch_timestamp_ns: u64,
+};
+
+/// Statistics for tombstone generation.
+pub const TombstoneStats = struct {
+    /// Tombstones generated from TTL expiration.
+    ttl_expirations: u64 = 0,
+    /// Tombstones generated from explicit deletion (GDPR).
+    explicit_deletions: u64 = 0,
+
+    /// Record TTL expiration tombstones.
+    pub fn record_ttl_expirations(self: *TombstoneStats, count: u64) void {
+        self.ttl_expirations += count;
+    }
+
+    /// Record explicit deletion tombstones.
+    pub fn record_explicit_deletions(self: *TombstoneStats, count: u64) void {
+        self.explicit_deletions += count;
+    }
+
+    /// Get total tombstones generated.
+    pub fn total(self: TombstoneStats) u64 {
+        return self.ttl_expirations + self.explicit_deletions;
+    }
+};
+
 // ============================================================================
 // Unit Tests
 // ============================================================================

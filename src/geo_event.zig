@@ -214,6 +214,87 @@ pub const GeoEvent = extern struct {
     pub fn remaining_ttl(self: *const GeoEvent, current_time_ns: u64) ?u64 {
         return ttl.remaining_ttl_seconds(self.timestamp, self.ttl_seconds, current_time_ns);
     }
+
+    // === Tombstone Methods ===
+
+    /// Check if this event is a tombstone (deleted entity marker).
+    pub fn is_tombstone(self: *const GeoEvent) bool {
+        return self.flags.deleted;
+    }
+
+    /// Create a tombstone GeoEvent for this entity.
+    ///
+    /// Tombstones are used for:
+    /// - GDPR entity deletion (explicit user request)
+    /// - TTL expiration (to prevent resurrection on restore)
+    ///
+    /// Per ttl-retention/spec.md:
+    /// - Tombstones have flags.deleted=true
+    /// - Tombstones have ttl_seconds=0 (never expire on their own)
+    /// - Tombstones preserve entity_id for resurrection prevention
+    ///
+    /// Arguments:
+    /// - current_time_ns: Current timestamp to use for the tombstone
+    ///
+    /// Returns: A new GeoEvent that acts as a tombstone
+    pub fn create_tombstone(self: *const GeoEvent, current_time_ns: u64) GeoEvent {
+        var tombstone = GeoEvent.zero();
+
+        // Preserve entity identity.
+        tombstone.entity_id = self.entity_id;
+        tombstone.group_id = self.group_id;
+
+        // Create new composite ID with current timestamp.
+        // Use the original S2 cell ID from the entity's location.
+        const unpacked = GeoEvent.unpack_id(self.id);
+        tombstone.id = GeoEvent.pack_id(unpacked.s2_cell_id, current_time_ns);
+        tombstone.timestamp = current_time_ns;
+
+        // Preserve location for potential audit/logging.
+        tombstone.lat_nano = self.lat_nano;
+        tombstone.lon_nano = self.lon_nano;
+
+        // Mark as tombstone - CRITICAL.
+        tombstone.flags.deleted = true;
+
+        // Tombstones never expire (remain until final compaction level).
+        tombstone.ttl_seconds = 0;
+
+        return tombstone;
+    }
+
+    /// Create a minimal tombstone GeoEvent from just entity_id and group_id.
+    ///
+    /// This is used when we don't have the full event data, only the entity info
+    /// from the RAM index entry.
+    ///
+    /// Arguments:
+    /// - entity_id: The UUID of the entity being deleted
+    /// - group_id: The fleet/region grouping identifier
+    /// - current_time_ns: Current timestamp to use for the tombstone
+    ///
+    /// Returns: A minimal tombstone GeoEvent
+    pub fn create_minimal_tombstone(
+        entity_id: u128,
+        group_id: u64,
+        current_time_ns: u64,
+    ) GeoEvent {
+        var tombstone = GeoEvent.zero();
+
+        tombstone.entity_id = entity_id;
+        tombstone.group_id = group_id;
+
+        // For minimal tombstone, use timestamp in both id fields.
+        // S2 cell ID is 0 since we don't know the location.
+        tombstone.id = GeoEvent.pack_id(0, current_time_ns);
+        tombstone.timestamp = current_time_ns;
+
+        // Mark as tombstone.
+        tombstone.flags.deleted = true;
+        tombstone.ttl_seconds = 0;
+
+        return tombstone;
+    }
 };
 
 // === Comptime Assertions ===
@@ -410,4 +491,77 @@ test "GeoEvent: remaining_ttl calculation" {
     // Event with ttl_seconds = 0 returns null.
     event.ttl_seconds = 0;
     try std.testing.expectEqual(@as(?u64, null), event.remaining_ttl(50 * ttl.ns_per_second));
+}
+
+test "GeoEvent: is_tombstone" {
+    var event = GeoEvent.zero();
+    try std.testing.expect(!event.is_tombstone());
+
+    event.flags.deleted = true;
+    try std.testing.expect(event.is_tombstone());
+}
+
+test "GeoEvent: create_tombstone preserves entity identity" {
+    const s2_cell: u64 = 0x89C2590000000000;
+    const original_ts: u64 = 1000 * ttl.ns_per_second;
+    const tombstone_ts: u64 = 2000 * ttl.ns_per_second;
+
+    var event = GeoEvent.zero();
+    event.id = GeoEvent.pack_id(s2_cell, original_ts);
+    event.entity_id = 0x12345678_ABCDEF00_12345678_ABCDEF00;
+    event.timestamp = original_ts;
+    event.group_id = 42;
+    event.lat_nano = GeoEvent.lat_from_float(37.7749);
+    event.lon_nano = GeoEvent.lon_from_float(-122.4194);
+    event.ttl_seconds = 3600;
+    event.flags.linked = true;
+
+    const tombstone = event.create_tombstone(tombstone_ts);
+
+    // Entity identity preserved.
+    try std.testing.expectEqual(event.entity_id, tombstone.entity_id);
+    try std.testing.expectEqual(event.group_id, tombstone.group_id);
+
+    // Location preserved.
+    try std.testing.expectEqual(event.lat_nano, tombstone.lat_nano);
+    try std.testing.expectEqual(event.lon_nano, tombstone.lon_nano);
+
+    // Tombstone has new timestamp.
+    try std.testing.expectEqual(tombstone_ts, tombstone.timestamp);
+    const unpacked = GeoEvent.unpack_id(tombstone.id);
+    try std.testing.expectEqual(tombstone_ts, unpacked.timestamp_ns);
+    try std.testing.expectEqual(s2_cell, unpacked.s2_cell_id);
+
+    // Tombstone flags set correctly.
+    try std.testing.expect(tombstone.is_tombstone());
+    try std.testing.expectEqual(@as(u32, 0), tombstone.ttl_seconds);
+
+    // Original event's other flags NOT copied.
+    try std.testing.expect(!tombstone.flags.linked);
+}
+
+test "GeoEvent: create_minimal_tombstone" {
+    const entity_id: u128 = 0xDEADBEEF_CAFEBABE_12345678_9ABCDEF0;
+    const group_id: u64 = 100;
+    const current_ts: u64 = 5000 * ttl.ns_per_second;
+
+    const tombstone = GeoEvent.create_minimal_tombstone(entity_id, group_id, current_ts);
+
+    // Entity identity set.
+    try std.testing.expectEqual(entity_id, tombstone.entity_id);
+    try std.testing.expectEqual(group_id, tombstone.group_id);
+
+    // Timestamp set.
+    try std.testing.expectEqual(current_ts, tombstone.timestamp);
+    const unpacked = GeoEvent.unpack_id(tombstone.id);
+    try std.testing.expectEqual(current_ts, unpacked.timestamp_ns);
+    try std.testing.expectEqual(@as(u64, 0), unpacked.s2_cell_id);
+
+    // Tombstone flags.
+    try std.testing.expect(tombstone.is_tombstone());
+    try std.testing.expectEqual(@as(u32, 0), tombstone.ttl_seconds);
+
+    // Location is zero (minimal tombstone).
+    try std.testing.expectEqual(@as(i64, 0), tombstone.lat_nano);
+    try std.testing.expectEqual(@as(i64, 0), tombstone.lon_nano);
 }
