@@ -7,6 +7,18 @@
 //! 1. prepare() - Calculate timestamps (primary only, before consensus)
 //! 2. prefetch() - Load required data into cache (async I/O)
 //! 3. commit() - Apply state changes (deterministic, after consensus)
+//!
+//! ## Client Session Management
+//!
+//! Client sessions (register operation 0x00) are handled by the VSR replica
+//! layer, NOT the state machine. The replica manages:
+//! - client_table_entry_create() for new client registration
+//! - client_table_entry_update() for subsequent operations
+//! - Session expiry and eviction for LRU cleanup
+//!
+//! This state machine only handles user operations (pulse, insert_events,
+//! query_*, etc.) that pass through VSR consensus. Register operations
+//! are intercepted by the replica before reaching commit().
 
 const std = @import("std");
 const assert = std.debug.assert;
