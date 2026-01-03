@@ -348,9 +348,11 @@ pub const DegradationDetector = struct {
     /// Detect probe length growth level.
     pub fn detect_probe_length_level(stats: IndexStats) HealthCheck {
         const max_probe = stats.max_probe_length_seen;
-        const level: DegradationLevel = if (max_probe >= DegradationThresholds.probe_length_critical)
+        const crit = DegradationThresholds.probe_length_critical;
+        const warn = DegradationThresholds.probe_length_warning;
+        const level: DegradationLevel = if (max_probe >= crit)
             .critical
-        else if (max_probe >= DegradationThresholds.probe_length_warning)
+        else if (max_probe >= warn)
             .warning
         else
             .normal;
@@ -600,7 +602,11 @@ pub const DegradedModeManager = struct {
     }
 
     /// Apply response actions and update state.
-    pub fn apply_response(self: *DegradedModeManager, response: Response, current_time_ns: u64) void {
+    pub fn apply_response(
+        self: *DegradedModeManager,
+        response: Response,
+        current_time_ns: u64,
+    ) void {
         // Update state.
         if (self.state != response.new_state) {
             self.state = response.new_state;
@@ -825,7 +831,7 @@ pub const AlertType = enum {
     /// Get recommended action for this alert type.
     pub fn recommendedAction(self: AlertType) []const u8 {
         return switch (self) {
-            .tombstone_degradation => "Consider triggering online rehash to reclaim tombstone slots",
+            .tombstone_degradation => "Trigger online rehash to reclaim tombstones",
             .probe_length_growth => "Monitor closely; rehash if probe length continues to grow",
             .latency_regression => "Check system resources; consider capacity increase",
             .capacity_limit => "Urgent: increase index capacity or reduce entity count",
