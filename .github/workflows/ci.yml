@@ -20,9 +20,13 @@ jobs:
         with:
           fetch-depth: 0  # Full history for tidy blob checks
 
+      # License header validation
+      - name: Check license headers
+        run: ./scripts/add-license-headers.sh --check
+
       # Shell script validation
       - name: Check shell scripts
-        run: shellcheck ./zig/download.sh
+        run: shellcheck ./zig/download.sh ./scripts/add-license-headers.sh ./scripts/dev-cluster.sh
 
       # Download Zig
       - name: Download Zig
