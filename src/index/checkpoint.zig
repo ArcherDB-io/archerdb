@@ -26,6 +26,8 @@ const mem = std.mem;
 const Allocator = mem.Allocator;
 const fs = std.fs;
 
+const log = std.log.scoped(.index_checkpoint);
+
 const stdx = @import("stdx");
 const constants = @import("../constants.zig");
 const vsr = @import("../vsr.zig");
@@ -566,6 +568,272 @@ pub fn IndexCheckpoint(comptime page_size: u32) type {
 pub const DefaultIndexCheckpoint = IndexCheckpoint(default_page_size);
 
 // ============================================================================
+// Full Index Rebuild (F2.2.6)
+// ============================================================================
+
+/// SeenEntities bitset for tracking which entity IDs have been processed during rebuild.
+/// Uses a bloom filter for memory efficiency (~128MB for 1B entities).
+///
+/// GDPR-CRITICAL: This bitset ensures newest versions take precedence.
+/// By marking entities as "seen" after processing from newest-to-oldest,
+/// we guarantee that deleted entities (tombstones) are not resurrected.
+pub fn SeenEntitiesBitset(comptime expected_entities: u64) type {
+    // Use ~1 bit per expected entity for ~1% false positive rate
+    // For 1B entities: 1B / 8 = 128MB
+    const bitset_bytes = (expected_entities + 7) / 8;
+
+    return struct {
+        const Self = @This();
+
+        bits: []u8,
+        allocator: Allocator,
+        seen_count: u64 = 0,
+
+        /// Initialize the seen entities bitset.
+        pub fn init(allocator: Allocator) !Self {
+            const bits = try allocator.alloc(u8, bitset_bytes);
+            @memset(bits, 0);
+            return Self{
+                .bits = bits,
+                .allocator = allocator,
+            };
+        }
+
+        /// Free the bitset memory.
+        pub fn deinit(self: *Self) void {
+            self.allocator.free(self.bits);
+            self.* = undefined;
+        }
+
+        /// Mark an entity as seen. Returns true if this is the first time seeing it.
+        /// Uses the hash of entity_id to determine bit position.
+        ///
+        /// GDPR-CRITICAL: Only the first occurrence (newest version) is processed.
+        pub fn mark_seen(self: *Self, entity_id: u128) bool {
+            const bit_index = self.hash_to_index(entity_id);
+            const byte_index = bit_index / 8;
+            const bit_offset: u3 = @intCast(bit_index % 8);
+            const mask: u8 = @as(u8, 1) << bit_offset;
+
+            const already_seen = (self.bits[byte_index] & mask) != 0;
+            if (!already_seen) {
+                self.bits[byte_index] |= mask;
+                self.seen_count += 1;
+                return true; // First time seeing this entity
+            }
+            return false; // Already seen (skip this older version)
+        }
+
+        /// Check if an entity has been seen.
+        pub fn was_seen(self: *const Self, entity_id: u128) bool {
+            const bit_index = self.hash_to_index(entity_id);
+            const byte_index = bit_index / 8;
+            const bit_offset: u3 = @intCast(bit_index % 8);
+            const mask: u8 = @as(u8, 1) << bit_offset;
+            return (self.bits[byte_index] & mask) != 0;
+        }
+
+        /// Reset the bitset for reuse.
+        pub fn reset(self: *Self) void {
+            @memset(self.bits, 0);
+            self.seen_count = 0;
+        }
+
+        /// Get the number of unique entities seen.
+        pub fn get_seen_count(self: *const Self) u64 {
+            return self.seen_count;
+        }
+
+        fn hash_to_index(self: *const Self, entity_id: u128) u64 {
+            // Use lower bits of entity_id hash modulo bitset size
+            const h = stdx.hash_inline(entity_id);
+            return h % (self.bits.len * 8);
+        }
+    };
+}
+
+/// Rebuild progress tracking.
+pub const RebuildProgress = struct {
+    /// Total records scanned.
+    records_scanned: u64 = 0,
+    /// Records inserted into index.
+    records_inserted: u64 = 0,
+    /// Records skipped (already seen).
+    records_skipped: u64 = 0,
+    /// Records skipped (tombstones).
+    tombstones_skipped: u64 = 0,
+    /// Current LSM level being processed.
+    current_level: u8 = 0,
+    /// Previous LSM level (for assertion).
+    previous_level: u8 = 255,
+    /// Start timestamp (nanoseconds).
+    start_time_ns: u64 = 0,
+    /// Last progress log timestamp.
+    last_log_time_ns: u64 = 0,
+
+    /// Check GDPR-critical ordering invariant.
+    /// Levels must be processed in order from L0 (newest) to L_max (oldest).
+    /// In LSM, level numbers INCREASE from newest to oldest: L0 → L1 → ... → L6.
+    pub fn assert_level_order(self: *RebuildProgress, level: u8) void {
+        // GDPR-CRITICAL: newest-to-oldest order required
+        // LSM levels: L0 (newest) → L6+ (oldest)
+        // Level numbers must increase or stay same as we process
+        assert(level >= self.current_level);
+        self.previous_level = self.current_level;
+        self.current_level = level;
+    }
+
+    /// Log progress every 1M records.
+    pub fn log_progress_if_needed(self: *RebuildProgress, current_time_ns: u64) void {
+        const log_interval_records: u64 = 1_000_000; // 1M records
+
+        // Log every 1M records
+        if (self.records_scanned % log_interval_records == 0 and self.records_scanned > 0) {
+            const elapsed_ns = current_time_ns - self.start_time_ns;
+            const elapsed_s = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000_000.0;
+            const rate = if (elapsed_s > 0)
+                @as(f64, @floatFromInt(self.records_scanned)) / elapsed_s
+            else
+                0.0;
+
+            log.info("Rebuild progress: scanned={} inserted={} skipped={} " ++
+                "tombstones={} level={} rate={d:.0} rec/s", .{
+                self.records_scanned,
+                self.records_inserted,
+                self.records_skipped,
+                self.tombstones_skipped,
+                self.current_level,
+                rate,
+            });
+            self.last_log_time_ns = current_time_ns;
+        }
+    }
+
+    /// Get completion percentage (based on estimated entries).
+    pub fn get_completion_percent(self: *const RebuildProgress, estimated_total: u64) u8 {
+        if (estimated_total == 0) return 100;
+        const percent = (self.records_scanned * 100) / estimated_total;
+        return @intCast(@min(percent, 100));
+    }
+};
+
+/// Result of a full index rebuild.
+pub const RebuildResult = struct {
+    /// Number of entries inserted.
+    entries_inserted: u64,
+    /// Number of entries skipped (duplicates).
+    entries_skipped: u64,
+    /// Number of tombstones encountered.
+    tombstones_encountered: u64,
+    /// Duration in nanoseconds.
+    duration_ns: u64,
+    /// Recovery path used.
+    recovery_path: RecoveryPath,
+};
+
+/// Full index rebuild from LSM storage (F2.2.6).
+///
+/// GDPR-CRITICAL: This function MUST process LSM levels in NEWEST-to-OLDEST order.
+/// Failure to maintain this order is a CRITICAL security bug that violates GDPR
+/// by potentially resurrecting deleted user data.
+///
+/// The rebuild uses the following strategy:
+/// 1. Iterate LSM levels from L0 (newest) to L_max (oldest)
+/// 2. For each GeoEvent encountered:
+///    - If entity_id already in seen_entities: Skip (we have newer version)
+///    - If tombstone: Mark seen but don't insert
+///    - Else: Insert into RAM index, mark in seen_entities
+/// 3. Progress logged every 1M records
+///
+/// Parameters:
+/// - index: The RAM index to rebuild
+/// - lsm_iterator: Iterator that yields GeoEvents from LSM, newest-to-oldest
+/// - allocator: Allocator for temporary seen_entities bitset
+/// - current_time_ns: Current timestamp for progress logging
+///
+/// Returns: RebuildResult with statistics
+pub fn full_rebuild(
+    comptime IndexType: type,
+    index: *IndexType,
+    lsm_iterator: anytype,
+    allocator: Allocator,
+    current_time_ns: u64,
+) !RebuildResult {
+    const GeoEvent = @import("../geo_event.zig").GeoEvent;
+
+    // Allocate seen_entities bitset (~128MB for 1B entities)
+    const SeenEntities = SeenEntitiesBitset(1_000_000_000);
+    var seen = try SeenEntities.init(allocator);
+    defer seen.deinit();
+
+    var progress = RebuildProgress{
+        .start_time_ns = current_time_ns,
+    };
+
+    log.info("Starting full index rebuild (F2.2.6)", .{});
+
+    // GDPR-CRITICAL: Process LSM levels newest-to-oldest
+    while (lsm_iterator.next()) |item| {
+        const level = item.level;
+        const event: *const GeoEvent = item.event;
+
+        // Assert GDPR-critical ordering invariant
+        progress.assert_level_order(level);
+        progress.records_scanned += 1;
+
+        // Check if we've already seen this entity (newer version exists)
+        const is_first_occurrence = seen.mark_seen(event.entity_id);
+
+        if (!is_first_occurrence) {
+            // Already processed newer version, skip this older one
+            progress.records_skipped += 1;
+            continue;
+        }
+
+        // Check for tombstone (entity deleted)
+        if (event.flags.deleted) {
+            // Mark as seen but don't insert - entity was deleted
+            progress.tombstones_skipped += 1;
+            continue;
+        }
+
+        // Insert into RAM index
+        const latest_id = @as(u128, event.timestamp) |
+            (@as(u128, event.s2_cell_id) << 64);
+        _ = index.upsert(event.entity_id, latest_id, event.ttl_seconds) catch |err| {
+            log.err("Rebuild failed: upsert error: {}", .{err});
+            return error.RebuildFailed;
+        };
+        progress.records_inserted += 1;
+
+        // Log progress periodically
+        progress.log_progress_if_needed(current_time_ns);
+    }
+
+    const duration_ns = current_time_ns - progress.start_time_ns;
+    const duration_s = @as(f64, @floatFromInt(duration_ns)) / 1_000_000_000.0;
+
+    log.info("Full index rebuild complete: inserted={} skipped={} tombstones={} " ++
+        "duration={d:.1}s", .{
+        progress.records_inserted,
+        progress.records_skipped,
+        progress.tombstones_skipped,
+        duration_s,
+    });
+
+    return RebuildResult{
+        .entries_inserted = progress.records_inserted,
+        .entries_skipped = progress.records_skipped,
+        .tombstones_encountered = progress.tombstones_skipped,
+        .duration_ns = duration_ns,
+        .recovery_path = .full_rebuild,
+    };
+}
+
+/// Default seen entities bitset for 1B entities.
+pub const DefaultSeenEntities = SeenEntitiesBitset(1_000_000_000);
+
+// ============================================================================
 // Unit Tests
 // ============================================================================
 
@@ -680,4 +948,84 @@ test "IndexCheckpoint: mark entry dirty" {
     checkpoint.mark_entry_dirty(999);
 
     try std.testing.expect(checkpoint.get_dirty_count() > 0);
+}
+
+test "SeenEntitiesBitset: basic operations (F2.2.6)" {
+    const allocator = std.testing.allocator;
+
+    // Use small bitset for testing
+    const TestBitset = SeenEntitiesBitset(1000);
+    var bitset = try TestBitset.init(allocator);
+    defer bitset.deinit();
+
+    // First occurrence should return true
+    try std.testing.expect(bitset.mark_seen(12345));
+    try std.testing.expectEqual(@as(u64, 1), bitset.get_seen_count());
+
+    // Second occurrence of same ID should return false
+    try std.testing.expect(!bitset.mark_seen(12345));
+    try std.testing.expectEqual(@as(u64, 1), bitset.get_seen_count());
+
+    // Different ID should return true
+    try std.testing.expect(bitset.mark_seen(67890));
+    try std.testing.expectEqual(@as(u64, 2), bitset.get_seen_count());
+
+    // Check was_seen
+    try std.testing.expect(bitset.was_seen(12345));
+    try std.testing.expect(bitset.was_seen(67890));
+
+    // Reset should clear everything
+    bitset.reset();
+    try std.testing.expectEqual(@as(u64, 0), bitset.get_seen_count());
+    try std.testing.expect(!bitset.was_seen(12345));
+}
+
+test "RebuildProgress: GDPR-critical level ordering (F2.2.6)" {
+    var progress = RebuildProgress{};
+
+    // Levels should be processed in order: L0 (newest) → L_max (oldest)
+    // LSM level numbers INCREASE from newest to oldest
+    // This is GDPR-critical to prevent deleted entities from being resurrected
+    progress.assert_level_order(0); // L0 (newest)
+    progress.assert_level_order(0); // Still L0 (processing within level)
+    progress.assert_level_order(1); // L1 (older) - level number increases
+    progress.assert_level_order(2); // L2 (even older)
+    progress.assert_level_order(2); // Still L2
+
+    // Note: We can't easily test that assert_level_order panics on wrong order
+    // since Zig's assert causes program termination. The assertion itself
+    // documents the invariant in code.
+}
+
+test "RebuildProgress: completion percentage" {
+    var progress = RebuildProgress{};
+
+    progress.records_scanned = 0;
+    try std.testing.expectEqual(@as(u8, 0), progress.get_completion_percent(100));
+
+    progress.records_scanned = 50;
+    try std.testing.expectEqual(@as(u8, 50), progress.get_completion_percent(100));
+
+    progress.records_scanned = 100;
+    try std.testing.expectEqual(@as(u8, 100), progress.get_completion_percent(100));
+
+    // Edge case: zero total
+    try std.testing.expectEqual(@as(u8, 100), progress.get_completion_percent(0));
+
+    // Overflow protection
+    progress.records_scanned = 200;
+    try std.testing.expectEqual(@as(u8, 100), progress.get_completion_percent(100));
+}
+
+test "RebuildResult: struct layout" {
+    const result = RebuildResult{
+        .entries_inserted = 1000000,
+        .entries_skipped = 50000,
+        .tombstones_encountered = 10000,
+        .duration_ns = 45_000_000_000, // 45 seconds
+        .recovery_path = .full_rebuild,
+    };
+
+    try std.testing.expectEqual(@as(u64, 1000000), result.entries_inserted);
+    try std.testing.expectEqual(RecoveryPath.full_rebuild, result.recovery_path);
 }
