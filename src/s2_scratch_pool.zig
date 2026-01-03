@@ -118,8 +118,6 @@ pub const PoolStats = struct {
 /// S2 scratch buffer pool.
 pub fn S2ScratchPoolType(comptime pool_size: usize, comptime buffer_size: usize) type {
     return struct {
-        
-
         /// The underlying memory block
         memory: []align(std.heap.page_size_min) u8,
 

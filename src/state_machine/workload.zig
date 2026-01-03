@@ -2160,7 +2160,6 @@ pub fn WorkloadType(comptime AccountingStateMachine: type) type {
             // +1 so that index=0 is encoded as a valid id.
             return self.options.geo_event_id_permutation.encode(index + 1);
         }
-
     };
 }
 

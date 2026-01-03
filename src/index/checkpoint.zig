@@ -933,8 +933,6 @@ pub const RecoveryDecision = struct {
 /// For 91.5GB index with 64KB pages: ~1.43M pages = ~179KB bitset
 pub fn DirtyPageTrackerType(comptime page_size: u32) type {
     return struct {
-        
-
         /// Bitset tracking dirty pages (1 = dirty, 0 = clean)
         dirty_bits: std.DynamicBitSet,
 
@@ -1052,7 +1050,6 @@ pub const DefaultDirtyTracker = DirtyPageTrackerType(default_page_size);
 /// IndexCheckpointType - Manages checkpoint persistence for RAM index.
 pub fn IndexCheckpointType(comptime page_size: u32) type {
     return struct {
-        
         const DirtyTracker = DirtyPageTrackerType(page_size);
 
         /// Dirty page tracker
@@ -1335,8 +1332,6 @@ pub fn SeenEntitiesBitsetType(comptime expected_entities: u64) type {
     const bitset_bytes = (expected_entities + 7) / 8;
 
     return struct {
-        
-
         bits: []u8,
         allocator: Allocator,
         seen_count: u64 = 0,
