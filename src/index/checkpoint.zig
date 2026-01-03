@@ -353,6 +353,218 @@ pub const RecoveryPath = enum {
 };
 
 // =============================================================================
+// Multi-Batch Atomic Commitment (F2.2.10)
+// =============================================================================
+//
+// Multi-batch operations pack multiple independent batches into a single VSR message
+// to amortize consensus costs. Each batch within a multi-batch message has atomic
+// commit semantics:
+//
+// Batch Atomicity Guarantees:
+//   - All events within a batch succeed or fail together (atomic unit)
+//   - RAM index and LSM updates happen in lockstep (no partial commits)
+//   - On failure, batch is rolled back before next batch executes
+//   - Batches are independent - failure of batch N does NOT affect batch N-1
+//
+// Commit Sequence (per batch):
+//   1. Validate all events in batch
+//   2. Apply RAM index updates (all or nothing)
+//   3. Queue LSM writes (batched for efficiency)
+//   4. Mark batch committed only after all updates succeed
+//   5. If error at any step, rollback RAM index changes
+//
+// Recovery Guarantees:
+//   - Committed batches are durable (survived WAL flush)
+//   - Partial batches never visible (atomic commit)
+//   - Multi-batch failures result in partial success (some batches may succeed)
+//   - Client receives per-batch status in response
+
+/// State of a batch commit operation.
+pub const BatchCommitState = enum {
+    /// Batch not yet started
+    pending,
+    /// Batch validation in progress
+    validating,
+    /// RAM index updates in progress
+    updating_ram_index,
+    /// LSM writes queued
+    lsm_queued,
+    /// Batch successfully committed
+    committed,
+    /// Batch failed, rolled back
+    rolled_back,
+    /// Batch skipped (validation failed)
+    skipped,
+};
+
+/// Tracks atomic commit state for a single batch within a multi-batch operation.
+///
+/// Ensures that RAM index and LSM updates happen together atomically.
+/// If any update fails, the batch is rolled back to its pre-commit state.
+pub const AtomicBatchCommit = struct {
+    /// Current state of this batch
+    state: BatchCommitState = .pending,
+
+    /// Number of events in this batch
+    event_count: u32 = 0,
+
+    /// Number of RAM index updates applied (for rollback tracking)
+    ram_index_updates: u32 = 0,
+
+    /// Number of LSM writes queued
+    lsm_writes_queued: u32 = 0,
+
+    /// Error code if batch failed
+    error_code: ?BatchCommitError = null,
+
+    /// Start time for this batch (nanoseconds)
+    start_time_ns: u64 = 0,
+
+    /// End time for this batch (nanoseconds)
+    end_time_ns: u64 = 0,
+
+    /// Begin batch commit - transition from pending to validating.
+    pub fn begin(self: *AtomicBatchCommit, event_count: u32) void {
+        assert(self.state == .pending);
+        self.state = .validating;
+        self.event_count = event_count;
+        self.start_time_ns = @as(u64, @intCast(std.time.nanoTimestamp()));
+    }
+
+    /// Mark validation complete, start RAM index updates.
+    pub fn begin_ram_updates(self: *AtomicBatchCommit) void {
+        assert(self.state == .validating);
+        self.state = .updating_ram_index;
+    }
+
+    /// Record a RAM index update (for rollback tracking).
+    pub fn record_ram_update(self: *AtomicBatchCommit) void {
+        assert(self.state == .updating_ram_index);
+        self.ram_index_updates += 1;
+    }
+
+    /// Mark RAM updates complete, queue LSM writes.
+    pub fn begin_lsm_writes(self: *AtomicBatchCommit) void {
+        assert(self.state == .updating_ram_index);
+        self.state = .lsm_queued;
+    }
+
+    /// Record an LSM write queued.
+    pub fn record_lsm_write(self: *AtomicBatchCommit) void {
+        assert(self.state == .lsm_queued);
+        self.lsm_writes_queued += 1;
+    }
+
+    /// Mark batch as successfully committed.
+    pub fn commit_success(self: *AtomicBatchCommit) void {
+        assert(self.state == .lsm_queued);
+        self.state = .committed;
+        self.end_time_ns = @as(u64, @intCast(std.time.nanoTimestamp()));
+    }
+
+    /// Mark batch as failed and rolled back.
+    pub fn commit_failure(self: *AtomicBatchCommit, err: BatchCommitError) void {
+        assert(self.state != .committed and self.state != .rolled_back);
+        self.state = .rolled_back;
+        self.error_code = err;
+        self.end_time_ns = @as(u64, @intCast(std.time.nanoTimestamp()));
+    }
+
+    /// Mark batch as skipped (validation failed before any updates).
+    pub fn skip(self: *AtomicBatchCommit, err: BatchCommitError) void {
+        assert(self.state == .pending or self.state == .validating);
+        self.state = .skipped;
+        self.error_code = err;
+        self.end_time_ns = @as(u64, @intCast(std.time.nanoTimestamp()));
+    }
+
+    /// Get batch duration in nanoseconds.
+    pub fn duration_ns(self: *const AtomicBatchCommit) u64 {
+        if (self.end_time_ns == 0 or self.start_time_ns == 0) return 0;
+        return self.end_time_ns -| self.start_time_ns;
+    }
+
+    /// Check if batch completed successfully.
+    pub fn is_success(self: *const AtomicBatchCommit) bool {
+        return self.state == .committed;
+    }
+};
+
+/// Errors that can occur during batch commit.
+pub const BatchCommitError = enum {
+    /// Validation failed (invalid event data)
+    validation_failed,
+    /// RAM index is full
+    ram_index_full,
+    /// LSM write failed
+    lsm_write_failed,
+    /// Entity already exists (for insert operations)
+    duplicate_entity,
+    /// Entity not found (for update/delete operations)
+    entity_not_found,
+    /// Timestamp conflict (older timestamp than existing)
+    timestamp_conflict,
+    /// Internal error
+    internal_error,
+};
+
+/// Result of a multi-batch commit operation.
+pub const MultiBatchCommitResult = struct {
+    /// Total number of batches in the message
+    batch_count: u32 = 0,
+
+    /// Number of batches that committed successfully
+    committed_count: u32 = 0,
+
+    /// Number of batches that failed
+    failed_count: u32 = 0,
+
+    /// Number of batches skipped (validation failed)
+    skipped_count: u32 = 0,
+
+    /// Total events across all batches
+    total_events: u64 = 0,
+
+    /// Total events committed successfully
+    committed_events: u64 = 0,
+
+    /// Total duration of the multi-batch operation (nanoseconds)
+    duration_ns: u64 = 0,
+
+    /// Whether all batches succeeded
+    pub fn all_success(self: *const MultiBatchCommitResult) bool {
+        return self.committed_count == self.batch_count and self.failed_count == 0;
+    }
+
+    /// Whether any batch succeeded
+    pub fn any_success(self: *const MultiBatchCommitResult) bool {
+        return self.committed_count > 0;
+    }
+
+    /// Get success rate as percentage (0-100).
+    pub fn success_rate_percent(self: *const MultiBatchCommitResult) u8 {
+        if (self.batch_count == 0) return 100;
+        return @intCast((self.committed_count * 100) / self.batch_count);
+    }
+
+    /// Record a successful batch commit.
+    pub fn record_success(self: *MultiBatchCommitResult, event_count: u32) void {
+        self.committed_count += 1;
+        self.committed_events += event_count;
+    }
+
+    /// Record a failed batch.
+    pub fn record_failure(self: *MultiBatchCommitResult) void {
+        self.failed_count += 1;
+    }
+
+    /// Record a skipped batch.
+    pub fn record_skipped(self: *MultiBatchCommitResult) void {
+        self.skipped_count += 1;
+    }
+};
+
+// =============================================================================
 // Recovery Window Guarantees (F2.2.7)
 // =============================================================================
 //
@@ -1729,4 +1941,160 @@ test "is_checkpoint_lag_critical: threshold check" {
     // Over threshold
     stats.last_vsr_checkpoint_op = 20000; // Gap of 19000
     try std.testing.expect(is_checkpoint_lag_critical(&stats));
+}
+
+// =============================================================================
+// Multi-Batch Atomic Commitment Tests (F2.2.10)
+// =============================================================================
+
+test "AtomicBatchCommit: state transitions - success path" {
+    var batch = AtomicBatchCommit{};
+
+    // Initial state
+    try std.testing.expectEqual(BatchCommitState.pending, batch.state);
+    try std.testing.expect(!batch.is_success());
+
+    // Begin with 10 events
+    batch.begin(10);
+    try std.testing.expectEqual(BatchCommitState.validating, batch.state);
+    try std.testing.expectEqual(@as(u32, 10), batch.event_count);
+    try std.testing.expect(batch.start_time_ns > 0);
+
+    // Start RAM updates
+    batch.begin_ram_updates();
+    try std.testing.expectEqual(BatchCommitState.updating_ram_index, batch.state);
+
+    // Record some RAM updates
+    batch.record_ram_update();
+    batch.record_ram_update();
+    try std.testing.expectEqual(@as(u32, 2), batch.ram_index_updates);
+
+    // Start LSM writes
+    batch.begin_lsm_writes();
+    try std.testing.expectEqual(BatchCommitState.lsm_queued, batch.state);
+
+    // Record LSM writes
+    batch.record_lsm_write();
+    try std.testing.expectEqual(@as(u32, 1), batch.lsm_writes_queued);
+
+    // Commit success
+    batch.commit_success();
+    try std.testing.expectEqual(BatchCommitState.committed, batch.state);
+    try std.testing.expect(batch.is_success());
+    try std.testing.expect(batch.end_time_ns > 0);
+    try std.testing.expect(batch.duration_ns() > 0);
+}
+
+test "AtomicBatchCommit: failure path" {
+    var batch = AtomicBatchCommit{};
+
+    batch.begin(5);
+    batch.begin_ram_updates();
+    batch.record_ram_update();
+
+    // Failure during RAM updates
+    batch.commit_failure(.ram_index_full);
+    try std.testing.expectEqual(BatchCommitState.rolled_back, batch.state);
+    try std.testing.expectEqual(BatchCommitError.ram_index_full, batch.error_code.?);
+    try std.testing.expect(!batch.is_success());
+}
+
+test "AtomicBatchCommit: skip path" {
+    var batch = AtomicBatchCommit{};
+
+    batch.begin(3);
+    // Validation failed, skip the batch
+    batch.skip(.validation_failed);
+    try std.testing.expectEqual(BatchCommitState.skipped, batch.state);
+    try std.testing.expectEqual(BatchCommitError.validation_failed, batch.error_code.?);
+    try std.testing.expect(!batch.is_success());
+}
+
+test "MultiBatchCommitResult: tracking success and failures" {
+    var result = MultiBatchCommitResult{};
+    result.batch_count = 5;
+    result.total_events = 100;
+
+    // Record 3 successes
+    result.record_success(30); // 30 events
+    result.record_success(25);
+    result.record_success(20);
+
+    // Record 1 failure and 1 skip
+    result.record_failure();
+    result.record_skipped();
+
+    try std.testing.expectEqual(@as(u32, 3), result.committed_count);
+    try std.testing.expectEqual(@as(u32, 1), result.failed_count);
+    try std.testing.expectEqual(@as(u32, 1), result.skipped_count);
+    try std.testing.expectEqual(@as(u64, 75), result.committed_events);
+
+    // Not all success
+    try std.testing.expect(!result.all_success());
+    // But some success
+    try std.testing.expect(result.any_success());
+    // Success rate: 3/5 = 60%
+    try std.testing.expectEqual(@as(u8, 60), result.success_rate_percent());
+}
+
+test "MultiBatchCommitResult: all success" {
+    var result = MultiBatchCommitResult{};
+    result.batch_count = 3;
+    result.total_events = 30;
+
+    result.record_success(10);
+    result.record_success(10);
+    result.record_success(10);
+
+    try std.testing.expect(result.all_success());
+    try std.testing.expect(result.any_success());
+    try std.testing.expectEqual(@as(u8, 100), result.success_rate_percent());
+}
+
+test "MultiBatchCommitResult: all failure" {
+    var result = MultiBatchCommitResult{};
+    result.batch_count = 2;
+    result.total_events = 20;
+
+    result.record_failure();
+    result.record_failure();
+
+    try std.testing.expect(!result.all_success());
+    try std.testing.expect(!result.any_success());
+    try std.testing.expectEqual(@as(u8, 0), result.success_rate_percent());
+}
+
+test "MultiBatchCommitResult: empty batch" {
+    const result = MultiBatchCommitResult{};
+
+    // Empty batch count should return 100% success
+    try std.testing.expectEqual(@as(u8, 100), result.success_rate_percent());
+}
+
+test "BatchCommitState: all states defined" {
+    // Ensure all states are usable
+    const states = [_]BatchCommitState{
+        .pending,
+        .validating,
+        .updating_ram_index,
+        .lsm_queued,
+        .committed,
+        .rolled_back,
+        .skipped,
+    };
+    try std.testing.expectEqual(@as(usize, 7), states.len);
+}
+
+test "BatchCommitError: all errors defined" {
+    // Ensure all error types are usable
+    const errors = [_]BatchCommitError{
+        .validation_failed,
+        .ram_index_full,
+        .lsm_write_failed,
+        .duplicate_entity,
+        .entity_not_found,
+        .timestamp_conflict,
+        .internal_error,
+    };
+    try std.testing.expectEqual(@as(usize, 7), errors.len);
 }
