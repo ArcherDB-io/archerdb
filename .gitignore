@@ -17,6 +17,9 @@ zig-out/
 /archerdb
 /tigerbeetle
 
+# Development cluster data
+.dev-cluster/
+
 # IDE
 .vscode/
 .idea/
