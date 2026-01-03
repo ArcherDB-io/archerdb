@@ -218,6 +218,227 @@ pub const RemoveIfMatchResult = struct {
     race_detected: bool,
 };
 
+// =============================================================================
+// Index Degradation Detection (F2.4.9)
+// =============================================================================
+
+/// Degradation level for index health checks.
+/// Per hybrid-memory/spec.md:623-775
+pub const DegradationLevel = enum {
+    /// Index is healthy, no action needed.
+    normal,
+    /// Index showing early signs of degradation, monitor closely.
+    warning,
+    /// Index severely degraded, immediate action required.
+    critical,
+
+    /// Convert to numeric severity (0=normal, 1=warning, 2=critical).
+    pub fn severity(self: DegradationLevel) u8 {
+        return switch (self) {
+            .normal => 0,
+            .warning => 1,
+            .critical => 2,
+        };
+    }
+};
+
+/// Type of index degradation detected.
+pub const DegradationType = enum {
+    /// TYPE 1: Tombstone accumulation causing probe length increase.
+    tombstone_accumulation,
+    /// TYPE 2: Probe length growth due to hash collisions.
+    probe_length_growth,
+    /// TYPE 3: Memory fragmentation causing cache misses.
+    memory_fragmentation,
+    /// TYPE 4: Capacity limit approaching (high load factor).
+    capacity_limit,
+    /// TYPE 5: Corruption detected (invariant violation).
+    corruption,
+};
+
+/// Threshold constants for degradation detection.
+/// Per hybrid-memory/spec.md:639-774
+pub const DegradationThresholds = struct {
+    // TYPE 1: Tombstone accumulation
+    pub const tombstone_warning: f32 = 0.10; // 10% tombstones
+    pub const tombstone_critical: f32 = 0.30; // 30% tombstones
+
+    // TYPE 2: Probe length (p99 approximation - using max_probe_length)
+    pub const probe_length_warning: u32 = 3;
+    pub const probe_length_critical: u32 = 10;
+
+    // TYPE 3: Memory fragmentation (using latency regression proxy)
+    pub const latency_regression_warning: f32 = 0.01; // 1% regression
+    pub const latency_regression_critical: f32 = 0.05; // 5% regression
+
+    // TYPE 4: Capacity limit (load factor)
+    pub const load_factor_warning: f32 = 0.60; // 60% full
+    pub const load_factor_critical: f32 = 0.75; // 75% full
+};
+
+/// Individual health check result.
+pub const HealthCheck = struct {
+    /// The type of degradation being checked.
+    degradation_type: DegradationType,
+    /// Current level (normal, warning, critical).
+    level: DegradationLevel,
+    /// Current metric value.
+    current_value: f32,
+    /// Threshold for warning level.
+    warning_threshold: f32,
+    /// Threshold for critical level.
+    critical_threshold: f32,
+};
+
+/// Complete degradation status for the index.
+pub const DegradationStatus = struct {
+    /// Overall degradation level (worst of all checks).
+    overall_level: DegradationLevel = .normal,
+    /// Individual health checks.
+    tombstone_check: HealthCheck,
+    probe_length_check: HealthCheck,
+    capacity_check: HealthCheck,
+    /// Corruption flag (true if any invariant violation detected).
+    corruption_detected: bool = false,
+    /// Recommended action based on overall status.
+    recommended_action: RecommendedAction = .none,
+
+    pub const RecommendedAction = enum {
+        /// No action needed.
+        none,
+        /// Monitor more closely, schedule maintenance.
+        monitor,
+        /// Schedule rehash/rebuild during maintenance window.
+        schedule_rebuild,
+        /// Immediate rebuild required.
+        immediate_rebuild,
+        /// Replace replica (corruption detected).
+        replace_replica,
+    };
+};
+
+/// Degradation detector for index health monitoring.
+pub const DegradationDetector = struct {
+    /// Baseline latency for regression detection (nanoseconds).
+    baseline_latency_ns: u64 = 0,
+    /// Last recorded latency for regression calculation.
+    last_latency_ns: u64 = 0,
+    /// Corruption events detected.
+    corruption_count: u64 = 0,
+
+    /// Detect tombstone accumulation level.
+    pub fn detect_tombstone_level(stats: IndexStats) HealthCheck {
+        const ratio = stats.tombstone_ratio();
+        const level: DegradationLevel = if (ratio >= DegradationThresholds.tombstone_critical)
+            .critical
+        else if (ratio >= DegradationThresholds.tombstone_warning)
+            .warning
+        else
+            .normal;
+
+        return .{
+            .degradation_type = .tombstone_accumulation,
+            .level = level,
+            .current_value = ratio,
+            .warning_threshold = DegradationThresholds.tombstone_warning,
+            .critical_threshold = DegradationThresholds.tombstone_critical,
+        };
+    }
+
+    /// Detect probe length growth level.
+    pub fn detect_probe_length_level(stats: IndexStats) HealthCheck {
+        const max_probe = stats.max_probe_length_seen;
+        const level: DegradationLevel = if (max_probe >= DegradationThresholds.probe_length_critical)
+            .critical
+        else if (max_probe >= DegradationThresholds.probe_length_warning)
+            .warning
+        else
+            .normal;
+
+        return .{
+            .degradation_type = .probe_length_growth,
+            .level = level,
+            .current_value = @floatFromInt(max_probe),
+            .warning_threshold = @floatFromInt(DegradationThresholds.probe_length_warning),
+            .critical_threshold = @floatFromInt(DegradationThresholds.probe_length_critical),
+        };
+    }
+
+    /// Detect capacity limit level.
+    pub fn detect_capacity_level(stats: IndexStats) HealthCheck {
+        const lf = stats.load_factor();
+        const level: DegradationLevel = if (lf >= DegradationThresholds.load_factor_critical)
+            .critical
+        else if (lf >= DegradationThresholds.load_factor_warning)
+            .warning
+        else
+            .normal;
+
+        return .{
+            .degradation_type = .capacity_limit,
+            .level = level,
+            .current_value = lf,
+            .warning_threshold = DegradationThresholds.load_factor_warning,
+            .critical_threshold = DegradationThresholds.load_factor_critical,
+        };
+    }
+
+    /// Run all health checks and return complete status.
+    pub fn check_health(self: *DegradationDetector, stats: IndexStats) DegradationStatus {
+        const tombstone_check = detect_tombstone_level(stats);
+        const probe_length_check = detect_probe_length_level(stats);
+        const capacity_check = detect_capacity_level(stats);
+
+        // Determine overall level (worst of all checks).
+        var overall_level: DegradationLevel = .normal;
+        if (self.corruption_count > 0) {
+            overall_level = .critical;
+        } else {
+            const max_severity = @max(
+                tombstone_check.level.severity(),
+                @max(
+                    probe_length_check.level.severity(),
+                    capacity_check.level.severity(),
+                ),
+            );
+            overall_level = switch (max_severity) {
+                0 => .normal,
+                1 => .warning,
+                else => .critical,
+            };
+        }
+
+        // Determine recommended action.
+        const action: DegradationStatus.RecommendedAction = if (self.corruption_count > 0)
+            .replace_replica
+        else if (overall_level == .critical)
+            .immediate_rebuild
+        else if (overall_level == .warning)
+            .schedule_rebuild
+        else
+            .none;
+
+        return .{
+            .overall_level = overall_level,
+            .tombstone_check = tombstone_check,
+            .probe_length_check = probe_length_check,
+            .capacity_check = capacity_check,
+            .corruption_detected = self.corruption_count > 0,
+            .recommended_action = action,
+        };
+    }
+
+    /// Record a corruption event.
+    pub fn record_corruption(self: *DegradationDetector) void {
+        self.corruption_count += 1;
+    }
+
+    /// Reset corruption counter (after rebuild).
+    pub fn reset_corruption(self: *DegradationDetector) void {
+        self.corruption_count = 0;
+    }
+};
+
 /// Result of a background TTL scan operation.
 pub const ScanExpiredResult = struct {
     /// Number of entries scanned in this batch.
@@ -1319,4 +1540,142 @@ test "RamIndex: mixed TTL entries - scanner removes only expired" {
     // Verify: Entry 4 removed (expired) - now tombstone.
     const l4 = index.lookup(id4);
     try std.testing.expect(l4.entry == null or l4.entry.?.is_tombstone());
+}
+
+// =============================================================================
+// Degradation Detection Tests (F2.4.9)
+// =============================================================================
+
+test "DegradationDetector: tombstone_level thresholds" {
+    // Test tombstone accumulation detection.
+    // Normal: < 10% tombstones.
+    const stats_normal = IndexStats{ .capacity = 100, .entry_count = 95, .tombstone_count = 5 };
+    const check_normal = DegradationDetector.detect_tombstone_level(stats_normal);
+    try std.testing.expectEqual(DegradationLevel.normal, check_normal.level);
+    try std.testing.expect(check_normal.current_value < 0.10);
+
+    // Warning: 10-30% tombstones.
+    const stats_warning = IndexStats{ .capacity = 100, .entry_count = 80, .tombstone_count = 15 };
+    const check_warning = DegradationDetector.detect_tombstone_level(stats_warning);
+    try std.testing.expectEqual(DegradationLevel.warning, check_warning.level);
+    try std.testing.expect(check_warning.current_value >= 0.10);
+    try std.testing.expect(check_warning.current_value < 0.30);
+
+    // Critical: > 30% tombstones.
+    const stats_critical = IndexStats{ .capacity = 100, .entry_count = 60, .tombstone_count = 35 };
+    const check_critical = DegradationDetector.detect_tombstone_level(stats_critical);
+    try std.testing.expectEqual(DegradationLevel.critical, check_critical.level);
+    try std.testing.expect(check_critical.current_value >= 0.30);
+}
+
+test "DegradationDetector: probe_length_level thresholds" {
+    // Test probe length growth detection.
+    // Normal: max_probe < 3.
+    const stats_normal = IndexStats{ .max_probe_length_seen = 2 };
+    const check_normal = DegradationDetector.detect_probe_length_level(stats_normal);
+    try std.testing.expectEqual(DegradationLevel.normal, check_normal.level);
+
+    // Warning: max_probe 3-10.
+    const stats_warning = IndexStats{ .max_probe_length_seen = 5 };
+    const check_warning = DegradationDetector.detect_probe_length_level(stats_warning);
+    try std.testing.expectEqual(DegradationLevel.warning, check_warning.level);
+
+    // Critical: max_probe >= 10.
+    const stats_critical = IndexStats{ .max_probe_length_seen = 12 };
+    const check_critical = DegradationDetector.detect_probe_length_level(stats_critical);
+    try std.testing.expectEqual(DegradationLevel.critical, check_critical.level);
+}
+
+test "DegradationDetector: capacity_level thresholds" {
+    // Test capacity limit detection.
+    // Normal: load_factor < 0.60.
+    const stats_normal = IndexStats{ .capacity = 100, .entry_count = 50, .tombstone_count = 5 };
+    const check_normal = DegradationDetector.detect_capacity_level(stats_normal);
+    try std.testing.expectEqual(DegradationLevel.normal, check_normal.level);
+    try std.testing.expect(check_normal.current_value < 0.60);
+
+    // Warning: load_factor 0.60-0.75.
+    const stats_warning = IndexStats{ .capacity = 100, .entry_count = 65, .tombstone_count = 3 };
+    const check_warning = DegradationDetector.detect_capacity_level(stats_warning);
+    try std.testing.expectEqual(DegradationLevel.warning, check_warning.level);
+    try std.testing.expect(check_warning.current_value >= 0.60);
+    try std.testing.expect(check_warning.current_value < 0.75);
+
+    // Critical: load_factor >= 0.75.
+    const stats_critical = IndexStats{ .capacity = 100, .entry_count = 70, .tombstone_count = 8 };
+    const check_critical = DegradationDetector.detect_capacity_level(stats_critical);
+    try std.testing.expectEqual(DegradationLevel.critical, check_critical.level);
+    try std.testing.expect(check_critical.current_value >= 0.75);
+}
+
+test "DegradationDetector: check_health overall level" {
+    var detector = DegradationDetector{};
+
+    // Healthy index: all checks normal.
+    const stats_healthy = IndexStats{
+        .capacity = 100,
+        .entry_count = 40,
+        .tombstone_count = 2,
+        .max_probe_length_seen = 1,
+    };
+    const status_healthy = detector.check_health(stats_healthy);
+    try std.testing.expectEqual(DegradationLevel.normal, status_healthy.overall_level);
+    try std.testing.expectEqual(DegradationStatus.RecommendedAction.none, status_healthy.recommended_action);
+    try std.testing.expect(!status_healthy.corruption_detected);
+
+    // Warning level: high tombstone ratio.
+    const stats_warning = IndexStats{
+        .capacity = 100,
+        .entry_count = 78,
+        .tombstone_count = 15, // ~16% tombstones
+        .max_probe_length_seen = 2,
+    };
+    const status_warning = detector.check_health(stats_warning);
+    try std.testing.expectEqual(DegradationLevel.warning, status_warning.overall_level);
+    try std.testing.expectEqual(DegradationStatus.RecommendedAction.schedule_rebuild, status_warning.recommended_action);
+
+    // Critical level: high load factor.
+    const stats_critical = IndexStats{
+        .capacity = 100,
+        .entry_count = 70,
+        .tombstone_count = 10, // 80% load factor
+        .max_probe_length_seen = 2,
+    };
+    const status_critical = detector.check_health(stats_critical);
+    try std.testing.expectEqual(DegradationLevel.critical, status_critical.overall_level);
+    try std.testing.expectEqual(DegradationStatus.RecommendedAction.immediate_rebuild, status_critical.recommended_action);
+}
+
+test "DegradationDetector: corruption detection" {
+    var detector = DegradationDetector{};
+
+    // No corruption initially.
+    const stats = IndexStats{ .capacity = 100, .entry_count = 10 };
+    const status_initial = detector.check_health(stats);
+    try std.testing.expect(!status_initial.corruption_detected);
+    try std.testing.expectEqual(DegradationLevel.normal, status_initial.overall_level);
+
+    // Record corruption.
+    detector.record_corruption();
+    const status_corrupted = detector.check_health(stats);
+    try std.testing.expect(status_corrupted.corruption_detected);
+    try std.testing.expectEqual(DegradationLevel.critical, status_corrupted.overall_level);
+    try std.testing.expectEqual(DegradationStatus.RecommendedAction.replace_replica, status_corrupted.recommended_action);
+
+    // Reset corruption.
+    detector.reset_corruption();
+    const status_reset = detector.check_health(stats);
+    try std.testing.expect(!status_reset.corruption_detected);
+    try std.testing.expectEqual(DegradationLevel.normal, status_reset.overall_level);
+}
+
+test "DegradationLevel: severity ordering" {
+    // Test that severity values are correctly ordered.
+    try std.testing.expectEqual(@as(u8, 0), DegradationLevel.normal.severity());
+    try std.testing.expectEqual(@as(u8, 1), DegradationLevel.warning.severity());
+    try std.testing.expectEqual(@as(u8, 2), DegradationLevel.critical.severity());
+
+    // Verify ordering.
+    try std.testing.expect(DegradationLevel.normal.severity() < DegradationLevel.warning.severity());
+    try std.testing.expect(DegradationLevel.warning.severity() < DegradationLevel.critical.severity());
 }
