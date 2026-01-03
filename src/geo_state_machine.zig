@@ -589,7 +589,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 // ArcherDB geospatial operations (TODO: implement with Forest)
                 .insert_events => 0, // TODO: execute_insert_events
                 .upsert_events => 0, // TODO: execute_upsert_events
-                .delete_entities => 0, // TODO: execute_delete_entities
+                .delete_entities => self.execute_delete_entities(message_body_used, output),
                 .query_uuid => 0, // TODO: execute_query_uuid
                 .query_radius => 0, // TODO: execute_query_radius
                 .query_polygon => 0, // TODO: execute_query_polygon
@@ -689,6 +689,67 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             _ = output;
             // TODO: Get change events
             return 0;
+        }
+
+        // ====================================================================
+        // F2.5: GDPR Entity Deletion Implementation
+        // ====================================================================
+
+        /// Execute delete_entities operation (F2.5.1).
+        ///
+        /// Deletes entities from the RAM index for GDPR compliance.
+        /// Per hybrid-memory/spec.md GDPR requirements:
+        /// - Removes entity from RAM index immediately
+        /// - Returns result for each entity (ok, not_found, invalid_id)
+        /// - LSM tombstones generated separately in F2.5.3
+        ///
+        /// Arguments:
+        /// - input: Array of u128 entity_ids to delete
+        /// - output: Buffer for DeleteEntitiesResult array
+        ///
+        /// Returns: Size of response written to output
+        fn execute_delete_entities(
+            self: *GeoStateMachine,
+            input: []const u8,
+            output: []u8,
+        ) usize {
+            // Parse input as array of entity_ids.
+            const entity_ids = mem.bytesAsSlice(u128, input);
+            const max_results = output.len / @sizeOf(DeleteEntitiesResult);
+            const results = mem.bytesAsSlice(
+                DeleteEntitiesResult,
+                output[0 .. max_results * @sizeOf(DeleteEntitiesResult)],
+            );
+
+            var results_count: usize = 0;
+            for (entity_ids, 0..) |entity_id, index| {
+                if (index >= max_results) break;
+
+                // Validate entity_id (zero is reserved).
+                if (entity_id == 0) {
+                    results[results_count] = DeleteEntitiesResult{
+                        .index = @intCast(index),
+                        .result = .entity_id_must_not_be_zero,
+                    };
+                    results_count += 1;
+                    continue;
+                }
+
+                // Remove from RAM index (F2.5.2).
+                const removed = self.ram_index.remove(entity_id);
+
+                results[results_count] = DeleteEntitiesResult{
+                    .index = @intCast(index),
+                    .result = if (removed) .ok else .entity_not_found,
+                };
+                results_count += 1;
+
+                // TODO F2.5.3: Generate LSM tombstones for all entity events
+                // This will cascade delete all GeoEvents for this entity.
+                // For now, only RAM index deletion is implemented.
+            }
+
+            return results_count * @sizeOf(DeleteEntitiesResult);
         }
 
         /// Execute cleanup_expired operation (F2.4.8).
