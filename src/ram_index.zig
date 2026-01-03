@@ -977,7 +977,7 @@ pub const AlertManager = struct {
     /// Alert callback (optional).
     alert_callback: ?*const fn (Alert) void = null,
     /// Last alert timestamp per type (to prevent alert storms).
-    last_alert_ns: [std.meta.fields(AlertType).len]u64 = [_]u64{0} ** std.meta.fields(AlertType).len,
+    last_alert_ns: [8]u64 = [_]u64{0} ** 8, // AlertType has 8 variants
     /// Minimum interval between alerts of the same type (1 minute).
     pub const min_alert_interval_ns: u64 = 60_000_000_000;
 
