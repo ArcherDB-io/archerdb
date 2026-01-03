@@ -339,35 +339,35 @@ const CLIArgs = union(enum) {
     pub const help = fmt.comptimePrint(
         \\Usage:
         \\
-        \\  tigerbeetle [-h | --help]
+        \\  archerdb [-h | --help]
         \\
-        \\  tigerbeetle format [--cluster=<integer>] --replica=<index> --replica-count=<integer> <path>
+        \\  archerdb format [--cluster=<integer>] --replica=<index> --replica-count=<integer> <path>
         \\
-        \\  tigerbeetle start --addresses=<addresses> [--cache-grid=<size><KiB|MiB|GiB>] <path>
+        \\  archerdb start --addresses=<addresses> [--cache-grid=<size><KiB|MiB|GiB>] <path>
         \\
-        \\  tigerbeetle recover --cluster=<integer> --addresses=<addresses>
-        \\                      --replica=<index> --replica-count=<integer> <path>
+        \\  archerdb recover --cluster=<integer> --addresses=<addresses>
+        \\                   --replica=<index> --replica-count=<integer> <path>
         \\
-        \\  tigerbeetle version [--verbose]
+        \\  archerdb version [--verbose]
         \\
-        \\  tigerbeetle repl --cluster=<integer> --addresses=<addresses>
+        \\  archerdb repl --cluster=<integer> --addresses=<addresses>
         \\
         \\Commands:
         \\
-        \\  format     Create a TigerBeetle replica data file at <path>.
+        \\  format     Create an ArcherDB replica data file at <path>.
         \\             The --replica and --replica-count arguments are required.
-        \\             Each TigerBeetle replica must have its own data file.
+        \\             Each ArcherDB replica must have its own data file.
         \\
-        \\  start      Run a TigerBeetle replica from the data file at <path>.
+        \\  start      Run an ArcherDB replica from the data file at <path>.
         \\
-        \\  recover    Create a TigerBeetle replica data file at <path> for recovery.
+        \\  recover    Create an ArcherDB replica data file at <path> for recovery.
         \\             Used when a replica's data file is completely lost.
         \\             Replicas with recovered data files must sync with the cluster before
         \\             they can participate in consensus.
         \\
-        \\  version    Print the TigerBeetle build version and the compile-time config values.
+        \\  version    Print the ArcherDB build version and the compile-time config values.
         \\
-        \\  repl       Enter the TigerBeetle client REPL.
+        \\  repl       Enter the ArcherDB client REPL.
         \\
         \\  amqp       CDC connector for AMQP targets.
         \\
@@ -397,10 +397,10 @@ const CLIArgs = union(enum) {
         \\        "addresses[i]" corresponds to replica "i".
         \\
         \\  --cache-grid=<size><KiB|MiB|GiB>
-        \\        Set the grid cache size. The grid cache acts like a page cache for TigerBeetle,
+        \\        Set the grid cache size. The grid cache acts like a page cache for ArcherDB,
         \\        and should be set as large as possible.
-        \\        On a machine running only TigerBeetle, this is somewhere around
-        \\        (Total RAM) - 3GiB (TigerBeetle) - 1GiB (System), eg 12GiB for a 16GiB machine.
+        \\        On a machine running only ArcherDB, this is somewhere around
+        \\        (Total RAM) - 3GiB (ArcherDB) - 1GiB (System), eg 12GiB for a 16GiB machine.
         \\        Defaults to {[default_cache_grid_gb]d}GiB.
         \\
         \\  --verbose
@@ -421,26 +421,26 @@ const CLIArgs = union(enum) {
         \\
         \\Examples:
         \\
-        \\  tigerbeetle format --cluster=0 --replica=0 --replica-count=3 0_0.tigerbeetle
-        \\  tigerbeetle format --cluster=0 --replica=1 --replica-count=3 0_1.tigerbeetle
-        \\  tigerbeetle format --cluster=0 --replica=2 --replica-count=3 0_2.tigerbeetle
+        \\  archerdb format --cluster=0 --replica=0 --replica-count=3 0_0.archerdb
+        \\  archerdb format --cluster=0 --replica=1 --replica-count=3 0_1.archerdb
+        \\  archerdb format --cluster=0 --replica=2 --replica-count=3 0_2.archerdb
         \\
-        \\  tigerbeetle start --addresses=127.0.0.1:3000,127.0.0.1:3001,127.0.0.1:3002 0_0.tigerbeetle
-        \\  tigerbeetle start --addresses=3000,3001,3002 0_1.tigerbeetle
-        \\  tigerbeetle start --addresses=3000,3001,3002 0_2.tigerbeetle
+        \\  archerdb start --addresses=127.0.0.1:3000,127.0.0.1:3001,127.0.0.1:3002 0_0.archerdb
+        \\  archerdb start --addresses=3000,3001,3002 0_1.archerdb
+        \\  archerdb start --addresses=3000,3001,3002 0_2.archerdb
         \\
-        \\  tigerbeetle start --addresses=192.168.0.1,192.168.0.2,192.168.0.3 0_0.tigerbeetle
+        \\  archerdb start --addresses=192.168.0.1,192.168.0.2,192.168.0.3 0_0.archerdb
         \\
-        \\  tigerbeetle start --addresses='[::1]:3000,[::1]:3001,[::1]:3002' 0_0.tigerbeetle
+        \\  archerdb start --addresses='[::1]:3000,[::1]:3001,[::1]:3002' 0_0.archerdb
         \\
-        \\  tigerbeetle recover --cluster=0 --addresses=3003,3001,3002 \
-        \\                      --replica=1 --replica-count=3 0_1.tigerbeetle
+        \\  archerdb recover --cluster=0 --addresses=3003,3001,3002 \
+        \\                   --replica=1 --replica-count=3 0_1.archerdb
         \\
-        \\  tigerbeetle version --verbose
+        \\  archerdb version --verbose
         \\
-        \\  tigerbeetle repl --addresses=3000,3001,3002 --cluster=0
+        \\  archerdb repl --addresses=3000,3001,3002 --cluster=0
         \\
-        \\  tigerbeetle amqp --addresses=3000,3001,3002 --cluster=0 \
+        \\  archerdb amqp --addresses=3000,3001,3002 --cluster=0 \
         \\      --host=127.0.0.1 --vhost=/ --user=guest --password=guest \
         \\      --publish-exchange=my_exhange_name
         \\
