@@ -411,6 +411,14 @@ fn options_swarm(prng: *stdx.PRNG) Simulator.Options {
                 .cache_entries_geo_events = if (prng.boolean()) 256 else 0, // F1.3.1
                 .log_trace = true,
             },
+            .geo => .{
+                .batch_size_limit = batch_size_limit,
+                .enable_index_checkpoint = true,
+                .lsm_forest_compaction_block_count = prng.int_inclusive(u32, 256) +
+                    StateMachine.Forest.Options.compaction_block_count_min,
+                .lsm_forest_node_count = 4096,
+                .cache_entries_geo_events = if (prng.boolean()) 256 else 0,
+            },
         },
         .replicate_options = .{
             .closed_loop = prng.chance(ratio(1, 5)),
@@ -538,6 +546,14 @@ fn options_performance(prng: *stdx.PRNG) Simulator.Options {
                 .cache_entries_transfers_pending = 0,
                 .cache_entries_geo_events = 0, // F1.3.1
                 .log_trace = true,
+            },
+            .geo => .{
+                .batch_size_limit = constants.message_body_size_max,
+                .enable_index_checkpoint = true,
+                .lsm_forest_compaction_block_count = 128 +
+                    StateMachine.Forest.Options.compaction_block_count_min,
+                .lsm_forest_node_count = 4096,
+                .cache_entries_geo_events = 256,
             },
         },
     };

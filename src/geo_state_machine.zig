@@ -110,6 +110,7 @@ const GeoEventFlags = @import("geo_event.zig").GeoEventFlags;
 const vsr = @import("vsr.zig");
 const ScopeCloseMode = @import("lsm/tree.zig").ScopeCloseMode;
 const ForestType = @import("lsm/forest.zig").ForestType;
+const GrooveType = @import("lsm/groove.zig").GrooveType;
 
 const MultiBatchEncoder = vsr.multi_batch.MultiBatchEncoder;
 const MultiBatchDecoder = vsr.multi_batch.MultiBatchDecoder;
@@ -138,19 +139,19 @@ const S2 = s2_index.S2;
 
 /// LSM tree identifiers for GeoEvent storage.
 /// Each tree provides a different index over GeoEvent data.
+/// Tree IDs must be contiguous with no gaps for ForestType.
 pub const tree_ids = struct {
     /// GeoEvent LSM tree configuration.
+    /// Tree IDs are contiguous 1-4 to satisfy ForestType requirements.
     /// - id (1): Primary index - composite ID (S2 cell << 64 | timestamp)
     /// - entity_id (2): Secondary index for UUID lookups
-    /// - correlation_id (3): Secondary index for trip/session queries
+    /// - timestamp (3): Object tree key for time-ordered iteration
     /// - group_id (4): Secondary index for fleet/region queries
-    /// - timestamp (5): Secondary index for time-range queries
     pub const GeoEventTree = .{
         .id = 1,
         .entity_id = 2,
-        .correlation_id = 3,
+        .timestamp = 3,
         .group_id = 4,
-        .timestamp = 5,
     };
 };
 
@@ -487,8 +488,71 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         /// Workload generator for VOPR testing (F4.1.1).
         pub const Workload = @import("testing/geo_workload.zig").GeoWorkloadType(GeoStateMachine);
 
-        // TODO(F1.2): Define Forest type for GeoEvent storage
-        // pub const Forest = ForestType(Storage, tree_ids);
+        // Tree value counts for batch processing (F1.2, F4.2)
+        // GeoEvent batch max based on message body size
+        const batch_geo_events_max: u32 = Operation.insert_events.event_max(
+            constants.message_body_size_max,
+        );
+
+        const tree_values_count_max = struct {
+            const geo_events = struct {
+                const id: u32 = batch_geo_events_max;
+                const entity_id: u32 = batch_geo_events_max;
+                const timestamp: u32 = batch_geo_events_max;
+                const group_id: u32 = batch_geo_events_max;
+            };
+        };
+
+        /// GeoEvents groove (F1.2, F4.2) - LSM tree storage for GeoEvent data.
+        /// Provides indexes for spatial-temporal queries:
+        /// - id: Composite key (S2 cell << 64 | timestamp) for spatial range queries
+        /// - entity_id: UUID lookup index for query_uuid operations
+        /// - timestamp: Object tree key for time-ordered iteration
+        /// - group_id: Fleet/region grouping index (optional)
+        const GeoEventsGroove = GrooveType(
+            Storage,
+            GeoEvent,
+            .{
+                .ids = tree_ids.GeoEventTree,
+                .batch_value_count_max = .{
+                    .id = tree_values_count_max.geo_events.id,
+                    .entity_id = tree_values_count_max.geo_events.entity_id,
+                    .timestamp = tree_values_count_max.geo_events.timestamp,
+                    .group_id = tree_values_count_max.geo_events.group_id,
+                },
+                .ignored = &[_][]const u8{
+                    // Coordinate data not directly indexed (spatial queries use id composite key)
+                    "lat_nano",
+                    "lon_nano",
+                    "altitude_mm",
+                    // Motion data not indexed
+                    "velocity_mms",
+                    "heading_cdeg",
+                    "accuracy_mm",
+                    // TTL handled by expiration logic, not indexed
+                    "ttl_seconds",
+                    // Application data
+                    "correlation_id",
+                    "user_data",
+                    // Flags and reserved
+                    "flags",
+                    "reserved",
+                },
+                .optional = &[_][]const u8{
+                    // group_id is optional - only indexed if non-zero
+                    "group_id",
+                },
+                .derived = .{},
+                .orphaned_ids = false,
+                .objects_cache = true, // Cache hot entities for query_latest
+            },
+        );
+
+        /// Forest type for GeoEvent LSM storage (F1.2, F4.2).
+        /// Contains only GeoEvents groove for standalone geo state machine.
+        pub const Forest = ForestType(Storage, .{
+            .geo_events = GeoEventsGroove,
+        });
 
         /// Configuration options for state machine initialization.
         pub const Options = struct {
@@ -496,7 +560,16 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             batch_size_limit: u32,
             /// Enable index checkpoint coordination (F2.2.3).
             enable_index_checkpoint: bool = true,
+            /// LSM forest compaction block count.
+            lsm_forest_compaction_block_count: u32 = Forest.Options.compaction_block_count_min + 128,
+            /// LSM forest node pool count.
+            lsm_forest_node_count: u32 = 4096,
+            /// Cache entries for geo events.
+            cache_entries_geo_events: u32 = 256,
         };
+
+        /// Prefetch timestamp - set during prefetch phase.
+        prefetch_timestamp: u64 = 0,
 
         /// Prepare timestamp for deterministic execution.
         prepare_timestamp: u64 = 0,
@@ -519,6 +592,10 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         /// Batch size limit for this state machine.
         batch_size_limit: u32,
 
+        /// Forest instance for LSM tree storage (F1.2, F4.2).
+        /// Required by VOPR for GridScrubber initialization.
+        forest: Forest,
+
         /// Grid reference for VSR checkpoint coordination (F2.2.3).
         /// Through grid.superblock, we access vsr_state.checkpoint for
         /// coordinating index checkpoint with VSR checkpoint sequence.
@@ -530,9 +607,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         /// Last recorded VSR checkpoint op (for monitoring lag).
         last_index_checkpoint_op: u64 = 0,
 
-        /// RAM Index reference for entity lookups (F2.1).
-        /// Note: Currently a stub pointer - to be integrated with Forest.
-        ram_index: *DefaultRamIndex = undefined,
+        /// RAM Index for entity lookups (F2.1).
+        /// Allocated during init for VOPR testing support.
+        ram_index: *DefaultRamIndex,
 
         /// TTL cleanup scanner state (F2.4.8).
         cleanup_scanner: ttl.CleanupScanner = ttl.CleanupScanner.init(),
@@ -565,25 +642,109 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             grid: *Grid,
             options: Options,
         ) !void {
-            _ = allocator;
             _ = time;
+
+            // Allocate RAM index for entity lookups (F2.1)
+            const ram_index_capacity: u32 = 10_000; // Initial capacity for testing
+            const ram_index = try allocator.create(DefaultRamIndex);
+            errdefer allocator.destroy(ram_index);
+
+            ram_index.* = try DefaultRamIndex.init(allocator, ram_index_capacity);
+            errdefer ram_index.deinit(allocator);
 
             self.* = .{
                 .batch_size_limit = options.batch_size_limit,
+                .prefetch_timestamp = 0,
                 .prepare_timestamp = 0,
                 .commit_timestamp = 0,
+                .forest = undefined,
                 .grid = grid,
                 .index_checkpoint_enabled = options.enable_index_checkpoint,
                 .last_index_checkpoint_op = 0,
+                .ram_index = ram_index,
             };
 
-            log.info("GeoStateMachine: index checkpoint coordination enabled (F2.2.3)", .{});
+            // Initialize Forest for LSM tree storage (F1.2, F4.2)
+            try self.forest.init(
+                allocator,
+                grid,
+                .{
+                    .compaction_block_count = options.lsm_forest_compaction_block_count,
+                    .node_count = options.lsm_forest_node_count,
+                },
+                forest_options(options),
+            );
+            errdefer self.forest.deinit(allocator);
+
+            log.info("GeoStateMachine: initialized with Forest and RAM index (F1.2, F2.1, F4.2)", .{});
+        }
+
+        /// Generate Forest options for GeoEvent groove.
+        pub fn forest_options(options: Options) Forest.GroovesOptions {
+            const prefetch_geo_events_limit: u32 =
+                Operation.insert_events.event_max(options.batch_size_limit);
+
+            const tree_values_count_limit = struct {
+                const geo_events = struct {
+                    const id: u32 = batch_geo_events_max;
+                    const entity_id: u32 = batch_geo_events_max;
+                    const timestamp: u32 = batch_geo_events_max;
+                    const group_id: u32 = batch_geo_events_max;
+                };
+            };
+
+            return .{
+                .geo_events = .{
+                    .prefetch_entries_for_read_max = prefetch_geo_events_limit,
+                    .prefetch_entries_for_update_max = prefetch_geo_events_limit,
+                    .cache_entries_max = options.cache_entries_geo_events,
+                    .tree_options_object = .{
+                        .batch_value_count_limit = tree_values_count_limit.geo_events.timestamp,
+                    },
+                    .tree_options_id = .{
+                        .batch_value_count_limit = tree_values_count_limit.geo_events.id,
+                    },
+                    .tree_options_index = index_tree_options(
+                        GeoEventsGroove.IndexTreeOptions,
+                        tree_values_count_limit.geo_events,
+                    ),
+                },
+            };
+        }
+
+        fn index_tree_options(
+            comptime IndexTreeOptions: type,
+            batch_limits: anytype,
+        ) IndexTreeOptions {
+            var result: IndexTreeOptions = undefined;
+            inline for (comptime std.meta.fieldNames(IndexTreeOptions)) |field| {
+                @field(result, field) = .{ .batch_value_count_limit = @field(batch_limits, field) };
+            }
+            return result;
         }
 
         pub fn deinit(self: *GeoStateMachine, allocator: std.mem.Allocator) void {
-            _ = self;
-            _ = allocator;
-            // TODO(F1.1.7): Cleanup resources
+            self.forest.deinit(allocator);
+            self.ram_index.deinit(allocator);
+            allocator.destroy(self.ram_index);
+        }
+
+        /// Reset state machine for state sync.
+        /// Called when a replica needs to sync from another replica's state.
+        pub fn reset(self: *GeoStateMachine) void {
+            self.forest.reset();
+
+            self.* = .{
+                .batch_size_limit = self.batch_size_limit,
+                .prefetch_timestamp = 0,
+                .prepare_timestamp = 0,
+                .commit_timestamp = 0,
+                .forest = self.forest,
+                .grid = self.grid,
+                .ram_index = self.ram_index,
+                .index_checkpoint_enabled = self.index_checkpoint_enabled,
+                .last_index_checkpoint_op = 0,
+            };
         }
 
         // ====================================================================
@@ -605,20 +766,35 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             assert(self.open_callback == null);
             self.open_callback = callback;
 
-            // TODO: When Forest is integrated:
-            // self.forest.open(open_finish);
-            //
-            // For now, immediately complete since we have no LSM tree yet
-            self.open_finish();
+            // Open the forest - required for replica initialization
+            self.forest.open(forest_open_callback);
         }
 
         /// Internal callback when forest open completes.
-        fn open_finish(self: *GeoStateMachine) void {
+        fn forest_open_callback(forest: *Forest) void {
+            const self: *GeoStateMachine = @fieldParentPtr("forest", forest);
             assert(self.open_callback != null);
 
             const callback = self.open_callback.?;
             self.open_callback = null;
             callback(self);
+        }
+
+        /// Check if a pulse operation is needed for TTL expiration.
+        /// Called periodically by the replica to check if pending events
+        /// need expiration processing.
+        ///
+        /// Returns true if there are GeoEvents that need TTL expiration
+        /// at the given timestamp.
+        pub fn pulse_needed(self: *const GeoStateMachine, timestamp: u64) bool {
+            _ = self;
+            _ = timestamp;
+
+            // TODO(F2.4): Implement TTL expiration check
+            // For now, GeoStateMachine doesn't generate pulse operations.
+            // When TTL cleanup is fully integrated, this will return true
+            // when there are expired events that need cleanup.
+            return false;
         }
 
         /// Prepare phase - calculate timestamp delta before consensus.
@@ -656,10 +832,11 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .create_accounts => @divExact(batch.len, event_size),
                 .create_transfers => @divExact(batch.len, event_size),
 
-                // TODO(F1.2): Add GeoEvent operations here
-                // .insert_events => @divExact(batch.len, @sizeOf(GeoEvent)),
-                // .upsert_events => @divExact(batch.len, @sizeOf(GeoEvent)),
-                // .delete_entities => @divExact(batch.len, @sizeOf(u128)),
+                // ArcherDB GeoEvent write operations (F1.2)
+                .insert_events => @divExact(batch.len, @sizeOf(GeoEvent)),
+                .upsert_events => @divExact(batch.len, @sizeOf(GeoEvent)),
+                .delete_entities => @divExact(batch.len, @sizeOf(u128)),
+                .cleanup_expired => 1, // Single cleanup operation
 
                 // Pulse: max events that could be processed
                 .pulse => batch_max_events(),
@@ -672,6 +849,14 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .query_accounts,
                 .query_transfers,
                 .get_change_events,
+                // ArcherDB GeoEvent query operations (F1.3)
+                .query_uuid,
+                .query_radius,
+                .query_polygon,
+                .query_latest,
+                // ArcherDB diagnostics
+                .archerdb_ping,
+                .archerdb_get_status,
                 => 0,
 
                 // Deprecated unbatched operations (TigerBeetle compatibility)
@@ -728,6 +913,11 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .create_transfers,
                 .deprecated_create_accounts_unbatched,
                 .deprecated_create_transfers_unbatched,
+                // ArcherDB GeoEvent write operations (F1.2)
+                .insert_events,
+                .upsert_events,
+                .delete_entities,
+                .cleanup_expired,
                 => {
                     // TODO: Prefetch existing records by ID
                     self.prefetch_finish();
@@ -747,6 +937,14 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .deprecated_get_account_balances_unbatched,
                 .deprecated_query_accounts_unbatched,
                 .deprecated_query_transfers_unbatched,
+                // ArcherDB GeoEvent query operations (F1.3)
+                .query_uuid,
+                .query_radius,
+                .query_polygon,
+                .query_latest,
+                // ArcherDB diagnostics
+                .archerdb_ping,
+                .archerdb_get_status,
                 => {
                     // TODO: Prefetch based on query filters
                     self.prefetch_finish();

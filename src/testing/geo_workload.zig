@@ -55,6 +55,39 @@ pub const Options = struct {
 
     /// Probability of using adversarial/edge-case patterns (F4.1.3)
     adversarial_probability: stdx.PRNG.Ratio = .{ .numerator = 20, .denominator = 100 },
+
+    /// Generate randomized options for VOPR testing.
+    /// Similar to accounting workload's Options.generate.
+    pub fn generate(prng: *stdx.PRNG, options: struct {
+        batch_size_limit: u32,
+        multi_batch_per_request_limit: u32,
+        client_count: usize,
+        in_flight_max: usize,
+    }) Options {
+        _ = options.multi_batch_per_request_limit;
+        _ = options.client_count;
+        _ = options.in_flight_max;
+
+        return .{
+            .batch_size_limit = options.batch_size_limit,
+            .requests_target = prng.range_inclusive(u32, 1000, 50000),
+            .write_probability = .{
+                .numerator = prng.range_inclusive(u8, 50, 90),
+                .denominator = 100,
+            },
+            .cluster_probability = .{
+                .numerator = prng.range_inclusive(u8, 10, 50),
+                .denominator = 100,
+            },
+            .hotspot_count = prng.range_inclusive(u8, 2, 10),
+            .hotspot_radius = @as(i64, @intCast(prng.range_inclusive(u64, 10_000_000, 500_000_000))),
+            .tracked_entities_max = prng.range_inclusive(u32, 100, 5000),
+            .adversarial_probability = .{
+                .numerator = prng.range_inclusive(u8, 10, 40),
+                .denominator = 100,
+            },
+        };
+    }
 };
 
 /// Edge-case coordinates for adversarial testing (F4.1.3)
@@ -96,8 +129,14 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
             size: usize,
         };
 
+        /// File-level Options reference for internal use
+        const FileOptions = @import("geo_workload.zig").Options;
+
+        /// Re-export Options for VOPR access as StateMachine.Workload.Options
+        pub const Options = FileOptions;
+
         prng: *stdx.PRNG,
-        options: Options,
+        options: FileOptions,
 
         /// Request tracking
         requests_sent: usize = 0,
@@ -135,7 +174,7 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
         pub fn init(
             allocator: std.mem.Allocator,
             prng: *stdx.PRNG,
-            options: Options,
+            options: FileOptions,
         ) !Self {
             var tracked = std.ArrayList(u128).init(allocator);
             errdefer tracked.deinit();
@@ -757,6 +796,26 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
             _ = operation;
 
             self.requests_delivered += 1;
+        }
+
+        /// Handle pulse operation for TTL expiration (F2.4.8).
+        /// Called for pulse operations in commit order.
+        pub fn on_pulse(
+            self: *Self,
+            operation: StateMachine.Operation,
+            timestamp: u64,
+        ) void {
+            _ = self;
+            _ = operation;
+            _ = timestamp;
+
+            // GeoEvent TTL expiration is handled by the state machine's
+            // pulse operation. The workload doesn't need to track this
+            // since entity lookups will naturally fail for expired events.
+            //
+            // In the future, this could be used to:
+            // - Remove expired entity_ids from tracked_entities
+            // - Update statistics for expired events
         }
     };
 }
