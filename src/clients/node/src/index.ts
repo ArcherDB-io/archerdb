@@ -1,4 +1,7 @@
 export * from './bindings'
+// ArcherDB geospatial types and client
+export * from './geo'
+export * from './geo_client'
 import {
   Account,
   Transfer,
