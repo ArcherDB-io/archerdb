@@ -41,11 +41,17 @@ const MultiBatchDecoder = vsr.multi_batch.MultiBatchDecoder;
 
 // RAM Index integration (F2.1)
 const RamIndex = @import("ram_index.zig").RamIndex;
+const DefaultRamIndex = @import("ram_index.zig").DefaultRamIndex;
 const IndexEntry = @import("ram_index.zig").IndexEntry;
 
 // Index checkpoint coordination (F2.2)
 const index_checkpoint = @import("index/checkpoint.zig");
 const CheckpointHeader = index_checkpoint.CheckpointHeader;
+
+// TTL cleanup integration (F2.4.8)
+const ttl = @import("ttl.zig");
+const CleanupRequest = ttl.CleanupRequest;
+const CleanupResponse = ttl.CleanupResponse;
 
 // ============================================================================
 // Tree IDs for LSM Storage
@@ -285,6 +291,16 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 
         /// Last recorded VSR checkpoint op (for monitoring lag).
         last_index_checkpoint_op: u64 = 0,
+
+        /// RAM Index reference for entity lookups (F2.1).
+        /// Note: Currently a stub pointer - to be integrated with Forest.
+        ram_index: *DefaultRamIndex = undefined,
+
+        /// TTL cleanup scanner state (F2.4.8).
+        cleanup_scanner: ttl.CleanupScanner = ttl.CleanupScanner.init(),
+
+        /// TTL metrics for observability (F2.4.5).
+        ttl_metrics: ttl.TtlMetrics = ttl.TtlMetrics{},
 
         // ====================================================================
         // Initialization
@@ -569,6 +585,22 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .deprecated_get_account_balances_unbatched => self.execute_get_account_balances(message_body_used, output),
                 .deprecated_query_accounts_unbatched => self.execute_query_accounts(message_body_used, output),
                 .deprecated_query_transfers_unbatched => self.execute_query_transfers(message_body_used, output),
+
+                // ArcherDB geospatial operations (TODO: implement with Forest)
+                .insert_events => 0, // TODO: execute_insert_events
+                .upsert_events => 0, // TODO: execute_upsert_events
+                .delete_entities => 0, // TODO: execute_delete_entities
+                .query_uuid => 0, // TODO: execute_query_uuid
+                .query_radius => 0, // TODO: execute_query_radius
+                .query_polygon => 0, // TODO: execute_query_polygon
+                .query_latest => 0, // TODO: execute_query_latest
+
+                // ArcherDB admin operations
+                .archerdb_ping => 0, // TODO: execute_archerdb_ping
+                .archerdb_get_status => 0, // TODO: execute_archerdb_get_status
+
+                // ArcherDB TTL cleanup (F2.4.8)
+                .cleanup_expired => self.execute_cleanup_expired(timestamp, message_body_used, output),
             };
 
             return result;
@@ -656,6 +688,73 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             _ = input;
             _ = output;
             // TODO: Get change events
+            return 0;
+        }
+
+        /// Execute cleanup_expired operation (F2.4.8).
+        ///
+        /// Scans the RAM index for expired entries and removes them.
+        /// Per ttl-retention/spec.md:
+        /// - Uses consensus timestamp for deterministic cleanup across replicas
+        /// - Scans batch_size entries (or all if batch_size = 0)
+        /// - Returns count of entries scanned and removed
+        ///
+        /// Arguments:
+        /// - timestamp: VSR consensus timestamp (nanoseconds)
+        /// - input: CleanupRequest bytes
+        /// - output: Buffer for CleanupResponse
+        ///
+        /// Returns: Size of response written to output
+        fn execute_cleanup_expired(
+            self: *GeoStateMachine,
+            timestamp: u64,
+            input: []const u8,
+            output: []u8,
+        ) usize {
+            // Parse request (if provided).
+            var batch_size: u32 = 0;
+            if (input.len >= @sizeOf(CleanupRequest)) {
+                const request = @as(*const CleanupRequest, @ptrCast(@alignCast(input.ptr))).*;
+                batch_size = request.batch_size;
+            }
+
+            // Scan the index for expired entries.
+            // If batch_size = 0, scan all entries (use capacity as batch size).
+            const scan_batch_size = if (batch_size == 0)
+                self.ram_index.capacity
+            else
+                batch_size;
+
+            // Run the scan using the consensus timestamp.
+            // This ensures all replicas remove the same entries.
+            const result = self.ram_index.scan_expired_batch(
+                self.cleanup_scanner.position,
+                scan_batch_size,
+                timestamp,
+            );
+
+            // Update scanner state.
+            self.cleanup_scanner.record_batch(
+                result.entries_scanned,
+                result.entries_removed,
+                result.next_position,
+                timestamp,
+            );
+
+            // Update TTL metrics.
+            self.ttl_metrics.record_cleanup_expiration(result.entries_removed);
+            self.ttl_metrics.record_cleanup_operation();
+
+            // Write response.
+            if (output.len >= @sizeOf(CleanupResponse)) {
+                const response = @as(*CleanupResponse, @ptrCast(@alignCast(output.ptr)));
+                response.* = CleanupResponse{
+                    .entries_scanned = result.entries_scanned,
+                    .entries_removed = result.entries_removed,
+                };
+                return @sizeOf(CleanupResponse);
+            }
+
             return 0;
         }
 

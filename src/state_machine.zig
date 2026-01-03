@@ -715,6 +715,9 @@ pub fn StateMachineType(comptime Storage: type) type {
             archerdb_ping: TimingSummary = .{},
             archerdb_get_status: TimingSummary = .{},
 
+            // ArcherDB TTL cleanup (F2.4.8)
+            cleanup_expired: TimingSummary = .{},
+
             compact: TimingSummary = .{},
             checkpoint: TimingSummary = .{},
 
@@ -832,6 +835,9 @@ pub fn StateMachineType(comptime Storage: type) type {
                     // ArcherDB admin operations (F1.2.6)
                     .archerdb_ping => .archerdb_ping,
                     .archerdb_get_status => .archerdb_get_status,
+
+                    // ArcherDB TTL cleanup (F2.4.8)
+                    .cleanup_expired => .cleanup_expired,
 
                     .pulse => comptime unreachable,
                 };
@@ -1142,6 +1148,9 @@ pub fn StateMachineType(comptime Storage: type) type {
                 .archerdb_ping => 0,
                 .archerdb_get_status => 0,
 
+                // ArcherDB TTL cleanup (F2.4.8) - modifies state
+                .cleanup_expired => 1,
+
                 .deprecated_create_accounts_unbatched => @divExact(batch.len, @sizeOf(Account)),
                 .deprecated_create_transfers_unbatched => @divExact(batch.len, @sizeOf(Transfer)),
                 .deprecated_lookup_accounts_unbatched => 0,
@@ -1238,6 +1247,8 @@ pub fn StateMachineType(comptime Storage: type) type {
                 .archerdb_ping,
                 .archerdb_get_status,
                 => self.prefetch_finish(),
+                // ArcherDB TTL cleanup (F2.4.8) - no prefetch needed
+                .cleanup_expired => self.prefetch_finish(),
 
                 .deprecated_create_accounts_unbatched => {
                     self.prefetch_create_accounts();
@@ -2854,6 +2865,8 @@ pub fn StateMachineType(comptime Storage: type) type {
                 // ArcherDB admin operations (F1.2.6)
                 .archerdb_ping => self.execute_archerdb_ping(timestamp, output_buffer),
                 .archerdb_get_status => self.execute_archerdb_get_status(output_buffer),
+                // ArcherDB TTL cleanup (F2.4.8) - handled by GeoStateMachine
+                .cleanup_expired => 0,
 
                 inline .deprecated_create_accounts_unbatched,
                 .deprecated_create_transfers_unbatched,

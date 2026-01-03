@@ -10,6 +10,7 @@ const maybe = stdx.maybe;
 // GeoEvent types for geospatial operations
 const geo_event = @import("geo_event.zig");
 const geo_state_machine = @import("geo_state_machine.zig");
+const ttl = @import("ttl.zig");
 
 pub const GeoEvent = geo_event.GeoEvent;
 pub const QueryUuidFilter = geo_state_machine.QueryUuidFilter;
@@ -19,6 +20,10 @@ pub const InsertGeoEventResult = geo_state_machine.InsertGeoEventResult;
 pub const InsertGeoEventsResult = geo_state_machine.InsertGeoEventsResult;
 pub const DeleteEntitiesResult = geo_state_machine.DeleteEntitiesResult;
 pub const QueryLatestFilter = geo_state_machine.QueryLatestFilter;
+
+// TTL cleanup types (F2.4.8)
+pub const CleanupRequest = ttl.CleanupRequest;
+pub const CleanupResponse = ttl.CleanupResponse;
 
 pub const Account = extern struct {
     id: u128,
@@ -732,6 +737,9 @@ pub const Operation = enum(u8) {
     archerdb_ping = constants.vsr_operations_reserved + 24,
     archerdb_get_status = constants.vsr_operations_reserved + 25,
 
+    // ArcherDB TTL cleanup operation (F2.4.8)
+    cleanup_expired = constants.vsr_operations_reserved + 27,
+
     pub fn EventType(comptime operation: Operation) type {
         return switch (operation) {
             .pulse => void,
@@ -757,6 +765,9 @@ pub const Operation = enum(u8) {
             // ArcherDB admin operations (F1.2.6)
             .archerdb_ping => void, // No request body needed
             .archerdb_get_status => void, // No request body needed
+
+            // ArcherDB TTL cleanup (F2.4.8)
+            .cleanup_expired => CleanupRequest,
 
             .deprecated_create_accounts_unbatched => Account,
             .deprecated_create_transfers_unbatched => Transfer,
@@ -794,6 +805,9 @@ pub const Operation = enum(u8) {
             // ArcherDB admin operations (F1.2.6)
             .archerdb_ping => PingResponse,
             .archerdb_get_status => StatusResponse,
+
+            // ArcherDB TTL cleanup (F2.4.8)
+            .cleanup_expired => CleanupResponse,
 
             .deprecated_create_accounts_unbatched => CreateAccountsResult,
             .deprecated_create_transfers_unbatched => CreateTransfersResult,
@@ -851,6 +865,9 @@ pub const Operation = enum(u8) {
             .archerdb_ping => false,
             .archerdb_get_status => false,
 
+            // ArcherDB TTL cleanup (F2.4.8) - single request
+            .cleanup_expired => false,
+
             .deprecated_create_accounts_unbatched => true,
             .deprecated_create_transfers_unbatched => true,
             .deprecated_lookup_accounts_unbatched => true,
@@ -894,6 +911,9 @@ pub const Operation = enum(u8) {
             // ArcherDB admin operations (F1.2.6) - single batch
             .archerdb_ping => false,
             .archerdb_get_status => false,
+
+            // ArcherDB TTL cleanup (F2.4.8) - single batch
+            .cleanup_expired => false,
 
             .deprecated_create_accounts_unbatched,
             .deprecated_create_transfers_unbatched,
@@ -1060,6 +1080,8 @@ pub const Operation = enum(u8) {
             },
             // ArcherDB admin operations (F1.2.6) - always return exactly 1 result
             .archerdb_ping, .archerdb_get_status => 1,
+            // ArcherDB TTL cleanup (F2.4.8) - returns exactly 1 CleanupResponse
+            .cleanup_expired => 1,
         };
     }
 
