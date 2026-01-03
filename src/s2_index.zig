@@ -226,12 +226,17 @@ pub const S2 = struct {
         const center_lon = @divTrunc(min_lon + max_lon, 2);
 
         // Compute approximate radius (diagonal of bounding box / 2)
-        const lat_diff = max_lat - min_lat;
-        const lon_diff = max_lon - min_lon;
-        const diagonal_nano = math.sqrt(@as(f64, @floatFromInt(lat_diff * lat_diff + lon_diff * lon_diff)));
+        // Convert to f64 BEFORE squaring to avoid integer overflow
+        // (nanodegree values up to 180e9 would overflow i64 when squared)
+        const lat_diff_f = @as(f64, @floatFromInt(max_lat - min_lat));
+        const lon_diff_f = @as(f64, @floatFromInt(max_lon - min_lon));
+        const diagonal_nano = math.sqrt(lat_diff_f * lat_diff_f + lon_diff_f * lon_diff_f);
 
         // Convert to millimeters (1 nanodegree ≈ 0.111 mm at equator)
-        const radius_mm: u32 = @intFromFloat(diagonal_nano * 0.111 / 2.0 + 1000.0);
+        // Cap at maximum supported radius (1000 km = 1,000,000,000 mm) to avoid overflow
+        const radius_mm_raw = diagonal_nano * 0.111 / 2.0 + 1000.0;
+        const max_radius_mm: f64 = 1_000_000_000.0; // 1000 km
+        const radius_mm: u32 = @intFromFloat(@min(radius_mm_raw, max_radius_mm));
 
         return coverCap(scratch, center_lat, center_lon, radius_mm, 8, 30);
     }

@@ -2040,6 +2040,26 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         ) bool {
             _ = self;
 
+            // Handle variable-length operations specially
+            if (operation == .query_polygon) {
+                // query_polygon body = QueryPolygonFilter (128 bytes) + vertices (N * 16 bytes)
+                const header_size = @sizeOf(QueryPolygonFilter);
+                if (message_body_used.len < header_size) return false;
+
+                const vertices_size = message_body_used.len - header_size;
+                if (vertices_size % @sizeOf(PolygonVertex) != 0) return false;
+
+                // Validate vertex_count matches actual vertices
+                const filter = mem.bytesAsValue(
+                    QueryPolygonFilter,
+                    message_body_used[0..header_size],
+                ).*;
+                const expected_vertices_size = filter.vertex_count * @sizeOf(PolygonVertex);
+                if (vertices_size != expected_vertices_size) return false;
+
+                return true;
+            }
+
             const event_size = operation.event_size();
             if (event_size == 0) return true; // No body expected
 
