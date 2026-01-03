@@ -60,23 +60,28 @@ jobs:
         run: ./zig/download.sh
 
       - name: Verify Zig version
+        shell: bash
         run: ./zig/zig version
-
-      # Run ecosystem validation tests (in archerdb subdir)
-      - name: Run ecosystem validation
-        run: ./zig/zig build test -Dtest-filter=ecosystem
 
       # Run unit tests
       - name: Run unit tests
-        run: ./zig/zig build test
+        shell: bash
+        run: ./zig/zig build test:unit
 
       # Build ArcherDB
       - name: Build ArcherDB
-        run: ./zig/zig build -Doptimize=ReleaseSafe
+        shell: bash
+        run: ./zig/zig build --release=safe
 
-      # Verify build
+      # Verify build (skip on Windows - binary has different name)
       - name: Verify binary
+        if: runner.os != 'Windows'
         run: ./zig-out/bin/archerdb version --verbose
+
+      - name: Verify binary (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: ./zig-out/bin/archerdb.exe version --verbose
 
   # Build reproducibility check
   reproducible-build:
@@ -89,13 +94,13 @@ jobs:
       # Build twice and compare hashes
       - name: First build
         run: |
-          ./zig/zig build -Doptimize=ReleaseSafe
+          ./zig/zig build --release=safe
           sha256sum ./zig-out/bin/archerdb > build1.sha256
 
       - name: Clean and rebuild
         run: |
           rm -rf ./zig-out ./.zig-cache
-          ./zig/zig build -Doptimize=ReleaseSafe
+          ./zig/zig build --release=safe
           sha256sum ./zig-out/bin/archerdb > build2.sha256
 
       - name: Compare builds

@@ -32,12 +32,12 @@ case "$(uname)" in
         ZIG_OS="macos"
         ZIG_EXTENSION=".tar.xz"
         ;;
-    CYGWIN*)
+    CYGWIN*|MINGW*|MSYS*)
         ZIG_OS="windows"
         ZIG_EXTENSION=".zip"
         ;;
     *)
-        echo "Unknown OS"
+        echo "Unknown OS: $(uname)"
         exit 1
         ;;
 esac
