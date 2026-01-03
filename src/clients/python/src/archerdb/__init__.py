@@ -81,6 +81,7 @@ from .client import (
     id,
     # Configuration
     TLSConfig,
+    RetryConfig,
     GeoClientConfig,
     # Errors - Base
     ArcherDBError,
@@ -103,6 +104,8 @@ from .client import (
     OutOfSpace,
     SessionExpired,
     ClientClosedError,
+    # Errors - Retry
+    RetryExhausted,
     # Batch classes
     GeoEventBatch,
     GeoEventBatchAsync,
@@ -161,6 +164,7 @@ __all__ = [
     "id",
     # Configuration
     "TLSConfig",
+    "RetryConfig",
     "GeoClientConfig",
     # Errors - Base
     "ArcherDBError",
@@ -183,6 +187,8 @@ __all__ = [
     "OutOfSpace",
     "SessionExpired",
     "ClientClosedError",
+    # Errors - Retry
+    "RetryExhausted",
     # Batch classes
     "GeoEventBatch",
     "GeoEventBatchAsync",

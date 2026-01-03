@@ -158,6 +158,45 @@ export interface TLSConfig {
 }
 
 /**
+ * Retry configuration options (per client-retry/spec.md).
+ */
+export interface RetryConfig {
+  /**
+   * Whether automatic retry is enabled (default: true).
+   */
+  enabled?: boolean
+
+  /**
+   * Maximum number of retry attempts after initial failure (default: 5).
+   * Total attempts = max_retries + 1.
+   */
+  max_retries?: number
+
+  /**
+   * Base backoff delay in milliseconds (default: 100).
+   * Delay doubles after each attempt: 100, 200, 400, 800, 1600ms.
+   */
+  base_backoff_ms?: number
+
+  /**
+   * Maximum backoff delay in milliseconds (default: 1600).
+   */
+  max_backoff_ms?: number
+
+  /**
+   * Total timeout for all retry attempts in milliseconds (default: 30000).
+   * Retries stop when this timeout is exceeded.
+   */
+  total_timeout_ms?: number
+
+  /**
+   * Whether to add random jitter to backoff delays (default: true).
+   * Jitter = random(0, base_delay / 2) prevents thundering herd.
+   */
+  jitter?: boolean
+}
+
+/**
  * Client configuration options.
  */
 export interface GeoClientConfig {
@@ -190,6 +229,11 @@ export interface GeoClientConfig {
    * Number of connection pool slots (default: 1).
    */
   pool_size?: number
+
+  /**
+   * Retry configuration (optional).
+   */
+  retry?: RetryConfig
 }
 
 // ============================================================================
@@ -466,13 +510,14 @@ export class DeleteEntityBatch {
  * ```
  */
 export class GeoClient {
-  private config: Required<GeoClientConfig>
+  private config: Required<Omit<GeoClientConfig, 'retry'>>
+  private retryConfig: Required<RetryConfig>
   private context: object | null = null
   private sessionId: bigint = 0n
   private requestNumber: bigint = 0n
 
   constructor(config: GeoClientConfig) {
-    // Apply defaults
+    // Apply defaults for main config
     this.config = {
       cluster_id: config.cluster_id,
       addresses: config.addresses,
@@ -480,6 +525,16 @@ export class GeoClient {
       connect_timeout_ms: config.connect_timeout_ms ?? 5000,
       request_timeout_ms: config.request_timeout_ms ?? 30000,
       pool_size: config.pool_size ?? 1,
+    }
+
+    // Apply defaults for retry config
+    this.retryConfig = {
+      enabled: config.retry?.enabled ?? true,
+      max_retries: config.retry?.max_retries ?? 5,
+      base_backoff_ms: config.retry?.base_backoff_ms ?? 100,
+      max_backoff_ms: config.retry?.max_backoff_ms ?? 1600,
+      total_timeout_ms: config.retry?.total_timeout_ms ?? 30000,
+      jitter: config.retry?.jitter ?? true,
     }
 
     // Validate configuration
@@ -754,54 +809,236 @@ export class GeoClient {
   }
 
   /**
-   * Submits a batch operation to the cluster.
+   * Submits a batch operation to the cluster with automatic retry.
    * @internal
    */
   async _submitBatch<R>(operation: GeoOperation, batch: unknown[]): Promise<R[]> {
     this.ensureConnected()
 
-    // NOTE: This is a skeleton implementation.
-    // In the full implementation, this would:
-    // 1. Serialize events to wire format
-    // 2. Send operation via native binding
-    // 3. Wait for quorum replication
-    // 4. Parse per-event error codes
-    // 5. Handle retries for retryable errors
-    //
-    // return new Promise((resolve, reject) => {
-    //   binding.submit(this.context, operation, batch, (error, results) => {
-    //     if (error) reject(error)
-    //     else resolve(results as R[])
-    //   })
-    // })
+    // Wrap the actual submission in retry logic
+    return withRetry(async () => {
+      // NOTE: This is a skeleton implementation.
+      // In the full implementation, this would:
+      // 1. Serialize events to wire format
+      // 2. Send operation via native binding using same request_number for idempotency
+      // 3. Wait for quorum replication
+      // 4. Parse per-event error codes
+      //
+      // The same request_number is used for all retries to ensure idempotency:
+      // const requestNumber = this.requestNumber
+      //
+      // return new Promise((resolve, reject) => {
+      //   binding.submit(this.context, {
+      //     operation,
+      //     batch,
+      //     request_number: requestNumber,
+      //   }, (error, results) => {
+      //     if (error) reject(error)
+      //     else resolve(results as R[])
+      //   })
+      // })
 
-    // Skeleton: return empty results (success)
-    return []
+      // Skeleton: return empty results (success)
+      return [] as R[]
+    }, this.retryConfig)
   }
 
   /**
-   * Submits a query operation to the cluster.
+   * Submits a query operation to the cluster with automatic retry.
    * @internal
    */
   async _submitQuery<R>(operation: GeoOperation, filter: unknown): Promise<R[]> {
     this.ensureConnected()
 
-    // NOTE: This is a skeleton implementation.
-    // In the full implementation, this would:
-    // 1. Serialize filter to wire format
-    // 2. Send query via native binding
-    // 3. Parse results
-    //
-    // return new Promise((resolve, reject) => {
-    //   binding.submit(this.context, operation, [filter], (error, results) => {
-    //     if (error) reject(error)
-    //     else resolve(results as R[])
-    //   })
-    // })
+    // Wrap the actual query in retry logic
+    return withRetry(async () => {
+      // NOTE: This is a skeleton implementation.
+      // In the full implementation, this would:
+      // 1. Serialize filter to wire format
+      // 2. Send query via native binding
+      // 3. Parse results
+      //
+      // return new Promise((resolve, reject) => {
+      //   binding.submit(this.context, operation, [filter], (error, results) => {
+      //     if (error) reject(error)
+      //     else resolve(results as R[])
+      //   })
+      // })
 
-    // Skeleton: return empty results
-    return []
+      // Skeleton: return empty results
+      return [] as R[]
+    }, this.retryConfig)
   }
+}
+
+// ============================================================================
+// Retry Policy (per client-retry spec)
+// ============================================================================
+
+/**
+ * Error returned when all retry attempts are exhausted.
+ */
+export class RetryExhausted extends ArcherDBError {
+  readonly code = 5001
+  readonly retryable = false
+
+  /**
+   * Number of retry attempts made before giving up.
+   */
+  readonly attempts: number
+
+  /**
+   * The last error from the final retry attempt.
+   */
+  readonly lastError: Error
+
+  constructor(attempts: number, lastError: Error) {
+    super(`All ${attempts} retry attempts exhausted. Last error: ${lastError.message}`)
+    this.attempts = attempts
+    this.lastError = lastError
+  }
+}
+
+/**
+ * Determines if an error is retryable.
+ *
+ * Retryable errors:
+ * - Timeouts
+ * - View change in progress
+ * - Not primary (redirect needed)
+ * - Cluster unavailable
+ * - Session expired
+ * - Connection failures
+ *
+ * Non-retryable errors:
+ * - Invalid coordinates/data
+ * - Polygon too complex
+ * - Batch/query too large
+ * - TLS errors
+ */
+function isRetryableError(error: unknown): boolean {
+  if (error instanceof ArcherDBError) {
+    return error.retryable
+  }
+  // Network errors are generally retryable
+  if (error instanceof Error) {
+    const msg = error.message.toLowerCase()
+    return (
+      msg.includes('timeout') ||
+      msg.includes('econnreset') ||
+      msg.includes('econnrefused') ||
+      msg.includes('epipe') ||
+      msg.includes('network')
+    )
+  }
+  return false
+}
+
+/**
+ * Calculates retry delay with exponential backoff and optional jitter.
+ *
+ * Backoff schedule (per spec):
+ * - Attempt 1: 0ms (immediate)
+ * - Attempt 2: 100ms + jitter
+ * - Attempt 3: 200ms + jitter
+ * - Attempt 4: 400ms + jitter
+ * - Attempt 5: 800ms + jitter
+ * - Attempt 6: 1600ms + jitter
+ *
+ * @param attempt - Current attempt number (1-indexed)
+ * @param config - Retry configuration
+ * @returns Delay in milliseconds
+ */
+function calculateRetryDelay(attempt: number, config: Required<RetryConfig>): number {
+  // First attempt is immediate
+  if (attempt <= 1) {
+    return 0
+  }
+
+  // Exponential backoff: base_delay * 2^(attempt-2)
+  // attempt 2 -> 100 * 2^0 = 100
+  // attempt 3 -> 100 * 2^1 = 200
+  // attempt 4 -> 100 * 2^2 = 400
+  // etc.
+  const baseDelay = config.base_backoff_ms * Math.pow(2, attempt - 2)
+  const delay = Math.min(baseDelay, config.max_backoff_ms)
+
+  if (!config.jitter) {
+    return delay
+  }
+
+  // Jitter: random(0, delay / 2)
+  const jitter = Math.random() * (delay / 2)
+  return Math.floor(delay + jitter)
+}
+
+/**
+ * Sleep for the specified duration.
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+/**
+ * Executes an operation with retry logic.
+ *
+ * @param operation - Async function to execute
+ * @param config - Retry configuration
+ * @returns Result of the operation
+ * @throws RetryExhausted if all retry attempts fail
+ * @throws Original error if non-retryable
+ */
+async function withRetry<T>(
+  operation: () => Promise<T>,
+  config: Required<RetryConfig>
+): Promise<T> {
+  if (!config.enabled) {
+    return operation()
+  }
+
+  const startTime = Date.now()
+  const maxAttempts = config.max_retries + 1
+  let lastError: Error = new Error('No attempts made')
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    // Check total timeout before starting attempt
+    const elapsed = Date.now() - startTime
+    if (elapsed >= config.total_timeout_ms) {
+      throw new RetryExhausted(attempt - 1, lastError)
+    }
+
+    try {
+      return await operation()
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error))
+
+      // Non-retryable errors fail immediately
+      if (!isRetryableError(error)) {
+        throw error
+      }
+
+      // Last attempt - don't sleep, just throw
+      if (attempt >= maxAttempts) {
+        break
+      }
+
+      // Calculate delay for next attempt
+      const delay = calculateRetryDelay(attempt + 1, config)
+
+      // Check if delay would exceed total timeout
+      const totalElapsed = Date.now() - startTime
+      if (totalElapsed + delay >= config.total_timeout_ms) {
+        break
+      }
+
+      // Wait before next attempt
+      if (delay > 0) {
+        await sleep(delay)
+      }
+    }
+  }
+
+  throw new RetryExhausted(maxAttempts, lastError)
 }
 
 // ============================================================================

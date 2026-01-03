@@ -144,6 +144,17 @@ class ClientClosedError(ArcherDBError):
     retryable = False
 
 
+class RetryExhausted(ArcherDBError):
+    """All retry attempts have been exhausted."""
+    code = 5002
+    retryable = False
+
+    def __init__(self, attempts: int, last_error: Exception) -> None:
+        super().__init__(f"All {attempts} retry attempts exhausted. Last error: {last_error}")
+        self.attempts = attempts
+        self.last_error = last_error
+
+
 # ============================================================================
 # ID Generation
 # ============================================================================
@@ -204,6 +215,17 @@ class TLSConfig:
 
 
 @dataclass
+class RetryConfig:
+    """Retry configuration options (per client-retry/spec.md)."""
+    enabled: bool = True              # Whether automatic retry is enabled
+    max_retries: int = 5              # Maximum retry attempts after initial failure
+    base_backoff_ms: int = 100        # Base backoff delay (doubles each attempt)
+    max_backoff_ms: int = 1600        # Maximum backoff delay
+    total_timeout_ms: int = 30000     # Total timeout for all retry attempts
+    jitter: bool = True               # Add random jitter to prevent thundering herd
+
+
+@dataclass
 class GeoClientConfig:
     """Client configuration options."""
     cluster_id: int
@@ -212,6 +234,7 @@ class GeoClientConfig:
     connect_timeout_ms: int = 5000
     request_timeout_ms: int = 30000
     pool_size: int = 1
+    retry: Optional[RetryConfig] = None
 
 
 # ============================================================================
@@ -453,6 +476,177 @@ class DeleteEntityBatchAsync:
 
 
 # ============================================================================
+# Retry Logic (per client-retry spec)
+# ============================================================================
+
+import random
+from typing import Callable, TypeVar
+
+_T = TypeVar('_T')
+
+
+def _is_retryable_error(error: Exception) -> bool:
+    """
+    Determines if an error is retryable.
+
+    Retryable: timeouts, view changes, not primary, cluster unavailable, session expired.
+    Non-retryable: invalid coordinates, polygon too complex, batch/query too large, TLS errors.
+    """
+    if isinstance(error, ArcherDBError):
+        return error.retryable
+    # Network errors are generally retryable
+    msg = str(error).lower()
+    return any(s in msg for s in ('timeout', 'connection', 'reset', 'refused', 'network'))
+
+
+def _calculate_retry_delay(attempt: int, config: RetryConfig) -> int:
+    """
+    Calculate retry delay with exponential backoff and optional jitter.
+
+    Backoff schedule (per spec):
+    - Attempt 1: 0ms (immediate)
+    - Attempt 2: 100ms + jitter
+    - Attempt 3: 200ms + jitter
+    - Attempt 4: 400ms + jitter
+    - Attempt 5: 800ms + jitter
+    - Attempt 6: 1600ms + jitter
+
+    Args:
+        attempt: Current attempt number (1-indexed)
+        config: Retry configuration
+
+    Returns:
+        Delay in milliseconds
+    """
+    # First attempt is immediate
+    if attempt <= 1:
+        return 0
+
+    # Exponential backoff: base_delay * 2^(attempt-2)
+    base_delay = config.base_backoff_ms * (2 ** (attempt - 2))
+    delay = min(base_delay, config.max_backoff_ms)
+
+    if not config.jitter:
+        return delay
+
+    # Jitter: random(0, delay / 2)
+    jitter = random.random() * (delay / 2)
+    return int(delay + jitter)
+
+
+def _with_retry_sync(operation: Callable[[], _T], config: RetryConfig) -> _T:
+    """
+    Execute an operation with retry logic (synchronous).
+
+    Args:
+        operation: Function to execute
+        config: Retry configuration
+
+    Returns:
+        Result of the operation
+
+    Raises:
+        RetryExhausted: If all retry attempts fail
+        Original error: If non-retryable
+    """
+    if not config.enabled:
+        return operation()
+
+    start_time = time.time() * 1000  # Convert to ms
+    max_attempts = config.max_retries + 1
+    last_error: Exception = Exception("No attempts made")
+
+    for attempt in range(1, max_attempts + 1):
+        # Check total timeout before starting attempt
+        elapsed = (time.time() * 1000) - start_time
+        if elapsed >= config.total_timeout_ms:
+            raise RetryExhausted(attempt - 1, last_error)
+
+        try:
+            return operation()
+        except Exception as error:
+            last_error = error
+
+            # Non-retryable errors fail immediately
+            if not _is_retryable_error(error):
+                raise
+
+            # Last attempt - don't sleep, just break to throw
+            if attempt >= max_attempts:
+                break
+
+            # Calculate delay for next attempt
+            delay = _calculate_retry_delay(attempt + 1, config)
+
+            # Check if delay would exceed total timeout
+            total_elapsed = (time.time() * 1000) - start_time
+            if total_elapsed + delay >= config.total_timeout_ms:
+                break
+
+            # Wait before next attempt
+            if delay > 0:
+                time.sleep(delay / 1000)  # Convert ms to seconds
+
+    raise RetryExhausted(max_attempts, last_error)
+
+
+async def _with_retry_async(operation: Callable[[], Any], config: RetryConfig) -> Any:
+    """
+    Execute an operation with retry logic (asynchronous).
+
+    Args:
+        operation: Async function to execute
+        config: Retry configuration
+
+    Returns:
+        Result of the operation
+
+    Raises:
+        RetryExhausted: If all retry attempts fail
+        Original error: If non-retryable
+    """
+    if not config.enabled:
+        return await operation()
+
+    start_time = time.time() * 1000  # Convert to ms
+    max_attempts = config.max_retries + 1
+    last_error: Exception = Exception("No attempts made")
+
+    for attempt in range(1, max_attempts + 1):
+        # Check total timeout before starting attempt
+        elapsed = (time.time() * 1000) - start_time
+        if elapsed >= config.total_timeout_ms:
+            raise RetryExhausted(attempt - 1, last_error)
+
+        try:
+            return await operation()
+        except Exception as error:
+            last_error = error
+
+            # Non-retryable errors fail immediately
+            if not _is_retryable_error(error):
+                raise
+
+            # Last attempt - don't sleep, just break to throw
+            if attempt >= max_attempts:
+                break
+
+            # Calculate delay for next attempt
+            delay = _calculate_retry_delay(attempt + 1, config)
+
+            # Check if delay would exceed total timeout
+            total_elapsed = (time.time() * 1000) - start_time
+            if total_elapsed + delay >= config.total_timeout_ms:
+                break
+
+            # Wait before next attempt
+            if delay > 0:
+                await asyncio.sleep(delay / 1000)  # Convert ms to seconds
+
+    raise RetryExhausted(max_attempts, last_error)
+
+
+# ============================================================================
 # Synchronous Client
 # ============================================================================
 
@@ -480,6 +674,7 @@ class GeoClientSync:
             raise ValueError("At least one replica address is required")
 
         self._config = config
+        self._retry_config = config.retry or RetryConfig()
         self._closed = False
         self._session_id: int = 0
         self._request_number: int = 0
@@ -642,16 +837,26 @@ class GeoClientSync:
             raise ClientClosedError("Client has been closed")
 
     def _submit_batch(self, operation: GeoOperation, batch: List[Any]) -> List[Any]:
-        """Submit a batch operation to the cluster."""
+        """Submit a batch operation to the cluster with automatic retry."""
         self._ensure_connected()
-        # NOTE: Skeleton implementation returns empty results (success)
-        return []
+
+        def do_submit() -> List[Any]:
+            # NOTE: Skeleton implementation.
+            # In full implementation, this would serialize and send via native binding,
+            # using the same request_number for all retries to ensure idempotency.
+            return []
+
+        return _with_retry_sync(do_submit, self._retry_config)
 
     def _submit_query(self, operation: GeoOperation, filter: Any) -> List[GeoEvent]:
-        """Submit a query operation to the cluster."""
+        """Submit a query operation to the cluster with automatic retry."""
         self._ensure_connected()
-        # NOTE: Skeleton implementation returns empty results
-        return []
+
+        def do_query() -> List[GeoEvent]:
+            # NOTE: Skeleton implementation returns empty results
+            return []
+
+        return _with_retry_sync(do_query, self._retry_config)
 
 
 # ============================================================================
@@ -682,6 +887,7 @@ class GeoClientAsync:
             raise ValueError("At least one replica address is required")
 
         self._config = config
+        self._retry_config = config.retry or RetryConfig()
         self._closed = False
         self._session_id: int = 0
         self._request_number: int = 0
@@ -839,16 +1045,26 @@ class GeoClientAsync:
             raise ClientClosedError("Client has been closed")
 
     async def _submit_batch(self, operation: GeoOperation, batch: List[Any]) -> List[Any]:
-        """Submit a batch operation to the cluster."""
+        """Submit a batch operation to the cluster with automatic retry."""
         self._ensure_connected()
-        # NOTE: Skeleton implementation
-        return []
+
+        async def do_submit() -> List[Any]:
+            # NOTE: Skeleton implementation.
+            # In full implementation, this would serialize and send via native binding,
+            # using the same request_number for all retries to ensure idempotency.
+            return []
+
+        return await _with_retry_async(do_submit, self._retry_config)
 
     async def _submit_query(self, operation: GeoOperation, filter: Any) -> List[GeoEvent]:
-        """Submit a query operation to the cluster."""
+        """Submit a query operation to the cluster with automatic retry."""
         self._ensure_connected()
-        # NOTE: Skeleton implementation
-        return []
+
+        async def do_query() -> List[GeoEvent]:
+            # NOTE: Skeleton implementation returns empty results
+            return []
+
+        return await _with_retry_async(do_query, self._retry_config)
 
 
 # ============================================================================
