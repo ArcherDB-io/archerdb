@@ -42,10 +42,11 @@ const ChangeEventsFilter = tb.ChangeEventsFilter;
 const ChangeEvent = tb.ChangeEvent;
 const ChangeEventType = tb.ChangeEventType;
 
-// ArcherDB geospatial types (F1.3.1)
+// ArcherDB geospatial types (F1.3.1, F1.3.2)
 const GeoEvent = tb.GeoEvent;
 const InsertGeoEventResult = tb.InsertGeoEventResult;
 const InsertGeoEventsResult = tb.InsertGeoEventsResult;
+const QueryUuidFilter = tb.QueryUuidFilter;
 
 pub const tree_ids = struct {
     pub const Account = .{
@@ -612,6 +613,13 @@ pub fn StateMachineType(comptime Storage: type) type {
 
         const ChangeEventsScanLookup = ChangeEventsScanLookupType(AccountEventsGroove, Storage);
 
+        // F1.3.2: GeoEvent scan lookup for entity_id queries
+        const GeoEventsScanLookup = ScanLookupType(
+            GeoEventsGroove,
+            GeoEventsGroove.ScanBuilder.Scan,
+            Storage,
+        );
+
         /// Since prefetch contexts are used one at a time, it's safe to access
         /// the union's fields and reuse the same memory for all context instances.
         const PrefetchContext = union(enum) {
@@ -656,6 +664,7 @@ pub fn StateMachineType(comptime Storage: type) type {
             account_balances: AccountBalancesScanLookup,
             expire_pending_transfers: ExpirePendingTransfers.ScanLookup,
             change_events: ChangeEventsScanLookup,
+            geo_events: GeoEventsScanLookup, // F1.3.2
 
             pub const Field = std.meta.FieldEnum(ScanLookup);
             pub fn FieldType(comptime field: Field) type {
@@ -1210,12 +1219,12 @@ pub fn StateMachineType(comptime Storage: type) type {
                 .query_transfers => self.prefetch_query_transfers(),
                 .get_change_events => self.prefetch_get_change_events(),
 
-                // ArcherDB geospatial operations (F1.3.1)
+                // ArcherDB geospatial operations (F1.3.1, F1.3.2)
                 .insert_events => self.prefetch_insert_events(),
+                .query_uuid => self.prefetch_query_uuid(),
                 // Remaining geo operations - stub (handled by GeoStateMachine later)
                 .upsert_events,
                 .delete_entities,
-                .query_uuid,
                 .query_radius,
                 .query_polygon,
                 => self.prefetch_finish(),
@@ -1515,6 +1524,101 @@ pub fn StateMachineType(comptime Storage: type) type {
             assert(self.prefetch_operation == .insert_events);
 
             self.prefetch_context = .null;
+            self.prefetch_finish();
+        }
+
+        // F1.3.2: UUID lookup prefetch
+        // Queries the entity_id index to find GeoEvents for a specific entity
+        fn prefetch_query_uuid(self: *StateMachine) void {
+            assert(self.prefetch_input != null);
+            assert(self.prefetch_operation.? == .query_uuid);
+            assert(self.scan_lookup == .null);
+            assert(self.scan_lookup_buffer_index == 0);
+            assert(self.scan_lookup_results.items.len == 0);
+
+            const filter: *const QueryUuidFilter = @ptrCast(@alignCast(self.prefetch_input.?));
+
+            // Validate filter
+            const filter_valid = filter.entity_id != 0 and
+                filter.limit != 0 and
+                stdx.zeroed(&filter.reserved);
+
+            if (!filter_valid) {
+                log.info("invalid filter for query_uuid: entity_id={} limit={}", .{
+                    filter.entity_id,
+                    filter.limit,
+                });
+                self.forest.grid.on_next_tick(
+                    &prefetch_scan_next_tick_callback,
+                    &self.scan_lookup_next_tick,
+                );
+                return;
+            }
+
+            log.debug("{?}: query_uuid: entity_id={}", .{
+                self.forest.grid.superblock.replica_index,
+                filter.entity_id,
+            });
+
+            assert(self.forest.scan_buffer_pool.scan_buffer_used == 0);
+
+            // Use the entity_id index to scan for matching events
+            // Use full timestamp range (min to max) to get all events for this entity
+            const timestamp_range: TimestampRange = .{
+                .min = TimestampRange.timestamp_min,
+                .max = TimestampRange.timestamp_max,
+            };
+            const scan = self.forest.grooves.geo_events.scan_builder.scan_prefix(
+                .entity_id,
+                self.forest.scan_buffer_pool.acquire_assume_capacity(),
+                snapshot_latest,
+                filter.entity_id,
+                timestamp_range,
+                .descending, // Most recent first
+            );
+            assert(self.forest.scan_buffer_pool.scan_buffer_used > 0);
+
+            const scan_buffer = stdx.bytes_as_slice(
+                .inexact,
+                GeoEvent,
+                self.scan_lookup_buffer[self.scan_lookup_buffer_index..],
+            );
+
+            const scan_lookup = self.scan_lookup.get(.geo_events);
+            scan_lookup.* = GeoEventsScanLookup.init(
+                &self.forest.grooves.geo_events,
+                scan,
+            );
+
+            const limit = @min(
+                filter.limit,
+                self.prefetch_operation.?.result_max(self.batch_size_limit),
+            );
+            assert(limit > 0);
+            assert(scan_buffer.len >= limit);
+            scan_lookup.read(
+                scan_buffer[0..limit],
+                &prefetch_query_uuid_callback,
+            );
+        }
+
+        fn prefetch_query_uuid_callback(
+            scan_lookup: *GeoEventsScanLookup,
+            results: []const GeoEvent,
+        ) void {
+            const self: *StateMachine = ScanLookup.parent(.geo_events, scan_lookup);
+            assert(self.prefetch_input != null);
+            assert(self.prefetch_operation.? == .query_uuid);
+            assert(self.scan_lookup_buffer_index < self.scan_lookup_buffer.len);
+
+            self.scan_lookup_buffer_index += @intCast(results.len * @sizeOf(GeoEvent));
+            self.scan_lookup_results.appendAssumeCapacity(@intCast(results.len));
+
+            self.scan_lookup = .null;
+            self.forest.scan_buffer_pool.reset();
+            self.forest.grooves.geo_events.scan_builder.reset();
+
+            // query_uuid is a single-filter operation, just finish
             self.prefetch_finish();
         }
 
@@ -2629,16 +2733,16 @@ pub fn StateMachineType(comptime Storage: type) type {
                     output_buffer,
                 ),
 
-                // ArcherDB geospatial operations (F1.3.1)
+                // ArcherDB geospatial operations (F1.3.1, F1.3.2)
                 .insert_events => self.execute_insert_events(
                     timestamp,
                     message_body_used,
                     output_buffer,
                 ),
+                .query_uuid => self.execute_query_uuid(output_buffer),
                 // Remaining geo operations - stub (handled by GeoStateMachine later)
                 .upsert_events,
                 .delete_entities,
-                .query_uuid,
                 .query_radius,
                 .query_polygon,
                 => 0,
@@ -3692,6 +3796,30 @@ pub fn StateMachineType(comptime Storage: type) type {
             }
             // Idempotent - same event already exists
             return .exists;
+        }
+
+        /// Execute query_uuid - return GeoEvents matching the entity_id (F1.3.2)
+        /// Results were prefetched into scan_lookup_buffer by prefetch_query_uuid
+        fn execute_query_uuid(
+            self: *StateMachine,
+            output_buffer: *align(16) [constants.message_body_size_max]u8,
+        ) usize {
+            // query_uuid is a single-filter operation, so there's exactly one result count
+            assert(self.scan_lookup_results.items.len == 1);
+            const result_count = self.scan_lookup_results.items[0];
+            self.scan_lookup_results.clearRetainingCapacity();
+
+            const result_size: u32 = @intCast(result_count * @sizeOf(GeoEvent));
+            assert(result_size <= self.scan_lookup_buffer_index);
+
+            // Copy results from scan buffer to output
+            @memcpy(
+                output_buffer[0..result_size],
+                self.scan_lookup_buffer[0..result_size],
+            );
+            self.scan_lookup_buffer_index = 0;
+
+            return result_size;
         }
 
         fn create_account(
