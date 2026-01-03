@@ -197,6 +197,103 @@ pub const DeletionMetrics = struct {
     }
 };
 
+/// Tombstone lifecycle metrics (F2.5.8).
+///
+/// Tracks tombstone behavior during LSM compaction for GDPR compliance
+/// verification and storage optimization.
+pub const TombstoneMetrics = struct {
+    /// Tombstones retained during compaction (older data still exists below).
+    tombstone_retained_compactions: u64 = 0,
+    /// Tombstones eliminated during compaction (entity fully purged).
+    tombstone_eliminated_compactions: u64 = 0,
+    /// Total compaction cycles processed.
+    compaction_cycles: u64 = 0,
+    /// Sum of tombstone ages at elimination (in seconds).
+    /// Divide by tombstone_eliminated_compactions for average age.
+    total_tombstone_age_seconds: u64 = 0,
+    /// Maximum observed tombstone age at elimination (seconds).
+    max_tombstone_age_seconds: u64 = 0,
+    /// Minimum observed tombstone age at elimination (seconds).
+    /// Initialized to max to track actual minimum.
+    min_tombstone_age_seconds: u64 = std.math.maxInt(u64),
+
+    /// Record a tombstone retention during compaction.
+    pub fn recordRetained(self: *TombstoneMetrics, count: u64) void {
+        self.tombstone_retained_compactions += count;
+    }
+
+    /// Record tombstone elimination with age tracking.
+    ///
+    /// Parameters:
+    /// - count: Number of tombstones eliminated
+    /// - total_age_seconds: Sum of ages of eliminated tombstones
+    /// - max_age: Maximum age among eliminated tombstones
+    /// - min_age: Minimum age among eliminated tombstones
+    pub fn recordEliminated(
+        self: *TombstoneMetrics,
+        count: u64,
+        total_age_seconds: u64,
+        max_age: u64,
+        min_age: u64,
+    ) void {
+        self.tombstone_eliminated_compactions += count;
+        self.total_tombstone_age_seconds += total_age_seconds;
+        if (max_age > self.max_tombstone_age_seconds) {
+            self.max_tombstone_age_seconds = max_age;
+        }
+        if (count > 0 and min_age < self.min_tombstone_age_seconds) {
+            self.min_tombstone_age_seconds = min_age;
+        }
+    }
+
+    /// Record completion of a compaction cycle.
+    pub fn recordCompactionCycle(self: *TombstoneMetrics) void {
+        self.compaction_cycles += 1;
+    }
+
+    /// Calculate average tombstone age at elimination (seconds).
+    pub fn averageTombstoneAge(self: TombstoneMetrics) u64 {
+        if (self.tombstone_eliminated_compactions == 0) return 0;
+        return self.total_tombstone_age_seconds / self.tombstone_eliminated_compactions;
+    }
+
+    /// Calculate retention ratio (0.0 to 1.0).
+    /// Higher values indicate more tombstones being retained vs eliminated.
+    pub fn retentionRatio(self: TombstoneMetrics) f64 {
+        const total = self.tombstone_retained_compactions + self.tombstone_eliminated_compactions;
+        if (total == 0) return 0.0;
+        return @as(f64, @floatFromInt(self.tombstone_retained_compactions)) / @as(f64, @floatFromInt(total));
+    }
+
+    /// Export metrics in Prometheus text format.
+    pub fn toPrometheus(self: TombstoneMetrics, writer: anytype) !void {
+        try writer.print(
+            \\# HELP archerdb_tombstone_retained_total Tombstones retained during compaction
+            \\# TYPE archerdb_tombstone_retained_total counter
+            \\archerdb_tombstone_retained_total {d}
+            \\# HELP archerdb_tombstone_eliminated_total Tombstones eliminated (entity fully purged)
+            \\# TYPE archerdb_tombstone_eliminated_total counter
+            \\archerdb_tombstone_eliminated_total {d}
+            \\# HELP archerdb_compaction_cycles_total Total LSM compaction cycles
+            \\# TYPE archerdb_compaction_cycles_total counter
+            \\archerdb_compaction_cycles_total {d}
+            \\# HELP archerdb_tombstone_age_seconds_total Sum of tombstone ages at elimination
+            \\# TYPE archerdb_tombstone_age_seconds_total counter
+            \\archerdb_tombstone_age_seconds_total {d}
+            \\# HELP archerdb_tombstone_age_max_seconds Maximum tombstone age at elimination
+            \\# TYPE archerdb_tombstone_age_max_seconds gauge
+            \\archerdb_tombstone_age_max_seconds {d}
+            \\
+        , .{
+            self.tombstone_retained_compactions,
+            self.tombstone_eliminated_compactions,
+            self.compaction_cycles,
+            self.total_tombstone_age_seconds,
+            self.max_tombstone_age_seconds,
+        });
+    }
+};
+
 // ============================================================================
 // Query Filters
 // ============================================================================
@@ -363,6 +460,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 
         /// Deletion metrics for GDPR compliance (F2.5.5).
         deletion_metrics: DeletionMetrics = DeletionMetrics{},
+
+        /// Tombstone lifecycle metrics for compaction monitoring (F2.5.8).
+        tombstone_metrics: TombstoneMetrics = TombstoneMetrics{},
 
         // ====================================================================
         // Initialization
@@ -1085,7 +1185,16 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         }
 
         /// Internal callback when forest compaction completes.
+        /// Records tombstone lifecycle metrics (F2.5.8).
         fn compact_finish(self: *GeoStateMachine) void {
+            // Record compaction cycle completion
+            self.tombstone_metrics.recordCompactionCycle();
+
+            // TODO: When Forest is integrated, the compaction process will call:
+            // - tombstone_metrics.recordRetained() for tombstones kept
+            // - tombstone_metrics.recordEliminated() for tombstones dropped
+            // These will be called from within the k-way merge during level compaction.
+
             const callback = self.compact_callback.?;
             self.compact_callback = null;
             callback(self);
@@ -1396,4 +1505,102 @@ test "DeletionMetrics: toPrometheus output" {
     try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_entities_deleted_total 100") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_deletion_not_found_total 5") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_deletion_operations_total 10") != null);
+}
+
+// =============================================================================
+// TombstoneMetrics Tests (F2.5.8)
+// =============================================================================
+
+test "TombstoneMetrics: recordRetained increments counter" {
+    var metrics = TombstoneMetrics{};
+    try std.testing.expectEqual(@as(u64, 0), metrics.tombstone_retained_compactions);
+
+    metrics.recordRetained(5);
+    try std.testing.expectEqual(@as(u64, 5), metrics.tombstone_retained_compactions);
+
+    metrics.recordRetained(3);
+    try std.testing.expectEqual(@as(u64, 8), metrics.tombstone_retained_compactions);
+}
+
+test "TombstoneMetrics: recordEliminated with age tracking" {
+    var metrics = TombstoneMetrics{};
+
+    // First batch: 10 tombstones, total age 1000s, max 200s, min 50s
+    metrics.recordEliminated(10, 1000, 200, 50);
+    try std.testing.expectEqual(@as(u64, 10), metrics.tombstone_eliminated_compactions);
+    try std.testing.expectEqual(@as(u64, 1000), metrics.total_tombstone_age_seconds);
+    try std.testing.expectEqual(@as(u64, 200), metrics.max_tombstone_age_seconds);
+    try std.testing.expectEqual(@as(u64, 50), metrics.min_tombstone_age_seconds);
+
+    // Second batch: 5 tombstones, total age 300s, max 100s, min 30s
+    metrics.recordEliminated(5, 300, 100, 30);
+    try std.testing.expectEqual(@as(u64, 15), metrics.tombstone_eliminated_compactions);
+    try std.testing.expectEqual(@as(u64, 1300), metrics.total_tombstone_age_seconds);
+    // Max should stay at 200 (highest seen)
+    try std.testing.expectEqual(@as(u64, 200), metrics.max_tombstone_age_seconds);
+    // Min should update to 30 (lowest seen)
+    try std.testing.expectEqual(@as(u64, 30), metrics.min_tombstone_age_seconds);
+}
+
+test "TombstoneMetrics: recordCompactionCycle" {
+    var metrics = TombstoneMetrics{};
+    try std.testing.expectEqual(@as(u64, 0), metrics.compaction_cycles);
+
+    metrics.recordCompactionCycle();
+    metrics.recordCompactionCycle();
+    metrics.recordCompactionCycle();
+
+    try std.testing.expectEqual(@as(u64, 3), metrics.compaction_cycles);
+}
+
+test "TombstoneMetrics: averageTombstoneAge" {
+    var metrics = TombstoneMetrics{};
+
+    // Zero eliminations - should return 0
+    try std.testing.expectEqual(@as(u64, 0), metrics.averageTombstoneAge());
+
+    // 10 tombstones with total age of 500 seconds = avg 50s
+    metrics.recordEliminated(10, 500, 100, 20);
+    try std.testing.expectEqual(@as(u64, 50), metrics.averageTombstoneAge());
+
+    // Add 5 more with 250s total = 15 tombstones, 750s total = avg 50s
+    metrics.recordEliminated(5, 250, 80, 30);
+    try std.testing.expectEqual(@as(u64, 50), metrics.averageTombstoneAge());
+}
+
+test "TombstoneMetrics: retentionRatio" {
+    var metrics = TombstoneMetrics{};
+
+    // No data - should return 0.0
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), metrics.retentionRatio(), 0.001);
+
+    // 80 retained, 20 eliminated = 0.8 retention ratio
+    metrics.tombstone_retained_compactions = 80;
+    metrics.tombstone_eliminated_compactions = 20;
+    try std.testing.expectApproxEqAbs(@as(f64, 0.8), metrics.retentionRatio(), 0.001);
+
+    // 50/50 = 0.5 ratio
+    metrics.tombstone_retained_compactions = 50;
+    metrics.tombstone_eliminated_compactions = 50;
+    try std.testing.expectApproxEqAbs(@as(f64, 0.5), metrics.retentionRatio(), 0.001);
+}
+
+test "TombstoneMetrics: toPrometheus output" {
+    var metrics = TombstoneMetrics{};
+    metrics.tombstone_retained_compactions = 1000;
+    metrics.tombstone_eliminated_compactions = 250;
+    metrics.compaction_cycles = 10;
+    metrics.total_tombstone_age_seconds = 12500;
+    metrics.max_tombstone_age_seconds = 300;
+
+    var buffer: [4096]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buffer);
+    try metrics.toPrometheus(fbs.writer());
+
+    const output = fbs.getWritten();
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_tombstone_retained_total 1000") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_tombstone_eliminated_total 250") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_compaction_cycles_total 10") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_tombstone_age_seconds_total 12500") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_tombstone_age_max_seconds 300") != null);
 }
