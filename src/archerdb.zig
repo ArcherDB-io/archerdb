@@ -15,6 +15,7 @@ pub const GeoEvent = geo_event.GeoEvent;
 pub const QueryUuidFilter = geo_state_machine.QueryUuidFilter;
 pub const QueryRadiusFilter = geo_state_machine.QueryRadiusFilter;
 pub const QueryPolygonFilter = geo_state_machine.QueryPolygonFilter;
+pub const InsertGeoEventResult = geo_state_machine.InsertGeoEventResult;
 pub const InsertGeoEventsResult = geo_state_machine.InsertGeoEventsResult;
 pub const DeleteEntitiesResult = geo_state_machine.DeleteEntitiesResult;
 

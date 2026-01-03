@@ -44,6 +44,8 @@ const ChangeEventType = tb.ChangeEventType;
 
 // ArcherDB geospatial types (F1.3.1)
 const GeoEvent = tb.GeoEvent;
+const InsertGeoEventResult = tb.InsertGeoEventResult;
+const InsertGeoEventsResult = tb.InsertGeoEventsResult;
 
 pub const tree_ids = struct {
     pub const Account = .{
@@ -617,6 +619,7 @@ pub fn StateMachineType(comptime Storage: type) type {
             accounts: AccountsGroove.PrefetchContext,
             transfers: TransfersGroove.PrefetchContext,
             transfers_pending: TransfersPendingGroove.PrefetchContext,
+            geo_events: GeoEventsGroove.PrefetchContext, // F1.3.1
 
             pub const Field = std.meta.FieldEnum(PrefetchContext);
             pub fn FieldType(comptime field: Field) type {
@@ -1190,6 +1193,7 @@ pub fn StateMachineType(comptime Storage: type) type {
             self.forest.grooves.accounts.prefetch_setup(null);
             self.forest.grooves.transfers.prefetch_setup(null);
             self.forest.grooves.transfers_pending.prefetch_setup(null);
+            self.forest.grooves.geo_events.prefetch_setup(null); // F1.3.1
 
             // Prefetch starts timing for an operation.
             self.metrics.timer.reset();
@@ -1206,8 +1210,9 @@ pub fn StateMachineType(comptime Storage: type) type {
                 .query_transfers => self.prefetch_query_transfers(),
                 .get_change_events => self.prefetch_get_change_events(),
 
-                // ArcherDB geospatial operations - stub (handled by GeoStateMachine)
-                .insert_events,
+                // ArcherDB geospatial operations (F1.3.1)
+                .insert_events => self.prefetch_insert_events(),
+                // Remaining geo operations - stub (handled by GeoStateMachine later)
                 .upsert_events,
                 .delete_entities,
                 .query_uuid,
@@ -1477,6 +1482,37 @@ pub fn StateMachineType(comptime Storage: type) type {
             assert(self.prefetch_input != null);
             assert(self.prefetch_operation == .lookup_transfers or
                 self.prefetch_operation == .deprecated_lookup_transfers_unbatched);
+
+            self.prefetch_context = .null;
+            self.prefetch_finish();
+        }
+
+        // ArcherDB GeoEvent prefetch (F1.3.1)
+        // Prefetches existing geo events for idempotency checks
+        fn prefetch_insert_events(self: *StateMachine) void {
+            assert(self.prefetch_input != null);
+            assert(self.prefetch_operation == .insert_events);
+
+            const events = stdx.bytes_as_slice(
+                .exact,
+                GeoEvent,
+                self.prefetch_input.?,
+            );
+            // Prefetch by composite ID for idempotency checks
+            for (events) |*e| {
+                self.forest.grooves.geo_events.prefetch_enqueue(e.id);
+            }
+
+            self.forest.grooves.geo_events.prefetch(
+                prefetch_insert_events_callback,
+                self.prefetch_context.get(.geo_events),
+            );
+        }
+
+        fn prefetch_insert_events_callback(completion: *GeoEventsGroove.PrefetchContext) void {
+            const self: *StateMachine = PrefetchContext.parent(.geo_events, completion);
+            assert(self.prefetch_input != null);
+            assert(self.prefetch_operation == .insert_events);
 
             self.prefetch_context = .null;
             self.prefetch_finish();
@@ -2593,8 +2629,13 @@ pub fn StateMachineType(comptime Storage: type) type {
                     output_buffer,
                 ),
 
-                // ArcherDB geospatial operations - stub (handled by GeoStateMachine)
-                .insert_events,
+                // ArcherDB geospatial operations (F1.3.1)
+                .insert_events => self.execute_insert_events(
+                    timestamp,
+                    message_body_used,
+                    output_buffer,
+                ),
+                // Remaining geo operations - stub (handled by GeoStateMachine later)
                 .upsert_events,
                 .delete_entities,
                 .query_uuid,
@@ -3529,6 +3570,128 @@ pub fn StateMachineType(comptime Storage: type) type {
                 .debit_account_timestamp = dr_account.timestamp,
                 .credit_account_timestamp = cr_account.timestamp,
             };
+        }
+
+        // ========================================================================
+        // ArcherDB GeoEvent Operations (F1.3.1)
+        // ========================================================================
+
+        /// Execute insert_events operation - batch insert of GeoEvents.
+        /// Similar to execute_create but simpler (no linked chains, no imports).
+        fn execute_insert_events(
+            self: *StateMachine,
+            timestamp: u64,
+            batch: []const u8,
+            output_buffer: *align(16) [constants.message_body_size_max]u8,
+        ) usize {
+            const events = stdx.bytes_as_slice(.exact, GeoEvent, batch);
+            const results = stdx.bytes_as_slice(.inexact, InsertGeoEventsResult, output_buffer);
+            assert(events.len <= results.len);
+
+            var count: usize = 0;
+            for (events, 0..) |*event, index| {
+                // Calculate timestamp for this event (nanosecond precision ordering)
+                const event_timestamp = timestamp - events.len + index + 1;
+                const result = self.insert_event(event_timestamp, event);
+
+                if (self.log_trace) {
+                    log.debug("{?}: insert_events {}/{}: {}: {}", .{
+                        self.forest.grid.superblock.replica_index,
+                        index + 1,
+                        events.len,
+                        result,
+                        event,
+                    });
+                }
+
+                if (result != .ok) {
+                    results[count] = .{ .index = @intCast(index), .result = result };
+                    count += 1;
+                }
+            }
+
+            return @sizeOf(InsertGeoEventsResult) * count;
+        }
+
+        /// Insert a single GeoEvent into the geo_events groove.
+        /// Validates the event and performs idempotency checks.
+        fn insert_event(
+            self: *StateMachine,
+            timestamp: u64,
+            e: *const GeoEvent,
+        ) InsertGeoEventResult {
+            assert(timestamp > self.commit_timestamp or constants.aof_recovery);
+
+            // Timestamp must be zero (assigned by state machine)
+            if (e.timestamp != 0) return .timestamp_must_be_zero;
+
+            // Validate reserved field (must be zeroed)
+            for (e.reserved) |byte| {
+                if (byte != 0) return .reserved_field;
+            }
+
+            // Validate reserved flags (must be zeroed)
+            if (e.flags.padding != 0) return .reserved_flag;
+
+            // Composite ID must not be zero (S2 cell + timestamp)
+            if (e.id == 0) return .id_must_not_be_zero;
+
+            // Entity ID must be present (UUID identifying the moving entity)
+            if (e.entity_id == 0) return .entity_id_must_not_be_zero;
+
+            // Validate coordinates are within valid ranges
+            if (e.lat_nano < GeoEvent.lat_nano_min or e.lat_nano > GeoEvent.lat_nano_max) {
+                return .lat_out_of_range;
+            }
+            if (e.lon_nano < GeoEvent.lon_nano_min or e.lon_nano > GeoEvent.lon_nano_max) {
+                return .lon_out_of_range;
+            }
+
+            // Validate heading range (0-36000 centidegrees)
+            if (e.heading_cdeg > GeoEvent.heading_max) {
+                return .heading_out_of_range;
+            }
+
+            // Check for existing event with same ID (idempotency)
+            switch (self.forest.grooves.geo_events.get(e.id)) {
+                .found_object => |existing| return insert_event_exists(e, &existing),
+                .found_orphaned_id => unreachable,
+                .not_found => {},
+            }
+
+            // Insert the event with assigned timestamp
+            self.forest.grooves.geo_events.insert(&.{
+                .id = e.id,
+                .entity_id = e.entity_id,
+                .correlation_id = e.correlation_id,
+                .user_data = e.user_data,
+                .lat_nano = e.lat_nano,
+                .lon_nano = e.lon_nano,
+                .group_id = e.group_id,
+                .timestamp = timestamp,
+                .altitude_mm = e.altitude_mm,
+                .velocity_mms = e.velocity_mms,
+                .ttl_seconds = e.ttl_seconds,
+                .accuracy_mm = e.accuracy_mm,
+                .heading_cdeg = e.heading_cdeg,
+                .flags = e.flags,
+                .reserved = @splat(0),
+            });
+            self.commit_timestamp = timestamp;
+            return .ok;
+        }
+
+        /// Check if existing event matches the new event for idempotency.
+        fn insert_event_exists(e: *const GeoEvent, existing: *const GeoEvent) InsertGeoEventResult {
+            assert(e.id == existing.id);
+            // Same ID but different entity_id is an error
+            if (e.entity_id != existing.entity_id) return .exists_with_different_entity_id;
+            // Same ID but different coordinates is an error
+            if (e.lat_nano != existing.lat_nano or e.lon_nano != existing.lon_nano) {
+                return .exists_with_different_coordinates;
+            }
+            // Idempotent - same event already exists
+            return .exists;
         }
 
         fn create_account(
