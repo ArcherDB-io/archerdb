@@ -52,6 +52,36 @@ pub const Options = struct {
 
     /// Number of tracked entities for updates/queries
     tracked_entities_max: u32 = 1000,
+
+    /// Probability of using adversarial/edge-case patterns (F4.1.3)
+    adversarial_probability: stdx.PRNG.Ratio = .{ .numerator = 20, .denominator = 100 },
+};
+
+/// Edge-case coordinates for adversarial testing (F4.1.3)
+/// Per testing-simulation spec: S2 cell calculation edge cases
+pub const EdgeCaseCoordinates = struct {
+    /// North pole (90°N)
+    pub const NORTH_POLE_LAT: i64 = 90_000_000_000;
+    /// South pole (90°S)
+    pub const SOUTH_POLE_LAT: i64 = -90_000_000_000;
+    /// Anti-meridian East (180°E)
+    pub const ANTI_MERIDIAN_EAST: i64 = 180_000_000_000;
+    /// Anti-meridian West (180°W)
+    pub const ANTI_MERIDIAN_WEST: i64 = -180_000_000_000;
+    /// Equator
+    pub const EQUATOR_LAT: i64 = 0;
+    /// Prime meridian
+    pub const PRIME_MERIDIAN_LON: i64 = 0;
+    /// Max valid latitude
+    pub const MAX_LAT: i64 = 90_000_000_000;
+    /// Min valid latitude
+    pub const MIN_LAT: i64 = -90_000_000_000;
+    /// Max valid longitude
+    pub const MAX_LON: i64 = 180_000_000_000;
+    /// Min valid longitude
+    pub const MIN_LON: i64 = -180_000_000_000;
+    /// One nanodegree (minimum precision difference)
+    pub const ONE_NANODEGREE: i64 = 1;
 };
 
 /// GeoEvent workload generator for VOPR simulation.
@@ -95,6 +125,11 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
             polygon_queries: u64 = 0,
             updates_sent: u64 = 0,
             deletes_sent: u64 = 0,
+            /// Adversarial pattern statistics (F4.1.3)
+            adversarial_queries: u64 = 0,
+            pole_queries: u64 = 0,
+            antimeridian_queries: u64 = 0,
+            boundary_queries: u64 = 0,
         };
 
         pub fn init(
@@ -265,6 +300,11 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
             self: *Self,
             body: []align(@alignOf(vsr.Header)) u8,
         ) RequestResult {
+            // Check for adversarial pattern (F4.1.3)
+            if (self.prng.chance(self.options.adversarial_probability)) {
+                return self.build_adversarial_query(body);
+            }
+
             // Weight distribution: 40% UUID, 40% radius, 20% polygon
             const roll = self.prng.int(u8);
             if (roll < 102) { // ~40%
@@ -274,6 +314,240 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
             } else { // ~20%
                 return self.build_polygon_query(body);
             }
+        }
+
+        /// Build an adversarial/edge-case spatial query (F4.1.3).
+        /// Tests boundary conditions per testing-simulation spec.
+        fn build_adversarial_query(
+            self: *Self,
+            body: []align(@alignOf(vsr.Header)) u8,
+        ) RequestResult {
+            self.stats.adversarial_queries += 1;
+
+            // Randomly select adversarial query type
+            const adversarial_type = self.prng.int(u8) % 6;
+            return switch (adversarial_type) {
+                0 => self.build_pole_radius_query(body),
+                1 => self.build_antimeridian_radius_query(body),
+                2 => self.build_zero_radius_query(body),
+                3 => self.build_max_radius_query(body),
+                4 => self.build_boundary_polygon_query(body),
+                else => self.build_concave_polygon_query(body),
+            };
+        }
+
+        /// Radius query centered at a pole (tests S2 cell edge cases)
+        fn build_pole_radius_query(
+            self: *Self,
+            body: []align(@alignOf(vsr.Header)) u8,
+        ) RequestResult {
+            const filter = @as(*archerdb.QueryRadiusFilter, @ptrCast(@alignCast(body.ptr)));
+
+            // Choose North or South pole
+            filter.center_lat_nano = if (self.prng.chance(.{ .numerator = 50, .denominator = 100 }))
+                EdgeCaseCoordinates.NORTH_POLE_LAT
+            else
+                EdgeCaseCoordinates.SOUTH_POLE_LAT;
+            filter.center_lon_nano = 0; // Longitude irrelevant at poles
+
+            // Radius between 1km and 100km
+            filter.radius_mm = self.prng.range_inclusive(u32, 1_000_000, 100_000_000);
+            filter.limit = self.prng.int_inclusive(u32, 1000);
+            filter.timestamp_min = 0;
+            filter.timestamp_max = 0;
+            filter.group_id = 0;
+            filter.reserved = [_]u8{0} ** 80;
+
+            self.stats.pole_queries += 1;
+            self.stats.radius_queries += 1;
+            self.stats.queries_sent += 1;
+
+            return .{
+                .operation = .query_radius,
+                .size = @sizeOf(archerdb.QueryRadiusFilter),
+            };
+        }
+
+        /// Radius query crossing the anti-meridian (±180°)
+        fn build_antimeridian_radius_query(
+            self: *Self,
+            body: []align(@alignOf(vsr.Header)) u8,
+        ) RequestResult {
+            const filter = @as(*archerdb.QueryRadiusFilter, @ptrCast(@alignCast(body.ptr)));
+
+            // Random latitude, longitude near anti-meridian
+            filter.center_lat_nano = @as(i64, @intCast(self.prng.range_inclusive(u64, 0, 180_000_000_000))) - 90_000_000_000;
+            // Longitude very close to ±180°
+            filter.center_lon_nano = if (self.prng.chance(.{ .numerator = 50, .denominator = 100 }))
+                EdgeCaseCoordinates.ANTI_MERIDIAN_EAST - @as(i64, @intCast(self.prng.range_inclusive(u64, 0, 10_000_000)))
+            else
+                EdgeCaseCoordinates.ANTI_MERIDIAN_WEST + @as(i64, @intCast(self.prng.range_inclusive(u64, 0, 10_000_000)));
+
+            // Large enough radius to cross anti-meridian
+            filter.radius_mm = self.prng.range_inclusive(u32, 50_000_000, 500_000_000); // 50-500km
+            filter.limit = self.prng.int_inclusive(u32, 1000);
+            filter.timestamp_min = 0;
+            filter.timestamp_max = 0;
+            filter.group_id = 0;
+            filter.reserved = [_]u8{0} ** 80;
+
+            self.stats.antimeridian_queries += 1;
+            self.stats.radius_queries += 1;
+            self.stats.queries_sent += 1;
+
+            return .{
+                .operation = .query_radius,
+                .size = @sizeOf(archerdb.QueryRadiusFilter),
+            };
+        }
+
+        /// Zero-radius query (point query edge case)
+        fn build_zero_radius_query(
+            self: *Self,
+            body: []align(@alignOf(vsr.Header)) u8,
+        ) RequestResult {
+            const filter = @as(*archerdb.QueryRadiusFilter, @ptrCast(@alignCast(body.ptr)));
+
+            filter.center_lat_nano = @as(i64, @intCast(self.prng.range_inclusive(u64, 0, 180_000_000_000))) - 90_000_000_000;
+            filter.center_lon_nano = @as(i64, @intCast(self.prng.range_inclusive(u64, 0, 360_000_000_000))) - 180_000_000_000;
+            filter.radius_mm = 0; // Zero radius
+            filter.limit = self.prng.int_inclusive(u32, 100);
+            filter.timestamp_min = 0;
+            filter.timestamp_max = 0;
+            filter.group_id = 0;
+            filter.reserved = [_]u8{0} ** 80;
+
+            self.stats.boundary_queries += 1;
+            self.stats.radius_queries += 1;
+            self.stats.queries_sent += 1;
+
+            return .{
+                .operation = .query_radius,
+                .size = @sizeOf(archerdb.QueryRadiusFilter),
+            };
+        }
+
+        /// Maximum radius query (1000km per spec)
+        fn build_max_radius_query(
+            self: *Self,
+            body: []align(@alignOf(vsr.Header)) u8,
+        ) RequestResult {
+            const filter = @as(*archerdb.QueryRadiusFilter, @ptrCast(@alignCast(body.ptr)));
+
+            filter.center_lat_nano = @as(i64, @intCast(self.prng.range_inclusive(u64, 0, 180_000_000_000))) - 90_000_000_000;
+            filter.center_lon_nano = @as(i64, @intCast(self.prng.range_inclusive(u64, 0, 360_000_000_000))) - 180_000_000_000;
+            filter.radius_mm = 1_000_000_000; // 1000km max radius
+            filter.limit = self.prng.int_inclusive(u32, 1000);
+            filter.timestamp_min = 0;
+            filter.timestamp_max = 0;
+            filter.group_id = 0;
+            filter.reserved = [_]u8{0} ** 80;
+
+            self.stats.boundary_queries += 1;
+            self.stats.radius_queries += 1;
+            self.stats.queries_sent += 1;
+
+            return .{
+                .operation = .query_radius,
+                .size = @sizeOf(archerdb.QueryRadiusFilter),
+            };
+        }
+
+        /// Polygon query at coordinate boundaries (min/max vertices, pole-containing)
+        fn build_boundary_polygon_query(
+            self: *Self,
+            body: []align(@alignOf(vsr.Header)) u8,
+        ) RequestResult {
+            const filter = @as(*archerdb.QueryPolygonFilter, @ptrCast(@alignCast(body.ptr)));
+
+            // Use minimum vertices (3) or maximum (capped at what fits)
+            const use_min = self.prng.chance(.{ .numerator = 50, .denominator = 100 });
+            const vertices_start = @sizeOf(archerdb.QueryPolygonFilter);
+            const vertices_bytes = body[vertices_start..];
+            const max_vertices = vertices_bytes.len / @sizeOf(geo_state_machine_types.PolygonVertex);
+
+            filter.vertex_count = if (use_min) 3 else @as(u32, @intCast(@min(max_vertices, 100)));
+            filter.limit = self.prng.int_inclusive(u32, 1000);
+            filter.timestamp_min = 0;
+            filter.timestamp_max = 0;
+            filter.group_id = 0;
+            filter.reserved = [_]u8{0} ** 96;
+
+            const vertices = stdx.bytes_as_slice(.inexact, geo_state_machine_types.PolygonVertex, vertices_bytes);
+
+            // Generate polygon containing a pole or crossing anti-meridian
+            const pole_containing = self.prng.chance(.{ .numerator = 50, .denominator = 100 });
+            if (pole_containing) {
+                // Triangle around north pole
+                vertices[0] = .{ .lat_nano = 85_000_000_000, .lon_nano = 0 };
+                vertices[1] = .{ .lat_nano = 85_000_000_000, .lon_nano = 120_000_000_000 };
+                vertices[2] = .{ .lat_nano = 85_000_000_000, .lon_nano = -120_000_000_000 };
+                // Fill remaining vertices with valid interpolated points if needed
+                for (vertices[3..filter.vertex_count]) |*v| {
+                    v.* = .{ .lat_nano = 85_000_000_000, .lon_nano = 0 };
+                }
+            } else {
+                // Polygon crossing anti-meridian
+                vertices[0] = .{ .lat_nano = 0, .lon_nano = 170_000_000_000 };
+                vertices[1] = .{ .lat_nano = 10_000_000_000, .lon_nano = -170_000_000_000 };
+                vertices[2] = .{ .lat_nano = -10_000_000_000, .lon_nano = -170_000_000_000 };
+                for (vertices[3..filter.vertex_count]) |*v| {
+                    v.* = .{ .lat_nano = 0, .lon_nano = 170_000_000_000 };
+                }
+            }
+
+            self.stats.boundary_queries += 1;
+            self.stats.polygon_queries += 1;
+            self.stats.queries_sent += 1;
+
+            const total_size = vertices_start + filter.vertex_count * @sizeOf(geo_state_machine_types.PolygonVertex);
+            return .{
+                .operation = .query_polygon,
+                .size = total_size,
+            };
+        }
+
+        /// Concave polygon query (tests point-in-polygon edge cases)
+        fn build_concave_polygon_query(
+            self: *Self,
+            body: []align(@alignOf(vsr.Header)) u8,
+        ) RequestResult {
+            const filter = @as(*archerdb.QueryPolygonFilter, @ptrCast(@alignCast(body.ptr)));
+
+            // Concave polygon (L-shape or star)
+            filter.vertex_count = 6; // L-shape
+            filter.limit = self.prng.int_inclusive(u32, 1000);
+            filter.timestamp_min = 0;
+            filter.timestamp_max = 0;
+            filter.group_id = 0;
+            filter.reserved = [_]u8{0} ** 96;
+
+            const vertices_start = @sizeOf(archerdb.QueryPolygonFilter);
+            const vertices_bytes = body[vertices_start..];
+            const vertices = stdx.bytes_as_slice(.inexact, geo_state_machine_types.PolygonVertex, vertices_bytes);
+
+            // Generate L-shaped concave polygon around a random center
+            const center_lat = @as(i64, @intCast(self.prng.range_inclusive(u64, 0, 160_000_000_000))) - 80_000_000_000;
+            const center_lon = @as(i64, @intCast(self.prng.range_inclusive(u64, 0, 340_000_000_000))) - 170_000_000_000;
+            const size: i64 = 1_000_000_000; // ~1 degree
+
+            // L-shape vertices (concave at vertex 2)
+            vertices[0] = .{ .lat_nano = center_lat, .lon_nano = center_lon };
+            vertices[1] = .{ .lat_nano = center_lat + size, .lon_nano = center_lon };
+            vertices[2] = .{ .lat_nano = center_lat + size, .lon_nano = center_lon + @divTrunc(size, 2) }; // Concave indent
+            vertices[3] = .{ .lat_nano = center_lat + @divTrunc(size, 2), .lon_nano = center_lon + @divTrunc(size, 2) };
+            vertices[4] = .{ .lat_nano = center_lat + @divTrunc(size, 2), .lon_nano = center_lon + size };
+            vertices[5] = .{ .lat_nano = center_lat, .lon_nano = center_lon + size };
+
+            self.stats.boundary_queries += 1;
+            self.stats.polygon_queries += 1;
+            self.stats.queries_sent += 1;
+
+            const total_size = vertices_start + filter.vertex_count * @sizeOf(geo_state_machine_types.PolygonVertex);
+            return .{
+                .operation = .query_polygon,
+                .size = total_size,
+            };
         }
 
         /// Build a query_uuid request.
@@ -586,4 +860,44 @@ test "GeoWorkload: determinism" {
         try std.testing.expectEqual(r1.op, r2.op);
         try std.testing.expectEqual(r1.size, r2.size);
     }
+}
+
+test "GeoWorkload: adversarial queries (F4.1.3)" {
+    const allocator = std.testing.allocator;
+    var prng = stdx.PRNG.from_seed(77777);
+
+    const MockStateMachine = struct {
+        pub const Operation = archerdb.Operation;
+    };
+
+    // Configure for 100% adversarial queries
+    var workload = try GeoWorkloadType(MockStateMachine).init(
+        allocator,
+        &prng,
+        .{
+            .requests_target = 100,
+            .write_probability = .{ .numerator = 0, .denominator = 100 }, // All queries
+            .adversarial_probability = .{ .numerator = 100, .denominator = 100 }, // All adversarial
+        },
+    );
+    defer workload.deinit(allocator);
+
+    var body: [8192]u8 align(@alignOf(vsr.Header)) = undefined;
+
+    // Generate adversarial queries
+    for (0..30) |_| {
+        const result = workload.build_request(0, &body);
+        try std.testing.expect(result.size > 0);
+        try std.testing.expect(result.size <= body.len);
+        // Should be either radius or polygon query
+        try std.testing.expect(result.operation == .query_radius or result.operation == .query_polygon);
+    }
+
+    // Verify adversarial stats were tracked
+    try std.testing.expect(workload.stats.adversarial_queries > 0);
+    // Should have various boundary types
+    const total_boundary = workload.stats.pole_queries +
+        workload.stats.antimeridian_queries +
+        workload.stats.boundary_queries;
+    try std.testing.expect(total_boundary > 0);
 }
