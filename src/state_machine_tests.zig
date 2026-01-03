@@ -3123,3 +3123,400 @@ test "StateMachine: query multi-batch input_valid" {
         ));
     }
 }
+
+// Tests multi-batch partial result handling (F1.3.6).
+// Verifies that when a multi-batch request contains multiple batches where some items
+// succeed and others fail, the response correctly encodes results for each batch
+// and the client can correctly identify which items in which batches failed.
+test "StateMachine: multi-batch partial result handling" {
+    const allocator = std.testing.allocator;
+    const input = try allocator.alignedAlloc(u8, 16, constants.message_body_size_max);
+    defer allocator.free(input);
+    const output = try allocator.alignedAlloc(u8, 16, constants.message_body_size_max);
+    defer allocator.free(output);
+
+    var context: TestContext = undefined;
+    try context.init(std.testing.allocator);
+    defer context.deinit(std.testing.allocator);
+
+    // Test with create_accounts operation
+    const operation = TestContext.StateMachine.Operation.create_accounts;
+    const event_size = operation.event_size();
+    const result_size = operation.result_size();
+
+    // Build a multi-batch request with 3 batches:
+    // Batch 0: 2 valid accounts (IDs 1, 2) - should succeed
+    // Batch 1: 2 accounts (IDs 3, 1) - ID 1 is duplicate, should fail
+    // Batch 2: 2 valid accounts (IDs 4, 5) - should succeed
+    var body_encoder = MultiBatchEncoder.init(input, .{
+        .element_size = event_size,
+    });
+
+    // Batch 0: accounts 1 and 2
+    {
+        const writable = body_encoder.writable().?;
+        const accounts = stdx.bytes_as_slice(.inexact, Account, writable);
+        accounts[0] = .{
+            .id = 1,
+            .debits_pending = 0,
+            .debits_posted = 0,
+            .credits_pending = 0,
+            .credits_posted = 0,
+            .user_data_128 = 0,
+            .user_data_64 = 0,
+            .user_data_32 = 0,
+            .reserved = 0,
+            .ledger = 1,
+            .code = 1,
+            .flags = .{},
+            .timestamp = 0,
+        };
+        accounts[1] = .{
+            .id = 2,
+            .debits_pending = 0,
+            .debits_posted = 0,
+            .credits_pending = 0,
+            .credits_posted = 0,
+            .user_data_128 = 0,
+            .user_data_64 = 0,
+            .user_data_32 = 0,
+            .reserved = 0,
+            .ledger = 1,
+            .code = 1,
+            .flags = .{},
+            .timestamp = 0,
+        };
+        body_encoder.add(2 * event_size);
+    }
+
+    // Batch 1: accounts 3 and 1 (1 is duplicate)
+    {
+        const writable = body_encoder.writable().?;
+        const accounts = stdx.bytes_as_slice(.inexact, Account, writable);
+        accounts[0] = .{
+            .id = 3,
+            .debits_pending = 0,
+            .debits_posted = 0,
+            .credits_pending = 0,
+            .credits_posted = 0,
+            .user_data_128 = 0,
+            .user_data_64 = 0,
+            .user_data_32 = 0,
+            .reserved = 0,
+            .ledger = 1,
+            .code = 1,
+            .flags = .{},
+            .timestamp = 0,
+        };
+        accounts[1] = .{
+            .id = 1, // Duplicate of batch 0
+            .debits_pending = 0,
+            .debits_posted = 0,
+            .credits_pending = 0,
+            .credits_posted = 0,
+            .user_data_128 = 0,
+            .user_data_64 = 0,
+            .user_data_32 = 0,
+            .reserved = 0,
+            .ledger = 1,
+            .code = 1,
+            .flags = .{},
+            .timestamp = 0,
+        };
+        body_encoder.add(2 * event_size);
+    }
+
+    // Batch 2: accounts 4 and 5
+    {
+        const writable = body_encoder.writable().?;
+        const accounts = stdx.bytes_as_slice(.inexact, Account, writable);
+        accounts[0] = .{
+            .id = 4,
+            .debits_pending = 0,
+            .debits_posted = 0,
+            .credits_pending = 0,
+            .credits_posted = 0,
+            .user_data_128 = 0,
+            .user_data_64 = 0,
+            .user_data_32 = 0,
+            .reserved = 0,
+            .ledger = 1,
+            .code = 1,
+            .flags = .{},
+            .timestamp = 0,
+        };
+        accounts[1] = .{
+            .id = 5,
+            .debits_pending = 0,
+            .debits_posted = 0,
+            .credits_pending = 0,
+            .credits_posted = 0,
+            .user_data_128 = 0,
+            .user_data_64 = 0,
+            .user_data_32 = 0,
+            .reserved = 0,
+            .ledger = 1,
+            .code = 1,
+            .flags = .{},
+            .timestamp = 0,
+        };
+        body_encoder.add(2 * event_size);
+    }
+
+    const bytes_written = body_encoder.finish();
+    const message_body: []align(16) const u8 = input[0..bytes_written];
+
+    // Prepare and execute
+    context.prepare(operation, message_body);
+    const output_aligned: *align(16) [constants.message_body_size_max]u8 = @alignCast(output[0..constants.message_body_size_max]);
+    const reply_size = context.execute(
+        context.op,
+        operation,
+        message_body,
+        output_aligned,
+    );
+    context.op += 1;
+
+    // Decode and verify the response
+    var reply_decoder = MultiBatchDecoder.init(
+        output[0..reply_size],
+        .{ .element_size = result_size },
+    ) catch unreachable;
+
+    // Should have 3 batches in response
+    try testing.expectEqual(@as(u16, 3), reply_decoder.batch_count());
+
+    // Batch 0 result: should have 0 errors (both accounts created successfully)
+    {
+        const batch_0_results = reply_decoder.pop().?;
+        const results = stdx.bytes_as_slice(.exact, CreateAccountsResult, batch_0_results);
+        try testing.expectEqual(@as(usize, 0), results.len);
+    }
+
+    // Batch 1 result: should have 1 error (account ID 1 already exists)
+    {
+        const batch_1_results = reply_decoder.pop().?;
+        const results = stdx.bytes_as_slice(.exact, CreateAccountsResult, batch_1_results);
+        try testing.expectEqual(@as(usize, 1), results.len);
+        try testing.expectEqual(@as(u32, 1), results[0].index); // Index 1 (second item) failed
+        try testing.expectEqual(CreateAccountResult.exists, results[0].result);
+    }
+
+    // Batch 2 result: should have 0 errors (both accounts created successfully)
+    {
+        const batch_2_results = reply_decoder.pop().?;
+        const results = stdx.bytes_as_slice(.exact, CreateAccountsResult, batch_2_results);
+        try testing.expectEqual(@as(usize, 0), results.len);
+    }
+
+    // No more batches
+    try testing.expect(reply_decoder.pop() == null);
+
+    // Verify the accounts were actually created
+    try testing.expect(context.state_machine.forest.grooves.accounts.get(1) == .found_object);
+    try testing.expect(context.state_machine.forest.grooves.accounts.get(2) == .found_object);
+    try testing.expect(context.state_machine.forest.grooves.accounts.get(3) == .found_object);
+    try testing.expect(context.state_machine.forest.grooves.accounts.get(4) == .found_object);
+    try testing.expect(context.state_machine.forest.grooves.accounts.get(5) == .found_object);
+}
+
+// Tests multi-batch partial result handling with create_transfers (F1.3.6).
+// Tests a more complex scenario with transfers that require account validation.
+test "StateMachine: multi-batch partial result handling (transfers)" {
+    const allocator = std.testing.allocator;
+    const input = try allocator.alignedAlloc(u8, 16, constants.message_body_size_max);
+    defer allocator.free(input);
+    const output = try allocator.alignedAlloc(u8, 16, constants.message_body_size_max);
+    defer allocator.free(output);
+
+    var context: TestContext = undefined;
+    try context.init(std.testing.allocator);
+    defer context.deinit(std.testing.allocator);
+
+    // First, create accounts for the transfers
+    {
+        const operation = TestContext.StateMachine.Operation.create_accounts;
+        const event_size = operation.event_size();
+
+        var body_encoder = MultiBatchEncoder.init(input, .{
+            .element_size = event_size,
+        });
+
+        const writable = body_encoder.writable().?;
+        const accounts = stdx.bytes_as_slice(.inexact, Account, writable);
+        // Create accounts 1 and 2 (valid pair for transfers)
+        accounts[0] = .{
+            .id = 1,
+            .debits_pending = 0,
+            .debits_posted = 0,
+            .credits_pending = 0,
+            .credits_posted = 0,
+            .user_data_128 = 0,
+            .user_data_64 = 0,
+            .user_data_32 = 0,
+            .reserved = 0,
+            .ledger = 1,
+            .code = 1,
+            .flags = .{},
+            .timestamp = 0,
+        };
+        accounts[1] = .{
+            .id = 2,
+            .debits_pending = 0,
+            .debits_posted = 0,
+            .credits_pending = 0,
+            .credits_posted = 0,
+            .user_data_128 = 0,
+            .user_data_64 = 0,
+            .user_data_32 = 0,
+            .reserved = 0,
+            .ledger = 1,
+            .code = 1,
+            .flags = .{},
+            .timestamp = 0,
+        };
+        body_encoder.add(2 * event_size);
+        const bytes_written = body_encoder.finish();
+        const message_body: []align(16) const u8 = input[0..bytes_written];
+        context.prepare(operation, message_body);
+        const output_aligned: *align(16) [constants.message_body_size_max]u8 = @alignCast(output[0..constants.message_body_size_max]);
+        _ = context.execute(context.op, operation, message_body, output_aligned);
+        context.op += 1;
+    }
+
+    // Now test transfers with multi-batch
+    const operation = TestContext.StateMachine.Operation.create_transfers;
+    const event_size = operation.event_size();
+    const result_size = operation.result_size();
+
+    // Build a multi-batch request with 3 batches:
+    // Batch 0: 1 valid transfer (1->2) - should succeed
+    // Batch 1: 1 transfer (1->999) - account 999 doesn't exist, should fail
+    // Batch 2: 1 valid transfer (2->1) - should succeed
+    var body_encoder = MultiBatchEncoder.init(input, .{
+        .element_size = event_size,
+    });
+
+    // Batch 0: valid transfer
+    {
+        const writable = body_encoder.writable().?;
+        const transfers = stdx.bytes_as_slice(.inexact, Transfer, writable);
+        transfers[0] = .{
+            .id = 100,
+            .debit_account_id = 1,
+            .credit_account_id = 2,
+            .amount = 50,
+            .pending_id = 0,
+            .user_data_128 = 0,
+            .user_data_64 = 0,
+            .user_data_32 = 0,
+            .timeout = 0,
+            .ledger = 1,
+            .code = 1,
+            .flags = .{},
+            .timestamp = 0,
+        };
+        body_encoder.add(1 * event_size);
+    }
+
+    // Batch 1: invalid transfer (credit account doesn't exist)
+    {
+        const writable = body_encoder.writable().?;
+        const transfers = stdx.bytes_as_slice(.inexact, Transfer, writable);
+        transfers[0] = .{
+            .id = 101,
+            .debit_account_id = 1,
+            .credit_account_id = 999, // Non-existent account
+            .amount = 50,
+            .pending_id = 0,
+            .user_data_128 = 0,
+            .user_data_64 = 0,
+            .user_data_32 = 0,
+            .timeout = 0,
+            .ledger = 1,
+            .code = 1,
+            .flags = .{},
+            .timestamp = 0,
+        };
+        body_encoder.add(1 * event_size);
+    }
+
+    // Batch 2: valid transfer
+    {
+        const writable = body_encoder.writable().?;
+        const transfers = stdx.bytes_as_slice(.inexact, Transfer, writable);
+        transfers[0] = .{
+            .id = 102,
+            .debit_account_id = 2,
+            .credit_account_id = 1,
+            .amount = 25,
+            .pending_id = 0,
+            .user_data_128 = 0,
+            .user_data_64 = 0,
+            .user_data_32 = 0,
+            .timeout = 0,
+            .ledger = 1,
+            .code = 1,
+            .flags = .{},
+            .timestamp = 0,
+        };
+        body_encoder.add(1 * event_size);
+    }
+
+    const bytes_written = body_encoder.finish();
+    const message_body: []align(16) const u8 = input[0..bytes_written];
+
+    // Prepare and execute
+    context.prepare(operation, message_body);
+    const output_aligned: *align(16) [constants.message_body_size_max]u8 = @alignCast(output[0..constants.message_body_size_max]);
+    const reply_size = context.execute(
+        context.op,
+        operation,
+        message_body,
+        output_aligned,
+    );
+    context.op += 1;
+
+    // Decode and verify the response
+    var reply_decoder = MultiBatchDecoder.init(
+        output[0..reply_size],
+        .{ .element_size = result_size },
+    ) catch unreachable;
+
+    // Should have 3 batches in response
+    try testing.expectEqual(@as(u16, 3), reply_decoder.batch_count());
+
+    // Batch 0 result: should have 0 errors (transfer succeeded)
+    {
+        const batch_0_results = reply_decoder.pop().?;
+        const results = stdx.bytes_as_slice(.exact, CreateTransfersResult, batch_0_results);
+        try testing.expectEqual(@as(usize, 0), results.len);
+    }
+
+    // Batch 1 result: should have 1 error (credit account doesn't exist)
+    {
+        const batch_1_results = reply_decoder.pop().?;
+        const results = stdx.bytes_as_slice(.exact, CreateTransfersResult, batch_1_results);
+        try testing.expectEqual(@as(usize, 1), results.len);
+        try testing.expectEqual(@as(u32, 0), results[0].index); // Index 0 (first item) failed
+        try testing.expectEqual(CreateTransferResult.credit_account_not_found, results[0].result);
+    }
+
+    // Batch 2 result: should have 0 errors (transfer succeeded)
+    {
+        const batch_2_results = reply_decoder.pop().?;
+        const results = stdx.bytes_as_slice(.exact, CreateTransfersResult, batch_2_results);
+        try testing.expectEqual(@as(usize, 0), results.len);
+    }
+
+    // No more batches
+    try testing.expect(reply_decoder.pop() == null);
+
+    // Verify transfers were created correctly
+    // Note: TigerBeetle tracks orphaned IDs for failed transfers to prevent ID reuse.
+    // So transfer 101 returns .found_orphaned_id (not .not_found) because the ID was
+    // registered even though the transfer failed validation.
+    try testing.expect(context.state_machine.forest.grooves.transfers.get(100) == .found_object);
+    try testing.expect(context.state_machine.forest.grooves.transfers.get(101) == .found_orphaned_id);
+    try testing.expect(context.state_machine.forest.grooves.transfers.get(102) == .found_object);
+}
