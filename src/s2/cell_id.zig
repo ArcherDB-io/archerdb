@@ -52,12 +52,13 @@ const hilbert_lookup = [4][4]u8{
     .{ 2, 1, 3, 0 },
 };
 
-/// Hilbert curve orientation lookup
+/// Hilbert curve orientation lookup (ij_index -> next_orientation)
+/// Derived from Go S2's posToOrientation by inverting through posToIJ
 const hilbert_orientation = [4][4]u8{
-    .{ 0, 0, 3, 3 },
-    .{ 1, 1, 2, 2 },
-    .{ 2, 2, 1, 1 },
-    .{ 3, 3, 0, 0 },
+    .{ 1, 0, 3, 0 }, // orientation 0
+    .{ 0, 2, 1, 1 }, // orientation 1 (swapMask)
+    .{ 2, 0, 2, 3 }, // orientation 2 (invertMask)
+    .{ 3, 3, 1, 2 }, // orientation 3 (swap|invert)
 };
 
 /// Create a cell ID from latitude and longitude in nanodegrees.
@@ -136,24 +137,16 @@ fn getFace(x: f64, y: f64, z: f64) u8 {
 
 /// Project a 3D point onto a face and get UV coordinates.
 /// UV range is [-1, 1] for each axis.
+/// This matches the Go S2 library's faceXYZToUV exactly.
 fn xyzToFaceUv(f: u8, x: f64, y: f64, z: f64) [2]f64 {
-    const coords = [3]f64{ x, y, z };
-
-    // Determine which axis is the face normal
-    const face_axis: usize = f % 3;
-    const face_sign: f64 = if (f < 3) 1.0 else -1.0;
-    const normal = coords[face_axis] * face_sign;
-
-    // Get UV axes for this face
-    const axes = face_uv_axes[f];
-    const u_axis: usize = @intCast(axes[0]);
-    const v_axis: usize = @intCast(axes[1]);
-
-    // Project onto face (divide by normal component)
-    const inv_normal = 1.0 / @abs(normal);
-    return .{
-        coords[u_axis] * inv_normal * face_sign,
-        coords[v_axis] * inv_normal * face_sign,
+    return switch (f) {
+        0 => .{ y / x, z / x },
+        1 => .{ -x / y, z / y },
+        2 => .{ -x / z, -y / z },
+        3 => .{ z / x, y / x },
+        4 => .{ z / y, -x / y },
+        5 => .{ -y / z, -x / z },
+        else => unreachable,
     };
 }
 
@@ -206,7 +199,9 @@ pub fn fromFaceIj(f: u8, i: u32, j: u32, lvl: u8) u64 {
     var id: u64 = @as(u64, f) << face_bits;
 
     // Convert IJ to Hilbert curve position and add to cell ID
-    const pos = ijToPos(i, j, lvl);
+    // Initial orientation depends on face (per S2 spec: face & swapMask)
+    const initial_orientation: u8 = @intCast(f & 1);
+    const pos = ijToPosWithOrientation(i, j, lvl, initial_orientation);
     id |= pos;
 
     // Add sentinel bit to mark level
@@ -217,8 +212,13 @@ pub fn fromFaceIj(f: u8, i: u32, j: u32, lvl: u8) u64 {
 
 /// Convert IJ coordinates to Hilbert curve position.
 fn ijToPos(i: u32, j: u32, lvl: u8) u64 {
+    return ijToPosWithOrientation(i, j, lvl, 0);
+}
+
+/// Convert IJ coordinates to Hilbert curve position with initial orientation.
+fn ijToPosWithOrientation(i: u32, j: u32, lvl: u8, initial_orientation: u8) u64 {
     var pos: u64 = 0;
-    var orientation: u8 = 0;
+    var orientation: u8 = initial_orientation;
 
     // Traverse from coarsest to finest level
     var l: u8 = 0;
@@ -282,13 +282,15 @@ pub fn children(cell_id: u64) [4]u64 {
     const new_lsb = lsb >> 2; // Move sentinel down one level
 
     // Remove old sentinel, add positions 0-3, add new sentinel
+    // The 2-bit child selector goes at bits S (old sentinel) and S-1
+    // where new_lsb << 1 = bit S-1 and new_lsb << 2 = bit S
     const base = (cell_id & ~lsb) | new_lsb;
 
     return .{
-        base, // Child 0
-        base | (new_lsb << 1), // Child 1
-        base | (new_lsb << 2), // Child 2
-        base | (new_lsb << 3), // Child 3
+        base, // Child 0: selector 00
+        base | (new_lsb << 1), // Child 1: selector 01 (bit S-1)
+        base | (new_lsb << 2), // Child 2: selector 10 (bit S)
+        base | (new_lsb << 1) | (new_lsb << 2), // Child 3: selector 11 (bits S-1 and S)
     };
 }
 
@@ -340,17 +342,20 @@ pub fn toLatLonNano(cell_id: u64) struct { lat_nano: i64, lon_nano: i64 } {
 // Internal helpers for reverse conversion
 
 fn toIj(id: u64) [2]u32 {
+    const f = face(id);
     const l = level(id);
     const shift: u6 = @intCast((max_level - l) * 2 + 1);
     const mask: u64 = (@as(u64, 1) << @intCast(l * 2)) - 1;
     const pos = (id >> shift) & mask;
-    return posToIj(pos, l);
+    // Use same initial orientation as forward path
+    const initial_orientation: u8 = @intCast(f & 1);
+    return posToIjWithOrientation(pos, l, initial_orientation);
 }
 
-fn posToIj(pos: u64, lvl: u8) [2]u32 {
-    var i: u32 = 0;
-    var j: u32 = 0;
-    var orientation: u8 = 0;
+fn posToIjWithOrientation(pos: u64, lvl: u8, initial_orientation: u8) [2]u32 {
+    var ii: u32 = 0;
+    var jj: u32 = 0;
+    var orientation: u8 = initial_orientation;
 
     var l: u8 = 0;
     while (l < lvl) : (l += 1) {
@@ -368,15 +373,15 @@ fn posToIj(pos: u64, lvl: u8) [2]u32 {
             }
         }
 
-        i = (i << 1) | i_bit;
-        j = (j << 1) | j_bit;
+        ii = (ii << 1) | i_bit;
+        jj = (jj << 1) | j_bit;
 
         // Update orientation
         const lookup_idx = (i_bit << 1) | j_bit;
         orientation = hilbert_orientation[orientation][lookup_idx];
     }
 
-    return .{ i, j };
+    return .{ ii, jj };
 }
 
 fn stToUv(st: [2]f64) [2]f64 {
@@ -395,17 +400,26 @@ fn stToUvSingle(st: f64) f64 {
     }
 }
 
+/// Convert face UV to XYZ (inverse of xyzToFaceUv)
 fn faceUvToXyz(f: u8, uv: [2]f64) [3]f64 {
-    const axes = face_uv_axes[f];
-    const u_axis: usize = @intCast(axes[0]);
-    const v_axis: usize = @intCast(axes[1]);
-    const face_axis: usize = f % 3;
-    const face_sign: f64 = if (f < 3) 1.0 else -1.0;
-
-    var xyz: [3]f64 = .{ 0, 0, 0 };
-    xyz[face_axis] = face_sign;
-    xyz[u_axis] = uv[0] * face_sign;
-    xyz[v_axis] = uv[1] * face_sign;
+    // This is the inverse of xyzToFaceUv
+    // For each face, we need to reconstruct x,y,z from u,v
+    const xyz: [3]f64 = switch (f) {
+        // xyzToFaceUv formulas:
+        // 0 => u=y/x, v=z/x => x=1, y=u*x=u, z=v*x=v
+        0 => .{ 1.0, uv[0], uv[1] },
+        // 1 => u=-x/y, v=z/y => y=1, x=-u*y=-u, z=v*y=v
+        1 => .{ -uv[0], 1.0, uv[1] },
+        // 2 => u=-x/z, v=-y/z => z=1, x=-u*z=-u, y=-v*z=-v
+        2 => .{ -uv[0], -uv[1], 1.0 },
+        // 3 => u=z/x, v=y/x => x=-1, z=u*x=-u, y=v*x=-v
+        3 => .{ -1.0, -uv[1], -uv[0] },
+        // 4 => u=z/y, v=-x/y => y=-1, z=u*y=-u, x=-v*y=v
+        4 => .{ uv[1], -1.0, -uv[0] },
+        // 5 => u=-y/z, v=-x/z => z=-1, y=-u*z=u, x=-v*z=v
+        5 => .{ uv[1], uv[0], -1.0 },
+        else => unreachable,
+    };
 
     // Normalize to unit sphere
     const norm = smath.sqrt(xyz[0] * xyz[0] + xyz[1] * xyz[1] + xyz[2] * xyz[2]);
