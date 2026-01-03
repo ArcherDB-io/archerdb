@@ -94,23 +94,23 @@ const SplitMix64 = struct {
 };
 
 fn parseLevelsCsv(allocator: std.mem.Allocator, csv: []const u8) ![]u8 {
-    var list: std.ArrayList(u8) = .empty;
-    errdefer list.deinit(allocator);
+    var list = std.ArrayList(u8).init(allocator);
+    errdefer list.deinit();
 
     var it = std.mem.splitScalar(u8, csv, ',');
     while (it.next()) |part_raw| {
         const part = std.mem.trim(u8, part_raw, " \t\r\n");
         if (part.len == 0) continue;
 
-        const level = try std.fmt.parseInt(u8, part, 10);
-        if (level > 30) return error.InvalidLevel;
-        try list.append(allocator, level);
+        const lvl = try std.fmt.parseInt(u8, part, 10);
+        if (lvl > 30) return error.InvalidLevel;
+        try list.append(lvl);
     }
     if (list.items.len == 0) return error.InvalidLevel;
 
     std.sort.pdq(u8, list.items, {}, struct {
-        fn lessThan(_: void, a: u8, b: u8) bool {
-            return a < b;
+        fn lessThan(_: void, a_val: u8, b_val: u8) bool {
+            return a_val < b_val;
         }
     }.lessThan);
 
@@ -122,9 +122,9 @@ fn parseLevelsCsv(allocator: std.mem.Allocator, csv: []const u8) ![]u8 {
             out_len += 1;
         }
     }
-    list.shrinkAndFree(allocator, out_len);
+    list.shrinkAndFree(out_len);
 
-    return try list.toOwnedSlice(allocator);
+    return try list.toOwnedSlice();
 }
 
 fn buildVectors(
@@ -150,12 +150,12 @@ fn buildVectors(
     var coord_set = std.AutoHashMap(Coord, void).init(allocator);
     defer coord_set.deinit();
 
-    var coords: std.ArrayList(Coord) = .empty;
-    defer coords.deinit(allocator);
+    var coords = std.ArrayList(Coord).init(allocator);
+    defer coords.deinit();
 
     for (edge_coords) |c| {
         try coord_set.put(c, {});
-        try coords.append(allocator, c);
+        try coords.append(c);
     }
 
     var rng = SplitMix64.init(seed);
@@ -171,15 +171,15 @@ fn buildVectors(
         const c = Coord{ .lat_nano = lat, .lon_nano = lon };
         if (coord_set.contains(c)) continue;
         try coord_set.put(c, {});
-        try coords.append(allocator, c);
+        try coords.append(c);
     }
 
-    var vectors: std.ArrayList(Vector) = .empty;
-    errdefer vectors.deinit(allocator);
+    var vectors = std.ArrayList(Vector).init(allocator);
+    errdefer vectors.deinit();
 
     for (coords.items) |c| {
         for (levels) |lvl| {
-            try vectors.append(allocator, .{
+            try vectors.append(.{
                 .lat_nano = c.lat_nano,
                 .lon_nano = c.lon_nano,
                 .level = lvl,
@@ -188,10 +188,10 @@ fn buildVectors(
     }
 
     std.sort.pdq(Vector, vectors.items, {}, struct {
-        fn lessThan(_: void, a: Vector, b: Vector) bool {
-            if (a.level != b.level) return a.level < b.level;
-            if (a.lat_nano != b.lat_nano) return a.lat_nano < b.lat_nano;
-            return a.lon_nano < b.lon_nano;
+        fn lessThan(_: void, va: Vector, vb: Vector) bool {
+            if (va.level != vb.level) return va.level < vb.level;
+            if (va.lat_nano != vb.lat_nano) return va.lat_nano < vb.lat_nano;
+            return va.lon_nano < vb.lon_nano;
         }
     }.lessThan);
 
@@ -207,7 +207,7 @@ fn buildVectors(
         }
     }
 
-    return try vectors.toOwnedSlice(allocator);
+    return try vectors.toOwnedSlice();
 }
 
 fn randI64Range(rng: *SplitMix64, min: i64, max: i64) i64 {
@@ -297,15 +297,14 @@ fn writeInputFile(path: []const u8, vectors: []const Vector) !void {
     var file = try std.fs.cwd().createFile(path, .{ .truncate = true });
     defer file.close();
 
-    var buf: [64 * 1024]u8 = undefined;
-    var file_writer = file.writer(&buf);
-    const w = &file_writer.interface;
+    var buffered = std.io.bufferedWriter(file.writer());
+    const w = buffered.writer();
 
     try w.writeAll("lat_nano\tlon_nano\tlevel\n");
     for (vectors) |v| {
         try w.print("{d}\t{d}\t{d}\n", .{ v.lat_nano, v.lon_nano, v.level });
     }
-    try w.flush();
+    try buffered.flush();
 }
 
 fn writeFinalOutput(
@@ -328,9 +327,8 @@ fn writeFinalOutput(
     var out_file = try cwd.createFile(out_path, .{ .truncate = true });
     defer out_file.close();
 
-    var buf: [64 * 1024]u8 = undefined;
-    var out_writer = out_file.writer(&buf);
-    const w = &out_writer.interface;
+    var buffered = std.io.bufferedWriter(out_file.writer());
+    const w = buffered.writer();
 
     try w.print("# generator: {s} {s}\n", .{ generator_id, generator_version });
     try w.print("# reference: {s}@{s}\n", .{ go_ref_module, go_ref_version });
@@ -342,11 +340,11 @@ fn writeFinalOutput(
     const data = try cwd.readFileAlloc(allocator, tmp_output_path, 8 * 1024 * 1024);
     defer allocator.free(data);
     try w.writeAll(data);
-    try w.flush();
+    try buffered.flush();
 }
 
 fn usage() !void {
-    try std.fs.File.stdout().writeAll(
+    try std.io.getStdOut().writeAll(
         "Usage:\n" ++
             "  zig run tools/s2_golden_gen/main.zig -- \\\n" ++
             "    --out testdata/s2/golden_vectors_v1.tsv \\\n" ++
