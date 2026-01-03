@@ -6,3 +6,15 @@ zig-out/
 .claude/
 .mcp.json
 .serena/
+
+# Build artifacts
+/zig-out/
+/.zig-cache/
+
+# Binaries
+/archerdb
+/tigerbeetle
+
+# IDE
+.vscode/
+.idea/
