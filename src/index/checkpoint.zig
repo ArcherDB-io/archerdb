@@ -182,6 +182,257 @@ pub const RecoveryPath = enum {
     lsm_scan, // Case B: Medium path via LSM
     full_rebuild, // Case C: Slow path via full rebuild
     clean_start, // No checkpoint, first startup
+
+    /// Convert to Prometheus-style label value.
+    pub fn to_label(self: RecoveryPath) []const u8 {
+        return switch (self) {
+            .none => "none",
+            .wal_replay => "wal",
+            .lsm_scan => "lsm",
+            .full_rebuild => "rebuild",
+            .clean_start => "clean",
+        };
+    }
+};
+
+// =============================================================================
+// Recovery Window Guarantees (F2.2.7)
+// =============================================================================
+//
+// The recovery system implements a tiered decision tree to minimize recovery time:
+//
+// Case A (WAL Replay): Gap <= journal_slot_count ops
+//   - Replay WAL from index_checkpoint_op + 1 to vsr_checkpoint_op
+//   - SLA: < 1 second (p99)
+//   - Most common path for normal restarts
+//
+// Case B (LSM Scan): Gap > journal_slot_count but LSM tables exist
+//   - Query LSM manifest for tables covering the op range
+//   - SLA: < 30 seconds (p99)
+//   - Occurs when WAL has wrapped but compaction hasn't deleted tables
+//
+// Case C (Full Rebuild): LSM tables compacted away
+//   - Scan all LSM levels newest→oldest with seen_entities bitset
+//   - SLA: < 2 hours for 16TB, < 2 minutes for 128GB (p99)
+//   - Worst case, only when checkpoint is very old or corrupted
+//
+// Case D (Stale Checkpoint): Checkpoint age > 1 week
+//   - Treat as potentially corrupted, trigger rebuild with alerting
+//   - Same SLA as Case C
+//   - Prevents silent corruption from causing data loss
+
+/// Recovery SLA thresholds per the spec.
+pub const RecoverySLA = struct {
+    /// WAL replay must complete within this time (nanoseconds).
+    /// Spec: < 1 second (p99)
+    pub const wal_replay_ns: u64 = 1 * std.time.ns_per_s;
+
+    /// LSM scan must complete within this time (nanoseconds).
+    /// Spec: < 30 seconds (p99)
+    pub const lsm_scan_ns: u64 = 30 * std.time.ns_per_s;
+
+    /// Full rebuild SLA depends on data size. For 128GB: ~2 minutes.
+    /// Spec: < 2 hours for 16TB
+    pub const rebuild_small_ns: u64 = 2 * 60 * std.time.ns_per_s; // 128GB
+    pub const rebuild_large_ns: u64 = 2 * 60 * 60 * std.time.ns_per_s; // 16TB
+
+    /// Threshold for small vs large data files (128GB).
+    pub const small_data_threshold_bytes: u64 = 128 * 1024 * 1024 * 1024;
+};
+
+/// Alert thresholds for recovery window health monitoring.
+pub const RecoveryAlertThresholds = struct {
+    /// Warning: checkpoint age > 2 minutes
+    pub const warning_age_seconds: u64 = 120;
+
+    /// Critical: checkpoint age > 5 minutes
+    pub const critical_age_seconds: u64 = 300;
+
+    /// Critical: checkpoint lag > 15,000 ops (approaching LSM retention limit)
+    pub const critical_lag_ops: u64 = 15_000;
+
+    /// Stale checkpoint threshold: > 1 week (triggers rebuild)
+    pub const stale_checkpoint_seconds: u64 = 7 * 24 * 60 * 60;
+};
+
+/// Recovery configuration parameters.
+pub const RecoveryConfig = struct {
+    /// WAL journal slot count (TigerBeetle default: 8192).
+    /// Recovery Case A is viable when gap <= journal_slot_count.
+    journal_slot_count: u64 = 8192,
+
+    /// LSM compaction retention ops.
+    /// Recovery Case B is viable when gap <= compaction_retention_ops.
+    compaction_retention_ops: u64 = 20_000,
+
+    /// Index checkpoint interval (seconds).
+    /// Lower = faster recovery, higher = less I/O overhead.
+    checkpoint_interval_seconds: u64 = 60,
+
+    /// Force rebuild if checkpoint is stale (age > this threshold).
+    stale_checkpoint_threshold_seconds: u64 = RecoveryAlertThresholds.stale_checkpoint_seconds,
+
+    /// Enable LSM manifest check for Case B decision.
+    enable_lsm_fallback: bool = true,
+
+    /// Create config with custom journal slot count.
+    pub fn with_journal_slots(journal_slots: u64) RecoveryConfig {
+        return .{ .journal_slot_count = journal_slots };
+    }
+};
+
+/// Input data for recovery decision.
+pub const RecoveryInput = struct {
+    /// Index checkpoint op number (from checkpoint header).
+    index_checkpoint_op: u64,
+
+    /// VSR checkpoint op number (from superblock).
+    vsr_checkpoint_op: u64,
+
+    /// Index checkpoint timestamp (nanoseconds).
+    index_checkpoint_timestamp_ns: u64,
+
+    /// Current timestamp (nanoseconds).
+    current_timestamp_ns: u64,
+
+    /// Whether LSM manifest covers the required op range.
+    /// Set by querying LSM: tables exist with op_min <= index_op and op_max >= vsr_op.
+    lsm_covers_gap: bool,
+
+    /// Whether checkpoint header is valid (checksum OK, magic OK).
+    checkpoint_valid: bool,
+
+    /// Calculate the operation gap.
+    pub fn op_gap(self: RecoveryInput) u64 {
+        return self.vsr_checkpoint_op -| self.index_checkpoint_op;
+    }
+
+    /// Calculate checkpoint age in seconds.
+    pub fn checkpoint_age_seconds(self: RecoveryInput) u64 {
+        const age_ns = self.current_timestamp_ns -| self.index_checkpoint_timestamp_ns;
+        return age_ns / std.time.ns_per_s;
+    }
+};
+
+/// Recovery decision output.
+pub const RecoveryDecision = struct {
+    /// The recovery path to take.
+    path: RecoveryPath,
+
+    /// Human-readable reason for the decision.
+    reason: []const u8,
+
+    /// Operations that need to be replayed.
+    ops_to_replay: u64,
+
+    /// Estimated recovery time (nanoseconds).
+    estimated_time_ns: u64,
+
+    /// Whether an alert should be raised.
+    should_alert: bool,
+
+    /// Alert message (if should_alert is true).
+    alert_message: []const u8,
+
+    /// Determine recovery path based on input and config.
+    ///
+    /// Implements the recovery decision tree from specs/hybrid-memory/spec.md:
+    ///
+    /// ```
+    /// 1. Load index checkpoint: index_checkpoint_op = N
+    /// 2. Load VSR checkpoint: vsr_checkpoint_op = M
+    /// 3. Calculate gap: G = M - N
+    ///
+    /// Case A: G <= journal_slot_count (8192 ops)
+    ///   PATH: WAL Replay (FAST PATH)
+    ///
+    /// Case B: G > journal_slot_count AND LSM tables cover gap
+    ///   PATH: LSM Replay (MEDIUM PATH)
+    ///
+    /// Case C: LSM tables don't cover gap (compaction occurred)
+    ///   PATH: Full Rebuild (SLOW PATH)
+    ///
+    /// Case D: Checkpoint stale (age > 1 week) or invalid
+    ///   PATH: Full Rebuild with alerting
+    /// ```
+    pub fn decide(input: RecoveryInput, config: RecoveryConfig) RecoveryDecision {
+        const gap = input.op_gap();
+        const age_seconds = input.checkpoint_age_seconds();
+
+        // Case D: Stale or invalid checkpoint - trigger rebuild with alert
+        if (!input.checkpoint_valid or age_seconds > config.stale_checkpoint_threshold_seconds) {
+            const reason = if (!input.checkpoint_valid)
+                "Checkpoint invalid (checksum or magic mismatch)"
+            else
+                "Checkpoint stale (age > 1 week)";
+
+            const alert_msg = if (!input.checkpoint_valid)
+                "Index checkpoint corrupted, triggering full rebuild"
+            else
+                "Index checkpoint stale (age > 1 week), triggering full rebuild";
+
+            return .{
+                .path = .full_rebuild,
+                .reason = reason,
+                .ops_to_replay = 0, // Full rebuild doesn't replay ops
+                .estimated_time_ns = RecoverySLA.rebuild_large_ns,
+                .should_alert = true,
+                .alert_message = alert_msg,
+            };
+        }
+
+        // Case A: Gap within WAL retention - fast WAL replay
+        if (gap <= config.journal_slot_count) {
+            return .{
+                .path = .wal_replay,
+                .reason = "Gap within WAL retention (Case A)",
+                .ops_to_replay = gap,
+                .estimated_time_ns = RecoverySLA.wal_replay_ns,
+                .should_alert = false,
+                .alert_message = "",
+            };
+        }
+
+        // Case B: Gap exceeds WAL but LSM tables exist
+        if (config.enable_lsm_fallback and input.lsm_covers_gap) {
+            const should_warn = gap > RecoveryAlertThresholds.critical_lag_ops;
+            return .{
+                .path = .lsm_scan,
+                .reason = "Gap exceeds WAL, using LSM scan (Case B)",
+                .ops_to_replay = gap,
+                .estimated_time_ns = RecoverySLA.lsm_scan_ns,
+                .should_alert = should_warn,
+                .alert_message = if (should_warn)
+                    "Index checkpoint lag approaching LSM retention limit"
+                else
+                    "",
+            };
+        }
+
+        // Case C: LSM tables compacted away - full rebuild required
+        return .{
+            .path = .full_rebuild,
+            .reason = "LSM tables compacted, full rebuild required (Case C)",
+            .ops_to_replay = 0,
+            .estimated_time_ns = RecoverySLA.rebuild_large_ns,
+            .should_alert = true,
+            .alert_message = "Index requires full rebuild (LSM tables compacted away)",
+        };
+    }
+
+    /// Log the decision for debugging/auditing.
+    pub fn log_decision(self: RecoveryDecision) void {
+        log.info("Recovery decision: path={s} reason=\"{s}\" ops={d} est_time={d}ns", .{
+            self.path.to_label(),
+            self.reason,
+            self.ops_to_replay,
+            self.estimated_time_ns,
+        });
+
+        if (self.should_alert) {
+            log.warn("Recovery alert: {s}", .{self.alert_message});
+        }
+    }
 };
 
 /// DirtyPageTracker - Tracks which index pages have been modified since last checkpoint.
@@ -1028,4 +1279,189 @@ test "RebuildResult: struct layout" {
 
     try std.testing.expectEqual(@as(u64, 1000000), result.entries_inserted);
     try std.testing.expectEqual(RecoveryPath.full_rebuild, result.recovery_path);
+}
+
+// =============================================================================
+// Recovery Decision Tests (F2.2.7)
+// =============================================================================
+
+test "RecoveryDecision: Case A - WAL replay when gap within journal slots" {
+    const config = RecoveryConfig{};
+    const now_ns: u64 = 1704067200_000_000_000; // 2024-01-01 00:00:00
+
+    const input = RecoveryInput{
+        .index_checkpoint_op = 1000,
+        .vsr_checkpoint_op = 5000, // Gap of 4000, within 8192
+        .index_checkpoint_timestamp_ns = now_ns - 30 * std.time.ns_per_s, // 30s ago
+        .current_timestamp_ns = now_ns,
+        .lsm_covers_gap = false, // Doesn't matter for Case A
+        .checkpoint_valid = true,
+    };
+
+    const decision = RecoveryDecision.decide(input, config);
+
+    try std.testing.expectEqual(RecoveryPath.wal_replay, decision.path);
+    try std.testing.expectEqual(@as(u64, 4000), decision.ops_to_replay);
+    try std.testing.expect(!decision.should_alert);
+    try std.testing.expectEqual(RecoverySLA.wal_replay_ns, decision.estimated_time_ns);
+}
+
+test "RecoveryDecision: Case B - LSM scan when gap exceeds WAL but LSM covers" {
+    const config = RecoveryConfig{};
+    const now_ns: u64 = 1704067200_000_000_000;
+
+    const input = RecoveryInput{
+        .index_checkpoint_op = 1000,
+        .vsr_checkpoint_op = 12000, // Gap of 11000, exceeds 8192
+        .index_checkpoint_timestamp_ns = now_ns - 60 * std.time.ns_per_s,
+        .current_timestamp_ns = now_ns,
+        .lsm_covers_gap = true, // LSM tables available
+        .checkpoint_valid = true,
+    };
+
+    const decision = RecoveryDecision.decide(input, config);
+
+    try std.testing.expectEqual(RecoveryPath.lsm_scan, decision.path);
+    try std.testing.expectEqual(@as(u64, 11000), decision.ops_to_replay);
+    try std.testing.expect(!decision.should_alert); // Gap < 15,000
+    try std.testing.expectEqual(RecoverySLA.lsm_scan_ns, decision.estimated_time_ns);
+}
+
+test "RecoveryDecision: Case B - LSM scan with warning when approaching limit" {
+    const config = RecoveryConfig{};
+    const now_ns: u64 = 1704067200_000_000_000;
+
+    const input = RecoveryInput{
+        .index_checkpoint_op = 1000,
+        .vsr_checkpoint_op = 18000, // Gap of 17000, exceeds 15,000 threshold
+        .index_checkpoint_timestamp_ns = now_ns - 120 * std.time.ns_per_s,
+        .current_timestamp_ns = now_ns,
+        .lsm_covers_gap = true,
+        .checkpoint_valid = true,
+    };
+
+    const decision = RecoveryDecision.decide(input, config);
+
+    try std.testing.expectEqual(RecoveryPath.lsm_scan, decision.path);
+    try std.testing.expect(decision.should_alert); // Gap > 15,000 triggers warning
+}
+
+test "RecoveryDecision: Case C - Full rebuild when LSM tables compacted" {
+    const config = RecoveryConfig{};
+    const now_ns: u64 = 1704067200_000_000_000;
+
+    const input = RecoveryInput{
+        .index_checkpoint_op = 1000,
+        .vsr_checkpoint_op = 25000, // Large gap
+        .index_checkpoint_timestamp_ns = now_ns - 300 * std.time.ns_per_s,
+        .current_timestamp_ns = now_ns,
+        .lsm_covers_gap = false, // LSM tables were compacted away
+        .checkpoint_valid = true,
+    };
+
+    const decision = RecoveryDecision.decide(input, config);
+
+    try std.testing.expectEqual(RecoveryPath.full_rebuild, decision.path);
+    try std.testing.expectEqual(@as(u64, 0), decision.ops_to_replay);
+    try std.testing.expect(decision.should_alert);
+}
+
+test "RecoveryDecision: Case D - Full rebuild on stale checkpoint" {
+    const config = RecoveryConfig{};
+    const now_ns: u64 = 1704067200_000_000_000;
+
+    // Checkpoint is 8 days old (exceeds 7 day threshold)
+    const eight_days_ns = 8 * 24 * 60 * 60 * std.time.ns_per_s;
+    const input = RecoveryInput{
+        .index_checkpoint_op = 1000,
+        .vsr_checkpoint_op = 2000, // Small gap, would be Case A normally
+        .index_checkpoint_timestamp_ns = now_ns - eight_days_ns,
+        .current_timestamp_ns = now_ns,
+        .lsm_covers_gap = true,
+        .checkpoint_valid = true,
+    };
+
+    const decision = RecoveryDecision.decide(input, config);
+
+    // Stale checkpoint forces rebuild even with small gap
+    try std.testing.expectEqual(RecoveryPath.full_rebuild, decision.path);
+    try std.testing.expect(decision.should_alert);
+    try std.testing.expect(std.mem.indexOf(u8, decision.reason, "stale") != null);
+}
+
+test "RecoveryDecision: Case D - Full rebuild on invalid checkpoint" {
+    const config = RecoveryConfig{};
+    const now_ns: u64 = 1704067200_000_000_000;
+
+    const input = RecoveryInput{
+        .index_checkpoint_op = 1000,
+        .vsr_checkpoint_op = 2000,
+        .index_checkpoint_timestamp_ns = now_ns - 30 * std.time.ns_per_s,
+        .current_timestamp_ns = now_ns,
+        .lsm_covers_gap = true,
+        .checkpoint_valid = false, // Checksum failed
+    };
+
+    const decision = RecoveryDecision.decide(input, config);
+
+    try std.testing.expectEqual(RecoveryPath.full_rebuild, decision.path);
+    try std.testing.expect(decision.should_alert);
+    try std.testing.expect(std.mem.indexOf(u8, decision.reason, "invalid") != null);
+}
+
+test "RecoveryInput: op_gap calculation" {
+    const input = RecoveryInput{
+        .index_checkpoint_op = 1000,
+        .vsr_checkpoint_op = 5000,
+        .index_checkpoint_timestamp_ns = 0,
+        .current_timestamp_ns = 0,
+        .lsm_covers_gap = false,
+        .checkpoint_valid = true,
+    };
+
+    try std.testing.expectEqual(@as(u64, 4000), input.op_gap());
+}
+
+test "RecoveryInput: checkpoint_age_seconds calculation" {
+    const now_ns: u64 = 1704067200_000_000_000;
+    const input = RecoveryInput{
+        .index_checkpoint_op = 0,
+        .vsr_checkpoint_op = 0,
+        .index_checkpoint_timestamp_ns = now_ns - 120 * std.time.ns_per_s, // 2 min ago
+        .current_timestamp_ns = now_ns,
+        .lsm_covers_gap = false,
+        .checkpoint_valid = true,
+    };
+
+    try std.testing.expectEqual(@as(u64, 120), input.checkpoint_age_seconds());
+}
+
+test "RecoveryConfig: custom journal slots" {
+    const config = RecoveryConfig.with_journal_slots(16384);
+    try std.testing.expectEqual(@as(u64, 16384), config.journal_slot_count);
+    try std.testing.expectEqual(@as(u64, 20_000), config.compaction_retention_ops);
+}
+
+test "RecoveryPath: to_label conversion" {
+    try std.testing.expectEqualStrings("wal", RecoveryPath.wal_replay.to_label());
+    try std.testing.expectEqualStrings("lsm", RecoveryPath.lsm_scan.to_label());
+    try std.testing.expectEqualStrings("rebuild", RecoveryPath.full_rebuild.to_label());
+    try std.testing.expectEqualStrings("clean", RecoveryPath.clean_start.to_label());
+    try std.testing.expectEqualStrings("none", RecoveryPath.none.to_label());
+}
+
+test "RecoverySLA: thresholds are sensible" {
+    // WAL replay should be fastest
+    try std.testing.expect(RecoverySLA.wal_replay_ns < RecoverySLA.lsm_scan_ns);
+    // LSM scan should be faster than full rebuild
+    try std.testing.expect(RecoverySLA.lsm_scan_ns < RecoverySLA.rebuild_small_ns);
+    // Small rebuild should be faster than large
+    try std.testing.expect(RecoverySLA.rebuild_small_ns < RecoverySLA.rebuild_large_ns);
+}
+
+test "RecoveryAlertThresholds: ordering" {
+    // Warning should trigger before critical
+    try std.testing.expect(
+        RecoveryAlertThresholds.warning_age_seconds < RecoveryAlertThresholds.critical_age_seconds,
+    );
 }
