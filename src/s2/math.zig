@@ -18,8 +18,6 @@
 //! - atan2: CORDIC algorithm (vectoring mode)
 
 const std = @import("std");
-const math = std.math;
-const assert = std.debug.assert;
 
 /// Pi constant with maximum f64 precision
 pub const pi: f64 = 3.14159265358979323846264338327950288;
@@ -99,10 +97,6 @@ const cordic_angles = [_]f64{
     0.0000000004656612873255223, // atan(0.0000000004656612873077392578125)
 };
 
-/// CORDIC gain factor K = prod(cos(atan(2^-i))) for 32 iterations
-/// This is approximately 0.6072529350088812561694
-const cordic_gain: f64 = 0.6072529350088812561694;
-
 /// Compute sin(x) using Chebyshev polynomial approximation.
 /// Input x should be in radians.
 /// Error < 1e-15 for all inputs.
@@ -111,7 +105,6 @@ pub fn sin(x: f64) f64 {
     var reduced = reduceAngle(x);
 
     // Further reduce to [-pi/2, pi/2] using sin(x) = sin(pi - x)
-    var sign: f64 = 1.0;
     if (reduced > pi_2) {
         reduced = pi - reduced;
     } else if (reduced < -pi_2) {
@@ -120,12 +113,12 @@ pub fn sin(x: f64) f64 {
 
     // Use sin(x) = x * P(x^2) for small x, cos(x-pi/2) for larger
     if (@abs(reduced) <= pi_4) {
-        return sign * sinTaylor(reduced);
+        return sinTaylor(reduced);
     } else {
         if (reduced > 0) {
-            return sign * cosTaylor(pi_2 - reduced);
+            return cosTaylor(pi_2 - reduced);
         } else {
-            return sign * -cosTaylor(-pi_2 - reduced);
+            return -cosTaylor(-pi_2 - reduced);
         }
     }
 }

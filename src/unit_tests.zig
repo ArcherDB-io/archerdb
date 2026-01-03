@@ -43,8 +43,10 @@ comptime {
     _ = @import("repl/completion.zig");
     _ = @import("repl/parser.zig");
     _ = @import("repl/terminal.zig");
+    _ = @import("s2/cap.zig");
     _ = @import("s2/cell_id.zig");
     _ = @import("s2/math.zig");
+    _ = @import("s2/region_coverer.zig");
     _ = @import("s2/s2.zig");
     _ = @import("scripts/cfo.zig");
     _ = @import("scripts/changelog.zig");

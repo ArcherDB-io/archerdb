@@ -40,6 +40,14 @@ const std = @import("std");
 
 pub const math = @import("math.zig");
 pub const cell_id = @import("cell_id.zig");
+pub const cap = @import("cap.zig");
+pub const region_coverer = @import("region_coverer.zig");
+
+// Re-export commonly used types
+pub const Cap = cap.Cap;
+pub const RegionCoverer = region_coverer.RegionCoverer;
+pub const Covering = region_coverer.Covering;
+pub const CellRange = region_coverer.CellRange;
 
 // Re-export commonly used functions at top level
 
@@ -119,7 +127,7 @@ test "S2 module: round-trip conversion" {
     const test_coords = [_][2]i64{
         .{ 0, 0 }, // Origin
         .{ 37_774900000, -122_419400000 }, // San Francisco
-        .{ 51_507400000, -0_127800000 }, // London
+        .{ 51_507400000, -127800000 }, // London
         .{ 35_689500000, 139_691700000 }, // Tokyo
         .{ -33_868800000, 151_209300000 }, // Sydney
     };

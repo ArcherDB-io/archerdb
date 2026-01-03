@@ -30,9 +30,6 @@ pub const max_level: u8 = 30;
 /// Number of faces on the S2 cube (Earth is projected onto a cube)
 pub const num_faces: u8 = 6;
 
-/// Sentinel bit position for level encoding
-const sentinel_bit: u64 = 1;
-
 /// Face bit shift (position in cell ID)
 const face_bits: u6 = 61;
 
@@ -72,22 +69,22 @@ const hilbert_orientation = [4][4]u8{
 /// Arguments:
 /// - lat_nano: Latitude in nanodegrees (-90_000_000_000 to +90_000_000_000)
 /// - lon_nano: Longitude in nanodegrees (-180_000_000_000 to +180_000_000_000)
-/// - level: S2 level (0-30), determines precision
+/// - lvl: S2 level (0-30), determines precision
 ///
 /// Returns: 64-bit S2 cell ID
-pub fn fromLatLonNano(lat_nano: i64, lon_nano: i64, level: u8) u64 {
-    assert(level <= max_level);
+pub fn fromLatLonNano(lat_nano: i64, lon_nano: i64, lvl: u8) u64 {
+    assert(lvl <= max_level);
 
     // Convert nanodegrees to radians
     const lat_rad = @as(f64, @floatFromInt(lat_nano)) * (smath.pi / 180_000_000_000.0);
     const lon_rad = @as(f64, @floatFromInt(lon_nano)) * (smath.pi / 180_000_000_000.0);
 
-    return fromLatLonRadians(lat_rad, lon_rad, level);
+    return fromLatLonRadians(lat_rad, lon_rad, lvl);
 }
 
 /// Create a cell ID from latitude and longitude in radians.
-pub fn fromLatLonRadians(lat_rad: f64, lon_rad: f64, level: u8) u64 {
-    assert(level <= max_level);
+pub fn fromLatLonRadians(lat_rad: f64, lon_rad: f64, lvl: u8) u64 {
+    assert(lvl <= max_level);
 
     // Convert to 3D point on unit sphere using deterministic trig
     const cos_lat = smath.cos(lat_rad);
@@ -95,25 +92,25 @@ pub fn fromLatLonRadians(lat_rad: f64, lon_rad: f64, level: u8) u64 {
     const y = cos_lat * smath.sin(lon_rad);
     const z = smath.sin(lat_rad);
 
-    return fromPoint(x, y, z, level);
+    return fromPoint(x, y, z, lvl);
 }
 
 /// Create a cell ID from a 3D point on the unit sphere.
-pub fn fromPoint(x: f64, y: f64, z: f64, level: u8) u64 {
+pub fn fromPoint(x: f64, y: f64, z: f64, lvl: u8) u64 {
     // Find which face of the cube the point projects to
-    const face = getFace(x, y, z);
+    const f = getFace(x, y, z);
 
     // Project point onto face and get UV coordinates
-    const uv = xyzToFaceUv(face, x, y, z);
+    const uv = xyzToFaceUv(f, x, y, z);
 
     // Convert UV to ST (apply S2's quadratic projection)
     const st = uvToSt(uv);
 
     // Convert ST to IJ (integer coordinates at given level)
-    const ij = stToIj(st, level);
+    const ij = stToIj(st, lvl);
 
     // Build cell ID from face and IJ
-    return fromFaceIj(face, ij[0], ij[1], level);
+    return fromFaceIj(f, ij[0], ij[1], lvl);
 }
 
 /// Get the face (0-5) that a point projects to.
@@ -139,16 +136,16 @@ fn getFace(x: f64, y: f64, z: f64) u8 {
 
 /// Project a 3D point onto a face and get UV coordinates.
 /// UV range is [-1, 1] for each axis.
-fn xyzToFaceUv(face: u8, x: f64, y: f64, z: f64) [2]f64 {
+fn xyzToFaceUv(f: u8, x: f64, y: f64, z: f64) [2]f64 {
     const coords = [3]f64{ x, y, z };
 
     // Determine which axis is the face normal
-    const face_axis: usize = face % 3;
-    const face_sign: f64 = if (face < 3) 1.0 else -1.0;
+    const face_axis: usize = f % 3;
+    const face_sign: f64 = if (f < 3) 1.0 else -1.0;
     const normal = coords[face_axis] * face_sign;
 
     // Get UV axes for this face
-    const axes = face_uv_axes[face];
+    const axes = face_uv_axes[f];
     const u_axis: usize = @intCast(axes[0]);
     const v_axis: usize = @intCast(axes[1]);
 
@@ -184,8 +181,8 @@ fn uvToStSingle(uv: f64) f64 {
 
 /// Convert ST coordinates to IJ at given level.
 /// ST range [0, 1] maps to IJ range [0, 2^level - 1].
-fn stToIj(st: [2]f64, level: u8) [2]u32 {
-    const max_ij: u32 = @as(u32, 1) << @intCast(level);
+fn stToIj(st: [2]f64, lvl: u8) [2]u32 {
+    const max_ij: u32 = @as(u32, 1) << @intCast(lvl);
 
     // Clamp to valid range and convert
     const i = stToIjSingle(st[0], max_ij);
@@ -201,32 +198,32 @@ fn stToIjSingle(st: f64, max_ij: u32) u32 {
 }
 
 /// Build cell ID from face and IJ coordinates.
-pub fn fromFaceIj(face: u8, i: u32, j: u32, level: u8) u64 {
-    assert(face < num_faces);
-    assert(level <= max_level);
+pub fn fromFaceIj(f: u8, i: u32, j: u32, lvl: u8) u64 {
+    assert(f < num_faces);
+    assert(lvl <= max_level);
 
     // Start with face bits
-    var cell_id: u64 = @as(u64, face) << face_bits;
+    var id: u64 = @as(u64, f) << face_bits;
 
     // Convert IJ to Hilbert curve position and add to cell ID
-    const pos = ijToPos(i, j, level);
-    cell_id |= pos;
+    const pos = ijToPos(i, j, lvl);
+    id |= pos;
 
     // Add sentinel bit to mark level
-    cell_id |= (@as(u64, 1) << @intCast((max_level - level) * 2));
+    id |= (@as(u64, 1) << @intCast((max_level - lvl) * 2));
 
-    return cell_id;
+    return id;
 }
 
 /// Convert IJ coordinates to Hilbert curve position.
-fn ijToPos(i: u32, j: u32, level: u8) u64 {
+fn ijToPos(i: u32, j: u32, lvl: u8) u64 {
     var pos: u64 = 0;
     var orientation: u8 = 0;
 
     // Traverse from coarsest to finest level
     var l: u8 = 0;
-    while (l < level) : (l += 1) {
-        const shift: u5 = @intCast(level - 1 - l);
+    while (l < lvl) : (l += 1) {
+        const shift: u5 = @intCast(lvl - 1 - l);
         const i_bit: u8 = @intCast((i >> shift) & 1);
         const j_bit: u8 = @intCast((j >> shift) & 1);
 
@@ -241,7 +238,7 @@ fn ijToPos(i: u32, j: u32, level: u8) u64 {
     }
 
     // Shift to correct position in cell ID (after face bits)
-    return pos << @intCast((max_level - level) * 2 + 1);
+    return pos << @intCast((max_level - lvl) * 2 + 1);
 }
 
 /// Extract the face (0-5) from a cell ID.
@@ -342,9 +339,11 @@ pub fn toLatLonNano(cell_id: u64) struct { lat_nano: i64, lon_nano: i64 } {
 
 // Internal helpers for reverse conversion
 
-fn toIj(cell_id: u64) [2]u32 {
-    const l = level(cell_id);
-    const pos = (cell_id >> @intCast((max_level - l) * 2 + 1)) & ((@as(u64, 1) << @intCast(l * 2)) - 1);
+fn toIj(id: u64) [2]u32 {
+    const l = level(id);
+    const shift: u6 = @intCast((max_level - l) * 2 + 1);
+    const mask: u64 = (@as(u64, 1) << @intCast(l * 2)) - 1;
+    const pos = (id >> shift) & mask;
     return posToIj(pos, l);
 }
 
