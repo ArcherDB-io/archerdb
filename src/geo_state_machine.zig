@@ -1213,3 +1213,74 @@ test "CheckpointHeader has VSR state fields (F2.2.3)" {
     try std.testing.expectEqual(@as(u64, 12345), header.vsr_checkpoint_op);
     try std.testing.expectEqual(@as(u64, 12400), header.vsr_commit_max);
 }
+
+// =============================================================================
+// GDPR Deletion Tests (F2.5.6)
+// =============================================================================
+
+test "DeleteEntityResult: result codes" {
+    try std.testing.expectEqual(@as(u32, 0), @intFromEnum(DeleteEntityResult.ok));
+    try std.testing.expectEqual(@as(u32, 2), @intFromEnum(DeleteEntityResult.entity_id_must_not_be_zero));
+    try std.testing.expectEqual(@as(u32, 3), @intFromEnum(DeleteEntityResult.entity_not_found));
+}
+
+test "DeleteEntitiesResult: struct layout" {
+    try std.testing.expectEqual(@as(usize, 8), @sizeOf(DeleteEntitiesResult));
+    const result = DeleteEntitiesResult{
+        .index = 5,
+        .result = .ok,
+    };
+    try std.testing.expectEqual(@as(u32, 5), result.index);
+    try std.testing.expectEqual(DeleteEntityResult.ok, result.result);
+}
+
+test "DeletionMetrics: record_deletion_batch" {
+    var metrics = DeletionMetrics{};
+
+    // Initial state.
+    try std.testing.expectEqual(@as(u64, 0), metrics.entities_deleted);
+    try std.testing.expectEqual(@as(u64, 0), metrics.entities_not_found);
+    try std.testing.expectEqual(@as(u64, 0), metrics.deletion_operations);
+
+    // Record first batch: 5 deleted, 2 not found, 1000ns.
+    metrics.record_deletion_batch(5, 2, 1000);
+    try std.testing.expectEqual(@as(u64, 5), metrics.entities_deleted);
+    try std.testing.expectEqual(@as(u64, 2), metrics.entities_not_found);
+    try std.testing.expectEqual(@as(u64, 1), metrics.deletion_operations);
+    try std.testing.expectEqual(@as(u64, 1000), metrics.total_deletion_duration_ns);
+
+    // Record second batch: 10 deleted, 0 not found, 2000ns.
+    metrics.record_deletion_batch(10, 0, 2000);
+    try std.testing.expectEqual(@as(u64, 15), metrics.entities_deleted);
+    try std.testing.expectEqual(@as(u64, 2), metrics.entities_not_found);
+    try std.testing.expectEqual(@as(u64, 2), metrics.deletion_operations);
+    try std.testing.expectEqual(@as(u64, 3000), metrics.total_deletion_duration_ns);
+}
+
+test "DeletionMetrics: average_deletion_latency_ns" {
+    var metrics = DeletionMetrics{};
+
+    // No deletions - returns 0.
+    try std.testing.expectEqual(@as(u64, 0), metrics.average_deletion_latency_ns());
+
+    // 10 entities deleted in 5000ns = 500ns per entity.
+    metrics.record_deletion_batch(10, 0, 5000);
+    try std.testing.expectEqual(@as(u64, 500), metrics.average_deletion_latency_ns());
+}
+
+test "DeletionMetrics: toPrometheus output" {
+    var metrics = DeletionMetrics{};
+    metrics.entities_deleted = 100;
+    metrics.entities_not_found = 5;
+    metrics.deletion_operations = 10;
+    metrics.total_deletion_duration_ns = 500000;
+
+    var buffer: [2048]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buffer);
+    try metrics.toPrometheus(fbs.writer());
+
+    const output = fbs.getWritten();
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_entities_deleted_total 100") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_deletion_not_found_total 5") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_deletion_operations_total 10") != null);
+}
