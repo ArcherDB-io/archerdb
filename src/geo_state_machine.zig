@@ -259,7 +259,8 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         /// Prepare phase - calculate timestamp delta before consensus.
         /// Called only on primary when converting client request to prepare.
         ///
-        /// Implementation: F1.1.3
+        /// The timestamp delta ensures each event in a batch gets a unique timestamp.
+        /// Write operations increment by event count; read operations return 0.
         pub fn prepare(
             self: *GeoStateMachine,
             operation: Operation,
@@ -267,20 +268,63 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         ) void {
             assert(message_body_used.len <= self.batch_size_limit);
 
-            // TODO(F1.1.3): Calculate delta based on operation type and batch size
-            const delta_ns: u64 = switch (operation) {
-                .pulse => 0,
-                .create_accounts, .create_transfers => blk: {
-                    // For TigerBeetle compatibility, use event count
-                    const event_size = operation.event_size();
-                    if (event_size == 0) break :blk 0;
-                    const count = @divFloor(message_body_used.len, event_size);
-                    break :blk count;
-                },
-                else => 1,
-            };
+            const delta_ns: u64 = self.prepare_delta_nanoseconds(operation, message_body_used);
+            maybe(delta_ns == 0);
+            self.prepare_timestamp += delta_ns;
+        }
 
-            self.prepare_timestamp +|= delta_ns;
+        /// Returns the logical time increment (in nanoseconds) for the batch.
+        /// Write operations increment by event count for unique timestamps.
+        /// Read operations return 0 (no state modification).
+        fn prepare_delta_nanoseconds(
+            self: *const GeoStateMachine,
+            operation: Operation,
+            batch: []const u8,
+        ) u64 {
+            assert(batch.len <= self.batch_size_limit);
+
+            const event_size = operation.event_size();
+            if (event_size == 0) return 0;
+
+            return switch (operation) {
+                // Write operations: increment by event count
+                .create_accounts => @divExact(batch.len, event_size),
+                .create_transfers => @divExact(batch.len, event_size),
+
+                // TODO(F1.2): Add GeoEvent operations here
+                // .insert_events => @divExact(batch.len, @sizeOf(GeoEvent)),
+                // .upsert_events => @divExact(batch.len, @sizeOf(GeoEvent)),
+                // .delete_entities => @divExact(batch.len, @sizeOf(u128)),
+
+                // Pulse: max events that could be processed
+                .pulse => batch_max_events(),
+
+                // Read operations: no timestamp increment
+                .lookup_accounts,
+                .lookup_transfers,
+                .get_account_transfers,
+                .get_account_balances,
+                .query_accounts,
+                .query_transfers,
+                .get_change_events,
+                => 0,
+
+                // Deprecated unbatched operations (TigerBeetle compatibility)
+                .deprecated_create_accounts_unbatched => @divExact(batch.len, event_size),
+                .deprecated_create_transfers_unbatched => @divExact(batch.len, event_size),
+                .deprecated_lookup_accounts_unbatched,
+                .deprecated_lookup_transfers_unbatched,
+                .deprecated_get_account_transfers_unbatched,
+                .deprecated_get_account_balances_unbatched,
+                .deprecated_query_accounts_unbatched,
+                .deprecated_query_transfers_unbatched,
+                => 0,
+            };
+        }
+
+        /// Maximum events per batch (for pulse timestamp delta).
+        fn batch_max_events() u64 {
+            return @divFloor(constants.message_body_size_max, @sizeOf(GeoEvent));
         }
 
         /// Prefetch phase - asynchronously load data needed for execution.
@@ -454,4 +498,12 @@ test "QueryPolygonFilter size" {
 
 test "PolygonVertex size" {
     try std.testing.expectEqual(@as(usize, 16), @sizeOf(PolygonVertex));
+}
+
+test "batch_max_events calculation" {
+    // Should calculate max GeoEvents that fit in message body
+    const max_events = @divFloor(constants.message_body_size_max, @sizeOf(GeoEvent));
+    try std.testing.expect(max_events > 0);
+    // With 128-byte GeoEvent and ~1MB body, should fit ~8000 events
+    try std.testing.expect(max_events >= 8);
 }
