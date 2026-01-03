@@ -60,6 +60,7 @@ comptime {
     _ = @import("state_machine_fuzz.zig");
     _ = @import("state_machine_tests.zig");
     _ = @import("testing/bench.zig");
+    _ = @import("testing/cluster/s2_determinism_checker.zig");
     _ = @import("testing/exhaustigen.zig");
     _ = @import("testing/geo_workload.zig");
     _ = @import("testing/id.zig");
