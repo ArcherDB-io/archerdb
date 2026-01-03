@@ -87,6 +87,16 @@ pub const tree_ids = struct {
         .ledger_expired = 32,
         .prunable = 33,
     };
+
+    // ArcherDB geospatial tree IDs (F1.3.1)
+    // GeoEvent storage uses composite ID (s2_cell_id:timestamp) as primary key
+    pub const GeoEvent = .{
+        .id = 34, // Composite ID: s2_cell_id high bits + timestamp low bits
+        .entity_id = 35, // Secondary index for UUID lookups
+        .timestamp = 36, // For temporal ordering/query_latest
+        .s2_cell_id = 37, // For spatial range scans
+        .group_id = 38, // Optional grouping index
+    };
 };
 
 pub const TransferPending = extern struct {
