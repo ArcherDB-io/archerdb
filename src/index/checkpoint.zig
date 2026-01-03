@@ -315,6 +315,11 @@ pub fn checkpoint_lag_ops(stats: *const CheckpointStats) u64 {
     return stats.last_vsr_checkpoint_op -| stats.last_checkpoint_op;
 }
 
+/// Convert nanoseconds to seconds as f64 for Prometheus metrics.
+pub fn ns_to_seconds(ns: u64) f64 {
+    return @as(f64, @floatFromInt(ns)) / @as(f64, std.time.ns_per_s);
+}
+
 /// Check if checkpoint age is in warning state (> 2 minutes).
 pub fn is_checkpoint_age_warning(stats: *const CheckpointStats) bool {
     return checkpoint_age_seconds(stats) > RecoveryAlertThresholds.warning_age_seconds;
@@ -1211,8 +1216,11 @@ pub fn IndexCheckpointType(comptime page_size: u32) type {
 
             // Read header
             var header: CheckpointHeader = undefined;
-            const header_bytes = file.reader().readBytesNoEof(@sizeOf(CheckpointHeader)) catch return error.IoError;
-            header = @bitCast(header_bytes);
+            const hdr_size = @sizeOf(CheckpointHeader);
+            const hdr_bytes = file.reader().readBytesNoEof(hdr_size) catch {
+                return error.IoError;
+            };
+            header = @bitCast(hdr_bytes);
 
             // Validate header
             if (!header.validate()) return error.InvalidHeader;
@@ -1286,10 +1294,14 @@ pub fn IndexCheckpointType(comptime page_size: u32) type {
             return self.calculate_header_checksum_for(&self.header);
         }
 
-        fn calculate_header_checksum_for(self: *const @This(), header: *const CheckpointHeader) u128 {
+        fn calculate_header_checksum_for(
+            self: *const @This(),
+            header: *const CheckpointHeader,
+        ) u128 {
             _ = self;
             // Checksum covers header bytes after the checksum field
-            const checksum_offset = @offsetOf(CheckpointHeader, "header_checksum") + @sizeOf(u128) + @sizeOf(u128);
+            const hdr_cs_off = @offsetOf(CheckpointHeader, "header_checksum");
+            const checksum_offset = hdr_cs_off + @sizeOf(u128) + @sizeOf(u128);
             const header_bytes = mem.asBytes(header);
             const payload = header_bytes[checksum_offset..];
             return vsr.checksum(payload);
@@ -1700,7 +1712,7 @@ pub const PrometheusMetrics = struct {
             labels.as_string(),
             stats.pages_written,
             labels.as_string(),
-            @as(f64, @floatFromInt(stats.last_checkpoint_duration_ns)) / @as(f64, std.time.ns_per_s),
+            ns_to_seconds(stats.last_checkpoint_duration_ns),
             labels.as_string(),
             checkpoint_age_seconds(stats),
             labels.as_string(),
@@ -1780,7 +1792,7 @@ pub const PrometheusMetrics = struct {
             labels.as_string(), cumulative_3600s,
             labels.as_string(), cumulative_7200s,
             labels.as_string(), cumulative_inf,
-            labels.as_string(), @as(f64, @floatFromInt(metrics.recovery_duration_sum_ns)) / @as(f64, std.time.ns_per_s),
+            labels.as_string(), ns_to_seconds(metrics.recovery_duration_sum_ns),
             labels.as_string(), metrics.recovery_duration_count,
         });
     }
@@ -1928,8 +1940,9 @@ test "DirtyPageTrackerType: dirty iterator" {
 
 test "IndexCheckpointType: initialization" {
     const allocator = std.testing.allocator;
+    const path = "/tmp/test_checkpoint.dat";
 
-    var checkpoint = try DefaultIndexCheckpointType.init(allocator, "/tmp/test_checkpoint.dat", 1000);
+    var checkpoint = try DefaultIndexCheckpointType.init(allocator, path, 1000);
     defer checkpoint.deinit();
 
     try std.testing.expectEqual(@as(u64, 1000), checkpoint.header.capacity);
@@ -1938,8 +1951,9 @@ test "IndexCheckpointType: initialization" {
 
 test "IndexCheckpointType: mark entry dirty" {
     const allocator = std.testing.allocator;
+    const path = "/tmp/test_checkpoint.dat";
 
-    var checkpoint = try DefaultIndexCheckpointType.init(allocator, "/tmp/test_checkpoint.dat", 1000);
+    var checkpoint = try DefaultIndexCheckpointType.init(allocator, path, 1000);
     defer checkpoint.deinit();
 
     // Mark entries dirty
@@ -2525,10 +2539,12 @@ test "PrometheusMetrics: format_recovery_metrics" {
     const output = stream.getWritten();
 
     // Verify histogram buckets are present
-    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_recovery_total") != null);
-    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_recovery_duration_seconds_bucket") != null);
-    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_recovery_duration_seconds_sum") != null);
-    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_recovery_duration_seconds_count") != null);
+    const pfx = "archerdb_recovery";
+    const dur = pfx ++ "_duration_seconds";
+    try std.testing.expect(std.mem.indexOf(u8, output, pfx ++ "_total") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, dur ++ "_bucket") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, dur ++ "_sum") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, dur ++ "_count") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "le=\"+Inf\"") != null);
 }
 
@@ -2572,33 +2588,36 @@ test "PrometheusMetrics.Labels: with_replica" {
 // =============================================================================
 
 test "IndexAlertThresholds: tombstone ratio thresholds" {
+    const IAT = IndexAlertThresholds;
     // Verify threshold values match spec
-    try std.testing.expectApproxEqAbs(@as(f32, 0.1), IndexAlertThresholds.tombstone_warning, 0.001);
-    try std.testing.expectApproxEqAbs(@as(f32, 0.3), IndexAlertThresholds.tombstone_critical, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.1), IAT.tombstone_warning, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.3), IAT.tombstone_critical, 0.001);
 
     // Warning should be less than critical
-    try std.testing.expect(IndexAlertThresholds.tombstone_warning < IndexAlertThresholds.tombstone_critical);
+    try std.testing.expect(IAT.tombstone_warning < IAT.tombstone_critical);
 }
 
 test "IndexAlertThresholds: load factor thresholds" {
+    const IAT = IndexAlertThresholds;
     // Verify threshold values match spec
-    try std.testing.expectApproxEqAbs(@as(f32, 0.6), IndexAlertThresholds.load_factor_warning, 0.001);
-    try std.testing.expectApproxEqAbs(@as(f32, 0.75), IndexAlertThresholds.load_factor_critical, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.6), IAT.load_factor_warning, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.75), IAT.load_factor_critical, 0.001);
 
     // Warning should be less than critical
-    try std.testing.expect(IndexAlertThresholds.load_factor_warning < IndexAlertThresholds.load_factor_critical);
+    try std.testing.expect(IAT.load_factor_warning < IAT.load_factor_critical);
 
     // Load factor thresholds should be below 1.0
-    try std.testing.expect(IndexAlertThresholds.load_factor_critical < 1.0);
+    try std.testing.expect(IAT.load_factor_critical < 1.0);
 }
 
 test "IndexAlertThresholds: probe length thresholds" {
+    const IAT = IndexAlertThresholds;
     // Verify threshold values match spec
-    try std.testing.expectEqual(@as(u32, 3), IndexAlertThresholds.probe_length_warning);
-    try std.testing.expectEqual(@as(u32, 10), IndexAlertThresholds.probe_length_critical);
+    try std.testing.expectEqual(@as(u32, 3), IAT.probe_length_warning);
+    try std.testing.expectEqual(@as(u32, 10), IAT.probe_length_critical);
 
     // Warning should be less than critical
-    try std.testing.expect(IndexAlertThresholds.probe_length_warning < IndexAlertThresholds.probe_length_critical);
+    try std.testing.expect(IAT.probe_length_warning < IAT.probe_length_critical);
 }
 
 test "IndexAlertThresholds: tombstone alert functions" {
@@ -2699,30 +2718,33 @@ test "IndexAlertThresholds: get_health_status" {
                 @as(f32, @floatFromInt(self.capacity));
         }
     };
+    const IAT = IndexAlertThresholds;
+    const HS = IAT.HealthStatus;
 
     // Healthy index
     const healthy = MockStats{};
-    try std.testing.expectEqual(IndexAlertThresholds.HealthStatus.healthy, IndexAlertThresholds.get_health_status(healthy));
+    try std.testing.expectEqual(HS.healthy, IAT.get_health_status(healthy));
 
     // Warning from high tombstones
     const warning_tombstone = MockStats{ .tombstone_count = 20, .entry_count = 80 };
-    try std.testing.expectEqual(IndexAlertThresholds.HealthStatus.warning, IndexAlertThresholds.get_health_status(warning_tombstone));
+    try std.testing.expectEqual(HS.warning, IAT.get_health_status(warning_tombstone));
 
     // Warning from high load factor
     const warning_load = MockStats{ .entry_count = 65, .capacity = 100 };
-    try std.testing.expectEqual(IndexAlertThresholds.HealthStatus.warning, IndexAlertThresholds.get_health_status(warning_load));
+    try std.testing.expectEqual(HS.warning, IAT.get_health_status(warning_load));
 
     // Warning from high probe length
     const warning_probe = MockStats{ .max_probe_length_seen = 5 };
-    try std.testing.expectEqual(IndexAlertThresholds.HealthStatus.warning, IndexAlertThresholds.get_health_status(warning_probe));
+    try std.testing.expectEqual(HS.warning, IAT.get_health_status(warning_probe));
 
     // Critical from tombstones
     const critical = MockStats{ .tombstone_count = 40, .entry_count = 60 };
-    try std.testing.expectEqual(IndexAlertThresholds.HealthStatus.critical, IndexAlertThresholds.get_health_status(critical));
+    try std.testing.expectEqual(HS.critical, IAT.get_health_status(critical));
 }
 
 test "IndexAlertThresholds.HealthStatus: to_label" {
-    try std.testing.expectEqualStrings("healthy", IndexAlertThresholds.HealthStatus.healthy.to_label());
-    try std.testing.expectEqualStrings("warning", IndexAlertThresholds.HealthStatus.warning.to_label());
-    try std.testing.expectEqualStrings("critical", IndexAlertThresholds.HealthStatus.critical.to_label());
+    const HS = IndexAlertThresholds.HealthStatus;
+    try std.testing.expectEqualStrings("healthy", HS.healthy.to_label());
+    try std.testing.expectEqualStrings("warning", HS.warning.to_label());
+    try std.testing.expectEqualStrings("critical", HS.critical.to_label());
 }

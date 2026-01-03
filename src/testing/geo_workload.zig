@@ -79,7 +79,9 @@ pub const Options = struct {
                 .denominator = 100,
             },
             .hotspot_count = prng.range_inclusive(u8, 2, 10),
-            .hotspot_radius = @as(i64, @intCast(prng.range_inclusive(u64, 10_000_000, 500_000_000))),
+            .hotspot_radius = @as(i64, @intCast(
+                prng.range_inclusive(u64, 10_000_000, 500_000_000),
+            )),
             .tracked_entities_max = prng.range_inclusive(u32, 100, 5000),
             .adversarial_probability = .{
                 .numerator = prng.range_inclusive(u8, 10, 40),
@@ -119,8 +121,6 @@ pub const EdgeCaseCoordinates = struct {
 /// GeoEvent workload generator for VOPR simulation.
 pub fn GeoWorkloadType(comptime StateMachine: type) type {
     return struct {
-        const Self = @This();
-
         /// Return type for build_request and related functions.
         /// Named struct to ensure type compatibility across all request builders.
         pub const RequestResult = struct {
@@ -174,7 +174,7 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
             allocator: std.mem.Allocator,
             prng: *stdx.PRNG,
             options: FileOptions,
-        ) !Self {
+        ) !@This() {
             var tracked = std.ArrayList(u128).init(allocator);
             errdefer tracked.deinit();
 
@@ -183,16 +183,18 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
             errdefer allocator.free(hotspots);
 
             for (hotspots) |*hs| {
+                // Random lat in valid range [-90, +90] degrees
+                // Generate unsigned [0, 180B] then shift to signed range
+                const lat_raw = prng.range_inclusive(u64, 0, 180_000_000_000);
+                // Random lon in valid range [-180, +180] degrees
+                const lon_raw = prng.range_inclusive(u64, 0, 360_000_000_000);
                 hs.* = .{
-                    // Random lat in valid range [-90, +90] degrees
-                    // Generate unsigned [0, 180B] then shift to signed range
-                    .lat_nano = @as(i64, @intCast(prng.range_inclusive(u64, 0, 180_000_000_000))) - 90_000_000_000,
-                    // Random lon in valid range [-180, +180] degrees
-                    .lon_nano = @as(i64, @intCast(prng.range_inclusive(u64, 0, 360_000_000_000))) - 180_000_000_000,
+                    .lat_nano = @as(i64, @intCast(lat_raw)) - 90_000_000_000,
+                    .lon_nano = @as(i64, @intCast(lon_raw)) - 180_000_000_000,
                 };
             }
 
-            return Self{
+            return @This(){
                 .prng = prng,
                 .options = options,
                 .tracked_entities = tracked,
@@ -200,20 +202,20 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
             };
         }
 
-        pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+        pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
             self.tracked_entities.deinit();
             allocator.free(self.hotspots);
         }
 
         /// Returns true when workload is complete.
-        pub fn done(self: *const Self) bool {
+        pub fn done(self: *const @This()) bool {
             return self.requests_sent >= self.options.requests_target and
                 self.requests_sent == self.requests_delivered;
         }
 
         /// Build a request body for the next operation.
         pub fn build_request(
-            self: *Self,
+            self: *@This(),
             client_index: usize,
             body: []align(@alignOf(vsr.Header)) u8,
         ) RequestResult {
@@ -231,7 +233,7 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
 
         /// Build a write operation (insert, update, or delete).
         fn build_write_request(
-            self: *Self,
+            self: *@This(),
             body: []align(@alignOf(vsr.Header)) u8,
         ) RequestResult {
             // Weight distribution: 80% inserts, 15% updates, 5% deletes
@@ -247,7 +249,7 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
 
         /// Build an insert_events request.
         fn build_insert_request(
-            self: *Self,
+            self: *@This(),
             body: []align(@alignOf(vsr.Header)) u8,
         ) RequestResult {
             const events: []GeoEvent = stdx.bytes_as_slice(.inexact, GeoEvent, body);
@@ -277,7 +279,7 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
 
         /// Build an update request (insert with existing entity_id).
         fn build_update_request(
-            self: *Self,
+            self: *@This(),
             body: []align(@alignOf(vsr.Header)) u8,
         ) RequestResult {
             if (self.tracked_entities.items.len == 0) {
@@ -306,7 +308,7 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
 
         /// Build a delete request.
         fn build_delete_request(
-            self: *Self,
+            self: *@This(),
             body: []align(@alignOf(vsr.Header)) u8,
         ) RequestResult {
             if (self.tracked_entities.items.len == 0) {
@@ -319,7 +321,8 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
 
             // Pick random entities to delete, respecting batch_size_limit
             const max_by_limit = self.options.batch_size_limit / @sizeOf(u128);
-            const count = self.prng.int_inclusive(usize, @max(1, @min(entity_ids.len, @min(max_by_limit, 10))));
+            const max_count = @min(entity_ids.len, @min(max_by_limit, 10));
+            const count = self.prng.int_inclusive(usize, @max(1, max_count));
             for (entity_ids[0..count], 0..) |*id, i| {
                 _ = i;
                 const idx = self.prng.int(usize) % self.tracked_entities.items.len;
@@ -336,7 +339,7 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
 
         /// Build a query operation.
         fn build_query_request(
-            self: *Self,
+            self: *@This(),
             body: []align(@alignOf(vsr.Header)) u8,
         ) RequestResult {
             // Check for adversarial pattern (F4.1.3)
@@ -358,7 +361,7 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
         /// Build an adversarial/edge-case spatial query (F4.1.3).
         /// Tests boundary conditions per testing-simulation spec.
         fn build_adversarial_query(
-            self: *Self,
+            self: *@This(),
             body: []align(@alignOf(vsr.Header)) u8,
         ) RequestResult {
             self.stats.adversarial_queries += 1;
@@ -377,7 +380,7 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
 
         /// Radius query centered at a pole (tests S2 cell edge cases)
         fn build_pole_radius_query(
-            self: *Self,
+            self: *@This(),
             body: []align(@alignOf(vsr.Header)) u8,
         ) RequestResult {
             const filter = @as(*archerdb.QueryRadiusFilter, @ptrCast(@alignCast(body.ptr)));
@@ -409,18 +412,20 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
 
         /// Radius query crossing the anti-meridian (±180°)
         fn build_antimeridian_radius_query(
-            self: *Self,
+            self: *@This(),
             body: []align(@alignOf(vsr.Header)) u8,
         ) RequestResult {
             const filter = @as(*archerdb.QueryRadiusFilter, @ptrCast(@alignCast(body.ptr)));
 
             // Random latitude, longitude near anti-meridian
-            filter.center_lat_nano = @as(i64, @intCast(self.prng.range_inclusive(u64, 0, 180_000_000_000))) - 90_000_000_000;
+            const lat_raw = self.prng.range_inclusive(u64, 0, 180_000_000_000);
+            filter.center_lat_nano = @as(i64, @intCast(lat_raw)) - 90_000_000_000;
             // Longitude very close to ±180°
+            const offset = @as(i64, @intCast(self.prng.range_inclusive(u64, 0, 10_000_000)));
             filter.center_lon_nano = if (self.prng.chance(.{ .numerator = 50, .denominator = 100 }))
-                EdgeCaseCoordinates.ANTI_MERIDIAN_EAST - @as(i64, @intCast(self.prng.range_inclusive(u64, 0, 10_000_000)))
+                EdgeCaseCoordinates.ANTI_MERIDIAN_EAST - offset
             else
-                EdgeCaseCoordinates.ANTI_MERIDIAN_WEST + @as(i64, @intCast(self.prng.range_inclusive(u64, 0, 10_000_000)));
+                EdgeCaseCoordinates.ANTI_MERIDIAN_WEST + offset;
 
             // Large enough radius to cross anti-meridian
             filter.radius_mm = self.prng.range_inclusive(u32, 50_000_000, 500_000_000); // 50-500km
@@ -442,13 +447,15 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
 
         /// Zero-radius query (point query edge case)
         fn build_zero_radius_query(
-            self: *Self,
+            self: *@This(),
             body: []align(@alignOf(vsr.Header)) u8,
         ) RequestResult {
             const filter = @as(*archerdb.QueryRadiusFilter, @ptrCast(@alignCast(body.ptr)));
 
-            filter.center_lat_nano = @as(i64, @intCast(self.prng.range_inclusive(u64, 0, 180_000_000_000))) - 90_000_000_000;
-            filter.center_lon_nano = @as(i64, @intCast(self.prng.range_inclusive(u64, 0, 360_000_000_000))) - 180_000_000_000;
+            const lat_rand = self.prng.range_inclusive(u64, 0, 180_000_000_000);
+            const lon_rand = self.prng.range_inclusive(u64, 0, 360_000_000_000);
+            filter.center_lat_nano = @as(i64, @intCast(lat_rand)) - 90_000_000_000;
+            filter.center_lon_nano = @as(i64, @intCast(lon_rand)) - 180_000_000_000;
             filter.radius_mm = 0; // Zero radius
             filter.limit = self.prng.int_inclusive(u32, 100);
             filter.timestamp_min = 0;
@@ -468,13 +475,15 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
 
         /// Maximum radius query (1000km per spec)
         fn build_max_radius_query(
-            self: *Self,
+            self: *@This(),
             body: []align(@alignOf(vsr.Header)) u8,
         ) RequestResult {
             const filter = @as(*archerdb.QueryRadiusFilter, @ptrCast(@alignCast(body.ptr)));
 
-            filter.center_lat_nano = @as(i64, @intCast(self.prng.range_inclusive(u64, 0, 180_000_000_000))) - 90_000_000_000;
-            filter.center_lon_nano = @as(i64, @intCast(self.prng.range_inclusive(u64, 0, 360_000_000_000))) - 180_000_000_000;
+            const lat_rand = self.prng.range_inclusive(u64, 0, 180_000_000_000);
+            const lon_rand = self.prng.range_inclusive(u64, 0, 360_000_000_000);
+            filter.center_lat_nano = @as(i64, @intCast(lat_rand)) - 90_000_000_000;
+            filter.center_lon_nano = @as(i64, @intCast(lon_rand)) - 180_000_000_000;
             filter.radius_mm = 1_000_000_000; // 1000km max radius
             filter.limit = self.prng.int_inclusive(u32, 1000);
             filter.timestamp_min = 0;
@@ -494,7 +503,7 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
 
         /// Polygon query at coordinate boundaries (min/max vertices, pole-containing)
         fn build_boundary_polygon_query(
-            self: *Self,
+            self: *@This(),
             body: []align(@alignOf(vsr.Header)) u8,
         ) RequestResult {
             const filter = @as(*archerdb.QueryPolygonFilter, @ptrCast(@alignCast(body.ptr)));
@@ -505,8 +514,9 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
             const vertices_bytes = body[vertices_start..];
             const max_by_body = vertices_bytes.len / @sizeOf(geo_state_machine_types.PolygonVertex);
             // Limit vertices to what fits in batch_size_limit
+            const vert_size = @sizeOf(geo_state_machine_types.PolygonVertex);
             const max_by_limit = if (self.options.batch_size_limit > vertices_start)
-                (self.options.batch_size_limit - vertices_start) / @sizeOf(geo_state_machine_types.PolygonVertex)
+                (self.options.batch_size_limit - vertices_start) / vert_size
             else
                 3; // Minimum polygon
             const max_vertices = @min(max_by_body, @min(max_by_limit, 100));
@@ -518,7 +528,8 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
             filter.group_id = 0;
             filter.reserved = [_]u8{0} ** 96;
 
-            const vertices = stdx.bytes_as_slice(.inexact, geo_state_machine_types.PolygonVertex, vertices_bytes);
+            const PV = geo_state_machine_types.PolygonVertex;
+            const vertices = stdx.bytes_as_slice(.inexact, PV, vertices_bytes);
 
             // Generate polygon containing a pole or crossing anti-meridian
             const pole_containing = self.prng.chance(.{ .numerator = 50, .denominator = 100 });
@@ -545,7 +556,8 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
             self.stats.polygon_queries += 1;
             self.stats.queries_sent += 1;
 
-            const total_size = vertices_start + filter.vertex_count * @sizeOf(geo_state_machine_types.PolygonVertex);
+            const pv_size = @sizeOf(geo_state_machine_types.PolygonVertex);
+            const total_size = vertices_start + filter.vertex_count * pv_size;
             return .{
                 .operation = .query_polygon,
                 .size = total_size,
@@ -554,15 +566,16 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
 
         /// Concave polygon query (tests point-in-polygon edge cases)
         fn build_concave_polygon_query(
-            self: *Self,
+            self: *@This(),
             body: []align(@alignOf(vsr.Header)) u8,
         ) RequestResult {
             const filter = @as(*archerdb.QueryPolygonFilter, @ptrCast(@alignCast(body.ptr)));
 
             const vertices_start = @sizeOf(archerdb.QueryPolygonFilter);
+            const pv_size = @sizeOf(geo_state_machine_types.PolygonVertex);
 
             // Check if L-shape (6 vertices) fits in batch_size_limit
-            const l_shape_size = vertices_start + 6 * @sizeOf(geo_state_machine_types.PolygonVertex);
+            const l_shape_size = vertices_start + 6 * pv_size;
             if (self.options.batch_size_limit < l_shape_size) {
                 // Batch too small for L-shape, fall back to radius query
                 return self.build_radius_query(body);
@@ -577,26 +590,30 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
             filter.reserved = [_]u8{0} ** 96;
 
             const vertices_bytes = body[vertices_start..];
-            const vertices = stdx.bytes_as_slice(.inexact, geo_state_machine_types.PolygonVertex, vertices_bytes);
+            const PV = geo_state_machine_types.PolygonVertex;
+            const vertices = stdx.bytes_as_slice(.inexact, PV, vertices_bytes);
 
             // Generate L-shaped concave polygon around a random center
-            const center_lat = @as(i64, @intCast(self.prng.range_inclusive(u64, 0, 160_000_000_000))) - 80_000_000_000;
-            const center_lon = @as(i64, @intCast(self.prng.range_inclusive(u64, 0, 340_000_000_000))) - 170_000_000_000;
+            const lat_rand = self.prng.range_inclusive(u64, 0, 160_000_000_000);
+            const lon_rand = self.prng.range_inclusive(u64, 0, 340_000_000_000);
+            const center_lat = @as(i64, @intCast(lat_rand)) - 80_000_000_000;
+            const center_lon = @as(i64, @intCast(lon_rand)) - 170_000_000_000;
             const size: i64 = 1_000_000_000; // ~1 degree
+            const half = @divTrunc(size, 2);
 
             // L-shape vertices (concave at vertex 2)
             vertices[0] = .{ .lat_nano = center_lat, .lon_nano = center_lon };
             vertices[1] = .{ .lat_nano = center_lat + size, .lon_nano = center_lon };
-            vertices[2] = .{ .lat_nano = center_lat + size, .lon_nano = center_lon + @divTrunc(size, 2) }; // Concave indent
-            vertices[3] = .{ .lat_nano = center_lat + @divTrunc(size, 2), .lon_nano = center_lon + @divTrunc(size, 2) };
-            vertices[4] = .{ .lat_nano = center_lat + @divTrunc(size, 2), .lon_nano = center_lon + size };
+            vertices[2] = .{ .lat_nano = center_lat + size, .lon_nano = center_lon + half };
+            vertices[3] = .{ .lat_nano = center_lat + half, .lon_nano = center_lon + half };
+            vertices[4] = .{ .lat_nano = center_lat + half, .lon_nano = center_lon + size };
             vertices[5] = .{ .lat_nano = center_lat, .lon_nano = center_lon + size };
 
             self.stats.boundary_queries += 1;
             self.stats.polygon_queries += 1;
             self.stats.queries_sent += 1;
 
-            const total_size = vertices_start + filter.vertex_count * @sizeOf(geo_state_machine_types.PolygonVertex);
+            const total_size = vertices_start + filter.vertex_count * pv_size;
             return .{
                 .operation = .query_polygon,
                 .size = total_size,
@@ -605,7 +622,7 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
 
         /// Build a query_uuid request.
         fn build_uuid_query(
-            self: *Self,
+            self: *@This(),
             body: []align(@alignOf(vsr.Header)) u8,
         ) RequestResult {
             const filter = @as(*archerdb.QueryUuidFilter, @ptrCast(@alignCast(body.ptr)));
@@ -635,7 +652,7 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
 
         /// Build a query_radius request.
         fn build_radius_query(
-            self: *Self,
+            self: *@This(),
             body: []align(@alignOf(vsr.Header)) u8,
         ) RequestResult {
             const filter = @as(*archerdb.QueryRadiusFilter, @ptrCast(@alignCast(body.ptr)));
@@ -648,8 +665,10 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
                 filter.center_lat_nano = hs.lat_nano;
                 filter.center_lon_nano = hs.lon_nano;
             } else {
-                filter.center_lat_nano = @as(i64, @intCast(self.prng.range_inclusive(u64, 0, 180_000_000_000))) - 90_000_000_000;
-                filter.center_lon_nano = @as(i64, @intCast(self.prng.range_inclusive(u64, 0, 360_000_000_000))) - 180_000_000_000;
+                const lat_rand = self.prng.range_inclusive(u64, 0, 180_000_000_000);
+                const lon_rand = self.prng.range_inclusive(u64, 0, 360_000_000_000);
+                filter.center_lat_nano = @as(i64, @intCast(lat_rand)) - 90_000_000_000;
+                filter.center_lon_nano = @as(i64, @intCast(lon_rand)) - 180_000_000_000;
             }
 
             // Radius between 100m and 100km
@@ -671,16 +690,17 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
 
         /// Build a query_polygon request.
         fn build_polygon_query(
-            self: *Self,
+            self: *@This(),
             body: []align(@alignOf(vsr.Header)) u8,
         ) RequestResult {
             const filter = @as(*archerdb.QueryPolygonFilter, @ptrCast(@alignCast(body.ptr)));
 
             const vertices_start = @sizeOf(archerdb.QueryPolygonFilter);
+            const pv_size = @sizeOf(geo_state_machine_types.PolygonVertex);
 
             // Calculate max vertices that fit in batch_size_limit
             const max_by_limit: u32 = if (self.options.batch_size_limit > vertices_start)
-                @intCast((self.options.batch_size_limit - vertices_start) / @sizeOf(geo_state_machine_types.PolygonVertex))
+                @intCast((self.options.batch_size_limit - vertices_start) / pv_size)
             else
                 3; // Minimum polygon
 
@@ -699,7 +719,8 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
             filter.group_id = 0;
             filter.reserved = [_]u8{0} ** 96;
             const vertices_bytes = body[vertices_start..];
-            const vertices = stdx.bytes_as_slice(.inexact, geo_state_machine_types.PolygonVertex, vertices_bytes);
+            const PV = geo_state_machine_types.PolygonVertex;
+            const vertices = stdx.bytes_as_slice(.inexact, PV, vertices_bytes);
 
             // Generate polygon around a center point
             var center_lat: i64 = undefined;
@@ -713,18 +734,24 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
                 center_lon = hs.lon_nano;
             } else {
                 // Use slightly smaller range to avoid edge cases with polygon vertices
-                center_lat = @as(i64, @intCast(self.prng.range_inclusive(u64, 0, 170_000_000_000))) - 85_000_000_000;
-                center_lon = @as(i64, @intCast(self.prng.range_inclusive(u64, 0, 350_000_000_000))) - 175_000_000_000;
+                const lat_rand = self.prng.range_inclusive(u64, 0, 170_000_000_000);
+                const lon_rand = self.prng.range_inclusive(u64, 0, 350_000_000_000);
+                center_lat = @as(i64, @intCast(lat_rand)) - 85_000_000_000;
+                center_lon = @as(i64, @intCast(lon_rand)) - 175_000_000_000;
             }
 
             // Generate vertices in a rough circle around center
             // Radius between 0.1° and 5° in nanodegrees
-            const radius: i64 = @as(i64, @intCast(self.prng.range_inclusive(u64, 100_000_000, 5_000_000_000)));
+            const rad_rand = self.prng.range_inclusive(u64, 100_000_000, 5_000_000_000);
+            const radius: i64 = @as(i64, @intCast(rad_rand));
+            const vc: i64 = @intCast(filter.vertex_count);
             for (vertices[0..filter.vertex_count], 0..) |*v, i| {
                 // Angle for this vertex
-                const angle_factor = @divTrunc(@as(i64, @intCast(i)) * 360, @as(i64, filter.vertex_count));
+                const idx: i64 = @intCast(i);
+                const angle_factor = @divTrunc(idx * 360, vc);
                 const lat_offset = @divTrunc(radius * angle_factor, 360);
                 const lon_offset = radius - @as(i64, @intCast(@abs(lat_offset)));
+                const lon_mod = @mod(lon_offset * idx, radius * 2) - radius;
 
                 v.lat_nano = std.math.clamp(
                     center_lat + lat_offset,
@@ -732,7 +759,7 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
                     90_000_000_000,
                 );
                 v.lon_nano = std.math.clamp(
-                    center_lon + @mod(lon_offset * @as(i64, @intCast(i)), radius * 2) - radius,
+                    center_lon + lon_mod,
                     -180_000_000_000,
                     180_000_000_000,
                 );
@@ -741,7 +768,7 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
             self.stats.polygon_queries += 1;
             self.stats.queries_sent += 1;
 
-            const total_size = vertices_start + filter.vertex_count * @sizeOf(geo_state_machine_types.PolygonVertex);
+            const total_size = vertices_start + filter.vertex_count * pv_size;
             return .{
                 .operation = .query_polygon,
                 .size = total_size,
@@ -749,7 +776,7 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
         }
 
         /// Generate a random GeoEvent.
-        fn generate_geo_event(self: *Self) GeoEvent {
+        fn generate_geo_event(self: *@This()) GeoEvent {
             var lat_nano: i64 = undefined;
             var lon_nano: i64 = undefined;
 
@@ -759,10 +786,11 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
                 const hs = self.hotspots[self.prng.int(usize) % self.hotspots.len];
                 // Generate unsigned offset [0, 2*radius] then shift to [-radius, +radius]
                 const radius: u64 = @intCast(@as(i64, @intCast(@abs(self.options.hotspot_radius))));
-                const lat_offset_unsigned = self.prng.range_inclusive(u64, 0, radius * 2);
-                const lon_offset_unsigned = self.prng.range_inclusive(u64, 0, radius * 2);
-                const lat_offset: i64 = @as(i64, @intCast(lat_offset_unsigned)) - @as(i64, @intCast(radius));
-                const lon_offset: i64 = @as(i64, @intCast(lon_offset_unsigned)) - @as(i64, @intCast(radius));
+                const lat_off_u = self.prng.range_inclusive(u64, 0, radius * 2);
+                const lon_off_u = self.prng.range_inclusive(u64, 0, radius * 2);
+                const rad_i64: i64 = @intCast(radius);
+                const lat_offset: i64 = @as(i64, @intCast(lat_off_u)) - rad_i64;
+                const lon_offset: i64 = @as(i64, @intCast(lon_off_u)) - rad_i64;
 
                 lat_nano = std.math.clamp(
                     hs.lat_nano + lat_offset,
@@ -776,12 +804,15 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
                 );
             } else {
                 // Random coordinates: generate unsigned [0, range] then shift to signed
-                lat_nano = @as(i64, @intCast(self.prng.range_inclusive(u64, 0, 180_000_000_000))) - 90_000_000_000;
-                lon_nano = @as(i64, @intCast(self.prng.range_inclusive(u64, 0, 360_000_000_000))) - 180_000_000_000;
+                const lat_rand = self.prng.range_inclusive(u64, 0, 180_000_000_000);
+                const lon_rand = self.prng.range_inclusive(u64, 0, 360_000_000_000);
+                lat_nano = @as(i64, @intCast(lat_rand)) - 90_000_000_000;
+                lon_nano = @as(i64, @intCast(lon_rand)) - 180_000_000_000;
             }
 
-            // Altitude: [0, 20_000_000] - 11_000_000 = [-11_000_000, +9_000_000] mm (ocean floor to Everest)
-            const altitude_mm: i32 = @as(i32, @intCast(self.prng.range_inclusive(u32, 0, 20_000_000))) - 11_000_000;
+            // Altitude: [-11_000_000, +9_000_000] mm (ocean floor to Everest)
+            const alt_rand = self.prng.range_inclusive(u32, 0, 20_000_000);
+            const altitude_mm: i32 = @as(i32, @intCast(alt_rand)) - 11_000_000;
 
             return GeoEvent{
                 .id = 0, // Set by state machine
@@ -807,7 +838,7 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
 
         /// Handle reply from state machine.
         pub fn on_reply(
-            self: *Self,
+            self: *@This(),
             client_index: usize,
             operation: StateMachine.Operation,
             timestamp: u64,
@@ -826,7 +857,7 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
         /// Handle pulse operation for TTL expiration (F2.4.8).
         /// Called for pulse operations in commit order.
         pub fn on_pulse(
-            self: *Self,
+            self: *@This(),
             operation: StateMachine.Operation,
             timestamp: u64,
         ) void {
@@ -974,7 +1005,9 @@ test "GeoWorkload: adversarial queries (F4.1.3)" {
         try std.testing.expect(result.size > 0);
         try std.testing.expect(result.size <= body.len);
         // Should be either radius or polygon query
-        try std.testing.expect(result.operation == .query_radius or result.operation == .query_polygon);
+        const is_radius = result.operation == .query_radius;
+        const is_polygon = result.operation == .query_polygon;
+        try std.testing.expect(is_radius or is_polygon);
     }
 
     // Verify adversarial stats were tracked

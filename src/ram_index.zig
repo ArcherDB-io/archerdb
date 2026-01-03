@@ -1108,7 +1108,7 @@ pub const AlertManager = struct {
 /// - Multiple concurrent readers (lookups) using lock-free atomic loads
 /// - Single writer (VSR commit phase guarantees serialized writes)
 /// - Read-during-write safety via atomic operations with Acquire/Release semantics
-pub fn RamIndex(comptime options: struct {
+pub fn RamIndexType(comptime options: struct {
     /// Enable statistics tracking (has minor performance overhead).
     track_stats: bool = true,
 }) type {
@@ -1304,7 +1304,11 @@ pub fn RamIndex(comptime options: struct {
                     }
 
                     self.updateUpsertStats(probe_count, false, false);
-                    return .{ .inserted = false, .updated = should_update, .probe_count = probe_count };
+                    return .{
+                        .inserted = false,
+                        .updated = should_update,
+                        .probe_count = probe_count,
+                    };
                 }
 
                 // Different entity - collision, probe next slot.
@@ -1584,10 +1588,11 @@ pub fn RamIndex(comptime options: struct {
         ///
         /// Per spec: Online rehash copies live entries, skips tombstones,
         /// reducing tombstone_ratio to 0 and probe_lengths back to optimal.
-        pub fn create_rehashed_copy(self: *@This(), allocator: std.mem.Allocator, config: RehashConfig) !struct {
-            new_index: @This(),
-            result: RehashResult,
-        } {
+        pub fn create_rehashed_copy(
+            self: *@This(),
+            allocator: std.mem.Allocator,
+            config: RehashConfig,
+        ) !struct { new_index: @This(), result: RehashResult } {
             const start_time = std.time.nanoTimestamp();
             const old_stats = self.get_stats();
 
@@ -1664,7 +1669,8 @@ pub fn RamIndex(comptime options: struct {
             if (result.new_tombstone_ratio > 0.001) return false;
 
             // Probe length should be optimal (< 3).
-            if (result.new_probe_length_max >= DegradationThresholds.probe_length_warning) return false;
+            const warn = DegradationThresholds.probe_length_warning;
+            if (result.new_probe_length_max >= warn) return false;
 
             return true;
         }
@@ -1697,7 +1703,12 @@ pub fn RamIndex(comptime options: struct {
             }
         }
 
-        fn updateUpsertStats(self: *@This(), probe_count: u32, inserted: bool, tombstone_reuse: bool) void {
+        fn updateUpsertStats(
+            self: *@This(),
+            probe_count: u32,
+            inserted: bool,
+            tombstone_reuse: bool,
+        ) void {
             if (options.track_stats) {
                 self.stats.upsert_count += 1;
                 self.stats.total_probe_length += probe_count;
@@ -1723,7 +1734,7 @@ pub fn RamIndex(comptime options: struct {
 }
 
 /// Default RAM index type with stats enabled.
-pub const DefaultRamIndex = RamIndex(.{ .track_stats = true });
+pub const DefaultRamIndex = RamIndexType(.{ .track_stats = true });
 
 // ============================================================================
 // Unit Tests
@@ -2362,9 +2373,10 @@ test "DegradationDetector: check_health overall level" {
         .tombstone_count = 2,
         .max_probe_length_seen = 1,
     };
+    const RecAction = DegradationStatus.RecommendedAction;
     const status_healthy = detector.check_health(stats_healthy);
     try std.testing.expectEqual(DegradationLevel.normal, status_healthy.overall_level);
-    try std.testing.expectEqual(DegradationStatus.RecommendedAction.none, status_healthy.recommended_action);
+    try std.testing.expectEqual(RecAction.none, status_healthy.recommended_action);
     try std.testing.expect(!status_healthy.corruption_detected);
 
     // Warning level: high tombstone ratio.
@@ -2376,7 +2388,8 @@ test "DegradationDetector: check_health overall level" {
     };
     const status_warning = detector.check_health(stats_warning);
     try std.testing.expectEqual(DegradationLevel.warning, status_warning.overall_level);
-    try std.testing.expectEqual(DegradationStatus.RecommendedAction.schedule_rebuild, status_warning.recommended_action);
+    const expected_warn = RecAction.schedule_rebuild;
+    try std.testing.expectEqual(expected_warn, status_warning.recommended_action);
 
     // Critical level: high load factor.
     const stats_critical = IndexStats{
@@ -2387,11 +2400,13 @@ test "DegradationDetector: check_health overall level" {
     };
     const status_critical = detector.check_health(stats_critical);
     try std.testing.expectEqual(DegradationLevel.critical, status_critical.overall_level);
-    try std.testing.expectEqual(DegradationStatus.RecommendedAction.immediate_rebuild, status_critical.recommended_action);
+    const expected_crit = RecAction.immediate_rebuild;
+    try std.testing.expectEqual(expected_crit, status_critical.recommended_action);
 }
 
 test "DegradationDetector: corruption detection" {
     var detector = DegradationDetector{};
+    const RecAction = DegradationStatus.RecommendedAction;
 
     // No corruption initially.
     const stats = IndexStats{ .capacity = 100, .entry_count = 10 };
@@ -2404,7 +2419,8 @@ test "DegradationDetector: corruption detection" {
     const status_corrupted = detector.check_health(stats);
     try std.testing.expect(status_corrupted.corruption_detected);
     try std.testing.expectEqual(DegradationLevel.critical, status_corrupted.overall_level);
-    try std.testing.expectEqual(DegradationStatus.RecommendedAction.replace_replica, status_corrupted.recommended_action);
+    const expected = RecAction.replace_replica;
+    try std.testing.expectEqual(expected, status_corrupted.recommended_action);
 
     // Reset corruption.
     detector.reset_corruption();
@@ -2414,14 +2430,15 @@ test "DegradationDetector: corruption detection" {
 }
 
 test "DegradationLevel: severity ordering" {
+    const DL = DegradationLevel;
     // Test that severity values are correctly ordered.
-    try std.testing.expectEqual(@as(u8, 0), DegradationLevel.normal.severity());
-    try std.testing.expectEqual(@as(u8, 1), DegradationLevel.warning.severity());
-    try std.testing.expectEqual(@as(u8, 2), DegradationLevel.critical.severity());
+    try std.testing.expectEqual(@as(u8, 0), DL.normal.severity());
+    try std.testing.expectEqual(@as(u8, 1), DL.warning.severity());
+    try std.testing.expectEqual(@as(u8, 2), DL.critical.severity());
 
     // Verify ordering.
-    try std.testing.expect(DegradationLevel.normal.severity() < DegradationLevel.warning.severity());
-    try std.testing.expect(DegradationLevel.warning.severity() < DegradationLevel.critical.severity());
+    try std.testing.expect(DL.normal.severity() < DL.warning.severity());
+    try std.testing.expect(DL.warning.severity() < DL.critical.severity());
 }
 
 // =============================================================================
@@ -2858,10 +2875,11 @@ test "AlertSeverity: toLabel conversion" {
 }
 
 test "AlertType: toLabel conversion" {
-    try std.testing.expectEqualStrings("tombstone_degradation", AlertType.tombstone_degradation.toLabel());
-    try std.testing.expectEqualStrings("probe_length_growth", AlertType.probe_length_growth.toLabel());
-    try std.testing.expectEqualStrings("capacity_limit", AlertType.capacity_limit.toLabel());
-    try std.testing.expectEqualStrings("rebuild_completed", AlertType.rebuild_completed.toLabel());
+    const AT = AlertType;
+    try std.testing.expectEqualStrings("tombstone_degradation", AT.tombstone_degradation.toLabel());
+    try std.testing.expectEqualStrings("probe_length_growth", AT.probe_length_growth.toLabel());
+    try std.testing.expectEqualStrings("capacity_limit", AT.capacity_limit.toLabel());
+    try std.testing.expectEqualStrings("rebuild_completed", AT.rebuild_completed.toLabel());
 }
 
 test "AlertType: recommendedAction returns action" {
@@ -2941,9 +2959,12 @@ test "RecoveryMetrics: toPrometheus output" {
     try metrics.toPrometheus(fbs.writer());
 
     const output = fbs.getWritten();
-    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_ram_index_rebuilds_started_total 5") != null);
-    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_ram_index_rebuilds_completed_total 4") != null);
-    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_ram_index_alerts_total 10") != null);
+    const started = "archerdb_ram_index_rebuilds_started_total 5";
+    const completed = "archerdb_ram_index_rebuilds_completed_total 4";
+    const alerts = "archerdb_ram_index_alerts_total 10";
+    try std.testing.expect(std.mem.indexOf(u8, output, started) != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, completed) != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, alerts) != null);
 }
 
 test "AlertManager: checkAndAlert with healthy status" {

@@ -337,7 +337,8 @@ pub const TombstoneMetrics = struct {
     pub fn retentionRatio(self: TombstoneMetrics) f64 {
         const total = self.tombstone_retained_compactions + self.tombstone_eliminated_compactions;
         if (total == 0) return 0.0;
-        return @as(f64, @floatFromInt(self.tombstone_retained_compactions)) / @as(f64, @floatFromInt(total));
+        const retained = @as(f64, @floatFromInt(self.tombstone_retained_compactions));
+        return retained / @as(f64, @floatFromInt(total));
     }
 
     /// Export metrics in Prometheus text format.
@@ -556,7 +557,8 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             /// Enable index checkpoint coordination (F2.2.3).
             enable_index_checkpoint: bool = true,
             /// LSM forest compaction block count.
-            lsm_forest_compaction_block_count: u32 = Forest.Options.compaction_block_count_min + 128,
+            lsm_forest_compaction_block_count: u32 = Forest.Options.compaction_block_count_min +
+                128,
             /// LSM forest node pool count.
             lsm_forest_node_count: u32 = 4096,
             /// Cache entries for geo events.
@@ -671,7 +673,8 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             );
             errdefer self.forest.deinit(allocator);
 
-            log.info("GeoStateMachine: initialized with Forest and RAM index (F1.2, F2.1, F4.2)", .{});
+            // GeoStateMachine initialized with Forest and RAM index (F1.2, F2.1, F4.2)
+            log.info("GeoStateMachine: initialized (F1.2, F2.1, F4.2)", .{});
         }
 
         /// Generate Forest options for GeoEvent groove.
@@ -1007,21 +1010,41 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 // Read operations
                 .lookup_accounts => self.execute_lookup_accounts(message_body_used, output),
                 .lookup_transfers => self.execute_lookup_transfers(message_body_used, output),
-                .get_account_transfers => self.execute_get_account_transfers(message_body_used, output),
-                .get_account_balances => self.execute_get_account_balances(message_body_used, output),
+                .get_account_transfers => {
+                    return self.execute_get_account_transfers(message_body_used, output);
+                },
+                .get_account_balances => {
+                    return self.execute_get_account_balances(message_body_used, output);
+                },
                 .query_accounts => self.execute_query_accounts(message_body_used, output),
                 .query_transfers => self.execute_query_transfers(message_body_used, output),
                 .get_change_events => self.execute_get_change_events(message_body_used, output),
 
                 // Deprecated unbatched operations (TigerBeetle compatibility)
-                .deprecated_create_accounts_unbatched => self.execute_create_accounts(timestamp, message_body_used, output),
-                .deprecated_create_transfers_unbatched => self.execute_create_transfers(timestamp, message_body_used, output),
-                .deprecated_lookup_accounts_unbatched => self.execute_lookup_accounts(message_body_used, output),
-                .deprecated_lookup_transfers_unbatched => self.execute_lookup_transfers(message_body_used, output),
-                .deprecated_get_account_transfers_unbatched => self.execute_get_account_transfers(message_body_used, output),
-                .deprecated_get_account_balances_unbatched => self.execute_get_account_balances(message_body_used, output),
-                .deprecated_query_accounts_unbatched => self.execute_query_accounts(message_body_used, output),
-                .deprecated_query_transfers_unbatched => self.execute_query_transfers(message_body_used, output),
+                .deprecated_create_accounts_unbatched => {
+                    return self.execute_create_accounts(timestamp, message_body_used, output);
+                },
+                .deprecated_create_transfers_unbatched => {
+                    return self.execute_create_transfers(timestamp, message_body_used, output);
+                },
+                .deprecated_lookup_accounts_unbatched => {
+                    return self.execute_lookup_accounts(message_body_used, output);
+                },
+                .deprecated_lookup_transfers_unbatched => {
+                    return self.execute_lookup_transfers(message_body_used, output);
+                },
+                .deprecated_get_account_transfers_unbatched => {
+                    return self.execute_get_account_transfers(message_body_used, output);
+                },
+                .deprecated_get_account_balances_unbatched => {
+                    return self.execute_get_account_balances(message_body_used, output);
+                },
+                .deprecated_query_accounts_unbatched => {
+                    return self.execute_query_accounts(message_body_used, output);
+                },
+                .deprecated_query_transfers_unbatched => {
+                    return self.execute_query_transfers(message_body_used, output);
+                },
 
                 // ArcherDB geospatial operations (TODO: implement with Forest)
                 .insert_events => 0, // TODO: execute_insert_events
@@ -1037,7 +1060,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .archerdb_get_status => 0, // TODO: execute_archerdb_get_status
 
                 // ArcherDB TTL cleanup (F2.4.8)
-                .cleanup_expired => self.execute_cleanup_expired(timestamp, message_body_used, output),
+                .cleanup_expired => {
+                    return self.execute_cleanup_expired(timestamp, message_body_used, output);
+                },
             };
 
             return result;
@@ -1054,7 +1079,12 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             return 0;
         }
 
-        fn execute_create_accounts(self: *GeoStateMachine, timestamp: u64, input: []const u8, output: []u8) usize {
+        fn execute_create_accounts(
+            self: *GeoStateMachine,
+            timestamp: u64,
+            input: []const u8,
+            output: []u8,
+        ) usize {
             _ = self;
             _ = timestamp;
             _ = input;
@@ -1063,7 +1093,12 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             return 0;
         }
 
-        fn execute_create_transfers(self: *GeoStateMachine, timestamp: u64, input: []const u8, output: []u8) usize {
+        fn execute_create_transfers(
+            self: *GeoStateMachine,
+            timestamp: u64,
+            input: []const u8,
+            output: []u8,
+        ) usize {
             _ = self;
             _ = timestamp;
             _ = input;
@@ -1088,7 +1123,11 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             return 0;
         }
 
-        fn execute_get_account_transfers(self: *GeoStateMachine, input: []const u8, output: []u8) usize {
+        fn execute_get_account_transfers(
+            self: *GeoStateMachine,
+            input: []const u8,
+            output: []u8,
+        ) usize {
             _ = self;
             _ = input;
             _ = output;
@@ -1096,7 +1135,11 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             return 0;
         }
 
-        fn execute_get_account_balances(self: *GeoStateMachine, input: []const u8, output: []u8) usize {
+        fn execute_get_account_balances(
+            self: *GeoStateMachine,
+            input: []const u8,
+            output: []u8,
+        ) usize {
             _ = self;
             _ = input;
             _ = output;
@@ -1104,7 +1147,11 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             return 0;
         }
 
-        fn execute_query_accounts(self: *GeoStateMachine, input: []const u8, output: []u8) usize {
+        fn execute_query_accounts(
+            self: *GeoStateMachine,
+            input: []const u8,
+            output: []u8,
+        ) usize {
             _ = self;
             _ = input;
             _ = output;
@@ -1112,7 +1159,11 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             return 0;
         }
 
-        fn execute_query_transfers(self: *GeoStateMachine, input: []const u8, output: []u8) usize {
+        fn execute_query_transfers(
+            self: *GeoStateMachine,
+            input: []const u8,
+            output: []u8,
+        ) usize {
             _ = self;
             _ = input;
             _ = output;
@@ -1120,7 +1171,11 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             return 0;
         }
 
-        fn execute_get_change_events(self: *GeoStateMachine, input: []const u8, output: []u8) usize {
+        fn execute_get_change_events(
+            self: *GeoStateMachine,
+            input: []const u8,
+            output: []u8,
+        ) usize {
             _ = self;
             _ = input;
             _ = output;
@@ -1378,7 +1433,8 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     .user_data = 0, // Not stored in RAM index
                     .lat_nano = cell_center.lat_nano,
                     .lon_nano = cell_center.lon_nano,
-                    .group_id = 0, // Not stored in RAM index - TODO: add group_id filter when Forest is ready
+                    // Not stored in RAM index - TODO: add group_id filter when Forest ready
+                    .group_id = 0,
                     .timestamp = timestamp,
                     .altitude_mm = 0,
                     .velocity_mms = 0,
@@ -1613,7 +1669,10 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         /// cellToRange(), which generates ranges [min, max) that include all
         /// descendant cells. So a level-30 cell ID can be directly compared
         /// against the ranges without needing to traverse the hierarchy.
-        fn cellInCovering(cell_id: u64, covering: *const [s2_index.s2_max_cells]s2_index.CellRange) bool {
+        fn cellInCovering(
+            cell_id: u64,
+            covering: *const [s2_index.s2_max_cells]s2_index.CellRange,
+        ) bool {
             for (covering) |range| {
                 // Skip empty ranges
                 if (range.start == 0 and range.end == 0) {
@@ -1870,11 +1929,10 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             const vsr_commit_max = self.grid.superblock.working.vsr_state.commit_max;
 
             // Log checkpoint coordination for debugging
-            log.debug("Index checkpoint coordination: vsr_checkpoint_op={} commit_max={} last_index_op={}", .{
-                vsr_checkpoint_op,
-                vsr_commit_max,
-                self.last_index_checkpoint_op,
-            });
+            log.debug(
+                "Index checkpoint: vsr_op={} commit_max={} last_index={}",
+                .{ vsr_checkpoint_op, vsr_commit_max, self.last_index_checkpoint_op },
+            );
 
             // Calculate checkpoint lag (ops since last index checkpoint)
             const checkpoint_lag = if (vsr_checkpoint_op > self.last_index_checkpoint_op)
@@ -2042,9 +2100,10 @@ test "CheckpointHeader has VSR state fields (F2.2.3)" {
 // =============================================================================
 
 test "DeleteEntityResult: result codes" {
-    try std.testing.expectEqual(@as(u32, 0), @intFromEnum(DeleteEntityResult.ok));
-    try std.testing.expectEqual(@as(u32, 2), @intFromEnum(DeleteEntityResult.entity_id_must_not_be_zero));
-    try std.testing.expectEqual(@as(u32, 3), @intFromEnum(DeleteEntityResult.entity_not_found));
+    const DER = DeleteEntityResult;
+    try std.testing.expectEqual(@as(u32, 0), @intFromEnum(DER.ok));
+    try std.testing.expectEqual(@as(u32, 2), @intFromEnum(DER.entity_id_must_not_be_zero));
+    try std.testing.expectEqual(@as(u32, 3), @intFromEnum(DER.entity_not_found));
 }
 
 test "DeleteEntitiesResult: struct layout" {
@@ -2103,9 +2162,12 @@ test "DeletionMetrics: toPrometheus output" {
     try metrics.toPrometheus(fbs.writer());
 
     const output = fbs.getWritten();
-    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_entities_deleted_total 100") != null);
-    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_deletion_not_found_total 5") != null);
-    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_deletion_operations_total 10") != null);
+    const del_total = "archerdb_entities_deleted_total 100";
+    const not_found = "archerdb_deletion_not_found_total 5";
+    const ops_total = "archerdb_deletion_operations_total 10";
+    try std.testing.expect(std.mem.indexOf(u8, output, del_total) != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, not_found) != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, ops_total) != null);
 }
 
 // =============================================================================
@@ -2199,11 +2261,13 @@ test "TombstoneMetrics: toPrometheus output" {
     try metrics.toPrometheus(fbs.writer());
 
     const output = fbs.getWritten();
-    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_tombstone_retained_total 1000") != null);
-    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_tombstone_eliminated_total 250") != null);
-    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_compaction_cycles_total 10") != null);
-    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_tombstone_age_seconds_total 12500") != null);
-    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_tombstone_age_max_seconds 300") != null);
+    const pfx = "archerdb_tombstone";
+    try std.testing.expect(std.mem.indexOf(u8, output, pfx ++ "_retained_total 1000") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, pfx ++ "_eliminated_total 250") != null);
+    const comp = "archerdb_compaction_cycles_total 10";
+    try std.testing.expect(std.mem.indexOf(u8, output, comp) != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, pfx ++ "_age_seconds_total 12500") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, pfx ++ "_age_max_seconds 300") != null);
 }
 
 // ============================================================================
