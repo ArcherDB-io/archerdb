@@ -1,77 +1,59 @@
 $ErrorActionPreference = "Stop"
 
-# Run from repo root: ./zig/download.ps1
+$ZIG_MIRROR="https://pkg.machengine.org/zig"
+$ZIG_RELEASE = "0.14.1"
+$ZIG_CHECKSUMS = @"
+$ZIG_MIRROR/0.14.1/zig-aarch64-windows-0.14.1.zip b5aac0ccc40dd91e8311b1f257717d8e3903b5fefb8f659de6d65a840ad1d0e7
+$ZIG_MIRROR/0.14.1/zig-x86_64-windows-0.14.1.zip 554f5378228923ffd558eac35e21af020c73789d87afeabf4bfd16f2e6feed2c
+"@
 
-$ZIG_RELEASE = "0.15.2"
-$ZIG_MIRROR = "https://ziglang.org/download"
-
-# Architecture detection
 $ZIG_ARCH = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") {
     "aarch64"
 } elseif ($env:PROCESSOR_ARCHITECTURE -eq "AMD64") {
     "x86_64"
 } else {
-    Write-Error "Unsupported architecture: $env:PROCESSOR_ARCHITECTURE"
+    Write-Error "Unsupported architecture: $($env:PROCESSOR_ARCHITECTURE)"
+    exit 1
+}
+$ZIG_OS = "windows"
+$ZIG_EXTENSION = ".zip"
+
+# Build URL:
+$ZIG_URL = "$ZIG_MIRROR/$ZIG_RELEASE/zig-$ZIG_ARCH-$ZIG_OS-$ZIG_RELEASE$ZIG_EXTENSION"
+$ZIG_ARCHIVE = [System.IO.Path]::GetFileName("$ZIG_URL")
+$ZIG_DIRECTORY = "$ZIG_ARCHIVE" -replace [regex]::Escape($ZIG_EXTENSION), ""
+
+# Find expected checksum from list:
+$ZIG_CHECKSUM_EXPECTED = ($ZIG_CHECKSUMS -split "`n" | Where-Object { $_ -like "*$ZIG_URL*" }) -split ' ' | Select-Object -Last 1
+
+Write-Output "Downloading Zig $ZIG_RELEASE for Windows..."
+Invoke-WebRequest -Uri "$ZIG_URL" -OutFile "$ZIG_ARCHIVE"
+
+# Verify the checksum.
+$ZIG_CHECKSUM_ACTUAL=(Get-FileHash "${ZIG_ARCHIVE}").Hash
+
+if ($ZIG_CHECKSUM_ACTUAL -ne $ZIG_CHECKSUM_EXPECTED) {
+    Write-Error "Checksum mismatch. Expected '$ZIG_CHECKSUM_EXPECTED' but got '$ZIG_CHECKSUM_ACTUAL'."
     exit 1
 }
 
-$ZIG_TARGET = "$ZIG_ARCH-windows"
+# Extract and then remove the downloaded archive:
+Write-Output "Extracting $ZIG_ARCHIVE..."
+Expand-Archive -Path "$ZIG_ARCHIVE" -DestinationPath .
+Remove-Item "$ZIG_ARCHIVE"
 
-# Checksums for Zig 0.15.2
-$ZIG_CHECKSUMS = @{
-    "x86_64-windows" = "3a0ed1e8799a2f8ce2a6e6290a9ff22e6906f8227865911fb7ddedc3cc14cb0c"
-    "aarch64-windows" = "b926465f8872bf983422257cd9ec248bb2b270996fbe8d57872cca13b56fc370"
-}
+# Replace these existing directories and files so that we can install or upgrade:
+Remove-Item -Recurse -Force -ErrorAction SilentlyContinue zig/doc, zig/lib
+Move-Item "$ZIG_DIRECTORY/LICENSE" zig/
+Move-Item "$ZIG_DIRECTORY/README.md" zig/
+Move-Item "$ZIG_DIRECTORY/doc" zig/
+Move-Item "$ZIG_DIRECTORY/lib" zig/
+Move-Item "$ZIG_DIRECTORY/zig.exe" zig/
 
-$ZIG_CHECKSUM = $ZIG_CHECKSUMS[$ZIG_TARGET]
-if (-not $ZIG_CHECKSUM) {
-    Write-Error "No checksum for: $ZIG_TARGET"
-    exit 1
-}
+# We expect to have now moved all directories and files out of the extracted directory.
+# Do not force remove so that we can get an error if the above list of files ever changes:
+Remove-Item "$ZIG_DIRECTORY"
 
-$ZIG_DIRECTORY = "zig-$ZIG_TARGET-$ZIG_RELEASE"
-$ZIG_ARCHIVE = "$ZIG_DIRECTORY.zip"
-$ZIG_URL = "$ZIG_MIRROR/$ZIG_RELEASE/$ZIG_ARCHIVE"
-
-# Check if already installed
-if (Test-Path "zig/zig.exe") {
-    $INSTALLED = & zig/zig.exe version 2>$null
-    if ($INSTALLED -eq $ZIG_RELEASE) {
-        Write-Host "Zig $ZIG_RELEASE already installed."
-        exit 0
-    }
-}
-
-Write-Host "Downloading Zig $ZIG_RELEASE ($ZIG_TARGET)..."
-
-# Download
-Invoke-WebRequest -Uri $ZIG_URL -OutFile $ZIG_ARCHIVE
-
-# Verify checksum
-Write-Host "Verifying checksum..."
-$ACTUAL = (Get-FileHash -Algorithm SHA256 $ZIG_ARCHIVE).Hash.ToLower()
-if ($ACTUAL -ne $ZIG_CHECKSUM) {
-    Write-Error "Checksum mismatch!"
-    Write-Host "Expected: $ZIG_CHECKSUM"
-    Write-Host "Actual:   $ACTUAL"
-    Remove-Item $ZIG_ARCHIVE -Force
-    exit 1
-}
-
-# Extract
-Write-Host "Extracting..."
-Expand-Archive -Path $ZIG_ARCHIVE -DestinationPath . -Force
-
-# Install to zig/
-Remove-Item -Path "zig/doc", "zig/lib", "zig/zig.exe", "zig/LICENSE", "zig/README.md" -Recurse -Force -ErrorAction SilentlyContinue
-Move-Item "$ZIG_DIRECTORY/doc" "zig/"
-Move-Item "$ZIG_DIRECTORY/lib" "zig/"
-Move-Item "$ZIG_DIRECTORY/zig.exe" "zig/"
-Move-Item "$ZIG_DIRECTORY/LICENSE" "zig/"
-Move-Item "$ZIG_DIRECTORY/README.md" "zig/"
-
-# Cleanup
-Remove-Item $ZIG_DIRECTORY -Recurse -Force
-Remove-Item $ZIG_ARCHIVE -Force
-
-Write-Host "Zig $ZIG_RELEASE installed to zig/zig.exe"
+# It's up to the user to add this to their path if they want to:
+$ZIG_BIN = Join-Path (Get-Location) "zig\zig.exe"
+Write-Output "Downloading completed ($ZIG_BIN)! Enjoy!"
