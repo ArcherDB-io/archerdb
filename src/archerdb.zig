@@ -880,21 +880,20 @@ pub const Operation = enum(u8) {
 
             .get_change_events => false,
 
-            // ArcherDB geospatial operations use multi-batch encoding
+            // ArcherDB geospatial operations - single batch for now (F1.3.5)
+            // TODO: Add multi-batch support via execute_multi_batch path
             .insert_events,
             .upsert_events,
             .delete_entities,
             .query_uuid,
+            .query_latest,
             .query_radius,
             .query_polygon,
-            => true,
+            => false,
 
             // ArcherDB admin operations (F1.2.6) - single batch
             .archerdb_ping => false,
             .archerdb_get_status => false,
-
-            // ArcherDB query_latest (F1.3.3) - single filter, not multi-batch
-            .query_latest => false,
 
             .deprecated_create_accounts_unbatched,
             .deprecated_create_transfers_unbatched,
