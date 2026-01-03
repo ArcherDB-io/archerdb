@@ -297,6 +297,125 @@ pub const CompactionStats = struct {
     }
 };
 
+/// Prometheus-formatted TTL metrics.
+///
+/// Per ttl-retention/spec.md, exposes:
+/// - archerdb_index_expirations_total (counter)
+/// - archerdb_compaction_events_expired_total (counter)
+/// - archerdb_cleanup_entries_removed_total (counter)
+/// - archerdb_index_expired_entries_estimate (gauge)
+pub const TtlPrometheusMetrics = struct {
+    /// Format TtlMetrics as Prometheus text format.
+    pub fn format_ttl_metrics(
+        writer: anytype,
+        metrics: *const TtlMetrics,
+        labels: []const u8,
+    ) !void {
+        // Events expired during lookup.
+        try writer.print(
+            \\# HELP archerdb_index_expirations_total Events expired during lookup
+            \\# TYPE archerdb_index_expirations_total counter
+            \\archerdb_index_expirations_total{{{s}}} {d}
+            \\
+        , .{ labels, metrics.expirations_on_lookup });
+
+        // Events expired during background cleanup.
+        try writer.print(
+            \\# HELP archerdb_cleanup_entries_removed_total Entries removed via cleanup
+            \\# TYPE archerdb_cleanup_entries_removed_total counter
+            \\archerdb_cleanup_entries_removed_total{{{s}}} {d}
+            \\
+        , .{ labels, metrics.expirations_on_cleanup });
+
+        // Events expired during compaction.
+        try writer.print(
+            \\# HELP archerdb_compaction_events_expired_total Events expired during compaction
+            \\# TYPE archerdb_compaction_events_expired_total counter
+            \\archerdb_compaction_events_expired_total{{{s}}} {d}
+            \\
+        , .{ labels, metrics.expirations_on_compaction });
+
+        // Total expirations across all paths.
+        try writer.print(
+            \\# HELP archerdb_ttl_expirations_total Total TTL expirations
+            \\# TYPE archerdb_ttl_expirations_total counter
+            \\archerdb_ttl_expirations_total{{{s}}} {d}
+            \\
+        , .{ labels, metrics.total_expirations() });
+
+        // Cleanup operations count.
+        try writer.print(
+            \\# HELP archerdb_cleanup_operations_total Explicit cleanup operations
+            \\# TYPE archerdb_cleanup_operations_total counter
+            \\archerdb_cleanup_operations_total{{{s}}} {d}
+            \\
+        , .{ labels, metrics.cleanup_operations });
+    }
+
+    /// Format CompactionStats as Prometheus text format.
+    pub fn format_compaction_stats(
+        writer: anytype,
+        stats: *const CompactionStats,
+        labels: []const u8,
+    ) !void {
+        try writer.print(
+            \\# HELP archerdb_compaction_events_expired Events expired in compaction
+            \\# TYPE archerdb_compaction_events_expired counter
+            \\archerdb_compaction_events_expired{{{s}}} {d}
+            \\
+        , .{ labels, stats.events_expired });
+
+        try writer.print(
+            \\# HELP archerdb_compaction_events_superseded Events superseded in compaction
+            \\# TYPE archerdb_compaction_events_superseded counter
+            \\archerdb_compaction_events_superseded{{{s}}} {d}
+            \\
+        , .{ labels, stats.events_superseded });
+
+        try writer.print(
+            \\# HELP archerdb_compaction_events_copied Events copied in compaction
+            \\# TYPE archerdb_compaction_events_copied counter
+            \\archerdb_compaction_events_copied{{{s}}} {d}
+            \\
+        , .{ labels, stats.events_copied });
+
+        try writer.print(
+            \\# HELP archerdb_compaction_expiration_rate Fraction of events expired
+            \\# TYPE archerdb_compaction_expiration_rate gauge
+            \\archerdb_compaction_expiration_rate{{{s}}} {d:.4}
+            \\
+        , .{ labels, stats.expiration_rate() });
+    }
+
+    /// Format CleanupScanner state as Prometheus text format.
+    pub fn format_scanner_state(
+        writer: anytype,
+        scanner: *const CleanupScanner,
+        labels: []const u8,
+    ) !void {
+        try writer.print(
+            \\# HELP archerdb_ttl_scanner_position Current scan position
+            \\# TYPE archerdb_ttl_scanner_position gauge
+            \\archerdb_ttl_scanner_position{{{s}}} {d}
+            \\
+        , .{ labels, scanner.position });
+
+        try writer.print(
+            \\# HELP archerdb_ttl_scanner_total_scanned Total entries scanned
+            \\# TYPE archerdb_ttl_scanner_total_scanned counter
+            \\archerdb_ttl_scanner_total_scanned{{{s}}} {d}
+            \\
+        , .{ labels, scanner.total_scanned });
+
+        try writer.print(
+            \\# HELP archerdb_ttl_scanner_total_removed Total entries removed
+            \\# TYPE archerdb_ttl_scanner_total_removed counter
+            \\archerdb_ttl_scanner_total_removed{{{s}}} {d}
+            \\
+        , .{ labels, scanner.total_removed });
+    }
+};
+
 /// Validate TTL value for insertion.
 ///
 /// Per the spec, all u32 values are valid:
@@ -550,4 +669,106 @@ test "remaining_ttl_seconds: expired returns 0" {
 
     const remaining = remaining_ttl_seconds(event_ts, ttl, current);
     try std.testing.expectEqual(@as(?u64, 0), remaining);
+}
+
+test "TtlPrometheusMetrics: format_ttl_metrics" {
+    var metrics = TtlMetrics{};
+    metrics.expirations_on_lookup = 100;
+    metrics.expirations_on_cleanup = 50;
+    metrics.expirations_on_compaction = 25;
+    metrics.cleanup_operations = 10;
+
+    var buffer: [4096]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buffer);
+    const writer = fbs.writer();
+
+    try TtlPrometheusMetrics.format_ttl_metrics(writer, &metrics, "instance=\"node1\"");
+    const output = fbs.getWritten();
+
+    // Verify key metric lines are present.
+    try std.testing.expect(std.mem.containsAtLeast(
+        u8,
+        output,
+        1,
+        "archerdb_index_expirations_total{instance=\"node1\"} 100",
+    ));
+    try std.testing.expect(std.mem.containsAtLeast(
+        u8,
+        output,
+        1,
+        "archerdb_ttl_expirations_total{instance=\"node1\"} 175",
+    ));
+    try std.testing.expect(std.mem.containsAtLeast(
+        u8,
+        output,
+        1,
+        "# TYPE archerdb_index_expirations_total counter",
+    ));
+}
+
+test "TtlPrometheusMetrics: format_compaction_stats" {
+    var stats = CompactionStats{};
+    stats.events_expired = 20;
+    stats.events_superseded = 30;
+    stats.events_copied = 50;
+
+    var buffer: [4096]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buffer);
+    const writer = fbs.writer();
+
+    try TtlPrometheusMetrics.format_compaction_stats(writer, &stats, "level=\"0\"");
+    const output = fbs.getWritten();
+
+    try std.testing.expect(std.mem.containsAtLeast(
+        u8,
+        output,
+        1,
+        "archerdb_compaction_events_expired{level=\"0\"} 20",
+    ));
+    try std.testing.expect(std.mem.containsAtLeast(
+        u8,
+        output,
+        1,
+        "archerdb_compaction_events_copied{level=\"0\"} 50",
+    ));
+    // Expiration rate: 20/100 = 0.2
+    try std.testing.expect(std.mem.containsAtLeast(
+        u8,
+        output,
+        1,
+        "archerdb_compaction_expiration_rate{level=\"0\"} 0.2",
+    ));
+}
+
+test "TtlPrometheusMetrics: format_scanner_state" {
+    var scanner = CleanupScanner.init();
+    scanner.position = 5000;
+    scanner.total_scanned = 100000;
+    scanner.total_removed = 250;
+
+    var buffer: [4096]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buffer);
+    const writer = fbs.writer();
+
+    try TtlPrometheusMetrics.format_scanner_state(writer, &scanner, "");
+    const output = fbs.getWritten();
+
+    try std.testing.expect(std.mem.containsAtLeast(
+        u8,
+        output,
+        1,
+        "archerdb_ttl_scanner_position{} 5000",
+    ));
+    try std.testing.expect(std.mem.containsAtLeast(
+        u8,
+        output,
+        1,
+        "archerdb_ttl_scanner_total_scanned{} 100000",
+    ));
+    try std.testing.expect(std.mem.containsAtLeast(
+        u8,
+        output,
+        1,
+        "archerdb_ttl_scanner_total_removed{} 250",
+    ));
 }
