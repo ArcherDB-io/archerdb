@@ -201,6 +201,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         /// Prepare timestamp for deterministic execution.
         prepare_timestamp: u64 = 0,
 
+        /// Commit timestamp - monotonically increasing per operation.
+        commit_timestamp: u64 = 0,
+
         /// Callback for async open completion.
         open_callback: ?*const fn (*GeoStateMachine) void = null,
 
@@ -402,7 +405,12 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         /// Commit phase - execute operation deterministically.
         /// All replicas MUST produce identical results for identical inputs.
         ///
-        /// Implementation: F1.1.5
+        /// This is the core execution phase after consensus. The timestamp
+        /// is assigned by VSR and must be used for all operations. All replicas
+        /// execute the same operations in the same order with the same timestamps,
+        /// ensuring bit-exact determinism.
+        ///
+        /// Returns the number of bytes written to the output buffer.
         pub fn commit(
             self: *GeoStateMachine,
             client: u128,
@@ -412,18 +420,137 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             message_body_used: []align(16) const u8,
             output: []align(16) u8,
         ) usize {
-            _ = self;
-            _ = client;
-            _ = op;
-            _ = timestamp;
-            _ = message_body_used;
-            _ = output;
+            // Validate operation number
+            assert(op != 0);
 
-            // TODO(F1.1.5): Implement operation execution
-            return switch (operation) {
-                .pulse => 0,
-                else => 0, // Stub - return empty result
+            // Timestamp must be strictly increasing (determinism invariant)
+            // During AOF recovery, timestamps may be replayed in order
+            assert(timestamp > self.commit_timestamp or constants.aof_recovery);
+
+            // Message body must fit within batch size limit
+            assert(message_body_used.len <= self.batch_size_limit);
+
+            // Only pulse operations can have client=0 (internal operations)
+            if (client == 0) assert(operation == .pulse);
+
+            // Update commit timestamp for monotonicity check
+            self.commit_timestamp = timestamp;
+
+            // Dispatch to operation-specific execution
+            const result: usize = switch (operation) {
+                // Pulse: internal maintenance (TTL cleanup, etc.)
+                .pulse => self.execute_pulse(timestamp),
+
+                // Write operations
+                .create_accounts => self.execute_create_accounts(timestamp, message_body_used, output),
+                .create_transfers => self.execute_create_transfers(timestamp, message_body_used, output),
+
+                // Read operations
+                .lookup_accounts => self.execute_lookup_accounts(message_body_used, output),
+                .lookup_transfers => self.execute_lookup_transfers(message_body_used, output),
+                .get_account_transfers => self.execute_get_account_transfers(message_body_used, output),
+                .get_account_balances => self.execute_get_account_balances(message_body_used, output),
+                .query_accounts => self.execute_query_accounts(message_body_used, output),
+                .query_transfers => self.execute_query_transfers(message_body_used, output),
+                .get_change_events => self.execute_get_change_events(message_body_used, output),
+
+                // Deprecated unbatched operations (TigerBeetle compatibility)
+                .deprecated_create_accounts_unbatched => self.execute_create_accounts(timestamp, message_body_used, output),
+                .deprecated_create_transfers_unbatched => self.execute_create_transfers(timestamp, message_body_used, output),
+                .deprecated_lookup_accounts_unbatched => self.execute_lookup_accounts(message_body_used, output),
+                .deprecated_lookup_transfers_unbatched => self.execute_lookup_transfers(message_body_used, output),
+                .deprecated_get_account_transfers_unbatched => self.execute_get_account_transfers(message_body_used, output),
+                .deprecated_get_account_balances_unbatched => self.execute_get_account_balances(message_body_used, output),
+                .deprecated_query_accounts_unbatched => self.execute_query_accounts(message_body_used, output),
+                .deprecated_query_transfers_unbatched => self.execute_query_transfers(message_body_used, output),
             };
+
+            return result;
+        }
+
+        // ====================================================================
+        // Execute Functions (Stubs - to be implemented with Forest integration)
+        // ====================================================================
+
+        fn execute_pulse(self: *GeoStateMachine, timestamp: u64) usize {
+            _ = self;
+            _ = timestamp;
+            // TODO: Execute TTL cleanup sweep
+            return 0;
+        }
+
+        fn execute_create_accounts(self: *GeoStateMachine, timestamp: u64, input: []const u8, output: []u8) usize {
+            _ = self;
+            _ = timestamp;
+            _ = input;
+            _ = output;
+            // TODO: Create TigerBeetle accounts (for compatibility during transition)
+            return 0;
+        }
+
+        fn execute_create_transfers(self: *GeoStateMachine, timestamp: u64, input: []const u8, output: []u8) usize {
+            _ = self;
+            _ = timestamp;
+            _ = input;
+            _ = output;
+            // TODO: Create TigerBeetle transfers (for compatibility during transition)
+            return 0;
+        }
+
+        fn execute_lookup_accounts(self: *GeoStateMachine, input: []const u8, output: []u8) usize {
+            _ = self;
+            _ = input;
+            _ = output;
+            // TODO: Lookup TigerBeetle accounts
+            return 0;
+        }
+
+        fn execute_lookup_transfers(self: *GeoStateMachine, input: []const u8, output: []u8) usize {
+            _ = self;
+            _ = input;
+            _ = output;
+            // TODO: Lookup TigerBeetle transfers
+            return 0;
+        }
+
+        fn execute_get_account_transfers(self: *GeoStateMachine, input: []const u8, output: []u8) usize {
+            _ = self;
+            _ = input;
+            _ = output;
+            // TODO: Get account transfers
+            return 0;
+        }
+
+        fn execute_get_account_balances(self: *GeoStateMachine, input: []const u8, output: []u8) usize {
+            _ = self;
+            _ = input;
+            _ = output;
+            // TODO: Get account balances
+            return 0;
+        }
+
+        fn execute_query_accounts(self: *GeoStateMachine, input: []const u8, output: []u8) usize {
+            _ = self;
+            _ = input;
+            _ = output;
+            // TODO: Query accounts
+            return 0;
+        }
+
+        fn execute_query_transfers(self: *GeoStateMachine, input: []const u8, output: []u8) usize {
+            _ = self;
+            _ = input;
+            _ = output;
+            // TODO: Query transfers
+            return 0;
+        }
+
+        fn execute_get_change_events(self: *GeoStateMachine, input: []const u8, output: []u8) usize {
+            _ = self;
+            _ = input;
+            _ = output;
+            // TODO: Get change events
+            return 0;
         }
 
         /// Compact phase - integrate with checkpoint system.
