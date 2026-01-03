@@ -736,6 +736,7 @@ pub fn WorkloadType(comptime AccountingStateMachine: type) type {
                 .delete_entities,
                 .query_radius,
                 .query_polygon,
+                .cleanup_expired,
                 .archerdb_ping,
                 .archerdb_get_status,
                 => {},

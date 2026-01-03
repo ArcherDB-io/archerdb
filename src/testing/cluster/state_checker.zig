@@ -206,7 +206,9 @@ pub fn StateCheckerType(comptime Client: type, comptime Replica: type) type {
             // Even if we have header_b, if its op is commit_root_op, we can't trust it.
             // If we just finished state sync, the header in our log might not have been
             // committed (it might be left over from before sync).
-            const checksum_b = if (commit_b == commit_root_op) commit_root else header_b.?.checksum;
+            // Note: header_b can be null when commit_min == op_checkpoint() but we haven't
+            // synced the header yet. In that case, we must use commit_root.
+            const checksum_b = if (commit_b == commit_root_op or header_b == null) commit_root else header_b.?.checksum;
 
             assert(checksum_b != commit_root or
                 replica.commit_min == replica.superblock.working.vsr_state.checkpoint.header.op);
@@ -256,7 +258,10 @@ pub fn StateCheckerType(comptime Client: type, comptime Replica: type) type {
                     // history. Check if this is a valid new state based on the originating client's
                     // inflight request.
                     const client: *const Client = for (state_checker.clients) |*client| {
-                        if (client.*.?.id == header_b.?.client) break &client.*.?;
+                        // Skip null clients (evicted clients are set to null)
+                        if (client.*) |_| {
+                            if (client.*.?.id == header_b.?.client) break &client.*.?;
+                        }
                     } else unreachable;
 
                     if (client.request_inflight == null) {
