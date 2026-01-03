@@ -633,6 +633,14 @@ pub fn StateMachineType(comptime Storage: type) type {
             query_transfers: TimingSummary = .{},
             get_change_events: TimingSummary = .{},
 
+            // ArcherDB geospatial operations (F1.2)
+            insert_events: TimingSummary = .{},
+            upsert_events: TimingSummary = .{},
+            delete_entities: TimingSummary = .{},
+            query_uuid: TimingSummary = .{},
+            query_radius: TimingSummary = .{},
+            query_polygon: TimingSummary = .{},
+
             compact: TimingSummary = .{},
             checkpoint: TimingSummary = .{},
 
@@ -737,6 +745,14 @@ pub fn StateMachineType(comptime Storage: type) type {
 
                     .get_change_events,
                     => .get_change_events,
+
+                    // ArcherDB geospatial operations (F1.2)
+                    .insert_events => .insert_events,
+                    .upsert_events => .upsert_events,
+                    .delete_entities => .delete_entities,
+                    .query_uuid => .query_uuid,
+                    .query_radius => .query_radius,
+                    .query_polygon => .query_polygon,
 
                     .pulse => comptime unreachable,
                 };
@@ -1031,6 +1047,14 @@ pub fn StateMachineType(comptime Storage: type) type {
                 .query_transfers => 0,
                 .get_change_events => 0,
 
+                // ArcherDB geospatial operations (handled by GeoStateMachine)
+                .insert_events => @divExact(batch.len, @sizeOf(tb.GeoEvent)),
+                .upsert_events => @divExact(batch.len, @sizeOf(tb.GeoEvent)),
+                .delete_entities => @divExact(batch.len, @sizeOf(u128)),
+                .query_uuid => 0,
+                .query_radius => 0,
+                .query_polygon => 0,
+
                 .deprecated_create_accounts_unbatched => @divExact(batch.len, @sizeOf(Account)),
                 .deprecated_create_transfers_unbatched => @divExact(batch.len, @sizeOf(Transfer)),
                 .deprecated_lookup_accounts_unbatched => 0,
@@ -1110,6 +1134,15 @@ pub fn StateMachineType(comptime Storage: type) type {
                 .query_accounts => self.prefetch_query_accounts(),
                 .query_transfers => self.prefetch_query_transfers(),
                 .get_change_events => self.prefetch_get_change_events(),
+
+                // ArcherDB geospatial operations - stub (handled by GeoStateMachine)
+                .insert_events,
+                .upsert_events,
+                .delete_entities,
+                .query_uuid,
+                .query_radius,
+                .query_polygon,
+                => self.prefetch_finish(),
 
                 .deprecated_create_accounts_unbatched => {
                     self.prefetch_create_accounts();
@@ -2483,6 +2516,15 @@ pub fn StateMachineType(comptime Storage: type) type {
                     message_body_used,
                     output_buffer,
                 ),
+
+                // ArcherDB geospatial operations - stub (handled by GeoStateMachine)
+                .insert_events,
+                .upsert_events,
+                .delete_entities,
+                .query_uuid,
+                .query_radius,
+                .query_polygon,
+                => 0,
 
                 inline .deprecated_create_accounts_unbatched,
                 .deprecated_create_transfers_unbatched,

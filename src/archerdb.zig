@@ -7,6 +7,17 @@ const constants = vsr.constants;
 const stdx = vsr.stdx;
 const maybe = stdx.maybe;
 
+// GeoEvent types for geospatial operations
+const geo_event = @import("geo_event.zig");
+const geo_state_machine = @import("geo_state_machine.zig");
+
+pub const GeoEvent = geo_event.GeoEvent;
+pub const QueryUuidFilter = geo_state_machine.QueryUuidFilter;
+pub const QueryRadiusFilter = geo_state_machine.QueryRadiusFilter;
+pub const QueryPolygonFilter = geo_state_machine.QueryPolygonFilter;
+pub const InsertGeoEventsResult = geo_state_machine.InsertGeoEventsResult;
+pub const DeleteEntitiesResult = geo_state_machine.DeleteEntitiesResult;
+
 pub const Account = extern struct {
     id: u128,
     debits_pending: u128,
@@ -661,6 +672,14 @@ pub const Operation = enum(u8) {
     query_accounts = constants.vsr_operations_reserved + 16,
     query_transfers = constants.vsr_operations_reserved + 17,
 
+    // ArcherDB geospatial operations (F1.2)
+    insert_events = constants.vsr_operations_reserved + 18,
+    upsert_events = constants.vsr_operations_reserved + 19,
+    delete_entities = constants.vsr_operations_reserved + 20,
+    query_uuid = constants.vsr_operations_reserved + 21,
+    query_radius = constants.vsr_operations_reserved + 22,
+    query_polygon = constants.vsr_operations_reserved + 23,
+
     pub fn EventType(comptime operation: Operation) type {
         return switch (operation) {
             .pulse => void,
@@ -673,6 +692,14 @@ pub const Operation = enum(u8) {
             .query_accounts => QueryFilter,
             .query_transfers => QueryFilter,
             .get_change_events => ChangeEventsFilter,
+
+            // ArcherDB geospatial operations
+            .insert_events => GeoEvent,
+            .upsert_events => GeoEvent,
+            .delete_entities => u128, // entity_id to delete
+            .query_uuid => QueryUuidFilter,
+            .query_radius => QueryRadiusFilter,
+            .query_polygon => QueryPolygonFilter,
 
             .deprecated_create_accounts_unbatched => Account,
             .deprecated_create_transfers_unbatched => Transfer,
@@ -697,6 +724,14 @@ pub const Operation = enum(u8) {
             .query_accounts => Account,
             .query_transfers => Transfer,
             .get_change_events => ChangeEvent,
+
+            // ArcherDB geospatial operations
+            .insert_events => InsertGeoEventsResult,
+            .upsert_events => InsertGeoEventsResult,
+            .delete_entities => DeleteEntitiesResult,
+            .query_uuid => GeoEvent,
+            .query_radius => GeoEvent,
+            .query_polygon => GeoEvent,
 
             .deprecated_create_accounts_unbatched => CreateAccountsResult,
             .deprecated_create_transfers_unbatched => CreateTransfersResult,
@@ -741,6 +776,14 @@ pub const Operation = enum(u8) {
             .query_transfers => false,
             .get_change_events => false,
 
+            // ArcherDB geospatial operations
+            .insert_events => true, // Batch of GeoEvents
+            .upsert_events => true, // Batch of GeoEvents
+            .delete_entities => true, // Batch of entity_ids
+            .query_uuid => false, // Single UUID filter
+            .query_radius => false, // Single radius query
+            .query_polygon => false, // Single polygon query
+
             .deprecated_create_accounts_unbatched => true,
             .deprecated_create_transfers_unbatched => true,
             .deprecated_lookup_accounts_unbatched => true,
@@ -769,6 +812,15 @@ pub const Operation = enum(u8) {
             => true,
 
             .get_change_events => false,
+
+            // ArcherDB geospatial operations use multi-batch encoding
+            .insert_events,
+            .upsert_events,
+            .delete_entities,
+            .query_uuid,
+            .query_radius,
+            .query_polygon,
+            => true,
 
             .deprecated_create_accounts_unbatched,
             .deprecated_create_transfers_unbatched,
@@ -877,6 +929,10 @@ pub const Operation = enum(u8) {
             .create_transfers,
             .lookup_accounts,
             .lookup_transfers,
+            // ArcherDB geospatial batchable operations
+            .insert_events,
+            .upsert_events,
+            .delete_entities,
             .deprecated_create_accounts_unbatched,
             .deprecated_create_transfers_unbatched,
             .deprecated_lookup_accounts_unbatched,
@@ -899,6 +955,10 @@ pub const Operation = enum(u8) {
             .get_account_balances,
             .query_accounts,
             .query_transfers,
+            // ArcherDB geospatial query operations
+            .query_uuid,
+            .query_radius,
+            .query_polygon,
             .deprecated_get_account_transfers_unbatched,
             .deprecated_get_account_balances_unbatched,
             .deprecated_query_accounts_unbatched,

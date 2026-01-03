@@ -46,16 +46,17 @@ const MultiBatchDecoder = vsr.multi_batch.MultiBatchDecoder;
 /// LSM tree identifiers for GeoEvent storage.
 /// Each tree provides a different index over GeoEvent data.
 pub const tree_ids = struct {
+    /// GeoEvent LSM tree configuration.
+    /// - id (1): Primary index - composite ID (S2 cell << 64 | timestamp)
+    /// - entity_id (2): Secondary index for UUID lookups
+    /// - correlation_id (3): Secondary index for trip/session queries
+    /// - group_id (4): Secondary index for fleet/region queries
+    /// - timestamp (5): Secondary index for time-range queries
     pub const GeoEventTree = .{
-        /// Primary index: composite ID (S2 cell << 64 | timestamp)
         .id = 1,
-        /// Secondary index: entity_id for UUID lookups
         .entity_id = 2,
-        /// Secondary index: correlation_id for trip/session queries
         .correlation_id = 3,
-        /// Secondary index: group_id for fleet/region queries
         .group_id = 4,
-        /// Secondary index: timestamp for time-range queries
         .timestamp = 5,
     };
 };
@@ -128,9 +129,13 @@ pub const DeleteEntitiesResult = extern struct {
 // ============================================================================
 
 /// Filter for UUID lookup queries.
+/// Returns latest GeoEvent for the specified entity_id, or empty if not found.
 pub const QueryUuidFilter = extern struct {
     entity_id: u128,
-    reserved: [112]u8 = @splat(0),
+    /// Maximum results to return (typically 1 for UUID lookups)
+    limit: u32,
+    /// Reserved for future use
+    reserved: [108]u8 = @splat(0),
 
     comptime {
         assert(@sizeOf(QueryUuidFilter) == 128);
