@@ -687,6 +687,22 @@ pub fn WorkloadType(comptime AccountingStateMachine: type) type {
                     stdx.bytes_as_slice(.exact, tb.ChangeEventsFilter, request_body),
                     stdx.bytes_as_slice(.exact, tb.ChangeEvent, reply_body),
                 ),
+
+                // ArcherDB geospatial operations - stub handlers (F1.3.5)
+                // The workload doesn't generate these operations yet, but we need
+                // handlers to allow VOPR compilation. TODO: Implement proper
+                // GeoEvent workload generation for full VOPR integration.
+                .insert_events,
+                .upsert_events,
+                .delete_entities,
+                .query_uuid,
+                .query_latest,
+                .query_radius,
+                .query_polygon,
+                .archerdb_ping,
+                .archerdb_get_status,
+                => {},
+
                 //Not handled by the client.
                 .pulse => unreachable,
             }
