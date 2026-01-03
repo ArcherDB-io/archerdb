@@ -1,21 +1,84 @@
 //! Deterministic math functions for S2 geometry.
 //!
+//! # Overview
+//!
 //! This module provides software-based trigonometric functions that produce
 //! bit-exact identical results across all platforms (x86, ARM, macOS, Linux).
 //!
-//! Why software trig? Standard library sin/cos/atan2 use hardware FPU
-//! instructions that can vary across:
-//! - CPU architectures (x86 vs ARM)
-//! - libc implementations (glibc vs musl vs macOS libc)
-//! - Compiler optimization levels
+//! # Why Software Trig?
 //!
-//! For VSR consensus, all replicas MUST produce identical S2 cell IDs for
-//! the same (lat, lon) coordinates. Non-deterministic math would cause
-//! hash-chain breaks and cluster panics.
+//! Standard library sin/cos/atan2 use hardware FPU instructions that can vary:
 //!
-//! Implementation:
-//! - sin/cos: Chebyshev polynomial approximation (7th order, error < 1e-15)
-//! - atan2: CORDIC algorithm (vectoring mode)
+//! - **CPU architectures**: x86 FSIN/FCOS vs ARM VFP instructions use different
+//!   internal algorithms and precision
+//! - **libc implementations**: glibc, musl, and macOS libc have different
+//!   software fallbacks with different error characteristics
+//! - **Compiler optimizations**: -ffast-math can reorder operations, breaking
+//!   IEEE 754 determinism
+//!
+//! # VSR Consensus Requirements
+//!
+//! For VSR (Viewstamped Replication) consensus, ALL replicas MUST produce
+//! identical S2 cell IDs for the same (lat, lon) coordinates. Non-deterministic
+//! math would cause:
+//!
+//! - Hash-chain verification failures
+//! - Cluster panics and data corruption
+//! - Split-brain scenarios
+//!
+//! # IEEE 754 Determinism Guarantees
+//!
+//! Our implementation achieves determinism by using ONLY these IEEE 754
+//! operations, which are required to be correctly rounded:
+//!
+//! - Addition (+)
+//! - Subtraction (-)
+//! - Multiplication (*)
+//! - Division (/)
+//! - Comparisons (<, >, ==, etc.)
+//!
+//! We AVOID these non-deterministic operations:
+//!
+//! - Hardware FSIN, FCOS, FTAN instructions
+//! - Hardware FSQRT (we use Newton-Raphson with basic ops instead)
+//! - Any math.h functions (sin, cos, tan, sqrt, exp, log, etc.)
+//!
+//! # Implementations
+//!
+//! - **sin/cos**: Taylor series (7th order, error < 1e-15)
+//!   Uses Horner's method for stable evaluation: sin(x) = x(1 + x²(-1/6 + x²(...)))
+//!
+//! - **atan2**: CORDIC algorithm (32 iterations, vectoring mode)
+//!   Rotation-only, avoiding any transcendental operations
+//!
+//! - **sqrt**: Newton-Raphson iteration (6 iterations)
+//!   Initial guess via bit manipulation, refined with x_{n+1} = (x_n + S/x_n)/2
+//!
+//! - **asin/acos**: Derived from atan2 and sqrt
+//!   asin(x) = atan2(x, sqrt(1-x²)), acos(x) = atan2(sqrt(1-x²), x)
+//!
+//! # Error Bounds
+//!
+//! - sin/cos: < 1e-15 (better than most hardware implementations)
+//! - atan2: < 1e-10 (limited by CORDIC iterations)
+//! - sqrt: < 1e-15 (Newton-Raphson converges quadratically)
+//!
+//! # Testing Strategy
+//!
+//! Determinism is verified via:
+//!
+//! 1. **Golden vectors**: Compare against Go S2 reference (testdata/s2/)
+//! 2. **Cross-platform hash**: XOR of many operations must match expected value
+//! 3. **Trig identities**: sin²(x) + cos²(x) = 1 for all x
+//! 4. **Round-trip tests**: lat/lon → cell_id → lat/lon
+//!
+//! See `cell_id.test.cross-platform determinism` for the verification test.
+//!
+//! # References
+//!
+//! - IEEE 754-2008: "Standard for Floating-Point Arithmetic"
+//! - CORDIC: "COordinate Rotation DIgital Computer" algorithm (Volder, 1959)
+//! - Taylor series: Standard calculus approximation
 
 const std = @import("std");
 
