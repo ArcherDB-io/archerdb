@@ -57,6 +57,11 @@ pub const GeoEvent = extern struct {
     /// Fleet/region grouping identifier
     group_id: u64,
 
+    /// Event timestamp in nanoseconds since Unix epoch.
+    /// Required by GrooveType for object tree ordering.
+    /// Should match the lower 64 bits of the composite `id`.
+    timestamp: u64,
+
     /// Altitude in millimeters above WGS84 ellipsoid
     altitude_mm: i32,
 
@@ -76,7 +81,7 @@ pub const GeoEvent = extern struct {
     flags: GeoEventFlags,
 
     /// Reserved for future use (must be zero)
-    reserved: [20]u8,
+    reserved: [12]u8,
 
     // === Constants ===
 
@@ -230,6 +235,7 @@ test "field layout verification" {
         .lat_nano = @offsetOf(GeoEvent, "lat_nano"),
         .lon_nano = @offsetOf(GeoEvent, "lon_nano"),
         .group_id = @offsetOf(GeoEvent, "group_id"),
+        .timestamp = @offsetOf(GeoEvent, "timestamp"),
         .altitude_mm = @offsetOf(GeoEvent, "altitude_mm"),
         .velocity_mms = @offsetOf(GeoEvent, "velocity_mms"),
         .ttl_seconds = @offsetOf(GeoEvent, "ttl_seconds"),
@@ -245,24 +251,25 @@ test "field layout verification" {
     try std.testing.expectEqual(@as(usize, 32), offsets.correlation_id);
     try std.testing.expectEqual(@as(usize, 48), offsets.user_data);
 
-    // u64 fields (8 bytes each)
+    // u64/i64 fields (8 bytes each)
     try std.testing.expectEqual(@as(usize, 64), offsets.lat_nano);
     try std.testing.expectEqual(@as(usize, 72), offsets.lon_nano);
     try std.testing.expectEqual(@as(usize, 80), offsets.group_id);
+    try std.testing.expectEqual(@as(usize, 88), offsets.timestamp);
 
-    // u32 fields (4 bytes each)
-    try std.testing.expectEqual(@as(usize, 88), offsets.altitude_mm);
-    try std.testing.expectEqual(@as(usize, 92), offsets.velocity_mms);
-    try std.testing.expectEqual(@as(usize, 96), offsets.ttl_seconds);
-    try std.testing.expectEqual(@as(usize, 100), offsets.accuracy_mm);
+    // u32/i32 fields (4 bytes each)
+    try std.testing.expectEqual(@as(usize, 96), offsets.altitude_mm);
+    try std.testing.expectEqual(@as(usize, 100), offsets.velocity_mms);
+    try std.testing.expectEqual(@as(usize, 104), offsets.ttl_seconds);
+    try std.testing.expectEqual(@as(usize, 108), offsets.accuracy_mm);
 
     // u16 fields (2 bytes each)
-    try std.testing.expectEqual(@as(usize, 104), offsets.heading_cdeg);
-    try std.testing.expectEqual(@as(usize, 106), offsets.flags);
+    try std.testing.expectEqual(@as(usize, 112), offsets.heading_cdeg);
+    try std.testing.expectEqual(@as(usize, 114), offsets.flags);
 
-    // Reserved (20 bytes)
-    try std.testing.expectEqual(@as(usize, 108), offsets.reserved);
+    // Reserved (12 bytes)
+    try std.testing.expectEqual(@as(usize, 116), offsets.reserved);
 
-    // Verify total: 108 + 20 = 128
-    try std.testing.expectEqual(@as(usize, 128), offsets.reserved + 20);
+    // Verify total: 116 + 12 = 128
+    try std.testing.expectEqual(@as(usize, 128), offsets.reserved + 12);
 }

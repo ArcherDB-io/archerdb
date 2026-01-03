@@ -367,6 +367,7 @@ fn command_start(
                 .cache_entries_accounts = args.cache_accounts,
                 .cache_entries_transfers = args.cache_transfers,
                 .cache_entries_transfers_pending = args.cache_transfers_pending,
+                .cache_entries_geo_events = args.cache_geo_events, // F1.3.1
                 .log_trace = args.log_trace,
             },
             .message_bus_options = .{

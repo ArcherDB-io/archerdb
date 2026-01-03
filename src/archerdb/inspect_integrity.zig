@@ -207,6 +207,7 @@ fn init(
             .cache_entries_accounts = 0,
             .cache_entries_transfers = 0,
             .cache_entries_transfers_pending = 0,
+            .cache_entries_geo_events = 0, // F1.3.1
 
             .log_trace = false,
         }),

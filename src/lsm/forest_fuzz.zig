@@ -79,6 +79,7 @@ const Environment = struct {
         .cache_entries_accounts = cache_entries_max,
         .cache_entries_transfers = cache_entries_max,
         .cache_entries_transfers_pending = cache_entries_max,
+        .cache_entries_geo_events = cache_entries_max, // F1.3.1
         .log_trace = true,
     });
 

@@ -407,6 +407,7 @@ fn options_swarm(prng: *stdx.PRNG) Simulator.Options {
                 .cache_entries_accounts = if (prng.boolean()) 256 else 0,
                 .cache_entries_transfers = if (prng.boolean()) 256 else 0,
                 .cache_entries_transfers_pending = if (prng.boolean()) 256 else 0,
+                .cache_entries_geo_events = if (prng.boolean()) 256 else 0, // F1.3.1
                 .log_trace = true,
             },
         },
@@ -534,6 +535,7 @@ fn options_performance(prng: *stdx.PRNG) Simulator.Options {
                 .cache_entries_accounts = 256,
                 .cache_entries_transfers = 0,
                 .cache_entries_transfers_pending = 0,
+                .cache_entries_geo_events = 0, // F1.3.1
                 .log_trace = true,
             },
         },

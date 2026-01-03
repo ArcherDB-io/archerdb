@@ -80,6 +80,7 @@ const CLIArgs = union(enum) {
         cache_accounts: ?ByteSize = null,
         cache_transfers: ?ByteSize = null,
         cache_transfers_pending: ?ByteSize = null,
+        cache_geo_events: ?ByteSize = null, // F1.3.1
         memory_lsm_manifest: ?ByteSize = null,
         memory_lsm_compaction: ?ByteSize = null,
         trace: ?[]const u8 = null,
@@ -126,6 +127,7 @@ const CLIArgs = union(enum) {
         cache_accounts: ?[]const u8 = null,
         cache_transfers: ?[]const u8 = null,
         cache_transfers_pending: ?[]const u8 = null,
+        cache_geo_events: ?[]const u8 = null, // F1.3.1
         cache_grid: ?[]const u8 = null,
         account_count: u32 = 10_000,
         account_count_hot: u32 = 0,
@@ -458,6 +460,7 @@ const StartDefaults = struct {
     cache_accounts: ByteSize,
     cache_transfers: ByteSize,
     cache_transfers_pending: ByteSize,
+    cache_geo_events: ByteSize, // F1.3.1
     cache_grid: ByteSize,
     memory_lsm_compaction: ByteSize,
 };
@@ -469,6 +472,7 @@ const start_defaults_production = StartDefaults{
     .cache_accounts = .{ .value = constants.cache_accounts_size_default },
     .cache_transfers = .{ .value = constants.cache_transfers_size_default },
     .cache_transfers_pending = .{ .value = constants.cache_transfers_pending_size_default },
+    .cache_geo_events = .{ .value = 0 }, // F1.3.1: default to no cache, will be configurable later
     .cache_grid = .{ .value = constants.grid_cache_size_default },
     .memory_lsm_compaction = .{
         // By default, add a few extra blocks for beat-scoped work.
@@ -482,6 +486,7 @@ const start_defaults_development = StartDefaults{
     .cache_accounts = .{ .value = 0 },
     .cache_transfers = .{ .value = 0 },
     .cache_transfers_pending = .{ .value = 0 },
+    .cache_geo_events = .{ .value = 0 }, // F1.3.1
     .cache_grid = .{ .value = constants.block_size * Grid.Cache.value_count_max_multiple },
     .memory_lsm_compaction = .{ .value = lsm_compaction_block_memory_min },
 };
@@ -523,6 +528,7 @@ pub const Command = union(enum) {
         cache_accounts: u32,
         cache_transfers: u32,
         cache_transfers_pending: u32,
+        cache_geo_events: u32, // F1.3.1
         storage_size_limit: u64,
         pipeline_requests_limit: u32,
         request_size_limit: u32,
@@ -573,6 +579,7 @@ pub const Command = union(enum) {
         cache_accounts: ?[]const u8,
         cache_transfers: ?[]const u8,
         cache_transfers_pending: ?[]const u8,
+        cache_geo_events: ?[]const u8, // F1.3.1
         cache_grid: ?[]const u8,
         log_debug: bool,
         log_debug_replica: bool,
@@ -842,6 +849,7 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
     const AccountsValuesCache = groove_config.accounts.ObjectsCache.Cache;
     const TransfersValuesCache = groove_config.transfers.ObjectsCache.Cache;
     const TransfersPendingValuesCache = groove_config.transfers_pending.ObjectsCache.Cache;
+    const GeoEventsValuesCache = groove_config.geo_events.ObjectsCache.Cache; // F1.3.1
 
     const addresses = parse_addresses(start.addresses, "--addresses", Command.Addresses);
     const defaults =
@@ -1041,6 +1049,12 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
             start.cache_transfers_pending orelse defaults.cache_transfers_pending,
             "--cache-transfers-pending",
         ),
+        .cache_geo_events = parse_cache_size_to_count(
+            tigerbeetle.GeoEvent,
+            GeoEventsValuesCache,
+            start.cache_geo_events orelse defaults.cache_geo_events,
+            "--cache-geo-events",
+        ),
         .cache_grid_blocks = parse_cache_size_to_count(
             [constants.block_size]u8,
             Grid.Cache,
@@ -1139,6 +1153,7 @@ fn parse_args_benchmark(benchmark: CLIArgs.Benchmark) Command.Benchmark {
         .cache_accounts = benchmark.cache_accounts,
         .cache_transfers = benchmark.cache_transfers,
         .cache_transfers_pending = benchmark.cache_transfers_pending,
+        .cache_geo_events = benchmark.cache_geo_events, // F1.3.1
         .cache_grid = benchmark.cache_grid,
         .log_debug = benchmark.log_debug,
         .log_debug_replica = benchmark.log_debug_replica,

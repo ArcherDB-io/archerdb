@@ -9,9 +9,11 @@ comptime {
     _ = @import("clients/c/tb_client/signal.zig");
     _ = @import("clients/c/test.zig");
     _ = @import("copyhound.zig");
+    _ = @import("error_codes.zig");
     _ = @import("ewah.zig");
     _ = @import("ewah_benchmark.zig");
     _ = @import("geo_event.zig");
+    _ = @import("geo_state_machine.zig");
     _ = @import("io/test.zig");
     _ = @import("iops.zig");
     _ = @import("list.zig");

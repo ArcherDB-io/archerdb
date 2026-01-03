@@ -42,6 +42,9 @@ const ChangeEventsFilter = tb.ChangeEventsFilter;
 const ChangeEvent = tb.ChangeEvent;
 const ChangeEventType = tb.ChangeEventType;
 
+// ArcherDB geospatial types (F1.3.1)
+const GeoEvent = tb.GeoEvent;
+
 pub const tree_ids = struct {
     pub const Account = .{
         .id = 1,
@@ -91,11 +94,10 @@ pub const tree_ids = struct {
     // ArcherDB geospatial tree IDs (F1.3.1)
     // GeoEvent storage uses composite ID (s2_cell_id:timestamp) as primary key
     pub const GeoEvent = .{
-        .id = 34, // Composite ID: s2_cell_id high bits + timestamp low bits
-        .entity_id = 35, // Secondary index for UUID lookups
-        .timestamp = 36, // For temporal ordering/query_latest
-        .s2_cell_id = 37, // For spatial range scans
-        .group_id = 38, // Optional grouping index
+        .id = 34, // Composite ID for spatial-temporal queries (s2_cell high, timestamp low)
+        .entity_id = 35, // Secondary index for UUID lookups (query_uuid)
+        .timestamp = 36, // Object tree key (required by GrooveType)
+        .group_id = 37, // Fleet/region grouping index
     };
 };
 
@@ -276,6 +278,7 @@ pub fn StateMachineType(comptime Storage: type) type {
             cache_entries_accounts: u32,
             cache_entries_transfers: u32,
             cache_entries_transfers_pending: u32,
+            cache_entries_geo_events: u32, // F1.3.1: ArcherDB geo events cache
             log_trace: bool,
         };
 
@@ -286,6 +289,7 @@ pub fn StateMachineType(comptime Storage: type) type {
             .transfers = TransfersGroove,
             .transfers_pending = TransfersPendingGroove,
             .account_events = AccountEventsGroove,
+            .geo_events = GeoEventsGroove, // F1.3.1: ArcherDB geospatial events
         });
 
         pub const batch_max = struct {
@@ -322,11 +326,17 @@ pub fn StateMachineType(comptime Storage: type) type {
                 ),
             );
 
+            // ArcherDB geospatial batch limits (F1.3.1)
+            pub const insert_geo_events: u32 = Operation.insert_events.event_max(
+                constants.message_body_size_max,
+            );
+
             comptime {
                 assert(create_accounts > 0);
                 assert(create_transfers > 0);
                 assert(lookup_accounts > 0);
                 assert(lookup_transfers > 0);
+                assert(insert_geo_events > 0);
             }
         };
 
@@ -540,6 +550,42 @@ pub fn StateMachineType(comptime Storage: type) type {
                 },
                 .orphaned_ids = false,
                 .objects_cache = false,
+            },
+        );
+
+        // ArcherDB GeoEvents groove (F1.3.1)
+        // Stores geospatial events with spatial-temporal composite key
+        const GeoEventsGroove = GrooveType(
+            Storage,
+            GeoEvent,
+            .{
+                .ids = tree_ids.GeoEvent,
+                .batch_value_count_max = tree_values_count_max.geo_events,
+                .ignored = &[_][]const u8{
+                    // Coordinate data not directly indexed (spatial queries use id composite key)
+                    "lat_nano",
+                    "lon_nano",
+                    "altitude_mm",
+                    // Motion data not indexed
+                    "velocity_mms",
+                    "heading_cdeg",
+                    "accuracy_mm",
+                    // TTL handled by expiration logic, not indexed
+                    "ttl_seconds",
+                    // Application data
+                    "correlation_id",
+                    "user_data",
+                    // Flags and reserved
+                    "flags",
+                    "reserved",
+                },
+                .optional = &[_][]const u8{
+                    // group_id is optional - only indexed if non-zero
+                    "group_id",
+                },
+                .derived = .{},
+                .orphaned_ids = false,
+                .objects_cache = true, // Cache hot entities for query_latest
             },
         );
 
@@ -985,7 +1031,10 @@ pub fn StateMachineType(comptime Storage: type) type {
             assert(batch.len <= self.batch_size_limit);
             maybe(batch.len == 0);
             switch (operation) {
-                .pulse => return batch.len == 0,
+                .pulse,
+                .archerdb_ping,
+                .archerdb_get_status,
+                => return batch.len == 0,
                 inline else => |operation_comptime| {
                     const event_size = operation_comptime.event_size();
                     assert(event_size > 0);
@@ -4465,6 +4514,12 @@ pub fn StateMachineType(comptime Storage: type) type {
             assert(prefetch_create_accounts_limit <= batch_max.lookup_transfers);
             assert(prefetch_create_transfers_limit <= batch_max.lookup_transfers);
 
+            // ArcherDB geo event prefetch limit (F1.3.1)
+            const prefetch_insert_geo_events_limit: u32 =
+                Operation.insert_events.event_max(options.batch_size_limit);
+            assert(prefetch_insert_geo_events_limit > 0);
+            assert(prefetch_insert_geo_events_limit <= batch_max.insert_geo_events);
+
             // Inputs are bounded by the runtime-known `batch_size_limit`,
             // while replies are only limited by the constant `message_body_size_max`.
             // This allows more read objects (lookups and queries) than writes (creates).
@@ -4549,6 +4604,25 @@ pub fn StateMachineType(comptime Storage: type) type {
                         tree_values_count_limit.account_events,
                     ),
                 },
+                // ArcherDB GeoEvents init options (F1.3.1)
+                .geo_events = .{
+                    // insert_events inserts up to batch_max events
+                    // query_uuid looks up entities by UUID
+                    .prefetch_entries_for_read_max = prefetch_insert_geo_events_limit,
+                    .prefetch_entries_for_update_max = prefetch_insert_geo_events_limit,
+                    // Cache hot entities for query_latest optimization
+                    .cache_entries_max = options.cache_entries_geo_events,
+                    .tree_options_object = .{
+                        .batch_value_count_limit = tree_values_count_limit.geo_events.timestamp,
+                    },
+                    .tree_options_id = .{
+                        .batch_value_count_limit = tree_values_count_limit.geo_events.id,
+                    },
+                    .tree_options_index = index_tree_options(
+                        GeoEventsGroove.IndexTreeOptions,
+                        tree_values_count_limit.geo_events,
+                    ),
+                },
             };
         }
 
@@ -4605,6 +4679,13 @@ pub fn StateMachineType(comptime Storage: type) type {
                 ledger_expired: u32,
                 prunable: u32,
             },
+            // ArcherDB GeoEvent tree value counts (F1.3.1)
+            geo_events: struct {
+                id: u32, // Composite spatial-temporal key
+                entity_id: u32, // UUID lookup index
+                timestamp: u32, // Object tree key
+                group_id: u32, // Fleet/region grouping
+            },
         } {
             assert(batch_size_limit <= constants.message_body_size_max);
 
@@ -4621,6 +4702,11 @@ pub fn StateMachineType(comptime Storage: type) type {
             );
             assert(batch_create_transfers > 0);
             assert(batch_create_transfers <= batch_max.create_transfers);
+
+            // ArcherDB geo event batch size (F1.3.1)
+            const batch_insert_geo_events: u32 = Operation.insert_events.event_max(batch_size_limit);
+            assert(batch_insert_geo_events > 0);
+            assert(batch_insert_geo_events <= batch_max.insert_geo_events);
 
             return .{
                 .accounts = .{
@@ -4667,6 +4753,13 @@ pub fn StateMachineType(comptime Storage: type) type {
                     .transfer_pending_id_expired = batch_create_transfers,
                     .ledger_expired = batch_create_transfers,
                     .prunable = batch_create_transfers,
+                },
+                // ArcherDB geo events (F1.3.1)
+                .geo_events = .{
+                    .id = batch_insert_geo_events,
+                    .entity_id = batch_insert_geo_events,
+                    .timestamp = batch_insert_geo_events,
+                    .group_id = batch_insert_geo_events,
                 },
             };
         }
