@@ -2383,8 +2383,9 @@ test "DegradationDetector: check_health overall level" {
     try std.testing.expect(!status_healthy.corruption_detected);
 
     // Warning level: high tombstone ratio.
+    // capacity=200 keeps load_factor at 46.5% (below warning 60%)
     const stats_warning = IndexStats{
-        .capacity = 100,
+        .capacity = 200,
         .entry_count = 78,
         .tombstone_count = 15, // ~16% tombstones
         .max_probe_length_seen = 2,

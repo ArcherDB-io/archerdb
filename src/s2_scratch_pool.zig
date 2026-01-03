@@ -280,7 +280,8 @@ test "S2ScratchPool: acquire and release" {
 
 test "S2ScratchPool: exhaustion" {
     const allocator = std.testing.allocator;
-    const SmallPool = S2ScratchPoolType(3, 1024);
+    // Buffer size must be at least page_size_min for alignment requirements
+    const SmallPool = S2ScratchPoolType(3, std.heap.page_size_min);
 
     var pool = try SmallPool.init(allocator);
     defer pool.deinit(allocator);
@@ -333,7 +334,8 @@ test "S2ScratchPool: typed access" {
 
 test "S2ScratchPool: statistics" {
     const allocator = std.testing.allocator;
-    const SmallPool = S2ScratchPoolType(3, 1024);
+    // Buffer size must be at least page_size_min for alignment requirements
+    const SmallPool = S2ScratchPoolType(3, std.heap.page_size_min);
 
     var pool = try SmallPool.init(allocator);
     defer pool.deinit(allocator);
@@ -362,7 +364,8 @@ test "S2ScratchPool: statistics" {
 
 test "S2ScratchPool: multiple buffers different indices" {
     const allocator = std.testing.allocator;
-    const SmallPool = S2ScratchPoolType(4, 1024);
+    const buf_size = std.heap.page_size_min;
+    const SmallPool = S2ScratchPoolType(4, buf_size);
 
     var pool = try SmallPool.init(allocator);
     defer pool.deinit(allocator);
@@ -383,9 +386,9 @@ test "S2ScratchPool: multiple buffers different indices" {
     const p3 = @intFromPtr(b3.data);
     const p4 = @intFromPtr(b4.data);
 
-    try std.testing.expect(@abs(@as(i64, @intCast(p2)) - @as(i64, @intCast(p1))) >= 1024);
-    try std.testing.expect(@abs(@as(i64, @intCast(p3)) - @as(i64, @intCast(p2))) >= 1024);
-    try std.testing.expect(@abs(@as(i64, @intCast(p4)) - @as(i64, @intCast(p3))) >= 1024);
+    try std.testing.expect(@abs(@as(i64, @intCast(p2)) - @as(i64, @intCast(p1))) >= buf_size);
+    try std.testing.expect(@abs(@as(i64, @intCast(p3)) - @as(i64, @intCast(p2))) >= buf_size);
+    try std.testing.expect(@abs(@as(i64, @intCast(p4)) - @as(i64, @intCast(p3))) >= buf_size);
 
     pool.release(b1);
     pool.release(b2);
@@ -395,7 +398,7 @@ test "S2ScratchPool: multiple buffers different indices" {
 
 test "S2ScratchPool: reuse after release" {
     const allocator = std.testing.allocator;
-    const SmallPool = S2ScratchPoolType(2, 1024);
+    const SmallPool = S2ScratchPoolType(2, std.heap.page_size_min);
 
     var pool = try SmallPool.init(allocator);
     defer pool.deinit(allocator);

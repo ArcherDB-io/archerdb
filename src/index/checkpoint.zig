@@ -2725,8 +2725,12 @@ test "IndexAlertThresholds: get_health_status" {
     const healthy = MockStats{};
     try std.testing.expectEqual(HS.healthy, IAT.get_health_status(healthy));
 
-    // Warning from high tombstones
-    const warning_tombstone = MockStats{ .tombstone_count = 20, .entry_count = 80 };
+    // Warning from high tombstones (capacity=200 to keep load_factor < warning)
+    const warning_tombstone = MockStats{
+        .tombstone_count = 20,
+        .entry_count = 80,
+        .capacity = 200,
+    };
     try std.testing.expectEqual(HS.warning, IAT.get_health_status(warning_tombstone));
 
     // Warning from high load factor
