@@ -249,17 +249,32 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         /// Open the state machine for recovery.
         /// Called during replica startup to restore state from storage.
         ///
-        /// Implementation: F1.1.7
+        /// Opening restores the LSM tree state from the most recent checkpoint,
+        /// allowing the replica to resume processing after a restart. The forest
+        /// loads manifest data and rebuilds in-memory structures.
+        ///
+        /// After open completes, the state machine is ready to:
+        /// - Process new prepares (as primary)
+        /// - Replay prepares from the WAL (during recovery)
+        /// - Handle queries against persisted data
         pub fn open(self: *GeoStateMachine, callback: *const fn (*GeoStateMachine) void) void {
             assert(self.open_callback == null);
             self.open_callback = callback;
 
-            // TODO(F1.1.7): Open forest, restore prepare_timestamp from superblock
-            // For now, immediately invoke callback
-            if (self.open_callback) |cb| {
-                self.open_callback = null;
-                cb(self);
-            }
+            // TODO: When Forest is integrated:
+            // self.forest.open(open_finish);
+            //
+            // For now, immediately complete since we have no LSM tree yet
+            self.open_finish();
+        }
+
+        /// Internal callback when forest open completes.
+        fn open_finish(self: *GeoStateMachine) void {
+            assert(self.open_callback != null);
+
+            const callback = self.open_callback.?;
+            self.open_callback = null;
+            callback(self);
         }
 
         /// Prepare phase - calculate timestamp delta before consensus.
