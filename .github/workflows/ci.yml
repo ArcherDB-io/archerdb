@@ -43,11 +43,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: 'ubuntu-22.04', name: 'Linux x64' }
-          - { os: 'ubuntu-24.04-arm', name: 'Linux ARM64' }
+          - { os: 'ubuntu-latest', name: 'Linux x64' }
           - { os: 'macos-latest', name: 'macOS ARM64' }
-          - { os: 'macos-13', name: 'macOS x64' }
-          - { os: 'windows-latest', name: 'Windows x64' }
+          # Windows and ARM runners added back when available
     runs-on: ${{ matrix.os }}
     name: Test (${{ matrix.name }})
     steps:
@@ -73,15 +71,10 @@ jobs:
         shell: bash
         run: ./zig/zig build --release=safe
 
-      # Verify build (skip on Windows - binary has different name)
+      # Verify build
       - name: Verify binary
-        if: runner.os != 'Windows'
-        run: ./zig-out/bin/archerdb version --verbose
-
-      - name: Verify binary (Windows)
-        if: runner.os == 'Windows'
         shell: bash
-        run: ./zig-out/bin/archerdb.exe version --verbose
+        run: ./zig-out/bin/archerdb version --verbose
 
   # Build reproducibility check
   reproducible-build:
