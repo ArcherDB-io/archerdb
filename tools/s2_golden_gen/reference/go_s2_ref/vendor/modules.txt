@@ -1,0 +1,7 @@
+# github.com/golang/geo v0.0.0-20251229110840-fd652594c94c
+## explicit; go 1.23.0
+github.com/golang/geo/r1
+github.com/golang/geo/r2
+github.com/golang/geo/r3
+github.com/golang/geo/s1
+github.com/golang/geo/s2
