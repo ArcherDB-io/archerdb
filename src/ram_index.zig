@@ -1113,6 +1113,9 @@ pub fn RamIndexType(comptime options: struct {
     track_stats: bool = true,
 }) type {
     return struct {
+        // Type alias for use in return types where @This() would be ambiguous.
+        const Index = @This();
+
         /// Pre-allocated array of index entries.
         /// Aligned to 64 bytes (cache line) to prevent false sharing.
         entries: []align(64) IndexEntry,
@@ -1592,7 +1595,7 @@ pub fn RamIndexType(comptime options: struct {
             self: *@This(),
             allocator: std.mem.Allocator,
             config: RehashConfig,
-        ) !struct { new_index: @This(), result: RehashResult } {
+        ) !struct { new_index: Index, result: RehashResult } {
             const start_time = std.time.nanoTimestamp();
             const old_stats = self.get_stats();
 
