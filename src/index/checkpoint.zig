@@ -624,6 +624,124 @@ pub const RecoveryAlertThresholds = struct {
     pub const stale_checkpoint_seconds: u64 = 7 * 24 * 60 * 60;
 };
 
+/// Alert thresholds for index health monitoring (F2.3.4).
+///
+/// These thresholds trigger operator alerts for proactive maintenance
+/// before index degradation impacts query performance.
+pub const IndexAlertThresholds = struct {
+    // =========================================================================
+    // Tombstone Ratio Thresholds
+    // =========================================================================
+    // Tombstones occupy hash table slots without holding live data.
+    // High tombstone ratio increases probe lengths and wastes memory.
+
+    /// Warning: tombstone_ratio > 0.1 (10%)
+    /// Action: Schedule maintenance within 1 week
+    pub const tombstone_warning: f32 = 0.1;
+
+    /// Critical: tombstone_ratio > 0.3 (30%)
+    /// Action: Immediate maintenance required - run `archerdb index rehash`
+    pub const tombstone_critical: f32 = 0.3;
+
+    // =========================================================================
+    // Load Factor Thresholds
+    // =========================================================================
+    // Load factor = (entries + tombstones) / capacity
+    // Hash table performance degrades rapidly above 0.75.
+
+    /// Warning: load_factor > 0.6 (60% full)
+    /// Action: Plan capacity increase or reduce entity count
+    pub const load_factor_warning: f32 = 0.6;
+
+    /// Critical: load_factor > 0.75 (75% full)
+    /// Action: Immediate capacity increase needed
+    pub const load_factor_critical: f32 = 0.75;
+
+    // =========================================================================
+    // Probe Length Thresholds
+    // =========================================================================
+    // p99 probe length measures hash collision severity.
+    // High probe length indicates O(n) lookup degradation.
+
+    /// Warning: probe_length p99 > 3
+    /// Action: Monitor for continued increase
+    pub const probe_length_warning: u32 = 3;
+
+    /// Critical: probe_length p99 > 10
+    /// Action: Immediate rehash/rebuild required
+    pub const probe_length_critical: u32 = 10;
+
+    // =========================================================================
+    // Helper Functions for Alert Status
+    // =========================================================================
+
+    /// Check if tombstone ratio is in warning state.
+    pub fn is_tombstone_warning(stats: anytype) bool {
+        return stats.tombstone_ratio() > tombstone_warning;
+    }
+
+    /// Check if tombstone ratio is in critical state.
+    pub fn is_tombstone_critical(stats: anytype) bool {
+        return stats.tombstone_ratio() > tombstone_critical;
+    }
+
+    /// Check if load factor is in warning state.
+    pub fn is_load_factor_warning(stats: anytype) bool {
+        return stats.load_factor() > load_factor_warning;
+    }
+
+    /// Check if load factor is in critical state.
+    pub fn is_load_factor_critical(stats: anytype) bool {
+        return stats.load_factor() > load_factor_critical;
+    }
+
+    /// Check if probe length is in warning state.
+    pub fn is_probe_length_warning(stats: anytype) bool {
+        return stats.max_probe_length_seen > probe_length_warning;
+    }
+
+    /// Check if probe length is in critical state.
+    pub fn is_probe_length_critical(stats: anytype) bool {
+        return stats.max_probe_length_seen > probe_length_critical;
+    }
+
+    /// Get the overall index health status.
+    pub const HealthStatus = enum {
+        healthy,
+        warning,
+        critical,
+
+        pub fn to_label(self: HealthStatus) []const u8 {
+            return switch (self) {
+                .healthy => "healthy",
+                .warning => "warning",
+                .critical => "critical",
+            };
+        }
+    };
+
+    /// Determine overall index health from stats.
+    pub fn get_health_status(stats: anytype) HealthStatus {
+        // Check critical conditions first
+        if (is_tombstone_critical(stats) or
+            is_load_factor_critical(stats) or
+            is_probe_length_critical(stats))
+        {
+            return .critical;
+        }
+
+        // Check warning conditions
+        if (is_tombstone_warning(stats) or
+            is_load_factor_warning(stats) or
+            is_probe_length_warning(stats))
+        {
+            return .warning;
+        }
+
+        return .healthy;
+    }
+};
+
 /// Recovery configuration parameters.
 pub const RecoveryConfig = struct {
     /// WAL journal slot count (TigerBeetle default: 8192).
@@ -2447,4 +2565,164 @@ test "PrometheusMetrics.Labels: as_string" {
 test "PrometheusMetrics.Labels: with_replica" {
     const labels = PrometheusMetrics.Labels.with_replica(5);
     try std.testing.expectEqual(@as(u8, 5), labels.replica_id);
+}
+
+// =============================================================================
+// Index Alert Threshold Tests (F2.3.4)
+// =============================================================================
+
+test "IndexAlertThresholds: tombstone ratio thresholds" {
+    // Verify threshold values match spec
+    try std.testing.expectApproxEqAbs(@as(f32, 0.1), IndexAlertThresholds.tombstone_warning, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.3), IndexAlertThresholds.tombstone_critical, 0.001);
+
+    // Warning should be less than critical
+    try std.testing.expect(IndexAlertThresholds.tombstone_warning < IndexAlertThresholds.tombstone_critical);
+}
+
+test "IndexAlertThresholds: load factor thresholds" {
+    // Verify threshold values match spec
+    try std.testing.expectApproxEqAbs(@as(f32, 0.6), IndexAlertThresholds.load_factor_warning, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.75), IndexAlertThresholds.load_factor_critical, 0.001);
+
+    // Warning should be less than critical
+    try std.testing.expect(IndexAlertThresholds.load_factor_warning < IndexAlertThresholds.load_factor_critical);
+
+    // Load factor thresholds should be below 1.0
+    try std.testing.expect(IndexAlertThresholds.load_factor_critical < 1.0);
+}
+
+test "IndexAlertThresholds: probe length thresholds" {
+    // Verify threshold values match spec
+    try std.testing.expectEqual(@as(u32, 3), IndexAlertThresholds.probe_length_warning);
+    try std.testing.expectEqual(@as(u32, 10), IndexAlertThresholds.probe_length_critical);
+
+    // Warning should be less than critical
+    try std.testing.expect(IndexAlertThresholds.probe_length_warning < IndexAlertThresholds.probe_length_critical);
+}
+
+test "IndexAlertThresholds: tombstone alert functions" {
+    // Create mock stats struct
+    const MockStats = struct {
+        tombstone_count: u64,
+        entry_count: u64,
+
+        pub fn tombstone_ratio(self: @This()) f32 {
+            const total = self.entry_count + self.tombstone_count;
+            if (total == 0) return 0.0;
+            return @as(f32, @floatFromInt(self.tombstone_count)) / @as(f32, @floatFromInt(total));
+        }
+    };
+
+    // Healthy state (< 10% tombstones)
+    const healthy = MockStats{ .tombstone_count = 5, .entry_count = 95 }; // 5%
+    try std.testing.expect(!IndexAlertThresholds.is_tombstone_warning(healthy));
+    try std.testing.expect(!IndexAlertThresholds.is_tombstone_critical(healthy));
+
+    // Warning state (10-30% tombstones)
+    const warning = MockStats{ .tombstone_count = 20, .entry_count = 80 }; // 20%
+    try std.testing.expect(IndexAlertThresholds.is_tombstone_warning(warning));
+    try std.testing.expect(!IndexAlertThresholds.is_tombstone_critical(warning));
+
+    // Critical state (> 30% tombstones)
+    const critical = MockStats{ .tombstone_count = 40, .entry_count = 60 }; // 40%
+    try std.testing.expect(IndexAlertThresholds.is_tombstone_warning(critical));
+    try std.testing.expect(IndexAlertThresholds.is_tombstone_critical(critical));
+}
+
+test "IndexAlertThresholds: load factor alert functions" {
+    const MockStats = struct {
+        entry_count: u64,
+        capacity: u64,
+        tombstone_count: u64 = 0,
+
+        pub fn load_factor(self: @This()) f32 {
+            if (self.capacity == 0) return 0.0;
+            return @as(f32, @floatFromInt(self.entry_count + self.tombstone_count)) /
+                @as(f32, @floatFromInt(self.capacity));
+        }
+    };
+
+    // Healthy state (< 60%)
+    const healthy = MockStats{ .entry_count = 50, .capacity = 100 }; // 50%
+    try std.testing.expect(!IndexAlertThresholds.is_load_factor_warning(healthy));
+    try std.testing.expect(!IndexAlertThresholds.is_load_factor_critical(healthy));
+
+    // Warning state (60-75%)
+    const warning = MockStats{ .entry_count = 70, .capacity = 100 }; // 70%
+    try std.testing.expect(IndexAlertThresholds.is_load_factor_warning(warning));
+    try std.testing.expect(!IndexAlertThresholds.is_load_factor_critical(warning));
+
+    // Critical state (> 75%)
+    const critical = MockStats{ .entry_count = 80, .capacity = 100 }; // 80%
+    try std.testing.expect(IndexAlertThresholds.is_load_factor_warning(critical));
+    try std.testing.expect(IndexAlertThresholds.is_load_factor_critical(critical));
+}
+
+test "IndexAlertThresholds: probe length alert functions" {
+    const MockStats = struct {
+        max_probe_length_seen: u32,
+    };
+
+    // Healthy state (< 3)
+    const healthy = MockStats{ .max_probe_length_seen = 2 };
+    try std.testing.expect(!IndexAlertThresholds.is_probe_length_warning(healthy));
+    try std.testing.expect(!IndexAlertThresholds.is_probe_length_critical(healthy));
+
+    // Warning state (3-10)
+    const warning = MockStats{ .max_probe_length_seen = 5 };
+    try std.testing.expect(IndexAlertThresholds.is_probe_length_warning(warning));
+    try std.testing.expect(!IndexAlertThresholds.is_probe_length_critical(warning));
+
+    // Critical state (> 10)
+    const critical = MockStats{ .max_probe_length_seen = 15 };
+    try std.testing.expect(IndexAlertThresholds.is_probe_length_warning(critical));
+    try std.testing.expect(IndexAlertThresholds.is_probe_length_critical(critical));
+}
+
+test "IndexAlertThresholds: get_health_status" {
+    const MockStats = struct {
+        tombstone_count: u64 = 0,
+        entry_count: u64 = 50,
+        capacity: u64 = 100,
+        max_probe_length_seen: u32 = 1,
+
+        pub fn tombstone_ratio(self: @This()) f32 {
+            const total = self.entry_count + self.tombstone_count;
+            if (total == 0) return 0.0;
+            return @as(f32, @floatFromInt(self.tombstone_count)) / @as(f32, @floatFromInt(total));
+        }
+
+        pub fn load_factor(self: @This()) f32 {
+            if (self.capacity == 0) return 0.0;
+            return @as(f32, @floatFromInt(self.entry_count + self.tombstone_count)) /
+                @as(f32, @floatFromInt(self.capacity));
+        }
+    };
+
+    // Healthy index
+    const healthy = MockStats{};
+    try std.testing.expectEqual(IndexAlertThresholds.HealthStatus.healthy, IndexAlertThresholds.get_health_status(healthy));
+
+    // Warning from high tombstones
+    const warning_tombstone = MockStats{ .tombstone_count = 20, .entry_count = 80 };
+    try std.testing.expectEqual(IndexAlertThresholds.HealthStatus.warning, IndexAlertThresholds.get_health_status(warning_tombstone));
+
+    // Warning from high load factor
+    const warning_load = MockStats{ .entry_count = 65, .capacity = 100 };
+    try std.testing.expectEqual(IndexAlertThresholds.HealthStatus.warning, IndexAlertThresholds.get_health_status(warning_load));
+
+    // Warning from high probe length
+    const warning_probe = MockStats{ .max_probe_length_seen = 5 };
+    try std.testing.expectEqual(IndexAlertThresholds.HealthStatus.warning, IndexAlertThresholds.get_health_status(warning_probe));
+
+    // Critical from tombstones
+    const critical = MockStats{ .tombstone_count = 40, .entry_count = 60 };
+    try std.testing.expectEqual(IndexAlertThresholds.HealthStatus.critical, IndexAlertThresholds.get_health_status(critical));
+}
+
+test "IndexAlertThresholds.HealthStatus: to_label" {
+    try std.testing.expectEqualStrings("healthy", IndexAlertThresholds.HealthStatus.healthy.to_label());
+    try std.testing.expectEqualStrings("warning", IndexAlertThresholds.HealthStatus.warning.to_label());
+    try std.testing.expectEqualStrings("critical", IndexAlertThresholds.HealthStatus.critical.to_label());
 }
