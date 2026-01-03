@@ -25,7 +25,7 @@ const mem = std.mem;
 const Allocator = mem.Allocator;
 
 const stdx = @import("stdx");
-const constants = @import("constants.zig");
+const ttl = @import("ttl.zig");
 
 /// Maximum number of probes before giving up on lookup/insert.
 /// Prevents infinite loops and bounds worst-case latency.
@@ -150,6 +150,9 @@ pub const IndexStats = struct {
     /// Hash collision count (probes > 1).
     collision_count: u64 = 0,
 
+    /// Number of entries removed due to TTL expiration.
+    ttl_expirations: u64 = 0,
+
     /// Calculate current load factor.
     pub fn load_factor(self: IndexStats) f32 {
         if (self.capacity == 0) return 0.0;
@@ -195,6 +198,24 @@ pub const UpsertResult = struct {
     updated: bool,
     /// Number of probes required for this upsert.
     probe_count: u32,
+};
+
+/// Result of a lookup operation with TTL checking.
+pub const LookupWithTtlResult = struct {
+    /// The found entry, or null if not found or expired.
+    entry: ?IndexEntry,
+    /// Number of probes required for this lookup.
+    probe_count: u32,
+    /// True if an entry was found but expired and removed.
+    expired: bool,
+};
+
+/// Result of a conditional remove operation.
+pub const RemoveIfMatchResult = struct {
+    /// True if the entry was removed.
+    removed: bool,
+    /// True if the entry was found but latest_id didn't match (concurrent upsert).
+    race_detected: bool,
 };
 
 /// RAM Index - O(1) entity lookup index.
@@ -463,6 +484,132 @@ pub fn RamIndex(comptime options: struct {
             }
 
             return false;
+        }
+
+        /// Atomically remove an entity only if its latest_id matches.
+        ///
+        /// This is used for TTL expiration to prevent race conditions:
+        /// - If latest_id matches: entry is removed (expired entry, no concurrent upsert)
+        /// - If latest_id doesn't match: entry is NOT removed (concurrent upsert happened)
+        ///
+        /// This ensures we never accidentally delete freshly inserted data.
+        ///
+        /// Per ttl-retention/spec.md: "Atomic: only remove if latest_id hasn't changed"
+        pub fn remove_if_id_matches(
+            self: *Self,
+            entity_id: u128,
+            expected_latest_id: u128,
+        ) RemoveIfMatchResult {
+            if (entity_id == 0) {
+                return .{ .removed = false, .race_detected = false };
+            }
+
+            var slot = self.slot_index(entity_id);
+            var probe_count: u32 = 0;
+
+            while (probe_count < max_probe_length) {
+                const entry_ptr: *IndexEntry = &self.entries[@intCast(slot)];
+                const entry = entry_ptr.*;
+
+                if (entry.is_empty()) {
+                    // Not found.
+                    return .{ .removed = false, .race_detected = false };
+                }
+
+                if (entry.entity_id == entity_id) {
+                    if (entry.is_tombstone()) {
+                        // Already deleted.
+                        return .{ .removed = false, .race_detected = false };
+                    }
+
+                    // Check if latest_id still matches what we expected.
+                    if (entry.latest_id != expected_latest_id) {
+                        // Race condition: a concurrent upsert changed the entry.
+                        // Do NOT remove - the new data is fresh.
+                        return .{ .removed = false, .race_detected = true };
+                    }
+
+                    // latest_id matches - safe to remove (expired entry).
+                    const tombstone = IndexEntry{
+                        .entity_id = entity_id,
+                        .latest_id = 0,
+                        .ttl_seconds = 0,
+                        .reserved = 0,
+                        .padding = [_]u8{0} ** 24,
+                    };
+
+                    @as(*volatile IndexEntry, @ptrCast(entry_ptr)).* = tombstone;
+
+                    if (options.track_stats) {
+                        self.stats.tombstone_count += 1;
+                        self.stats.entry_count -|= 1;
+                        // Track TTL expirations separately.
+                        self.stats.ttl_expirations += 1;
+                    }
+
+                    return .{ .removed = true, .race_detected = false };
+                }
+
+                slot = (slot + 1) % self.capacity;
+                probe_count += 1;
+            }
+
+            return .{ .removed = false, .race_detected = false };
+        }
+
+        /// Lookup with TTL expiration check.
+        ///
+        /// This implements lazy TTL expiration per ttl-retention/spec.md:
+        /// 1. Lookup the entity
+        /// 2. Check if expired using the provided consensus timestamp
+        /// 3. If expired, atomically remove and return null
+        ///
+        /// Arguments:
+        /// - entity_id: The entity UUID to look up
+        /// - current_time_ns: The consensus timestamp (use VSR commit timestamp for queries)
+        ///
+        /// Returns:
+        /// - entry: The found entry (null if not found or expired)
+        /// - probe_count: Probes used for lookup
+        /// - expired: True if entry was found but expired and removed
+        pub fn lookup_with_ttl(
+            self: *Self,
+            entity_id: u128,
+            current_time_ns: u64,
+        ) LookupWithTtlResult {
+            // First, do a regular lookup.
+            const result = self.lookup(entity_id);
+
+            if (result.entry) |entry| {
+                // Check TTL expiration.
+                const expiration = ttl.is_entry_expired(entry, current_time_ns);
+
+                if (expiration.expired) {
+                    // Entry is expired - atomically remove it.
+                    // This prevents race with concurrent upserts.
+                    _ = self.remove_if_id_matches(entity_id, entry.latest_id);
+
+                    return .{
+                        .entry = null,
+                        .probe_count = result.probe_count,
+                        .expired = true,
+                    };
+                }
+
+                // Entry is not expired - return it.
+                return .{
+                    .entry = entry,
+                    .probe_count = result.probe_count,
+                    .expired = false,
+                };
+            }
+
+            // Entry not found.
+            return .{
+                .entry = null,
+                .probe_count = result.probe_count,
+                .expired = false,
+            };
         }
 
         /// Get current statistics.
@@ -761,4 +908,136 @@ test "RamIndex: entity_id zero is rejected" {
 
     // Lookup of 0 should return null immediately.
     try std.testing.expect(index.lookup(0).entry == null);
+}
+
+test "RamIndex: remove_if_id_matches removes when matching" {
+    const allocator = std.testing.allocator;
+
+    var index = try DefaultRamIndex.init(allocator, 1000);
+    defer index.deinit(allocator);
+
+    // Insert entry.
+    const latest_id: u128 = 1000;
+    _ = try index.upsert(42, latest_id, 3600);
+
+    // Remove with matching latest_id - should succeed.
+    const result = index.remove_if_id_matches(42, latest_id);
+    try std.testing.expect(result.removed);
+    try std.testing.expect(!result.race_detected);
+
+    // Entry should now be a tombstone (lookup returns null).
+    try std.testing.expect(index.lookup(42).entry == null);
+}
+
+test "RamIndex: remove_if_id_matches detects race condition" {
+    const allocator = std.testing.allocator;
+
+    var index = try DefaultRamIndex.init(allocator, 1000);
+    defer index.deinit(allocator);
+
+    // Insert entry.
+    const old_latest_id: u128 = 1000;
+    _ = try index.upsert(42, old_latest_id, 3600);
+
+    // Simulate concurrent upsert - update to new latest_id.
+    const new_latest_id: u128 = 2000;
+    _ = try index.upsert(42, new_latest_id, 1800);
+
+    // Try to remove with OLD latest_id - should detect race.
+    const result = index.remove_if_id_matches(42, old_latest_id);
+    try std.testing.expect(!result.removed);
+    try std.testing.expect(result.race_detected);
+
+    // Entry should still exist with new latest_id.
+    const lookup = index.lookup(42);
+    try std.testing.expect(lookup.entry != null);
+    try std.testing.expectEqual(new_latest_id, lookup.entry.?.latest_id);
+}
+
+test "RamIndex: lookup_with_ttl returns entry when not expired" {
+    const allocator = std.testing.allocator;
+
+    var index = try DefaultRamIndex.init(allocator, 1000);
+    defer index.deinit(allocator);
+
+    // Insert entry with TTL of 10 seconds.
+    // latest_id lower 64 bits = timestamp = 5 seconds (in nanoseconds).
+    const event_ts_ns = 5 * ttl.ns_per_second;
+    const latest_id: u128 = (@as(u128, 0xDEADBEEF) << 64) | event_ts_ns;
+    _ = try index.upsert(42, latest_id, 10); // TTL = 10 seconds.
+
+    // Lookup at 10 seconds (before expiration at 15 seconds).
+    const current_time_ns = 10 * ttl.ns_per_second;
+    const result = index.lookup_with_ttl(42, current_time_ns);
+
+    try std.testing.expect(result.entry != null);
+    try std.testing.expect(!result.expired);
+    try std.testing.expectEqual(latest_id, result.entry.?.latest_id);
+}
+
+test "RamIndex: lookup_with_ttl removes expired entry" {
+    const allocator = std.testing.allocator;
+
+    var index = try DefaultRamIndex.init(allocator, 1000);
+    defer index.deinit(allocator);
+
+    // Insert entry with TTL of 10 seconds.
+    // Timestamp = 5 seconds, so expires at 15 seconds.
+    const event_ts_ns = 5 * ttl.ns_per_second;
+    const latest_id: u128 = (@as(u128, 0xDEADBEEF) << 64) | event_ts_ns;
+    _ = try index.upsert(42, latest_id, 10); // TTL = 10 seconds.
+
+    // Verify entry exists with regular lookup.
+    try std.testing.expect(index.lookup(42).entry != null);
+
+    // Lookup at 20 seconds (after expiration at 15 seconds).
+    const current_time_ns = 20 * ttl.ns_per_second;
+    const result = index.lookup_with_ttl(42, current_time_ns);
+
+    try std.testing.expect(result.entry == null);
+    try std.testing.expect(result.expired);
+
+    // Entry should now be removed (tombstoned).
+    try std.testing.expect(index.lookup(42).entry == null);
+}
+
+test "RamIndex: lookup_with_ttl with ttl_seconds=0 never expires" {
+    const allocator = std.testing.allocator;
+
+    var index = try DefaultRamIndex.init(allocator, 1000);
+    defer index.deinit(allocator);
+
+    // Insert entry with TTL of 0 (never expires).
+    const event_ts_ns = 1 * ttl.ns_per_second;
+    const latest_id: u128 = (@as(u128, 0xDEADBEEF) << 64) | event_ts_ns;
+    _ = try index.upsert(42, latest_id, 0); // TTL = 0 (never expires).
+
+    // Lookup at far future time - should still return entry.
+    const current_time_ns = std.math.maxInt(u64) - 1;
+    const result = index.lookup_with_ttl(42, current_time_ns);
+
+    try std.testing.expect(result.entry != null);
+    try std.testing.expect(!result.expired);
+}
+
+test "RamIndex: ttl_expirations stat is incremented" {
+    const allocator = std.testing.allocator;
+
+    var index = try DefaultRamIndex.init(allocator, 1000);
+    defer index.deinit(allocator);
+
+    // Insert expired entry.
+    const event_ts_ns = 1 * ttl.ns_per_second;
+    const latest_id: u128 = event_ts_ns;
+    _ = try index.upsert(42, latest_id, 10); // Expires at 11 seconds.
+
+    // Initial stats should have 0 expirations.
+    try std.testing.expectEqual(@as(u64, 0), index.get_stats().ttl_expirations);
+
+    // Lookup with TTL at 20 seconds (after expiration).
+    const current_time_ns = 20 * ttl.ns_per_second;
+    _ = index.lookup_with_ttl(42, current_time_ns);
+
+    // Stats should now show 1 expiration.
+    try std.testing.expectEqual(@as(u64, 1), index.get_stats().ttl_expirations);
 }
