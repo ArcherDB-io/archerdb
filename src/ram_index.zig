@@ -218,6 +218,18 @@ pub const RemoveIfMatchResult = struct {
     race_detected: bool,
 };
 
+/// Result of a background TTL scan operation.
+pub const ScanExpiredResult = struct {
+    /// Number of entries scanned in this batch.
+    entries_scanned: u64,
+    /// Number of expired entries removed.
+    entries_removed: u64,
+    /// Next position to scan (for incremental scanning).
+    next_position: u64,
+    /// True if scan wrapped around to beginning.
+    wrapped: bool,
+};
+
 /// RAM Index - O(1) entity lookup index.
 ///
 /// Thread-safety model:
@@ -609,6 +621,86 @@ pub fn RamIndex(comptime options: struct {
                 .entry = null,
                 .probe_count = result.probe_count,
                 .expired = false,
+            };
+        }
+
+        /// Scan a batch of index entries for TTL expiration.
+        ///
+        /// This implements the background cleanup scanner per ttl-retention/spec.md.
+        /// It scans entries sequentially from a given position, removing expired
+        /// entries and returning the next position for incremental scanning.
+        ///
+        /// Arguments:
+        /// - start_position: Index slot to start scanning from
+        /// - batch_size: Maximum number of entries to scan (0 = scan all)
+        /// - current_time_ns: Current timestamp for expiration calculation
+        ///
+        /// Returns:
+        /// - entries_scanned: Number of slots examined
+        /// - entries_removed: Number of expired entries removed
+        /// - next_position: Where to resume on next scan
+        /// - wrapped: True if scan wrapped around to index start
+        ///
+        /// Thread Safety:
+        /// - Safe to call during normal operation (uses atomic reads)
+        /// - Writes are protected by VSR's single-writer guarantee
+        pub fn scan_expired_batch(
+            self: *Self,
+            start_position: u64,
+            batch_size: u64,
+            current_time_ns: u64,
+        ) ScanExpiredResult {
+            var entries_scanned: u64 = 0;
+            var entries_removed: u64 = 0;
+            var wrapped = false;
+
+            // Determine effective batch size (0 = scan all).
+            const effective_batch = if (batch_size == 0) self.capacity else batch_size;
+
+            // Start position, wrapped to valid range.
+            var position = if (start_position >= self.capacity) 0 else start_position;
+            const initial_position = position;
+
+            while (entries_scanned < effective_batch) {
+                // Read entry atomically.
+                const entry_ptr: *IndexEntry = &self.entries[@intCast(position)];
+                const entry = @as(*volatile IndexEntry, @ptrCast(entry_ptr)).*;
+
+                // Skip empty slots and tombstones.
+                if (!entry.is_empty() and !entry.is_tombstone()) {
+                    // Check TTL expiration.
+                    const expiration = ttl.is_entry_expired(entry, current_time_ns);
+
+                    if (expiration.expired) {
+                        // Atomically remove if latest_id still matches.
+                        const remove_result = self.remove_if_id_matches(
+                            entry.entity_id,
+                            entry.latest_id,
+                        );
+                        if (remove_result.removed) {
+                            entries_removed += 1;
+                        }
+                        // If race_detected, entry was updated - skip it.
+                    }
+                }
+
+                entries_scanned += 1;
+
+                // Move to next position (with wraparound).
+                position = (position + 1) % self.capacity;
+
+                // Check if we've wrapped around to the starting position.
+                if (position == initial_position and entries_scanned > 0) {
+                    wrapped = true;
+                    break;
+                }
+            }
+
+            return .{
+                .entries_scanned = entries_scanned,
+                .entries_removed = entries_removed,
+                .next_position = position,
+                .wrapped = wrapped,
             };
         }
 
@@ -1040,4 +1132,97 @@ test "RamIndex: ttl_expirations stat is incremented" {
 
     // Stats should now show 1 expiration.
     try std.testing.expectEqual(@as(u64, 1), index.get_stats().ttl_expirations);
+}
+
+test "RamIndex: scan_expired_batch removes expired entries" {
+    const allocator = std.testing.allocator;
+
+    var index = try DefaultRamIndex.init(allocator, 100);
+    defer index.deinit(allocator);
+
+    // Insert 3 entries: 2 expired, 1 not expired.
+    // Entry 1: expires at 10 seconds.
+    const ts1 = 1 * ttl.ns_per_second;
+    _ = try index.upsert(100, ts1, 9); // Expires at 10 seconds.
+
+    // Entry 2: expires at 20 seconds.
+    const ts2 = 5 * ttl.ns_per_second;
+    _ = try index.upsert(200, ts2, 15); // Expires at 20 seconds.
+
+    // Entry 3: never expires.
+    const ts3 = 1 * ttl.ns_per_second;
+    _ = try index.upsert(300, ts3, 0); // TTL = 0, never expires.
+
+    // Scan at 15 seconds - entry 1 should be expired, others not.
+    const scan_time = 15 * ttl.ns_per_second;
+    const result = index.scan_expired_batch(0, 0, scan_time); // Scan all.
+
+    try std.testing.expectEqual(@as(u64, 100), result.entries_scanned);
+    try std.testing.expectEqual(@as(u64, 1), result.entries_removed);
+    try std.testing.expect(result.wrapped);
+
+    // Verify entry 100 is gone, others remain.
+    try std.testing.expect(index.lookup(100).entry == null);
+    try std.testing.expect(index.lookup(200).entry != null);
+    try std.testing.expect(index.lookup(300).entry != null);
+}
+
+test "RamIndex: scan_expired_batch batch size limits scan" {
+    const allocator = std.testing.allocator;
+
+    var index = try DefaultRamIndex.init(allocator, 100);
+    defer index.deinit(allocator);
+
+    // Insert an entry.
+    _ = try index.upsert(42, 1 * ttl.ns_per_second, 0);
+
+    // Scan with batch size of 10.
+    const result = index.scan_expired_batch(0, 10, 0);
+
+    // Should scan exactly 10 entries.
+    try std.testing.expectEqual(@as(u64, 10), result.entries_scanned);
+    try std.testing.expectEqual(@as(u64, 10), result.next_position);
+    try std.testing.expect(!result.wrapped);
+}
+
+test "RamIndex: scan_expired_batch incremental scanning" {
+    const allocator = std.testing.allocator;
+
+    var index = try DefaultRamIndex.init(allocator, 100);
+    defer index.deinit(allocator);
+
+    // Scan first 30 entries.
+    const result1 = index.scan_expired_batch(0, 30, 0);
+    try std.testing.expectEqual(@as(u64, 30), result1.next_position);
+    try std.testing.expect(!result1.wrapped);
+
+    // Continue from position 30, scan 30 more.
+    const result2 = index.scan_expired_batch(result1.next_position, 30, 0);
+    try std.testing.expectEqual(@as(u64, 60), result2.next_position);
+    try std.testing.expect(!result2.wrapped);
+
+    // Continue from 60, scan 50 (position will wrap from 99 to 0).
+    const result3 = index.scan_expired_batch(result2.next_position, 50, 0);
+    try std.testing.expectEqual(@as(u64, 50), result3.entries_scanned);
+    // Position wraps around: 60 + 50 = 110 % 100 = 10.
+    try std.testing.expectEqual(@as(u64, 10), result3.next_position);
+    try std.testing.expect(!result3.wrapped); // Didn't reach initial position.
+
+    // Scan remaining 50 to complete the full cycle.
+    const result4 = index.scan_expired_batch(result3.next_position, 50, 0);
+    try std.testing.expectEqual(@as(u64, 50), result4.entries_scanned);
+    try std.testing.expectEqual(@as(u64, 60), result4.next_position);
+    // Now we're back where we started the incremental scan.
+}
+
+test "RamIndex: scan_expired_batch handles wraparound position" {
+    const allocator = std.testing.allocator;
+
+    var index = try DefaultRamIndex.init(allocator, 100);
+    defer index.deinit(allocator);
+
+    // Start from position beyond capacity (should wrap to 0).
+    const result = index.scan_expired_batch(150, 10, 0);
+    try std.testing.expectEqual(@as(u64, 10), result.entries_scanned);
+    try std.testing.expectEqual(@as(u64, 10), result.next_position);
 }
