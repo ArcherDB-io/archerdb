@@ -1,0 +1,83 @@
+name: Zig Release Monitor
+
+on:
+  schedule:
+    # Run every Monday at 9:00 UTC
+    - cron: '0 9 * * 1'
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  check-releases:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get current pinned Zig version
+        id: current
+        run: |
+          CURRENT=$(grep 'ZIG_RELEASE=' zig/download.sh | head -1 | cut -d'"' -f2)
+          echo "version=$CURRENT" >> "$GITHUB_OUTPUT"
+          echo "Current pinned Zig: $CURRENT"
+
+      - name: Check latest Zig release
+        id: latest-zig
+        run: |
+          LATEST=$(curl -s https://ziglang.org/download/index.json | jq -r 'keys | map(select(. != "master")) | sort | last')
+          echo "version=$LATEST" >> "$GITHUB_OUTPUT"
+          echo "Latest Zig release: $LATEST"
+
+      - name: Check TigerBeetle Zig version
+        id: tigerbeetle
+        run: |
+          TB_ZIG=$(curl -s https://raw.githubusercontent.com/tigerbeetle/tigerbeetle/main/zig/download.sh | grep 'ZIG_RELEASE=' | head -1 | cut -d'"' -f2)
+          echo "version=$TB_ZIG" >> "$GITHUB_OUTPUT"
+          echo "TigerBeetle Zig version: $TB_ZIG"
+
+      - name: Compare versions
+        env:
+          CURRENT: ${{ steps.current.outputs.version }}
+          LATEST_ZIG: ${{ steps.latest-zig.outputs.version }}
+          TB_ZIG: ${{ steps.tigerbeetle.outputs.version }}
+        run: |
+          echo "=== Zig Version Report ==="
+          echo "ArcherDB pinned: $CURRENT"
+          echo "TigerBeetle uses: $TB_ZIG"
+          echo "Latest Zig release: $LATEST_ZIG"
+          echo ""
+
+          if [ "$CURRENT" != "$TB_ZIG" ]; then
+            echo "WARNING: TigerBeetle updated to Zig $TB_ZIG"
+            echo "ACTION REQUIRED: Update zig/download.sh to match TigerBeetle"
+          fi
+
+          if [ "$CURRENT" != "$LATEST_ZIG" ]; then
+            echo "INFO: Newer Zig version available: $LATEST_ZIG"
+            echo "(Wait for TigerBeetle to upgrade before updating ArcherDB)"
+          fi
+
+      - name: Create issue if TigerBeetle updated
+        if: steps.tigerbeetle.outputs.version != steps.current.outputs.version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TB_ZIG: ${{ steps.tigerbeetle.outputs.version }}
+          CURRENT: ${{ steps.current.outputs.version }}
+        run: |
+          # Check if issue already exists
+          EXISTING=$(gh issue list --label "zig-update" --state open --json number --jq 'length')
+          if [ "$EXISTING" = "0" ]; then
+            gh issue create \
+              --title "Zig version update: $CURRENT -> $TB_ZIG" \
+              --label "zig-update" \
+              --body "TigerBeetle has updated their Zig version from $CURRENT to $TB_ZIG.
+
+          ## Action Required
+          1. Update zig/download.sh to use Zig $TB_ZIG
+          2. Run ecosystem validation tests
+          3. Verify all builds pass
+
+          ## References
+          - TigerBeetle download.sh: https://github.com/tigerbeetle/tigerbeetle/blob/main/zig/download.sh
+          - Zig releases: https://ziglang.org/download/
+
+          This issue was automatically created by the Zig Release Monitor workflow."
+          fi
