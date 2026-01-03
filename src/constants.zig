@@ -801,10 +801,10 @@ pub const bus_message_burst_warn_min = 8;
 /// This is a cluster-level constant - changing it breaks storage format.
 pub const geo_event_size: u32 = 128;
 
-/// Maximum events per batch (conservative for 1 MiB message size).
-/// Calculation: (message_size_max - header - safety_margin) / geo_event_size
-/// (1,048,576 - 256 - 1024) / 128 = 8,177, rounded to 8,000 for margin.
-pub const batch_events_max: u32 = 8_000;
+/// Maximum events per batch (derived from message_body_size_max).
+/// Calculation: (message_body_size_max - safety_margin) / geo_event_size
+/// For 1 MiB message: (1,048,320 - 1024) / 128 = 8,180 events.
+pub const batch_events_max: u32 = @divFloor(message_body_size_max - 1024, geo_event_size);
 
 // === S2 Spatial Indexing Constants ===
 
@@ -864,9 +864,9 @@ pub const index_memory_bytes: u64 = index_capacity * index_entry_size;
 
 // === Query Limits ===
 
-/// Maximum events in query result (must fit in message).
+/// Maximum events in query result (derived from message_body_size_max).
 /// Calculation: (message_body_size_max - overhead) / geo_event_size.
-pub const query_result_max: u32 = 8_000;
+pub const query_result_max: u32 = @divFloor(message_body_size_max - 1024, geo_event_size);
 
 /// Maximum polygon vertices in spatial queries.
 pub const polygon_vertices_max: u32 = 10_000;
@@ -880,6 +880,16 @@ pub const max_concurrent_queries: u32 = 100;
 
 /// Query queue depth before rejecting with too_many_queries.
 pub const query_queue_max: u32 = 1_000;
+
+// === TTL Constants ===
+
+/// Interval between background TTL cleanup sweeps (milliseconds).
+/// The cleanup process runs periodically to remove expired entries from the RAM index.
+pub const ttl_check_interval_ms: u64 = 60_000; // 1 minute
+
+/// Maximum expired entries to clean per sweep.
+/// Limits CPU impact of TTL cleanup during high-throughput periods.
+pub const ttl_batch_size: u32 = 10_000;
 
 comptime {
     // Verify S2 cell level is in valid range (1-30)

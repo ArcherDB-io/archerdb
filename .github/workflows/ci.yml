@@ -1,5 +1,6 @@
 name: CI
-permissions: {}
+permissions:
+  contents: read  # Required for actions/checkout
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
