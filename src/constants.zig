@@ -792,3 +792,54 @@ pub const lsm_scans_max = config.cluster.lsm_scans_max;
 
 /// Processing more than this amount of messages in a single event loop turn issues a warning.
 pub const bus_message_burst_warn_min = 8;
+
+// ============================================================================
+// ArcherDB Geospatial Constants
+// ============================================================================
+
+/// Size of GeoEvent struct in bytes (cache-aligned, matches data model spec).
+/// This is a cluster-level constant - changing it breaks storage format.
+pub const geo_event_size: u32 = 128;
+
+/// Maximum events per batch (conservative for 1 MiB message size).
+/// Calculation: (message_size_max - header - safety_margin) / geo_event_size
+/// (1,048,576 - 256 - 1024) / 128 = 8,177, rounded to 8,000 for margin.
+pub const batch_events_max: u32 = 8_000;
+
+// === S2 Spatial Indexing Constants ===
+
+/// S2 cell level for storage indexing (maximum precision).
+/// Level 30 = ~0.5cm² cell size. This is the finest granularity.
+/// CRITICAL: Cluster-level constant - changing breaks spatial index.
+pub const s2_cell_level: u8 = 30;
+
+/// Maximum cells in S2 RegionCoverer result for queries.
+/// Higher = more precise covering but more scan ranges.
+pub const s2_max_cells: u8 = 16;
+
+/// Minimum S2 cell level for query covering (coarse cell ranges).
+pub const s2_cover_min_level: u8 = 10;
+
+/// Maximum S2 cell level for query covering.
+/// Note: Storage uses s2_cell_level=30, but query covering is capped for performance.
+pub const s2_cover_max_level: u8 = 18;
+
+/// S2 scratch buffer size for polygon covering (per query).
+/// S2 RegionCoverer requires working memory for complex polygons.
+/// 1MB is sufficient for 10k vertices.
+pub const s2_scratch_size: u64 = 1 * MiB;
+
+/// S2 scratch buffer pool size (matches max_concurrent_queries).
+pub const s2_scratch_pool_size: u32 = 100;
+
+comptime {
+    // Verify S2 cell level is in valid range (1-30)
+    assert(s2_cell_level >= 1 and s2_cell_level <= 30);
+
+    // Verify covering level hierarchy
+    assert(s2_cover_min_level < s2_cover_max_level);
+    assert(s2_cover_max_level <= s2_cell_level);
+
+    // Verify batch fits in message body
+    assert(batch_events_max * geo_event_size < message_body_size_max);
+}
