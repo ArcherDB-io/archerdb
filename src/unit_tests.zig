@@ -61,6 +61,7 @@ comptime {
     _ = @import("time.zig");
     _ = @import("trace.zig");
     _ = @import("trace/event.zig");
+    _ = @import("ttl.zig");
     _ = @import("vsr.zig");
     _ = @import("vsr/checksum.zig");
     _ = @import("vsr/clock.zig");
