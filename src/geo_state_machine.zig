@@ -874,6 +874,80 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             return 0;
         }
 
+        /// Tombstone retention decision for LSM compaction (F2.5.7).
+        ///
+        /// CRITICAL: This function determines whether a tombstone can be safely
+        /// dropped during compaction. Incorrect decisions can resurrect deleted
+        /// data, violating GDPR compliance.
+        ///
+        /// ## Decision Logic
+        ///
+        /// A tombstone can ONLY be dropped when ALL of these conditions are met:
+        /// 1. The tombstone has reached the deepest level (L_max)
+        /// 2. No older versions of this entity exist in any level
+        /// 3. The tombstone has survived at least one full compaction cycle
+        ///
+        /// ## Parameters
+        ///
+        /// - entity_id: The entity this tombstone marks as deleted
+        /// - tombstone_op: The VSR operation number when deletion occurred
+        /// - current_level: The LSM level being compacted (source level)
+        /// - target_level: The destination level after compaction
+        /// - max_level: The deepest level in this LSM tree
+        ///
+        /// ## Returns
+        ///
+        /// - true: Retain the tombstone (write to target level)
+        /// - false: Drop the tombstone (entity fully deleted from storage)
+        ///
+        /// ## Safety
+        ///
+        /// When in doubt, ALWAYS retain. A retained tombstone costs storage
+        /// but maintains correctness. A dropped tombstone risks data resurrection.
+        ///
+        fn should_retain_tombstone(
+            self: *GeoStateMachine,
+            entity_id: u128,
+            tombstone_op: u64,
+            current_level: u8,
+            target_level: u8,
+            max_level: u8,
+        ) bool {
+            _ = self;
+            _ = entity_id;
+            _ = tombstone_op;
+            _ = current_level;
+            _ = target_level;
+            _ = max_level;
+
+            // TODO: Implement when Forest is integrated
+            //
+            // Algorithm:
+            // 1. If target_level < max_level:
+            //    - Always retain (tombstone hasn't reached bottom)
+            //
+            // 2. If target_level == max_level:
+            //    - Check levels below current for any version of entity_id
+            //    - If found: retain (older data still exists)
+            //    - If not found: can drop (entity fully purged)
+            //
+            // 3. Additional checks:
+            //    - Verify tombstone_op < current compaction cycle op
+            //    - Check entity doesn't appear in any pending operations
+            //
+            // Implementation when Forest available:
+            // for (target_level + 1..max_level + 1) |level| {
+            //     if (self.forest.level_contains_entity(level, entity_id)) {
+            //         return true; // Must retain
+            //     }
+            // }
+            // return false; // Safe to drop
+
+            // Conservative default: always retain tombstones
+            // This is safe but uses more storage until Forest integration
+            return true;
+        }
+
         /// Execute cleanup_expired operation (F2.4.8).
         ///
         /// Scans the RAM index for expired entries and removes them.
@@ -950,6 +1024,42 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         ///
         /// The operation number `op` is used to determine which LSM levels
         /// need compaction based on the compaction schedule.
+        ///
+        /// ## CRITICAL: Tombstone Retention for GDPR Compliance (F2.5.7)
+        ///
+        /// During compaction, tombstones (deletion markers) MUST be retained until
+        /// all older versions of the entity have been eliminated from lower levels.
+        /// Dropping a tombstone prematurely would "resurrect" deleted data, violating
+        /// GDPR "right to erasure" guarantees.
+        ///
+        /// ### Tombstone Retention Algorithm
+        ///
+        /// When compacting level L(n) into L(n+1):
+        /// 1. For each tombstone in the compaction input:
+        ///    a. Check if any version of this entity exists in levels L(n+2)...L(max)
+        ///    b. If older versions exist below: RETAIN the tombstone in output
+        ///    c. If no older versions exist: tombstone can be dropped (data fully deleted)
+        ///
+        /// 2. Tombstone age tracking:
+        ///    - Each tombstone carries the `op` number when deletion occurred
+        ///    - Tombstones are only droppable after compacting through ALL levels
+        ///    - Minimum retention: tombstone must survive at least one full compaction cycle
+        ///
+        /// 3. Safety invariants:
+        ///    - A tombstone at level N always shadows entries at levels > N
+        ///    - Dropping a tombstone at level N is only safe when levels > N have no older entries
+        ///    - On recovery, tombstones must be replayed to maintain deletion state
+        ///
+        /// ### Implementation Status
+        ///
+        /// This requires Forest integration to access:
+        /// - `forest.get_tree(entity_id)` - to check for older versions
+        /// - `forest.compaction_iterator()` - to process tombstones during merge
+        /// - Level metadata to determine tombstone droppability
+        ///
+        /// See: generate_lsm_tombstones_for_entity() for tombstone creation
+        /// See: should_retain_tombstone() for retention decision logic
+        ///
         pub fn compact(
             self: *GeoStateMachine,
             callback: *const fn (*GeoStateMachine) void,
@@ -966,6 +1076,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 
             // TODO: When Forest is integrated:
             // self.forest.compact(compact_finish, op);
+            //
+            // Compaction callback will invoke should_retain_tombstone() for each
+            // tombstone encountered during level merges.
             //
             // For now, immediately complete since we have no LSM tree yet
             self.compact_finish();
