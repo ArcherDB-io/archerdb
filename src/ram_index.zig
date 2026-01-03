@@ -1226,3 +1226,97 @@ test "RamIndex: scan_expired_batch handles wraparound position" {
     try std.testing.expectEqual(@as(u64, 10), result.entries_scanned);
     try std.testing.expectEqual(@as(u64, 10), result.next_position);
 }
+
+test "RamIndex: full TTL lifecycle - insert, expire, lookup removes" {
+    const allocator = std.testing.allocator;
+
+    var index = try DefaultRamIndex.init(allocator, 100);
+    defer index.deinit(allocator);
+
+    const entity_id: u128 = 0x1234567890ABCDEF;
+    const event_timestamp: u64 = 10 * ttl.ns_per_second;
+    const ttl_seconds: u32 = 60; // 60 second TTL.
+
+    // Pack timestamp into latest_id (lower 64 bits).
+    const latest_id: u128 = (@as(u128, 0x89C259) << 64) | event_timestamp;
+
+    // Step 1: Insert entry with TTL.
+    _ = try index.upsert(entity_id, latest_id, ttl_seconds);
+    try std.testing.expectEqual(@as(u64, 1), index.stats.entry_count);
+
+    // Step 2: Lookup before expiration - entry should be found.
+    const before_time = 30 * ttl.ns_per_second; // 30 seconds.
+    const lookup1 = index.lookup_with_ttl(entity_id, before_time);
+    try std.testing.expect(lookup1.entry != null);
+    try std.testing.expect(!lookup1.expired);
+
+    // Step 3: Lookup after expiration - entry should be removed.
+    const after_time = 100 * ttl.ns_per_second; // 100 seconds > 10+60.
+    const lookup2 = index.lookup_with_ttl(entity_id, after_time);
+    try std.testing.expect(lookup2.entry == null);
+    try std.testing.expect(lookup2.expired);
+
+    // Step 4: Verify stats updated.
+    try std.testing.expectEqual(@as(u64, 1), index.stats.ttl_expirations);
+    try std.testing.expectEqual(@as(u64, 1), index.stats.tombstone_count);
+}
+
+test "RamIndex: mixed TTL entries - scanner removes only expired" {
+    const allocator = std.testing.allocator;
+
+    var index = try DefaultRamIndex.init(allocator, 100);
+    defer index.deinit(allocator);
+
+    const current_time: u64 = 100 * ttl.ns_per_second;
+
+    // Insert entries with different TTL states:
+    // 1. Never expires (ttl_seconds = 0).
+    // 2. Already expired (timestamp + ttl < current_time).
+    // 3. Not yet expired (timestamp + ttl > current_time).
+
+    // Entry 1: Never expires.
+    const id1: u128 = 1;
+    const ts1: u64 = 10 * ttl.ns_per_second;
+    _ = try index.upsert(id1, ts1, 0); // ttl_seconds = 0 -> never expires.
+
+    // Entry 2: Expired (timestamp=10s, ttl=30s -> expires at 40s, current=100s).
+    const id2: u128 = 2;
+    const ts2: u64 = 10 * ttl.ns_per_second;
+    _ = try index.upsert(id2, ts2, 30);
+
+    // Entry 3: Not expired yet (timestamp=50s, ttl=100s -> expires at 150s).
+    const id3: u128 = 3;
+    const ts3: u64 = 50 * ttl.ns_per_second;
+    _ = try index.upsert(id3, ts3, 100);
+
+    // Entry 4: Expired (timestamp=5s, ttl=10s -> expires at 15s).
+    const id4: u128 = 4;
+    const ts4: u64 = 5 * ttl.ns_per_second;
+    _ = try index.upsert(id4, ts4, 10);
+
+    try std.testing.expectEqual(@as(u64, 4), index.stats.entry_count);
+
+    // Scan all entries.
+    const result = index.scan_expired_batch(0, 100, current_time);
+
+    // Should have removed entries 2 and 4 (both expired).
+    try std.testing.expectEqual(@as(u64, 2), result.entries_removed);
+
+    // Verify: Entry 1 still exists (never expires).
+    const l1 = index.lookup(id1);
+    try std.testing.expect(l1.entry != null);
+    try std.testing.expect(!l1.entry.?.is_tombstone());
+
+    // Verify: Entry 2 removed (expired) - now tombstone.
+    const l2 = index.lookup(id2);
+    try std.testing.expect(l2.entry == null or l2.entry.?.is_tombstone());
+
+    // Verify: Entry 3 still exists (not yet expired).
+    const l3 = index.lookup(id3);
+    try std.testing.expect(l3.entry != null);
+    try std.testing.expect(!l3.entry.?.is_tombstone());
+
+    // Verify: Entry 4 removed (expired) - now tombstone.
+    const l4 = index.lookup(id4);
+    try std.testing.expect(l4.entry == null or l4.entry.?.is_tombstone());
+}
