@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2024-2025 ArcherDB Contributors
-//! Parse and validate command-line arguments for the tigerbeetle binary.
+//! Parse and validate command-line arguments for the archerdb binary.
 //!
 //! Everything that can be validated without reading the data file must be validated here.
 //! Caller must additionally assert validity of arguments as a defense in depth.
@@ -224,27 +224,27 @@ const CLIArgs = union(enum) {
         pub const help =
             \\Usage:
             \\
-            \\  tigerbeetle inspect [-h | --help]
+            \\  archerdb inspect [-h | --help]
             \\
-            \\  tigerbeetle inspect constants
+            \\  archerdb inspect constants
             \\
-            \\  tigerbeetle inspect metrics
+            \\  archerdb inspect metrics
             \\
-            \\  tigerbeetle inspect op <op>
+            \\  archerdb inspect op <op>
             \\
-            \\  tigerbeetle inspect superblock <path>
+            \\  archerdb inspect superblock <path>
             \\
-            \\  tigerbeetle inspect wal [--slot=<slot>] <path>
+            \\  archerdb inspect wal [--slot=<slot>] <path>
             \\
-            \\  tigerbeetle inspect replies [--slot=<slot>] <path>
+            \\  archerdb inspect replies [--slot=<slot>] <path>
             \\
-            \\  tigerbeetle inspect grid [--block=<address>] <path>
+            \\  archerdb inspect grid [--block=<address>] <path>
             \\
-            \\  tigerbeetle inspect manifest <path>
+            \\  archerdb inspect manifest <path>
             \\
-            \\  tigerbeetle inspect tables --tree=<name|id> [--level=<integer>] <path>
+            \\  archerdb inspect tables --tree=<name|id> [--level=<integer>] <path>
             \\
-            \\  tigerbeetle inspect integrity [--log-debug] [--seed=<seed>]
+            \\  archerdb inspect integrity [--log-debug] [--seed=<seed>]
             \\                                [--memory-lsm-manifest=<size>]
             \\                                [--skip-wal] [--skip-client-replies] [--skip-grid]
             \\                                <path>
@@ -685,7 +685,7 @@ pub const Command = union(enum) {
     amqp: AMQP,
 };
 
-/// Parse the command line arguments passed to the `tigerbeetle` binary.
+/// Parse the command line arguments passed to the `archerdb` binary.
 /// Exits the program with a non-zero exit code if an error is found.
 pub fn parse_args(args_iterator: *std.process.ArgIterator) Command {
     const cli_args = stdx.flags(args_iterator, CLIArgs);

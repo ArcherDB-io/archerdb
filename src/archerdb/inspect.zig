@@ -51,7 +51,7 @@ pub fn command_inspect(
 
     inline for (.{ inspect_result, flush_result }) |result| {
         result catch |err| switch (err) {
-            // Ignore BrokenPipe so that e.g. "tigerbeetle inspect ... | head -n12" succeeds.
+            // Ignore BrokenPipe so that e.g. "archerdb inspect ... | head -n12" succeeds.
             error.BrokenPipe => {},
             else => return err,
         };

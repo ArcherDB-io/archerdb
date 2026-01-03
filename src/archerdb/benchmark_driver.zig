@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2024-2025 ArcherDB Contributors
-//! Driver script behind `tigerbeetle benchmark` command.
+//! Driver script behind `archerdb benchmark` command.
 //!
 //! During benchmarking, there are three entities to keep track of:
 //! - the "load" process generating requests,
-//! - the cluster of `tigerbeetle`s processing requests,
+//! - the cluster of ArcherDB replicas processing requests,
 //! - the orchestrating script coordinating the two.
 //!
 //! This here is the orchestrator. If no `--addresses` is passed on the command line, it spins up a
-//! temporary single-node `tigerbeetle` cluster. Otherwise, an existing cluster is re-used for the
+//! temporary single-node ArcherDB cluster. Otherwise, an existing cluster is re-used for the
 //! benchmarking.
 //!
 //! The cluster address is then passed onto `benchmark_load.zig`, which deals with both offering
@@ -31,7 +31,7 @@ pub fn command_benchmark(
     args: *const cli.Command.Benchmark,
 ) !void {
     // Note: we intentionally don't use a temporary directory for this data file, and instead just
-    // put it into CWD, as performance of TigerBeetle very much depends on a specific file system.
+    // put it into CWD, as performance of ArcherDB very much depends on a specific file system.
     const data_file = args.file orelse data_file: {
         var random_bytes: [4]u8 = undefined;
         std.crypto.random.bytes(&random_bytes);

@@ -112,7 +112,7 @@ pub fn main() !void {
             if (args.statsd) |address| statsd_address = address;
             log_trace = args.log_trace;
         },
-        .benchmark => {}, // Forwards trace and statsd argument to child tigerbeetle.
+        .benchmark => {}, // Forwards trace and statsd argument to child archerdb.
         inline else => |args| comptime {
             assert(!@hasField(@TypeOf(args), "trace"));
             assert(!@hasField(@TypeOf(args), "statsd"));
@@ -447,13 +447,13 @@ fn command_start(
         );
     }
 
-    // It is possible to start tigerbeetle passing `0` as an address:
-    //     $ tigerbeetle start --addresses=0 0_0.tigerbeetle
+    // It is possible to start archerdb passing `0` as an address:
+    //     $ archerdb start --addresses=0 0_0.archerdb
     // This enables a couple of special behaviors, useful in tests:
     // - The operating system picks a free port, avoiding "address already in use" errors.
     // - The port, and only the port, is printed to the stdout, so that the parent process
     //   can learn it.
-    // - tigerbeetle process exits when its stdin gets closed.
+    // - archerdb process exits when its stdin gets closed.
     if (args.addresses_zero) {
         const port_actual = replica.message_bus.accept_address.?.getPort();
         const stdout = std.io.getStdOut();
