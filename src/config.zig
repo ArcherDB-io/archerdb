@@ -4,7 +4,7 @@
 //! Configuration values are set from a combination of:
 //! - default values
 //! - `root.tigerbeetle_config`
-//! - `@import("tigerbeetle_options")`
+//! - `@import("archerdb_options")`
 
 const builtin = @import("builtin");
 const std = @import("std");

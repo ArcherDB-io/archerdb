@@ -8,7 +8,7 @@ const assert = std.debug.assert;
 const maybe = stdx.maybe;
 const log = std.log.scoped(.test_auditor);
 
-const tb = @import("../tigerbeetle.zig");
+const tb = @import("../archerdb.zig");
 const IdPermutation = @import("../testing/id.zig").IdPermutation;
 const TimestampRange = @import("../lsm/timestamp_range.zig").TimestampRange;
 

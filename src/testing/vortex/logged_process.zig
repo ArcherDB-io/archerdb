@@ -3,7 +3,7 @@
 //!
 //! We use this to run a cluster of replicas and the workload.
 //!
-//! NOTE: some duplication exists between this and `tmp_tigerbeetle.zig` that could perhaps be
+//! NOTE: some duplication exists between this and `tmp_archerdb.zig` that could perhaps be
 //! unified.
 const std = @import("std");
 const builtin = @import("builtin");
@@ -77,7 +77,7 @@ pub fn terminate(
 
     // Terminate the process.
     //
-    // Uses the same method as `src/testing/tmp_tigerbeetle.zig`.
+    // Uses the same method as `src/testing/tmp_archerdb.zig`.
     // See: https://github.com/ziglang/zig/issues/16820
     _ = kill: {
         if (builtin.os.tag == .windows) {

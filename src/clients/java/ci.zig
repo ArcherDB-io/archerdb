@@ -3,7 +3,7 @@ const log = std.log;
 const assert = std.debug.assert;
 
 const Shell = @import("../../shell.zig");
-const TmpTigerBeetle = @import("../../testing/tmp_tigerbeetle.zig");
+const TmpTigerBeetle = @import("../../testing/tmp_archerdb.zig");
 
 pub fn tests(shell: *Shell, gpa: std.mem.Allocator) !void {
     assert(shell.file_exists("pom.xml"));

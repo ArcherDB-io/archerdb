@@ -14,7 +14,7 @@ const assert = std.debug.assert;
 const Shell = @import("./shell.zig");
 const Snap = stdx.Snap;
 const snap = Snap.snap_fn("src");
-const TmpTigerBeetle = @import("./testing/tmp_tigerbeetle.zig");
+const TmpTigerBeetle = @import("./testing/tmp_archerdb.zig");
 
 const stdx = @import("stdx");
 const ratio = stdx.PRNG.ratio;
@@ -343,7 +343,7 @@ test "help/version smoke" {
     inline for (.{
         .{ .command = "{tigerbeetle} --help", .substring = "tigerbeetle repl" },
         .{ .command = "{tigerbeetle} inspect --help", .substring = "tables --tree" },
-        .{ .command = "{tigerbeetle} version", .substring = "TigerBeetle version" },
+        .{ .command = "{tigerbeetle} version", .substring = "ArcherDB version" },
         .{ .command = "{tigerbeetle} version --verbose", .substring = "process.aof_recovery=" },
     }) |check| {
         const output = try shell.exec_stdout(check.command, .{ .tigerbeetle = tigerbeetle });

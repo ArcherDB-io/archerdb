@@ -5196,7 +5196,7 @@ pub fn ReplicaType(
             // * Running with the real state machine - as otherwise there's a circular dependency,
             // * and when the replica's status is .normal - otherwise things like WAL replay at
             //   startup will skew these numbers.
-            if (StateMachine.Operation == @import("../tigerbeetle.zig").Operation and
+            if (StateMachine.Operation == @import("../archerdb.zig").Operation and
                 self.status == .normal)
             {
                 if (StateMachine.Operation.from_vsr(
@@ -5438,7 +5438,7 @@ pub fn ReplicaType(
                             self.commit_prepare.?.header.timestamp,
                     };
 
-                    if (StateMachine.Operation == @import("../tigerbeetle.zig").Operation and
+                    if (StateMachine.Operation == @import("../archerdb.zig").Operation and
                         self.status == .normal)
                     {
                         if (StateMachine.Operation.from_vsr(
@@ -7160,7 +7160,7 @@ pub fn ReplicaType(
                 request.message.header.client,
             });
             if (request.message.header.previous_request_latency != 0) {
-                if (StateMachine.Operation == @import("../tigerbeetle.zig").Operation and
+                if (StateMachine.Operation == @import("../archerdb.zig").Operation and
                     self.status == .normal)
                 {
                     if (StateMachine.Operation.from_vsr(

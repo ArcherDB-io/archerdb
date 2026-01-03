@@ -26,7 +26,7 @@ const Ratio = stdx.PRNG.Ratio;
 const ratio = stdx.PRNG.ratio;
 
 const constants = @import("../constants.zig");
-const tb = @import("../tigerbeetle.zig");
+const tb = @import("../archerdb.zig");
 const vsr = @import("../vsr.zig");
 const accounting_auditor = @import("auditor.zig");
 const Auditor = accounting_auditor.AccountingAuditor;

@@ -7,7 +7,7 @@
 //! After every operation, all accounts are queried, and basic invariants are checked.
 //!
 //! The workload and drivers communicate with a binary protocol over stdio. The protocol is based
-//! on the extern structs in `src/tigerbeetle.zig` and `src/state_machine.zig`, and it works like
+//! on the extern structs in `src/archerdb.zig` and `src/state_machine.zig`, and it works like
 //! this:
 //!
 //! 1. Workload sends a request, which is:
@@ -19,7 +19,7 @@
 //!    * the _operation_ (1 byte)
 //!    * the _result count_ (4 bytes), and
 //!    * the results (result count * size of result pair), where each pair holds an index and a
-//!      result enum value (see `src/tigerbeetle.zig`)
+//!      result enum value (see `src/archerdb.zig`)
 //! 3. The workload receives the results, and expects them to be of the same operation type as
 //!    originally requested. There might be fewer results than events, because clients can omit
 //!    .ok results.
@@ -29,7 +29,7 @@
 
 const std = @import("std");
 const stdx = @import("stdx");
-const tb = @import("../../tigerbeetle.zig");
+const tb = @import("../../archerdb.zig");
 const Operation = tb.Operation;
 const RingBufferType = stdx.RingBufferType;
 const ratio = stdx.PRNG.ratio;

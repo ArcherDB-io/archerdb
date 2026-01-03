@@ -7,7 +7,7 @@ const constants = @import("../constants.zig");
 const Command = @import("../vsr.zig").Command;
 const Zone = @import("../vsr.zig").Zone;
 const CommitStage = @import("../vsr/replica.zig").CommitStage;
-const Operation = @import("../tigerbeetle.zig").Operation;
+const Operation = @import("../archerdb.zig").Operation;
 const Duration = stdx.Duration;
 
 const TreeEnum = tree_enum: {

@@ -11,10 +11,10 @@ const vsr = @import("../vsr.zig");
 
 const log = std.log.scoped(.lsm_forest_fuzz);
 const lsm = @import("tree.zig");
-const tb = @import("../tigerbeetle.zig");
+const tb = @import("../archerdb.zig");
 
 const TimeSim = @import("../testing/time.zig").TimeSim;
-const Account = @import("../tigerbeetle.zig").Account;
+const Account = @import("../archerdb.zig").Account;
 const Storage = @import("../testing/storage.zig").Storage;
 const StateMachine = @import("../state_machine.zig").StateMachineType(Storage);
 const Reservation = @import("../vsr/free_set.zig").Reservation;

@@ -11,13 +11,13 @@ const maybe = stdx.maybe;
 const ratio = stdx.PRNG.ratio;
 const KiB = stdx.KiB;
 
-const tb = @import("../tigerbeetle.zig");
+const tb = @import("../archerdb.zig");
 const vsr = @import("../vsr.zig");
 const amqp = @import("../cdc/amqp.zig");
 
 const JSONMessage = @import("../cdc/runner.zig").Message;
 const Shell = @import("../shell.zig");
-const TmpTigerBeetle = @import("../testing/tmp_tigerbeetle.zig");
+const TmpTigerBeetle = @import("../testing/tmp_archerdb.zig");
 
 pub const CLIArgs = struct {
     transfer_count: u32,

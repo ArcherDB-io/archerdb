@@ -9,7 +9,7 @@ const stdx = @import("stdx");
 const maybe = stdx.maybe;
 
 const constants = @import("constants.zig");
-const tb = @import("tigerbeetle.zig");
+const tb = @import("archerdb.zig");
 const vsr = @import("vsr.zig");
 const snapshot_latest = @import("lsm/tree.zig").snapshot_latest;
 const ScopeCloseMode = @import("lsm/tree.zig").ScopeCloseMode;

@@ -577,9 +577,9 @@ fn build_check(
     },
 ) void {
     const tigerbeetle = b.addExecutable(.{
-        .name = "tigerbeetle",
+        .name = "archerdb",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/tigerbeetle/main.zig"),
+            .root_source_file = b.path("src/archerdb/main.zig"),
             .target = options.target,
             .optimize = options.mode,
         }),
@@ -644,7 +644,7 @@ fn build_tigerbeetle(
     const out_filename = if (options.target.result.os.tag == .windows)
         "tigerbeetle.exe"
     else
-        "tigerbeetle";
+        "archerdb";
 
     steps.install.dependOn(&b.addInstallBinFile(tigerbeetle_bin, out_filename).step);
     // "zig build install" moves the server executable to the root folder:
@@ -666,7 +666,7 @@ fn build_tigerbeetle_executable(b: *std.Build, options: struct {
     mode: std.builtin.OptimizeMode,
 }) *std.Build.Step.Compile {
     const root_module = b.createModule(.{
-        .root_source_file = b.path("src/tigerbeetle/main.zig"),
+        .root_source_file = b.path("src/archerdb/main.zig"),
         .target = options.target,
         .optimize = options.mode,
     });
@@ -675,7 +675,7 @@ fn build_tigerbeetle_executable(b: *std.Build, options: struct {
     if (options.mode == .ReleaseSafe) strip_root_module(root_module);
 
     const tigerbeetle = b.addExecutable(.{
-        .name = "tigerbeetle",
+        .name = "archerdb",
         .root_module = root_module,
     });
 
@@ -755,18 +755,18 @@ fn build_tigerbeetle_executable_multiversion(b: *std.Build, options: struct {
     const basename = if (options.target.result.os.tag == .windows)
         "tigerbeetle.exe"
     else
-        "tigerbeetle";
+        "archerdb";
     return build_multiversion.addPrefixedOutputFileArg("--output=", basename);
 }
 
-// Downloads a pre-build llvm-objcopy from <https://github.com/tigerbeetle/dependencies>.
+// Downloads a pre-build llvm-objcopy from <https://github.com/archerdb/dependencies>.
 fn build_tigerbeetle_executable_get_objcopy(b: *std.Build) std.Build.LazyPath {
     switch (b.graph.host.result.os.tag) {
         .linux => {
             switch (b.graph.host.result.cpu.arch) {
                 .x86_64 => {
                     return fetch(b, .{
-                        .url = "https://github.com/tigerbeetle/dependencies/releases/download/" ++
+                        .url = "https://github.com/archerdb/dependencies/releases/download/" ++
                             "18.1.8/llvm-objcopy-x86_64-linux.zip",
                         .file_name = "llvm-objcopy",
                         .hash = "N-V-__8AAFCWcgAxBPUOMe_uJrFGfQ2Ri_SsbNp77pPYZdAe",
@@ -774,7 +774,7 @@ fn build_tigerbeetle_executable_get_objcopy(b: *std.Build) std.Build.LazyPath {
                 },
                 .aarch64 => {
                     return fetch(b, .{
-                        .url = "https://github.com/tigerbeetle/dependencies/releases/download/" ++
+                        .url = "https://github.com/archerdb/dependencies/releases/download/" ++
                             "18.1.8/llvm-objcopy-aarch64-linux.zip",
                         .file_name = "llvm-objcopy",
                         .hash = "N-V-__8AAIgJcQAG--KvT2zb1yNrlRtNEo3pW3aIgoppmbT-",
@@ -786,7 +786,7 @@ fn build_tigerbeetle_executable_get_objcopy(b: *std.Build) std.Build.LazyPath {
         .windows => {
             assert(b.graph.host.result.cpu.arch == .x86_64);
             return fetch(b, .{
-                .url = "https://github.com/tigerbeetle/dependencies/releases/download/" ++
+                .url = "https://github.com/archerdb/dependencies/releases/download/" ++
                     "18.1.8/llvm-objcopy-x86_64-windows.zip",
                 .file_name = "llvm-objcopy.exe",
                 .hash = "N-V-__8AAADuPABpdHRgl3oetSEQ6yq8i5kq9XJC73JDFtMH",
@@ -796,7 +796,7 @@ fn build_tigerbeetle_executable_get_objcopy(b: *std.Build) std.Build.LazyPath {
             // TODO: this assert triggers, but the macOS tests on x86_64 work...?
             // assert(b.graph.host.result.cpu.arch == .aarch64);
             return fetch(b, .{
-                .url = "https://github.com/tigerbeetle/dependencies/releases/download/" ++
+                .url = "https://github.com/archerdb/dependencies/releases/download/" ++
                     "18.1.8/llvm-objcopy-aarch64-macos.zip",
                 .file_name = "llvm-objcopy",
                 .hash = "N-V-__8AAFAsVgArdRpU50gjJhqaAUSXsTemKo2A9rCaewUV",
@@ -1223,7 +1223,7 @@ fn build_vortex_executable(
         .name = "tb_client",
         .linkage = .static,
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/tigerbeetle/libtb_client.zig"),
+            .root_source_file = b.path("src/archerdb/libtb_client.zig"),
             .target = options.target,
             .optimize = options.mode,
         }),
@@ -1313,7 +1313,7 @@ fn build_rust_client(
         const resolved_target = b.resolveTargetQuery(query);
 
         const root_module = b.createModule(.{
-            .root_source_file = b.path("src/tigerbeetle/libtb_client.zig"),
+            .root_source_file = b.path("src/archerdb/libtb_client.zig"),
             .target = resolved_target,
             .optimize = options.mode,
         });
@@ -1403,7 +1403,7 @@ fn build_go_client(
         const resolved_target = b.resolveTargetQuery(query);
 
         const root_module = b.createModule(.{
-            .root_source_file = b.path("src/tigerbeetle/libtb_client.zig"),
+            .root_source_file = b.path("src/archerdb/libtb_client.zig"),
             .target = resolved_target,
             .optimize = options.mode,
             .stack_protector = false,
@@ -1461,7 +1461,7 @@ fn build_java_client(
     java_bindings_generator.root_module.addOptions("vsr_options", options.vsr_options);
     const bindings = Generated.directory(b, .{
         .generator = java_bindings_generator,
-        .path = "./src/clients/java/src/main/java/com/tigerbeetle/",
+        .path = "./src/clients/java/src/main/java/com/archerdb/",
     });
 
     inline for (platforms) |platform| {
@@ -1532,7 +1532,7 @@ fn build_dotnet_client(
         const resolved_target = b.resolveTargetQuery(query);
 
         const root_module = b.createModule(.{
-            .root_source_file = b.path("src/tigerbeetle/libtb_client.zig"),
+            .root_source_file = b.path("src/archerdb/libtb_client.zig"),
             .target = resolved_target,
             .optimize = options.mode,
         });
@@ -1685,7 +1685,7 @@ fn build_python_client(
     python_bindings_generator.root_module.addOptions("vsr_options", options.vsr_options);
     const bindings = Generated.file(b, .{
         .generator = python_bindings_generator,
-        .path = "./src/clients/python/src/tigerbeetle/bindings.py",
+        .path = "./src/clients/python/src/archerdb/bindings.py",
     });
 
     inline for (platforms) |platform| {
@@ -1696,7 +1696,7 @@ fn build_python_client(
         const resolved_target = b.resolveTargetQuery(query);
 
         const root_module = b.createModule(.{
-            .root_source_file = b.path("src/tigerbeetle/libtb_client.zig"),
+            .root_source_file = b.path("src/archerdb/libtb_client.zig"),
             .target = resolved_target,
             .optimize = options.mode,
         });
@@ -1718,7 +1718,7 @@ fn build_python_client(
         step_clients_python.dependOn(&b.addInstallFile(
             shared_lib.getEmittedBin(),
             b.pathJoin(&.{
-                "../src/clients/python/src/tigerbeetle/lib/",
+                "../src/clients/python/src/archerdb/lib/",
                 platform[0],
                 shared_lib.out_filename,
             }),
@@ -1748,7 +1748,7 @@ fn build_c_client(
         const resolved_target = b.resolveTargetQuery(query);
 
         const root_module = b.createModule(.{
-            .root_source_file = b.path("src/tigerbeetle/libtb_client.zig"),
+            .root_source_file = b.path("src/archerdb/libtb_client.zig"),
             .target = resolved_target,
             .optimize = options.mode,
         });
@@ -1800,7 +1800,7 @@ fn build_clients_c_sample(
         .name = "tb_client",
         .linkage = .static,
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/tigerbeetle/libtb_client.zig"),
+            .root_source_file = b.path("src/archerdb/libtb_client.zig"),
             .target = options.target,
             .optimize = options.mode,
         }),
@@ -2143,14 +2143,14 @@ fn download_release(
     };
 
     const url = b.fmt(
-        "https://github.com/tigerbeetle/tigerbeetle" ++
+        "https://github.com/archerdb/tigerbeetle" ++
             "/releases/{s}/tigerbeetle-{s}-{s}{s}.zip",
         .{ release_slug, arch, os, debug },
     );
 
     return fetch(b, .{
         .url = url,
-        .file_name = if (target.result.os.tag == .windows) "tigerbeetle.exe" else "tigerbeetle",
+        .file_name = if (target.result.os.tag == .windows) "tigerbeetle.exe" else "archerdb",
         .hash = null,
     });
 }

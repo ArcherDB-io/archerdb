@@ -6,7 +6,7 @@ const mem = std.mem;
 const stdx = @import("stdx");
 const maybe = stdx.maybe;
 
-const tb = @import("tigerbeetle.zig");
+const tb = @import("archerdb.zig");
 const vsr = @import("vsr.zig");
 const constants = vsr.constants;
 

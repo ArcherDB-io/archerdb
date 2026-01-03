@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const Shell = @import("../../shell.zig");
-const TmpTigerBeetle = @import("../../testing/tmp_tigerbeetle.zig");
+const TmpTigerBeetle = @import("../../testing/tmp_archerdb.zig");
 
 pub fn tests(shell: *Shell, gpa: std.mem.Allocator) !void {
     try shell.exec_zig("build clients:rust -Drelease", .{});

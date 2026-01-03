@@ -7,7 +7,7 @@ const vsr = @import("vsr.zig");
 const constants = vsr.constants;
 const stdx = @import("stdx");
 
-const tb = @import("tigerbeetle.zig");
+const tb = @import("archerdb.zig");
 const TestContext = @import("state_machine_tests.zig").TestContext;
 const fuzz = @import("./testing/fuzz.zig");
 
