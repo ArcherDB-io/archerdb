@@ -49,6 +49,7 @@ comptime {
     _ = @import("s2/math.zig");
     _ = @import("s2/region_coverer.zig");
     _ = @import("s2/s2.zig");
+    _ = @import("s2_scratch_pool.zig");
     _ = @import("scripts/cfo.zig");
     _ = @import("scripts/changelog.zig");
     _ = @import("shell.zig");
