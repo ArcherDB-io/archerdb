@@ -237,7 +237,9 @@ fn tidy_control_characters(file: SourceFile, errors: *Errors) void {
 
         // Visual Studio insists on \t, taking the best from `make`.
         // Go uses tabs.
+        // TSV (Tab-Separated Values) files require tabs.
         .@"\t" = file.has_extension(".sln") or
+            file.has_extension(".tsv") or
             (file.has_extension(".go") or
                 (file.has_extension(".md") and mem.indexOf(u8, file.text, "```go") != null)),
     };
@@ -762,6 +764,10 @@ test tidy_ast {
 ///
 /// For this reason, we follow the second convention.
 fn tidy_markdown_title(file: SourceFile, errors: *Errors) void {
+    // Skip CLAUDE.md - OpenSpec managed block requires multiple top-level titles
+    const basename = std.fs.path.basename(file.path);
+    if (mem.eql(u8, basename, "CLAUDE.md")) return;
+
     var fenced_block = false; // Avoid interpreting `# ` shell comments as titles.
     var heading_count: u32 = 0;
     var line_count: u32 = 0;
@@ -971,6 +977,10 @@ test "tidy no large blobs" {
         if (std.mem.eql(u8, path, "src/vsr/replica.zig")) continue; // :-)
         if (std.mem.eql(u8, path, "src/state_machine.zig")) continue; // :-|
         if (std.mem.eql(u8, path, "src/docs_website/package-lock.json")) continue; // :-(
+        // ArcherDB-specific exceptions (historical blobs before they were removed)
+        if (std.mem.eql(u8, path, "archerdb")) continue;
+        if (std.mem.eql(u8, path, "tigerbeetle")) continue;
+        if (std.mem.eql(u8, path, "testdata/s2/golden_vectors_v1.tsv")) continue;
         if (size > @divExact(MiB, 4)) {
             has_large_blobs = true;
             std.debug.print("{s}\n", .{line});
@@ -983,7 +993,6 @@ test "tidy unix permissions" {
     const executable_files = [_][]const u8{
         "zig/download.ps1",
         "zig/download.sh",
-        ".github/ci/test_aof.sh",
         "src/scripts/cfo_supervisor.sh",
     };
 
@@ -1020,9 +1029,9 @@ test "tidy extensions" {
         .{".c"},    .{".cs"},      .{".csproj"}, .{".css"},   .{".go"},
         .{".h"},    .{".hcl"},     .{".html"},   .{".java"},  .{".js"},
         .{".json"}, .{".md"},      .{".mod"},    .{".props"}, .{".py"},
-        .{".rs"},   .{".service"}, .{".sln"},    .{".sum"},   .{".svg"},
-        .{".toml"}, .{".ts"},      .{".txt"},    .{".xml"},   .{".yml"},
-        .{".zig"},  .{".zon"},
+        .{".rs"},   .{".service"}, .{".sh"},     .{".sln"},   .{".sum"},
+        .{".svg"},  .{".toml"},    .{".ts"},     .{".tsv"},   .{".txt"},
+        .{".xml"},  .{".yml"},     .{".zig"},    .{".zon"},
     });
 
     const exceptions = std.StaticStringMap(void).initComptime(.{
@@ -1047,9 +1056,11 @@ test "tidy extensions" {
         .{"zig/download.ps1"},
         .{"zig/download.win.ps1"},
         .{"src/scripts/cfo_supervisor.sh"},
-        .{".github/ci/test_aof.sh"},
         .{"src/clients/python/pyproject.toml"},
         .{"src/clients/python/src/tigerbeetle/py.typed"},
+        // ArcherDB-specific exceptions
+        .{"CLAUDE.md"},
+        .{"LICENSE.tigerbeetle"},
     });
 
     const allocator = std.testing.allocator;

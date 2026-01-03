@@ -1,4 +1,4 @@
-## S2 golden vector generator (tooling-only)
+# S2 Golden Vector Generator
 
 ArcherDB is a Zig project. This directory exists only to make the **S2 golden vectors** used by tests/specs reproducible.
 

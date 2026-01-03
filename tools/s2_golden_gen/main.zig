@@ -1,4 +1,5 @@
 const std = @import("std");
+const assert = std.debug.assert;
 
 const generator_id = "tools/s2_golden_gen/main.zig";
 const generator_version = "v1";
@@ -178,7 +179,11 @@ fn buildVectors(
 
     for (coords.items) |c| {
         for (levels) |lvl| {
-            try vectors.append(allocator, .{ .lat_nano = c.lat_nano, .lon_nano = c.lon_nano, .level = lvl });
+            try vectors.append(allocator, .{
+                .lat_nano = c.lat_nano,
+                .lon_nano = c.lon_nano,
+                .level = lvl,
+            });
         }
     }
 
@@ -195,7 +200,9 @@ fn buildVectors(
     while (j < vectors.items.len) : (j += 1) {
         const prev = vectors.items[j - 1];
         const cur = vectors.items[j];
-        if (prev.level == cur.level and prev.lat_nano == cur.lat_nano and prev.lon_nano == cur.lon_nano) {
+        const is_dup = prev.level == cur.level and
+            prev.lat_nano == cur.lat_nano and prev.lon_nano == cur.lon_nano;
+        if (is_dup) {
             return error.DuplicateVector;
         }
     }
@@ -204,7 +211,7 @@ fn buildVectors(
 }
 
 fn randI64Range(rng: *SplitMix64, min: i64, max: i64) i64 {
-    std.debug.assert(min <= max);
+    assert(min <= max);
     const span = @as(u64, @intCast(max - min)) + 1;
     const v = rng.next() % span;
     return min + @as(i64, @intCast(v));
@@ -341,6 +348,8 @@ fn writeFinalOutput(
 fn usage() !void {
     try std.fs.File.stdout().writeAll(
         "Usage:\n" ++
-            "  zig run tools/s2_golden_gen/main.zig -- --out testdata/s2/golden_vectors_v1.tsv --seed 1 --random 1024 --levels 0,1,5,10,15,18,30\n",
+            "  zig run tools/s2_golden_gen/main.zig -- \\\n" ++
+            "    --out testdata/s2/golden_vectors_v1.tsv \\\n" ++
+            "    --seed 1 --random 1024 --levels 0,1,5,10,15,18,30\n",
     );
 }

@@ -11,28 +11,42 @@ on:
     branches: ["main"]
 
 jobs:
-  # Smoke test - quick validation on Linux
+  # Smoke test - fast feedback on common issues
   smoke:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: shellcheck ./zig/download.sh
-      - run: ./zig/download.sh && ./zig/zig version
-      - run: ./zig/zig build test
 
-  # Cross-platform ecosystem validation
-  ecosystem-validation:
+      # Shell script validation
+      - name: Check shell scripts
+        run: shellcheck ./zig/download.sh
+
+      # Download Zig
+      - name: Download Zig
+        run: ./zig/download.sh && ./zig/zig version
+
+      # Code formatting and tidy checks
+      - name: Run tidy checks
+        run: ./zig/zig build test -- tidy
+
+      # Quick build verification
+      - name: Quick build
+        run: ./zig/zig build
+
+  # Core test suite across platforms
+  test:
+    needs: smoke
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { os: 'ubuntu-latest', name: 'Linux x64' }
+          - { os: 'ubuntu-22.04', name: 'Linux x64' }
           - { os: 'ubuntu-24.04-arm', name: 'Linux ARM64' }
           - { os: 'macos-latest', name: 'macOS ARM64' }
           - { os: 'macos-13', name: 'macOS x64' }
           - { os: 'windows-latest', name: 'Windows x64' }
     runs-on: ${{ matrix.os }}
-    name: Ecosystem Validation (${{ matrix.name }})
+    name: Test (${{ matrix.name }})
     steps:
       - run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
@@ -45,17 +59,25 @@ jobs:
       - name: Verify Zig version
         run: ./zig/zig version
 
-      - name: Run ecosystem validation tests
-        run: ./zig/zig test src/ecosystem_validation.zig
+      # Run ecosystem validation tests (in archerdb subdir)
+      - name: Run ecosystem validation
+        run: ./zig/zig build test -Dtest-filter=ecosystem
 
+      # Run unit tests
+      - name: Run unit tests
+        run: ./zig/zig build test
+
+      # Build ArcherDB
       - name: Build ArcherDB
-        run: ./zig/zig build
+        run: ./zig/zig build -Doptimize=ReleaseSafe
 
-      - name: Verify build
+      # Verify build
+      - name: Verify binary
         run: ./zig-out/bin/archerdb version --verbose
 
   # Build reproducibility check
   reproducible-build:
+    needs: smoke
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -77,4 +99,26 @@ jobs:
         run: |
           echo "Build 1:" && cat build1.sha256
           echo "Build 2:" && cat build2.sha256
-          diff build1.sha256 build2.sha256 && echo "Builds are reproducible!"
+          diff build1.sha256 build2.sha256 && echo "✓ Builds are reproducible!"
+
+  # Core status check - aggregates required checks
+  core:
+    needs: [smoke, test, reproducible-build]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Check all jobs
+        run: |
+          if [[ "${{ needs.smoke.result }}" != "success" ]]; then
+            echo "Smoke job failed"
+            exit 1
+          fi
+          if [[ "${{ needs.test.result }}" != "success" ]]; then
+            echo "Test job failed"
+            exit 1
+          fi
+          if [[ "${{ needs.reproducible-build.result }}" != "success" ]]; then
+            echo "Reproducible build job failed"
+            exit 1
+          fi
+          echo "✓ All core checks passed!"

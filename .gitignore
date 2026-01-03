@@ -4,8 +4,10 @@ zig-out/
 
 # Local AI assistant config
 .claude/
+**/.claude/
 .mcp.json
 .serena/
+*.local.md
 
 # Build artifacts
 /zig-out/
