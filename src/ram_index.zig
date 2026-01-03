@@ -679,6 +679,83 @@ pub const DegradedModeManager = struct {
     }
 };
 
+// =============================================================================
+// Online Rehash Procedure (F2.4.11)
+// Per hybrid-memory/spec.md:900-943
+// =============================================================================
+
+/// Strategy for index rehash operation.
+pub const RehashStrategy = enum {
+    /// Online rehash: Copy live entries to new table while serving queries.
+    online,
+    /// Full rebuild: Stop writes, rebuild from LSM.
+    full,
+};
+
+/// Configuration for rehash operation.
+pub const RehashConfig = struct {
+    /// Rehash strategy.
+    strategy: RehashStrategy = .online,
+    /// Maximum CPU percentage to use (0-100).
+    max_cpu_percent: u8 = 50,
+    /// Batch size for copying entries.
+    batch_size: u32 = 10_000,
+    /// New capacity (0 = same as current).
+    new_capacity: u64 = 0,
+};
+
+/// State of an ongoing rehash operation.
+pub const RehashState = struct {
+    /// Whether rehash is in progress.
+    in_progress: bool = false,
+    /// Number of entries copied so far.
+    entries_copied: u64 = 0,
+    /// Total entries to copy.
+    total_entries: u64 = 0,
+    /// Tombstones skipped (not copied).
+    tombstones_skipped: u64 = 0,
+    /// Progress percentage (0-100).
+    progress_percent: u8 = 0,
+    /// Timestamp when rehash started (nanoseconds).
+    started_at_ns: u64 = 0,
+    /// Whether rehash completed successfully.
+    completed: bool = false,
+    /// Error message if failed.
+    error_message: ?[]const u8 = null,
+
+    /// Update progress percentage.
+    pub fn update_progress(self: *RehashState) void {
+        if (self.total_entries == 0) {
+            self.progress_percent = 100;
+        } else {
+            const pct = (self.entries_copied * 100) / self.total_entries;
+            self.progress_percent = @intCast(@min(pct, 100));
+        }
+    }
+};
+
+/// Result of a rehash operation.
+pub const RehashResult = struct {
+    /// Whether rehash succeeded.
+    success: bool,
+    /// Number of live entries copied.
+    entries_copied: u64,
+    /// Number of tombstones skipped.
+    tombstones_skipped: u64,
+    /// Duration in nanoseconds.
+    duration_ns: u64,
+    /// Old probe length p99 (before rehash).
+    old_probe_length_max: u32,
+    /// New probe length p99 (after rehash).
+    new_probe_length_max: u32,
+    /// Old tombstone ratio.
+    old_tombstone_ratio: f32,
+    /// New tombstone ratio (should be 0).
+    new_tombstone_ratio: f32,
+    /// Error message if failed.
+    error_message: ?[]const u8,
+};
+
 /// Result of a background TTL scan operation.
 pub const ScanExpiredResult = struct {
     /// Number of entries scanned in this batch.
@@ -1163,6 +1240,101 @@ pub fn RamIndex(comptime options: struct {
                 .next_position = position,
                 .wrapped = wrapped,
             };
+        }
+
+        // =================================================================
+        // Online Rehash (F2.4.11)
+        // =================================================================
+
+        /// Create a new rehashed index with tombstones removed.
+        /// Returns a new RamIndex with all live entries copied.
+        /// The caller is responsible for atomic swap and freeing the old index.
+        ///
+        /// Per spec: Online rehash copies live entries, skips tombstones,
+        /// reducing tombstone_ratio to 0 and probe_lengths back to optimal.
+        pub fn create_rehashed_copy(self: *Self, allocator: std.mem.Allocator, config: RehashConfig) !struct {
+            new_index: Self,
+            result: RehashResult,
+        } {
+            const start_time = std.time.nanoTimestamp();
+            const old_stats = self.get_stats();
+
+            // Determine new capacity.
+            const new_capacity = if (config.new_capacity > 0)
+                config.new_capacity
+            else
+                self.capacity;
+
+            // Allocate new index (var to allow mutation).
+            var new_index = try Self.init(allocator, new_capacity);
+            errdefer new_index.deinit(allocator);
+
+            // Copy live entries (skip tombstones).
+            var entries_copied: u64 = 0;
+            var tombstones_skipped: u64 = 0;
+            var new_max_probe: u32 = 0;
+
+            var i: u64 = 0;
+            while (i < self.capacity) : (i += 1) {
+                // Read entry atomically (same pattern as scan_expired_batch).
+                const entry_ptr: *IndexEntry = &self.entries[@intCast(i)];
+                const entry = @as(*volatile IndexEntry, @ptrCast(entry_ptr)).*;
+
+                // Skip empty slots.
+                if (entry.entity_id == 0) continue;
+
+                // Skip tombstones.
+                if (entry.is_tombstone()) {
+                    tombstones_skipped += 1;
+                    continue;
+                }
+
+                // Copy live entry to new index.
+                const upsert_result = try new_index.upsert(
+                    entry.entity_id,
+                    entry.latest_id,
+                    entry.ttl_seconds,
+                );
+
+                entries_copied += 1;
+                if (upsert_result.probe_count > new_max_probe) {
+                    new_max_probe = upsert_result.probe_count;
+                }
+            }
+
+            const end_time = std.time.nanoTimestamp();
+            const duration_ns: u64 = @intCast(@max(0, end_time - start_time));
+
+            const new_stats = new_index.get_stats();
+
+            return .{
+                .new_index = new_index,
+                .result = .{
+                    .success = true,
+                    .entries_copied = entries_copied,
+                    .tombstones_skipped = tombstones_skipped,
+                    .duration_ns = duration_ns,
+                    .old_probe_length_max = old_stats.max_probe_length_seen,
+                    .new_probe_length_max = new_max_probe,
+                    .old_tombstone_ratio = old_stats.tombstone_ratio(),
+                    .new_tombstone_ratio = new_stats.tombstone_ratio(),
+                    .error_message = null,
+                },
+            };
+        }
+
+        /// Verify rehash success criteria per spec.
+        pub fn verify_rehash_success(result: RehashResult, expected_entries: u64) bool {
+            // All entries still present.
+            if (result.entries_copied != expected_entries) return false;
+
+            // Tombstone ratio should be 0.
+            if (result.new_tombstone_ratio > 0.001) return false;
+
+            // Probe length should be optimal (< 3).
+            if (result.new_probe_length_max >= DegradationThresholds.probe_length_warning) return false;
+
+            return true;
         }
 
         /// Get current statistics.
@@ -2187,4 +2359,158 @@ test "DiagnosticConfig: sampling" {
     // Should have logged ~10 queries (10% sample rate).
     try std.testing.expectEqual(@as(u64, 10), logged_count);
     try std.testing.expectEqual(@as(u64, 10), config.diagnostics_logged);
+}
+
+// =============================================================================
+// Online Rehash Tests (F2.4.11)
+// =============================================================================
+
+test "RamIndex: create_rehashed_copy removes tombstones" {
+    const allocator = std.testing.allocator;
+    var index = try DefaultRamIndex.init(allocator, 100);
+    defer index.deinit(allocator);
+
+    // Insert entries.
+    _ = try index.upsert(1, 100, 0);
+    _ = try index.upsert(2, 200, 0);
+    _ = try index.upsert(3, 300, 0);
+    _ = try index.upsert(4, 400, 0);
+    _ = try index.upsert(5, 500, 0);
+
+    const stats_before = index.get_stats();
+    try std.testing.expectEqual(@as(u64, 5), stats_before.entry_count);
+
+    // Remove two entries (creates tombstones).
+    const removed1 = index.remove_if_id_matches(2, 200);
+    const removed2 = index.remove_if_id_matches(4, 400);
+    try std.testing.expect(removed1.removed);
+    try std.testing.expect(removed2.removed);
+
+    // Verify tombstones exist.
+    const stats_with_tombstones = index.get_stats();
+    try std.testing.expect(stats_with_tombstones.tombstone_ratio() > 0);
+
+    // Perform rehash.
+    const config = RehashConfig{};
+    var rehash_output = try index.create_rehashed_copy(allocator, config);
+    var new_index = &rehash_output.new_index;
+    const result = rehash_output.result;
+    defer new_index.deinit(allocator);
+
+    // Verify result.
+    try std.testing.expect(result.success);
+    try std.testing.expectEqual(@as(u64, 3), result.entries_copied);
+    try std.testing.expectEqual(@as(u64, 2), result.tombstones_skipped);
+
+    // Verify new index has no tombstones.
+    const new_stats = new_index.get_stats();
+    try std.testing.expectEqual(@as(u64, 3), new_stats.entry_count);
+    try std.testing.expectEqual(@as(u64, 0), new_stats.tombstone_count);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), new_stats.tombstone_ratio(), 0.001);
+
+    // Verify entries are accessible in new index.
+    const l1 = new_index.lookup(1);
+    const l3 = new_index.lookup(3);
+    const l5 = new_index.lookup(5);
+    try std.testing.expect(l1.entry != null);
+    try std.testing.expect(l3.entry != null);
+    try std.testing.expect(l5.entry != null);
+    try std.testing.expectEqual(@as(u128, 100), l1.entry.?.latest_id);
+    try std.testing.expectEqual(@as(u128, 300), l3.entry.?.latest_id);
+    try std.testing.expectEqual(@as(u128, 500), l5.entry.?.latest_id);
+
+    // Verify removed entries are not in new index.
+    const l2 = new_index.lookup(2);
+    const l4 = new_index.lookup(4);
+    try std.testing.expect(l2.entry == null);
+    try std.testing.expect(l4.entry == null);
+}
+
+test "RamIndex: verify_rehash_success criteria" {
+    // Success case.
+    const success_result = RehashResult{
+        .success = true,
+        .entries_copied = 100,
+        .tombstones_skipped = 20,
+        .duration_ns = 1000,
+        .old_probe_length_max = 8,
+        .new_probe_length_max = 1,
+        .old_tombstone_ratio = 0.17,
+        .new_tombstone_ratio = 0.0,
+        .error_message = null,
+    };
+    try std.testing.expect(DefaultRamIndex.verify_rehash_success(success_result, 100));
+
+    // Failure: wrong entry count.
+    const wrong_count = RehashResult{
+        .success = true,
+        .entries_copied = 95,
+        .tombstones_skipped = 20,
+        .duration_ns = 1000,
+        .old_probe_length_max = 8,
+        .new_probe_length_max = 1,
+        .old_tombstone_ratio = 0.17,
+        .new_tombstone_ratio = 0.0,
+        .error_message = null,
+    };
+    try std.testing.expect(!DefaultRamIndex.verify_rehash_success(wrong_count, 100));
+
+    // Failure: tombstones remain.
+    const tombstones_remain = RehashResult{
+        .success = true,
+        .entries_copied = 100,
+        .tombstones_skipped = 20,
+        .duration_ns = 1000,
+        .old_probe_length_max = 8,
+        .new_probe_length_max = 1,
+        .old_tombstone_ratio = 0.17,
+        .new_tombstone_ratio = 0.05,
+        .error_message = null,
+    };
+    try std.testing.expect(!DefaultRamIndex.verify_rehash_success(tombstones_remain, 100));
+
+    // Failure: probe length still high.
+    const high_probe = RehashResult{
+        .success = true,
+        .entries_copied = 100,
+        .tombstones_skipped = 20,
+        .duration_ns = 1000,
+        .old_probe_length_max = 8,
+        .new_probe_length_max = 5, // >= warning threshold (3)
+        .old_tombstone_ratio = 0.17,
+        .new_tombstone_ratio = 0.0,
+        .error_message = null,
+    };
+    try std.testing.expect(!DefaultRamIndex.verify_rehash_success(high_probe, 100));
+}
+
+test "RehashState: progress tracking" {
+    var state = RehashState{};
+
+    // Initial state.
+    try std.testing.expect(!state.in_progress);
+    try std.testing.expectEqual(@as(u8, 0), state.progress_percent);
+
+    // Start rehash.
+    state.in_progress = true;
+    state.total_entries = 100;
+    state.entries_copied = 0;
+    state.update_progress();
+    try std.testing.expectEqual(@as(u8, 0), state.progress_percent);
+
+    // 50% progress.
+    state.entries_copied = 50;
+    state.update_progress();
+    try std.testing.expectEqual(@as(u8, 50), state.progress_percent);
+
+    // 100% progress.
+    state.entries_copied = 100;
+    state.update_progress();
+    try std.testing.expectEqual(@as(u8, 100), state.progress_percent);
+
+    // Empty table (edge case).
+    state.total_entries = 0;
+    state.entries_copied = 0;
+    state.update_progress();
+    try std.testing.expectEqual(@as(u8, 100), state.progress_percent);
 }
