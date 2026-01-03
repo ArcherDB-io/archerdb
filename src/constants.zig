@@ -832,6 +832,55 @@ pub const s2_scratch_size: u64 = 1 * MiB;
 /// S2 scratch buffer pool size (matches max_concurrent_queries).
 pub const s2_scratch_pool_size: u32 = 100;
 
+// === RAM Index Constants ===
+
+/// Index entry size in bytes (cache-line aligned for performance).
+/// Each entry stores: entity_id (16 bytes), latest_id (16 bytes), ttl_seconds (4 bytes),
+/// plus additional fields for O(1) lookup.
+pub const index_entry_size: u32 = 64;
+
+/// Index load factor target as percentage (70% = 0.70).
+/// Higher load factors increase hash collisions, lower wastes memory.
+pub const index_load_factor_percent: u8 = 70;
+
+/// Maximum entities per node (limited by RAM index).
+/// 1 billion entities × 64 bytes = ~64GB RAM for index alone.
+pub const entities_max_per_node: u64 = 1_000_000_000;
+
+/// Index capacity (total hash table slots).
+/// Calculated: entities_max_per_node × (100 / load_factor_percent).
+/// ~1.43 billion slots to maintain 70% load factor.
+pub const index_capacity: u64 = (entities_max_per_node * 100) / index_load_factor_percent;
+
+/// Number of logical shards for index partitioning.
+/// shard_id = hash(entity_id) % shard_count.
+/// Reduces cache line contention during high-throughput upserts.
+/// Must be power of 2 for efficient modulo via bitmask.
+pub const shard_count: u16 = 256;
+
+/// Index memory requirement estimate in bytes.
+/// index_capacity × index_entry_size = ~91.5GB for 1B entities.
+pub const index_memory_bytes: u64 = index_capacity * index_entry_size;
+
+// === Query Limits ===
+
+/// Maximum events in query result (must fit in message).
+/// Calculation: (message_body_size_max - overhead) / geo_event_size.
+pub const query_result_max: u32 = 8_000;
+
+/// Maximum polygon vertices in spatial queries.
+pub const polygon_vertices_max: u32 = 10_000;
+
+/// Maximum radius in meters for radius queries.
+pub const radius_max_meters: u32 = 1_000_000; // 1000 km
+
+/// Maximum concurrent spatial queries (memory bounded).
+/// Each query may allocate scratch buffers and result buffers.
+pub const max_concurrent_queries: u32 = 100;
+
+/// Query queue depth before rejecting with too_many_queries.
+pub const query_queue_max: u32 = 1_000;
+
 comptime {
     // Verify S2 cell level is in valid range (1-30)
     assert(s2_cell_level >= 1 and s2_cell_level <= 30);
@@ -842,4 +891,16 @@ comptime {
 
     // Verify batch fits in message body
     assert(batch_events_max * geo_event_size < message_body_size_max);
+
+    // Verify shard count is power of 2 (efficient modulo via bitmask)
+    assert(shard_count > 0 and (shard_count & (shard_count - 1)) == 0);
+
+    // Verify index entry is cache-line aligned
+    assert(index_entry_size % cache_line_size == 0);
+
+    // Verify query results fit in message
+    assert(query_result_max * geo_event_size < message_body_size_max);
+
+    // Verify index capacity calculation
+    assert(index_capacity >= entities_max_per_node);
 }
