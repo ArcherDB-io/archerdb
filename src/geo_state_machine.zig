@@ -330,7 +330,12 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         /// Prefetch phase - asynchronously load data needed for execution.
         /// Called after consensus, before commit.
         ///
-        /// Implementation: F1.1.4
+        /// Prefetch loads required data from LSM trees into cache to ensure
+        /// cache hits during the commit phase. This is critical for performance
+        /// as commit() must be synchronous and deterministic.
+        ///
+        /// Currently empty implementation - will be populated when Forest is
+        /// integrated with GeoEvent grooves.
         pub fn prefetch(
             self: *GeoStateMachine,
             callback: *const fn (*GeoStateMachine) void,
@@ -338,19 +343,60 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             operation: Operation,
             message_body_used: []align(16) const u8,
         ) void {
-            _ = op;
-            _ = operation;
-            _ = message_body_used;
-
+            assert(op > 0);
             assert(self.prefetch_callback == null);
+            assert(message_body_used.len <= self.batch_size_limit);
+
             self.prefetch_callback = callback;
 
-            // TODO(F1.1.4): Prefetch data from LSM trees based on operation
-            // For now, immediately invoke callback
-            if (self.prefetch_callback) |cb| {
-                self.prefetch_callback = null;
-                cb(self);
+            // Store operation context for future implementation
+            // TODO: When Forest is integrated:
+            // 1. self.forest.grooves.geo_events.prefetch_setup(null);
+            // 2. Dispatch to operation-specific prefetch based on operation type
+            // 3. For insert_events: prefetch existing entity_ids for conflict detection
+            // 4. For query_uuid: prefetch entity_id index entries
+            // 5. For query_radius/polygon: S2 cell range prefetch
+
+            switch (operation) {
+                // Write operations will need to prefetch for conflict detection
+                .create_accounts,
+                .create_transfers,
+                .deprecated_create_accounts_unbatched,
+                .deprecated_create_transfers_unbatched,
+                => {
+                    // TODO: Prefetch existing records by ID
+                    self.prefetch_finish();
+                },
+
+                // Read operations will need to prefetch query results
+                .lookup_accounts,
+                .lookup_transfers,
+                .get_account_transfers,
+                .get_account_balances,
+                .query_accounts,
+                .query_transfers,
+                .get_change_events,
+                .deprecated_lookup_accounts_unbatched,
+                .deprecated_lookup_transfers_unbatched,
+                .deprecated_get_account_transfers_unbatched,
+                .deprecated_get_account_balances_unbatched,
+                .deprecated_query_accounts_unbatched,
+                .deprecated_query_transfers_unbatched,
+                => {
+                    // TODO: Prefetch based on query filters
+                    self.prefetch_finish();
+                },
+
+                // Pulse has no data to prefetch
+                .pulse => self.prefetch_finish(),
             }
+        }
+
+        /// Complete prefetch phase and invoke callback.
+        fn prefetch_finish(self: *GeoStateMachine) void {
+            const callback = self.prefetch_callback.?;
+            self.prefetch_callback = null;
+            callback(self);
         }
 
         /// Commit phase - execute operation deterministically.
