@@ -245,6 +245,58 @@ pub const TtlMetrics = struct {
     }
 };
 
+/// Statistics for compaction with TTL and liveness checks.
+///
+/// Per ttl-retention/spec.md, compaction tracks:
+/// - Events discarded due to TTL expiration
+/// - Events discarded because superseded by newer version
+/// - Events copied forward (still live)
+pub const CompactionStats = struct {
+    /// Events discarded due to TTL expiration.
+    events_expired: u64 = 0,
+
+    /// Events discarded because superseded by newer version (not in index).
+    events_superseded: u64 = 0,
+
+    /// Events copied forward (still live in index).
+    events_copied: u64 = 0,
+
+    /// Total events processed in this compaction.
+    pub fn total_events(self: CompactionStats) u64 {
+        return self.events_expired + self.events_superseded + self.events_copied;
+    }
+
+    /// Expiration rate (fraction of events discarded due to TTL).
+    pub fn expiration_rate(self: CompactionStats) f32 {
+        const total = self.total_events();
+        if (total == 0) return 0.0;
+        return @as(f32, @floatFromInt(self.events_expired)) /
+            @as(f32, @floatFromInt(total));
+    }
+
+    /// Record an expired event during compaction.
+    pub fn record_expired(self: *CompactionStats) void {
+        self.events_expired += 1;
+    }
+
+    /// Record a superseded event during compaction.
+    pub fn record_superseded(self: *CompactionStats) void {
+        self.events_superseded += 1;
+    }
+
+    /// Record a copied event during compaction.
+    pub fn record_copied(self: *CompactionStats) void {
+        self.events_copied += 1;
+    }
+
+    /// Merge stats from another compaction.
+    pub fn merge(self: *CompactionStats, other: CompactionStats) void {
+        self.events_expired += other.events_expired;
+        self.events_superseded += other.events_superseded;
+        self.events_copied += other.events_copied;
+    }
+};
+
 /// Validate TTL value for insertion.
 ///
 /// Per the spec, all u32 values are valid:
@@ -415,6 +467,48 @@ test "TtlMetrics: counters" {
     try std.testing.expectEqual(@as(u64, 10), metrics.expirations_on_cleanup);
     try std.testing.expectEqual(@as(u64, 5), metrics.expirations_on_compaction);
     try std.testing.expectEqual(@as(u64, 17), metrics.total_expirations());
+}
+
+test "CompactionStats: counters and calculations" {
+    var stats = CompactionStats{};
+
+    // Record some events.
+    stats.record_expired();
+    stats.record_expired();
+    stats.record_superseded();
+    stats.record_superseded();
+    stats.record_superseded();
+    stats.record_copied();
+    stats.record_copied();
+    stats.record_copied();
+    stats.record_copied();
+    stats.record_copied();
+
+    // Verify counts: 2 expired, 3 superseded, 5 copied.
+    try std.testing.expectEqual(@as(u64, 2), stats.events_expired);
+    try std.testing.expectEqual(@as(u64, 3), stats.events_superseded);
+    try std.testing.expectEqual(@as(u64, 5), stats.events_copied);
+    try std.testing.expectEqual(@as(u64, 10), stats.total_events());
+
+    // Expiration rate: 2/10 = 0.2
+    try std.testing.expectApproxEqAbs(@as(f32, 0.2), stats.expiration_rate(), 0.001);
+}
+
+test "CompactionStats: merge" {
+    var stats1 = CompactionStats{};
+    stats1.record_expired();
+    stats1.record_copied();
+
+    var stats2 = CompactionStats{};
+    stats2.events_expired = 5;
+    stats2.events_superseded = 3;
+    stats2.events_copied = 10;
+
+    stats1.merge(stats2);
+
+    try std.testing.expectEqual(@as(u64, 6), stats1.events_expired);
+    try std.testing.expectEqual(@as(u64, 3), stats1.events_superseded);
+    try std.testing.expectEqual(@as(u64, 11), stats1.events_copied);
 }
 
 test "validate_ttl_on_insert: accepts valid TTL" {

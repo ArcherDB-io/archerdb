@@ -6,6 +6,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const stdx = @import("stdx");
+const ttl = @import("ttl.zig");
 
 /// Packed flags for GeoEvent status.
 /// Uses explicit padding bits for forward compatibility.
@@ -144,6 +145,75 @@ pub const GeoEvent = extern struct {
     pub fn zero() GeoEvent {
         return std.mem.zeroes(GeoEvent);
     }
+
+    // === TTL Methods ===
+
+    /// Check if this event is expired given the current time.
+    ///
+    /// Per ttl-retention/spec.md:
+    /// - ttl_seconds = 0 means never expires
+    /// - Uses timestamp field (lower 64 bits of id) for expiration calculation
+    ///
+    /// Arguments:
+    /// - current_time_ns: Current timestamp in nanoseconds (consensus or wall clock)
+    ///
+    /// Returns: true if event has expired
+    pub fn is_expired(self: *const GeoEvent, current_time_ns: u64) bool {
+        return ttl.is_expired(self.timestamp, self.ttl_seconds, current_time_ns).expired;
+    }
+
+    /// Check if this event should be copied forward during compaction.
+    ///
+    /// Per ttl-retention/spec.md, during compaction:
+    /// 1. If expired: Skip (don't copy to new table)
+    /// 2. If deleted (tombstone): May need to keep for resurrection prevention
+    /// 3. Otherwise: Copy forward
+    ///
+    /// Arguments:
+    /// - current_time_ns: Current timestamp for TTL calculation
+    /// - is_final_level: True if compacting to the final LSM level
+    ///
+    /// Returns: true if event should be copied forward
+    pub fn should_copy_forward(
+        self: *const GeoEvent,
+        current_time_ns: u64,
+        is_final_level: bool,
+    ) bool {
+        // Expired events are never copied forward.
+        if (self.is_expired(current_time_ns)) {
+            return false;
+        }
+
+        // Tombstones (deleted entities) need special handling.
+        // Per spec: tombstones are kept unless at final level.
+        if (self.flags.deleted) {
+            // At final level, tombstones can be dropped.
+            // Otherwise, keep them to prevent resurrection on restore.
+            return !is_final_level;
+        }
+
+        // Not expired, not tombstone - copy forward.
+        return true;
+    }
+
+    /// Get expiration timestamp for this event.
+    ///
+    /// Returns:
+    /// - maxInt(u64) if event never expires (ttl_seconds = 0)
+    /// - Calculated expiration timestamp otherwise
+    pub fn expiration_time_ns(self: *const GeoEvent) u64 {
+        return ttl.is_expired(self.timestamp, self.ttl_seconds, 0).expiration_time_ns;
+    }
+
+    /// Get remaining TTL in seconds, if applicable.
+    ///
+    /// Returns:
+    /// - null if event never expires
+    /// - 0 if event is already expired
+    /// - remaining seconds otherwise
+    pub fn remaining_ttl(self: *const GeoEvent, current_time_ns: u64) ?u64 {
+        return ttl.remaining_ttl_seconds(self.timestamp, self.ttl_seconds, current_time_ns);
+    }
 };
 
 // === Comptime Assertions ===
@@ -272,4 +342,72 @@ test "field layout verification" {
 
     // Verify total: 116 + 12 = 128
     try std.testing.expectEqual(@as(usize, 128), offsets.reserved + 12);
+}
+
+test "GeoEvent: is_expired with ttl_seconds = 0 never expires" {
+    var event = GeoEvent.zero();
+    event.timestamp = 1 * ttl.ns_per_second;
+    event.ttl_seconds = 0; // Never expires.
+
+    // Should not be expired even at far future time.
+    try std.testing.expect(!event.is_expired(std.math.maxInt(u64) - 1));
+}
+
+test "GeoEvent: is_expired returns true for expired event" {
+    var event = GeoEvent.zero();
+    event.timestamp = 5 * ttl.ns_per_second; // Event at 5 seconds.
+    event.ttl_seconds = 10; // Expires at 15 seconds.
+
+    // Not expired at 10 seconds.
+    try std.testing.expect(!event.is_expired(10 * ttl.ns_per_second));
+
+    // Expired at 20 seconds.
+    try std.testing.expect(event.is_expired(20 * ttl.ns_per_second));
+}
+
+test "GeoEvent: should_copy_forward with expired event" {
+    var event = GeoEvent.zero();
+    event.timestamp = 1 * ttl.ns_per_second;
+    event.ttl_seconds = 10; // Expires at 11 seconds.
+
+    // At 20 seconds, event is expired - should not copy.
+    try std.testing.expect(!event.should_copy_forward(20 * ttl.ns_per_second, false));
+    try std.testing.expect(!event.should_copy_forward(20 * ttl.ns_per_second, true));
+}
+
+test "GeoEvent: should_copy_forward with tombstone" {
+    var event = GeoEvent.zero();
+    event.timestamp = 1 * ttl.ns_per_second;
+    event.ttl_seconds = 0; // Never expires.
+    event.flags.deleted = true; // Tombstone.
+
+    // Not at final level - keep tombstone.
+    try std.testing.expect(event.should_copy_forward(0, false));
+
+    // At final level - drop tombstone.
+    try std.testing.expect(!event.should_copy_forward(0, true));
+}
+
+test "GeoEvent: should_copy_forward with normal event" {
+    var event = GeoEvent.zero();
+    event.timestamp = 1 * ttl.ns_per_second;
+    event.ttl_seconds = 0; // Never expires.
+    event.flags.deleted = false; // Not tombstone.
+
+    // Normal event should always be copied.
+    try std.testing.expect(event.should_copy_forward(0, false));
+    try std.testing.expect(event.should_copy_forward(0, true));
+}
+
+test "GeoEvent: remaining_ttl calculation" {
+    var event = GeoEvent.zero();
+    event.timestamp = 10 * ttl.ns_per_second;
+    event.ttl_seconds = 100; // Expires at 110 seconds.
+
+    // At 50 seconds, 60 seconds remaining.
+    try std.testing.expectEqual(@as(?u64, 60), event.remaining_ttl(50 * ttl.ns_per_second));
+
+    // Event with ttl_seconds = 0 returns null.
+    event.ttl_seconds = 0;
+    try std.testing.expectEqual(@as(?u64, null), event.remaining_ttl(50 * ttl.ns_per_second));
 }
