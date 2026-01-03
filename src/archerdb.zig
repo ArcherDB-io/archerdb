@@ -478,6 +478,50 @@ pub const CreateTransfersResult = extern struct {
     }
 };
 
+/// Response to archerdb_ping operation (F1.2.6).
+/// Simple echo to verify cluster connectivity at the state machine level.
+pub const PingResponse = extern struct {
+    /// Server timestamp when ping was processed
+    timestamp: u64,
+    /// Reserved for future use
+    reserved: [120]u8 = @splat(0),
+
+    comptime {
+        assert(@sizeOf(PingResponse) == 128);
+        assert(stdx.no_padding(PingResponse));
+    }
+};
+
+/// Response to archerdb_get_status operation (F1.2.6).
+/// Returns current cluster and node status information.
+pub const StatusResponse = extern struct {
+    /// Current view number (monotonically increasing)
+    view: u64,
+    /// Most recent commit timestamp
+    commit_timestamp: u64,
+    /// Number of entities in RAM index
+    entity_count: u64,
+    /// Checkpoint operation number
+    checkpoint_op: u64,
+    /// Current operation number (log head)
+    log_head_op: u64,
+    /// Replica index (0-based)
+    replica_index: u8,
+    /// Total replica count in cluster
+    replica_count: u8,
+    /// Status flags (bit 0: is_primary, bit 1: is_syncing)
+    status_flags: u8,
+    /// Reserved for alignment
+    reserved_byte: u8 = 0,
+    /// Reserved for future use (44 = 128 - 40 - 44, where 40 = 5*u64, 4 = 4*u8)
+    reserved: [84]u8 = @splat(0),
+
+    comptime {
+        assert(@sizeOf(StatusResponse) == 128);
+        assert(stdx.no_padding(StatusResponse));
+    }
+};
+
 pub const QueryFilter = extern struct {
     /// Query by the `user_data_128` index.
     /// Use zero for no filter.
@@ -680,6 +724,11 @@ pub const Operation = enum(u8) {
     query_radius = constants.vsr_operations_reserved + 22,
     query_polygon = constants.vsr_operations_reserved + 23,
 
+    // ArcherDB admin operations (F1.2.6)
+    // Note: These complement the VSR-layer ping_client/pong_client for client-visible status
+    archerdb_ping = constants.vsr_operations_reserved + 24,
+    archerdb_get_status = constants.vsr_operations_reserved + 25,
+
     pub fn EventType(comptime operation: Operation) type {
         return switch (operation) {
             .pulse => void,
@@ -700,6 +749,10 @@ pub const Operation = enum(u8) {
             .query_uuid => QueryUuidFilter,
             .query_radius => QueryRadiusFilter,
             .query_polygon => QueryPolygonFilter,
+
+            // ArcherDB admin operations (F1.2.6)
+            .archerdb_ping => void, // No request body needed
+            .archerdb_get_status => void, // No request body needed
 
             .deprecated_create_accounts_unbatched => Account,
             .deprecated_create_transfers_unbatched => Transfer,
@@ -732,6 +785,10 @@ pub const Operation = enum(u8) {
             .query_uuid => GeoEvent,
             .query_radius => GeoEvent,
             .query_polygon => GeoEvent,
+
+            // ArcherDB admin operations (F1.2.6)
+            .archerdb_ping => PingResponse,
+            .archerdb_get_status => StatusResponse,
 
             .deprecated_create_accounts_unbatched => CreateAccountsResult,
             .deprecated_create_transfers_unbatched => CreateTransfersResult,
@@ -784,6 +841,10 @@ pub const Operation = enum(u8) {
             .query_radius => false, // Single radius query
             .query_polygon => false, // Single polygon query
 
+            // ArcherDB admin operations (F1.2.6) - no batching
+            .archerdb_ping => false,
+            .archerdb_get_status => false,
+
             .deprecated_create_accounts_unbatched => true,
             .deprecated_create_transfers_unbatched => true,
             .deprecated_lookup_accounts_unbatched => true,
@@ -821,6 +882,10 @@ pub const Operation = enum(u8) {
             .query_radius,
             .query_polygon,
             => true,
+
+            // ArcherDB admin operations (F1.2.6) - single batch
+            .archerdb_ping => false,
+            .archerdb_get_status => false,
 
             .deprecated_create_accounts_unbatched,
             .deprecated_create_transfers_unbatched,
@@ -984,6 +1049,8 @@ pub const Operation = enum(u8) {
                     operation_comptime.result_max(constants.message_body_size_max),
                 );
             },
+            // ArcherDB admin operations (F1.2.6) - always return exactly 1 result
+            .archerdb_ping, .archerdb_get_status => 1,
         };
     }
 

@@ -641,6 +641,10 @@ pub fn StateMachineType(comptime Storage: type) type {
             query_radius: TimingSummary = .{},
             query_polygon: TimingSummary = .{},
 
+            // ArcherDB admin operations (F1.2.6)
+            archerdb_ping: TimingSummary = .{},
+            archerdb_get_status: TimingSummary = .{},
+
             compact: TimingSummary = .{},
             checkpoint: TimingSummary = .{},
 
@@ -753,6 +757,10 @@ pub fn StateMachineType(comptime Storage: type) type {
                     .query_uuid => .query_uuid,
                     .query_radius => .query_radius,
                     .query_polygon => .query_polygon,
+
+                    // ArcherDB admin operations (F1.2.6)
+                    .archerdb_ping => .archerdb_ping,
+                    .archerdb_get_status => .archerdb_get_status,
 
                     .pulse => comptime unreachable,
                 };
@@ -1055,6 +1063,10 @@ pub fn StateMachineType(comptime Storage: type) type {
                 .query_radius => 0,
                 .query_polygon => 0,
 
+                // ArcherDB admin operations (F1.2.6) - read-only, no delta
+                .archerdb_ping => 0,
+                .archerdb_get_status => 0,
+
                 .deprecated_create_accounts_unbatched => @divExact(batch.len, @sizeOf(Account)),
                 .deprecated_create_transfers_unbatched => @divExact(batch.len, @sizeOf(Transfer)),
                 .deprecated_lookup_accounts_unbatched => 0,
@@ -1142,6 +1154,11 @@ pub fn StateMachineType(comptime Storage: type) type {
                 .query_uuid,
                 .query_radius,
                 .query_polygon,
+                => self.prefetch_finish(),
+
+                // ArcherDB admin operations (F1.2.6) - no prefetch needed
+                .archerdb_ping,
+                .archerdb_get_status,
                 => self.prefetch_finish(),
 
                 .deprecated_create_accounts_unbatched => {
@@ -2526,6 +2543,10 @@ pub fn StateMachineType(comptime Storage: type) type {
                 .query_polygon,
                 => 0,
 
+                // ArcherDB admin operations (F1.2.6)
+                .archerdb_ping => self.execute_archerdb_ping(timestamp, output_buffer),
+                .archerdb_get_status => self.execute_archerdb_get_status(output_buffer),
+
                 inline .deprecated_create_accounts_unbatched,
                 .deprecated_create_transfers_unbatched,
                 .deprecated_lookup_accounts_unbatched,
@@ -2549,7 +2570,11 @@ pub fn StateMachineType(comptime Storage: type) type {
 
             @setEvalBranchQuota(10_000);
             switch (operation) {
-                .pulse => {},
+                // Operations with void EventType (no batch calculation needed)
+                .pulse,
+                .archerdb_ping,
+                .archerdb_get_status,
+                => {},
                 inline else => |operation_comptime| {
                     const event_size: u32 = operation_comptime.event_size();
                     const batch_count: u32 = batch_count: {
@@ -2670,6 +2695,46 @@ pub fn StateMachineType(comptime Storage: type) type {
             const encoded_bytes: usize = reply_encoder.finish();
             assert(encoded_bytes > 0);
             return encoded_bytes;
+        }
+
+        /// Execute archerdb_ping operation (F1.2.6).
+        /// Returns the current timestamp to verify cluster connectivity.
+        fn execute_archerdb_ping(
+            self: *StateMachine,
+            timestamp: u64,
+            output_buffer: *align(16) [constants.message_body_size_max]u8,
+        ) usize {
+            _ = self;
+            const response = tb.PingResponse{
+                .timestamp = timestamp,
+            };
+            const response_bytes = std.mem.asBytes(&response);
+            @memcpy(output_buffer[0..response_bytes.len], response_bytes);
+            return response_bytes.len;
+        }
+
+        /// Execute archerdb_get_status operation (F1.2.6).
+        /// Returns current cluster and node status information.
+        fn execute_archerdb_get_status(
+            self: *StateMachine,
+            output_buffer: *align(16) [constants.message_body_size_max]u8,
+        ) usize {
+            // Return current state machine status.
+            // Note: Some fields (view, replica_index, etc.) are actually VSR-level
+            // and would need to be populated by the replica layer in a production impl.
+            const response = tb.StatusResponse{
+                .view = 0, // Would be populated by VSR layer
+                .commit_timestamp = self.commit_timestamp,
+                .entity_count = 0, // Would be populated by GeoStateMachine
+                .checkpoint_op = 0, // Would be populated by VSR layer
+                .log_head_op = 0, // Would be populated by VSR layer
+                .replica_index = 0, // Would be populated by VSR layer
+                .replica_count = 0, // Would be populated by VSR layer
+                .status_flags = 0, // Would be populated by VSR layer
+            };
+            const response_bytes = std.mem.asBytes(&response);
+            @memcpy(output_buffer[0..response_bytes.len], response_bytes);
+            return response_bytes.len;
         }
 
         fn execute_query(
