@@ -768,6 +768,334 @@ pub const ScanExpiredResult = struct {
     wrapped: bool,
 };
 
+// ============================================================================
+// F2.4.12: Recovery Metrics and Alerts
+// Per hybrid-memory/spec.md:1818-1913
+// ============================================================================
+
+/// Severity levels for index health alerts.
+pub const AlertSeverity = enum {
+    /// Informational - no action required.
+    info,
+    /// Warning - monitor closely, may need action.
+    warning,
+    /// Critical - immediate action required.
+    critical,
+
+    /// Convert to Prometheus label value.
+    pub fn toLabel(self: AlertSeverity) []const u8 {
+        return switch (self) {
+            .info => "info",
+            .warning => "warning",
+            .critical => "critical",
+        };
+    }
+};
+
+/// Types of alerts that can be raised.
+pub const AlertType = enum {
+    /// Tombstone ratio exceeds threshold.
+    tombstone_degradation,
+    /// Average probe length increasing.
+    probe_length_growth,
+    /// P99 latency regression.
+    latency_regression,
+    /// Load factor approaching limit.
+    capacity_limit,
+    /// Data corruption detected.
+    corruption_detected,
+    /// Rebuild operation started.
+    rebuild_in_progress,
+    /// Rebuild operation completed.
+    rebuild_completed,
+
+    /// Convert to Prometheus label value.
+    pub fn toLabel(self: AlertType) []const u8 {
+        return switch (self) {
+            .tombstone_degradation => "tombstone_degradation",
+            .probe_length_growth => "probe_length_growth",
+            .latency_regression => "latency_regression",
+            .capacity_limit => "capacity_limit",
+            .corruption_detected => "corruption_detected",
+            .rebuild_in_progress => "rebuild_in_progress",
+            .rebuild_completed => "rebuild_completed",
+        };
+    }
+
+    /// Get recommended action for this alert type.
+    pub fn recommendedAction(self: AlertType) []const u8 {
+        return switch (self) {
+            .tombstone_degradation => "Consider triggering online rehash to reclaim tombstone slots",
+            .probe_length_growth => "Monitor closely; rehash if probe length continues to grow",
+            .latency_regression => "Check system resources; consider capacity increase",
+            .capacity_limit => "Urgent: increase index capacity or reduce entity count",
+            .corruption_detected => "Critical: initiate full rebuild from persistent storage",
+            .rebuild_in_progress => "No action needed; rebuild operation running",
+            .rebuild_completed => "No action needed; rebuild finished successfully",
+        };
+    }
+};
+
+/// A single alert instance.
+pub const Alert = struct {
+    /// Type of alert.
+    alert_type: AlertType,
+    /// Severity level.
+    severity: AlertSeverity,
+    /// Current value that triggered the alert.
+    current_value: f64,
+    /// Threshold that was exceeded.
+    threshold: f64,
+    /// Timestamp when alert was generated (nanoseconds since epoch).
+    timestamp_ns: u64,
+    /// Human-readable message.
+    message: []const u8,
+
+    /// Format alert for logging.
+    pub fn format(self: Alert, writer: anytype) !void {
+        try writer.print("[{s}] {s}: {s} (value={d:.4}, threshold={d:.4})", .{
+            self.severity.toLabel(),
+            self.alert_type.toLabel(),
+            self.message,
+            self.current_value,
+            self.threshold,
+        });
+    }
+};
+
+/// Metrics tracking for rebuild/recovery operations.
+pub const RecoveryMetrics = struct {
+    /// Number of rebuild operations started.
+    rebuilds_started: u64 = 0,
+    /// Number of rebuild operations completed successfully.
+    rebuilds_completed: u64 = 0,
+    /// Number of rebuild operations that failed.
+    rebuilds_failed: u64 = 0,
+    /// Total entries copied across all rebuilds.
+    total_entries_copied: u64 = 0,
+    /// Total tombstones reclaimed across all rebuilds.
+    total_tombstones_reclaimed: u64 = 0,
+    /// Cumulative rebuild duration in nanoseconds.
+    total_rebuild_duration_ns: u64 = 0,
+    /// Timestamp of last rebuild start.
+    last_rebuild_start_ns: u64 = 0,
+    /// Timestamp of last rebuild completion.
+    last_rebuild_complete_ns: u64 = 0,
+    /// Last rebuild result (for diagnostics).
+    last_rebuild_success: bool = true,
+    /// Number of alerts raised.
+    alerts_raised: u64 = 0,
+    /// Number of critical alerts raised.
+    critical_alerts_raised: u64 = 0,
+
+    /// Record the start of a rebuild operation.
+    pub fn recordRebuildStart(self: *RecoveryMetrics, timestamp_ns: u64) void {
+        self.rebuilds_started += 1;
+        self.last_rebuild_start_ns = timestamp_ns;
+    }
+
+    /// Record successful completion of a rebuild.
+    pub fn recordRebuildComplete(
+        self: *RecoveryMetrics,
+        timestamp_ns: u64,
+        entries_copied: u64,
+        tombstones_reclaimed: u64,
+    ) void {
+        self.rebuilds_completed += 1;
+        self.last_rebuild_complete_ns = timestamp_ns;
+        self.last_rebuild_success = true;
+        self.total_entries_copied += entries_copied;
+        self.total_tombstones_reclaimed += tombstones_reclaimed;
+        if (self.last_rebuild_start_ns > 0) {
+            self.total_rebuild_duration_ns += timestamp_ns - self.last_rebuild_start_ns;
+        }
+    }
+
+    /// Record a failed rebuild.
+    pub fn recordRebuildFailure(self: *RecoveryMetrics) void {
+        self.rebuilds_failed += 1;
+        self.last_rebuild_success = false;
+    }
+
+    /// Record an alert.
+    pub fn recordAlert(self: *RecoveryMetrics, severity: AlertSeverity) void {
+        self.alerts_raised += 1;
+        if (severity == .critical) {
+            self.critical_alerts_raised += 1;
+        }
+    }
+
+    /// Calculate average rebuild duration.
+    pub fn averageRebuildDurationNs(self: RecoveryMetrics) u64 {
+        if (self.rebuilds_completed == 0) return 0;
+        return self.total_rebuild_duration_ns / self.rebuilds_completed;
+    }
+
+    /// Export metrics in Prometheus text format.
+    pub fn toPrometheus(self: RecoveryMetrics, writer: anytype) !void {
+        try writer.print(
+            \\# HELP archerdb_ram_index_rebuilds_total Total number of index rebuild operations
+            \\# TYPE archerdb_ram_index_rebuilds_total counter
+            \\archerdb_ram_index_rebuilds_started_total {d}
+            \\archerdb_ram_index_rebuilds_completed_total {d}
+            \\archerdb_ram_index_rebuilds_failed_total {d}
+            \\# HELP archerdb_ram_index_rebuild_entries_total Total entries processed during rebuilds
+            \\# TYPE archerdb_ram_index_rebuild_entries_total counter
+            \\archerdb_ram_index_rebuild_entries_copied_total {d}
+            \\archerdb_ram_index_rebuild_tombstones_reclaimed_total {d}
+            \\# HELP archerdb_ram_index_rebuild_duration_ns_total Cumulative rebuild duration
+            \\# TYPE archerdb_ram_index_rebuild_duration_ns_total counter
+            \\archerdb_ram_index_rebuild_duration_ns_total {d}
+            \\# HELP archerdb_ram_index_alerts_total Total number of alerts raised
+            \\# TYPE archerdb_ram_index_alerts_total counter
+            \\archerdb_ram_index_alerts_total {d}
+            \\archerdb_ram_index_critical_alerts_total {d}
+            \\
+        , .{
+            self.rebuilds_started,
+            self.rebuilds_completed,
+            self.rebuilds_failed,
+            self.total_entries_copied,
+            self.total_tombstones_reclaimed,
+            self.total_rebuild_duration_ns,
+            self.alerts_raised,
+            self.critical_alerts_raised,
+        });
+    }
+};
+
+/// Alert manager for generating alerts based on index health.
+pub const AlertManager = struct {
+    /// Recovery metrics tracker.
+    metrics: RecoveryMetrics = .{},
+    /// Alert callback (optional).
+    alert_callback: ?*const fn (Alert) void = null,
+    /// Last alert timestamp per type (to prevent alert storms).
+    last_alert_ns: [std.meta.fields(AlertType).len]u64 = [_]u64{0} ** std.meta.fields(AlertType).len,
+    /// Minimum interval between alerts of the same type (1 minute).
+    pub const min_alert_interval_ns: u64 = 60_000_000_000;
+
+    /// Check index health and generate alerts if needed.
+    /// Takes a single HealthCheck result and generates an alert if warranted.
+    pub fn checkAndAlert(
+        self: *AlertManager,
+        health: HealthCheck,
+        current_ns: u64,
+    ) ?Alert {
+        // Check for critical conditions first
+        if (health.level == .critical) {
+            return self.maybeRaiseAlert(
+                health.degradation_type,
+                .critical,
+                health,
+                current_ns,
+            );
+        }
+
+        // Check for warning conditions
+        if (health.level == .warning) {
+            return self.maybeRaiseAlert(
+                health.degradation_type,
+                .warning,
+                health,
+                current_ns,
+            );
+        }
+
+        return null;
+    }
+
+    fn maybeRaiseAlert(
+        self: *AlertManager,
+        degradation_type: DegradationType,
+        severity: AlertSeverity,
+        health: HealthCheck,
+        current_ns: u64,
+    ) ?Alert {
+        const alert_type = degradationToAlertType(degradation_type);
+        const type_index = @intFromEnum(alert_type);
+
+        // Check if we're rate-limited (first alert always goes through)
+        const last_ns = self.last_alert_ns[type_index];
+        if (last_ns > 0 and current_ns < last_ns + min_alert_interval_ns) {
+            return null;
+        }
+
+        // Update last alert time
+        self.last_alert_ns[type_index] = current_ns;
+
+        const alert = Alert{
+            .alert_type = alert_type,
+            .severity = severity,
+            .current_value = health.current_value,
+            .threshold = health.warning_threshold,
+            .timestamp_ns = current_ns,
+            .message = alert_type.recommendedAction(),
+        };
+
+        // Record in metrics
+        self.metrics.recordAlert(severity);
+
+        // Call callback if set
+        if (self.alert_callback) |callback| {
+            callback(alert);
+        }
+
+        return alert;
+    }
+
+    fn degradationToAlertType(degradation_type: DegradationType) AlertType {
+        return switch (degradation_type) {
+            .tombstone_accumulation => .tombstone_degradation,
+            .probe_length_growth => .probe_length_growth,
+            .memory_fragmentation => .latency_regression,
+            .capacity_limit => .capacity_limit,
+            .corruption => .corruption_detected,
+        };
+    }
+
+    /// Raise a rebuild-started alert.
+    pub fn alertRebuildStarted(self: *AlertManager, current_ns: u64) Alert {
+        self.metrics.recordRebuildStart(current_ns);
+        const alert = Alert{
+            .alert_type = .rebuild_in_progress,
+            .severity = .info,
+            .current_value = 0,
+            .threshold = 0,
+            .timestamp_ns = current_ns,
+            .message = "Index rebuild operation started",
+        };
+        self.metrics.recordAlert(.info);
+        if (self.alert_callback) |callback| {
+            callback(alert);
+        }
+        return alert;
+    }
+
+    /// Raise a rebuild-completed alert.
+    pub fn alertRebuildCompleted(
+        self: *AlertManager,
+        current_ns: u64,
+        entries_copied: u64,
+        tombstones_reclaimed: u64,
+    ) Alert {
+        self.metrics.recordRebuildComplete(current_ns, entries_copied, tombstones_reclaimed);
+        const alert = Alert{
+            .alert_type = .rebuild_completed,
+            .severity = .info,
+            .current_value = @floatFromInt(entries_copied),
+            .threshold = @floatFromInt(tombstones_reclaimed),
+            .timestamp_ns = current_ns,
+            .message = "Index rebuild operation completed successfully",
+        };
+        self.metrics.recordAlert(.info);
+        if (self.alert_callback) |callback| {
+            callback(alert);
+        }
+        return alert;
+    }
+};
+
 /// RAM Index - O(1) entity lookup index.
 ///
 /// Thread-safety model:
@@ -2513,4 +2841,206 @@ test "RehashState: progress tracking" {
     state.entries_copied = 0;
     state.update_progress();
     try std.testing.expectEqual(@as(u8, 100), state.progress_percent);
+}
+
+// =============================================================================
+// Recovery Metrics and Alerts Tests (F2.4.12)
+// =============================================================================
+
+test "AlertSeverity: toLabel conversion" {
+    try std.testing.expectEqualStrings("info", AlertSeverity.info.toLabel());
+    try std.testing.expectEqualStrings("warning", AlertSeverity.warning.toLabel());
+    try std.testing.expectEqualStrings("critical", AlertSeverity.critical.toLabel());
+}
+
+test "AlertType: toLabel conversion" {
+    try std.testing.expectEqualStrings("tombstone_degradation", AlertType.tombstone_degradation.toLabel());
+    try std.testing.expectEqualStrings("probe_length_growth", AlertType.probe_length_growth.toLabel());
+    try std.testing.expectEqualStrings("capacity_limit", AlertType.capacity_limit.toLabel());
+    try std.testing.expectEqualStrings("rebuild_completed", AlertType.rebuild_completed.toLabel());
+}
+
+test "AlertType: recommendedAction returns action" {
+    const action = AlertType.tombstone_degradation.recommendedAction();
+    try std.testing.expect(action.len > 0);
+    try std.testing.expect(std.mem.indexOf(u8, action, "rehash") != null);
+}
+
+test "RecoveryMetrics: rebuild tracking" {
+    var metrics = RecoveryMetrics{};
+
+    // Initial state.
+    try std.testing.expectEqual(@as(u64, 0), metrics.rebuilds_started);
+    try std.testing.expectEqual(@as(u64, 0), metrics.rebuilds_completed);
+    try std.testing.expectEqual(@as(u64, 0), metrics.rebuilds_failed);
+
+    // Start rebuild.
+    metrics.recordRebuildStart(1000);
+    try std.testing.expectEqual(@as(u64, 1), metrics.rebuilds_started);
+    try std.testing.expectEqual(@as(u64, 1000), metrics.last_rebuild_start_ns);
+
+    // Complete rebuild.
+    metrics.recordRebuildComplete(2000, 100, 20);
+    try std.testing.expectEqual(@as(u64, 1), metrics.rebuilds_completed);
+    try std.testing.expectEqual(@as(u64, 100), metrics.total_entries_copied);
+    try std.testing.expectEqual(@as(u64, 20), metrics.total_tombstones_reclaimed);
+    try std.testing.expectEqual(@as(u64, 1000), metrics.total_rebuild_duration_ns);
+    try std.testing.expect(metrics.last_rebuild_success);
+
+    // Record failure.
+    metrics.recordRebuildFailure();
+    try std.testing.expectEqual(@as(u64, 1), metrics.rebuilds_failed);
+    try std.testing.expect(!metrics.last_rebuild_success);
+}
+
+test "RecoveryMetrics: averageRebuildDurationNs" {
+    var metrics = RecoveryMetrics{};
+
+    // No rebuilds - returns 0.
+    try std.testing.expectEqual(@as(u64, 0), metrics.averageRebuildDurationNs());
+
+    // Two rebuilds (using non-zero start times to trigger duration tracking).
+    // Note: recordRebuildComplete only adds duration if last_rebuild_start_ns > 0.
+    metrics.recordRebuildStart(1000);
+    metrics.recordRebuildComplete(2000, 50, 10); // duration = 1000
+    metrics.recordRebuildStart(3000);
+    metrics.recordRebuildComplete(6000, 50, 10); // duration = 3000
+
+    // Average: (1000 + 3000) / 2 = 2000.
+    try std.testing.expectEqual(@as(u64, 2000), metrics.averageRebuildDurationNs());
+}
+
+test "RecoveryMetrics: alert counting" {
+    var metrics = RecoveryMetrics{};
+
+    metrics.recordAlert(.info);
+    metrics.recordAlert(.warning);
+    metrics.recordAlert(.critical);
+    metrics.recordAlert(.critical);
+
+    try std.testing.expectEqual(@as(u64, 4), metrics.alerts_raised);
+    try std.testing.expectEqual(@as(u64, 2), metrics.critical_alerts_raised);
+}
+
+test "RecoveryMetrics: toPrometheus output" {
+    var metrics = RecoveryMetrics{};
+    metrics.rebuilds_started = 5;
+    metrics.rebuilds_completed = 4;
+    metrics.rebuilds_failed = 1;
+    metrics.total_entries_copied = 1000;
+    metrics.total_tombstones_reclaimed = 200;
+    metrics.alerts_raised = 10;
+    metrics.critical_alerts_raised = 2;
+
+    var buffer: [2048]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buffer);
+    try metrics.toPrometheus(fbs.writer());
+
+    const output = fbs.getWritten();
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_ram_index_rebuilds_started_total 5") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_ram_index_rebuilds_completed_total 4") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_ram_index_alerts_total 10") != null);
+}
+
+test "AlertManager: checkAndAlert with healthy status" {
+    var manager = AlertManager{};
+
+    // Healthy index - no alerts (level = normal).
+    const health = HealthCheck{
+        .degradation_type = .tombstone_accumulation,
+        .level = .normal,
+        .current_value = 0.05,
+        .warning_threshold = 0.10,
+        .critical_threshold = 0.30,
+    };
+
+    const alert = manager.checkAndAlert(health, 1000);
+    try std.testing.expect(alert == null);
+}
+
+test "AlertManager: checkAndAlert with warning status" {
+    var manager = AlertManager{};
+
+    // Warning level - should generate alert.
+    const health = HealthCheck{
+        .degradation_type = .tombstone_accumulation,
+        .level = .warning,
+        .current_value = 0.15,
+        .warning_threshold = 0.10,
+        .critical_threshold = 0.30,
+    };
+
+    const alert = manager.checkAndAlert(health, 1000);
+    try std.testing.expect(alert != null);
+    try std.testing.expectEqual(AlertType.tombstone_degradation, alert.?.alert_type);
+    try std.testing.expectEqual(AlertSeverity.warning, alert.?.severity);
+}
+
+test "AlertManager: checkAndAlert rate limiting" {
+    var manager = AlertManager{};
+
+    const health = HealthCheck{
+        .degradation_type = .tombstone_accumulation,
+        .level = .warning,
+        .current_value = 0.15,
+        .warning_threshold = 0.10,
+        .critical_threshold = 0.30,
+    };
+
+    // First alert - should succeed.
+    const alert1 = manager.checkAndAlert(health, 1000);
+    try std.testing.expect(alert1 != null);
+
+    // Second alert immediately after - should be rate limited.
+    const alert2 = manager.checkAndAlert(health, 2000);
+    try std.testing.expect(alert2 == null);
+
+    // Third alert after min_alert_interval - should succeed.
+    const alert3 = manager.checkAndAlert(health, 1000 + AlertManager.min_alert_interval_ns + 1);
+    try std.testing.expect(alert3 != null);
+}
+
+test "AlertManager: alertRebuildStarted" {
+    var manager = AlertManager{};
+
+    const alert = manager.alertRebuildStarted(5000);
+    try std.testing.expectEqual(AlertType.rebuild_in_progress, alert.alert_type);
+    try std.testing.expectEqual(AlertSeverity.info, alert.severity);
+    try std.testing.expectEqual(@as(u64, 5000), alert.timestamp_ns);
+    try std.testing.expectEqual(@as(u64, 1), manager.metrics.rebuilds_started);
+}
+
+test "AlertManager: alertRebuildCompleted" {
+    var manager = AlertManager{};
+
+    // Start and complete rebuild.
+    _ = manager.alertRebuildStarted(1000);
+    const alert = manager.alertRebuildCompleted(2000, 100, 25);
+
+    try std.testing.expectEqual(AlertType.rebuild_completed, alert.alert_type);
+    try std.testing.expectEqual(AlertSeverity.info, alert.severity);
+    try std.testing.expectEqual(@as(f64, 100), alert.current_value);
+    try std.testing.expectEqual(@as(f64, 25), alert.threshold);
+    try std.testing.expectEqual(@as(u64, 1), manager.metrics.rebuilds_completed);
+    try std.testing.expectEqual(@as(u64, 100), manager.metrics.total_entries_copied);
+    try std.testing.expectEqual(@as(u64, 25), manager.metrics.total_tombstones_reclaimed);
+}
+
+test "Alert: format output" {
+    const alert = Alert{
+        .alert_type = .tombstone_degradation,
+        .severity = .warning,
+        .current_value = 0.15,
+        .threshold = 0.10,
+        .timestamp_ns = 1000,
+        .message = "Test message",
+    };
+
+    var buffer: [256]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buffer);
+    try alert.format(fbs.writer());
+
+    const output = fbs.getWritten();
+    try std.testing.expect(std.mem.indexOf(u8, output, "[warning]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "tombstone_degradation") != null);
 }
