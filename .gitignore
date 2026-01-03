@@ -1,3 +1,8 @@
 # Zig build artifacts
 .zig-cache/
 zig-out/
+
+# Local AI assistant config
+.claude/
+.mcp.json
+.serena/
