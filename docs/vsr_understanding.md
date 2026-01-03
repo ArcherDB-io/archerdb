@@ -151,7 +151,78 @@ ReplicaEvent = union(enum) {
 }
 ```
 
-## 5. Patterns to Reuse in ArcherDB
+## 5. Checkpoint Sequence
+
+Checkpointing persists state durably so the journal can be truncated. The sequence
+ensures crash recovery correctness.
+
+### Checkpoint Flow (grid → fsync → superblock → fsync)
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  1. GRID WRITE PHASE                                                │
+│     - State machine writes data to grid blocks                      │
+│     - LSM compaction flushes SSTables                               │
+│     - Client replies persisted                                      │
+│     - All writes accumulated in write buffer                        │
+└─────────────────────────────────┬───────────────────────────────────┘
+                                  │
+                                  ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  2. GRID FSYNC                                                      │
+│     - fsync() on grid file                                          │
+│     - Ensures all data blocks durable before superblock update      │
+│     - Critical: superblock must not point to non-durable data       │
+└─────────────────────────────────┬───────────────────────────────────┘
+                                  │
+                                  ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  3. SUPERBLOCK WRITE                                                │
+│     - Write new superblock with:                                    │
+│       • checkpoint_id (monotonic)                                   │
+│       • vsr_state (view, commit, etc.)                              │
+│       • free_set_checksum                                           │
+│       • client_sessions_checksum                                    │
+│       • storage_size                                                │
+│     - Superblock is written to multiple reserved sectors            │
+└─────────────────────────────────┬───────────────────────────────────┘
+                                  │
+                                  ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  4. SUPERBLOCK FSYNC                                                │
+│     - fsync() on superblock sectors                                 │
+│     - Only after this is checkpoint durable                         │
+│     - Journal can now truncate up to checkpoint_op                  │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Checkpoint Triggers
+- Every `vsr_checkpoint_ops` operations (configurable)
+- After compaction completes
+- Before state sync to peer
+
+### Recovery from Checkpoint
+1. Read superblock, verify integrity
+2. Load state machine from checkpoint_id
+3. Replay journal from checkpoint_op + 1
+4. Resume normal operation
+
+### Superblock Format (src/vsr/superblock.zig)
+```zig
+SuperBlockHeader {
+    checksum: u128,           // Self-integrity
+    copy: u8,                 // Which copy (redundancy)
+    version: u16,             // Format version
+    cluster: u128,            // Cluster ID
+    storage_size: u64,        // Total storage
+    storage_size_max: u64,    // Max allowed
+    sequence: u64,            // Monotonic counter
+    checkpoint: Checkpoint,   // Current checkpoint state
+    vsr_state: VSRState,      // Consensus state
+}
+```
+
+## 6. Patterns to Reuse in ArcherDB
 
 ### Keep Verbatim
 - **View change protocol**: Robust, well-tested
