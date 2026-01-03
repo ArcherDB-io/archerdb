@@ -1,0 +1,683 @@
+//! Index Checkpoint - Periodic persistence of RAM index to disk.
+//!
+//! Implements an incremental dirty-page checkpoint strategy to avoid
+//! massive I/O spikes when persisting large indexes (90GB+ for 1B entities).
+//!
+//! Key features:
+//! - Dirty page tracking via bitset (1 bit per page)
+//! - Continuous background flush of dirty pages
+//! - Coordination with VSR checkpoint for recovery
+//! - Recovery decision tree: WAL replay → LSM scan → Full rebuild
+//!
+//! Checkpoint coordination:
+//! 1. VSR Checkpoint (storage-engine) - Every 256 operations
+//! 2. Index Checkpoint (this module) - Continuous background process
+//!
+//! Recovery paths:
+//! - Case A: WAL replay (gap <= journal_slot_count) - Fast
+//! - Case B: LSM scan (8K-20K ops gap) - Medium
+//! - Case C: Full rebuild (checkpoint very old) - Slow
+//!
+//! See specs/hybrid-memory/spec.md for full requirements.
+
+const std = @import("std");
+const assert = std.debug.assert;
+const mem = std.mem;
+const Allocator = mem.Allocator;
+const fs = std.fs;
+
+const stdx = @import("stdx");
+const constants = @import("../constants.zig");
+const vsr = @import("../vsr.zig");
+const RamIndex = @import("../ram_index.zig").RamIndex;
+const IndexEntry = @import("../ram_index.zig").IndexEntry;
+
+/// Checkpoint file magic number: "ARCH" (0x41524348)
+pub const MAGIC: u32 = 0x41524348;
+
+/// Current checkpoint format version.
+pub const VERSION: u16 = 1;
+
+/// Default page size for dirty tracking (64KB).
+/// This determines checkpoint granularity - smaller = more overhead, larger = more wasted writes.
+pub const default_page_size: u32 = 64 * 1024;
+
+/// Maximum checkpoint age before triggering rebuild (7 days in seconds).
+pub const max_checkpoint_age_seconds: u64 = 7 * 24 * 60 * 60;
+
+/// CheckpointHeader - 256-byte header for index checkpoint files.
+///
+/// Layout matches spec requirements with Aegis-128L checksums for integrity.
+pub const CheckpointHeader = extern struct {
+    /// Magic number: 0x41524348 ("ARCH")
+    magic: u32 = MAGIC,
+
+    /// Checkpoint format version
+    version: u16 = VERSION,
+
+    /// Reserved padding for alignment
+    reserved1: u16 = 0,
+
+    /// Number of index entries in this checkpoint
+    entry_count: u64 = 0,
+
+    /// Index capacity (total slots)
+    capacity: u64 = 0,
+
+    /// Highest timestamp seen in indexed events
+    timestamp_high_water: u64 = 0,
+
+    /// VSR checkpoint op number at index checkpoint time
+    vsr_checkpoint_op: u64 = 0,
+
+    /// VSR commit_max at index checkpoint time
+    vsr_commit_max: u64 = 0,
+
+    /// Unix timestamp when checkpoint was created (nanoseconds)
+    checkpoint_timestamp_ns: u64 = 0,
+
+    /// Checksum of header (Aegis-128L MAC), computed after this field
+    header_checksum: u128 = 0,
+
+    /// Padding for u128 alignment
+    header_checksum_padding: u128 = 0,
+
+    /// Checksum of all index entries (Aegis-128L MAC)
+    body_checksum: u128 = 0,
+
+    /// Padding for u128 alignment
+    body_checksum_padding: u128 = 0,
+
+    /// Number of pages in checkpoint
+    page_count: u64 = 0,
+
+    /// Page size in bytes
+    page_size: u32 = default_page_size,
+
+    /// Reserved padding
+    reserved2: u32 = 0,
+
+    /// Reserved for future use (106 bytes to reach 256 total)
+    reserved: [106]u8 = [_]u8{0} ** 106,
+
+    /// Validate header fields for sanity.
+    pub fn validate(self: CheckpointHeader) bool {
+        if (self.magic != MAGIC) return false;
+        if (self.version == 0 or self.version > VERSION) return false;
+        if (self.capacity == 0) return false;
+        if (self.entry_count > self.capacity) return false;
+        if (self.page_size == 0) return false;
+        return true;
+    }
+
+    /// Check if checkpoint is stale (age > max_checkpoint_age_seconds).
+    pub fn is_stale(self: CheckpointHeader) bool {
+        const now_ns = @as(u64, @intCast(std.time.nanoTimestamp()));
+        const age_ns = now_ns -| self.checkpoint_timestamp_ns;
+        const age_seconds = age_ns / std.time.ns_per_s;
+        return age_seconds > max_checkpoint_age_seconds;
+    }
+};
+
+// Compile-time validation of CheckpointHeader layout.
+comptime {
+    // CheckpointHeader must be exactly 256 bytes.
+    assert(@sizeOf(CheckpointHeader) == 256);
+}
+
+/// Error codes for checkpoint operations.
+pub const CheckpointError = error{
+    /// File I/O error
+    IoError,
+
+    /// Invalid checkpoint header (magic, version, or validation failed)
+    InvalidHeader,
+
+    /// Checkpoint is corrupted (checksum mismatch)
+    ChecksumMismatch,
+
+    /// Checkpoint is stale (age > max_checkpoint_age_seconds)
+    StaleCheckpoint,
+
+    /// Out of memory
+    OutOfMemory,
+
+    /// File not found
+    NotFound,
+
+    /// Recovery required (checkpoint too old for WAL replay)
+    RecoveryRequired,
+};
+
+/// Statistics for checkpoint operations.
+pub const CheckpointStats = struct {
+    /// Number of checkpoints written
+    checkpoint_count: u64 = 0,
+
+    /// Total pages written (across all checkpoints)
+    pages_written: u64 = 0,
+
+    /// Total bytes written
+    bytes_written: u64 = 0,
+
+    /// Last checkpoint timestamp (nanoseconds)
+    last_checkpoint_ns: u64 = 0,
+
+    /// Last checkpoint duration (nanoseconds)
+    last_checkpoint_duration_ns: u64 = 0,
+
+    /// Number of recovery operations
+    recovery_count: u64 = 0,
+
+    /// Recovery path taken (for metrics)
+    last_recovery_path: RecoveryPath = .none,
+};
+
+/// Recovery path taken during startup.
+pub const RecoveryPath = enum {
+    none,
+    wal_replay, // Case A: Fast path via WAL
+    lsm_scan, // Case B: Medium path via LSM
+    full_rebuild, // Case C: Slow path via full rebuild
+    clean_start, // No checkpoint, first startup
+};
+
+/// DirtyPageTracker - Tracks which index pages have been modified since last checkpoint.
+///
+/// Uses a bitset where each bit represents one page (default 64KB).
+/// For 91.5GB index with 64KB pages: ~1.43M pages = ~179KB bitset
+pub fn DirtyPageTracker(comptime page_size: u32) type {
+    return struct {
+        const Self = @This();
+
+        /// Bitset tracking dirty pages (1 = dirty, 0 = clean)
+        dirty_bits: std.DynamicBitSet,
+
+        /// Number of pages in the index
+        page_count: u64,
+
+        /// Number of currently dirty pages
+        dirty_count: std.atomic.Value(u64),
+
+        /// Total bytes in the index
+        total_bytes: u64,
+
+        pub fn init(allocator: Allocator, total_bytes: u64) !Self {
+            const page_count = (total_bytes + page_size - 1) / page_size;
+
+            const dirty_bits = try std.DynamicBitSet.initEmpty(allocator, @intCast(page_count));
+
+            return Self{
+                .dirty_bits = dirty_bits,
+                .page_count = page_count,
+                .dirty_count = std.atomic.Value(u64).init(0),
+                .total_bytes = total_bytes,
+            };
+        }
+
+        pub fn deinit(self: *Self, allocator: Allocator) void {
+            _ = allocator;
+            self.dirty_bits.deinit();
+            self.* = undefined;
+        }
+
+        /// Mark a byte range as dirty.
+        /// Called when index entries are modified.
+        pub fn mark_dirty(self: *Self, offset: u64, len: u64) void {
+            const start_page = offset / page_size;
+            const end_page = (offset + len + page_size - 1) / page_size;
+
+            var page = start_page;
+            while (page < end_page and page < self.page_count) : (page += 1) {
+                if (!self.dirty_bits.isSet(@intCast(page))) {
+                    self.dirty_bits.set(@intCast(page));
+                    _ = self.dirty_count.fetchAdd(1, .monotonic);
+                }
+            }
+        }
+
+        /// Mark a single page as dirty by page index.
+        pub fn mark_page_dirty(self: *Self, page_index: u64) void {
+            if (page_index >= self.page_count) return;
+
+            if (!self.dirty_bits.isSet(@intCast(page_index))) {
+                self.dirty_bits.set(@intCast(page_index));
+                _ = self.dirty_count.fetchAdd(1, .monotonic);
+            }
+        }
+
+        /// Clear dirty bit for a page after successful flush.
+        pub fn clear_dirty(self: *Self, page_index: u64) void {
+            if (page_index >= self.page_count) return;
+
+            if (self.dirty_bits.isSet(@intCast(page_index))) {
+                self.dirty_bits.unset(@intCast(page_index));
+                _ = self.dirty_count.fetchSub(1, .monotonic);
+            }
+        }
+
+        /// Clear all dirty bits (after full checkpoint).
+        pub fn clear_all(self: *Self) void {
+            self.dirty_bits.setRangeValue(.{ .start = 0, .end = @intCast(self.page_count) }, false);
+            self.dirty_count.store(0, .monotonic);
+        }
+
+        /// Get number of dirty pages.
+        pub fn get_dirty_count(self: *const Self) u64 {
+            return self.dirty_count.load(.monotonic);
+        }
+
+        /// Check if a specific page is dirty.
+        pub fn is_dirty(self: *const Self, page_index: u64) bool {
+            if (page_index >= self.page_count) return false;
+            return self.dirty_bits.isSet(@intCast(page_index));
+        }
+
+        /// Iterator over dirty pages.
+        pub fn dirty_iterator(self: *const Self) DirtyIterator {
+            return DirtyIterator{
+                .bits = &self.dirty_bits,
+                .page_count = self.page_count,
+                .current = 0,
+            };
+        }
+
+        pub const DirtyIterator = struct {
+            bits: *const std.DynamicBitSet,
+            page_count: u64,
+            current: u64,
+
+            pub fn next(self: *DirtyIterator) ?u64 {
+                while (self.current < self.page_count) {
+                    const page = self.current;
+                    self.current += 1;
+                    if (self.bits.isSet(@intCast(page))) {
+                        return page;
+                    }
+                }
+                return null;
+            }
+        };
+    };
+}
+
+/// Default dirty page tracker with 64KB pages.
+pub const DefaultDirtyTracker = DirtyPageTracker(default_page_size);
+
+/// IndexCheckpoint - Manages checkpoint persistence for RAM index.
+pub fn IndexCheckpoint(comptime page_size: u32) type {
+    return struct {
+        const Self = @This();
+        const DirtyTracker = DirtyPageTracker(page_size);
+
+        /// Dirty page tracker
+        dirty_tracker: DirtyTracker,
+
+        /// Checkpoint header (current state)
+        header: CheckpointHeader,
+
+        /// Statistics
+        stats: CheckpointStats,
+
+        /// Checkpoint file path
+        checkpoint_path: []const u8,
+
+        /// Allocator for internal use
+        allocator: Allocator,
+
+        /// Initialize checkpoint manager.
+        pub fn init(
+            allocator: Allocator,
+            checkpoint_path: []const u8,
+            index_capacity: u64,
+        ) !Self {
+            const total_bytes = index_capacity * @sizeOf(IndexEntry);
+
+            return Self{
+                .dirty_tracker = try DirtyTracker.init(allocator, total_bytes),
+                .header = CheckpointHeader{
+                    .capacity = index_capacity,
+                    .page_size = page_size,
+                    .page_count = (total_bytes + page_size - 1) / page_size,
+                },
+                .stats = CheckpointStats{},
+                .checkpoint_path = checkpoint_path,
+                .allocator = allocator,
+            };
+        }
+
+        /// Deinitialize checkpoint manager.
+        pub fn deinit(self: *Self) void {
+            self.dirty_tracker.deinit(self.allocator);
+            self.* = undefined;
+        }
+
+        /// Mark index entry as modified (for dirty tracking).
+        /// Called by RamIndex on upsert/remove operations.
+        pub fn mark_entry_dirty(self: *Self, entry_index: u64) void {
+            const byte_offset = entry_index * @sizeOf(IndexEntry);
+            self.dirty_tracker.mark_dirty(byte_offset, @sizeOf(IndexEntry));
+        }
+
+        /// Write incremental checkpoint (dirty pages only).
+        ///
+        /// This is the main checkpoint operation, designed to be called
+        /// periodically in the background without blocking operations.
+        pub fn write_incremental(
+            self: *Self,
+            index_entries: []const IndexEntry,
+            vsr_checkpoint_op: u64,
+            vsr_commit_max: u64,
+        ) CheckpointError!void {
+            const start_time = std.time.nanoTimestamp();
+
+            // Open/create checkpoint file
+            var file = fs.cwd().createFile(self.checkpoint_path, .{
+                .read = true,
+                .truncate = false,
+            }) catch return error.IoError;
+            defer file.close();
+
+            // Update header
+            self.header.entry_count = self.count_entries(index_entries);
+            self.header.vsr_checkpoint_op = vsr_checkpoint_op;
+            self.header.vsr_commit_max = vsr_commit_max;
+            self.header.checkpoint_timestamp_ns = @as(u64, @intCast(std.time.nanoTimestamp()));
+
+            // Calculate body checksum (all entries)
+            self.header.body_checksum = self.calculate_body_checksum(index_entries);
+
+            // Write dirty pages
+            var pages_written: u64 = 0;
+            var iter = self.dirty_tracker.dirty_iterator();
+            while (iter.next()) |page_index| {
+                const page_offset = page_index * page_size;
+                const byte_offset = @sizeOf(CheckpointHeader) + page_offset;
+
+                // Calculate entry range for this page
+                const start_entry = page_offset / @sizeOf(IndexEntry);
+                const end_entry = @min(
+                    (page_offset + page_size) / @sizeOf(IndexEntry),
+                    index_entries.len,
+                );
+
+                if (start_entry >= index_entries.len) continue;
+
+                // Write page
+                const page_entries = index_entries[start_entry..end_entry];
+                const page_bytes = mem.sliceAsBytes(page_entries);
+
+                file.seekTo(byte_offset) catch return error.IoError;
+                file.writeAll(page_bytes) catch return error.IoError;
+
+                self.dirty_tracker.clear_dirty(page_index);
+                pages_written += 1;
+            }
+
+            // Calculate and write header checksum
+            self.header.header_checksum = self.calculate_header_checksum();
+
+            // Write header
+            file.seekTo(0) catch return error.IoError;
+            file.writeAll(mem.asBytes(&self.header)) catch return error.IoError;
+
+            // Sync to disk
+            file.sync() catch return error.IoError;
+
+            // Update stats
+            const end_time = std.time.nanoTimestamp();
+            self.stats.checkpoint_count += 1;
+            self.stats.pages_written += pages_written;
+            self.stats.bytes_written += pages_written * page_size + @sizeOf(CheckpointHeader);
+            self.stats.last_checkpoint_ns = @as(u64, @intCast(end_time));
+            self.stats.last_checkpoint_duration_ns = @as(u64, @intCast(end_time - start_time));
+        }
+
+        /// Write full checkpoint (all pages).
+        /// Used for initial checkpoint or recovery.
+        pub fn write_full(
+            self: *Self,
+            index_entries: []const IndexEntry,
+            vsr_checkpoint_op: u64,
+            vsr_commit_max: u64,
+        ) CheckpointError!void {
+            const start_time = std.time.nanoTimestamp();
+
+            // Mark all pages as dirty to force full write
+            var page: u64 = 0;
+            while (page < self.dirty_tracker.page_count) : (page += 1) {
+                self.dirty_tracker.mark_page_dirty(page);
+            }
+
+            // Use incremental write (which will now write everything)
+            try self.write_incremental(index_entries, vsr_checkpoint_op, vsr_commit_max);
+
+            // Update stats
+            const end_time = std.time.nanoTimestamp();
+            self.stats.last_checkpoint_duration_ns = @as(u64, @intCast(end_time - start_time));
+        }
+
+        /// Load checkpoint from disk into index entries.
+        /// Returns the VSR checkpoint op for replay coordination.
+        pub fn load(
+            self: *Self,
+            index_entries: []IndexEntry,
+        ) CheckpointError!struct { vsr_op: u64, vsr_commit_max: u64 } {
+            var file = fs.cwd().openFile(self.checkpoint_path, .{}) catch |err| {
+                if (err == error.FileNotFound) return error.NotFound;
+                return error.IoError;
+            };
+            defer file.close();
+
+            // Read header
+            var header: CheckpointHeader = undefined;
+            const header_bytes = file.reader().readBytesNoEof(@sizeOf(CheckpointHeader)) catch return error.IoError;
+            header = @bitCast(header_bytes);
+
+            // Validate header
+            if (!header.validate()) return error.InvalidHeader;
+
+            // Verify header checksum
+            const expected_checksum = self.calculate_header_checksum_for(&header);
+            if (header.header_checksum != expected_checksum) return error.ChecksumMismatch;
+
+            // Check for stale checkpoint
+            if (header.is_stale()) {
+                self.stats.last_recovery_path = .full_rebuild;
+                return error.StaleCheckpoint;
+            }
+
+            // Verify capacity matches
+            if (header.capacity != self.header.capacity) return error.InvalidHeader;
+
+            // Read index entries
+            const entry_bytes = mem.sliceAsBytes(index_entries);
+            _ = file.reader().readAll(entry_bytes) catch return error.IoError;
+
+            // Verify body checksum
+            const body_checksum = self.calculate_body_checksum(index_entries);
+            if (header.body_checksum != body_checksum) return error.ChecksumMismatch;
+
+            // Update our header with loaded state
+            self.header = header;
+
+            // Clear dirty bits (just loaded, nothing to flush)
+            self.dirty_tracker.clear_all();
+
+            self.stats.recovery_count += 1;
+            self.stats.last_recovery_path = .wal_replay;
+
+            return .{
+                .vsr_op = header.vsr_checkpoint_op,
+                .vsr_commit_max = header.vsr_commit_max,
+            };
+        }
+
+        /// Check if checkpoint exists on disk.
+        pub fn exists(self: *const Self) bool {
+            _ = fs.cwd().statFile(self.checkpoint_path) catch return false;
+            return true;
+        }
+
+        /// Get current dirty page count.
+        pub fn get_dirty_count(self: *const Self) u64 {
+            return self.dirty_tracker.get_dirty_count();
+        }
+
+        /// Get statistics.
+        pub fn get_stats(self: *const Self) CheckpointStats {
+            return self.stats;
+        }
+
+        // Internal helpers
+
+        fn count_entries(self: *const Self, entries: []const IndexEntry) u64 {
+            _ = self;
+            var count: u64 = 0;
+            for (entries) |entry| {
+                if (!entry.is_empty() and !entry.is_tombstone()) {
+                    count += 1;
+                }
+            }
+            return count;
+        }
+
+        fn calculate_header_checksum(self: *Self) u128 {
+            return self.calculate_header_checksum_for(&self.header);
+        }
+
+        fn calculate_header_checksum_for(self: *const Self, header: *const CheckpointHeader) u128 {
+            _ = self;
+            // Checksum covers header bytes after the checksum field
+            const checksum_offset = @offsetOf(CheckpointHeader, "header_checksum") + @sizeOf(u128) + @sizeOf(u128);
+            const header_bytes = mem.asBytes(header);
+            const payload = header_bytes[checksum_offset..];
+            return vsr.checksum(payload);
+        }
+
+        fn calculate_body_checksum(self: *const Self, entries: []const IndexEntry) u128 {
+            _ = self;
+            return vsr.checksum(mem.sliceAsBytes(entries));
+        }
+    };
+}
+
+/// Default index checkpoint with 64KB pages.
+pub const DefaultIndexCheckpoint = IndexCheckpoint(default_page_size);
+
+// ============================================================================
+// Unit Tests
+// ============================================================================
+
+test "CheckpointHeader: size and layout" {
+    // CheckpointHeader must be exactly 256 bytes.
+    try std.testing.expectEqual(@as(usize, 256), @sizeOf(CheckpointHeader));
+}
+
+test "CheckpointHeader: validation" {
+    var header = CheckpointHeader{};
+    header.capacity = 1000;
+
+    // Valid header
+    try std.testing.expect(header.validate());
+
+    // Invalid magic
+    header.magic = 0x12345678;
+    try std.testing.expect(!header.validate());
+    header.magic = MAGIC;
+
+    // Invalid version
+    header.version = 0;
+    try std.testing.expect(!header.validate());
+    header.version = VERSION;
+
+    // Zero capacity
+    header.capacity = 0;
+    try std.testing.expect(!header.validate());
+}
+
+test "DirtyPageTracker: mark and clear" {
+    const allocator = std.testing.allocator;
+    const page_size: u32 = 1024; // 1KB pages for testing
+    const Tracker = DirtyPageTracker(page_size);
+
+    var tracker = try Tracker.init(allocator, 10 * page_size);
+    defer tracker.deinit(allocator);
+
+    // Initially no dirty pages
+    try std.testing.expectEqual(@as(u64, 0), tracker.get_dirty_count());
+
+    // Mark first page dirty
+    tracker.mark_dirty(0, 64);
+    try std.testing.expectEqual(@as(u64, 1), tracker.get_dirty_count());
+    try std.testing.expect(tracker.is_dirty(0));
+    try std.testing.expect(!tracker.is_dirty(1));
+
+    // Mark range spanning multiple pages
+    tracker.mark_dirty(512, 1024); // Spans pages 0-1
+    try std.testing.expectEqual(@as(u64, 2), tracker.get_dirty_count());
+    try std.testing.expect(tracker.is_dirty(0));
+    try std.testing.expect(tracker.is_dirty(1));
+
+    // Clear one page
+    tracker.clear_dirty(0);
+    try std.testing.expectEqual(@as(u64, 1), tracker.get_dirty_count());
+    try std.testing.expect(!tracker.is_dirty(0));
+    try std.testing.expect(tracker.is_dirty(1));
+
+    // Clear all
+    tracker.clear_all();
+    try std.testing.expectEqual(@as(u64, 0), tracker.get_dirty_count());
+}
+
+test "DirtyPageTracker: dirty iterator" {
+    const allocator = std.testing.allocator;
+    const page_size: u32 = 1024;
+    const Tracker = DirtyPageTracker(page_size);
+
+    var tracker = try Tracker.init(allocator, 10 * page_size);
+    defer tracker.deinit(allocator);
+
+    // Mark pages 1, 3, 7 dirty
+    tracker.mark_page_dirty(1);
+    tracker.mark_page_dirty(3);
+    tracker.mark_page_dirty(7);
+
+    // Iterate and collect
+    var dirty_pages = std.ArrayList(u64).init(allocator);
+    defer dirty_pages.deinit();
+
+    var iter = tracker.dirty_iterator();
+    while (iter.next()) |page| {
+        try dirty_pages.append(page);
+    }
+
+    try std.testing.expectEqual(@as(usize, 3), dirty_pages.items.len);
+    try std.testing.expectEqual(@as(u64, 1), dirty_pages.items[0]);
+    try std.testing.expectEqual(@as(u64, 3), dirty_pages.items[1]);
+    try std.testing.expectEqual(@as(u64, 7), dirty_pages.items[2]);
+}
+
+test "IndexCheckpoint: initialization" {
+    const allocator = std.testing.allocator;
+
+    var checkpoint = try DefaultIndexCheckpoint.init(allocator, "/tmp/test_checkpoint.dat", 1000);
+    defer checkpoint.deinit();
+
+    try std.testing.expectEqual(@as(u64, 1000), checkpoint.header.capacity);
+    try std.testing.expectEqual(@as(u64, 0), checkpoint.get_dirty_count());
+}
+
+test "IndexCheckpoint: mark entry dirty" {
+    const allocator = std.testing.allocator;
+
+    var checkpoint = try DefaultIndexCheckpoint.init(allocator, "/tmp/test_checkpoint.dat", 1000);
+    defer checkpoint.deinit();
+
+    // Mark entries dirty
+    checkpoint.mark_entry_dirty(0);
+    checkpoint.mark_entry_dirty(100);
+    checkpoint.mark_entry_dirty(999);
+
+    try std.testing.expect(checkpoint.get_dirty_count() > 0);
+}
