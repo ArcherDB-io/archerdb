@@ -26,10 +26,12 @@ ArcherDB extends [TigerBeetle](https://tigerbeetle.com/)'s battle-tested distrib
 
 ## Documentation
 
-- [Getting Started Guide](docs/getting-started.md) *(coming soon)*
-- [API Reference](docs/api-reference.md) *(coming soon)*
-- [Operations Runbook](docs/operations-runbook.md) *(coming soon)*
+- [Getting Started Guide](docs/getting-started.md)
+- [Operations Runbook](docs/operations-runbook.md)
+- [Disaster Recovery](docs/disaster-recovery.md)
+- [Capacity Planning](docs/capacity-planning.md)
 - [SDK Retry Semantics](docs/sdk-retry-semantics.md)
+- [API Reference](docs/api-reference.md) *(coming soon)*
 
 ## Client SDKs
 
