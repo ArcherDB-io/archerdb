@@ -744,12 +744,41 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 };
                 results_count += 1;
 
-                // TODO F2.5.3: Generate LSM tombstones for all entity events
-                // This will cascade delete all GeoEvents for this entity.
-                // For now, only RAM index deletion is implemented.
+                // F2.5.3: Generate LSM tombstones for cascading delete.
+                // When Forest is integrated, this will:
+                // 1. Query tree_ids.GeoEventTree.entity_id index for all events
+                // 2. Generate tombstone for each event found
+                // 3. Insert tombstones into LSM tree for compaction
+                // Currently blocked on Forest integration (see execute_insert_events TODO).
+                // The RAM index deletion above is sufficient for immediate lookup removal.
             }
 
             return results_count * @sizeOf(DeleteEntitiesResult);
+        }
+
+        /// Generate LSM tombstones for cascading entity delete (F2.5.3).
+        ///
+        /// When implemented, this function will:
+        /// 1. Query the entity_id secondary index for all GeoEvents
+        /// 2. For each event found, generate a tombstone with the same key
+        /// 3. Insert tombstones into the LSM tree for compaction
+        ///
+        /// GDPR compliance: Tombstones must persist until compaction
+        /// eliminates all historical versions of the events.
+        ///
+        /// Returns: Number of tombstones generated
+        fn generate_lsm_tombstones_for_entity(
+            self: *GeoStateMachine,
+            entity_id: u128,
+        ) u64 {
+            _ = self;
+            _ = entity_id;
+            // TODO: Implement when Forest is integrated
+            // Steps:
+            // 1. self.forest.grooves.geo_events.scan_by_entity_id(entity_id)
+            // 2. For each event: self.forest.grooves.geo_events.delete(event.id)
+            // 3. Return count of tombstones generated
+            return 0;
         }
 
         /// Execute cleanup_expired operation (F2.4.8).
