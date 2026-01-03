@@ -164,6 +164,17 @@ pub fn ContextType(
             .query_accounts,
             .query_transfers,
             .get_change_events,
+            // ArcherDB geospatial operations (F1.3.7)
+            .insert_events,
+            .upsert_events,
+            .delete_entities,
+            .query_uuid,
+            .query_latest,
+            .query_radius,
+            .query_polygon,
+            // ArcherDB admin operations (F1.3.7)
+            .archerdb_ping,
+            .archerdb_get_status,
         };
 
         const UserData = extern struct {
@@ -519,6 +530,10 @@ pub fn ContextType(
                 root.assert_phase(.pending);
 
                 if (root.operation != packet.operation) continue;
+
+                // Skip batching for non-multi-batch operations (F1.3.7)
+                const operation_for_batch: Operation = operation_from_int(root.operation).?;
+                if (!operation_for_batch.is_multi_batch()) continue;
 
                 // Check if the message has enough space for the submitted number of events:
                 const request_size: u32 = size: {

@@ -211,6 +211,19 @@ pub const EchoOperation = enum(u8) {
     query_accounts = @intFromEnum(Operation.query_accounts),
     query_transfers = @intFromEnum(Operation.query_transfers),
 
+    // ArcherDB geospatial operations (F1.3.7)
+    insert_events = @intFromEnum(Operation.insert_events),
+    upsert_events = @intFromEnum(Operation.upsert_events),
+    delete_entities = @intFromEnum(Operation.delete_entities),
+    query_uuid = @intFromEnum(Operation.query_uuid),
+    query_latest = @intFromEnum(Operation.query_latest),
+    query_radius = @intFromEnum(Operation.query_radius),
+    query_polygon = @intFromEnum(Operation.query_polygon),
+
+    // ArcherDB admin operations (F1.3.7)
+    archerdb_ping = @intFromEnum(Operation.archerdb_ping),
+    archerdb_get_status = @intFromEnum(Operation.archerdb_get_status),
+
     comptime {
         const operation_type_info = @typeInfo(Operation).@"enum";
         const echo_type_info = @typeInfo(EchoOperation).@"enum";

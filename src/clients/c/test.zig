@@ -121,6 +121,10 @@ test "tb_client echo" {
         tb_client.Operation.get_account_balances,
         tb_client.Operation.query_accounts,
         tb_client.Operation.query_transfers,
+        // ArcherDB geospatial operations (F1.3.7)
+        tb_client.Operation.insert_events,
+        tb_client.Operation.query_uuid,
+        tb_client.Operation.query_latest,
     };
 
     // Initializing an echo client for testing purposes.
@@ -191,6 +195,19 @@ test "tb_client echo" {
             },
             .query_accounts, .query_transfers => .{
                 @sizeOf(tb.QueryFilter),
+                1,
+            },
+            // ArcherDB geospatial operations (F1.3.7)
+            .insert_events => .{
+                @sizeOf(tb.GeoEvent),
+                @divExact(constants.message_body_size_max, @sizeOf(tb.GeoEvent)),
+            },
+            .query_uuid => .{
+                @sizeOf(tb.QueryUuidFilter),
+                1,
+            },
+            .query_latest => .{
+                @sizeOf(tb.QueryLatestFilter),
                 1,
             },
             else => unreachable,
