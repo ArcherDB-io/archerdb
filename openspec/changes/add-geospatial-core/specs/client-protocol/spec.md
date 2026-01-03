@@ -145,13 +145,13 @@ The system SHALL define precise wire format for single UUID lookups.
 - **THEN** the body SHALL be structured as:
   ```
   QueryUuidResponse (variable):
-  ├─ status: u8            # 0 = found, 105 = entity_not_found
+  ├─ status: u8            # 0 = found, 200 = entity_not_found (see error-codes/spec.md)
   ├─ reserved1: [15]u8     # Padding to 16-byte alignment
   ├─ event: GeoEvent       # 128 bytes (only if status = 0)
   ```
 - **AND** total body size is 16 bytes if not found, 144 bytes if found
 - **AND** status = 0 (ok) means entity was found and event is included
-- **AND** status = 105 (entity_not_found) means entity does not exist
+- **AND** status = 200 (entity_not_found) means entity does not exist
 
 ### Requirement: UUID Batch Query Wire Format
 
@@ -290,6 +290,7 @@ The system SHALL define operation codes for all client operations matching the q
   - `query_radius` (0x11) - Find events within radius
   - `query_polygon` (0x12) - Find events within polygon
   - `query_uuid_batch` (0x13) - Lookup multiple UUIDs
+  - `query_latest` (0x14) - Retrieve most recent events globally or by group (see query-engine/spec.md)
 
 #### Scenario: Admin operations
 
@@ -774,6 +775,45 @@ The system SHALL encode batches of GeoEvents directly in the message body with z
 - **AND** when `end_time = 0`, no upper bound filter is applied
 - **AND** when both are 0, all events matching spatial criteria are returned
 
+#### Scenario: query_latest request encoding
+
+- **WHEN** encoding a query_latest request (operation 0x14)
+- **THEN** the message body SHALL contain:
+  ```
+  QueryLatest (64 bytes, 8-byte aligned):
+  ├─ limit: u32             # Max results (default 1000, max 81000) (4 bytes)
+  ├─ reserved1: u32         # Padding (must be zero) (4 bytes)
+  ├─ group_id: u64          # Optional group filter (0 = all groups) (8 bytes)
+  ├─ cursor_timestamp: u64  # For pagination (0 = start from latest) (8 bytes)
+  ├─ reserved2: [40]u8      # Padding to 64 bytes (must be zero)
+  ```
+- **AND** total body size is exactly 64 bytes
+- **AND** results are ordered newest-to-oldest by timestamp
+- **AND** for first query, set `cursor_timestamp = 0`
+- **AND** for pagination, set `cursor_timestamp` to last event's timestamp from previous response
+- **AND** see query-engine/spec.md for complete semantics
+
+#### Clarification: query_latest is temporal, not spatial
+
+- **WHEN** distinguishing query_latest from spatial queries (radius/polygon)
+- **THEN** the following SHALL be understood:
+  - **query_latest** (0x14): Returns N most recent events **globally or by group_id**, ordered newest-to-oldest
+    - Purpose: Replay, debugging, monitoring (NOT production spatial queries)
+    - Does NOT filter by location
+    - Does filter by timestamp (via pagination cursor)
+    - Does filter by group_id (optional)
+  - **query_radius** (0x11): Returns events within X meters of a point
+  - **query_polygon** (0x12): Returns events within an arbitrary geopolygon
+  - DO NOT use query_latest for spatial filtering; use query_radius or query_polygon instead
+
+#### Scenario: query_latest response encoding
+
+- **WHEN** query_latest completes
+- **THEN** the response uses standard QueryResponseHeader (32 bytes) followed by GeoEvent array
+- **AND** `has_more = 1` indicates more results available via pagination
+- **AND** `cursor_id` contains the timestamp of the last returned event for pagination
+- **AND** events are ordered from newest to oldest
+
 ### Requirement: Response Encoding
 
 The system SHALL encode query results as arrays of GeoEvents with metadata.
@@ -799,6 +839,17 @@ The system SHALL encode query results as arrays of GeoEvents with metadata.
   ```
 - **AND** all fields are naturally aligned for zero-copy access
 
+#### Scenario: Query response data structure clarification
+
+- **WHEN** implementing query response parsing
+- **THEN** the following clarification SHALL apply:
+  - Query responses return **full GeoEvent structs** (128 bytes each), NOT IndexEntry structs (64 bytes)
+  - This is consistent with the wire format definition above and query_result_max constant in constants/spec.md
+  - Calculation: query_result_max = 81,000 events × 128 bytes/event = ~10.37MB + 32-byte header = 10.4MB
+  - Clients must allocate receive buffers with 128 bytes per result, not 64 bytes
+  - Size limit validation: count ≤ query_result_max AND (32 + count × 128) ≤ message_size_max
+  - **IMPORTANT for SDK developers**: Allocate buffers as: `buffer_size = header_size + (expected_results × 128)`
+
 #### Scenario: Empty result handling
 
 - **WHEN** a query matches zero events
@@ -806,6 +857,467 @@ The system SHALL encode query results as arrays of GeoEvents with metadata.
 - **AND** `count` SHALL be 0
 - **AND** `total_count` SHALL be 0
 - **AND** no event data is included in body
+
+### Requirement: Multi-Batch Partial Result Retry Semantics
+
+The system SHALL define clear retry behavior for partial multi-batch failures to enable correct client SDK implementation.
+
+#### Scenario: Multi-batch response structure
+
+- **WHEN** a multi-batch message is processed
+- **THEN** the response SHALL use multi-batch encoding (same as request):
+  - Payload: Concatenated batch responses
+  - Trailer: Array of u16 response sizes + u16 response count
+- **AND** `partial_result` flag in message header indicates incomplete processing
+- **AND** batch trailer enables client to parse which batches succeeded/failed
+
+#### Scenario: Partial success identification
+
+- **WHEN** multi-batch message partially succeeds
+- **THEN** the client SDK SHALL:
+  1. Parse response trailer to identify batch count returned
+  2. Extract status for each batch response
+  3. Identify first failed batch index F (first batch with error status)
+  4. Identify skipped batches (indices F+1 to N where N = request batch count)
+- **AND** batches 0..F-1 are considered successfully processed
+- **AND** batches F..N require retry
+
+#### Scenario: Retry strategy for idempotent operations
+
+- **WHEN** multi-batch contains idempotent operations (upsert, query)
+- **AND** partial failure occurs at batch F
+- **THEN** the client SDK SHALL:
+  1. **Retry batches F..N** (failed and skipped batches)
+  2. Do NOT retry batches 0..F-1 (already succeeded)
+  3. Safe because: upsert uses LWW semantics (replaying is idempotent)
+- **AND** this minimizes duplicate work while ensuring all batches complete
+- **AND** ArcherDB v1 operations (upsert, query, delete) are ALL idempotent
+
+#### Scenario: Retry strategy for validation failures
+
+- **WHEN** multi-batch validation fails at batch F (e.g., invalid_coordinates)
+- **THEN** the system SHALL:
+  1. Stop processing immediately (fail-fast)
+  2. Return error response for batch F
+  3. Mark batches 0..F-1 as skipped (not processed)
+  4. Mark batches F+1..N as skipped (not processed)
+  5. Set `partial_result = true` in reply header
+- **AND** client SHALL fix validation error and retry ENTIRE message 0..N
+- **AND** validation is all-or-nothing (transactional semantics)
+
+#### Scenario: Retry strategy for resource exhaustion
+
+- **WHEN** multi-batch resource exhaustion occurs at batch F (e.g., message_body_too_large)
+- **AND** batches 0..F-1 already committed successfully
+- **THEN** the client SDK SHALL:
+  1. Accept results for batches 0..F-1 (already processed)
+  2. Retry batches F..N in a NEW message
+  3. Potentially split batch F if it's too large (pagination)
+- **AND** this provides graceful degradation (partial progress)
+
+#### Scenario: Multi-batch atomic transactions (future)
+
+- **WHEN** atomic multi-batch transactions are supported (future version)
+- **THEN** the semantics SHALL be:
+  - All-or-nothing: if any batch fails validation, none execute
+  - Set `transaction_id` in multi-batch header to enable atomic mode
+  - If batch F fails during execution:
+    - Roll back batches 0..F-1 (undo already-applied changes)
+    - Return error for entire transaction
+  - **NOT SUPPORTED in v1** (all operations are independent)
+- **AND** v1 clients SHALL NOT set `transaction_id` (reserved field must be 0)
+
+#### Scenario: Partial result flag interpretation
+
+- **WHEN** response message has `partial_result = true` in header
+- **THEN** client SHALL interpret as:
+  - For multi-batch: Some batches were skipped due to error or size limit
+  - For single-batch: Result was truncated due to message size limit (pagination required)
+  - Check response count vs request count to determine which batches processed
+- **AND** client SDK SHALL expose this information to application
+- **AND** application can decide whether to retry or handle partial results
+
+#### Scenario: SDK retry configuration
+
+- **WHEN** client SDK implements multi-batch retry logic
+- **THEN** it SHALL provide configuration options:
+  ```
+  RetryConfig {
+    max_retries: u32,           // Default: 10
+    initial_backoff_ms: u32,    // Default: 100ms
+    max_backoff_ms: u32,        // Default: 5000ms
+    backoff_multiplier: f32,    // Default: 2.0
+    retry_on_validation_error: bool,  // Default: false (client should fix)
+    retry_on_resource_error: bool,    // Default: true (transient)
+  }
+  ```
+- **AND** SDKs SHALL log retry attempts at DEBUG level
+- **AND** SDKs SHALL surface retry count to application (for monitoring)
+
+#### Scenario: Cross-language SDK consistency
+
+- **WHEN** implementing client SDKs in multiple languages
+- **THEN** ALL SDKs SHALL implement identical retry semantics:
+  - Retry failed+skipped batches for idempotent operations
+  - Use exponential backoff with same default parameters
+  - Surface partial result information to application
+  - Provide configuration for retry behavior
+- **AND** integration tests SHALL verify cross-language consistency
+- **AND** wire format compatibility tests SHALL include partial failure scenarios
+
+### Requirement: Multi-Batch Wire Format (Binary Protocol)
+
+The system SHALL define explicit binary wire format for multi-batch requests and responses with truncation algorithm.
+
+#### Scenario: Multi-batch request encoding (concatenated batches)
+
+- **WHEN** client sends multiple operations in a single message (multi-batch)
+- **THEN** the message body SHALL be structured as:
+  ```
+  MULTI-BATCH REQUEST BODY:
+  ┌──────────────────────────────────────────────────────────────┐
+  │ Batch 0 (variable size)                                      │
+  │  ├─ count: u32         # events or UUIDs in this batch       │
+  │  ├─ reserved: u32      # alignment padding                   │
+  │  └─ events/ids: [count]...                                   │
+  ├──────────────────────────────────────────────────────────────┤
+  │ Batch 1 (variable size)                                      │
+  │  ├─ count: u32                                               │
+  │  ├─ reserved: u32                                            │
+  │  └─ events/ids: [count]...                                   │
+  ├──────────────────────────────────────────────────────────────┤
+  │ ...                                                          │
+  ├──────────────────────────────────────────────────────────────┤
+  │ Batch N (variable size)                                      │
+  │  ├─ count: u32                                               │
+  │  ├─ reserved: u32                                            │
+  │  └─ events/ids: [count]...                                   │
+  └──────────────────────────────────────────────────────────────┘
+  ```
+- **AND** each batch follows the standard format for its operation type:
+  - `insert_events`, `upsert_events`: 8 + (count × 128) bytes
+  - `query_uuid_batch`: 8 + (count × 16) bytes
+  - `delete_entities`: 8 + (count × 16) bytes
+- **AND** batches are concatenated without gaps (no padding between them)
+- **AND** maximum message body size is `message_size_max` (10.4MB by default)
+- **AND** client SHALL include multiple batches in single message if total size ≤ message_size_max
+
+**Example: 3-batch request (2 upsert + 1 query_uuid_batch)**:
+```
+Batch 0 (upsert 2 events): 8 + (2 × 128) = 264 bytes
+Batch 1 (upsert 3 events): 8 + (3 × 128) = 392 bytes
+Batch 2 (query 5 UUIDs): 8 + (5 × 16) = 88 bytes
+Total: 264 + 392 + 88 = 744 bytes
+```
+
+#### Scenario: Multi-batch response encoding (with trailer)
+
+- **WHEN** server returns multi-batch response
+- **THEN** the message body SHALL be structured as:
+  ```
+  MULTI-BATCH RESPONSE BODY:
+  ┌──────────────────────────────────────────────────────────────┐
+  │ Response 0 (variable size)                                   │
+  │  ├─ status: u8         # per-response status                 │
+  │  ├─ reserved: [7]u8    # alignment to 8 bytes                │
+  │  └─ response data      # status-specific fields              │
+  ├──────────────────────────────────────────────────────────────┤
+  │ Response 1 (variable size)                                   │
+  │  ├─ status: u8                                               │
+  │  ├─ reserved: [7]u8                                          │
+  │  └─ response data                                            │
+  ├──────────────────────────────────────────────────────────────┤
+  │ ... (truncated responses if partial_result = true)          │
+  └──────────────────────────────────────────────────────────────┘
+  ┌──────────────────────────────────────────────────────────────┐
+  │ TRAILER (at end of message body)                             │
+  ├──────────────────────────────────────────────────────────────┤
+  │ sizes[0]: u16         # byte size of response 0              │
+  │ sizes[1]: u16         # byte size of response 1              │
+  │ ...                                                          │
+  │ sizes[N-1]: u16       # byte size of response N-1            │
+  │ count: u16            # total batch count returned (N)       │
+  └──────────────────────────────────────────────────────────────┘
+  ```
+- **AND** trailer is located at the VERY END of message body
+- **AND** trailer byte size = 2 × (response_count + 1) bytes
+- **AND** trailer MUST be present even if response_count = 0 (then only count: 0x0000)
+- **AND** response_count in trailer indicates how many batches were processed (may be < request count if truncated)
+
+**Example: 3-batch response (partial, truncated at batch 2)**:
+```
+Response 0 (WriteResponse): status=0, events_processed=2, events_failed=0, events_skipped=0
+  Byte size: 8 bytes (1 byte status + 7 bytes reserved + 0 bytes details)
+Response 1 (WriteResponse): status=0, events_processed=3, events_failed=0, events_skipped=0
+  Byte size: 8 bytes
+Response 2: SKIPPED (not returned due to truncation)
+
+Trailer:
+  sizes[0]: 0x0008  (response 0 is 8 bytes, little-endian: 08 00)
+  sizes[1]: 0x0008  (response 1 is 8 bytes, little-endian: 08 00)
+  count: 0x0002    (2 responses returned, little-endian: 02 00)
+Total trailer: 6 bytes
+Message body: 8 + 8 + 6 = 22 bytes
+```
+
+#### Scenario: Multi-batch truncation algorithm (server-side)
+
+- **WHEN** server processes multi-batch request that would produce response > message_size_max
+- **THEN** the truncation algorithm SHALL be:
+
+```
+Algorithm: TRUNCATE_MULTI_BATCH
+Input: batch_responses[0..N], message_size_max
+Output: truncated_responses[0..F], partial_result_flag, error_status
+
+Step 1: Calculate initial trailer size
+  trailer_size = 2 × (N + 1)  // u16 per response + count
+
+Step 2: Calculate cumulative response sizes and iterate
+  body_size = 0
+  for batch_index in 0..N:
+    response_i = batch_responses[batch_index]
+    response_size_i = calculate_response_size(response_i)
+
+    // Check if this response would exceed limit
+    new_body_size = body_size + response_size_i + (2 × (batch_index + 2))
+                    // ^current size  ^next response  ^updated trailer (one more entry)
+
+    if new_body_size > message_size_max:
+      // This batch doesn't fit; truncate here
+      return {
+        responses: batch_responses[0..batch_index-1],
+        response_count: batch_index,
+        trailer_size: 2 × (batch_index + 1),  // Only count returned responses
+        partial_result: true,
+        error: error_code_from_truncation_reason
+      }
+
+    body_size = new_body_size
+
+Step 3: If all batches fit, return all
+  return {
+    responses: batch_responses[0..N],
+    response_count: N + 1,
+    trailer_size: 2 × (N + 2),
+    partial_result: false,
+    error: none
+  }
+
+Special cases:
+- If response_count becomes 0 (first response too large):
+  Return single error response (error_code = resource_exhausted)
+  NO truncation trailer (single-response message)
+- If validation fails at batch F:
+  Return response 0..F-1 (skipped, not in body)
+  Return error response for batch F
+  NO responses for batch F+1..N
+  Set partial_result = true
+```
+
+**Truncation Example (message_size_max = 1000 bytes)**:
+```
+Batch 0 (upsert 2 events): response = 8 bytes
+Batch 1 (upsert 3 events): response = 8 bytes
+Batch 2 (query 5 UUIDs): response = 100 bytes (variable, depends on matches)
+
+Iteration:
+- batch_index=0: body_size=0, new_size=8+4=12 ≤ 1000 ✓ continue
+- batch_index=1: body_size=12, new_size=12+8+4=24 ≤ 1000 ✓ continue
+- batch_index=2: body_size=24, new_size=24+100+6=130 ≤ 1000 ✓ continue
+- batch_index=3: (doesn't exist, all responses fit)
+
+Result: response_count=3, partial_result=false, no truncation
+```
+
+**Truncation Example (message_size_max = 50 bytes)**:
+```
+Same batches as above.
+
+Iteration:
+- batch_index=0: body_size=0, new_size=8+4=12 ≤ 50 ✓ continue
+- batch_index=1: body_size=12, new_size=12+8+4=24 ≤ 50 ✓ continue
+- batch_index=2: body_size=24, new_size=24+100+6=130 > 50 ✗ TRUNCATE
+
+Result: response_count=2, partial_result=true, return responses[0..1] only
+Client will retry batch 2 in a new message
+```
+
+#### Scenario: Multi-batch response parsing (client-side)
+
+- **WHEN** client receives multi-batch response
+- **THEN** the parsing algorithm SHALL be:
+
+```
+Algorithm: PARSE_MULTI_BATCH_RESPONSE
+Input: message_body[0..body_size], message_size_max
+Output: batch_results[0..response_count], partial_result_flag
+
+Step 1: Validate trailer exists
+  if body_size < 2:
+    return ERROR: "Response body too small for trailer"
+
+  // Read count from very end of message (last 2 bytes)
+  count_offset = body_size - 2
+  response_count = read_u16_le(message_body[count_offset:count_offset+2])
+
+  // Validate trailer size
+  expected_trailer_size = 2 × (response_count + 1)
+  if body_size < expected_trailer_size:
+    return ERROR: "Body size insufficient for declared count"
+
+Step 2: Extract trailer
+  trailer_offset = body_size - expected_trailer_size
+  response_sizes = []
+  for i in 0..response_count-1:
+    size_i = read_u16_le(message_body[trailer_offset + 2*i:trailer_offset + 2*i + 2])
+    response_sizes.append(size_i)
+
+Step 3: Validate trailer sizes sum
+  payload_size = sum(response_sizes)
+  if payload_size > trailer_offset:
+    return ERROR: "Response sizes exceed payload area"
+
+Step 4: Parse individual batch responses
+  batch_results = []
+  offset = 0
+  for i in 0..response_count-1:
+    response_start = offset
+    response_end = offset + response_sizes[i]
+    response_data = message_body[response_start:response_end]
+
+    batch_result = parse_response(response_data, operation_type[i])
+    batch_results.append(batch_result)
+
+    offset = response_end
+
+Step 5: Check partial_result flag
+  if partial_result flag set in message header:
+    // Some batches were truncated/skipped
+    // Batches [0..response_count-1] succeeded or error
+    // Batches [response_count..request_count-1] must be retried
+    return {
+      batch_results: batch_results,
+      partial_result: true,
+      first_truncated_batch: response_count
+    }
+  else:
+    // All batches returned
+    return {
+      batch_results: batch_results,
+      partial_result: false
+    }
+
+Error handling:
+- If any response_sizes[i] = 0: ERROR (invalid)
+- If any response has invalid status: Include in batch_results as error
+- If offset != trailer_offset at end: ERROR (size mismatch)
+```
+
+**Parsing Example (same truncated response as above)**:
+```
+Message body:
+  [0..7]: Response 0 (8 bytes)
+  [8..15]: Response 1 (8 bytes)
+  [16..19]: sizes[0]=0x0008, sizes[1]=0x0008 (4 bytes)
+  [20..21]: count=0x0002 (2 bytes)
+  Total: 22 bytes
+
+Parsing:
+- count_offset = 22 - 2 = 20
+- response_count = read_u16_le([20..21]) = 0x0002 = 2
+- trailer_size = 2 × (2 + 1) = 6 bytes
+- trailer_offset = 22 - 6 = 16
+- sizes[0] = read_u16_le([16..17]) = 0x0008 = 8
+- sizes[1] = read_u16_le([18..19]) = 0x0008 = 8
+- payload_size = 8 + 8 = 16 ≤ trailer_offset ✓
+- Response 0: [0..7] (8 bytes)
+- Response 1: [8..15] (8 bytes)
+- offset=16 == trailer_offset ✓
+
+Result: 2 responses parsed successfully, partial_result=true
+```
+
+#### Scenario: Multi-batch protocol constants and byte order
+
+- **WHEN** implementing multi-batch encoding/decoding
+- **THEN** these CRITICAL constants SHALL be used:
+  ```
+  MULTI-BATCH PROTOCOL CONSTANTS
+  ══════════════════════════════
+
+  BYTE ORDER:
+  - All u16/u32/u64 values use LITTLE-ENDIAN byte order
+  - Example: count=0x0002 is encoded as bytes [0x02, 0x00]
+  - This matches TigerBeetle protocol conventions
+
+  MESSAGE CONSTRAINTS:
+  - message_size_max: 10,485,760 bytes (10.4MB)
+  - batch_count_max: No hard limit per message, but limited by message_size_max
+  - response_count: u16, thus max 65,535 responses (in theory; practically limited by message_size)
+  - response_size: u16 per response in trailer, max 65,535 bytes per response
+
+  TRUNCATION BEHAVIOR:
+  - If any single response exceeds message_size_max:
+    Return ERROR status code: resource_exhausted (code 211)
+    Return response_count: 0 (no trailer returned)
+    Return single error message (NOT wrapped in multi-batch)
+  - If partial responses fit but not all:
+    Return response_count: N (where N < request_count)
+    Set partial_result flag in message header
+    Include trailer with N entries
+    Client MUST retry truncated batches
+
+  BATCH INDEPENDENCE:
+  - Each batch is validated and processed independently
+  - Validation failure in batch N does NOT prevent batch N+1 processing
+  - If batch N validation fails:
+    Return error status in response N
+    Continue processing batch N+1
+  - All batches 0..F-1 are included in response, even if some have error status
+  - This enables partial success scenarios (some batches error, others succeed)
+
+  EMPTY BATCH HANDLING:
+  - Empty batch (count=0) is VALID and SHALL be processed
+  - Empty batch size: 8 bytes (count: u32=0 + reserved: u32)
+  - Empty batch response: Valid response with count=0, no operations performed
+  - Use case: Padding for alignment, or conditional skipping by client
+  ```
+
+#### Scenario: Edge cases and validation
+
+- **WHEN** parsing or generating multi-batch messages
+- **THEN** the following edge cases SHALL be handled:
+
+| Case | Behavior | Example |
+|------|----------|---------|
+| **Empty response** (count=0) | Trailer only: just "00 00" (count=0) | single_batch=false, returns 0 responses |
+| **Single batch response** | Trailer present: sizes[0], count=0x0001 | Parsed same way as multi-batch |
+| **Batch too large for message** | Batch 0 response > (message_size_max - 4) | Truncate at batch 0, return error_code=resource_exhausted |
+| **All batches skipped (validation)** | count=0, partial_result=true | Trailer: only "00 00", client retries all |
+| **Mixed operation types** | Each batch response format matches its operation | trailer size = 2 × (count + 1) regardless |
+| **Malformed response** | count field > 100 (unreasonable) | Client SHALL reject, not attempt to parse |
+
+- **AND** client SDKs SHALL validate:
+  - response_count ≤ request_count (cannot return more than sent)
+  - response_count > 0 OR partial_result = true (at least one batch or explicit truncation)
+  - sum(response_sizes) + trailer_size ≤ message_size_max
+  - No response_sizes[i] = 0 (each response must be non-empty or omitted)
+
+#### Scenario: Wire format compatibility testing
+
+- **WHEN** testing multi-batch wire format
+- **THEN** test cases SHALL include:
+  - 1 batch, no truncation
+  - 5 batches, no truncation
+  - 10 batches, truncated at batch 5
+  - Truncated at batch 0 (first response too large)
+  - Zero batches (empty response)
+  - Large responses (100KB individual response)
+  - Mixed operation types in single message
+  - Validation failure (error in batch F)
+  - Resource exhaustion (partial_result = true)
+- **AND** tests SHALL verify binary compatibility across all SDKs (Zig, Java, Go, Python, Node.js)
 
 ### Requirement: Delete Operation Format
 
@@ -905,16 +1417,15 @@ The system SHALL use a comprehensive error code enum based on TigerBeetle's taxo
   - `version_not_supported = 11` - Protocol version not supported by server
   - `not_processed = 255` - Sentinel: event not processed (in batch, appears after first failure)
 
-#### Scenario: Geospatial error codes
+#### Scenario: Geospatial validation error codes (100-116)
 
-- **WHEN** defining geospatial-specific error codes
-- **THEN** the following SHALL be included:
+- **WHEN** defining geospatial-specific validation error codes
+- **THEN** the following SHALL be included (per error-codes/spec.md ranges 100-199):
   - `invalid_coordinates = 100` - Lat/lon out of valid range
   - `polygon_too_complex = 101` - Vertex count exceeds limit
   - `query_result_too_large = 102` - Result set exceeds max_result_size
   - `invalid_s2_cell = 103` - S2 cell ID is malformed
   - `radius_too_large = 104` - Radius exceeds maximum allowed
-  - `entity_not_found = 105` - UUID lookup found no matching entity
   - `event_already_expired = 106` - Imported event's TTL has already expired
   - `query_timeout = 107` - Query exceeded CPU time budget
   - `polygon_too_simple = 108` - Polygon has fewer than 3 distinct vertices (duplicates removed)
@@ -926,6 +1437,7 @@ The system SHALL use a comprehensive error code enum based on TigerBeetle's taxo
   - `id_must_not_be_zero = 114` - ID field cannot be zero (reserved sentinel value)
   - `id_must_not_be_int_max = 115` - ID field cannot be max int value (reserved sentinel)
   - `timestamp_must_be_zero = 116` - Timestamp field must be zero for server-assigned timestamps
+- **NOTE**: `entity_not_found = 200` is a State error, not a validation error (see error-codes/spec.md)
 
 #### Scenario: Cluster error codes
 
@@ -937,12 +1449,12 @@ The system SHALL use a comprehensive error code enum based on TigerBeetle's taxo
   - `index_capacity_exceeded = 203` - RAM index is at capacity, cannot insert new entities
   - `out_of_space = 204` - Disk is full, cannot write data
   - `too_many_queries = 205` - Query queue is full, try again later
-  - `resource_exhausted = 206` - Internal resource pool exhausted (message buffers, etc.)
   - `backup_required = 207` - Writes halted pending backup (backup-mandatory mode)
   - `cluster_mismatch = 208` - Client certificate cluster ID doesn't match server
   - `checkpoint_lag_backpressure = 209` - Writes halted because index checkpoint is lagging too far behind WAL head
-  - `index_degraded = 210` - Hash probe length exceeded threshold, index needs rebuild
-  - `replica_rebuilding = 211` - Replica is rebuilding index from storage, cannot serve queries
+  - `entity_expired = 210` - Entity has expired due to TTL (see error-codes/spec.md)
+  - `resource_exhausted = 211` - Internal resource pool exhausted (see error-codes/spec.md)
+  - `index_degraded = 310` - Hash probe length exceeded threshold (see error-codes/spec.md)
 
 ### Requirement: Protocol Versioning
 

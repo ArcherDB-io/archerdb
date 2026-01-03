@@ -223,6 +223,92 @@ The system SHALL provide an explicit cleanup function for applications to trigge
   4. **commit()**: Scan index, remove entries where `current_time >= event_timestamp + ttl_ns`
 - **AND** all replicas receive the same timestamp, ensuring deterministic cleanup results
 
+#### Scenario: TTL Expiration Race Condition Prevention (CRITICAL)
+
+- **WHEN** lookup and cleanup happen concurrently
+- **THEN** a potential race condition exists where expiration checks might observe inconsistent timestamps
+- **AND** the system SHALL prevent this via the following protocol:
+  ```zig
+  // CRITICAL: TTL Consistency Protocol for Concurrent Operations
+
+  // Lookup path (query operation in VSR):
+  pub fn query_uuid_lookup(entity_id: u128, consensus_timestamp: u64) !IndexEntry {
+      if (index.lookup(entity_id)) |entry| {
+          const expiration_time = entry.timestamp + (entry.ttl_seconds * 1_000_000_000);
+          // CRITICAL: Use consensus_timestamp from this VSR operation (immutable during commit)
+          if (consensus_timestamp >= expiration_time) {
+              // Entry expired - atomically remove with race protection
+              _ = index.remove_if_id_matches(entity_id, entry.latest_id);
+              return error.entity_not_found;
+          }
+          // Entry not expired at this consensus_timestamp
+          // Proceed with storage lookup - entry is guaranteed to exist
+          return entry;
+      }
+      return error.entity_not_found;
+  }
+
+  // Cleanup path (explicit cleanup_expired VSR operation):
+  pub fn cleanup_expired(consensus_timestamp: u64) void {
+      // ALL replicas receive SAME consensus_timestamp via VSR
+      // This ensures deterministic cleanup across cluster
+      for (index.entries) |entry| {
+          const expiration_time = entry.timestamp + (entry.ttl_seconds * 1_000_000_000);
+          if (consensus_timestamp >= expiration_time) {
+              // Entry is expired according to VSR-assigned timestamp
+              // Safe to remove - all replicas will reach same conclusion
+              _ = index.remove_if_id_matches(entry.entity_id, entry.latest_id);
+          }
+      }
+  }
+  ```
+- **AND** the safety guarantee is:
+  1. Each VSR operation receives a unique, monotonically-increasing consensus_timestamp
+  2. All replicas apply the same operation with the same consensus_timestamp (deterministic)
+  3. If operation A uses timestamp T1 and operation B uses timestamp T2 > T1:
+     - A sees entry as "not expired"
+     - B sees entry as "expired"
+     - B can safely remove because A's decision was made with earlier timestamp
+  4. If two operations use the SAME consensus_timestamp T (e.g., pipelined lookups):
+     - Both reach identical expiration conclusion
+     - No race: either both see "not expired" or both see "expired"
+- **AND** potential window analysis:
+  ```
+  Race Window Scenario:
+  ─────────────────────
+  1. Lookup op @ T1: "entry NOT expired" → returns IndexEntry ✓
+  2. Cleanup op @ T2 (T2 > T1): "entry IS expired" → removes from index
+  3. Lookup proceeds to storage fetch → may fail if cleanup removes storage entry
+
+  MITIGATION:
+  - Lookup and cleanup use different consensus timestamps
+  - If cleanup removes entry AFTER lookup checks expiration at T1:
+    - Entry may be removed from index but still in storage
+    - Storage lookup may return "entry not found" (acceptable - entry technically expired)
+    - Client sees entity_not_found (safe behavior)
+  - If cleanup removes entry BEFORE lookup checks expiration:
+    - Lookup uses later consensus_timestamp and sees entry as expired
+    - Lookup returns entity_not_found (correct)
+  - No data corruption: only timing of "expired" observation changes
+  ```
+- **AND** the atomic removal primitive MUST prevent race with concurrent upsert:
+  ```zig
+  // Atomic conditional removal - prevents deleting fresh data
+  pub fn remove_if_id_matches(entity_id: u128, expected_latest_id: u128) bool {
+      // Atomically:
+      // 1. Read current entry
+      // 2. Check if latest_id still matches expected value
+      // 3. If yes: remove and return true
+      // 4. If no: abort (concurrent upsert happened) and return false
+      // This ensures we never delete freshly inserted data
+  }
+  ```
+- **AND** this race condition protection requires VSR's linearization guarantees:**
+  - VSR assigns timestamps to operations in order
+  - All replicas apply operations in same order with same timestamps
+  - Therefore: if op A executes before op B, all replicas see op A's timestamp < op B's timestamp
+  - Expiration calculations are monotonic: timestamp T makes same decisions on all replicas
+
 #### Scenario: Cleanup operation code
 
 - **WHEN** defining operation codes

@@ -67,13 +67,18 @@ The system SHALL enumerate all error codes with complete metadata in a central t
 | 102 | invalid_ttl | TTL value is invalid | No | ttl_seconds, max_ttl_seconds |
 | 103 | invalid_entity_id | Entity ID is malformed or invalid | No | entity_id |
 | 104 | invalid_batch_size | Batch size exceeds limits | No | batch_size, batch_events_max |
-| 105 | empty_batch | Batch contains zero events | No | (none) |
+| 105 | reserved_105 | Reserved (empty batches are valid no-ops per query-engine spec) | No | (none) |
 | 106 | invalid_s2_cell | S2 cell ID is invalid or out of range | No | s2_cell_id, s2_level |
 | 107 | invalid_radius | Radius parameter is invalid or too large | No | radius_meters, max_radius_meters |
-| 108 | invalid_polygon | Polygon has self-intersection or <3 vertices | No | vertex_count, intersection_point |
-| 109 | coordinate_mismatch | S2 cell ID does not match lat/lon coordinates | No | entity_id, computed_cell, provided_cell |
-| 110 | timestamp_in_future | Event timestamp is in the future | No | event_timestamp, current_time |
-| 111 | timestamp_too_old | Event timestamp exceeds maximum age | No | event_timestamp, current_time, max_age_seconds |
+| 108 | invalid_polygon | Generic polygon validation failure | No | reason |
+| 109 | polygon_self_intersecting | Polygon edges cross each other | No | intersection_point, edge1_index, edge2_index |
+| 110 | radius_zero | Radius query with 0 meters not supported | No | (none) |
+| 111 | polygon_too_large | Polygon spans > 350° longitude (world-wrapping) | No | bbox_width_degrees |
+| 112 | polygon_degenerate | All vertices collinear (zero area) | No | vertex_count, computed_area |
+| 113 | polygon_empty | Polygon has zero vertices | No | (none) |
+| 114 | coordinate_mismatch | S2 cell ID does not match lat/lon coordinates | No | entity_id, computed_cell, provided_cell |
+| 115 | timestamp_in_future | Event timestamp is in the future | No | event_timestamp, current_time |
+| 116 | timestamp_too_old | Event timestamp exceeds maximum age | No | event_timestamp, current_time, max_age_seconds |
 | 200 | entity_not_found | Entity UUID does not exist in index | No | entity_id |
 | 201 | cluster_unavailable | Cluster has no quorum (too many replicas down) | Yes | view, replica_count, alive_count, quorum_replication |
 | 202 | view_change_in_progress | Cluster is performing view change | Yes | old_view, new_view |
@@ -84,6 +89,8 @@ The system SHALL enumerate all error codes with complete metadata in a central t
 | 207 | checkpoint_in_progress | Cannot process request during checkpoint | Yes | checkpoint_id, progress_percent |
 | 208 | storage_unavailable | Storage subsystem is not ready | Yes | reason |
 | 209 | index_rebuilding | RAM index is being rebuilt from LSM | Yes | progress_percent |
+| 210 | entity_expired | Entity has expired due to TTL | No | entity_id, expiration_time, current_time |
+| 211 | resource_exhausted | Internal resource pool exhausted | Yes | resource_type, current_usage, max_capacity |
 | 300 | too_many_events | Batch exceeds batch_events_max | No | batch_size, batch_events_max |
 | 301 | message_body_too_large | Message body exceeds message_body_size_max | No | body_size, message_body_size_max |
 | 302 | result_set_too_large | Query result exceeds message size limit | No | result_count, max_result_count |
@@ -292,13 +299,18 @@ The system SHALL define explicit test scenarios for every error code to ensure c
   - **Code 102 (invalid_ttl)**: ttl_seconds=maxInt(u32)+1 (hypothetical, type prevents)
   - **Code 103 (invalid_entity_id)**: entity_id=null or malformed UUID (if validated)
   - **Code 104 (invalid_batch_size)**: batch_size=15,000 (exceeds 10,000 limit)
-  - **Code 105 (empty_batch)**: batch with zero events
+  - **Code 105 (reserved_105)**: Reserved - empty batches are valid no-ops (see query-engine/spec.md)
   - **Code 106 (invalid_s2_cell)**: s2_cell_id with invalid level encoding
   - **Code 107 (invalid_radius)**: radius_meters=2,000,000 (exceeds 1,000,000 max)
-  - **Code 108 (invalid_polygon)**: polygon with 2 vertices (need ≥3)
-  - **Code 109 (coordinate_mismatch)**: Manually set ID not matching lat/lon
-  - **Code 110 (timestamp_in_future)**: event_timestamp > current_time + 60s
-  - **Code 111 (timestamp_too_old)**: event_timestamp < current_time - max_age
+  - **Code 108 (invalid_polygon)**: Generic polygon error with malformed input
+  - **Code 109 (polygon_self_intersecting)**: Bowtie polygon (edges cross)
+  - **Code 110 (radius_zero)**: radius_meters=0 (use UUID query instead)
+  - **Code 111 (polygon_too_large)**: polygon spanning 360° longitude
+  - **Code 112 (polygon_degenerate)**: All 3+ vertices on same line (zero area)
+  - **Code 113 (polygon_empty)**: vertex_count=0
+  - **Code 114 (coordinate_mismatch)**: Manually set ID not matching lat/lon
+  - **Code 115 (timestamp_in_future)**: event_timestamp > current_time + 60s
+  - **Code 116 (timestamp_too_old)**: event_timestamp < current_time - max_age
 
 #### Scenario: State error tests (codes 200-209)
 

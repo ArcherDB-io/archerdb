@@ -123,6 +123,13 @@ The system SHALL define storage-related constants for data file organization.
 
   /// Idle compaction timeout (trigger background compaction during low load)
   pub const compaction_idle_timeout_ms = 60_000; // 60 seconds
+
+  /// Minimum operations retained in compaction history
+  /// Used to ensure recovery window >= checkpoint_interval
+  /// Formula: minimum 2× checkpoint_interval to allow recovery during compaction
+  /// At 1M events/sec, 60s checkpoint interval = 60M events retained
+  /// Conservative: ~20,000 operations minimum between compaction cycles
+  pub const compaction_retention_ops = 20_000;
   ```
 
 ### Requirement: VSR and Replication Constants
@@ -136,11 +143,32 @@ The system SHALL define constants for the VSR consensus protocol.
   ```zig
   /// Number of slots in the journal (WAL ring buffer)
   /// MUST be large enough to hold history between checkpoints (60s index checkpoint)
-  /// At 100 batches/sec (1M events/sec / 10k batch), we need >6000 slots.
-  /// 8192 slots provides ~81 seconds of history at peak load.
+  ///
+  /// FORMULA: journal_slot_count >= (checkpoint_interval_seconds × throughput_events_per_sec) / avg_ops_per_slot
+  ///
+  /// ARCHERDDB CALCULATION (TARGET: 1M events/sec):
+  /// - Target throughput: 1M events/sec = 100 batches/sec (10K events/batch)
+  /// - Checkpoint interval: 60 seconds = 60M events between checkpoints
+  /// - TigerBeetle baseline: ~1666 ops/sec per slot → needs 60,000 slots for safety margin
+  /// - ArcherDB actual ops_per_slot unknown until F0.2.7 empirical validation
+  /// - Current conservative estimate: 8192 slots = ~81 seconds @ 100 batches/sec
+  ///   (assumes ~12,250 events per slot; if actual is lower, FAIL condition)
+  ///
+  /// CRITICAL VALIDATION REQUIRED (F0.2.7 task, Week 0-1):
+  /// The actual ops_per_slot for ArcherDB must be measured empirically at peak 1M ops/sec.
+  /// This is BLOCKING - if F0.2.7 FAILS, architecture cannot proceed.
+  /// Steps:
+  /// 1. Run steady-state load test: 1M events/sec for 5 minutes
+  /// 2. Measure: max_journal_slots_occupied = peak concurrent slots in use
+  /// 3. Calculate: actual_ops_per_slot = 1M / max_journal_slots_occupied
+  /// 4. Decision tree:
+  ///    a) If actual_ops_per_slot ≥ 12,250: PASS - 8192 slots sufficient, margin good
+  ///    b) If 6,125 ≤ actual_ops_per_slot < 12,250: MARGINAL - 8192 adequate but no margin
+  ///    c) If actual_ops_per_slot < 6,125: FAIL - recalculate: journal_slot_count = 60M / actual_ops_per_slot
+  ///       For example, if actual = 5000, need 12,000 slots (requires ~120GB WAL disk)
   ///
   /// WAL DISK USAGE CLARIFICATION:
-  /// - Headers ring: 8192 * 256 bytes = ~2MB
+  /// - Headers ring: 8192 * 256 bytes = ~2MB (negligible)
   /// - Prepares ring: 8192 * message_size_max = 8192 * 10MB = ~82GB
   /// - This 82GB is REQUIRED for the WAL to function correctly at peak load
   /// - If disk space is constrained:

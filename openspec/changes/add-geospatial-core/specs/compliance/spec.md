@@ -64,6 +64,87 @@ The system SHALL implement all GDPR data subject rights for location data proces
   - Verify complete data erasure
 - **AND** erasure SHALL be permanent and irreversible
 
+#### Scenario: GDPR Deletion Edge Cases (Implementation Complexity)
+
+- **WHEN** implementing entity deletion across a distributed cluster
+- **THEN** the system SHALL handle these critical edge cases:
+
+  **Case 1: Concurrent Delete Requests**
+  - **Situation**: Multiple delete requests for same entity arrive simultaneously (e.g., GDPR request + user-initiated + legal hold override)
+  - **Requirement**: All delete requests SHALL be serialized through VSR consensus
+    - Primary assigns monotonic timestamp to each delete request
+    - All replicas execute deletes in same order (deterministic)
+  - **Implementation**: Use `entity_id` as key in LSM; each delete is new tombstone with higher timestamp
+  - **Testing**: Fire 10+ concurrent delete requests for same entity; verify single tombstone created with highest timestamp
+  - **Metric**: `archerdb_concurrent_deletes_merged` counter
+
+  **Case 2: Partial Failure During Deletion (Network Partition)**
+  - **Situation**: Primary creates tombstone, commits to WAL, but partition occurs before all replicas ack
+    - Primary: Tombstone committed, returns success to client
+    - Replica A: Received tombstone during catch-up
+    - Replica B: Offline during partition, missed tombstone
+  - **Requirement**: Eventual consistency via VSR view change
+    - When Replica B rejoin cluster, VSR catch-up replays all committed operations including tombstone
+    - Replica B applies same tombstone deterministically
+  - **Implementation**: No special handling needed (VSR handles automatically)
+  - **Testing**: Kill replica during delete, rejoin after partition heals, verify tombstone applied
+  - **Metric**: `archerdb_deletion_view_change_recoveries` counter
+
+  **Case 3: Post-Deletion Reinsertion (Timestamp Edge Case)**
+  - **Situation**: Entity deleted, then user re-tracks immediately (within ~100μs), new location event arrives during delete WAL entry being replicated
+    - Delete tombstone ID: `[S2_cell=X | timestamp=T_delete]`
+    - New event ID: `[S2_cell=Y | timestamp=T_new]`
+    - If `T_new < T_delete` (clock skew): Old location appears after deletion tombstone in LSM
+    - If `T_new > T_delete` (normal): New location overrides deletion
+  - **Requirement**: LWW semantics SHALL handle correctly
+    - If reinserted timestamp > delete timestamp: New event is accepted (user re-tracking)
+    - If reinserted timestamp < delete timestamp: Event is ignored (out-of-order, stale data from before deletion)
+  - **Implementation**: Compare `T_new` vs `T_delete` during LSM compaction; skip stale events
+  - **Testing**: Delete entity, immediately insert with synthetic earlier timestamp, verify not included in queries
+  - **Risk**: If clock skew is large (>1s), older data could reappear; validate clock synchronization via Byzantine clock (Marzullo's algorithm per TigerBeetle)
+  - **Metric**: `archerdb_deletion_out_of_order_reinsertion` counter
+
+  **Case 4: Tombstone Retention During Compaction (Compliance Window)**
+  - **Situation**: Compaction runs while tombstones exist; when to actually delete tombstones?
+    - Option A: Delete immediately (risky - audit trail needed, data recovery impossible)
+    - Option B: Retain until all older versions eliminated (safe)
+  - **Requirement**: SHALL retain tombstones until newer LSM levels confirm no older versions exist
+    - Tombstone created at LSM compaction: Level = 0
+    - During L0→L1 compaction: Check if older versions exist in L1+
+    - If yes: Keep tombstone; if no: Mark for deletion (still retain 7 years for audit)
+    - Metric: Track tombstone age and count
+  - **Implementation**: Compaction iterator skips deleted versions; marks tombstone `ready_for_audit_archival` but doesn't delete file blocks until 7-year hold expires
+  - **Testing**: Compact, verify tombstones preserved; check audit log retention
+  - **Exit Criteria**: `archerdb_tombstone_elimination_count` tracks compactions that eliminated tombstones
+  - **Metric**: `archerdb_tombstone_age_seconds` histogram (when deleted)
+
+  **Case 5: In-Flight Queries (Race Condition)**
+  - **Situation**: Query begins execution, entity is deleted mid-query
+    - Thread 1: `find_in_radius(0, 0, 1000m)` starts, reads entity from LSM
+    - Thread 2: `delete_entity(entity_id)` commits tombstone
+    - Thread 1: Returns deleted entity in results (GDPR violation!)
+  - **Requirement**: Queries SHALL use consensus timestamp for TTL checks; also apply to deletion tombstones
+    - Query starts with `consensus_timestamp = T_query`
+    - Check LSM: If any delete tombstone with `timestamp <= T_query`, skip result
+    - Even if physical LSM block read the event, logical filter removes it
+  - **Implementation**: Query engine applies `is_deleted(entity_id, consensus_timestamp)` check post-filter
+  - **Testing**: Start long radius query, delete entity mid-query, verify not in final results
+  - **Metric**: `archerdb_query_deleted_results_filtered` counter (should be 0 in normal operation)
+
+  **Case 6: Deletion with TTL Overlap (Conflicting Expiration)**
+  - **Situation**: TTL expiration vs explicit deletion race
+    - Entity has `ttl_seconds=3600` (1 hour)
+    - GDPR delete requested at 55 minutes
+    - TTL background scanner expires at 60 minutes
+  - **Requirement**: First event to commit wins (timestamp-based precedence)
+    - If delete comes first: Tombstone with `T_delete` created
+    - TTL scanner sees tombstone, skips (deletion already occurred)
+    - If TTL expires first: TTL generates tombstone with `T_ttl`
+    - Delete request compares timestamps, realizes entity already deleted
+  - **Implementation**: No special handling; TTL and deletion both create tombstones (idempotent)
+  - **Testing**: Create entity with 5s TTL, delete at 3s, verify exactly 1 tombstone
+  - **Metric**: `archerdb_deletion_ttl_race_events` counter
+
 #### Scenario: Right to data portability (Article 20)
 
 - **WHEN** implementing data portability

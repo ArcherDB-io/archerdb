@@ -46,6 +46,28 @@ The system SHALL maintain multiple redundant copies of the superblock for crash 
 - **AND** each copy SHALL be sector-aligned (4096 bytes minimum)
 - **AND** copy count MUST be even for flexible quorum reads
 
+#### Design Note: Superblock Redundancy Trade-offs
+
+**Copy Count Decision** (4 vs 6 vs 8):
+
+| Factor | 4 Copies | 6 Copies | 8 Copies |
+|--------|----------|----------|----------|
+| **Storage Overhead** | 16KB (4 × 4KB) | 24KB | 32KB |
+| **Quorum Size** | Need 3/4 (75%) intact | Need 4/6 (67%) intact | Need 5/8 (62%) intact |
+| **Sector Corruption Tolerance** | Up to 1 copy (25%) | Up to 2 copies (33%) | Up to 3 copies (37%) |
+| **Crash Scenario** | Survives 1 sector failure | Survives 2 sector failures | Survives 3 sector failures |
+| **SSD Wear Impact** | Minimal | Low | Medium |
+| **Write Latency** | ~1-2ms (sequential writes) | ~2-3ms | ~3-4ms |
+| **Recommended For** | Single-replica dev/test | Production default | High-reliability clusters |
+
+**Recommendation for v1**: **Use 6 copies as default** (balanced protection + performance)
+- Provides sector corruption tolerance (survives 2 failures)
+- Minimal write latency penalty vs 4 copies
+- Widely tested in TigerBeetle production deployments
+- Supports flexible quorum (don't need all 6 to succeed, just 4)
+
+**Configuration**: Make copy count configurable via `--superblock-copies {4|6|8}` (default: 6)
+
 #### Scenario: Superblock header fields
 
 - **WHEN** a SuperBlockHeader is defined

@@ -13,7 +13,7 @@ The system SHALL be implemented by **forking TigerBeetle**, not by building from
 #### Scenario: Strategic rationale
 
 - **WHEN** beginning ArcherDB implementation
-- **THEN** engineers MUST understand why forking is mandatory:
+- **THEN** the developer MUST understand why forking is mandatory:
   1. **Risk Reduction**: VSR consensus took TigerBeetle 5+ years to perfect; reimplementing it introduces unnecessary risk
   2. **Time Savings**: ~70% of codebase is reusable, reducing timeline from 18+ months to 6-9 months
   3. **Battle-Tested Code**: TigerBeetle's storage engine, I/O layer, and replication are production-proven
@@ -22,7 +22,7 @@ The system SHALL be implemented by **forking TigerBeetle**, not by building from
 
 #### Scenario: Getting started (Day 1)
 
-- **WHEN** an engineering team begins implementation
+- **WHEN** beginning implementation
 - **THEN** the first steps SHALL be:
   ```bash
   # Step 1: Fork TigerBeetle
@@ -39,13 +39,165 @@ The system SHALL be implemented by **forking TigerBeetle**, not by building from
   # Step 4: Run VOPR simulator to understand testing approach
   zig build vopr
 
-  # Step 5: Study the codebase (allow 2-4 weeks for team ramp-up)
+  # Step 5: Study the codebase (allow 2-4 weeks for knowledge acquisition)
   # Focus areas: src/vsr/replica.zig, src/tigerbeetle.zig, src/lsm/
   ```
-- **AND** the team SHALL NOT begin modifications until all members can:
+- **AND** modifications SHALL NOT begin until the developer can:
   - Explain VSR message flow (Prepare → PrepareOk → Commit)
   - Describe the checkpoint sequence (grid → fsync → superblock → fsync)
   - Understand the state machine interface (prepare/prefetch/commit phases)
+
+### Requirement: Zig Ecosystem and Language Feature Validation (Week 0 Gate)
+
+The system SHALL validate Zig language maturity and availability of critical stdlib features before committing to implementation.
+
+- **WHEN** beginning Week 0 setup (before F0.1 fork)
+- **THEN** a language feature validation audit SHALL be executed:
+  ```
+  ZIG ECOSYSTEM VALIDATION PROCEDURE
+  ══════════════════════════════════
+
+  OBJECTIVE: Validate that Zig language and standard library provide all critical
+  features required for ArcherDB implementation. Identify fallbacks for any missing
+  or unstable features before F0.1 begins.
+
+  CRITICAL FEATURES MATRIX:
+  ────────────────────────
+
+  Feature Category 1: Numeric & Math (Required for S2, CORDIC, Chebyshev)
+  ──────────────────────────────────────────────────────────────────────
+  ✓ REQUIRED: std.math.sin, cos, atan2 with f64 precision
+  ✓ REQUIRED: comptime float operations (compile-time trig for polynomial coefficients)
+  ✓ REQUIRED: u64/u128 integer math with overflow detection
+  ✓ OPTIONAL: Hardware AES (Aegis-128L) - fallback: libsodium binding
+
+  Validation test:
+    1. Compile: `const pi = std.math.pi; const sin_pi_4 = std.math.sin(pi/4);`
+    2. Verify: sin(π/4) ≈ 0.7071 ± 1e-15 precision
+    3. Compile-time: const cos_val = std.math.cos(angle) at comptime
+    4. Result: PASS if all 3 work correctly
+
+  Feature Category 2: Concurrency & Async I/O (Required for io_uring, replication)
+  ──────────────────────────────────────────────────────────────────────────────
+  ✓ REQUIRED: std.os.linux.io_uring integration (TigerBeetle foundation)
+  ✓ REQUIRED: async/await syntax (if used by TigerBeetle)
+  ✓ REQUIRED: Thread-safe atomics (std.atomic.*)
+  ✓ REQUIRED: Mutex/RwLock (std.Thread.Mutex, std.Thread.RwLock)
+  ✗ OPTIONAL: Go-style channels (Zig doesn't have, use message pool instead)
+
+  Validation test:
+    1. Compile TigerBeetle's io_uring code without errors
+    2. Run TigerBeetle's async tests: `zig build test -- io`
+    3. Measure atomic CAS performance (must be lock-free)
+    4. Result: PASS if TigerBeetle compiles and runs
+
+  Feature Category 3: Memory & Allocation (Required for zero-allocation discipline)
+  ──────────────────────────────────────────────────────────────────────────────
+  ✓ REQUIRED: StaticAllocator pattern (TigerBeetle's memory discipline)
+  ✓ REQUIRED: extern struct with exact layout control
+  ✓ REQUIRED: @sizeOf, @alignOf, comptime assertions
+  ✓ REQUIRED: No runtime allocations in hot path (Zig compiler validation)
+  ✓ OPTIONAL: Memory tagging/ASAN for debugging
+
+  Validation test:
+    1. Create GeoEvent extern struct with @sizeOf == 128
+    2. Verify no padding or reordering: comptime check
+    3. Test pointer arithmetic: index * 128 byte offset
+    4. Compile-time allocation check: all allocations in init paths only
+    5. Result: PASS if struct layout is exact and no hot-path allocations
+
+  Feature Category 4: Standard Library Stability (Required for LSM, storage)
+  ──────────────────────────────────────────────────────────────────────────
+  ✓ REQUIRED: std.ArrayList, std.HashMap (collections)
+  ✓ REQUIRED: std.fs for file I/O
+  ✓ REQUIRED: std.crypto for hashing (SHA256, CRC32C)
+  ✓ REQUIRED: std.testing framework
+  ✗ BREAKING RISK: std.meta, std.builtin API changes (track Zig version carefully)
+
+  Validation test:
+    1. Pin Zig version: use exactly version X.Y.Z (e.g., 0.11.0)
+    2. Compile TigerBeetle with pinned version
+    3. Test std.ArrayList, HashMap operations
+    4. Test std.crypto.hash.sha256
+    5. Verify reproducible builds: same commit → same binary hash
+    6. Result: PASS if all tests pass and builds are deterministic
+
+  Feature Category 5: C FFI Integration (Required for S2 library)
+  ──────────────────────────────────────────────────────────────
+  ✓ REQUIRED: @cImport for C headers
+  ✓ REQUIRED: Calling C functions from Zig with type safety
+  ✓ REQUIRED: extern structs matching C layout
+  ✓ CRITICAL: ABI stability across platforms (Linux x86/ARM, macOS Intel/ARM)
+
+  Validation test:
+    1. Create simple C library (test.c with: int add(int a, int b) { return a+b; })
+    2. Build it: gcc -shared -o libtest.so test.c
+    3. Call from Zig: const lib = @cImport(@cInclude("test.h"));
+    4. Link and run: zig build-exe test.zig -ltest -L.
+    5. Verify on multiple platforms (x86 Linux, ARM Linux, macOS)
+    6. Result: PASS if C interop works on all platforms without bugs
+
+  WEEK 0 VALIDATION PROCEDURE:
+  ──────────────────────────
+
+  Timeline: 2-3 days (days 1-3 of Week 0)
+  Owner: Solo developer (AI-assisted validation)
+  Gate: MUST PASS before F0.1 begins
+
+  Day 1: Feature detection (4 hours)
+  ─────────────────────────────────
+  1. Clone TigerBeetle repo and build with pinned Zig version
+  2. Run all stdlib feature tests (math, async, memory, fs, crypto)
+  3. Document results in: docs/zig_ecosystem_audit_week0.md
+  4. List any FAILURES as "Blockers"
+
+  Day 2: Fallback implementation (4 hours)
+  ──────────────────────────────────────
+  For each FAILURE, implement fallback:
+    - Hardware AES missing → Link libsodium (external C library)
+    - Missing std.* API → Implement wrapper or use alternative
+    - Performance regression → Profile and optimize or use C binding
+  4. Document fallback in: docs/zig_ecosystem_workarounds.md
+
+  Day 3: Integration & Cross-platform (4 hours)
+  ─────────────────────────────────────────────
+  1. Test all required features on secondary platforms:
+     - Linux ARM64 (Graviton2 or emulated via QEMU)
+     - macOS x86-64 and ARM64 (if available)
+     - Windows (if in scope)
+  2. Verify C FFI ABI compatibility across platforms
+  3. Create CI pipeline to re-validate on every commit
+  4. Document platform-specific workarounds
+
+  DECISION GATE:
+  ──────────────
+  GO: All critical features present and working → Proceed to F0.1 fork
+     - Document: "Zig ecosystem audit PASSED - ready for implementation"
+     - Timeline impact: Zero (stays on schedule)
+
+  NO-GO (unlikely): Critical features missing with no fallback → Options:
+    1. Use different language (Go? C++?) - 2-4 month delay for rewrite
+    2. Delay project 4-6 months (wait for Zig 1.0, ecosystem maturity)
+    3. Build fallback implementation in C, wrap in Zig
+    - Timeline impact: +1-4 months depending on option
+    - Probability: < 5% (Zig is stable enough for this use case)
+
+  MONITORING DURING F0-F4:
+  ──────────────────────
+  1. Watch Zig release notes weekly (breaking changes?)
+  2. Re-validate critical features every 2 weeks
+  3. Set alerts for Zig version warnings or deprecations
+  4. Maintain pinned version in build.zig.zon (Zig package manager)
+  5. Have contingency: documented steps to revert to previous Zig version
+
+  DOCUMENTATION DELIVERABLES:
+  ──────────────────────────
+  - docs/zig_ecosystem_audit_week0.md: Audit results, feature status
+  - docs/zig_ecosystem_workarounds.md: Fallback implementations
+  - docs/zig_pinned_version.txt: Exact Zig version used (e.g., "0.11.0")
+  - build.zig.zon: Package manager lock file (Zig 0.12+)
+  - Continuous integration: .github/workflows/zig-audit.yml (re-validate weekly)
+  ```
 
 ### Requirement: Component Classification (Keep vs Replace vs Add)
 
@@ -130,20 +282,32 @@ The system SHALL preserve TigerBeetle's state machine interface to minimize VSR 
 
   ```zig
   pub const Operation = enum(u8) {
-      // Infrastructure operations (KEEP from TigerBeetle)
-      reserved = 0,
-      root = 1,
-      register = 2,
+      // VSR internal operations (TigerBeetle infrastructure, NOT client-facing)
+      reserved = 254,         // Internal sentinel
+      root = 255,             // Internal VSR root operation
 
-      // Geospatial operations (REPLACE TigerBeetle's financial ops)
-      upsert_events = 128,    // was: create_accounts
-      query_uuid = 129,       // was: create_transfers
-      query_uuid_batch = 130, // was: lookup_accounts
-      query_radius = 131,     // was: lookup_transfers
-      query_polygon = 132,    // NEW
-      query_latest = 133,     // NEW
-      delete_entity = 134,    // NEW (GDPR)
-      get_status = 135,       // NEW (admin)
+      // Client-facing operations (semantic ranges per client-protocol/spec.md)
+      // Session: 0x00
+      register = 0,           // 0x00 - Establish/resume client session
+
+      // Write operations: 0x01-0x0F
+      insert_events = 1,      // 0x01
+      upsert_events = 2,      // 0x02
+      delete_entities = 3,    // 0x03 (GDPR)
+
+      // Query operations: 0x10-0x1F
+      query_uuid = 16,        // 0x10
+      query_radius = 17,      // 0x11
+      query_polygon = 18,     // 0x12
+      query_uuid_batch = 19,  // 0x13
+      query_latest = 20,      // 0x14
+
+      // Admin operations: 0x20-0x2F
+      ping = 32,              // 0x20
+      get_status = 33,        // 0x21
+
+      // Maintenance: 0x30-0x3F
+      cleanup_expired = 48,   // 0x30
   };
   ```
 
@@ -158,9 +322,9 @@ The system SHALL be implemented in clearly defined phases.
   1. Forked repository with renamed entry points
   2. GeoEvent struct defined (128 bytes, matching layout requirements)
   3. Basic state machine compiling (no functionality yet)
-  4. Team has completed TigerBeetle codebase study
+  4. TigerBeetle codebase study completed
   5. Development environment and CI/CD established
-- **AND** success criteria: `zig build` succeeds, team can explain VSR flow
+- **AND** success criteria: `zig build` succeeds, VSR flow understood and documented
 
 #### Scenario: Phase 2 - State Machine Replacement (Weeks 7-14)
 
@@ -221,7 +385,7 @@ The system documentation SHALL warn against common implementation mistakes.
 #### Scenario: Pitfalls that WILL cause failure
 
 - **WHEN** implementing ArcherDB
-- **THEN** engineers MUST avoid these critical mistakes:
+- **THEN** these critical mistakes MUST be avoided:
 
   | Pitfall | Why It's Fatal | Prevention |
   |---------|----------------|------------|
@@ -502,7 +666,7 @@ The system SHALL contribute improvements back to TigerBeetle when applicable.
 #### Scenario: Upstream contributions
 
 - **WHEN** ArcherDB discovers bugs or improvements in borrowed TigerBeetle patterns
-- **THEN** the team SHALL:
+- **THEN** the project SHALL:
   - Report bugs to TigerBeetle project
   - Contribute fixes upstream if applicable
   - Share performance optimizations discovered
@@ -636,6 +800,108 @@ The system SHALL reuse TigerBeetle's constant naming conventions and values wher
   // Derived from TigerBeetle's events_per_block pattern
   // Accounts for 256-byte BlockHeader
   pub const events_per_block = (block_size - block_header_size) / geo_event_size; // 510 events
+  ```
+
+### Requirement: Journal Sizing Validation and Retention Guarantees
+
+The system SHALL validate that the configured journal_slot_count provides sufficient retention to meet recovery window guarantees.
+
+- **WHEN** validating journal sizing (F0.2.7 gate)
+- **THEN** the system SHALL execute a measurement procedure:
+  ```
+  JOURNAL SIZING VALIDATION PROCEDURE
+  ════════════════════════════════════
+
+  OBJECTIVE: Empirically validate that journal_slot_count=8192 supports ≥60 second
+  retention window at target throughput of 1M operations/second.
+
+  MEASUREMENT SETUP:
+  ─────────────────
+  1. Configuration:
+     - Single-node ArcherDB instance (no replication, single replica)
+     - journal_slot_count = 8192 (TigerBeetle: 1024, ArcherDB scaling: 8x)
+     - Target throughput: 1M operations/second
+     - Measurement duration: 120 seconds (2× desired retention window)
+
+  2. Workload generation:
+     - Constant rate: 1M insert_events/second
+     - Payload: Minimal GeoEvent (test locations uniformly distributed)
+     - Request batching: Multi-batch protocol with 100-200 events per batch
+     - Connection count: 16-32 concurrent connections (to saturate 1M ops/sec)
+
+  3. Metrics collection:
+     - Timer: Record wall-clock time (must run ≥120s without timeout)
+     - WAL: Track journal_head and journal_tail pointers continuously
+     - Throughput: Count actual operations written per second
+     - Checkpoints: Record when checkpoints occur (every 256 operations per TigerBeetle)
+
+  VALIDATION PROCEDURE:
+  ────────────────────
+  1. Run benchmark for 120 seconds at 1M ops/sec (target: 120M total operations)
+
+  2. Calculate metrics:
+     ops_per_checkpoint = (checkpoint_interval × 2) = 512 operations per checkpoint
+       [Rationale: TigerBeetle's checkpoint_interval=256 pipelines per checkpoint,
+        each pipeline contains ~2 batches on average, each batch ~1 operation]
+
+     ops_per_slot_actual = (total_ops_written) / (checkpoints_executed)
+       [Record from instrumentation during test]
+
+     retention_seconds = (journal_slot_count × ops_per_slot_actual) / (ops_per_second)
+       [Key equation: retention = (8192 slots × ops_per_slot) / 1M ops/sec]
+
+  3. Determine pass/fail:
+     PASS criteria:
+       - retention_seconds ≥ 60 seconds (meets F2.2.7 gate requirement)
+       - No timeout or throughput collapse during 120s run
+       - Journal never overflows (tail catches head)
+
+     FAIL criteria:
+       - retention_seconds < 60 seconds
+       - Timeout or crash during test
+       - Journal overflow detected
+       - Sustained throughput < 800K ops/sec (20% degradation acceptable)
+
+  4. If PASS: Document results in constants/spec.md:
+     ```
+     VALIDATION RESULT (Week 2, F0.2.7):
+     ═════════════════════════════════════
+     Date: [test date]
+     Configuration: Single-node, 8192 journal slots, 1M ops/sec target
+     Measured ops_per_checkpoint: [X] operations
+     Calculated retention: [Y] seconds
+     Status: ✅ PASS - meets ≥60s requirement
+     ```
+
+  5. If FAIL: Recalculate required journal_slot_count:
+     required_slots = (target_throughput × retention_window_seconds) / ops_per_slot
+
+     Example FAIL recovery:
+     - Measured ops_per_slot = 1024 (TigerBeetle-like)
+     - Required for 60s retention: (1M ops/sec × 60s) / 1024 = 58,594 slots
+     - Minimum: 65,536 slots (next power of 2)
+     - Action: Update F0.4.1 constant to 65536
+     - Risk: Larger journal = more memory, slower checkpoint operations
+     - Document decision: "F0.2.7 FAIL → require 65K slots for v1.0"
+
+  BLOCKER IMPACT:
+  ───────────────
+  This validation gates:
+  - F2.2.7: Recovery window guarantee definition
+  - F2.2.9: Recovery metrics implementation
+  - Specification: hybrid-memory/spec.md recovery procedures (relies on retention window)
+
+  Timeline:
+  - Must complete by end of Week 2
+  - If FAIL, ripple cost: +2-3 days to recalculate and update all downstream specs
+
+  CROSS-REPLICA VALIDATION:
+  ───────────────────────
+  After F1 (state machine complete), validate on 3-node cluster:
+  - All replicas should measure same ops_per_checkpoint
+  - Retention window must be consistent across replicas
+  - Alert if any replica diverges > 5% from mean retention
+  - Root cause: May indicate GC pauses, I/O delays, or clock drift
   ```
 
 ### Requirement: TigerBeetle Testing Patterns
@@ -907,6 +1173,178 @@ The system SHALL distinguish between TigerBeetle-borrowed patterns (marked with 
   | Polygon | `s2polygon.cc` | `polygon.go` | Used for polygon queries |
   | Point containment | `s2contains_point_query.cc` | `containspointquery.go` | Post-filter |
 - **AND** study both C++ and Go when implementing (different clarity tradeoffs)
+
+#### Scenario: CRITICAL - S2 Determinism Validation Spike (Decision Gate F0.4.6c)
+
+- **WHEN** implementing S2 geometry library
+- **THEN** a CRITICAL validation spike MUST occur in **Weeks 1-4 of Phase F0** (before proceeding to Phase F3)
+- **BLOCKING GATE**: Implementation cannot proceed with F3.1-F3.3 (S2 Integration) until this spike is completed
+
+**Why This Spike is Critical**:
+- Non-deterministic S2 computation causes **replica divergence** (hash-chain breaks, cluster-wide panic)
+- VSR consensus requires **bit-exact identical results** on all replicas across all platforms
+- Floating-point math (sin, cos, atan2) NOT bit-exact across x86/ARM/macOS/Linux unless carefully controlled
+
+**Spike Timeline** (2-3 weeks):
+```
+WEEK 1-2 (F0.4-F0.5): Evaluate Options A & B
+─────────────────────────────────────────────
+- Option A: Pure Zig with software trig (Chebyshev + CORDIC)
+  CRITICAL PASS Criterion (MUST PASS - this is the real test):
+    → Golden vector validation: S2 cell ID matches Google reference (C++ S2)
+       BIT-EXACT on 10,000 test vectors across ALL available platforms
+       - Vectors include all 31 S2 levels: [0, 1, 5, 10, 15, 18, 30]
+       - Edge cases: poles (lat ±90°), antimeridian (lon ±180°)
+       - Degenerate cases: very small areas, very large areas, line segments
+       - ANY SINGLE MISMATCH = FAIL (treat as fatal)
+       - Test on: x86-64 Linux (required), ARM64 Linux (required if available),
+                  macOS x86-64 (required), macOS ARM64 (required if available)
+       - Acceptable to skip 1 platform if hardware unavailable (document gap)
+       - Unacceptable to test only 1 platform
+
+  Secondary Validations (diagnostic, help explain failures):
+    1. Chebyshev polynomial sin/cos accuracy:
+       - Measure: max absolute error vs reference on 1000 test angles
+       - Target: < 1e-15
+       - If golden vectors pass: ignore this (trig must be good enough)
+       - If golden vectors fail: analyze trig error to diagnose issue
+    2. CORDIC atan2 accuracy:
+       - Measure: max absolute error vs reference on 1000 test points
+       - Target: < 1e-15
+       - Same diagnostic purpose as Chebyshev
+
+  Performance Target (target, not hard requirement):
+    - Covering duration < 1ms p99 on simple geometries (radius < 1km)
+    - Acceptable: 10-100ms p99 on complex polygons (can document as limitation)
+    - If > 100ms p99 on simple: may reconsider approach
+
+  FAIL Criteria (any one = pivot to Option B):
+    - Golden vector mismatch on ANY platform (even 1 vector mismatch = failure)
+    - Cannot compile with -O3 on target platforms
+    - Covering performance > 100ms p99 on simple geometries
+    - Trig functions unable to achieve < 1e-10 accuracy (not 1e-15, just < 1e-10)
+
+- Option B: Primary-computed + hash verification (pragmatic fallback)
+  CRITICAL PASS Criterion (MUST PASS):
+    → Primary computes S2 cell ID, replicas verify via hash without recomputing S2
+       All 10,000 golden vectors produce identical results on all platforms
+       (because they use Google's C++ S2, which is deterministic)
+
+  Implementation Details (MUST be specified):
+    1. Hash function: SHA-256(cell_id_0 || cell_id_1 || ... || cell_id_N)
+       - Compute aggregate hash per batch
+       - Include aggregate hash in prepare message
+       - Each replica independently verifies after computing all cell IDs
+    2. Mismatch handling: If hash doesn't match:
+       - Log CRITICAL error: "S2 divergence detected, primary hash=%x, computed=%x"
+       - PANIC replica immediately (cannot continue)
+       - Do NOT attempt to reconcile or fallback
+       - This prevents silent corruption
+    3. Integration: Google C++ S2 via:
+       - Zig C FFI bindings (preferred, lightweight)
+       - Static linking with ABI stability guarantee
+       - Version pin: Google S2 library version X.Y.Z (immutable)
+       - Build determinism: Binary must be reproducible across platforms
+
+  Performance Requirement:
+    - Hash verification latency: < 1ms per batch (10ms for 100-batch message)
+    - This is acceptable overhead (< 2% of typical batch latency)
+
+  FAIL Criteria (any one = evaluate fallback):
+    - Cannot integrate Google S2 safely (licensing issues, build complexity)
+    - Hash verification introduces > 5% latency overhead
+    - Platform divergence detected even with Google S2 library
+    - Confidence < 70% in long-term maintainability
+
+WEEK 3 (F0.4.6c): Decision Point
+────────────────────────────────
+- **Friday End-of-Day: GO/NO-GO Decision**
+  - IF Option A PASS: Choose Option A (pure Zig, maximum control)
+  - IF Option A FAIL + Option B PASS: Choose Option B (pragmatic v1)
+  - IF Both FAIL: Evaluate grid-based fallback (absolute last resort)
+  - Document decision rationale in design.md Decision 3a section
+
+WEEK 4+ (F0.4.7, then F3.2): Golden Vector Validation
+──────────────────────────────────────────────────────
+- Generate 10,000+ golden vectors from Google S2 reference (C++)
+- Validate on ALL 4 platforms (x86-64 Linux, ARM64 Linux, x86-64 macOS, ARM64 macOS)
+- ANY platform divergence = BLOCKER (investigate floating-point difference)
+- Success: All platforms produce identical cell IDs for all vectors
+- Failure: Escalate to Decision 3a, may need to pivot options
+```
+
+**Success Criteria (MUST ALL BE TRUE to proceed)**:
+
+| Criterion | Validation | Failure Action | Timeline |
+|-----------|-----------|---------------|-----------|
+| **Option Feasibility** | Spike completes with clear winner | Re-run spike, may extend to Week 5 | Week 3 |
+| **Performance Target** | Covering < 50ms p99 (Option A acceptable @ 100-200ms, still < polygon SLA) | Reconsider thresholds if needed | Week 3 |
+| **Platform Determinism** | S2 cell_id identical on x86/ARM/macOS | ANY divergence = investigate, may pivot | Week 4 |
+| **Golden Vectors** | 100% match on 10,000 reference vectors | Fix algorithm, revalidate (add 1 week) | Week 4-5 |
+| **Implementation Feasibility** | No show-stopping Zig stdlib gaps | Implement workarounds in F0.2 | Week 2 |
+
+**Failure Criteria** (Any one failure → STOP, evaluate fallback):
+- Zig comptime math unable to achieve < 1e-15 error (Option A fails)
+- Hash-based verification introduces unacceptable latency (Option B fails)
+- Platform divergence detected and root cause unclear
+- Confidence < 70% in implementation path
+
+**Fallback Strategy** (If both A and B fail or high risk):
+```
+GRID-BASED SPATIAL INDEX (Last Resort) - SCOPE & REALISTIC ESTIMATE
+───────────────────────────────────────────────────────────────────
+
+⚠️ WARNING: Grid-based fallback is NOT a quick pivot. It is a complete spatial indexing rewrite.
+
+Scope:
+- Replace S2 hierarchical cell model with fixed-size grid cells (e.g., 100m × 100m)
+- Integer arithmetic only (no floating-point transcendentals)
+- Must support radius queries (approximate: expand query box) and polygon queries (grid-based containment test)
+- Trade-off: Less elegant spatial hierarchy vs 100% deterministic on any platform
+
+Implementation Effort (REALISTIC):
+- Week 1: Design grid cell layout, coordinate conversion formulas (lat/lon → grid_x/grid_y)
+- Week 1: Implement grid cell ID encoding (u64 composite ID like S2)
+- Week 2: Implement radius query expansion (convert radius meters → grid cell expansion)
+- Week 1-2: Implement polygon containment testing with grid cells
+- Week 1: Integration testing and performance validation
+- TOTAL: ~2 weeks of focused development (AI-assisted)
+
+Timeline Impact:
+- If F0.4.6 spike FAILS (both Option A/B): +2 weeks delay in F3 start (Week 26→28)
+- If grid fallback needed: +2 weeks in F3 implementation (Week 28→30)
+- TOTAL if fallback invoked: +4 weeks vs original plan
+
+Risk:
+- Grid cells have different locality properties than S2 (larger cell sizes)
+- May impact query performance vs S2 Option B
+- Requires re-benchmarking all spatial queries with grid model
+
+Use ONLY if:
+1. Option A spike proves mathematically infeasible (> 1e-10 error, < 70% confidence)
+2. Option B hash verification proves too slow (> 100ms p99 query latency)
+3. Platform divergence proves unsolvable (different CPU precision)
+
+Recommendation:
+- Assume Option A/B will work (90% probability)
+- Do NOT plan for grid fallback in baseline schedule
+- Only implement if spike clearly shows need
+- If needed, evaluate timeline impact and adjust milestones
+```
+
+**Deliverables After Spike**:
+1. **Decision documentation**: "S2 Determinism Strategy (Option X chosen)" in design.md
+2. **Spike results**: Recorded in `testdata/s2/spike_report_f0.4.6.txt`
+3. **Implementation plan**: Specific algorithms chosen (Option A → Chebyshev/CORDIC, or Option B → hash function)
+4. **Risk mitigation**: Any platform-specific issues found and documented
+5. **Week 4 go/no-go**: Implementation confidence documented > 80%
+
+**CRITICAL**: This spike is NOT optional or deferrable. Proceeding to F3 without resolving S2 determinism risks entire project correctness (replica divergence → cluster panic).
+
+**Related Requirements**:
+- See `tasks.md` F0.4.6a-F0.4.6d for detailed decision gate implementation
+- See `design.md` Decision 3a for complete architecture and rationale
+- See `query-engine/spec.md` for S2 usage in radius/polygon queries (depends on determinism guarantee)
 
 #### Scenario: Hybrid Memory Index (PARTIALLY from TigerBeetle)
 
@@ -1909,6 +2347,58 @@ The system SHALL provide a comprehensive disaster recovery runbook.
   RPO: Time since last backup (configure backup frequency accordingly)
   ```
 
+#### Scenario: Corruption detection monitoring in steady state
+
+The system SHALL implement continuous corruption detection to identify failures before recovery is needed.
+
+- **WHEN** the system is operating normally
+- **THEN** corruption detection SHALL proceed as follows:
+  ```
+  CORRUPTION DETECTION IN STEADY STATE
+  ════════════════════════════════════
+
+  CONTINUOUS DETECTION (during normal operation):
+  ──────────────────────────────────────────────
+  1. Periodic integrity checks (during checkpoint):
+     - Frequency: Every checkpoint (default 30 seconds)
+     - Scope: Verify all index entries can be looked up
+     - Verify no orphaned entries in hash table
+     - Verify probe lengths match expected structure
+     - Time budget: < 100ms (must not block queries)
+
+  2. Checksum verification on block reads:
+     - For every page read from index: verify CRC32C checksum
+     - Frequency: 100% of reads (always enabled, 0% overhead with hardware CRC)
+     - Detection: Mismatch triggers immediate corruption alert
+     - Behavior: Log error, increment archerdb_index_corruption_detected counter
+
+  3. Replica divergence detection:
+     - Via VSR commit comparison (already in replication/spec.md)
+     - When replicas' archerdb_commit_sequence diverges > 1000ms:
+       - This is unrecoverable divergence (see hybrid-memory/spec.md)
+       - Trigger: Treat as corruption, initiate replica replacement
+
+  METADATA VALIDATION FAILURE HANDLING:
+  ─────────────────────────────────────
+  Critical metadata structures (WAL head/tail, LSM manifest, superblock) are validated:
+  - On every access: Quick validation (< 1μs)
+  - On failure: Increment validation_failure_count
+
+  Failure threshold for UNRECOVERABLE declaration:
+  - 1st failure: Log as WARNING, continue operation (validation_failures=1)
+  - 2-5 failures within 60s: Escalate to ERROR, notify operator (validation_failures=2-5)
+  - 6+ failures within 60s: Declare UNRECOVERABLE, halt further writes (validation_failures≥6)
+    [Rationale: If metadata is corrupted at this rate, recovery is likely to fail anyway.
+     Halt writes to prevent cascading corruption. Operator must provision backup restore.]
+
+  DETECTION ALERTS:
+  ─────────────────
+  - archerdb_index_corruption_detected: Counter incremented on ANY corruption detection
+  - archerdb_metadata_validation_failed: Counter for failed validations
+  - Alert rule: If corruption_detected > 0 in past 5 minutes → CRITICAL (page on-call)
+  - Alert rule: If validation_failed > 5 in past 60s → CRITICAL (acknowledge in 1 hour)
+  ```
+
 #### Scenario: Data corruption detection and recovery
 
 - **WHEN** data corruption is detected (checksum mismatch)
@@ -1938,6 +2428,602 @@ The system SHALL provide a comprehensive disaster recovery runbook.
      - Check disk health (SMART data)
      - Check for memory errors (ECC logs)
      - Consider hardware replacement even if repair succeeds
+  ```
+
+### Requirement: Recovery Edge Cases and Unrecoverable Procedures
+
+The system SHALL define explicit procedures for unrecoverable scenarios and backup restore edge cases.
+
+#### Scenario: Unrecoverable scenario decision tree
+
+- **WHEN** a recovery procedure is attempted and fails
+- **THEN** the system SHALL follow this decision tree to determine if recovery is possible:
+  ```
+  UNRECOVERABLE SCENARIO DECISION TREE
+  ════════════════════════════════════
+
+  1. LOAD DATA FILE:
+     - Can superblock be read from any of 3 copies?
+       YES → Proceed with recovery path selection (see hybrid-memory/spec.md)
+       NO  → UNRECOVERABLE (go to step 5)
+
+  2. DETERMINE RECOVERY PATH:
+     - Is checkpoint valid and recent (< 5 minutes old)?
+       YES → WAL replay path (fast recovery)
+       NO  → Proceed to step 3
+     - Is LSM manifest readable?
+       YES → LSM replay path (medium recovery)
+       NO  → Proceed to step 3
+
+  3. CHECK FULL REBUILD FEASIBILITY:
+     - Is data file structurally valid?
+       YES → Full rebuild possible (slow recovery)
+       NO  → UNRECOVERABLE (go to step 5)
+     - Is disk space available (need 2x data file size for rebuild)?
+       YES → Proceed with full rebuild
+       NO  → UNRECOVERABLE (go to step 5)
+
+  4. RECOVERY PATH SELECTED:
+     - Execute appropriate path (WAL/LSM/rebuild)
+     - Wait for completion
+     - Verify index built successfully
+     - Return to normal operation
+
+  5. UNRECOVERABLE:
+     - Log critical error with detailed failure reason
+     - Replica MUST NOT attempt recovery again (prevent infinite loop)
+     - Return exit code indicating unrecoverable state
+     - Operator MUST provision backup restore (see below)
+  ```
+
+#### Scenario: Unrecoverable scenario triggers
+
+- **WHEN** any of these conditions are detected
+- **THEN** recovery is declared UNRECOVERABLE:
+  ```
+  UNRECOVERABLE CONDITION CHECKLIST:
+
+  ✗ All 3 superblock copies corrupted or missing
+    - Cannot determine data file layout, checksum algorithm, or recovery window
+    - Required action: Full backup restore
+    - Time to recovery: 60-90 minutes (for 1B entities)
+
+  ✗ Data file checksum verification fails AND cannot repair
+    - Detected when: storage engine reports CRC mismatch on multiple blocks
+    - Indicates: Disk failure, data corruption, or bitrot
+    - Required action: Full backup restore
+    - Investigation: Check disk SMART data, ECC memory logs
+
+  ✗ Index checkpoint corrupted AND full rebuild disk space unavailable
+    - Detected when: index_checkpoint_age_seconds continuously increasing
+    - No WAL coverage (gap > journal_slot_count)
+    - No LSM backup tables
+    - No disk space to rebuild
+    - Required action: Provision additional disk, then full backup restore
+
+  ✗ Disk space exhaustion prevents index checkpoint and recovery
+    - Detected when: Write fails due to no space
+    - Cannot checkpoint index (no disk space)
+    - Cannot recover from crash (need checkpoint)
+    - Cannot restore from backup (need space for new data file)
+    - Required action: Delete old backups, external storage, or new hardware
+
+  ✗ VSR superblock quorum lost and primary election impossible
+    - Detected when: Cannot read quorum view from superblock
+    - All 3 superblock copies have different view data
+    - Indicates: Corrupted VSR state, impossible to determine primary
+    - Required action: Full backup restore OR manual cluster reset (see replication/spec.md)
+
+  ✗ Replica data file format unrecognized (version mismatch after upgrade failure)
+    - Detected when: superblock.version_code != expected version
+    - Indicates: Failed upgrade or corrupted superblock
+    - Required action: Verify upgrade was complete, or restore from pre-upgrade backup
+
+  ✗ Critical metadata structure validation fails repeatedly
+    - Detected when: Journal WAL ring head/tail pointers are inconsistent
+    - Or: LSM manifest lists blocks that don't exist on disk
+    - Indicates: Severe metadata corruption
+    - Required action: Full backup restore
+  ```
+
+#### Scenario: Backup restore procedures for edge cases
+
+- **WHEN** performing backup restore in edge case scenarios
+- **THEN** procedures SHALL be:
+  ```
+  BACKUP RESTORE EDGE CASES
+  ═════════════════════════
+
+  EDGE CASE 1: Backup checksum mismatch during restore
+  ─────────────────────────────────────────────────────
+  Scenario: archerdb restore detects CRC mismatch on backup block
+
+  Cause:
+  - Network corruption during block download (unlikely with HTTPS)
+  - S3 object storage bitrot (rare but possible)
+  - Corrupted backup block at source
+
+  Procedure:
+  1. Stop restore operation immediately
+  2. Log error with block sequence number and checksum details
+  3. Re-download the block from S3:
+     - Retry 3 times with exponential backoff
+     - If still fails: block may be permanently corrupted
+  4. Assess recovery options:
+     a. If failed block is recent (within tolerance):
+        - Restore to point-in-time BEFORE the block
+        - Use --point-in-time=<timestamp-before-failure>
+        - Accept RPO of data lost
+     b. If failed block is critical (early blocks with base data):
+        - Escalate to cloud provider (S3 corruption)
+        - Request block repair or provide alternative backup
+        - Wait for provider to fix, or use older backup
+  5. Verify restored data with additional checksums
+  6. Run data consistency check post-restore
+
+  Time impact: +10-30 minutes (retry delay, re-download)
+
+  EDGE CASE 2: Backup bucket access denied during restore
+  ─────────────────────────────────────────────────────────
+  Scenario: S3 credentials expired, IAM policy changed, or bucket deleted
+
+  Cause:
+  - Credentials expired mid-restore
+  - IAM role revoked
+  - Backup bucket deleted or moved
+  - Network connectivity lost to S3
+
+  Procedure:
+  1. Check S3 bucket accessibility:
+     $ aws s3 ls s3://your-backup-bucket
+  2. Verify credentials:
+     $ aws sts get-caller-identity
+  3. If credentials expired:
+     - Obtain new credentials
+     - Resume restore with --resume flag:
+       $ archerdb restore --resume --from-s3=s3://... --credentials=...
+  4. If IAM policy changed:
+     - Restore policy (s3:GetObject, s3:ListBucket)
+     - Resume restore
+  5. If bucket deleted:
+     - Restore bucket from S3 versioning or provider backups
+     - Or restore from alternative backup (if exists)
+  6. If network lost:
+     - Restore network connectivity
+     - Resume restore
+
+  Prevention:
+  - Monitor credential expiration (alert 7 days before)
+  - Test backup restore quarterly (catches IAM drift)
+  - Use IAM policies with long-lived credentials for restore
+  - Verify backup bucket exists in account during health checks
+
+  EDGE CASE 3: Partial backup (cluster failure mid-backup)
+  ──────────────────────────────────────────────────────────
+  Scenario: Backup was interrupted by node failure or network issue
+
+  Symptoms:
+  - Block sequence numbers have gaps
+  - Backup metadata incomplete
+  - List shows partial upload timestamps
+
+  Procedure:
+  1. Identify last complete block:
+     $ archerdb backup verify --bucket=s3://... --repair
+     - Scans all blocks, checks sequence continuity
+     - Reports first gap
+  2. Restore to point-in-time BEFORE gap:
+     $ archerdb restore --from-s3=... --point-in-time=<before-gap> \
+         --to-data-file=...
+  3. Accept data loss:
+     - RPO = time to last complete backup block
+     - This is ACCEPTABLE (backup unavailable anyway)
+  4. After restore, trigger full backup:
+     - Ensures next backup is complete
+     - Blocks previous partial backup from being used again
+
+  Prevention:
+  - Monitor backup completion metrics:
+    archerdb_backup_blocks_uploaded_total - archerdb_backup_lag_blocks
+  - Alert if backup hangs for > 1 hour
+  - Use mandatory backup mode (halts writes if backup fails)
+
+  EDGE CASE 4: Restore creates smaller index than original
+  ──────────────────────────────────────────────────────────
+  Scenario: Using --skip-expired filtering, index is much smaller
+
+  Cause:
+  - TTL expiration since backup was created
+  - Entities deleted since backup
+  - Tombstones marked as deleted
+
+  Procedure:
+  1. This is EXPECTED behavior (not an error)
+     - Filtered expired events per backup-restore spec
+     - Smaller index = faster rebuild
+  2. Verify restoration succeeded:
+     $ archerdb restore --verify --from-s3=... --to-data-file=...
+  3. Compare to expected size:
+     - If index >> expected: may indicate restore failure
+     - If index << expected: verify TTL expiration is correct
+  4. Run queries to sample restored data
+  5. Proceed with normal operations
+
+  EDGE CASE 5: Cannot allocate disk space for restored data
+  ───────────────────────────────────────────────────────────
+  Scenario: Target disk has insufficient space for data file
+
+  Cause:
+  - Disk smaller than original cluster
+  - Other processes using space
+  - Filesystem quota exceeded
+
+  Procedure:
+  1. Calculate required space:
+     - Backup block size ≈ Original data file size
+     - Add 2x for rebuild (temporary)
+     - Minimum: data_file_size + 2×data_file_size
+  2. Free disk space:
+     - Delete old backups: $ rm /old-backup-path/*
+     - Delete temporary files: $ journalctl --vacuum=2d
+     - Move other data to other filesystem
+  3. Or provision new disk:
+     - Add new device: $ fdisk /dev/sdX
+     - Extend filesystem: $ lvextend -L +500G /dev/mapper/...
+  4. Resume restore:
+     $ archerdb restore --resume --from-s3=... --to-data-file=...
+  5. Verify: $ df -h /path (should show adequate free space)
+
+  EDGE CASE 6: Restore from backup created on different cluster version
+  ─────────────────────────────────────────────────────────────────────────
+  Scenario: Backup from v1.0, restoring to v1.1 cluster
+
+  Cause:
+  - Cluster upgraded to new version
+  - Need to restore from old backup (replay/rollback)
+
+  Procedure:
+  1. Check compatibility:
+     $ archerdb backup info --bucket=s3://... \
+         --show-version
+     Expected: Version matches current cluster or older
+  2. If backup is NEWER than cluster:
+     - Downgrade not supported
+     - Either upgrade cluster or find older backup
+     - Or proceed with data loss (restore to older backup)
+  3. If backup is SAME or OLDER:
+     - Restore normally
+     - v1.1 is backward compatible with v1.0 backups
+     - Format migration happens post-restore if needed
+  4. Verify result:
+     $ archerdb status
+     $ archerdb verify --data-file=...
+
+  EDGE CASE 7: Restore replica to wrong cluster ID
+  ──────────────────────────────────────────────────
+  Scenario: Restore backup from Cluster A to Cluster B
+
+  Cause:
+  - Operator error (wrong backup path)
+  - Cross-cluster disaster (restore to wrong DR site)
+
+  Procedure:
+  1. Prevention (CRITICAL):
+     - archerdb restore MUST validate cluster-id
+     - Block restore if cluster-id mismatch (exit code 2)
+     - Operator MUST pass --force-cluster-id to override
+  2. If mistake discovered mid-restore:
+     - Stop restore immediately
+     - Delete partially restored data file
+     - Start fresh with correct backup
+  3. If discovered post-restore:
+     - Data is in wrong cluster (FATAL)
+     - Cluster will reject due to cluster-id mismatch
+     - Cannot proceed
+     - Delete corrupted data file
+     - Restore from correct backup
+  4. Recovery from cross-cluster restore:
+     - Restore failed replicas with correct backup
+     - Cluster continues serving from unaffected replicas
+     - Affected replica catches up via state sync
+  ```
+
+#### Scenario: Unrecoverable cluster procedures
+
+- **WHEN** entire cluster becomes unrecoverable
+- **THEN** emergency procedures SHALL be:
+  ```
+  EMERGENCY UNRECOVERABLE CLUSTER PROCEDURES
+  ═══════════════════════════════════════════
+
+  SITUATION: All replicas have corrupted data files, or backups unavailable.
+  IMPACT: Complete data loss or very old restore point.
+  RTO: 2-4 hours (if backup exists), or catastrophic loss if not.
+
+  STEP 1: ASSESS SITUATION
+  ────────────────────────
+  - Do backups exist in S3/object storage?
+  - What is the oldest complete backup?
+  - When was last backup completed?
+  - Is any replica data recoverable (even partially)?
+
+  DECISION TREE:
+  ┌─ YES, recent backup (< 1 day)      → Restore from backup (RTO: 2 hours)
+  ├─ YES, old backup (> 1 week)        → Restore and accept data loss
+  ├─ NO backup, but one replica OK      → Full cluster state sync recovery
+  └─ NO backup, all replicas corrupt    → TOTAL DATA LOSS
+
+  STEP 2: IF BACKUP EXISTS
+  ────────────────────────
+  1. Identify latest complete backup:
+     $ aws s3 ls s3://backup-bucket --recursive | tail -20
+  2. Verify backup integrity:
+     $ archerdb backup verify --bucket=s3://... --detailed
+  3. Provision new cluster (if old hardware unrecoverable):
+     - New hardware (3-5 nodes)
+     - Network configured
+     - Storage provisioned
+  4. Restore each replica:
+     - Download backup blocks
+     - Build index
+     - Verify checksums
+     - Start replica
+  5. Verify cluster quorum:
+     - All replicas joined
+     - VSR consensus established
+     - Cluster serving requests
+
+  STEP 3: IF NO BACKUP (WORST CASE)
+  ──────────────────────────────────
+  If one replica survives with partial data:
+  1. Identify surviving replica
+  2. Perform recovery from that replica:
+     $ archerdb start --data-file=/path/to/surviving/data.archerdb
+  3. Other replicas catch up via state sync
+  4. Cluster continues with recovered state
+  5. Accept data loss since last backup
+
+  If all replicas corrupted:
+  - TOTAL DATA LOSS (unless external backups exist)
+  - Notification to stakeholders (legal implications if personal data lost)
+  - Incident post-mortem (why no backup? why not tested?)
+  - Transition to manual recovery/litigation support
+
+  POST-EMERGENCY:
+  ────────────────
+  1. Document what happened (timeline, root cause, recovery actions)
+  2. Calculate RPO impact (how much data lost)
+  3. Notify affected users if applicable
+  4. Implement preventive measures:
+     - Mandatory backup mode
+     - Backup to multiple regions
+     - Regular backup restore drills
+     - Better monitoring/alerting
+  5. Review disaster recovery SLA (update if unrealistic)
+  6. Update runbook with lessons learned
+  ```
+
+#### Scenario: Recovery verification checklist
+
+- **WHEN** any recovery operation completes
+- **THEN** operators SHALL verify with this checklist:
+  ```
+  RECOVERY VERIFICATION CHECKLIST
+  ═════════════════════════════════
+
+  □ Replica startup:
+    - Start time < expected (check archerdb_recovery_duration_seconds)
+    - Recovery path matches expectation (WAL/LSM/rebuild)
+    - No errors in logs
+
+  □ Index integrity:
+    - Entry count matches expected (query sample entities)
+    - No missing or corrupted entries
+    - Geospatial queries return correct results
+
+  □ Replication health:
+    - Replica joins cluster as "normal" status
+    - Catches up to other replicas (replication_lag → 0)
+    - Accepts write operations
+
+  □ Data consistency:
+    - Cross-replica query sampling (spot check 100 random entities)
+    - All replicas return same results (linearizability)
+    - Timestamp ordering correct (LWW)
+
+  □ Performance baseline:
+    - Query latency within expected range
+    - No performance regressions
+    - Compaction completing normally
+
+  □ TTL/Expiration:
+    - Expired events not served in queries
+    - Tombstones prevent resurrection
+    - TTL metrics consistent
+
+  □ Backup health (post-restore):
+    - Create backup and verify blocks upload
+    - Backup completion metric increments
+    - No backup delays
+
+  □ Alerting active:
+    - All monitoring alerts re-enabled
+    - No stale alerting rules
+    - On-call rotation notified recovery complete
+
+  Failure of ANY check → escalate, do NOT declare recovery complete.
+  ```
+
+### Requirement: Recovery SLA Validation and Benchmarking (F2.3 Gate)
+
+The system SHALL validate that recovery procedures meet defined SLA targets before proceeding to production.
+
+- **WHEN** validating recovery performance (F2.3 gate, Week 12)
+- **THEN** the system SHALL execute these benchmarks:
+  ```
+  RECOVERY SLA VALIDATION PROCEDURE
+  ═════════════════════════════════
+
+  OBJECTIVE: Empirically validate that recovery times meet SLA targets:
+  - WAL replay: < 1 second
+  - LSM rebuild: < 30 seconds
+  - Full index rebuild: < 2 minutes (128GB), < 2 hours (16TB max)
+
+  TEST SCENARIOS:
+  ───────────────
+
+  Scenario 1: WAL Replay Recovery
+  ────────────────────────────────
+  Setup:
+    - Single-node with checkpoint + 60MB WAL (max retention window)
+    - Simulate crash immediately after checkpoint written
+    - WAL contains 60M operations (1M ops/sec × 60s)
+
+  Test procedure:
+    1. Start replica with checkpoint loaded, WAL intact
+    2. Measure time from startup to "ready to accept queries"
+    3. Repeat 10 times, record p50/p99/p99.9 latencies
+
+  Pass criteria:
+    - p99 replay time ≤ 1 second
+    - No data loss detected post-recovery
+    - Metrics: archerdb_recovery_wal_duration_seconds
+
+  Scenario 2: LSM Replay Recovery
+  ───────────────────────────────
+  Setup:
+    - Single-node with checkpoint + 3-level LSM (L0, L1, L2)
+    - Simulate crash during compaction
+    - Compaction incomplete (partially written L1 table)
+
+  Test procedure:
+    1. Intentionally corrupt checkpoint (mark as invalid)
+    2. Startup must rebuild index from WAL + LSM
+    3. Measure time to full index readiness
+    4. Repeat 5 times (compaction-heavy, slower)
+
+  Pass criteria:
+    - p99 LSM replay ≤ 30 seconds
+    - No data loss or orphaned LSM tables
+    - All L0→L1→L2 compactions replayed correctly
+    - Metrics: archerdb_recovery_lsm_duration_seconds
+
+  Scenario 3: Full Index Rebuild
+  ──────────────────────────────
+  Setup:
+    - Single-node with 1B entities (128GB index)
+    - Simulate complete checkpoint corruption
+    - Force full rebuild by scanning LSM newest→oldest
+
+  Test procedure:
+    1. Pre-populate 1B entities (via multi-batch insert)
+    2. Trigger intentional corruption (overwrite superblock)
+    3. Startup forces full rebuild path
+    4. Measure time from crash detection to index ready
+    5. Measure memory usage during rebuild
+
+  Pass criteria:
+    - p99 rebuild time ≤ 2 minutes (128GB), ≤ 2 hours (16TB max)
+    - Memory during rebuild: < 256GB (2x index size acceptable for compaction buffers)
+    - Zero entity loss (all 1B entities present post-rebuild)
+    - Metrics: archerdb_recovery_rebuild_duration_seconds, archerdb_recovery_rebuild_percent
+
+  DECISION GATE (Week 12):
+  ──────────────────────
+  GO: All 3 scenarios PASS → Proceed to F2.4 (TTL) and F3 (S2)
+  NO-GO: Any scenario FAIL → Options:
+    1. Optimize recovery path (faster LSM merge, better checkpoint placement)
+    2. Extend F2 timeline +2 weeks (add F2.5 Recovery Optimization phase)
+    3. Modify compaction strategy (reduce LSM levels, increase L0 size) → +1 week design
+
+  CONTINGENCY ANALYSIS:
+  ─────────────────────
+  If FAIL on WAL replay (> 1s):
+    - Issue: WAL too large or parsing slow
+    - Fix: Optimize WAL format, use mmap for faster reading
+    - Blocker risk: LOW (fundamental operations sound)
+    - Timeline: +1-2 days optimization
+
+  If FAIL on LSM rebuild (> 30s):
+    - Issue: Compaction speed or LSM structure too deep
+    - Fix: Increase compaction parallelism, reduce levels
+    - Blocker risk: MEDIUM (may require LSM design change)
+    - Timeline: +3-5 days design/implementation
+
+  If FAIL on full rebuild (> 2 min for 128GB):
+    - Issue: Sequential LSM scan is bottleneck
+    - Fix: Parallelize rebuild, use prefetch hints
+    - Blocker risk: MEDIUM (core algorithm may need redesign)
+    - Timeline: +1 week optimization + testing
+    - Risk: If cannot achieve 2 min, may need to limit single-node capacity
+      (e.g., max 64GB per node, require sharding for 128GB+)
+
+  MONITORING DURING F3-F4:
+  ────────────────────────
+  Continuously track recovery metrics in production:
+  - Alert if WAL replay ever exceeds 500ms (50% of SLA)
+  - Alert if LSM rebuild exceeds 15s (50% of SLA)
+  - Alert if full rebuild exceeds 1 min (50% of SLA)
+  - Trend analysis: Are recovery times increasing over time?
+    (Indicates LSM depth increasing, or checkpoint size growth)
+  ```
+
+### Requirement: Query Behavior During Index Recovery
+
+The system SHALL define explicit SLAs for query performance during recovery procedures to prevent cascading failures in S2-heavy workloads.
+
+- **WHEN** index recovery is in progress (WAL replay, LSM rebuild, or full rebuild)
+- **THEN** the system SHALL ensure:
+  ```
+  QUERY BEHAVIOR DURING INDEX RECOVERY
+  ═════════════════════════════════════
+
+  RECOVERY PROCEDURE SLAs AND QUERY IMPACT:
+  ────────────────────────────────────────
+
+  Recovery Type 1: WAL Replay (< 1 second)
+  - Duration: < 1 second (negligible for most deployments)
+  - Query availability: AVAILABLE (replicas serve during replay)
+  - Expected impact: None (WAL replay does not block queries)
+
+  Recovery Type 2: LSM Replay (< 30 seconds)
+  - Duration: < 30 seconds
+  - Query availability: AVAILABLE (can serve during LSM rebuild, with warnings)
+  - Expected latency impact: +10-20% (LSM table scans slower than in-memory index)
+  - Guidance: Accept increased latency during replay
+  - S2-specific impact: Radius and polygon queries slower but functional
+  - Action: No automatic query rejection; clients should retry if timeout
+
+  Recovery Type 3: Full Rebuild (2-5 minutes for 128GB)
+  - Duration: 2-5 minutes (critical for S2-heavy workloads)
+  - Query availability: AVAILABLE, but DEGRADED
+  - Degradation strategy:
+    (a) Queries are ACCEPTED (do not reject)
+    (b) S2 covering queries: May take 5-10x normal time
+       - Simple coverings: 50μs → 250-500μs (still < 1ms, acceptable)
+       - Complex coverings: 5ms → 25-50ms (exceeds 50ms target, degraded)
+    (c) Timeout behavior: Increase timeout to 10s (from normal 1-5s)
+    (d) Queue behavior: Accept queries but queue them if backlog > 100
+  - Expected impact: Cascading timeouts if workload is 100% S2-queries (high complexity)
+  - Mitigation strategies:
+    1. Preferentially process non-S2 queries during rebuild
+    2. For S2 queries: Route to non-degraded replicas if available (VSR load balancing)
+    3. Circuit breaker: Disable S2 queries during rebuild if p99 > 100ms consistently
+  - Guidance: This is EXPECTED degradation; clients should implement retry logic
+
+  ALERT RULES FOR RECOVERY:
+  ────────────────────────
+  - Alert: If recovery duration > 2x normal → "Recovery taking longer than expected"
+  - Alert: If query_timeout_total > 1000/sec during rebuild → "Query overload during recovery"
+  - Alert: If query latency p99 > 50ms during rebuild → "Query degradation during recovery"
+  - Action: Do NOT fail queries automatically; accept degradation as expected
+
+  OPERATIONAL GUIDANCE:
+  ───────────────────
+  1. Schedule full rebuilds during maintenance windows (or low-traffic periods)
+  2. For 24/7 systems: Use VSR load balancing to shift S2 workload to healthy replicas
+  3. If cascading timeouts occur: Reduce concurrent S2 query rate at client layer
+  4. Recovery is complete when: archerdb_index_rebuild_percent = 100 AND validation passes
   ```
 
 ### Requirement: Upgrade Path Documentation
@@ -2266,9 +3352,400 @@ The system SHALL provide an operational runbook for day-to-day operations.
   4. Plan for capacity expansion
 
   ESCALATION:
-  - SEV1 (cluster down): Immediate page to on-call engineer
-  - SEV2 (degraded): Page within 15 minutes
-  - SEV3 (warning): Address during business hours
+  - SEV1 (cluster down): Immediate investigation required
+  - SEV2 (degraded): Address within 15 minutes
+  - SEV3 (warning): Address during next work session
+  ```
+
+### Requirement: Zig Standard Library Compatibility
+
+The system SHALL explicitly document Zig stdlib requirements and fallback strategies for known gaps.
+
+#### Scenario: Required Zig stdlib features with fallback strategies
+
+- **WHEN** implementing ArcherDB in Zig
+- **THEN** the following stdlib features and their fallbacks SHALL be used:
+
+  | Feature | Required | Zig 0.13 Status | Fallback Strategy | F0.1 Validation |
+  |---------|----------|-----------|-------------------|-----------------|
+  | **Bit Manipulation** (`@bitCast`, `@byteSwap`) | ✅ YES | Native | Guaranteed; no fallback needed | Comptime assert exists |
+  | **Intrinsics** (`@popCount`, `@clz`, `@ctz`) | ✅ YES | Native | Guaranteed; no fallback needed | Comptime assert exists |
+  | **Memory Operations** (`@memcpy`) | ✅ YES | std.mem | Guaranteed; no fallback needed | Comptime assert exists |
+  | **Math Functions** (sin, cos, atan2) | ⚠️ CRITICAL | std.math exists | **Chebyshev/CORDIC pure Zig** (Option A spike in F0.4) | Test on x86/ARM/macOS |
+  | **Hashing** (wyhash) | ⚠️ NEEDED | Not in std | **Implement wyhash in pure Zig (1-2 days)** OR use std.hash.SipHash | F0.2 validation spike |
+  | **Atomics** (`@atomicLoad`) | ✅ YES | Native | Guaranteed; no fallback needed | Comptime assert exists |
+  | **Comptime computation** | ✅ YES | Native | Guaranteed; no fallback needed | Comptime assert exists |
+  | **Error Handling** (`!Type`, `catch`) | ✅ YES | Native | Guaranteed; no fallback needed | Comptime assert exists |
+  | **C FFI** (`@cImport`) | ✅ YES | Native | Guaranteed; no fallback needed | Test Google S2 C++ bindings |
+
+- **AND** for CRITICAL/NEEDED features:
+  1. Create F0.1 spike task to validate feature availability
+  2. Document workaround strategy if unavailable
+  3. Add `comptime` assertion to code to catch issues at compile-time
+
+#### Scenario: Known Zig ecosystem gaps - mitigation strategies
+
+- **WHEN** encountering Zig stdlib or ecosystem limitations
+- **THEN** the following mitigation strategies SHALL be applied:
+
+  | Gap | Severity | Recommended Approach | Effort | Backlog? |
+  |----|----------|-------------------|--------|----------|
+  | **No wyhash in std** | Medium | Implement wyhash in pure Zig (copy Google's reference) | 1-2 days | NO - do in F0.2 |
+  | **Math.sin/cos determinism** | CRITICAL | S2 Option A spike validates; fallback to Option B if unclear | 2 weeks spike | NO - do in F0.4 |
+  | **Limited crypto (AES-NI)** | Low | Defer full-disk encryption to v2; use software AES for v1 | Defer | YES - backlog v2 |
+  | **No standard UUID type** | Low | Use u128 (already in GeoEvent struct) | N/A | NO - already using |
+
+- **AND** all workaround implementations SHALL be:
+  - Stored in separate `src/compat/` directory
+  - Documented with `// ZIG_COMPAT_WORKAROUND:` comments
+  - Logged at startup with version and rationale
+  - Included in deployment checklist to ensure consistency across replicas
+
+#### Scenario: Zig version stability and CI/CD validation
+
+- **WHEN** deploying ArcherDB to production
+- **THEN** the following version constraints SHALL be enforced:
+  - **Minimum Zig version**: 0.13 (first stable with production guarantees)
+  - **Maximum Zig version**: Latest 0.13.x (minor updates only)
+  - **Forbidden versions**: 0.11, 0.12 (breaking changes, not production-ready)
+  - **CI/CD requirement**: All tests pass on pinned Zig 0.13.x before merge
+  - **Docker constraint**: Dockerfile specifies exact Zig version (e.g., `FROM zig:0.13.0`)
+
+- **AND** if Zig 0.13 reaches end-of-life:
+  1. Evaluate upgrade path to next stable version
+  2. Run full regression test suite
+  3. Validate no breaking changes to math, atomics, or C FFI
+  4. Update deployment documentation
+  5. Plan rolling upgrade for existing clusters
+
+### Requirement: F4 VOPR Simulator and Cluster Testing (Weeks 27-32)
+
+The system SHALL validate distributed correctness using VOPR (Viewstamped Replication Protocol) fault-injection simulator adapted for GeoEvent operations.
+
+- **WHEN** validating cluster behavior (F4 phase, Week 27+)
+- **THEN** the system SHALL implement these testing procedures:
+  ```
+  F4 VOPR ADAPTATION & CLUSTER TESTING SPECIFICATION
+  ═══════════════════════════════════════════════════
+
+  F4.1 VOPR ADAPTATION (Weeks 27-28):
+  ──────────────────────────────────
+
+  Objective: Adapt TigerBeetle's VOPR to GeoEvent operations
+
+  DELIVERABLES:
+  1. GeoEvent operation generators:
+     - Random locations: Uniform distribution across globe
+     - Clustered locations: 90% within 1000km, 10% random (real-world pattern)
+     - Adversarial: Coordinates designed to stress S2 calculations
+     - Polygon queries: Simple (3 vertices), complex (100+ vertices), edge cases
+
+  2. VOPR invariants for GeoEvents:
+     - Linearizability: All replicas eventually agree on operation order
+     - Idempotency: Duplicate writes produce same result (LWW - last-write-wins)
+     - S2 Determinism: All replicas produce identical S2 cell IDs (bit-exact)
+     - TTL Correctness: Expired events removed correctly across replicas
+     - Index Consistency: All replicas have identical index state post-sync
+
+  3. Fault injection scenarios:
+     - Primary crash: Stop primary replica, verify quorum continues
+     - Secondary crash: Stop secondary, quorum continues, data preserved
+     - Network partition: Isolate subset of replicas, verify safe behavior
+     - Message loss: Drop N% of messages, verify eventual consistency
+     - Corruption: Inject bit flips, verify corruption detected
+
+  ACCEPTANCE CRITERIA (Week 28):
+  - VOPR runs 1M+ geospatial operations without invariant violations
+  - S2 determinism invariant passes (all replicas have identical cell IDs)
+  - Recovery after replica crash completes in < 30 seconds
+
+  F4.2 CLUSTER TESTING (Weeks 28-30):
+  ────────────────────────────────────
+
+  Objective: Test multi-replica behavior under realistic conditions
+
+  TEST MATRIX:
+  ────────────
+
+  Scenario 1: 3-Replica Cluster (Standard)
+  ─────────────────────────────────────────
+  Setup: 1 primary, 2 secondaries (can tolerate 1 failure)
+  Test workload: 1M insert_events/sec sustained for 5 minutes
+  Expected behavior:
+    - Primary accepts all writes
+    - Secondaries sync within <100ms
+    - Replication lag: < 1000 operations
+    - Failover time (if primary crashes): < 3 seconds
+
+  Pass criteria:
+    - All 3 replicas have identical state at end
+    - Zero data loss
+    - View change completes < 3s
+    - Replication lag metric < 1000 ops
+
+  Scenario 2: 5-Replica Cluster (High Availability)
+  ──────────────────────────────────────────────────
+  Setup: 1 primary, 4 secondaries (can tolerate 2 failures)
+  Test workload: 500K ops/sec for 10 minutes (slower due to higher replication cost)
+  Expected behavior:
+    - Tolerate failure of 2 replicas simultaneously
+    - View change still completes < 3 seconds
+    - Throughput degradation ≤ 20%
+
+  Pass criteria:
+    - All 5 replicas have identical state
+    - Can survive simultaneous 2-replica crash
+    - Failover completes < 3s
+
+  Scenario 3: 6-Replica Cluster (Maximum)
+  ────────────────────────────────────────
+  Setup: 1 primary, 5 secondaries (can tolerate 2 failures, Flexible Paxos limit)
+  Test workload: 400K ops/sec for 5 minutes
+  Expected behavior:
+    - Maximum supported configuration works
+    - Throughput degradation ≤ 30% vs 3-replica baseline
+
+  Pass criteria:
+    - All 6 replicas converge
+    - Failover works
+    - No performance collapse
+
+  F4.2.4 View Change Timing (< 3 second target):
+  ────────────────────────────────────────────────
+  Procedure:
+    1. Run cluster at steady state (500K ops/sec)
+    2. Crash primary replica abruptly (kill -9)
+    3. Measure time from crash to first write accepted on new primary
+    4. Target: < 3 seconds
+    5. Repeat 10 times, report p50/p99
+
+  Acceptance: p99 < 3 seconds, p50 < 1 second
+
+  F4.2.5 Network Partition Testing:
+  ──────────────────────────────────
+  Procedure:
+    1. 3-replica cluster at steady state
+    2. Partition: Isolate primary + 1 secondary from 1 secondary
+    3. Behavior: Minority partition (1 replica) should NOT accept writes (safe)
+    4. Majority partition (2 replicas) should elect new primary and continue
+    5. Heal partition: All replicas rejoin and resync
+
+  Pass criteria:
+    - Minority partition rejects writes (quorum check)
+    - Majority partition continues accepting writes
+    - Upon heal, minority resync and reach consensus
+    - Zero data loss after heal
+
+  F4.3 SAFETY VERIFICATION (Week 31):
+  ────────────────────────────────────
+
+  Objective: Formal validation of linearizability and consistency
+
+  F4.3.1 Linearizability Proof (1M+ operations):
+  Run VOPR simulator for 1M operations with multiple threads/clients.
+  Verify: All operations execute in total order consistent with client observation.
+  Tool: TigerBeetle's existing history validation logic, adapted for GeoEvents.
+
+  F4.3.2 Mega-Scale Test (10M+ operations):
+  Extended VOPR run with 10M operations.
+  Verify: No memory leaks, no invariant violations, no state divergence.
+  Metrics:
+    - Operations/second sustained: Should be consistent
+    - Memory usage growth: Should be sub-linear (compaction working)
+    - Invariant violations: Must be exactly 0
+
+  F4.3.3 Index Consistency Verification:
+  After each major scenario, verify:
+    - All replicas have identical index hash (deep equality check)
+    - Entity counts match across replicas
+    - Latest timestamp for each entity matches
+
+  Acceptance (Week 31):
+  - 10M operation VOPR run completes without violation
+  - Index consistency verified post-run
+  - All 3 failover scenarios pass
+
+  EXIT CRITERIA (Week 32):
+  - VOPR passes 10M+ operations with 0 invariant violations
+  - View change: p99 < 3 seconds
+  - All replicas converge post-partition
+  - Index consistency verified
+  - Ready for F5 Performance Validation
+  ```
+
+### Requirement: F5 Performance Validation Benchmarks (Weeks 33-38)
+
+The system SHALL validate that all performance targets are met under production conditions.
+
+- **WHEN** conducting performance validation (F5 phase, Week 33+)
+- **THEN** the system SHALL execute these benchmarks:
+  ```
+  F5 PERFORMANCE VALIDATION SPECIFICATION
+  ═══════════════════════════════════════
+
+  F5.1.1 Write Throughput Validation (Target: 1M events/sec per node)
+  ────────────────────────────────────────────────────────────────
+  Procedure:
+    1. Single-node cluster, 3x replication within same node
+    2. Sustained write load: Insert_events in batches of 128
+    3. Target: Achieve 1M operations/second sustained for 5 minutes
+    4. Measure: Actual ops/sec, p99 latency, memory growth
+
+  Pass criteria:
+    - Sustained throughput ≥ 900K ops/sec (90% of target acceptable)
+    - p99 latency ≤ 10ms
+    - Memory growth ≤ 100MB over 5 minutes
+
+  F5.1.2 UUID Lookup Latency (Target: < 500μs p99)
+  ────────────────────────────────────────────────
+  Procedure:
+    1. Pre-populate 1B entities in index
+    2. Random UUID queries, 100 concurrent clients
+    3. Target: < 500μs p99 latency
+    4. Measure: p50, p99, p99.9 latencies
+
+  Pass criteria:
+    - p99 < 500μs
+    - p99.9 < 1000μs
+    - No query ever exceeds 5ms
+
+  F5.1.3 Radius Query Performance (Target: < 50ms p99)
+  ─────────────────────────────────────────────────────
+  Procedure:
+    1. 1B entities, uniform distribution
+    2. Radius queries: 1000 random locations, 100km radius
+    3. Measure: p50, p99, p99.9 latencies
+
+  Pass criteria:
+    - p99 < 50ms
+    - p99.9 < 100ms
+
+  F5.1.4 Polygon Query Performance (Target: < 100ms p99)
+  ──────────────────────────────────────────────────────
+  Procedure:
+    1. 1B entities
+    2. Polygon queries: US state boundaries (50-100 vertices)
+    3. Measure: p50, p99, p99.9 latencies
+
+  Pass criteria:
+    - p99 < 100ms
+    - p99.9 < 200ms
+
+  F5.1.5 Memory Usage Validation
+  ──────────────────────────────
+  Scale validation: Test at 1M, 10M, 100M, 1B entities
+  Expected memory scaling:
+    - 1M: ~300MB (index + LSM)
+    - 10M: ~3GB
+    - 100M: ~30GB
+    - 1B: ~300GB (includes 91.5GB index + LSM tiers)
+
+  Pass criteria: Memory scaling is linear (slope consistent)
+
+  F5.1.6 Replication Lag (Target: < 10ms same region)
+  ────────────────────────────────────────────────────
+  Procedure:
+    1. 3-node cluster, same datacenter
+    2. Write at 1M ops/sec to primary
+    3. Measure: Time from write accepted to replicated on secondaries
+    4. Target: < 10ms p99
+
+  Pass criteria:
+    - p99 lag < 10ms
+    - Lag stable (not growing over time)
+  ```
+
+### Requirement: F5 Multi-Batch Retry Semantics (Weeks 37-38)
+
+The system SHALL define explicit retry logic for multi-batch failures in client SDKs.
+
+- **WHEN** client receives partial_result=true response
+- **THEN** SDKs SHALL implement:
+  ```
+  MULTI-BATCH RETRY SEMANTICS
+  ════════════════════════════
+
+  RESPONSE FORMAT REMINDER:
+  ────────────────────────
+  Multi-batch response includes:
+    - partial_result: bool (true if any batch failed)
+    - failed_batch_index: u8 (index F of first failed batch, 0-255)
+    - num_batches: u16 (total batches attempted)
+
+  RETRY LOGIC (Idempotent Operations - ArcherDB v1):
+  ──────────────────────────────────────────────────
+  All ArcherDB v1 write operations are idempotent (upsert, query, delete).
+  Exception: insert_events is NOT idempotent (avoid in client code).
+
+  IF partial_result = true AND failed_batch_index = F:
+    1. Retry logic: Send batches [F..N] (failed + skipped batches only)
+    2. Skip sending batches [0..F-1] (already succeeded on server)
+    3. Max retries: 3 (exponential backoff: 10ms, 100ms, 1s)
+    4. Verify: Use LWW (last-write-wins) timestamp to detect duplicates
+       (Server deduplicates using entity_id + timestamp)
+
+  CODE EXAMPLE (Pseudo-code):
+  ──────────────────────────
+  fn send_multi_batch(batches: Vec<Batch>) -> Result<Response> {
+    let mut all_batches = batches.clone();
+    let mut retry_count = 0;
+
+    loop {
+      let response = client.send_request(all_batches.clone());
+
+      if response.partial_result {
+        // Batch F failed, retry only [F..N]
+        let failed_idx = response.failed_batch_index as usize;
+        all_batches = all_batches[failed_idx..].to_vec();
+
+        retry_count += 1;
+        if retry_count > 3 {
+          return Err("Max retries exceeded");
+        }
+
+        let backoff_ms = 10 * (10 ^ retry_count);
+        sleep(Duration::from_millis(backoff_ms));
+        continue;
+      }
+
+      return Ok(response);
+    }
+  }
+
+  FAILURE SCENARIOS:
+  ──────────────────
+
+  Scenario A: Validation Failure (One batch has invalid data)
+  Example: Batch 2 has invalid_coordinates error
+  Behavior: partial_result=true, failed_batch_index=2
+  SDK action: Retry only batches [2..N]
+  Important: Batch 2 will fail again unless client fixes data
+  Recommendation: Log error and skip batch 2, or return error to user
+
+  Scenario B: Resource Exhaustion (Message too large)
+  Example: All N batches together exceed message_size_max
+  Behavior: partial_result=true, failed_batch_index=0 (none succeeded)
+  SDK action: Paginate batches into smaller requests, retry each separately
+  Important: Must split original multi-batch into multiple smaller requests
+
+  Scenario C: Replication Lag (Write accepted but not fully replicated)
+  Example: Primary accepted, but replication incomplete
+  Behavior: partial_result=false (success), but replication_lag_ms = 500
+  SDK action: No retry needed, operation succeeded
+  Note: Client can wait via polling /metrics if strong consistency required
+
+  MONITORING & OBSERVABILITY:
+  ──────────────────────────
+  SDK MUST track:
+    - retry_count per request
+    - retry_latency_ms (time spent retrying)
+    - validation_failure_count (how often batches failed validation)
+    - resource_exhaustion_count (how often message too large)
+
+  Alert thresholds:
+    - validation_failure_rate > 1% → Investigate invalid data source
+    - resource_exhaustion_rate > 0.1% → Increase message_size_max or paginate
+    - retry_latency_p99 > 1000ms → Investigate replication health
   ```
 
 ### Related Specifications

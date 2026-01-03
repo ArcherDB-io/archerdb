@@ -2,6 +2,39 @@
 
 ## ADDED Requirements
 
+### Requirement: TTL Expiration Check on Entity Lookup
+
+The system SHALL check TTL validity during query execution and return errors for expired entities.
+
+#### Scenario: TTL expiration during query
+
+- **WHEN** an entity is retrieved from index or LSM during query execution
+- **THEN** the system SHALL check if the entity has expired:
+  ```zig
+  // During query execution, after fetching IndexEntry or GeoEvent:
+  if (entry.ttl_seconds > 0) {
+      const now_seconds = timestamp_ns / 1_000_000_000;
+      const expiry_seconds = entry.creation_timestamp_ns / 1_000_000_000 + entry.ttl_seconds;
+      if (now_seconds > expiry_seconds) {
+          return error.entity_expired; // Do NOT return stale data
+      }
+  }
+  ```
+- **AND** return error code `entity_expired` (code 210 - see error-codes/spec.md)
+- **AND** do NOT return the expired entity to client
+- **AND** log this as a normal operation (not a system error)
+
+#### Scenario: TTL coordination with deletion
+
+- **WHEN** both TTL expiration and explicit deletion (GDPR) can occur
+- **THEN** the system SHALL treat them equivalently:
+  - Both remove entity from RAM index
+  - Both generate LSM tombstones
+  - Both prevent queries from returning the entity
+- **AND** the entity disappears from all queries once TTL is exceeded (same as explicit delete)
+
+---
+
 ### Requirement: Three-Phase Execution Model
 
 The system SHALL implement TigerBeetle's three-phase execution model: prepare, prefetch, and commit (execute) to ensure deterministic behavior and optimal I/O patterns.
@@ -92,7 +125,6 @@ The system SHALL use Google S2 geometry library for spatial indexing and query d
 - **THEN** it SHALL be converted to an S2 cell ID at level 30 (maximum precision)
 - **AND** the cell ID SHALL be a 64-bit unsigned integer
 - **AND** conversion uses: `S2.lat_lon_to_cell_id(lat_nano, lon_nano, 30)`
-- **CLARIFICATION**: Storage ALWAYS uses level 30 for maximum precision (~7.5mm). The "level 18" mentioned in query decomposition is for QUERY COVERING, not storage. Queries use coarser levels (up to 18) to generate efficient cell ranges that cover the query region, then scan the level-30 data within those ranges.
 
 #### Scenario: Cell hierarchy
 
@@ -105,6 +137,23 @@ The system SHALL use Google S2 geometry library for spatial indexing and query d
 - **WHEN** a polygon or circle region is queried
 - **THEN** the S2 RegionCoverer SHALL decompose it into a set of cell ID ranges
 - **AND** the number of cells SHALL be bounded by s2_max_cells constant (default: 16)
+
+#### Design Note: Storage Level vs Query Level Distinction
+
+**Important**: ArcherDB uses **two different S2 cell levels** for different purposes:
+
+1. **Storage Level**: ALWAYS **level 30** (~7.5mm precision)
+   - All GeoEvents are indexed at level 30 in the composite ID
+   - Enables precise spatial locality in LSM key ordering
+   - Cannot be changed at runtime (baked into data format)
+
+2. **Query Level**: VARIES **1-30** depending on query radius/area
+   - Query decomposition uses coarser levels (e.g., level 18 for ~150m radius)
+   - Efficient cell range generation minimizes cells examined
+   - Query level is ONLY used during planning; data is always level 30
+   - Post-filter phase performs exact geometry tests on level-30 results
+
+**Why Two Levels?**: Storage level 30 provides precision and locality; query levels 1-30 provide query efficiency. This decoupling is key to ArcherDB's performance model.
 
 ### Requirement: S2 Level Selection Algorithm
 
@@ -281,8 +330,21 @@ The system SHALL provide explicit guidance for selecting S2 parameters based on 
   Target values:
   - s2_cells_count: median < 8, p99 < 16
   - post_filter_ratio: median < 1.5, p99 < 5.0
-  - covering_duration: median < 100μs, p99 < 1ms
+  - covering_duration: median < 100μs, p99 < 1ms (assumes radius/simple polygon)
   ```
+
+#### Scenario: S2 covering complexity assumptions
+
+- **WHEN** evaluating S2 covering performance
+- **THEN** the targets (covering_duration < 1ms p99) assume:
+  - **Radius queries**: Covering produces < 16 cells (median < 8)
+  - **Simple polygons**: < 50 vertices, < 10 cells (median ~5)
+  - **Moderate polygons**: 50-100 vertices, < 200 cells (median ~50)
+- **AND** more complex geometries have higher covering costs:
+  - **Complex polygons** (100-1000 vertices): Covering ~200-1000 cells, duration ~2-5ms
+  - **Very complex polygons** (1000-10000 vertices): Covering > 1000 cells, duration 5-20ms
+  - These exceed the < 1ms target and reduce overall query performance
+- **AND** S2 library implementation is deterministic (Chebyshev/CORDIC for trig) per Decision 3a
 
 ### Requirement: S2 Implementation Validation
 
@@ -486,6 +548,254 @@ The system SHALL validate S2 implementation using deterministic invariants and g
   - Option B: Use integer-only S2 approximation (accuracy trade-off)
   - Option C: Defer S2 computation to primary, replicas verify hash only
 
+#### Scenario: S2 Covering Empirical Evidence Test Suite
+
+The system SHALL validate S2 covering performance and complexity empirically using a comprehensive test suite.
+
+- **WHEN** implementing radius and polygon queries
+- **THEN** the test suite SHALL validate:
+  ```
+  S2 COVERING EMPIRICAL EVIDENCE TEST SUITE
+  ═════════════════════════════════════════
+
+  OBJECTIVE: Validate that empirical S2 covering times and cell counts match specifications.
+
+  TEST INFRASTRUCTURE:
+  ───────────────────
+  1. Benchmark harness (measure wall-clock time)
+     - Warm-up iterations (discard JIT/cache effects)
+     - 10,000+ iterations per test case
+     - Report: mean, p50, p99, p99.9 latencies
+     - Record: number of cells in covering, actual covering time
+
+  2. Test case library (testdata/s2/covering_test_cases.json)
+     - Geometry type (radius, simple polygon, complex polygon)
+     - Complexity class (simple, moderate, complex, very complex)
+     - Coordinates and parameters
+     - Expected cell count range (min-max)
+     - Expected latency range (p99 bounds)
+
+  3. Platform matrix
+     - Linux x86_64, macOS ARM64, Linux ARM64 (at minimum)
+     - Record hardware profile (CPU model, frequency)
+     - Verify results are within ±15% of baseline platform (x86-64 Linux is baseline):
+       Example: If x86-64 result is 100μs, ARM64/macOS must be within 85-115μs
+       Example: If x86-64 result is 100μs, ARM64 measured at 150μs would FAIL (50% > ±15%)
+       (Accounts for CPU instruction set differences and clock differences)
+
+  4. Metrics collection
+     - archerdb_s2_covering_duration_seconds histogram
+     - archerdb_s2_covering_cell_count histogram
+     - archerdb_s2_covering_max_cells_exceeded_total counter
+
+  COVERING COMPLEXITY CLASSES:
+  ────────────────────────────
+
+  Class 1: SIMPLE (single-cell or few-cell coverings)
+  ─────────────────────────────────────────────────
+  Geometry: Small radius or simple convex polygon
+
+  Test Cases:
+  - Radius 10m at (40.7128, -74.0060) [NYC]
+    Expected: 1 cell at level 30
+    Expected latency: < 50μs (p99)
+    Expected cell count: 1
+
+  - Radius 100m at (51.5074, -0.1278) [London]
+    Expected: 1-4 cells at level 29-30
+    Expected latency: < 75μs (p99)
+    Expected cell count: < 5
+
+  - Triangle: (40°, -100°), (40°, -90°), (35°, -95°)
+    Expected: Simple 3-vertex polygon
+    Expected latency: < 100μs (p99)
+    Expected cell count: < 50
+
+  Success Criteria (ALL MUST PASS):
+  - Measured latency ≤ 100μs (p99)
+  - Cell count ≤ 50
+  - Cross-platform consistency: Within ±15% of x86-64 Linux baseline (see platform matrix)
+
+  Class 2: MODERATE (tens to hundreds of cells)
+  ───────────────────────────────────────────
+  Geometry: Medium radius or moderate polygon
+
+  Test Cases:
+  - Radius 1km at (35.6762, 139.6503) [Tokyo]
+    Expected: 50-100 cells at mixed levels
+    Expected latency: < 500μs (p99)
+    Expected cell count: 50-150
+
+  - Radius 5km at (48.8566, 2.3522) [Paris]
+    Expected: 100-300 cells
+    Expected latency: < 800μs (p99)
+    Expected cell count: 100-400
+
+  - Pentagon: 50-vertex regular polygon at (37.7749, -122.4194) [SF]
+    Expected: ~100-200 cells
+    Expected latency: < 750μs (p99)
+    Expected cell count: 100-300
+
+  Success Criteria:
+  - Measured latency ≤ 1ms (p99)
+  - Cell count: 50-500
+  - Covering efficiency > 80% (covering_cells / bounding_box_cells)
+
+  Class 3: COMPLEX (hundreds to 1000+ cells)
+  ──────────────────────────────────────────
+  Geometry: Large radius or complex polygon
+
+  Test Cases:
+  - Radius 50km at (40.7128, -74.0060) [NYC metro]
+    Expected: 500-1000 cells
+    Expected latency: < 2ms (p99)
+    Expected cell count: 500-1500
+
+  - Radius 100km at equator
+    Expected: 1000-2000 cells
+    Expected latency: < 5ms (p99)
+    Expected cell count: 1000-3000
+
+  - Complex polygon: 200-vertex polygon (e.g., US state boundary simplified)
+    Expected: ~500-2000 cells
+    Expected latency: < 5ms (p99)
+    Expected cell count: 500-2500
+
+  - Polygon spanning antimeridian: vertices at lon ±170° to ±175°
+    Expected: Proper antimeridian handling
+    Expected cell count: < 3000
+    Expected latency: < 10ms (p99)
+
+  Success Criteria:
+  - Measured latency ≤ 5-10ms (p99) depending on geometry
+  - Cell count ≤ 3000 (max_cells limit)
+  - No truncation errors (max_cells_exceeded = false)
+
+  Class 4: VERY COMPLEX (geometries near max_cells limit)
+  ─────────────────────────────────────────────────────
+  Geometry: Very large radius or highly complex polygon
+
+  Test Cases:
+  - Radius 500km (continental scale)
+    Expected: 2000-8000 cells
+    Expected latency: < 20ms (p99)
+    Note: May approach or hit max_cells limit
+
+  - Radius 1000km (near half-globe)
+    Expected: 5000-10000+ cells, possible truncation
+    Expected latency: < 50ms (p99)
+    Note: Truncation is acceptable; truncate_cells=true
+
+  - Polygon with 500+ vertices (complex coastline)
+    Expected: 2000-5000 cells
+    Expected latency: < 25ms (p99)
+
+  - Global equatorial zone (+/- 30° latitude)
+    Expected: Entire equatorial band
+    Expected cell count: > 10,000 (definite truncation)
+    Expected latency: < 100ms (p99)
+    Note: This exceeds targets; documented as NOT SUITABLE for p99 < 50ms
+
+  Success Criteria (PASS-with-Limitation):
+  - Measured latency ≤ 20-100ms (p99) depending on geometry
+    [Note: PASS criterion, but exceeds typical query target (<50ms). Document in query planning guide.]
+  - Truncation acceptance:
+    IF cell count exceeds max_cells (8192):
+      THEN PASS if: (a) truncation is deterministic (always same cells for same geometry)
+                     (b) cell count is fully populated up to max_cells (no gaps in covering)
+                     (c) truncation is documented in query result (truncated_by_max_cells flag)
+      THEN FAIL if: (a) truncation is nondeterministic (different cells for same geometry)
+                     (b) partial covering returned (fewer than max_cells when more cells exist)
+  - Cross-platform consistency: Within ±15% of x86-64 Linux baseline
+  - Query Planner Guidance:
+    - Geometries in this class should be flagged as "exceeds performance targets"
+    - Recommend using smaller radii or simplified polygon boundaries for typical (<50ms) queries
+    - Suitable for background analytics or reporting, not real-time transactional queries
+
+  EDGE CASES (all complexity classes):
+  ──────────────────────────────────────
+
+  1. Radius 0m (point query)
+     Expected: 1 cell at level 30
+     Latency: < 50μs
+
+  2. Exact pole (lat = ±90°)
+     Expected: Valid covering at any level, no crash
+     Latency: < 100μs
+
+  3. Antimeridian crossing
+     Expected: Proper wrapping, no cell duplication
+     Cell count: Matches non-crossing equivalent
+
+  4. Very large radius (> 10,000 km)
+     Expected: Truncation at max_cells (safe degradation)
+     Latency: < 100ms (p99)
+
+  5. Degenerate polygon (< 3 vertices, self-intersecting)
+     Expected: Rejected with validation error (or skip if already validated)
+     Latency: N/A (error path, not measured)
+
+  MEASUREMENT PROCEDURE:
+  ──────────────────────
+
+  For each test case:
+
+  1. Prepare geometry and parameters
+  2. Run 1000 warm-up iterations (discard)
+  3. Run 10,000+ measurement iterations
+     - Measure `archerdb_s2_covering_duration_seconds` histogram
+     - Record actual cell count returned
+  4. Collect statistics: mean, p50, p99, p99.9 latencies
+  5. Collect metrics: cell_count, max_cells_exceeded, truncated
+  6. Repeat on 3+ platforms
+  7. Compare results: Verify latency ±15%, cell count exact match
+
+  Success: All measured values within expected bounds
+  Failure: > 5% of iterations exceed p99 target
+
+  VALIDATION CHECKLIST:
+  ──────────────────────
+
+  □ Class 1 (SIMPLE) latencies < 100μs (p99)
+  □ Class 2 (MODERATE) latencies < 1ms (p99)
+  □ Class 3 (COMPLEX) latencies < 5-10ms (p99)
+  □ Class 4 (VERY COMPLEX) documented as exceeding targets
+
+  □ Cell counts within expected ranges for each class
+  □ Antimeridian geometries produce correct cell counts
+  □ Pole geometries handled without crashes
+  □ Truncation is deterministic (same input → same cells)
+
+  □ Cross-platform consistency (±15% latency variance acceptable)
+  □ No platform-specific covering divergence
+  □ Metrics correctly recorded in Prometheus
+
+  □ Edge cases explicitly tested and documented
+  □ Performance assumptions validated empirically
+  □ Degradation graceful (truncation acceptable, no corruption)
+
+  REGRESSION TESTING:
+  ──────────────────
+
+  After each code change to S2 covering:
+  1. Run full test suite (all 4 complexity classes)
+  2. Compare to baseline (previous runs)
+  3. Alert if any latency exceeds baseline by > 10% (p99)
+  4. Alert if cell count diverges from expected
+  5. Maintain historical benchmark results in `/testdata/s2/benchmarks_log.tsv`
+
+  DOCUMENTATION REQUIREMENTS:
+  ──────────────────────────
+
+  Each test case SHALL document:
+  - Geometry type and parameters
+  - Why this test case matters (coverage gap, edge case, etc.)
+  - Expected behavior
+  - Maximum acceptable latency (p99)
+  - Expected cell count range
+  - Known limitations or degradations
+  ```
+
 #### Scenario: S2 cross-replica verification
 
 - **WHEN** a replica receives a prepare with GeoEvents
@@ -504,6 +814,26 @@ The system SHALL validate S2 implementation using deterministic invariants and g
 - **AND** the system SHALL NOT use `clock.now_synchronized()` or any local wall clock during execution.
 - **AND** `state_machine.commit()` receives the timestamp; this value MUST be passed down to the query engine filter logic.
 - **AND** this ensures that a query executing on Replica A (fast) and Replica B (slow) produces identical results even if an event expires in the interim.
+
+#### Scenario: Timestamp Threading Through Three Phases
+
+- **WHEN** a query (radius/polygon/lookup) is executed
+- **THEN** the consensus timestamp MUST be threaded as:
+  1. **Prepare Phase** (primary only):
+     - `prepare(operation, body) -> prepare_timestamp` (derived from accumulated delta_ns)
+     - Timestamp assigned before consensus
+  2. **Prefetch Phase**:
+     - `prefetch(callback, op, operation, body, prepare_timestamp)`
+     - Timestamp optionally passed for context; not used for expiration checks
+  3. **Commit/Execute Phase** (all replicas):
+     - `commit(client, op, consensus_timestamp, operation, body, output)`
+     - VSR delivers `consensus_timestamp` from Prepare phase after consensus
+     - Query engine uses `consensus_timestamp` for all TTL expiration checks:
+       - UUID Lookup: Check IndexEntry.ttl_seconds vs consensus_timestamp
+       - Radius Query: Skip expired events using consensus_timestamp
+       - Polygon Query: Skip expired events using consensus_timestamp
+- **AND** each query result MUST document the consensus_timestamp used (for debugging, audit trail).
+- **AND** replication is deterministic: Replica A and B with identical state produce identical results for the same query at the same consensus_timestamp.
 
 ### Requirement: UUID Lookup Query
 
@@ -531,6 +861,78 @@ The system SHALL support O(1) lookup of the latest location for a specific entit
 - **WHEN** prefetching for lookup operations
 - **THEN** the system SHALL enqueue `latest_id` values for prefetch
 - **AND** cache blocks containing the corresponding GeoEvents
+
+### Requirement: Latest Events Query (query_latest)
+
+The system SHALL support retrieving the N most recent events across the entire database for replay, debugging, and monitoring purposes.
+
+#### Scenario: Basic query_latest operation
+
+- **WHEN** `query_latest(limit, group_id_filter, cursor_timestamp)` is called
+- **THEN** the system SHALL:
+  1. Scan LSM tree in reverse chronological order (newest first)
+  2. If `group_id_filter != 0`: filter by group_id
+  3. If `cursor_timestamp != 0`: start from events with timestamp < cursor_timestamp
+  4. Return up to `limit` events (max 81,000 per page)
+  5. Order by: timestamp DESC, then entity_id ASC (deterministic tie-break)
+- **AND** this query does NOT use spatial indexing (pure temporal scan)
+- **AND** deleted entities (tombstones) SHALL be excluded
+
+#### Scenario: query_latest request format
+
+- **WHEN** encoding query_latest request (operation 0x14 / 20)
+- **THEN** body SHALL contain:
+  ```
+  [limit: u32]              # Max results (default 1000, max 81000)
+  [group_id: u64]           # Optional group filter (0 = all groups)
+  [cursor_timestamp: u64]   # For pagination (0 = start from latest)
+  [reserved: [48]u8]        # Alignment
+  ```
+
+#### Scenario: query_latest response format
+
+- **WHEN** query_latest completes
+- **THEN** response SHALL contain:
+  ```
+  QueryResponse {
+    count: u32,            # number of results returned
+    has_more: u8,          # 1 if more results available
+    reserved: [3]u8,       # Alignment
+    // followed by count × GeoEvent structs (128 bytes each)
+  }
+  ```
+
+#### Scenario: Use cases for query_latest
+
+- **WHEN** query_latest is appropriate
+- **THEN** typical scenarios are:
+  - **Event replay**: Stream processing, ETL pipelines (cursor-based pagination)
+  - **Debugging**: Investigate recent activity (latest 100-1000 events)
+  - **Monitoring dashboards**: Display recent events in admin UI
+  - **Compliance audits**: Retrieve recent activity logs for specific group_id
+- **AND** query_latest is NOT for production spatial queries (use radius/polygon instead)
+- **AND** large-scale replay SHOULD use group_id partitioning to parallelize
+
+#### Scenario: Performance characteristics
+
+- **WHEN** executing query_latest
+- **THEN** performance SHALL be:
+  - Latency: p99 < 100ms for limit=1000 (LSM L0 scan)
+  - Latency: p99 < 500ms for limit=10000 (may hit L1)
+  - Throughput: 10,000+ events/sec for sequential replay with pagination
+- **AND** this is slower than UUID lookup (no index) but faster than full spatial scan
+
+#### Scenario: Pagination with cursor
+
+- **WHEN** paginating through results
+- **THEN** client SHALL:
+  1. Make initial request with cursor_timestamp=0
+  2. Receive up to 81,000 events ordered by timestamp DESC
+  3. Extract lowest timestamp T from results
+  4. Make next request with cursor_timestamp=T
+  5. Repeat until has_more=0
+- **AND** concurrent writes during pagination may cause results to appear in later pages
+- **AND** this is acceptable for debugging/replay use cases
 
 ### Requirement: Radius Query
 
@@ -892,14 +1294,35 @@ The system SHALL meet aggressive performance targets matching TigerBeetle-class 
 - **THEN** the system SHALL achieve:
   - p99 < 50ms (sequential scan with prefetch)
   - p50 < 20ms
-- **AND** this assumes S2 covering produces <16 cell ranges
+- **AND** this assumes:
+  - S2 covering produces <16 cell ranges (documented empirically)
+  - **HOT DATA assumption**: Query results are LSM L0/L1 cached (recent writes/queries)
+  - Sequential read throughput: 3GB/s (typical NVMe)
+  - Post-filter cost (S2 cell → actual radius): <5ms for typical queries
+  - S2 covering duration: <1ms (median <100μs per line 299)
+- **AND** cold-data queries (uncached entities) may exceed 50ms:
+  - Penalty: +40-50ms for additional disk seeks/sequential reads
+  - Recommend caching via read-ahead prefetch for known-hot spatial regions
+- **AND** worst-case polygon queries (10K vertices, scattered entities) may exceed 50ms/100ms targets
 
 #### Scenario: Polygon query latency target
 
 - **WHEN** performing polygon queries on complex shapes
 - **THEN** the system SHALL achieve:
-  - p99 < 100ms (more complex than radius due to irregular covering)
+  - p99 < 100ms for **moderate-complexity polygons** (< 100 vertices, <500 covering cells)
   - p50 < 40ms
+- **AND** this assumes:
+  - Polygon complexity: < 100 vertices for p99 < 100ms
+  - S2 covering produces < 500 cells (typical covering, not worst-case)
+  - Post-filter cost (containment check): <10ms for typical polygons
+  - HOT DATA assumption: Query results are LSM L0/L1 cached
+- **AND** **very complex polygons** (10K vertices, 10K+ covering cells):
+  - S2 covering: up to 1ms p99 (line 300)
+  - Cell scan: ~20ms (thousands of cells × 100-200μs per cell)
+  - Post-filter containment: ~30-50ms (complex point-in-polygon tests)
+  - **Expected p99: 50-100ms** (may exceed 100ms target)
+  - Recommend using radius queries for simple cases; reserve polygons for moderate complexity
+- **AND** clients SHOULD batch related queries to amortize covering cost
 
 #### Scenario: View change failover target
 
@@ -997,6 +1420,12 @@ The system SHALL enforce limits on query result sets to prevent resource exhaust
 - **THEN** the system SHALL:
   - Enforce maximum 10,000 vertices per polygon
   - Return error `polygon_too_complex` if exceeded
+- **AND** performance characteristics vary by polygon complexity:
+  - **Simple polygons** (< 50 vertices): S2 covering ~5-10 cells, post-filter ~2ms, **p99 < 30ms**
+  - **Moderate polygons** (50-100 vertices): S2 covering ~50-200 cells, post-filter ~5-10ms, **p99 < 100ms**
+  - **Complex polygons** (100-1000 vertices): S2 covering ~200-1000 cells, post-filter ~20-50ms, **p99: 50-150ms** (may exceed target)
+  - **Very complex polygons** (1000-10000 vertices): S2 covering > 1000 cells, post-filter > 50ms, **p99: 100-300ms** (expect significant delays)
+- **AND** recommendation: Use radius queries for latency-critical operations; reserve polygons for analytical workloads
 
 #### Scenario: Maximum radius
 
@@ -1386,6 +1815,140 @@ The system SHALL implement comprehensive error handling with clear propagation s
   - **Network partition**: Continue serving reads from replicas with quorum
 - **AND** graceful degradation ensures partial availability over complete failure
 
+### Requirement: Cold-Start Performance SLA
+
+The system SHALL define and meet performance targets for cluster cold starts (full restart) across three distinct recovery scenarios based on checkpoint validity and data volume.
+
+#### Scenario: Cold start with valid recent checkpoint
+
+- **WHEN** the cluster restarts with a valid index checkpoint (< 2 minutes old)
+- **THEN** recovery SHALL complete in:
+  - **p50**: < 20 seconds (checkpoint load + partial WAL replay)
+  - **p99**: < 60 seconds (checkpoint load + full WAL replay if needed)
+- **AND** the system SHALL be able to accept queries as soon as VSR quorum is formed
+- **AND** recovery operations (checkpoint load, WAL replay) SHALL NOT block query serving
+- **AND** this is the expected case in production (nominal recovery path)
+
+#### Scenario: Cold start with missing or old checkpoint
+
+- **WHEN** the cluster restarts with no valid checkpoint or checkpoint > 5 minutes old
+- **THEN** recovery SHALL fall back to LSM replay:
+  - **p50**: < 15 seconds (small LSM scan for recent changes)
+  - **p99**: < 45 seconds (scan through L0 + partial L1 tables)
+- **AND** this path occurs ~1-2% of the time (if checkpointing fails)
+- **AND** operators SHALL be alerted if `archerdb_index_checkpoint_age_seconds > 300`
+
+#### Scenario: Cold start with corrupted checkpoint (worst case)
+
+- **WHEN** the cluster restarts with corrupted or unavailable checkpoint
+- **THEN** recovery SHALL fall back to full LSM rebuild:
+  - **128GB data file (1B entities)**: < 2 minutes (p99)
+    - Sequential disk read: ~45 seconds at 3GB/s
+    - Index insertion overhead: ~15 seconds
+  - **16TB data file (cluster max capacity)**: < 2 hours (p99)
+    - Sequential disk read: ~89 minutes at 3GB/s
+    - Index insertion overhead: ~30 minutes
+- **AND** this path is ONLY expected if checkpoint storage fails
+- **AND** cluster SHALL continue serving reads (replicas) during rebuild on primary
+- **AND** operators SHALL monitor for `archerdb_recovery_path_taken{path="rebuild"}` increments
+
+#### Scenario: Partial cluster restart (single node failure)
+
+- **WHEN** a single replica fails and restarts while others continue
+- **THEN** the restarting node SHALL:
+  - Trigger VSR view change if primary fails (quorum election)
+  - Join as backup and perform catch-up (see replication-engine/spec.md)
+  - Perform recovery in parallel with catch-up to minimize availability impact
+- **AND** cluster availability SHALL NOT be affected (quorum remains active)
+- **AND** recovery latency targets are the same as full cluster restart (above)
+
+#### Scenario: Rolling restart (maintenance)
+
+- **WHEN** operators perform controlled rolling restart (one replica at a time)
+- **THEN** the system SHALL:
+  - Maintain quorum at all times (restart only backups first, then primary last)
+  - Each restarting node performs recovery independently (see scenarios above)
+  - Other nodes continue to serve queries and replicate
+- **AND** operators SHOULD use `--wait-for-checkpoint` flag to ensure fast recovery:
+  - Blocks node startup until checkpoint age < 60 seconds
+  - Prevents worst-case 2-hour rebuild scenario
+- **AND** cluster availability SHALL NOT decrease during rolling restart
+
+#### Scenario: Cold-start monitoring and alerting
+
+- **WHEN** tracking cold start performance
+- **THEN** the system SHALL expose metrics:
+  ```
+  # Index checkpoint age (seconds since last successful checkpoint)
+  archerdb_index_checkpoint_age_seconds gauge
+
+  # Number of operations between index checkpoint and VSR stable
+  archerdb_index_checkpoint_lag_ops gauge
+
+  # Recovery path taken on last startup (wal/lsm/rebuild)
+  archerdb_recovery_path_taken{path="wal"|"lsm"|"rebuild"} counter
+
+  # Duration of recovery operation
+  archerdb_recovery_duration_seconds histogram
+
+  # Number of events processed during recovery
+  archerdb_recovery_events_processed counter
+
+  # Throughput of recovery (events/sec)
+  archerdb_recovery_throughput_events_per_sec gauge
+  ```
+- **AND** alert thresholds SHALL be:
+  - **Warning** (yellow): `index_checkpoint_age_seconds > 120` (2 minutes)
+  - **Critical** (red): `index_checkpoint_age_seconds > 300` (5 minutes)
+  - **Critical** (red): `recovery_path_taken{path="rebuild"}` increments (full rebuild triggered)
+- **AND** operators SHALL investigate if recovery takes > 50% of p99 target
+
+#### Scenario: Preventing worst-case recovery
+
+- **WHEN** ensuring fast cold starts
+- **THEN** operators SHALL:
+  1. **Enable automatic checkpointing** (default: every 60 seconds)
+  2. **Monitor `index_checkpoint_age_seconds` continuously** (add to dashboards)
+  3. **Alert if checkpointing stalls** (age increases without bound)
+  4. **Provision sufficient disk space** for checkpoint (≥256GB for 1B entities)
+  5. **Use hardware with fast NVMe** (>2GB/s sequential write for checkpoints)
+  6. **Test recovery procedures regularly**:
+     - Kill -9 primary node, measure recovery time
+     - Simulate checkpoint corruption, measure rebuild time
+     - Use chaos testing to validate recovery under failure conditions
+  7. **Configure `--wait-for-checkpoint` in production**:
+     - Ensures nodes don't start with very old checkpoints
+     - Prevents accidental 2-hour rebuilds during maintenance
+- **AND** operators SHALL maintain runbook: "How to Recover from Checkpoint Corruption"
+
+#### Scenario: Recovery SLA trade-off guidance
+
+- **WHEN** tuning recovery parameters
+- **THEN** the following guidance SHALL apply:
+  ```
+  ┌─────────────────────────────────────────────────────────────────────────────┐
+  │                    RECOVERY TIME TRADE-OFF TABLE                             │
+  ├─────────────────────────┬──────────────┬──────────┬─────────────────────────┤
+  │ Configuration           │ p99 Time     │ Risk     │ When to Use             │
+  ├─────────────────────────┼──────────────┼──────────┼─────────────────────────┤
+  │ Checkpoint every 30s    │ < 30s        │ Medium   │ Very strict SLA         │
+  │ (Default) every 60s     │ < 60s        │ Low      │ Most deployments        │
+  │ Checkpoint every 120s   │ < 2min       │ Medium   │ Cost-sensitive ops      │
+  │ Checkpoint every 300s   │ < 5min       │ High     │ NOT recommended         │
+  │ Checkpoint disabled     │ < 2 hours    │ EXTREME  │ Dev/test only           │
+  └─────────────────────────┴──────────────┴──────────┴─────────────────────────┘
+
+  Recommendation:
+  - Production: Use default (60s checkpoint interval, < 60s p99)
+  - Staging: 60-120s (cost-conscious, accept higher p99)
+  - Development: Disable checkpointing (rebuild on every restart acceptable)
+
+  Memory trade-off:
+  - Checkpoint requires 64MB scratch buffer per 1B entities
+  - Negligible compared to 128GB index size
+  - Do NOT disable checkpointing to save this memory
+  ```
+
 ### Related Specifications
 
 - See `specs/error-codes/spec.md` for complete error code enumeration and metadata
@@ -1394,3 +1957,4 @@ The system SHALL implement comprehensive error handling with clear propagation s
 - See `specs/replication/spec.md` for VSR error conditions and view changes
 - See `specs/storage-engine/spec.md` for storage layer error handling
 - See `specs/observability/spec.md` for error metrics and logging requirements
+- See `specs/hybrid-memory/spec.md` for index recovery and checkpoint details
