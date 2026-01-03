@@ -703,6 +703,12 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         /// - Returns result for each entity (ok, not_found, invalid_id)
         /// - LSM tombstones generated separately in F2.5.3
         ///
+        /// Deterministic Ordering (F2.5.4):
+        /// This function processes entity_ids in the order they appear in the input
+        /// batch. Since VSR consensus ensures all replicas receive the same batch
+        /// with the same ordering, deletion order is deterministic across replicas.
+        /// No timestamps or external state affect the processing order.
+        ///
         /// Arguments:
         /// - input: Array of u128 entity_ids to delete
         /// - output: Buffer for DeleteEntitiesResult array
