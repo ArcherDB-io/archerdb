@@ -163,11 +163,12 @@ test "S2 module: golden vector validation" {
 
     const file = std.fs.cwd().openFile(golden_path, .{}) catch |err| {
         // Skip test if golden vectors file not found (e.g., in minimal builds)
-        if (err == error.FileNotFound) {
-            std.debug.print("Skipping golden vector test: {s} not found\n", .{golden_path});
-            return;
-        }
-        return err;
+        return switch (err) {
+            error.FileNotFound => {
+                std.debug.print("Skipping golden vector test: {s} not found\n", .{golden_path});
+            },
+            else => err,
+        };
     };
     defer file.close();
 
@@ -256,7 +257,7 @@ test "S2 module: golden vector validation" {
         }
     }
 
-    std.debug.print("Golden vector validation: {d} tests, {d} errors\n", .{ test_count, error_count });
+    std.debug.print("Golden validation: {d} tests, {d} errors\n", .{ test_count, error_count });
     std.debug.print("Errors by level:\n", .{});
     for (0..31) |l| {
         if (level_counts[l] > 0) {

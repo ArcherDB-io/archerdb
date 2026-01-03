@@ -33,7 +33,6 @@
 //! post-filter cost acceptable.
 
 const std = @import("std");
-const assert = std.debug.assert;
 const s2_index = @import("s2_index.zig");
 const S2 = s2_index.S2;
 
@@ -88,16 +87,17 @@ pub const PostFilterStats = struct {
 
     /// Export statistics in Prometheus format.
     pub fn toPrometheus(self: PostFilterStats, writer: anytype) !void {
-        try writer.print("archerdb_postfilter_candidates {d}\n", .{self.candidates_from_coarse});
-        try writer.print("archerdb_postfilter_distance_passed {d}\n", .{self.passed_distance_filter});
-        try writer.print("archerdb_postfilter_distance_failed {d}\n", .{self.failed_distance_filter});
-        try writer.print("archerdb_postfilter_polygon_passed {d}\n", .{self.passed_polygon_filter});
-        try writer.print("archerdb_postfilter_polygon_failed {d}\n", .{self.failed_polygon_filter});
-        try writer.print("archerdb_postfilter_deleted_filtered {d}\n", .{self.filtered_by_deletion});
-        try writer.print("archerdb_postfilter_timestamp_filtered {d}\n", .{self.filtered_by_timestamp});
-        try writer.print("archerdb_postfilter_ttl_filtered {d}\n", .{self.filtered_by_ttl});
-        try writer.print("archerdb_postfilter_distance_fp_rate {d:.4}\n", .{self.distanceFalsePositiveRate()});
-        try writer.print("archerdb_postfilter_polygon_fp_rate {d:.4}\n", .{self.polygonFalsePositiveRate()});
+        const s = self;
+        try writer.print("archerdb_pf_candidates {d}\n", .{s.candidates_from_coarse});
+        try writer.print("archerdb_pf_dist_passed {d}\n", .{s.passed_distance_filter});
+        try writer.print("archerdb_pf_dist_failed {d}\n", .{s.failed_distance_filter});
+        try writer.print("archerdb_pf_poly_passed {d}\n", .{s.passed_polygon_filter});
+        try writer.print("archerdb_pf_poly_failed {d}\n", .{s.failed_polygon_filter});
+        try writer.print("archerdb_pf_deleted {d}\n", .{s.filtered_by_deletion});
+        try writer.print("archerdb_pf_ts_filtered {d}\n", .{s.filtered_by_timestamp});
+        try writer.print("archerdb_pf_ttl_filtered {d}\n", .{s.filtered_by_ttl});
+        try writer.print("archerdb_pf_dist_fp {d:.4}\n", .{s.distanceFalsePositiveRate()});
+        try writer.print("archerdb_pf_poly_fp {d:.4}\n", .{s.polygonFalsePositiveRate()});
     }
 };
 
@@ -306,7 +306,14 @@ pub const PostFilterContext = struct {
         }
 
         // Check distance (most expensive, do last)
-        if (!self.checkDistance(point_lat_nano, point_lon_nano, center_lat_nano, center_lon_nano, radius_mm)) {
+        const in_radius = self.checkDistance(
+            point_lat_nano,
+            point_lon_nano,
+            center_lat_nano,
+            center_lon_nano,
+            radius_mm,
+        );
+        if (!in_radius) {
             return .fail_distance;
         }
 
@@ -560,7 +567,7 @@ test "PostFilterStats: prometheus export" {
     try stats.toPrometheus(stream.writer());
 
     const output = stream.getWritten();
-    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_postfilter_candidates 100") != null);
-    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_postfilter_distance_passed 80") != null);
-    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_postfilter_distance_failed 20") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_pf_candidates 100") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_pf_dist_passed 80") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_pf_dist_failed 20") != null);
 }

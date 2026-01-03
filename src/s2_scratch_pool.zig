@@ -116,7 +116,7 @@ pub const PoolStats = struct {
 /// S2 scratch buffer pool.
 pub fn S2ScratchPoolType(comptime pool_size: usize, comptime buffer_size: usize) type {
     return struct {
-        const Self = @This();
+        
 
         /// The underlying memory block
         memory: []align(std.heap.page_size_min) u8,
@@ -131,7 +131,7 @@ pub fn S2ScratchPoolType(comptime pool_size: usize, comptime buffer_size: usize)
         stats: PoolStats,
 
         /// Initialize the pool by allocating all buffers.
-        pub fn init(allocator: Allocator) !Self {
+        pub fn init(allocator: Allocator) !@This() {
             const total_size = pool_size * buffer_size;
 
             const memory = try allocator.alignedAlloc(
@@ -141,7 +141,7 @@ pub fn S2ScratchPoolType(comptime pool_size: usize, comptime buffer_size: usize)
             );
             errdefer allocator.free(memory);
 
-            return Self{
+            return @This(){
                 .memory = memory,
                 .in_use = [_]bool{false} ** pool_size,
                 .free_count = pool_size,
@@ -150,7 +150,7 @@ pub fn S2ScratchPoolType(comptime pool_size: usize, comptime buffer_size: usize)
         }
 
         /// Deinitialize the pool, freeing all memory.
-        pub fn deinit(self: *Self, allocator: Allocator) void {
+        pub fn deinit(self: *@This(), allocator: Allocator) void {
             // All buffers should be released before deinit
             assert(self.free_count == pool_size);
             allocator.free(self.memory);
@@ -161,7 +161,7 @@ pub fn S2ScratchPoolType(comptime pool_size: usize, comptime buffer_size: usize)
         ///
         /// Returns null if the pool is exhausted (all buffers in use).
         /// The caller is responsible for releasing the buffer when done.
-        pub fn acquire(self: *Self) ?ScratchBuffer {
+        pub fn acquire(self: *@This()) ?ScratchBuffer {
             self.stats.acquires += 1;
 
             if (self.free_count == 0) {
@@ -195,7 +195,7 @@ pub fn S2ScratchPoolType(comptime pool_size: usize, comptime buffer_size: usize)
         }
 
         /// Release a scratch buffer back to the pool.
-        pub fn release(self: *Self, buffer: ScratchBuffer) void {
+        pub fn release(self: *@This(), buffer: ScratchBuffer) void {
             assert(buffer.index < pool_size);
             assert(self.in_use[buffer.index]); // Must be in use
 
@@ -207,27 +207,27 @@ pub fn S2ScratchPoolType(comptime pool_size: usize, comptime buffer_size: usize)
         }
 
         /// Get the number of free buffers.
-        pub fn freeCount(self: *const Self) usize {
+        pub fn freeCount(self: *const @This()) usize {
             return self.free_count;
         }
 
         /// Get the number of buffers in use.
-        pub fn usedCount(self: *const Self) usize {
+        pub fn usedCount(self: *const @This()) usize {
             return pool_size - self.free_count;
         }
 
         /// Check if the pool is exhausted.
-        pub fn isExhausted(self: *const Self) bool {
+        pub fn isExhausted(self: *const @This()) bool {
             return self.free_count == 0;
         }
 
         /// Get pool statistics.
-        pub fn getStats(self: *const Self) PoolStats {
+        pub fn getStats(self: *const @This()) PoolStats {
             return self.stats;
         }
 
         /// Reset statistics (for testing).
-        pub fn resetStats(self: *Self) void {
+        pub fn resetStats(self: *@This()) void {
             self.stats = .{};
             self.stats.current_usage = pool_size - self.free_count;
         }
@@ -428,6 +428,8 @@ test "PoolStats: prometheus export" {
     try stats.toPrometheus(stream.writer());
 
     const output = stream.getWritten();
-    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_s2_scratch_pool_acquires 100") != null);
-    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_s2_scratch_pool_peak_usage 10") != null);
+    const acq = "archerdb_s2_scratch_pool_acquires 100";
+    const peak = "archerdb_s2_scratch_pool_peak_usage 10";
+    try std.testing.expect(std.mem.indexOf(u8, output, acq) != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, peak) != null);
 }

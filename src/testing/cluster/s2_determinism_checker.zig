@@ -173,7 +173,9 @@ pub const S2DeterminismChecker = struct {
 
         // S2 face boundaries occur at approximately ±45° and ±135° longitude
         // and ±35.264° latitude (the cube face edges)
-        const face_boundary_lons = [_]i64{ 45_000_000_000, 135_000_000_000, -45_000_000_000, -135_000_000_000 };
+        const face_boundary_lons = [_]i64{
+            45_000_000_000, 135_000_000_000, -45_000_000_000, -135_000_000_000,
+        };
         const face_boundary_lat: i64 = 35_264_389_682; // atan(1/sqrt(2)) in nanodegrees
 
         for (face_boundary_lons) |boundary_lon| {

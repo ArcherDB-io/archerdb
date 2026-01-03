@@ -108,15 +108,10 @@ const constants = @import("constants.zig");
 const GeoEvent = @import("geo_event.zig").GeoEvent;
 const GeoEventFlags = @import("geo_event.zig").GeoEventFlags;
 const vsr = @import("vsr.zig");
-const ScopeCloseMode = @import("lsm/tree.zig").ScopeCloseMode;
 const ForestType = @import("lsm/forest.zig").ForestType;
 const GrooveType = @import("lsm/groove.zig").GrooveType;
 
-const MultiBatchEncoder = vsr.multi_batch.MultiBatchEncoder;
-const MultiBatchDecoder = vsr.multi_batch.MultiBatchDecoder;
-
 // RAM Index integration (F2.1)
-const RamIndex = @import("ram_index.zig").RamIndex;
 const DefaultRamIndex = @import("ram_index.zig").DefaultRamIndex;
 const IndexEntry = @import("ram_index.zig").IndexEntry;
 
@@ -1229,31 +1224,6 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             return results_count * @sizeOf(DeleteEntitiesResult);
         }
 
-        /// Generate LSM tombstones for cascading entity delete (F2.5.3).
-        ///
-        /// When implemented, this function will:
-        /// 1. Query the entity_id secondary index for all GeoEvents
-        /// 2. For each event found, generate a tombstone with the same key
-        /// 3. Insert tombstones into the LSM tree for compaction
-        ///
-        /// GDPR compliance: Tombstones must persist until compaction
-        /// eliminates all historical versions of the events.
-        ///
-        /// Returns: Number of tombstones generated
-        fn generate_lsm_tombstones_for_entity(
-            self: *GeoStateMachine,
-            entity_id: u128,
-        ) u64 {
-            _ = self;
-            _ = entity_id;
-            // TODO: Implement when Forest is integrated
-            // Steps:
-            // 1. self.forest.grooves.geo_events.scan_by_entity_id(entity_id)
-            // 2. For each event: self.forest.grooves.geo_events.delete(event.id)
-            // 3. Return count of tombstones generated
-            return 0;
-        }
-
         // ====================================================================
         // F3.3.2: Radius Query Implementation
         // ====================================================================
@@ -1695,80 +1665,6 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             return .{ .min_level = min_level, .max_level = max_level };
         }
 
-        /// Tombstone retention decision for LSM compaction (F2.5.7).
-        ///
-        /// CRITICAL: This function determines whether a tombstone can be safely
-        /// dropped during compaction. Incorrect decisions can resurrect deleted
-        /// data, violating GDPR compliance.
-        ///
-        /// ## Decision Logic
-        ///
-        /// A tombstone can ONLY be dropped when ALL of these conditions are met:
-        /// 1. The tombstone has reached the deepest level (L_max)
-        /// 2. No older versions of this entity exist in any level
-        /// 3. The tombstone has survived at least one full compaction cycle
-        ///
-        /// ## Parameters
-        ///
-        /// - entity_id: The entity this tombstone marks as deleted
-        /// - tombstone_op: The VSR operation number when deletion occurred
-        /// - current_level: The LSM level being compacted (source level)
-        /// - target_level: The destination level after compaction
-        /// - max_level: The deepest level in this LSM tree
-        ///
-        /// ## Returns
-        ///
-        /// - true: Retain the tombstone (write to target level)
-        /// - false: Drop the tombstone (entity fully deleted from storage)
-        ///
-        /// ## Safety
-        ///
-        /// When in doubt, ALWAYS retain. A retained tombstone costs storage
-        /// but maintains correctness. A dropped tombstone risks data resurrection.
-        ///
-        fn should_retain_tombstone(
-            self: *GeoStateMachine,
-            entity_id: u128,
-            tombstone_op: u64,
-            current_level: u8,
-            target_level: u8,
-            max_level: u8,
-        ) bool {
-            _ = self;
-            _ = entity_id;
-            _ = tombstone_op;
-            _ = current_level;
-            _ = target_level;
-            _ = max_level;
-
-            // TODO: Implement when Forest is integrated
-            //
-            // Algorithm:
-            // 1. If target_level < max_level:
-            //    - Always retain (tombstone hasn't reached bottom)
-            //
-            // 2. If target_level == max_level:
-            //    - Check levels below current for any version of entity_id
-            //    - If found: retain (older data still exists)
-            //    - If not found: can drop (entity fully purged)
-            //
-            // 3. Additional checks:
-            //    - Verify tombstone_op < current compaction cycle op
-            //    - Check entity doesn't appear in any pending operations
-            //
-            // Implementation when Forest available:
-            // for (target_level + 1..max_level + 1) |level| {
-            //     if (self.forest.level_contains_entity(level, entity_id)) {
-            //         return true; // Must retain
-            //     }
-            // }
-            // return false; // Safe to drop
-
-            // Conservative default: always retain tombstones
-            // This is safe but uses more storage until Forest integration
-            return true;
-        }
-
         /// Execute cleanup_expired operation (F2.4.8).
         ///
         /// Scans the RAM index for expired entries and removes them.
@@ -2072,42 +1968,6 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 
         // ====================================================================
         // Helper Functions
-        // ====================================================================
-
-        /// Validate a GeoEvent for insertion.
-        fn validate_geo_event(event: *const GeoEvent) InsertGeoEventResult {
-            // Check entity_id
-            if (event.entity_id == 0) {
-                return .entity_id_must_not_be_zero;
-            }
-
-            // Check coordinates
-            if (!GeoEvent.validate_coordinates(event.lat_nano, event.lon_nano)) {
-                if (event.lat_nano < GeoEvent.lat_nano_min or
-                    event.lat_nano > GeoEvent.lat_nano_max)
-                {
-                    return .lat_out_of_range;
-                }
-                return .lon_out_of_range;
-            }
-
-            // Check heading
-            if (event.heading_cdeg > GeoEvent.heading_max) {
-                return .heading_out_of_range;
-            }
-
-            // Check reserved fields (must be zero)
-            if (!stdx.zeroed(&event.reserved)) {
-                return .reserved_field;
-            }
-
-            // Check reserved flags
-            if (event.flags.padding != 0) {
-                return .reserved_flag;
-            }
-
-            return .ok;
-        }
     };
 }
 

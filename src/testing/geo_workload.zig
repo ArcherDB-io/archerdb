@@ -19,7 +19,6 @@
 //! for regression testing and bug reproduction.
 
 const std = @import("std");
-const assert = std.debug.assert;
 const stdx = @import("stdx");
 const vsr = @import("../vsr.zig");
 const constants = @import("../constants.zig");

@@ -1980,8 +1980,10 @@ pub fn WorkloadType(comptime AccountingStateMachine: type) type {
 
                 // Generate random coordinates within valid range
                 // lat: -90B to +90B, lon: -180B to +180B (nanodegrees)
-                const lat_range: u64 = @intCast(tb.GeoEvent.lat_nano_max - tb.GeoEvent.lat_nano_min);
-                const lon_range: u64 = @intCast(tb.GeoEvent.lon_nano_max - tb.GeoEvent.lon_nano_min);
+                const lat_diff = tb.GeoEvent.lat_nano_max - tb.GeoEvent.lat_nano_min;
+                const lon_diff = tb.GeoEvent.lon_nano_max - tb.GeoEvent.lon_nano_min;
+                const lat_range: u64 = @intCast(lat_diff);
+                const lon_range: u64 = @intCast(lon_diff);
                 const lat_nano: i64 = @as(i64, @intCast(self.prng.int_inclusive(u64, lat_range))) +
                     tb.GeoEvent.lat_nano_min;
                 const lon_nano: i64 = @as(i64, @intCast(self.prng.int_inclusive(u64, lon_range))) +
@@ -2000,7 +2002,8 @@ pub fn WorkloadType(comptime AccountingStateMachine: type) type {
                     .lat_nano = lat_nano,
                     .lon_nano = lon_nano,
                     .group_id = self.prng.int_inclusive(u64, 100), // 100 groups
-                    .altitude_mm = @as(i32, @intCast(self.prng.int_inclusive(u32, 10010000))) - 10000,
+                    .altitude_mm = @as(i32, @intCast(self.prng.int_inclusive(u32, 10010000))) -
+                        10000,
                     .velocity_mms = self.prng.int_inclusive(u32, 50000), // 0-50 m/s
                     .ttl_seconds = 0, // Never expires
                     .accuracy_mm = self.prng.int_inclusive(u32, 100000), // 0-100m
@@ -2156,10 +2159,6 @@ pub fn WorkloadType(comptime AccountingStateMachine: type) type {
             return self.options.geo_event_id_permutation.encode(index + 1);
         }
 
-        /// Convert geo_event ID back to index
-        fn geo_event_id_to_index(self: *const Workload, id: u128) usize {
-            return @as(usize, @intCast(self.options.geo_event_id_permutation.decode(id))) - 1;
-        }
     };
 }
 

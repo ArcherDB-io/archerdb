@@ -1,7 +1,8 @@
 //! ArcherDB Error Codes (F1.2.4)
 //!
 //! Defines system-wide error codes for ArcherDB operations.
-//! These codes follow the ranges defined in openspec/changes/add-geospatial-core/specs/error-codes/spec.md
+//! These codes follow the ranges defined in:
+//! openspec/changes/add-geospatial-core/specs/error-codes/spec.md
 //!
 //! Error Code Ranges:
 //!   - 1-10:     Protocol errors
@@ -54,7 +55,7 @@ pub const ValidationError = enum(u32) {
     /// Returns a human-readable description of the error.
     pub fn description(self: ValidationError) []const u8 {
         return switch (self) {
-            .invalid_coordinates => "Coordinates out of valid range (lat: -90 to 90, lon: -180 to 180)",
+            .invalid_coordinates => "Coordinates out of range (lat: -90..90, lon: -180..180)",
             .ttl_overflow => "TTL calculation would overflow timestamp",
             .invalid_ttl => "TTL value exceeds maximum allowed",
             .invalid_entity_id => "Entity ID is null or malformed",
@@ -270,7 +271,8 @@ test "resource error codes in expected range" {
 
 test "polygon-specific error codes" {
     // F1.2.4: Verify polygon-specific codes 109-113 exist
-    try std.testing.expectEqual(@as(u32, 109), @intFromEnum(ValidationError.polygon_self_intersecting));
+    const self_int = @intFromEnum(ValidationError.polygon_self_intersecting);
+    try std.testing.expectEqual(@as(u32, 109), self_int);
     try std.testing.expectEqual(@as(u32, 110), @intFromEnum(ValidationError.radius_zero));
     try std.testing.expectEqual(@as(u32, 111), @intFromEnum(ValidationError.polygon_too_large));
     try std.testing.expectEqual(@as(u32, 112), @intFromEnum(ValidationError.polygon_degenerate));
@@ -285,7 +287,8 @@ test "updated error codes 114-116" {
 }
 
 test "spec synchronization - all error codes from spec exist" {
-    // F1.2.5: Verify implementation matches openspec/changes/add-geospatial-core/specs/error-codes/spec.md
+    // F1.2.5: Verify implementation matches spec in:
+    // openspec/changes/add-geospatial-core/specs/error-codes/spec.md
     // This test verifies key error codes from each category exist at expected values.
 
     // Validation errors (100-116)

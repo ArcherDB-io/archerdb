@@ -208,7 +208,8 @@ pub fn StateCheckerType(comptime Client: type, comptime Replica: type) type {
             // committed (it might be left over from before sync).
             // Note: header_b can be null when commit_min == op_checkpoint() but we haven't
             // synced the header yet. In that case, we must use commit_root.
-            const checksum_b = if (commit_b == commit_root_op or header_b == null) commit_root else header_b.?.checksum;
+            const use_root = commit_b == commit_root_op or header_b == null;
+            const checksum_b = if (use_root) commit_root else header_b.?.checksum;
 
             assert(checksum_b != commit_root or
                 replica.commit_min == replica.superblock.working.vsr_state.checkpoint.header.op);

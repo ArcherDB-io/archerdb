@@ -146,7 +146,8 @@ pub const S2 = struct {
         );
 
         // Create RegionCoverer
-        const coverer = s2.RegionCoverer.initWithParams(min_level, max_level, @intCast(s2_max_cells));
+        const max_cells: u8 = @intCast(s2_max_cells);
+        const coverer = s2.RegionCoverer.initWithParams(min_level, max_level, max_cells);
 
         // Get covering - uses scratch buffer for allocations
         var covering = coverer.coverCap(cap_result, allocator) catch {

@@ -3268,7 +3268,8 @@ test "StateMachine: multi-batch partial result handling" {
 
     // Prepare and execute
     context.prepare(operation, message_body);
-    const output_aligned: *align(16) [constants.message_body_size_max]u8 = @alignCast(output[0..constants.message_body_size_max]);
+    const out_slice = output[0..constants.message_body_size_max];
+    const output_aligned: *align(16) [constants.message_body_size_max]u8 = @alignCast(out_slice);
     const reply_size = context.execute(
         context.op,
         operation,
@@ -3379,7 +3380,8 @@ test "StateMachine: multi-batch partial result handling (transfers)" {
         const bytes_written = body_encoder.finish();
         const message_body: []align(16) const u8 = input[0..bytes_written];
         context.prepare(operation, message_body);
-        const output_aligned: *align(16) [constants.message_body_size_max]u8 = @alignCast(output[0..constants.message_body_size_max]);
+        const out_slice = output[0..constants.message_body_size_max];
+    const output_aligned: *align(16) [constants.message_body_size_max]u8 = @alignCast(out_slice);
         _ = context.execute(context.op, operation, message_body, output_aligned);
         context.op += 1;
     }
@@ -3468,7 +3470,8 @@ test "StateMachine: multi-batch partial result handling (transfers)" {
 
     // Prepare and execute
     context.prepare(operation, message_body);
-    const output_aligned: *align(16) [constants.message_body_size_max]u8 = @alignCast(output[0..constants.message_body_size_max]);
+    const out_slice = output[0..constants.message_body_size_max];
+    const output_aligned: *align(16) [constants.message_body_size_max]u8 = @alignCast(out_slice);
     const reply_size = context.execute(
         context.op,
         operation,
@@ -3516,7 +3519,8 @@ test "StateMachine: multi-batch partial result handling (transfers)" {
     // Note: TigerBeetle tracks orphaned IDs for failed transfers to prevent ID reuse.
     // So transfer 101 returns .found_orphaned_id (not .not_found) because the ID was
     // registered even though the transfer failed validation.
-    try testing.expect(context.state_machine.forest.grooves.transfers.get(100) == .found_object);
-    try testing.expect(context.state_machine.forest.grooves.transfers.get(101) == .found_orphaned_id);
-    try testing.expect(context.state_machine.forest.grooves.transfers.get(102) == .found_object);
+    const tr = context.state_machine.forest.grooves.transfers;
+    try testing.expect(tr.get(100) == .found_object);
+    try testing.expect(tr.get(101) == .found_orphaned_id);
+    try testing.expect(tr.get(102) == .found_object);
 }

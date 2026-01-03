@@ -29,9 +29,7 @@ const fs = std.fs;
 const log = std.log.scoped(.index_checkpoint);
 
 const stdx = @import("stdx");
-const constants = @import("../constants.zig");
 const vsr = @import("../vsr.zig");
-const RamIndex = @import("../ram_index.zig").RamIndex;
 const IndexEntry = @import("../ram_index.zig").IndexEntry;
 
 /// Checkpoint file magic number: "ARCH" (0x41524348)
@@ -922,13 +920,13 @@ pub const RecoveryDecision = struct {
     }
 };
 
-/// DirtyPageTracker - Tracks which index pages have been modified since last checkpoint.
+/// DirtyPageTrackerType - Tracks which index pages have been modified since last checkpoint.
 ///
 /// Uses a bitset where each bit represents one page (default 64KB).
 /// For 91.5GB index with 64KB pages: ~1.43M pages = ~179KB bitset
-pub fn DirtyPageTracker(comptime page_size: u32) type {
+pub fn DirtyPageTrackerType(comptime page_size: u32) type {
     return struct {
-        const Self = @This();
+        
 
         /// Bitset tracking dirty pages (1 = dirty, 0 = clean)
         dirty_bits: std.DynamicBitSet,
@@ -942,12 +940,12 @@ pub fn DirtyPageTracker(comptime page_size: u32) type {
         /// Total bytes in the index
         total_bytes: u64,
 
-        pub fn init(allocator: Allocator, total_bytes: u64) !Self {
+        pub fn init(allocator: Allocator, total_bytes: u64) !@This() {
             const page_count = (total_bytes + page_size - 1) / page_size;
 
             const dirty_bits = try std.DynamicBitSet.initEmpty(allocator, @intCast(page_count));
 
-            return Self{
+            return @This(){
                 .dirty_bits = dirty_bits,
                 .page_count = page_count,
                 .dirty_count = std.atomic.Value(u64).init(0),
@@ -955,7 +953,7 @@ pub fn DirtyPageTracker(comptime page_size: u32) type {
             };
         }
 
-        pub fn deinit(self: *Self, allocator: Allocator) void {
+        pub fn deinit(self: *@This(), allocator: Allocator) void {
             _ = allocator;
             self.dirty_bits.deinit();
             self.* = undefined;
@@ -963,7 +961,7 @@ pub fn DirtyPageTracker(comptime page_size: u32) type {
 
         /// Mark a byte range as dirty.
         /// Called when index entries are modified.
-        pub fn mark_dirty(self: *Self, offset: u64, len: u64) void {
+        pub fn mark_dirty(self: *@This(), offset: u64, len: u64) void {
             const start_page = offset / page_size;
             const end_page = (offset + len + page_size - 1) / page_size;
 
@@ -977,7 +975,7 @@ pub fn DirtyPageTracker(comptime page_size: u32) type {
         }
 
         /// Mark a single page as dirty by page index.
-        pub fn mark_page_dirty(self: *Self, page_index: u64) void {
+        pub fn mark_page_dirty(self: *@This(), page_index: u64) void {
             if (page_index >= self.page_count) return;
 
             if (!self.dirty_bits.isSet(@intCast(page_index))) {
@@ -987,7 +985,7 @@ pub fn DirtyPageTracker(comptime page_size: u32) type {
         }
 
         /// Clear dirty bit for a page after successful flush.
-        pub fn clear_dirty(self: *Self, page_index: u64) void {
+        pub fn clear_dirty(self: *@This(), page_index: u64) void {
             if (page_index >= self.page_count) return;
 
             if (self.dirty_bits.isSet(@intCast(page_index))) {
@@ -997,24 +995,24 @@ pub fn DirtyPageTracker(comptime page_size: u32) type {
         }
 
         /// Clear all dirty bits (after full checkpoint).
-        pub fn clear_all(self: *Self) void {
+        pub fn clear_all(self: *@This()) void {
             self.dirty_bits.setRangeValue(.{ .start = 0, .end = @intCast(self.page_count) }, false);
             self.dirty_count.store(0, .monotonic);
         }
 
         /// Get number of dirty pages.
-        pub fn get_dirty_count(self: *const Self) u64 {
+        pub fn get_dirty_count(self: *const @This()) u64 {
             return self.dirty_count.load(.monotonic);
         }
 
         /// Check if a specific page is dirty.
-        pub fn is_dirty(self: *const Self, page_index: u64) bool {
+        pub fn is_dirty(self: *const @This(), page_index: u64) bool {
             if (page_index >= self.page_count) return false;
             return self.dirty_bits.isSet(@intCast(page_index));
         }
 
         /// Iterator over dirty pages.
-        pub fn dirty_iterator(self: *const Self) DirtyIterator {
+        pub fn dirty_iterator(self: *const @This()) DirtyIterator {
             return DirtyIterator{
                 .bits = &self.dirty_bits,
                 .page_count = self.page_count,
@@ -1042,13 +1040,13 @@ pub fn DirtyPageTracker(comptime page_size: u32) type {
 }
 
 /// Default dirty page tracker with 64KB pages.
-pub const DefaultDirtyTracker = DirtyPageTracker(default_page_size);
+pub const DefaultDirtyTracker = DirtyPageTrackerType(default_page_size);
 
-/// IndexCheckpoint - Manages checkpoint persistence for RAM index.
-pub fn IndexCheckpoint(comptime page_size: u32) type {
+/// IndexCheckpointType - Manages checkpoint persistence for RAM index.
+pub fn IndexCheckpointType(comptime page_size: u32) type {
     return struct {
-        const Self = @This();
-        const DirtyTracker = DirtyPageTracker(page_size);
+        
+        const DirtyTracker = DirtyPageTrackerType(page_size);
 
         /// Dirty page tracker
         dirty_tracker: DirtyTracker,
@@ -1070,10 +1068,10 @@ pub fn IndexCheckpoint(comptime page_size: u32) type {
             allocator: Allocator,
             checkpoint_path: []const u8,
             index_capacity: u64,
-        ) !Self {
+        ) !@This() {
             const total_bytes = index_capacity * @sizeOf(IndexEntry);
 
-            return Self{
+            return @This(){
                 .dirty_tracker = try DirtyTracker.init(allocator, total_bytes),
                 .header = CheckpointHeader{
                     .capacity = index_capacity,
@@ -1087,14 +1085,14 @@ pub fn IndexCheckpoint(comptime page_size: u32) type {
         }
 
         /// Deinitialize checkpoint manager.
-        pub fn deinit(self: *Self) void {
+        pub fn deinit(self: *@This()) void {
             self.dirty_tracker.deinit(self.allocator);
             self.* = undefined;
         }
 
         /// Mark index entry as modified (for dirty tracking).
         /// Called by RamIndex on upsert/remove operations.
-        pub fn mark_entry_dirty(self: *Self, entry_index: u64) void {
+        pub fn mark_entry_dirty(self: *@This(), entry_index: u64) void {
             const byte_offset = entry_index * @sizeOf(IndexEntry);
             self.dirty_tracker.mark_dirty(byte_offset, @sizeOf(IndexEntry));
         }
@@ -1104,7 +1102,7 @@ pub fn IndexCheckpoint(comptime page_size: u32) type {
         /// This is the main checkpoint operation, designed to be called
         /// periodically in the background without blocking operations.
         pub fn write_incremental(
-            self: *Self,
+            self: *@This(),
             index_entries: []const IndexEntry,
             vsr_checkpoint_op: u64,
             vsr_commit_max: u64,
@@ -1176,7 +1174,7 @@ pub fn IndexCheckpoint(comptime page_size: u32) type {
         /// Write full checkpoint (all pages).
         /// Used for initial checkpoint or recovery.
         pub fn write_full(
-            self: *Self,
+            self: *@This(),
             index_entries: []const IndexEntry,
             vsr_checkpoint_op: u64,
             vsr_commit_max: u64,
@@ -1200,12 +1198,14 @@ pub fn IndexCheckpoint(comptime page_size: u32) type {
         /// Load checkpoint from disk into index entries.
         /// Returns the VSR checkpoint op for replay coordination.
         pub fn load(
-            self: *Self,
+            self: *@This(),
             index_entries: []IndexEntry,
         ) CheckpointError!struct { vsr_op: u64, vsr_commit_max: u64 } {
             var file = fs.cwd().openFile(self.checkpoint_path, .{}) catch |err| {
-                if (err == error.FileNotFound) return error.NotFound;
-                return error.IoError;
+                return switch (err) {
+                    error.FileNotFound => error.NotFound,
+                    else => error.IoError,
+                };
             };
             defer file.close();
 
@@ -1254,24 +1254,24 @@ pub fn IndexCheckpoint(comptime page_size: u32) type {
         }
 
         /// Check if checkpoint exists on disk.
-        pub fn exists(self: *const Self) bool {
+        pub fn exists(self: *const @This()) bool {
             _ = fs.cwd().statFile(self.checkpoint_path) catch return false;
             return true;
         }
 
         /// Get current dirty page count.
-        pub fn get_dirty_count(self: *const Self) u64 {
+        pub fn get_dirty_count(self: *const @This()) u64 {
             return self.dirty_tracker.get_dirty_count();
         }
 
         /// Get statistics.
-        pub fn get_stats(self: *const Self) CheckpointStats {
+        pub fn get_stats(self: *const @This()) CheckpointStats {
             return self.stats;
         }
 
         // Internal helpers
 
-        fn count_entries(self: *const Self, entries: []const IndexEntry) u64 {
+        fn count_entries(self: *const @This(), entries: []const IndexEntry) u64 {
             _ = self;
             var count: u64 = 0;
             for (entries) |entry| {
@@ -1282,11 +1282,11 @@ pub fn IndexCheckpoint(comptime page_size: u32) type {
             return count;
         }
 
-        fn calculate_header_checksum(self: *Self) u128 {
+        fn calculate_header_checksum(self: *@This()) u128 {
             return self.calculate_header_checksum_for(&self.header);
         }
 
-        fn calculate_header_checksum_for(self: *const Self, header: *const CheckpointHeader) u128 {
+        fn calculate_header_checksum_for(self: *const @This(), header: *const CheckpointHeader) u128 {
             _ = self;
             // Checksum covers header bytes after the checksum field
             const checksum_offset = @offsetOf(CheckpointHeader, "header_checksum") + @sizeOf(u128) + @sizeOf(u128);
@@ -1295,7 +1295,7 @@ pub fn IndexCheckpoint(comptime page_size: u32) type {
             return vsr.checksum(payload);
         }
 
-        fn calculate_body_checksum(self: *const Self, entries: []const IndexEntry) u128 {
+        fn calculate_body_checksum(self: *const @This(), entries: []const IndexEntry) u128 {
             _ = self;
             return vsr.checksum(mem.sliceAsBytes(entries));
         }
@@ -1303,7 +1303,7 @@ pub fn IndexCheckpoint(comptime page_size: u32) type {
 }
 
 /// Default index checkpoint with 64KB pages.
-pub const DefaultIndexCheckpoint = IndexCheckpoint(default_page_size);
+pub const DefaultIndexCheckpointType = IndexCheckpointType(default_page_size);
 
 // ============================================================================
 // Full Index Rebuild (F2.2.6)
@@ -1315,30 +1315,30 @@ pub const DefaultIndexCheckpoint = IndexCheckpoint(default_page_size);
 /// GDPR-CRITICAL: This bitset ensures newest versions take precedence.
 /// By marking entities as "seen" after processing from newest-to-oldest,
 /// we guarantee that deleted entities (tombstones) are not resurrected.
-pub fn SeenEntitiesBitset(comptime expected_entities: u64) type {
+pub fn SeenEntitiesBitsetType(comptime expected_entities: u64) type {
     // Use ~1 bit per expected entity for ~1% false positive rate
     // For 1B entities: 1B / 8 = 128MB
     const bitset_bytes = (expected_entities + 7) / 8;
 
     return struct {
-        const Self = @This();
+        
 
         bits: []u8,
         allocator: Allocator,
         seen_count: u64 = 0,
 
         /// Initialize the seen entities bitset.
-        pub fn init(allocator: Allocator) !Self {
+        pub fn init(allocator: Allocator) !@This() {
             const bits = try allocator.alloc(u8, bitset_bytes);
             @memset(bits, 0);
-            return Self{
+            return @This(){
                 .bits = bits,
                 .allocator = allocator,
             };
         }
 
         /// Free the bitset memory.
-        pub fn deinit(self: *Self) void {
+        pub fn deinit(self: *@This()) void {
             self.allocator.free(self.bits);
             self.* = undefined;
         }
@@ -1347,7 +1347,7 @@ pub fn SeenEntitiesBitset(comptime expected_entities: u64) type {
         /// Uses the hash of entity_id to determine bit position.
         ///
         /// GDPR-CRITICAL: Only the first occurrence (newest version) is processed.
-        pub fn mark_seen(self: *Self, entity_id: u128) bool {
+        pub fn mark_seen(self: *@This(), entity_id: u128) bool {
             const bit_index = self.hash_to_index(entity_id);
             const byte_index = bit_index / 8;
             const bit_offset: u3 = @intCast(bit_index % 8);
@@ -1363,7 +1363,7 @@ pub fn SeenEntitiesBitset(comptime expected_entities: u64) type {
         }
 
         /// Check if an entity has been seen.
-        pub fn was_seen(self: *const Self, entity_id: u128) bool {
+        pub fn was_seen(self: *const @This(), entity_id: u128) bool {
             const bit_index = self.hash_to_index(entity_id);
             const byte_index = bit_index / 8;
             const bit_offset: u3 = @intCast(bit_index % 8);
@@ -1372,17 +1372,17 @@ pub fn SeenEntitiesBitset(comptime expected_entities: u64) type {
         }
 
         /// Reset the bitset for reuse.
-        pub fn reset(self: *Self) void {
+        pub fn reset(self: *@This()) void {
             @memset(self.bits, 0);
             self.seen_count = 0;
         }
 
         /// Get the number of unique entities seen.
-        pub fn get_seen_count(self: *const Self) u64 {
+        pub fn get_seen_count(self: *const @This()) u64 {
             return self.seen_count;
         }
 
-        fn hash_to_index(self: *const Self, entity_id: u128) u64 {
+        fn hash_to_index(self: *const @This(), entity_id: u128) u64 {
             // Use lower bits of entity_id hash modulo bitset size
             const h = stdx.hash_inline(entity_id);
             return h % (self.bits.len * 8);
@@ -1500,7 +1500,7 @@ pub fn full_rebuild(
     const GeoEvent = @import("../geo_event.zig").GeoEvent;
 
     // Allocate seen_entities bitset (~128MB for 1B entities)
-    const SeenEntities = SeenEntitiesBitset(1_000_000_000);
+    const SeenEntities = SeenEntitiesBitsetType(1_000_000_000);
     var seen = try SeenEntities.init(allocator);
     defer seen.deinit();
 
@@ -1569,7 +1569,7 @@ pub fn full_rebuild(
 }
 
 /// Default seen entities bitset for 1B entities.
-pub const DefaultSeenEntities = SeenEntitiesBitset(1_000_000_000);
+pub const DefaultSeenEntities = SeenEntitiesBitsetType(1_000_000_000);
 
 // ============================================================================
 // Prometheus Metrics Export (F2.3.3)
@@ -1864,10 +1864,10 @@ test "CheckpointHeader: validation" {
     try std.testing.expect(!header.validate());
 }
 
-test "DirtyPageTracker: mark and clear" {
+test "DirtyPageTrackerType: mark and clear" {
     const allocator = std.testing.allocator;
     const page_size: u32 = 1024; // 1KB pages for testing
-    const Tracker = DirtyPageTracker(page_size);
+    const Tracker = DirtyPageTrackerType(page_size);
 
     var tracker = try Tracker.init(allocator, 10 * page_size);
     defer tracker.deinit(allocator);
@@ -1898,10 +1898,10 @@ test "DirtyPageTracker: mark and clear" {
     try std.testing.expectEqual(@as(u64, 0), tracker.get_dirty_count());
 }
 
-test "DirtyPageTracker: dirty iterator" {
+test "DirtyPageTrackerType: dirty iterator" {
     const allocator = std.testing.allocator;
     const page_size: u32 = 1024;
-    const Tracker = DirtyPageTracker(page_size);
+    const Tracker = DirtyPageTrackerType(page_size);
 
     var tracker = try Tracker.init(allocator, 10 * page_size);
     defer tracker.deinit(allocator);
@@ -1926,20 +1926,20 @@ test "DirtyPageTracker: dirty iterator" {
     try std.testing.expectEqual(@as(u64, 7), dirty_pages.items[2]);
 }
 
-test "IndexCheckpoint: initialization" {
+test "IndexCheckpointType: initialization" {
     const allocator = std.testing.allocator;
 
-    var checkpoint = try DefaultIndexCheckpoint.init(allocator, "/tmp/test_checkpoint.dat", 1000);
+    var checkpoint = try DefaultIndexCheckpointType.init(allocator, "/tmp/test_checkpoint.dat", 1000);
     defer checkpoint.deinit();
 
     try std.testing.expectEqual(@as(u64, 1000), checkpoint.header.capacity);
     try std.testing.expectEqual(@as(u64, 0), checkpoint.get_dirty_count());
 }
 
-test "IndexCheckpoint: mark entry dirty" {
+test "IndexCheckpointType: mark entry dirty" {
     const allocator = std.testing.allocator;
 
-    var checkpoint = try DefaultIndexCheckpoint.init(allocator, "/tmp/test_checkpoint.dat", 1000);
+    var checkpoint = try DefaultIndexCheckpointType.init(allocator, "/tmp/test_checkpoint.dat", 1000);
     defer checkpoint.deinit();
 
     // Mark entries dirty
@@ -1950,11 +1950,11 @@ test "IndexCheckpoint: mark entry dirty" {
     try std.testing.expect(checkpoint.get_dirty_count() > 0);
 }
 
-test "SeenEntitiesBitset: basic operations (F2.2.6)" {
+test "SeenEntitiesBitsetType: basic operations (F2.2.6)" {
     const allocator = std.testing.allocator;
 
     // Use small bitset for testing
-    const TestBitset = SeenEntitiesBitset(1000);
+    const TestBitset = SeenEntitiesBitsetType(1000);
     var bitset = try TestBitset.init(allocator);
     defer bitset.deinit();
 

@@ -38,7 +38,6 @@
 //! in the prefetch phase to minimize I/O.
 
 const std = @import("std");
-const assert = std.debug.assert;
 
 /// Composite ID range for skip-scan filtering.
 /// Represents a query range [start, end) for GeoEvent composite IDs.
@@ -333,7 +332,8 @@ test "evaluateBlockMultiRange: skip decision" {
         .{ .start = 0, .end = 50 },
         .{ .start = 50, .end = 300 },
     };
-    try std.testing.expectEqual(BlockDecision.full_match, evaluateBlockMultiRange(block, &ranges_full));
+    const result = evaluateBlockMultiRange(block, &ranges_full);
+    try std.testing.expectEqual(BlockDecision.full_match, result);
 }
 
 test "cellRangesToIdRanges: conversion" {

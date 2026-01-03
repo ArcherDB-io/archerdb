@@ -33,16 +33,6 @@ pub const num_faces: u8 = 6;
 /// Face bit shift (position in cell ID)
 const face_bits: u6 = 61;
 
-/// Lookup table for face-to-UV coordinate mapping
-const face_uv_axes = [6][2]i8{
-    .{ 1, 2 }, // Face 0: +X, Y and Z axes
-    .{ 2, 0 }, // Face 1: +Y, Z and X axes
-    .{ 0, 1 }, // Face 2: +Z, X and Y axes
-    .{ 1, 2 }, // Face 3: -X, Y and Z axes
-    .{ 2, 0 }, // Face 4: -Y, Z and X axes
-    .{ 0, 1 }, // Face 5: -Z, X and Y axes
-};
-
 /// Hilbert curve lookup table for pos-to-ij conversion
 /// Each entry encodes the transformation for one step of the curve
 const hilbert_lookup = [4][4]u8{
@@ -208,11 +198,6 @@ pub fn fromFaceIj(f: u8, i: u32, j: u32, lvl: u8) u64 {
     id |= (@as(u64, 1) << @intCast((max_level - lvl) * 2));
 
     return id;
-}
-
-/// Convert IJ coordinates to Hilbert curve position.
-fn ijToPos(i: u32, j: u32, lvl: u8) u64 {
-    return ijToPosWithOrientation(i, j, lvl, 0);
 }
 
 /// Convert IJ coordinates to Hilbert curve position with initial orientation.
@@ -530,7 +515,9 @@ test "cross-platform determinism" {
 
     // Test grid of coordinates (covers all faces and various precision levels)
     const lat_steps = [_]i64{ -90_000_000_000, -45_000_000_000, 0, 45_000_000_000, 90_000_000_000 };
-    const lon_steps = [_]i64{ -180_000_000_000, -90_000_000_000, 0, 90_000_000_000, 180_000_000_000 };
+    const lon_steps = [_]i64{
+        -180_000_000_000, -90_000_000_000, 0, 90_000_000_000, 180_000_000_000,
+    };
     const levels = [_]u8{ 0, 5, 10, 15, 20, 25, 30 };
 
     // Generate deterministic cell IDs and XOR them into hash
@@ -583,7 +570,7 @@ test "cross-platform determinism" {
         std.debug.print("\nCROSS-PLATFORM DETERMINISM FAILURE!\n", .{});
         std.debug.print("Expected hash: 0x{x:0>16}\n", .{expected_hash});
         std.debug.print("Actual hash:   0x{x:0>16}\n", .{hash});
-        std.debug.print("\nThis indicates non-deterministic behavior that will break VSR consensus.\n", .{});
+        std.debug.print("\nNon-deterministic behavior will break VSR consensus.\n", .{});
         try std.testing.expectEqual(expected_hash, hash);
     }
 }

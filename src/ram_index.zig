@@ -1107,8 +1107,6 @@ pub fn RamIndex(comptime options: struct {
     track_stats: bool = true,
 }) type {
     return struct {
-        const Self = @This();
-
         /// Pre-allocated array of index entries.
         /// Aligned to 64 bytes (cache line) to prevent false sharing.
         entries: []align(64) IndexEntry,
@@ -1129,7 +1127,7 @@ pub fn RamIndex(comptime options: struct {
         /// For 1B entities: capacity = 1,428,571,429 slots (~91.5GB)
         ///
         /// Memory is pre-allocated at startup and never grows.
-        pub fn init(allocator: Allocator, capacity: u64) IndexError!Self {
+        pub fn init(allocator: Allocator, capacity: u64) IndexError!@This() {
             if (capacity == 0) return error.InvalidConfiguration;
 
             // Allocate aligned memory for entries.
@@ -1143,7 +1141,7 @@ pub fn RamIndex(comptime options: struct {
             // Initialize all entries to empty.
             @memset(entries, IndexEntry.empty);
 
-            return Self{
+            return @This(){
                 .entries = entries,
                 .capacity = capacity,
                 .count = std.atomic.Value(u64).init(0),
@@ -1154,7 +1152,7 @@ pub fn RamIndex(comptime options: struct {
         }
 
         /// Deinitialize and free index memory.
-        pub fn deinit(self: *Self, allocator: Allocator) void {
+        pub fn deinit(self: *@This(), allocator: Allocator) void {
             allocator.free(self.entries);
             self.* = undefined;
         }
@@ -1166,7 +1164,7 @@ pub fn RamIndex(comptime options: struct {
         }
 
         /// Calculate slot index from hash.
-        inline fn slot_index(self: *const Self, entity_id: u128) u64 {
+        inline fn slot_index(self: *const @This(), entity_id: u128) u64 {
             return hash(entity_id) % self.capacity;
         }
 
@@ -1177,7 +1175,7 @@ pub fn RamIndex(comptime options: struct {
         ///
         /// Returns the IndexEntry if found, null otherwise.
         /// Also returns the probe count for diagnostics.
-        pub fn lookup(self: *Self, entity_id: u128) LookupResult {
+        pub fn lookup(self: *@This(), entity_id: u128) LookupResult {
             if (entity_id == 0) {
                 // Entity ID 0 is reserved as empty marker.
                 return .{ .entry = null, .probe_count = 0 };
@@ -1232,7 +1230,7 @@ pub fn RamIndex(comptime options: struct {
         /// This function is NOT thread-safe for concurrent writes.
         /// VSR commit phase guarantees single-threaded execution.
         pub fn upsert(
-            self: *Self,
+            self: *@This(),
             entity_id: u128,
             latest_id: u128,
             ttl_seconds: u32,
@@ -1317,7 +1315,7 @@ pub fn RamIndex(comptime options: struct {
         ///
         /// Tombstones preserve the slot for the entity_id to ensure
         /// proper probe chain behavior. They are reclaimed during rebuild.
-        pub fn remove(self: *Self, entity_id: u128) bool {
+        pub fn remove(self: *@This(), entity_id: u128) bool {
             if (entity_id == 0) return false;
 
             var slot = self.slot_index(entity_id);
@@ -1374,7 +1372,7 @@ pub fn RamIndex(comptime options: struct {
         ///
         /// Per ttl-retention/spec.md: "Atomic: only remove if latest_id hasn't changed"
         pub fn remove_if_id_matches(
-            self: *Self,
+            self: *@This(),
             entity_id: u128,
             expected_latest_id: u128,
         ) RemoveIfMatchResult {
@@ -1451,7 +1449,7 @@ pub fn RamIndex(comptime options: struct {
         /// - probe_count: Probes used for lookup
         /// - expired: True if entry was found but expired and removed
         pub fn lookup_with_ttl(
-            self: *Self,
+            self: *@This(),
             entity_id: u128,
             current_time_ns: u64,
         ) LookupWithTtlResult {
@@ -1511,7 +1509,7 @@ pub fn RamIndex(comptime options: struct {
         /// - Safe to call during normal operation (uses atomic reads)
         /// - Writes are protected by VSR's single-writer guarantee
         pub fn scan_expired_batch(
-            self: *Self,
+            self: *@This(),
             start_position: u64,
             batch_size: u64,
             current_time_ns: u64,
@@ -1580,8 +1578,8 @@ pub fn RamIndex(comptime options: struct {
         ///
         /// Per spec: Online rehash copies live entries, skips tombstones,
         /// reducing tombstone_ratio to 0 and probe_lengths back to optimal.
-        pub fn create_rehashed_copy(self: *Self, allocator: std.mem.Allocator, config: RehashConfig) !struct {
-            new_index: Self,
+        pub fn create_rehashed_copy(self: *@This(), allocator: std.mem.Allocator, config: RehashConfig) !struct {
+            new_index: @This(),
             result: RehashResult,
         } {
             const start_time = std.time.nanoTimestamp();
@@ -1594,7 +1592,7 @@ pub fn RamIndex(comptime options: struct {
                 self.capacity;
 
             // Allocate new index (var to allow mutation).
-            var new_index = try Self.init(allocator, new_capacity);
+            var new_index = try @This().init(allocator, new_capacity);
             errdefer new_index.deinit(allocator);
 
             // Copy live entries (skip tombstones).
@@ -1666,7 +1664,7 @@ pub fn RamIndex(comptime options: struct {
         }
 
         /// Get current statistics.
-        pub fn get_stats(self: *const Self) IndexStats {
+        pub fn get_stats(self: *const @This()) IndexStats {
             if (options.track_stats) {
                 var stats = self.stats;
                 stats.entry_count = self.count.load(.monotonic);
@@ -1681,7 +1679,7 @@ pub fn RamIndex(comptime options: struct {
 
         // Internal stats update functions.
 
-        fn updateLookupStats(self: *Self, probe_count: u32, hit: bool) void {
+        fn updateLookupStats(self: *@This(), probe_count: u32, hit: bool) void {
             if (options.track_stats) {
                 self.stats.lookup_count += 1;
                 if (hit) self.stats.lookup_hit_count += 1;
@@ -1693,7 +1691,7 @@ pub fn RamIndex(comptime options: struct {
             }
         }
 
-        fn updateUpsertStats(self: *Self, probe_count: u32, inserted: bool, tombstone_reuse: bool) void {
+        fn updateUpsertStats(self: *@This(), probe_count: u32, inserted: bool, tombstone_reuse: bool) void {
             if (options.track_stats) {
                 self.stats.upsert_count += 1;
                 self.stats.total_probe_length += probe_count;
@@ -1710,7 +1708,7 @@ pub fn RamIndex(comptime options: struct {
             }
         }
 
-        fn updateProbeLimit(self: *Self) void {
+        fn updateProbeLimit(self: *@This()) void {
             if (options.track_stats) {
                 self.stats.probe_limit_hits += 1;
             }
