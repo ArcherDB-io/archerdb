@@ -1,0 +1,381 @@
+{
+  "description": "Canonical test cases for cross-language wire format compatibility",
+  "version": "1.0.0",
+
+  "constants": {
+    "LAT_MAX": 90.0,
+    "LON_MAX": 180.0,
+    "NANODEGREES_PER_DEGREE": 1000000000,
+    "MM_PER_METER": 1000,
+    "CENTIDEGREES_PER_DEGREE": 100,
+    "BATCH_SIZE_MAX": 10000,
+    "QUERY_LIMIT_MAX": 81000,
+    "POLYGON_VERTICES_MAX": 10000
+  },
+
+  "operation_codes": {
+    "INSERT_EVENTS": 146,
+    "UPSERT_EVENTS": 147,
+    "DELETE_ENTITIES": 148,
+    "QUERY_UUID": 149,
+    "QUERY_RADIUS": 150,
+    "QUERY_POLYGON": 151,
+    "QUERY_LATEST": 154
+  },
+
+  "geo_event_flags": {
+    "NONE": 0,
+    "LINKED": 1,
+    "IMPORTED": 2,
+    "STATIONARY": 4,
+    "LOW_ACCURACY": 8,
+    "OFFLINE": 16,
+    "DELETED": 32
+  },
+
+  "insert_result_codes": {
+    "OK": 0,
+    "LINKED_EVENT_FAILED": 1,
+    "LINKED_EVENT_CHAIN_OPEN": 2,
+    "TIMESTAMP_MUST_BE_ZERO": 3,
+    "RESERVED_FIELD": 4,
+    "RESERVED_FLAG": 5,
+    "ID_MUST_NOT_BE_ZERO": 6,
+    "ENTITY_ID_MUST_NOT_BE_ZERO": 7,
+    "INVALID_COORDINATES": 8,
+    "LAT_OUT_OF_RANGE": 9,
+    "LON_OUT_OF_RANGE": 10,
+    "EXISTS_WITH_DIFFERENT_ENTITY_ID": 11,
+    "EXISTS_WITH_DIFFERENT_COORDINATES": 12,
+    "EXISTS": 13,
+    "HEADING_OUT_OF_RANGE": 14,
+    "TTL_INVALID": 15
+  },
+
+  "delete_result_codes": {
+    "OK": 0,
+    "LINKED_EVENT_FAILED": 1,
+    "ENTITY_ID_MUST_NOT_BE_ZERO": 2,
+    "ENTITY_NOT_FOUND": 3
+  },
+
+  "coordinate_conversions": [
+    {
+      "description": "Zero coordinates",
+      "degrees": 0.0,
+      "expected_nanodegrees": 0
+    },
+    {
+      "description": "Maximum latitude",
+      "degrees": 90.0,
+      "expected_nanodegrees": 90000000000
+    },
+    {
+      "description": "Minimum latitude",
+      "degrees": -90.0,
+      "expected_nanodegrees": -90000000000
+    },
+    {
+      "description": "Maximum longitude",
+      "degrees": 180.0,
+      "expected_nanodegrees": 180000000000
+    },
+    {
+      "description": "Minimum longitude",
+      "degrees": -180.0,
+      "expected_nanodegrees": -180000000000
+    },
+    {
+      "description": "San Francisco latitude",
+      "degrees": 37.7749,
+      "expected_nanodegrees": 37774900000
+    },
+    {
+      "description": "San Francisco longitude",
+      "degrees": -122.4194,
+      "expected_nanodegrees": -122419400000
+    },
+    {
+      "description": "Tokyo latitude",
+      "degrees": 35.6762,
+      "expected_nanodegrees": 35676200000
+    },
+    {
+      "description": "Small positive",
+      "degrees": 0.000000001,
+      "expected_nanodegrees": 1
+    },
+    {
+      "description": "Precision test",
+      "degrees": 45.123456789,
+      "expected_nanodegrees": 45123456789
+    }
+  ],
+
+  "distance_conversions": [
+    {
+      "description": "Zero meters",
+      "meters": 0.0,
+      "expected_mm": 0
+    },
+    {
+      "description": "One meter",
+      "meters": 1.0,
+      "expected_mm": 1000
+    },
+    {
+      "description": "One kilometer",
+      "meters": 1000.0,
+      "expected_mm": 1000000
+    },
+    {
+      "description": "Fractional meters",
+      "meters": 1.5,
+      "expected_mm": 1500
+    },
+    {
+      "description": "Sub-millimeter (rounds up)",
+      "meters": 0.0006,
+      "expected_mm": 1
+    }
+  ],
+
+  "heading_conversions": [
+    {
+      "description": "North",
+      "degrees": 0.0,
+      "expected_centidegrees": 0
+    },
+    {
+      "description": "East",
+      "degrees": 90.0,
+      "expected_centidegrees": 9000
+    },
+    {
+      "description": "South",
+      "degrees": 180.0,
+      "expected_centidegrees": 18000
+    },
+    {
+      "description": "West",
+      "degrees": 270.0,
+      "expected_centidegrees": 27000
+    },
+    {
+      "description": "Full circle",
+      "degrees": 360.0,
+      "expected_centidegrees": 36000
+    },
+    {
+      "description": "Fractional heading",
+      "degrees": 45.5,
+      "expected_centidegrees": 4550
+    }
+  ],
+
+  "geo_events": [
+    {
+      "description": "Basic event at origin",
+      "input": {
+        "entity_id": 12345,
+        "latitude": 0.0,
+        "longitude": 0.0
+      },
+      "expected": {
+        "entity_id": 12345,
+        "lat_nano": 0,
+        "lon_nano": 0,
+        "id": 0,
+        "timestamp": 0,
+        "correlation_id": 0,
+        "user_data": 0,
+        "group_id": 0,
+        "altitude_mm": 0,
+        "velocity_mms": 0,
+        "ttl_seconds": 0,
+        "accuracy_mm": 0,
+        "heading_cdeg": 0,
+        "flags": 0
+      }
+    },
+    {
+      "description": "San Francisco event with all fields",
+      "input": {
+        "entity_id": 99999,
+        "latitude": 37.7749,
+        "longitude": -122.4194,
+        "correlation_id": 11111,
+        "user_data": 42,
+        "group_id": 1001,
+        "altitude_m": 100.5,
+        "velocity_mps": 15.0,
+        "ttl_seconds": 3600,
+        "accuracy_m": 5.0,
+        "heading": 90.0,
+        "flags": 4
+      },
+      "expected": {
+        "entity_id": 99999,
+        "lat_nano": 37774900000,
+        "lon_nano": -122419400000,
+        "id": 0,
+        "timestamp": 0,
+        "correlation_id": 11111,
+        "user_data": 42,
+        "group_id": 1001,
+        "altitude_mm": 100500,
+        "velocity_mms": 15000,
+        "ttl_seconds": 3600,
+        "accuracy_mm": 5000,
+        "heading_cdeg": 9000,
+        "flags": 4
+      }
+    },
+    {
+      "description": "Event at poles",
+      "input": {
+        "entity_id": 1,
+        "latitude": 90.0,
+        "longitude": 180.0
+      },
+      "expected": {
+        "entity_id": 1,
+        "lat_nano": 90000000000,
+        "lon_nano": 180000000000,
+        "id": 0,
+        "timestamp": 0,
+        "correlation_id": 0,
+        "user_data": 0,
+        "group_id": 0,
+        "altitude_mm": 0,
+        "velocity_mms": 0,
+        "ttl_seconds": 0,
+        "accuracy_mm": 0,
+        "heading_cdeg": 0,
+        "flags": 0
+      }
+    },
+    {
+      "description": "Event with combined flags",
+      "input": {
+        "entity_id": 5555,
+        "latitude": 0.0,
+        "longitude": 0.0,
+        "flags": 5
+      },
+      "expected": {
+        "entity_id": 5555,
+        "lat_nano": 0,
+        "lon_nano": 0,
+        "id": 0,
+        "timestamp": 0,
+        "correlation_id": 0,
+        "user_data": 0,
+        "group_id": 0,
+        "altitude_mm": 0,
+        "velocity_mms": 0,
+        "ttl_seconds": 0,
+        "accuracy_mm": 0,
+        "heading_cdeg": 0,
+        "flags": 5
+      }
+    }
+  ],
+
+  "radius_queries": [
+    {
+      "description": "Basic radius query",
+      "input": {
+        "latitude": 37.7749,
+        "longitude": -122.4194,
+        "radius_m": 1000
+      },
+      "expected": {
+        "center_lat_nano": 37774900000,
+        "center_lon_nano": -122419400000,
+        "radius_mm": 1000000,
+        "limit": 1000,
+        "timestamp_min": 0,
+        "timestamp_max": 0,
+        "group_id": 0
+      }
+    },
+    {
+      "description": "Radius query with all options",
+      "input": {
+        "latitude": 35.6762,
+        "longitude": 139.6503,
+        "radius_m": 5000,
+        "limit": 500,
+        "timestamp_min": 1000,
+        "timestamp_max": 2000,
+        "group_id": 42
+      },
+      "expected": {
+        "center_lat_nano": 35676200000,
+        "center_lon_nano": 139650300000,
+        "radius_mm": 5000000,
+        "limit": 500,
+        "timestamp_min": 1000,
+        "timestamp_max": 2000,
+        "group_id": 42
+      }
+    }
+  ],
+
+  "polygon_queries": [
+    {
+      "description": "Triangle polygon",
+      "input": {
+        "vertices": [
+          [37.0, -122.0],
+          [38.0, -122.0],
+          [37.5, -121.0]
+        ]
+      },
+      "expected": {
+        "vertices": [
+          {"lat_nano": 37000000000, "lon_nano": -122000000000},
+          {"lat_nano": 38000000000, "lon_nano": -122000000000},
+          {"lat_nano": 37500000000, "lon_nano": -121000000000}
+        ],
+        "limit": 1000,
+        "timestamp_min": 0,
+        "timestamp_max": 0,
+        "group_id": 0
+      }
+    },
+    {
+      "description": "Rectangle polygon with options",
+      "input": {
+        "vertices": [
+          [37.0, -122.5],
+          [37.0, -122.0],
+          [38.0, -122.0],
+          [38.0, -122.5]
+        ],
+        "limit": 200,
+        "group_id": 10
+      },
+      "expected": {
+        "vertices": [
+          {"lat_nano": 37000000000, "lon_nano": -122500000000},
+          {"lat_nano": 37000000000, "lon_nano": -122000000000},
+          {"lat_nano": 38000000000, "lon_nano": -122000000000},
+          {"lat_nano": 38000000000, "lon_nano": -122500000000}
+        ],
+        "limit": 200,
+        "timestamp_min": 0,
+        "timestamp_max": 0,
+        "group_id": 10
+      }
+    }
+  ],
+
+  "validation_cases": {
+    "invalid_latitudes": [91, -91, 180, -180, 1000],
+    "invalid_longitudes": [181, -181, 360, -360, 1000],
+    "valid_boundary_latitudes": [90, -90, 0, 45, -45],
+    "valid_boundary_longitudes": [180, -180, 0, 90, -90]
+  }
+}
