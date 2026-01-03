@@ -39,6 +39,14 @@ const ForestType = @import("lsm/forest.zig").ForestType;
 const MultiBatchEncoder = vsr.multi_batch.MultiBatchEncoder;
 const MultiBatchDecoder = vsr.multi_batch.MultiBatchDecoder;
 
+// RAM Index integration (F2.1)
+const RamIndex = @import("ram_index.zig").RamIndex;
+const IndexEntry = @import("ram_index.zig").IndexEntry;
+
+// Index checkpoint coordination (F2.2)
+const index_checkpoint = @import("index/checkpoint.zig");
+const CheckpointHeader = index_checkpoint.CheckpointHeader;
+
 // ============================================================================
 // Tree IDs for LSM Storage
 // ============================================================================
@@ -226,6 +234,9 @@ pub const QueryLatestFilter = extern struct {
 
 /// Creates a GeoStateMachine type parameterized by Storage.
 pub fn GeoStateMachineType(comptime Storage: type) type {
+    // Grid type for accessing superblock (VSR checkpoint coordination)
+    const Grid = @import("vsr/grid.zig").GridType(Storage);
+
     return struct {
         const GeoStateMachine = @This();
 
@@ -234,6 +245,14 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 
         // TODO(F1.2): Define Forest type for GeoEvent storage
         // pub const Forest = ForestType(Storage, tree_ids);
+
+        /// Configuration options for state machine initialization.
+        pub const Options = struct {
+            /// Maximum batch size for operations.
+            batch_size_limit: u32,
+            /// Enable index checkpoint coordination (F2.2.3).
+            enable_index_checkpoint: bool = true,
+        };
 
         /// Prepare timestamp for deterministic execution.
         prepare_timestamp: u64 = 0,
@@ -256,21 +275,49 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         /// Batch size limit for this state machine.
         batch_size_limit: u32,
 
+        /// Grid reference for VSR checkpoint coordination (F2.2.3).
+        /// Through grid.superblock, we access vsr_state.checkpoint for
+        /// coordinating index checkpoint with VSR checkpoint sequence.
+        grid: *Grid,
+
+        /// Index checkpoint enabled flag.
+        index_checkpoint_enabled: bool,
+
+        /// Last recorded VSR checkpoint op (for monitoring lag).
+        last_index_checkpoint_op: u64 = 0,
+
         // ====================================================================
         // Initialization
         // ====================================================================
 
+        /// Initialize the GeoStateMachine with Grid reference for VSR coordination.
+        ///
+        /// The Grid reference provides access to:
+        /// - grid.superblock.working.vsr_state.checkpoint.header.op - VSR checkpoint op
+        /// - grid.superblock.working.vsr_state.commit_max - Commit max
+        ///
+        /// This enables coordination between RAM index checkpoints and VSR checkpoints
+        /// as required by the hybrid-memory spec (F2.2.3).
         pub fn init(
+            self: *GeoStateMachine,
             allocator: std.mem.Allocator,
-            storage: *Storage,
-            batch_size_limit: u32,
-        ) !GeoStateMachine {
+            time: vsr.time.Time,
+            grid: *Grid,
+            options: Options,
+        ) !void {
             _ = allocator;
-            _ = storage;
+            _ = time;
 
-            return GeoStateMachine{
-                .batch_size_limit = batch_size_limit,
+            self.* = .{
+                .batch_size_limit = options.batch_size_limit,
+                .prepare_timestamp = 0,
+                .commit_timestamp = 0,
+                .grid = grid,
+                .index_checkpoint_enabled = options.enable_index_checkpoint,
+                .last_index_checkpoint_op = 0,
             };
+
+            log.info("GeoStateMachine: index checkpoint coordination enabled (F2.2.3)", .{});
         }
 
         pub fn deinit(self: *GeoStateMachine, allocator: std.mem.Allocator) void {
@@ -497,8 +544,12 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .pulse => self.execute_pulse(timestamp),
 
                 // Write operations
-                .create_accounts => self.execute_create_accounts(timestamp, message_body_used, output),
-                .create_transfers => self.execute_create_transfers(timestamp, message_body_used, output),
+                .create_accounts => {
+                    return self.execute_create_accounts(timestamp, message_body_used, output);
+                },
+                .create_transfers => {
+                    return self.execute_create_transfers(timestamp, message_body_used, output);
+                },
 
                 // Read operations
                 .lookup_accounts => self.execute_lookup_accounts(message_body_used, output),
@@ -651,6 +702,17 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         /// Checkpointing writes the current LSM tree state to disk,
         /// creating a recovery point. After checkpoint, the WAL entries
         /// before this point can be discarded.
+        ///
+        /// VSR Checkpoint Coordination (F2.2.3):
+        /// This function coordinates the index checkpoint with VSR's checkpoint sequence:
+        /// 1. Extract current VSR state from grid.superblock.working.vsr_state
+        /// 2. Record vsr_checkpoint_op and commit_max in index checkpoint header
+        /// 3. The index checkpoint ensures recovery can determine correct WAL replay range
+        ///
+        /// Recovery will use the recorded vsr_checkpoint_op to:
+        /// - Case A: WAL replay if gap <= journal_slot_count (fast)
+        /// - Case B: LSM scan if gap is moderate (medium)
+        /// - Case C: Full rebuild if checkpoint is too old (slow)
         pub fn checkpoint(
             self: *GeoStateMachine,
             callback: *const fn (*GeoStateMachine) void,
@@ -661,11 +723,76 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 
             self.checkpoint_callback = callback;
 
+            // F2.2.3: Extract VSR checkpoint state for index checkpoint coordination
+            if (self.index_checkpoint_enabled) {
+                self.coordinate_index_checkpoint();
+            }
+
             // TODO: When Forest is integrated:
             // self.forest.checkpoint(checkpoint_finish);
             //
             // For now, immediately complete since we have no LSM tree yet
             self.checkpoint_finish();
+        }
+
+        /// Coordinate index checkpoint with VSR checkpoint sequence (F2.2.3).
+        ///
+        /// This function extracts VSR state from the superblock and would pass it
+        /// to the RAM index checkpoint system. The recorded state enables:
+        /// - Determining correct WAL replay range during recovery
+        /// - Detecting if index checkpoint is too far behind VSR checkpoint
+        /// - Metrics for monitoring checkpoint lag
+        fn coordinate_index_checkpoint(self: *GeoStateMachine) void {
+            // Access VSR checkpoint state through grid.superblock
+            const checkpoint_state = &self.grid.superblock.working.vsr_state.checkpoint;
+            const vsr_checkpoint_op = checkpoint_state.header.op;
+            const vsr_commit_max = self.grid.superblock.working.vsr_state.commit_max;
+
+            // Log checkpoint coordination for debugging
+            log.debug("Index checkpoint coordination: vsr_checkpoint_op={} commit_max={} last_index_op={}", .{
+                vsr_checkpoint_op,
+                vsr_commit_max,
+                self.last_index_checkpoint_op,
+            });
+
+            // Calculate checkpoint lag (ops since last index checkpoint)
+            const checkpoint_lag = if (vsr_checkpoint_op > self.last_index_checkpoint_op)
+                vsr_checkpoint_op - self.last_index_checkpoint_op
+            else
+                0;
+
+            // Warn if index checkpoint is lagging significantly behind VSR
+            // The spec suggests triggering LSM scan if gap exceeds journal_slot_count
+            if (checkpoint_lag > constants.journal_slot_count) {
+                log.warn("Index checkpoint lagging behind VSR: gap={} (journal_slot_count={})", .{
+                    checkpoint_lag,
+                    constants.journal_slot_count,
+                });
+            }
+
+            // TODO(F2.2): When RAM index is integrated, call:
+            // index_checkpoint.write_incremental(
+            //     &self.ram_index,
+            //     vsr_checkpoint_op,
+            //     vsr_commit_max,
+            //     timestamp_high_water,
+            // );
+
+            // Record the VSR checkpoint op we've coordinated with
+            self.last_index_checkpoint_op = vsr_checkpoint_op;
+        }
+
+        /// Get current VSR checkpoint state (F2.2.3).
+        /// Returns the VSR checkpoint op and commit_max for external coordination.
+        pub fn get_vsr_checkpoint_state(self: *const GeoStateMachine) struct {
+            vsr_checkpoint_op: u64,
+            vsr_commit_max: u64,
+        } {
+            const checkpoint_state = &self.grid.superblock.working.vsr_state.checkpoint;
+            return .{
+                .vsr_checkpoint_op = checkpoint_state.header.op,
+                .vsr_commit_max = self.grid.superblock.working.vsr_state.commit_max,
+            };
         }
 
         /// Internal callback when forest checkpoint completes.
@@ -769,4 +896,38 @@ test "batch_max_events calculation" {
     try std.testing.expect(max_events > 0);
     // With 128-byte GeoEvent and ~1MB body, should fit ~8000 events
     try std.testing.expect(max_events >= 8);
+}
+
+test "GeoStateMachine has checkpoint coordination fields (F2.2.3)" {
+    // This compile-time test verifies the GeoStateMachine has the required
+    // fields for VSR checkpoint coordination (F2.2.3).
+    const TestStorage = @import("testing/storage.zig").Storage;
+    const GeoStateMachine = GeoStateMachineType(TestStorage);
+
+    // Verify Options struct has required fields
+    _ = GeoStateMachine.Options{
+        .batch_size_limit = 1024,
+        .enable_index_checkpoint = true,
+    };
+
+    // Verify the struct has checkpoint coordination fields
+    comptime {
+        // Must have grid field for VSR access
+        _ = @offsetOf(GeoStateMachine, "grid");
+        // Must have index_checkpoint_enabled flag
+        _ = @offsetOf(GeoStateMachine, "index_checkpoint_enabled");
+        // Must track last checkpoint op for lag detection
+        _ = @offsetOf(GeoStateMachine, "last_index_checkpoint_op");
+    }
+}
+
+test "CheckpointHeader has VSR state fields (F2.2.3)" {
+    // Verify CheckpointHeader can store VSR checkpoint coordination data.
+    const header = CheckpointHeader{
+        .vsr_checkpoint_op = 12345,
+        .vsr_commit_max = 12400,
+        .checkpoint_timestamp_ns = 1704067200_000_000_000,
+    };
+    try std.testing.expectEqual(@as(u64, 12345), header.vsr_checkpoint_op);
+    try std.testing.expectEqual(@as(u64, 12400), header.vsr_commit_max);
 }

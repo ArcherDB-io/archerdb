@@ -211,7 +211,8 @@ pub fn RamIndex(comptime options: struct {
         const Self = @This();
 
         /// Pre-allocated array of index entries.
-        entries: []IndexEntry,
+        /// Aligned to 64 bytes (cache line) to prevent false sharing.
+        entries: []align(64) IndexEntry,
 
         /// Total number of slots (capacity).
         capacity: u64,
