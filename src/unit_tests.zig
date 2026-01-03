@@ -38,6 +38,7 @@ comptime {
     _ = @import("lsm/zig_zag_merge.zig");
     _ = @import("message_buffer.zig");
     _ = @import("multiversion.zig");
+    _ = @import("post_filter.zig");
     _ = @import("queue.zig");
     _ = @import("ram_index.zig");
     _ = @import("repl/completion.zig");
@@ -51,6 +52,7 @@ comptime {
     _ = @import("scripts/cfo.zig");
     _ = @import("scripts/changelog.zig");
     _ = @import("shell.zig");
+    _ = @import("skip_scan.zig");
     _ = @import("stack.zig");
     _ = @import("state_machine.zig");
     _ = @import("state_machine_fuzz.zig");

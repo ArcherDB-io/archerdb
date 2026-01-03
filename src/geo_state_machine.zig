@@ -2130,10 +2130,8 @@ test "TombstoneMetrics: toPrometheus output" {
 // ============================================================================
 
 test "selectS2Levels: small radius (100m)" {
-    const GeoStateMachine = GeoStateMachineType(
-        @import("vsr.zig").TestStorage,
-        @import("vsr.zig").TestStorage.TestingMessageBus,
-    );
+    const TestStorage = @import("testing/storage.zig").Storage;
+    const GeoStateMachine = GeoStateMachineType(TestStorage);
     const levels = GeoStateMachine.selectS2Levels(100_000); // 100m in mm
     // Per spec: 100m → level 16
     try std.testing.expect(levels.min_level >= 14 and levels.min_level <= 17);
@@ -2142,10 +2140,8 @@ test "selectS2Levels: small radius (100m)" {
 }
 
 test "selectS2Levels: medium radius (1km)" {
-    const GeoStateMachine = GeoStateMachineType(
-        @import("vsr.zig").TestStorage,
-        @import("vsr.zig").TestStorage.TestingMessageBus,
-    );
+    const TestStorage = @import("testing/storage.zig").Storage;
+    const GeoStateMachine = GeoStateMachineType(TestStorage);
     const levels = GeoStateMachine.selectS2Levels(1_000_000); // 1km in mm
     // Per spec: 1km → level ~13
     try std.testing.expect(levels.min_level >= 10 and levels.min_level <= 14);
@@ -2153,10 +2149,8 @@ test "selectS2Levels: medium radius (1km)" {
 }
 
 test "selectS2Levels: large radius (100km)" {
-    const GeoStateMachine = GeoStateMachineType(
-        @import("vsr.zig").TestStorage,
-        @import("vsr.zig").TestStorage.TestingMessageBus,
-    );
+    const TestStorage = @import("testing/storage.zig").Storage;
+    const GeoStateMachine = GeoStateMachineType(TestStorage);
     const levels = GeoStateMachine.selectS2Levels(100_000_000); // 100km in mm
     // Per spec: 100km → level ~6
     try std.testing.expect(levels.min_level >= 4 and levels.min_level <= 8);
@@ -2164,10 +2158,8 @@ test "selectS2Levels: large radius (100km)" {
 }
 
 test "cellInCovering: basic range check" {
-    const GeoStateMachine = GeoStateMachineType(
-        @import("vsr.zig").TestStorage,
-        @import("vsr.zig").TestStorage.TestingMessageBus,
-    );
+    const TestStorage = @import("testing/storage.zig").Storage;
+    const GeoStateMachine = GeoStateMachineType(TestStorage);
 
     // Create a simple covering with one range
     var covering: [s2_index.s2_max_cells]s2_index.CellRange = undefined;
