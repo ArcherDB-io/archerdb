@@ -139,6 +139,65 @@ pub const DeleteEntitiesResult = extern struct {
 };
 
 // ============================================================================
+// Deletion Metrics (F2.5.5)
+// ============================================================================
+
+/// Metrics for GDPR entity deletion operations.
+pub const DeletionMetrics = struct {
+    /// Total entities successfully deleted.
+    entities_deleted: u64 = 0,
+    /// Total entities not found during deletion.
+    entities_not_found: u64 = 0,
+    /// Total deletion operations executed.
+    deletion_operations: u64 = 0,
+    /// Cumulative deletion duration in nanoseconds.
+    total_deletion_duration_ns: u64 = 0,
+
+    /// Record a deletion batch result.
+    pub fn record_deletion_batch(
+        self: *DeletionMetrics,
+        deleted: u64,
+        not_found: u64,
+        duration_ns: u64,
+    ) void {
+        self.entities_deleted += deleted;
+        self.entities_not_found += not_found;
+        self.deletion_operations += 1;
+        self.total_deletion_duration_ns += duration_ns;
+    }
+
+    /// Calculate average deletion latency (ns per entity).
+    pub fn average_deletion_latency_ns(self: DeletionMetrics) u64 {
+        if (self.entities_deleted == 0) return 0;
+        return self.total_deletion_duration_ns / self.entities_deleted;
+    }
+
+    /// Export metrics in Prometheus text format.
+    pub fn toPrometheus(self: DeletionMetrics, writer: anytype) !void {
+        try writer.print(
+            \\# HELP archerdb_entities_deleted_total Total entities deleted
+            \\# TYPE archerdb_entities_deleted_total counter
+            \\archerdb_entities_deleted_total {d}
+            \\# HELP archerdb_deletion_not_found_total Delete requests for non-existent entities
+            \\# TYPE archerdb_deletion_not_found_total counter
+            \\archerdb_deletion_not_found_total {d}
+            \\# HELP archerdb_deletion_operations_total Total deletion operations
+            \\# TYPE archerdb_deletion_operations_total counter
+            \\archerdb_deletion_operations_total {d}
+            \\# HELP archerdb_deletion_duration_ns_total Cumulative deletion duration
+            \\# TYPE archerdb_deletion_duration_ns_total counter
+            \\archerdb_deletion_duration_ns_total {d}
+            \\
+        , .{
+            self.entities_deleted,
+            self.entities_not_found,
+            self.deletion_operations,
+            self.total_deletion_duration_ns,
+        });
+    }
+};
+
+// ============================================================================
 // Query Filters
 // ============================================================================
 
@@ -301,6 +360,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 
         /// TTL metrics for observability (F2.4.5).
         ttl_metrics: ttl.TtlMetrics = ttl.TtlMetrics{},
+
+        /// Deletion metrics for GDPR compliance (F2.5.5).
+        deletion_metrics: DeletionMetrics = DeletionMetrics{},
 
         // ====================================================================
         // Initialization
@@ -719,6 +781,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             input: []const u8,
             output: []u8,
         ) usize {
+            // Measure deletion latency (F2.5.5).
+            const start_time = std.time.nanoTimestamp();
+
             // Parse input as array of entity_ids.
             const entity_ids = mem.bytesAsSlice(u128, input);
             const max_results = output.len / @sizeOf(DeleteEntitiesResult);
@@ -728,6 +793,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             );
 
             var results_count: usize = 0;
+            var deleted_count: u64 = 0;
+            var not_found_count: u64 = 0;
+
             for (entity_ids, 0..) |entity_id, index| {
                 if (index >= max_results) break;
 
@@ -750,6 +818,13 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 };
                 results_count += 1;
 
+                // Track metrics (F2.5.5).
+                if (removed) {
+                    deleted_count += 1;
+                } else {
+                    not_found_count += 1;
+                }
+
                 // F2.5.3: Generate LSM tombstones for cascading delete.
                 // When Forest is integrated, this will:
                 // 1. Query tree_ids.GeoEventTree.entity_id index for all events
@@ -758,6 +833,18 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 // Currently blocked on Forest integration (see execute_insert_events TODO).
                 // The RAM index deletion above is sufficient for immediate lookup removal.
             }
+
+            // Record metrics (F2.5.5).
+            const end_time = std.time.nanoTimestamp();
+            const duration_ns: u64 = if (end_time > start_time)
+                @intCast(end_time - start_time)
+            else
+                0;
+            self.deletion_metrics.record_deletion_batch(
+                deleted_count,
+                not_found_count,
+                duration_ns,
+            );
 
             return results_count * @sizeOf(DeleteEntitiesResult);
         }
