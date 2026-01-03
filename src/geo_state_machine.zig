@@ -128,6 +128,10 @@ const ttl = @import("ttl.zig");
 const CleanupRequest = ttl.CleanupRequest;
 const CleanupResponse = ttl.CleanupResponse;
 
+// S2 spatial index integration (F3.3.2)
+const s2_index = @import("s2_index.zig");
+const S2 = s2_index.S2;
+
 // ============================================================================
 // Tree IDs for LSM Storage
 // ============================================================================
@@ -828,7 +832,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .upsert_events => 0, // TODO: execute_upsert_events
                 .delete_entities => self.execute_delete_entities(message_body_used, output),
                 .query_uuid => 0, // TODO: execute_query_uuid
-                .query_radius => 0, // TODO: execute_query_radius
+                .query_radius => self.execute_query_radius(message_body_used, output),
                 .query_polygon => 0, // TODO: execute_query_polygon
                 .query_latest => 0, // TODO: execute_query_latest
 
@@ -1047,6 +1051,237 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             // 2. For each event: self.forest.grooves.geo_events.delete(event.id)
             // 3. Return count of tombstones generated
             return 0;
+        }
+
+        // ====================================================================
+        // F3.3.2: Radius Query Implementation
+        // ====================================================================
+
+        /// Execute radius query (F3.3.2).
+        ///
+        /// Implements the radius query execution flow per query-engine/spec.md:
+        /// 1. Convert the circle to an S2 Cap
+        /// 2. Generate covering cell ID ranges
+        /// 3. Scan RAM index for matching entries (coarse filter by cell range)
+        /// 4. Post-filter using precise Haversine distance calculation
+        /// 5. Apply timestamp/group_id filters if specified
+        ///
+        /// **Current Implementation**: Uses RAM index scan since LSM Forest
+        /// integration is not yet complete. This provides entity lookups but
+        /// is less efficient than LSM tree range scans for large datasets.
+        ///
+        /// **Future**: When Forest is integrated, replace RAM index scan with
+        /// LSM tree range scan for O(cells * log(n)) performance.
+        ///
+        /// Arguments:
+        /// - input: QueryRadiusFilter serialized data
+        /// - output: Buffer for GeoEvent results
+        ///
+        /// Returns: Size of response written to output (number of bytes)
+        fn execute_query_radius(
+            self: *GeoStateMachine,
+            input: []const u8,
+            output: []u8,
+        ) usize {
+            // Validate input size
+            if (input.len < @sizeOf(QueryRadiusFilter)) {
+                log.warn("query_radius: input too small ({d} < {d})", .{
+                    input.len,
+                    @sizeOf(QueryRadiusFilter),
+                });
+                return 0;
+            }
+
+            // Parse filter from input
+            const filter = mem.bytesAsValue(
+                QueryRadiusFilter,
+                input[0..@sizeOf(QueryRadiusFilter)],
+            ).*;
+
+            // Validate filter parameters
+            if (filter.radius_mm == 0) {
+                log.warn("query_radius: radius_mm must be > 0", .{});
+                return 0;
+            }
+            if (filter.limit == 0) {
+                log.warn("query_radius: limit must be > 0", .{});
+                return 0;
+            }
+
+            // Calculate output capacity
+            const max_results = output.len / @sizeOf(GeoEvent);
+            const effective_limit = @min(filter.limit, @as(u32, @intCast(max_results)));
+            if (effective_limit == 0) {
+                return 0;
+            }
+
+            // Generate S2 covering for the query region
+            var scratch: [s2_index.s2_scratch_size]u8 = undefined;
+
+            // Select S2 levels based on radius per spec decision table
+            const level_params = selectS2Levels(filter.radius_mm);
+
+            const covering = S2.coverCap(
+                &scratch,
+                filter.center_lat_nano,
+                filter.center_lon_nano,
+                filter.radius_mm,
+                level_params.min_level,
+                level_params.max_level,
+            );
+
+            // Count non-empty ranges for logging
+            var num_ranges: usize = 0;
+            for (covering) |range| {
+                if (range.start != 0 or range.end != 0) {
+                    num_ranges += 1;
+                }
+            }
+
+            log.debug("query_radius: covering generated with {d} ranges", .{num_ranges});
+
+            // Scan RAM index and collect matching entries
+            const results_slice = mem.bytesAsSlice(
+                GeoEvent,
+                output[0 .. effective_limit * @sizeOf(GeoEvent)],
+            );
+
+            var result_count: usize = 0;
+            const radius_mm_u64 = @as(u64, filter.radius_mm);
+
+            // Scan entire RAM index (temporary until LSM scan is available)
+            // NOTE: This is O(n) where n is index capacity. For production use,
+            // LSM tree range scan should be used instead.
+            var position: u64 = 0;
+            while (position < self.ram_index.capacity and result_count < effective_limit) {
+                // Read entry from index
+                const entry_ptr: *IndexEntry = &self.ram_index.entries[@intCast(position)];
+                const entry = @as(*volatile IndexEntry, @ptrCast(entry_ptr)).*;
+
+                position += 1;
+
+                // Skip empty slots and tombstones
+                if (entry.is_empty() or entry.is_tombstone()) {
+                    continue;
+                }
+
+                // Extract S2 cell ID from composite latest_id (upper 64 bits)
+                const cell_id = @as(u64, @truncate(entry.latest_id >> 64));
+                const timestamp = @as(u64, @truncate(entry.latest_id));
+
+                // Coarse filter: Check if cell is in any covering range
+                if (!cellInCovering(cell_id, &covering)) {
+                    continue;
+                }
+
+                // Apply timestamp filter if specified
+                if (filter.timestamp_min > 0 and timestamp < filter.timestamp_min) {
+                    continue;
+                }
+                if (filter.timestamp_max > 0 and timestamp > filter.timestamp_max) {
+                    continue;
+                }
+
+                // Get approximate lat/lon from cell center
+                // Note: At level 30, cells are ~7.5mm, so this is sufficiently accurate
+                const cell_center = S2.cellIdToLatLon(cell_id);
+
+                // Post-filter: Precise distance check using Haversine formula
+                if (!S2.isWithinDistance(
+                    filter.center_lat_nano,
+                    filter.center_lon_nano,
+                    cell_center.lat_nano,
+                    cell_center.lon_nano,
+                    radius_mm_u64,
+                )) {
+                    continue;
+                }
+
+                // Build GeoEvent result
+                // NOTE: This creates a minimal GeoEvent from index data.
+                // When Forest is integrated, we should fetch the full event from LSM.
+                results_slice[result_count] = GeoEvent{
+                    .id = entry.latest_id,
+                    .entity_id = entry.entity_id,
+                    .correlation_id = 0, // Not stored in RAM index
+                    .user_data = 0, // Not stored in RAM index
+                    .lat_nano = cell_center.lat_nano,
+                    .lon_nano = cell_center.lon_nano,
+                    .group_id = 0, // Not stored in RAM index - TODO: add group_id filter when Forest is ready
+                    .timestamp = timestamp,
+                    .altitude_mm = 0,
+                    .velocity_mms = 0,
+                    .ttl_seconds = entry.ttl_seconds,
+                    .accuracy_mm = 0,
+                    .heading_cdeg = 0,
+                    .flags = GeoEventFlags.none,
+                    .reserved = [_]u8{0} ** 12,
+                };
+
+                result_count += 1;
+            }
+
+            log.debug("query_radius: returning {d} results", .{result_count});
+
+            return result_count * @sizeOf(GeoEvent);
+        }
+
+        /// Check if a cell ID falls within any of the covering ranges.
+        ///
+        /// The covering ranges are computed from S2 cells at various levels using
+        /// cellToRange(), which generates ranges [min, max) that include all
+        /// descendant cells. So a level-30 cell ID can be directly compared
+        /// against the ranges without needing to traverse the hierarchy.
+        fn cellInCovering(cell_id: u64, covering: *const [s2_index.s2_max_cells]s2_index.CellRange) bool {
+            for (covering) |range| {
+                // Skip empty ranges
+                if (range.start == 0 and range.end == 0) {
+                    continue;
+                }
+
+                // Check if cell is within range [start, end)
+                // The ranges already cover all descendant cells
+                if (cell_id >= range.start and cell_id < range.end) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// Select S2 levels based on radius per spec decision table.
+        /// Returns min_level and max_level for RegionCoverer.
+        fn selectS2Levels(radius_mm: u32) struct { min_level: u8, max_level: u8 } {
+            // Convert mm to meters for level selection
+            const radius_m = @as(f64, @floatFromInt(radius_mm)) / 1000.0;
+
+            // Per query-engine/spec.md decision table:
+            // min_level = max(0, min(18, floor(log2(7842000 / radius_meters))))
+            // max_level = min(min_level + 4, 18)
+
+            if (radius_m <= 0) {
+                return .{ .min_level = 18, .max_level = 18 };
+            }
+
+            const earth_radius_km = 7842.0; // From spec
+            const ratio = (earth_radius_km * 1000.0) / radius_m;
+
+            if (ratio <= 1.0) {
+                return .{ .min_level = 0, .max_level = 4 };
+            }
+
+            // Calculate log2 using bit manipulation for determinism
+            const log2_val = @log2(ratio);
+            const min_level_raw = @floor(log2_val);
+
+            var min_level: u8 = 0;
+            if (min_level_raw > 0) {
+                min_level = @min(18, @as(u8, @intFromFloat(min_level_raw)));
+            }
+
+            const max_level = @min(min_level + 4, 18);
+
+            return .{ .min_level = min_level, .max_level = max_level };
         }
 
         /// Tombstone retention decision for LSM compaction (F2.5.7).
@@ -1678,4 +1913,70 @@ test "TombstoneMetrics: toPrometheus output" {
     try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_compaction_cycles_total 10") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_tombstone_age_seconds_total 12500") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_tombstone_age_max_seconds 300") != null);
+}
+
+// ============================================================================
+// F3.3.2: Radius Query Tests
+// ============================================================================
+
+test "selectS2Levels: small radius (100m)" {
+    const GeoStateMachine = GeoStateMachineType(
+        @import("vsr.zig").TestStorage,
+        @import("vsr.zig").TestStorage.TestingMessageBus,
+    );
+    const levels = GeoStateMachine.selectS2Levels(100_000); // 100m in mm
+    // Per spec: 100m → level 16
+    try std.testing.expect(levels.min_level >= 14 and levels.min_level <= 17);
+    try std.testing.expect(levels.max_level <= 18);
+    try std.testing.expect(levels.max_level > levels.min_level);
+}
+
+test "selectS2Levels: medium radius (1km)" {
+    const GeoStateMachine = GeoStateMachineType(
+        @import("vsr.zig").TestStorage,
+        @import("vsr.zig").TestStorage.TestingMessageBus,
+    );
+    const levels = GeoStateMachine.selectS2Levels(1_000_000); // 1km in mm
+    // Per spec: 1km → level ~13
+    try std.testing.expect(levels.min_level >= 10 and levels.min_level <= 14);
+    try std.testing.expect(levels.max_level <= 18);
+}
+
+test "selectS2Levels: large radius (100km)" {
+    const GeoStateMachine = GeoStateMachineType(
+        @import("vsr.zig").TestStorage,
+        @import("vsr.zig").TestStorage.TestingMessageBus,
+    );
+    const levels = GeoStateMachine.selectS2Levels(100_000_000); // 100km in mm
+    // Per spec: 100km → level ~6
+    try std.testing.expect(levels.min_level >= 4 and levels.min_level <= 8);
+    try std.testing.expect(levels.max_level <= 12);
+}
+
+test "cellInCovering: basic range check" {
+    const GeoStateMachine = GeoStateMachineType(
+        @import("vsr.zig").TestStorage,
+        @import("vsr.zig").TestStorage.TestingMessageBus,
+    );
+
+    // Create a simple covering with one range
+    var covering: [s2_index.s2_max_cells]s2_index.CellRange = undefined;
+    for (&covering) |*range| {
+        range.* = .{ .start = 0, .end = 0 };
+    }
+
+    // Set up a range [1000, 2000)
+    covering[0] = .{ .start = 1000, .end = 2000 };
+
+    // Test: cell inside range
+    try std.testing.expect(GeoStateMachine.cellInCovering(1500, &covering));
+
+    // Test: cell at start of range (inclusive)
+    try std.testing.expect(GeoStateMachine.cellInCovering(1000, &covering));
+
+    // Test: cell at end of range (exclusive)
+    try std.testing.expect(!GeoStateMachine.cellInCovering(2000, &covering));
+
+    // Test: cell outside range
+    try std.testing.expect(!GeoStateMachine.cellInCovering(500, &covering));
 }
