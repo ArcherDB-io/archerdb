@@ -213,6 +213,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         /// Callback for async compact completion.
         compact_callback: ?*const fn (*GeoStateMachine) void = null,
 
+        /// Callback for async checkpoint completion.
+        checkpoint_callback: ?*const fn (*GeoStateMachine) void = null,
+
         /// Batch size limit for this state machine.
         batch_size_limit: u32,
 
@@ -554,35 +557,70 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         }
 
         /// Compact phase - integrate with checkpoint system.
-        /// Called during compaction cycle.
+        /// Called during compaction cycle to trigger LSM tree compaction.
         ///
-        /// Implementation: F1.1.6
+        /// Compaction merges sorted runs in the LSM tree, reducing read
+        /// amplification and freeing space. This is called periodically
+        /// by VSR as part of the checkpoint cycle.
+        ///
+        /// The operation number `op` is used to determine which LSM levels
+        /// need compaction based on the compaction schedule.
         pub fn compact(
             self: *GeoStateMachine,
             callback: *const fn (*GeoStateMachine) void,
             op: u64,
         ) void {
-            _ = op;
+            // Must have committed at least one operation
+            assert(op != 0);
 
+            // Cannot start compaction while another compact/checkpoint is in progress
             assert(self.compact_callback == null);
+            assert(self.checkpoint_callback == null);
+
             self.compact_callback = callback;
 
-            // TODO(F1.1.6): Trigger forest compaction
-            // For now, immediately invoke callback
-            if (self.compact_callback) |cb| {
-                self.compact_callback = null;
-                cb(self);
-            }
+            // TODO: When Forest is integrated:
+            // self.forest.compact(compact_finish, op);
+            //
+            // For now, immediately complete since we have no LSM tree yet
+            self.compact_finish();
         }
 
-        /// Checkpoint phase - save state to disk.
+        /// Internal callback when forest compaction completes.
+        fn compact_finish(self: *GeoStateMachine) void {
+            const callback = self.compact_callback.?;
+            self.compact_callback = null;
+            callback(self);
+        }
+
+        /// Checkpoint phase - save state to durable storage.
+        /// Called after compaction to persist the compacted state.
+        ///
+        /// Checkpointing writes the current LSM tree state to disk,
+        /// creating a recovery point. After checkpoint, the WAL entries
+        /// before this point can be discarded.
         pub fn checkpoint(
             self: *GeoStateMachine,
             callback: *const fn (*GeoStateMachine) void,
         ) void {
-            _ = self;
-            _ = callback;
-            // TODO: Implement checkpointing
+            // Cannot start checkpoint while another compact/checkpoint is in progress
+            assert(self.compact_callback == null);
+            assert(self.checkpoint_callback == null);
+
+            self.checkpoint_callback = callback;
+
+            // TODO: When Forest is integrated:
+            // self.forest.checkpoint(checkpoint_finish);
+            //
+            // For now, immediately complete since we have no LSM tree yet
+            self.checkpoint_finish();
+        }
+
+        /// Internal callback when forest checkpoint completes.
+        fn checkpoint_finish(self: *GeoStateMachine) void {
+            const callback = self.checkpoint_callback.?;
+            self.checkpoint_callback = null;
+            callback(self);
         }
 
         // ====================================================================
