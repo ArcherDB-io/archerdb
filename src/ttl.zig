@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! TTL (Time-to-Live) expiration and cleanup module.
 //!
 //! This module implements the TTL functionality as specified in:

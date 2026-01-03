@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! Iterate over every TableInfo in the forest.
 //!
 //! The underlying level iterator is stable across ManifestLevel mutation and

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 ///! Implements the AMQP (Advanced Message Queuing Protocol) 0.9.1 wire protocol.
 ///! https://www.amqp.org/sites/amqp.org/files/amqp0-9-1.zip
 ///!

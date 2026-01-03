@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! ArcherDB Error Codes (F1.2.4)
 //!
 //! Defines system-wide error codes for ArcherDB operations.

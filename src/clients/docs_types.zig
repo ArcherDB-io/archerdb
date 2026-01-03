@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 // The purpose of these types is to help in reading this doc, not
 // because the types matter.
 const String = []const u8;

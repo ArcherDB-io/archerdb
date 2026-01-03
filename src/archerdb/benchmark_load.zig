@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! Start TigerBeetle clients to run a workload (described below) against a cluster while measuring
 //! observed latencies and throughput.
 //!

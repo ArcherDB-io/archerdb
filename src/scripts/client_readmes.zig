@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! All language clients are sufficiently similar, and, for that reason, we generate the
 //! corresponding READMEs by splicing language-specific code snippets into a language agnostic
 //! template. This file handles the generation process.

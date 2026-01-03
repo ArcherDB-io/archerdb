@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! Decode grid blocks.
 //!
 //! Rather than switching between specialized decoders depending on the tree, each schema encodes

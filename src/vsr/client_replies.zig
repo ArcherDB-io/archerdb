@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! Store the latest reply to every active client session.
 //!
 //! This allows them to be resent to the corresponding client if the client missed the original

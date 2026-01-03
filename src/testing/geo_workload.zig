@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! GeoEvent Workload Generator for VOPR (F4.1.1)
 //!
 //! This module generates random GeoEvent workloads for the VOPR simulator,

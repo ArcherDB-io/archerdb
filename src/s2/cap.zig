@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! S2 Cap - A spherical cap (circular region on the sphere)
 //!
 //! A Cap represents a circular region on the unit sphere, defined by a center

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! K-way merge via a loser tree algorithm (Knuth Volume 3 p. 253).
 //! Merges k sorted streams using a tournament (loser) tree.
 //! The current global winner lives in `contender`. Internal nodes in `losers`

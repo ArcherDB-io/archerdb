@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! Constants are the configuration that the code actually imports — they include:
 //! - all of the configuration values (flattened)
 //! - derived configuration values,

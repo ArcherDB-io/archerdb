@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! Test vectors for `stdx.inline_hash` from
 //!
 //! <https://github.com/abseil/abseil-cpp/blob/511ad6492eabb7797910ce8689577c45f57bce40/absl/hash/internal/low_level_hash_test.cc>

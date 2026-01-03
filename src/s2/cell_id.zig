@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! S2 Cell ID implementation in pure Zig.
 //!
 //! S2 is a hierarchical spatial index that maps the Earth's surface to a

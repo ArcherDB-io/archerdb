@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 const Sample = @import("./docs_types.zig").Sample;
 
 pub const samples = [_]Sample{

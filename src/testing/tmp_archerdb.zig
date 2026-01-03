@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! TmpTigerBeetle is an utility for integration tests, which spawns a single node TigerBeetle
 //! cluster in a temporary directory.
 

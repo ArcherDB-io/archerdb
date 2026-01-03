@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 /// This is the main entrypoint for the Vortex testing tools, delegating to these programs:
 ///
 /// * _supervisor_: runs a cluster of multiple TigerBeetle replicas, drivers, and a workload, along

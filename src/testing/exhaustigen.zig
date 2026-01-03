@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! An utility for exhaustive generation of arbitrary data
 //! <https://matklad.github.io/2021/11/07/generate-all-the-things.html>
 test "generate all permutations" {

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! S2 Spatial Index - Unified Interface for Spatial Lookups
 //!
 //! This module provides a clean interface to S2 spatial indexing functions

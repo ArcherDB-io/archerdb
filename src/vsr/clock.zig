@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! Cluster-wide synchronized clock, aggregating timing information from all replicas.
 //!
 //! Time plays a central role in TigerBeetle data model. Because it is so important, TigerBeetle

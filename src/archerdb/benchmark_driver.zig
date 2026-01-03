@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! Driver script behind `tigerbeetle benchmark` command.
 //!
 //! During benchmarking, there are three entities to keep track of:

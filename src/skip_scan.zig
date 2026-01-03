@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! Skip-Scan Optimization for Spatial Range Queries (F3.3.4)
 //!
 //! This module implements block-level min/max filtering to skip irrelevant

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! Sanity checks that all the generated files look reasonable.
 
 const std = @import("std");

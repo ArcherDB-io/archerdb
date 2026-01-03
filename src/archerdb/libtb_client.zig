@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! Entry point for exporting the `tb_client` library.
 //! Used by language clients that rely on the shared or static library exposed by `tb_client.h`.
 //! For an idiomatic Zig API, use `vsr.tb_client` directly instead.

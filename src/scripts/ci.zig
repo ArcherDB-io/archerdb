@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! Various CI checks that go beyond `zig build test`. Notably, at the moment this script includes:
 //!
 //! - Testing all language clients.

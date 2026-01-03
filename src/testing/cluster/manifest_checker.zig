@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! Verify that the ManifestLevels tables are constructed consistently across replicas and after
 //! recovering from a restart.
 const std = @import("std");

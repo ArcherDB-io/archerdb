@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! The Workload drives an end-to-end test: from client requests, through consensus and the state
 //! machine, down to the storage engine, and back.
 //!

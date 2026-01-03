@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! Runs a set of macro-benchmarks whose result is displayed at <https://tigerbeetle.github.io>.
 //!
 //! Specifically:

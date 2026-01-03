@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! Some tools for working with Linux `unshare` and namespaces.
 //!
 //! We use user, pid, and network namespaces for two purposes:

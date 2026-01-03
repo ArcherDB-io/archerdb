@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! Very simple state machine fuzzer. It looks for poison pill style ops that are otherwise valid
 //! which cause a crash, then be replayed after said crash, resulting in a crash loop.
 const std = @import("std");

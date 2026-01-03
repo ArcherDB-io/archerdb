@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! Parse and validate command-line arguments for the tigerbeetle binary.
 //!
 //! Everything that can be validated without reading the data file must be validated here.

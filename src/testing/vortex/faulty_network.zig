@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! The `Network` is a set of proxies used to inject network faults in a Vortex test cluster. We
 //! create one `Proxy` per replica in the test cluster. Each proxy has a set of available
 //! `Connection`s, which model the communication through the proxy (replica-to-replica or

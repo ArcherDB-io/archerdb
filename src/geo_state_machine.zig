@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! GeoStateMachine - ArcherDB's geospatial state machine implementation.
 //!
 //! This module implements the StateMachine interface required by VSR,

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! Convenient constructs for TigerBeetle components, for fuzzing and testing.
 //!
 //! Consider the Grid. In the actual database, there is only single call to Grid.init.

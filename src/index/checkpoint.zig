@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! Index Checkpoint - Periodic persistence of RAM index to disk.
 //!
 //! Implements an incremental dirty-page checkpoint strategy to avoid

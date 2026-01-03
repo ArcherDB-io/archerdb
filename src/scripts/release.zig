@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! Orchestrates building and publishing a distribution of tigerbeetle --- a collection of (source
 //! and binary) artifacts which constitutes a release and which we upload to various registries.
 //!

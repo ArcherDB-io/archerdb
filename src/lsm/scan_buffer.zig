@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 const std = @import("std");
 const mem = std.mem;
 const Allocator = std.mem.Allocator;

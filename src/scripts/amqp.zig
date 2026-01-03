@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! Integration tests for the AMQP client.
 //! Uses a real RabbitMQ instance running on docker.
 

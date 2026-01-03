@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! Track corrupt/missing grid blocks.
 //!
 //! - The GridBlocksMissing is LSM-aware: it can repair entire tables.

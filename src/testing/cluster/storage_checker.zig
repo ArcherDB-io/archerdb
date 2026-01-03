@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! Verify deterministic storage.
 //!
 //! At each replica compact and checkpoint, check that storage is byte-for-byte identical across

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! This file piggy-backs on the logging infrastructure to implement explicit coverage marks:
 //!     <https://ferrous-systems.com/blog/coverage-marks/>
 //!

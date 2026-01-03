@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! S2 Determinism Checker for VOPR (F4.1.4)
 //!
 //! This module verifies that S2 cell computations are deterministic across

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! Post-Filter Module for Precise Geometry Tests (F3.3.5)
 //!
 //! This module provides post-filtering utilities for spatial queries, ensuring

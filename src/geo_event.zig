@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! GeoEvent - The core data structure for ArcherDB geospatial events.
 //!
 //! A 128-byte extern struct with explicit memory layout guarantees matching

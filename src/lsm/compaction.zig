@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! Compaction moves or merges a table's values from the previous level.
 //!
 //! Each Compaction is paced to run in an arbitrary amount of beats, by the forest.

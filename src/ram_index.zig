@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! RAM Index - O(1) entity lookup index for ArcherDB.
 //!
 //! Implements an Aerospike-style index-on-RAM architecture where the primary

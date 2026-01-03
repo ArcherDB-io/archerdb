@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 /// Basic state shared across all implementations of a Scan.
 pub const ScanState = enum {
     /// The scan has not been executed yet.

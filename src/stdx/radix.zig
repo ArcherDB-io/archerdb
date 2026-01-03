@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! Stable, non-allocating, out-of-place LSD radix sort over unsigned integer keys.
 //! Sorts `values` in ascending order by `key_from_value`, using `values_scratch`
 //! as an equally sized, disjoint swap buffer. Keys must be an unsigned `Int`.

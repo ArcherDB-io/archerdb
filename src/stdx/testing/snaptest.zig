@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! A tiny pattern/library for testing with expectations ([1], [2]).
 //!
 //! On a high level, this is a replacement for `std.testing.expectEqual` which:

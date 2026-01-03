@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 ///! This test hosts an in-process JVM
 ///! using the JNI Invocation API.
 const std = @import("std");

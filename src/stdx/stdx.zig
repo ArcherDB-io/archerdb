@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! Extensions to the standard library -- things which could have been in std, but aren't.
 //!
 //! Unlike std, the namespacing is relatively flat: `stdx.PRNG` rather than `stdx.random.PRNG`.

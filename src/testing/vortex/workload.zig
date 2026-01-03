@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! This workload runs in an loop, generating and executing operations on a cluster through a
 //! _driver_.
 //!

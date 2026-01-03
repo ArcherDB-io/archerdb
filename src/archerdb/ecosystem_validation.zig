@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 // ArcherDB Zig Ecosystem Validation
 // F0.0.1: Execute Zig ecosystem validation audit per implementation-guide/spec.md
 //

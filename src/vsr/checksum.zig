@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! This file implements vsr.checksum. TigerBeetle uses this checksum to:
 //!
 //! - detect bitrot in data on disk,

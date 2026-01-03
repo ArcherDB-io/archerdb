@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 ///! Based on Java Native Interface Specification and Java Invocation API.
 ///! https://docs.oracle.com/en/java/javase/17/docs/specs/jni.
 ///!

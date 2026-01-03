@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 ///! Multi-batching consists of the application submitting multiple independent units of work of
 ///! the same operation (the batch payload) within a single VSR message.
 ///! This amortizes network and consensus costs, improving performance in scenarios where highly

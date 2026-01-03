@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 const ScanTreeType = @import("scan_tree.zig").ScanTreeType;
 const ScanBuffer = @import("scan_buffer.zig").ScanBuffer;
 

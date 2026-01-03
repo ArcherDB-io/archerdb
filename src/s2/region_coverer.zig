@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! S2 RegionCoverer - Generate cell ID ranges that cover a region
 //!
 //! The RegionCoverer produces a set of S2 cells that completely cover a

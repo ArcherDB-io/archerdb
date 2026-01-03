@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! ScratchMemory is a page-aligned scratch buffer meant for situations where a buffer is required
 //! (e.g., radix sort) and can be shared between components.
 //! The buffer is page-aligned so that smaller alignments are trivially satisfied. See:

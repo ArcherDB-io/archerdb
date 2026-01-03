@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! Analyze LLVM IR to find:
 //! - large memcpy calls
 //! - functions with many copies due to monomorphisation and big total size

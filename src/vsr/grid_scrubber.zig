@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! Scrub grid blocks.
 //!
 //! A "data scrubber" is a background task that gradually/incrementally reads the disk and validates

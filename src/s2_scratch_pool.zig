@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! S2 Scratch Buffer Pool (F3.3.6)
 //!
 //! Pre-allocated pool of scratch buffers for S2 polygon covering operations.

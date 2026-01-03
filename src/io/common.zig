@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! Code shared across several IO implementations, because, e.g., it is expressible via POSIX layer.
 const builtin = @import("builtin");
 const std = @import("std");

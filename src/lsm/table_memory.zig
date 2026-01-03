@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! Memory tables for an LSM (log‑structured merge) stage.
 //!
 //! Each `tree.zig` maintains two in‑memory tables:

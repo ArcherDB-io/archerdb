@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! The Auditor constructs the expected state of its corresponding StateMachine from requests and
 //! replies. It validates replies against its local state.
 //!

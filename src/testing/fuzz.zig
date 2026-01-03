@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! Utils functions for writing fuzzers.
 
 const builtin = @import("builtin");

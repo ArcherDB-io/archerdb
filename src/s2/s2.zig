@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! S2 Geometry Library - Pure Zig Implementation
 //!
 //! This module provides S2 spatial indexing functionality for ArcherDB.

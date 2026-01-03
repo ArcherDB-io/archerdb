@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! Vendored from Zig's 0.13.0 standard library to maintain hash stability.
 //! Source: https://github.com/ziglang/zig/blob/0.13.0/lib/std/crypto/aegis.zig
 

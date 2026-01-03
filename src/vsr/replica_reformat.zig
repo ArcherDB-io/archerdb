@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! Replica recovery: Format a data file to replace one which was permanently lost.
 //!
 //! 1. The recovery process send `pipeline_prepare_queue_max` requests (1 register + many noops) to

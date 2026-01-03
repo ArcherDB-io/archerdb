@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! An allocator wrapper which can be disabled at runtime.
 //! We use this for allocating at startup and then
 //! disable it to prevent accidental dynamic allocation at runtime.

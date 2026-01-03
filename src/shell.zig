@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 //! Collection of utilities for scripting: an in-process sh+coreutils combo.
 //!
 //! Keep this as a single file, independent from the rest of the codebase, to make it easier to
