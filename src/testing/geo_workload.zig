@@ -318,8 +318,9 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
             // Use the body for entity IDs (u128 array)
             const entity_ids: []u128 = stdx.bytes_as_slice(.inexact, u128, body);
 
-            // Pick random entities to delete
-            const count = self.prng.int_inclusive(usize, @min(entity_ids.len, 10));
+            // Pick random entities to delete, respecting batch_size_limit
+            const max_by_limit = self.options.batch_size_limit / @sizeOf(u128);
+            const count = self.prng.int_inclusive(usize, @max(1, @min(entity_ids.len, @min(max_by_limit, 10))));
             for (entity_ids[0..count], 0..) |*id, i| {
                 _ = i;
                 const idx = self.prng.int(usize) % self.tracked_entities.items.len;
@@ -499,13 +500,19 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
         ) RequestResult {
             const filter = @as(*archerdb.QueryPolygonFilter, @ptrCast(@alignCast(body.ptr)));
 
-            // Use minimum vertices (3) or maximum (capped at what fits)
+            // Use minimum vertices (3) or maximum (capped by batch_size_limit)
             const use_min = self.prng.chance(.{ .numerator = 50, .denominator = 100 });
             const vertices_start = @sizeOf(archerdb.QueryPolygonFilter);
             const vertices_bytes = body[vertices_start..];
-            const max_vertices = vertices_bytes.len / @sizeOf(geo_state_machine_types.PolygonVertex);
+            const max_by_body = vertices_bytes.len / @sizeOf(geo_state_machine_types.PolygonVertex);
+            // Limit vertices to what fits in batch_size_limit
+            const max_by_limit = if (self.options.batch_size_limit > vertices_start)
+                (self.options.batch_size_limit - vertices_start) / @sizeOf(geo_state_machine_types.PolygonVertex)
+            else
+                3; // Minimum polygon
+            const max_vertices = @min(max_by_body, @min(max_by_limit, 100));
 
-            filter.vertex_count = if (use_min) 3 else @as(u32, @intCast(@min(max_vertices, 100)));
+            filter.vertex_count = if (use_min) 3 else @as(u32, @intCast(@max(3, max_vertices)));
             filter.limit = self.prng.int_inclusive(u32, 1000);
             filter.timestamp_min = 0;
             filter.timestamp_max = 0;
@@ -553,6 +560,15 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
         ) RequestResult {
             const filter = @as(*archerdb.QueryPolygonFilter, @ptrCast(@alignCast(body.ptr)));
 
+            const vertices_start = @sizeOf(archerdb.QueryPolygonFilter);
+
+            // Check if L-shape (6 vertices) fits in batch_size_limit
+            const l_shape_size = vertices_start + 6 * @sizeOf(geo_state_machine_types.PolygonVertex);
+            if (self.options.batch_size_limit < l_shape_size) {
+                // Batch too small for L-shape, fall back to radius query
+                return self.build_radius_query(body);
+            }
+
             // Concave polygon (L-shape or star)
             filter.vertex_count = 6; // L-shape
             filter.limit = self.prng.int_inclusive(u32, 1000);
@@ -561,7 +577,6 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
             filter.group_id = 0;
             filter.reserved = [_]u8{0} ** 96;
 
-            const vertices_start = @sizeOf(archerdb.QueryPolygonFilter);
             const vertices_bytes = body[vertices_start..];
             const vertices = stdx.bytes_as_slice(.inexact, geo_state_machine_types.PolygonVertex, vertices_bytes);
 
@@ -662,17 +677,28 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
         ) RequestResult {
             const filter = @as(*archerdb.QueryPolygonFilter, @ptrCast(@alignCast(body.ptr)));
 
-            // Generate polygon with 3-10 vertices
-            const vertex_count = self.prng.int_inclusive(u32, 10);
+            const vertices_start = @sizeOf(archerdb.QueryPolygonFilter);
+
+            // Calculate max vertices that fit in batch_size_limit
+            const max_by_limit: u32 = if (self.options.batch_size_limit > vertices_start)
+                @intCast((self.options.batch_size_limit - vertices_start) / @sizeOf(geo_state_machine_types.PolygonVertex))
+            else
+                3; // Minimum polygon
+
+            // Check if even minimum polygon fits
+            if (max_by_limit < 3) {
+                // Batch too small for polygon, fall back to radius query
+                return self.build_radius_query(body);
+            }
+
+            // Generate polygon with 3 to min(10, max_by_limit) vertices
+            const vertex_count = self.prng.int_inclusive(u32, @min(10, max_by_limit));
             filter.vertex_count = @max(3, vertex_count);
             filter.limit = self.prng.int_inclusive(u32, 1000);
             filter.timestamp_min = 0;
             filter.timestamp_max = 0;
             filter.group_id = 0;
             filter.reserved = [_]u8{0} ** 96;
-
-            // Generate vertices after filter header
-            const vertices_start = @sizeOf(archerdb.QueryPolygonFilter);
             const vertices_bytes = body[vertices_start..];
             const vertices = stdx.bytes_as_slice(.inexact, geo_state_machine_types.PolygonVertex, vertices_bytes);
 
