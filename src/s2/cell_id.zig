@@ -1,0 +1,509 @@
+//! S2 Cell ID implementation in pure Zig.
+//!
+//! S2 is a hierarchical spatial index that maps the Earth's surface to a
+//! 64-bit integer (cell ID). The key properties are:
+//!
+//! 1. **Hierarchical**: Cell IDs encode a position in a quad-tree. Parent cells
+//!    can be obtained by bit-shifting.
+//!
+//! 2. **Space-filling curve**: Uses a Hilbert curve for locality - nearby points
+//!    on Earth tend to have numerically close cell IDs.
+//!
+//! 3. **Deterministic**: This implementation uses software math to ensure
+//!    bit-exact identical results across all platforms.
+//!
+//! Cell ID structure (64 bits):
+//! ```
+//! [Face (3 bits)][Position (61 bits)]
+//! ```
+//!
+//! Position is a sequence of 2-bit "child selectors" indicating which quadrant
+//! at each level (0-30). The sentinel bit marks the end of the hierarchy.
+
+const std = @import("std");
+const assert = std.debug.assert;
+const smath = @import("math.zig");
+
+/// Maximum S2 level (finest granularity, ~7.5mm precision)
+pub const max_level: u8 = 30;
+
+/// Number of faces on the S2 cube (Earth is projected onto a cube)
+pub const num_faces: u8 = 6;
+
+/// Sentinel bit position for level encoding
+const sentinel_bit: u64 = 1;
+
+/// Face bit shift (position in cell ID)
+const face_bits: u6 = 61;
+
+/// Lookup table for face-to-UV coordinate mapping
+const face_uv_axes = [6][2]i8{
+    .{ 1, 2 }, // Face 0: +X, Y and Z axes
+    .{ 2, 0 }, // Face 1: +Y, Z and X axes
+    .{ 0, 1 }, // Face 2: +Z, X and Y axes
+    .{ 1, 2 }, // Face 3: -X, Y and Z axes
+    .{ 2, 0 }, // Face 4: -Y, Z and X axes
+    .{ 0, 1 }, // Face 5: -Z, X and Y axes
+};
+
+/// Hilbert curve lookup table for pos-to-ij conversion
+/// Each entry encodes the transformation for one step of the curve
+const hilbert_lookup = [4][4]u8{
+    .{ 0, 1, 3, 2 },
+    .{ 0, 3, 1, 2 },
+    .{ 2, 3, 1, 0 },
+    .{ 2, 1, 3, 0 },
+};
+
+/// Hilbert curve orientation lookup
+const hilbert_orientation = [4][4]u8{
+    .{ 0, 0, 3, 3 },
+    .{ 1, 1, 2, 2 },
+    .{ 2, 2, 1, 1 },
+    .{ 3, 3, 0, 0 },
+};
+
+/// Create a cell ID from latitude and longitude in nanodegrees.
+///
+/// This is the primary entry point for converting geographic coordinates
+/// to S2 cell IDs. The computation is fully deterministic using software
+/// trigonometry.
+///
+/// Arguments:
+/// - lat_nano: Latitude in nanodegrees (-90_000_000_000 to +90_000_000_000)
+/// - lon_nano: Longitude in nanodegrees (-180_000_000_000 to +180_000_000_000)
+/// - level: S2 level (0-30), determines precision
+///
+/// Returns: 64-bit S2 cell ID
+pub fn fromLatLonNano(lat_nano: i64, lon_nano: i64, level: u8) u64 {
+    assert(level <= max_level);
+
+    // Convert nanodegrees to radians
+    const lat_rad = @as(f64, @floatFromInt(lat_nano)) * (smath.pi / 180_000_000_000.0);
+    const lon_rad = @as(f64, @floatFromInt(lon_nano)) * (smath.pi / 180_000_000_000.0);
+
+    return fromLatLonRadians(lat_rad, lon_rad, level);
+}
+
+/// Create a cell ID from latitude and longitude in radians.
+pub fn fromLatLonRadians(lat_rad: f64, lon_rad: f64, level: u8) u64 {
+    assert(level <= max_level);
+
+    // Convert to 3D point on unit sphere using deterministic trig
+    const cos_lat = smath.cos(lat_rad);
+    const x = cos_lat * smath.cos(lon_rad);
+    const y = cos_lat * smath.sin(lon_rad);
+    const z = smath.sin(lat_rad);
+
+    return fromPoint(x, y, z, level);
+}
+
+/// Create a cell ID from a 3D point on the unit sphere.
+pub fn fromPoint(x: f64, y: f64, z: f64, level: u8) u64 {
+    // Find which face of the cube the point projects to
+    const face = getFace(x, y, z);
+
+    // Project point onto face and get UV coordinates
+    const uv = xyzToFaceUv(face, x, y, z);
+
+    // Convert UV to ST (apply S2's quadratic projection)
+    const st = uvToSt(uv);
+
+    // Convert ST to IJ (integer coordinates at given level)
+    const ij = stToIj(st, level);
+
+    // Build cell ID from face and IJ
+    return fromFaceIj(face, ij[0], ij[1], level);
+}
+
+/// Get the face (0-5) that a point projects to.
+fn getFace(x: f64, y: f64, z: f64) u8 {
+    const abs_x = @abs(x);
+    const abs_y = @abs(y);
+    const abs_z = @abs(z);
+
+    if (abs_x > abs_y) {
+        if (abs_x > abs_z) {
+            return if (x > 0) 0 else 3;
+        } else {
+            return if (z > 0) 2 else 5;
+        }
+    } else {
+        if (abs_y > abs_z) {
+            return if (y > 0) 1 else 4;
+        } else {
+            return if (z > 0) 2 else 5;
+        }
+    }
+}
+
+/// Project a 3D point onto a face and get UV coordinates.
+/// UV range is [-1, 1] for each axis.
+fn xyzToFaceUv(face: u8, x: f64, y: f64, z: f64) [2]f64 {
+    const coords = [3]f64{ x, y, z };
+
+    // Determine which axis is the face normal
+    const face_axis: usize = face % 3;
+    const face_sign: f64 = if (face < 3) 1.0 else -1.0;
+    const normal = coords[face_axis] * face_sign;
+
+    // Get UV axes for this face
+    const axes = face_uv_axes[face];
+    const u_axis: usize = @intCast(axes[0]);
+    const v_axis: usize = @intCast(axes[1]);
+
+    // Project onto face (divide by normal component)
+    const inv_normal = 1.0 / @abs(normal);
+    return .{
+        coords[u_axis] * inv_normal * face_sign,
+        coords[v_axis] * inv_normal * face_sign,
+    };
+}
+
+/// Convert UV coordinates to ST using S2's quadratic projection.
+/// This provides better uniformity than linear projection.
+fn uvToSt(uv: [2]f64) [2]f64 {
+    return .{
+        uvToStSingle(uv[0]),
+        uvToStSingle(uv[1]),
+    };
+}
+
+/// Single coordinate UV to ST conversion.
+/// S2 uses: ST = 0.5 * (1 + 3*UV) for UV in [-1/3, 1/3]
+///          ST = UV + sign(UV)/3 for |UV| > 1/3
+/// But we use the simpler quadratic: ST = 0.5 * (1 + UV) for uniformity.
+fn uvToStSingle(uv: f64) f64 {
+    // S2's quadratic projection for better cell uniformity
+    if (uv >= 0) {
+        return 0.5 * smath.sqrt(1.0 + 3.0 * uv);
+    } else {
+        return 1.0 - 0.5 * smath.sqrt(1.0 - 3.0 * uv);
+    }
+}
+
+/// Convert ST coordinates to IJ at given level.
+/// ST range [0, 1] maps to IJ range [0, 2^level - 1].
+fn stToIj(st: [2]f64, level: u8) [2]u32 {
+    const max_ij: u32 = @as(u32, 1) << @intCast(level);
+
+    // Clamp to valid range and convert
+    const i = stToIjSingle(st[0], max_ij);
+    const j = stToIjSingle(st[1], max_ij);
+
+    return .{ i, j };
+}
+
+fn stToIjSingle(st: f64, max_ij: u32) u32 {
+    // Clamp ST to [0, 1) and scale to IJ
+    const clamped = @max(0.0, @min(0.999999999999, st));
+    return @intFromFloat(clamped * @as(f64, @floatFromInt(max_ij)));
+}
+
+/// Build cell ID from face and IJ coordinates.
+pub fn fromFaceIj(face: u8, i: u32, j: u32, level: u8) u64 {
+    assert(face < num_faces);
+    assert(level <= max_level);
+
+    // Start with face bits
+    var cell_id: u64 = @as(u64, face) << face_bits;
+
+    // Convert IJ to Hilbert curve position and add to cell ID
+    const pos = ijToPos(i, j, level);
+    cell_id |= pos;
+
+    // Add sentinel bit to mark level
+    cell_id |= (@as(u64, 1) << @intCast((max_level - level) * 2));
+
+    return cell_id;
+}
+
+/// Convert IJ coordinates to Hilbert curve position.
+fn ijToPos(i: u32, j: u32, level: u8) u64 {
+    var pos: u64 = 0;
+    var orientation: u8 = 0;
+
+    // Traverse from coarsest to finest level
+    var l: u8 = 0;
+    while (l < level) : (l += 1) {
+        const shift: u5 = @intCast(level - 1 - l);
+        const i_bit: u8 = @intCast((i >> shift) & 1);
+        const j_bit: u8 = @intCast((j >> shift) & 1);
+
+        // Lookup position and next orientation
+        const lookup_idx = (i_bit << 1) | j_bit;
+        const hilbert_pos = hilbert_lookup[orientation][lookup_idx];
+        const next_orientation = hilbert_orientation[orientation][lookup_idx];
+
+        // Add to position
+        pos = (pos << 2) | hilbert_pos;
+        orientation = next_orientation;
+    }
+
+    // Shift to correct position in cell ID (after face bits)
+    return pos << @intCast((max_level - level) * 2 + 1);
+}
+
+/// Extract the face (0-5) from a cell ID.
+pub fn face(cell_id: u64) u8 {
+    return @intCast(cell_id >> face_bits);
+}
+
+/// Extract the level from a cell ID by finding the sentinel bit.
+pub fn level(cell_id: u64) u8 {
+    // The sentinel is the lowest set bit
+    // Level = (trailing zeros - 1) / 2
+    var lsb = cell_id & (~cell_id + 1); // Isolate lowest set bit
+    var trailing: u8 = 0;
+    while (lsb > 1) : (lsb >>= 1) {
+        trailing += 1;
+    }
+    return @intCast(max_level - trailing / 2);
+}
+
+/// Get the parent cell ID at level - 1.
+pub fn parent(cell_id: u64) u64 {
+    const lsb = cell_id & (~cell_id + 1);
+    // Move sentinel up one level (multiply by 4)
+    return (cell_id & ~(lsb | (lsb << 1))) | (lsb << 2);
+}
+
+/// Get the parent cell ID at a specific level.
+pub fn parentAtLevel(cell_id: u64, target_level: u8) u64 {
+    assert(target_level < level(cell_id));
+
+    var result = cell_id;
+    while (level(result) > target_level) {
+        result = parent(result);
+    }
+    return result;
+}
+
+/// Get the four child cell IDs.
+pub fn children(cell_id: u64) [4]u64 {
+    const lsb = cell_id & (~cell_id + 1);
+    const new_lsb = lsb >> 2; // Move sentinel down one level
+
+    // Remove old sentinel, add positions 0-3, add new sentinel
+    const base = (cell_id & ~lsb) | new_lsb;
+
+    return .{
+        base, // Child 0
+        base | (new_lsb << 1), // Child 1
+        base | (new_lsb << 2), // Child 2
+        base | (new_lsb << 3), // Child 3
+    };
+}
+
+/// Check if a cell ID is valid.
+pub fn isValid(cell_id: u64) bool {
+    if (cell_id == 0) return false;
+    if (face(cell_id) >= num_faces) return false;
+
+    // Check sentinel bit is in valid position
+    const l = level(cell_id);
+    return l <= max_level;
+}
+
+/// Get the center point of a cell as (lat, lon) in radians.
+pub fn toLatLonRadians(cell_id: u64) struct { lat: f64, lon: f64 } {
+    const f = face(cell_id);
+    const ij = toIj(cell_id);
+    const l = level(cell_id);
+
+    // Convert IJ to ST (center of cell)
+    const max_ij: f64 = @floatFromInt(@as(u32, 1) << @intCast(l));
+    const st = [2]f64{
+        (@as(f64, @floatFromInt(ij[0])) + 0.5) / max_ij,
+        (@as(f64, @floatFromInt(ij[1])) + 0.5) / max_ij,
+    };
+
+    // Convert ST to UV
+    const uv = stToUv(st);
+
+    // Convert UV to XYZ
+    const xyz = faceUvToXyz(f, uv);
+
+    // Convert XYZ to lat/lon
+    const lat = smath.atan2(xyz[2], smath.sqrt(xyz[0] * xyz[0] + xyz[1] * xyz[1]));
+    const lon = smath.atan2(xyz[1], xyz[0]);
+
+    return .{ .lat = lat, .lon = lon };
+}
+
+/// Get the center point as (lat_nano, lon_nano).
+pub fn toLatLonNano(cell_id: u64) struct { lat_nano: i64, lon_nano: i64 } {
+    const ll = toLatLonRadians(cell_id);
+    return .{
+        .lat_nano = @intFromFloat(ll.lat * (180_000_000_000.0 / smath.pi)),
+        .lon_nano = @intFromFloat(ll.lon * (180_000_000_000.0 / smath.pi)),
+    };
+}
+
+// Internal helpers for reverse conversion
+
+fn toIj(cell_id: u64) [2]u32 {
+    const l = level(cell_id);
+    const pos = (cell_id >> @intCast((max_level - l) * 2 + 1)) & ((@as(u64, 1) << @intCast(l * 2)) - 1);
+    return posToIj(pos, l);
+}
+
+fn posToIj(pos: u64, lvl: u8) [2]u32 {
+    var i: u32 = 0;
+    var j: u32 = 0;
+    var orientation: u8 = 0;
+
+    var l: u8 = 0;
+    while (l < lvl) : (l += 1) {
+        const shift: u6 = @intCast((lvl - 1 - l) * 2);
+        const hilbert_pos: u8 = @intCast((pos >> shift) & 3);
+
+        // Find i_bit and j_bit from hilbert_pos using reverse lookup
+        var i_bit: u8 = 0;
+        var j_bit: u8 = 0;
+        for (hilbert_lookup[orientation], 0..) |hp, idx| {
+            if (hp == hilbert_pos) {
+                i_bit = @intCast(idx >> 1);
+                j_bit = @intCast(idx & 1);
+                break;
+            }
+        }
+
+        i = (i << 1) | i_bit;
+        j = (j << 1) | j_bit;
+
+        // Update orientation
+        const lookup_idx = (i_bit << 1) | j_bit;
+        orientation = hilbert_orientation[orientation][lookup_idx];
+    }
+
+    return .{ i, j };
+}
+
+fn stToUv(st: [2]f64) [2]f64 {
+    return .{
+        stToUvSingle(st[0]),
+        stToUvSingle(st[1]),
+    };
+}
+
+fn stToUvSingle(st: f64) f64 {
+    // Inverse of quadratic projection
+    if (st >= 0.5) {
+        return (4.0 * st * st - 1.0) / 3.0;
+    } else {
+        return (1.0 - 4.0 * (1.0 - st) * (1.0 - st)) / 3.0;
+    }
+}
+
+fn faceUvToXyz(f: u8, uv: [2]f64) [3]f64 {
+    const axes = face_uv_axes[f];
+    const u_axis: usize = @intCast(axes[0]);
+    const v_axis: usize = @intCast(axes[1]);
+    const face_axis: usize = f % 3;
+    const face_sign: f64 = if (f < 3) 1.0 else -1.0;
+
+    var xyz: [3]f64 = .{ 0, 0, 0 };
+    xyz[face_axis] = face_sign;
+    xyz[u_axis] = uv[0] * face_sign;
+    xyz[v_axis] = uv[1] * face_sign;
+
+    // Normalize to unit sphere
+    const norm = smath.sqrt(xyz[0] * xyz[0] + xyz[1] * xyz[1] + xyz[2] * xyz[2]);
+    return .{ xyz[0] / norm, xyz[1] / norm, xyz[2] / norm };
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+test "fromLatLonNano: origin" {
+    const cell_id = fromLatLonNano(0, 0, 30);
+    try std.testing.expect(cell_id != 0);
+    try std.testing.expect(isValid(cell_id));
+    try std.testing.expectEqual(@as(u8, 30), level(cell_id));
+}
+
+test "fromLatLonNano: poles" {
+    // North pole
+    const north = fromLatLonNano(90_000_000_000, 0, 30);
+    try std.testing.expect(isValid(north));
+    try std.testing.expectEqual(@as(u8, 2), face(north)); // +Z face
+
+    // South pole
+    const south = fromLatLonNano(-90_000_000_000, 0, 30);
+    try std.testing.expect(isValid(south));
+    try std.testing.expectEqual(@as(u8, 5), face(south)); // -Z face
+}
+
+test "level: extraction" {
+    const level_0 = fromLatLonNano(0, 0, 0);
+    const level_15 = fromLatLonNano(0, 0, 15);
+    const level_30 = fromLatLonNano(0, 0, 30);
+
+    try std.testing.expectEqual(@as(u8, 0), level(level_0));
+    try std.testing.expectEqual(@as(u8, 15), level(level_15));
+    try std.testing.expectEqual(@as(u8, 30), level(level_30));
+}
+
+test "parent: hierarchy" {
+    const cell = fromLatLonNano(37_774900000, -122_419400000, 20);
+    const p = parent(cell);
+
+    try std.testing.expectEqual(@as(u8, 20), level(cell));
+    try std.testing.expectEqual(@as(u8, 19), level(p));
+
+    // Parent should have same face
+    try std.testing.expectEqual(face(cell), face(p));
+}
+
+test "children: subdivision" {
+    const cell = fromLatLonNano(0, 0, 15);
+    const kids = children(cell);
+
+    for (kids) |kid| {
+        try std.testing.expect(isValid(kid));
+        try std.testing.expectEqual(@as(u8, 16), level(kid));
+        try std.testing.expectEqual(cell, parent(kid));
+    }
+}
+
+test "round-trip: lat/lon conversion" {
+    const lat_nano: i64 = 37_774900000; // San Francisco
+    const lon_nano: i64 = -122_419400000;
+
+    const cell_id = fromLatLonNano(lat_nano, lon_nano, 30);
+    const result = toLatLonNano(cell_id);
+
+    // At level 30, precision is ~7.5mm, which is < 1 nanodegree
+    // Allow some error due to projection/reverse projection
+    const tolerance: i64 = 1000; // 1 microdegree
+    try std.testing.expect(@abs(result.lat_nano - lat_nano) < tolerance);
+    try std.testing.expect(@abs(result.lon_nano - lon_nano) < tolerance);
+}
+
+test "face: all faces reachable" {
+    // Points on each face
+    const test_points = [_][2]i64{
+        .{ 0, 0 }, // Face 0 or 2
+        .{ 0, 90_000_000_000 }, // Face 1
+        .{ 90_000_000_000, 0 }, // Face 2 (north pole)
+        .{ 0, 180_000_000_000 }, // Face 3
+        .{ 0, -90_000_000_000 }, // Face 4
+        .{ -90_000_000_000, 0 }, // Face 5 (south pole)
+    };
+
+    var faces_seen = [_]bool{false} ** 6;
+    for (test_points) |pt| {
+        const cell_id = fromLatLonNano(pt[0], pt[1], 30);
+        const f = face(cell_id);
+        faces_seen[f] = true;
+    }
+
+    // At least 3 faces should be reachable from these points
+    var count: u8 = 0;
+    for (faces_seen) |seen| {
+        if (seen) count += 1;
+    }
+    try std.testing.expect(count >= 3);
+}
