@@ -173,7 +173,164 @@ pub const CheckpointStats = struct {
 
     /// Recovery path taken (for metrics)
     last_recovery_path: RecoveryPath = .none,
+
+    /// Last recovery duration (nanoseconds)
+    last_recovery_duration_ns: u64 = 0,
+
+    /// Index checkpoint op at last checkpoint
+    last_checkpoint_op: u64 = 0,
+
+    /// VSR checkpoint op at last checkpoint (for lag calculation)
+    last_vsr_checkpoint_op: u64 = 0,
 };
+
+// =============================================================================
+// Recovery Metrics (F2.2.9)
+// =============================================================================
+//
+// Prometheus-style metrics for monitoring recovery window health:
+//
+// archerdb_index_checkpoint_age_seconds (gauge)
+//   - Age of the most recent index checkpoint
+//   - Alert: Warning if > 120s, Critical if > 300s
+//
+// archerdb_index_checkpoint_lag_ops (gauge)
+//   - Operations between index checkpoint and VSR checkpoint
+//   - Alert: Critical if > 15,000 (approaching LSM retention limit)
+//
+// archerdb_recovery_path_taken (counter)
+//   - Labels: path="wal|lsm|rebuild|clean"
+//   - Incremented on each startup based on recovery path
+//
+// archerdb_recovery_duration_seconds (histogram)
+//   - Duration of the recovery procedure on startup
+
+/// Recovery metrics for Prometheus-style monitoring.
+///
+/// These metrics expose checkpoint health and recovery statistics
+/// per the spec (specs/hybrid-memory/spec.md).
+pub const RecoveryMetrics = struct {
+    /// Counter: Number of WAL replay recoveries
+    recovery_wal_count: u64 = 0,
+
+    /// Counter: Number of LSM scan recoveries
+    recovery_lsm_count: u64 = 0,
+
+    /// Counter: Number of full rebuild recoveries
+    recovery_rebuild_count: u64 = 0,
+
+    /// Counter: Number of clean starts (no checkpoint)
+    recovery_clean_count: u64 = 0,
+
+    /// Histogram buckets for recovery duration (nanoseconds).
+    /// Buckets: [1s, 5s, 10s, 30s, 60s, 120s, 300s, 600s, 1800s, 3600s, 7200s]
+    recovery_duration_bucket_1s: u64 = 0,
+    recovery_duration_bucket_5s: u64 = 0,
+    recovery_duration_bucket_10s: u64 = 0,
+    recovery_duration_bucket_30s: u64 = 0,
+    recovery_duration_bucket_60s: u64 = 0,
+    recovery_duration_bucket_120s: u64 = 0,
+    recovery_duration_bucket_300s: u64 = 0,
+    recovery_duration_bucket_600s: u64 = 0,
+    recovery_duration_bucket_1800s: u64 = 0,
+    recovery_duration_bucket_3600s: u64 = 0,
+    recovery_duration_bucket_7200s: u64 = 0,
+    recovery_duration_bucket_inf: u64 = 0,
+
+    /// Sum of all recovery durations (nanoseconds)
+    recovery_duration_sum_ns: u64 = 0,
+
+    /// Total recovery count (for histogram)
+    recovery_duration_count: u64 = 0,
+
+    /// Record a recovery event with duration and path.
+    pub fn record_recovery(self: *RecoveryMetrics, path: RecoveryPath, duration_ns: u64) void {
+        // Increment path counter
+        switch (path) {
+            .wal_replay => self.recovery_wal_count += 1,
+            .lsm_scan => self.recovery_lsm_count += 1,
+            .full_rebuild => self.recovery_rebuild_count += 1,
+            .clean_start => self.recovery_clean_count += 1,
+            .none => {},
+        }
+
+        // Update histogram
+        self.recovery_duration_sum_ns += duration_ns;
+        self.recovery_duration_count += 1;
+
+        const duration_s = duration_ns / std.time.ns_per_s;
+        if (duration_s <= 1) {
+            self.recovery_duration_bucket_1s += 1;
+        } else if (duration_s <= 5) {
+            self.recovery_duration_bucket_5s += 1;
+        } else if (duration_s <= 10) {
+            self.recovery_duration_bucket_10s += 1;
+        } else if (duration_s <= 30) {
+            self.recovery_duration_bucket_30s += 1;
+        } else if (duration_s <= 60) {
+            self.recovery_duration_bucket_60s += 1;
+        } else if (duration_s <= 120) {
+            self.recovery_duration_bucket_120s += 1;
+        } else if (duration_s <= 300) {
+            self.recovery_duration_bucket_300s += 1;
+        } else if (duration_s <= 600) {
+            self.recovery_duration_bucket_600s += 1;
+        } else if (duration_s <= 1800) {
+            self.recovery_duration_bucket_1800s += 1;
+        } else if (duration_s <= 3600) {
+            self.recovery_duration_bucket_3600s += 1;
+        } else if (duration_s <= 7200) {
+            self.recovery_duration_bucket_7200s += 1;
+        } else {
+            self.recovery_duration_bucket_inf += 1;
+        }
+    }
+
+    /// Get recovery count by path (for Prometheus labels).
+    pub fn get_recovery_count(self: *const RecoveryMetrics, path: RecoveryPath) u64 {
+        return switch (path) {
+            .wal_replay => self.recovery_wal_count,
+            .lsm_scan => self.recovery_lsm_count,
+            .full_rebuild => self.recovery_rebuild_count,
+            .clean_start => self.recovery_clean_count,
+            .none => 0,
+        };
+    }
+
+    /// Calculate average recovery duration in nanoseconds.
+    pub fn get_avg_recovery_duration_ns(self: *const RecoveryMetrics) u64 {
+        if (self.recovery_duration_count == 0) return 0;
+        return self.recovery_duration_sum_ns / self.recovery_duration_count;
+    }
+};
+
+/// Calculate checkpoint age in seconds from stats.
+pub fn checkpoint_age_seconds(stats: *const CheckpointStats) u64 {
+    if (stats.last_checkpoint_ns == 0) return 0;
+    const now_ns = @as(u64, @intCast(std.time.nanoTimestamp()));
+    const age_ns = now_ns -| stats.last_checkpoint_ns;
+    return age_ns / std.time.ns_per_s;
+}
+
+/// Calculate checkpoint lag in operations from stats.
+pub fn checkpoint_lag_ops(stats: *const CheckpointStats) u64 {
+    return stats.last_vsr_checkpoint_op -| stats.last_checkpoint_op;
+}
+
+/// Check if checkpoint age is in warning state (> 2 minutes).
+pub fn is_checkpoint_age_warning(stats: *const CheckpointStats) bool {
+    return checkpoint_age_seconds(stats) > RecoveryAlertThresholds.warning_age_seconds;
+}
+
+/// Check if checkpoint age is in critical state (> 5 minutes).
+pub fn is_checkpoint_age_critical(stats: *const CheckpointStats) bool {
+    return checkpoint_age_seconds(stats) > RecoveryAlertThresholds.critical_age_seconds;
+}
+
+/// Check if checkpoint lag is approaching critical limit (> 15,000 ops).
+pub fn is_checkpoint_lag_critical(stats: *const CheckpointStats) bool {
+    return checkpoint_lag_ops(stats) > RecoveryAlertThresholds.critical_lag_ops;
+}
 
 /// Recovery path taken during startup.
 pub const RecoveryPath = enum {
@@ -1464,4 +1621,112 @@ test "RecoveryAlertThresholds: ordering" {
     try std.testing.expect(
         RecoveryAlertThresholds.warning_age_seconds < RecoveryAlertThresholds.critical_age_seconds,
     );
+}
+
+// =============================================================================
+// Recovery Metrics Tests (F2.2.9)
+// =============================================================================
+
+test "RecoveryMetrics: record_recovery increments counters" {
+    var metrics = RecoveryMetrics{};
+
+    // Record WAL recovery
+    metrics.record_recovery(.wal_replay, 500_000_000); // 0.5s
+    try std.testing.expectEqual(@as(u64, 1), metrics.recovery_wal_count);
+    try std.testing.expectEqual(@as(u64, 0), metrics.recovery_lsm_count);
+    try std.testing.expectEqual(@as(u64, 0), metrics.recovery_rebuild_count);
+
+    // Record LSM recovery
+    metrics.record_recovery(.lsm_scan, 15_000_000_000); // 15s
+    try std.testing.expectEqual(@as(u64, 1), metrics.recovery_wal_count);
+    try std.testing.expectEqual(@as(u64, 1), metrics.recovery_lsm_count);
+
+    // Record rebuild recovery
+    metrics.record_recovery(.full_rebuild, 120_000_000_000); // 120s
+    try std.testing.expectEqual(@as(u64, 1), metrics.recovery_rebuild_count);
+
+    // Total count
+    try std.testing.expectEqual(@as(u64, 3), metrics.recovery_duration_count);
+}
+
+test "RecoveryMetrics: histogram buckets" {
+    var metrics = RecoveryMetrics{};
+
+    // Under 1s
+    metrics.record_recovery(.wal_replay, 500_000_000);
+    try std.testing.expectEqual(@as(u64, 1), metrics.recovery_duration_bucket_1s);
+
+    // Between 5-10s
+    metrics.record_recovery(.lsm_scan, 7_000_000_000);
+    try std.testing.expectEqual(@as(u64, 1), metrics.recovery_duration_bucket_10s);
+
+    // Between 30-60s
+    metrics.record_recovery(.lsm_scan, 45_000_000_000);
+    try std.testing.expectEqual(@as(u64, 1), metrics.recovery_duration_bucket_60s);
+
+    // Between 60-120s
+    metrics.record_recovery(.full_rebuild, 90_000_000_000);
+    try std.testing.expectEqual(@as(u64, 1), metrics.recovery_duration_bucket_120s);
+
+    // Over 7200s (2 hours)
+    metrics.record_recovery(.full_rebuild, 8000_000_000_000);
+    try std.testing.expectEqual(@as(u64, 1), metrics.recovery_duration_bucket_inf);
+}
+
+test "RecoveryMetrics: get_recovery_count" {
+    var metrics = RecoveryMetrics{};
+
+    metrics.record_recovery(.wal_replay, 100_000_000);
+    metrics.record_recovery(.wal_replay, 200_000_000);
+    metrics.record_recovery(.lsm_scan, 5_000_000_000);
+    metrics.record_recovery(.clean_start, 10_000_000);
+
+    try std.testing.expectEqual(@as(u64, 2), metrics.get_recovery_count(.wal_replay));
+    try std.testing.expectEqual(@as(u64, 1), metrics.get_recovery_count(.lsm_scan));
+    try std.testing.expectEqual(@as(u64, 0), metrics.get_recovery_count(.full_rebuild));
+    try std.testing.expectEqual(@as(u64, 1), metrics.get_recovery_count(.clean_start));
+}
+
+test "RecoveryMetrics: average duration" {
+    var metrics = RecoveryMetrics{};
+
+    // No recoveries yet
+    try std.testing.expectEqual(@as(u64, 0), metrics.get_avg_recovery_duration_ns());
+
+    // Add two recoveries: 1s and 3s
+    metrics.record_recovery(.wal_replay, 1_000_000_000);
+    metrics.record_recovery(.wal_replay, 3_000_000_000);
+
+    // Average should be 2s
+    try std.testing.expectEqual(@as(u64, 2_000_000_000), metrics.get_avg_recovery_duration_ns());
+}
+
+test "checkpoint_lag_ops: basic calculation" {
+    var stats = CheckpointStats{};
+    stats.last_checkpoint_op = 1000;
+    stats.last_vsr_checkpoint_op = 5000;
+
+    try std.testing.expectEqual(@as(u64, 4000), checkpoint_lag_ops(&stats));
+}
+
+test "checkpoint_lag_ops: saturating subtraction" {
+    var stats = CheckpointStats{};
+    stats.last_checkpoint_op = 5000;
+    stats.last_vsr_checkpoint_op = 1000; // Unusual case: index ahead of VSR
+
+    // Should saturate to 0, not wrap around
+    try std.testing.expectEqual(@as(u64, 0), checkpoint_lag_ops(&stats));
+}
+
+test "is_checkpoint_lag_critical: threshold check" {
+    var stats = CheckpointStats{};
+
+    // Under threshold
+    stats.last_checkpoint_op = 1000;
+    stats.last_vsr_checkpoint_op = 10000; // Gap of 9000
+    try std.testing.expect(!is_checkpoint_lag_critical(&stats));
+
+    // Over threshold
+    stats.last_vsr_checkpoint_op = 20000; // Gap of 19000
+    try std.testing.expect(is_checkpoint_lag_critical(&stats));
 }
