@@ -484,6 +484,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         /// The operation type exported for client protocol.
         pub const Operation = @import("archerdb.zig").Operation;
 
+        /// Workload generator for VOPR testing (F4.1.1).
+        pub const Workload = @import("testing/geo_workload.zig").GeoWorkloadType(GeoStateMachine);
+
         // TODO(F1.2): Define Forest type for GeoEvent storage
         // pub const Forest = ForestType(Storage, tree_ids);
 

@@ -5,7 +5,7 @@ const builtin = @import("builtin");
 const assert = std.debug.assert;
 const Query = std.Target.Query;
 
-const VoprStateMachine = enum { testing, accounting };
+const VoprStateMachine = enum { testing, accounting, geo };
 const VoprLog = enum { short, full };
 
 // TigerBeetle binary requires certain CPU feature and supports a closed set of CPUs. Here, we

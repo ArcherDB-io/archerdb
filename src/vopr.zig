@@ -27,6 +27,7 @@ const state_machine = vsr_vopr_options.state_machine;
 const StateMachineType = switch (state_machine) {
     .accounting => @import("state_machine.zig").StateMachineType,
     .testing => @import("testing/state_machine.zig").StateMachineType,
+    .geo => @import("geo_state_machine.zig").GeoStateMachineType,
 };
 
 const Cluster = @import("testing/cluster.zig").ClusterType(StateMachineType);

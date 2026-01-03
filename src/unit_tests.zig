@@ -49,6 +49,7 @@ comptime {
     _ = @import("s2/math.zig");
     _ = @import("s2/region_coverer.zig");
     _ = @import("s2/s2.zig");
+    _ = @import("s2_index.zig");
     _ = @import("s2_scratch_pool.zig");
     _ = @import("scripts/cfo.zig");
     _ = @import("scripts/changelog.zig");
@@ -60,6 +61,7 @@ comptime {
     _ = @import("state_machine_tests.zig");
     _ = @import("testing/bench.zig");
     _ = @import("testing/exhaustigen.zig");
+    _ = @import("testing/geo_workload.zig");
     _ = @import("testing/id.zig");
     _ = @import("testing/marks.zig");
     _ = @import("testing/table.zig");
