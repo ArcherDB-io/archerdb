@@ -1,110 +1,118 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/usr/bin/env sh
+set -eu
 
-# Run from repo root: ./zig/download.sh
+ZIG_MIRROR="https://pkg.machengine.org/zig"
+ZIG_RELEASE="0.14.1"
+ZIG_CHECKSUMS=$(cat<<EOF
+${ZIG_MIRROR}/0.14.1/zig-aarch64-linux-0.14.1.tar.xz f7a654acc967864f7a050ddacfaa778c7504a0eca8d2b678839c21eea47c992b
+${ZIG_MIRROR}/0.14.1/zig-aarch64-macos-0.14.1.tar.xz 39f3dc5e79c22088ce878edc821dedb4ca5a1cd9f5ef915e9b3cc3053e8faefa
+${ZIG_MIRROR}/0.14.1/zig-aarch64-windows-0.14.1.zip b5aac0ccc40dd91e8311b1f257717d8e3903b5fefb8f659de6d65a840ad1d0e7
+${ZIG_MIRROR}/0.14.1/zig-x86_64-linux-0.14.1.tar.xz 24aeeec8af16c381934a6cd7d95c807a8cb2cf7df9fa40d359aa884195c4716c
+${ZIG_MIRROR}/0.14.1/zig-x86_64-macos-0.14.1.tar.xz b0f8bdfb9035783db58dd6c19d7dea89892acc3814421853e5752fe4573e5f43
+${ZIG_MIRROR}/0.14.1/zig-x86_64-windows-0.14.1.zip 554f5378228923ffd558eac35e21af020c73789d87afeabf4bfd16f2e6feed2c
+EOF
+)
 
-ZIG_RELEASE="0.15.2"
-ZIG_MIRROR="https://ziglang.org/download"
+echo "Downloading Zig $ZIG_RELEASE release build..."
 
-# Platform detection
-ARCH=$(uname -m)
-case "$ARCH" in
-    arm64|aarch64) ZIG_ARCH="aarch64" ;;
-    x86_64|amd64)  ZIG_ARCH="x86_64" ;;
-    *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
-esac
-
-OS=$(uname -s)
-case "$OS" in
-    Linux)                 ZIG_OS="linux" ;;
-    Darwin)                ZIG_OS="macos" ;;
-    CYGWIN*|MINGW*|MSYS*)  ZIG_OS="windows" ;;
-    *) echo "Unsupported OS: $OS"; exit 1 ;;
-esac
-
-ZIG_TARGET="${ZIG_ARCH}-${ZIG_OS}"
-
-# Checksums for Zig 0.15.2
-case "$ZIG_TARGET" in
-    x86_64-linux)   ZIG_CHECKSUM="02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239" ;;
-    aarch64-linux)  ZIG_CHECKSUM="958ed7d1e00d0ea76590d27666efbf7a932281b3d7ba0c6b01b0ff26498f667f" ;;
-    x86_64-macos)   ZIG_CHECKSUM="375b6909fc1495d16fc2c7db9538f707456bfc3373b14ee83fdd3e22b3d43f7f" ;;
-    aarch64-macos)  ZIG_CHECKSUM="3cc2bab367e185cdfb27501c4b30b1b0653c28d9f73df8dc91488e66ece5fa6b" ;;
-    x86_64-windows) ZIG_CHECKSUM="3a0ed1e8799a2f8ce2a6e6290a9ff22e6906f8227865911fb7ddedc3cc14cb0c" ;;
-    aarch64-windows) ZIG_CHECKSUM="b926465f8872bf983422257cd9ec248bb2b270996fbe8d57872cca13b56fc370" ;;
-    *) echo "No checksum for: $ZIG_TARGET"; exit 1 ;;
-esac
-
-if [ "$ZIG_OS" = "windows" ]; then
-    ZIG_EXT="zip"
+# Determine the architecture:
+if [ "$(uname -m)" = 'arm64' ] || [ "$(uname -m)" = 'aarch64' ]; then
+    ZIG_ARCH="aarch64"
 else
-    ZIG_EXT="tar.xz"
+    ZIG_ARCH="x86_64"
 fi
 
-ZIG_DIRECTORY="zig-${ZIG_TARGET}-${ZIG_RELEASE}"
-ZIG_ARCHIVE="${ZIG_DIRECTORY}.${ZIG_EXT}"
-ZIG_URL="${ZIG_MIRROR}/${ZIG_RELEASE}/${ZIG_ARCHIVE}"
+# Determine the operating system:
+case "$(uname)" in
+    Linux)
+        ZIG_OS="linux"
+        ZIG_EXTENSION=".tar.xz"
+        ;;
+    Darwin)
+        ZIG_OS="macos"
+        ZIG_EXTENSION=".tar.xz"
+        ;;
+    CYGWIN*)
+        ZIG_OS="windows"
+        ZIG_EXTENSION=".zip"
+        ;;
+    *)
+        echo "Unknown OS"
+        exit 1
+        ;;
+esac
 
-# Check if already installed
-if [ -x "zig/zig" ]; then
-    INSTALLED=$(zig/zig version 2>/dev/null || echo "")
-    if [ "$INSTALLED" = "$ZIG_RELEASE" ]; then
-        echo "Zig $ZIG_RELEASE already installed."
-        exit 0
+ZIG_URL="${ZIG_MIRROR}/${ZIG_RELEASE}/zig-${ZIG_ARCH}-${ZIG_OS}-${ZIG_RELEASE}${ZIG_EXTENSION}"
+ZIG_CHECKSUM_EXPECTED=$(echo "$ZIG_CHECKSUMS" | grep -F "$ZIG_URL" | cut -d ' ' -f 2)
+
+# Work out the filename from the URL, as well as the directory without the ".tar.xz" file extension:
+ZIG_ARCHIVE=$(basename "$ZIG_URL")
+ZIG_DIRECTORY=$(basename "$ZIG_ARCHIVE" "$ZIG_EXTENSION")
+
+# Download, making sure we download to the same output document, without wget adding "-1" etc. if the file was previously partially downloaded:
+if command -v curl > /dev/null; then
+    curl --silent --output "$ZIG_ARCHIVE" "$ZIG_URL"
+elif command -v wget > /dev/null; then
+    # -4 forces `wget` to connect to ipv4 addresses, as ipv6 fails to resolve on certain distros.
+    # Only A records (for ipv4) are used in DNS:
+    ipv4="-4"
+    # But Alpine doesn't support this argument
+    if [ -f /etc/alpine-release ]; then
+        ipv4=""
     fi
-fi
 
-echo "Downloading Zig $ZIG_RELEASE ($ZIG_TARGET)..."
-
-# Download
-if command -v curl >/dev/null 2>&1; then
-    curl --progress-bar -L -o "$ZIG_ARCHIVE" "$ZIG_URL"
-elif command -v wget >/dev/null 2>&1; then
-    WGET_OPTS="--progress=bar:force"
-    # Alpine Linux wget doesn't support -4
-    [ ! -f /etc/alpine-release ] && WGET_OPTS="$WGET_OPTS -4"
-    wget $WGET_OPTS -O "$ZIG_ARCHIVE" "$ZIG_URL" 2>&1
+    # shellcheck disable=SC2086 # We control ipv4 and it'll always either be empty or -4
+    wget $ipv4 --quiet --output-document="$ZIG_ARCHIVE" "$ZIG_URL"
 else
-    echo "Error: curl or wget required"
+    echo "Neither curl nor wget available."
     exit 1
 fi
 
-# Verify checksum
-echo "Verifying checksum..."
-if command -v sha256sum >/dev/null 2>&1; then
-    ACTUAL=$(sha256sum "$ZIG_ARCHIVE" | cut -d' ' -f1)
-elif command -v shasum >/dev/null 2>&1; then
-    ACTUAL=$(shasum -a 256 "$ZIG_ARCHIVE" | cut -d' ' -f1)
+# Verify the checksum.
+ZIG_CHECKSUM_ACTUAL=""
+if command -v sha256sum > /dev/null; then
+    ZIG_CHECKSUM_ACTUAL=$(sha256sum "$ZIG_ARCHIVE" | cut -d ' ' -f 1)
+elif command -v shasum > /dev/null; then
+    ZIG_CHECKSUM_ACTUAL=$(shasum -a 256 "$ZIG_ARCHIVE" | cut -d ' ' -f 1)
 else
-    echo "Warning: no sha256sum/shasum, skipping verification"
-    ACTUAL="$ZIG_CHECKSUM"
-fi
-
-if [ "$ACTUAL" != "$ZIG_CHECKSUM" ]; then
-    echo "Checksum mismatch!"
-    echo "Expected: $ZIG_CHECKSUM"
-    echo "Actual:   $ACTUAL"
-    rm -f "$ZIG_ARCHIVE"
+    echo "Neither sha256sum nor shasum available."
     exit 1
 fi
 
-# Extract
-echo "Extracting..."
-if [ "$ZIG_EXT" = "tar.xz" ]; then
-    tar -xf "$ZIG_ARCHIVE"
-else
-    unzip -q "$ZIG_ARCHIVE"
+if [ "$ZIG_CHECKSUM_ACTUAL" != "$ZIG_CHECKSUM_EXPECTED" ]; then
+    echo "Checksum mismatch. Expected '$ZIG_CHECKSUM_EXPECTED' got '$ZIG_CHECKSUM_ACTUAL'."
+    exit 1
 fi
 
-# Install to zig/
-rm -rf zig/doc zig/lib zig/zig zig/LICENSE zig/README.md
+# Extract and then remove the downloaded archive:
+echo "Extracting $ZIG_ARCHIVE..."
+case "$ZIG_EXTENSION" in
+    ".tar.xz")
+        tar -xf "$ZIG_ARCHIVE"
+        ;;
+    ".zip")
+        unzip -q "$ZIG_ARCHIVE"
+        ;;
+    *)
+        echo "Unexpected error extracting Zig archive."
+        exit 1
+        ;;
+esac
+rm "$ZIG_ARCHIVE"
+
+# Replace these existing directories and files so that we can install or upgrade:
+rm -rf zig/doc
+rm -rf zig/lib
+mv "$ZIG_DIRECTORY/LICENSE" zig/
+mv "$ZIG_DIRECTORY/README.md" zig/
 mv "$ZIG_DIRECTORY/doc" zig/
 mv "$ZIG_DIRECTORY/lib" zig/
 mv "$ZIG_DIRECTORY/zig" zig/
-mv "$ZIG_DIRECTORY/LICENSE" zig/
-mv "$ZIG_DIRECTORY/README.md" zig/
 
-# Cleanup
-rm -rf "$ZIG_DIRECTORY" "$ZIG_ARCHIVE"
+# We expect to have now moved all directories and files out of the extracted directory.
+# Do not force remove so that we can get an error if the above list of files ever changes:
+rmdir "$ZIG_DIRECTORY"
 
-echo "Zig $ZIG_RELEASE installed to zig/zig"
+# It's up to the user to add this to their path if they want to:
+ZIG_BIN="$(pwd)/zig/zig"
+echo "Downloading completed ($ZIG_BIN)! Enjoy!"

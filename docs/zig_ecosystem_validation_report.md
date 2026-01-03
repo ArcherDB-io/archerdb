@@ -1,8 +1,8 @@
 # Zig Ecosystem Validation Report
 
-**Task:** F0.0.1
+**Tasks:** F0.0.1, F0.0.2
 **Date:** 2026-01-03
-**Zig Version:** 0.15.2
+**Zig Version:** 0.14.1 (TigerBeetle-compatible)
 **Platform:** Linux 6.8.0-90-generic (x86_64)
 
 ## Executive Summary
@@ -86,10 +86,47 @@ TOTAL:               128 bytes
 | `@cImport` availability | PASS | Can import C headers |
 | C type sizes (c_int, c_long) | PASS | Match expected sizes |
 
+## TigerBeetle Compatibility (F0.0.2)
+
+### Build Validation
+
+TigerBeetle was cloned and built successfully with Zig 0.14.1:
+
+```bash
+git clone https://github.com/tigerbeetle/tigerbeetle.git
+./zig/download.sh  # Downloads Zig 0.14.1
+./zig/zig build    # Success - produces 26MB binary
+```
+
+### Test Results
+
+```
+Build Summary: 29/33 steps succeeded; 2 failed
+Tests: 380/382 passed (99.5%)
+```
+
+The 2 failures are in vortex integration tests requiring Linux namespace isolation (`unshare` syscall) - a system privilege issue, not a Zig/code problem.
+
+### Version Discovery
+
+- **Initial ArcherDB Zig:** 0.15.2
+- **TigerBeetle pinned Zig:** 0.14.1
+- **Chosen version:** 0.14.1 (for TigerBeetle compatibility)
+
+**Why 0.14.1?** Zig is pre-1.0 and APIs change frequently. TigerBeetle pins its Zig version to ensure reproducible builds. We must use the same version to fork without API migration work.
+
+### API Differences Found (0.14.1 vs 0.15.2)
+
+| Feature | 0.14.1 | 0.15.2 |
+|---------|--------|--------|
+| `ArrayList.deinit()` | No args | Takes `allocator` |
+| `std.io.getStdOut()` | Available | Moved/renamed |
+| `sanitize_c` field | `bool` | `enum SanitizeC` |
+
 ## Recommendations
 
-1. **Pin Zig version to 0.15.2** - Store Zig binary in repository (already done in `zig/` directory)
-2. **Document API differences** - Keep notes on Zig 0.15.x API changes vs documentation
+1. **Pin Zig version to 0.14.1** - TigerBeetle-compatible version
+2. **Use TigerBeetle's download.sh** - Ensures consistent Zig across all developers
 3. **Proceed with F0.1** - Fork TigerBeetle repository
 
 ## Test Execution
@@ -106,6 +143,7 @@ TOTAL:               128 bytes
 
 ## Next Steps
 
-1. Close GitHub issue #39 (F0.0.1)
-2. Proceed to F0.0.2 (Day 1: Feature detection)
-3. Continue through F0.0 validation gate
+1. ~~Close GitHub issue #39 (F0.0.1)~~ DONE
+2. ~~F0.0.2 (Day 1: Feature detection)~~ DONE - TigerBeetle builds with Zig 0.14.1
+3. Proceed to F0.0.3 (Day 2: Fallback implementation)
+4. Continue through F0.0 validation gate to F0.1 (Fork TigerBeetle)

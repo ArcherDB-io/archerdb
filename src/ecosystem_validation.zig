@@ -198,7 +198,7 @@ test "Category4: std.ArrayList operations" {
     const allocator = arena.allocator();
 
     var list = std.ArrayList(u64).initCapacity(allocator, 16) catch unreachable;
-    defer list.deinit(allocator);
+    defer list.deinit();
 
     list.appendAssumeCapacity(42);
     list.appendAssumeCapacity(123);
