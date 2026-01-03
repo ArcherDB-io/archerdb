@@ -1,0 +1,80 @@
+name: CI
+permissions: {}
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+on:
+  pull_request:
+  push:
+    branches: ["main"]
+
+jobs:
+  # Smoke test - quick validation on Linux
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: shellcheck ./zig/download.sh
+      - run: ./zig/download.sh && ./zig/zig version
+      - run: ./zig/zig build test
+
+  # Cross-platform ecosystem validation
+  ecosystem-validation:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: 'ubuntu-latest', name: 'Linux x64' }
+          - { os: 'ubuntu-24.04-arm', name: 'Linux ARM64' }
+          - { os: 'macos-latest', name: 'macOS ARM64' }
+          - { os: 'macos-13', name: 'macOS x64' }
+          - { os: 'windows-latest', name: 'Windows x64' }
+    runs-on: ${{ matrix.os }}
+    name: Ecosystem Validation (${{ matrix.name }})
+    steps:
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+
+      # Download Zig (platform-specific)
+      - name: Download Zig
+        shell: bash
+        run: ./zig/download.sh
+
+      - name: Verify Zig version
+        run: ./zig/zig version
+
+      - name: Run ecosystem validation tests
+        run: ./zig/zig test src/ecosystem_validation.zig
+
+      - name: Build ArcherDB
+        run: ./zig/zig build
+
+      - name: Verify build
+        run: ./zig-out/bin/archerdb version --verbose
+
+  # Build reproducibility check
+  reproducible-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./zig/download.sh
+
+      # Build twice and compare hashes
+      - name: First build
+        run: |
+          ./zig/zig build -Doptimize=ReleaseSafe
+          sha256sum ./zig-out/bin/archerdb > build1.sha256
+
+      - name: Clean and rebuild
+        run: |
+          rm -rf ./zig-out ./.zig-cache
+          ./zig/zig build -Doptimize=ReleaseSafe
+          sha256sum ./zig-out/bin/archerdb > build2.sha256
+
+      - name: Compare builds
+        run: |
+          echo "Build 1:" && cat build1.sha256
+          echo "Build 2:" && cat build2.sha256
+          diff build1.sha256 build2.sha256 && echo "Builds are reproducible!"
