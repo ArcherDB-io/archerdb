@@ -98,6 +98,10 @@ pub const StateError = enum(u32) {
     storage_unavailable = 208,
     /// Index rebuilding during cold start
     index_rebuilding = 209,
+    /// Entity has expired due to TTL
+    entity_expired = 210,
+    /// Internal resource pool exhausted
+    resource_exhausted = 211,
 
     pub fn description(self: StateError) []const u8 {
         return switch (self) {
@@ -111,11 +115,13 @@ pub const StateError = enum(u32) {
             .checkpoint_in_progress => "Checkpoint is in progress",
             .storage_unavailable => "Storage is unavailable",
             .index_rebuilding => "Index is rebuilding after cold start",
+            .entity_expired => "Entity has expired due to TTL",
+            .resource_exhausted => "Internal resource pool exhausted",
         };
     }
 };
 
-/// Resource error codes (300-308)
+/// Resource error codes (300-310)
 /// These errors indicate resource exhaustion.
 pub const ResourceError = enum(u32) {
     /// Batch exceeds 10,000 events
@@ -136,6 +142,10 @@ pub const ResourceError = enum(u32) {
     too_many_queries = 307,
     /// Pipeline full
     pipeline_full = 308,
+    /// RAM index capacity limit reached
+    index_capacity_exceeded = 309,
+    /// Hash table probe length exceeded max_probe_length
+    index_degraded = 310,
 
     pub fn description(self: ResourceError) []const u8 {
         return switch (self) {
@@ -148,6 +158,8 @@ pub const ResourceError = enum(u32) {
             .disk_full => "Disk full",
             .too_many_queries => "Too many concurrent queries (>100)",
             .pipeline_full => "Write pipeline is full",
+            .index_capacity_exceeded => "RAM index capacity limit reached",
+            .index_degraded => "Hash table probe length exceeded limit",
         };
     }
 };
@@ -244,14 +256,14 @@ test "validation error codes in expected range" {
 
 test "state error codes in expected range" {
     const min = @intFromEnum(StateError.entity_not_found);
-    const max = @intFromEnum(StateError.index_rebuilding);
+    const max = @intFromEnum(StateError.resource_exhausted);
     try std.testing.expect(min >= 200);
     try std.testing.expect(max <= 299);
 }
 
 test "resource error codes in expected range" {
     const min = @intFromEnum(ResourceError.too_many_events);
-    const max = @intFromEnum(ResourceError.pipeline_full);
+    const max = @intFromEnum(ResourceError.index_degraded);
     try std.testing.expect(min >= 300);
     try std.testing.expect(max <= 399);
 }
@@ -270,4 +282,34 @@ test "updated error codes 114-116" {
     try std.testing.expectEqual(@as(u32, 114), @intFromEnum(ValidationError.coordinate_mismatch));
     try std.testing.expectEqual(@as(u32, 115), @intFromEnum(ValidationError.timestamp_in_future));
     try std.testing.expectEqual(@as(u32, 116), @intFromEnum(ValidationError.timestamp_too_old));
+}
+
+test "spec synchronization - all error codes from spec exist" {
+    // F1.2.5: Verify implementation matches openspec/changes/add-geospatial-core/specs/error-codes/spec.md
+    // This test verifies key error codes from each category exist at expected values.
+
+    // Validation errors (100-116)
+    try std.testing.expectEqual(@as(u32, 100), @intFromEnum(ValidationError.invalid_coordinates));
+    try std.testing.expectEqual(@as(u32, 108), @intFromEnum(ValidationError.invalid_polygon));
+    try std.testing.expectEqual(@as(u32, 116), @intFromEnum(ValidationError.timestamp_too_old));
+
+    // State errors (200-211)
+    try std.testing.expectEqual(@as(u32, 200), @intFromEnum(StateError.entity_not_found));
+    try std.testing.expectEqual(@as(u32, 209), @intFromEnum(StateError.index_rebuilding));
+    try std.testing.expectEqual(@as(u32, 210), @intFromEnum(StateError.entity_expired));
+    try std.testing.expectEqual(@as(u32, 211), @intFromEnum(StateError.resource_exhausted));
+
+    // Resource errors (300-310)
+    try std.testing.expectEqual(@as(u32, 300), @intFromEnum(ResourceError.too_many_events));
+    try std.testing.expectEqual(@as(u32, 308), @intFromEnum(ResourceError.pipeline_full));
+    try std.testing.expectEqual(@as(u32, 309), @intFromEnum(ResourceError.index_capacity_exceeded));
+    try std.testing.expectEqual(@as(u32, 310), @intFromEnum(ResourceError.index_degraded));
+
+    // Security errors (400-404)
+    try std.testing.expectEqual(@as(u32, 400), @intFromEnum(SecurityError.authentication_failed));
+    try std.testing.expectEqual(@as(u32, 404), @intFromEnum(SecurityError.cluster_key_mismatch));
+
+    // Internal errors (500-504)
+    try std.testing.expectEqual(@as(u32, 500), @intFromEnum(InternalError.internal_error));
+    try std.testing.expectEqual(@as(u32, 504), @intFromEnum(InternalError.invariant_violation));
 }
