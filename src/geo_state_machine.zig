@@ -19,6 +19,81 @@
 //! This state machine only handles user operations (pulse, insert_events,
 //! query_*, etc.) that pass through VSR consensus. Register operations
 //! are intercepted by the replica before reaching commit().
+//!
+//! ## GDPR Compliance Verification Procedure (F2.5.9)
+//!
+//! ArcherDB implements GDPR "right to erasure" (Article 17) through a three-phase
+//! deletion process. This section documents how to verify compliance.
+//!
+//! ### Phase 1: Delete (Immediate)
+//!
+//! When `delete_entities` operation is executed:
+//! 1. Entity is removed from RAM index immediately (O(1) removal)
+//! 2. Tombstone markers are generated for LSM tree (pending Forest integration)
+//! 3. Operation is recorded in deletion_metrics
+//!
+//! **Verification**: Query the entity_id - should return NOT_FOUND
+//! ```
+//! result = query_uuid(deleted_entity_id)
+//! assert(result.count == 0)  // Entity no longer accessible
+//! ```
+//!
+//! ### Phase 2: Compact (Background)
+//!
+//! During LSM compaction cycles:
+//! 1. Tombstones propagate through LSM levels (L0 → L1 → L2 → ...)
+//! 2. Tombstones shadow any older versions of the entity
+//! 3. `should_retain_tombstone()` determines when tombstones can be dropped
+//! 4. Tombstones are only eliminated when ALL conditions are met:
+//!    - Tombstone has reached deepest level (L_max)
+//!    - No older versions exist in any lower level
+//!    - At least one full compaction cycle has passed
+//!
+//! **Verification**: Monitor tombstone_metrics
+//! ```
+//! // After sufficient compaction cycles:
+//! assert(tombstone_metrics.tombstone_eliminated_compactions > 0)
+//! // Retention ratio should decrease over time:
+//! assert(tombstone_metrics.retentionRatio() < 1.0)
+//! ```
+//!
+//! ### Phase 3: Verify (Audit)
+//!
+//! To verify complete erasure for compliance audit:
+//!
+//! 1. **Immediate Verification** (after delete):
+//!    - Entity not in RAM index: `ram_index.get(entity_id) == null`
+//!    - Delete acknowledged: check DeleteEntitiesResult.ok
+//!
+//! 2. **Post-Compaction Verification** (after compaction cycles):
+//!    - LSM tree contains no versions: requires Forest integration
+//!    - Tombstone eliminated: tombstone_metrics shows elimination
+//!
+//! 3. **Metrics Export** (for audit trail):
+//!    ```
+//!    deletion_metrics.toPrometheus(writer)  // Deletion counts
+//!    tombstone_metrics.toPrometheus(writer) // Tombstone lifecycle
+//!    ```
+//!
+//! ### Compliance Guarantees
+//!
+//! - **Deterministic Ordering**: VSR consensus ensures deletion order is
+//!   identical across all replicas (F2.5.4)
+//! - **No Data Resurrection**: Tombstones are retained until older versions
+//!   are eliminated (F2.5.7)
+//! - **Audit Trail**: Metrics provide verifiable deletion evidence
+//! - **Eventual Erasure**: Compaction guarantees physical data removal
+//!
+//! ### Implementation Status
+//!
+//! | Component | Status | Notes |
+//! |-----------|--------|-------|
+//! | RAM index removal | ✓ Complete | O(1) immediate removal |
+//! | Deletion metrics | ✓ Complete | Prometheus export |
+//! | Tombstone metrics | ✓ Complete | Lifecycle tracking |
+//! | LSM tombstones | ◐ Stub | Awaiting Forest integration |
+//! | Tombstone retention | ◐ Stub | Awaiting Forest integration |
+//! | Full verification | ◐ Partial | Needs Forest for LSM queries |
 
 const std = @import("std");
 const assert = std.debug.assert;
