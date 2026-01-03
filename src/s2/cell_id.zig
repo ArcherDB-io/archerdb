@@ -520,3 +520,70 @@ test "face: all faces reachable" {
     }
     try std.testing.expect(count >= 3);
 }
+
+test "cross-platform determinism" {
+    // Compute a hash of many S2 operations to verify determinism.
+    // This hash MUST be identical across all platforms (x86, ARM, macOS, Linux).
+    // If it differs, the implementation is non-deterministic and will break VSR consensus.
+
+    var hash: u64 = 0;
+
+    // Test grid of coordinates (covers all faces and various precision levels)
+    const lat_steps = [_]i64{ -90_000_000_000, -45_000_000_000, 0, 45_000_000_000, 90_000_000_000 };
+    const lon_steps = [_]i64{ -180_000_000_000, -90_000_000_000, 0, 90_000_000_000, 180_000_000_000 };
+    const levels = [_]u8{ 0, 5, 10, 15, 20, 25, 30 };
+
+    // Generate deterministic cell IDs and XOR them into hash
+    for (lat_steps) |lat| {
+        for (lon_steps) |lon| {
+            for (levels) |lvl| {
+                const cell_id = fromLatLonNano(lat, lon, lvl);
+                hash ^= cell_id;
+
+                // Also test hierarchy operations
+                if (lvl > 0) {
+                    const p = parent(cell_id);
+                    hash ^= p;
+                }
+                if (lvl < max_level) {
+                    const kids = children(cell_id);
+                    for (kids) |kid| {
+                        hash ^= kid;
+                    }
+                }
+
+                // Test round-trip
+                const result = toLatLonNano(cell_id);
+                hash ^= @as(u64, @bitCast(result.lat_nano));
+                hash ^= @as(u64, @bitCast(result.lon_nano));
+            }
+        }
+    }
+
+    // Add some trigonometric operations to the hash
+    const test_angles = [_]f64{ 0.0, 0.1, 0.5, 1.0, 1.5, 2.0, 3.0, smath.pi };
+    for (test_angles) |angle| {
+        const s = smath.sin(angle);
+        const c = smath.cos(angle);
+        hash ^= @as(u64, @bitCast(s));
+        hash ^= @as(u64, @bitCast(c));
+    }
+
+    // Expected hash value (computed on Linux x86_64)
+    // If this test fails on another platform, the implementation is non-deterministic!
+    //
+    // Platform verification status:
+    // - Linux x86_64: VERIFIED (this machine)
+    // - macOS ARM64: TODO
+    // - Linux ARM64: TODO
+    // - Windows x86_64: TODO
+    const expected_hash: u64 = 0xcfcb49bcd16dea5d;
+
+    if (hash != expected_hash) {
+        std.debug.print("\nCROSS-PLATFORM DETERMINISM FAILURE!\n", .{});
+        std.debug.print("Expected hash: 0x{x:0>16}\n", .{expected_hash});
+        std.debug.print("Actual hash:   0x{x:0>16}\n", .{hash});
+        std.debug.print("\nThis indicates non-deterministic behavior that will break VSR consensus.\n", .{});
+        try std.testing.expectEqual(expected_hash, hash);
+    }
+}
