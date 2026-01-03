@@ -111,6 +111,8 @@ from .client import (
     # Client classes
     GeoClientSync,
     GeoClientAsync,
+    # Batch helpers
+    split_batch,
 )
 
 # Public API
@@ -189,4 +191,6 @@ __all__ = [
     # Client classes
     "GeoClientSync",
     "GeoClientAsync",
+    # Batch helpers
+    "split_batch",
 ]

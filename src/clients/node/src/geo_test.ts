@@ -49,6 +49,9 @@ import {
   InvalidCoordinates,
   BatchTooLarge,
   InvalidEntityId,
+
+  // Batch helpers
+  splitBatch,
 } from './geo_client'
 
 // Local ID generation (copied from index.ts to avoid loading native binding)
@@ -609,6 +612,109 @@ function test_id_generation() {
 }
 
 // ============================================================================
+// Split Batch Helper Tests
+// ============================================================================
+
+function test_splitBatch_basic() {
+  const items = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+  // Split into chunks of 3
+  const chunks = splitBatch(items, 3)
+
+  assert.strictEqual(chunks.length, 4)
+  assert.deepStrictEqual(chunks[0], [1, 2, 3])
+  assert.deepStrictEqual(chunks[1], [4, 5, 6])
+  assert.deepStrictEqual(chunks[2], [7, 8, 9])
+  assert.deepStrictEqual(chunks[3], [10])
+
+  console.log('✓ splitBatch_basic')
+}
+
+function test_splitBatch_exactDivision() {
+  const items = [1, 2, 3, 4, 5, 6]
+
+  // Exact division
+  const chunks = splitBatch(items, 2)
+
+  assert.strictEqual(chunks.length, 3)
+  assert.deepStrictEqual(chunks[0], [1, 2])
+  assert.deepStrictEqual(chunks[1], [3, 4])
+  assert.deepStrictEqual(chunks[2], [5, 6])
+
+  console.log('✓ splitBatch_exactDivision')
+}
+
+function test_splitBatch_emptyArray() {
+  const items: number[] = []
+
+  const chunks = splitBatch(items, 3)
+
+  assert.strictEqual(chunks.length, 0)
+
+  console.log('✓ splitBatch_emptyArray')
+}
+
+function test_splitBatch_singleChunk() {
+  const items = [1, 2, 3]
+
+  // Chunk size larger than array
+  const chunks = splitBatch(items, 10)
+
+  assert.strictEqual(chunks.length, 1)
+  assert.deepStrictEqual(chunks[0], [1, 2, 3])
+
+  console.log('✓ splitBatch_singleChunk')
+}
+
+function test_splitBatch_chunkSizeOne() {
+  const items = [1, 2, 3]
+
+  const chunks = splitBatch(items, 1)
+
+  assert.strictEqual(chunks.length, 3)
+  assert.deepStrictEqual(chunks[0], [1])
+  assert.deepStrictEqual(chunks[1], [2])
+  assert.deepStrictEqual(chunks[2], [3])
+
+  console.log('✓ splitBatch_chunkSizeOne')
+}
+
+function test_splitBatch_zeroChunkSize_throws() {
+  const items = [1, 2, 3]
+
+  assert.throws(() => {
+    splitBatch(items, 0)
+  }, /chunkSize must be greater than 0/)
+
+  console.log('✓ splitBatch_zeroChunkSize_throws')
+}
+
+function test_splitBatch_negativeChunkSize_throws() {
+  const items = [1, 2, 3]
+
+  assert.throws(() => {
+    splitBatch(items, -1)
+  }, /chunkSize must be greater than 0/)
+
+  console.log('✓ splitBatch_negativeChunkSize_throws')
+}
+
+function test_splitBatch_defaultChunkSize() {
+  // Create an array of 2500 items
+  const items = Array.from({ length: 2500 }, (_, i) => i)
+
+  // Use default chunk size (1000)
+  const chunks = splitBatch(items)
+
+  assert.strictEqual(chunks.length, 3)
+  assert.strictEqual(chunks[0].length, 1000)
+  assert.strictEqual(chunks[1].length, 1000)
+  assert.strictEqual(chunks[2].length, 500)
+
+  console.log('✓ splitBatch_defaultChunkSize')
+}
+
+// ============================================================================
 // Run All Tests
 // ============================================================================
 
@@ -656,6 +762,16 @@ function runTests() {
 
   // ID generation tests
   test_id_generation()
+
+  // Split batch helper tests
+  test_splitBatch_basic()
+  test_splitBatch_exactDivision()
+  test_splitBatch_emptyArray()
+  test_splitBatch_singleChunk()
+  test_splitBatch_chunkSizeOne()
+  test_splitBatch_zeroChunkSize_throws()
+  test_splitBatch_negativeChunkSize_throws()
+  test_splitBatch_defaultChunkSize()
 
   console.log('\n=== All tests passed! ===\n')
 }

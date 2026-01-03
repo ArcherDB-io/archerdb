@@ -805,6 +805,63 @@ export class GeoClient {
 }
 
 // ============================================================================
+// Batch Helpers (per client-retry spec)
+// ============================================================================
+
+/**
+ * Splits a batch of items into smaller chunks for retry scenarios.
+ *
+ * When a large batch times out, the SDK cannot determine which events succeeded
+ * vs failed. Use this helper to split the batch into smaller chunks and retry
+ * each chunk individually. The server's idempotency guarantees ensure that
+ * any already-committed events will not be duplicated.
+ *
+ * @param items - Array of events or entity IDs to split
+ * @param chunkSize - Maximum size of each chunk (default: 1000)
+ * @returns Array of arrays, each containing at most chunkSize items
+ *
+ * @example
+ * ```typescript
+ * // Original batch timed out
+ * const events = generateLargeEventList()
+ *
+ * // Split into smaller batches for retry
+ * const chunks = splitBatch(events, 500)
+ *
+ * for (const chunk of chunks) {
+ *   const batch = client.createBatch()
+ *   for (const event of chunk) {
+ *     batch.add(event)
+ *   }
+ *   try {
+ *     await batch.commit()
+ *   } catch (e) {
+ *     if (e instanceof OperationTimeout) {
+ *       // Retry with even smaller chunks
+ *       const smallerChunks = splitBatch(chunk, 100)
+ *       // ...
+ *     }
+ *   }
+ * }
+ * ```
+ */
+export function splitBatch<T>(items: T[], chunkSize: number = 1000): T[][] {
+  if (chunkSize <= 0) {
+    throw new Error('chunkSize must be greater than 0')
+  }
+
+  if (items.length === 0) {
+    return []
+  }
+
+  const chunks: T[][] = []
+  for (let i = 0; i < items.length; i += chunkSize) {
+    chunks.push(items.slice(i, i + chunkSize))
+  }
+  return chunks
+}
+
+// ============================================================================
 // Factory Function
 // ============================================================================
 

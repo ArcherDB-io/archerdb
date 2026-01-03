@@ -79,6 +79,8 @@ from . import (
     # Client classes
     GeoClientSync,
     GeoClientAsync,
+    # Batch helpers
+    split_batch,
 )
 
 
@@ -768,6 +770,88 @@ class TestClientInstantiation(unittest.TestCase):
         with GeoClientSync(config) as client:
             self.assertTrue(client.is_connected)
         self.assertFalse(client.is_connected)
+
+
+class TestSplitBatch(unittest.TestCase):
+    """Test split_batch helper function."""
+
+    def test_basic_split(self):
+        """Split list into chunks of specified size."""
+        items = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        chunks = split_batch(items, 3)
+
+        self.assertEqual(len(chunks), 4)
+        self.assertEqual(chunks[0], [1, 2, 3])
+        self.assertEqual(chunks[1], [4, 5, 6])
+        self.assertEqual(chunks[2], [7, 8, 9])
+        self.assertEqual(chunks[3], [10])
+
+    def test_exact_division(self):
+        """Split when items divide evenly."""
+        items = [1, 2, 3, 4, 5, 6]
+        chunks = split_batch(items, 2)
+
+        self.assertEqual(len(chunks), 3)
+        self.assertEqual(chunks[0], [1, 2])
+        self.assertEqual(chunks[1], [3, 4])
+        self.assertEqual(chunks[2], [5, 6])
+
+    def test_empty_list(self):
+        """Empty list returns empty result."""
+        chunks = split_batch([], 3)
+        self.assertEqual(chunks, [])
+
+    def test_single_chunk(self):
+        """Chunk size larger than list."""
+        items = [1, 2, 3]
+        chunks = split_batch(items, 10)
+
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(chunks[0], [1, 2, 3])
+
+    def test_chunk_size_one(self):
+        """Chunk size of 1 creates individual items."""
+        items = [1, 2, 3]
+        chunks = split_batch(items, 1)
+
+        self.assertEqual(len(chunks), 3)
+        self.assertEqual(chunks[0], [1])
+        self.assertEqual(chunks[1], [2])
+        self.assertEqual(chunks[2], [3])
+
+    def test_zero_chunk_size_raises(self):
+        """Zero chunk size raises ValueError."""
+        with self.assertRaises(ValueError) as ctx:
+            split_batch([1, 2, 3], 0)
+        self.assertIn("chunk_size must be greater than 0", str(ctx.exception))
+
+    def test_negative_chunk_size_raises(self):
+        """Negative chunk size raises ValueError."""
+        with self.assertRaises(ValueError) as ctx:
+            split_batch([1, 2, 3], -1)
+        self.assertIn("chunk_size must be greater than 0", str(ctx.exception))
+
+    def test_default_chunk_size(self):
+        """Default chunk size is 1000."""
+        items = list(range(2500))
+        chunks = split_batch(items)
+
+        self.assertEqual(len(chunks), 3)
+        self.assertEqual(len(chunks[0]), 1000)
+        self.assertEqual(len(chunks[1]), 1000)
+        self.assertEqual(len(chunks[2]), 500)
+
+    def test_with_geo_events(self):
+        """Works with GeoEvent objects."""
+        events = [
+            GeoEvent(entity_id=i, lat_nano=i * 1000000, lon_nano=-i * 1000000)
+            for i in range(1, 11)
+        ]
+        chunks = split_batch(events, 3)
+
+        self.assertEqual(len(chunks), 4)
+        self.assertEqual(chunks[0][0].entity_id, 1)
+        self.assertEqual(chunks[3][0].entity_id, 10)
 
 
 def run_tests():

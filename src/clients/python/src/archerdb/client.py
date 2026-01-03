@@ -849,3 +849,58 @@ class GeoClientAsync:
         self._ensure_connected()
         # NOTE: Skeleton implementation
         return []
+
+
+# ============================================================================
+# Batch Helpers (per client-retry spec)
+# ============================================================================
+
+from typing import TypeVar
+
+T = TypeVar('T')
+
+
+def split_batch(items: List[T], chunk_size: int = 1000) -> List[List[T]]:
+    """
+    Split a batch of items into smaller chunks for retry scenarios.
+
+    When a large batch times out, the SDK cannot determine which events succeeded
+    vs failed. Use this helper to split the batch into smaller chunks and retry
+    each chunk individually. The server's idempotency guarantees ensure that
+    any already-committed events will not be duplicated.
+
+    Args:
+        items: List of events or entity IDs to split
+        chunk_size: Maximum size of each chunk (default: 1000)
+
+    Returns:
+        List of lists, each containing at most chunk_size items
+
+    Raises:
+        ValueError: If chunk_size is less than or equal to 0
+
+    Example:
+        # Original batch timed out
+        events = generate_large_event_list()
+
+        # Split into smaller batches for retry
+        chunks = split_batch(events, 500)
+
+        for chunk in chunks:
+            batch = client.create_batch()
+            for event in chunk:
+                batch.add(event)
+            try:
+                batch.commit()
+            except OperationTimeout:
+                # Retry with even smaller chunks
+                smaller_chunks = split_batch(chunk, 100)
+                # ...
+    """
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be greater than 0")
+
+    if not items:
+        return []
+
+    return [items[i:i + chunk_size] for i in range(0, len(items), chunk_size)]
