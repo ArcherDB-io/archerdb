@@ -439,6 +439,246 @@ pub const DegradationDetector = struct {
     }
 };
 
+// =============================================================================
+// Graceful Degradation Strategies (F2.4.10)
+// Per hybrid-memory/spec.md:777-890
+// =============================================================================
+
+/// Query queue configuration for backpressure under degradation.
+pub const QueryQueueConfig = struct {
+    /// Soft limit: Start applying backpressure (reject new queries).
+    pub const soft_limit: u32 = 100;
+    /// Hard limit: Force immediate rebuild, reject all queries.
+    pub const hard_limit: u32 = 500;
+    /// Normal query timeout (nanoseconds) - 1 second.
+    pub const normal_timeout_ns: u64 = 1_000_000_000;
+    /// Degraded query timeout (nanoseconds) - 5 seconds.
+    pub const degraded_timeout_ns: u64 = 5_000_000_000;
+};
+
+/// State of the degraded mode.
+pub const DegradedModeState = enum {
+    /// Normal operation.
+    normal,
+    /// Warning level - continue normal operation, notify operator.
+    warning,
+    /// Critical level - degraded mode active.
+    degraded,
+    /// Unrecoverable - replica must stop.
+    unrecoverable,
+};
+
+/// Diagnostic mode configuration.
+pub const DiagnosticConfig = struct {
+    /// Sample rate for diagnostic logging (0.1 = 10% of queries).
+    pub const sample_rate: f32 = 0.10;
+    /// Whether diagnostic logging is enabled.
+    enabled: bool = false,
+    /// Counter for sampling.
+    query_counter: u64 = 0,
+    /// Number of diagnostics logged.
+    diagnostics_logged: u64 = 0,
+
+    /// Check if this query should be logged (sampling).
+    pub fn should_log(self: *DiagnosticConfig) bool {
+        if (!self.enabled) return false;
+        self.query_counter += 1;
+        // Sample every 10th query (10%).
+        if (self.query_counter % 10 == 0) {
+            self.diagnostics_logged += 1;
+            return true;
+        }
+        return false;
+    }
+};
+
+/// Degraded mode manager for graceful degradation.
+pub const DegradedModeManager = struct {
+    /// Current degraded mode state.
+    state: DegradedModeState = .normal,
+    /// Timestamp when degraded mode was entered (nanoseconds).
+    degraded_since_ns: u64 = 0,
+    /// Current query queue depth.
+    query_queue_depth: u32 = 0,
+    /// Whether background rebuild is in progress.
+    rebuild_in_progress: bool = false,
+    /// Rebuild progress percentage (0-100).
+    rebuild_percent: u8 = 0,
+    /// Diagnostic mode configuration.
+    diagnostics: DiagnosticConfig = .{},
+    /// Cache reduction applied (true if 50% evicted).
+    cache_reduced: bool = false,
+    /// Queries rejected due to backpressure.
+    queries_rejected: u64 = 0,
+
+    /// Response action for a given degradation status.
+    pub const Response = struct {
+        /// New state to enter.
+        new_state: DegradedModeState,
+        /// Should log warning message.
+        log_warning: bool,
+        /// Should log critical message.
+        log_critical: bool,
+        /// Should notify operator.
+        notify_operator: bool,
+        /// Should page on-call.
+        page_oncall: bool,
+        /// Should enable diagnostic logging.
+        enable_diagnostics: bool,
+        /// Should reduce cache.
+        reduce_cache: bool,
+        /// Should start rebuild.
+        start_rebuild: bool,
+        /// Should stop replica (corruption).
+        stop_replica: bool,
+        /// Query timeout to use (nanoseconds).
+        query_timeout_ns: u64,
+    };
+
+    /// Determine response actions based on degradation status.
+    pub fn determine_response(status: DegradationStatus) Response {
+        // Corruption - unrecoverable.
+        if (status.corruption_detected) {
+            return .{
+                .new_state = .unrecoverable,
+                .log_warning = false,
+                .log_critical = true,
+                .notify_operator = true,
+                .page_oncall = true,
+                .enable_diagnostics = true,
+                .reduce_cache = false,
+                .start_rebuild = false,
+                .stop_replica = true,
+                .query_timeout_ns = 0, // Not serving queries.
+            };
+        }
+
+        switch (status.overall_level) {
+            .normal => {
+                return .{
+                    .new_state = .normal,
+                    .log_warning = false,
+                    .log_critical = false,
+                    .notify_operator = false,
+                    .page_oncall = false,
+                    .enable_diagnostics = false,
+                    .reduce_cache = false,
+                    .start_rebuild = false,
+                    .stop_replica = false,
+                    .query_timeout_ns = QueryQueueConfig.normal_timeout_ns,
+                };
+            },
+            .warning => {
+                return .{
+                    .new_state = .warning,
+                    .log_warning = true,
+                    .log_critical = false,
+                    .notify_operator = true,
+                    .page_oncall = false,
+                    .enable_diagnostics = false,
+                    .reduce_cache = false,
+                    .start_rebuild = false,
+                    .stop_replica = false,
+                    .query_timeout_ns = QueryQueueConfig.normal_timeout_ns,
+                };
+            },
+            .critical => {
+                return .{
+                    .new_state = .degraded,
+                    .log_warning = false,
+                    .log_critical = true,
+                    .notify_operator = true,
+                    .page_oncall = true,
+                    .enable_diagnostics = true,
+                    .reduce_cache = true,
+                    .start_rebuild = true,
+                    .stop_replica = false,
+                    .query_timeout_ns = QueryQueueConfig.degraded_timeout_ns,
+                };
+            },
+        }
+    }
+
+    /// Apply response actions and update state.
+    pub fn apply_response(self: *DegradedModeManager, response: Response, current_time_ns: u64) void {
+        // Update state.
+        if (self.state != response.new_state) {
+            self.state = response.new_state;
+            if (response.new_state == .degraded) {
+                self.degraded_since_ns = current_time_ns;
+            }
+        }
+
+        // Enable/disable diagnostics.
+        self.diagnostics.enabled = response.enable_diagnostics;
+
+        // Track cache reduction.
+        if (response.reduce_cache and !self.cache_reduced) {
+            self.cache_reduced = true;
+        }
+
+        // Track rebuild.
+        if (response.start_rebuild and !self.rebuild_in_progress) {
+            self.rebuild_in_progress = true;
+            self.rebuild_percent = 0;
+        }
+    }
+
+    /// Check if query should be accepted based on queue depth.
+    pub fn should_accept_query(self: *const DegradedModeManager) bool {
+        // Unrecoverable - reject all.
+        if (self.state == .unrecoverable) return false;
+
+        // Hard limit - reject all.
+        if (self.query_queue_depth >= QueryQueueConfig.hard_limit) return false;
+
+        // Soft limit in degraded mode - reject.
+        if (self.state == .degraded and
+            self.query_queue_depth >= QueryQueueConfig.soft_limit)
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    /// Record query rejection.
+    pub fn record_rejection(self: *DegradedModeManager) void {
+        self.queries_rejected += 1;
+    }
+
+    /// Get current query timeout.
+    pub fn query_timeout(self: *const DegradedModeManager) u64 {
+        return switch (self.state) {
+            .normal, .warning => QueryQueueConfig.normal_timeout_ns,
+            .degraded => QueryQueueConfig.degraded_timeout_ns,
+            .unrecoverable => 0,
+        };
+    }
+
+    /// Update rebuild progress.
+    pub fn update_rebuild_progress(self: *DegradedModeManager, percent: u8) void {
+        self.rebuild_percent = percent;
+        if (percent >= 100) {
+            self.rebuild_in_progress = false;
+        }
+    }
+
+    /// Complete recovery - reset to normal state.
+    pub fn complete_recovery(self: *DegradedModeManager) void {
+        self.state = .normal;
+        self.rebuild_in_progress = false;
+        self.rebuild_percent = 0;
+        self.cache_reduced = false;
+        self.diagnostics.enabled = false;
+    }
+
+    /// Check if replica should stop (unrecoverable corruption).
+    pub fn should_stop_replica(self: *const DegradedModeManager) bool {
+        return self.state == .unrecoverable;
+    }
+};
+
 /// Result of a background TTL scan operation.
 pub const ScanExpiredResult = struct {
     /// Number of entries scanned in this batch.
@@ -1678,4 +1918,273 @@ test "DegradationLevel: severity ordering" {
     // Verify ordering.
     try std.testing.expect(DegradationLevel.normal.severity() < DegradationLevel.warning.severity());
     try std.testing.expect(DegradationLevel.warning.severity() < DegradationLevel.critical.severity());
+}
+
+// =============================================================================
+// Graceful Degradation Tests (F2.4.10)
+// =============================================================================
+
+test "DegradedModeManager: determine_response normal" {
+    // Normal status should return normal response.
+    const status = DegradationStatus{
+        .overall_level = .normal,
+        .tombstone_check = .{
+            .degradation_type = .tombstone_accumulation,
+            .level = .normal,
+            .current_value = 0.05,
+            .warning_threshold = 0.10,
+            .critical_threshold = 0.30,
+        },
+        .probe_length_check = .{
+            .degradation_type = .probe_length_growth,
+            .level = .normal,
+            .current_value = 1.0,
+            .warning_threshold = 3.0,
+            .critical_threshold = 10.0,
+        },
+        .capacity_check = .{
+            .degradation_type = .capacity_limit,
+            .level = .normal,
+            .current_value = 0.40,
+            .warning_threshold = 0.60,
+            .critical_threshold = 0.75,
+        },
+        .corruption_detected = false,
+        .recommended_action = .none,
+    };
+
+    const response = DegradedModeManager.determine_response(status);
+    try std.testing.expectEqual(DegradedModeState.normal, response.new_state);
+    try std.testing.expect(!response.log_warning);
+    try std.testing.expect(!response.log_critical);
+    try std.testing.expect(!response.notify_operator);
+    try std.testing.expect(!response.reduce_cache);
+    try std.testing.expect(!response.start_rebuild);
+    try std.testing.expect(!response.stop_replica);
+    try std.testing.expectEqual(QueryQueueConfig.normal_timeout_ns, response.query_timeout_ns);
+}
+
+test "DegradedModeManager: determine_response warning" {
+    // Warning status should log warning and notify operator.
+    const status = DegradationStatus{
+        .overall_level = .warning,
+        .tombstone_check = .{
+            .degradation_type = .tombstone_accumulation,
+            .level = .warning,
+            .current_value = 0.15,
+            .warning_threshold = 0.10,
+            .critical_threshold = 0.30,
+        },
+        .probe_length_check = .{
+            .degradation_type = .probe_length_growth,
+            .level = .normal,
+            .current_value = 2.0,
+            .warning_threshold = 3.0,
+            .critical_threshold = 10.0,
+        },
+        .capacity_check = .{
+            .degradation_type = .capacity_limit,
+            .level = .normal,
+            .current_value = 0.50,
+            .warning_threshold = 0.60,
+            .critical_threshold = 0.75,
+        },
+        .corruption_detected = false,
+        .recommended_action = .schedule_rebuild,
+    };
+
+    const response = DegradedModeManager.determine_response(status);
+    try std.testing.expectEqual(DegradedModeState.warning, response.new_state);
+    try std.testing.expect(response.log_warning);
+    try std.testing.expect(!response.log_critical);
+    try std.testing.expect(response.notify_operator);
+    try std.testing.expect(!response.page_oncall);
+    try std.testing.expect(!response.reduce_cache);
+    try std.testing.expect(!response.start_rebuild);
+    try std.testing.expectEqual(QueryQueueConfig.normal_timeout_ns, response.query_timeout_ns);
+}
+
+test "DegradedModeManager: determine_response critical" {
+    // Critical status should enter degraded mode with all emergency actions.
+    const status = DegradationStatus{
+        .overall_level = .critical,
+        .tombstone_check = .{
+            .degradation_type = .tombstone_accumulation,
+            .level = .critical,
+            .current_value = 0.35,
+            .warning_threshold = 0.10,
+            .critical_threshold = 0.30,
+        },
+        .probe_length_check = .{
+            .degradation_type = .probe_length_growth,
+            .level = .normal,
+            .current_value = 2.0,
+            .warning_threshold = 3.0,
+            .critical_threshold = 10.0,
+        },
+        .capacity_check = .{
+            .degradation_type = .capacity_limit,
+            .level = .normal,
+            .current_value = 0.50,
+            .warning_threshold = 0.60,
+            .critical_threshold = 0.75,
+        },
+        .corruption_detected = false,
+        .recommended_action = .immediate_rebuild,
+    };
+
+    const response = DegradedModeManager.determine_response(status);
+    try std.testing.expectEqual(DegradedModeState.degraded, response.new_state);
+    try std.testing.expect(!response.log_warning);
+    try std.testing.expect(response.log_critical);
+    try std.testing.expect(response.notify_operator);
+    try std.testing.expect(response.page_oncall);
+    try std.testing.expect(response.enable_diagnostics);
+    try std.testing.expect(response.reduce_cache);
+    try std.testing.expect(response.start_rebuild);
+    try std.testing.expect(!response.stop_replica);
+    try std.testing.expectEqual(QueryQueueConfig.degraded_timeout_ns, response.query_timeout_ns);
+}
+
+test "DegradedModeManager: determine_response corruption" {
+    // Corruption should trigger unrecoverable state.
+    const status = DegradationStatus{
+        .overall_level = .critical,
+        .tombstone_check = .{
+            .degradation_type = .tombstone_accumulation,
+            .level = .normal,
+            .current_value = 0.05,
+            .warning_threshold = 0.10,
+            .critical_threshold = 0.30,
+        },
+        .probe_length_check = .{
+            .degradation_type = .probe_length_growth,
+            .level = .normal,
+            .current_value = 2.0,
+            .warning_threshold = 3.0,
+            .critical_threshold = 10.0,
+        },
+        .capacity_check = .{
+            .degradation_type = .capacity_limit,
+            .level = .normal,
+            .current_value = 0.40,
+            .warning_threshold = 0.60,
+            .critical_threshold = 0.75,
+        },
+        .corruption_detected = true,
+        .recommended_action = .replace_replica,
+    };
+
+    const response = DegradedModeManager.determine_response(status);
+    try std.testing.expectEqual(DegradedModeState.unrecoverable, response.new_state);
+    try std.testing.expect(response.log_critical);
+    try std.testing.expect(response.page_oncall);
+    try std.testing.expect(response.stop_replica);
+    try std.testing.expect(!response.start_rebuild); // Cannot rebuild with corruption.
+    try std.testing.expectEqual(@as(u64, 0), response.query_timeout_ns);
+}
+
+test "DegradedModeManager: query acceptance based on queue depth" {
+    var manager = DegradedModeManager{};
+
+    // Normal mode - accept all queries.
+    try std.testing.expect(manager.should_accept_query());
+
+    // Warning mode - still accept all queries.
+    manager.state = .warning;
+    try std.testing.expect(manager.should_accept_query());
+
+    // Degraded mode below soft limit - accept.
+    manager.state = .degraded;
+    manager.query_queue_depth = 50;
+    try std.testing.expect(manager.should_accept_query());
+
+    // Degraded mode at soft limit - reject.
+    manager.query_queue_depth = 100;
+    try std.testing.expect(!manager.should_accept_query());
+
+    // Normal mode at soft limit - still accept.
+    manager.state = .normal;
+    try std.testing.expect(manager.should_accept_query());
+
+    // Any mode at hard limit - reject.
+    manager.query_queue_depth = 500;
+    try std.testing.expect(!manager.should_accept_query());
+
+    // Unrecoverable - reject all.
+    manager.state = .unrecoverable;
+    manager.query_queue_depth = 0;
+    try std.testing.expect(!manager.should_accept_query());
+}
+
+test "DegradedModeManager: query timeout" {
+    var manager = DegradedModeManager{};
+
+    // Normal mode - 1 second timeout.
+    try std.testing.expectEqual(QueryQueueConfig.normal_timeout_ns, manager.query_timeout());
+
+    // Warning mode - still 1 second.
+    manager.state = .warning;
+    try std.testing.expectEqual(QueryQueueConfig.normal_timeout_ns, manager.query_timeout());
+
+    // Degraded mode - 5 second timeout.
+    manager.state = .degraded;
+    try std.testing.expectEqual(QueryQueueConfig.degraded_timeout_ns, manager.query_timeout());
+
+    // Unrecoverable - 0 (not serving).
+    manager.state = .unrecoverable;
+    try std.testing.expectEqual(@as(u64, 0), manager.query_timeout());
+}
+
+test "DegradedModeManager: complete recovery cycle" {
+    var manager = DegradedModeManager{};
+
+    // Enter degraded mode.
+    manager.state = .degraded;
+    manager.degraded_since_ns = 1000;
+    manager.rebuild_in_progress = true;
+    manager.rebuild_percent = 50;
+    manager.cache_reduced = true;
+    manager.diagnostics.enabled = true;
+
+    // Verify degraded state.
+    try std.testing.expectEqual(DegradedModeState.degraded, manager.state);
+    try std.testing.expect(manager.rebuild_in_progress);
+    try std.testing.expect(manager.cache_reduced);
+
+    // Complete recovery.
+    manager.complete_recovery();
+
+    // Verify normal state restored.
+    try std.testing.expectEqual(DegradedModeState.normal, manager.state);
+    try std.testing.expect(!manager.rebuild_in_progress);
+    try std.testing.expectEqual(@as(u8, 0), manager.rebuild_percent);
+    try std.testing.expect(!manager.cache_reduced);
+    try std.testing.expect(!manager.diagnostics.enabled);
+}
+
+test "DiagnosticConfig: sampling" {
+    var config = DiagnosticConfig{};
+
+    // Disabled by default - never log.
+    try std.testing.expect(!config.should_log());
+    try std.testing.expect(!config.should_log());
+    try std.testing.expect(!config.should_log());
+    try std.testing.expectEqual(@as(u64, 0), config.diagnostics_logged);
+
+    // Enable diagnostics.
+    config.enabled = true;
+
+    // Sample every 10th query.
+    var logged_count: u64 = 0;
+    var i: u32 = 0;
+    while (i < 100) : (i += 1) {
+        if (config.should_log()) {
+            logged_count += 1;
+        }
+    }
+
+    // Should have logged ~10 queries (10% sample rate).
+    try std.testing.expectEqual(@as(u64, 10), logged_count);
+    try std.testing.expectEqual(@as(u64, 10), config.diagnostics_logged);
 }
