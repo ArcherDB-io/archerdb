@@ -49,9 +49,21 @@ import {
   InvalidCoordinates,
   BatchTooLarge,
   InvalidEntityId,
+  RetryExhausted,
+  OperationTimeout,
+  ClusterUnavailable,
+  ViewChangeInProgress,
+  NotPrimary,
+  ConnectionFailed,
+  TLSError,
+  PolygonTooComplex,
+  QueryResultTooLarge,
 
   // Batch helpers
   splitBatch,
+
+  // Internal exports for testing retry logic
+  _testExports,
 } from './geo_client'
 
 // Local ID generation (copied from index.ts to avoid loading native binding)
@@ -715,10 +727,393 @@ function test_splitBatch_defaultChunkSize() {
 }
 
 // ============================================================================
+// Partial Failure Scenario Tests (F5.3.9)
+// ============================================================================
+
+// --- Error Classification Tests ---
+
+function test_isRetryableError_retryableErrors() {
+  const { isRetryableError } = _testExports
+
+  // Retryable ArcherDB errors
+  assert.strictEqual(isRetryableError(new OperationTimeout('timeout')), true)
+  assert.strictEqual(isRetryableError(new ClusterUnavailable('unavailable')), true)
+  assert.strictEqual(isRetryableError(new ViewChangeInProgress('view change')), true)
+  assert.strictEqual(isRetryableError(new NotPrimary('not primary')), true)
+  assert.strictEqual(isRetryableError(new ConnectionFailed('failed')), true)
+
+  console.log('✓ isRetryableError_retryableErrors')
+}
+
+function test_isRetryableError_nonRetryableErrors() {
+  const { isRetryableError } = _testExports
+
+  // Non-retryable ArcherDB errors
+  assert.strictEqual(isRetryableError(new InvalidCoordinates('bad coords')), false)
+  assert.strictEqual(isRetryableError(new BatchTooLarge('too big')), false)
+  assert.strictEqual(isRetryableError(new InvalidEntityId('bad id')), false)
+  assert.strictEqual(isRetryableError(new TLSError('tls failed')), false)
+  assert.strictEqual(isRetryableError(new PolygonTooComplex('too complex')), false)
+  assert.strictEqual(isRetryableError(new QueryResultTooLarge('too large')), false)
+
+  console.log('✓ isRetryableError_nonRetryableErrors')
+}
+
+function test_isRetryableError_networkErrors() {
+  const { isRetryableError } = _testExports
+
+  // Network errors (generic Error with specific messages)
+  assert.strictEqual(isRetryableError(new Error('Connection timeout')), true)
+  assert.strictEqual(isRetryableError(new Error('ECONNRESET')), true)
+  assert.strictEqual(isRetryableError(new Error('ECONNREFUSED')), true)
+  assert.strictEqual(isRetryableError(new Error('EPIPE')), true)
+  assert.strictEqual(isRetryableError(new Error('network error')), true)
+
+  // Non-network generic errors
+  assert.strictEqual(isRetryableError(new Error('some other error')), false)
+  assert.strictEqual(isRetryableError(new Error('invalid data')), false)
+
+  console.log('✓ isRetryableError_networkErrors')
+}
+
+// --- Backoff Calculation Tests ---
+
+function test_calculateRetryDelay_schedule() {
+  const { calculateRetryDelay } = _testExports
+
+  const config = {
+    enabled: true,
+    max_retries: 5,
+    base_backoff_ms: 100,
+    max_backoff_ms: 1600,
+    total_timeout_ms: 30000,
+    jitter: false, // Disable jitter for deterministic testing
+  }
+
+  // First attempt is immediate
+  assert.strictEqual(calculateRetryDelay(1, config), 0)
+
+  // Subsequent attempts follow exponential backoff
+  // attempt 2: 100 * 2^0 = 100
+  assert.strictEqual(calculateRetryDelay(2, config), 100)
+  // attempt 3: 100 * 2^1 = 200
+  assert.strictEqual(calculateRetryDelay(3, config), 200)
+  // attempt 4: 100 * 2^2 = 400
+  assert.strictEqual(calculateRetryDelay(4, config), 400)
+  // attempt 5: 100 * 2^3 = 800
+  assert.strictEqual(calculateRetryDelay(5, config), 800)
+  // attempt 6: 100 * 2^4 = 1600
+  assert.strictEqual(calculateRetryDelay(6, config), 1600)
+
+  console.log('✓ calculateRetryDelay_schedule')
+}
+
+function test_calculateRetryDelay_maxBackoff() {
+  const { calculateRetryDelay } = _testExports
+
+  const config = {
+    enabled: true,
+    max_retries: 10,
+    base_backoff_ms: 100,
+    max_backoff_ms: 500, // Capped at 500ms
+    total_timeout_ms: 30000,
+    jitter: false,
+  }
+
+  // Should cap at max_backoff_ms
+  // attempt 5: 100 * 2^3 = 800, but capped to 500
+  assert.strictEqual(calculateRetryDelay(5, config), 500)
+  // attempt 6 and beyond stay capped
+  assert.strictEqual(calculateRetryDelay(6, config), 500)
+  assert.strictEqual(calculateRetryDelay(10, config), 500)
+
+  console.log('✓ calculateRetryDelay_maxBackoff')
+}
+
+function test_calculateRetryDelay_jitter() {
+  const { calculateRetryDelay } = _testExports
+
+  const config = {
+    enabled: true,
+    max_retries: 5,
+    base_backoff_ms: 100,
+    max_backoff_ms: 1600,
+    total_timeout_ms: 30000,
+    jitter: true, // Enable jitter
+  }
+
+  // With jitter, delay should be base_delay + random(0, base_delay/2)
+  // For attempt 2 with base_delay 100: should be 100-150ms
+  const delays: number[] = []
+  for (let i = 0; i < 100; i++) {
+    delays.push(calculateRetryDelay(2, config))
+  }
+
+  // All delays should be within expected range
+  const minDelay = Math.min(...delays)
+  const maxDelay = Math.max(...delays)
+
+  assert(minDelay >= 100, `Min delay ${minDelay} should be >= 100`)
+  assert(maxDelay <= 150, `Max delay ${maxDelay} should be <= 150`)
+  // With 100 samples, we should see some variation
+  assert(maxDelay > minDelay, 'Jitter should cause variation in delays')
+
+  console.log('✓ calculateRetryDelay_jitter')
+}
+
+// --- Retry Logic Tests ---
+
+async function test_withRetry_success() {
+  const { withRetry } = _testExports
+
+  const config = {
+    enabled: true,
+    max_retries: 5,
+    base_backoff_ms: 10, // Short for testing
+    max_backoff_ms: 100,
+    total_timeout_ms: 1000,
+    jitter: false,
+  }
+
+  let attempts = 0
+  const result = await withRetry(async () => {
+    attempts++
+    return 'success'
+  }, config)
+
+  assert.strictEqual(result, 'success')
+  assert.strictEqual(attempts, 1) // Should succeed on first try
+
+  console.log('✓ withRetry_success')
+}
+
+async function test_withRetry_eventualSuccess() {
+  const { withRetry } = _testExports
+
+  const config = {
+    enabled: true,
+    max_retries: 5,
+    base_backoff_ms: 10,
+    max_backoff_ms: 100,
+    total_timeout_ms: 5000,
+    jitter: false,
+  }
+
+  let attempts = 0
+  const result = await withRetry(async () => {
+    attempts++
+    if (attempts < 3) {
+      throw new ConnectionFailed('simulated failure')
+    }
+    return 'success after retries'
+  }, config)
+
+  assert.strictEqual(result, 'success after retries')
+  assert.strictEqual(attempts, 3) // Failed twice, succeeded on third
+
+  console.log('✓ withRetry_eventualSuccess')
+}
+
+async function test_withRetry_exhaustion() {
+  const { withRetry } = _testExports
+
+  const config = {
+    enabled: true,
+    max_retries: 3,
+    base_backoff_ms: 10,
+    max_backoff_ms: 100,
+    total_timeout_ms: 5000,
+    jitter: false,
+  }
+
+  let attempts = 0
+  let threw = false
+  try {
+    await withRetry(async () => {
+      attempts++
+      throw new ClusterUnavailable('always fails')
+    }, config)
+  } catch (e) {
+    threw = true
+    assert(e instanceof RetryExhausted)
+    assert.strictEqual(e.attempts, 4) // max_retries + 1 = 4
+    assert(e.lastError instanceof ClusterUnavailable)
+  }
+
+  assert(threw, 'Should throw RetryExhausted')
+  assert.strictEqual(attempts, 4) // All 4 attempts made
+
+  console.log('✓ withRetry_exhaustion')
+}
+
+async function test_withRetry_nonRetryableError() {
+  const { withRetry } = _testExports
+
+  const config = {
+    enabled: true,
+    max_retries: 5,
+    base_backoff_ms: 10,
+    max_backoff_ms: 100,
+    total_timeout_ms: 5000,
+    jitter: false,
+  }
+
+  let attempts = 0
+  let threw = false
+  try {
+    await withRetry(async () => {
+      attempts++
+      throw new InvalidCoordinates('bad coordinates')
+    }, config)
+  } catch (e) {
+    threw = true
+    assert(e instanceof InvalidCoordinates)
+    assert.strictEqual(e.message, 'bad coordinates')
+  }
+
+  assert(threw, 'Should throw immediately without retry')
+  assert.strictEqual(attempts, 1) // No retries for non-retryable errors
+
+  console.log('✓ withRetry_nonRetryableError')
+}
+
+async function test_withRetry_totalTimeout() {
+  const { withRetry } = _testExports
+
+  const config = {
+    enabled: true,
+    max_retries: 100, // Many retries allowed
+    base_backoff_ms: 50,
+    max_backoff_ms: 100,
+    total_timeout_ms: 200, // But short total timeout
+    jitter: false,
+  }
+
+  let attempts = 0
+  let threw = false
+  const startTime = Date.now()
+
+  try {
+    await withRetry(async () => {
+      attempts++
+      throw new OperationTimeout('simulated timeout')
+    }, config)
+  } catch (e) {
+    threw = true
+    assert(e instanceof RetryExhausted)
+  }
+
+  const elapsed = Date.now() - startTime
+
+  assert(threw, 'Should throw RetryExhausted')
+  // Should stop due to total timeout, not max_retries
+  assert(attempts < 100, `Should stop early due to timeout (attempts: ${attempts})`)
+  // Elapsed time should be around total_timeout_ms
+  assert(elapsed >= 150, `Elapsed time ${elapsed}ms should be >= 150ms`)
+  assert(elapsed < 500, `Elapsed time ${elapsed}ms should be < 500ms`)
+
+  console.log('✓ withRetry_totalTimeout')
+}
+
+async function test_withRetry_disabled() {
+  const { withRetry } = _testExports
+
+  const config = {
+    enabled: false, // Retry disabled
+    max_retries: 5,
+    base_backoff_ms: 10,
+    max_backoff_ms: 100,
+    total_timeout_ms: 5000,
+    jitter: false,
+  }
+
+  let attempts = 0
+  let threw = false
+  try {
+    await withRetry(async () => {
+      attempts++
+      throw new ClusterUnavailable('fails')
+    }, config)
+  } catch (e) {
+    threw = true
+    assert(e instanceof ClusterUnavailable)
+  }
+
+  assert(threw, 'Should throw original error')
+  assert.strictEqual(attempts, 1) // No retries when disabled
+
+  console.log('✓ withRetry_disabled')
+}
+
+// --- Partial Batch Retry Pattern Tests ---
+
+async function test_partialBatchRetryPattern() {
+  // This tests the recommended pattern from the spec:
+  // When a large batch times out, split and retry smaller chunks
+
+  const largeEventList = Array.from({ length: 5000 }, (_, i) => ({
+    id: BigInt(i),
+    data: `event-${i}`,
+  }))
+
+  // Simulate: first batch times out, then smaller batches succeed
+  let submitCount = 0
+  const mockSubmit = async (events: typeof largeEventList) => {
+    submitCount++
+    if (events.length > 1000 && submitCount === 1) {
+      // First large batch times out
+      throw new OperationTimeout('batch too large, timeout')
+    }
+    // Smaller batches succeed
+    return events.map(e => ({ id: e.id, result: 'ok' }))
+  }
+
+  // Pattern implementation
+  let results: { id: bigint; result: string }[] = []
+  try {
+    results = await mockSubmit(largeEventList)
+  } catch (e) {
+    if (e instanceof OperationTimeout) {
+      // Split into smaller batches and retry
+      const chunks = splitBatch(largeEventList, 1000)
+      for (const chunk of chunks) {
+        const chunkResults = await mockSubmit(chunk)
+        results.push(...chunkResults)
+      }
+    } else {
+      throw e
+    }
+  }
+
+  // All events should have been processed
+  assert.strictEqual(results.length, 5000)
+  // Should have made 6 total submissions (1 failed + 5 chunk retries)
+  assert.strictEqual(submitCount, 6)
+
+  console.log('✓ partialBatchRetryPattern')
+}
+
+// --- RetryExhausted Error Tests ---
+
+function test_RetryExhausted_properties() {
+  const lastError = new ClusterUnavailable('final failure')
+  const error = new RetryExhausted(5, lastError)
+
+  assert.strictEqual(error.code, 5001)
+  assert.strictEqual(error.retryable, false)
+  assert.strictEqual(error.attempts, 5)
+  assert.strictEqual(error.lastError, lastError)
+  assert(error.message.includes('5 retry attempts'))
+  assert(error.message.includes('final failure'))
+
+  console.log('✓ RetryExhausted_properties')
+}
+
+// ============================================================================
 // Run All Tests
 // ============================================================================
 
-function runTests() {
+async function runTests() {
   console.log('\n=== ArcherDB Node.js SDK Tests ===\n')
 
   // Coordinate conversion tests
@@ -772,6 +1167,35 @@ function runTests() {
   test_splitBatch_zeroChunkSize_throws()
   test_splitBatch_negativeChunkSize_throws()
   test_splitBatch_defaultChunkSize()
+
+  // =========================================
+  // Partial Failure Scenario Tests (F5.3.9)
+  // =========================================
+  console.log('\n--- Partial Failure Scenario Tests ---\n')
+
+  // Error classification tests
+  test_isRetryableError_retryableErrors()
+  test_isRetryableError_nonRetryableErrors()
+  test_isRetryableError_networkErrors()
+
+  // Backoff calculation tests
+  test_calculateRetryDelay_schedule()
+  test_calculateRetryDelay_maxBackoff()
+  test_calculateRetryDelay_jitter()
+
+  // Retry logic tests (async)
+  await test_withRetry_success()
+  await test_withRetry_eventualSuccess()
+  await test_withRetry_exhaustion()
+  await test_withRetry_nonRetryableError()
+  await test_withRetry_totalTimeout()
+  await test_withRetry_disabled()
+
+  // Partial batch retry pattern test (async)
+  await test_partialBatchRetryPattern()
+
+  // RetryExhausted error tests
+  test_RetryExhausted_properties()
 
   console.log('\n=== All tests passed! ===\n')
 }

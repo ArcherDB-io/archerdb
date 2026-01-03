@@ -54,6 +54,7 @@ from . import (
     # Configuration
     TLSConfig,
     GeoClientConfig,
+    RetryConfig,
     # Errors
     ArcherDBError,
     ConnectionFailed,
@@ -71,6 +72,7 @@ from . import (
     OutOfSpace,
     SessionExpired,
     ClientClosedError,
+    RetryExhausted,
     # Batch classes
     GeoEventBatch,
     GeoEventBatchAsync,
@@ -81,6 +83,13 @@ from . import (
     GeoClientAsync,
     # Batch helpers
     split_batch,
+)
+
+# Import internal functions for testing
+from .client import (
+    _is_retryable_error,
+    _calculate_retry_delay,
+    _with_retry_sync,
 )
 
 
@@ -852,6 +861,283 @@ class TestSplitBatch(unittest.TestCase):
         self.assertEqual(len(chunks), 4)
         self.assertEqual(chunks[0][0].entity_id, 1)
         self.assertEqual(chunks[3][0].entity_id, 10)
+
+
+# =============================================================================
+# Partial Failure Scenario Tests (F5.3.9)
+# =============================================================================
+
+
+class TestErrorClassification(unittest.TestCase):
+    """Test error classification for retry logic."""
+
+    def test_retryable_errors(self):
+        """Retryable ArcherDB errors are correctly classified."""
+        self.assertTrue(_is_retryable_error(OperationTimeout("timeout")))
+        self.assertTrue(_is_retryable_error(ClusterUnavailable("unavailable")))
+        self.assertTrue(_is_retryable_error(ViewChangeInProgress("view change")))
+        self.assertTrue(_is_retryable_error(NotPrimary("not primary")))
+        self.assertTrue(_is_retryable_error(ConnectionFailed("failed")))
+        self.assertTrue(_is_retryable_error(ConnectionTimeout("timeout")))
+        self.assertTrue(_is_retryable_error(SessionExpired("expired")))
+
+    def test_non_retryable_errors(self):
+        """Non-retryable ArcherDB errors are correctly classified."""
+        self.assertFalse(_is_retryable_error(InvalidCoordinates("bad coords")))
+        self.assertFalse(_is_retryable_error(BatchTooLarge("too big")))
+        self.assertFalse(_is_retryable_error(InvalidEntityId("bad id")))
+        self.assertFalse(_is_retryable_error(TLSError("tls failed")))
+        self.assertFalse(_is_retryable_error(PolygonTooComplex("too complex")))
+        self.assertFalse(_is_retryable_error(QueryResultTooLarge("too large")))
+        self.assertFalse(_is_retryable_error(OutOfSpace("no space")))
+
+    def test_network_errors(self):
+        """Network errors (generic exceptions) are classified correctly."""
+        # Network-related messages are retryable
+        self.assertTrue(_is_retryable_error(Exception("Connection timeout")))
+        self.assertTrue(_is_retryable_error(ConnectionError("connection reset")))
+        self.assertTrue(_is_retryable_error(TimeoutError("operation timed out")))
+        self.assertTrue(_is_retryable_error(OSError("Network is unreachable")))
+
+        # Non-network generic errors are not retryable
+        self.assertFalse(_is_retryable_error(Exception("some other error")))
+        self.assertFalse(_is_retryable_error(ValueError("invalid data")))
+
+
+class TestBackoffCalculation(unittest.TestCase):
+    """Test retry backoff calculation."""
+
+    def test_backoff_schedule(self):
+        """Backoff follows exponential schedule per spec."""
+        config = RetryConfig(
+            enabled=True,
+            max_retries=5,
+            base_backoff_ms=100,
+            max_backoff_ms=1600,
+            total_timeout_ms=30000,
+            jitter=False,  # Disable jitter for deterministic testing
+        )
+
+        # First attempt is immediate
+        self.assertEqual(_calculate_retry_delay(1, config), 0)
+
+        # Subsequent attempts follow exponential backoff
+        self.assertEqual(_calculate_retry_delay(2, config), 100)  # 100 * 2^0
+        self.assertEqual(_calculate_retry_delay(3, config), 200)  # 100 * 2^1
+        self.assertEqual(_calculate_retry_delay(4, config), 400)  # 100 * 2^2
+        self.assertEqual(_calculate_retry_delay(5, config), 800)  # 100 * 2^3
+        self.assertEqual(_calculate_retry_delay(6, config), 1600)  # 100 * 2^4
+
+    def test_max_backoff_cap(self):
+        """Backoff is capped at max_backoff_ms."""
+        config = RetryConfig(
+            enabled=True,
+            max_retries=10,
+            base_backoff_ms=100,
+            max_backoff_ms=500,  # Capped at 500ms
+            total_timeout_ms=30000,
+            jitter=False,
+        )
+
+        # Should cap at max_backoff_ms
+        self.assertEqual(_calculate_retry_delay(5, config), 500)  # Would be 800
+        self.assertEqual(_calculate_retry_delay(6, config), 500)  # Would be 1600
+        self.assertEqual(_calculate_retry_delay(10, config), 500)
+
+    def test_jitter_adds_variation(self):
+        """Jitter adds randomness to delay."""
+        config = RetryConfig(
+            enabled=True,
+            max_retries=5,
+            base_backoff_ms=100,
+            max_backoff_ms=1600,
+            total_timeout_ms=30000,
+            jitter=True,  # Enable jitter
+        )
+
+        # With jitter, delays should vary but stay within range
+        delays = [_calculate_retry_delay(2, config) for _ in range(100)]
+
+        min_delay = min(delays)
+        max_delay = max(delays)
+
+        # For attempt 2 with base 100: should be 100-150ms
+        self.assertGreaterEqual(min_delay, 100)
+        self.assertLessEqual(max_delay, 150)
+        # With 100 samples, we should see variation
+        self.assertGreater(max_delay, min_delay)
+
+
+class TestRetryLogic(unittest.TestCase):
+    """Test retry logic execution."""
+
+    def test_success_on_first_attempt(self):
+        """Successful operation doesn't retry."""
+        config = RetryConfig(
+            enabled=True,
+            max_retries=5,
+            base_backoff_ms=10,
+            max_backoff_ms=100,
+            total_timeout_ms=1000,
+            jitter=False,
+        )
+
+        attempts = [0]
+
+        def operation():
+            attempts[0] += 1
+            return "success"
+
+        result = _with_retry_sync(operation, config)
+
+        self.assertEqual(result, "success")
+        self.assertEqual(attempts[0], 1)
+
+    def test_eventual_success(self):
+        """Operation succeeds after transient failures."""
+        config = RetryConfig(
+            enabled=True,
+            max_retries=5,
+            base_backoff_ms=10,
+            max_backoff_ms=100,
+            total_timeout_ms=5000,
+            jitter=False,
+        )
+
+        attempts = [0]
+
+        def operation():
+            attempts[0] += 1
+            if attempts[0] < 3:
+                raise ConnectionFailed("simulated failure")
+            return "success after retries"
+
+        result = _with_retry_sync(operation, config)
+
+        self.assertEqual(result, "success after retries")
+        self.assertEqual(attempts[0], 3)
+
+    def test_retry_exhaustion(self):
+        """All retry attempts exhausted raises RetryExhausted."""
+        config = RetryConfig(
+            enabled=True,
+            max_retries=3,
+            base_backoff_ms=10,
+            max_backoff_ms=100,
+            total_timeout_ms=5000,
+            jitter=False,
+        )
+
+        attempts = [0]
+
+        def operation():
+            attempts[0] += 1
+            raise ClusterUnavailable("always fails")
+
+        with self.assertRaises(RetryExhausted) as ctx:
+            _with_retry_sync(operation, config)
+
+        self.assertEqual(ctx.exception.attempts, 4)  # max_retries + 1
+        self.assertIsInstance(ctx.exception.last_error, ClusterUnavailable)
+        self.assertEqual(attempts[0], 4)
+
+    def test_non_retryable_error_fails_immediately(self):
+        """Non-retryable errors fail without retry."""
+        config = RetryConfig(
+            enabled=True,
+            max_retries=5,
+            base_backoff_ms=10,
+            max_backoff_ms=100,
+            total_timeout_ms=5000,
+            jitter=False,
+        )
+
+        attempts = [0]
+
+        def operation():
+            attempts[0] += 1
+            raise InvalidCoordinates("bad coordinates")
+
+        with self.assertRaises(InvalidCoordinates):
+            _with_retry_sync(operation, config)
+
+        # Only one attempt - no retries for non-retryable errors
+        self.assertEqual(attempts[0], 1)
+
+    def test_retry_disabled(self):
+        """Disabled retry passes through errors immediately."""
+        config = RetryConfig(
+            enabled=False,  # Retry disabled
+            max_retries=5,
+            base_backoff_ms=10,
+            max_backoff_ms=100,
+            total_timeout_ms=5000,
+            jitter=False,
+        )
+
+        attempts = [0]
+
+        def operation():
+            attempts[0] += 1
+            raise ClusterUnavailable("fails")
+
+        with self.assertRaises(ClusterUnavailable):
+            _with_retry_sync(operation, config)
+
+        # No retries when disabled
+        self.assertEqual(attempts[0], 1)
+
+
+class TestPartialBatchRetryPattern(unittest.TestCase):
+    """Test the recommended partial batch retry pattern."""
+
+    def test_split_and_retry_pattern(self):
+        """Test splitting large batch after timeout and retrying chunks."""
+        large_event_list = [
+            {"id": i, "data": f"event-{i}"} for i in range(5000)
+        ]
+
+        submit_count = [0]
+
+        def mock_submit(events):
+            submit_count[0] += 1
+            if len(events) > 1000 and submit_count[0] == 1:
+                # First large batch times out
+                raise OperationTimeout("batch too large, timeout")
+            # Smaller batches succeed
+            return [{"id": e["id"], "result": "ok"} for e in events]
+
+        # Pattern implementation
+        results = []
+        try:
+            results = mock_submit(large_event_list)
+        except OperationTimeout:
+            # Split into smaller batches and retry
+            chunks = split_batch(large_event_list, 1000)
+            for chunk in chunks:
+                chunk_results = mock_submit(chunk)
+                results.extend(chunk_results)
+
+        # All events should have been processed
+        self.assertEqual(len(results), 5000)
+        # Should have made 6 total submissions (1 failed + 5 chunk retries)
+        self.assertEqual(submit_count[0], 6)
+
+
+class TestRetryExhaustedError(unittest.TestCase):
+    """Test RetryExhausted error properties."""
+
+    def test_properties(self):
+        """RetryExhausted contains expected properties."""
+        last_error = ClusterUnavailable("final failure")
+        error = RetryExhausted(5, last_error)
+
+        self.assertEqual(error.code, 5002)
+        self.assertFalse(error.retryable)
+        self.assertEqual(error.attempts, 5)
+        self.assertEqual(error.last_error, last_error)
+        self.assertIn("5", str(error))
+        self.assertIn("final failure", str(error))
 
 
 def run_tests():

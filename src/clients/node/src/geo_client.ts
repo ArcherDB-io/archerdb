@@ -1119,3 +1119,17 @@ export function splitBatch<T>(items: T[], chunkSize: number = 1000): T[][] {
 export function createGeoClient(config: GeoClientConfig): GeoClient {
   return new GeoClient(config)
 }
+
+// ============================================================================
+// Test Exports (for unit testing retry logic)
+// ============================================================================
+
+/**
+ * Internal functions exported for testing purposes only.
+ * @internal
+ */
+export const _testExports = {
+  isRetryableError,
+  calculateRetryDelay,
+  withRetry,
+}
