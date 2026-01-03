@@ -42,11 +42,12 @@ const ChangeEventsFilter = tb.ChangeEventsFilter;
 const ChangeEvent = tb.ChangeEvent;
 const ChangeEventType = tb.ChangeEventType;
 
-// ArcherDB geospatial types (F1.3.1, F1.3.2)
+// ArcherDB geospatial types (F1.3.1, F1.3.2, F1.3.3)
 const GeoEvent = tb.GeoEvent;
 const InsertGeoEventResult = tb.InsertGeoEventResult;
 const InsertGeoEventsResult = tb.InsertGeoEventsResult;
 const QueryUuidFilter = tb.QueryUuidFilter;
+const QueryLatestFilter = tb.QueryLatestFilter;
 
 pub const tree_ids = struct {
     pub const Account = .{
@@ -701,11 +702,12 @@ pub fn StateMachineType(comptime Storage: type) type {
             query_transfers: TimingSummary = .{},
             get_change_events: TimingSummary = .{},
 
-            // ArcherDB geospatial operations (F1.2)
+            // ArcherDB geospatial operations (F1.2, F1.3.3)
             insert_events: TimingSummary = .{},
             upsert_events: TimingSummary = .{},
             delete_entities: TimingSummary = .{},
             query_uuid: TimingSummary = .{},
+            query_latest: TimingSummary = .{},
             query_radius: TimingSummary = .{},
             query_polygon: TimingSummary = .{},
 
@@ -818,11 +820,12 @@ pub fn StateMachineType(comptime Storage: type) type {
                     .get_change_events,
                     => .get_change_events,
 
-                    // ArcherDB geospatial operations (F1.2)
+                    // ArcherDB geospatial operations (F1.2, F1.3.3)
                     .insert_events => .insert_events,
                     .upsert_events => .upsert_events,
                     .delete_entities => .delete_entities,
                     .query_uuid => .query_uuid,
+                    .query_latest => .query_latest,
                     .query_radius => .query_radius,
                     .query_polygon => .query_polygon,
 
@@ -1131,6 +1134,7 @@ pub fn StateMachineType(comptime Storage: type) type {
                 .upsert_events => @divExact(batch.len, @sizeOf(tb.GeoEvent)),
                 .delete_entities => @divExact(batch.len, @sizeOf(u128)),
                 .query_uuid => 0,
+                .query_latest => 0, // Read-only query (F1.3.3)
                 .query_radius => 0,
                 .query_polygon => 0,
 
@@ -1219,9 +1223,10 @@ pub fn StateMachineType(comptime Storage: type) type {
                 .query_transfers => self.prefetch_query_transfers(),
                 .get_change_events => self.prefetch_get_change_events(),
 
-                // ArcherDB geospatial operations (F1.3.1, F1.3.2)
+                // ArcherDB geospatial operations (F1.3.1, F1.3.2, F1.3.3)
                 .insert_events => self.prefetch_insert_events(),
                 .query_uuid => self.prefetch_query_uuid(),
+                .query_latest => self.prefetch_query_latest(),
                 // Remaining geo operations - stub (handled by GeoStateMachine later)
                 .upsert_events,
                 .delete_entities,
@@ -1619,6 +1624,104 @@ pub fn StateMachineType(comptime Storage: type) type {
             self.forest.grooves.geo_events.scan_builder.reset();
 
             // query_uuid is a single-filter operation, just finish
+            self.prefetch_finish();
+        }
+
+        // F1.3.3: Prefetch for query_latest operation
+        fn prefetch_query_latest(self: *StateMachine) void {
+            assert(self.prefetch_input != null);
+            assert(self.prefetch_operation.? == .query_latest);
+            assert(self.scan_lookup == .null);
+            assert(self.scan_lookup_buffer_index == 0);
+            assert(self.scan_lookup_results.items.len == 0);
+
+            const filter: *const QueryLatestFilter = @ptrCast(@alignCast(self.prefetch_input.?));
+
+            // Validate filter
+            const filter_valid = filter.limit != 0 and
+                stdx.zeroed(&filter.reserved);
+
+            if (!filter_valid) {
+                log.info("invalid filter for query_latest: limit={}", .{
+                    filter.limit,
+                });
+                self.forest.grid.on_next_tick(
+                    &prefetch_scan_next_tick_callback,
+                    &self.scan_lookup_next_tick,
+                );
+                return;
+            }
+
+            log.debug("{?}: query_latest: group_id={} limit={} cursor={}", .{
+                self.forest.grid.superblock.replica_index,
+                filter.group_id,
+                filter.limit,
+                filter.cursor_timestamp,
+            });
+
+            assert(self.forest.scan_buffer_pool.scan_buffer_used == 0);
+
+            // Determine timestamp range based on cursor
+            // If cursor_timestamp != 0, start from events with timestamp < cursor
+            const timestamp_range: TimestampRange = .{
+                .min = TimestampRange.timestamp_min,
+                .max = if (filter.cursor_timestamp != 0)
+                    filter.cursor_timestamp - 1 // Exclusive: < cursor
+                else
+                    TimestampRange.timestamp_max,
+            };
+
+            // Use scan_timestamp for global timestamp-ordered scan (descending = newest first)
+            // TODO(F1.3.3): Add group_id filtering with scan_prefix when group_id != 0
+            const scan = self.forest.grooves.geo_events.scan_builder.scan_timestamp(
+                self.forest.scan_buffer_pool.acquire_assume_capacity(),
+                snapshot_latest,
+                timestamp_range,
+                .descending, // Newest events first
+            );
+            assert(self.forest.scan_buffer_pool.scan_buffer_used > 0);
+
+            const scan_buffer = stdx.bytes_as_slice(
+                .inexact,
+                GeoEvent,
+                self.scan_lookup_buffer[self.scan_lookup_buffer_index..],
+            );
+
+            const scan_lookup = self.scan_lookup.get(.geo_events);
+            scan_lookup.* = GeoEventsScanLookup.init(
+                &self.forest.grooves.geo_events,
+                scan,
+            );
+
+            const limit = @min(
+                filter.limit,
+                self.prefetch_operation.?.result_max(self.batch_size_limit),
+            );
+            assert(limit > 0);
+            assert(scan_buffer.len >= limit);
+            scan_lookup.read(
+                scan_buffer[0..limit],
+                &prefetch_query_latest_callback,
+            );
+        }
+
+        fn prefetch_query_latest_callback(
+            scan_lookup: *GeoEventsScanLookup,
+            results: []const GeoEvent,
+        ) void {
+            const self: *StateMachine = ScanLookup.parent(.geo_events, scan_lookup);
+            assert(self.prefetch_input != null);
+            assert(self.prefetch_operation.? == .query_latest);
+            assert(self.scan_lookup_buffer_index < self.scan_lookup_buffer.len);
+
+            self.scan_lookup_buffer_index += @intCast(results.len * @sizeOf(GeoEvent));
+            self.scan_lookup_results.appendAssumeCapacity(@intCast(results.len));
+
+            self.scan_lookup = .null;
+            self.forest.scan_buffer_pool.reset();
+            self.forest.grooves.geo_events.scan_builder.reset();
+
+            // query_latest is a single-filter operation, just finish
             self.prefetch_finish();
         }
 
@@ -2733,13 +2836,14 @@ pub fn StateMachineType(comptime Storage: type) type {
                     output_buffer,
                 ),
 
-                // ArcherDB geospatial operations (F1.3.1, F1.3.2)
+                // ArcherDB geospatial operations (F1.3.1, F1.3.2, F1.3.3)
                 .insert_events => self.execute_insert_events(
                     timestamp,
                     message_body_used,
                     output_buffer,
                 ),
                 .query_uuid => self.execute_query_uuid(output_buffer),
+                .query_latest => self.execute_query_latest(output_buffer),
                 // Remaining geo operations - stub (handled by GeoStateMachine later)
                 .upsert_events,
                 .delete_entities,
@@ -2913,7 +3017,7 @@ pub fn StateMachineType(comptime Storage: type) type {
                 .timestamp = timestamp,
             };
             const response_bytes = std.mem.asBytes(&response);
-            @memcpy(output_buffer[0..response_bytes.len], response_bytes);
+            stdx.copy_disjoint(.exact, u8, output_buffer[0..response_bytes.len], response_bytes);
             return response_bytes.len;
         }
 
@@ -2937,7 +3041,7 @@ pub fn StateMachineType(comptime Storage: type) type {
                 .status_flags = 0, // Would be populated by VSR layer
             };
             const response_bytes = std.mem.asBytes(&response);
-            @memcpy(output_buffer[0..response_bytes.len], response_bytes);
+            stdx.copy_disjoint(.exact, u8, output_buffer[0..response_bytes.len], response_bytes);
             return response_bytes.len;
         }
 
@@ -3813,7 +3917,34 @@ pub fn StateMachineType(comptime Storage: type) type {
             assert(result_size <= self.scan_lookup_buffer_index);
 
             // Copy results from scan buffer to output
-            @memcpy(
+            stdx.copy_disjoint(
+                .exact,
+                u8,
+                output_buffer[0..result_size],
+                self.scan_lookup_buffer[0..result_size],
+            );
+            self.scan_lookup_buffer_index = 0;
+
+            return result_size;
+        }
+
+        // F1.3.3: Execute query_latest - return N most recent events globally
+        fn execute_query_latest(
+            self: *StateMachine,
+            output_buffer: *align(16) [constants.message_body_size_max]u8,
+        ) usize {
+            // query_latest is a single-filter operation, so there's exactly one result count
+            assert(self.scan_lookup_results.items.len == 1);
+            const result_count = self.scan_lookup_results.items[0];
+            self.scan_lookup_results.clearRetainingCapacity();
+
+            const result_size: u32 = @intCast(result_count * @sizeOf(GeoEvent));
+            assert(result_size <= self.scan_lookup_buffer_index);
+
+            // Copy results from scan buffer to output
+            stdx.copy_disjoint(
+                .exact,
+                u8,
                 output_buffer[0..result_size],
                 self.scan_lookup_buffer[0..result_size],
             );
@@ -4995,7 +5126,8 @@ pub fn StateMachineType(comptime Storage: type) type {
             assert(batch_create_transfers <= batch_max.create_transfers);
 
             // ArcherDB geo event batch size (F1.3.1)
-            const batch_insert_geo_events: u32 = Operation.insert_events.event_max(batch_size_limit);
+            const batch_insert_geo_events: u32 =
+                Operation.insert_events.event_max(batch_size_limit);
             assert(batch_insert_geo_events > 0);
             assert(batch_insert_geo_events <= batch_max.insert_geo_events);
 

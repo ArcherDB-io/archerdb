@@ -18,6 +18,7 @@ pub const QueryPolygonFilter = geo_state_machine.QueryPolygonFilter;
 pub const InsertGeoEventResult = geo_state_machine.InsertGeoEventResult;
 pub const InsertGeoEventsResult = geo_state_machine.InsertGeoEventsResult;
 pub const DeleteEntitiesResult = geo_state_machine.DeleteEntitiesResult;
+pub const QueryLatestFilter = geo_state_machine.QueryLatestFilter;
 
 pub const Account = extern struct {
     id: u128,
@@ -724,6 +725,7 @@ pub const Operation = enum(u8) {
     query_uuid = constants.vsr_operations_reserved + 21,
     query_radius = constants.vsr_operations_reserved + 22,
     query_polygon = constants.vsr_operations_reserved + 23,
+    query_latest = constants.vsr_operations_reserved + 26, // F1.3.3: Most recent events globally
 
     // ArcherDB admin operations (F1.2.6)
     // Note: These complement the VSR-layer ping_client/pong_client for client-visible status
@@ -750,6 +752,7 @@ pub const Operation = enum(u8) {
             .query_uuid => QueryUuidFilter,
             .query_radius => QueryRadiusFilter,
             .query_polygon => QueryPolygonFilter,
+            .query_latest => QueryLatestFilter, // F1.3.3
 
             // ArcherDB admin operations (F1.2.6)
             .archerdb_ping => void, // No request body needed
@@ -786,6 +789,7 @@ pub const Operation = enum(u8) {
             .query_uuid => GeoEvent,
             .query_radius => GeoEvent,
             .query_polygon => GeoEvent,
+            .query_latest => GeoEvent, // F1.3.3
 
             // ArcherDB admin operations (F1.2.6)
             .archerdb_ping => PingResponse,
@@ -841,6 +845,7 @@ pub const Operation = enum(u8) {
             .query_uuid => false, // Single UUID filter
             .query_radius => false, // Single radius query
             .query_polygon => false, // Single polygon query
+            .query_latest => false, // Single filter (F1.3.3)
 
             // ArcherDB admin operations (F1.2.6) - no batching
             .archerdb_ping => false,
@@ -887,6 +892,9 @@ pub const Operation = enum(u8) {
             // ArcherDB admin operations (F1.2.6) - single batch
             .archerdb_ping => false,
             .archerdb_get_status => false,
+
+            // ArcherDB query_latest (F1.3.3) - single filter, not multi-batch
+            .query_latest => false,
 
             .deprecated_create_accounts_unbatched,
             .deprecated_create_transfers_unbatched,
@@ -1023,6 +1031,7 @@ pub const Operation = enum(u8) {
             .query_transfers,
             // ArcherDB geospatial query operations
             .query_uuid,
+            .query_latest,
             .query_radius,
             .query_polygon,
             .deprecated_get_account_transfers_unbatched,

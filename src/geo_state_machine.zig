@@ -200,6 +200,26 @@ pub const PolygonVertex = extern struct {
     }
 };
 
+/// Filter for query_latest operation (F1.3.3).
+/// Returns the N most recent events globally or filtered by group_id.
+pub const QueryLatestFilter = extern struct {
+    /// Maximum results to return (default 1000, max 81000)
+    limit: u32,
+    /// Reserved for alignment
+    _reserved_align: u32 = 0,
+    /// Group ID filter (0 = all groups)
+    group_id: u64,
+    /// Cursor timestamp for pagination (0 = start from latest)
+    cursor_timestamp: u64,
+    /// Reserved for future use
+    reserved: [104]u8 = @splat(0),
+
+    comptime {
+        assert(@sizeOf(QueryLatestFilter) == 128);
+        assert(stdx.no_padding(QueryLatestFilter));
+    }
+};
+
 // ============================================================================
 // State Machine Implementation
 // ============================================================================
