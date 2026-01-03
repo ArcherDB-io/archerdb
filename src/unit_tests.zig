@@ -38,6 +38,7 @@ comptime {
     _ = @import("message_buffer.zig");
     _ = @import("multiversion.zig");
     _ = @import("queue.zig");
+    _ = @import("ram_index.zig");
     _ = @import("repl/completion.zig");
     _ = @import("repl/parser.zig");
     _ = @import("repl/terminal.zig");
