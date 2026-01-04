@@ -36,6 +36,7 @@ pub const backup_state = @import("archerdb/backup_state.zig");
 pub const restore = @import("archerdb/restore.zig");
 pub const backup_coordinator = @import("archerdb/backup_coordinator.zig");
 pub const backup_restore_test = @import("archerdb/backup_restore_test.zig");
+pub const signal_handler = @import("archerdb/signal_handler.zig");
 pub const lsm = .{
     .tree = @import("lsm/tree.zig"),
     .groove = @import("lsm/groove.zig"),
