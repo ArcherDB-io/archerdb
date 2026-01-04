@@ -44,6 +44,7 @@ const constants = @import("../constants.zig");
 const stdx = @import("stdx");
 const maybe = stdx.maybe;
 const vsr = @import("../vsr.zig");
+const archerdb_metrics = vsr.archerdb_metrics;
 const trace = @import("../trace.zig");
 const StackType = @import("../stack.zig").StackType;
 const IOPSType = @import("../iops.zig").IOPSType;
@@ -798,6 +799,10 @@ pub fn CompactionType(
                 compaction.counters.out,
                 compaction.counters.dropped,
             });
+
+            // Record LSM compaction metrics
+            // Note: bytes_moved and latency tracking requires additional instrumentation
+            archerdb_metrics.Registry.recordCompaction(compaction.level_b, 0, 0);
 
             // Mark the immutable table as flushed, if we were compacting into level 0.
             if (compaction.level_b == 0) {

@@ -473,6 +473,60 @@ pub const Registry = struct {
         null,
     );
 
+    // LSM metrics (F5.2 - Observability)
+    // Per-level compaction counts (max 6 levels)
+    pub var lsm_compactions_per_level: [6]std.atomic.Value(u64) = [_]std.atomic.Value(u64){
+        std.atomic.Value(u64).init(0),
+        std.atomic.Value(u64).init(0),
+        std.atomic.Value(u64).init(0),
+        std.atomic.Value(u64).init(0),
+        std.atomic.Value(u64).init(0),
+        std.atomic.Value(u64).init(0),
+    };
+
+    // Per-level bytes moved during compaction
+    pub var lsm_compaction_bytes_per_level: [6]std.atomic.Value(u64) = [_]std.atomic.Value(u64){
+        std.atomic.Value(u64).init(0),
+        std.atomic.Value(u64).init(0),
+        std.atomic.Value(u64).init(0),
+        std.atomic.Value(u64).init(0),
+        std.atomic.Value(u64).init(0),
+        std.atomic.Value(u64).init(0),
+    };
+
+    pub var lsm_compaction_latency: LatencyHistogram = latencyHistogram(
+        "archerdb_lsm_compaction_latency_seconds",
+        "Compaction duration histogram",
+        null,
+    );
+
+    // Per-level table counts (max 6 levels, updated via updateLsmMetrics)
+    // Formatted with labels in format()
+    pub var lsm_tables_per_level: [6]std.atomic.Value(u32) = [_]std.atomic.Value(u32){
+        std.atomic.Value(u32).init(0),
+        std.atomic.Value(u32).init(0),
+        std.atomic.Value(u32).init(0),
+        std.atomic.Value(u32).init(0),
+        std.atomic.Value(u32).init(0),
+        std.atomic.Value(u32).init(0),
+    };
+
+    // Per-level size in bytes
+    pub var lsm_level_size_bytes: [6]std.atomic.Value(u64) = [_]std.atomic.Value(u64){
+        std.atomic.Value(u64).init(0),
+        std.atomic.Value(u64).init(0),
+        std.atomic.Value(u64).init(0),
+        std.atomic.Value(u64).init(0),
+        std.atomic.Value(u64).init(0),
+        std.atomic.Value(u64).init(0),
+    };
+
+    // User bytes written (for write amplification calculation)
+    pub var lsm_user_bytes_written: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
+    // Total disk bytes written by LSM (includes compaction)
+    pub var lsm_disk_bytes_written: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
     /// Format all metrics as Prometheus text format.
     pub fn format(writer: anytype) !void {
         // Set info gauge to 1 (it's always present)
@@ -532,6 +586,67 @@ pub const Registry = struct {
 
         // Index load factor
         try index_load_factor.format(writer);
+        try writer.writeAll("\n");
+
+        // LSM metrics - per-level compactions
+        try writer.writeAll("# HELP archerdb_lsm_compactions_total Total compactions performed per level\n");
+        try writer.writeAll("# TYPE archerdb_lsm_compactions_total counter\n");
+        for (lsm_compactions_per_level, 0..) |count, level| {
+            try writer.print("archerdb_lsm_compactions_total{{level=\"{d}\"}} {d}\n", .{
+                level,
+                count.load(.monotonic),
+            });
+        }
+        try writer.writeAll("\n");
+
+        // Per-level bytes moved during compaction
+        try writer.writeAll("# HELP archerdb_lsm_compaction_bytes_moved_total Bytes moved during compaction per level\n");
+        try writer.writeAll("# TYPE archerdb_lsm_compaction_bytes_moved_total counter\n");
+        for (lsm_compaction_bytes_per_level, 0..) |bytes, level| {
+            try writer.print("archerdb_lsm_compaction_bytes_moved_total{{level=\"{d}\"}} {d}\n", .{
+                level,
+                bytes.load(.monotonic),
+            });
+        }
+        try writer.writeAll("\n");
+
+        // Compaction latency histogram
+        try lsm_compaction_latency.format(writer);
+        try writer.writeAll("\n");
+
+        // Per-level table counts
+        try writer.writeAll("# HELP archerdb_lsm_tables_count Current number of tables per level\n");
+        try writer.writeAll("# TYPE archerdb_lsm_tables_count gauge\n");
+        for (lsm_tables_per_level, 0..) |count, level| {
+            try writer.print("archerdb_lsm_tables_count{{level=\"{d}\"}} {d}\n", .{
+                level,
+                count.load(.monotonic),
+            });
+        }
+        try writer.writeAll("\n");
+
+        // Per-level size bytes
+        try writer.writeAll("# HELP archerdb_lsm_level_size_bytes Current size of each LSM level\n");
+        try writer.writeAll("# TYPE archerdb_lsm_level_size_bytes gauge\n");
+        for (lsm_level_size_bytes, 0..) |size, level| {
+            try writer.print("archerdb_lsm_level_size_bytes{{level=\"{d}\"}} {d}\n", .{
+                level,
+                size.load(.monotonic),
+            });
+        }
+        try writer.writeAll("\n");
+
+        // Write amplification ratio
+        const user_bytes = lsm_user_bytes_written.load(.monotonic);
+        const disk_bytes = lsm_disk_bytes_written.load(.monotonic);
+        try writer.writeAll("# HELP archerdb_lsm_write_amplification_ratio Write amplification (disk_bytes / user_bytes)\n");
+        try writer.writeAll("# TYPE archerdb_lsm_write_amplification_ratio gauge\n");
+        if (user_bytes > 0) {
+            const ratio: f64 = @as(f64, @floatFromInt(disk_bytes)) / @as(f64, @floatFromInt(user_bytes));
+            try writer.print("archerdb_lsm_write_amplification_ratio {d:.2}\n", .{ratio});
+        } else {
+            try writer.writeAll("archerdb_lsm_write_amplification_ratio 0\n");
+        }
     }
 
     /// Update VSR metrics from replica state.
@@ -599,6 +714,48 @@ pub const Registry = struct {
         disk_write_bytes_total.add(bytes);
         if (latency_ns > 0) {
             disk_write_latency.observeNs(latency_ns);
+        }
+    }
+
+    /// Record a completed compaction operation.
+    /// level is the destination level (0-5), bytes_moved is total bytes processed.
+    /// latency_ns is the compaction duration in nanoseconds.
+    pub fn recordCompaction(level: u8, bytes_moved: u64, latency_ns: u64) void {
+        // Track per-level compaction count and bytes
+        if (level < lsm_compactions_per_level.len) {
+            _ = lsm_compactions_per_level[level].fetchAdd(1, .monotonic);
+            _ = lsm_compaction_bytes_per_level[level].fetchAdd(bytes_moved, .monotonic);
+        }
+        // Track total disk bytes for write amplification
+        _ = lsm_disk_bytes_written.fetchAdd(bytes_moved, .monotonic);
+        if (latency_ns > 0) {
+            lsm_compaction_latency.observeNs(latency_ns);
+        }
+    }
+
+    /// Record user-visible bytes written (for write amplification calculation).
+    /// Called when user data is written to LSM.
+    pub fn recordUserBytesWritten(bytes: u64) void {
+        _ = lsm_user_bytes_written.fetchAdd(bytes, .monotonic);
+        _ = lsm_disk_bytes_written.fetchAdd(bytes, .monotonic);
+    }
+
+    /// Update LSM level metrics (table counts and sizes per level).
+    /// Called periodically or after compaction events.
+    /// tables_per_level: array of table counts for each level (max 6 levels)
+    /// sizes_per_level: array of sizes in bytes for each level (max 6 levels)
+    pub fn updateLsmMetrics(
+        tables_per_level: []const u32,
+        sizes_per_level: []const u64,
+    ) void {
+        const max_levels = @min(lsm_tables_per_level.len, tables_per_level.len);
+        for (0..max_levels) |i| {
+            lsm_tables_per_level[i].store(tables_per_level[i], .monotonic);
+        }
+
+        const max_size_levels = @min(lsm_level_size_bytes.len, sizes_per_level.len);
+        for (0..max_size_levels) |i| {
+            lsm_level_size_bytes[i].store(sizes_per_level[i], .monotonic);
         }
     }
 };
