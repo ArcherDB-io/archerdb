@@ -1178,7 +1178,9 @@ test "Registry: replication lag metrics format" {
     Registry.updateReplicationLag(0, 0, 0);
     Registry.updateReplicationLag(1, 3, 3_000_000); // 3ms lag
 
-    var buf: [4096]u8 = undefined;
+    // Use same buffer size as metrics_server.zig (65536)
+    // to accommodate all metrics including LSM per-level stats
+    var buf: [65536]u8 = undefined;
     var fbs = std.io.fixedBufferStream(&buf);
 
     try Registry.format(fbs.writer());
