@@ -541,6 +541,23 @@ pub const Registry = struct {
     pub var free_set_blocks_reserved: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
     pub var free_set_total_blocks: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
 
+    // Backup metrics (F5.5.6 - Observability)
+    // See backup-restore/spec.md for metric definitions
+    pub var backup_blocks_uploaded_total: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+    pub var backup_lag_blocks: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+    pub var backup_failures_total: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+    pub var backup_last_success_timestamp: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+    pub var backup_rpo_current_seconds: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+    pub var backup_blocks_abandoned_total: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+    pub var backup_mandatory_bypass_total: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
+    // Backup upload latency histogram (buckets: 100ms, 500ms, 1s, 5s, 10s, 30s, 60s)
+    pub var backup_upload_latency: LatencyHistogram = latencyHistogram(
+        "archerdb_backup_upload_latency_seconds",
+        "Backup upload latency histogram",
+        null,
+    );
+
     // Replication lag metrics (F5.1.6 - Observability)
     // Per-replica replication lag tracking (max 6 replicas as per constants.replicas_max)
     pub const max_replicas: usize = 6;
@@ -855,6 +872,60 @@ pub const Registry = struct {
         } else {
             try writer.writeAll("archerdb_free_set_utilization 0\n");
         }
+        try writer.writeAll("\n");
+
+        // Backup metrics (F5.5.6)
+        try writer.writeAll("# HELP archerdb_backup_blocks_uploaded_total " ++
+            "Total blocks uploaded to object storage\n");
+        try writer.writeAll("# TYPE archerdb_backup_blocks_uploaded_total counter\n");
+        const uploaded = backup_blocks_uploaded_total.load(.monotonic);
+        try writer.print("archerdb_backup_blocks_uploaded_total {d}\n", .{uploaded});
+        try writer.writeAll("\n");
+
+        try writer.writeAll("# HELP archerdb_backup_lag_blocks " ++
+            "Blocks pending backup (not yet uploaded)\n");
+        try writer.writeAll("# TYPE archerdb_backup_lag_blocks gauge\n");
+        const lag = backup_lag_blocks.load(.monotonic);
+        try writer.print("archerdb_backup_lag_blocks {d}\n", .{lag});
+        try writer.writeAll("\n");
+
+        try writer.writeAll("# HELP archerdb_backup_failures_total " ++
+            "Total backup upload failures\n");
+        try writer.writeAll("# TYPE archerdb_backup_failures_total counter\n");
+        const failures = backup_failures_total.load(.monotonic);
+        try writer.print("archerdb_backup_failures_total {d}\n", .{failures});
+        try writer.writeAll("\n");
+
+        try writer.writeAll("# HELP archerdb_backup_last_success_timestamp " ++
+            "Unix timestamp of last successful backup\n");
+        try writer.writeAll("# TYPE archerdb_backup_last_success_timestamp gauge\n");
+        const last_success = backup_last_success_timestamp.load(.monotonic);
+        try writer.print("archerdb_backup_last_success_timestamp {d}\n", .{last_success});
+        try writer.writeAll("\n");
+
+        try writer.writeAll("# HELP archerdb_backup_rpo_current_seconds " ++
+            "Current Recovery Point Objective (seconds since oldest un-backed-up block)\n");
+        try writer.writeAll("# TYPE archerdb_backup_rpo_current_seconds gauge\n");
+        const rpo = backup_rpo_current_seconds.load(.monotonic);
+        try writer.print("archerdb_backup_rpo_current_seconds {d}\n", .{rpo});
+        try writer.writeAll("\n");
+
+        try writer.writeAll("# HELP archerdb_backup_blocks_abandoned_total " ++
+            "Blocks abandoned without backup (best-effort mode, Free Set pressure)\n");
+        try writer.writeAll("# TYPE archerdb_backup_blocks_abandoned_total counter\n");
+        const abandoned = backup_blocks_abandoned_total.load(.monotonic);
+        try writer.print("archerdb_backup_blocks_abandoned_total {d}\n", .{abandoned});
+        try writer.writeAll("\n");
+
+        try writer.writeAll("# HELP archerdb_backup_mandatory_bypass_total " ++
+            "Count of mandatory mode halt timeout bypasses\n");
+        try writer.writeAll("# TYPE archerdb_backup_mandatory_bypass_total counter\n");
+        const bypass = backup_mandatory_bypass_total.load(.monotonic);
+        try writer.print("archerdb_backup_mandatory_bypass_total {d}\n", .{bypass});
+        try writer.writeAll("\n");
+
+        // Backup upload latency histogram
+        try backup_upload_latency.format(writer);
     }
 
     /// Update VSR metrics from replica state.
@@ -1044,6 +1115,45 @@ pub const Registry = struct {
         free_set_blocks_reserved.store(blocks_reserved, .monotonic);
         free_set_total_blocks.store(total_blocks, .monotonic);
     }
+
+    // ==========================================================================
+    // Backup Metrics Update Functions (F5.5.6)
+    // ==========================================================================
+
+    /// Record a successful backup block upload.
+    /// latency_ns is the upload duration in nanoseconds.
+    /// timestamp is the Unix timestamp (seconds since epoch) of the upload.
+    pub fn recordBackupBlockUploaded(latency_ns: u64, timestamp: u64) void {
+        _ = backup_blocks_uploaded_total.fetchAdd(1, .monotonic);
+        backup_last_success_timestamp.store(timestamp, .monotonic);
+        if (latency_ns > 0) {
+            backup_upload_latency.observeNs(latency_ns);
+        }
+    }
+
+    /// Record a backup upload failure.
+    pub fn recordBackupFailure() void {
+        _ = backup_failures_total.fetchAdd(1, .monotonic);
+    }
+
+    /// Update the current backup lag (blocks pending upload).
+    /// Also updates RPO based on oldest un-backed-up block age.
+    /// lag_blocks: Number of blocks awaiting backup
+    /// oldest_block_age_seconds: Age of oldest un-backed-up block in seconds
+    pub fn updateBackupLag(lag_blocks: u64, oldest_block_age_seconds: u64) void {
+        backup_lag_blocks.store(lag_blocks, .monotonic);
+        backup_rpo_current_seconds.store(oldest_block_age_seconds, .monotonic);
+    }
+
+    /// Record a block being abandoned without backup (best-effort mode under pressure).
+    pub fn recordBackupBlockAbandoned() void {
+        _ = backup_blocks_abandoned_total.fetchAdd(1, .monotonic);
+    }
+
+    /// Record a mandatory mode halt timeout bypass.
+    pub fn recordBackupMandatoryBypass() void {
+        _ = backup_mandatory_bypass_total.fetchAdd(1, .monotonic);
+    }
 };
 
 // Tests
@@ -1200,4 +1310,117 @@ test "Registry: replication lag metrics format" {
     const has_replica1 = std.mem.indexOf(u8, output, "replica=\"replica-1\"") != null;
     try std.testing.expect(has_replica0);
     try std.testing.expect(has_replica1);
+}
+
+// =============================================================================
+// F5.5.6: Backup Metrics Tests
+// =============================================================================
+
+test "Registry: backup block uploaded tracking" {
+    // Reset state
+    Registry.backup_blocks_uploaded_total.store(0, .monotonic);
+    Registry.backup_last_success_timestamp.store(0, .monotonic);
+
+    // Record an upload with 100ms latency at timestamp 1704067200 (2024-01-01 00:00:00)
+    Registry.recordBackupBlockUploaded(100_000_000, 1704067200);
+
+    const uploaded = Registry.backup_blocks_uploaded_total.load(.monotonic);
+    try std.testing.expectEqual(@as(u64, 1), uploaded);
+
+    const timestamp = Registry.backup_last_success_timestamp.load(.monotonic);
+    try std.testing.expectEqual(@as(u64, 1704067200), timestamp);
+
+    // Record another upload
+    Registry.recordBackupBlockUploaded(50_000_000, 1704067260);
+
+    const uploaded2 = Registry.backup_blocks_uploaded_total.load(.monotonic);
+    try std.testing.expectEqual(@as(u64, 2), uploaded2);
+}
+
+test "Registry: backup failure tracking" {
+    // Reset state
+    Registry.backup_failures_total.store(0, .monotonic);
+
+    Registry.recordBackupFailure();
+    Registry.recordBackupFailure();
+    Registry.recordBackupFailure();
+
+    const failures = Registry.backup_failures_total.load(.monotonic);
+    try std.testing.expectEqual(@as(u64, 3), failures);
+}
+
+test "Registry: backup lag and RPO tracking" {
+    // Reset state
+    Registry.backup_lag_blocks.store(0, .monotonic);
+    Registry.backup_rpo_current_seconds.store(0, .monotonic);
+
+    // Update lag: 5 blocks pending, oldest is 30 seconds old
+    Registry.updateBackupLag(5, 30);
+
+    const lag = Registry.backup_lag_blocks.load(.monotonic);
+    try std.testing.expectEqual(@as(u64, 5), lag);
+
+    const rpo = Registry.backup_rpo_current_seconds.load(.monotonic);
+    try std.testing.expectEqual(@as(u64, 30), rpo);
+}
+
+test "Registry: backup block abandoned tracking" {
+    // Reset state
+    Registry.backup_blocks_abandoned_total.store(0, .monotonic);
+
+    Registry.recordBackupBlockAbandoned();
+    Registry.recordBackupBlockAbandoned();
+
+    const abandoned = Registry.backup_blocks_abandoned_total.load(.monotonic);
+    try std.testing.expectEqual(@as(u64, 2), abandoned);
+}
+
+test "Registry: backup mandatory bypass tracking" {
+    // Reset state
+    Registry.backup_mandatory_bypass_total.store(0, .monotonic);
+
+    Registry.recordBackupMandatoryBypass();
+
+    const bypass = Registry.backup_mandatory_bypass_total.load(.monotonic);
+    try std.testing.expectEqual(@as(u64, 1), bypass);
+}
+
+test "Registry: backup metrics format output" {
+    // Reset state for consistent test
+    Registry.backup_blocks_uploaded_total.store(100, .monotonic);
+    Registry.backup_lag_blocks.store(5, .monotonic);
+    Registry.backup_failures_total.store(2, .monotonic);
+    Registry.backup_last_success_timestamp.store(1704067200, .monotonic);
+    Registry.backup_rpo_current_seconds.store(15, .monotonic);
+    Registry.backup_blocks_abandoned_total.store(0, .monotonic);
+    Registry.backup_mandatory_bypass_total.store(0, .monotonic);
+
+    var buf: [8192]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buf);
+
+    try Registry.format(fbs.writer());
+
+    const output = fbs.getWritten();
+
+    // Verify all backup metrics are present
+    const uploaded_key = "archerdb_backup_blocks_uploaded_total";
+    try std.testing.expect(std.mem.indexOf(u8, output, uploaded_key) != null);
+
+    const lag_key = "archerdb_backup_lag_blocks";
+    try std.testing.expect(std.mem.indexOf(u8, output, lag_key) != null);
+
+    const failures_key = "archerdb_backup_failures_total";
+    try std.testing.expect(std.mem.indexOf(u8, output, failures_key) != null);
+
+    const last_success_key = "archerdb_backup_last_success_timestamp";
+    try std.testing.expect(std.mem.indexOf(u8, output, last_success_key) != null);
+
+    const rpo_key = "archerdb_backup_rpo_current_seconds";
+    try std.testing.expect(std.mem.indexOf(u8, output, rpo_key) != null);
+
+    const abandoned_key = "archerdb_backup_blocks_abandoned_total";
+    try std.testing.expect(std.mem.indexOf(u8, output, abandoned_key) != null);
+
+    const bypass_key = "archerdb_backup_mandatory_bypass_total";
+    try std.testing.expect(std.mem.indexOf(u8, output, bypass_key) != null);
 }
