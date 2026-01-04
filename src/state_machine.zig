@@ -3939,6 +3939,9 @@ pub fn StateMachineType(comptime Storage: type) type {
             self: *StateMachine,
             output_buffer: *align(16) [constants.message_body_size_max]u8,
         ) usize {
+            // Start timing for metrics (F1.4.1 - Observability)
+            const start_time = std.time.nanoTimestamp();
+
             // query_uuid is a single-filter operation, so there's exactly one result count
             assert(self.scan_lookup_results.items.len == 1);
             const result_count = self.scan_lookup_results.items[0];
@@ -3956,6 +3959,14 @@ pub fn StateMachineType(comptime Storage: type) type {
             );
             self.scan_lookup_buffer_index = 0;
 
+            // Record read metrics (F1.4.1 - Observability)
+            archerdb_metrics.Registry.read_operations_total.inc();
+            archerdb_metrics.Registry.read_events_returned_total.add(@intCast(result_count));
+
+            const end_time = std.time.nanoTimestamp();
+            const elapsed_ns: u64 = @intCast(@max(0, end_time - start_time));
+            archerdb_metrics.Registry.read_latency.observeNs(elapsed_ns);
+
             return result_size;
         }
 
@@ -3964,6 +3975,9 @@ pub fn StateMachineType(comptime Storage: type) type {
             self: *StateMachine,
             output_buffer: *align(16) [constants.message_body_size_max]u8,
         ) usize {
+            // Start timing for metrics (F1.4.1 - Observability)
+            const start_time = std.time.nanoTimestamp();
+
             // query_latest is a single-filter operation, so there's exactly one result count
             assert(self.scan_lookup_results.items.len == 1);
             const result_count = self.scan_lookup_results.items[0];
@@ -3980,6 +3994,14 @@ pub fn StateMachineType(comptime Storage: type) type {
                 self.scan_lookup_buffer[0..result_size],
             );
             self.scan_lookup_buffer_index = 0;
+
+            // Record read metrics (F1.4.1 - Observability)
+            archerdb_metrics.Registry.read_operations_total.inc();
+            archerdb_metrics.Registry.read_events_returned_total.add(@intCast(result_count));
+
+            const end_time = std.time.nanoTimestamp();
+            const elapsed_ns: u64 = @intCast(@max(0, end_time - start_time));
+            archerdb_metrics.Registry.read_latency.observeNs(elapsed_ns);
 
             return result_size;
         }
