@@ -541,6 +541,79 @@ pub const Registry = struct {
     pub var free_set_blocks_reserved: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
     pub var free_set_total_blocks: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
 
+    // Backup metrics (F5.5.6 - Backup Monitoring)
+    // See: openspec/changes/add-geospatial-core/specs/backup-restore/spec.md
+
+    /// Total blocks uploaded to object storage
+    pub var backup_blocks_uploaded_total: Counter = Counter.init(
+        "archerdb_backup_blocks_uploaded_total",
+        "Total blocks uploaded to object storage",
+        null,
+    );
+
+    /// Current backup lag (blocks not yet uploaded)
+    pub var backup_lag_blocks: Gauge = Gauge.init(
+        "archerdb_backup_lag_blocks",
+        "Backup lag (blocks pending upload)",
+        null,
+    );
+
+    /// Total backup upload failures
+    pub var backup_failures_total: Counter = Counter.init(
+        "archerdb_backup_failures_total",
+        "Total backup upload failures",
+        null,
+    );
+
+    /// Timestamp of last successful backup
+    pub var backup_last_success_timestamp: Gauge = Gauge.init(
+        "archerdb_backup_last_success_timestamp",
+        "Timestamp of last successful backup (Unix seconds)",
+        null,
+    );
+
+    /// Backup upload latency histogram
+    pub var backup_upload_latency: LatencyHistogram = latencyHistogram(
+        "archerdb_backup_upload_latency_seconds",
+        "Backup upload latency histogram",
+        null,
+    );
+
+    /// Current Recovery Point Objective (seconds since oldest un-backed-up block)
+    pub var backup_rpo_current_seconds: Gauge = Gauge.init(
+        "archerdb_backup_rpo_current_seconds",
+        "Current RPO (seconds since oldest un-backed-up block)",
+        null,
+    );
+
+    /// Blocks abandoned without backup (best-effort mode only)
+    pub var backup_blocks_abandoned_total: Counter = Counter.init(
+        "archerdb_backup_blocks_abandoned_total",
+        "Blocks abandoned without backup (best-effort mode)",
+        null,
+    );
+
+    /// Emergency mandatory bypass counter (when mandatory timeout hit)
+    pub var backup_mandatory_bypass_total: Counter = Counter.init(
+        "archerdb_backup_mandatory_bypass_total",
+        "Emergency bypasses of mandatory backup (timeout hit)",
+        null,
+    );
+
+    /// Backup enabled status (1 = enabled, 0 = disabled)
+    pub var backup_enabled: Gauge = Gauge.init(
+        "archerdb_backup_enabled",
+        "Whether backup is enabled (1 = yes, 0 = no)",
+        null,
+    );
+
+    /// Backup mode (0 = best-effort, 1 = mandatory)
+    pub var backup_mode: Gauge = Gauge.init(
+        "archerdb_backup_mode",
+        "Backup mode (0 = best-effort, 1 = mandatory)",
+        null,
+    );
+
     /// Format all metrics as Prometheus text format.
     pub fn format(writer: anytype) !void {
         // Set info gauge to 1 (it's always present)
@@ -794,6 +867,19 @@ pub const Registry = struct {
         } else {
             try writer.writeAll("archerdb_free_set_utilization 0\n");
         }
+        try writer.writeAll("\n");
+
+        // Backup metrics (F5.5.6)
+        try backup_enabled.format(writer);
+        try backup_mode.format(writer);
+        try backup_blocks_uploaded_total.format(writer);
+        try backup_lag_blocks.format(writer);
+        try backup_failures_total.format(writer);
+        try backup_last_success_timestamp.format(writer);
+        try backup_upload_latency.format(writer);
+        try backup_rpo_current_seconds.format(writer);
+        try backup_blocks_abandoned_total.format(writer);
+        try backup_mandatory_bypass_total.format(writer);
     }
 
     /// Update VSR metrics from replica state.
@@ -931,6 +1017,54 @@ pub const Registry = struct {
         free_set_blocks_reserved.store(blocks_reserved, .monotonic);
         free_set_total_blocks.store(total_blocks, .monotonic);
     }
+
+    // =========================================================================
+    // Backup Metrics Update Functions (F5.5.6)
+    // =========================================================================
+
+    /// Initialize backup metrics from config.
+    /// Call once during startup after backup config is loaded.
+    pub fn initBackupMetrics(enabled: bool, is_mandatory: bool) void {
+        backup_enabled.set(if (enabled) 1 else 0);
+        backup_mode.set(if (is_mandatory) 1 else 0);
+    }
+
+    /// Record a successful block upload.
+    /// latency_ns is the upload duration in nanoseconds.
+    pub fn recordBackupUpload(latency_ns: u64) void {
+        backup_blocks_uploaded_total.inc();
+        if (latency_ns > 0) {
+            backup_upload_latency.observeNs(latency_ns);
+        }
+        // Update last success timestamp (Unix seconds)
+        const now = std.time.timestamp();
+        backup_last_success_timestamp.set(now);
+    }
+
+    /// Record a backup upload failure.
+    pub fn recordBackupFailure() void {
+        backup_failures_total.inc();
+    }
+
+    /// Update backup lag (blocks pending upload).
+    pub fn updateBackupLag(pending_blocks: u64) void {
+        backup_lag_blocks.set(@intCast(pending_blocks));
+    }
+
+    /// Update current RPO (seconds since oldest un-backed-up block).
+    pub fn updateBackupRpo(rpo_seconds: u64) void {
+        backup_rpo_current_seconds.set(@intCast(rpo_seconds));
+    }
+
+    /// Record a block abandoned without backup (best-effort mode).
+    pub fn recordBackupAbandoned() void {
+        backup_blocks_abandoned_total.inc();
+    }
+
+    /// Record an emergency mandatory bypass (timeout hit).
+    pub fn recordMandatoryBypass() void {
+        backup_mandatory_bypass_total.inc();
+    }
 };
 
 // Tests
@@ -1002,4 +1136,134 @@ test "Counter: prometheus format with labels" {
 
     const output = fbs.getWritten();
     try std.testing.expect(std.mem.indexOf(u8, output, "test_total{method=\"GET\"} 100") != null);
+}
+
+// =============================================================================
+// Backup Metrics Tests (F5.5.6)
+// =============================================================================
+
+test "Backup: initBackupMetrics" {
+    // Test enabled with best-effort mode
+    Registry.initBackupMetrics(true, false);
+    try std.testing.expectEqual(@as(i64, 1), Registry.backup_enabled.get());
+    try std.testing.expectEqual(@as(i64, 0), Registry.backup_mode.get());
+
+    // Test enabled with mandatory mode
+    Registry.initBackupMetrics(true, true);
+    try std.testing.expectEqual(@as(i64, 1), Registry.backup_enabled.get());
+    try std.testing.expectEqual(@as(i64, 1), Registry.backup_mode.get());
+
+    // Test disabled
+    Registry.initBackupMetrics(false, false);
+    try std.testing.expectEqual(@as(i64, 0), Registry.backup_enabled.get());
+}
+
+test "Backup: recordBackupUpload" {
+    // Reset counter for test
+    Registry.backup_blocks_uploaded_total = Counter.init(
+        "archerdb_backup_blocks_uploaded_total",
+        "Total blocks uploaded to object storage",
+        null,
+    );
+
+    try std.testing.expectEqual(@as(u64, 0), Registry.backup_blocks_uploaded_total.get());
+
+    Registry.recordBackupUpload(1_000_000); // 1ms latency
+    try std.testing.expectEqual(@as(u64, 1), Registry.backup_blocks_uploaded_total.get());
+
+    Registry.recordBackupUpload(2_000_000); // 2ms latency
+    try std.testing.expectEqual(@as(u64, 2), Registry.backup_blocks_uploaded_total.get());
+
+    // Last success timestamp should be set
+    try std.testing.expect(Registry.backup_last_success_timestamp.get() > 0);
+}
+
+test "Backup: recordBackupFailure" {
+    // Reset counter for test
+    Registry.backup_failures_total = Counter.init(
+        "archerdb_backup_failures_total",
+        "Total backup upload failures",
+        null,
+    );
+
+    try std.testing.expectEqual(@as(u64, 0), Registry.backup_failures_total.get());
+
+    Registry.recordBackupFailure();
+    try std.testing.expectEqual(@as(u64, 1), Registry.backup_failures_total.get());
+
+    Registry.recordBackupFailure();
+    Registry.recordBackupFailure();
+    try std.testing.expectEqual(@as(u64, 3), Registry.backup_failures_total.get());
+}
+
+test "Backup: updateBackupLag" {
+    Registry.updateBackupLag(0);
+    try std.testing.expectEqual(@as(i64, 0), Registry.backup_lag_blocks.get());
+
+    Registry.updateBackupLag(10);
+    try std.testing.expectEqual(@as(i64, 10), Registry.backup_lag_blocks.get());
+
+    Registry.updateBackupLag(100);
+    try std.testing.expectEqual(@as(i64, 100), Registry.backup_lag_blocks.get());
+}
+
+test "Backup: updateBackupRpo" {
+    Registry.updateBackupRpo(0);
+    try std.testing.expectEqual(@as(i64, 0), Registry.backup_rpo_current_seconds.get());
+
+    Registry.updateBackupRpo(60); // 1 minute
+    try std.testing.expectEqual(@as(i64, 60), Registry.backup_rpo_current_seconds.get());
+
+    Registry.updateBackupRpo(3600); // 1 hour
+    try std.testing.expectEqual(@as(i64, 3600), Registry.backup_rpo_current_seconds.get());
+}
+
+test "Backup: recordBackupAbandoned" {
+    // Reset counter for test
+    Registry.backup_blocks_abandoned_total = Counter.init(
+        "archerdb_backup_blocks_abandoned_total",
+        "Blocks abandoned without backup (best-effort mode)",
+        null,
+    );
+
+    try std.testing.expectEqual(@as(u64, 0), Registry.backup_blocks_abandoned_total.get());
+
+    Registry.recordBackupAbandoned();
+    try std.testing.expectEqual(@as(u64, 1), Registry.backup_blocks_abandoned_total.get());
+}
+
+test "Backup: recordMandatoryBypass" {
+    // Reset counter for test
+    Registry.backup_mandatory_bypass_total = Counter.init(
+        "archerdb_backup_mandatory_bypass_total",
+        "Emergency bypasses of mandatory backup (timeout hit)",
+        null,
+    );
+
+    try std.testing.expectEqual(@as(u64, 0), Registry.backup_mandatory_bypass_total.get());
+
+    Registry.recordMandatoryBypass();
+    try std.testing.expectEqual(@as(u64, 1), Registry.backup_mandatory_bypass_total.get());
+}
+
+test "Backup: metrics in prometheus format" {
+    // Initialize with known values
+    Registry.initBackupMetrics(true, true);
+    Registry.updateBackupLag(5);
+    Registry.updateBackupRpo(120);
+
+    var buf: [8192]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buf);
+
+    try Registry.format(fbs.writer());
+
+    const output = fbs.getWritten();
+
+    // Check backup metrics are present
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_backup_enabled") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_backup_mode") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_backup_lag_blocks") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_backup_rpo_current_seconds") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_backup_blocks_uploaded_total") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_backup_failures_total") != null);
 }
