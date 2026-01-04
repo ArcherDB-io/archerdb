@@ -97,6 +97,8 @@ const CLIArgs = union(enum) {
         log_file: ?[]const u8 = null,
         log_rotate_size: ?ByteSize = null,
         log_rotate_count: ?u32 = null,
+        metrics_port: ?u16 = null,
+        metrics_bind: ?[]const u8 = null,
 
         // Everything from here until positional arguments is considered experimental, and requires
         // `--experimental` to be set. Experimental flags disable automatic upgrades with
@@ -457,6 +459,16 @@ const CLIArgs = union(enum) {
         \\        Requires --log-file to be set.
         \\        Defaults to 10.
         \\
+        \\  --metrics-port=<port>
+        \\        Enable the metrics/health HTTP endpoint on the specified port.
+        \\        When set, serves /metrics, /health/live, and /health/ready endpoints.
+        \\        Default port when enabled: 9091.
+        \\
+        \\  --metrics-bind=<address>
+        \\        Bind address for the metrics endpoint.
+        \\        Defaults to "127.0.0.1" for security (localhost only).
+        \\        Use "0.0.0.0" to listen on all interfaces (requires explicit opt-in).
+        \\
         \\  --verbose
         \\        Print compile-time configuration along with the build version.
         \\
@@ -604,6 +616,8 @@ pub const Command = union(enum) {
         log_rotate_size: u64,
         log_rotate_count: u32,
         log_trace: bool,
+        metrics_port: ?u16,
+        metrics_bind: []const u8,
         statsd: ?std.net.Address,
     };
 
@@ -871,7 +885,8 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
         "development",      "experimental",
         "log_level",        "log_format",
         "log_file",         "log_rotate_size",
-        "log_rotate_count",
+        "log_rotate_count", "metrics_port",
+        "metrics_bind",
     };
     inline for (std.meta.fields(@TypeOf(start))) |field| {
         @setEvalBranchQuota(8_000);
@@ -1145,6 +1160,8 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
         .log_rotate_size = if (start.log_rotate_size) |size| size.bytes() else 100 * 1024 * 1024, // Default 100MB
         .log_rotate_count = start.log_rotate_count orelse 10, // Default 10 files
         .log_trace = start.log_trace,
+        .metrics_port = start.metrics_port,
+        .metrics_bind = start.metrics_bind orelse "127.0.0.1",
         .statsd = if (start.statsd) |statsd_address|
             parse_address_and_port(statsd_address, "--statsd", 8125)
         else

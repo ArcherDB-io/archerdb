@@ -16,6 +16,7 @@ const config = constants.config;
 const benchmark_driver = @import("benchmark_driver.zig");
 const cli = @import("cli.zig");
 const inspect = @import("inspect.zig");
+const metrics_server = @import("metrics_server.zig");
 
 const IO = vsr.io.IO;
 const Time = vsr.time.Time;
@@ -135,6 +136,9 @@ pub const RotatingLog = struct {
 
 /// Global rotating log instance (null if logging to stderr).
 pub var rotating_log: ?RotatingLog = null;
+
+/// Global metrics server instance (null if not enabled).
+var metrics_srv: ?*metrics_server.MetricsServer = null;
 
 pub fn log_runtime(
     comptime message_level: std.log.Level,
@@ -290,6 +294,9 @@ pub fn main() !void {
     // Cleanup rotating log on exit
     defer if (rotating_log) |*rlog| rlog.deinit();
 
+    // Cleanup metrics server on exit
+    defer if (metrics_srv) |srv| srv.stop();
+
     var statsd_address: ?std.net.Address = null;
     var log_trace = true;
 
@@ -310,6 +317,14 @@ pub fn main() !void {
                 rotating_log = RotatingLog.init(log_path, args.log_rotate_size, args.log_rotate_count) catch |err| {
                     // Fall back to stderr if we can't open the log file
                     log.err("error opening log file '{s}': {}", .{ log_path, err });
+                    return err;
+                };
+            }
+
+            // Initialize metrics server if --metrics-port is set
+            if (args.metrics_port) |port| {
+                metrics_srv = metrics_server.MetricsServer.start(args.metrics_bind, port) catch |err| {
+                    log.err("error starting metrics server on {s}:{d}: {}", .{ args.metrics_bind, port, err });
                     return err;
                 };
             }
