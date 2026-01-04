@@ -29,6 +29,7 @@ pub const superblock = @import("vsr/superblock.zig");
 pub const aof = @import("aof.zig");
 pub const repl = @import("repl.zig");
 pub const archerdb_metrics = @import("archerdb/metrics.zig");
+pub const backup_config = @import("archerdb/backup_config.zig");
 pub const lsm = .{
     .tree = @import("lsm/tree.zig"),
     .groove = @import("lsm/groove.zig"),
