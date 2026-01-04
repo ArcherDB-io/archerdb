@@ -8,6 +8,7 @@ comptime {
     _ = @import("archerdb/ecosystem_validation.zig");
     _ = @import("archerdb/metrics.zig");
     _ = @import("archerdb/metrics_server.zig");
+    _ = @import("archerdb/restore.zig");
     _ = @import("cdc/amqp.zig");
     _ = @import("cdc/amqp/protocol.zig");
     _ = @import("cdc/runner.zig");
