@@ -256,14 +256,16 @@ pub const MinimizationPolicy = struct {
 
     /// Check if a field should be stripped.
     pub fn shouldStrip(self: MinimizationPolicy, field: StrippableField) bool {
-        return (self.strip_fields & (@as(u8, 1) << @intFromEnum(field))) != 0;
+        const shift: u3 = @intCast(@intFromEnum(field));
+        return (self.strip_fields & (@as(u8, 1) << shift)) != 0;
     }
 
     /// Create bitmask from field array.
     fn fieldMask(fields: []const StrippableField) u8 {
         var mask: u8 = 0;
         for (fields) |f| {
-            mask |= @as(u8, 1) << @intFromEnum(f);
+            const shift: u3 = @intCast(@intFromEnum(f));
+            mask |= @as(u8, 1) << shift;
         }
         return mask;
     }
@@ -351,6 +353,16 @@ pub const MinimizedEvent = struct {
             .group_id = 0,
         };
     }
+
+    /// Anonymize this event by zeroing sensitive fields.
+    pub fn anonymize(self: *MinimizedEvent) void {
+        self.entity_id = 0;
+        self.altitude_mm = 0;
+        self.velocity_mms = 0;
+        self.heading_cdeg = 0;
+        self.accuracy_mm = 0;
+        self.group_id = 0;
+    }
 };
 
 /// Entity minimization settings.
@@ -382,15 +394,17 @@ pub const EntityMinimizationSettings = struct {
 
     /// Check if purpose is allowed.
     pub fn isPurposeAllowed(self: EntityMinimizationSettings, purpose: CollectionPurpose) bool {
-        return (self.allowed_purposes & (@as(u16, 1) << @intFromEnum(purpose))) != 0;
+        const shift: u4 = @intCast(@intFromEnum(purpose));
+        return (self.allowed_purposes & (@as(u16, 1) << shift)) != 0;
     }
 
     /// Set purpose allowed/disallowed.
     pub fn setPurposeAllowed(self: *EntityMinimizationSettings, purpose: CollectionPurpose, allowed: bool) void {
+        const shift: u4 = @intCast(@intFromEnum(purpose));
         if (allowed) {
-            self.allowed_purposes |= @as(u16, 1) << @intFromEnum(purpose);
+            self.allowed_purposes |= @as(u16, 1) << shift;
         } else {
-            self.allowed_purposes &= ~(@as(u16, 1) << @intFromEnum(purpose));
+            self.allowed_purposes &= ~(@as(u16, 1) << shift);
         }
     }
 
