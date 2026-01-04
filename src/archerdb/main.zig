@@ -343,8 +343,8 @@ pub fn main() !void {
             if (args.metrics_port) |port| {
                 const bind = args.metrics_bind;
                 metrics_srv = metrics_server.MetricsServer.start(bind, port) catch |err| {
-                    const fmt = "error starting metrics server on {s}:{d}: {}";
-                    log.err(fmt, .{ bind, port, err });
+                    const err_msg = "error starting metrics server on {s}:{d}: {}";
+                    log.err(err_msg, .{ bind, port, err });
                     return err;
                 };
             }
@@ -475,8 +475,8 @@ fn command_status(address: []const u8, port: u16) !void {
     defer std.posix.close(socket);
 
     std.posix.connect(socket, &addr.any, addr.getOsSockLen()) catch |err| {
-        const fmt = "Error: failed to connect to {s}:{d}: {}\n";
-        try std.fmt.format(stdout, fmt, .{ address, port, err });
+        const err_msg = "Error: failed to connect to {s}:{d}: {}\n";
+        try std.fmt.format(stdout, err_msg, .{ address, port, err });
         try stdout_buffer.flush();
         return;
     };
