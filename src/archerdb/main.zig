@@ -271,8 +271,14 @@ pub fn main() !void {
         return; // Exit early before initializing IO.
     }
 
+    if (command == .status) {
+        try command_status(command.status.address, command.status.port);
+        return; // Exit early before initializing IO.
+    }
+
     log_level_runtime = switch (command) {
         .version => unreachable,
+        .status => unreachable,
         .inspect => |inspect_cmd| switch (inspect_cmd) {
             .integrity => |integrity| integrity.log_level.toStdLogLevel(),
             else => .info,
@@ -350,6 +356,7 @@ pub fn main() !void {
 
     switch (command) {
         .version => unreachable, // Handled earlier.
+        .status => unreachable, // Handled earlier.
         inline .format, .start, .recover => |*args, command_storage| {
             const direct_io: vsr.io.DirectIO =
                 if (!constants.direct_io)
@@ -431,6 +438,83 @@ fn command_version(gpa: mem.Allocator, verbose: bool) !void {
 
         vsr.multiversion.print_information(gpa, self_exe_path, stdout) catch {};
     }
+    try stdout_buffer.flush();
+}
+
+fn command_status(address: []const u8, port: u16) !void {
+    var stdout_buffer = std.io.bufferedWriter(std.io.getStdOut().writer());
+    var stdout_writer = stdout_buffer.writer();
+    const stdout = stdout_writer.any();
+
+    // Connect to the metrics server health endpoint
+    const addr = std.net.Address.parseIp4(address, port) catch |err| {
+        try std.fmt.format(stdout, "Error: invalid address {s}:{d}: {}\n", .{ address, port, err });
+        try stdout_buffer.flush();
+        return;
+    };
+
+    const socket = std.posix.socket(std.posix.AF.INET, std.posix.SOCK.STREAM, 0) catch |err| {
+        try std.fmt.format(stdout, "Error: failed to create socket: {}\n", .{err});
+        try stdout_buffer.flush();
+        return;
+    };
+    defer std.posix.close(socket);
+
+    std.posix.connect(socket, &addr.any, addr.getOsSockLen()) catch |err| {
+        try std.fmt.format(stdout, "Error: failed to connect to {s}:{d}: {}\n", .{ address, port, err });
+        try stdout_buffer.flush();
+        return;
+    };
+
+    // Send HTTP GET request for health status
+    const request = "GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+    _ = std.posix.write(socket, request) catch |err| {
+        try std.fmt.format(stdout, "Error: failed to send request: {}\n", .{err});
+        try stdout_buffer.flush();
+        return;
+    };
+
+    // Read response
+    var response_buf: [4096]u8 = undefined;
+    const bytes_read = std.posix.read(socket, &response_buf) catch |err| {
+        try std.fmt.format(stdout, "Error: failed to read response: {}\n", .{err});
+        try stdout_buffer.flush();
+        return;
+    };
+
+    if (bytes_read == 0) {
+        try stdout.writeAll("Error: empty response from server\n");
+        try stdout_buffer.flush();
+        return;
+    }
+
+    const response = response_buf[0..bytes_read];
+
+    // Parse HTTP response
+    if (std.mem.indexOf(u8, response, "\r\n\r\n")) |body_start| {
+        const body = response[body_start + 4 ..];
+
+        // Extract HTTP status code
+        if (std.mem.indexOf(u8, response, " ")) |status_start| {
+            const status_line = response[status_start + 1 ..];
+            if (std.mem.indexOf(u8, status_line, " ")) |status_end| {
+                const status_code = status_line[0..status_end];
+
+                if (std.mem.eql(u8, status_code, "200")) {
+                    try std.fmt.format(stdout, "ArcherDB Status: READY\n", .{});
+                } else if (std.mem.eql(u8, status_code, "503")) {
+                    try std.fmt.format(stdout, "ArcherDB Status: NOT READY\n", .{});
+                } else {
+                    try std.fmt.format(stdout, "ArcherDB Status: UNKNOWN (HTTP {s})\n", .{status_code});
+                }
+
+                try std.fmt.format(stdout, "Response: {s}\n", .{body});
+            }
+        }
+    } else {
+        try stdout.writeAll("Error: malformed HTTP response\n");
+    }
+
     try stdout_buffer.flush();
 }
 

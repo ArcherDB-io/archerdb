@@ -145,6 +145,11 @@ const CLIArgs = union(enum) {
         verbose: bool = false,
     };
 
+    const Status = struct {
+        address: []const u8 = "127.0.0.1",
+        port: u16 = 9100, // Default metrics port
+    };
+
     const Repl = struct {
         addresses: []const u8,
         cluster: u128,
@@ -359,6 +364,7 @@ const CLIArgs = union(enum) {
     recover: Recover,
     start: Start,
     version: Version,
+    status: Status,
     repl: Repl,
     benchmark: Benchmark,
     inspect: Inspect,
@@ -625,6 +631,11 @@ pub const Command = union(enum) {
         verbose: bool,
     };
 
+    pub const Status = struct {
+        address: []const u8,
+        port: u16,
+    };
+
     pub const Repl = struct {
         addresses: Addresses,
         cluster: u128,
@@ -748,6 +759,7 @@ pub const Command = union(enum) {
     recover: Recover,
     start: Start,
     version: Version,
+    status: Status,
     repl: Repl,
     benchmark: Benchmark,
     inspect: Inspect,
@@ -765,6 +777,7 @@ pub fn parse_args(args_iterator: *std.process.ArgIterator) Command {
         .recover => |recover| .{ .recover = parse_args_recover(recover) },
         .start => |start| .{ .start = parse_args_start(start) },
         .version => |version| .{ .version = parse_args_version(version) },
+        .status => |status| .{ .status = parse_args_status(status) },
         .repl => |repl| .{ .repl = parse_args_repl(repl) },
         .benchmark => |benchmark| .{ .benchmark = parse_args_benchmark(benchmark) },
         .inspect => |inspect| .{ .inspect = parse_args_inspect(inspect) },
@@ -1172,6 +1185,13 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
 fn parse_args_version(version: CLIArgs.Version) Command.Version {
     return .{
         .verbose = version.verbose,
+    };
+}
+
+fn parse_args_status(status: CLIArgs.Status) Command.Status {
+    return .{
+        .address = status.address,
+        .port = status.port,
     };
 }
 
