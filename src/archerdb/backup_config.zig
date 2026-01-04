@@ -25,8 +25,17 @@
 //! - Actual S3/GCS/Azure clients: Pending external integration
 
 const std = @import("std");
+const builtin = @import("builtin");
 const mem = std.mem;
 const log = std.log.scoped(.backup_config);
+
+// During tests, we don't want log.err to fail tests when testing error paths.
+// Wrap logging functions to suppress errors in test mode.
+fn logErr(comptime fmt: []const u8, args: anytype) void {
+    if (!builtin.is_test) {
+        log.err(fmt, args);
+    }
+}
 
 /// Supported object storage providers for backup.
 pub const StorageProvider = enum {
@@ -251,19 +260,19 @@ pub const BackupConfig = struct {
     /// Validate configuration.
     fn validate(self: *const BackupConfig) !void {
         if (self.options.bucket == null) {
-            log.err("backup enabled but --backup-bucket not provided", .{});
+            logErr("backup enabled but --backup-bucket not provided", .{});
             return error.MissingBucket;
         }
 
         // KMS key required for sse-kms encryption
         if (self.options.encryption == .sse_kms and self.options.kms_key_id == null) {
-            log.err("sse-kms encryption requires --backup-kms-key-id", .{});
+            logErr("sse-kms encryption requires --backup-kms-key-id", .{});
             return error.MissingKmsKey;
         }
 
         // Validate queue limits
         if (self.options.queue_soft_limit >= self.options.queue_hard_limit) {
-            log.err("queue_soft_limit must be < queue_hard_limit", .{});
+            logErr("queue_soft_limit must be < queue_hard_limit", .{});
             return error.InvalidQueueLimits;
         }
     }
