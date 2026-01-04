@@ -1104,12 +1104,13 @@ pub fn StateMachineType(comptime Storage: type) type {
                     if (vertices_size % @sizeOf(tb.PolygonVertex) != 0) return false;
 
                     // Validate vertex_count matches actual vertices
+                    // Calculate actual count from size to avoid integer overflow on invalid input
+                    const actual_vertex_count = vertices_size / @sizeOf(tb.PolygonVertex);
                     const filter = mem.bytesAsValue(
                         tb.QueryPolygonFilter,
                         batch[0..header_size],
                     ).*;
-                    const expected_vertices_size = filter.vertex_count * @sizeOf(tb.PolygonVertex);
-                    if (vertices_size != expected_vertices_size) return false;
+                    if (actual_vertex_count != filter.vertex_count) return false;
 
                     return true;
                 },

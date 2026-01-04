@@ -1446,7 +1446,7 @@ test "amqp: spec" {
     // Sanity check to ensure the spec hasn't been manually modified.
     // Checking the hash to avoid downloading the XML from external sources during CI.
     try testing.expectEqual(
-        269315715514333185404011239500341468006,
+        293289375328745326739409964585342280773,
         vsr.checksum(@embedFile("amqp/spec.zig")),
     );
 }

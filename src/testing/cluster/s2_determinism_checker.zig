@@ -189,7 +189,10 @@ pub const S2DeterminismChecker = struct {
         }
 
         // Check latitude face boundary
-        if (@abs(@abs(lat_nano) - face_boundary_lat) < 1_000_000_000) {
+        // Use signed arithmetic to avoid overflow when comparing distances
+        const abs_lat: i64 = @intCast(@abs(lat_nano));
+        const lat_distance = @abs(abs_lat - face_boundary_lat);
+        if (lat_distance < 1_000_000_000) {
             checker.stats.face_boundary_checks += 1;
         }
     }
