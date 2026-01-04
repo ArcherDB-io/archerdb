@@ -748,11 +748,11 @@ test "parallel export with filter" {
         event.timestamp = 1700000000000000000 + i;
     }
 
-    // Filter to only entity IDs 0-4
+    // Filter to only entity IDs 0-4 (using entity_ids filter)
+    const entity_ids = [_]u128{ 0, 1, 2, 3, 4 };
     const filter = bulk_export.ExportFilter{
         .entity_filter = .{
-            .min_entity_id = 0,
-            .max_entity_id = 4,
+            .entity_ids = &entity_ids,
         },
     };
 
