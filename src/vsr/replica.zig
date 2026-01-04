@@ -32,6 +32,7 @@ const Multiversion = @import("../multiversion.zig").Multiversion;
 const marks = @import("../testing/marks.zig");
 
 const vsr = @import("../vsr.zig");
+const archerdb_metrics = vsr.archerdb_metrics;
 const Header = vsr.Header;
 const Timeout = vsr.Timeout;
 const Command = vsr.Command;
@@ -3855,6 +3856,17 @@ pub fn ReplicaType(
             self.trace.gauge(
                 .lsm_manifest_block_count,
                 self.superblock.working.vsr_state.checkpoint.manifest_block_count,
+            );
+
+            // Update Prometheus grid cache and journal metrics
+            archerdb_metrics.Registry.updateGridMetrics(
+                self.grid.cache.metrics.hits,
+                self.grid.cache.metrics.misses,
+                @intCast(self.grid.cache_blocks.len),
+                if (self.grid.free_set.opened) self.grid.free_set.count_acquired() else 0,
+                self.grid.blocks_missing.faulty_blocks.count(),
+                self.journal.dirty.count,
+                self.journal.faulty.count,
             );
 
             self.trace.emit_metrics();

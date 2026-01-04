@@ -527,6 +527,17 @@ pub const Registry = struct {
     // Total disk bytes written by LSM (includes compaction)
     pub var lsm_disk_bytes_written: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
 
+    // Grid cache metrics (F5.2 - Observability)
+    pub var grid_cache_hits_total: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+    pub var grid_cache_misses_total: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+    pub var grid_blocks_acquired: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+    pub var grid_blocks_missing: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+    pub var grid_cache_blocks_count: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
+    // Journal/WAL metrics (F5.2 - Observability)
+    pub var journal_dirty_count: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+    pub var journal_faulty_count: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
     /// Format all metrics as Prometheus text format.
     pub fn format(writer: anytype) !void {
         // Set info gauge to 1 (it's always present)
@@ -647,6 +658,61 @@ pub const Registry = struct {
         } else {
             try writer.writeAll("archerdb_lsm_write_amplification_ratio 0\n");
         }
+        try writer.writeAll("\n");
+
+        // Grid cache metrics
+        try writer.writeAll("# HELP archerdb_grid_cache_hits_total Cache hits for block reads\n");
+        try writer.writeAll("# TYPE archerdb_grid_cache_hits_total counter\n");
+        try writer.print("archerdb_grid_cache_hits_total {d}\n", .{grid_cache_hits_total.load(.monotonic)});
+        try writer.writeAll("\n");
+
+        try writer.writeAll("# HELP archerdb_grid_cache_misses_total Cache misses requiring disk read\n");
+        try writer.writeAll("# TYPE archerdb_grid_cache_misses_total counter\n");
+        try writer.print("archerdb_grid_cache_misses_total {d}\n", .{grid_cache_misses_total.load(.monotonic)});
+        try writer.writeAll("\n");
+
+        // Grid cache hit ratio (derived)
+        const cache_hits = grid_cache_hits_total.load(.monotonic);
+        const cache_misses = grid_cache_misses_total.load(.monotonic);
+        const cache_total = cache_hits + cache_misses;
+        try writer.writeAll("# HELP archerdb_grid_cache_hit_ratio Cache hit rate (hits / total)\n");
+        try writer.writeAll("# TYPE archerdb_grid_cache_hit_ratio gauge\n");
+        if (cache_total > 0) {
+            const hit_ratio: f64 = @as(f64, @floatFromInt(cache_hits)) / @as(f64, @floatFromInt(cache_total));
+            try writer.print("archerdb_grid_cache_hit_ratio {d:.4}\n", .{hit_ratio});
+        } else {
+            try writer.writeAll("archerdb_grid_cache_hit_ratio 0\n");
+        }
+        try writer.writeAll("\n");
+
+        // Grid cache size (blocks × block_size)
+        const cache_blocks = grid_cache_blocks_count.load(.monotonic);
+        const block_size: u64 = 65536; // constants.block_size (64KB)
+        try writer.writeAll("# HELP archerdb_grid_cache_size_bytes Current cache size in bytes\n");
+        try writer.writeAll("# TYPE archerdb_grid_cache_size_bytes gauge\n");
+        try writer.print("archerdb_grid_cache_size_bytes {d}\n", .{cache_blocks * block_size});
+        try writer.writeAll("\n");
+
+        // Grid block utilization
+        try writer.writeAll("# HELP archerdb_grid_blocks_acquired Acquired blocks (in use)\n");
+        try writer.writeAll("# TYPE archerdb_grid_blocks_acquired gauge\n");
+        try writer.print("archerdb_grid_blocks_acquired {d}\n", .{grid_blocks_acquired.load(.monotonic)});
+        try writer.writeAll("\n");
+
+        try writer.writeAll("# HELP archerdb_grid_blocks_missing Missing/faulty blocks being repaired\n");
+        try writer.writeAll("# TYPE archerdb_grid_blocks_missing gauge\n");
+        try writer.print("archerdb_grid_blocks_missing {d}\n", .{grid_blocks_missing.load(.monotonic)});
+        try writer.writeAll("\n");
+
+        // Journal/WAL metrics
+        try writer.writeAll("# HELP archerdb_journal_dirty_count Dirty journal slots\n");
+        try writer.writeAll("# TYPE archerdb_journal_dirty_count gauge\n");
+        try writer.print("archerdb_journal_dirty_count {d}\n", .{journal_dirty_count.load(.monotonic)});
+        try writer.writeAll("\n");
+
+        try writer.writeAll("# HELP archerdb_journal_faulty_count Faulty journal slots\n");
+        try writer.writeAll("# TYPE archerdb_journal_faulty_count gauge\n");
+        try writer.print("archerdb_journal_faulty_count {d}\n", .{journal_faulty_count.load(.monotonic)});
     }
 
     /// Update VSR metrics from replica state.
@@ -757,6 +823,26 @@ pub const Registry = struct {
         for (0..max_size_levels) |i| {
             lsm_level_size_bytes[i].store(sizes_per_level[i], .monotonic);
         }
+    }
+
+    /// Update grid cache and journal metrics.
+    /// Called periodically from the main replica loop.
+    pub fn updateGridMetrics(
+        cache_hits: u64,
+        cache_misses: u64,
+        cache_blocks: u64,
+        blocks_acquired: u64,
+        blocks_missing: u64,
+        dirty_count: u64,
+        faulty_count: u64,
+    ) void {
+        grid_cache_hits_total.store(cache_hits, .monotonic);
+        grid_cache_misses_total.store(cache_misses, .monotonic);
+        grid_cache_blocks_count.store(cache_blocks, .monotonic);
+        grid_blocks_acquired.store(blocks_acquired, .monotonic);
+        grid_blocks_missing.store(blocks_missing, .monotonic);
+        journal_dirty_count.store(dirty_count, .monotonic);
+        journal_faulty_count.store(faulty_count, .monotonic);
     }
 };
 
