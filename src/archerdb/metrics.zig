@@ -1188,6 +1188,76 @@ pub const Registry = struct {
     /// Whether TLS is currently enabled (1 = yes, 0 = no).
     pub var tls_enabled: std.atomic.Value(i64) = std.atomic.Value(i64).init(0);
 
+    // ==========================================================================
+    // Certificate Revocation Metrics (F5.4.4)
+    // ==========================================================================
+
+    /// Total revocation checks performed.
+    pub var tls_revocation_checks_total: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
+    /// Failed revocation checks (unable to determine status).
+    pub var tls_revocation_failures_total: std.atomic.Value(u64) =
+        std.atomic.Value(u64).init(0);
+
+    /// Certificates found to be revoked.
+    pub var tls_revoked_certs_total: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
+    /// Connections rejected due to revoked certificates.
+    pub var tls_revoked_rejections_total: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
+    /// CRL refresh attempts.
+    pub var tls_crl_refresh_total: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
+    /// Failed CRL refresh attempts.
+    pub var tls_crl_refresh_failures_total: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
+    /// OCSP request attempts.
+    pub var tls_ocsp_requests_total: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
+    /// Failed OCSP requests.
+    pub var tls_ocsp_request_failures_total: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
+    /// OCSP request latency histogram.
+    pub var tls_ocsp_latency: LatencyHistogram = latencyHistogram(
+        "archerdb_tls_ocsp_latency_seconds",
+        "OCSP request latency histogram",
+        null,
+    );
+
+    /// Record a revocation check result.
+    pub fn recordRevocationCheck(revoked: bool) void {
+        _ = tls_revocation_checks_total.fetchAdd(1, .monotonic);
+        if (revoked) {
+            _ = tls_revoked_certs_total.fetchAdd(1, .monotonic);
+            _ = tls_revoked_rejections_total.fetchAdd(1, .monotonic);
+        }
+    }
+
+    /// Record a failed revocation check (could not determine status).
+    pub fn recordRevocationCheckFailure() void {
+        _ = tls_revocation_checks_total.fetchAdd(1, .monotonic);
+        _ = tls_revocation_failures_total.fetchAdd(1, .monotonic);
+    }
+
+    /// Record a CRL refresh.
+    pub fn recordCrlRefresh(success: bool) void {
+        _ = tls_crl_refresh_total.fetchAdd(1, .monotonic);
+        if (!success) {
+            _ = tls_crl_refresh_failures_total.fetchAdd(1, .monotonic);
+        }
+    }
+
+    /// Record an OCSP request.
+    pub fn recordOcspRequest(success: bool, latency_ns: u64) void {
+        _ = tls_ocsp_requests_total.fetchAdd(1, .monotonic);
+        if (!success) {
+            _ = tls_ocsp_request_failures_total.fetchAdd(1, .monotonic);
+        }
+        if (latency_ns > 0) {
+            tls_ocsp_latency.observeNs(latency_ns);
+        }
+    }
+
     /// Record a successful certificate reload.
     pub fn recordCertReload() void {
         _ = tls_cert_reloads_total.fetchAdd(1, .monotonic);
@@ -1270,6 +1340,66 @@ pub const Registry = struct {
 
         // Handshake latency
         try tls_handshake_latency.format(writer);
+
+        // Certificate Revocation Metrics (F5.4.4)
+        try writer.writeAll("# HELP archerdb_tls_revocation_checks_total " ++
+            "Total certificate revocation checks performed\n");
+        try writer.writeAll("# TYPE archerdb_tls_revocation_checks_total counter\n");
+        try writer.print("archerdb_tls_revocation_checks_total {d}\n\n", .{
+            tls_revocation_checks_total.load(.monotonic),
+        });
+
+        try writer.writeAll("# HELP archerdb_tls_revocation_failures_total " ++
+            "Failed revocation checks (status unknown)\n");
+        try writer.writeAll("# TYPE archerdb_tls_revocation_failures_total counter\n");
+        try writer.print("archerdb_tls_revocation_failures_total {d}\n\n", .{
+            tls_revocation_failures_total.load(.monotonic),
+        });
+
+        try writer.writeAll("# HELP archerdb_tls_revoked_certs_total " ++
+            "Certificates found to be revoked\n");
+        try writer.writeAll("# TYPE archerdb_tls_revoked_certs_total counter\n");
+        try writer.print("archerdb_tls_revoked_certs_total {d}\n\n", .{
+            tls_revoked_certs_total.load(.monotonic),
+        });
+
+        try writer.writeAll("# HELP archerdb_tls_revoked_rejections_total " ++
+            "Connections rejected due to revoked certificates\n");
+        try writer.writeAll("# TYPE archerdb_tls_revoked_rejections_total counter\n");
+        try writer.print("archerdb_tls_revoked_rejections_total {d}\n\n", .{
+            tls_revoked_rejections_total.load(.monotonic),
+        });
+
+        try writer.writeAll("# HELP archerdb_tls_crl_refresh_total " ++
+            "Total CRL refresh attempts\n");
+        try writer.writeAll("# TYPE archerdb_tls_crl_refresh_total counter\n");
+        try writer.print("archerdb_tls_crl_refresh_total {d}\n\n", .{
+            tls_crl_refresh_total.load(.monotonic),
+        });
+
+        try writer.writeAll("# HELP archerdb_tls_crl_refresh_failures_total " ++
+            "Failed CRL refresh attempts\n");
+        try writer.writeAll("# TYPE archerdb_tls_crl_refresh_failures_total counter\n");
+        try writer.print("archerdb_tls_crl_refresh_failures_total {d}\n\n", .{
+            tls_crl_refresh_failures_total.load(.monotonic),
+        });
+
+        try writer.writeAll("# HELP archerdb_tls_ocsp_requests_total " ++
+            "Total OCSP request attempts\n");
+        try writer.writeAll("# TYPE archerdb_tls_ocsp_requests_total counter\n");
+        try writer.print("archerdb_tls_ocsp_requests_total {d}\n\n", .{
+            tls_ocsp_requests_total.load(.monotonic),
+        });
+
+        try writer.writeAll("# HELP archerdb_tls_ocsp_request_failures_total " ++
+            "Failed OCSP requests\n");
+        try writer.writeAll("# TYPE archerdb_tls_ocsp_request_failures_total counter\n");
+        try writer.print("archerdb_tls_ocsp_request_failures_total {d}\n\n", .{
+            tls_ocsp_request_failures_total.load(.monotonic),
+        });
+
+        // OCSP latency
+        try tls_ocsp_latency.format(writer);
     }
 };
 

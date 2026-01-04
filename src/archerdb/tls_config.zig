@@ -7,6 +7,22 @@
 //! - PEM file format validation
 //! - Certificate loading infrastructure
 //! - TLS configuration management
+//! - Certificate revocation configuration (F5.4.4)
+//!
+//! Certificate Revocation Checking (F5.4.4):
+//! The revocation configuration supports CRL and OCSP checking modes.
+//! Note: Full implementation pending Zig TLS server support. Currently:
+//! - Configuration types and CLI options are defined
+//! - Metrics infrastructure is in place
+//! - Actual CRL/OCSP checking is a stub awaiting HTTP client integration
+//!
+//! Revocation options:
+//! - `revocation_check`: Mode (disabled, crl, ocsp, both)
+//! - `crl_path`: Local CRL file path
+//! - `crl_refresh_interval`: CRL refresh interval in seconds (default: 3600)
+//! - `ocsp_responder_url`: OCSP responder URL override
+//! - `ocsp_timeout`: OCSP request timeout in seconds (default: 5)
+//! - `revocation_failure_mode`: fail_closed or fail_open
 //!
 //! Usage:
 //! ```zig
@@ -51,6 +67,26 @@ fn logWarn(comptime fmt: []const u8, args: anytype) void {
     }
 }
 
+/// Certificate revocation check mode (F5.4.4).
+pub const RevocationCheckMode = enum {
+    /// Revocation checking disabled (default for development mode).
+    disabled,
+    /// Check CRL (Certificate Revocation List) only.
+    crl,
+    /// Check OCSP (Online Certificate Status Protocol) only.
+    ocsp,
+    /// Check both CRL and OCSP (CRL first, fall back to OCSP).
+    both,
+};
+
+/// Failure mode when revocation check cannot be performed.
+pub const RevocationFailureMode = enum {
+    /// Reject connections if revocation status unknown (secure default).
+    fail_closed,
+    /// Allow connections if revocation status unknown (log warning).
+    fail_open,
+};
+
 /// TLS configuration options passed from CLI.
 pub const TlsOptions = struct {
     /// Whether TLS is required (--tls-required).
@@ -66,6 +102,34 @@ pub const TlsOptions = struct {
     /// Path to CA certificate for client verification (PEM format).
     /// If set, enables mTLS (mutual TLS) - clients must present valid certificates.
     ca_path: ?[]const u8 = null,
+
+    // =========================================================================
+    // Certificate Revocation Configuration (F5.4.4)
+    // =========================================================================
+
+    /// Revocation checking mode (--tls-revocation-check).
+    /// Default: disabled in dev mode, crl in production mode.
+    revocation_check: RevocationCheckMode = .disabled,
+
+    /// Path to local CRL file (--tls-crl-path).
+    /// If not set, CRL will be fetched from CA certificate's distribution point.
+    crl_path: ?[]const u8 = null,
+
+    /// CRL refresh interval in seconds (--tls-crl-refresh-interval).
+    /// Default: 3600 (1 hour).
+    crl_refresh_interval: u32 = 3600,
+
+    /// OCSP responder URL override (--tls-ocsp-responder-url).
+    /// If not set, URL is extracted from certificate's AIA extension.
+    ocsp_responder_url: ?[]const u8 = null,
+
+    /// OCSP request timeout in seconds (--tls-ocsp-timeout).
+    /// Default: 5 seconds.
+    ocsp_timeout: u32 = 5,
+
+    /// Failure mode when revocation check fails (--tls-revocation-failure-mode).
+    /// Default: fail_closed (reject on unknown status).
+    revocation_failure_mode: RevocationFailureMode = .fail_closed,
 };
 
 /// Certificate data loaded from files.
