@@ -366,6 +366,37 @@ pub const Registry = struct {
         null,
     );
 
+    // VSR (ViewStamped Replication) metrics (F5.2.2 - Observability)
+    pub var vsr_view: Gauge = Gauge.init(
+        "archerdb_vsr_view",
+        "Current VSR view number",
+        null,
+    );
+
+    pub var vsr_status: Gauge = Gauge.init(
+        "archerdb_vsr_status",
+        "Replica status (0=normal, 1=view_change, 2=recovering)",
+        null,
+    );
+
+    pub var vsr_is_primary: Gauge = Gauge.init(
+        "archerdb_vsr_is_primary",
+        "Whether this replica is the primary (1=yes, 0=no)",
+        null,
+    );
+
+    pub var vsr_op_number: Gauge = Gauge.init(
+        "archerdb_vsr_op_number",
+        "Highest committed operation number",
+        null,
+    );
+
+    pub var vsr_view_changes_total: Counter = Counter.init(
+        "archerdb_vsr_view_changes_total",
+        "Total view changes",
+        null,
+    );
+
     /// Format all metrics as Prometheus text format.
     pub fn format(writer: anytype) !void {
         // Set info gauge to 1 (it's always present)
@@ -396,6 +427,39 @@ pub const Registry = struct {
         try writer.writeAll("\n");
 
         try write_errors_total.format(writer);
+        try writer.writeAll("\n");
+
+        // VSR metrics
+        try vsr_view.format(writer);
+        try vsr_status.format(writer);
+        try vsr_is_primary.format(writer);
+        try vsr_op_number.format(writer);
+        try vsr_view_changes_total.format(writer);
+    }
+
+    /// Update VSR metrics from replica state.
+    /// Called periodically from the main replica loop.
+    ///
+    /// Status mapping:
+    /// - 0 = normal
+    /// - 1 = view_change
+    /// - 2 = recovering
+    /// - 3 = recovering_head
+    pub fn updateVsrMetrics(
+        view: u32,
+        status: i64,
+        is_primary: bool,
+        op_number: u64,
+    ) void {
+        vsr_view.set(@intCast(view));
+        vsr_status.set(status);
+        vsr_is_primary.set(if (is_primary) 1 else 0);
+        vsr_op_number.set(@intCast(op_number));
+    }
+
+    /// Record a view change event.
+    pub fn recordViewChange() void {
+        vsr_view_changes_total.inc();
     }
 };
 

@@ -12,6 +12,7 @@ const vsr = @import("vsr");
 const stdx = vsr.stdx;
 const constants = vsr.constants;
 const config = constants.config;
+const archerdb_metrics = vsr.archerdb_metrics;
 
 const benchmark_driver = @import("benchmark_driver.zig");
 const cli = @import("cli.zig");
@@ -798,8 +799,40 @@ fn command_start(
         }
     }
 
+    // Track previous view for detecting view changes
+    var prev_view: u32 = replica.view;
+
     while (true) {
         replica.tick();
+
+        // Update VSR metrics (F5.2.2 - Observability)
+        const status_code: i64 = switch (replica.status) {
+            .normal => 0,
+            .view_change => 1,
+            .recovering => 2,
+            .recovering_head => 3,
+        };
+        const is_primary = replica.primary_index(replica.view) == replica.replica;
+        archerdb_metrics.Registry.updateVsrMetrics(
+            replica.view,
+            status_code,
+            is_primary,
+            replica.commit_min,
+        );
+
+        // Track view changes
+        if (replica.view != prev_view) {
+            archerdb_metrics.Registry.recordViewChange();
+            prev_view = replica.view;
+        }
+
+        // Update replica state for health endpoint
+        metrics_server.replica_state = switch (replica.status) {
+            .normal => .ready,
+            .view_change => .view_change,
+            .recovering, .recovering_head => .recovering,
+        };
+
         try io.run_for_ns(constants.tick_ms * std.time.ns_per_ms);
     }
 }
