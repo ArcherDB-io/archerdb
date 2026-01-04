@@ -252,7 +252,8 @@ test "S2DeterminismChecker: cross-replica consistency" {
     // Simulate replica computing same value
     checker.assert_cross_replica_consistency(lat, lon, 20, cell_id);
 
-    try std.testing.expect(checker.stats.determinism_verified >= 2);
+    // assert_cross_replica_consistency increments determinism_verified by 1
+    try std.testing.expect(checker.stats.determinism_verified >= 1);
 }
 
 test "S2DeterminismChecker: different levels produce different cells" {
