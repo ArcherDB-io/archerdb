@@ -386,7 +386,7 @@ pub fn MessageBusType(comptime IO: type) type {
                 //     // 3. Request client certificate (mTLS)
                 //     // 4. Verify client cert against CA (bus.tls_options.ca_cert_pem)
                 //     // 5. Extract replica ID from client certificate CN
-                //     // 6. Store verified replica ID for later verification against message headers
+                //     // 6. Store replica ID for verification vs message headers
                 //     //
                 //     // NOTE: At this point peer identity is unknown (.unknown).
                 //     // The replica ID from certificate would be stored and verified

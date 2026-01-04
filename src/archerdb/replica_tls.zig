@@ -52,12 +52,6 @@ fn logErr(comptime fmt: []const u8, args: anytype) void {
     }
 }
 
-fn logWarn(comptime fmt: []const u8, args: anytype) void {
-    if (!builtin.is_test) {
-        log.warn(fmt, args);
-    }
-}
-
 /// Errors that can occur during replica TLS operations.
 pub const ReplicaTlsError = error{
     /// Certificate is not in valid PEM format
@@ -103,7 +97,10 @@ pub const ReplicaIdentity = struct {
 /// - The PEM format is invalid
 /// - The CN is not in "replica-N" format
 /// - The replica ID is out of range
-pub fn extractReplicaId(allocator: mem.Allocator, pem_data: []const u8) ReplicaTlsError!ReplicaIdentity {
+pub fn extractReplicaId(
+    allocator: mem.Allocator,
+    pem_data: []const u8,
+) ReplicaTlsError!ReplicaIdentity {
     // Convert PEM to DER
     const der_data = pemToDer(allocator, pem_data) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
@@ -307,30 +304,11 @@ pub fn formatReplicaCn(buf: []u8, replica_id: u8) []const u8 {
 // Tests
 // =============================================================================
 
-// Test certificate in PEM format (self-signed, for testing only)
-// CN=replica-0, valid for testing replica ID extraction
-const test_cert_pem =
-    \\-----BEGIN CERTIFICATE-----
-    \\MIIBkjCB/AIJAKbMvLUf8a7YMA0GCSqGSIb3DQEBCwUAMBQxEjAQBgNVBAMMCXJl
-    \\cGxpY2EtMDAeFw0yNTAxMDEwMDAwMDBaFw0yNjAxMDEwMDAwMDBaMBQxEjAQBgNV
-    \\BAMMCXJlcGxpY2EtMDBcMA0GCSqGSIb3DQEBAQUAA0sAMEgCQQC7o96WzE9n4P2M
-    \\xY8WYzYnCiYfRJxGBl5xDl5vDK8B9vDmEoFl7l5g5VxqE8YpC2YqYnA0NqH1M3m5
-    \\D5k3j5utAgMBAAEwDQYJKoZIhvcNAQELBQADQQBGMd4sR0f3F8UBJ7XJgN5fPlhb
-    \\KXHyqQc3M8ey5P6p8lhJ5L8rXqH5n5U5F0r7FqE5U5W0r7mKqH5oOqH5oL5o
-    \\-----END CERTIFICATE-----
-;
-
-// Invalid certificate (wrong CN format)
-const test_invalid_cn_cert_pem =
-    \\-----BEGIN CERTIFICATE-----
-    \\MIIBkDCB+gIJAKbMvLUf8a7XMA0GCSqGSIb3DQEBCwUAMBIxEDAOBgNVBAMMB2lu
-    \\dmFsaWQwHhcNMjUwMTAxMDAwMDAwWhcNMjYwMTAxMDAwMDAwWjASMRAwDgYDVQQD
-    \\DAdpbnZhbGlkMFwwDQYJKoZIhvcNAQEBBQADSwAwSAJBALuj3pbMT2fg/YzFjxZj
-    \\NicKJh9EnEYGXnEOXm8MrwH28OYSgWXuXmDlXGoTxikLZipicDQ2ofUzebkPmTeP
-    \\m60CAwEAATANBgkqhkiG9w0BAQsFAANBAEYx3ixHR/cXxQEntcmA3l8+WFspcfKp
-    \\Bzczx7Lk/qnyWEnkvyteofmflTkXSvsWoTlTlbSvuYqofmg6ofmgvmg=
-    \\-----END CERTIFICATE-----
-;
+// NOTE: Full certificate parsing tests require valid X.509 certificates.
+// The tests below verify the helper functions (CN parsing, validation, etc.)
+// without requiring cryptographically valid certificates.
+// Integration tests with real certificates should be added when a test
+// certificate generation infrastructure is available.
 
 test "parseReplicaCn: valid formats" {
     try std.testing.expectEqual(@as(u8, 0), try parseReplicaCn("replica-0"));
