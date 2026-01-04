@@ -7,9 +7,10 @@ comptime {
     _ = @import("archerdb/backup_queue.zig");
     _ = @import("archerdb/backup_restore_test.zig");
     _ = @import("archerdb/backup_state.zig");
+    _ = @import("archerdb/bulk_export.zig");
     _ = @import("archerdb/data_export.zig");
     _ = @import("archerdb/data_export_csv.zig");
-    _ = @import("archerdb/bulk_export.zig");
+    _ = @import("archerdb/data_validation.zig");
     _ = @import("archerdb/ecosystem_validation.zig");
     _ = @import("archerdb/metrics.zig");
     _ = @import("archerdb/metrics_server.zig");
