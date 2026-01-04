@@ -11,6 +11,7 @@ comptime {
     _ = @import("archerdb/consent_management.zig");
     _ = @import("archerdb/data_export.zig");
     _ = @import("archerdb/data_export_csv.zig");
+    _ = @import("archerdb/data_minimization.zig");
     _ = @import("archerdb/data_subject_rights.zig");
     _ = @import("archerdb/data_transform.zig");
     _ = @import("archerdb/data_validation.zig");
