@@ -19,6 +19,7 @@ comptime {
     _ = @import("archerdb/data_transfer.zig");
     _ = @import("archerdb/data_validation.zig");
     _ = @import("archerdb/dpia.zig");
+    _ = @import("archerdb/export_control.zig");
     _ = @import("archerdb/ecosystem_validation.zig");
     _ = @import("archerdb/etl_integration.zig");
     _ = @import("archerdb/incremental_load.zig");
