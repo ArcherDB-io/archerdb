@@ -105,6 +105,8 @@ pub const StateError = enum(u32) {
     entity_expired = 210,
     /// Internal resource pool exhausted
     resource_exhausted = 211,
+    /// Writes halted pending backup (mandatory mode)
+    backup_required = 212,
 
     pub fn description(self: StateError) []const u8 {
         return switch (self) {
@@ -120,6 +122,7 @@ pub const StateError = enum(u32) {
             .index_rebuilding => "Index is rebuilding after cold start",
             .entity_expired => "Entity has expired due to TTL",
             .resource_exhausted => "Internal resource pool exhausted",
+            .backup_required => "Writes halted pending backup completion (mandatory mode)",
         };
     }
 };
