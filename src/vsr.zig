@@ -32,6 +32,7 @@ pub const archerdb_metrics = @import("archerdb/metrics.zig");
 pub const tls_config = @import("archerdb/tls_config.zig");
 pub const backup_config = @import("archerdb/backup_config.zig");
 pub const backup_queue = @import("archerdb/backup_queue.zig");
+pub const backup_state = @import("archerdb/backup_state.zig");
 pub const lsm = .{
     .tree = @import("lsm/tree.zig"),
     .groove = @import("lsm/groove.zig"),
