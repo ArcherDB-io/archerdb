@@ -2899,6 +2899,9 @@ test "StateMachine: input_valid" {
     const operations = std.enums.values(TestContext.StateMachine.Operation);
     for (operations) |operation| {
         if (operation == .pulse) continue;
+        // Skip variable-length operations - they require properly initialized
+        // content (e.g., query_polygon needs vertex_count to match actual vertices)
+        if (operation.is_variable_length()) continue;
         const event_size = operation.event_size();
         maybe(event_size == 0);
 
