@@ -1395,7 +1395,9 @@ test "Registry: backup metrics format output" {
     Registry.backup_blocks_abandoned_total.store(0, .monotonic);
     Registry.backup_mandatory_bypass_total.store(0, .monotonic);
 
-    var buf: [8192]u8 = undefined;
+    // Use same buffer size as metrics_server.zig (65536)
+    // to accommodate all metrics including LSM per-level stats
+    var buf: [65536]u8 = undefined;
     var fbs = std.io.fixedBufferStream(&buf);
 
     try Registry.format(fbs.writer());
