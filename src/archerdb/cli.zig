@@ -38,6 +38,29 @@ comptime {
 const KiB = stdx.KiB;
 const GiB = stdx.GiB;
 
+/// Log level for runtime filtering.
+pub const LogLevel = enum {
+    err,
+    warn,
+    info,
+    debug,
+
+    pub fn toStdLogLevel(self: LogLevel) std.log.Level {
+        return switch (self) {
+            .err => .err,
+            .warn => .warn,
+            .info => .info,
+            .debug => .debug,
+        };
+    }
+};
+
+/// Log output format.
+pub const LogFormat = enum {
+    text,
+    json,
+};
+
 const CLIArgs = union(enum) {
     const Format = struct {
         cluster: ?u128 = null,
@@ -46,7 +69,7 @@ const CLIArgs = union(enum) {
         standby: ?u8 = null,
         replica_count: u8,
         development: bool = false,
-        log_debug: bool = false,
+        log_level: LogLevel = .info,
 
         @"--": void,
         path: []const u8,
@@ -58,7 +81,7 @@ const CLIArgs = union(enum) {
         replica: u8,
         replica_count: u8,
         development: bool = false,
-        log_debug: bool = false,
+        log_level: LogLevel = .info,
 
         @"--": void,
         path: []const u8,
@@ -69,6 +92,8 @@ const CLIArgs = union(enum) {
         addresses: []const u8,
         cache_grid: ?ByteSize = null,
         development: bool = false,
+        log_level: LogLevel = .info,
+        log_format: LogFormat = .text,
 
         // Everything from here until positional arguments is considered experimental, and requires
         // `--experimental` to be set. Experimental flags disable automatic upgrades with
@@ -86,7 +111,6 @@ const CLIArgs = union(enum) {
         memory_lsm_manifest: ?ByteSize = null,
         memory_lsm_compaction: ?ByteSize = null,
         trace: ?[]const u8 = null,
-        log_debug: bool = false,
         log_trace: bool = false,
         timeout_prepare_ms: ?u64 = null,
         timeout_grid_repair_message_ms: ?u64 = null,
@@ -121,7 +145,7 @@ const CLIArgs = union(enum) {
         cluster: u128,
         verbose: bool = false,
         command: []const u8 = "",
-        log_debug: bool = false,
+        log_level: LogLevel = .info,
     };
 
     // Experimental: the interface is subject to change.
@@ -133,7 +157,7 @@ const CLIArgs = union(enum) {
         cache_grid: ?[]const u8 = null,
         account_count: u32 = 10_000,
         account_count_hot: u32 = 0,
-        log_debug: bool = false,
+        log_level: LogLevel = .info,
         log_debug_replica: bool = false,
         /// The probability distribution used to select accounts when making transfers or queries.
         account_distribution: Command.Benchmark.Distribution = .uniform,
@@ -210,7 +234,7 @@ const CLIArgs = union(enum) {
             path: []const u8,
         },
         integrity: struct {
-            log_debug: bool = false,
+            log_level: LogLevel = .info,
             seed: ?[]const u8 = null,
             memory_lsm_manifest: ?ByteSize = null,
             skip_wal: bool = false,
@@ -303,7 +327,7 @@ const CLIArgs = union(enum) {
 
     // Internal: used to validate multiversion binaries.
     const Multiversion = struct {
-        log_debug: bool = false,
+        log_level: LogLevel = .info,
 
         @"--": void,
         path: []const u8,
@@ -323,7 +347,7 @@ const CLIArgs = union(enum) {
         idle_interval_ms: ?u32 = null,
         requests_per_second_limit: ?u32 = null,
         timestamp_last: ?u64 = null,
-        verbose: bool = false,
+        log_level: LogLevel = .info,
     };
 
     format: Format,
@@ -345,7 +369,8 @@ const CLIArgs = union(enum) {
         \\
         \\  archerdb format [--cluster=<integer>] --replica=<index> --replica-count=<integer> <path>
         \\
-        \\  archerdb start --addresses=<addresses> [--cache-grid=<size><KiB|MiB|GiB>] <path>
+        \\  archerdb start --addresses=<addresses> [--cache-grid=<size><KiB|MiB|GiB>]
+        \\                [--log-level=<level>] [--log-format=<format>] <path>
         \\
         \\  archerdb recover --cluster=<integer> --addresses=<addresses>
         \\                   --replica=<index> --replica-count=<integer> <path>
@@ -404,6 +429,16 @@ const CLIArgs = union(enum) {
         \\        On a machine running only ArcherDB, this is somewhere around
         \\        (Total RAM) - 3GiB (ArcherDB) - 1GiB (System), eg 12GiB for a 16GiB machine.
         \\        Defaults to {[default_cache_grid_gb]d}GiB.
+        \\
+        \\  --log-level=<err|warn|info|debug>
+        \\        Set the log level for runtime filtering.
+        \\        Defaults to "info".
+        \\
+        \\  --log-format=<text|json>
+        \\        Set the log output format.
+        \\        Use "text" for human-readable output (development).
+        \\        Use "json" for structured logging (production/log aggregation).
+        \\        Defaults to "text".
         \\
         \\  --verbose
         \\        Print compile-time configuration along with the build version.
@@ -508,7 +543,7 @@ pub const Command = union(enum) {
         replica_count: u8,
         development: bool,
         path: []const u8,
-        log_debug: bool,
+        log_level: LogLevel,
     };
 
     pub const Recover = struct {
@@ -518,7 +553,7 @@ pub const Command = union(enum) {
         replica_count: u8,
         development: bool,
         path: []const u8,
-        log_debug: bool,
+        log_level: LogLevel,
     };
 
     pub const Start = struct {
@@ -546,7 +581,8 @@ pub const Command = union(enum) {
         replicate_star: bool,
         aof_file: ?Path,
         path: []const u8,
-        log_debug: bool,
+        log_level: LogLevel,
+        log_format: LogFormat,
         log_trace: bool,
         statsd: ?std.net.Address,
     };
@@ -560,7 +596,7 @@ pub const Command = union(enum) {
         cluster: u128,
         verbose: bool,
         statements: []const u8,
-        log_debug: bool,
+        log_level: LogLevel,
     };
 
     pub const Benchmark = struct {
@@ -583,7 +619,7 @@ pub const Command = union(enum) {
         cache_transfers_pending: ?[]const u8,
         cache_geo_events: ?[]const u8, // F1.3.1
         cache_grid: ?[]const u8,
-        log_debug: bool,
+        log_level: LogLevel,
         log_debug_replica: bool,
         account_count: u32,
         account_count_hot: u32,
@@ -643,7 +679,7 @@ pub const Command = union(enum) {
         };
 
         pub const Integrity = struct {
-            log_debug: bool,
+            log_level: LogLevel,
             seed: ?[]const u8,
             lsm_forest_node_count: u32,
             skip_wal: bool,
@@ -655,7 +691,7 @@ pub const Command = union(enum) {
 
     pub const Multiversion = struct {
         path: []const u8,
-        log_debug: bool,
+        log_level: LogLevel,
     };
 
     pub const AMQP = struct {
@@ -671,7 +707,7 @@ pub const Command = union(enum) {
         idle_interval_ms: ?u32,
         requests_per_second_limit: ?u32,
         timestamp_last: ?u64,
-        log_debug: bool,
+        log_level: LogLevel,
     };
 
     format: Format,
@@ -767,7 +803,7 @@ fn parse_args_format(format: CLIArgs.Format) Command.Format {
         .replica_count = format.replica_count,
         .development = format.development,
         .path = format.path,
-        .log_debug = format.log_debug,
+        .log_level = format.log_level,
     };
 }
 
@@ -803,7 +839,7 @@ fn parse_args_recover(recover: CLIArgs.Recover) Command.Recover {
         .replica_count = recover.replica_count,
         .development = recover.development,
         .path = recover.path,
-        .log_debug = recover.log_debug,
+        .log_level = recover.log_level,
     };
 }
 
@@ -813,6 +849,7 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
     const stable_args = .{
         "addresses",   "cache_grid",
         "development", "experimental",
+        "log_level",   "log_format",
     };
     inline for (std.meta.fields(@TypeOf(start))) |field| {
         @setEvalBranchQuota(4_000);
@@ -1023,8 +1060,8 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
         break :blk aof_file;
     } else null;
 
-    if (start.log_trace and !start.log_debug) {
-        vsr.fatal(.cli, "--log-debug must be provided when using --log-trace", .{});
+    if (start.log_trace and start.log_level != .debug) {
+        vsr.fatal(.cli, "--log-level=debug must be provided when using --log-trace", .{});
     }
 
     return .{
@@ -1080,7 +1117,8 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
         .replicate_star = start.replicate_star,
         .aof_file = aof_file,
         .path = start.path,
-        .log_debug = start.log_debug,
+        .log_level = start.log_level,
+        .log_format = start.log_format,
         .log_trace = start.log_trace,
         .statsd = if (start.statsd) |statsd_address|
             parse_address_and_port(statsd_address, "--statsd", 8125)
@@ -1103,7 +1141,7 @@ fn parse_args_repl(repl: CLIArgs.Repl) Command.Repl {
         .cluster = repl.cluster,
         .verbose = repl.verbose,
         .statements = repl.command,
-        .log_debug = repl.log_debug,
+        .log_level = repl.log_level,
     };
 }
 
@@ -1157,7 +1195,7 @@ fn parse_args_benchmark(benchmark: CLIArgs.Benchmark) Command.Benchmark {
         .cache_transfers_pending = benchmark.cache_transfers_pending,
         .cache_geo_events = benchmark.cache_geo_events, // F1.3.1
         .cache_grid = benchmark.cache_grid,
-        .log_debug = benchmark.log_debug,
+        .log_level = benchmark.log_level,
         .log_debug_replica = benchmark.log_debug_replica,
         .account_count = benchmark.account_count,
         .account_count_hot = benchmark.account_count_hot,
@@ -1225,7 +1263,7 @@ fn parse_args_inspect_integrity(args: CLIArgs.Inspect) Command.Inspect.Integrity
 
     return .{
         .path = integrity.path,
-        .log_debug = integrity.log_debug,
+        .log_level = integrity.log_level,
         .seed = integrity.seed,
         .skip_wal = integrity.skip_wal,
         .skip_client_replies = integrity.skip_client_replies,
@@ -1276,7 +1314,7 @@ fn parse_args_inspect(inspect: CLIArgs.Inspect) Command.Inspect {
 fn parse_args_multiversion(multiversion: CLIArgs.Multiversion) Command.Multiversion {
     return .{
         .path = multiversion.path,
-        .log_debug = multiversion.log_debug,
+        .log_level = multiversion.log_level,
     };
 }
 
@@ -1319,7 +1357,7 @@ fn parse_args_amqp(amqp: CLIArgs.AMQP) Command.AMQP {
         .idle_interval_ms = amqp.idle_interval_ms,
         .requests_per_second_limit = amqp.requests_per_second_limit,
         .timestamp_last = amqp.timestamp_last,
-        .log_debug = amqp.verbose,
+        .log_level = amqp.log_level,
     };
 }
 

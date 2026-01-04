@@ -25,7 +25,7 @@
 //! Other options:
 //!
 //! * Set the test duration by adding the `--test-duration=XmYs` option (it's 1 minute by default).
-//! * Enable replica debug logging with `--log-debug`.
+//! * Enable replica debug logging with `--log-level=debug`.
 //!
 //! If you have permissions troubles with unshare and Ubuntu, see:
 //! https://github.com/YoYoGames/GameMaker-Bugs/issues/6015#issuecomment-2135552784
@@ -581,7 +581,7 @@ const Replica = struct {
         var argv: stdx.BoundedArrayType([]const u8, 16) = .{};
         argv.push_slice(&.{ self.executable_path, "start" });
         if (self.log_debug) {
-            argv.push_slice(&.{ "--log-debug", "--experimental" });
+            argv.push_slice(&.{"--log-level=debug"});
         }
         argv.push_slice(&.{ addresses_arg, self.datafile });
 

@@ -43,6 +43,10 @@ const GiB = stdx.GiB;
 /// One of: .err, .warn, .info, .debug
 pub var log_level_runtime: std.log.Level = .info;
 
+/// The runtime log format.
+/// One of: .text, .json
+pub var log_format_runtime: cli.LogFormat = .text;
+
 pub fn log_runtime(
     comptime message_level: std.log.Level,
     comptime scope: @Type(.enum_literal),
@@ -51,7 +55,66 @@ pub fn log_runtime(
 ) void {
     // A microbenchmark places the cost of this if at somewhere around 1600us for 10 million calls.
     if (@intFromEnum(message_level) <= @intFromEnum(log_level_runtime)) {
-        stdx.log_with_timestamp(message_level, scope, format, args);
+        switch (log_format_runtime) {
+            .text => stdx.log_with_timestamp(message_level, scope, format, args),
+            .json => log_json(message_level, scope, format, args),
+        }
+    }
+}
+
+fn log_json(
+    comptime message_level: std.log.Level,
+    comptime scope: @Type(.enum_literal),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    const level_text = comptime message_level.asText();
+    const scope_name = comptime if (scope == .default) "default" else @tagName(scope);
+    const date_time = stdx.DateTimeUTC.now();
+
+    const stderr = std.io.getStdErr().writer();
+    var buffered_writer = std.io.bufferedWriter(stderr);
+    const writer = buffered_writer.writer();
+
+    nosuspend {
+        // Format the message into a buffer first to escape it properly for JSON
+        var msg_buf: [4096]u8 = undefined;
+        const message = std.fmt.bufPrint(&msg_buf, format, args) catch |err| switch (err) {
+            error.NoSpaceLeft => "[message truncated]",
+        };
+
+        // Output JSON log entry
+        writer.print("{{\"timestamp\":\"{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}.{d:0>3}Z\"," ++
+            "\"level\":\"{s}\",\"scope\":\"{s}\",\"message\":\"", .{
+            date_time.year,
+            date_time.month,
+            date_time.day,
+            date_time.hour,
+            date_time.minute,
+            date_time.second,
+            date_time.millisecond,
+            level_text,
+            scope_name,
+        }) catch return;
+
+        // JSON-escape the message
+        for (message) |c| {
+            switch (c) {
+                '"' => writer.writeAll("\\\"") catch return,
+                '\\' => writer.writeAll("\\\\") catch return,
+                '\n' => writer.writeAll("\\n") catch return,
+                '\r' => writer.writeAll("\\r") catch return,
+                '\t' => writer.writeAll("\\t") catch return,
+                else => if (c < 0x20) {
+                    writer.print("\\u{x:0>4}", .{c}) catch return;
+                } else {
+                    writer.writeByte(c) catch return;
+                },
+            }
+        }
+
+        writer.writeAll("\"}\n") catch return;
+        buffered_writer.flush() catch return;
     }
 }
 
@@ -83,8 +146,11 @@ pub fn main() !void {
 
     log_level_runtime = switch (command) {
         .version => unreachable,
-        .inspect => .info,
-        inline else => |*args| if (args.log_debug) .debug else .info,
+        .inspect => |inspect_cmd| switch (inspect_cmd) {
+            .integrity => |integrity| integrity.log_level.toStdLogLevel(),
+            else => .info,
+        },
+        inline else => |*args| args.log_level.toStdLogLevel(),
     };
 
     // Try and init IO early, before a file has even been created, so if it fails (eg, io_uring
@@ -111,6 +177,7 @@ pub fn main() !void {
             }
             if (args.statsd) |address| statsd_address = address;
             log_trace = args.log_trace;
+            log_format_runtime = args.log_format;
         },
         .benchmark => {}, // Forwards trace and statsd argument to child archerdb.
         inline else => |args| comptime {
