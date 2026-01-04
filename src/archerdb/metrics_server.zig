@@ -15,6 +15,8 @@ const std = @import("std");
 const posix = std.posix;
 const log = std.log.scoped(.metrics_server);
 
+const metrics = @import("metrics.zig");
+
 /// State of the replica for health checks.
 pub const ReplicaState = enum {
     /// Replica is starting up, not ready to serve.
@@ -203,19 +205,20 @@ pub const MetricsServer = struct {
     }
 
     fn handleMetrics(client_fd: posix.socket_t) !void {
-        // TODO: Implement actual metrics collection (issue #380)
-        // For now, return a placeholder with basic info
-        const body =
-            \\# HELP archerdb_info ArcherDB build information
-            \\# TYPE archerdb_info gauge
-            \\archerdb_info{version="0.0.1"} 1
-            \\
-            \\# HELP archerdb_health_status Current health status (1 = healthy)
-            \\# TYPE archerdb_health_status gauge
-            \\archerdb_health_status{status="ready"} 1
-            \\
-        ;
-        try sendResponse(client_fd, .ok, "text/plain; version=0.0.4", body);
+        // Update health status gauge based on replica state
+        const state = replica_state;
+        metrics.Registry.health_ready.set(if (state.isReady()) 1 else 0);
+
+        // Format all metrics to buffer
+        var buf: [65536]u8 = undefined;
+        var fbs = std.io.fixedBufferStream(&buf);
+        metrics.Registry.format(fbs.writer()) catch |err| {
+            log.warn("error formatting metrics: {}", .{err});
+            try sendResponse(client_fd, .service_unavailable, "text/plain", "Error formatting metrics");
+            return;
+        };
+
+        try sendResponse(client_fd, .ok, "text/plain; version=0.0.4", fbs.getWritten());
     }
 
     const HttpStatus = enum {
