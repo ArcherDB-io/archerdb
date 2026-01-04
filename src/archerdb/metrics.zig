@@ -538,6 +538,11 @@ pub const Registry = struct {
     pub var journal_dirty_count: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
     pub var journal_faulty_count: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
 
+    // Free set metrics (F5.2 - Observability)
+    pub var free_set_blocks_free: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+    pub var free_set_blocks_reserved: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+    pub var free_set_total_blocks: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
     /// Format all metrics as Prometheus text format.
     pub fn format(writer: anytype) !void {
         // Set info gauge to 1 (it's always present)
@@ -713,6 +718,37 @@ pub const Registry = struct {
         try writer.writeAll("# HELP archerdb_journal_faulty_count Faulty journal slots\n");
         try writer.writeAll("# TYPE archerdb_journal_faulty_count gauge\n");
         try writer.print("archerdb_journal_faulty_count {d}\n", .{journal_faulty_count.load(.monotonic)});
+        try writer.writeAll("\n");
+
+        // Free set metrics
+        const blocks_free = free_set_blocks_free.load(.monotonic);
+        const blocks_reserved = free_set_blocks_reserved.load(.monotonic);
+        const blocks_acquired_val = grid_blocks_acquired.load(.monotonic);
+        const total_blocks = free_set_total_blocks.load(.monotonic);
+
+        try writer.writeAll("# HELP archerdb_free_set_blocks_free Free blocks available\n");
+        try writer.writeAll("# TYPE archerdb_free_set_blocks_free gauge\n");
+        try writer.print("archerdb_free_set_blocks_free {d}\n", .{blocks_free});
+        try writer.writeAll("\n");
+
+        try writer.writeAll("# HELP archerdb_free_set_blocks_reserved Reserved but not yet acquired\n");
+        try writer.writeAll("# TYPE archerdb_free_set_blocks_reserved gauge\n");
+        try writer.print("archerdb_free_set_blocks_reserved {d}\n", .{blocks_reserved});
+        try writer.writeAll("\n");
+
+        try writer.writeAll("# HELP archerdb_free_set_blocks_acquired Acquired blocks (in use)\n");
+        try writer.writeAll("# TYPE archerdb_free_set_blocks_acquired gauge\n");
+        try writer.print("archerdb_free_set_blocks_acquired {d}\n", .{blocks_acquired_val});
+        try writer.writeAll("\n");
+
+        try writer.writeAll("# HELP archerdb_free_set_utilization Free set capacity utilization (0.0-1.0)\n");
+        try writer.writeAll("# TYPE archerdb_free_set_utilization gauge\n");
+        if (total_blocks > 0) {
+            const utilization: f64 = @as(f64, @floatFromInt(blocks_acquired_val)) / @as(f64, @floatFromInt(total_blocks));
+            try writer.print("archerdb_free_set_utilization {d:.4}\n", .{utilization});
+        } else {
+            try writer.writeAll("archerdb_free_set_utilization 0\n");
+        }
     }
 
     /// Update VSR metrics from replica state.
@@ -825,7 +861,7 @@ pub const Registry = struct {
         }
     }
 
-    /// Update grid cache and journal metrics.
+    /// Update grid cache, journal, and free set metrics.
     /// Called periodically from the main replica loop.
     pub fn updateGridMetrics(
         cache_hits: u64,
@@ -835,6 +871,9 @@ pub const Registry = struct {
         blocks_missing: u64,
         dirty_count: u64,
         faulty_count: u64,
+        blocks_free: u64,
+        blocks_reserved: u64,
+        total_blocks: u64,
     ) void {
         grid_cache_hits_total.store(cache_hits, .monotonic);
         grid_cache_misses_total.store(cache_misses, .monotonic);
@@ -843,6 +882,9 @@ pub const Registry = struct {
         grid_blocks_missing.store(blocks_missing, .monotonic);
         journal_dirty_count.store(dirty_count, .monotonic);
         journal_faulty_count.store(faulty_count, .monotonic);
+        free_set_blocks_free.store(blocks_free, .monotonic);
+        free_set_blocks_reserved.store(blocks_reserved, .monotonic);
+        free_set_total_blocks.store(total_blocks, .monotonic);
     }
 };
 

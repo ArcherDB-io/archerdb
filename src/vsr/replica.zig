@@ -3858,15 +3858,24 @@ pub fn ReplicaType(
                 self.superblock.working.vsr_state.checkpoint.manifest_block_count,
             );
 
-            // Update Prometheus grid cache and journal metrics
+            // Update Prometheus grid cache, journal, and free set metrics
+            const blocks_acquired = if (self.grid.free_set.opened) self.grid.free_set.count_acquired() else 0;
+            const blocks_free = if (self.grid.free_set.opened) self.grid.free_set.count_free() else 0;
+            const total_blocks = if (self.grid.free_set.opened)
+                self.grid.free_set.blocks_acquired.bit_length
+            else
+                0;
             archerdb_metrics.Registry.updateGridMetrics(
                 self.grid.cache.metrics.hits,
                 self.grid.cache.metrics.misses,
                 @intCast(self.grid.cache_blocks.len),
-                if (self.grid.free_set.opened) self.grid.free_set.count_acquired() else 0,
+                blocks_acquired,
                 self.grid.blocks_missing.faulty_blocks.count(),
                 self.journal.dirty.count,
                 self.journal.faulty.count,
+                blocks_free,
+                self.grid.free_set.reservation_blocks,
+                total_blocks,
             );
 
             self.trace.emit_metrics();
