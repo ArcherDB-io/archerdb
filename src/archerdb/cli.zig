@@ -29,6 +29,7 @@ const Ratio = stdx.PRNG.Ratio;
 const ByteSize = stdx.ByteSize;
 const Operation = tigerbeetle.Operation;
 const Duration = stdx.Duration;
+const backup_config = vsr.backup_config;
 
 comptime {
     // Make sure we are running the Accounting StateMachine.
@@ -105,6 +106,21 @@ const CLIArgs = union(enum) {
         tls_cert_path: ?[]const u8 = null,
         tls_key_path: ?[]const u8 = null,
         tls_ca_path: ?[]const u8 = null,
+
+        // Backup configuration (F5.5 - Backup & Restore)
+        backup_enabled: bool = false,
+        backup_provider: ?[]const u8 = null, // s3, gcs, azure, local
+        backup_bucket: ?[]const u8 = null,
+        backup_region: ?[]const u8 = null,
+        backup_credentials: ?[]const u8 = null,
+        backup_mode: ?[]const u8 = null, // best-effort, mandatory
+        backup_encryption: ?[]const u8 = null, // none, sse, sse-kms
+        backup_kms_key_id: ?[]const u8 = null,
+        backup_compress: ?[]const u8 = null, // none, zstd
+        backup_queue_soft_limit: u32 = 50,
+        backup_queue_hard_limit: u32 = 100,
+        backup_retention_days: u32 = 0,
+        backup_primary_only: bool = false,
 
         // Everything from here until positional arguments is considered experimental, and requires
         // `--experimental` to be set. Experimental flags disable automatic upgrades with
@@ -649,6 +665,20 @@ pub const Command = union(enum) {
         tls_cert_path: ?[]const u8,
         tls_key_path: ?[]const u8,
         tls_ca_path: ?[]const u8,
+        // Backup configuration (F5.5)
+        backup_enabled: bool,
+        backup_provider: backup_config.StorageProvider,
+        backup_bucket: ?[]const u8,
+        backup_region: ?[]const u8,
+        backup_credentials: ?[]const u8,
+        backup_mode: backup_config.BackupMode,
+        backup_encryption: backup_config.EncryptionMode,
+        backup_kms_key_id: ?[]const u8,
+        backup_compress: backup_config.CompressionMode,
+        backup_queue_soft_limit: u32,
+        backup_queue_hard_limit: u32,
+        backup_retention_days: u32,
+        backup_primary_only: bool,
         statsd: ?std.net.Address,
     };
 
@@ -927,16 +957,22 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
     // Allowlist of stable flags. --development will disable automatic multiversion
     // upgrades too, but the flag itself is stable.
     const stable_args = .{
-        "addresses",        "cache_grid",
-        "development",      "experimental",
-        "log_level",        "log_format",
-        "log_file",         "log_rotate_size",
-        "log_rotate_count", "metrics_port",
-        "metrics_bind",     "tls_required",
-        "tls_cert_path",    "tls_key_path",
-        "tls_ca_path",
+        "addresses",               "cache_grid",
+        "development",             "experimental",
+        "log_level",               "log_format",
+        "log_file",                "log_rotate_size",
+        "log_rotate_count",        "metrics_port",
+        "metrics_bind",            "tls_required",
+        "tls_cert_path",           "tls_key_path",
+        "tls_ca_path",             "backup_enabled",
+        "backup_provider",         "backup_bucket",
+        "backup_region",           "backup_credentials",
+        "backup_mode",             "backup_encryption",
+        "backup_kms_key_id",       "backup_compress",
+        "backup_queue_soft_limit", "backup_queue_hard_limit",
+        "backup_retention_days",   "backup_primary_only",
     };
-    @setEvalBranchQuota(16_000);
+    @setEvalBranchQuota(48_000);
     inline for (std.meta.fields(@TypeOf(start))) |field| {
         // Positional arguments can't be experimental.
         comptime if (std.mem.eql(u8, field.name, "--")) break;
@@ -1220,6 +1256,32 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
         .tls_cert_path = start.tls_cert_path,
         .tls_key_path = start.tls_key_path,
         .tls_ca_path = start.tls_ca_path,
+        // Backup configuration (F5.5 - Backup & Restore)
+        .backup_enabled = start.backup_enabled,
+        .backup_provider = if (start.backup_provider) |p|
+            backup_config.StorageProvider.fromString(p) orelse .s3
+        else
+            .s3,
+        .backup_bucket = start.backup_bucket,
+        .backup_region = start.backup_region,
+        .backup_credentials = start.backup_credentials,
+        .backup_mode = if (start.backup_mode) |m|
+            backup_config.BackupMode.fromString(m) orelse .best_effort
+        else
+            .best_effort,
+        .backup_encryption = if (start.backup_encryption) |e|
+            backup_config.EncryptionMode.fromString(e) orelse .sse
+        else
+            .sse,
+        .backup_kms_key_id = start.backup_kms_key_id,
+        .backup_compress = if (start.backup_compress) |c|
+            backup_config.CompressionMode.fromString(c) orelse .none
+        else
+            .none,
+        .backup_queue_soft_limit = start.backup_queue_soft_limit,
+        .backup_queue_hard_limit = start.backup_queue_hard_limit,
+        .backup_retention_days = start.backup_retention_days,
+        .backup_primary_only = start.backup_primary_only,
     };
 }
 
