@@ -47,6 +47,95 @@ pub var log_level_runtime: std.log.Level = .info;
 /// One of: .text, .json
 pub var log_format_runtime: cli.LogFormat = .text;
 
+/// Rotating log file configuration.
+pub const RotatingLog = struct {
+    file: std.fs.File,
+    path: []const u8,
+    bytes_written: u64,
+    rotate_size: u64,
+    rotate_count: u32,
+    mutex: std.Thread.Mutex,
+
+    const Self = @This();
+
+    pub fn init(path: []const u8, rotate_size: u64, rotate_count: u32) !Self {
+        const file = try std.fs.cwd().createFile(path, .{ .truncate = false });
+        // Seek to end for appending
+        const stat = try file.stat();
+        try file.seekTo(stat.size);
+        return Self{
+            .file = file,
+            .path = path,
+            .bytes_written = stat.size,
+            .rotate_size = rotate_size,
+            .rotate_count = rotate_count,
+            .mutex = .{},
+        };
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.file.close();
+    }
+
+    pub fn write(self: *Self, data: []const u8) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        // Check if rotation needed before writing
+        if (self.bytes_written + data.len > self.rotate_size) {
+            self.rotateFiles();
+        }
+
+        // Write data
+        _ = self.file.write(data) catch return;
+        self.bytes_written += data.len;
+    }
+
+    fn rotateFiles(self: *Self) void {
+        // Close current file
+        self.file.close();
+
+        // Shift rotated files: .N -> .N+1, deleting oldest if over count
+        var i: u32 = self.rotate_count;
+        while (i > 0) : (i -= 1) {
+            var old_name_buf: [std.fs.max_path_bytes]u8 = undefined;
+            var new_name_buf: [std.fs.max_path_bytes]u8 = undefined;
+
+            const old_suffix = if (i == 1) "" else std.fmt.bufPrint(&old_name_buf, ".{d}", .{i - 1}) catch continue;
+            const new_suffix = std.fmt.bufPrint(&new_name_buf, ".{d}", .{i}) catch continue;
+
+            var old_path_buf: [std.fs.max_path_bytes]u8 = undefined;
+            var new_path_buf: [std.fs.max_path_bytes]u8 = undefined;
+
+            const old_path = if (i == 1)
+                self.path
+            else
+                std.fmt.bufPrint(&old_path_buf, "{s}{s}", .{ self.path, old_suffix }) catch continue;
+
+            const new_path = std.fmt.bufPrint(&new_path_buf, "{s}{s}", .{ self.path, new_suffix }) catch continue;
+
+            if (i == self.rotate_count) {
+                // Delete oldest rotated file if it exists
+                std.fs.cwd().deleteFile(new_path) catch {};
+            }
+
+            // Rename old to new
+            std.fs.cwd().rename(old_path, new_path) catch {};
+        }
+
+        // Create new log file
+        self.file = std.fs.cwd().createFile(self.path, .{ .truncate = true }) catch return;
+        self.bytes_written = 0;
+    }
+
+    pub fn getWriter(self: *Self) std.fs.File.Writer {
+        return self.file.writer();
+    }
+};
+
+/// Global rotating log instance (null if logging to stderr).
+pub var rotating_log: ?RotatingLog = null;
+
 pub fn log_runtime(
     comptime message_level: std.log.Level,
     comptime scope: @Type(.enum_literal),
@@ -56,10 +145,35 @@ pub fn log_runtime(
     // A microbenchmark places the cost of this if at somewhere around 1600us for 10 million calls.
     if (@intFromEnum(message_level) <= @intFromEnum(log_level_runtime)) {
         switch (log_format_runtime) {
-            .text => stdx.log_with_timestamp(message_level, scope, format, args),
+            .text => log_text(message_level, scope, format, args),
             .json => log_json(message_level, scope, format, args),
         }
     }
+}
+
+fn log_text(
+    comptime message_level: std.log.Level,
+    comptime scope: @Type(.enum_literal),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    const level_text = comptime message_level.asText();
+    const scope_prefix = if (scope == .default) ": " else "(" ++ @tagName(scope) ++ "): ";
+    const date_time = stdx.DateTimeUTC.now();
+
+    // Format the complete log line into a buffer using two-step approach
+    var log_buf: [8192]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&log_buf);
+    const writer = fbs.writer();
+
+    nosuspend {
+        // Write timestamp prefix
+        date_time.format("", .{}, writer) catch return;
+        // Write level, scope, and formatted message
+        writer.print(" " ++ level_text ++ scope_prefix ++ format ++ "\n", args) catch return;
+    }
+
+    writeLogOutput(fbs.getWritten());
 }
 
 fn log_json(
@@ -72,18 +186,16 @@ fn log_json(
     const scope_name = comptime if (scope == .default) "default" else @tagName(scope);
     const date_time = stdx.DateTimeUTC.now();
 
-    const stderr = std.io.getStdErr().writer();
-    var buffered_writer = std.io.bufferedWriter(stderr);
-    const writer = buffered_writer.writer();
+    // Format the message first to escape it properly for JSON
+    var msg_buf: [4096]u8 = undefined;
+    const message = std.fmt.bufPrint(&msg_buf, format, args) catch "[message truncated]";
+
+    // Build JSON output with escaping
+    var log_buf: [8192]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&log_buf);
+    const writer = fbs.writer();
 
     nosuspend {
-        // Format the message into a buffer first to escape it properly for JSON
-        var msg_buf: [4096]u8 = undefined;
-        const message = std.fmt.bufPrint(&msg_buf, format, args) catch |err| switch (err) {
-            error.NoSpaceLeft => "[message truncated]",
-        };
-
-        // Output JSON log entry
         writer.print("{{\"timestamp\":\"{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}.{d:0>3}Z\"," ++
             "\"level\":\"{s}\",\"scope\":\"{s}\",\"message\":\"", .{
             date_time.year,
@@ -114,7 +226,18 @@ fn log_json(
         }
 
         writer.writeAll("\"}\n") catch return;
-        buffered_writer.flush() catch return;
+    }
+
+    writeLogOutput(fbs.getWritten());
+}
+
+/// Write log output to either the rotating log file or stderr.
+fn writeLogOutput(data: []const u8) void {
+    if (rotating_log) |*rlog| {
+        rlog.write(data);
+    } else {
+        const stderr = std.io.getStdErr();
+        _ = stderr.write(data) catch {};
     }
 }
 
@@ -164,6 +287,9 @@ pub fn main() !void {
     var trace_file: ?std.fs.File = null;
     defer if (trace_file) |file| file.close();
 
+    // Cleanup rotating log on exit
+    defer if (rotating_log) |*rlog| rlog.deinit();
+
     var statsd_address: ?std.net.Address = null;
     var log_trace = true;
 
@@ -178,6 +304,15 @@ pub fn main() !void {
             if (args.statsd) |address| statsd_address = address;
             log_trace = args.log_trace;
             log_format_runtime = args.log_format;
+
+            // Initialize rotating log if --log-file is set
+            if (args.log_file) |log_path| {
+                rotating_log = RotatingLog.init(log_path, args.log_rotate_size, args.log_rotate_count) catch |err| {
+                    // Fall back to stderr if we can't open the log file
+                    log.err("error opening log file '{s}': {}", .{ log_path, err });
+                    return err;
+                };
+            }
         },
         .benchmark => {}, // Forwards trace and statsd argument to child archerdb.
         inline else => |args| comptime {

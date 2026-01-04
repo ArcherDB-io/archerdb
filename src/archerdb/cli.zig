@@ -94,6 +94,9 @@ const CLIArgs = union(enum) {
         development: bool = false,
         log_level: LogLevel = .info,
         log_format: LogFormat = .text,
+        log_file: ?[]const u8 = null,
+        log_rotate_size: ?ByteSize = null,
+        log_rotate_count: ?u32 = null,
 
         // Everything from here until positional arguments is considered experimental, and requires
         // `--experimental` to be set. Experimental flags disable automatic upgrades with
@@ -440,6 +443,20 @@ const CLIArgs = union(enum) {
         \\        Use "json" for structured logging (production/log aggregation).
         \\        Defaults to "text".
         \\
+        \\  --log-file=<path>
+        \\        Log to the specified file instead of stderr.
+        \\        When not set, logs are written to stderr.
+        \\
+        \\  --log-rotate-size=<size><KiB|MiB|GiB>
+        \\        Rotate log file when it reaches this size.
+        \\        Requires --log-file to be set.
+        \\        Defaults to 100MiB.
+        \\
+        \\  --log-rotate-count=<n>
+        \\        Keep the last N rotated log files.
+        \\        Requires --log-file to be set.
+        \\        Defaults to 10.
+        \\
         \\  --verbose
         \\        Print compile-time configuration along with the build version.
         \\
@@ -583,6 +600,9 @@ pub const Command = union(enum) {
         path: []const u8,
         log_level: LogLevel,
         log_format: LogFormat,
+        log_file: ?[]const u8,
+        log_rotate_size: u64,
+        log_rotate_count: u32,
         log_trace: bool,
         statsd: ?std.net.Address,
     };
@@ -847,12 +867,14 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
     // Allowlist of stable flags. --development will disable automatic multiversion
     // upgrades too, but the flag itself is stable.
     const stable_args = .{
-        "addresses",   "cache_grid",
-        "development", "experimental",
-        "log_level",   "log_format",
+        "addresses",        "cache_grid",
+        "development",      "experimental",
+        "log_level",        "log_format",
+        "log_file",         "log_rotate_size",
+        "log_rotate_count",
     };
     inline for (std.meta.fields(@TypeOf(start))) |field| {
-        @setEvalBranchQuota(4_000);
+        @setEvalBranchQuota(8_000);
         // Positional arguments can't be experimental.
         comptime if (std.mem.eql(u8, field.name, "--")) break;
 
@@ -1119,6 +1141,9 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
         .path = start.path,
         .log_level = start.log_level,
         .log_format = start.log_format,
+        .log_file = start.log_file,
+        .log_rotate_size = if (start.log_rotate_size) |size| size.bytes() else 100 * 1024 * 1024, // Default 100MB
+        .log_rotate_count = start.log_rotate_count orelse 10, // Default 10 files
         .log_trace = start.log_trace,
         .statsd = if (start.statsd) |statsd_address|
             parse_address_and_port(statsd_address, "--statsd", 8125)
