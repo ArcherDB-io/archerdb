@@ -10,6 +10,7 @@ const stdx = vsr.stdx;
 const QueueType = vsr.queue.QueueType;
 const constants = vsr.constants;
 const Tracer = vsr.trace.Tracer;
+const archerdb_metrics = vsr.archerdb_metrics;
 
 pub fn StorageType(comptime IO: type) type {
     return struct {
@@ -86,6 +87,9 @@ pub fn StorageType(comptime IO: type) type {
 
             zone: vsr.Zone,
             start: ?stdx.Instant,
+
+            /// Original buffer length for metrics tracking (buffer gets re-sliced as writes complete).
+            buffer_len: u64,
         };
 
         pub const NextTick = struct {
@@ -262,6 +266,9 @@ pub fn StorageType(comptime IO: type) type {
                     self.tracer.time.monotonic().duration_since(read.start.?),
                 );
 
+                // Record disk I/O metrics
+                archerdb_metrics.Registry.recordDiskRead(read.target_max);
+
                 read.callback(read);
                 return;
             }
@@ -404,6 +411,7 @@ pub fn StorageType(comptime IO: type) type {
                 .offset = offset_in_storage,
                 .zone = zone,
                 .start = self.tracer.time.monotonic(),
+                .buffer_len = buffer.len,
             };
 
             self.start_write(write);
@@ -472,6 +480,9 @@ pub fn StorageType(comptime IO: type) type {
                     .{ .storage_write = .{ .zone = write.zone } },
                     self.tracer.time.monotonic().duration_since(write.start.?),
                 );
+
+                // Record disk I/O metrics
+                archerdb_metrics.Registry.recordDiskWrite(write.buffer_len);
 
                 write.callback(write);
                 return;

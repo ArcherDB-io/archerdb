@@ -833,6 +833,15 @@ fn command_start(
             .recovering, .recovering_head => .recovering,
         };
 
+        // Update resource metrics (F5.2 - Observability: memory, disk)
+        archerdb_metrics.Registry.updateResourceMetrics(
+            counting_allocator.alloc_size,
+            counting_allocator.live_size(),
+            replica.superblock.staging.vsr_state.checkpoint.storage_size,
+            0, // TODO: Index entries - requires LSM tree traversal
+            0, // TODO: Index capacity - requires configuration access
+        );
+
         try io.run_for_ns(constants.tick_ms * std.time.ns_per_ms);
     }
 }

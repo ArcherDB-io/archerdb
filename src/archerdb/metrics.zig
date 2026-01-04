@@ -397,6 +397,62 @@ pub const Registry = struct {
         null,
     );
 
+    // Resource metrics (F5.2 - Observability: memory, disk, I/O)
+    pub var memory_allocated_bytes: Gauge = Gauge.init(
+        "archerdb_memory_allocated_bytes",
+        "Total memory allocated by the process",
+        null,
+    );
+
+    pub var memory_used_bytes: Gauge = Gauge.init(
+        "archerdb_memory_used_bytes",
+        "Memory currently in use (allocated - freed)",
+        null,
+    );
+
+    pub var data_file_size_bytes: Gauge = Gauge.init(
+        "archerdb_data_file_size_bytes",
+        "Data file size in bytes",
+        null,
+    );
+
+    pub var index_entries: Gauge = Gauge.init(
+        "archerdb_index_entries",
+        "Current entity count in primary index",
+        null,
+    );
+
+    pub var index_capacity: Gauge = Gauge.init(
+        "archerdb_index_capacity",
+        "Maximum index capacity",
+        null,
+    );
+
+    // I/O metrics
+    pub var disk_reads_total: Counter = Counter.init(
+        "archerdb_disk_reads_total",
+        "Total disk read operations",
+        null,
+    );
+
+    pub var disk_writes_total: Counter = Counter.init(
+        "archerdb_disk_writes_total",
+        "Total disk write operations",
+        null,
+    );
+
+    pub var disk_read_bytes_total: Counter = Counter.init(
+        "archerdb_disk_read_bytes_total",
+        "Total bytes read from disk",
+        null,
+    );
+
+    pub var disk_write_bytes_total: Counter = Counter.init(
+        "archerdb_disk_write_bytes_total",
+        "Total bytes written to disk",
+        null,
+    );
+
     /// Format all metrics as Prometheus text format.
     pub fn format(writer: anytype) !void {
         // Set info gauge to 1 (it's always present)
@@ -435,6 +491,21 @@ pub const Registry = struct {
         try vsr_is_primary.format(writer);
         try vsr_op_number.format(writer);
         try vsr_view_changes_total.format(writer);
+        try writer.writeAll("\n");
+
+        // Resource metrics
+        try memory_allocated_bytes.format(writer);
+        try memory_used_bytes.format(writer);
+        try data_file_size_bytes.format(writer);
+        try index_entries.format(writer);
+        try index_capacity.format(writer);
+        try writer.writeAll("\n");
+
+        // I/O metrics
+        try disk_reads_total.format(writer);
+        try disk_writes_total.format(writer);
+        try disk_read_bytes_total.format(writer);
+        try disk_write_bytes_total.format(writer);
     }
 
     /// Update VSR metrics from replica state.
@@ -460,6 +531,34 @@ pub const Registry = struct {
     /// Record a view change event.
     pub fn recordViewChange() void {
         vsr_view_changes_total.inc();
+    }
+
+    /// Update resource metrics (memory, disk, I/O).
+    /// Called periodically from the main replica loop.
+    pub fn updateResourceMetrics(
+        mem_allocated: u64,
+        mem_used: u64,
+        storage_size: u64,
+        idx_entries: u64,
+        idx_capacity: u64,
+    ) void {
+        memory_allocated_bytes.set(@intCast(mem_allocated));
+        memory_used_bytes.set(@intCast(mem_used));
+        data_file_size_bytes.set(@intCast(storage_size));
+        index_entries.set(@intCast(idx_entries));
+        index_capacity.set(@intCast(idx_capacity));
+    }
+
+    /// Record a disk read operation.
+    pub fn recordDiskRead(bytes: u64) void {
+        disk_reads_total.inc();
+        disk_read_bytes_total.add(bytes);
+    }
+
+    /// Record a disk write operation.
+    pub fn recordDiskWrite(bytes: u64) void {
+        disk_writes_total.inc();
+        disk_write_bytes_total.add(bytes);
     }
 };
 
