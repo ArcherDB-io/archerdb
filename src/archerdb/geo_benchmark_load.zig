@@ -3,13 +3,13 @@
 //! GeoEvent benchmark load generator for F5.1.1-F5.1.4.
 //!
 //! Measures:
-//! - F5.1.1: GeoEvent upsert throughput (target: 1M events/sec per node)
+//! - F5.1.1: GeoEvent insert throughput (target: 1M events/sec per node)
 //! - F5.1.2: UUID lookup latency (target: <500us p99)
 //! - F5.1.3: Radius query latency (target: <50ms p99)
 //! - F5.1.4: Polygon query latency (target: <100ms p99)
 //!
 //! Workload steps:
-//! 1. Upsert GeoEvents (bulk insert to measure write throughput)
+//! 1. Insert GeoEvents (bulk insert to measure write throughput)
 //! 2. Query by UUID (point lookups to measure index performance)
 //! 3. Query by radius (spatial queries around random points)
 //! 4. Query by polygon (spatial queries with polygon bounds)
@@ -160,8 +160,8 @@ pub fn main(
     // Register clients
     try benchmark.run(.register);
 
-    // F5.1.1: Upsert throughput benchmark
-    try benchmark.run(.upsert_events);
+    // F5.1.1: Insert throughput benchmark
+    try benchmark.run(.insert_events);
 
     // F5.1.2: UUID query latency benchmark
     if (benchmark.geo_query_uuid_count > 0) {
@@ -211,7 +211,7 @@ const GeoBenchmark = struct {
     const Stage = enum {
         idle,
         register,
-        upsert_events,
+        insert_events,
         query_uuid,
         query_radius,
         query_polygon,
@@ -234,7 +234,7 @@ const GeoBenchmark = struct {
             const client = @as(u32, @intCast(client_usize));
             switch (b.stage) {
                 .register => b.register(client),
-                .upsert_events => b.upsert_events(client),
+                .insert_events => b.insert_events(client),
                 .query_uuid => b.do_query_uuid(client),
                 .query_radius => b.do_query_radius(client),
                 .query_polygon => b.do_query_polygon(client),
@@ -287,15 +287,15 @@ const GeoBenchmark = struct {
     }
 
     // =========================================================================
-    // F5.1.1: Upsert Events (Write Throughput)
+    // F5.1.1: Insert Events (Write Throughput)
     // =========================================================================
 
-    fn upsert_events(b: *GeoBenchmark, client_index: u32) void {
-        assert(b.stage == .upsert_events);
+    fn insert_events(b: *GeoBenchmark, client_index: u32) void {
+        assert(b.stage == .insert_events);
         assert(!b.clients_busy.is_set(client_index));
 
         if (b.event_index >= b.geo_event_count) {
-            if (b.clients_busy.empty()) b.upsert_events_finish();
+            if (b.clients_busy.empty()) b.insert_events_finish();
             return;
         }
 
@@ -311,20 +311,20 @@ const GeoBenchmark = struct {
         )[0..batch_count];
         b.build_events(events);
 
-        b.request(client_index, .upsert_events, .{
+        b.request(client_index, .insert_events, .{
             .batch_count = batch_count,
             .event_size = @sizeOf(GeoEvent),
         });
     }
 
-    fn upsert_events_callback(b: *GeoBenchmark, client_index: u32, result: []const u8) void {
-        assert(b.stage == .upsert_events);
+    fn insert_events_callback(b: *GeoBenchmark, client_index: u32, result: []const u8) void {
+        assert(b.stage == .insert_events);
 
         const results = stdx.bytes_as_slice(.exact, InsertGeoEventsResult, result);
         // Check for errors
         for (results) |r| {
             if (r.result != .ok) {
-                log.warn("upsert error at index {}: {}", .{ r.index, r.result });
+                log.warn("insert error at index {}: {}", .{ r.index, r.result });
             }
         }
 
@@ -333,14 +333,14 @@ const GeoBenchmark = struct {
         b.request_latency_histogram[@min(request_duration_ms, b.request_latency_histogram.len - 1)] += 1;
 
         if (b.print_batch_timings) {
-            log.info("upsert batch {}: {} ms", .{ b.request_index, request_duration_ms });
+            log.info("insert batch {}: {} ms", .{ b.request_index, request_duration_ms });
         }
 
-        b.upsert_events(client_index);
+        b.insert_events(client_index);
     }
 
-    fn upsert_events_finish(b: *GeoBenchmark) void {
-        assert(b.stage == .upsert_events);
+    fn insert_events_finish(b: *GeoBenchmark) void {
+        assert(b.stage == .insert_events);
 
         const duration_s = @as(f64, @floatFromInt(b.timer.read())) / std.time.ns_per_s;
         const events_per_sec = @as(u64, @intFromFloat(@as(f64, @floatFromInt(b.events_created)) / duration_s));
@@ -348,7 +348,7 @@ const GeoBenchmark = struct {
         b.output.print(
             \\
             \\=== F5.1.1: GeoEvent Write Throughput ===
-            \\events upserted = {[events]}
+            \\events inserted = {[events]}
             \\duration = {[duration]d:.2} s
             \\throughput = {[rate]} events/s
             \\target = 1,000,000 events/s per node
@@ -359,7 +359,7 @@ const GeoBenchmark = struct {
             .rate = events_per_sec,
         }) catch unreachable;
 
-        print_percentiles_histogram(b.output, "upsert batch", b.request_latency_histogram);
+        print_percentiles_histogram(b.output, "insert batch", b.request_latency_histogram);
 
         b.run_finish();
     }
@@ -731,7 +731,7 @@ const GeoBenchmark = struct {
         } else result;
 
         switch (operation) {
-            .upsert_events => b.upsert_events_callback(client, input),
+            .insert_events => b.insert_events_callback(client, input),
             .query_uuid => b.query_uuid_callback(client, input),
             .query_radius => b.query_radius_callback(client, input),
             .query_polygon => b.query_polygon_callback(client, input),
