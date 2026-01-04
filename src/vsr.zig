@@ -51,6 +51,7 @@ pub const data_minimization = @import("archerdb/data_minimization.zig");
 pub const compliance_audit = @import("archerdb/compliance_audit.zig");
 pub const breach_notification = @import("archerdb/breach_notification.zig");
 pub const dpia = @import("archerdb/dpia.zig");
+pub const data_transfer = @import("archerdb/data_transfer.zig");
 pub const lsm = .{
     .tree = @import("lsm/tree.zig"),
     .groove = @import("lsm/groove.zig"),

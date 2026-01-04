@@ -16,6 +16,7 @@ comptime {
     _ = @import("archerdb/data_minimization.zig");
     _ = @import("archerdb/data_subject_rights.zig");
     _ = @import("archerdb/data_transform.zig");
+    _ = @import("archerdb/data_transfer.zig");
     _ = @import("archerdb/data_validation.zig");
     _ = @import("archerdb/dpia.zig");
     _ = @import("archerdb/ecosystem_validation.zig");
