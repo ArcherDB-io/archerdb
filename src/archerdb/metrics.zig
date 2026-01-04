@@ -453,6 +453,26 @@ pub const Registry = struct {
         null,
     );
 
+    // Disk I/O latency histograms
+    pub var disk_read_latency: LatencyHistogram = latencyHistogram(
+        "archerdb_disk_read_latency_seconds",
+        "Disk read latency histogram",
+        null,
+    );
+
+    pub var disk_write_latency: LatencyHistogram = latencyHistogram(
+        "archerdb_disk_write_latency_seconds",
+        "Disk write latency histogram",
+        null,
+    );
+
+    // Index load factor (derived: entries / capacity)
+    pub var index_load_factor: Gauge = Gauge.init(
+        "archerdb_index_load_factor",
+        "Index load factor (entries / capacity, 0.0 to 1.0 scaled by 1000)",
+        null,
+    );
+
     /// Format all metrics as Prometheus text format.
     pub fn format(writer: anytype) !void {
         // Set info gauge to 1 (it's always present)
@@ -506,6 +526,12 @@ pub const Registry = struct {
         try disk_writes_total.format(writer);
         try disk_read_bytes_total.format(writer);
         try disk_write_bytes_total.format(writer);
+        try disk_read_latency.format(writer);
+        try disk_write_latency.format(writer);
+        try writer.writeAll("\n");
+
+        // Index load factor
+        try index_load_factor.format(writer);
     }
 
     /// Update VSR metrics from replica state.
@@ -547,18 +573,33 @@ pub const Registry = struct {
         data_file_size_bytes.set(@intCast(storage_size));
         index_entries.set(@intCast(idx_entries));
         index_capacity.set(@intCast(idx_capacity));
+
+        // Calculate index load factor (scaled by 1000 for gauge precision)
+        // e.g., 500 = 0.5 (50% full), 900 = 0.9 (90% full)
+        if (idx_capacity > 0) {
+            const load_factor_scaled: i64 = @intCast((idx_entries * 1000) / idx_capacity);
+            index_load_factor.set(load_factor_scaled);
+        }
     }
 
-    /// Record a disk read operation.
-    pub fn recordDiskRead(bytes: u64) void {
+    /// Record a disk read operation with optional latency.
+    /// latency_ns is the operation duration in nanoseconds (0 to skip latency recording).
+    pub fn recordDiskRead(bytes: u64, latency_ns: u64) void {
         disk_reads_total.inc();
         disk_read_bytes_total.add(bytes);
+        if (latency_ns > 0) {
+            disk_read_latency.observeNs(latency_ns);
+        }
     }
 
-    /// Record a disk write operation.
-    pub fn recordDiskWrite(bytes: u64) void {
+    /// Record a disk write operation with optional latency.
+    /// latency_ns is the operation duration in nanoseconds (0 to skip latency recording).
+    pub fn recordDiskWrite(bytes: u64, latency_ns: u64) void {
         disk_writes_total.inc();
         disk_write_bytes_total.add(bytes);
+        if (latency_ns > 0) {
+            disk_write_latency.observeNs(latency_ns);
+        }
     }
 };
 

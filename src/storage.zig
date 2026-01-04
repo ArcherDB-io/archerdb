@@ -261,13 +261,14 @@ pub fn StorageType(comptime IO: type) type {
                 // be reported.
                 assert(bytes_read != null);
 
+                const duration = self.tracer.time.monotonic().duration_since(read.start.?);
                 self.tracer.timing(
                     .{ .storage_read = .{ .zone = read.zone } },
-                    self.tracer.time.monotonic().duration_since(read.start.?),
+                    duration,
                 );
 
-                // Record disk I/O metrics
-                archerdb_metrics.Registry.recordDiskRead(read.target_max);
+                // Record disk I/O metrics with latency
+                archerdb_metrics.Registry.recordDiskRead(read.target_max, duration.ns);
 
                 read.callback(read);
                 return;
@@ -476,13 +477,14 @@ pub fn StorageType(comptime IO: type) type {
             write.buffer = write.buffer[bytes_written..];
 
             if (write.buffer.len == 0) {
+                const duration = self.tracer.time.monotonic().duration_since(write.start.?);
                 self.tracer.timing(
                     .{ .storage_write = .{ .zone = write.zone } },
-                    self.tracer.time.monotonic().duration_since(write.start.?),
+                    duration,
                 );
 
-                // Record disk I/O metrics
-                archerdb_metrics.Registry.recordDiskWrite(write.buffer_len);
+                // Record disk I/O metrics with latency
+                archerdb_metrics.Registry.recordDiskWrite(write.buffer_len, duration.ns);
 
                 write.callback(write);
                 return;
