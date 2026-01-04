@@ -49,6 +49,7 @@ pub const consent_management = @import("archerdb/consent_management.zig");
 pub const data_subject_rights = @import("archerdb/data_subject_rights.zig");
 pub const data_minimization = @import("archerdb/data_minimization.zig");
 pub const compliance_audit = @import("archerdb/compliance_audit.zig");
+pub const breach_notification = @import("archerdb/breach_notification.zig");
 pub const lsm = .{
     .tree = @import("lsm/tree.zig"),
     .groove = @import("lsm/groove.zig"),

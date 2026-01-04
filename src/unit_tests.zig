@@ -8,6 +8,7 @@ comptime {
     _ = @import("archerdb/backup_restore_test.zig");
     _ = @import("archerdb/backup_state.zig");
     _ = @import("archerdb/bulk_export.zig");
+    _ = @import("archerdb/breach_notification.zig");
     _ = @import("archerdb/consent_management.zig");
     _ = @import("archerdb/compliance_audit.zig");
     _ = @import("archerdb/data_export.zig");
