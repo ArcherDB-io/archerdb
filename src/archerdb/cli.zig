@@ -990,7 +990,7 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
         "backup_queue_soft_limit",     "backup_queue_hard_limit",
         "backup_retention_days",       "backup_primary_only",
     };
-    @setEvalBranchQuota(48_000);
+    @setEvalBranchQuota(96_000);
     inline for (std.meta.fields(@TypeOf(start))) |field| {
         // Positional arguments can't be experimental.
         comptime if (std.mem.eql(u8, field.name, "--")) break;
