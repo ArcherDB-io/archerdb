@@ -18,6 +18,7 @@ const benchmark_driver = @import("benchmark_driver.zig");
 const cli = @import("cli.zig");
 const inspect = @import("inspect.zig");
 const metrics_server = @import("metrics_server.zig");
+const tls_config = vsr.tls_config;
 
 const IO = vsr.io.IO;
 const Time = vsr.time.Time;
@@ -564,6 +565,22 @@ fn command_start(
 ) !void {
     var counting_allocator = vsr.CountingAllocator.init(base_allocator);
     const gpa = counting_allocator.allocator();
+
+    // Initialize TLS configuration (F5.4.1 - Security)
+    // Validates certificate paths and loads certificates if TLS is required.
+    var tls = tls_config.TlsConfig.init(gpa, .{
+        .required = args.tls_required,
+        .cert_path = args.tls_cert_path,
+        .key_path = args.tls_key_path,
+        .ca_path = args.tls_ca_path,
+    }) catch |err| {
+        log.err("TLS configuration error: {}", .{err});
+        return err;
+    };
+    defer tls.deinit();
+
+    // Update TLS metrics
+    archerdb_metrics.Registry.setTlsEnabled(tls.isEnabled());
 
     // TODO Panic if the data file's size is larger that args.storage_size_limit.
     // (Here or in Replica.open()?).

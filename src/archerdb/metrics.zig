@@ -926,6 +926,10 @@ pub const Registry = struct {
 
         // Backup upload latency histogram
         try backup_upload_latency.format(writer);
+        try writer.writeAll("\n");
+
+        // TLS metrics (F5.4.1)
+        try formatTlsMetrics(writer);
     }
 
     /// Update VSR metrics from replica state.
@@ -1153,6 +1157,119 @@ pub const Registry = struct {
     /// Record a mandatory mode halt timeout bypass.
     pub fn recordBackupMandatoryBypass() void {
         _ = backup_mandatory_bypass_total.fetchAdd(1, .monotonic);
+    }
+
+    // ==========================================================================
+    // TLS Metrics (F5.4.1 - Security)
+    // ==========================================================================
+
+    /// Certificate reload attempts (successful or not).
+    pub var tls_cert_reloads_total: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
+    /// Failed certificate reload attempts.
+    pub var tls_cert_reload_failures_total: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
+    /// Successful TLS handshakes.
+    pub var tls_handshakes_total: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
+    /// Failed TLS handshakes.
+    pub var tls_handshake_failures_total: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
+    /// Current active TLS connections.
+    pub var tls_active_connections: std.atomic.Value(i64) = std.atomic.Value(i64).init(0);
+
+    /// TLS handshake latency histogram.
+    pub var tls_handshake_latency: LatencyHistogram = latencyHistogram(
+        "archerdb_tls_handshake_latency_seconds",
+        "TLS handshake latency histogram",
+        null,
+    );
+
+    /// Whether TLS is currently enabled (1 = yes, 0 = no).
+    pub var tls_enabled: std.atomic.Value(i64) = std.atomic.Value(i64).init(0);
+
+    /// Record a successful certificate reload.
+    pub fn recordCertReload() void {
+        _ = tls_cert_reloads_total.fetchAdd(1, .monotonic);
+    }
+
+    /// Record a failed certificate reload.
+    pub fn recordCertReloadFailure() void {
+        _ = tls_cert_reloads_total.fetchAdd(1, .monotonic);
+        _ = tls_cert_reload_failures_total.fetchAdd(1, .monotonic);
+    }
+
+    /// Record a successful TLS handshake.
+    pub fn recordTlsHandshake(latency_ns: u64) void {
+        _ = tls_handshakes_total.fetchAdd(1, .monotonic);
+        if (latency_ns > 0) {
+            tls_handshake_latency.observeNs(latency_ns);
+        }
+    }
+
+    /// Record a failed TLS handshake.
+    pub fn recordTlsHandshakeFailure() void {
+        _ = tls_handshake_failures_total.fetchAdd(1, .monotonic);
+    }
+
+    /// Update TLS connection count (increment on connect, decrement on disconnect).
+    pub fn updateTlsConnections(delta: i64) void {
+        _ = tls_active_connections.fetchAdd(delta, .monotonic);
+    }
+
+    /// Set TLS enabled status.
+    pub fn setTlsEnabled(enabled: bool) void {
+        tls_enabled.store(if (enabled) 1 else 0, .monotonic);
+    }
+
+    /// Format TLS metrics for Prometheus output.
+    pub fn formatTlsMetrics(writer: anytype) !void {
+        // TLS enabled status
+        try writer.writeAll("# HELP archerdb_tls_enabled " ++
+            "Whether TLS is enabled (1=yes, 0=no)\n");
+        try writer.writeAll("# TYPE archerdb_tls_enabled gauge\n");
+        try writer.print("archerdb_tls_enabled {d}\n\n", .{tls_enabled.load(.monotonic)});
+
+        // Certificate reload metrics
+        try writer.writeAll("# HELP archerdb_tls_cert_reloads_total " ++
+            "Total certificate reload attempts\n");
+        try writer.writeAll("# TYPE archerdb_tls_cert_reloads_total counter\n");
+        try writer.print("archerdb_tls_cert_reloads_total {d}\n\n", .{
+            tls_cert_reloads_total.load(.monotonic),
+        });
+
+        try writer.writeAll("# HELP archerdb_tls_cert_reload_failures_total " ++
+            "Failed certificate reload attempts\n");
+        try writer.writeAll("# TYPE archerdb_tls_cert_reload_failures_total counter\n");
+        try writer.print("archerdb_tls_cert_reload_failures_total {d}\n\n", .{
+            tls_cert_reload_failures_total.load(.monotonic),
+        });
+
+        // Handshake metrics
+        try writer.writeAll("# HELP archerdb_tls_handshakes_total " ++
+            "Total successful TLS handshakes\n");
+        try writer.writeAll("# TYPE archerdb_tls_handshakes_total counter\n");
+        try writer.print("archerdb_tls_handshakes_total {d}\n\n", .{
+            tls_handshakes_total.load(.monotonic),
+        });
+
+        try writer.writeAll("# HELP archerdb_tls_handshake_failures_total " ++
+            "Total failed TLS handshakes\n");
+        try writer.writeAll("# TYPE archerdb_tls_handshake_failures_total counter\n");
+        try writer.print("archerdb_tls_handshake_failures_total {d}\n\n", .{
+            tls_handshake_failures_total.load(.monotonic),
+        });
+
+        // Active connections
+        try writer.writeAll("# HELP archerdb_tls_active_connections " ++
+            "Current active TLS connections\n");
+        try writer.writeAll("# TYPE archerdb_tls_active_connections gauge\n");
+        try writer.print("archerdb_tls_active_connections {d}\n\n", .{
+            tls_active_connections.load(.monotonic),
+        });
+
+        // Handshake latency
+        try tls_handshake_latency.format(writer);
     }
 };
 
