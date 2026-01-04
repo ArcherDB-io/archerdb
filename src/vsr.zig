@@ -44,6 +44,7 @@ pub const data_validation = @import("archerdb/data_validation.zig");
 pub const parallel_export = @import("archerdb/parallel_export.zig");
 pub const incremental_load = @import("archerdb/incremental_load.zig");
 pub const etl_integration = @import("archerdb/etl_integration.zig");
+pub const data_transform = @import("archerdb/data_transform.zig");
 pub const lsm = .{
     .tree = @import("lsm/tree.zig"),
     .groove = @import("lsm/groove.zig"),
