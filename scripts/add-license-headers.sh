@@ -63,7 +63,7 @@ while IFS= read -r -d '' file; do
 
     # File is missing header
     missing=$((missing + 1))
-    rel_path="${file#$PROJECT_ROOT/}"
+    rel_path="${file#"$PROJECT_ROOT"/}"
 
     if [[ "$CHECK_ONLY" == "true" ]]; then
         echo -e "${RED}Missing header:${NC} $rel_path"

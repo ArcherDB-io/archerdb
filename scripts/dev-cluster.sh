@@ -115,9 +115,11 @@ data_file() {
 
 # Check if a replica is running
 is_running() {
-    local pidfile=$(pid_file "$1")
+    local pidfile
+    pidfile=$(pid_file "$1")
     if [[ -f "$pidfile" ]]; then
-        local pid=$(cat "$pidfile")
+        local pid
+        pid=$(cat "$pidfile")
         if kill -0 "$pid" 2>/dev/null; then
             return 0
         fi
@@ -159,7 +161,8 @@ cmd_start() {
     # Format data files if they don't exist
     echo -e "${BLUE}Formatting data files...${NC}"
     for ((i=0; i<NODES; i++)); do
-        local df=$(data_file "$i")
+        local df
+        df=$(data_file "$i")
         if [[ ! -f "$df" ]]; then
             echo -e "  Formatting replica ${GREEN}$i${NC}..."
             "$ARCHERDB_BIN" format \
@@ -173,14 +176,16 @@ cmd_start() {
     done
 
     # Start all replicas
-    local addresses=$(generate_addresses)
+    local addresses
+    addresses=$(generate_addresses)
     echo ""
     echo -e "${BLUE}Starting replicas...${NC}"
 
     for ((i=0; i<NODES; i++)); do
-        local df=$(data_file "$i")
-        local lf=$(log_file "$i")
-        local pf=$(pid_file "$i")
+        local df lf pf
+        df=$(data_file "$i")
+        lf=$(log_file "$i")
+        pf=$(pid_file "$i")
 
         echo -e "  Starting replica ${GREEN}$i${NC} on port ${GREEN}$((BASE_PORT + i))${NC}..."
 
@@ -220,14 +225,14 @@ cmd_stop() {
     echo -e "${BLUE}Stopping ArcherDB development cluster...${NC}"
 
     local stopped=0
-    local failed=0
 
     # Find all PID files
     shopt -s nullglob
     for pidfile in "$DATA_DIR"/replica-*.pid; do
         if [[ -f "$pidfile" ]]; then
-            local replica=$(basename "$pidfile" | sed 's/replica-\([0-9]*\)\.pid/\1/')
-            local pid=$(cat "$pidfile")
+            local replica pid
+            replica=$(basename "$pidfile" | sed 's/replica-\([0-9]*\)\.pid/\1/')
+            pid=$(cat "$pidfile")
 
             if kill -0 "$pid" 2>/dev/null; then
                 echo -e "  Stopping replica ${GREEN}$replica${NC} (PID $pid)..."
@@ -279,11 +284,13 @@ cmd_status() {
     shopt -s nullglob
     for datafile in "$DATA_DIR"/replica-*.archerdb; do
         if [[ -f "$datafile" ]]; then
-            local replica=$(basename "$datafile" | sed 's/replica-\([0-9]*\)\.archerdb/\1/')
-            local port=$((BASE_PORT + replica))
+            local replica port
+            replica=$(basename "$datafile" | sed 's/replica-\([0-9]*\)\.archerdb/\1/')
+            port=$((BASE_PORT + replica))
 
             if is_running "$replica"; then
-                local pid=$(cat "$(pid_file "$replica")")
+                local pid
+                pid=$(cat "$(pid_file "$replica")")
                 echo -e "  Replica ${GREEN}$replica${NC}: ${GREEN}RUNNING${NC} (PID $pid, port $port)"
                 running=$((running + 1))
             else
@@ -319,7 +326,8 @@ cmd_clean() {
 # View logs for a replica
 cmd_logs() {
     local replica="${REPLICA_INDEX:-0}"
-    local lf=$(log_file "$replica")
+    local lf
+    lf=$(log_file "$replica")
 
     if [[ ! -f "$lf" ]]; then
         echo -e "${RED}No log file found for replica $replica${NC}"
