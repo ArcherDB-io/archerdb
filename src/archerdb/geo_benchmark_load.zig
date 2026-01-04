@@ -174,13 +174,8 @@ pub fn main(
     }
 
     // F5.1.4: Polygon query latency benchmark
-    // NOTE: Polygon queries require variable-length messages (filter + vertices)
-    // which the client currently doesn't support. See issue for enhancement.
     if (benchmark.geo_query_polygon_count > 0) {
-        log.warn("Polygon queries skipped: client doesn't support variable-length messages yet", .{});
-        log.warn("Polygon query benchmark requires client enhancement (see F5.1.4)", .{});
-        // TODO: Enable when client supports variable-length requests
-        // try benchmark.run(.query_polygon);
+        try benchmark.run(.query_polygon);
     }
 }
 

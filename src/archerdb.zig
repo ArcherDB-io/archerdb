@@ -18,6 +18,7 @@ pub const GeoEvent = geo_event.GeoEvent;
 pub const QueryUuidFilter = geo_state_machine.QueryUuidFilter;
 pub const QueryRadiusFilter = geo_state_machine.QueryRadiusFilter;
 pub const QueryPolygonFilter = geo_state_machine.QueryPolygonFilter;
+pub const PolygonVertex = geo_state_machine.PolygonVertex;
 pub const InsertGeoEventResult = geo_state_machine.InsertGeoEventResult;
 pub const InsertGeoEventsResult = geo_state_machine.InsertGeoEventsResult;
 pub const DeleteEntitiesResult = geo_state_machine.DeleteEntitiesResult;
@@ -926,6 +927,20 @@ pub const Operation = enum(u8) {
             .deprecated_query_accounts_unbatched,
             .deprecated_query_transfers_unbatched,
             => false,
+        };
+    }
+
+    /// Whether the operation has variable-length request body (header + trailing data).
+    /// For example, query_polygon has QueryPolygonFilter (128 bytes) followed by
+    /// variable-length PolygonVertex array (N × 16 bytes).
+    /// Inline function so that `operation` can be known at comptime.
+    pub inline fn is_variable_length(operation: Operation) bool {
+        return switch (operation) {
+            // query_polygon body = QueryPolygonFilter + PolygonVertex[]
+            .query_polygon => true,
+
+            // All other operations have fixed-size events
+            else => false,
         };
     }
 

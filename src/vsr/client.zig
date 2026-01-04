@@ -313,10 +313,21 @@ pub fn ClientType(
             assert(self.request_inflight == null);
             assert(self.request_number > 0);
 
-            const event_size = operation.event_size();
             assert(events.len <= constants.message_body_size_max);
             assert(events.len <= self.batch_size_limit.?);
-            assert(events.len % event_size == 0);
+
+            // Validate request body size based on operation type
+            if (operation.is_variable_length()) {
+                // Variable-length operations (e.g., query_polygon) have header + trailing data
+                // For query_polygon: QueryPolygonFilter (128) + vertices (N × 16)
+                const event_size = operation.event_size();
+                assert(events.len >= event_size); // At least the header
+                // Trailing data validation is done by the state machine
+            } else {
+                // Fixed-size operations: body must be aligned to event size
+                const event_size = operation.event_size();
+                assert(events.len % event_size == 0);
+            }
 
             const message = self.get_message().build(.request);
             errdefer self.release_message(message.base());

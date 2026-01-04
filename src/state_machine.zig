@@ -1066,6 +1066,10 @@ pub fn StateMachineType(comptime Storage: type) type {
                     assert(event_size > 0);
 
                     if (comptime !operation_comptime.is_batchable()) {
+                        // Handle variable-length operations (e.g., query_polygon)
+                        if (comptime operation_comptime.is_variable_length()) {
+                            return validate_variable_length_batch(operation_comptime, batch);
+                        }
                         return batch.len == event_size;
                     }
                     comptime assert(operation_comptime.is_batchable());
@@ -1082,6 +1086,34 @@ pub fn StateMachineType(comptime Storage: type) type {
                     if (event_count > event_max) return false;
                     return true;
                 },
+            }
+        }
+
+        /// Validates variable-length operation batches (e.g., query_polygon).
+        /// query_polygon body = QueryPolygonFilter (128 bytes) + PolygonVertex[] (N × 16 bytes)
+        fn validate_variable_length_batch(
+            comptime operation: Operation,
+            batch: []const u8,
+        ) bool {
+            switch (operation) {
+                .query_polygon => {
+                    const header_size = @sizeOf(tb.QueryPolygonFilter);
+                    if (batch.len < header_size) return false;
+
+                    const vertices_size = batch.len - header_size;
+                    if (vertices_size % @sizeOf(tb.PolygonVertex) != 0) return false;
+
+                    // Validate vertex_count matches actual vertices
+                    const filter = mem.bytesAsValue(
+                        tb.QueryPolygonFilter,
+                        batch[0..header_size],
+                    ).*;
+                    const expected_vertices_size = filter.vertex_count * @sizeOf(tb.PolygonVertex);
+                    if (vertices_size != expected_vertices_size) return false;
+
+                    return true;
+                },
+                else => unreachable, // Only called for variable-length operations
             }
         }
 
@@ -2904,6 +2936,10 @@ pub fn StateMachineType(comptime Storage: type) type {
                 inline else => |operation_comptime| {
                     const event_size: u32 = operation_comptime.event_size();
                     const batch_count: u32 = batch_count: {
+                        // Variable-length operations have batch count of 1
+                        if (comptime operation_comptime.is_variable_length()) {
+                            break :batch_count 1;
+                        }
                         if (!operation_comptime.is_multi_batch()) {
                             break :batch_count @intCast(@divExact(
                                 message_body_used.len,
