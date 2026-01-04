@@ -32,9 +32,24 @@
 //! ```
 
 const std = @import("std");
+const builtin = @import("builtin");
 const log = std.log.scoped(.tls_config);
 const fs = std.fs;
 const mem = std.mem;
+
+// During tests, we don't want log.err to fail tests when testing error paths.
+// Wrap logging functions to suppress errors in test mode.
+fn logErr(comptime fmt: []const u8, args: anytype) void {
+    if (!builtin.is_test) {
+        log.err(fmt, args);
+    }
+}
+
+fn logWarn(comptime fmt: []const u8, args: anytype) void {
+    if (!builtin.is_test) {
+        log.warn(fmt, args);
+    }
+}
 
 /// TLS configuration options passed from CLI.
 pub const TlsOptions = struct {
@@ -110,7 +125,7 @@ pub const TlsConfig = struct {
             self.enabled = true;
             log.info("TLS enabled (optional mode)", .{});
         } else {
-            log.warn("TLS disabled - development mode only, do not use in production", .{});
+            logWarn("TLS disabled - development mode only, do not use in production", .{});
         }
 
         return self;
@@ -134,7 +149,7 @@ pub const TlsConfig = struct {
     /// On failure, keeps old certificates and logs error.
     pub fn reload(self: *TlsConfig) !void {
         if (!self.enabled) {
-            log.warn("certificate reload requested but TLS is disabled", .{});
+            logWarn("certificate reload requested but TLS is disabled", .{});
             return;
         }
 
@@ -163,16 +178,16 @@ pub const TlsConfig = struct {
     /// Validate that all required paths are provided.
     fn validateRequiredPaths(self: *const TlsConfig) !void {
         if (self.options.cert_path == null) {
-            log.err("TLS required but --tls-cert-path not provided", .{});
+            logErr("TLS required but --tls-cert-path not provided", .{});
             return error.MissingCertPath;
         }
         if (self.options.key_path == null) {
-            log.err("TLS required but --tls-key-path not provided", .{});
+            logErr("TLS required but --tls-key-path not provided", .{});
             return error.MissingKeyPath;
         }
         // CA path is required for mTLS
         if (self.options.ca_path == null) {
-            log.err("TLS required but --tls-ca-path not provided (needed for mTLS)", .{});
+            logErr("TLS required but --tls-ca-path not provided (needed for mTLS)", .{});
             return error.MissingCaPath;
         }
     }
@@ -183,7 +198,7 @@ pub const TlsConfig = struct {
         const has_key = self.options.key_path != null;
 
         if (has_cert != has_key) {
-            log.err("both --tls-cert-path and --tls-key-path must be provided together", .{});
+            logErr("both --tls-cert-path and --tls-key-path must be provided together", .{});
             return error.IncompleteConfig;
         }
     }
@@ -207,21 +222,21 @@ pub const TlsConfig = struct {
 
         // Load certificate file
         const cert_pem = readFile(self.allocator, cert_path) catch |err| {
-            log.err("failed to read certificate file '{s}': {}", .{ cert_path, err });
+            logErr("failed to read certificate file '{s}': {}", .{ cert_path, err });
             return error.CertReadError;
         };
         errdefer self.allocator.free(cert_pem);
 
         // Load private key file
         const key_pem = readFile(self.allocator, key_path) catch |err| {
-            log.err("failed to read private key file '{s}': {}", .{ key_path, err });
+            logErr("failed to read private key file '{s}': {}", .{ key_path, err });
             return error.KeyReadError;
         };
         errdefer self.allocator.free(key_pem);
 
         // Check private key file permissions (security requirement)
         checkKeyPermissions(key_path) catch |err| {
-            log.warn("private key file '{s}' has insecure permissions: {}", .{ key_path, err });
+            logWarn("private key file '{s}' has insecure permissions: {}", .{ key_path, err });
             // Non-fatal warning per security spec
         };
 
@@ -229,7 +244,7 @@ pub const TlsConfig = struct {
         var ca_pem: ?[]const u8 = null;
         if (self.options.ca_path) |ca_path| {
             ca_pem = readFile(self.allocator, ca_path) catch |err| {
-                log.err("failed to read CA certificate file '{s}': {}", .{ ca_path, err });
+                logErr("failed to read CA certificate file '{s}': {}", .{ ca_path, err });
                 return error.CaReadError;
             };
         }
@@ -286,13 +301,13 @@ fn checkKeyPermissions(path: []const u8) !void {
 fn validatePemFormat(data: []const u8, name: []const u8) !void {
     // PEM files must start with "-----BEGIN"
     if (!mem.startsWith(u8, data, "-----BEGIN ")) {
-        log.err("{s} is not in valid PEM format (missing BEGIN marker)", .{name});
+        logErr("{s} is not in valid PEM format (missing BEGIN marker)", .{name});
         return error.InvalidPemFormat;
     }
 
     // PEM files must contain "-----END"
     if (mem.indexOf(u8, data, "-----END ") == null) {
-        log.err("{s} is not in valid PEM format (missing END marker)", .{name});
+        logErr("{s} is not in valid PEM format (missing END marker)", .{name});
         return error.InvalidPemFormat;
     }
 }
