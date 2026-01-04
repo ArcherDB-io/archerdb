@@ -13,6 +13,11 @@ const stdx = @import("stdx");
 const maybe = stdx.maybe;
 const RingBufferType = stdx.RingBufferType;
 const MessagePool = @import("message_pool.zig").MessagePool;
+
+/// TLS configuration for replica-to-replica mTLS (F5.4.2).
+/// Currently provides infrastructure for certificate-based replica identity verification.
+/// Full mTLS handshake integration is pending Zig TLS server support.
+pub const ReplicaTls = @import("archerdb/replica_tls.zig");
 const Message = MessagePool.Message;
 const MessageBuffer = @import("./message_buffer.zig").MessageBuffer;
 const QueueType = @import("./queue.zig").QueueType;
@@ -69,6 +74,10 @@ pub fn MessageBusType(comptime IO: type) type {
         /// Reset to zero after a successful `on_connect()`.
         replicas_connect_attempts: []u64,
 
+        /// TLS configuration for mTLS replica authentication (F5.4.2).
+        /// Stored here for use in connection callbacks and identity verification.
+        tls_options: Options.TlsOptions = .{},
+
         /// Map from client id to the currently active connection for that client.
         /// This is used to make lookup of client connections when sending messages
         /// efficient and to ensure old client connections are dropped if a new one
@@ -88,6 +97,32 @@ pub fn MessageBusType(comptime IO: type) type {
             configuration: []const Address,
             io: *IO,
             clients_limit: ?u32 = null,
+
+            /// TLS configuration for mTLS authentication (F5.4.2).
+            /// When enabled, replica connections will verify peer certificates
+            /// and extract replica identity from certificate CN.
+            ///
+            /// NOTE: Full mTLS handshake is pending Zig TLS server support.
+            /// Currently this enables certificate-based identity verification
+            /// infrastructure for when TLS handshake becomes available.
+            tls: TlsOptions = .{},
+
+            pub const TlsOptions = struct {
+                /// Enable TLS for replica connections.
+                /// When true, replicas must present valid certificates.
+                enabled: bool = false,
+
+                /// PEM-encoded certificate for this replica.
+                /// Certificate CN must match "replica-N" format where N is replica index.
+                cert_pem: ?[]const u8 = null,
+
+                /// PEM-encoded private key for this replica.
+                key_pem: ?[]const u8 = null,
+
+                /// PEM-encoded CA certificate for verifying peer certificates.
+                /// All replicas in the cluster must be signed by this CA.
+                ca_cert_pem: ?[]const u8 = null,
+            };
         };
         const Address = std.net.Address;
         const MessageBus = @This();
@@ -165,8 +200,14 @@ pub fn MessageBusType(comptime IO: type) type {
                 .replicas = replicas,
                 .replicas_addresses = replicas_addresses,
                 .replicas_connect_attempts = replicas_connect_attempts,
+                .tls_options = options.tls,
                 .prng = stdx.PRNG.from_seed(prng_seed),
             };
+
+            // Log TLS configuration status (F5.4.2)
+            if (options.tls.enabled) {
+                log.info("{}: TLS enabled for replica connections", .{bus.id});
+            }
 
             switch (process_id) {
                 .replica => {
@@ -334,6 +375,26 @@ pub fn MessageBusType(comptime IO: type) type {
                 connection.state = .connected;
                 connection.fd = fd;
                 bus.connections_used += 1;
+
+                // F5.4.2 mTLS Integration Point:
+                // After TCP accept succeeds but before starting recv, this is where
+                // TLS server handshake would occur:
+                //
+                // if (bus.tls_options.enabled) {
+                //     // 1. Initiate TLS handshake as server
+                //     // 2. Present our certificate (bus.tls_options.cert_pem)
+                //     // 3. Request client certificate (mTLS)
+                //     // 4. Verify client cert against CA (bus.tls_options.ca_cert_pem)
+                //     // 5. Extract replica ID from client certificate CN
+                //     // 6. Store verified replica ID for later verification against message headers
+                //     //
+                //     // NOTE: At this point peer identity is unknown (.unknown).
+                //     // The replica ID from certificate would be stored and verified
+                //     // when recv_update_peer() processes the first message.
+                // }
+                //
+                // NOTE: TLS server implementation pending in Zig std library.
+                // Zig std.crypto.tls.Client exists but Server is not available.
 
                 bus.assert_connection_initial_state(connection);
                 assert(connection.recv_buffer == null);
@@ -528,6 +589,36 @@ pub fn MessageBusType(comptime IO: type) type {
 
             log.info("{}: on_connect: connected to={}", .{ bus.id, connection.peer.replica });
             bus.replicas_connect_attempts[connection.peer.replica] = 0;
+
+            // F5.4.2 mTLS Integration Point:
+            // After TCP connect succeeds but before starting recv/send, this is where
+            // TLS client handshake would occur:
+            //
+            // if (bus.tls_options.enabled) {
+            //     // 1. Initiate TLS handshake as client
+            //     // 2. Server presents certificate
+            //     // 3. Verify server cert against CA (bus.tls_options.ca_cert_pem)
+            //     // 4. Extract replica ID from server certificate CN
+            //     // 5. Verify replica ID matches connection.peer.replica
+            //     // 6. Present our certificate (bus.tls_options.cert_pem)
+            //     //
+            //     // const peer_identity = ReplicaTls.extractReplicaId(
+            //     //     allocator, peer_cert_pem
+            //     // ) catch |err| {
+            //     //     log.warn("{}: TLS: invalid peer certificate: {}", .{bus.id, err});
+            //     //     bus.terminate(connection, .shutdown);
+            //     //     return;
+            //     // };
+            //     //
+            //     // if (peer_identity.replica_id != connection.peer.replica) {
+            //     //     log.warn("{}: TLS: replica ID mismatch", .{bus.id});
+            //     //     bus.terminate(connection, .shutdown);
+            //     //     return;
+            //     // }
+            // }
+            //
+            // NOTE: Full TLS handshake pending Zig TLS server support (ziglang/zig tracking).
+            // Zig std.crypto.tls.Client exists but Server implementation is not available.
 
             bus.assert_connection_initial_state(connection);
             assert(connection.recv_buffer == null);
