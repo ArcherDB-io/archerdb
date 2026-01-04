@@ -46,6 +46,9 @@ const ChangeEventType = tb.ChangeEventType;
 
 // ArcherDB geospatial types (F1.3.1, F1.3.2, F1.3.3)
 const GeoEvent = tb.GeoEvent;
+
+// ArcherDB metrics (F1.4.1 - Observability) - access through vsr to avoid module duplication
+const archerdb_metrics = vsr.archerdb_metrics;
 const InsertGeoEventResult = tb.InsertGeoEventResult;
 const InsertGeoEventsResult = tb.InsertGeoEventsResult;
 const QueryUuidFilter = tb.QueryUuidFilter;
@@ -3807,6 +3810,9 @@ pub fn StateMachineType(comptime Storage: type) type {
             batch: []const u8,
             output_buffer: *align(16) [constants.message_body_size_max]u8,
         ) usize {
+            // Start timing for metrics (F1.4.1 - Observability)
+            const start_time = std.time.nanoTimestamp();
+
             const events = stdx.bytes_as_slice(.exact, GeoEvent, batch);
             const results = stdx.bytes_as_slice(.inexact, InsertGeoEventsResult, output_buffer);
             assert(events.len <= results.len);
@@ -3832,6 +3838,16 @@ pub fn StateMachineType(comptime Storage: type) type {
                     count += 1;
                 }
             }
+
+            // Record write metrics (F1.4.1 - Observability)
+            const successful_events = events.len - count;
+            archerdb_metrics.Registry.write_operations_total.inc();
+            archerdb_metrics.Registry.write_events_total.add(@intCast(successful_events));
+            archerdb_metrics.Registry.write_bytes_total.add(@intCast(@sizeOf(GeoEvent) * successful_events));
+
+            const end_time = std.time.nanoTimestamp();
+            const elapsed_ns: u64 = @intCast(@max(0, end_time - start_time));
+            archerdb_metrics.Registry.write_latency.observeNs(elapsed_ns);
 
             return @sizeOf(InsertGeoEventsResult) * count;
         }

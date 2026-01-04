@@ -15,7 +15,8 @@ const std = @import("std");
 const posix = std.posix;
 const log = std.log.scoped(.metrics_server);
 
-const metrics = @import("metrics.zig");
+const vsr = @import("vsr");
+const metrics = vsr.archerdb_metrics;
 
 /// State of the replica for health checks.
 pub const ReplicaState = enum {
