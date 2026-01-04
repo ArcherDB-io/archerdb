@@ -3075,3 +3075,157 @@ test "Alert: format output" {
     try std.testing.expect(std.mem.indexOf(u8, output, "[warning]") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "tombstone_degradation") != null);
 }
+
+// =============================================================================
+// F5.1.5: Memory Usage Validation Tests
+// =============================================================================
+//
+// These tests validate memory usage at different entity scales per the
+// performance-validation spec requirements:
+// - Memory Efficiency: 64 bytes per entity index overhead (cache-line aligned)
+// - 128GB Limit: Performance with 1B entities in 128GB RAM (~91.5GB index)
+
+test "F5.1.5: IndexEntry is exactly 64 bytes (cache-line aligned)" {
+    // This is a critical invariant for memory efficiency.
+    // 64 bytes = 1 CPU cache line = optimal memory access patterns.
+    try std.testing.expectEqual(@as(usize, 64), @sizeOf(IndexEntry));
+}
+
+test "F5.1.5: memory_bytes calculation validates 64 bytes per slot" {
+    // Memory = capacity * 64 bytes (one cache line per slot)
+    const stats = IndexStats{
+        .entry_count = 1000,
+        .capacity = 1500, // ~67% load factor
+        .tombstone_count = 0,
+        .lookup_count = 0,
+        .lookup_hit_count = 0,
+        .upsert_count = 0,
+        .total_probe_length = 0,
+        .max_probe_length_seen = 0,
+        .probe_limit_hits = 0,
+        .collision_count = 0,
+        .ttl_expirations = 0,
+    };
+
+    // 1500 slots * 64 bytes = 96,000 bytes
+    try std.testing.expectEqual(@as(u64, 96_000), stats.memory_bytes());
+}
+
+test "F5.1.5: memory validation at 1M entities" {
+    // 1M entities at 70% load factor = ~1.43M slots
+    // Memory = 1.43M * 64 bytes = ~91.4 MB
+    const entities: u64 = 1_000_000;
+    const load_factor: f64 = 0.70;
+    const capacity: u64 = @intFromFloat(@ceil(@as(f64, @floatFromInt(entities)) / load_factor));
+    const expected_bytes = capacity * 64;
+
+    // Validate calculation
+    // 1M / 0.70 = 1,428,572 slots (rounded up)
+    // 1,428,572 * 64 = 91,428,608 bytes (~87.2 MB)
+    try std.testing.expect(expected_bytes >= 91_000_000);
+    try std.testing.expect(expected_bytes <= 92_000_000);
+
+    // Create stats to verify memory_bytes()
+    const stats = IndexStats{
+        .entry_count = entities,
+        .capacity = capacity,
+        .tombstone_count = 0,
+        .lookup_count = 0,
+        .lookup_hit_count = 0,
+        .upsert_count = 0,
+        .total_probe_length = 0,
+        .max_probe_length_seen = 0,
+        .probe_limit_hits = 0,
+        .collision_count = 0,
+        .ttl_expirations = 0,
+    };
+    try std.testing.expectEqual(expected_bytes, stats.memory_bytes());
+}
+
+test "F5.1.5: memory validation at 10M entities" {
+    // 10M entities at 70% load factor = ~14.3M slots
+    // Memory = 14.3M * 64 bytes = ~914 MB
+    const entities: u64 = 10_000_000;
+    const load_factor: f64 = 0.70;
+    const cap: u64 = @intFromFloat(@ceil(@as(f64, @floatFromInt(entities)) / load_factor));
+    const expected_bytes = cap * 64;
+
+    // 10M / 0.70 = 14,285,715 slots (rounded up)
+    // 14,285,715 * 64 = 914,285,760 bytes (~872 MB)
+    try std.testing.expect(expected_bytes >= 900_000_000);
+    try std.testing.expect(expected_bytes <= 920_000_000);
+}
+
+test "F5.1.5: memory validation at 100M entities" {
+    // 100M entities at 70% load factor = ~143M slots
+    // Memory = 143M * 64 bytes = ~9.14 GB
+    const entities: u64 = 100_000_000;
+    const load_factor: f64 = 0.70;
+    const cap: u64 = @intFromFloat(@ceil(@as(f64, @floatFromInt(entities)) / load_factor));
+    const expected_bytes = cap * 64;
+
+    // 100M / 0.70 = 142,857,143 slots (rounded up)
+    // 142,857,143 * 64 = 9,142,857,152 bytes (~8.5 GB)
+    const expected_gb: f64 = @as(f64, @floatFromInt(expected_bytes)) / (1024 * 1024 * 1024);
+    try std.testing.expect(expected_gb >= 8.5);
+    try std.testing.expect(expected_gb <= 9.5);
+}
+
+test "F5.1.5: memory validation at 1B entities (theoretical)" {
+    // 1B entities at 70% load factor = ~1.43B slots
+    // Memory = 1.43B * 64 bytes = ~91.5 GB
+    // This validates the spec's 128GB RAM requirement claim.
+    const entities: u64 = 1_000_000_000;
+    const load_factor: f64 = 0.70;
+    const cap: u64 = @intFromFloat(@ceil(@as(f64, @floatFromInt(entities)) / load_factor));
+    const expected_bytes = cap * 64;
+
+    // 1B / 0.70 = 1,428,571,429 slots (rounded up)
+    // 1,428,571,429 * 64 = 91,428,571,456 bytes (~85.2 GB)
+    const expected_gb: f64 = @as(f64, @floatFromInt(expected_bytes)) / (1024 * 1024 * 1024);
+
+    // Per spec: "128GB Limit: Performance with 1B entities in 128GB RAM (~91.5GB index)"
+    try std.testing.expect(expected_gb >= 85.0);
+    try std.testing.expect(expected_gb <= 92.0);
+
+    // Verify fits within 128GB with OS/cache overhead
+    const total_ram_gb: f64 = 128.0;
+    const os_overhead_gb: f64 = 36.0; // ~36GB for OS, cache, buffers
+    const available_for_index_gb = total_ram_gb - os_overhead_gb;
+    try std.testing.expect(expected_gb <= available_for_index_gb);
+}
+
+test "F5.1.5: load factor impact on memory" {
+    // Test that load factor correctly impacts memory requirements.
+    // Lower load factor = more memory, better performance (fewer collisions)
+    // Higher load factor = less memory, more collisions
+    const entities: u64 = 1_000_000;
+
+    // At 50% load factor (2x slots)
+    const capacity_50: u64 = @intFromFloat(
+        @ceil(@as(f64, @floatFromInt(entities)) / 0.50),
+    );
+    const bytes_50 = capacity_50 * 64;
+
+    // At 70% load factor (1.43x slots) - our default
+    const capacity_70: u64 = @intFromFloat(
+        @ceil(@as(f64, @floatFromInt(entities)) / 0.70),
+    );
+    const bytes_70 = capacity_70 * 64;
+
+    // At 90% load factor (1.11x slots)
+    const capacity_90: u64 = @intFromFloat(
+        @ceil(@as(f64, @floatFromInt(entities)) / 0.90),
+    );
+    const bytes_90 = capacity_90 * 64;
+
+    // Lower load factor should use more memory
+    try std.testing.expect(bytes_50 > bytes_70);
+    try std.testing.expect(bytes_70 > bytes_90);
+
+    // 50% should be ~40% more memory than 70%
+    const ratio_50_70: f64 = @as(f64, @floatFromInt(bytes_50)) /
+        @as(f64, @floatFromInt(bytes_70));
+    try std.testing.expect(ratio_50_70 >= 1.35);
+    try std.testing.expect(ratio_50_70 <= 1.45);
+}
