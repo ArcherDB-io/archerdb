@@ -3845,6 +3845,11 @@ pub fn StateMachineType(comptime Storage: type) type {
             archerdb_metrics.Registry.write_events_total.add(@intCast(successful_events));
             archerdb_metrics.Registry.write_bytes_total.add(@intCast(@sizeOf(GeoEvent) * successful_events));
 
+            // Record error metrics (F1.4.1 - Observability)
+            if (count > 0) {
+                archerdb_metrics.Registry.write_errors_total.add(@intCast(count));
+            }
+
             const end_time = std.time.nanoTimestamp();
             const elapsed_ns: u64 = @intCast(@max(0, end_time - start_time));
             archerdb_metrics.Registry.write_latency.observeNs(elapsed_ns);

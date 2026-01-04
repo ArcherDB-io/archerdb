@@ -359,6 +359,13 @@ pub const Registry = struct {
         null,
     );
 
+    // Error metrics
+    pub var write_errors_total: Counter = Counter.init(
+        "archerdb_write_errors_total",
+        "Total write operation errors",
+        null,
+    );
+
     /// Format all metrics as Prometheus text format.
     pub fn format(writer: anytype) !void {
         // Set info gauge to 1 (it's always present)
@@ -386,6 +393,9 @@ pub const Registry = struct {
         try writer.writeAll("\n");
 
         try active_connections.format(writer);
+        try writer.writeAll("\n");
+
+        try write_errors_total.format(writer);
     }
 };
 
