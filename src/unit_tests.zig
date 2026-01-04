@@ -3,6 +3,7 @@
 comptime {
     _ = @import("aof.zig");
     _ = @import("archerdb/backup_config.zig");
+    _ = @import("archerdb/backup_coordinator.zig");
     _ = @import("archerdb/backup_queue.zig");
     _ = @import("archerdb/backup_state.zig");
     _ = @import("archerdb/ecosystem_validation.zig");
