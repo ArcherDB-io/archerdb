@@ -35,6 +35,7 @@ const ZipfianGenerator = stdx.ZipfianGenerator;
 const ZipfianShuffled = stdx.ZipfianShuffled;
 
 const cli = @import("./cli.zig");
+const geo_benchmark_load = @import("./geo_benchmark_load.zig");
 
 pub fn main(
     allocator: std.mem.Allocator,
@@ -43,6 +44,11 @@ pub fn main(
     addresses: []const std.net.Address,
     cli_args: *const cli.Command.Benchmark,
 ) !void {
+    // F5.1.1-F5.1.4: Route to geo benchmark when --geo flag is set
+    if (cli_args.geo) {
+        return geo_benchmark_load.main(allocator, io, time, addresses, cli_args);
+    }
+
     if (builtin.mode != .ReleaseSafe and builtin.mode != .ReleaseFast) {
         log.warn("Benchmark must be built with '-Drelease' for reasonable results.", .{});
     }

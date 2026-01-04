@@ -201,6 +201,21 @@ const CLIArgs = union(enum) {
         file: ?[]const u8 = null,
         addresses: ?[]const u8 = null,
         seed: ?[]const u8 = null,
+        // F5.1.1-F5.1.4: GeoEvent benchmarking parameters
+        /// Enable geospatial benchmarking mode (upsert_events, query_uuid, query_radius)
+        geo: bool = false,
+        /// Number of GeoEvents to insert (default: 1M for throughput target)
+        geo_event_count: u64 = 1_000_000,
+        /// Number of unique entities (default: 100K)
+        geo_entity_count: u32 = 100_000,
+        /// Number of UUID lookup queries
+        geo_query_uuid_count: u32 = 10_000,
+        /// Number of radius queries
+        geo_query_radius_count: u32 = 1_000,
+        /// Number of polygon queries
+        geo_query_polygon_count: u32 = 100,
+        /// Radius for geo queries in meters (default: 1km)
+        geo_query_radius_meters: u32 = 1_000,
     };
 
     // Experimental: the interface is subject to change.
@@ -698,6 +713,14 @@ pub const Command = union(enum) {
         file: ?[]const u8,
         addresses: ?Addresses,
         seed: ?[]const u8,
+        // F5.1.1-F5.1.4: GeoEvent benchmarking
+        geo: bool,
+        geo_event_count: u64,
+        geo_entity_count: u32,
+        geo_query_uuid_count: u32,
+        geo_query_radius_count: u32,
+        geo_query_polygon_count: u32,
+        geo_query_radius_meters: u32,
     };
 
     pub const Inspect = union(enum) {
@@ -1298,6 +1321,14 @@ fn parse_args_benchmark(benchmark: CLIArgs.Benchmark) Command.Benchmark {
         .file = benchmark.file,
         .addresses = addresses,
         .seed = benchmark.seed,
+        // F5.1.1-F5.1.4: GeoEvent benchmarking
+        .geo = benchmark.geo,
+        .geo_event_count = benchmark.geo_event_count,
+        .geo_entity_count = benchmark.geo_entity_count,
+        .geo_query_uuid_count = benchmark.geo_query_uuid_count,
+        .geo_query_radius_count = benchmark.geo_query_radius_count,
+        .geo_query_polygon_count = benchmark.geo_query_polygon_count,
+        .geo_query_radius_meters = benchmark.geo_query_radius_meters,
     };
 }
 
