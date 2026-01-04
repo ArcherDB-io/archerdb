@@ -541,6 +541,38 @@ pub const Registry = struct {
     pub var free_set_blocks_reserved: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
     pub var free_set_total_blocks: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
 
+    // Replication lag metrics (F5.1.6 - Observability)
+    // Per-replica replication lag tracking (max 6 replicas as per constants.replicas_max)
+    pub const max_replicas: usize = 6;
+
+    /// Replication lag in operations per replica.
+    /// Tracked from the primary's perspective: commit_max - replica's commit_min.
+    pub var vsr_replication_lag_ops: [max_replicas]std.atomic.Value(u64) = [_]std.atomic.Value(u64){
+        std.atomic.Value(u64).init(0),
+        std.atomic.Value(u64).init(0),
+        std.atomic.Value(u64).init(0),
+        std.atomic.Value(u64).init(0),
+        std.atomic.Value(u64).init(0),
+        std.atomic.Value(u64).init(0),
+    };
+
+    /// Replication lag in nanoseconds per replica.
+    /// Derived from operation lag and average operation rate.
+    pub var vsr_replication_lag_ns: [max_replicas]std.atomic.Value(u64) = [_]std.atomic.Value(u64){
+        std.atomic.Value(u64).init(0),
+        std.atomic.Value(u64).init(0),
+        std.atomic.Value(u64).init(0),
+        std.atomic.Value(u64).init(0),
+        std.atomic.Value(u64).init(0),
+        std.atomic.Value(u64).init(0),
+    };
+
+    /// Number of active replicas in the cluster.
+    pub var vsr_replica_count: std.atomic.Value(u8) = std.atomic.Value(u8).init(0);
+
+    /// This replica's index in the cluster.
+    pub var vsr_replica_index: std.atomic.Value(u8) = std.atomic.Value(u8).init(0);
+
     /// Format all metrics as Prometheus text format.
     pub fn format(writer: anytype) !void {
         // Set info gauge to 1 (it's always present)
@@ -580,6 +612,35 @@ pub const Registry = struct {
         try vsr_op_number.format(writer);
         try vsr_view_changes_total.format(writer);
         try writer.writeAll("\n");
+
+        // VSR replication lag metrics (F5.1.6)
+        const replica_count = vsr_replica_count.load(.monotonic);
+        if (replica_count > 0) {
+            try writer.writeAll("# HELP archerdb_vsr_replication_lag_ops " ++
+                "Replication lag in operations per replica\n");
+            try writer.writeAll("# TYPE archerdb_vsr_replication_lag_ops gauge\n");
+            for (0..replica_count) |i| {
+                const lag = vsr_replication_lag_ops[i].load(.monotonic);
+                try writer.print(
+                    "archerdb_vsr_replication_lag_ops{{replica=\"replica-{d}\"}} {d}\n",
+                    .{ i, lag },
+                );
+            }
+            try writer.writeAll("\n");
+
+            try writer.writeAll("# HELP archerdb_vsr_replication_lag_seconds " ++
+                "Replication lag in seconds per replica\n");
+            try writer.writeAll("# TYPE archerdb_vsr_replication_lag_seconds gauge\n");
+            for (0..replica_count) |i| {
+                const lag_ns = vsr_replication_lag_ns[i].load(.monotonic);
+                const lag_sec: f64 = @as(f64, @floatFromInt(lag_ns)) / 1e9;
+                try writer.print(
+                    "archerdb_vsr_replication_lag_seconds{{replica=\"replica-{d}\"}} {d:.6}\n",
+                    .{ i, lag_sec },
+                );
+            }
+            try writer.writeAll("\n");
+        }
 
         // Resource metrics
         try memory_allocated_bytes.format(writer);
@@ -821,6 +882,58 @@ pub const Registry = struct {
         vsr_view_changes_total.inc();
     }
 
+    /// Initialize replication lag tracking for the cluster.
+    /// Called once during replica startup.
+    pub fn initReplicationLagTracking(replica_count_val: u8, replica_index: u8) void {
+        vsr_replica_count.store(replica_count_val, .monotonic);
+        vsr_replica_index.store(replica_index, .monotonic);
+        // Initialize all lag values to 0
+        for (&vsr_replication_lag_ops) |*lag| {
+            lag.store(0, .monotonic);
+        }
+        for (&vsr_replication_lag_ns) |*lag| {
+            lag.store(0, .monotonic);
+        }
+    }
+
+    /// Update replication lag for a specific replica.
+    /// Called when the primary receives a PrepareOk or Commit message.
+    ///
+    /// Args:
+    ///   replica_idx: Index of the replica (0-based)
+    ///   lag_ops: Replication lag in operations (commit_max - replica's commit_min)
+    ///   lag_ns: Estimated lag in nanoseconds (if known, or 0)
+    pub fn updateReplicationLag(replica_idx: u8, lag_ops: u64, lag_ns: u64) void {
+        if (replica_idx < max_replicas) {
+            vsr_replication_lag_ops[replica_idx].store(lag_ops, .monotonic);
+            vsr_replication_lag_ns[replica_idx].store(lag_ns, .monotonic);
+        }
+    }
+
+    /// Update replication lag for all replicas at once.
+    /// Called periodically from the primary's main loop.
+    ///
+    /// Args:
+    ///   commit_max: The primary's commit_max (highest committed op)
+    ///   commit_mins: Array of commit_min values for each replica (null if unknown)
+    ///   avg_op_duration_ns: Average operation duration for time estimation
+    pub fn updateAllReplicationLags(
+        commit_max: u64,
+        commit_mins: []const ?u64,
+        avg_op_duration_ns: u64,
+    ) void {
+        const count = @min(commit_mins.len, max_replicas);
+        for (0..count) |i| {
+            if (commit_mins[i]) |replica_commit_min| {
+                // Saturating subtraction to handle edge cases
+                const lag_ops = commit_max -| replica_commit_min;
+                const lag_ns = lag_ops * avg_op_duration_ns;
+                vsr_replication_lag_ops[i].store(lag_ops, .monotonic);
+                vsr_replication_lag_ns[i].store(lag_ns, .monotonic);
+            }
+        }
+    }
+
     /// Update resource metrics (memory, disk, I/O).
     /// Called periodically from the main replica loop.
     pub fn updateResourceMetrics(
@@ -1002,4 +1115,89 @@ test "Counter: prometheus format with labels" {
 
     const output = fbs.getWritten();
     try std.testing.expect(std.mem.indexOf(u8, output, "test_total{method=\"GET\"} 100") != null);
+}
+
+test "Registry: replication lag initialization" {
+    // Initialize with 3 replicas, this replica is index 1
+    Registry.initReplicationLagTracking(3, 1);
+
+    try std.testing.expectEqual(@as(u8, 3), Registry.vsr_replica_count.load(.monotonic));
+    try std.testing.expectEqual(@as(u8, 1), Registry.vsr_replica_index.load(.monotonic));
+
+    // All lag values should be initialized to 0
+    for (0..3) |i| {
+        const lag = Registry.vsr_replication_lag_ops[i].load(.monotonic);
+        try std.testing.expectEqual(@as(u64, 0), lag);
+    }
+}
+
+test "Registry: update single replica lag" {
+    // Initialize
+    Registry.initReplicationLagTracking(3, 0);
+
+    // Update lag for replica 1: 5 ops behind, 5ms estimated lag
+    Registry.updateReplicationLag(1, 5, 5_000_000);
+
+    const lag_ops_1 = Registry.vsr_replication_lag_ops[1].load(.monotonic);
+    try std.testing.expectEqual(@as(u64, 5), lag_ops_1);
+    const lag_ns_1 = Registry.vsr_replication_lag_ns[1].load(.monotonic);
+    try std.testing.expectEqual(@as(u64, 5_000_000), lag_ns_1);
+
+    // Other replicas should still be at 0
+    try std.testing.expectEqual(@as(u64, 0), Registry.vsr_replication_lag_ops[0].load(.monotonic));
+    try std.testing.expectEqual(@as(u64, 0), Registry.vsr_replication_lag_ops[2].load(.monotonic));
+}
+
+test "Registry: update all replication lags" {
+    // Initialize
+    Registry.initReplicationLagTracking(3, 0);
+
+    // Simulate: commit_max = 1000, replicas at 1000, 995, 998
+    const commit_mins = [_]?u64{ 1000, 995, 998 };
+    const avg_op_ns: u64 = 1_000_000; // 1ms per op
+
+    Registry.updateAllReplicationLags(1000, &commit_mins, avg_op_ns);
+
+    // Replica 0: 0 ops behind (primary)
+    try std.testing.expectEqual(@as(u64, 0), Registry.vsr_replication_lag_ops[0].load(.monotonic));
+    // Replica 1: 5 ops behind, 5ms lag
+    const r1_ops = Registry.vsr_replication_lag_ops[1].load(.monotonic);
+    const r1_ns = Registry.vsr_replication_lag_ns[1].load(.monotonic);
+    try std.testing.expectEqual(@as(u64, 5), r1_ops);
+    try std.testing.expectEqual(@as(u64, 5_000_000), r1_ns);
+    // Replica 2: 2 ops behind, 2ms lag
+    const r2_ops = Registry.vsr_replication_lag_ops[2].load(.monotonic);
+    const r2_ns = Registry.vsr_replication_lag_ns[2].load(.monotonic);
+    try std.testing.expectEqual(@as(u64, 2), r2_ops);
+    try std.testing.expectEqual(@as(u64, 2_000_000), r2_ns);
+}
+
+test "Registry: replication lag metrics format" {
+    // Initialize with 2 replicas
+    Registry.initReplicationLagTracking(2, 0);
+    Registry.updateReplicationLag(0, 0, 0);
+    Registry.updateReplicationLag(1, 3, 3_000_000); // 3ms lag
+
+    // Use same buffer size as metrics_server.zig (65536)
+    // to accommodate all metrics including LSM per-level stats
+    var buf: [65536]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buf);
+
+    try Registry.format(fbs.writer());
+
+    const output = fbs.getWritten();
+
+    // Should contain lag_ops metrics
+    const has_lag_ops = std.mem.indexOf(u8, output, "archerdb_vsr_replication_lag_ops") != null;
+    try std.testing.expect(has_lag_ops);
+
+    // Should contain lag_seconds metrics
+    const has_lag_sec = std.mem.indexOf(u8, output, "archerdb_vsr_replication_lag_seconds") != null;
+    try std.testing.expect(has_lag_sec);
+
+    // Should have per-replica labels
+    const has_replica0 = std.mem.indexOf(u8, output, "replica=\"replica-0\"") != null;
+    const has_replica1 = std.mem.indexOf(u8, output, "replica=\"replica-1\"") != null;
+    try std.testing.expect(has_replica0);
+    try std.testing.expect(has_replica1);
 }

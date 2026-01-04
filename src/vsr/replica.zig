@@ -1104,6 +1104,9 @@ pub fn ReplicaType(
             self.node_count = node_count;
             self.replica = replica_index;
 
+            // Initialize replication lag metrics tracking (F5.1.6)
+            archerdb_metrics.Registry.initReplicationLagTracking(replica_count, replica_index);
+
             self.journal_repair_message_budget = try RepairBudgetJournal.init(
                 allocator,
                 .{
@@ -3878,6 +3881,11 @@ pub fn ReplicaType(
                 self.grid.free_set.reservation_blocks,
                 total_blocks,
             );
+
+            // Update replication lag metrics for this replica (F5.1.6)
+            // Lag represents uncommitted operations: commit_max - commit_min
+            const replication_lag_ops = self.commit_max -| self.commit_min;
+            archerdb_metrics.Registry.updateReplicationLag(self.replica, replication_lag_ops, 0);
 
             self.trace.emit_metrics();
         }
