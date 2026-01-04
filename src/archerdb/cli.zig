@@ -100,6 +100,12 @@ const CLIArgs = union(enum) {
         metrics_port: ?u16 = null,
         metrics_bind: ?[]const u8 = null,
 
+        // TLS configuration (F5.3 - Security)
+        tls_required: bool = false,
+        tls_cert_path: ?[]const u8 = null,
+        tls_key_path: ?[]const u8 = null,
+        tls_ca_path: ?[]const u8 = null,
+
         // Everything from here until positional arguments is considered experimental, and requires
         // `--experimental` to be set. Experimental flags disable automatic upgrades with
         // multiversion binaries; each replica has to be manually restarted. Experimental flags must
@@ -624,6 +630,10 @@ pub const Command = union(enum) {
         log_trace: bool,
         metrics_port: ?u16,
         metrics_bind: []const u8,
+        tls_required: bool,
+        tls_cert_path: ?[]const u8,
+        tls_key_path: ?[]const u8,
+        tls_ca_path: ?[]const u8,
         statsd: ?std.net.Address,
     };
 
@@ -899,10 +909,12 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
         "log_level",        "log_format",
         "log_file",         "log_rotate_size",
         "log_rotate_count", "metrics_port",
-        "metrics_bind",
+        "metrics_bind",     "tls_required",
+        "tls_cert_path",    "tls_key_path",
+        "tls_ca_path",
     };
+    @setEvalBranchQuota(16_000);
     inline for (std.meta.fields(@TypeOf(start))) |field| {
-        @setEvalBranchQuota(8_000);
         // Positional arguments can't be experimental.
         comptime if (std.mem.eql(u8, field.name, "--")) break;
 
@@ -1179,6 +1191,11 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
             parse_address_and_port(statsd_address, "--statsd", 8125)
         else
             null,
+        // TLS configuration (F5.3 - Security)
+        .tls_required = start.tls_required,
+        .tls_cert_path = start.tls_cert_path,
+        .tls_key_path = start.tls_key_path,
+        .tls_ca_path = start.tls_ca_path,
     };
 }
 
