@@ -3383,7 +3383,8 @@ test "StateMachine: multi-batch partial result handling (transfers)" {
         const message_body: []align(16) const u8 = input[0..bytes_written];
         context.prepare(operation, message_body);
         const out_slice = output[0..constants.message_body_size_max];
-        const output_aligned: *align(16) [constants.message_body_size_max]u8 = @alignCast(out_slice);
+        const output_aligned: *align(16) [constants.message_body_size_max]u8 =
+            @alignCast(out_slice);
         _ = context.execute(context.op, operation, message_body, output_aligned);
         context.op += 1;
     }

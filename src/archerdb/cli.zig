@@ -1205,7 +1205,8 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
         .log_level = start.log_level,
         .log_format = start.log_format,
         .log_file = start.log_file,
-        .log_rotate_size = if (start.log_rotate_size) |size| size.bytes() else 100 * 1024 * 1024, // Default 100MB
+        // Default 100MB
+        .log_rotate_size = if (start.log_rotate_size) |s| s.bytes() else 100 * 1024 * 1024,
         .log_rotate_count = start.log_rotate_count orelse 10, // Default 10 files
         .log_trace = start.log_trace,
         .metrics_port = start.metrics_port,

@@ -58,14 +58,12 @@ pub const RotatingLog = struct {
     rotate_count: u32,
     mutex: std.Thread.Mutex,
 
-    const Self = @This();
-
-    pub fn init(path: []const u8, rotate_size: u64, rotate_count: u32) !Self {
+    pub fn init(path: []const u8, rotate_size: u64, rotate_count: u32) !RotatingLog {
         const file = try std.fs.cwd().createFile(path, .{ .truncate = false });
         // Seek to end for appending
         const stat = try file.stat();
         try file.seekTo(stat.size);
-        return Self{
+        return RotatingLog{
             .file = file,
             .path = path,
             .bytes_written = stat.size,
@@ -75,11 +73,11 @@ pub const RotatingLog = struct {
         };
     }
 
-    pub fn deinit(self: *Self) void {
+    pub fn deinit(self: *RotatingLog) void {
         self.file.close();
     }
 
-    pub fn write(self: *Self, data: []const u8) void {
+    pub fn write(self: *RotatingLog, data: []const u8) void {
         self.mutex.lock();
         defer self.mutex.unlock();
 
@@ -93,7 +91,7 @@ pub const RotatingLog = struct {
         self.bytes_written += data.len;
     }
 
-    fn rotateFiles(self: *Self) void {
+    fn rotateFiles(self: *RotatingLog) void {
         // Close current file
         self.file.close();
 
@@ -103,18 +101,27 @@ pub const RotatingLog = struct {
             var old_name_buf: [std.fs.max_path_bytes]u8 = undefined;
             var new_name_buf: [std.fs.max_path_bytes]u8 = undefined;
 
-            const old_suffix = if (i == 1) "" else std.fmt.bufPrint(&old_name_buf, ".{d}", .{i - 1}) catch continue;
-            const new_suffix = std.fmt.bufPrint(&new_name_buf, ".{d}", .{i}) catch continue;
+            const old_sfx_fmt = std.fmt.bufPrint(&old_name_buf, ".{d}", .{i - 1});
+            const old_suffix = if (i == 1) "" else old_sfx_fmt catch continue;
+            const new_suffix_fmt = std.fmt.bufPrint(&new_name_buf, ".{d}", .{i});
+            const new_suffix = new_suffix_fmt catch continue;
 
             var old_path_buf: [std.fs.max_path_bytes]u8 = undefined;
             var new_path_buf: [std.fs.max_path_bytes]u8 = undefined;
 
-            const old_path = if (i == 1)
-                self.path
-            else
-                std.fmt.bufPrint(&old_path_buf, "{s}{s}", .{ self.path, old_suffix }) catch continue;
+            const old_path_fmt = std.fmt.bufPrint(
+                &old_path_buf,
+                "{s}{s}",
+                .{ self.path, old_suffix },
+            );
+            const old_path = if (i == 1) self.path else old_path_fmt catch continue;
 
-            const new_path = std.fmt.bufPrint(&new_path_buf, "{s}{s}", .{ self.path, new_suffix }) catch continue;
+            const new_path_fmt = std.fmt.bufPrint(
+                &new_path_buf,
+                "{s}{s}",
+                .{ self.path, new_suffix },
+            );
+            const new_path = new_path_fmt catch continue;
 
             if (i == self.rotate_count) {
                 // Delete oldest rotated file if it exists
@@ -130,7 +137,7 @@ pub const RotatingLog = struct {
         self.bytes_written = 0;
     }
 
-    pub fn getWriter(self: *Self) std.fs.File.Writer {
+    pub fn getWriter(self: *RotatingLog) std.fs.File.Writer {
         return self.file.writer();
     }
 };
@@ -201,8 +208,10 @@ fn log_json(
     const writer = fbs.writer();
 
     nosuspend {
-        writer.print("{{\"timestamp\":\"{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}.{d:0>3}Z\"," ++
-            "\"level\":\"{s}\",\"scope\":\"{s}\",\"message\":\"", .{
+        const fmt_ts = "{{\"timestamp\":\"{d:0>4}-{d:0>2}-{d:0>2}T" ++
+            "{d:0>2}:{d:0>2}:{d:0>2}.{d:0>3}Z\"," ++
+            "\"level\":\"{s}\",\"scope\":\"{s}\",\"message\":\"";
+        writer.print(fmt_ts, .{
             date_time.year,
             date_time.month,
             date_time.day,
@@ -321,7 +330,9 @@ pub fn main() !void {
 
             // Initialize rotating log if --log-file is set
             if (args.log_file) |log_path| {
-                rotating_log = RotatingLog.init(log_path, args.log_rotate_size, args.log_rotate_count) catch |err| {
+                const rotate_sz = args.log_rotate_size;
+                const rotate_cnt = args.log_rotate_count;
+                rotating_log = RotatingLog.init(log_path, rotate_sz, rotate_cnt) catch |err| {
                     // Fall back to stderr if we can't open the log file
                     log.err("error opening log file '{s}': {}", .{ log_path, err });
                     return err;
@@ -330,8 +341,10 @@ pub fn main() !void {
 
             // Initialize metrics server if --metrics-port is set
             if (args.metrics_port) |port| {
-                metrics_srv = metrics_server.MetricsServer.start(args.metrics_bind, port) catch |err| {
-                    log.err("error starting metrics server on {s}:{d}: {}", .{ args.metrics_bind, port, err });
+                const bind = args.metrics_bind;
+                metrics_srv = metrics_server.MetricsServer.start(bind, port) catch |err| {
+                    const fmt = "error starting metrics server on {s}:{d}: {}";
+                    log.err(fmt, .{ bind, port, err });
                     return err;
                 };
             }
@@ -462,7 +475,8 @@ fn command_status(address: []const u8, port: u16) !void {
     defer std.posix.close(socket);
 
     std.posix.connect(socket, &addr.any, addr.getOsSockLen()) catch |err| {
-        try std.fmt.format(stdout, "Error: failed to connect to {s}:{d}: {}\n", .{ address, port, err });
+        const fmt = "Error: failed to connect to {s}:{d}: {}\n";
+        try std.fmt.format(stdout, fmt, .{ address, port, err });
         try stdout_buffer.flush();
         return;
     };
@@ -506,7 +520,8 @@ fn command_status(address: []const u8, port: u16) !void {
                 } else if (std.mem.eql(u8, status_code, "503")) {
                     try std.fmt.format(stdout, "ArcherDB Status: NOT READY\n", .{});
                 } else {
-                    try std.fmt.format(stdout, "ArcherDB Status: UNKNOWN (HTTP {s})\n", .{status_code});
+                    const unk_fmt = "ArcherDB Status: UNKNOWN (HTTP {s})\n";
+                    try std.fmt.format(stdout, unk_fmt, .{status_code});
                 }
 
                 try std.fmt.format(stdout, "Response: {s}\n", .{body});

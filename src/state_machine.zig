@@ -3880,7 +3880,8 @@ pub fn StateMachineType(comptime Storage: type) type {
             const successful_events = events.len - count;
             archerdb_metrics.Registry.write_operations_total.inc();
             archerdb_metrics.Registry.write_events_total.add(@intCast(successful_events));
-            archerdb_metrics.Registry.write_bytes_total.add(@intCast(@sizeOf(GeoEvent) * successful_events));
+            const bytes_written = @sizeOf(GeoEvent) * successful_events;
+            archerdb_metrics.Registry.write_bytes_total.add(@intCast(bytes_written));
 
             // Record error metrics (F1.4.1 - Observability)
             if (count > 0) {

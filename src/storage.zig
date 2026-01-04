@@ -88,7 +88,8 @@ pub fn StorageType(comptime IO: type) type {
             zone: vsr.Zone,
             start: ?stdx.Instant,
 
-            /// Original buffer length for metrics tracking (buffer gets re-sliced as writes complete).
+            /// Original buffer length for metrics tracking
+            /// (buffer gets re-sliced as writes complete).
             buffer_len: u64,
         };
 

@@ -996,6 +996,8 @@ test "tidy unix permissions" {
         "zig/download.ps1",
         "zig/download.sh",
         "src/scripts/cfo_supervisor.sh",
+        "scripts/add-license-headers.sh",
+        "scripts/dev-cluster.sh",
     };
 
     const allocator = std.testing.allocator;
@@ -1063,6 +1065,8 @@ test "tidy extensions" {
         // ArcherDB-specific exceptions
         .{"CLAUDE.md"},
         .{"LICENSE.tigerbeetle"},
+        .{"NOTICE"},
+        .{"scripts/add-license-headers.sh"},
     });
 
     const allocator = std.testing.allocator;

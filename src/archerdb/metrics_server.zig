@@ -56,11 +56,9 @@ pub const MetricsServer = struct {
     thread: std.Thread,
     running: std.atomic.Value(bool),
 
-    const Self = @This();
-
-    pub fn start(bind_address: []const u8, port: u16) !*Self {
+    pub fn start(bind_address: []const u8, port: u16) !*MetricsServer {
         const allocator = std.heap.page_allocator;
-        const self = try allocator.create(Self);
+        const self = try allocator.create(MetricsServer);
         errdefer allocator.destroy(self);
 
         // Parse bind address
@@ -75,7 +73,8 @@ pub const MetricsServer = struct {
 
         // Set socket options
         const enable: u32 = 1;
-        try posix.setsockopt(self.server_fd, posix.SOL.SOCKET, posix.SO.REUSEADDR, std.mem.asBytes(&enable));
+        const sock_opt = posix.SO.REUSEADDR;
+        try posix.setsockopt(self.server_fd, posix.SOL.SOCKET, sock_opt, std.mem.asBytes(&enable));
 
         // Bind and listen
         try posix.bind(self.server_fd, &address.any, address.getOsSockLen());
@@ -88,12 +87,14 @@ pub const MetricsServer = struct {
         var bound_addr_len: posix.socklen_t = @sizeOf(posix.sockaddr);
         try posix.getsockname(self.server_fd, &bound_addr, &bound_addr_len);
 
-        const bound_port = std.mem.bigToNative(u16, @as(*align(1) const posix.sockaddr.in, @ptrCast(&bound_addr)).port);
+        const addr_in: *align(1) const posix.sockaddr.in = @ptrCast(&bound_addr);
+        const bound_port = std.mem.bigToNative(u16, addr_in.port);
         log.info("metrics server listening on {s}:{d}", .{ bind_address, bound_port });
 
         // Security warning for binding to all interfaces
         if (std.mem.eql(u8, bind_address, "0.0.0.0")) {
-            log.warn("metrics server bound to all interfaces (0.0.0.0) - consider using authentication in production", .{});
+            const msg = "metrics server bound to 0.0.0.0 - consider auth in prod";
+            log.warn(msg, .{});
         }
 
         // Start server thread
@@ -102,7 +103,7 @@ pub const MetricsServer = struct {
         return self;
     }
 
-    pub fn stop(self: *Self) void {
+    pub fn stop(self: *MetricsServer) void {
         self.running.store(false, .release);
 
         // Close socket to interrupt accept()
@@ -116,12 +117,14 @@ pub const MetricsServer = struct {
         std.heap.page_allocator.destroy(self);
     }
 
-    fn serverLoop(self: *Self) void {
+    fn serverLoop(self: *MetricsServer) void {
         while (self.running.load(.acquire)) {
             var client_addr: posix.sockaddr = undefined;
             var client_addr_len: posix.socklen_t = @sizeOf(posix.sockaddr);
 
-            const client_fd = posix.accept(self.server_fd, &client_addr, &client_addr_len, 0) catch |err| {
+            const c_addr = &client_addr;
+            const c_len = &client_addr_len;
+            const client_fd = posix.accept(self.server_fd, c_addr, c_len, 0) catch |err| {
                 if (!self.running.load(.acquire)) break; // Normal shutdown
                 log.warn("accept error: {}", .{err});
                 continue;
@@ -165,7 +168,9 @@ pub const MetricsServer = struct {
 
     fn parsePath(request: []const u8) ?[]const u8 {
         // Find end of first line
-        const line_end = std.mem.indexOf(u8, request, "\r\n") orelse std.mem.indexOf(u8, request, "\n") orelse return null;
+        const crlf = std.mem.indexOf(u8, request, "\r\n");
+        const lf = std.mem.indexOf(u8, request, "\n");
+        const line_end = crlf orelse lf orelse return null;
         const first_line = request[0..line_end];
 
         // Parse "GET /path HTTP/1.1"
@@ -198,10 +203,13 @@ pub const MetricsServer = struct {
             try sendResponse(client_fd, .ok, "application/json", body);
         } else {
             var body_buf: [256]u8 = undefined;
-            const body = std.fmt.bufPrint(&body_buf, "{{\"status\":\"unavailable\",\"reason\":\"{s}\"}}", .{state.reason()}) catch |err| switch (err) {
+            const fmt = "{{\"status\":\"unavailable\",\"reason\":\"{s}\"}}";
+            const reason = state.reason();
+            const body = std.fmt.bufPrint(&body_buf, fmt, .{reason}) catch |err| switch (err) {
                 error.NoSpaceLeft => "{\"status\":\"unavailable\"}",
             };
-            try sendResponse(client_fd, .service_unavailable, "application/json", body);
+            const ctype = "application/json";
+            try sendResponse(client_fd, .service_unavailable, ctype, body);
         }
     }
 
@@ -215,7 +223,8 @@ pub const MetricsServer = struct {
         var fbs = std.io.fixedBufferStream(&buf);
         metrics.Registry.format(fbs.writer()) catch |err| {
             log.warn("error formatting metrics: {}", .{err});
-            try sendResponse(client_fd, .service_unavailable, "text/plain", "Error formatting metrics");
+            const msg = "Error formatting metrics";
+            try sendResponse(client_fd, .service_unavailable, "text/plain", msg);
             return;
         };
 
@@ -238,9 +247,18 @@ pub const MetricsServer = struct {
         }
     };
 
-    fn sendResponse(client_fd: posix.socket_t, status: HttpStatus, content_type: []const u8, body: []const u8) !void {
+    fn sendResponse(
+        client_fd: posix.socket_t,
+        status: HttpStatus,
+        content_type: []const u8,
+        body: []const u8,
+    ) !void {
         var response_buf: [8192]u8 = undefined;
-        const response = std.fmt.bufPrint(&response_buf, "HTTP/1.1 {s}\r\nContent-Type: {s}\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n{s}", .{
+        const http_fmt = "HTTP/1.1 {s}\r\n" ++
+            "Content-Type: {s}\r\n" ++
+            "Content-Length: {d}\r\n" ++
+            "Connection: close\r\n\r\n{s}";
+        const response = std.fmt.bufPrint(&response_buf, http_fmt, .{
             status.code(),
             content_type,
             body.len,

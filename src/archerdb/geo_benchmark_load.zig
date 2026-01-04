@@ -17,7 +17,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const assert = std.debug.assert;
-const panic = std.debug.panic;
 const log = std.log.scoped(.geo_benchmark);
 
 const vsr = @import("vsr");
@@ -27,7 +26,6 @@ const stdx = vsr.stdx;
 const flags = vsr.flags;
 const IO = vsr.io.IO;
 const Time = vsr.time.Time;
-const Duration = stdx.Duration;
 const MessagePool = vsr.message_pool.MessagePool;
 const MessageBus = vsr.message_bus.MessageBusType(IO);
 const Client = vsr.ClientType(tb.Operation, MessageBus);
@@ -82,13 +80,17 @@ pub fn main(
     }
 
     std.log.info("GeoEvent Benchmark running against {any}", .{addresses});
-    std.log.info("Configuration: {} events, {} entities, {} UUID queries, {} radius queries, {} polygon queries", .{
-        cli_args.geo_event_count,
-        cli_args.geo_entity_count,
-        cli_args.geo_query_uuid_count,
-        cli_args.geo_query_radius_count,
-        cli_args.geo_query_polygon_count,
-    });
+    std.log.info(
+        "Configuration: {} events, {} entities, {} UUID queries, " ++
+            "{} radius queries, {} polygon queries",
+        .{
+            cli_args.geo_event_count,
+            cli_args.geo_entity_count,
+            cli_args.geo_query_uuid_count,
+            cli_args.geo_query_radius_count,
+            cli_args.geo_query_polygon_count,
+        },
+    );
 
     var clients = stdx.BoundedArrayType(Client, constants.clients_max){};
     defer for (clients.slice()) |*client| client.deinit(allocator);
@@ -330,7 +332,8 @@ const GeoBenchmark = struct {
 
         const request_duration_ns = b.timer.read() - b.clients_request_ns[client_index];
         const request_duration_ms = @divTrunc(request_duration_ns, std.time.ns_per_ms);
-        b.request_latency_histogram[@min(request_duration_ms, b.request_latency_histogram.len - 1)] += 1;
+        const hist_idx = @min(request_duration_ms, b.request_latency_histogram.len - 1);
+        b.request_latency_histogram[hist_idx] += 1;
 
         if (b.print_batch_timings) {
             log.info("insert batch {}: {} ms", .{ b.request_index, request_duration_ms });
@@ -342,8 +345,10 @@ const GeoBenchmark = struct {
     fn insert_events_finish(b: *GeoBenchmark) void {
         assert(b.stage == .insert_events);
 
-        const duration_s = @as(f64, @floatFromInt(b.timer.read())) / std.time.ns_per_s;
-        const events_per_sec = @as(u64, @intFromFloat(@as(f64, @floatFromInt(b.events_created)) / duration_s));
+        const timer_ns: f64 = @floatFromInt(b.timer.read());
+        const duration_s = timer_ns / std.time.ns_per_s;
+        const events_f: f64 = @floatFromInt(b.events_created);
+        const events_per_sec: u64 = @intFromFloat(events_f / duration_s);
 
         b.output.print(
             \\
@@ -440,7 +445,8 @@ const GeoBenchmark = struct {
 
         const request_duration_ns = b.timer.read() - b.clients_request_ns[client_index];
         const request_duration_ms = @divTrunc(request_duration_ns, std.time.ns_per_ms);
-        b.request_latency_histogram[@min(request_duration_ms, b.request_latency_histogram.len - 1)] += 1;
+        const hist_idx = @min(request_duration_ms, b.request_latency_histogram.len - 1);
+        b.request_latency_histogram[hist_idx] += 1;
 
         b.do_query_uuid(client_index);
     }
@@ -510,7 +516,8 @@ const GeoBenchmark = struct {
 
         const request_duration_ns = b.timer.read() - b.clients_request_ns[client_index];
         const request_duration_ms = @divTrunc(request_duration_ns, std.time.ns_per_ms);
-        b.request_latency_histogram[@min(request_duration_ms, b.request_latency_histogram.len - 1)] += 1;
+        const hist_idx = @min(request_duration_ms, b.request_latency_histogram.len - 1);
+        b.request_latency_histogram[hist_idx] += 1;
 
         b.do_query_radius(client_index);
     }
@@ -571,11 +578,17 @@ const GeoBenchmark = struct {
         };
 
         // Add vertices after filter (4 corners of rectangle)
-        const vertices_ptr: [*]PolygonVertex = @alignCast(@ptrCast(&b.client_requests[client_index][@sizeOf(QueryPolygonFilter)]));
-        vertices_ptr[0] = .{ .lat_nano = center_lat - half_size, .lon_nano = center_lon - half_size };
-        vertices_ptr[1] = .{ .lat_nano = center_lat - half_size, .lon_nano = center_lon + half_size };
-        vertices_ptr[2] = .{ .lat_nano = center_lat + half_size, .lon_nano = center_lon + half_size };
-        vertices_ptr[3] = .{ .lat_nano = center_lat + half_size, .lon_nano = center_lon - half_size };
+        const request_buf = &b.client_requests[client_index];
+        const offset = @sizeOf(QueryPolygonFilter);
+        const vertices_ptr: [*]PolygonVertex = @alignCast(@ptrCast(&request_buf[offset]));
+        const min_lat = center_lat - half_size;
+        const max_lat = center_lat + half_size;
+        const min_lon = center_lon - half_size;
+        const max_lon = center_lon + half_size;
+        vertices_ptr[0] = .{ .lat_nano = min_lat, .lon_nano = min_lon };
+        vertices_ptr[1] = .{ .lat_nano = min_lat, .lon_nano = max_lon };
+        vertices_ptr[2] = .{ .lat_nano = max_lat, .lon_nano = max_lon };
+        vertices_ptr[3] = .{ .lat_nano = max_lat, .lon_nano = min_lon };
 
         b.query_index += 1;
 
@@ -610,7 +623,8 @@ const GeoBenchmark = struct {
 
         const request_duration_ns = b.timer.read() - b.clients_request_ns[client_index];
         const request_duration_ms = @divTrunc(request_duration_ns, std.time.ns_per_ms);
-        b.request_latency_histogram[@min(request_duration_ms, b.request_latency_histogram.len - 1)] += 1;
+        const hist_idx = @min(request_duration_ms, b.request_latency_histogram.len - 1);
+        b.request_latency_histogram[hist_idx] += 1;
 
         b.do_query_polygon(client_index);
     }
@@ -756,8 +770,10 @@ fn compute_simple_s2_cell(lat_nano: i64, lon_nano: i64) u64 {
     const face: u64 = @as(u64, @intFromFloat(lon_norm * 6.0)) % 6;
 
     // Position within face
-    const i: u64 = @intFromFloat(lat_norm * @as(f64, @floatFromInt(cells_per_side)));
-    const j: u64 = @intFromFloat((lon_norm * 6.0 - @as(f64, @floatFromInt(face))) * @as(f64, @floatFromInt(cells_per_side)));
+    const cells_f: f64 = @floatFromInt(cells_per_side);
+    const face_f: f64 = @floatFromInt(face);
+    const i: u64 = @intFromFloat(lat_norm * cells_f);
+    const j: u64 = @intFromFloat((lon_norm * 6.0 - face_f) * cells_f);
 
     // Pack into S2 cell ID format (simplified)
     return (face << 61) | ((i & 0xFFF) << 49) | ((j & 0xFFF) << 37);

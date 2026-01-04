@@ -10,7 +10,6 @@
 //! All types are thread-safe using atomic operations for lock-free access.
 
 const std = @import("std");
-const Allocator = std.mem.Allocator;
 
 /// A monotonically increasing counter metric.
 /// Thread-safe via atomic operations.
@@ -20,9 +19,7 @@ pub const Counter = struct {
     help: []const u8,
     labels: ?[]const u8,
 
-    const Self = @This();
-
-    pub fn init(name: []const u8, help: []const u8, labels: ?[]const u8) Self {
+    pub fn init(name: []const u8, help: []const u8, labels: ?[]const u8) Counter {
         return .{
             .value = std.atomic.Value(u64).init(0),
             .name = name,
@@ -32,22 +29,22 @@ pub const Counter = struct {
     }
 
     /// Increment the counter by 1.
-    pub fn inc(self: *Self) void {
+    pub fn inc(self: *Counter) void {
         _ = self.value.fetchAdd(1, .monotonic);
     }
 
     /// Add a value to the counter.
-    pub fn add(self: *Self, delta: u64) void {
+    pub fn add(self: *Counter, delta: u64) void {
         _ = self.value.fetchAdd(delta, .monotonic);
     }
 
     /// Get the current value.
-    pub fn get(self: *const Self) u64 {
+    pub fn get(self: *const Counter) u64 {
         return self.value.load(.monotonic);
     }
 
     /// Format as Prometheus text format.
-    pub fn format(self: *const Self, writer: anytype) !void {
+    pub fn format(self: *const Counter, writer: anytype) !void {
         try writer.print("# HELP {s} {s}\n", .{ self.name, self.help });
         try writer.print("# TYPE {s} counter\n", .{self.name});
         if (self.labels) |labels| {
@@ -67,9 +64,7 @@ pub const Gauge = struct {
     help: []const u8,
     labels: ?[]const u8,
 
-    const Self = @This();
-
-    pub fn init(name: []const u8, help: []const u8, labels: ?[]const u8) Self {
+    pub fn init(name: []const u8, help: []const u8, labels: ?[]const u8) Gauge {
         return .{
             .value = std.atomic.Value(i64).init(0),
             .name = name,
@@ -79,32 +74,32 @@ pub const Gauge = struct {
     }
 
     /// Set the gauge to a specific value.
-    pub fn set(self: *Self, val: i64) void {
+    pub fn set(self: *Gauge, val: i64) void {
         self.value.store(val, .monotonic);
     }
 
     /// Increment the gauge by 1.
-    pub fn inc(self: *Self) void {
+    pub fn inc(self: *Gauge) void {
         _ = self.value.fetchAdd(1, .monotonic);
     }
 
     /// Decrement the gauge by 1.
-    pub fn dec(self: *Self) void {
+    pub fn dec(self: *Gauge) void {
         _ = self.value.fetchSub(1, .monotonic);
     }
 
     /// Add a value to the gauge.
-    pub fn add(self: *Self, delta: i64) void {
+    pub fn add(self: *Gauge, delta: i64) void {
         _ = self.value.fetchAdd(delta, .monotonic);
     }
 
     /// Get the current value.
-    pub fn get(self: *const Self) i64 {
+    pub fn get(self: *const Gauge) i64 {
         return self.value.load(.monotonic);
     }
 
     /// Format as Prometheus text format.
-    pub fn format(self: *const Self, writer: anytype) !void {
+    pub fn format(self: *const Gauge, writer: anytype) !void {
         try writer.print("# HELP {s} {s}\n", .{ self.name, self.help });
         try writer.print("# TYPE {s} gauge\n", .{self.name});
         if (self.labels) |labels| {
@@ -118,7 +113,7 @@ pub const Gauge = struct {
 /// A histogram metric for tracking value distributions.
 /// Thread-safe via atomic operations.
 /// Configurable bucket boundaries at compile time.
-pub fn Histogram(comptime bucket_count: usize) type {
+pub fn HistogramType(comptime bucket_count: usize) type {
     return struct {
         buckets: [bucket_count]std.atomic.Value(u64),
         bucket_bounds: [bucket_count]f64,
@@ -128,11 +123,14 @@ pub fn Histogram(comptime bucket_count: usize) type {
         help: []const u8,
         labels: ?[]const u8,
 
-        const Self = @This();
-
         /// Initialize with the given bucket boundaries.
         /// Boundaries should be in ascending order (e.g., 0.001, 0.005, 0.01, 0.05, 0.1).
-        pub fn init(name: []const u8, help: []const u8, labels: ?[]const u8, bounds: [bucket_count]f64) Self {
+        pub fn init(
+            name: []const u8,
+            help: []const u8,
+            labels: ?[]const u8,
+            bounds: [bucket_count]f64,
+        ) @This() {
             var buckets: [bucket_count]std.atomic.Value(u64) = undefined;
             for (&buckets) |*b| {
                 b.* = std.atomic.Value(u64).init(0);
@@ -149,7 +147,7 @@ pub fn Histogram(comptime bucket_count: usize) type {
         }
 
         /// Observe a value (e.g., latency in seconds).
-        pub fn observe(self: *Self, value: f64) void {
+        pub fn observe(self: *@This(), value: f64) void {
             // Increment count
             _ = self.count.fetchAdd(1, .monotonic);
 
@@ -167,7 +165,7 @@ pub fn Histogram(comptime bucket_count: usize) type {
         }
 
         /// Observe a duration in nanoseconds (more efficient for timing).
-        pub fn observeNs(self: *Self, value_ns: u64) void {
+        pub fn observeNs(self: *@This(), value_ns: u64) void {
             _ = self.count.fetchAdd(1, .monotonic);
             _ = self.sum.fetchAdd(value_ns, .monotonic);
 
@@ -181,17 +179,17 @@ pub fn Histogram(comptime bucket_count: usize) type {
         }
 
         /// Get the current count.
-        pub fn getCount(self: *const Self) u64 {
+        pub fn getCount(self: *const @This()) u64 {
             return self.count.load(.monotonic);
         }
 
         /// Get the current sum in seconds.
-        pub fn getSum(self: *const Self) f64 {
+        pub fn getSum(self: *const @This()) f64 {
             return @as(f64, @floatFromInt(self.sum.load(.monotonic))) / 1e9;
         }
 
         /// Format as Prometheus text format.
-        pub fn format(self: *const Self, writer: anytype) !void {
+        pub fn format(self: *const @This(), writer: anytype) !void {
             try writer.print("# HELP {s} {s}\n", .{ self.name, self.help });
             try writer.print("# TYPE {s} histogram\n", .{self.name});
 
@@ -261,7 +259,7 @@ pub fn Histogram(comptime bucket_count: usize) type {
 
 /// Standard latency histogram with common bucket boundaries.
 /// Buckets: 500μs, 1ms, 5ms, 10ms, 50ms, 100ms, 500ms, 1s, 5s
-pub const LatencyHistogram = Histogram(9);
+pub const LatencyHistogram = HistogramType(9);
 
 /// Create a standard latency histogram.
 pub fn latencyHistogram(name: []const u8, help: []const u8, labels: ?[]const u8) LatencyHistogram {
@@ -605,7 +603,9 @@ pub const Registry = struct {
         try writer.writeAll("\n");
 
         // LSM metrics - per-level compactions
-        try writer.writeAll("# HELP archerdb_lsm_compactions_total Total compactions performed per level\n");
+        try writer.writeAll(
+            "# HELP archerdb_lsm_compactions_total Total compactions per level\n",
+        );
         try writer.writeAll("# TYPE archerdb_lsm_compactions_total counter\n");
         for (lsm_compactions_per_level, 0..) |count, level| {
             try writer.print("archerdb_lsm_compactions_total{{level=\"{d}\"}} {d}\n", .{
@@ -616,7 +616,9 @@ pub const Registry = struct {
         try writer.writeAll("\n");
 
         // Per-level bytes moved during compaction
-        try writer.writeAll("# HELP archerdb_lsm_compaction_bytes_moved_total Bytes moved during compaction per level\n");
+        try writer.writeAll(
+            "# HELP archerdb_lsm_compaction_bytes_moved_total Bytes moved per level\n",
+        );
         try writer.writeAll("# TYPE archerdb_lsm_compaction_bytes_moved_total counter\n");
         for (lsm_compaction_bytes_per_level, 0..) |bytes, level| {
             try writer.print("archerdb_lsm_compaction_bytes_moved_total{{level=\"{d}\"}} {d}\n", .{
@@ -631,7 +633,9 @@ pub const Registry = struct {
         try writer.writeAll("\n");
 
         // Per-level table counts
-        try writer.writeAll("# HELP archerdb_lsm_tables_count Current number of tables per level\n");
+        try writer.writeAll(
+            "# HELP archerdb_lsm_tables_count Current table count per level\n",
+        );
         try writer.writeAll("# TYPE archerdb_lsm_tables_count gauge\n");
         for (lsm_tables_per_level, 0..) |count, level| {
             try writer.print("archerdb_lsm_tables_count{{level=\"{d}\"}} {d}\n", .{
@@ -642,7 +646,9 @@ pub const Registry = struct {
         try writer.writeAll("\n");
 
         // Per-level size bytes
-        try writer.writeAll("# HELP archerdb_lsm_level_size_bytes Current size of each LSM level\n");
+        try writer.writeAll(
+            "# HELP archerdb_lsm_level_size_bytes Size of each LSM level\n",
+        );
         try writer.writeAll("# TYPE archerdb_lsm_level_size_bytes gauge\n");
         for (lsm_level_size_bytes, 0..) |size, level| {
             try writer.print("archerdb_lsm_level_size_bytes{{level=\"{d}\"}} {d}\n", .{
@@ -655,10 +661,14 @@ pub const Registry = struct {
         // Write amplification ratio
         const user_bytes = lsm_user_bytes_written.load(.monotonic);
         const disk_bytes = lsm_disk_bytes_written.load(.monotonic);
-        try writer.writeAll("# HELP archerdb_lsm_write_amplification_ratio Write amplification (disk_bytes / user_bytes)\n");
+        try writer.writeAll(
+            "# HELP archerdb_lsm_write_amplification_ratio disk_bytes/user_bytes\n",
+        );
         try writer.writeAll("# TYPE archerdb_lsm_write_amplification_ratio gauge\n");
         if (user_bytes > 0) {
-            const ratio: f64 = @as(f64, @floatFromInt(disk_bytes)) / @as(f64, @floatFromInt(user_bytes));
+            const disk_f: f64 = @floatFromInt(disk_bytes);
+            const user_f: f64 = @floatFromInt(user_bytes);
+            const ratio: f64 = disk_f / user_f;
             try writer.print("archerdb_lsm_write_amplification_ratio {d:.2}\n", .{ratio});
         } else {
             try writer.writeAll("archerdb_lsm_write_amplification_ratio 0\n");
@@ -666,24 +676,34 @@ pub const Registry = struct {
         try writer.writeAll("\n");
 
         // Grid cache metrics
-        try writer.writeAll("# HELP archerdb_grid_cache_hits_total Cache hits for block reads\n");
+        try writer.writeAll(
+            "# HELP archerdb_grid_cache_hits_total Cache hits for block reads\n",
+        );
         try writer.writeAll("# TYPE archerdb_grid_cache_hits_total counter\n");
-        try writer.print("archerdb_grid_cache_hits_total {d}\n", .{grid_cache_hits_total.load(.monotonic)});
+        const cache_hits_val = grid_cache_hits_total.load(.monotonic);
+        try writer.print("archerdb_grid_cache_hits_total {d}\n", .{cache_hits_val});
         try writer.writeAll("\n");
 
-        try writer.writeAll("# HELP archerdb_grid_cache_misses_total Cache misses requiring disk read\n");
+        try writer.writeAll(
+            "# HELP archerdb_grid_cache_misses_total Cache misses (disk read)\n",
+        );
         try writer.writeAll("# TYPE archerdb_grid_cache_misses_total counter\n");
-        try writer.print("archerdb_grid_cache_misses_total {d}\n", .{grid_cache_misses_total.load(.monotonic)});
+        const cache_miss_val = grid_cache_misses_total.load(.monotonic);
+        try writer.print("archerdb_grid_cache_misses_total {d}\n", .{cache_miss_val});
         try writer.writeAll("\n");
 
         // Grid cache hit ratio (derived)
         const cache_hits = grid_cache_hits_total.load(.monotonic);
         const cache_misses = grid_cache_misses_total.load(.monotonic);
         const cache_total = cache_hits + cache_misses;
-        try writer.writeAll("# HELP archerdb_grid_cache_hit_ratio Cache hit rate (hits / total)\n");
+        try writer.writeAll(
+            "# HELP archerdb_grid_cache_hit_ratio Cache hit rate (hits/total)\n",
+        );
         try writer.writeAll("# TYPE archerdb_grid_cache_hit_ratio gauge\n");
         if (cache_total > 0) {
-            const hit_ratio: f64 = @as(f64, @floatFromInt(cache_hits)) / @as(f64, @floatFromInt(cache_total));
+            const hits_f: f64 = @floatFromInt(cache_hits);
+            const total_f: f64 = @floatFromInt(cache_total);
+            const hit_ratio: f64 = hits_f / total_f;
             try writer.print("archerdb_grid_cache_hit_ratio {d:.4}\n", .{hit_ratio});
         } else {
             try writer.writeAll("archerdb_grid_cache_hit_ratio 0\n");
@@ -693,31 +713,46 @@ pub const Registry = struct {
         // Grid cache size (blocks × block_size)
         const cache_blocks = grid_cache_blocks_count.load(.monotonic);
         const block_size: u64 = 65536; // constants.block_size (64KB)
-        try writer.writeAll("# HELP archerdb_grid_cache_size_bytes Current cache size in bytes\n");
+        try writer.writeAll(
+            "# HELP archerdb_grid_cache_size_bytes Cache size in bytes\n",
+        );
         try writer.writeAll("# TYPE archerdb_grid_cache_size_bytes gauge\n");
-        try writer.print("archerdb_grid_cache_size_bytes {d}\n", .{cache_blocks * block_size});
+        const cache_size = cache_blocks * block_size;
+        try writer.print("archerdb_grid_cache_size_bytes {d}\n", .{cache_size});
         try writer.writeAll("\n");
 
         // Grid block utilization
-        try writer.writeAll("# HELP archerdb_grid_blocks_acquired Acquired blocks (in use)\n");
+        try writer.writeAll(
+            "# HELP archerdb_grid_blocks_acquired Acquired blocks (in use)\n",
+        );
         try writer.writeAll("# TYPE archerdb_grid_blocks_acquired gauge\n");
-        try writer.print("archerdb_grid_blocks_acquired {d}\n", .{grid_blocks_acquired.load(.monotonic)});
+        const blocks_acq = grid_blocks_acquired.load(.monotonic);
+        try writer.print("archerdb_grid_blocks_acquired {d}\n", .{blocks_acq});
         try writer.writeAll("\n");
 
-        try writer.writeAll("# HELP archerdb_grid_blocks_missing Missing/faulty blocks being repaired\n");
+        try writer.writeAll(
+            "# HELP archerdb_grid_blocks_missing Missing/faulty blocks\n",
+        );
         try writer.writeAll("# TYPE archerdb_grid_blocks_missing gauge\n");
-        try writer.print("archerdb_grid_blocks_missing {d}\n", .{grid_blocks_missing.load(.monotonic)});
+        const blocks_miss = grid_blocks_missing.load(.monotonic);
+        try writer.print("archerdb_grid_blocks_missing {d}\n", .{blocks_miss});
         try writer.writeAll("\n");
 
         // Journal/WAL metrics
-        try writer.writeAll("# HELP archerdb_journal_dirty_count Dirty journal slots\n");
+        try writer.writeAll(
+            "# HELP archerdb_journal_dirty_count Dirty journal slots\n",
+        );
         try writer.writeAll("# TYPE archerdb_journal_dirty_count gauge\n");
-        try writer.print("archerdb_journal_dirty_count {d}\n", .{journal_dirty_count.load(.monotonic)});
+        const dirty_cnt = journal_dirty_count.load(.monotonic);
+        try writer.print("archerdb_journal_dirty_count {d}\n", .{dirty_cnt});
         try writer.writeAll("\n");
 
-        try writer.writeAll("# HELP archerdb_journal_faulty_count Faulty journal slots\n");
+        try writer.writeAll(
+            "# HELP archerdb_journal_faulty_count Faulty journal slots\n",
+        );
         try writer.writeAll("# TYPE archerdb_journal_faulty_count gauge\n");
-        try writer.print("archerdb_journal_faulty_count {d}\n", .{journal_faulty_count.load(.monotonic)});
+        const faulty_cnt = journal_faulty_count.load(.monotonic);
+        try writer.print("archerdb_journal_faulty_count {d}\n", .{faulty_cnt});
         try writer.writeAll("\n");
 
         // Free set metrics
@@ -726,25 +761,35 @@ pub const Registry = struct {
         const blocks_acquired_val = grid_blocks_acquired.load(.monotonic);
         const total_blocks = free_set_total_blocks.load(.monotonic);
 
-        try writer.writeAll("# HELP archerdb_free_set_blocks_free Free blocks available\n");
+        try writer.writeAll(
+            "# HELP archerdb_free_set_blocks_free Free blocks available\n",
+        );
         try writer.writeAll("# TYPE archerdb_free_set_blocks_free gauge\n");
         try writer.print("archerdb_free_set_blocks_free {d}\n", .{blocks_free});
         try writer.writeAll("\n");
 
-        try writer.writeAll("# HELP archerdb_free_set_blocks_reserved Reserved but not yet acquired\n");
+        try writer.writeAll(
+            "# HELP archerdb_free_set_blocks_reserved Reserved (not acquired)\n",
+        );
         try writer.writeAll("# TYPE archerdb_free_set_blocks_reserved gauge\n");
         try writer.print("archerdb_free_set_blocks_reserved {d}\n", .{blocks_reserved});
         try writer.writeAll("\n");
 
-        try writer.writeAll("# HELP archerdb_free_set_blocks_acquired Acquired blocks (in use)\n");
+        try writer.writeAll(
+            "# HELP archerdb_free_set_blocks_acquired Acquired blocks (in use)\n",
+        );
         try writer.writeAll("# TYPE archerdb_free_set_blocks_acquired gauge\n");
         try writer.print("archerdb_free_set_blocks_acquired {d}\n", .{blocks_acquired_val});
         try writer.writeAll("\n");
 
-        try writer.writeAll("# HELP archerdb_free_set_utilization Free set capacity utilization (0.0-1.0)\n");
+        try writer.writeAll(
+            "# HELP archerdb_free_set_utilization Capacity utilization (0-1)\n",
+        );
         try writer.writeAll("# TYPE archerdb_free_set_utilization gauge\n");
         if (total_blocks > 0) {
-            const utilization: f64 = @as(f64, @floatFromInt(blocks_acquired_val)) / @as(f64, @floatFromInt(total_blocks));
+            const acq_f: f64 = @floatFromInt(blocks_acquired_val);
+            const tot_f: f64 = @floatFromInt(total_blocks);
+            const utilization: f64 = acq_f / tot_f;
             try writer.print("archerdb_free_set_utilization {d:.4}\n", .{utilization});
         } else {
             try writer.writeAll("archerdb_free_set_utilization 0\n");

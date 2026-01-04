@@ -3859,8 +3859,9 @@ pub fn ReplicaType(
             );
 
             // Update Prometheus grid cache, journal, and free set metrics
-            const blocks_acquired = if (self.grid.free_set.opened) self.grid.free_set.count_acquired() else 0;
-            const blocks_free = if (self.grid.free_set.opened) self.grid.free_set.count_free() else 0;
+            const fs_opened = self.grid.free_set.opened;
+            const blocks_acquired = if (fs_opened) self.grid.free_set.count_acquired() else 0;
+            const blocks_free = if (fs_opened) self.grid.free_set.count_free() else 0;
             const total_blocks = if (self.grid.free_set.opened)
                 self.grid.free_set.blocks_acquired.bit_length
             else
