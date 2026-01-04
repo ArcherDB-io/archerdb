@@ -2373,7 +2373,9 @@ test "AtomicBatchCommit: state transitions - success path" {
     try std.testing.expectEqual(BatchCommitState.committed, batch.state);
     try std.testing.expect(batch.is_success());
     try std.testing.expect(batch.end_time_ns > 0);
-    try std.testing.expect(batch.duration_ns() > 0);
+    // Note: duration can be 0 on very fast systems where the operation completes
+    // within the same nanosecond tick (common on fast ARM64 processors)
+    try std.testing.expect(batch.end_time_ns >= batch.start_time_ns);
 }
 
 test "AtomicBatchCommit: failure path" {
