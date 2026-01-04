@@ -3,6 +3,8 @@
 comptime {
     _ = @import("aof.zig");
     _ = @import("archerdb/ecosystem_validation.zig");
+    _ = @import("archerdb/metrics.zig");
+    _ = @import("archerdb/metrics_server.zig");
     _ = @import("cdc/amqp.zig");
     _ = @import("cdc/amqp/protocol.zig");
     _ = @import("cdc/runner.zig");
@@ -112,6 +114,9 @@ const quine =
     \\
     \\    var unit_tests_contents = std.ArrayList(u8).init(arena);
     \\    const writer = unit_tests_contents.writer();
+    \\    // Write the copyright header first
+    \\    try writer.writeAll("// SPDX-License-Identifier: Apache-2.0\n");
+    \\    try writer.writeAll("// Copyright (c) 2024-2025 ArcherDB Contributors\n");
     \\    try writer.writeAll("comptime {\n");
     \\
     \\    for (try unit_test_files(arena, src_dir)) |unit_test_file| {
@@ -131,7 +136,7 @@ const quine =
     \\
     \\    assert(std.mem.eql(u8, @src().file, "unit_tests.zig"));
     \\    const unit_tests_contents_disk = try src_dir.readFileAlloc(arena, @src().file, 1 * MiB);
-    \\    assert(std.mem.startsWith(u8, unit_tests_contents_disk, "comptime {"));
+    \\    assert(std.mem.startsWith(u8, unit_tests_contents_disk, "// SPDX-License-Identifier:"));
     \\    assert(std.mem.endsWith(u8, unit_tests_contents.items, "}\n"));
     \\
     \\    const unit_tests_needs_update = !std.mem.startsWith(
@@ -235,6 +240,9 @@ test quine {
 
     var unit_tests_contents = std.ArrayList(u8).init(arena);
     const writer = unit_tests_contents.writer();
+    // Write the copyright header first
+    try writer.writeAll("// SPDX-License-Identifier: Apache-2.0\n");
+    try writer.writeAll("// Copyright (c) 2024-2025 ArcherDB Contributors\n");
     try writer.writeAll("comptime {\n");
 
     for (try unit_test_files(arena, src_dir)) |unit_test_file| {
@@ -254,7 +262,7 @@ test quine {
 
     assert(std.mem.eql(u8, @src().file, "unit_tests.zig"));
     const unit_tests_contents_disk = try src_dir.readFileAlloc(arena, @src().file, 1 * MiB);
-    assert(std.mem.startsWith(u8, unit_tests_contents_disk, "comptime {"));
+    assert(std.mem.startsWith(u8, unit_tests_contents_disk, "// SPDX-License-Identifier:"));
     assert(std.mem.endsWith(u8, unit_tests_contents.items, "}\n"));
 
     const unit_tests_needs_update = !std.mem.startsWith(
