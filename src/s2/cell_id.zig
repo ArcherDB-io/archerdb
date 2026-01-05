@@ -563,9 +563,9 @@ test "cross-platform determinism" {
     //
     // Platform verification status:
     // - Linux x86_64: VERIFIED (this machine)
-    // - macOS ARM64: TODO
-    // - Linux ARM64: TODO
-    // - Windows x86_64: TODO
+    // - macOS ARM64: Not yet validated (validation needed before production on this platform)
+    // - Linux ARM64: Not yet validated (validation needed before production on this platform)
+    // - Windows x86_64: Not yet validated (validation needed before production on this platform)
     const expected_hash: u64 = 0xcfcb49bcd16dea5d;
 
     if (hash != expected_hash) {

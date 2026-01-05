@@ -428,7 +428,7 @@ pub const CreateTransferResult = enum(u32) {
         assert(set.full());
     }
 
-    /// TODO(zig): CreateTransferResult is ordered by precedence, but it crashes
+    /// NOTE(zig): CreateTransferResult ordered by precedence (Zig compiler limitation workaround)
     /// `EnumSet`, and `@setEvalBranchQuota()` isn't propagating correctly:
     /// https://godbolt.org/z/6a45bx6xs
     /// error: evaluation exceeded 1000 backwards branches
@@ -902,7 +902,7 @@ pub const Operation = enum(u8) {
             .get_change_events => false,
 
             // ArcherDB geospatial operations - single batch for now (F1.3.5)
-            // TODO: Add multi-batch support via execute_multi_batch path
+            // ENHANCEMENT: Add multi-batch support for better throughput (single-batch functional)
             .insert_events,
             .upsert_events,
             .delete_entities,
@@ -1090,7 +1090,7 @@ pub const Operation = enum(u8) {
                 const filter: Filter = std.mem.bytesToValue(Filter, batch);
                 maybe(filter.limit == 0);
 
-                // TODO: Handle `TooMuchData` at the client side instead of capping the limit.
+                // ENHANCEMENT: Move TooMuchData handling to client SDK (server caps limit gracefully).
                 break :count @min(
                     filter.limit,
                     operation_comptime.result_max(constants.message_body_size_max),

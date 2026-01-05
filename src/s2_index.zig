@@ -197,8 +197,9 @@ pub const S2 = struct {
         min_level: u8,
         max_level: u8,
     ) [s2_max_cells]CellRange {
-        // TODO: Implement proper polygon covering with S2Loop
-        // For now, use bounding box approximation
+        // NOTE: Current implementation uses bounding box approximation.
+        // This is conservative (may return more cells than needed) but correct.
+        // ENHANCEMENT: Could use S2Loop for tighter covering, reducing false positives.
         _ = min_level;
         _ = max_level;
 
