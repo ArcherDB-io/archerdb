@@ -163,11 +163,10 @@ const ConfigCluster = struct {
     journal_slot_count: u32 = 1024,
     /// Maximum message size (header + body). Default: 1 MiB.
     /// NOTE: The spec (constants/spec.md) defines message_size_max = 10 MiB for production,
-    /// which enables batch_events_max = 10,000 and query_result_max = 81,000.
-    /// With the current 1 MiB default, effective limits are ~8,180 events.
-    /// For production deployments requiring full capacity, configure: 10 * MiB
+    /// which enables batch_events_max = 10,000 and query_result_max = 81,918 (~82k events).
+    /// This provides excellent query performance for spatial queries returning large result sets.
     /// WAL implication: prepares_ring_size = journal_slot_count × message_size_max
-    message_size_max: u32 = 1 * MiB,
+    message_size_max: u32 = 10 * MiB,
     superblock_copies: comptime_int = 4,
     block_size: comptime_int = 512 * KiB,
     lsm_levels: u6 = 7,

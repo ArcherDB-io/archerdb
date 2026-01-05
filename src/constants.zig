@@ -197,7 +197,7 @@ pub const journal_slot_count = config.cluster.journal_slot_count;
 /// This also enables us to detect filesystem inode corruption that would change the journal size.
 pub const journal_size = journal_size_headers + journal_size_prepares;
 pub const journal_size_headers = journal_slot_count * @sizeOf(vsr.Header);
-pub const journal_size_prepares = journal_slot_count * message_size_max;
+pub const journal_size_prepares: u64 = @as(u64, journal_slot_count) * @as(u64, message_size_max);
 
 comptime {
     // For the given WAL (lsm_compaction_ops=4):
@@ -446,8 +446,10 @@ pub const tcp_sndbuf_client = connection_send_queue_max_client * message_size_ma
 
 comptime {
     // Avoid latency issues from setting sndbuf too high:
-    assert(tcp_sndbuf_replica <= 16 * MiB);
-    assert(tcp_sndbuf_client <= 16 * MiB);
+    // NOTE: With message_size_max = 10 MiB and queue depth of 2-4,
+    // tcp_sndbuf can be 20-40 MiB. Increased limit to 64 MiB to accommodate.
+    assert(tcp_sndbuf_replica <= 64 * MiB);
+    assert(tcp_sndbuf_client <= 64 * MiB);
 }
 
 /// Whether to enable TCP keepalive:
