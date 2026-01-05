@@ -263,3 +263,36 @@ The system SHALL support absolute timeouts for I/O operations.
 - See `specs/memory-management/spec.md` for MessagePool and zero-copy message passing
 - See `specs/error-codes/spec.md` for I/O error codes and timeout handling
 - See `specs/observability/spec.md` for I/O performance metrics (disk read/write latency)
+
+## Implementation Status
+
+**Overall: 95% Complete**
+
+### Platform-Specific I/O
+
+| Platform | Backend | Status |
+|----------|---------|--------|
+| Linux | io_uring | ✓ Complete |
+| Windows | IOCP (64-entry) | ✓ Complete |
+| macOS | kqueue | ✓ Complete |
+
+### Core Features
+
+| Feature | Linux | Windows | macOS | Status |
+|---------|-------|---------|-------|--------|
+| io_uring integration | ✓ Full | N/A | N/A | COMPLETE |
+| Direct I/O | ✓ O_DIRECT | ✓ FILE_NO_INTERMEDIATE_BUFFERING | ✓ F_NOCACHE | COMPLETE |
+| CQE/Completion handling | ✓ Batched 256 | ✓ 64-entry | ✓ kqueue events | COMPLETE |
+| Error code mapping | ✓ Full | ✓ Full | ✓ Full | COMPLETE |
+| Operation batching | ✓ Yes | ✓ Yes | ✓ Yes | COMPLETE |
+| Zero-copy send | ✓ send_now() | Partial | N/A | IMPLEMENTED |
+| Cancellation | ✓ Functional | TODO | TODO | PARTIAL |
+| Timeout support | ✓ Full | ✓ Full | ✓ Full | COMPLETE |
+| Platform abstraction | ✓ Yes | ✓ Yes | ✓ Yes | COMPLETE |
+
+### Implementation Notes
+
+- io_uring on Linux provides highest performance with full async I/O
+- Cross-platform abstraction in `src/io.zig` handles platform differences
+- Direct I/O bypasses page cache for deterministic latency
+- Cancellation support varies by platform (Linux complete, others TODO)

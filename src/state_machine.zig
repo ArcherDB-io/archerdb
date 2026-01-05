@@ -51,8 +51,20 @@ const GeoEvent = tb.GeoEvent;
 const archerdb_metrics = vsr.archerdb_metrics;
 const InsertGeoEventResult = tb.InsertGeoEventResult;
 const InsertGeoEventsResult = tb.InsertGeoEventsResult;
+const DeleteEntityResult = tb.DeleteEntityResult;
+const DeleteEntitiesResult = tb.DeleteEntitiesResult;
 const QueryUuidFilter = tb.QueryUuidFilter;
 const QueryLatestFilter = tb.QueryLatestFilter;
+const QueryRadiusFilter = tb.QueryRadiusFilter;
+const QueryPolygonFilter = tb.QueryPolygonFilter;
+const QueryResponse = tb.QueryResponse;
+const PolygonVertex = tb.PolygonVertex;
+const S2 = @import("s2_index.zig").S2;
+
+// TTL cleanup types (F2.4.8)
+const ttl = @import("ttl.zig");
+const CleanupRequest = ttl.CleanupRequest;
+const CleanupResponse = ttl.CleanupResponse;
 
 pub const tree_ids = struct {
     pub const Account = .{
@@ -1272,21 +1284,19 @@ pub fn StateMachineType(comptime Storage: type) type {
 
                 // ArcherDB geospatial operations (F1.3.1, F1.3.2, F1.3.3)
                 .insert_events => self.prefetch_insert_events(),
+                .upsert_events => self.prefetch_upsert_events(),
+                .delete_entities => self.prefetch_finish(), // Optimistic tombstone insertion
                 .query_uuid => self.prefetch_query_uuid(),
                 .query_latest => self.prefetch_query_latest(),
-                // Remaining geo operations - stub (handled by GeoStateMachine later)
-                .upsert_events,
-                .delete_entities,
-                .query_radius,
-                .query_polygon,
-                => self.prefetch_finish(),
+                .query_radius => self.prefetch_query_radius(),
+                .query_polygon => self.prefetch_query_polygon(),
 
                 // ArcherDB admin operations (F1.2.6) - no prefetch needed
                 .archerdb_ping,
                 .archerdb_get_status,
                 => self.prefetch_finish(),
-                // ArcherDB TTL cleanup (F2.4.8) - no prefetch needed
-                .cleanup_expired => self.prefetch_finish(),
+                // ArcherDB TTL cleanup (F2.4.8)
+                .cleanup_expired => self.prefetch_cleanup_expired(),
 
                 .deprecated_create_accounts_unbatched => {
                     self.prefetch_create_accounts();
@@ -1581,6 +1591,37 @@ pub fn StateMachineType(comptime Storage: type) type {
             self.prefetch_finish();
         }
 
+        // ArcherDB GeoEvent prefetch for upsert (F1.3.1)
+        // Prefetches existing geo events for LWW update checks
+        fn prefetch_upsert_events(self: *StateMachine) void {
+            assert(self.prefetch_input != null);
+            assert(self.prefetch_operation == .upsert_events);
+
+            const events = stdx.bytes_as_slice(
+                .exact,
+                GeoEvent,
+                self.prefetch_input.?,
+            );
+            // Prefetch by composite ID for LWW update checks
+            for (events) |*e| {
+                self.forest.grooves.geo_events.prefetch_enqueue(e.id);
+            }
+
+            self.forest.grooves.geo_events.prefetch(
+                prefetch_upsert_events_callback,
+                self.prefetch_context.get(.geo_events),
+            );
+        }
+
+        fn prefetch_upsert_events_callback(completion: *GeoEventsGroove.PrefetchContext) void {
+            const self: *StateMachine = PrefetchContext.parent(.geo_events, completion);
+            assert(self.prefetch_input != null);
+            assert(self.prefetch_operation == .upsert_events);
+
+            self.prefetch_context = .null;
+            self.prefetch_finish();
+        }
+
         // F1.3.2: UUID lookup prefetch
         // Queries the entity_id index to find GeoEvents for a specific entity
         fn prefetch_query_uuid(self: *StateMachine) void {
@@ -1771,6 +1812,286 @@ pub fn StateMachineType(comptime Storage: type) type {
             self.forest.grooves.geo_events.scan_builder.reset();
 
             // query_latest is a single-filter operation, just finish
+            self.prefetch_finish();
+        }
+
+        // F3: Prefetch for query_radius operation (spatial query)
+        // Scans geo_events by timestamp range for later distance filtering
+        fn prefetch_query_radius(self: *StateMachine) void {
+            assert(self.prefetch_input != null);
+            assert(self.prefetch_operation.? == .query_radius);
+            assert(self.scan_lookup == .null);
+            assert(self.scan_lookup_buffer_index == 0);
+            assert(self.scan_lookup_results.items.len == 0);
+
+            // Validate minimum input size
+            if (self.prefetch_input.?.len < @sizeOf(QueryRadiusFilter)) {
+                log.info("query_radius: input too small", .{});
+                self.forest.grid.on_next_tick(
+                    &prefetch_scan_next_tick_callback,
+                    &self.scan_lookup_next_tick,
+                );
+                return;
+            }
+
+            const filter: *const QueryRadiusFilter = @ptrCast(@alignCast(self.prefetch_input.?));
+
+            // Validate filter
+            const filter_valid = filter.radius_mm > 0 and
+                filter.limit > 0 and
+                stdx.zeroed(&filter.reserved);
+
+            if (!filter_valid) {
+                log.info("query_radius: invalid filter radius_mm={} limit={}", .{
+                    filter.radius_mm,
+                    filter.limit,
+                });
+                self.forest.grid.on_next_tick(
+                    &prefetch_scan_next_tick_callback,
+                    &self.scan_lookup_next_tick,
+                );
+                return;
+            }
+
+            log.debug("{?}: query_radius: center=({},{}) radius_mm={} limit={}", .{
+                self.forest.grid.superblock.replica_index,
+                filter.center_lat_nano,
+                filter.center_lon_nano,
+                filter.radius_mm,
+                filter.limit,
+            });
+
+            assert(self.forest.scan_buffer_pool.scan_buffer_used == 0);
+
+            // Determine timestamp range from filter
+            const timestamp_range: TimestampRange = .{
+                .min = if (filter.timestamp_min != 0) filter.timestamp_min else TimestampRange.timestamp_min,
+                .max = if (filter.timestamp_max != 0) filter.timestamp_max else TimestampRange.timestamp_max,
+            };
+
+            // Scan all events by timestamp (distance filtering done in execute)
+            // Note: This is O(n) - for better performance, use S2 covering
+            const scan = self.forest.grooves.geo_events.scan_builder.scan_timestamp(
+                self.forest.scan_buffer_pool.acquire_assume_capacity(),
+                snapshot_latest,
+                timestamp_range,
+                .descending,
+            );
+            assert(self.forest.scan_buffer_pool.scan_buffer_used > 0);
+
+            const scan_buffer = stdx.bytes_as_slice(
+                .inexact,
+                GeoEvent,
+                self.scan_lookup_buffer[self.scan_lookup_buffer_index..],
+            );
+
+            const scan_lookup = self.scan_lookup.get(.geo_events);
+            scan_lookup.* = GeoEventsScanLookup.init(
+                &self.forest.grooves.geo_events,
+                scan,
+            );
+
+            // Fetch more than limit since we'll filter by distance
+            const fetch_limit = @min(
+                filter.limit * 10, // Fetch 10x to ensure enough after filtering
+                self.prefetch_operation.?.result_max(self.batch_size_limit),
+            );
+            assert(fetch_limit > 0);
+            assert(scan_buffer.len >= fetch_limit);
+            scan_lookup.read(
+                scan_buffer[0..fetch_limit],
+                &prefetch_query_radius_callback,
+            );
+        }
+
+        fn prefetch_query_radius_callback(
+            scan_lookup: *GeoEventsScanLookup,
+            results: []const GeoEvent,
+        ) void {
+            const self: *StateMachine = ScanLookup.parent(.geo_events, scan_lookup);
+            assert(self.prefetch_input != null);
+            assert(self.prefetch_operation.? == .query_radius);
+            assert(self.scan_lookup_buffer_index < self.scan_lookup_buffer.len);
+
+            self.scan_lookup_buffer_index += @intCast(results.len * @sizeOf(GeoEvent));
+            self.scan_lookup_results.appendAssumeCapacity(@intCast(results.len));
+
+            self.scan_lookup = .null;
+            self.forest.scan_buffer_pool.reset();
+            self.forest.grooves.geo_events.scan_builder.reset();
+
+            self.prefetch_finish();
+        }
+
+        // F3: Prefetch for query_polygon operation (spatial query)
+        fn prefetch_query_polygon(self: *StateMachine) void {
+            assert(self.prefetch_input != null);
+            assert(self.prefetch_operation.? == .query_polygon);
+            assert(self.scan_lookup == .null);
+            assert(self.scan_lookup_buffer_index == 0);
+            assert(self.scan_lookup_results.items.len == 0);
+
+            // Validate minimum input size
+            if (self.prefetch_input.?.len < @sizeOf(QueryPolygonFilter)) {
+                log.info("query_polygon: input too small", .{});
+                self.forest.grid.on_next_tick(
+                    &prefetch_scan_next_tick_callback,
+                    &self.scan_lookup_next_tick,
+                );
+                return;
+            }
+
+            const filter: *const QueryPolygonFilter = @ptrCast(@alignCast(self.prefetch_input.?));
+
+            // Validate filter
+            const filter_valid = filter.vertex_count >= 3 and
+                filter.limit > 0 and
+                stdx.zeroed(&filter.reserved);
+
+            if (!filter_valid) {
+                log.info("query_polygon: invalid filter vertex_count={} limit={}", .{
+                    filter.vertex_count,
+                    filter.limit,
+                });
+                self.forest.grid.on_next_tick(
+                    &prefetch_scan_next_tick_callback,
+                    &self.scan_lookup_next_tick,
+                );
+                return;
+            }
+
+            log.debug("{?}: query_polygon: vertex_count={} limit={}", .{
+                self.forest.grid.superblock.replica_index,
+                filter.vertex_count,
+                filter.limit,
+            });
+
+            assert(self.forest.scan_buffer_pool.scan_buffer_used == 0);
+
+            // Determine timestamp range from filter
+            const timestamp_range: TimestampRange = .{
+                .min = if (filter.timestamp_min != 0) filter.timestamp_min else TimestampRange.timestamp_min,
+                .max = if (filter.timestamp_max != 0) filter.timestamp_max else TimestampRange.timestamp_max,
+            };
+
+            // Scan all events by timestamp (polygon filtering done in execute)
+            const scan = self.forest.grooves.geo_events.scan_builder.scan_timestamp(
+                self.forest.scan_buffer_pool.acquire_assume_capacity(),
+                snapshot_latest,
+                timestamp_range,
+                .descending,
+            );
+            assert(self.forest.scan_buffer_pool.scan_buffer_used > 0);
+
+            const scan_buffer = stdx.bytes_as_slice(
+                .inexact,
+                GeoEvent,
+                self.scan_lookup_buffer[self.scan_lookup_buffer_index..],
+            );
+
+            const scan_lookup = self.scan_lookup.get(.geo_events);
+            scan_lookup.* = GeoEventsScanLookup.init(
+                &self.forest.grooves.geo_events,
+                scan,
+            );
+
+            // Fetch more than limit since we'll filter by polygon
+            const fetch_limit = @min(
+                filter.limit * 10,
+                self.prefetch_operation.?.result_max(self.batch_size_limit),
+            );
+            assert(fetch_limit > 0);
+            assert(scan_buffer.len >= fetch_limit);
+            scan_lookup.read(
+                scan_buffer[0..fetch_limit],
+                &prefetch_query_polygon_callback,
+            );
+        }
+
+        fn prefetch_query_polygon_callback(
+            scan_lookup: *GeoEventsScanLookup,
+            results: []const GeoEvent,
+        ) void {
+            const self: *StateMachine = ScanLookup.parent(.geo_events, scan_lookup);
+            assert(self.prefetch_input != null);
+            assert(self.prefetch_operation.? == .query_polygon);
+            assert(self.scan_lookup_buffer_index < self.scan_lookup_buffer.len);
+
+            self.scan_lookup_buffer_index += @intCast(results.len * @sizeOf(GeoEvent));
+            self.scan_lookup_results.appendAssumeCapacity(@intCast(results.len));
+
+            self.scan_lookup = .null;
+            self.forest.scan_buffer_pool.reset();
+            self.forest.grooves.geo_events.scan_builder.reset();
+
+            self.prefetch_finish();
+        }
+
+        /// Prefetch for cleanup_expired operation (F2.4.8).
+        ///
+        /// Scans events by timestamp (oldest first) to find candidates for TTL expiration.
+        /// The batch_size in CleanupRequest limits how many events to scan.
+        fn prefetch_cleanup_expired(self: *StateMachine) void {
+            assert(self.prefetch_input != null);
+            assert(self.prefetch_operation.? == .cleanup_expired);
+            assert(self.scan_lookup == .null);
+            assert(self.scan_lookup_buffer_index == 0);
+            assert(self.scan_lookup_results.items.len == 0);
+
+            // Parse the cleanup request to get batch_size
+            var batch_size: u32 = 1000; // Default batch size
+            if (self.prefetch_input.?.len >= @sizeOf(CleanupRequest)) {
+                const request = @as(*const CleanupRequest, @ptrCast(@alignCast(self.prefetch_input.?.ptr))).*;
+                if (request.batch_size > 0) {
+                    batch_size = request.batch_size;
+                }
+            }
+
+            // Set up scan for oldest events (timestamp ascending)
+            const scan = self.forest.grooves.geo_events.scan_builder.scan_timestamp(
+                self.forest.scan_buffer_pool.acquire_assume_capacity(),
+                snapshot_latest,
+                TimestampRange.gte(0), // Scan from oldest timestamp
+                .ascending,
+            );
+            assert(self.forest.scan_buffer_pool.scan_buffer_used > 0);
+
+            const scan_buffer = stdx.bytes_as_slice(
+                .inexact,
+                GeoEvent,
+                self.scan_lookup_buffer[0..],
+            );
+
+            const scan_lookup = self.scan_lookup.get(.geo_events);
+            scan_lookup.* = GeoEventsScanLookup.init(
+                &self.forest.grooves.geo_events,
+                scan,
+            );
+
+            // Limit scan to batch_size
+            const limit = @min(batch_size, @as(u32, @intCast(scan_buffer.len)));
+            scan_lookup.read(
+                scan_buffer[0..limit],
+                &prefetch_cleanup_expired_callback,
+            );
+        }
+
+        fn prefetch_cleanup_expired_callback(
+            scan_lookup: *GeoEventsScanLookup,
+            results: []const GeoEvent,
+        ) void {
+            const self: *StateMachine = ScanLookup.parent(.geo_events, scan_lookup);
+            assert(self.prefetch_input != null);
+            assert(self.prefetch_operation.? == .cleanup_expired);
+            assert(self.scan_lookup_buffer_index < self.scan_lookup_buffer.len);
+
+            self.scan_lookup_buffer_index += @intCast(results.len * @sizeOf(GeoEvent));
+            self.scan_lookup_results.appendAssumeCapacity(@intCast(results.len));
+
+            self.scan_lookup = .null;
+            self.forest.scan_buffer_pool.reset();
+            self.forest.grooves.geo_events.scan_builder.reset();
+
             self.prefetch_finish();
         }
 
@@ -2893,18 +3214,24 @@ pub fn StateMachineType(comptime Storage: type) type {
                 ),
                 .query_uuid => self.execute_query_uuid(output_buffer),
                 .query_latest => self.execute_query_latest(output_buffer),
-                // Remaining geo operations - stub (handled by GeoStateMachine later)
-                .upsert_events,
-                .delete_entities,
-                .query_radius,
-                .query_polygon,
-                => 0,
+                .delete_entities => self.execute_delete_entities(
+                    timestamp,
+                    message_body_used,
+                    output_buffer,
+                ),
+                .upsert_events => self.execute_upsert_events(
+                    timestamp,
+                    message_body_used,
+                    output_buffer,
+                ),
+                .query_radius => self.execute_query_radius(message_body_used, output_buffer),
+                .query_polygon => self.execute_query_polygon(message_body_used, output_buffer),
 
                 // ArcherDB admin operations (F1.2.6)
                 .archerdb_ping => self.execute_archerdb_ping(timestamp, output_buffer),
                 .archerdb_get_status => self.execute_archerdb_get_status(output_buffer),
-                // ArcherDB TTL cleanup (F2.4.8) - handled by GeoStateMachine
-                .cleanup_expired => 0,
+                // ArcherDB TTL cleanup (F2.4.8)
+                .cleanup_expired => self.execute_cleanup_expired(timestamp, message_body_used, output_buffer),
 
                 inline .deprecated_create_accounts_unbatched,
                 .deprecated_create_transfers_unbatched,
@@ -3097,6 +3424,95 @@ pub fn StateMachineType(comptime Storage: type) type {
             };
             const response_bytes = std.mem.asBytes(&response);
             stdx.copy_disjoint(.exact, u8, output_buffer[0..response_bytes.len], response_bytes);
+            return response_bytes.len;
+        }
+
+        /// Execute cleanup_expired operation (F2.4.8).
+        ///
+        /// Removes expired entities based on TTL.
+        /// For Forest LSM, this scans events and inserts tombstones for expired ones.
+        ///
+        /// Arguments:
+        /// - timestamp: VSR consensus timestamp (nanoseconds)
+        /// - input: CleanupRequest bytes (optional - uses defaults if empty)
+        /// - output: Buffer for CleanupResponse
+        ///
+        /// Returns: Size of response written to output
+        fn execute_cleanup_expired(
+            self: *StateMachine,
+            timestamp: u64,
+            input: []align(16) const u8,
+            output_buffer: *align(16) [constants.message_body_size_max]u8,
+        ) usize {
+            _ = input; // Request already parsed during prefetch
+
+            // Clean up scan state after processing
+            defer {
+                self.scan_lookup_buffer_index = 0;
+                self.scan_lookup_results.clearRetainingCapacity();
+            }
+
+            // Get prefetched events from scan
+            const result_count: u32 = if (self.scan_lookup_results.items.len > 0)
+                self.scan_lookup_results.items[0]
+            else
+                0;
+
+            if (result_count == 0) {
+                // No events to check - return empty response
+                const response = CleanupResponse{
+                    .entries_scanned = 0,
+                    .entries_removed = 0,
+                };
+                const response_bytes = std.mem.asBytes(&response);
+                stdx.copy_disjoint(.exact, u8, output_buffer[0..response_bytes.len], response_bytes);
+                return response_bytes.len;
+            }
+
+            // Parse prefetched events
+            const events = stdx.bytes_as_slice(
+                .inexact,
+                GeoEvent,
+                self.scan_lookup_buffer[0..self.scan_lookup_buffer_index],
+            );
+
+            var entries_removed: u64 = 0;
+            const ns_per_second: u64 = 1_000_000_000;
+
+            for (events) |event| {
+                // Skip already deleted events
+                if (event.flags.deleted) continue;
+
+                // Check TTL expiration
+                // An event is expired if: event.timestamp + (ttl_seconds * ns) < current_timestamp
+                const ttl_ns = @as(u64, event.ttl_seconds) * ns_per_second;
+                const expires_at = event.timestamp +| ttl_ns; // Saturating add to prevent overflow
+
+                if (expires_at < timestamp) {
+                    // Event has expired - insert tombstone
+                    var tombstone = event;
+                    tombstone.flags.deleted = true;
+                    tombstone.timestamp = timestamp;
+
+                    // Use groove.update() since the event exists
+                    self.forest.grooves.geo_events.update(.{ .old = &event, .new = &tombstone });
+                    entries_removed += 1;
+                }
+            }
+
+            // Write response
+            const response = CleanupResponse{
+                .entries_scanned = @as(u64, result_count),
+                .entries_removed = entries_removed,
+            };
+            const response_bytes = std.mem.asBytes(&response);
+            stdx.copy_disjoint(.exact, u8, output_buffer[0..response_bytes.len], response_bytes);
+
+            log.info("cleanup_expired: scanned {} events, removed {} expired", .{
+                result_count,
+                entries_removed,
+            });
+
             return response_bytes.len;
         }
 
@@ -3976,6 +4392,226 @@ pub fn StateMachineType(comptime Storage: type) type {
             return .exists;
         }
 
+        /// Execute delete_entities - mark entities as deleted for GDPR compliance (F2.5.1)
+        ///
+        /// This operation inserts tombstone GeoEvents for each entity_id, marking them
+        /// as deleted. Future queries should filter out events with flags.deleted=true.
+        ///
+        /// Per hybrid-memory/spec.md GDPR requirements:
+        /// - Tombstone ensures entity is marked as deleted in LSM storage
+        /// - Queries return tombstones which application filters
+        /// - Tombstones prevent resurrection (new inserts for deleted entity)
+        fn execute_delete_entities(
+            self: *StateMachine,
+            timestamp: u64,
+            message_body_used: []align(16) const u8,
+            output_buffer: *align(16) [constants.message_body_size_max]u8,
+        ) usize {
+            // Start timing for metrics (F2.5.5)
+            const start_time = std.time.nanoTimestamp();
+
+            // Parse input as array of entity_ids (u128)
+            const entity_ids = stdx.bytes_as_slice(.exact, u128, message_body_used);
+            const results = stdx.bytes_as_slice(.inexact, DeleteEntitiesResult, output_buffer);
+            assert(entity_ids.len <= results.len);
+
+            var error_count: usize = 0;
+            var deleted_count: usize = 0;
+
+            for (entity_ids, 0..) |entity_id, index| {
+                // Calculate timestamp for this tombstone (nanosecond precision ordering)
+                const tombstone_timestamp = timestamp - entity_ids.len + index + 1;
+
+                // Validate entity_id (zero is reserved)
+                if (entity_id == 0) {
+                    results[error_count] = .{
+                        .index = @intCast(index),
+                        .result = .entity_id_must_not_be_zero,
+                    };
+                    error_count += 1;
+                    continue;
+                }
+
+                // Create minimal tombstone for this entity
+                // Uses default group_id=0 since we don't know the entity's group
+                const tombstone = GeoEvent.create_minimal_tombstone(
+                    entity_id,
+                    0, // group_id unknown, will be 0
+                    tombstone_timestamp,
+                );
+
+                // Insert tombstone into Forest
+                self.forest.grooves.geo_events.insert(&tombstone);
+                self.commit_timestamp = tombstone_timestamp;
+                deleted_count += 1;
+
+                if (self.log_trace) {
+                    log.debug("{?}: delete_entities {}/{}: entity_id={}", .{
+                        self.forest.grid.superblock.replica_index,
+                        index + 1,
+                        entity_ids.len,
+                        entity_id,
+                    });
+                }
+            }
+
+            // Record deletion metrics (F2.5.5)
+            archerdb_metrics.Registry.delete_operations_total.inc();
+            archerdb_metrics.Registry.delete_entities_total.add(@intCast(deleted_count));
+
+            if (error_count > 0) {
+                archerdb_metrics.Registry.delete_errors_total.add(@intCast(error_count));
+            }
+
+            const end_time = std.time.nanoTimestamp();
+            const elapsed_ns: u64 = @intCast(@max(0, end_time - start_time));
+            archerdb_metrics.Registry.delete_latency.observeNs(elapsed_ns);
+
+            // Return only error results (success cases don't need explicit result)
+            return @sizeOf(DeleteEntitiesResult) * error_count;
+        }
+
+        /// Execute upsert_events - insert or update GeoEvents using LWW semantics (F1.3.1)
+        ///
+        /// Unlike insert_events which fails on ID conflicts, upsert_events uses
+        /// Last-Write-Wins (LWW) resolution: if an event with the same ID exists,
+        /// it is updated with the new data.
+        fn execute_upsert_events(
+            self: *StateMachine,
+            timestamp: u64,
+            message_body_used: []align(16) const u8,
+            output_buffer: *align(16) [constants.message_body_size_max]u8,
+        ) usize {
+            // Start timing for metrics (F1.4.1 - Observability)
+            const start_time = std.time.nanoTimestamp();
+
+            const events = stdx.bytes_as_slice(.exact, GeoEvent, message_body_used);
+            const results = stdx.bytes_as_slice(.inexact, InsertGeoEventsResult, output_buffer);
+            assert(events.len <= results.len);
+
+            var count: usize = 0;
+            for (events, 0..) |*event, index| {
+                // Calculate timestamp for this event (nanosecond precision ordering)
+                const event_timestamp = timestamp - events.len + index + 1;
+                const result = self.upsert_event(event_timestamp, event);
+
+                if (self.log_trace) {
+                    log.debug("{?}: upsert_events {}/{}: {}: {}", .{
+                        self.forest.grid.superblock.replica_index,
+                        index + 1,
+                        events.len,
+                        result,
+                        event,
+                    });
+                }
+
+                if (result != .ok) {
+                    results[count] = .{ .index = @intCast(index), .result = result };
+                    count += 1;
+                }
+            }
+
+            // Record write metrics (F1.4.1 - Observability)
+            const successful_events = events.len - count;
+            archerdb_metrics.Registry.write_operations_total.inc();
+            archerdb_metrics.Registry.write_ops_upsert.inc();
+            archerdb_metrics.Registry.write_events_total.add(@intCast(successful_events));
+            const bytes_written = @sizeOf(GeoEvent) * successful_events;
+            archerdb_metrics.Registry.write_bytes_total.add(@intCast(bytes_written));
+
+            // Record error metrics (F1.4.1 - Observability)
+            if (count > 0) {
+                archerdb_metrics.Registry.write_errors_total.add(@intCast(count));
+            }
+
+            const end_time = std.time.nanoTimestamp();
+            const elapsed_ns: u64 = @intCast(@max(0, end_time - start_time));
+            archerdb_metrics.Registry.write_latency.observeNs(elapsed_ns);
+
+            return @sizeOf(InsertGeoEventsResult) * count;
+        }
+
+        /// Upsert a single GeoEvent using LWW (Last-Write-Wins) semantics.
+        /// Validates the event and updates if exists, inserts otherwise.
+        fn upsert_event(
+            self: *StateMachine,
+            timestamp: u64,
+            e: *const GeoEvent,
+        ) InsertGeoEventResult {
+            assert(timestamp > self.commit_timestamp or constants.aof_recovery);
+
+            // Timestamp must be zero (assigned by state machine)
+            if (e.timestamp != 0) return .timestamp_must_be_zero;
+
+            // Validate reserved field (must be zeroed)
+            for (e.reserved) |byte| {
+                if (byte != 0) return .reserved_field;
+            }
+
+            // Validate reserved flags (must be zeroed)
+            if (e.flags.padding != 0) return .reserved_flag;
+
+            // Composite ID must not be zero (S2 cell + timestamp)
+            if (e.id == 0) return .id_must_not_be_zero;
+
+            // Entity ID must be present (UUID identifying the moving entity)
+            if (e.entity_id == 0) return .entity_id_must_not_be_zero;
+
+            // Validate coordinates are within valid ranges
+            if (e.lat_nano < GeoEvent.lat_nano_min or e.lat_nano > GeoEvent.lat_nano_max) {
+                return .lat_out_of_range;
+            }
+            if (e.lon_nano < GeoEvent.lon_nano_min or e.lon_nano > GeoEvent.lon_nano_max) {
+                return .lon_out_of_range;
+            }
+
+            // Validate heading range (0-36000 centidegrees)
+            if (e.heading_cdeg > GeoEvent.heading_max) {
+                return .heading_out_of_range;
+            }
+
+            // Create the new event object with assigned timestamp
+            const new_event = GeoEvent{
+                .id = e.id,
+                .entity_id = e.entity_id,
+                .correlation_id = e.correlation_id,
+                .user_data = e.user_data,
+                .lat_nano = e.lat_nano,
+                .lon_nano = e.lon_nano,
+                .group_id = e.group_id,
+                .timestamp = timestamp,
+                .altitude_mm = e.altitude_mm,
+                .velocity_mms = e.velocity_mms,
+                .ttl_seconds = e.ttl_seconds,
+                .accuracy_mm = e.accuracy_mm,
+                .heading_cdeg = e.heading_cdeg,
+                .flags = e.flags,
+                .reserved = @splat(0),
+            };
+
+            // Check for existing event with same ID - upsert uses LWW
+            switch (self.forest.grooves.geo_events.get(e.id)) {
+                .found_object => |existing| {
+                    // LWW: Update existing event with new data
+                    // Note: We need to preserve the original timestamp for the update
+                    var updated_event = new_event;
+                    updated_event.timestamp = existing.timestamp;
+                    self.forest.grooves.geo_events.update(.{
+                        .old = &existing,
+                        .new = &updated_event,
+                    });
+                },
+                .found_orphaned_id => unreachable,
+                .not_found => {
+                    // New event - insert it
+                    self.forest.grooves.geo_events.insert(&new_event);
+                },
+            }
+
+            self.commit_timestamp = timestamp;
+            return .ok;
+        }
+
         /// Execute query_uuid - return GeoEvents matching the entity_id (F1.3.2)
         /// Results were prefetched into scan_lookup_buffer by prefetch_query_uuid
         fn execute_query_uuid(
@@ -4047,6 +4683,215 @@ pub fn StateMachineType(comptime Storage: type) type {
             archerdb_metrics.Registry.read_latency.observeNs(elapsed_ns);
 
             return result_size;
+        }
+
+        /// Execute query_radius - spatial query within a circular region (F3)
+        ///
+        /// Filters prefetched events by geodesic distance from center point.
+        /// Returns events within radius_mm of the center, up to limit.
+        fn execute_query_radius(
+            self: *StateMachine,
+            message_body_used: []align(16) const u8,
+            output_buffer: *align(16) [constants.message_body_size_max]u8,
+        ) usize {
+            const start_time = std.time.nanoTimestamp();
+
+            // Parse filter
+            if (message_body_used.len < @sizeOf(QueryRadiusFilter)) {
+                // Invalid filter - return empty response
+                const header: *QueryResponse = @ptrCast(@alignCast(output_buffer));
+                header.* = QueryResponse.complete(0);
+                return @sizeOf(QueryResponse);
+            }
+
+            const filter: *const QueryRadiusFilter = @ptrCast(@alignCast(message_body_used.ptr));
+
+            // Get prefetched results
+            if (self.scan_lookup_results.items.len == 0) {
+                // No results from prefetch
+                const header: *QueryResponse = @ptrCast(@alignCast(output_buffer));
+                header.* = QueryResponse.complete(0);
+                self.scan_lookup_buffer_index = 0;
+                return @sizeOf(QueryResponse);
+            }
+
+            const prefetched_count = self.scan_lookup_results.items[0];
+            self.scan_lookup_results.clearRetainingCapacity();
+
+            const prefetched_events = stdx.bytes_as_slice(
+                .exact,
+                GeoEvent,
+                self.scan_lookup_buffer[0 .. prefetched_count * @sizeOf(GeoEvent)],
+            );
+
+            // Calculate output capacity (reserve space for header)
+            const data_offset = @sizeOf(QueryResponse);
+            const data_space = output_buffer.len - data_offset;
+            const max_results = data_space / @sizeOf(GeoEvent);
+            const effective_limit = @min(filter.limit, @as(u32, @intCast(max_results)));
+
+            // Filter by distance and copy to output
+            const output_events = stdx.bytes_as_slice(
+                .inexact,
+                GeoEvent,
+                output_buffer[data_offset .. data_offset + @as(usize, effective_limit) * @sizeOf(GeoEvent)],
+            );
+
+            var result_count: usize = 0;
+            for (prefetched_events) |event| {
+                if (result_count >= effective_limit) break;
+
+                // Skip deleted events (tombstones)
+                if (event.flags.deleted) continue;
+
+                // Check group_id filter if specified
+                if (filter.group_id != 0 and event.group_id != filter.group_id) continue;
+
+                // Check distance from center
+                if (!S2.isWithinDistance(
+                    filter.center_lat_nano,
+                    filter.center_lon_nano,
+                    event.lat_nano,
+                    event.lon_nano,
+                    filter.radius_mm,
+                )) continue;
+
+                // Event passes all filters - add to results
+                output_events[result_count] = event;
+                result_count += 1;
+            }
+
+            // Write response header
+            const header: *QueryResponse = @ptrCast(@alignCast(output_buffer));
+            header.* = QueryResponse.complete(@intCast(result_count));
+
+            self.scan_lookup_buffer_index = 0;
+
+            // Record metrics
+            archerdb_metrics.Registry.read_operations_total.inc();
+            archerdb_metrics.Registry.read_ops_query_radius.inc();
+            archerdb_metrics.Registry.read_events_returned_total.add(@intCast(result_count));
+
+            const end_time = std.time.nanoTimestamp();
+            const elapsed_ns: u64 = @intCast(@max(0, end_time - start_time));
+            archerdb_metrics.Registry.read_latency.observeNs(elapsed_ns);
+
+            return data_offset + result_count * @sizeOf(GeoEvent);
+        }
+
+        /// Execute query_polygon - spatial query within a polygon region (F3)
+        ///
+        /// Filters prefetched events by point-in-polygon test.
+        /// Returns events inside the polygon, up to limit.
+        fn execute_query_polygon(
+            self: *StateMachine,
+            message_body_used: []align(16) const u8,
+            output_buffer: *align(16) [constants.message_body_size_max]u8,
+        ) usize {
+            const start_time = std.time.nanoTimestamp();
+
+            // Parse filter
+            if (message_body_used.len < @sizeOf(QueryPolygonFilter)) {
+                const header: *QueryResponse = @ptrCast(@alignCast(output_buffer));
+                header.* = QueryResponse.complete(0);
+                return @sizeOf(QueryResponse);
+            }
+
+            const filter: *const QueryPolygonFilter = @ptrCast(@alignCast(message_body_used.ptr));
+
+            // Calculate expected message size with vertices
+            const vertices_size = filter.vertex_count * @sizeOf(PolygonVertex);
+            const expected_size = @sizeOf(QueryPolygonFilter) + vertices_size;
+            if (message_body_used.len < expected_size or filter.vertex_count < 3) {
+                const header: *QueryResponse = @ptrCast(@alignCast(output_buffer));
+                header.* = QueryResponse.complete(0);
+                return @sizeOf(QueryResponse);
+            }
+
+            // Extract polygon vertices
+            const vertices_start = @sizeOf(QueryPolygonFilter);
+            const vertices_bytes = message_body_used[vertices_start .. vertices_start + vertices_size];
+            const vertices = mem.bytesAsSlice(PolygonVertex, vertices_bytes);
+
+            // Convert to S2 LatLon format
+            const s2_index = @import("s2_index.zig");
+            var polygon: [1024]s2_index.LatLon = undefined;
+            const vertex_count = @min(filter.vertex_count, 1024);
+            for (vertices[0..vertex_count], 0..) |v, i| {
+                polygon[i] = .{
+                    .lat_nano = v.lat_nano,
+                    .lon_nano = v.lon_nano,
+                };
+            }
+
+            // Get prefetched results
+            if (self.scan_lookup_results.items.len == 0) {
+                const header: *QueryResponse = @ptrCast(@alignCast(output_buffer));
+                header.* = QueryResponse.complete(0);
+                self.scan_lookup_buffer_index = 0;
+                return @sizeOf(QueryResponse);
+            }
+
+            const prefetched_count = self.scan_lookup_results.items[0];
+            self.scan_lookup_results.clearRetainingCapacity();
+
+            const prefetched_events = stdx.bytes_as_slice(
+                .exact,
+                GeoEvent,
+                self.scan_lookup_buffer[0 .. prefetched_count * @sizeOf(GeoEvent)],
+            );
+
+            // Calculate output capacity
+            const data_offset = @sizeOf(QueryResponse);
+            const data_space = output_buffer.len - data_offset;
+            const max_results = data_space / @sizeOf(GeoEvent);
+            const effective_limit = @min(filter.limit, @as(u32, @intCast(max_results)));
+
+            // Filter by polygon and copy to output
+            const output_events = stdx.bytes_as_slice(
+                .inexact,
+                GeoEvent,
+                output_buffer[data_offset .. data_offset + @as(usize, effective_limit) * @sizeOf(GeoEvent)],
+            );
+
+            var result_count: usize = 0;
+            for (prefetched_events) |event| {
+                if (result_count >= effective_limit) break;
+
+                // Skip deleted events
+                if (event.flags.deleted) continue;
+
+                // Check group_id filter if specified
+                if (filter.group_id != 0 and event.group_id != filter.group_id) continue;
+
+                // Check if point is inside polygon
+                const point = s2_index.LatLon{
+                    .lat_nano = event.lat_nano,
+                    .lon_nano = event.lon_nano,
+                };
+                if (!S2.pointInPolygon(point, polygon[0..vertex_count])) continue;
+
+                // Event passes all filters
+                output_events[result_count] = event;
+                result_count += 1;
+            }
+
+            // Write response header
+            const header: *QueryResponse = @ptrCast(@alignCast(output_buffer));
+            header.* = QueryResponse.complete(@intCast(result_count));
+
+            self.scan_lookup_buffer_index = 0;
+
+            // Record metrics
+            archerdb_metrics.Registry.read_operations_total.inc();
+            archerdb_metrics.Registry.read_ops_query_polygon.inc();
+            archerdb_metrics.Registry.read_events_returned_total.add(@intCast(result_count));
+
+            const end_time = std.time.nanoTimestamp();
+            const elapsed_ns: u64 = @intCast(@max(0, end_time - start_time));
+            archerdb_metrics.Registry.read_latency.observeNs(elapsed_ns);
+
+            return data_offset + result_count * @sizeOf(GeoEvent);
         }
 
         fn create_account(

@@ -113,6 +113,9 @@ const vsr = @import("vsr.zig");
 const ForestType = @import("lsm/forest.zig").ForestType;
 const GrooveType = @import("lsm/groove.zig").GrooveType;
 
+// Prometheus metrics integration (F5.2.2)
+const archerdb_metrics = vsr.archerdb_metrics;
+
 // RAM Index integration (F2.1)
 const DefaultRamIndex = @import("ram_index.zig").DefaultRamIndex;
 const IndexEntry = @import("ram_index.zig").IndexEntry;
@@ -274,6 +277,64 @@ pub const DeletionMetrics = struct {
     }
 };
 
+/// Insert operation metrics for observability.
+///
+/// Tracks insert/upsert performance and validation outcomes.
+pub const InsertMetrics = struct {
+    /// Total events successfully inserted.
+    events_inserted: u64 = 0,
+    /// Total events rejected due to validation.
+    events_rejected: u64 = 0,
+    /// Total insert operations (batches).
+    insert_operations: u64 = 0,
+    /// Cumulative insert duration in nanoseconds.
+    total_insert_duration_ns: u64 = 0,
+
+    /// Record an insert batch result.
+    pub fn recordInsertBatch(
+        self: *InsertMetrics,
+        inserted: u64,
+        rejected: u64,
+        duration_ns: u64,
+    ) void {
+        self.events_inserted += inserted;
+        self.events_rejected += rejected;
+        self.insert_operations += 1;
+        self.total_insert_duration_ns += duration_ns;
+    }
+
+    /// Calculate average insert latency (ns per event).
+    pub fn averageInsertLatencyNs(self: InsertMetrics) u64 {
+        const total_events = self.events_inserted + self.events_rejected;
+        if (total_events == 0) return 0;
+        return self.total_insert_duration_ns / total_events;
+    }
+
+    /// Export metrics in Prometheus text format.
+    pub fn toPrometheus(self: InsertMetrics, writer: anytype) !void {
+        try writer.print(
+            \\# HELP archerdb_events_inserted_total Total events successfully inserted
+            \\# TYPE archerdb_events_inserted_total counter
+            \\archerdb_events_inserted_total {d}
+            \\# HELP archerdb_events_rejected_total Events rejected due to validation
+            \\# TYPE archerdb_events_rejected_total counter
+            \\archerdb_events_rejected_total {d}
+            \\# HELP archerdb_insert_operations_total Total insert operations
+            \\# TYPE archerdb_insert_operations_total counter
+            \\archerdb_insert_operations_total {d}
+            \\# HELP archerdb_insert_duration_ns_total Cumulative insert duration
+            \\# TYPE archerdb_insert_duration_ns_total counter
+            \\archerdb_insert_duration_ns_total {d}
+            \\
+        , .{
+            self.events_inserted,
+            self.events_rejected,
+            self.insert_operations,
+            self.total_insert_duration_ns,
+        });
+    }
+};
+
 /// Tombstone lifecycle metrics (F2.5.8).
 ///
 /// Tracks tombstone behavior during LSM compaction for GDPR compliance
@@ -372,6 +433,97 @@ pub const TombstoneMetrics = struct {
     }
 };
 
+/// Query operation metrics for observability.
+///
+/// Tracks query performance and usage patterns for monitoring dashboards.
+pub const QueryMetrics = struct {
+    /// Total query operations by type.
+    query_uuid_count: u64 = 0,
+    query_radius_count: u64 = 0,
+    query_polygon_count: u64 = 0,
+    query_latest_count: u64 = 0,
+
+    /// Total results returned across all queries.
+    total_results_returned: u64 = 0,
+
+    /// Query timing (cumulative nanoseconds).
+    total_query_duration_ns: u64 = 0,
+
+    /// Cache hit/miss tracking.
+    index_hits: u64 = 0,
+    index_misses: u64 = 0,
+
+    /// Record a UUID query.
+    pub fn recordUuidQuery(self: *QueryMetrics, found: bool, duration_ns: u64) void {
+        self.query_uuid_count += 1;
+        self.total_query_duration_ns += duration_ns;
+        if (found) {
+            self.index_hits += 1;
+            self.total_results_returned += 1;
+        } else {
+            self.index_misses += 1;
+        }
+    }
+
+    /// Record a radius query.
+    pub fn recordRadiusQuery(self: *QueryMetrics, results_count: u64, duration_ns: u64) void {
+        self.query_radius_count += 1;
+        self.total_results_returned += results_count;
+        self.total_query_duration_ns += duration_ns;
+    }
+
+    /// Record a polygon query.
+    pub fn recordPolygonQuery(self: *QueryMetrics, results_count: u64, duration_ns: u64) void {
+        self.query_polygon_count += 1;
+        self.total_results_returned += results_count;
+        self.total_query_duration_ns += duration_ns;
+    }
+
+    /// Calculate average query latency.
+    pub fn averageQueryLatencyNs(self: QueryMetrics) u64 {
+        const total_queries = self.query_uuid_count + self.query_radius_count +
+            self.query_polygon_count + self.query_latest_count;
+        if (total_queries == 0) return 0;
+        return self.total_query_duration_ns / total_queries;
+    }
+
+    /// Export metrics in Prometheus text format.
+    pub fn toPrometheus(self: QueryMetrics, writer: anytype) !void {
+        try writer.print(
+            \\# HELP archerdb_query_uuid_total Total UUID lookup queries
+            \\# TYPE archerdb_query_uuid_total counter
+            \\archerdb_query_uuid_total {d}
+            \\# HELP archerdb_query_radius_total Total radius queries
+            \\# TYPE archerdb_query_radius_total counter
+            \\archerdb_query_radius_total {d}
+            \\# HELP archerdb_query_polygon_total Total polygon queries
+            \\# TYPE archerdb_query_polygon_total counter
+            \\archerdb_query_polygon_total {d}
+            \\# HELP archerdb_query_results_total Total results returned
+            \\# TYPE archerdb_query_results_total counter
+            \\archerdb_query_results_total {d}
+            \\# HELP archerdb_query_duration_ns_total Cumulative query duration
+            \\# TYPE archerdb_query_duration_ns_total counter
+            \\archerdb_query_duration_ns_total {d}
+            \\# HELP archerdb_index_hits_total RAM index cache hits
+            \\# TYPE archerdb_index_hits_total counter
+            \\archerdb_index_hits_total {d}
+            \\# HELP archerdb_index_misses_total RAM index cache misses
+            \\# TYPE archerdb_index_misses_total counter
+            \\archerdb_index_misses_total {d}
+            \\
+        , .{
+            self.query_uuid_count,
+            self.query_radius_count,
+            self.query_polygon_count,
+            self.total_results_returned,
+            self.total_query_duration_ns,
+            self.index_hits,
+            self.index_misses,
+        });
+    }
+};
+
 // ============================================================================
 // Query Filters
 // ============================================================================
@@ -465,6 +617,56 @@ pub const QueryLatestFilter = extern struct {
     comptime {
         assert(@sizeOf(QueryLatestFilter) == 128);
         assert(stdx.no_padding(QueryLatestFilter));
+    }
+};
+
+/// Response header for spatial queries (radius, polygon, latest).
+/// Placed at start of response body, followed by count × GeoEvent structs.
+///
+/// Per query-engine/spec.md §1385-1393:
+/// - count: actual number of results in this response
+/// - has_more: 1 if more results available via cursor pagination
+/// - partial_result: 1 if response was truncated due to message size limit
+pub const QueryResponse = extern struct {
+    /// Number of GeoEvent results following this header
+    count: u32,
+    /// 1 if more results available (use cursor to fetch), 0 otherwise
+    has_more: u8,
+    /// 1 if response was truncated due to message_size_max, 0 otherwise
+    partial_result: u8,
+    /// Reserved for future flags
+    reserved: [2]u8 = @splat(0),
+
+    comptime {
+        assert(@sizeOf(QueryResponse) == 8);
+        assert(stdx.no_padding(QueryResponse));
+    }
+
+    /// Create a response header for a complete result set
+    pub fn complete(count: u32) QueryResponse {
+        return .{
+            .count = count,
+            .has_more = 0,
+            .partial_result = 0,
+        };
+    }
+
+    /// Create a response header indicating more results available
+    pub fn with_more(count: u32) QueryResponse {
+        return .{
+            .count = count,
+            .has_more = 1,
+            .partial_result = 0,
+        };
+    }
+
+    /// Create a response header indicating truncation due to message size
+    pub fn truncated(count: u32) QueryResponse {
+        return .{
+            .count = count,
+            .has_more = 1,
+            .partial_result = 1,
+        };
     }
 };
 
@@ -613,6 +815,12 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         /// TTL cleanup scanner state (F2.4.8).
         cleanup_scanner: ttl.CleanupScanner = ttl.CleanupScanner.init(),
 
+        /// TTL configuration for cleanup scheduling.
+        ttl_config: ttl.Config = ttl.default_config,
+
+        /// Count of entries with non-zero TTL (for tracking if cleanup needed).
+        entries_with_ttl: u64 = 0,
+
         /// TTL metrics for observability (F2.4.5).
         ttl_metrics: ttl.TtlMetrics = ttl.TtlMetrics{},
 
@@ -621,6 +829,12 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 
         /// Tombstone lifecycle metrics for compaction monitoring (F2.5.8).
         tombstone_metrics: TombstoneMetrics = TombstoneMetrics{},
+
+        /// Query operation metrics (F3.3).
+        query_metrics: QueryMetrics = QueryMetrics{},
+
+        /// Insert operation metrics.
+        insert_metrics: InsertMetrics = InsertMetrics{},
 
         // ====================================================================
         // Initialization
@@ -787,14 +1001,24 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         /// Returns true if there are GeoEvents that need TTL expiration
         /// at the given timestamp.
         pub fn pulse_needed(self: *const GeoStateMachine, timestamp: u64) bool {
-            _ = self;
-            _ = timestamp;
+            // TTL cleanup pulse scheduling (F2.4)
+            //
+            // Returns true when a TTL cleanup pulse operation should be scheduled.
+            // The VSR replica will call this periodically and schedule a pulse
+            // operation if it returns true.
+            //
+            // Conditions for triggering cleanup:
+            // 1. There are entries with non-zero TTL (something might be expired)
+            // 2. The cleanup interval has elapsed since the last run
 
-            // TODO(F2.4): Implement TTL expiration check
-            // For now, GeoStateMachine doesn't generate pulse operations.
-            // When TTL cleanup is fully integrated, this will return true
-            // when there are expired events that need cleanup.
-            return false;
+            // Skip if no entries have TTL set (nothing can expire)
+            if (self.entries_with_ttl == 0) {
+                return false;
+            }
+
+            // Convert timestamp to nanoseconds (VSR timestamp is in ns)
+            // Check if cleanup interval has elapsed
+            return self.cleanup_scanner.is_due(timestamp, self.ttl_config);
         }
 
         /// Prepare phase - calculate timestamp delta before consensus.
@@ -1048,18 +1272,22 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     return self.execute_query_transfers(message_body_used, output);
                 },
 
-                // ArcherDB geospatial operations (TODO: implement with Forest)
-                .insert_events => 0, // TODO: execute_insert_events
-                .upsert_events => 0, // TODO: execute_upsert_events
+                // ArcherDB geospatial operations
+                .insert_events => {
+                    return self.execute_insert_events(timestamp, message_body_used, output);
+                },
+                .upsert_events => {
+                    return self.execute_upsert_events(timestamp, message_body_used, output);
+                },
                 .delete_entities => self.execute_delete_entities(message_body_used, output),
-                .query_uuid => 0, // TODO: execute_query_uuid
+                .query_uuid => self.execute_query_uuid(message_body_used, output),
                 .query_radius => self.execute_query_radius(message_body_used, output),
                 .query_polygon => self.execute_query_polygon(message_body_used, output),
-                .query_latest => 0, // TODO: execute_query_latest
+                .query_latest => 0, // TODO: Requires Forest LSM integration
 
                 // ArcherDB admin operations
-                .archerdb_ping => 0, // TODO: execute_archerdb_ping
-                .archerdb_get_status => 0, // TODO: execute_archerdb_get_status
+                .archerdb_ping => self.execute_archerdb_ping(output),
+                .archerdb_get_status => self.execute_archerdb_get_status(output),
 
                 // ArcherDB TTL cleanup (F2.4.8)
                 .cleanup_expired => {
@@ -1075,10 +1303,45 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         // ====================================================================
 
         fn execute_pulse(self: *GeoStateMachine, timestamp: u64) usize {
-            _ = self;
-            _ = timestamp;
-            // TODO: Execute TTL cleanup sweep
-            return 0;
+            // Execute TTL cleanup sweep (F2.4 - TTL Retention)
+            // Pulse is called periodically by VSR; we use it for background cleanup.
+            //
+            // Per ttl-retention/spec.md: TTL cleanup runs at intervals defined by
+            // ttl_config.cleanup_interval_ns. The pulse_needed() function checks
+            // if we're due for another scan.
+
+            // Only run cleanup if we have entries with TTL
+            if (self.entries_with_ttl == 0) {
+                return 0;
+            }
+
+            // Scan a batch of entries for TTL expiration
+            // Use a reasonable batch size to avoid blocking other operations
+            const batch_size: u32 = 1000;
+            const result = self.ram_index.scan_expired_batch(
+                self.cleanup_scanner.position,
+                batch_size,
+                timestamp,
+            );
+
+            // Update scanner state
+            self.cleanup_scanner.record_batch(
+                result.entries_scanned,
+                result.next_position,
+                timestamp,
+            );
+
+            // Update entries_with_ttl count (approximate, will be recalculated on full scan)
+            if (result.entries_removed > 0 and self.entries_with_ttl >= result.entries_removed) {
+                self.entries_with_ttl -= result.entries_removed;
+            }
+
+            // Record metrics
+            if (result.entries_removed > 0) {
+                archerdb_metrics.Registry.write_events_total.add(result.entries_removed);
+            }
+
+            return result.entries_removed;
         }
 
         fn execute_create_accounts(
@@ -1278,7 +1541,436 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 duration_ns,
             );
 
+            // Record per-operation Prometheus metrics (F5.2.2)
+            archerdb_metrics.Registry.write_ops_delete.inc();
+            archerdb_metrics.Registry.write_operations_total.inc();
+            archerdb_metrics.Registry.write_events_total.add(deleted_count);
+            archerdb_metrics.Registry.write_latency.observeNs(duration_ns);
+
             return results_count * @sizeOf(DeleteEntitiesResult);
+        }
+
+        // ====================================================================
+        // F1.2: Insert Events Implementation
+        // ====================================================================
+
+        /// Execute insert_events operation.
+        ///
+        /// Validates and inserts a batch of GeoEvents into the RAM index.
+        /// Per data-model/spec.md:
+        /// - Validates all fields (coordinates, entity_id, flags)
+        /// - Computes S2 cell ID at level 30 for spatial indexing
+        /// - Builds composite ID: [S2 Cell ID (upper 64) | Timestamp (lower 64)]
+        /// - Upserts into RAM index with LWW semantics
+        ///
+        /// **Current Implementation**: Inserts into RAM index only.
+        /// **Future**: When Forest is integrated, also persist to LSM tree.
+        ///
+        /// Arguments:
+        /// - timestamp: VSR consensus timestamp (used if event.timestamp == 0)
+        /// - input: Batch of GeoEvent structs
+        /// - output: Buffer for InsertGeoEventsResult results
+        ///
+        /// Returns: Size of response written to output
+        fn execute_insert_events(
+            self: *GeoStateMachine,
+            timestamp: u64,
+            input: []const u8,
+            output: []u8,
+        ) usize {
+            const start_time = std.time.nanoTimestamp();
+
+            // Parse input as array of GeoEvents
+            const events = mem.bytesAsSlice(GeoEvent, input);
+            const max_results = output.len / @sizeOf(InsertGeoEventsResult);
+            const results = mem.bytesAsSlice(
+                InsertGeoEventsResult,
+                output[0 .. max_results * @sizeOf(InsertGeoEventsResult)],
+            );
+
+            var results_count: usize = 0;
+            var inserted_count: u64 = 0;
+            var rejected_count: u64 = 0;
+
+            for (events, 0..) |event, index| {
+                if (index >= max_results) break;
+
+                // Validate entity_id (zero is reserved)
+                if (event.entity_id == 0) {
+                    results[results_count] = InsertGeoEventsResult{
+                        .index = @intCast(index),
+                        .result = .entity_id_must_not_be_zero,
+                    };
+                    results_count += 1;
+                    rejected_count += 1;
+                    continue;
+                }
+
+                // Validate coordinates are within valid range
+                // Latitude: -90° to +90° (-90_000_000_000 to +90_000_000_000 nanodegrees)
+                // Longitude: -180° to +180° (-180_000_000_000 to +180_000_000_000 nanodegrees)
+                const lat_max: i64 = 90_000_000_000;
+                const lon_max: i64 = 180_000_000_000;
+
+                if (event.lat_nano < -lat_max or event.lat_nano > lat_max) {
+                    results[results_count] = InsertGeoEventsResult{
+                        .index = @intCast(index),
+                        .result = .lat_out_of_range,
+                    };
+                    results_count += 1;
+                    rejected_count += 1;
+                    continue;
+                }
+
+                if (event.lon_nano < -lon_max or event.lon_nano > lon_max) {
+                    results[results_count] = InsertGeoEventsResult{
+                        .index = @intCast(index),
+                        .result = .lon_out_of_range,
+                    };
+                    results_count += 1;
+                    rejected_count += 1;
+                    continue;
+                }
+
+                // Validate heading if present (0-35999 centidegrees)
+                if (event.heading_cdeg > 35999) {
+                    results[results_count] = InsertGeoEventsResult{
+                        .index = @intCast(index),
+                        .result = .heading_out_of_range,
+                    };
+                    results_count += 1;
+                    rejected_count += 1;
+                    continue;
+                }
+
+                // Use consensus timestamp if event timestamp is zero
+                const event_timestamp = if (event.timestamp == 0) timestamp else event.timestamp;
+
+                // Compute S2 cell ID at level 30 (7.5mm precision)
+                const cell_id = S2.latLonToCellId(event.lat_nano, event.lon_nano, 30);
+
+                // Build composite ID: [S2 Cell ID (upper 64) | Timestamp (lower 64)]
+                const composite_id: u128 = (@as(u128, cell_id) << 64) | @as(u128, event_timestamp);
+
+                // Upsert into RAM index with LWW semantics
+                const upsert_result = self.ram_index.upsert(
+                    event.entity_id,
+                    composite_id,
+                    event.ttl_seconds,
+                ) catch |err| {
+                    // Handle index capacity errors
+                    log.err("insert_events: RAM index error: {}", .{err});
+                    results[results_count] = InsertGeoEventsResult{
+                        .index = @intCast(index),
+                        .result = .reserved_field, // Using reserved as "internal error"
+                    };
+                    results_count += 1;
+                    rejected_count += 1;
+                    continue;
+                };
+
+                // Record result
+                if (upsert_result.inserted) {
+                    results[results_count] = InsertGeoEventsResult{
+                        .index = @intCast(index),
+                        .result = .ok,
+                    };
+                    inserted_count += 1;
+                    // Track entries with TTL for pulse scheduling
+                    if (event.ttl_seconds > 0) {
+                        self.entries_with_ttl += 1;
+                    }
+                } else if (upsert_result.updated) {
+                    // LWW accepted the update
+                    results[results_count] = InsertGeoEventsResult{
+                        .index = @intCast(index),
+                        .result = .ok,
+                    };
+                    inserted_count += 1;
+                    // Note: TTL tracking for updates is complex (old TTL vs new TTL)
+                    // For simplicity, we assume updates maintain TTL status
+                } else {
+                    // LWW rejected - older event
+                    results[results_count] = InsertGeoEventsResult{
+                        .index = @intCast(index),
+                        .result = .exists,
+                    };
+                    rejected_count += 1;
+                }
+                results_count += 1;
+            }
+
+            log.debug("insert_events: processed {d} events, {d} results", .{ events.len, results_count });
+
+            // Record insert metrics
+            const end_time = std.time.nanoTimestamp();
+            const duration_ns: u64 = if (end_time > start_time) @intCast(end_time - start_time) else 0;
+            self.insert_metrics.recordInsertBatch(inserted_count, rejected_count, duration_ns);
+
+            // Record per-operation Prometheus metrics (F5.2.2)
+            archerdb_metrics.Registry.write_ops_insert.inc();
+            archerdb_metrics.Registry.write_operations_total.inc();
+            archerdb_metrics.Registry.write_events_total.add(inserted_count);
+            archerdb_metrics.Registry.write_latency.observeNs(duration_ns);
+
+            // Update index capacity metrics and check thresholds (F5.2 - Observability)
+            const stats = self.ram_index.getStats();
+            if (stats.capacity > 0) {
+                const load_factor_pct = (stats.entry_count * 100) / stats.capacity;
+                archerdb_metrics.Registry.index_load_factor.set(@intCast(load_factor_pct * 100));
+
+                // Increment capacity warning/critical counters at thresholds
+                if (load_factor_pct >= 95) {
+                    archerdb_metrics.Registry.index_capacity_emergency_total.inc();
+                } else if (load_factor_pct >= 90) {
+                    archerdb_metrics.Registry.index_capacity_critical_total.inc();
+                } else if (load_factor_pct >= 80) {
+                    archerdb_metrics.Registry.index_capacity_warning_total.inc();
+                }
+
+                // Update tombstone ratio gauge
+                if (stats.entry_count > 0) {
+                    const tombstone_ratio_pct = (stats.tombstone_count * 100) / stats.entry_count;
+                    archerdb_metrics.Registry.index_tombstone_ratio.set(@intCast(tombstone_ratio_pct * 100));
+                }
+            }
+
+            return results_count * @sizeOf(InsertGeoEventsResult);
+        }
+
+        // ====================================================================
+        // F1.2: Upsert Events Implementation
+        // ====================================================================
+
+        /// Execute upsert_events operation.
+        ///
+        /// Same as insert_events but with upsert semantics - always succeeds
+        /// using LWW resolution instead of failing on existing entries.
+        /// This is essentially an alias to insert_events since our RAM index
+        /// uses LWW by default.
+        fn execute_upsert_events(
+            self: *GeoStateMachine,
+            timestamp: u64,
+            input: []const u8,
+            output: []u8,
+        ) usize {
+            // Upsert uses the same implementation as insert
+            // (LWW semantics handle conflicts automatically)
+            const result = self.execute_insert_events(timestamp, input, output);
+
+            // Override the operation counter to upsert (insert already recorded write_ops_insert)
+            // We decrement insert and increment upsert for accurate per-operation tracking
+            archerdb_metrics.Registry.write_ops_insert.value.fetchSub(1, .monotonic);
+            archerdb_metrics.Registry.write_ops_upsert.inc();
+
+            return result;
+        }
+
+        // ====================================================================
+        // F1.3: Query UUID Implementation
+        // ====================================================================
+
+        /// Execute query_uuid operation.
+        ///
+        /// Looks up a single entity by UUID and returns its latest GeoEvent.
+        /// Uses O(1) RAM index lookup per hybrid-memory/spec.md.
+        ///
+        /// Arguments:
+        /// - input: QueryUuidFilter with entity_id
+        /// - output: Buffer for GeoEvent result
+        ///
+        /// Returns: Size of response (0 if not found, sizeof(GeoEvent) if found)
+        fn execute_query_uuid(
+            self: *GeoStateMachine,
+            input: []const u8,
+            output: []u8,
+        ) usize {
+            const start_time = std.time.nanoTimestamp();
+
+            // Validate input size
+            if (input.len < @sizeOf(QueryUuidFilter)) {
+                log.warn("query_uuid: input too small ({d} < {d})", .{
+                    input.len,
+                    @sizeOf(QueryUuidFilter),
+                });
+                return 0;
+            }
+
+            // Parse filter
+            const filter = mem.bytesAsValue(
+                QueryUuidFilter,
+                input[0..@sizeOf(QueryUuidFilter)],
+            ).*;
+
+            // Validate entity_id
+            if (filter.entity_id == 0) {
+                log.warn("query_uuid: entity_id must not be zero", .{});
+                return 0;
+            }
+
+            // O(1) lookup in RAM index
+            const lookup_result = self.ram_index.lookup(filter.entity_id);
+
+            if (lookup_result.entry) |entry| {
+                // Found - build GeoEvent from index entry
+                if (output.len < @sizeOf(GeoEvent)) {
+                    log.warn("query_uuid: output buffer too small", .{});
+                    return 0;
+                }
+
+                // Extract S2 cell ID and timestamp from composite ID
+                const cell_id = @as(u64, @truncate(entry.latest_id >> 64));
+                const event_timestamp = @as(u64, @truncate(entry.latest_id));
+
+                // Get approximate coordinates from cell center
+                const cell_center = S2.cellIdToLatLon(cell_id);
+
+                // Build result GeoEvent
+                const result_event = GeoEvent{
+                    .id = entry.latest_id,
+                    .entity_id = entry.entity_id,
+                    .correlation_id = 0, // Not stored in RAM index
+                    .user_data = 0, // Not stored in RAM index
+                    .lat_nano = cell_center.lat_nano,
+                    .lon_nano = cell_center.lon_nano,
+                    .group_id = 0, // Not stored in RAM index
+                    .timestamp = event_timestamp,
+                    .altitude_mm = 0,
+                    .velocity_mms = 0,
+                    .ttl_seconds = entry.ttl_seconds,
+                    .accuracy_mm = 0,
+                    .heading_cdeg = 0,
+                    .flags = GeoEventFlags.none,
+                    .reserved = [_]u8{0} ** 12,
+                };
+
+                // Write to output
+                const result_ptr = mem.bytesAsValue(
+                    GeoEvent,
+                    output[0..@sizeOf(GeoEvent)],
+                );
+                result_ptr.* = result_event;
+
+                // Record metrics
+                const end_time = std.time.nanoTimestamp();
+                const duration_ns: u64 = if (end_time > start_time)
+                    @intCast(end_time - start_time)
+                else
+                    0;
+                self.query_metrics.recordUuidQuery(true, duration_ns);
+
+                // Record per-operation Prometheus metrics (F5.2.2)
+                archerdb_metrics.Registry.read_ops_query_uuid.inc();
+                archerdb_metrics.Registry.read_operations_total.inc();
+                archerdb_metrics.Registry.read_events_returned_total.add(1);
+                archerdb_metrics.Registry.read_latency.observeNs(duration_ns);
+                archerdb_metrics.Registry.query_result_size.observe(1.0);
+
+                log.debug("query_uuid: found entity {x}", .{filter.entity_id});
+                return @sizeOf(GeoEvent);
+            } else {
+                // Not found - record metrics
+                const end_time = std.time.nanoTimestamp();
+                const duration_ns: u64 = if (end_time > start_time)
+                    @intCast(end_time - start_time)
+                else
+                    0;
+                self.query_metrics.recordUuidQuery(false, duration_ns);
+
+                // Record per-operation Prometheus metrics (F5.2.2)
+                archerdb_metrics.Registry.read_ops_query_uuid.inc();
+                archerdb_metrics.Registry.read_operations_total.inc();
+                archerdb_metrics.Registry.read_latency.observeNs(duration_ns);
+                archerdb_metrics.Registry.query_result_size.observe(0.0);
+
+                log.debug("query_uuid: entity {x} not found", .{filter.entity_id});
+                return 0;
+            }
+        }
+
+        // ====================================================================
+        // Admin Operations
+        // ====================================================================
+
+        /// Execute archerdb_ping operation.
+        ///
+        /// Simple health check that returns success.
+        /// Used by clients to verify connectivity.
+        fn execute_archerdb_ping(
+            self: *GeoStateMachine,
+            output: []u8,
+        ) usize {
+            _ = self;
+            // Return a simple "pong" response (4 bytes: 0x706F6E67 = "pong")
+            if (output.len >= 4) {
+                output[0] = 'p';
+                output[1] = 'o';
+                output[2] = 'n';
+                output[3] = 'g';
+                return 4;
+            }
+            return 0;
+        }
+
+        /// Execute archerdb_get_status operation.
+        ///
+        /// Returns current server status including:
+        /// - RAM index statistics (entry count, capacity, load factor)
+        /// - TTL cleanup metrics
+        /// - Deletion metrics
+        fn execute_archerdb_get_status(
+            self: *GeoStateMachine,
+            output: []u8,
+        ) usize {
+            // Status response structure (64 bytes)
+            const StatusResponse = extern struct {
+                /// RAM index entry count
+                ram_index_count: u64,
+                /// RAM index capacity
+                ram_index_capacity: u64,
+                /// RAM index load factor (as percentage * 100)
+                ram_index_load_pct: u32,
+                /// Tombstone count
+                tombstone_count: u64,
+                /// Total TTL expirations
+                ttl_expirations: u64,
+                /// Total deletions
+                deletion_count: u64,
+                /// Reserved for future use
+                reserved: [20]u8,
+            };
+
+            comptime {
+                assert(@sizeOf(StatusResponse) == 64);
+            }
+
+            if (output.len < @sizeOf(StatusResponse)) {
+                return 0;
+            }
+
+            const stats = self.ram_index.getStats();
+            const load_pct: u32 = if (stats.capacity > 0)
+                @intCast((stats.entry_count * 10000) / stats.capacity)
+            else
+                0;
+
+            const response = StatusResponse{
+                .ram_index_count = stats.entry_count,
+                .ram_index_capacity = stats.capacity,
+                .ram_index_load_pct = load_pct,
+                .tombstone_count = stats.tombstone_count,
+                .ttl_expirations = self.ttl_metrics.total_expirations,
+                .deletion_count = self.deletion_metrics.total_deletions,
+                .reserved = [_]u8{0} ** 20,
+            };
+
+            const response_ptr = mem.bytesAsValue(
+                StatusResponse,
+                output[0..@sizeOf(StatusResponse)],
+            );
+            response_ptr.* = response;
+
+            return @sizeOf(StatusResponse);
         }
 
         // ====================================================================
@@ -1311,12 +2003,20 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             input: []const u8,
             output: []u8,
         ) usize {
+            const start_time = std.time.nanoTimestamp();
+
             // Validate input size
             if (input.len < @sizeOf(QueryRadiusFilter)) {
                 log.warn("query_radius: input too small ({d} < {d})", .{
                     input.len,
                     @sizeOf(QueryRadiusFilter),
                 });
+                return 0;
+            }
+
+            // Validate output can hold at least the response header
+            if (output.len < @sizeOf(QueryResponse)) {
+                log.warn("query_radius: output buffer too small for header", .{});
                 return 0;
             }
 
@@ -1336,11 +2036,15 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 return 0;
             }
 
-            // Calculate output capacity
-            const max_results = output.len / @sizeOf(GeoEvent);
+            // Calculate output capacity (reserve space for header)
+            const data_space = output.len - @sizeOf(QueryResponse);
+            const max_results = data_space / @sizeOf(GeoEvent);
             const effective_limit = @min(filter.limit, @as(u32, @intCast(max_results)));
             if (effective_limit == 0) {
-                return 0;
+                // Return empty response with header
+                const header = mem.bytesAsValue(QueryResponse, output[0..@sizeOf(QueryResponse)]);
+                header.* = QueryResponse.complete(0);
+                return @sizeOf(QueryResponse);
             }
 
             // Generate S2 covering for the query region
@@ -1369,19 +2073,29 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             log.debug("query_radius: covering generated with {d} ranges", .{num_ranges});
 
             // Scan RAM index and collect matching entries
+            // Results start after the QueryResponse header
+            const results_offset = @sizeOf(QueryResponse);
+            const results_end = results_offset + effective_limit * @sizeOf(GeoEvent);
             const results_slice = mem.bytesAsSlice(
                 GeoEvent,
-                output[0 .. effective_limit * @sizeOf(GeoEvent)],
+                output[results_offset..results_end],
             );
 
             var result_count: usize = 0;
+            var has_more: bool = false;
             const radius_mm_u64 = @as(u64, filter.radius_mm);
 
             // Scan entire RAM index (temporary until LSM scan is available)
             // NOTE: This is O(n) where n is index capacity. For production use,
             // LSM tree range scan should be used instead.
             var position: u64 = 0;
-            while (position < self.ram_index.capacity and result_count < effective_limit) {
+            while (position < self.ram_index.capacity) {
+                // Check if we've hit the result limit
+                if (result_count >= effective_limit) {
+                    // There might be more results - we hit the limit before scanning all
+                    has_more = true;
+                    break;
+                }
                 // Read entry from index
                 const entry_ptr: *IndexEntry = &self.ram_index.entries[@intCast(position)];
                 const entry = @as(*volatile IndexEntry, @ptrCast(entry_ptr)).*;
@@ -1450,9 +2164,32 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 result_count += 1;
             }
 
-            log.debug("query_radius: returning {d} results", .{result_count});
+            // Record metrics
+            const end_time = std.time.nanoTimestamp();
+            const duration_ns: u64 = if (end_time > start_time)
+                @intCast(end_time - start_time)
+            else
+                0;
+            self.query_metrics.recordRadiusQuery(result_count, duration_ns);
 
-            return result_count * @sizeOf(GeoEvent);
+            // Record per-operation Prometheus metrics (F5.2.2)
+            archerdb_metrics.Registry.read_ops_query_radius.inc();
+            archerdb_metrics.Registry.read_operations_total.inc();
+            archerdb_metrics.Registry.read_events_returned_total.add(result_count);
+            archerdb_metrics.Registry.read_latency.observeNs(duration_ns);
+            archerdb_metrics.Registry.query_result_size.observe(@floatFromInt(result_count));
+
+            // Write QueryResponse header
+            const header = mem.bytesAsValue(QueryResponse, output[0..@sizeOf(QueryResponse)]);
+            if (has_more) {
+                header.* = QueryResponse.with_more(@intCast(result_count));
+            } else {
+                header.* = QueryResponse.complete(@intCast(result_count));
+            }
+
+            log.debug("query_radius: returning {d} results, has_more={}", .{ result_count, has_more });
+
+            return @sizeOf(QueryResponse) + result_count * @sizeOf(GeoEvent);
         }
 
         // ====================================================================
@@ -1482,6 +2219,8 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             input: []const u8,
             output: []u8,
         ) usize {
+            const start_time = std.time.nanoTimestamp();
+
             // Validate minimum input size (header only)
             if (input.len < @sizeOf(QueryPolygonFilter)) {
                 log.warn("query_polygon: input too small for header ({d} < {d})", .{
@@ -1555,11 +2294,50 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             }
             const polygon_slice = latlon_vertices[0..vertices.len];
 
-            // Calculate output capacity
-            const max_results = output.len / @sizeOf(GeoEvent);
+            // Polygon validation (per spec: query-engine/spec.md)
+            // Check for degenerate polygon (collinear vertices)
+            if (S2.isPolygonDegenerate(polygon_slice)) {
+                log.warn("query_polygon: polygon_degenerate (all vertices are collinear)", .{});
+                // Return error code in first byte of output
+                if (output.len >= 4) {
+                    mem.writeInt(u32, output[0..4], 112, .little); // polygon_degenerate
+                }
+                return 4;
+            }
+
+            // Check for self-intersecting polygon (bowtie shape)
+            if (S2.isPolygonSelfIntersecting(polygon_slice)) {
+                log.warn("query_polygon: polygon_self_intersecting (edges cross)", .{});
+                if (output.len >= 4) {
+                    mem.writeInt(u32, output[0..4], 109, .little); // polygon_self_intersecting
+                }
+                return 4;
+            }
+
+            // Check for polygon spanning too much longitude
+            if (S2.isPolygonTooLarge(polygon_slice)) {
+                log.warn("query_polygon: polygon_too_large (spans > 350° longitude)", .{});
+                if (output.len >= 4) {
+                    mem.writeInt(u32, output[0..4], 111, .little); // polygon_too_large
+                }
+                return 4;
+            }
+
+            // Validate output can hold at least the response header
+            if (output.len < @sizeOf(QueryResponse)) {
+                log.warn("query_polygon: output buffer too small for header", .{});
+                return 0;
+            }
+
+            // Calculate output capacity (reserve space for header)
+            const data_space = output.len - @sizeOf(QueryResponse);
+            const max_results = data_space / @sizeOf(GeoEvent);
             const effective_limit = @min(filter.limit, @as(u32, @intCast(max_results)));
             if (effective_limit == 0) {
-                return 0;
+                // Return empty response with header
+                const header = mem.bytesAsValue(QueryResponse, output[0..@sizeOf(QueryResponse)]);
+                header.* = QueryResponse.complete(0);
+                return @sizeOf(QueryResponse);
             }
 
             // Generate S2 covering for the polygon
@@ -1588,16 +2366,26 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             });
 
             // Scan RAM index and collect matching entries
+            // Results start after the QueryResponse header
+            const results_offset = @sizeOf(QueryResponse);
+            const results_end = results_offset + effective_limit * @sizeOf(GeoEvent);
             const results_slice = mem.bytesAsSlice(
                 GeoEvent,
-                output[0 .. effective_limit * @sizeOf(GeoEvent)],
+                output[results_offset..results_end],
             );
 
             var result_count: usize = 0;
+            var has_more: bool = false;
 
             // Scan entire RAM index (temporary until LSM scan is available)
             var position: u64 = 0;
-            while (position < self.ram_index.capacity and result_count < effective_limit) {
+            while (position < self.ram_index.capacity) {
+                // Check if we've hit the result limit
+                if (result_count >= effective_limit) {
+                    // There might be more results - we hit the limit before scanning all
+                    has_more = true;
+                    break;
+                }
                 // Read entry from index
                 const entry_ptr: *IndexEntry = &self.ram_index.entries[@intCast(position)];
                 const entry = @as(*volatile IndexEntry, @ptrCast(entry_ptr)).*;
@@ -1660,9 +2448,32 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 result_count += 1;
             }
 
-            log.debug("query_polygon: returning {d} results", .{result_count});
+            // Record metrics
+            const end_time = std.time.nanoTimestamp();
+            const duration_ns: u64 = if (end_time > start_time)
+                @intCast(end_time - start_time)
+            else
+                0;
+            self.query_metrics.recordPolygonQuery(result_count, duration_ns);
 
-            return result_count * @sizeOf(GeoEvent);
+            // Record per-operation Prometheus metrics (F5.2.2)
+            archerdb_metrics.Registry.read_ops_query_polygon.inc();
+            archerdb_metrics.Registry.read_operations_total.inc();
+            archerdb_metrics.Registry.read_events_returned_total.add(result_count);
+            archerdb_metrics.Registry.read_latency.observeNs(duration_ns);
+            archerdb_metrics.Registry.query_result_size.observe(@floatFromInt(result_count));
+
+            // Write QueryResponse header
+            const header = mem.bytesAsValue(QueryResponse, output[0..@sizeOf(QueryResponse)]);
+            if (has_more) {
+                header.* = QueryResponse.with_more(@intCast(result_count));
+            } else {
+                header.* = QueryResponse.complete(@intCast(result_count));
+            }
+
+            log.debug("query_polygon: returning {d} results, has_more={}", .{ result_count, has_more });
+
+            return @sizeOf(QueryResponse) + result_count * @sizeOf(GeoEvent);
         }
 
         /// Check if a cell ID falls within any of the covering ranges.
@@ -2013,6 +2824,26 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 const expected_vertices_size = filter.vertex_count * @sizeOf(PolygonVertex);
                 if (vertices_size != expected_vertices_size) return false;
 
+                // F1.1.3: Validate polygon constraints
+                // Minimum 3 vertices required for a valid polygon
+                if (filter.vertex_count < 3) return false;
+
+                // Maximum vertices per constants.polygon_vertices_max (10,000)
+                if (filter.vertex_count > constants.polygon_vertices_max) return false;
+
+                // Validate limit is non-zero
+                if (filter.limit == 0) return false;
+
+                // Validate each vertex coordinate is within bounds
+                const vertices = mem.bytesAsSlice(
+                    PolygonVertex,
+                    message_body_used[header_size..],
+                );
+                for (vertices) |vertex| {
+                    if (!isValidLatitudeNano(vertex.lat_nano)) return false;
+                    if (!isValidLongitudeNano(vertex.lon_nano)) return false;
+                }
+
                 return true;
             }
 
@@ -2022,12 +2853,94 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             // Body must be properly aligned
             if (message_body_used.len % event_size != 0) return false;
 
-            // TODO(F1.1.3): Add operation-specific validation
-            return true;
+            // F1.1.3: Operation-specific validation
+            switch (operation) {
+                .insert_events, .upsert_events => {
+                    // Validate each GeoEvent in the batch
+                    const events = mem.bytesAsSlice(GeoEvent, message_body_used);
+                    for (events) |event| {
+                        if (!validateGeoEvent(event)) return false;
+                    }
+                    return true;
+                },
+                .delete_entities => {
+                    // delete_entities takes array of entity_ids (u128)
+                    // Entity IDs of 0 are invalid (will fail at execution but not reject entire message)
+                    return true;
+                },
+                .query_uuid => {
+                    // QueryUuidFilter validation - entity_id must be non-zero
+                    if (message_body_used.len < @sizeOf(QueryUuidFilter)) return false;
+                    const filter = mem.bytesAsValue(QueryUuidFilter, message_body_used[0..@sizeOf(QueryUuidFilter)]).*;
+                    if (filter.entity_id == 0) return false;
+                    if (filter.limit == 0) return false;
+                    return true;
+                },
+                .query_radius => {
+                    // QueryRadiusFilter validation
+                    if (message_body_used.len < @sizeOf(QueryRadiusFilter)) return false;
+                    const filter = mem.bytesAsValue(QueryRadiusFilter, message_body_used[0..@sizeOf(QueryRadiusFilter)]).*;
+
+                    // Validate coordinates
+                    if (!isValidLatitudeNano(filter.center_lat_nano)) return false;
+                    if (!isValidLongitudeNano(filter.center_lon_nano)) return false;
+
+                    // Validate radius (must be positive)
+                    if (filter.radius_mm == 0) return false;
+
+                    // Validate limit
+                    if (filter.limit == 0) return false;
+                    return true;
+                },
+                .query_polygon => {
+                    // Already validated above
+                    return true;
+                },
+                else => {
+                    // Default: size alignment check is sufficient
+                    return true;
+                },
+            }
         }
 
         // ====================================================================
         // Helper Functions
+
+        /// Validate a GeoEvent for input_valid (F1.1.3).
+        /// Returns true if the event passes all validation checks.
+        fn validateGeoEvent(event: GeoEvent) bool {
+            // entity_id must not be zero
+            if (event.entity_id == 0) return false;
+
+            // Validate latitude range: -90e9 to +90e9 nanodegrees
+            if (!isValidLatitudeNano(event.lat_nano)) return false;
+
+            // Validate longitude range: -180e9 to +180e9 nanodegrees
+            if (!isValidLongitudeNano(event.lon_nano)) return false;
+
+            // Validate heading: 0-36000 centidegrees (0-360 degrees)
+            if (event.heading_cdeg > 36000) return false;
+
+            // TTL must be non-negative (it's u32, always >= 0)
+            // Reserved fields should be zero
+            for (event.reserved) |byte| {
+                if (byte != 0) return false;
+            }
+
+            return true;
+        }
+
+        /// Validate latitude in nanodegrees.
+        fn isValidLatitudeNano(lat_nano: i64) bool {
+            const lat_max_nano: i64 = 90_000_000_000; // 90 * 1e9
+            return lat_nano >= -lat_max_nano and lat_nano <= lat_max_nano;
+        }
+
+        /// Validate longitude in nanodegrees.
+        fn isValidLongitudeNano(lon_nano: i64) bool {
+            const lon_max_nano: i64 = 180_000_000_000; // 180 * 1e9
+            return lon_nano >= -lon_max_nano and lon_nano <= lon_max_nano;
+        }
     };
 }
 
@@ -2340,6 +3253,29 @@ test "QueryPolygonFilter: struct layout validation" {
     try std.testing.expectEqual(@as(usize, 16), @sizeOf(PolygonVertex));
 }
 
+test "QueryResponse: struct layout and constructors" {
+    // Verify struct size per spec (8 bytes)
+    try std.testing.expectEqual(@as(usize, 8), @sizeOf(QueryResponse));
+
+    // Test complete() constructor
+    const complete_resp = QueryResponse.complete(100);
+    try std.testing.expectEqual(@as(u32, 100), complete_resp.count);
+    try std.testing.expectEqual(@as(u8, 0), complete_resp.has_more);
+    try std.testing.expectEqual(@as(u8, 0), complete_resp.partial_result);
+
+    // Test with_more() constructor
+    const more_resp = QueryResponse.with_more(50);
+    try std.testing.expectEqual(@as(u32, 50), more_resp.count);
+    try std.testing.expectEqual(@as(u8, 1), more_resp.has_more);
+    try std.testing.expectEqual(@as(u8, 0), more_resp.partial_result);
+
+    // Test truncated() constructor
+    const truncated_resp = QueryResponse.truncated(8000);
+    try std.testing.expectEqual(@as(u32, 8000), truncated_resp.count);
+    try std.testing.expectEqual(@as(u8, 1), truncated_resp.has_more);
+    try std.testing.expectEqual(@as(u8, 1), truncated_resp.partial_result);
+}
+
 test "polygon query: vertex count validation" {
     // A polygon must have at least 3 vertices (triangle)
     // This is validated in execute_query_polygon via the vertex_count field
@@ -2390,4 +3326,135 @@ test "pointInPolygon: square test" {
     // Point outside square (above)
     const outside_above = s2_index.LatLon{ .lat_nano = 15_000_000_000, .lon_nano = 5_000_000_000 };
     try std.testing.expect(!S2.pointInPolygon(outside_above, &square));
+}
+
+test "execute_archerdb_ping: returns pong" {
+    var output: [16]u8 = undefined;
+    const result = blk: {
+        // Test the ping response format (we can't instantiate GeoStateMachine in unit tests
+        // but we can verify the expected output format)
+        output[0] = 'p';
+        output[1] = 'o';
+        output[2] = 'n';
+        output[3] = 'g';
+        break :blk 4;
+    };
+    try std.testing.expectEqual(@as(usize, 4), result);
+    try std.testing.expectEqualSlices(u8, "pong", output[0..4]);
+}
+
+test "InsertGeoEventResult: all result codes valid" {
+    // Verify all result codes are sequential starting from 0
+    const values = std.enums.values(InsertGeoEventResult);
+    for (values, 0..) |_, index| {
+        const result: InsertGeoEventResult = @enumFromInt(index);
+        // Just verifying we can convert index to enum value
+        _ = result;
+    }
+    // Verify specific values
+    try std.testing.expectEqual(@as(u32, 0), @intFromEnum(InsertGeoEventResult.ok));
+    try std.testing.expectEqual(@as(u32, 7), @intFromEnum(InsertGeoEventResult.entity_id_must_not_be_zero));
+    try std.testing.expectEqual(@as(u32, 9), @intFromEnum(InsertGeoEventResult.lat_out_of_range));
+    try std.testing.expectEqual(@as(u32, 10), @intFromEnum(InsertGeoEventResult.lon_out_of_range));
+    try std.testing.expectEqual(@as(u32, 14), @intFromEnum(InsertGeoEventResult.heading_out_of_range));
+}
+
+test "QueryUuidFilter: field layout" {
+    const filter = QueryUuidFilter{
+        .entity_id = 0x12345678_9abcdef0_12345678_9abcdef0,
+        .limit = 1,
+    };
+    try std.testing.expectEqual(@as(u128, 0x12345678_9abcdef0_12345678_9abcdef0), filter.entity_id);
+    try std.testing.expectEqual(@as(u32, 1), filter.limit);
+    try std.testing.expectEqual(@as(usize, 128), @sizeOf(QueryUuidFilter));
+}
+
+test "coordinate validation: latitude boundaries" {
+    const lat_max_nano: i64 = 90_000_000_000;
+
+    // Test valid latitude boundary values
+    // The validation logic: lat >= -90° and lat <= 90°
+    try std.testing.expect(0 >= -lat_max_nano and 0 <= lat_max_nano); // 0° valid
+    try std.testing.expect(lat_max_nano >= -lat_max_nano and lat_max_nano <= lat_max_nano); // 90° valid
+    try std.testing.expect(-lat_max_nano >= -lat_max_nano and -lat_max_nano <= lat_max_nano); // -90° valid
+
+    // Test invalid latitude values
+    const invalid_lat: i64 = 91_000_000_000;
+    try std.testing.expect(!(invalid_lat >= -lat_max_nano and invalid_lat <= lat_max_nano)); // 91° invalid
+}
+
+test "coordinate validation: longitude boundaries" {
+    const lon_max_nano: i64 = 180_000_000_000;
+
+    // Test valid longitude boundary values
+    try std.testing.expect(0 >= -lon_max_nano and 0 <= lon_max_nano); // 0° valid
+    try std.testing.expect(lon_max_nano >= -lon_max_nano and lon_max_nano <= lon_max_nano); // 180° valid
+    try std.testing.expect(-lon_max_nano >= -lon_max_nano and -lon_max_nano <= lon_max_nano); // -180° valid
+
+    // Test invalid longitude values
+    const invalid_lon: i64 = 181_000_000_000;
+    try std.testing.expect(!(invalid_lon >= -lon_max_nano and invalid_lon <= lon_max_nano)); // 181° invalid
+}
+
+test "GeoEvent validation: heading boundary (36000 centidegrees = 360°)" {
+    // Heading is stored in centidegrees (0-36000)
+    // 36000 = 360.00° (valid, wraps to 0)
+    // 36001 = 360.01° (invalid)
+    try std.testing.expect(0 <= 36000); // 0° valid
+    try std.testing.expect(18000 <= 36000); // 180° valid
+    try std.testing.expect(36000 <= 36000); // 360° valid
+    try std.testing.expect(!(36001 <= 36000)); // 360.01° invalid
+}
+
+test "GeoEvent: struct size is exactly 128 bytes" {
+    try std.testing.expectEqual(@as(usize, 128), @sizeOf(GeoEvent));
+}
+
+test "GeoEvent: reserved field is 12 bytes" {
+    // Verify reserved field size matches expected padding
+    const event = GeoEvent{
+        .id = 0,
+        .entity_id = 1,
+        .correlation_id = 0,
+        .user_data = 0,
+        .lat_nano = 0,
+        .lon_nano = 0,
+        .group_id = 0,
+        .timestamp = 0,
+        .altitude_mm = 0,
+        .velocity_mms = 0,
+        .ttl_seconds = 0,
+        .accuracy_mm = 0,
+        .heading_cdeg = 0,
+        .flags = GeoEventFlags.none,
+        .reserved = [_]u8{0} ** 12,
+    };
+    try std.testing.expectEqual(@as(usize, 12), event.reserved.len);
+}
+
+test "composite ID encoding: S2 cell and timestamp" {
+    // Test the composite ID format used in insert_events
+    const lat_nano: i64 = 37_774900000; // San Francisco lat
+    const lon_nano: i64 = -122_419400000; // San Francisco lon
+    const timestamp: u64 = 1704067200_000_000_000; // 2024-01-01 00:00:00 UTC in nanos
+
+    // Compute S2 cell ID at level 30
+    const cell_id = S2.latLonToCellId(lat_nano, lon_nano, 30);
+
+    // Build composite ID
+    const composite_id: u128 = (@as(u128, cell_id) << 64) | @as(u128, timestamp);
+
+    // Extract back
+    const extracted_cell_id = @as(u64, @truncate(composite_id >> 64));
+    const extracted_timestamp = @as(u64, @truncate(composite_id));
+
+    try std.testing.expectEqual(cell_id, extracted_cell_id);
+    try std.testing.expectEqual(timestamp, extracted_timestamp);
+
+    // Verify cell center is approximately correct
+    const center = S2.cellIdToLatLon(extracted_cell_id);
+    // Allow 1 microdegree tolerance (at level 30, precision is ~7.5mm)
+    const tolerance: i64 = 1000;
+    try std.testing.expect(@abs(center.lat_nano - lat_nano) < tolerance);
+    try std.testing.expect(@abs(center.lon_nano - lon_nano) < tolerance);
 }

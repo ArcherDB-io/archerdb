@@ -25,10 +25,19 @@ NANODEGREES_PER_DEGREE: int = 1_000_000_000
 MM_PER_METER: int = 1000
 CENTIDEGREES_PER_DEGREE: int = 100
 
-# Limits per spec
+# Limits per spec (assumes production config with 10MB message_size_max)
+# NOTE: These limits are configuration-dependent and computed dynamically by the server.
+# The server returns actual limits during client registration (batch_size_limit).
+# With the default 1MB message_size_max, effective limits are ~8,180 events.
+# For production deployments, configure message_size_max = 10MB in server config.
 BATCH_SIZE_MAX: int = 10_000
 QUERY_LIMIT_MAX: int = 81_000
 POLYGON_VERTICES_MAX: int = 10_000
+
+# Safe limits for default 1MB message configuration
+# Use these if connecting to a server with default configuration
+BATCH_SIZE_MAX_DEFAULT: int = 8_000
+QUERY_LIMIT_MAX_DEFAULT: int = 8_000
 
 
 # ============================================================================
@@ -60,7 +69,10 @@ class GeoOperation(IntEnum):
     QUERY_UUID = 149       # vsr_operations_reserved (128) + 21
     QUERY_RADIUS = 150     # vsr_operations_reserved (128) + 22
     QUERY_POLYGON = 151    # vsr_operations_reserved (128) + 23
+    ARCHERDB_PING = 152    # vsr_operations_reserved (128) + 24
+    ARCHERDB_GET_STATUS = 153  # vsr_operations_reserved (128) + 25
     QUERY_LATEST = 154     # vsr_operations_reserved (128) + 26
+    CLEANUP_EXPIRED = 155  # vsr_operations_reserved (128) + 27
 
 
 class InsertGeoEventResult(IntEnum):
@@ -201,6 +213,57 @@ class QueryLatestFilter:
 
 
 @dataclass
+class QueryResponse:
+    """
+    Wire format header for query responses (8 bytes).
+    Matches QueryResponse struct in geo_state_machine.zig.
+
+    The server sends this header followed by an array of GeoEvent records.
+    Use from_bytes() to parse the header from response data.
+    """
+    count: int = 0           # Number of events in response (u32)
+    has_more: bool = False   # More results available beyond limit (u8 flag)
+    partial_result: bool = False  # Result set was truncated (u8 flag)
+    # 2 bytes reserved/padding
+
+    # Flag bit positions in the flags byte
+    FLAG_HAS_MORE: int = 0x01
+    FLAG_PARTIAL_RESULT: int = 0x02
+
+    @classmethod
+    def from_bytes(cls, data: bytes) -> "QueryResponse":
+        """
+        Parse QueryResponse header from raw bytes.
+
+        Args:
+            data: At least 8 bytes of response data
+
+        Returns:
+            Parsed QueryResponse header
+
+        Raises:
+            ValueError: If data is less than 8 bytes
+        """
+        if len(data) < 8:
+            raise ValueError(f"QueryResponse requires 8 bytes, got {len(data)}")
+
+        import struct
+        # Format: u32 count (little-endian) + u8 flags + u8 reserved + u16 reserved
+        count, flags, _, _ = struct.unpack("<IBBH", data[:8])
+
+        return cls(
+            count=count,
+            has_more=bool(flags & cls.FLAG_HAS_MORE),
+            partial_result=bool(flags & cls.FLAG_PARTIAL_RESULT),
+        )
+
+    @staticmethod
+    def header_size() -> int:
+        """Return the size of the QueryResponse header in bytes."""
+        return 8
+
+
+@dataclass
 class QueryResult:
     """Query result with pagination support."""
     events: List[GeoEvent] = field(default_factory=list)
@@ -213,6 +276,25 @@ class DeleteResult:
     """Result structure for delete operations."""
     deleted_count: int = 0
     not_found_count: int = 0
+
+
+@dataclass
+class StatusResponse:
+    """
+    Server status response from archerdb_get_status operation.
+    Matches StatusResponse in geo_state_machine.zig (64 bytes).
+    """
+    ram_index_count: int = 0       # Number of entities in RAM index
+    ram_index_capacity: int = 0    # Total RAM index capacity
+    ram_index_load_pct: int = 0    # Load factor as percentage * 100 (e.g., 7000 = 70%)
+    tombstone_count: int = 0       # Number of tombstone entries
+    ttl_expirations: int = 0       # Total TTL expirations processed
+    deletion_count: int = 0        # Total deletions processed
+
+    @property
+    def load_factor(self) -> float:
+        """Return the load factor as a decimal (e.g., 0.70)."""
+        return self.ram_index_load_pct / 10000.0
 
 
 # ============================================================================

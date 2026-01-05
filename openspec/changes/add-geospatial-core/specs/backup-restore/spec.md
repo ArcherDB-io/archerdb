@@ -502,3 +502,47 @@ The system SHALL define recovery time objectives for disaster recovery scenarios
 - See `specs/ttl-retention/spec.md` for TTL filtering during restore
 - See `specs/hybrid-memory/spec.md` for index rebuild after restore
 - See `specs/observability/spec.md` for backup monitoring metrics
+
+## Implementation Status
+
+This section documents the current implementation status relative to the specification.
+
+### Completed Components
+
+| Component | File | Status |
+|-----------|------|--------|
+| RestoreConfig | `src/archerdb/restore.zig` | Complete - All configuration types implemented |
+| PointInTime | `src/archerdb/restore.zig` | Complete - seq/timestamp/latest parsing |
+| RestoreStats | `src/archerdb/restore.zig` | Complete - All metrics tracked |
+| RestoreError | `src/archerdb/restore.zig` | Complete - All error types defined |
+| RestoreManager skeleton | `src/archerdb/restore.zig` | Complete - Execute workflow defined |
+| StorageProvider enum | `src/archerdb/backup_config.zig` | Complete - S3/GCS/Azure/Local |
+| BackupConfig | `src/archerdb/backup_config.zig` | Complete - All options defined |
+| BlockRef | `src/archerdb/backup_config.zig` | Complete - Block metadata structure |
+
+### Pending External Integration
+
+The following operations require HTTP client integration for cloud storage APIs:
+
+| Operation | Function | Dependency |
+|-----------|----------|------------|
+| List S3 objects | `listBlocks()` | HTTP client (ListObjectsV2 API) |
+| Download blocks | `downloadAndVerifyBlock()` | HTTP client (GetObject API) |
+| Upload blocks | Backup upload | HTTP client (PutObject API) |
+| Delete old blocks | Retention cleanup | HTTP client (DeleteObjects API) |
+
+**Note**: The restore skeleton (`execute()`) has the complete workflow:
+1. List available blocks ← stub returns empty
+2. Filter by point-in-time ← implemented
+3. Verify sequence continuity ← implemented
+4. Download and verify blocks ← stub increments counters
+5. Write blocks to data file ← stub increments counters
+6. Build RAM index ← interface defined
+7. Write superblock ← interface defined
+
+The architecture is designed for external HTTP client injection. When an HTTP client becomes available (via Zig stdlib or external library), the stub functions can be replaced with actual cloud operations.
+
+### Test Coverage
+
+- Unit tests exist for: PointInTime parsing, RestoreConfig defaults, provider detection, sequence continuity verification
+- Integration tests for actual S3 operations pending HTTP client availability

@@ -31,17 +31,19 @@ The system SHALL store geospatial events in a fixed-size 128-byte `extern struct
   - `lat_nano: i64` (8 bytes) - Latitude in nanodegrees
   - `lon_nano: i64` (8 bytes) - Longitude in nanodegrees
   - `group_id: u64` (8 bytes) - Fleet/region grouping identifier
+  - `timestamp: u64` (8 bytes) - Event timestamp in nanoseconds since Unix epoch (required for GrooveType)
   - `altitude_mm: i32` (4 bytes) - Altitude in millimeters above WGS84
   - `velocity_mms: u32` (4 bytes) - Speed in millimeters per second
   - `ttl_seconds: u32` (4 bytes) - Time-to-live in seconds (0 = never expires)
   - `accuracy_mm: u32` (4 bytes) - GPS accuracy radius in millimeters
   - `heading_cdeg: u16` (2 bytes) - Heading in centidegrees (0-36000)
   - `flags: GeoEventFlags` (2 bytes) - Packed status bitmask
-  - `reserved: [20]u8` (20 bytes) - Reserved for future use (must be zero)
-  
+  - `reserved: [12]u8` (12 bytes) - Reserved for future use (must be zero)
+
   **ALIGNMENT NOTE**: Fields are ordered largest-to-smallest within each alignment class
-  (u128s first, then u64s, then u32s, then u16s) to avoid padding. The u32 `accuracy_mm`
-  comes before the u16 `heading_cdeg` to maintain 4-byte alignment at offset 100.
+  (u128s first, then u64s, then u32s, then u16s) to avoid padding. The `timestamp` field
+  is required by GrooveType for object tree ordering and should match the lower 64 bits
+  of the composite `id`.
 
 ### Requirement: Packed Flags Structure
 
@@ -230,11 +232,11 @@ The system SHALL support forward-compatible schema evolution for GeoEvent and ot
 #### Scenario: Reserved field usage policy
 
 - **WHEN** adding new fields in future versions
-- **THEN** they SHALL be allocated from the `reserved: [20]u8` field:
+- **THEN** they SHALL be allocated from the `reserved: [12]u8` field:
   ```
-  Version 0 (current): reserved: [20]u8 = all zeros
-  Version 1 (example): reserved: [16]u8, new_field: u32
-  Version 2 (example): reserved: [12]u8, new_field: u32, another: u32
+  Version 0 (current): reserved: [12]u8 = all zeros
+  Version 1 (example): reserved: [8]u8, new_field: u32
+  Version 2 (example): reserved: [4]u8, new_field: u32, another: u32
   ```
 - **AND** new fields SHALL have zero as their default value
 - **AND** zero value SHALL mean "not specified" or "use default"
@@ -295,7 +297,7 @@ The system SHALL support forward-compatible schema evolution for GeoEvent and ot
   3. Provide migration tool if data conversion needed
   4. Support previous version for at least 2 major releases
 - **AND** breaking changes are avoided whenever possible
-- **AND** reserved fields provide 20 bytes of expansion room
+- **AND** reserved fields provide 12 bytes of expansion room
 
 ### Requirement: Comprehensive Input Validation
 
@@ -400,7 +402,7 @@ The system SHALL validate all GeoEvent fields systematically during input_valid(
 
 #### Scenario: Reserved fields validation
 
-- **WHEN** validating reserved field (20 bytes)
+- **WHEN** validating reserved field (12 bytes)
 - **THEN** the system SHALL enforce:
   ```zig
   for (geo_event.reserved) |byte| {

@@ -291,6 +291,136 @@ pub const S2 = struct {
     }
 
     // =========================================================================
+    // Polygon Validation
+    // =========================================================================
+
+    /// Check if a polygon is degenerate (all vertices are collinear)
+    ///
+    /// A degenerate polygon has zero area because all vertices lie on a line.
+    /// Uses cross-product to detect collinearity.
+    ///
+    /// Returns: true if polygon is degenerate (collinear), false if valid
+    pub fn isPolygonDegenerate(polygon: []const LatLon) bool {
+        if (polygon.len < 3) return true;
+
+        // Check if all vertices are collinear by computing cross products
+        // If all cross products are zero (or very small), points are collinear
+        const p0 = polygon[0];
+
+        for (2..polygon.len) |i| {
+            const p1 = polygon[i - 1];
+            const p2 = polygon[i];
+
+            // Cross product: (p1-p0) × (p2-p0)
+            // = (p1.lat - p0.lat) * (p2.lon - p0.lon) - (p1.lon - p0.lon) * (p2.lat - p0.lat)
+            const dx1 = p1.lat_nano - p0.lat_nano;
+            const dy1 = p1.lon_nano - p0.lon_nano;
+            const dx2 = p2.lat_nano - p0.lat_nano;
+            const dy2 = p2.lon_nano - p0.lon_nano;
+
+            // Use i128 to avoid overflow with nanodegrees
+            const cross = @as(i128, dx1) * @as(i128, dy2) - @as(i128, dy1) * @as(i128, dx2);
+
+            // If any cross product is non-zero, polygon is not degenerate
+            // Use tolerance for numerical stability (1 square nanodegree)
+            if (@abs(cross) > 1_000_000) {
+                return false;
+            }
+        }
+
+        return true; // All points are collinear
+    }
+
+    /// Check if two line segments intersect (excluding endpoints)
+    ///
+    /// Uses the cross-product orientation test.
+    fn segmentsIntersect(
+        a1: LatLon,
+        a2: LatLon,
+        b1: LatLon,
+        b2: LatLon,
+    ) bool {
+        // Compute orientations of the four relevant triangles
+        const o1 = orientation(a1, a2, b1);
+        const o2 = orientation(a1, a2, b2);
+        const o3 = orientation(b1, b2, a1);
+        const o4 = orientation(b1, b2, a2);
+
+        // General case: segments intersect if orientations differ
+        if (o1 != o2 and o3 != o4) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /// Compute orientation of triplet (p, q, r)
+    /// Returns: 0 = collinear, 1 = clockwise, 2 = counter-clockwise
+    fn orientation(p: LatLon, q: LatLon, r: LatLon) i32 {
+        const val = @as(i128, q.lon_nano - p.lon_nano) * @as(i128, r.lat_nano - q.lat_nano) -
+            @as(i128, q.lat_nano - p.lat_nano) * @as(i128, r.lon_nano - q.lon_nano);
+
+        if (val == 0) return 0; // Collinear
+        return if (val > 0) @as(i32, 1) else @as(i32, 2);
+    }
+
+    /// Check if a polygon has self-intersecting edges (bowtie shape)
+    ///
+    /// Two non-adjacent edges that cross make the polygon invalid.
+    /// Adjacent edges share a vertex and are allowed to "touch".
+    ///
+    /// Returns: true if polygon self-intersects, false if valid
+    pub fn isPolygonSelfIntersecting(polygon: []const LatLon) bool {
+        if (polygon.len < 4) return false; // Triangle can't self-intersect
+
+        const n = polygon.len;
+
+        // Check each pair of non-adjacent edges
+        for (0..n) |i| {
+            const a1 = polygon[i];
+            const a2 = polygon[(i + 1) % n];
+
+            // Only check edges that are at least 2 apart (non-adjacent)
+            for ((i + 2)..n) |j| {
+                // Skip if edges share a vertex (adjacent)
+                if (j == (i + n - 1) % n) continue;
+                if ((j + 1) % n == i) continue;
+
+                const b1 = polygon[j];
+                const b2 = polygon[(j + 1) % n];
+
+                if (segmentsIntersect(a1, a2, b1, b2)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /// Check if a polygon spans more than 350 degrees longitude
+    ///
+    /// Such polygons effectively cover most of the globe and should be rejected
+    /// as they're likely errors or would be extremely expensive to process.
+    ///
+    /// Returns: true if polygon is too large, false if valid
+    pub fn isPolygonTooLarge(polygon: []const LatLon) bool {
+        if (polygon.len < 3) return false;
+
+        var min_lon: i64 = std.math.maxInt(i64);
+        var max_lon: i64 = std.math.minInt(i64);
+
+        for (polygon) |v| {
+            if (v.lon_nano < min_lon) min_lon = v.lon_nano;
+            if (v.lon_nano > max_lon) max_lon = v.lon_nano;
+        }
+
+        // 350 degrees in nanodegrees
+        const max_span: i64 = 350_000_000_000;
+        return (max_lon - min_lon) > max_span;
+    }
+
+    // =========================================================================
     // Distance Calculations
     // =========================================================================
 
@@ -467,4 +597,91 @@ test "S2.isWithinDistance: basic" {
 
     // Far apart points
     try std.testing.expect(!S2.isWithinDistance(0, 0, 90_000_000_000, 0, 1_000_000)); // 1km
+}
+
+// =========================================================================
+// Polygon Validation Tests
+// =========================================================================
+
+test "S2.isPolygonDegenerate: valid triangle" {
+    const triangle = [_]LatLon{
+        .{ .lat_nano = 0, .lon_nano = 0 },
+        .{ .lat_nano = 10_000_000_000, .lon_nano = 0 }, // 10° lat
+        .{ .lat_nano = 5_000_000_000, .lon_nano = 10_000_000_000 }, // 5° lat, 10° lon
+    };
+    try std.testing.expect(!S2.isPolygonDegenerate(&triangle));
+}
+
+test "S2.isPolygonDegenerate: collinear points" {
+    // All points on the same line (same latitude)
+    const line = [_]LatLon{
+        .{ .lat_nano = 0, .lon_nano = 0 },
+        .{ .lat_nano = 0, .lon_nano = 10_000_000_000 },
+        .{ .lat_nano = 0, .lon_nano = 20_000_000_000 },
+    };
+    try std.testing.expect(S2.isPolygonDegenerate(&line));
+}
+
+test "S2.isPolygonDegenerate: too few vertices" {
+    const point = [_]LatLon{
+        .{ .lat_nano = 0, .lon_nano = 0 },
+    };
+    try std.testing.expect(S2.isPolygonDegenerate(&point));
+
+    const line_segment = [_]LatLon{
+        .{ .lat_nano = 0, .lon_nano = 0 },
+        .{ .lat_nano = 10_000_000_000, .lon_nano = 10_000_000_000 },
+    };
+    try std.testing.expect(S2.isPolygonDegenerate(&line_segment));
+}
+
+test "S2.isPolygonSelfIntersecting: valid square" {
+    const square = [_]LatLon{
+        .{ .lat_nano = 0, .lon_nano = 0 },
+        .{ .lat_nano = 10_000_000_000, .lon_nano = 0 },
+        .{ .lat_nano = 10_000_000_000, .lon_nano = 10_000_000_000 },
+        .{ .lat_nano = 0, .lon_nano = 10_000_000_000 },
+    };
+    try std.testing.expect(!S2.isPolygonSelfIntersecting(&square));
+}
+
+test "S2.isPolygonSelfIntersecting: bowtie shape" {
+    // Bowtie: edges cross in the middle
+    const bowtie = [_]LatLon{
+        .{ .lat_nano = 0, .lon_nano = 0 },
+        .{ .lat_nano = 10_000_000_000, .lon_nano = 10_000_000_000 },
+        .{ .lat_nano = 10_000_000_000, .lon_nano = 0 },
+        .{ .lat_nano = 0, .lon_nano = 10_000_000_000 },
+    };
+    try std.testing.expect(S2.isPolygonSelfIntersecting(&bowtie));
+}
+
+test "S2.isPolygonSelfIntersecting: triangle (no self-intersection possible)" {
+    const triangle = [_]LatLon{
+        .{ .lat_nano = 0, .lon_nano = 0 },
+        .{ .lat_nano = 10_000_000_000, .lon_nano = 0 },
+        .{ .lat_nano = 5_000_000_000, .lon_nano = 10_000_000_000 },
+    };
+    try std.testing.expect(!S2.isPolygonSelfIntersecting(&triangle));
+}
+
+test "S2.isPolygonTooLarge: normal polygon" {
+    const small_square = [_]LatLon{
+        .{ .lat_nano = 0, .lon_nano = 0 },
+        .{ .lat_nano = 10_000_000_000, .lon_nano = 0 },
+        .{ .lat_nano = 10_000_000_000, .lon_nano = 10_000_000_000 },
+        .{ .lat_nano = 0, .lon_nano = 10_000_000_000 },
+    };
+    try std.testing.expect(!S2.isPolygonTooLarge(&small_square));
+}
+
+test "S2.isPolygonTooLarge: globe-spanning polygon" {
+    // Polygon spanning nearly the entire longitude range
+    const huge = [_]LatLon{
+        .{ .lat_nano = 0, .lon_nano = -179_000_000_000 }, // -179°
+        .{ .lat_nano = 10_000_000_000, .lon_nano = -179_000_000_000 },
+        .{ .lat_nano = 10_000_000_000, .lon_nano = 179_000_000_000 }, // +179°
+        .{ .lat_nano = 0, .lon_nano = 179_000_000_000 },
+    };
+    try std.testing.expect(S2.isPolygonTooLarge(&huge));
 }

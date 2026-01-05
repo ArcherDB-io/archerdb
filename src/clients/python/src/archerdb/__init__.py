@@ -58,8 +58,10 @@ from .types import (
     PolygonVertex,
     QueryPolygonFilter,
     QueryLatestFilter,
+    QueryResponse,
     QueryResult,
     DeleteResult,
+    StatusResponse,
     # Conversion helpers
     degrees_to_nano,
     nano_to_degrees,
@@ -145,6 +147,7 @@ __all__ = [
     "PolygonVertex",
     "QueryPolygonFilter",
     "QueryLatestFilter",
+    "QueryResponse",
     "QueryResult",
     "DeleteResult",
     # Conversion helpers

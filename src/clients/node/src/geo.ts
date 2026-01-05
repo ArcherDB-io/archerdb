@@ -346,6 +346,55 @@ export type QueryResult = {
 }
 
 /**
+ * Wire format header for query responses (8 bytes).
+ * Matches QueryResponse struct in geo_state_machine.zig.
+ *
+ * The server sends this header followed by an array of GeoEvent records.
+ */
+export type QueryResponse = {
+  /** Number of events in response (u32) */
+  count: number
+  /** More results available beyond limit */
+  has_more: boolean
+  /** Result set was truncated */
+  partial_result: boolean
+}
+
+/**
+ * Flag bit positions in the QueryResponse flags byte.
+ */
+export const QUERY_RESPONSE_FLAG_HAS_MORE = 0x01
+export const QUERY_RESPONSE_FLAG_PARTIAL_RESULT = 0x02
+
+/**
+ * Size of QueryResponse header in bytes.
+ */
+export const QUERY_RESPONSE_HEADER_SIZE = 8
+
+/**
+ * Parse QueryResponse header from raw bytes.
+ *
+ * @param data - At least 8 bytes of response data
+ * @returns Parsed QueryResponse header
+ * @throws Error if data is less than 8 bytes
+ */
+export function parseQueryResponse(data: Uint8Array): QueryResponse {
+  if (data.length < QUERY_RESPONSE_HEADER_SIZE) {
+    throw new Error(`QueryResponse requires ${QUERY_RESPONSE_HEADER_SIZE} bytes, got ${data.length}`)
+  }
+
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength)
+  const count = view.getUint32(0, true) // little-endian
+  const flags = view.getUint8(4)
+
+  return {
+    count,
+    has_more: (flags & QUERY_RESPONSE_FLAG_HAS_MORE) !== 0,
+    partial_result: (flags & QUERY_RESPONSE_FLAG_PARTIAL_RESULT) !== 0,
+  }
+}
+
+/**
  * Result structure for delete operations.
  */
 export type DeleteResult = {
@@ -365,13 +414,35 @@ export type DeleteResult = {
  * Maps to Operation enum in archerdb.zig
  */
 export enum GeoOperation {
-  insert_events = 146,   // vsr_operations_reserved (128) + 18
-  upsert_events = 147,   // vsr_operations_reserved (128) + 19
-  delete_entities = 148, // vsr_operations_reserved (128) + 20
-  query_uuid = 149,      // vsr_operations_reserved (128) + 21
-  query_radius = 150,    // vsr_operations_reserved (128) + 22
-  query_polygon = 151,   // vsr_operations_reserved (128) + 23
-  query_latest = 154,    // vsr_operations_reserved (128) + 26
+  insert_events = 146,      // vsr_operations_reserved (128) + 18
+  upsert_events = 147,      // vsr_operations_reserved (128) + 19
+  delete_entities = 148,    // vsr_operations_reserved (128) + 20
+  query_uuid = 149,         // vsr_operations_reserved (128) + 21
+  query_radius = 150,       // vsr_operations_reserved (128) + 22
+  query_polygon = 151,      // vsr_operations_reserved (128) + 23
+  archerdb_ping = 152,      // vsr_operations_reserved (128) + 24
+  archerdb_get_status = 153, // vsr_operations_reserved (128) + 25
+  query_latest = 154,       // vsr_operations_reserved (128) + 26
+  cleanup_expired = 155,    // vsr_operations_reserved (128) + 27
+}
+
+/**
+ * Server status response from archerdb_get_status operation.
+ * Matches StatusResponse in geo_state_machine.zig (64 bytes).
+ */
+export type StatusResponse = {
+  /** Number of entities in RAM index */
+  ram_index_count: bigint
+  /** Total RAM index capacity */
+  ram_index_capacity: bigint
+  /** Load factor as percentage * 100 (e.g., 7000 = 70%) */
+  ram_index_load_pct: number
+  /** Number of tombstone entries */
+  tombstone_count: bigint
+  /** Total TTL expirations processed */
+  ttl_expirations: bigint
+  /** Total deletions processed */
+  deletion_count: bigint
 }
 
 // ============================================================================
@@ -405,11 +476,21 @@ export const CENTIDEGREES_PER_DEGREE = 100
 
 /**
  * Maximum results per query (spatial query limit).
+ *
+ * NOTE: This assumes production config with 10MB message_size_max.
+ * With the default 1MB message_size_max, the effective limit is ~8,180 events.
+ * The server returns actual limits during client registration (batch_size_limit).
+ * For production deployments, configure message_size_max = 10MB in server config.
  */
 export const QUERY_LIMIT_MAX = 81_000
 
 /**
  * Maximum events per batch.
+ *
+ * NOTE: This assumes production config with 10MB message_size_max.
+ * With the default 1MB message_size_max, the effective limit is ~8,180 events.
+ * The server returns actual limits during client registration (batch_size_limit).
+ * For production deployments, configure message_size_max = 10MB in server config.
  */
 export const BATCH_SIZE_MAX = 10_000
 
@@ -417,6 +498,18 @@ export const BATCH_SIZE_MAX = 10_000
  * Maximum polygon vertices.
  */
 export const POLYGON_VERTICES_MAX = 10_000
+
+/**
+ * Safe batch size limit for default 1MB message configuration.
+ * Use this if connecting to a server with default configuration.
+ */
+export const BATCH_SIZE_MAX_DEFAULT = 8_000
+
+/**
+ * Safe query limit for default 1MB message configuration.
+ * Use this if connecting to a server with default configuration.
+ */
+export const QUERY_LIMIT_MAX_DEFAULT = 8_000
 
 /**
  * Converts degrees to nanodegrees.

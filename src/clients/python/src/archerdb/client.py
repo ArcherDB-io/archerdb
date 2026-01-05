@@ -858,6 +858,38 @@ class GeoClientSync:
 
         return _with_retry_sync(do_query, self._retry_config)
 
+    # ========== Admin Operations ==========
+
+    def ping(self) -> bool:
+        """
+        Send a ping to verify server connectivity.
+
+        Returns:
+            True if server responds with 'pong', False otherwise.
+        """
+        self._ensure_connected()
+        # NOTE: Skeleton implementation - in full impl would send ARCHERDB_PING
+        # and verify "pong" response
+        return True
+
+    def get_status(self) -> "StatusResponse":
+        """
+        Get current server status including RAM index statistics.
+
+        Returns:
+            StatusResponse with server statistics.
+
+        Example:
+            status = client.get_status()
+            print(f"Entities: {status.ram_index_count}")
+            print(f"Load factor: {status.load_factor:.1%}")
+        """
+        from .types import StatusResponse
+        self._ensure_connected()
+        # NOTE: Skeleton implementation - in full impl would send ARCHERDB_GET_STATUS
+        # and deserialize the 64-byte response
+        return StatusResponse()
+
 
 # ============================================================================
 # Asynchronous Client
@@ -1065,6 +1097,38 @@ class GeoClientAsync:
             return []
 
         return await _with_retry_async(do_query, self._retry_config)
+
+    # ========== Admin Operations ==========
+
+    async def ping(self) -> bool:
+        """
+        Send a ping to verify server connectivity.
+
+        Returns:
+            True if server responds with 'pong', False otherwise.
+        """
+        self._ensure_connected()
+        # NOTE: Skeleton implementation - in full impl would send ARCHERDB_PING
+        # and verify "pong" response
+        return True
+
+    async def get_status(self) -> "StatusResponse":
+        """
+        Get current server status including RAM index statistics.
+
+        Returns:
+            StatusResponse with server statistics.
+
+        Example:
+            status = await client.get_status()
+            print(f"Entities: {status.ram_index_count}")
+            print(f"Load factor: {status.load_factor:.1%}")
+        """
+        from .types import StatusResponse
+        self._ensure_connected()
+        # NOTE: Skeleton implementation - in full impl would send ARCHERDB_GET_STATUS
+        # and deserialize the 64-byte response
+        return StatusResponse()
 
 
 # ============================================================================

@@ -753,3 +753,51 @@ The system SHALL degrade gracefully under resource pressure rather than crashing
 - **AND** metrics SHALL indicate degradation:
   - `archerdb_health_status{status="degraded"}` = 1
   - `archerdb_health_status{status="healthy"}` = 0
+
+## Implementation Status
+
+### Metrics Implementation (`src/archerdb/metrics.zig`)
+
+| Metric Category | Implementation | Operation Labels | Status |
+|----------------|----------------|------------------|--------|
+| Write operations | `archerdb_write_operations_total` | ✓ `operation="insert\|upsert\|delete"` | ✓ Complete |
+| Write events | `archerdb_write_events_total` | N/A | ✓ Complete |
+| Write latency | `archerdb_write_latency_seconds` | Aggregate | ✓ Complete |
+| Read operations | `archerdb_read_operations_total` | ✓ `operation="query_uuid\|radius\|polygon\|latest"` | ✓ Complete |
+| Read events | `archerdb_read_events_returned_total` | N/A | ✓ Complete |
+| Read latency | `archerdb_read_latency_seconds` | Aggregate | ✓ Complete |
+| Index lookups | `archerdb_index_lookups_total` | N/A | ✓ Complete |
+| VSR metrics | All `archerdb_vsr_*` | N/A | ✓ Complete |
+| Health status | `archerdb_health_status` | N/A | ✓ Complete |
+| Query result size | `archerdb_query_result_events` | Histogram | ✓ Complete |
+| Index capacity | `archerdb_index_capacity_*_total` | Warning/Critical/Emergency | ✓ Complete |
+| Tombstone ratio | `archerdb_index_tombstone_ratio` | Gauge | ✓ Complete |
+| I/O latency exceeded | `archerdb_io_latency_exceeded_total` | Counter | ✓ Complete |
+
+**Operation Labels - IMPLEMENTED**
+
+Per-operation metrics are now available in `src/archerdb/metrics.zig`:
+- Write operations: `write_ops_insert`, `write_ops_upsert`, `write_ops_delete`
+- Read operations: `read_ops_query_uuid`, `read_ops_query_radius`, `read_ops_query_polygon`, `read_ops_query_latest`
+
+Example Prometheus queries:
+- `sum(rate(archerdb_write_operations_total{operation="insert"}[5m]))` - insert rate
+- `sum by (operation)(archerdb_read_operations_total)` - reads by type
+
+### Metrics Server (`src/archerdb/metrics_server.zig`)
+
+| Feature | Status |
+|---------|--------|
+| HTTP endpoint | ✓ Implemented |
+| Localhost binding | ✓ Implemented |
+| Bearer token auth | Pending |
+| TLS support | Pending |
+| Response caching | ✓ Implemented (1-second TTL) |
+
+### Health Endpoints
+
+| Endpoint | Status |
+|----------|--------|
+| `/metrics` | ✓ Implemented |
+| `/health/live` | ✓ Implemented |
+| `/health/ready` | ✓ Implemented |
