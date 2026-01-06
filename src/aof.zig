@@ -413,9 +413,10 @@ pub fn AOFType(comptime IO: type) type {
                 if (header.operation.vsr_reserved()) return false;
                 const state_machine_operation = header.operation.cast(tb.Operation);
                 switch (state_machine_operation) {
-                    .create_accounts, .create_transfers => return true,
+                    // ArcherDB geospatial operations that modify state
+                    .insert_events, .upsert_events, .delete_entities => return true,
 
-                    // Pulses are replayed to handle pending transfer expiry.
+                    // Pulses are replayed to handle TTL expiry.
                     .pulse => return true,
 
                     else => return false,

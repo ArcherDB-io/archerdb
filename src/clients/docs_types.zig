@@ -57,20 +57,16 @@ pub const Docs = struct {
 
     client_object_documentation: Markdown,
 
-    create_accounts_documentation: Markdown,
+    // ArcherDB geospatial operations documentation
+    insert_events_documentation: Markdown,
 
-    create_accounts_errors_documentation: Markdown,
+    insert_events_errors_documentation: Markdown,
 
-    account_flags_documentation: Markdown,
+    geo_event_flags_documentation: Markdown,
 
-    create_transfers_documentation: Markdown,
+    query_operations_documentation: Markdown,
 
-    create_transfers_errors_documentation: Markdown,
-
-    // Good example of using batches to create transfers.
-    // Bad example of not using batches well to create transfers.
-
-    transfer_flags_documentation: Markdown,
+    delete_entities_documentation: Markdown,
 
     // Optional prefix if test code must be in a certain directory
     // (e.g. Java and `src/main/java`).

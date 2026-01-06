@@ -11,9 +11,9 @@ pub const PythonDocs = Docs{
 
     .test_source_path = "",
 
-    .name = "tigerbeetle-python",
+    .name = "archerdb-python",
     .description =
-    \\The TigerBeetle client for Python.
+    \\The ArcherDB client for Python.
     ,
     .prerequisites =
     \\* Python (or PyPy, etc) >= `3.7`
@@ -23,43 +23,44 @@ pub const PythonDocs = Docs{
     .project_file_name = "",
     .test_file_name = "main",
 
-    .install_commands = "pip install tigerbeetle",
+    .install_commands = "pip install archerdb",
     .run_commands = "python3 main.py",
 
     .examples = "",
 
     .client_object_documentation = "",
-    .create_accounts_documentation = "",
-    .account_flags_documentation =
-    \\To toggle behavior for an account, combine enum values stored in the
-    \\`AccountFlags` object (it's an `enum.IntFlag`) with bitwise-or:
+
+    .insert_events_documentation =
+    \\Insert geospatial events using `client.insert_events()`. Each event
+    \\contains location data (latitude, longitude), entity ID, and metadata.
+    ,
+
+    .geo_event_flags_documentation =
+    \\To toggle behavior for a geo event, combine enum values stored in the
+    \\`GeoEventFlags` object (it's an `enum.IntFlag`) with bitwise-or:
     \\
-    \\* `AccountFlags.linked`
-    \\* `AccountFlags.debits_must_not_exceed_credits`
-    \\* `AccountFlags.credits_must_not_exceed_credits`
-    \\* `AccountFlags.history`
+    \\* `GeoEventFlags.has_altitude`
+    \\* `GeoEventFlags.tombstone`
     \\
     ,
 
-    .create_accounts_errors_documentation =
+    .insert_events_errors_documentation =
     \\To handle errors you can compare the result code returned
-    \\from `client.create_accounts` with enum values in the
-    \\`CreateAccountResult` object.
-    ,
-    .create_transfers_documentation = "",
-    .create_transfers_errors_documentation =
-    \\To handle errors you can compare the result code returned
-    \\from `client.create_transfers` with enum values in the
-    \\`CreateTransferResult` object.
+    \\from `client.insert_events` with enum values in the
+    \\`InsertGeoEventResult` object.
     ,
 
-    .transfer_flags_documentation =
-    \\To toggle behavior for a transfer, combine enum values stored in the
-    \\`TransferFlags` object (it's an `enum.IntFlag`) with bitwise-or:
+    .query_operations_documentation =
+    \\ArcherDB supports several query operations:
     \\
-    \\* `TransferFlags.linked`
-    \\* `TransferFlags.pending`
-    \\* `TransferFlags.post_pending_transfer`
-    \\* `TransferFlags.void_pending_transfer`
+    \\* `query_uuid` - Query events by entity UUID
+    \\* `query_latest` - Query latest events for entities
+    \\* `query_radius` - Query events within a radius of a point
+    \\* `query_polygon` - Query events within a polygon
+    ,
+
+    .delete_entities_documentation =
+    \\To delete entities, pass a list of entity IDs to `delete_entities`.
+    \\This will mark all events for those entities as tombstoned.
     ,
 };

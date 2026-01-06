@@ -64,20 +64,6 @@ pub const tb_operation = tb.Operation;
 pub const tb_completion_t = tb.CompletionCallback;
 pub const tb_init_parameters = tb.InitParameters;
 
-pub const tb_account_t = vsr.tigerbeetle.Account;
-pub const tb_transfer_t = vsr.tigerbeetle.Transfer;
-pub const tb_account_flags = vsr.tigerbeetle.AccountFlags;
-pub const tb_transfer_flags = vsr.tigerbeetle.TransferFlags;
-pub const tb_create_account_result = vsr.tigerbeetle.CreateAccountResult;
-pub const tb_create_transfer_result = vsr.tigerbeetle.CreateTransferResult;
-pub const tb_create_accounts_result_t = vsr.tigerbeetle.CreateAccountsResult;
-pub const tb_create_transfers_result_t = vsr.tigerbeetle.CreateTransfersResult;
-pub const tb_account_filter_t = vsr.tigerbeetle.AccountFilter;
-pub const tb_account_filter_flags = vsr.tigerbeetle.AccountFilterFlags;
-pub const tb_account_balance_t = vsr.tigerbeetle.AccountBalance;
-pub const tb_query_filter_t = vsr.tigerbeetle.QueryFilter;
-pub const tb_query_filter_flags = vsr.tigerbeetle.QueryFilterFlags;
-
 // ArcherDB GeoEvent types (geospatial database core)
 pub const geo_event_t = vsr.tigerbeetle.GeoEvent;
 pub const geo_event_flags = @import("../../geo_event.zig").GeoEventFlags;

@@ -33,91 +33,56 @@ const TypeMapping = struct {
     }
 };
 
+// ArcherDB geospatial type mappings
 const type_mappings = .{
-    .{ tb.AccountFlags, TypeMapping{
-        .name = "AccountFlags",
+    .{ tb.GeoEventFlags, TypeMapping{
+        .name = "GeoEventFlags",
         .visibility = .public,
         .private_fields = &.{"padding"},
-        .docs_link = "reference/account#flags",
+        .docs_link = "reference/geo-event#flags",
     } },
-    .{ tb.TransferFlags, TypeMapping{
-        .name = "TransferFlags",
-        .visibility = .public,
-        .private_fields = &.{"padding"},
-        .docs_link = "reference/transfer#flags",
-    } },
-    .{ tb.AccountFilterFlags, TypeMapping{
-        .name = "AccountFilterFlags",
-        .visibility = .public,
-        .private_fields = &.{"padding"},
-        .docs_link = "reference/account-filter#flags",
-    } },
-    .{ tb.QueryFilterFlags, TypeMapping{
-        .name = "QueryFilterFlags",
-        .visibility = .public,
-        .private_fields = &.{"padding"},
-        .docs_link = "reference/query-filter#flags",
-    } },
-    .{ tb.Account, TypeMapping{
-        .name = "Account",
+    .{ tb.GeoEvent, TypeMapping{
+        .name = "GeoEvent",
         .visibility = .public,
         .private_fields = &.{"reserved"},
-        .readonly_fields = &.{
-            "debits_pending",
-            "credits_pending",
-            "debits_posted",
-            "credits_posted",
-        },
-        .docs_link = "reference/account#",
+        .docs_link = "reference/geo-event#",
     } },
-    .{
-        tb.Transfer, TypeMapping{
-            .name = "Transfer",
-            .visibility = .public,
-            .private_fields = &.{"reserved"},
-            .readonly_fields = &.{},
-            .docs_link = "reference/transfer#",
-            .constants =
-            \\    public static UInt128 AmountMax => UInt128.MaxValue;
-            \\
-            ,
-        },
-    },
-    .{ tb.CreateAccountResult, TypeMapping{
-        .name = "CreateAccountResult",
+    .{ tb.InsertGeoEventResult, TypeMapping{
+        .name = "InsertGeoEventResult",
         .visibility = .public,
-        .docs_link = "reference/requests/create_accounts#",
+        .docs_link = "reference/requests/insert_events#",
     } },
-    .{ tb.CreateTransferResult, TypeMapping{
-        .name = "CreateTransferResult",
-        .visibility = .public,
-        .docs_link = "reference/requests/create_transfers#",
-    } },
-    .{ tb.CreateAccountsResult, TypeMapping{
-        .name = "CreateAccountsResult",
+    .{ tb.InsertGeoEventsResult, TypeMapping{
+        .name = "InsertGeoEventsResult",
         .visibility = .public,
     } },
-    .{ tb.CreateTransfersResult, TypeMapping{
-        .name = "CreateTransfersResult",
+    .{ tb.DeleteEntitiesResult, TypeMapping{
+        .name = "DeleteEntitiesResult",
         .visibility = .public,
     } },
-    .{ tb.AccountFilter, TypeMapping{
-        .name = "AccountFilter",
+    .{ tb.QueryUuidFilter, TypeMapping{
+        .name = "QueryUuidFilter",
         .visibility = .public,
         .private_fields = &.{"reserved"},
-        .docs_link = "reference/account-filter#",
+        .docs_link = "reference/query-uuid-filter#",
     } },
-    .{ tb.AccountBalance, TypeMapping{
-        .name = "AccountBalance",
+    .{ tb.QueryRadiusFilter, TypeMapping{
+        .name = "QueryRadiusFilter",
         .visibility = .public,
         .private_fields = &.{"reserved"},
-        .docs_link = "reference/account-balances#",
+        .docs_link = "reference/query-radius-filter#",
     } },
-    .{ tb.QueryFilter, TypeMapping{
-        .name = "QueryFilter",
+    .{ tb.QueryPolygonFilter, TypeMapping{
+        .name = "QueryPolygonFilter",
         .visibility = .public,
         .private_fields = &.{"reserved"},
-        .docs_link = "reference/query-filter#",
+        .docs_link = "reference/query-polygon-filter#",
+    } },
+    .{ tb.QueryLatestFilter, TypeMapping{
+        .name = "QueryLatestFilter",
+        .visibility = .public,
+        .private_fields = &.{"reserved"},
+        .docs_link = "reference/query-latest-filter#",
     } },
     .{ exports.tb_init_status, TypeMapping{
         .name = "InitializationStatus",
@@ -420,7 +385,7 @@ fn emit_docs(buffer: anytype, comptime mapping: TypeMapping, comptime field: ?[]
     if (mapping.docs_link) |docs_link| {
         try buffer.writer().print(
             \\    /// <summary>
-            \\    /// https://docs.tigerbeetle.com/{s}{s}
+            \\    /// https://docs.archerdb.io/{s}{s}
             \\    /// </summary>
             \\
         , .{
@@ -442,7 +407,7 @@ pub fn generate_bindings(buffer: *std.ArrayList(u8)) !void {
         \\using System;
         \\using System.Runtime.InteropServices;
         \\
-        \\namespace TigerBeetle;
+        \\namespace ArcherDB;
         \\
         \\
     , .{});
@@ -485,8 +450,6 @@ pub fn generate_bindings(buffer: *std.ArrayList(u8)) !void {
     }
 
     // Emit function declarations.
-    // TODO: use `std.meta.declaractions` and generate with pub + export functions.
-    // Zig 0.9.1 has `decl.data.Fn.arg_names` but it's currently/incorrectly a zero-sized slice.
     try buffer.writer().print(
         \\internal static class Native
         \\{{

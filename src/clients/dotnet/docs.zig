@@ -11,9 +11,9 @@ pub const DotnetDocs = Docs{
 
     .test_source_path = "",
 
-    .name = "tigerbeetle-dotnet",
+    .name = "archerdb-dotnet",
     .description =
-    \\The TigerBeetle client for .NET.
+    \\The ArcherDB client for .NET.
     ,
 
     .prerequisites =
@@ -34,48 +34,50 @@ pub const DotnetDocs = Docs{
 
     .install_commands =
     \\dotnet new console
-    \\dotnet add package tigerbeetle
+    \\dotnet add package archerdb
     ,
     .run_commands = "dotnet run",
 
     .examples = "",
 
     .client_object_documentation = "",
-    .create_accounts_documentation =
-    \\The `UInt128` fields like `ID`, `UserData128`, `Amount` and
-    \\account balances have a few extension methods to make it easier
+
+    .insert_events_documentation =
+    \\The `UInt128` fields like `Id`, `EntityId`, `S2CellId` and
+    \\`CompositeId` have a few extension methods to make it easier
     \\to convert 128-bit little-endian unsigned integers between
     \\`BigInteger`, `byte[]`, and `Guid`.
     \\
-    \\See the class [UInt128Extensions](/src/clients/dotnet/TigerBeetle/UInt128Extensions.cs)
+    \\See the class [UInt128Extensions](/src/clients/dotnet/ArcherDB/UInt128Extensions.cs)
     \\for more details.
     ,
 
-    .account_flags_documentation =
-    \\To toggle behavior for an account, combine enum values stored in the
-    \\`AccountFlags` object with bitwise-or:
+    .geo_event_flags_documentation =
+    \\To toggle behavior for a geo event, combine enum values stored in the
+    \\`GeoEventFlags` object with bitwise-or:
     \\
-    \\* `AccountFlags.None`
-    \\* `AccountFlags.Linked`
-    \\* `AccountFlags.DebitsMustNotExceedCredits`
-    \\* `AccountFlags.CreditsMustNotExceedDebits`
-    \\* `AccountFlags.History`
+    \\* `GeoEventFlags.None`
+    \\* `GeoEventFlags.HasAltitude`
+    \\* `GeoEventFlags.Tombstone`
     ,
 
-    .create_accounts_errors_documentation = "",
+    .insert_events_errors_documentation =
+    \\To handle errors, check the result returned from `client.InsertEvents()`.
+    \\Each result contains an `Index` field to map back to the input event
+    \\and a `Result` field with the `InsertGeoEventResult` enum.
+    ,
 
-    .create_transfers_documentation = "",
-
-    .create_transfers_errors_documentation = "",
-
-    .transfer_flags_documentation =
-    \\To toggle behavior for an account, combine enum values stored in the
-    \\`TransferFlags` object with bitwise-or:
+    .query_operations_documentation =
+    \\ArcherDB supports several query operations:
     \\
-    \\* `TransferFlags.None`
-    \\* `TransferFlags.Linked`
-    \\* `TransferFlags.Pending`
-    \\* `TransferFlags.PostPendingTransfer`
-    \\* `TransferFlags.VoidPendingTransfer`
+    \\* `QueryUuid()` - Query events by entity UUID
+    \\* `QueryLatest()` - Query latest events for entities
+    \\* `QueryRadius()` - Query events within a radius of a point
+    \\* `QueryPolygon()` - Query events within a polygon
+    ,
+
+    .delete_entities_documentation =
+    \\To delete entities, pass an array of entity IDs to `DeleteEntities()`.
+    \\This will mark all events for those entities as tombstoned.
     ,
 };

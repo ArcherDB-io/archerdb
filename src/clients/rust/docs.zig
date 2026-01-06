@@ -11,12 +11,12 @@ pub const RustDocs = Docs{
 
     .test_source_path = "src/",
 
-    .name = "tigerbeetle-rust",
+    .name = "archerdb-rust",
     .description =
-    \\The TigerBeetle client for Rust.
+    \\The ArcherDB client for Rust.
     \\
-    \\[![crates.io](https://img.shields.io/crates/v/tigerbeetle)](https://crates.io/crates/tigerbeetle)
-    \\[![docs.rs](https://img.shields.io/docsrs/tigerbeetle)](https://docs.rs/tigerbeetle)
+    \\[![crates.io](https://img.shields.io/crates/v/archerdb)](https://crates.io/crates/archerdb)
+    \\[![docs.rs](https://img.shields.io/docsrs/archerdb)](https://docs.rs/archerdb)
     ,
 
     .prerequisites =
@@ -26,12 +26,12 @@ pub const RustDocs = Docs{
     .project_file_name = "Cargo.toml",
     .project_file =
     \\[package]
-    \\name = "tigerbeetle-test"
+    \\name = "archerdb-test"
     \\version = "0.1.0"
     \\edition = "2024"
     \\
     \\[dependencies]
-    \\tigerbeetle.path = "../.."
+    \\archerdb.path = "../.."
     \\futures = "0.3"
     ,
 
@@ -45,64 +45,61 @@ pub const RustDocs = Docs{
 
     .client_object_documentation = "",
 
-    .create_accounts_documentation = "",
-
-    .account_flags_documentation =
-    \\To toggle behavior for an account, use the `AccountFlags` bitflags.
-    \\You can combine multiple flags using the `|` operator. Here are a
-    \\few examples:
-    \\
-    \\* `AccountFlags::Linked`
-    \\* `AccountFlags::DebitsMustNotExceedCredits`
-    \\* `AccountFlags::CreditsMustNotExceedDebits`
-    \\* `AccountFlags::History`
-    \\* `AccountFlags::Linked | AccountFlags::History`
-    ,
-
-    .create_accounts_errors_documentation =
-    \\To handle errors, iterate over the `Vec<CreateAccountsResult>` returned
-    \\from `client.create_accounts()`. Each result contains an `index` field
-    \\to map back to the input account and a `result` field with the
-    \\`CreateAccountResult` enum.
-    ,
-
-    .create_transfers_documentation =
-    \\Transfers support various types including regular, pending, linked,
-    \\and two-phase transfers. Use `TransferFlags` to specify behavior:
+    .insert_events_documentation =
+    \\Insert geospatial events using `client.insert_events()`. Each event
+    \\contains location data (latitude, longitude), entity ID, and metadata.
     \\
     \\```rust
-    \\let transfer = Transfer {
-    \\    id: tb::id(),
-    \\    debit_account_id: account1_id,
-    \\    credit_account_id: account2_id,
-    \\    amount: 100,
-    \\    ledger: 1,
-    \\    code: 1,
-    \\    flags: TransferFlags::Pending,
+    \\let event = GeoEvent {
+    \\    id: archerdb::id(),
+    \\    entity_id: entity_uuid,
+    \\    latitude_e7: 407_128_000, // NYC latitude * 1e7
+    \\    longitude_e7: -740_060_000, // NYC longitude * 1e7
     \\    ..Default::default()
     \\};
+    \\client.insert_events(&[event]).await?;
     \\```
-    \\
-    \\For linked transfers, set the `Linked` flag on all transfers in the
-    \\chain except the last one. If any transfer in a linked chain fails,
-    \\the entire chain is rolled back.
-    ,
-    .create_transfers_errors_documentation =
-    \\To handle transfer errors, iterate over the `Vec<CreateTransfersResult>`
-    \\returned from `client.create_transfers()`. Each result contains an
-    \\`index` field to map back to the input transfer and a `result` field
-    \\with the `CreateTransferResult` enum.
     ,
 
-    .transfer_flags_documentation =
-    \\To toggle behavior for a transfer, use the `TransferFlags` bitflags.
+    .geo_event_flags_documentation =
+    \\To toggle behavior for a geo event, use the `GeoEventFlags` bitflags.
     \\You can combine multiple flags using the `|` operator. Here are a
     \\few examples:
     \\
-    \\* `TransferFlags::Linked`
-    \\* `TransferFlags::Pending`
-    \\* `TransferFlags::PostPendingTransfer`
-    \\* `TransferFlags::VoidPendingTransfer`
-    \\* `TransferFlags::Linked | TransferFlags::Pending`
+    \\* `GeoEventFlags::HasAltitude`
+    \\* `GeoEventFlags::Tombstone`
+    \\* `GeoEventFlags::HasAltitude | GeoEventFlags::Tombstone`
+    ,
+
+    .insert_events_errors_documentation =
+    \\To handle errors, iterate over the `Vec<InsertGeoEventsResult>` returned
+    \\from `client.insert_events()`. Each result contains an `index` field
+    \\to map back to the input event and a `result` field with the
+    \\`InsertGeoEventResult` enum.
+    ,
+
+    .query_operations_documentation =
+    \\ArcherDB supports several query operations:
+    \\
+    \\* `query_uuid()` - Query events by entity UUID
+    \\* `query_latest()` - Query latest events for entities
+    \\* `query_radius()` - Query events within a radius of a point
+    \\* `query_polygon()` - Query events within a polygon
+    \\
+    \\```rust
+    \\// Query events within 1km of a point
+    \\let filter = QueryRadiusFilter {
+    \\    center_lat_e7: 407_128_000,
+    \\    center_lon_e7: -740_060_000,
+    \\    radius_meters: 1000,
+    \\    ..Default::default()
+    \\};
+    \\let events = client.query_radius(&filter).await?;
+    \\```
+    ,
+
+    .delete_entities_documentation =
+    \\To delete entities, pass a slice of entity IDs to `delete_entities()`.
+    \\This will mark all events for those entities as tombstoned.
     ,
 };
