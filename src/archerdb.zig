@@ -22,6 +22,7 @@ pub const QueryResponse = geo_state_machine.QueryResponse;
 pub const PolygonVertex = geo_state_machine.PolygonVertex;
 pub const InsertGeoEventResult = geo_state_machine.InsertGeoEventResult;
 pub const InsertGeoEventsResult = geo_state_machine.InsertGeoEventsResult;
+pub const DeleteEntityResult = geo_state_machine.DeleteEntityResult;
 pub const DeleteEntitiesResult = geo_state_machine.DeleteEntitiesResult;
 pub const QueryLatestFilter = geo_state_machine.QueryLatestFilter;
 

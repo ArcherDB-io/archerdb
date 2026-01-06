@@ -19,22 +19,23 @@ const mappings_vsr = .{
     .{ exports.tb_register_log_callback_status, "RegisterLogCallbackStatus" },
 };
 
-/// State machine specific mappings: in future, these should be pulled automatically from the state
-/// machine.
+/// State machine specific mappings for ArcherDB geospatial operations.
+/// NOTE: Legacy TigerBeetle financial types (Account, Transfer, etc.) have been removed.
+/// ArcherDB is a geospatial database only.
 const mappings_state_machine = .{
-    .{ tb.AccountFlags, "AccountFlags" },
-    .{ tb.TransferFlags, "TransferFlags" },
-    .{ tb.AccountFilterFlags, "AccountFilterFlags" },
-    .{ tb.QueryFilterFlags, "QueryFilterFlags" },
-    .{ tb.Account, "Account" },
-    .{ tb.Transfer, "Transfer" },
-    .{ tb.CreateAccountResult, "CreateAccountResult" },
-    .{ tb.CreateTransferResult, "CreateTransferResult" },
-    .{ tb.CreateAccountsResult, "CreateAccountsResult" },
-    .{ tb.CreateTransfersResult, "CreateTransfersResult" },
-    .{ tb.AccountFilter, "AccountFilter" },
-    .{ tb.AccountBalance, "AccountBalance" },
-    .{ tb.QueryFilter, "QueryFilter" },
+    // ArcherDB geospatial types
+    .{ tb.GeoEvent, "GeoEvent" },
+    .{ @import("../../geo_event.zig").GeoEventFlags, "GeoEventFlags" },
+    .{ tb.InsertGeoEventResult, "InsertGeoEventResult" },
+    .{ tb.InsertGeoEventsResult, "InsertGeoEventsResult" },
+    .{ tb.DeleteEntityResult, "DeleteEntityResult" },
+    .{ tb.DeleteEntitiesResult, "DeleteEntitiesResult" },
+    .{ tb.QueryUuidFilter, "QueryUuidFilter" },
+    .{ tb.QueryRadiusFilter, "QueryRadiusFilter" },
+    .{ tb.QueryPolygonFilter, "QueryPolygonFilter" },
+    .{ tb.QueryLatestFilter, "QueryLatestFilter" },
+    .{ tb.QueryResponse, "QueryResponse" },
+    .{ tb.PolygonVertex, "PolygonVertex" },
 };
 
 const mappings_all = mappings_vsr ++ mappings_state_machine;
@@ -79,15 +80,27 @@ fn zig_to_ctype(comptime Type: type) []const u8 {
         .@"struct" => return zig_to_ctype(std.meta.Int(.unsigned, @bitSizeOf(Type))),
         .bool => return "ctypes.c_bool",
         .int => |info| {
-            assert(info.signedness == .unsigned);
-            return switch (info.bits) {
-                8 => "ctypes.c_uint8",
-                16 => "ctypes.c_uint16",
-                32 => "ctypes.c_uint32",
-                64 => "ctypes.c_uint64",
-                128 => "c_uint128",
-                else => @compileError("invalid int type"),
-            };
+            // Support both signed and unsigned integers for ArcherDB's GeoEvent
+            // (lat_nano, lon_nano, altitude_mm are signed i64/i32)
+            if (info.signedness == .signed) {
+                return switch (info.bits) {
+                    8 => "ctypes.c_int8",
+                    16 => "ctypes.c_int16",
+                    32 => "ctypes.c_int32",
+                    64 => "ctypes.c_int64",
+                    128 => "c_int128",
+                    else => @compileError("invalid signed int type"),
+                };
+            } else {
+                return switch (info.bits) {
+                    8 => "ctypes.c_uint8",
+                    16 => "ctypes.c_uint16",
+                    32 => "ctypes.c_uint32",
+                    64 => "ctypes.c_uint64",
+                    128 => "c_uint128",
+                    else => @compileError("invalid unsigned int type"),
+                };
+            }
         },
         .optional => |info| switch (@typeInfo(info.child)) {
             .pointer => return zig_to_ctype(info.child),
@@ -125,7 +138,8 @@ fn zig_to_python(comptime Type: type) []const u8 {
         .@"struct" => return comptime mapping_name_from_type(mappings_state_machine, Type).?,
         .bool => return "bool",
         .int => |info| {
-            assert(info.signedness == .unsigned);
+            // Support both signed and unsigned integers for ArcherDB's GeoEvent
+            // (lat_nano, lon_nano, altitude_mm are signed i64/i32)
             return switch (info.bits) {
                 8 => "int",
                 16 => "int",
@@ -552,15 +566,16 @@ pub fn main() !void {
             \\
         , .{prefix_class});
 
+        // ArcherDB geospatial operations
+        // NOTE: Legacy TigerBeetle financial operations have been removed.
         const operations: []const tb.Operation = &.{
-            .create_accounts,
-            .create_transfers,
-            .lookup_accounts,
-            .lookup_transfers,
-            .get_account_transfers,
-            .get_account_balances,
-            .query_accounts,
-            .query_transfers,
+            .insert_events,
+            .upsert_events,
+            .delete_entities,
+            .query_uuid,
+            .query_radius,
+            .query_polygon,
+            .query_latest,
         };
         inline for (operations) |operation| {
             emit_method(&buffer, operation, .{ .is_async = is_async });
@@ -575,16 +590,17 @@ pub fn main() !void {
 /// Used by client code generation to make clearer APIs: the name of the Event parameter,
 /// when used as a variable.
 /// Inline function so that `operation` can be known at comptime.
+/// NOTE: Updated for ArcherDB geospatial operations only.
 fn event_name(comptime operation: tb.Operation) []const u8 {
     return switch (operation) {
-        .create_accounts => "accounts",
-        .create_transfers => "transfers",
-        .lookup_accounts => "accounts",
-        .lookup_transfers => "transfers",
-        .get_account_transfers => "filter",
-        .get_account_balances => "filter",
-        .query_accounts => "query_filter",
-        .query_transfers => "query_filter",
+        // ArcherDB geospatial operations
+        .insert_events => "events",
+        .upsert_events => "events",
+        .delete_entities => "entity_ids",
+        .query_uuid => "filter",
+        .query_radius => "filter",
+        .query_polygon => "filter",
+        .query_latest => "filter",
         else => comptime unreachable,
     };
 }

@@ -154,8 +154,8 @@ type GeoEvent struct {
 	LonNano int64
 
 	// GroupID is the fleet/region grouping identifier.
-	// Use zero Uint128 for ungrouped events.
-	GroupID Uint128
+	// Use 0 for ungrouped events.
+	GroupID uint64
 
 	// Timestamp is the event timestamp in nanoseconds since Unix epoch.
 	// Set to 0 for server-assigned timestamp.
@@ -178,6 +178,10 @@ type GeoEvent struct {
 
 	// Flags contains packed status flags.
 	Flags GeoEventFlags
+
+	// Reserved for future use (must be zero).
+	// This ensures 128-byte struct alignment with the server.
+	Reserved [12]byte
 }
 
 // ============================================================================
@@ -342,7 +346,7 @@ type GeoEventOptions struct {
 	Longitude     float64 // Degrees (-180 to +180)
 	CorrelationID Uint128
 	UserData      Uint128
-	GroupID       Uint128
+	GroupID       uint64  // Fleet/region grouping identifier
 	AltitudeM     float64 // Meters
 	VelocityMPS   float64 // Meters per second
 	TTLSeconds    uint32

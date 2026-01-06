@@ -185,7 +185,13 @@ func (b *ArcherDBBenchmark) benchmarkInsert() benchmarkResult {
 			errors += b.batchSize
 			continue
 		}
-		errors += len(results)
+		// Only count actual failures, not successful results
+		// The server returns results for all events including OK ones
+		for _, r := range results {
+			if r.Result != types.InsertResultOK {
+				errors++
+			}
+		}
 
 		batchEnd := time.Now()
 		batchLatencyUs := float64(batchEnd.Sub(batchStart).Microseconds())

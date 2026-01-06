@@ -21,64 +21,56 @@ const TypeMapping = struct {
     }
 };
 
+// ArcherDB geospatial type mappings
+// NOTE: Legacy TigerBeetle financial types (Account, Transfer, etc.) have been removed.
+// ArcherDB is a geospatial database only.
 const type_mappings = .{
-    .{ tb.AccountFlags, TypeMapping{
-        .name = "AccountFlags",
-        .hidden_fields = &.{"padding"},
-        .docs_link = "reference/account#flags",
-    } },
-    .{ tb.TransferFlags, TypeMapping{
-        .name = "TransferFlags",
-        .hidden_fields = &.{"padding"},
-        .docs_link = "reference/transfer#flags",
-    } },
-    .{ tb.AccountFilterFlags, TypeMapping{
-        .name = "AccountFilterFlags",
-        .hidden_fields = &.{"padding"},
-        .docs_link = "reference/account-filter#flags",
-    } },
-    .{ tb.QueryFilterFlags, TypeMapping{
-        .name = "QueryFilterFlags",
-        .hidden_fields = &.{"padding"},
-        .docs_link = "reference/query-filter#flags",
-    } },
-    .{ tb.Account, TypeMapping{
-        .name = "Account",
-        .docs_link = "reference/account/#",
-    } },
-    .{ tb.Transfer, TypeMapping{
-        .name = "Transfer",
-        .docs_link = "reference/transfer/#",
-    } },
-    .{ tb.CreateAccountResult, TypeMapping{
-        .name = "CreateAccountError",
-        .docs_link = "reference/requests/create_accounts#",
-    } },
-    .{ tb.CreateTransferResult, TypeMapping{
-        .name = "CreateTransferError",
-        .docs_link = "reference/requests/create_transfers#",
-    } },
-    .{ tb.CreateAccountsResult, TypeMapping{
-        .name = "CreateAccountsError",
-    } },
-    .{ tb.CreateTransfersResult, TypeMapping{
-        .name = "CreateTransfersError",
-    } },
-    .{ tb.AccountFilter, TypeMapping{
-        .name = "AccountFilter",
+    // GeoEvent and related types
+    .{ tb.GeoEvent, TypeMapping{
+        .name = "GeoEvent",
         .hidden_fields = &.{"reserved"},
-        .docs_link = "reference/account-filter#",
     } },
-    .{ tb.QueryFilter, TypeMapping{
-        .name = "QueryFilter",
+    .{ @import("../../geo_event.zig").GeoEventFlags, TypeMapping{
+        .name = "GeoEventFlags",
+        .hidden_fields = &.{"padding"},
+    } },
+    .{ tb.InsertGeoEventResult, TypeMapping{
+        .name = "InsertGeoEventError",
+    } },
+    .{ tb.InsertGeoEventsResult, TypeMapping{
+        .name = "InsertGeoEventsError",
+    } },
+    .{ tb.DeleteEntityResult, TypeMapping{
+        .name = "DeleteEntityError",
+    } },
+    .{ tb.DeleteEntitiesResult, TypeMapping{
+        .name = "DeleteEntitiesError",
+    } },
+    // Query filter types
+    .{ tb.QueryUuidFilter, TypeMapping{
+        .name = "QueryUuidFilter",
         .hidden_fields = &.{"reserved"},
-        .docs_link = "reference/query-filter#",
     } },
-    .{ tb.AccountBalance, TypeMapping{
-        .name = "AccountBalance",
+    .{ tb.QueryRadiusFilter, TypeMapping{
+        .name = "QueryRadiusFilter",
         .hidden_fields = &.{"reserved"},
-        .docs_link = "reference/account-balances#",
     } },
+    .{ tb.QueryPolygonFilter, TypeMapping{
+        .name = "QueryPolygonFilter",
+        .hidden_fields = &.{"reserved"},
+    } },
+    .{ tb.QueryLatestFilter, TypeMapping{
+        .name = "QueryLatestFilter",
+        .hidden_fields = &.{ "reserved", "_reserved_align" },
+    } },
+    .{ tb.QueryResponse, TypeMapping{
+        .name = "QueryResponse",
+        .hidden_fields = &.{"reserved"},
+    } },
+    .{ tb.PolygonVertex, TypeMapping{
+        .name = "PolygonVertex",
+    } },
+    // VSR operations
     .{ tb_client.Operation, TypeMapping{
         .name = "Operation",
         .hidden_fields = &.{ "reserved", "root", "register" },
@@ -99,8 +91,11 @@ fn typescript_type(comptime Type: type) []const u8 {
             ),
         },
         .int => |info| {
-            assert(info.signedness == .unsigned);
-            return switch (info.bits) {
+            // Support both signed and unsigned integers for ArcherDB's GeoEvent
+            // (lat_nano, lon_nano, altitude_mm are signed i64/i32)
+            _ = info; // signedness doesn't matter for TypeScript type
+            return switch (@typeInfo(Type).int.bits) {
+                8 => "number", // QueryResponse has_more, partial_result
                 16 => "number",
                 32 => "number",
                 64 => "bigint",
