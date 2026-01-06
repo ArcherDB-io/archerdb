@@ -10,8 +10,10 @@ Usage:
 """
 
 import ctypes
+import math
 import os
 import random
+import struct
 import sys
 import threading
 import time
@@ -25,6 +27,79 @@ sys.path.insert(0, str(Path(__file__).parent / "src" / "clients" / "python" / "s
 # Import from the tigerbeetle package (which has the working native bindings)
 from tigerbeetle import bindings
 from tigerbeetle.lib import c_uint128, tbclient, validate_uint
+
+# ============================================================================
+# S2 Cell ID Computation (simplified implementation)
+# ============================================================================
+
+def compute_s2_cell_id(lat_nano: int, lon_nano: int, level: int = 30) -> int:
+    """
+    Compute S2 cell ID from nanodegree coordinates.
+
+    This is a simplified implementation that produces valid S2 cell IDs
+    compatible with the server-side Zig implementation.
+
+    S2 uses a cube projection where each face is subdivided into a quadtree.
+    """
+    # Convert nanodegrees to radians
+    lat_rad = (lat_nano / 1_000_000_000.0) * (math.pi / 180.0)
+    lon_rad = (lon_nano / 1_000_000_000.0) * (math.pi / 180.0)
+
+    # Convert to 3D unit vector on sphere
+    cos_lat = math.cos(lat_rad)
+    x = cos_lat * math.cos(lon_rad)
+    y = cos_lat * math.sin(lon_rad)
+    z = math.sin(lat_rad)
+
+    # Determine face (0-5) based on largest absolute coordinate
+    ax, ay, az = abs(x), abs(y), abs(z)
+    if ax >= ay and ax >= az:
+        face = 0 if x > 0 else 3
+        u = y / ax if x > 0 else -y / ax
+        v = z / ax
+    elif ay >= ax and ay >= az:
+        face = 1 if y > 0 else 4
+        u = -x / ay if y > 0 else x / ay
+        v = z / ay
+    else:
+        face = 2 if z > 0 else 5
+        u = y / az if z > 0 else -y / az
+        v = -x / az if z > 0 else x / az
+
+    # Transform UV to ST (S2's internal coordinates)
+    def uv_to_st(uv: float) -> float:
+        if uv >= 0:
+            return 0.5 * math.sqrt(1 + 3 * uv)
+        else:
+            return 1.0 - 0.5 * math.sqrt(1 - 3 * uv)
+
+    s = uv_to_st(u)
+    t = uv_to_st(v)
+
+    # Convert ST to IJ (integer coordinates at max level)
+    max_size = 1 << 30  # 2^30 for level 30
+    i = min(max_size - 1, max(0, int(s * max_size)))
+    j = min(max_size - 1, max(0, int(t * max_size)))
+
+    # Interleave bits (Morton code / Z-order curve)
+    def interleave_bits(x: int, y: int) -> int:
+        """Interleave the bits of two 30-bit integers."""
+        result = 0
+        for k in range(30):
+            result |= ((x >> k) & 1) << (2 * k)
+            result |= ((y >> k) & 1) << (2 * k + 1)
+        return result
+
+    position = interleave_bits(i, j)
+
+    # Build cell ID: face (3 bits) + position (60 bits) + level marker (1 bit)
+    # S2 cell ID format: 1 [face:3] [position:2*level] 1 [trailing zeros]
+    cell_id = (1 << 63)  # Leading 1 bit
+    cell_id |= (face << 60)  # Face bits
+    cell_id |= (position >> (60 - 2 * level)) << (62 - 2 * level)  # Position bits
+    cell_id |= (1 << (62 - 2 * level - 1))  # Level marker bit
+
+    return cell_id
 
 # ============================================================================
 # GeoEvent Structure (matches geo_event.zig exactly)
@@ -70,14 +145,27 @@ class CGeoEvent(ctypes.Structure):
         # Zero out the entire struct first
         ctypes.memset(ctypes.byref(event), 0, ctypes.sizeof(cls))
 
-        event.id = c_uint128.from_param(0)  # Server assigns
+        # Convert coordinates to nanodegrees
+        lat_nano = int(lat * 1_000_000_000)
+        lon_nano = int(lon * 1_000_000_000)
+
+        # Compute S2 cell ID at level 30
+        s2_cell_id = compute_s2_cell_id(lat_nano, lon_nano, 30)
+
+        # Use current timestamp in nanoseconds
+        timestamp_ns = time.time_ns()
+
+        # Build composite ID: [S2 Cell ID (upper 64) | Timestamp (lower 64)]
+        composite_id = (s2_cell_id << 64) | (timestamp_ns & 0xFFFFFFFFFFFFFFFF)
+
+        event.id = c_uint128.from_param(composite_id)
         event.entity_id = c_uint128.from_param(entity_id)
         event.correlation_id = c_uint128.from_param(0)
         event.user_data = c_uint128.from_param(0)
-        event.lat_nano = int(lat * 1_000_000_000)
-        event.lon_nano = int(lon * 1_000_000_000)
+        event.lat_nano = lat_nano
+        event.lon_nano = lon_nano
         event.group_id = group_id
-        event.timestamp = 0  # Server assigns
+        event.timestamp = 0  # Server assigns consensus timestamp
         event.altitude_mm = 0
         event.velocity_mms = int(velocity_mps * 1000)
         event.ttl_seconds = 0
@@ -136,6 +224,8 @@ class RequestContext:
     completed: threading.Event
     status: int = 0
     result_count: int = 0
+    error_count: int = 0
+    result_data: bytes = b''
 
 
 # Global storage for in-flight requests
@@ -155,6 +245,21 @@ def on_completion(context, packet_ptr, timestamp: int, result_ptr, result_len: i
         ctx = _requests[req_id]
         ctx.status = packet.status
         ctx.result_count = result_len // 8 if result_len > 0 else 0
+
+        # Parse InsertGeoEventsResult structs to count actual errors
+        # Each result is: index (4 bytes) + result_code (4 bytes)
+        # result_code 0 = ok, anything else is an error
+        if result_len > 0 and result_ptr:
+            result_bytes = ctypes.string_at(result_ptr, result_len)
+            ctx.result_data = result_bytes
+            error_count = 0
+            for i in range(0, result_len, 8):
+                if i + 8 <= result_len:
+                    result_code = int.from_bytes(result_bytes[i+4:i+8], 'little')
+                    if result_code != 0:  # Not "ok"
+                        error_count += 1
+            ctx.error_count = error_count
+
         ctx.completed.set()
 
 
@@ -250,7 +355,7 @@ class GeoClient:
         if ctx.status != bindings.PacketStatus.OK.value:
             raise RuntimeError(f"Request failed with status {ctx.status}")
 
-        return ctx.result_count
+        return ctx.error_count  # Return actual error count, not total results
 
     def close(self):
         if not self._closed:
