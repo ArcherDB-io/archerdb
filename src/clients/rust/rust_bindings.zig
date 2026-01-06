@@ -6,19 +6,18 @@ const exports = vsr.tb_client.exports;
 const assert = std.debug.assert;
 
 const type_mappings = .{
-    .{ exports.tb_account_flags, "TB_ACCOUNT_FLAGS" },
-    .{ exports.tb_account_t, "tb_account_t" },
-    .{ exports.tb_transfer_flags, "TB_TRANSFER_FLAGS" },
-    .{ exports.tb_transfer_t, "tb_transfer_t" },
-    .{ exports.tb_create_account_result, "TB_CREATE_ACCOUNT_RESULT" },
-    .{ exports.tb_create_transfer_result, "TB_CREATE_TRANSFER_RESULT" },
-    .{ exports.tb_create_accounts_result_t, "tb_create_accounts_result_t" },
-    .{ exports.tb_create_transfers_result_t, "tb_create_transfers_result_t" },
-    .{ exports.tb_account_filter_t, "tb_account_filter_t" },
-    .{ exports.tb_account_filter_flags, "TB_ACCOUNT_FILTER_FLAGS" },
-    .{ exports.tb_account_balance_t, "tb_account_balance_t" },
-    .{ exports.tb_query_filter_t, "tb_query_filter_t" },
-    .{ exports.tb_query_filter_flags, "TB_QUERY_FILTER_FLAGS" },
+    // ArcherDB GeoEvent types (geospatial database core)
+    .{ exports.geo_event_t, "geo_event_t" },
+    .{ exports.geo_event_flags, "GEO_EVENT_FLAGS" },
+    .{ exports.insert_geo_event_result, "INSERT_GEO_EVENT_RESULT" },
+    .{ exports.insert_geo_events_result_t, "insert_geo_events_result_t" },
+    .{ exports.delete_entities_result_t, "delete_entities_result_t" },
+    .{ exports.query_uuid_filter_t, "query_uuid_filter_t" },
+    .{ exports.query_radius_filter_t, "query_radius_filter_t" },
+    .{ exports.query_polygon_filter_t, "query_polygon_filter_t" },
+    .{ exports.query_latest_filter_t, "query_latest_filter_t" },
+    .{ exports.query_response_t, "query_response_t" },
+    .{ exports.polygon_vertex_t, "polygon_vertex_t" },
     .{
         exports.tb_client_t, "tb_client_t",
         \\// Opaque struct serving as a handle for the client instance.
@@ -46,14 +45,25 @@ fn resolve_rust_type(comptime Type: type) []const u8 {
         .@"struct" => return resolve_rust_type(std.meta.Int(.unsigned, @bitSizeOf(Type))),
         .bool => return "u8", // todo "bool"
         .int => |info| {
-            assert(info.signedness == .unsigned);
-            return switch (info.bits) {
-                8 => "u8",
-                16 => "u16",
-                32 => "u32",
-                64 => "u64",
-                128 => "u128",
-                else => @compileError("invalid int type"),
+            // Support both signed and unsigned integers for GeoEvent fields
+            // (lat_nano, lon_nano are i64; altitude_mm is i32)
+            return switch (info.signedness) {
+                .unsigned => switch (info.bits) {
+                    8 => "u8",
+                    16 => "u16",
+                    32 => "u32",
+                    64 => "u64",
+                    128 => "u128",
+                    else => @compileError("invalid unsigned int type"),
+                },
+                .signed => switch (info.bits) {
+                    8 => "i8",
+                    16 => "i16",
+                    32 => "i32",
+                    64 => "i64",
+                    128 => "i128",
+                    else => @compileError("invalid signed int type"),
+                },
             };
         },
         .optional => |info| switch (@typeInfo(info.child)) {
@@ -106,14 +116,19 @@ fn emit_enum(
     };
     const rust_backing_type_str = switch (@typeInfo(backing_type)) {
         .int => |i| brk: {
-            break :brk switch (i.bits) {
-                32 => switch (i.signedness) {
-                    .unsigned => "u32",
-                    .signed => "i32",
+            break :brk switch (i.signedness) {
+                .unsigned => switch (i.bits) {
+                    8 => "u8",
+                    16 => "u16",
+                    32 => "u32",
+                    else => @panic("unexpected unsigned backing type"),
                 },
-                16 => "u16",
-                8 => "u8",
-                else => @panic("unexpected"),
+                .signed => switch (i.bits) {
+                    8 => "i8",
+                    16 => "i16",
+                    32 => "i32",
+                    else => @panic("unexpected signed backing type"),
+                },
             };
         },
         else => @panic("unexpected"),

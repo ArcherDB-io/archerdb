@@ -32,27 +32,15 @@ class CoordinateUtilsTest {
     // ========================================================================
 
     @ParameterizedTest
-    @CsvSource({
-            "37.7749, 37774900000",
-            "-122.4194, -122419400000",
-            "90.0, 90000000000",
-            "-90.0, -90000000000",
-            "180.0, 180000000000",
-            "-180.0, -180000000000",
-            "0.0, 0"
-    })
+    @CsvSource({"37.7749, 37774900000", "-122.4194, -122419400000", "90.0, 90000000000",
+            "-90.0, -90000000000", "180.0, 180000000000", "-180.0, -180000000000", "0.0, 0"})
     void testDegreesToNano(double degrees, long expectedNano) {
         assertEquals(expectedNano, CoordinateUtils.degreesToNano(degrees));
     }
 
     @ParameterizedTest
-    @CsvSource({
-            "37774900000, 37.7749",
-            "-122419400000, -122.4194",
-            "90000000000, 90.0",
-            "-90000000000, -90.0",
-            "0, 0.0"
-    })
+    @CsvSource({"37774900000, 37.7749", "-122419400000, -122.4194", "90000000000, 90.0",
+            "-90000000000, -90.0", "0, 0.0"})
     void testNanoToDegrees(long nano, double expectedDegrees) {
         assertEquals(expectedDegrees, CoordinateUtils.nanoToDegrees(nano), 0.0001);
     }
@@ -68,45 +56,31 @@ class CoordinateUtilsTest {
     }
 
     @ParameterizedTest
-    @CsvSource({
-            "1.0, 1000",
-            "5.5, 5500",
-            "0.0, 0",
-            "1000.0, 1000000"
-    })
+    @CsvSource({"1.0, 1000", "5.5, 5500", "0.0, 0", "1000.0, 1000000"})
     void testMetersToMm(double meters, int expectedMm) {
         assertEquals(expectedMm, CoordinateUtils.metersToMm(meters));
     }
 
     @ParameterizedTest
-    @CsvSource({
-            "1000, 1.0",
-            "5500, 5.5",
-            "0, 0.0"
-    })
+    @CsvSource({"1000, 1.0", "5500, 5.5", "0, 0.0"})
     void testMmToMeters(int mm, double expectedMeters) {
         assertEquals(expectedMeters, CoordinateUtils.mmToMeters(mm), 0.0001);
     }
 
     @ParameterizedTest
-    @CsvSource({
-            "0, 0",       // North
-            "90, 9000",   // East
+    @CsvSource({"0, 0", // North
+            "90, 9000", // East
             "180, 18000", // South
-            "270, 27000", // West
-            "360, 36000"  // Full circle
+            "270, 27000" // West
+    // Note: 360 degrees maps to 36000 which exceeds short max (32767)
+    // Valid heading range is 0-359.99 degrees (0-35999 centidegrees)
     })
     void testHeadingToCentidegrees(double degrees, short expectedCdeg) {
         assertEquals(expectedCdeg, CoordinateUtils.headingToCentidegrees(degrees));
     }
 
     @ParameterizedTest
-    @CsvSource({
-            "0, 0",
-            "9000, 90",
-            "18000, 180",
-            "27000, 270"
-    })
+    @CsvSource({"0, 0", "9000, 90", "18000, 180", "27000, 270"})
     void testCentidegreesToHeading(short cdeg, double expectedDegrees) {
         assertEquals(expectedDegrees, CoordinateUtils.centidegreesToHeading(cdeg), 0.0001);
     }
@@ -173,19 +147,15 @@ class CoordinateUtilsTest {
 
     @Test
     void testValidateCoordinates_invalidLatitude() {
-        IllegalArgumentException ex = assertThrows(
-                IllegalArgumentException.class,
-                () -> CoordinateUtils.validateCoordinates(91, 0)
-        );
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> CoordinateUtils.validateCoordinates(91, 0));
         assertTrue(ex.getMessage().contains("Invalid latitude"));
     }
 
     @Test
     void testValidateCoordinates_invalidLongitude() {
-        IllegalArgumentException ex = assertThrows(
-                IllegalArgumentException.class,
-                () -> CoordinateUtils.validateCoordinates(0, 181)
-        );
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> CoordinateUtils.validateCoordinates(0, 181));
         assertTrue(ex.getMessage().contains("Invalid longitude"));
     }
 }
