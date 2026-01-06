@@ -676,6 +676,7 @@ pub const QueryResponse = extern struct {
 // ============================================================================
 
 /// Creates a GeoStateMachine type parameterized by Storage.
+/// This is the main StateMachine implementation for ArcherDB (geospatial-only).
 pub fn GeoStateMachineType(comptime Storage: type) type {
     // Grid type for accessing superblock (VSR checkpoint coordination)
     const Grid = @import("vsr/grid.zig").GridType(Storage);
@@ -1053,10 +1054,6 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             if (event_size == 0) return 0;
 
             return switch (operation) {
-                // Write operations: increment by event count
-                .create_accounts => @divExact(batch.len, event_size),
-                .create_transfers => @divExact(batch.len, event_size),
-
                 // ArcherDB GeoEvent write operations (F1.2)
                 .insert_events => @divExact(batch.len, @sizeOf(GeoEvent)),
                 .upsert_events => @divExact(batch.len, @sizeOf(GeoEvent)),
@@ -1067,14 +1064,6 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .pulse => batch_max_events(),
 
                 // Read operations: no timestamp increment
-                .lookup_accounts,
-                .lookup_transfers,
-                .get_account_transfers,
-                .get_account_balances,
-                .query_accounts,
-                .query_transfers,
-                .get_change_events,
-                // ArcherDB GeoEvent query operations (F1.3)
                 .query_uuid,
                 .query_radius,
                 .query_polygon,
@@ -1082,17 +1071,6 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 // ArcherDB diagnostics
                 .archerdb_ping,
                 .archerdb_get_status,
-                => 0,
-
-                // Deprecated unbatched operations (TigerBeetle compatibility)
-                .deprecated_create_accounts_unbatched => @divExact(batch.len, event_size),
-                .deprecated_create_transfers_unbatched => @divExact(batch.len, event_size),
-                .deprecated_lookup_accounts_unbatched,
-                .deprecated_lookup_transfers_unbatched,
-                .deprecated_get_account_transfers_unbatched,
-                .deprecated_get_account_balances_unbatched,
-                .deprecated_query_accounts_unbatched,
-                .deprecated_query_transfers_unbatched,
                 => 0,
             };
         }
@@ -1134,29 +1112,12 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             // has full Forest LSM prefetch integration.
 
             switch (operation) {
-                // All operations use optimistic/immediate execution
+                // All ArcherDB operations use optimistic/immediate execution
                 // GeoEvent operations rely on RAM index for fast access
-                .create_accounts,
-                .create_transfers,
-                .deprecated_create_accounts_unbatched,
-                .deprecated_create_transfers_unbatched,
                 .insert_events,
                 .upsert_events,
                 .delete_entities,
                 .cleanup_expired,
-                .lookup_accounts,
-                .lookup_transfers,
-                .get_account_transfers,
-                .get_account_balances,
-                .query_accounts,
-                .query_transfers,
-                .get_change_events,
-                .deprecated_lookup_accounts_unbatched,
-                .deprecated_lookup_transfers_unbatched,
-                .deprecated_get_account_transfers_unbatched,
-                .deprecated_get_account_balances_unbatched,
-                .deprecated_query_accounts_unbatched,
-                .deprecated_query_transfers_unbatched,
                 .query_uuid,
                 .query_radius,
                 .query_polygon,
@@ -1217,54 +1178,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 // Pulse: internal maintenance (TTL cleanup, etc.)
                 .pulse => self.execute_pulse(timestamp),
 
-                // Write operations
-                .create_accounts => {
-                    return self.execute_create_accounts(timestamp, message_body_used, output);
-                },
-                .create_transfers => {
-                    return self.execute_create_transfers(timestamp, message_body_used, output);
-                },
-
-                // Read operations
-                .lookup_accounts => self.execute_lookup_accounts(message_body_used, output),
-                .lookup_transfers => self.execute_lookup_transfers(message_body_used, output),
-                .get_account_transfers => {
-                    return self.execute_get_account_transfers(message_body_used, output);
-                },
-                .get_account_balances => {
-                    return self.execute_get_account_balances(message_body_used, output);
-                },
-                .query_accounts => self.execute_query_accounts(message_body_used, output),
-                .query_transfers => self.execute_query_transfers(message_body_used, output),
-                .get_change_events => self.execute_get_change_events(message_body_used, output),
-
-                // Deprecated unbatched operations (TigerBeetle compatibility)
-                .deprecated_create_accounts_unbatched => {
-                    return self.execute_create_accounts(timestamp, message_body_used, output);
-                },
-                .deprecated_create_transfers_unbatched => {
-                    return self.execute_create_transfers(timestamp, message_body_used, output);
-                },
-                .deprecated_lookup_accounts_unbatched => {
-                    return self.execute_lookup_accounts(message_body_used, output);
-                },
-                .deprecated_lookup_transfers_unbatched => {
-                    return self.execute_lookup_transfers(message_body_used, output);
-                },
-                .deprecated_get_account_transfers_unbatched => {
-                    return self.execute_get_account_transfers(message_body_used, output);
-                },
-                .deprecated_get_account_balances_unbatched => {
-                    return self.execute_get_account_balances(message_body_used, output);
-                },
-                .deprecated_query_accounts_unbatched => {
-                    return self.execute_query_accounts(message_body_used, output);
-                },
-                .deprecated_query_transfers_unbatched => {
-                    return self.execute_query_transfers(message_body_used, output);
-                },
-
-                // ArcherDB geospatial operations
+                // ArcherDB geospatial write operations (F1.2)
                 .insert_events => {
                     return self.execute_insert_events(timestamp, message_body_used, output);
                 },
@@ -1272,6 +1186,8 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     return self.execute_upsert_events(timestamp, message_body_used, output);
                 },
                 .delete_entities => self.execute_delete_entities(message_body_used, output),
+
+                // ArcherDB geospatial query operations (F1.3)
                 .query_uuid => self.execute_query_uuid(message_body_used, output),
                 .query_radius => self.execute_query_radius(message_body_used, output),
                 .query_polygon => self.execute_query_polygon(message_body_used, output),
@@ -1337,112 +1253,6 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             }
 
             return result.entries_removed;
-        }
-
-        fn execute_create_accounts(
-            self: *GeoStateMachine,
-            timestamp: u64,
-            input: []const u8,
-            output: []u8,
-        ) usize {
-            _ = self;
-            _ = timestamp;
-            _ = input;
-            _ = output;
-            // NOTE: TigerBeetle operations not supported in standalone GeoStateMachine.
-            // This is a GeoEvent-only state machine for VOPR testing.
-            // For unified accounts+geoevents support, use StateMachine in state_machine.zig.
-            return 0;
-        }
-
-        fn execute_create_transfers(
-            self: *GeoStateMachine,
-            timestamp: u64,
-            input: []const u8,
-            output: []u8,
-        ) usize {
-            _ = self;
-            _ = timestamp;
-            _ = input;
-            _ = output;
-            // NOTE: TigerBeetle operations not supported (see execute_create_accounts)
-            return 0;
-        }
-
-        fn execute_lookup_accounts(self: *GeoStateMachine, input: []const u8, output: []u8) usize {
-            _ = self;
-            _ = input;
-            _ = output;
-            // NOTE: TigerBeetle operations not supported (see execute_create_accounts)
-            return 0;
-        }
-
-        fn execute_lookup_transfers(self: *GeoStateMachine, input: []const u8, output: []u8) usize {
-            _ = self;
-            _ = input;
-            _ = output;
-            // NOTE: TigerBeetle operations not supported (see execute_create_accounts)
-            return 0;
-        }
-
-        fn execute_get_account_transfers(
-            self: *GeoStateMachine,
-            input: []const u8,
-            output: []u8,
-        ) usize {
-            _ = self;
-            _ = input;
-            _ = output;
-            // NOTE: TigerBeetle operations not supported (see execute_create_accounts)
-            return 0;
-        }
-
-        fn execute_get_account_balances(
-            self: *GeoStateMachine,
-            input: []const u8,
-            output: []u8,
-        ) usize {
-            _ = self;
-            _ = input;
-            _ = output;
-            // NOTE: TigerBeetle operations not supported (see execute_create_accounts)
-            return 0;
-        }
-
-        fn execute_query_accounts(
-            self: *GeoStateMachine,
-            input: []const u8,
-            output: []u8,
-        ) usize {
-            _ = self;
-            _ = input;
-            _ = output;
-            // NOTE: TigerBeetle operations not supported (see execute_create_accounts)
-            return 0;
-        }
-
-        fn execute_query_transfers(
-            self: *GeoStateMachine,
-            input: []const u8,
-            output: []u8,
-        ) usize {
-            _ = self;
-            _ = input;
-            _ = output;
-            // NOTE: TigerBeetle operations not supported (see execute_create_accounts)
-            return 0;
-        }
-
-        fn execute_get_change_events(
-            self: *GeoStateMachine,
-            input: []const u8,
-            output: []u8,
-        ) usize {
-            _ = self;
-            _ = input;
-            _ = output;
-            // NOTE: TigerBeetle operations not supported (see execute_create_accounts)
-            return 0;
         }
 
         // ====================================================================
@@ -1927,6 +1737,8 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 ram_index_capacity: u64,
                 /// RAM index load factor (as percentage * 100)
                 ram_index_load_pct: u32,
+                /// Padding for alignment
+                _padding: u32 = 0,
                 /// Tombstone count
                 tombstone_count: u64,
                 /// Total TTL expirations
@@ -1934,7 +1746,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 /// Total deletions
                 deletion_count: u64,
                 /// Reserved for future use
-                reserved: [20]u8,
+                reserved: [16]u8,
             };
 
             comptime {
@@ -1945,7 +1757,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 return 0;
             }
 
-            const stats = self.ram_index.getStats();
+            const stats = self.ram_index.stats;
             const load_pct: u32 = if (stats.capacity > 0)
                 @intCast((stats.entry_count * 10000) / stats.capacity)
             else
@@ -1956,9 +1768,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .ram_index_capacity = stats.capacity,
                 .ram_index_load_pct = load_pct,
                 .tombstone_count = stats.tombstone_count,
-                .ttl_expirations = self.ttl_metrics.total_expirations,
-                .deletion_count = self.deletion_metrics.total_deletions,
-                .reserved = [_]u8{0} ** 20,
+                .ttl_expirations = self.ttl_metrics.total_expirations(),
+                .deletion_count = self.deletion_metrics.entities_deleted,
+                .reserved = [_]u8{0} ** 16,
             };
 
             const response_ptr = mem.bytesAsValue(
@@ -3593,3 +3405,11 @@ test "composite ID encoding: S2 cell and timestamp" {
     try std.testing.expect(@abs(center.lat_nano - lat_nano) < tolerance);
     try std.testing.expect(@abs(center.lon_nano - lon_nano) < tolerance);
 }
+
+// ============================================================================
+// Public API Aliases
+// ============================================================================
+
+/// Alias for compatibility with vsr.state_machine.StateMachineType interface.
+/// ArcherDB uses GeoStateMachineType as its primary state machine.
+pub const StateMachineType = GeoStateMachineType;

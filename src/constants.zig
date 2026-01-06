@@ -162,19 +162,9 @@ pub const memory_size_max_default = config.process.memory_size_max_default;
 ///   - low temporal locality
 ///   - negative expected result
 ///
-/// The default size of the accounts in-memory cache:
+/// The default size of the GeoEvent in-memory cache (ArcherDB F1.3.1):
 /// This impacts the amount of memory allocated at initialization by the server.
-pub const cache_accounts_size_default = config.process.cache_accounts_size_default;
-
-/// The default size of the transfers in-memory cache:
-/// This impacts the amount of memory allocated at initialization by the server.
-/// We allocate more capacity than the number of transfers for a safe hash table load factor.
-pub const cache_transfers_size_default = config.process.cache_transfers_size_default;
-
-/// The default size of the two-phase transfers in-memory cache:
-/// This impacts the amount of memory allocated at initialization by the server.
-pub const cache_transfers_pending_size_default =
-    config.process.cache_transfers_pending_size_default;
+pub const cache_geo_events_size_default = config.process.cache_geo_events_size_default;
 
 /// The size of the client replies zone.
 pub const client_replies_size = clients_max * message_size_max;

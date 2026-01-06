@@ -194,24 +194,13 @@ pub fn EchoClientType(comptime MessageBus: type) type {
     };
 }
 
-/// Mocks the Accounting StateMachine operation, but replaces
+/// Mocks the GeoStateMachine operation, but replaces
 /// all `Result`s with `Event`s, since the echo client replies
 /// with the same content of the input.
 pub const EchoOperation = enum(u8) {
     const Operation = vsr.tigerbeetle.Operation;
 
     pulse = @intFromEnum(Operation.pulse),
-
-    get_change_events = @intFromEnum(Operation.get_change_events),
-
-    create_accounts = @intFromEnum(Operation.create_accounts),
-    create_transfers = @intFromEnum(Operation.create_transfers),
-    lookup_accounts = @intFromEnum(Operation.lookup_accounts),
-    lookup_transfers = @intFromEnum(Operation.lookup_transfers),
-    get_account_transfers = @intFromEnum(Operation.get_account_transfers),
-    get_account_balances = @intFromEnum(Operation.get_account_balances),
-    query_accounts = @intFromEnum(Operation.query_accounts),
-    query_transfers = @intFromEnum(Operation.query_transfers),
 
     // ArcherDB geospatial operations (F1.3.7)
     insert_events = @intFromEnum(Operation.insert_events),
@@ -221,6 +210,7 @@ pub const EchoOperation = enum(u8) {
     query_latest = @intFromEnum(Operation.query_latest),
     query_radius = @intFromEnum(Operation.query_radius),
     query_polygon = @intFromEnum(Operation.query_polygon),
+    cleanup_expired = @intFromEnum(Operation.cleanup_expired),
 
     // ArcherDB admin operations (F1.3.7)
     archerdb_ping = @intFromEnum(Operation.archerdb_ping),

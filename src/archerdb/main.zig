@@ -706,11 +706,7 @@ fn command_start(
                 .batch_size_limit = args.request_size_limit - @sizeOf(vsr.Header),
                 .lsm_forest_compaction_block_count = args.lsm_forest_compaction_block_count,
                 .lsm_forest_node_count = args.lsm_forest_node_count,
-                .cache_entries_accounts = args.cache_accounts,
-                .cache_entries_transfers = args.cache_transfers,
-                .cache_entries_transfers_pending = args.cache_transfers_pending,
-                .cache_entries_geo_events = args.cache_geo_events, // F1.3.1
-                .log_trace = args.log_trace,
+                .cache_entries_geo_events = args.cache_geo_events,
             },
             .message_bus_options = .{
                 .configuration = args.addresses.const_slice(),
@@ -975,33 +971,30 @@ fn command_repl(
 }
 
 fn command_amqp(gpa: mem.Allocator, time: Time, args: *const cli.Command.AMQP) !void {
-    var runner: vsr.cdc.Runner = undefined;
-    try runner.init(
-        gpa,
-        time,
-        .{
-            .cluster_id = args.cluster,
-            .addresses = args.addresses.const_slice(),
-            .host = args.host,
-            .user = args.user,
-            .password = args.password,
-            .vhost = args.vhost,
-            .publish_exchange = args.publish_exchange,
-            .publish_routing_key = args.publish_routing_key,
-            .event_count_max = args.event_count_max,
-            .idle_interval_ms = args.idle_interval_ms,
-            .requests_per_second_limit = args.requests_per_second_limit,
-            .recovery_mode = if (args.timestamp_last) |timestamp_last|
-                .{ .override = timestamp_last }
-            else
-                .recover,
-        },
-    );
-    defer runner.deinit();
+    // ArcherDB CDC/AMQP is not yet implemented - stub out with clear error message
+    _ = gpa;
+    _ = time;
+    _ = args;
 
-    while (true) {
-        runner.tick();
-    }
+    const stderr = std.io.getStdErr().writer();
+    try stderr.print(
+        \\
+        \\ArcherDB CDC (Change Data Capture) - Not Yet Implemented
+        \\============================================================
+        \\
+        \\The AMQP/CDC feature is not yet implemented for ArcherDB's
+        \\geospatial operations.
+        \\
+        \\For real-time event streaming, use the client SDKs with:
+        \\  - query_latest: Poll for most recent events
+        \\  - query_uuid: Track specific entities
+        \\  - query_radius: Monitor geographic areas
+        \\
+        \\For more information: https://archerdb.io/docs
+        \\
+    , .{});
+
+    return error.NotImplemented;
 }
 
 fn print_value(

@@ -110,23 +110,18 @@ test "u128 consistency test" {
 // 2. the application can submit messages and receive replies through the completion callback.
 // 3. the data marshaling is correct, and exactly the same data sent was received back.
 test "tb_client echo" {
-    // Using the create_accounts operation for this test.
+    // Using the insert_events operation for this test.
     const RequestContext = RequestContextType(constants.message_body_size_max);
 
-    // Test multiple operations to prevent all requests from ending up in the same batch.
+    // Test multiple ArcherDB geospatial operations (F1.3.7)
     const operations = [_]tb_client.Operation{
-        tb_client.Operation.create_accounts,
-        tb_client.Operation.create_transfers,
-        tb_client.Operation.lookup_accounts,
-        tb_client.Operation.lookup_transfers,
-        tb_client.Operation.get_account_transfers,
-        tb_client.Operation.get_account_balances,
-        tb_client.Operation.query_accounts,
-        tb_client.Operation.query_transfers,
-        // ArcherDB geospatial operations (F1.3.7)
         tb_client.Operation.insert_events,
+        tb_client.Operation.upsert_events,
+        tb_client.Operation.delete_entities,
         tb_client.Operation.query_uuid,
         tb_client.Operation.query_latest,
+        tb_client.Operation.query_radius,
+        tb_client.Operation.query_polygon,
     };
 
     // Initializing an echo client for testing purposes.
@@ -173,36 +168,15 @@ test "tb_client echo" {
             break :operation operation_current.?;
         };
 
+        // ArcherDB geospatial operations event sizes (F1.3.7)
         const event_size: u32, const event_request_max: u32 = switch (operation) {
-            // All multi-batched operations require a minimum trailer size of one element:
-            .create_accounts => .{
-                @sizeOf(tb.Account),
-                @divExact(constants.message_body_size_max, @sizeOf(tb.Account)) - 1,
-            },
-            .create_transfers => .{
-                @sizeOf(tb.Transfer),
-                @divExact(constants.message_body_size_max, @sizeOf(tb.Transfer)) - 1,
-            },
-            .lookup_accounts => .{
-                @sizeOf(u128),
-                @divExact(constants.message_body_size_max, @sizeOf(tb.Account)) - 1,
-            },
-            .lookup_transfers => .{
-                @sizeOf(u128),
-                @divExact(constants.message_body_size_max, @sizeOf(tb.Transfer)) - 1,
-            },
-            .get_account_transfers, .get_account_balances => .{
-                @sizeOf(tb.AccountFilter),
-                1,
-            },
-            .query_accounts, .query_transfers => .{
-                @sizeOf(tb.QueryFilter),
-                1,
-            },
-            // ArcherDB geospatial operations (F1.3.7)
-            .insert_events => .{
+            .insert_events, .upsert_events => .{
                 @sizeOf(tb.GeoEvent),
                 @divExact(constants.message_body_size_max, @sizeOf(tb.GeoEvent)),
+            },
+            .delete_entities => .{
+                @sizeOf(u128), // entity_id
+                @divExact(constants.message_body_size_max, @sizeOf(u128)),
             },
             .query_uuid => .{
                 @sizeOf(tb.QueryUuidFilter),
@@ -210,6 +184,14 @@ test "tb_client echo" {
             },
             .query_latest => .{
                 @sizeOf(tb.QueryLatestFilter),
+                1,
+            },
+            .query_radius => .{
+                @sizeOf(tb.QueryRadiusFilter),
+                1,
+            },
+            .query_polygon => .{
+                @sizeOf(tb.QueryPolygonFilter),
                 1,
             },
             else => unreachable,
@@ -330,7 +312,7 @@ test "tb_client client status" {
     };
 
     const packet = &request.packet;
-    packet.operation = @intFromEnum(tb_client.Operation.create_accounts);
+    packet.operation = @intFromEnum(tb_client.Operation.insert_events);
     packet.user_data = &request;
     packet.data = null;
     packet.data_size = 0;
@@ -410,8 +392,8 @@ test "tb_client PacketStatus" {
     // Messages larger than constants.message_body_size_max should return "too_much_data":
     try assert_result(
         &client_out,
-        @intFromEnum(tb_client.Operation.create_transfers),
-        constants.message_body_size_max + @sizeOf(tb_client.exports.tb_transfer_t),
+        @intFromEnum(tb_client.Operation.insert_events),
+        constants.message_body_size_max + @sizeOf(tb_client.exports.geo_event_t),
         .too_much_data,
     );
 
@@ -445,19 +427,19 @@ test "tb_client PacketStatus" {
     // should return "invalid_data_size":
     try assert_result(
         &client_out,
-        @intFromEnum(tb_client.Operation.create_transfers),
-        @sizeOf(tb_client.exports.tb_transfer_t) - 1,
+        @intFromEnum(tb_client.Operation.insert_events),
+        @sizeOf(tb_client.exports.geo_event_t) - 1,
         .invalid_data_size,
     );
     try assert_result(
         &client_out,
-        @intFromEnum(tb_client.Operation.lookup_transfers),
+        @intFromEnum(tb_client.Operation.delete_entities),
         @sizeOf(u128) + 1,
         .invalid_data_size,
     );
     try assert_result(
         &client_out,
-        @intFromEnum(tb_client.Operation.lookup_accounts),
+        @intFromEnum(tb_client.Operation.delete_entities),
         @sizeOf(u128) * 2.5,
         .invalid_data_size,
     );
@@ -465,20 +447,20 @@ test "tb_client PacketStatus" {
     // Messages with zero length or multiple of the event size are valid.
     try assert_result(
         &client_out,
-        @intFromEnum(tb_client.Operation.create_accounts),
+        @intFromEnum(tb_client.Operation.insert_events),
         0,
         .ok,
     );
     try assert_result(
         &client_out,
-        @intFromEnum(tb_client.Operation.create_accounts),
-        @sizeOf(tb_client.exports.tb_account_t),
+        @intFromEnum(tb_client.Operation.insert_events),
+        @sizeOf(tb_client.exports.geo_event_t),
         .ok,
     );
     try assert_result(
         &client_out,
-        @intFromEnum(tb_client.Operation.create_accounts),
-        @sizeOf(tb_client.exports.tb_account_t) * 2,
+        @intFromEnum(tb_client.Operation.insert_events),
+        @sizeOf(tb_client.exports.geo_event_t) * 2,
         .ok,
     );
 }

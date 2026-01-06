@@ -156,17 +156,8 @@ pub fn ContextType(
         });
 
         const Operation = Client.Operation;
+        // ArcherDB geospatial operations only (F1.3.7)
         const allowed_operations = [_]Operation{
-            .create_accounts,
-            .create_transfers,
-            .lookup_accounts,
-            .lookup_transfers,
-            .get_account_transfers,
-            .get_account_balances,
-            .query_accounts,
-            .query_transfers,
-            .get_change_events,
-            // ArcherDB geospatial operations (F1.3.7)
             .insert_events,
             .upsert_events,
             .delete_entities,
@@ -174,6 +165,7 @@ pub fn ContextType(
             .query_latest,
             .query_radius,
             .query_polygon,
+            .cleanup_expired,
             // ArcherDB admin operations (F1.3.7)
             .archerdb_ping,
             .archerdb_get_status,

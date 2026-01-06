@@ -68,9 +68,7 @@ pub fn command_benchmark(
     } else {
         // Arguments forwarded to the replica cannot be used with a cluster started by the user.
         inline for (.{
-            "cache_accounts",
-            "cache_transfers",
-            "cache_transfers_pending",
+            "cache_geo_events",
             "cache_grid",
             "statsd",
             "trace",
@@ -169,11 +167,9 @@ fn start(allocator: std.mem.Allocator, options: struct {
     try start_args.append(arena.allocator(), "start");
     try start_args.append(arena.allocator(), "--addresses=0");
 
-    // Forward the cache options to the tigerbeetle process:
+    // Forward the cache options to the archerdb process:
     const forward_args = &.{
-        .{ options.args.cache_accounts, "cache-accounts" },
-        .{ options.args.cache_transfers, "cache-transfers" },
-        .{ options.args.cache_transfers_pending, "cache-transfers-pending" },
+        .{ options.args.cache_geo_events, "cache-geo-events" },
         .{ options.args.cache_grid, "cache-grid" },
         .{ options.args.statsd, "statsd" },
         .{ options.args.trace, "trace" },

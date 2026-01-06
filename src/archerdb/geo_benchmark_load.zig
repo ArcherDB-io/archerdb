@@ -84,11 +84,11 @@ pub fn main(
         "Configuration: {} events, {} entities, {} UUID queries, " ++
             "{} radius queries, {} polygon queries",
         .{
-            cli_args.geo_event_count,
-            cli_args.geo_entity_count,
-            cli_args.geo_query_uuid_count,
-            cli_args.geo_query_radius_count,
-            cli_args.geo_query_polygon_count,
+            cli_args.event_count,
+            cli_args.entity_count,
+            cli_args.query_uuid_count,
+            cli_args.query_radius_count,
+            cli_args.query_polygon_count,
         },
     );
 
@@ -129,7 +129,7 @@ pub fn main(
     defer allocator.free(client_replies);
 
     // Track entity UUIDs for queries
-    const entity_ids = try allocator.alloc(u128, cli_args.geo_entity_count);
+    const entity_ids = try allocator.alloc(u128, cli_args.entity_count);
     defer allocator.free(entity_ids);
 
     // Generate deterministic entity UUIDs
@@ -150,12 +150,12 @@ pub fn main(
         .client_replies = client_replies,
         .request_latency_histogram = request_latency_histogram,
         .entity_ids = entity_ids,
-        .geo_event_count = cli_args.geo_event_count,
-        .geo_entity_count = cli_args.geo_entity_count,
-        .geo_query_uuid_count = cli_args.geo_query_uuid_count,
-        .geo_query_radius_count = cli_args.geo_query_radius_count,
-        .geo_query_polygon_count = cli_args.geo_query_polygon_count,
-        .geo_query_radius_meters = cli_args.geo_query_radius_meters,
+        .event_count = cli_args.event_count,
+        .entity_count = cli_args.entity_count,
+        .query_uuid_count = cli_args.query_uuid_count,
+        .query_radius_count = cli_args.query_radius_count,
+        .query_polygon_count = cli_args.query_polygon_count,
+        .query_radius_meters = cli_args.query_radius_meters,
         .print_batch_timings = cli_args.print_batch_timings,
     };
 
@@ -166,17 +166,17 @@ pub fn main(
     try benchmark.run(.insert_events);
 
     // F5.1.2: UUID query latency benchmark
-    if (benchmark.geo_query_uuid_count > 0) {
+    if (benchmark.query_uuid_count > 0) {
         try benchmark.run(.query_uuid);
     }
 
     // F5.1.3: Radius query latency benchmark
-    if (benchmark.geo_query_radius_count > 0) {
+    if (benchmark.query_radius_count > 0) {
         try benchmark.run(.query_radius);
     }
 
     // F5.1.4: Polygon query latency benchmark
-    if (benchmark.geo_query_polygon_count > 0) {
+    if (benchmark.query_polygon_count > 0) {
         try benchmark.run(.query_polygon);
     }
 }
@@ -190,12 +190,12 @@ const GeoBenchmark = struct {
 
     // Configuration
     entity_ids: []const u128,
-    geo_event_count: u64,
-    geo_entity_count: u32,
-    geo_query_uuid_count: u32,
-    geo_query_radius_count: u32,
-    geo_query_polygon_count: u32,
-    geo_query_radius_meters: u32,
+    event_count: u64,
+    entity_count: u32,
+    query_uuid_count: u32,
+    query_radius_count: u32,
+    query_polygon_count: u32,
+    query_radius_meters: u32,
     print_batch_timings: bool,
 
     // State
@@ -296,14 +296,14 @@ const GeoBenchmark = struct {
         assert(b.stage == .insert_events);
         assert(!b.clients_busy.is_set(client_index));
 
-        if (b.event_index >= b.geo_event_count) {
+        if (b.event_index >= b.event_count) {
             if (b.clients_busy.empty()) b.insert_events_finish();
             return;
         }
 
         // Calculate batch size (max events per message)
         const max_events_per_batch = constants.message_body_size_max / @sizeOf(GeoEvent);
-        const remaining = b.geo_event_count - b.event_index;
+        const remaining = b.event_count - b.event_index;
         const batch_count: u32 = @intCast(@min(remaining, max_events_per_batch));
 
         const events = stdx.bytes_as_slice(
@@ -372,7 +372,7 @@ const GeoBenchmark = struct {
     fn build_events(b: *GeoBenchmark, events: []GeoEvent) void {
         for (events) |*event| {
             // Select entity cyclically
-            const entity_idx = b.event_index % b.geo_entity_count;
+            const entity_idx = b.event_index % b.entity_count;
             const entity_id = b.entity_ids[entity_idx];
 
             // Generate random coordinates (global distribution)
@@ -417,13 +417,13 @@ const GeoBenchmark = struct {
         assert(b.stage == .query_uuid);
         assert(!b.clients_busy.is_set(client_index));
 
-        if (b.query_index >= b.geo_query_uuid_count) {
+        if (b.query_index >= b.query_uuid_count) {
             if (b.clients_busy.empty()) b.query_uuid_finish();
             return;
         }
 
         // Pick a random entity to query
-        const entity_idx = b.prng.int(u32) % b.geo_entity_count;
+        const entity_idx = b.prng.int(u32) % b.entity_count;
         const entity_id = b.entity_ids[entity_idx];
 
         const filter: *QueryUuidFilter = @alignCast(@ptrCast(&b.client_requests[client_index]));
@@ -481,7 +481,7 @@ const GeoBenchmark = struct {
         assert(b.stage == .query_radius);
         assert(!b.clients_busy.is_set(client_index));
 
-        if (b.query_index >= b.geo_query_radius_count) {
+        if (b.query_index >= b.query_radius_count) {
             if (b.clients_busy.empty()) b.query_radius_finish();
             return;
         }
@@ -496,7 +496,7 @@ const GeoBenchmark = struct {
         filter.* = .{
             .center_lat_nano = lat_nano,
             .center_lon_nano = lon_nano,
-            .radius_mm = b.geo_query_radius_meters * 1000, // Convert meters to mm
+            .radius_mm = b.query_radius_meters * 1000, // Convert meters to mm
             .limit = 100,
             .timestamp_min = 0,
             .timestamp_max = 0,
@@ -537,7 +537,7 @@ const GeoBenchmark = struct {
             \\
         , .{
             .queries = b.request_index,
-            .radius = b.geo_query_radius_meters,
+            .radius = b.query_radius_meters,
             .duration = duration_s,
         }) catch unreachable;
 
@@ -554,7 +554,7 @@ const GeoBenchmark = struct {
         assert(b.stage == .query_polygon);
         assert(!b.clients_busy.is_set(client_index));
 
-        if (b.query_index >= b.geo_query_polygon_count) {
+        if (b.query_index >= b.query_polygon_count) {
             if (b.clients_busy.empty()) b.query_polygon_finish();
             return;
         }

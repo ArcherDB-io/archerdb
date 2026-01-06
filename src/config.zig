@@ -101,9 +101,7 @@ const ConfigProcess = struct {
     storage_size_limit_default: u64 = 16 * TiB,
     storage_size_limit_max: u64 = 64 * TiB,
     memory_size_max_default: u64 = GiB,
-    cache_accounts_size_default: u64,
-    cache_transfers_size_default: u64,
-    cache_transfers_pending_size_default: u64,
+    cache_geo_events_size_default: u64,
     client_request_queue_max: u32 = 2,
     lsm_manifest_node_size: u64 = 16 * KiB,
     connection_delay_min_ms: u64 = 50,
@@ -229,9 +227,7 @@ pub const configs = struct {
     pub const default_production = Config{
         .process = .{
             .direct_io = true,
-            .cache_accounts_size_default = @sizeOf(vsr.tigerbeetle.Account) * MiB,
-            .cache_transfers_size_default = 0,
-            .cache_transfers_pending_size_default = 0,
+            .cache_geo_events_size_default = @sizeOf(vsr.tigerbeetle.GeoEvent) * MiB,
             .verify = true,
         },
         .cluster = .{
@@ -247,9 +243,7 @@ pub const configs = struct {
             .storage_size_limit_default = 1 * GiB,
             .storage_size_limit_max = 1 * GiB,
             .direct_io = false,
-            .cache_accounts_size_default = @sizeOf(vsr.tigerbeetle.Account) * 256,
-            .cache_transfers_size_default = 0,
-            .cache_transfers_pending_size_default = 0,
+            .cache_geo_events_size_default = @sizeOf(vsr.tigerbeetle.GeoEvent) * 256,
             .journal_iops_read_max = 3,
             .journal_iops_write_max = 2,
             .grid_repair_request_max = 4,
