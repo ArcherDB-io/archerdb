@@ -34,6 +34,16 @@ class Operation(enum.IntEnum):
     GET_ACCOUNT_BALANCES = 143
     QUERY_ACCOUNTS = 144
     QUERY_TRANSFERS = 145
+    # ArcherDB geospatial operations
+    INSERT_EVENTS = 146
+    UPSERT_EVENTS = 147
+    DELETE_ENTITIES = 148
+    QUERY_UUID = 149
+    QUERY_RADIUS = 150
+    QUERY_POLYGON = 151
+    ARCHERDB_PING = 152
+    ARCHERDB_GET_STATUS = 153
+    QUERY_LATEST = 154
 
 
 class PacketStatus(enum.IntEnum):

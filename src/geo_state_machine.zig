@@ -634,11 +634,12 @@ pub const QueryResponse = extern struct {
     has_more: u8,
     /// 1 if response was truncated due to message_size_max, 0 otherwise
     partial_result: u8,
-    /// Reserved for future flags
-    reserved: [2]u8 = @splat(0),
+    /// Reserved for future flags (10 bytes to ensure 16-byte total size for GeoEvent alignment)
+    reserved: [10]u8 = @splat(0),
 
     comptime {
-        assert(@sizeOf(QueryResponse) == 8);
+        // Must be 16 bytes so GeoEvent results following the header are 16-byte aligned
+        assert(@sizeOf(QueryResponse) == 16);
         assert(stdx.no_padding(QueryResponse));
     }
 

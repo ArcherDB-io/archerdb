@@ -58,7 +58,9 @@ void on_completion(
 
 int main(int argc, char **argv) {
     printf("TigerBeetle C Sample\n");
+    fflush(stdout);
     printf("Connecting...\n");
+    fflush(stdout);
     tb_client_t client;
 
     const char *address = getenv("TB_ADDRESS");

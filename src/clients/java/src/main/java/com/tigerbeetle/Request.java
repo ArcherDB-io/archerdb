@@ -26,20 +26,26 @@ abstract class Request<TResponse extends Batch> {
      */
     // @formatter:on
 
+    /**
+     * Operation codes for ArcherDB geospatial operations.
+     *
+     * Legacy TigerBeetle financial operations have been removed. See archerdb.geo package for
+     * geospatial client implementation.
+     */
     enum Operations {
-        // TODO Auto-generate these.
         PULSE(128),
-        CREATE_ACCOUNTS(138),
-        CREATE_TRANSFERS(139),
-        LOOKUP_ACCOUNTS(140),
-        LOOKUP_TRANSFERS(141),
-        GET_ACCOUNT_TRANSFERS(142),
-        GET_ACCOUNT_BALANCES(143),
-        QUERY_ACCOUNTS(144),
-        QUERY_TRANSFERS(145),
 
-        ECHO_ACCOUNTS(138),
-        ECHO_TRANSFERS(139);
+        // ArcherDB geospatial operations (F1.2)
+        INSERT_EVENTS(146),
+        UPSERT_EVENTS(147),
+        DELETE_ENTITIES(148),
+        QUERY_UUID(149),
+        QUERY_RADIUS(150),
+        QUERY_POLYGON(151),
+        ARCHERDB_PING(152),
+        ARCHERDB_GET_STATUS(153),
+        QUERY_LATEST(154),
+        CLEANUP_EXPIRED(155);
 
         byte value;
 
@@ -81,128 +87,52 @@ abstract class Request<TResponse extends Batch> {
         nativeClient.submit(this);
     }
 
-    // Unchecked: Since we just support a limited set of operations, it is safe to cast the
-    // result to T[]
+    /**
+     * Handles request completion callback from the JNI side.
+     *
+     * Note: Geospatial operations are handled by the archerdb.geo package, which has its own native
+     * bindings implementation. This method is kept for infrastructure compatibility.
+     */
     @SuppressWarnings("unchecked")
     void endRequest(final byte receivedOperation, final byte status, final long timestamp) {
-
         // This method is called from the JNI side, on the tb_client thread
         // We CAN'T throw any exception here, any event must be stored and
         // handled from the user's thread on the completion.
 
-        Batch result = null;
         Throwable exception = null;
 
         try {
-
             if (receivedOperation != operation.value) {
-
                 exception =
                         new AssertionError("Unexpected callback operation: expected=%d, actual=%d",
                                 operation.value, receivedOperation);
-
             } else if (status != PacketStatus.Ok.value) {
-
                 if (status == PacketStatus.ClientShutdown.value) {
                     exception = new IllegalStateException("Client is closed");
                 } else {
                     exception = new RequestException(status);
                 }
-
             } else {
-
-                switch (operation) {
-                    case CREATE_ACCOUNTS: {
-                        result = new CreateAccountResultBatch(
-                                replyBuffer == null ? REPLY_EMPTY : ByteBuffer.wrap(replyBuffer));
-                        exception = checkResultLength(result);
-                        break;
-                    }
-
-                    case CREATE_TRANSFERS: {
-                        result = new CreateTransferResultBatch(
-                                replyBuffer == null ? REPLY_EMPTY : ByteBuffer.wrap(replyBuffer));
-                        exception = checkResultLength(result);
-                        break;
-                    }
-
-                    case ECHO_ACCOUNTS:
-                    case LOOKUP_ACCOUNTS: {
-                        result = new AccountBatch(
-                                replyBuffer == null ? REPLY_EMPTY : ByteBuffer.wrap(replyBuffer));
-                        exception = checkResultLength(result);
-                        break;
-                    }
-
-                    case ECHO_TRANSFERS:
-                    case LOOKUP_TRANSFERS: {
-                        result = new TransferBatch(
-                                replyBuffer == null ? REPLY_EMPTY : ByteBuffer.wrap(replyBuffer));
-                        exception = checkResultLength(result);
-                        break;
-                    }
-
-                    case GET_ACCOUNT_TRANSFERS: {
-                        result = new TransferBatch(
-                                replyBuffer == null ? REPLY_EMPTY : ByteBuffer.wrap(replyBuffer));
-                        break;
-                    }
-
-                    case GET_ACCOUNT_BALANCES: {
-                        result = new AccountBalanceBatch(
-                                replyBuffer == null ? REPLY_EMPTY : ByteBuffer.wrap(replyBuffer));
-                        break;
-                    }
-
-                    case QUERY_ACCOUNTS: {
-                        result = new AccountBatch(
-                                replyBuffer == null ? REPLY_EMPTY : ByteBuffer.wrap(replyBuffer));
-                        break;
-                    }
-
-                    case QUERY_TRANSFERS: {
-                        result = new TransferBatch(
-                                replyBuffer == null ? REPLY_EMPTY : ByteBuffer.wrap(replyBuffer));
-                        break;
-                    }
-
-                    default: {
-                        exception = new AssertionError("Unknown operation %d", operation);
-                        break;
-                    }
-                }
+                // Geo operations are handled by archerdb.geo package
+                exception = new AssertionError(
+                        "Operation %d should be handled by archerdb.geo package", operation);
             }
         } catch (Throwable any) {
             exception = any;
         }
 
         try {
-            if (exception == null) {
-                result.setHeader(new Batch.Header(timestamp));
-                setResult((TResponse) result);
-            } else {
-                setException(exception);
-            }
+            setException(exception);
         } catch (Throwable any) {
             System.err.println("Completion of request failed!\n"
-                    + "This is a bug in TigerBeetle. Please report it at https://github.com/tigerbeetle/tigerbeetle.\n"
+                    + "This is a bug in ArcherDB. Please report it at https://github.com/ArcherDB-io/archerdb.\n"
                     + "Cause: " + any.toString());
             any.printStackTrace();
             Runtime.getRuntime().halt(1);
         }
     }
 
-    private AssertionError checkResultLength(Batch result) {
-        if (result.getLength() > requestLen) {
-            return new AssertionError(
-                    "Amount of results is greater than the amount of requests: resultLen=%d, requestLen=%d",
-                    result.getLength(), requestLen);
-        } else {
-            return null;
-        }
-    }
-
-    // Unused: Used by unit tests.
+    // Used by unit tests.
     @SuppressWarnings("unused")
     void setReplyBuffer(byte[] buffer) {
         this.replyBuffer = buffer;

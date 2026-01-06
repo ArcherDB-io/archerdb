@@ -2,31 +2,14 @@ package com.tigerbeetle;
 
 import static com.tigerbeetle.AssertionError.assertTrue;
 
+/**
+ * Generic blocking request infrastructure.
+ *
+ * This class provides the core blocking request mechanism used by the ArcherDB client for
+ * synchronous operations. Financial-specific factory methods have been removed in favor of the
+ * archerdb.geo package implementations.
+ */
 final class BlockingRequest<TResponse extends Batch> extends Request<TResponse> {
-
-    // @formatter:off
-    /*
-     * Overview:
-     *
-     * Implements a Request that blocks the caller thread until signaled as completed by the TB's callback.
-     * See AsyncRequest.java for the async implementation.
-     *
-     * We could have used the same AsyncRequest implementation by just waiting the CompletableFuture<T>.
-     *
-     * CompletableFuture<T> implements a sophisticated lock using CAS + waiter stack:
-     * https://hg.openjdk.java.net/jdk8/jdk8/jdk/file/687fd7c7986d/src/share/classes/java/util/concurrent/CompletableFuture.java#l114
-     *
-     * This BlockingRequest<T> implements a much simpler general-purpose "synchronized" block that relies on the
-     * standard Monitor.wait().
-     *
-     * This approach is particularly good here for 3 reasons:
-     *
-     *   1. We are always dealing with just one waiter thread, no need for a waiter stack.
-     *   2. It is expected for a request to be at least 2 io-ticks long, making sense to suspend the waiter thread immediately.
-     *   3. To avoid putting more pressure on the GC with additional object allocations required by the CompletableFuture
-     *
-     */
-    // @formatter:on
 
     private TResponse result;
     private Throwable exception;
@@ -37,66 +20,6 @@ final class BlockingRequest<TResponse extends Batch> extends Request<TResponse> 
 
         result = null;
         exception = null;
-    }
-
-    public static BlockingRequest<CreateAccountResultBatch> createAccounts(
-            final NativeClient nativeClient, final AccountBatch batch) {
-        return new BlockingRequest<CreateAccountResultBatch>(nativeClient,
-                Request.Operations.CREATE_ACCOUNTS, batch);
-    }
-
-    public static BlockingRequest<AccountBatch> lookupAccounts(final NativeClient nativeClient,
-            final IdBatch batch) {
-        return new BlockingRequest<AccountBatch>(nativeClient, Request.Operations.LOOKUP_ACCOUNTS,
-                batch);
-    }
-
-    public static BlockingRequest<CreateTransferResultBatch> createTransfers(
-            final NativeClient nativeClient, final TransferBatch batch) {
-        return new BlockingRequest<CreateTransferResultBatch>(nativeClient,
-                Request.Operations.CREATE_TRANSFERS, batch);
-    }
-
-    public static BlockingRequest<TransferBatch> lookupTransfers(final NativeClient nativeClient,
-            final IdBatch batch) {
-        return new BlockingRequest<TransferBatch>(nativeClient, Request.Operations.LOOKUP_TRANSFERS,
-                batch);
-    }
-
-    public static BlockingRequest<TransferBatch> getAccountTransfers(
-            final NativeClient nativeClient, final AccountFilter filter) {
-        return new BlockingRequest<TransferBatch>(nativeClient,
-                Request.Operations.GET_ACCOUNT_TRANSFERS, filter.batch);
-    }
-
-    public static BlockingRequest<AccountBalanceBatch> getAccountBalances(
-            final NativeClient nativeClient, final AccountFilter filter) {
-        return new BlockingRequest<AccountBalanceBatch>(nativeClient,
-                Request.Operations.GET_ACCOUNT_BALANCES, filter.batch);
-    }
-
-    public static BlockingRequest<AccountBatch> queryAccounts(final NativeClient nativeClient,
-            final QueryFilter filter) {
-        return new BlockingRequest<AccountBatch>(nativeClient, Request.Operations.QUERY_ACCOUNTS,
-                filter.batch);
-    }
-
-    public static BlockingRequest<TransferBatch> queryTransfers(final NativeClient nativeClient,
-            final QueryFilter filter) {
-        return new BlockingRequest<TransferBatch>(nativeClient, Request.Operations.QUERY_TRANSFERS,
-                filter.batch);
-    }
-
-    public static BlockingRequest<AccountBatch> echo(final NativeClient nativeClient,
-            final AccountBatch batch) {
-        return new BlockingRequest<AccountBatch>(nativeClient, Request.Operations.ECHO_ACCOUNTS,
-                batch);
-    }
-
-    public static BlockingRequest<TransferBatch> echo(final NativeClient nativeClient,
-            final TransferBatch batch) {
-        return new BlockingRequest<TransferBatch>(nativeClient, Request.Operations.ECHO_TRANSFERS,
-                batch);
     }
 
     public boolean isDone() {

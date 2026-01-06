@@ -225,8 +225,9 @@ function test_createGeoEvent() {
   assert.strictEqual(event.accuracy_mm, 5000)
   assert.strictEqual(event.ttl_seconds, 86400)
   assert.strictEqual(event.group_id, 100n)
-  assert.strictEqual(event.id, 0n) // Server-assigned
-  assert.strictEqual(event.timestamp, 0n) // Server-assigned
+  // ID is a composite key (S2 cell ID + timestamp) computed client-side, should be non-zero
+  assert.notStrictEqual(event.id, 0n)
+  assert.strictEqual(event.timestamp, 0n) // Server-assigned (timestamp field, not the ID timestamp component)
   assert.strictEqual(event.flags, GeoEventFlags.none)
 
   console.log('✓ createGeoEvent')

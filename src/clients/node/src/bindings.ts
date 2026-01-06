@@ -920,5 +920,15 @@ export enum Operation {
   get_account_balances = 143,
   query_accounts = 144,
   query_transfers = 145,
+  insert_events = 146,
+  upsert_events = 147,
+  delete_entities = 148,
+  query_uuid = 149,
+  query_radius = 150,
+  query_polygon = 151,
+  query_latest = 154,
+  archerdb_ping = 152,
+  archerdb_get_status = 153,
+  cleanup_expired = 155,
 }
 

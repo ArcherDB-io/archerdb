@@ -1,6 +1,6 @@
 package types
 
-// SplitAccountBatch splits a slice of Account into smaller chunks for retry scenarios.
+// SplitGeoEventBatch splits a slice of GeoEvent into smaller chunks for retry scenarios.
 //
 // When a large batch times out, the SDK cannot determine which events succeeded
 // vs failed. Use this helper to split the batch into smaller chunks and retry
@@ -8,7 +8,7 @@ package types
 // any already-committed events will not be duplicated.
 //
 // Parameters:
-//   - accounts: Slice of accounts to split
+//   - events: Slice of GeoEvents to split
 //   - chunkSize: Maximum size of each chunk (must be > 0)
 //
 // Returns:
@@ -18,70 +18,45 @@ package types
 // Example:
 //
 //	// Original batch timed out
-//	accounts := generateLargeAccountList()
+//	events := generateLargeEventList()
 //
 //	// Split into smaller batches for retry
-//	chunks := types.SplitAccountBatch(accounts, 500)
+//	chunks := types.SplitGeoEventBatch(events, 500)
 //
 //	for _, chunk := range chunks {
-//	    results, err := client.CreateAccounts(chunk)
+//	    results, err := client.InsertEvents(chunk)
 //	    if err != nil {
 //	        // Handle retry with even smaller chunks
-//	        smallerChunks := types.SplitAccountBatch(chunk, 100)
+//	        smallerChunks := types.SplitGeoEventBatch(chunk, 100)
 //	        // ...
 //	    }
 //	}
-func SplitAccountBatch(accounts []Account, chunkSize int) [][]Account {
+func SplitGeoEventBatch(events []GeoEvent, chunkSize int) [][]GeoEvent {
 	if chunkSize <= 0 {
 		panic("chunkSize must be greater than 0")
 	}
 
-	if len(accounts) == 0 {
+	if len(events) == 0 {
 		return nil
 	}
 
-	numChunks := (len(accounts) + chunkSize - 1) / chunkSize
-	chunks := make([][]Account, 0, numChunks)
+	numChunks := (len(events) + chunkSize - 1) / chunkSize
+	chunks := make([][]GeoEvent, 0, numChunks)
 
-	for i := 0; i < len(accounts); i += chunkSize {
+	for i := 0; i < len(events); i += chunkSize {
 		end := i + chunkSize
-		if end > len(accounts) {
-			end = len(accounts)
+		if end > len(events) {
+			end = len(events)
 		}
-		chunks = append(chunks, accounts[i:end])
-	}
-
-	return chunks
-}
-
-// SplitTransferBatch splits a slice of Transfer into smaller chunks.
-// See SplitAccountBatch for full documentation.
-func SplitTransferBatch(transfers []Transfer, chunkSize int) [][]Transfer {
-	if chunkSize <= 0 {
-		panic("chunkSize must be greater than 0")
-	}
-
-	if len(transfers) == 0 {
-		return nil
-	}
-
-	numChunks := (len(transfers) + chunkSize - 1) / chunkSize
-	chunks := make([][]Transfer, 0, numChunks)
-
-	for i := 0; i < len(transfers); i += chunkSize {
-		end := i + chunkSize
-		if end > len(transfers) {
-			end = len(transfers)
-		}
-		chunks = append(chunks, transfers[i:end])
+		chunks = append(chunks, events[i:end])
 	}
 
 	return chunks
 }
 
 // SplitUint128Batch splits a slice of Uint128 into smaller chunks.
-// This is useful for splitting batches of IDs (e.g., for batch lookups).
-// See SplitAccountBatch for full documentation.
+// This is useful for splitting batches of entity IDs (e.g., for batch lookups or deletes).
+// See SplitGeoEventBatch for full documentation.
 func SplitUint128Batch(ids []Uint128, chunkSize int) [][]Uint128 {
 	if chunkSize <= 0 {
 		panic("chunkSize must be greater than 0")

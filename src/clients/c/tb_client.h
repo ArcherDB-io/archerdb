@@ -15,6 +15,109 @@ extern "C" {
 #include <stdbool.h>
 
 typedef __uint128_t tb_uint128_t;
+typedef __int128_t tb_int128_t;
+
+typedef enum GEO_EVENT_FLAGS {
+    GEO_EVENT_LINKED = 1 << 0,
+    GEO_EVENT_IMPORTED = 1 << 1,
+    GEO_EVENT_STATIONARY = 1 << 2,
+    GEO_EVENT_LOW_ACCURACY = 1 << 3,
+    GEO_EVENT_OFFLINE = 1 << 4,
+    GEO_EVENT_DELETED = 1 << 5,
+} GEO_EVENT_FLAGS;
+
+typedef struct geo_event_t {
+    tb_uint128_t id;
+    tb_uint128_t entity_id;
+    tb_uint128_t correlation_id;
+    tb_uint128_t user_data;
+    int64_t lat_nano;
+    int64_t lon_nano;
+    uint64_t group_id;
+    uint64_t timestamp;
+    int32_t altitude_mm;
+    uint32_t velocity_mms;
+    uint32_t ttl_seconds;
+    uint32_t accuracy_mm;
+    uint16_t heading_cdeg;
+    uint16_t flags;
+    uint8_t reserved[12];
+} geo_event_t;
+
+typedef enum INSERT_GEO_EVENT_RESULT {
+    INSERT_GEO_EVENT_OK = 0,
+    INSERT_GEO_EVENT_LINKED_EVENT_FAILED = 1,
+    INSERT_GEO_EVENT_LINKED_EVENT_CHAIN_OPEN = 2,
+    INSERT_GEO_EVENT_TIMESTAMP_MUST_BE_ZERO = 3,
+    INSERT_GEO_EVENT_RESERVED_FIELD = 4,
+    INSERT_GEO_EVENT_RESERVED_FLAG = 5,
+    INSERT_GEO_EVENT_ID_MUST_NOT_BE_ZERO = 6,
+    INSERT_GEO_EVENT_ENTITY_ID_MUST_NOT_BE_ZERO = 7,
+    INSERT_GEO_EVENT_INVALID_COORDINATES = 8,
+    INSERT_GEO_EVENT_LAT_OUT_OF_RANGE = 9,
+    INSERT_GEO_EVENT_LON_OUT_OF_RANGE = 10,
+    INSERT_GEO_EVENT_EXISTS_WITH_DIFFERENT_ENTITY_ID = 11,
+    INSERT_GEO_EVENT_EXISTS_WITH_DIFFERENT_COORDINATES = 12,
+    INSERT_GEO_EVENT_EXISTS = 13,
+    INSERT_GEO_EVENT_HEADING_OUT_OF_RANGE = 14,
+    INSERT_GEO_EVENT_TTL_INVALID = 15,
+} INSERT_GEO_EVENT_RESULT;
+
+typedef struct insert_geo_events_result_t {
+    uint32_t index;
+    uint32_t result;
+} insert_geo_events_result_t;
+
+typedef struct delete_entities_result_t {
+    uint32_t index;
+    uint32_t result;
+} delete_entities_result_t;
+
+typedef struct query_uuid_filter_t {
+    tb_uint128_t entity_id;
+    uint32_t limit;
+    uint8_t reserved[108];
+} query_uuid_filter_t;
+
+typedef struct query_radius_filter_t {
+    int64_t center_lat_nano;
+    int64_t center_lon_nano;
+    uint32_t radius_mm;
+    uint32_t limit;
+    uint64_t timestamp_min;
+    uint64_t timestamp_max;
+    uint64_t group_id;
+    uint8_t reserved[80];
+} query_radius_filter_t;
+
+typedef struct query_polygon_filter_t {
+    uint32_t vertex_count;
+    uint32_t limit;
+    uint64_t timestamp_min;
+    uint64_t timestamp_max;
+    uint64_t group_id;
+    uint8_t reserved[96];
+} query_polygon_filter_t;
+
+typedef struct query_latest_filter_t {
+    uint32_t limit;
+    uint32_t _reserved_align;
+    uint64_t group_id;
+    uint64_t cursor_timestamp;
+    uint8_t reserved[104];
+} query_latest_filter_t;
+
+typedef struct query_response_t {
+    uint32_t count;
+    uint8_t has_more;
+    uint8_t partial_result;
+    uint8_t reserved[10];
+} query_response_t;
+
+typedef struct polygon_vertex_t {
+    int64_t lat_nano;
+    int64_t lon_nano;
+} polygon_vertex_t;
 
 typedef enum TB_ACCOUNT_FLAGS {
     TB_ACCOUNT_LINKED = 1 << 0,

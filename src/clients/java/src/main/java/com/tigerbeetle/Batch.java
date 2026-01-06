@@ -73,7 +73,7 @@ public abstract class Batch {
 
     private final int ELEMENT_SIZE;
 
-    Batch(final int capacity, final int ELEMENT_SIZE) {
+    protected Batch(final int capacity, final int ELEMENT_SIZE) {
 
         assertTrue(ELEMENT_SIZE > 0, "Element size cannot be zero or negative");
 
@@ -91,7 +91,7 @@ public abstract class Batch {
         this.buffer = ByteBuffer.allocateDirect(bufferCapacity).order(BYTE_ORDER);
     }
 
-    Batch(final ByteBuffer buffer, final int ELEMENT_SIZE) {
+    protected Batch(final ByteBuffer buffer, final int ELEMENT_SIZE) {
 
         assertTrue(ELEMENT_SIZE > 0, "Element size cannot be zero or negative");
         Objects.requireNonNull(buffer, "Buffer cannot be null");

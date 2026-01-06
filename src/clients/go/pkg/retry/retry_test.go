@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	sdk_errors "github.com/tigerbeetle/tigerbeetle-go/pkg/errors"
+	sdk_errors "github.com/archerdb/archerdb-go/pkg/errors"
 )
 
 func TestDefaultConfig(t *testing.T) {

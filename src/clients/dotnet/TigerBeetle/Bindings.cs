@@ -1218,6 +1218,26 @@ internal enum TBOperation : byte
 
     QueryTransfers = 145,
 
+    InsertEvents = 146,
+
+    UpsertEvents = 147,
+
+    DeleteEntities = 148,
+
+    QueryUuid = 149,
+
+    QueryRadius = 150,
+
+    QueryPolygon = 151,
+
+    QueryLatest = 154,
+
+    ArcherdbPing = 152,
+
+    ArcherdbGetStatus = 153,
+
+    CleanupExpired = 155,
+
 }
 
 [StructLayout(LayoutKind.Sequential, Size = SIZE)]

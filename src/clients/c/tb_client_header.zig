@@ -7,6 +7,19 @@ const vsr = @import("vsr");
 const exports = vsr.tb_client.exports;
 
 const type_mappings = .{
+    // ArcherDB GeoEvent types (geospatial database core)
+    .{ exports.geo_event_flags, "GEO_EVENT_FLAGS" },
+    .{ exports.geo_event_t, "geo_event_t" },
+    .{ exports.insert_geo_event_result, "INSERT_GEO_EVENT_RESULT" },
+    .{ exports.insert_geo_events_result_t, "insert_geo_events_result_t" },
+    .{ exports.delete_entities_result_t, "delete_entities_result_t" },
+    .{ exports.query_uuid_filter_t, "query_uuid_filter_t" },
+    .{ exports.query_radius_filter_t, "query_radius_filter_t" },
+    .{ exports.query_polygon_filter_t, "query_polygon_filter_t" },
+    .{ exports.query_latest_filter_t, "query_latest_filter_t" },
+    .{ exports.query_response_t, "query_response_t" },
+    .{ exports.polygon_vertex_t, "polygon_vertex_t" },
+    // Legacy TigerBeetle types (kept for compatibility during migration)
     .{ exports.tb_account_flags, "TB_ACCOUNT_FLAGS" },
     .{ exports.tb_account_t, "tb_account_t" },
     .{ exports.tb_transfer_flags, "TB_TRANSFER_FLAGS" },
@@ -48,15 +61,25 @@ fn resolve_c_type(comptime Type: type) []const u8 {
         .@"struct" => return resolve_c_type(std.meta.Int(.unsigned, @bitSizeOf(Type))),
         .bool => return "uint8_t",
         .int => |info| {
-            assert(info.signedness == .unsigned);
-            return switch (info.bits) {
-                8 => "uint8_t",
-                16 => "uint16_t",
-                32 => "uint32_t",
-                64 => "uint64_t",
-                128 => "tb_uint128_t",
-                else => @compileError("invalid int type"),
-            };
+            if (info.signedness == .unsigned) {
+                return switch (info.bits) {
+                    8 => "uint8_t",
+                    16 => "uint16_t",
+                    32 => "uint32_t",
+                    64 => "uint64_t",
+                    128 => "tb_uint128_t",
+                    else => @compileError("invalid int type"),
+                };
+            } else {
+                return switch (info.bits) {
+                    8 => "int8_t",
+                    16 => "int16_t",
+                    32 => "int32_t",
+                    64 => "int64_t",
+                    128 => "tb_int128_t",
+                    else => @compileError("invalid int type"),
+                };
+            }
         },
         .optional => |info| switch (@typeInfo(info.child)) {
             .pointer => return resolve_c_type(info.child),
@@ -183,6 +206,7 @@ pub fn main() !void {
         \\#include <stdbool.h>
         \\
         \\typedef __uint128_t tb_uint128_t;
+        \\typedef __int128_t tb_int128_t;
         \\
         \\
     , .{});

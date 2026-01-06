@@ -190,8 +190,11 @@ cmd_start() {
         echo -e "  Starting replica ${GREEN}$i${NC} on port ${GREEN}$((BASE_PORT + i))${NC}..."
 
         # Start in background, redirect output to log file
+        # Use small cache sizes for development (512MiB grid cache instead of 1GiB default)
+        # This allows running 3-node clusters on machines with limited RAM
         "$ARCHERDB_BIN" start \
             --addresses="$addresses" \
+            --cache-grid=512MiB \
             "$df" \
             >"$lf" 2>&1 &
 

@@ -911,6 +911,8 @@ pub fn ContextType(
                 .multi_batch_event_count = 0,
                 .multi_batch_result_count_expected = 0,
                 .phase = .submitted,
+                // Must explicitly zero reserved for extern struct (defaults don't apply)
+                .reserved = @splat(0),
             };
 
             if (self.eviction_reason == null) {

@@ -1,81 +1,86 @@
-package com.tigerbeetle.samples;
+package com.archerdb.samples;
 
-import java.util.Arrays;
-import java.math.BigInteger;
+/**
+ * ArcherDB Basic Sample - Insert and Query Geospatial Events
+ *
+ * This sample demonstrates:
+ * 1. Connecting to an ArcherDB cluster
+ * 2. Inserting geo events with location data
+ * 3. Querying events within a radius
+ */
 
-import com.tigerbeetle.*;
+import java.util.List;
+import java.util.ArrayList;
+import java.util.Random;
+
+import com.archerdb.geo.*;
 
 public final class Main {
     public static void main(String[] args) throws Exception {
-        String replicaAddress = System.getenv("TB_ADDRESS");
+        String address = System.getenv("ARCHERDB_ADDRESS");
+        if (address == null) {
+            address = "127.0.0.1:3001";
+        }
 
-        byte[] clusterID = UInt128.asBytes(0);
-        String[] replicaAddresses = new String[] {replicaAddress == null ? "3000" : replicaAddress};
-        try (var client = new Client(clusterID, replicaAddresses)) {
-            // Create two accounts
-            AccountBatch accounts = new AccountBatch(2);
-            accounts.add();
-            accounts.setId(1);
-            accounts.setLedger(1);
-            accounts.setCode(1);
+        // Connect to ArcherDB cluster
+        try (GeoClient client = GeoClient.create(0L, address)) {
+            System.out.println("Connected to ArcherDB at " + address);
 
-            accounts.add();
-            accounts.setId(2);
-            accounts.setLedger(1);
-            accounts.setCode(1);
+            // San Francisco area coordinates
+            double baseLat = 37.7749;
+            double baseLon = -122.4194;
 
-            CreateAccountResultBatch accountErrors = client.createAccounts(accounts);
-            while (accountErrors.next()) {
-                switch (accountErrors.getResult()) {
-                    default:
-                        System.err.printf("Error creating account %d: %s\n",
-                                accountErrors.getIndex(),
-                                accountErrors.getResult());
-                        assert false;
+            // Insert events using a batch
+            GeoEventBatch batch = client.createBatch();
+            List<UInt128> entityIds = new ArrayList<>();
+            Random random = new Random();
+
+            for (int i = 0; i < 5; i++) {
+                // Generate a random entity ID
+                UInt128 entityId = UInt128.random();
+                entityIds.add(entityId);
+
+                GeoEvent event = new GeoEvent.Builder()
+                    .setEntityId(entityId)
+                    .setLatitude(baseLat + i * 0.001)  // ~111 meters apart
+                    .setLongitude(baseLon + i * 0.001)
+                    .setTimestamp(System.nanoTime() + i)
+                    .setGroupId(1L)
+                    .setAccuracyMm(10_000)  // 10m accuracy
+                    .build();
+                batch.add(event);
+            }
+
+            List<InsertGeoEventsError> errors = batch.commit();
+            if (!errors.isEmpty()) {
+                System.err.println("Insert errors: " + errors);
+            } else {
+                System.out.println("Successfully inserted " + entityIds.size() + " events");
+            }
+
+            // Query events within 1km radius of SF center
+            QueryRadiusFilter filter = QueryRadiusFilter.create(
+                baseLat, baseLon, 1000, 100
+            );
+            QueryResult result = client.queryRadius(filter);
+
+            System.out.println("\nFound " + result.getEvents().size() + " events within 1km of SF center:");
+            for (GeoEvent event : result.getEvents()) {
+                System.out.printf("  Entity %s: (%.4f, %.4f)%n",
+                    event.getEntityId(), event.getLatitude(), event.getLongitude());
+            }
+
+            // Look up a specific entity
+            if (!entityIds.isEmpty()) {
+                GeoEvent found = client.getLatestByUuid(entityIds.get(0));
+                if (found != null) {
+                    System.out.printf("%nLatest position for entity %s:%n", entityIds.get(0));
+                    System.out.printf("  Location: (%.4f, %.4f)%n", found.getLatitude(), found.getLongitude());
+                    System.out.printf("  Timestamp: %d%n", found.getTimestamp());
                 }
             }
 
-            TransferBatch transfers = new TransferBatch(1);
-            transfers.add();
-            transfers.setId(1);
-            transfers.setDebitAccountId(1);
-            transfers.setCreditAccountId(2);
-            transfers.setLedger(1);
-            transfers.setCode(1);
-            transfers.setAmount(10);
-
-            CreateTransferResultBatch transferErrors = client.createTransfers(transfers);
-            while (transferErrors.next()) {
-                switch (transferErrors.getResult()) {
-                    default:
-                        System.err.printf("Error creating transfer %d: %s\n",
-                                transferErrors.getIndex(),
-                                transferErrors.getResult());
-                        assert false;
-                }
-            }
-
-            IdBatch ids = new IdBatch(2);
-            ids.add(1);
-            ids.add(2);
-            accounts = client.lookupAccounts(ids);
-            assert accounts.getCapacity() == 2;
-
-            while (accounts.next()) {
-                if (accounts.getId(UInt128.LeastSignificant) == 1
-                        && accounts.getId(UInt128.MostSignificant) == 0) {
-                    assert accounts.getDebitsPosted().intValueExact() == 10;
-                    assert accounts.getCreditsPosted().intValueExact() == 0;
-                } else if (accounts.getId(UInt128.LeastSignificant) == 2
-                        && accounts.getId(UInt128.MostSignificant) == 0) {
-                    assert accounts.getDebitsPosted().intValueExact() == 0;
-                    assert accounts.getCreditsPosted().intValueExact() == 10;
-                } else {
-                    System.err.printf("Unexpected account: %s\n",
-                            UInt128.asBigInteger(accounts.getId()).toString());
-                    assert false;
-                }
-            }
+            System.out.println("\nok");
         }
     }
 }

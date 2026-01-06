@@ -315,6 +315,12 @@ export type QueryLatestFilter = {
   limit: number
 
   /**
+   * Reserved for alignment (must be 0).
+   * @internal
+   */
+  _reserved_align: number
+
+  /**
    * Group ID filter (0 = all groups).
    */
   group_id: bigint
@@ -443,6 +449,98 @@ export type StatusResponse = {
   ttl_expirations: bigint
   /** Total deletions processed */
   deletion_count: bigint
+}
+
+// ============================================================================
+// S2 Cell ID Computation (Simplified)
+// ============================================================================
+
+/**
+ * Computes S2 cell ID at level 30 (7.5mm precision).
+ * This is a simplified implementation for client-side composite ID generation.
+ *
+ * @param lat_nano - Latitude in nanodegrees
+ * @param lon_nano - Longitude in nanodegrees
+ * @returns S2 cell ID as bigint (u64)
+ */
+export function computeS2CellId(lat_nano: bigint, lon_nano: bigint): bigint {
+  // Convert to radians
+  const lat = Number(lat_nano) / 1e9 * Math.PI / 180
+  const lon = Number(lon_nano) / 1e9 * Math.PI / 180
+
+  // Convert to S2 point (unit sphere)
+  const cos_lat = Math.cos(lat)
+  const x = cos_lat * Math.cos(lon)
+  const y = cos_lat * Math.sin(lon)
+  const z = Math.sin(lat)
+
+  // Determine face (0-5) based on largest absolute coordinate
+  let face: number
+  const ax = Math.abs(x), ay = Math.abs(y), az = Math.abs(z)
+  if (ax >= ay && ax >= az) {
+    face = x > 0 ? 0 : 3
+  } else if (ay >= ax && ay >= az) {
+    face = y > 0 ? 1 : 4
+  } else {
+    face = z > 0 ? 2 : 5
+  }
+
+  // Project to face coordinates (u, v) in [-1, 1]
+  let u: number, v: number
+  switch (face) {
+    case 0: u = y / x; v = z / x; break
+    case 1: u = -x / y; v = z / y; break
+    case 2: u = -x / z; v = -y / z; break
+    case 3: u = z / x; v = y / x; break
+    case 4: u = z / y; v = -x / y; break
+    case 5: u = -y / z; v = -x / z; break
+    default: u = 0; v = 0
+  }
+
+  // Apply quadratic transform for better cell uniformity
+  const stFromUV = (uv: number): number => {
+    if (uv >= 0) {
+      return 0.5 * Math.sqrt(1 + 3 * uv)
+    } else {
+      return 1 - 0.5 * Math.sqrt(1 - 3 * uv)
+    }
+  }
+  const s = stFromUV(u)
+  const t = stFromUV(v)
+
+  // Convert to integer coordinates at level 30
+  const level = 30
+  const maxSize = 1 << level
+  const i = Math.min(maxSize - 1, Math.max(0, Math.floor(s * maxSize)))
+  const j = Math.min(maxSize - 1, Math.max(0, Math.floor(t * maxSize)))
+
+  // Build cell ID using Hilbert curve interleaving
+  // Face bits (3 bits) + pos bits (60 bits) + 1 bit
+  let cellId = BigInt(face) << 61n
+
+  // Interleave i and j bits (simplified - not full Hilbert curve)
+  for (let k = level - 1; k >= 0; k--) {
+    const iBit = (i >> k) & 1
+    const jBit = (j >> k) & 1
+    const bits = (iBit << 1) | jBit
+    cellId |= BigInt(bits) << BigInt(2 * k + 1)
+  }
+
+  // Set the sentinel bit
+  cellId |= 1n
+
+  return cellId
+}
+
+/**
+ * Creates a composite ID from S2 cell ID and timestamp.
+ *
+ * @param s2CellId - S2 cell ID (upper 64 bits)
+ * @param timestamp - Timestamp in nanoseconds (lower 64 bits)
+ * @returns Composite ID as u128
+ */
+export function packCompositeId(s2CellId: bigint, timestamp: bigint): bigint {
+  return (s2CellId << 64n) | timestamp
 }
 
 // ============================================================================
@@ -680,6 +778,8 @@ export interface GeoEventOptions {
  * - Meters to millimeters
  * - Heading degrees to centidegrees
  *
+ * Also computes the composite ID (S2 cell | timestamp) client-side.
+ *
  * @param options - Event options with user-friendly units
  * @returns GeoEvent ready for insertion
  *
@@ -703,15 +803,27 @@ export function createGeoEvent(options: GeoEventOptions): GeoEvent {
     throw new Error(`Invalid longitude: ${options.longitude}. Must be between -180 and +180 degrees.`)
   }
 
+  const lat_nano = degreesToNano(options.latitude)
+  const lon_nano = degreesToNano(options.longitude)
+
+  // Compute timestamp for composite ID (nanoseconds since Unix epoch)
+  // NOTE: Server validates timestamp field must be 0 for non-imported events,
+  // but the composite ID contains the timestamp embedded in it.
+  const now_ns = BigInt(Date.now()) * 1_000_000n
+
+  // Compute S2 cell ID and composite ID
+  const s2CellId = computeS2CellId(lat_nano, lon_nano)
+  const compositeId = packCompositeId(s2CellId, now_ns)
+
   return {
-    id: 0n, // Server-assigned
+    id: compositeId,
     entity_id: options.entity_id,
     correlation_id: options.correlation_id ?? 0n,
     user_data: options.user_data ?? 0n,
-    lat_nano: degreesToNano(options.latitude),
-    lon_nano: degreesToNano(options.longitude),
+    lat_nano,
+    lon_nano,
     group_id: options.group_id ?? 0n,
-    timestamp: 0n, // Server-assigned
+    timestamp: 0n, // Server validates this must be 0 for non-imported events
     altitude_mm: options.altitude_m !== undefined ? metersToMm(options.altitude_m) : 0,
     velocity_mms: options.velocity_mps !== undefined ? metersToMm(options.velocity_mps) : 0,
     ttl_seconds: options.ttl_seconds ?? 0,

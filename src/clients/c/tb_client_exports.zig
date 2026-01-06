@@ -78,6 +78,19 @@ pub const tb_account_balance_t = vsr.tigerbeetle.AccountBalance;
 pub const tb_query_filter_t = vsr.tigerbeetle.QueryFilter;
 pub const tb_query_filter_flags = vsr.tigerbeetle.QueryFilterFlags;
 
+// ArcherDB GeoEvent types (geospatial database core)
+pub const geo_event_t = vsr.tigerbeetle.GeoEvent;
+pub const geo_event_flags = @import("../../geo_event.zig").GeoEventFlags;
+pub const insert_geo_event_result = vsr.tigerbeetle.InsertGeoEventResult;
+pub const insert_geo_events_result_t = vsr.tigerbeetle.InsertGeoEventsResult;
+pub const delete_entities_result_t = vsr.tigerbeetle.DeleteEntitiesResult;
+pub const query_uuid_filter_t = vsr.tigerbeetle.QueryUuidFilter;
+pub const query_radius_filter_t = vsr.tigerbeetle.QueryRadiusFilter;
+pub const query_polygon_filter_t = vsr.tigerbeetle.QueryPolygonFilter;
+pub const query_latest_filter_t = vsr.tigerbeetle.QueryLatestFilter;
+pub const query_response_t = vsr.tigerbeetle.QueryResponse;
+pub const polygon_vertex_t = vsr.tigerbeetle.PolygonVertex;
+
 pub fn init_error_to_status(err: tb.InitError) tb_init_status {
     return switch (err) {
         error.Unexpected => .unexpected,

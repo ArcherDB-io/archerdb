@@ -1,7 +1,12 @@
 /**
- * TigerBeetle client for Java.
+ * ArcherDB low-level infrastructure package.
  *
- * @see <a href="https://docs.tigerbeetle.com">TigerBeetle Docs</a>
- * @see <a href="https://github.com/tigerbeetle/tigerbeetle-java">Source code</a>
+ * This package contains infrastructure classes inherited from TigerBeetle for native bindings and
+ * batch operations.
+ *
+ * For the main ArcherDB geospatial API, use the {@link com.archerdb.geo} package.
+ *
+ * @see com.archerdb.geo.GeoClient
+ * @see <a href="https://github.com/ArcherDB-io/archerdb">ArcherDB Source</a>
  */
 package com.tigerbeetle;

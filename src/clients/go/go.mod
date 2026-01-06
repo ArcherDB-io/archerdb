@@ -1,3 +1,3 @@
-module github.com/tigerbeetle/tigerbeetle-go
+module github.com/archerdb/archerdb-go
 
-go 1.17
+go 1.21
