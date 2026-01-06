@@ -7,23 +7,29 @@ const assert = std.debug.assert;
 const stdx = vsr.stdx;
 const tb = vsr.tigerbeetle;
 
+// ArcherDB geospatial type mappings
+// Note: The Go SDK uses hand-written types in geo_event.go which provide
+// a more idiomatic Go API with helper methods. This generator is kept
+// for build system compatibility but outputs minimal bindings.
+// For the full geospatial API, see pkg/types/geo_event.go
+
+// Only generate low-level C-compatible raw types with "Raw" suffix.
+// The Go SDK has hand-written idiomatic types in geo_event.go that provide
+// a better API with helper methods, builders, and type safety.
+// These raw types are kept for FFI compatibility and as documentation.
 const type_mappings = .{
-    .{ tb.AccountFlags, "AccountFlags" },
-    .{ tb.TransferFlags, "TransferFlags" },
-    .{ tb.AccountFilterFlags, "AccountFilterFlags" },
-    .{ tb.QueryFilterFlags, "QueryFilterFlags" },
-    .{ tb.Account, "Account" },
-    .{ tb.Transfer, "Transfer" },
-    .{ tb.CreateAccountResult, "CreateAccountResult", "Account" },
-    .{ tb.CreateTransferResult, "CreateTransferResult", "Transfer" },
-    .{ tb.CreateAccountsResult, "AccountEventResult" },
-    .{ tb.CreateTransfersResult, "TransferEventResult" },
-    .{ tb.AccountFilter, "AccountFilter" },
-    .{ tb.AccountBalance, "AccountBalance" },
-    .{ tb.QueryFilter, "QueryFilter" },
-    .{ tb.ChangeEvent, "ChangeEvent" },
-    .{ tb.ChangeEventType, "ChangeEventType", "ChangeEvent" },
-    .{ tb.ChangeEventsFilter, "ChangeEventsFilter" },
+    // Raw struct types for FFI (C struct compatible)
+    .{ tb.GeoEventFlags, "GeoEventFlagsRaw" },
+    .{ tb.GeoEvent, "GeoEventRaw" },
+    // Result enums (used by result structs)
+    .{ tb.InsertGeoEventResult, "InsertGeoEventResultRaw", "GeoEvent" },
+    .{ tb.DeleteEntityResult, "DeleteEntityResultRaw", "Entity" },
+    // Result structs
+    .{ tb.InsertGeoEventsResult, "InsertGeoEventsResultRaw" },
+    .{ tb.DeleteEntitiesResult, "DeleteEntitiesResultRaw" },
+    // Query types
+    .{ tb.QueryUuidFilter, "QueryUuidFilterRaw" },
+    .{ tb.QueryResponse, "QueryResponseRaw" },
 };
 
 fn go_type(comptime Type: type) []const u8 {
@@ -37,15 +43,24 @@ fn go_type(comptime Type: type) []const u8 {
                 @compileError("Type " ++ @typeName(Type) ++ " not mapped."),
         },
         .int => |info| {
-            assert(info.signedness == .unsigned);
-            return switch (info.bits) {
-                1 => "bool",
-                8 => "uint8",
-                16 => "uint16",
-                32 => "uint32",
-                64 => "uint64",
-                128 => "Uint128",
-                else => @compileError("invalid int type"),
+            return switch (info.signedness) {
+                .unsigned => switch (info.bits) {
+                    1 => "bool",
+                    8 => "uint8",
+                    16 => "uint16",
+                    32 => "uint32",
+                    64 => "uint64",
+                    128 => "Uint128",
+                    else => @compileError("invalid unsigned int type"),
+                },
+                .signed => switch (info.bits) {
+                    8 => "int8",
+                    16 => "int16",
+                    32 => "int32",
+                    64 => "int64",
+                    128 => "Int128",
+                    else => @compileError("invalid signed int type"),
+                },
             };
         },
         else => @compileError("Unhandled type: " ++ @typeName(Type)),
@@ -266,25 +281,22 @@ fn emit_struct(
     try buffer.writer().print("}}\n\n", .{});
 
     if (flagsField) {
-        const flagType = if (comptime std.mem.eql(u8, name, "Account"))
-            tb.AccountFlags
-        else if (comptime std.mem.eql(u8, name, "Transfer"))
-            tb.TransferFlags
-        else if (comptime std.mem.eql(u8, name, "AccountFilter"))
-            tb.AccountFilterFlags
-        else if (comptime std.mem.eql(u8, name, "QueryFilter"))
-            tb.QueryFilterFlags
+        const flagTypeName = if (comptime std.mem.eql(u8, name, "GeoEventRaw"))
+            "GeoEventFlagsRaw"
         else
             unreachable;
-        // Conversion from packed to struct (e.g. Account.AccountFlags())
+        const flagType = if (comptime std.mem.eql(u8, name, "GeoEventRaw"))
+            tb.GeoEventFlags
+        else
+            unreachable;
+        // Conversion from packed to struct (e.g. GeoEventRaw.GetFlags())
         try buffer.writer().print(
-            "func (o {s}) {s}Flags() {s}Flags {{\n" ++
-                "\tvar f {s}Flags\n",
+            "func (o {s}) GetFlags() {s} {{\n" ++
+                "\tvar f {s}\n",
             .{
                 name,
-                name,
-                name,
-                name,
+                flagTypeName,
+                flagTypeName,
             },
         );
 

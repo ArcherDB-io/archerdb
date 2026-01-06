@@ -15,6 +15,7 @@ const geo_state_machine = @import("geo_state_machine.zig");
 const ttl = @import("ttl.zig");
 
 pub const GeoEvent = geo_event.GeoEvent;
+pub const GeoEventFlags = geo_event.GeoEventFlags;
 pub const QueryUuidFilter = geo_state_machine.QueryUuidFilter;
 pub const QueryRadiusFilter = geo_state_machine.QueryRadiusFilter;
 pub const QueryPolygonFilter = geo_state_machine.QueryPolygonFilter;
