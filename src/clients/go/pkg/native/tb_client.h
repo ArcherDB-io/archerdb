@@ -15,215 +15,109 @@ extern "C" {
 #include <stdbool.h>
 
 typedef __uint128_t tb_uint128_t;
+typedef __int128_t tb_int128_t;
 
-typedef enum TB_ACCOUNT_FLAGS {
-    TB_ACCOUNT_LINKED = 1 << 0,
-    TB_ACCOUNT_DEBITS_MUST_NOT_EXCEED_CREDITS = 1 << 1,
-    TB_ACCOUNT_CREDITS_MUST_NOT_EXCEED_DEBITS = 1 << 2,
-    TB_ACCOUNT_HISTORY = 1 << 3,
-    TB_ACCOUNT_IMPORTED = 1 << 4,
-    TB_ACCOUNT_CLOSED = 1 << 5,
-} TB_ACCOUNT_FLAGS;
+typedef enum GEO_EVENT_FLAGS {
+    GEO_EVENT_LINKED = 1 << 0,
+    GEO_EVENT_IMPORTED = 1 << 1,
+    GEO_EVENT_STATIONARY = 1 << 2,
+    GEO_EVENT_LOW_ACCURACY = 1 << 3,
+    GEO_EVENT_OFFLINE = 1 << 4,
+    GEO_EVENT_DELETED = 1 << 5,
+} GEO_EVENT_FLAGS;
 
-typedef struct tb_account_t {
+typedef struct geo_event_t {
     tb_uint128_t id;
-    tb_uint128_t debits_pending;
-    tb_uint128_t debits_posted;
-    tb_uint128_t credits_pending;
-    tb_uint128_t credits_posted;
-    tb_uint128_t user_data_128;
-    uint64_t user_data_64;
-    uint32_t user_data_32;
-    uint32_t reserved;
-    uint32_t ledger;
-    uint16_t code;
-    uint16_t flags;
+    tb_uint128_t entity_id;
+    tb_uint128_t correlation_id;
+    tb_uint128_t user_data;
+    int64_t lat_nano;
+    int64_t lon_nano;
+    uint64_t group_id;
     uint64_t timestamp;
-} tb_account_t;
-
-typedef enum TB_TRANSFER_FLAGS {
-    TB_TRANSFER_LINKED = 1 << 0,
-    TB_TRANSFER_PENDING = 1 << 1,
-    TB_TRANSFER_POST_PENDING_TRANSFER = 1 << 2,
-    TB_TRANSFER_VOID_PENDING_TRANSFER = 1 << 3,
-    TB_TRANSFER_BALANCING_DEBIT = 1 << 4,
-    TB_TRANSFER_BALANCING_CREDIT = 1 << 5,
-    TB_TRANSFER_CLOSING_DEBIT = 1 << 6,
-    TB_TRANSFER_CLOSING_CREDIT = 1 << 7,
-    TB_TRANSFER_IMPORTED = 1 << 8,
-} TB_TRANSFER_FLAGS;
-
-typedef struct tb_transfer_t {
-    tb_uint128_t id;
-    tb_uint128_t debit_account_id;
-    tb_uint128_t credit_account_id;
-    tb_uint128_t amount;
-    tb_uint128_t pending_id;
-    tb_uint128_t user_data_128;
-    uint64_t user_data_64;
-    uint32_t user_data_32;
-    uint32_t timeout;
-    uint32_t ledger;
-    uint16_t code;
+    int32_t altitude_mm;
+    uint32_t velocity_mms;
+    uint32_t ttl_seconds;
+    uint32_t accuracy_mm;
+    uint16_t heading_cdeg;
     uint16_t flags;
-    uint64_t timestamp;
-} tb_transfer_t;
+    uint8_t reserved[12];
+} geo_event_t;
 
-typedef enum TB_CREATE_ACCOUNT_RESULT {
-    TB_CREATE_ACCOUNT_OK = 0,
-    TB_CREATE_ACCOUNT_LINKED_EVENT_FAILED = 1,
-    TB_CREATE_ACCOUNT_LINKED_EVENT_CHAIN_OPEN = 2,
-    TB_CREATE_ACCOUNT_IMPORTED_EVENT_EXPECTED = 22,
-    TB_CREATE_ACCOUNT_IMPORTED_EVENT_NOT_EXPECTED = 23,
-    TB_CREATE_ACCOUNT_TIMESTAMP_MUST_BE_ZERO = 3,
-    TB_CREATE_ACCOUNT_IMPORTED_EVENT_TIMESTAMP_OUT_OF_RANGE = 24,
-    TB_CREATE_ACCOUNT_IMPORTED_EVENT_TIMESTAMP_MUST_NOT_ADVANCE = 25,
-    TB_CREATE_ACCOUNT_RESERVED_FIELD = 4,
-    TB_CREATE_ACCOUNT_RESERVED_FLAG = 5,
-    TB_CREATE_ACCOUNT_ID_MUST_NOT_BE_ZERO = 6,
-    TB_CREATE_ACCOUNT_ID_MUST_NOT_BE_INT_MAX = 7,
-    TB_CREATE_ACCOUNT_EXISTS_WITH_DIFFERENT_FLAGS = 15,
-    TB_CREATE_ACCOUNT_EXISTS_WITH_DIFFERENT_USER_DATA_128 = 16,
-    TB_CREATE_ACCOUNT_EXISTS_WITH_DIFFERENT_USER_DATA_64 = 17,
-    TB_CREATE_ACCOUNT_EXISTS_WITH_DIFFERENT_USER_DATA_32 = 18,
-    TB_CREATE_ACCOUNT_EXISTS_WITH_DIFFERENT_LEDGER = 19,
-    TB_CREATE_ACCOUNT_EXISTS_WITH_DIFFERENT_CODE = 20,
-    TB_CREATE_ACCOUNT_EXISTS = 21,
-    TB_CREATE_ACCOUNT_FLAGS_ARE_MUTUALLY_EXCLUSIVE = 8,
-    TB_CREATE_ACCOUNT_DEBITS_PENDING_MUST_BE_ZERO = 9,
-    TB_CREATE_ACCOUNT_DEBITS_POSTED_MUST_BE_ZERO = 10,
-    TB_CREATE_ACCOUNT_CREDITS_PENDING_MUST_BE_ZERO = 11,
-    TB_CREATE_ACCOUNT_CREDITS_POSTED_MUST_BE_ZERO = 12,
-    TB_CREATE_ACCOUNT_LEDGER_MUST_NOT_BE_ZERO = 13,
-    TB_CREATE_ACCOUNT_CODE_MUST_NOT_BE_ZERO = 14,
-    TB_CREATE_ACCOUNT_IMPORTED_EVENT_TIMESTAMP_MUST_NOT_REGRESS = 26,
-} TB_CREATE_ACCOUNT_RESULT;
+typedef enum INSERT_GEO_EVENT_RESULT {
+    INSERT_GEO_EVENT_OK = 0,
+    INSERT_GEO_EVENT_LINKED_EVENT_FAILED = 1,
+    INSERT_GEO_EVENT_LINKED_EVENT_CHAIN_OPEN = 2,
+    INSERT_GEO_EVENT_TIMESTAMP_MUST_BE_ZERO = 3,
+    INSERT_GEO_EVENT_RESERVED_FIELD = 4,
+    INSERT_GEO_EVENT_RESERVED_FLAG = 5,
+    INSERT_GEO_EVENT_ID_MUST_NOT_BE_ZERO = 6,
+    INSERT_GEO_EVENT_ENTITY_ID_MUST_NOT_BE_ZERO = 7,
+    INSERT_GEO_EVENT_INVALID_COORDINATES = 8,
+    INSERT_GEO_EVENT_LAT_OUT_OF_RANGE = 9,
+    INSERT_GEO_EVENT_LON_OUT_OF_RANGE = 10,
+    INSERT_GEO_EVENT_EXISTS_WITH_DIFFERENT_ENTITY_ID = 11,
+    INSERT_GEO_EVENT_EXISTS_WITH_DIFFERENT_COORDINATES = 12,
+    INSERT_GEO_EVENT_EXISTS = 13,
+    INSERT_GEO_EVENT_HEADING_OUT_OF_RANGE = 14,
+    INSERT_GEO_EVENT_TTL_INVALID = 15,
+} INSERT_GEO_EVENT_RESULT;
 
-typedef enum TB_CREATE_TRANSFER_RESULT {
-    TB_CREATE_TRANSFER_OK = 0,
-    TB_CREATE_TRANSFER_LINKED_EVENT_FAILED = 1,
-    TB_CREATE_TRANSFER_LINKED_EVENT_CHAIN_OPEN = 2,
-    TB_CREATE_TRANSFER_IMPORTED_EVENT_EXPECTED = 56,
-    TB_CREATE_TRANSFER_IMPORTED_EVENT_NOT_EXPECTED = 57,
-    TB_CREATE_TRANSFER_TIMESTAMP_MUST_BE_ZERO = 3,
-    TB_CREATE_TRANSFER_IMPORTED_EVENT_TIMESTAMP_OUT_OF_RANGE = 58,
-    TB_CREATE_TRANSFER_IMPORTED_EVENT_TIMESTAMP_MUST_NOT_ADVANCE = 59,
-    TB_CREATE_TRANSFER_RESERVED_FLAG = 4,
-    TB_CREATE_TRANSFER_ID_MUST_NOT_BE_ZERO = 5,
-    TB_CREATE_TRANSFER_ID_MUST_NOT_BE_INT_MAX = 6,
-    TB_CREATE_TRANSFER_EXISTS_WITH_DIFFERENT_FLAGS = 36,
-    TB_CREATE_TRANSFER_EXISTS_WITH_DIFFERENT_PENDING_ID = 40,
-    TB_CREATE_TRANSFER_EXISTS_WITH_DIFFERENT_TIMEOUT = 44,
-    TB_CREATE_TRANSFER_EXISTS_WITH_DIFFERENT_DEBIT_ACCOUNT_ID = 37,
-    TB_CREATE_TRANSFER_EXISTS_WITH_DIFFERENT_CREDIT_ACCOUNT_ID = 38,
-    TB_CREATE_TRANSFER_EXISTS_WITH_DIFFERENT_AMOUNT = 39,
-    TB_CREATE_TRANSFER_EXISTS_WITH_DIFFERENT_USER_DATA_128 = 41,
-    TB_CREATE_TRANSFER_EXISTS_WITH_DIFFERENT_USER_DATA_64 = 42,
-    TB_CREATE_TRANSFER_EXISTS_WITH_DIFFERENT_USER_DATA_32 = 43,
-    TB_CREATE_TRANSFER_EXISTS_WITH_DIFFERENT_LEDGER = 67,
-    TB_CREATE_TRANSFER_EXISTS_WITH_DIFFERENT_CODE = 45,
-    TB_CREATE_TRANSFER_EXISTS = 46,
-    TB_CREATE_TRANSFER_ID_ALREADY_FAILED = 68,
-    TB_CREATE_TRANSFER_FLAGS_ARE_MUTUALLY_EXCLUSIVE = 7,
-    TB_CREATE_TRANSFER_DEBIT_ACCOUNT_ID_MUST_NOT_BE_ZERO = 8,
-    TB_CREATE_TRANSFER_DEBIT_ACCOUNT_ID_MUST_NOT_BE_INT_MAX = 9,
-    TB_CREATE_TRANSFER_CREDIT_ACCOUNT_ID_MUST_NOT_BE_ZERO = 10,
-    TB_CREATE_TRANSFER_CREDIT_ACCOUNT_ID_MUST_NOT_BE_INT_MAX = 11,
-    TB_CREATE_TRANSFER_ACCOUNTS_MUST_BE_DIFFERENT = 12,
-    TB_CREATE_TRANSFER_PENDING_ID_MUST_BE_ZERO = 13,
-    TB_CREATE_TRANSFER_PENDING_ID_MUST_NOT_BE_ZERO = 14,
-    TB_CREATE_TRANSFER_PENDING_ID_MUST_NOT_BE_INT_MAX = 15,
-    TB_CREATE_TRANSFER_PENDING_ID_MUST_BE_DIFFERENT = 16,
-    TB_CREATE_TRANSFER_TIMEOUT_RESERVED_FOR_PENDING_TRANSFER = 17,
-    TB_CREATE_TRANSFER_CLOSING_TRANSFER_MUST_BE_PENDING = 64,
-    TB_CREATE_TRANSFER_LEDGER_MUST_NOT_BE_ZERO = 19,
-    TB_CREATE_TRANSFER_CODE_MUST_NOT_BE_ZERO = 20,
-    TB_CREATE_TRANSFER_DEBIT_ACCOUNT_NOT_FOUND = 21,
-    TB_CREATE_TRANSFER_CREDIT_ACCOUNT_NOT_FOUND = 22,
-    TB_CREATE_TRANSFER_ACCOUNTS_MUST_HAVE_THE_SAME_LEDGER = 23,
-    TB_CREATE_TRANSFER_TRANSFER_MUST_HAVE_THE_SAME_LEDGER_AS_ACCOUNTS = 24,
-    TB_CREATE_TRANSFER_PENDING_TRANSFER_NOT_FOUND = 25,
-    TB_CREATE_TRANSFER_PENDING_TRANSFER_NOT_PENDING = 26,
-    TB_CREATE_TRANSFER_PENDING_TRANSFER_HAS_DIFFERENT_DEBIT_ACCOUNT_ID = 27,
-    TB_CREATE_TRANSFER_PENDING_TRANSFER_HAS_DIFFERENT_CREDIT_ACCOUNT_ID = 28,
-    TB_CREATE_TRANSFER_PENDING_TRANSFER_HAS_DIFFERENT_LEDGER = 29,
-    TB_CREATE_TRANSFER_PENDING_TRANSFER_HAS_DIFFERENT_CODE = 30,
-    TB_CREATE_TRANSFER_EXCEEDS_PENDING_TRANSFER_AMOUNT = 31,
-    TB_CREATE_TRANSFER_PENDING_TRANSFER_HAS_DIFFERENT_AMOUNT = 32,
-    TB_CREATE_TRANSFER_PENDING_TRANSFER_ALREADY_POSTED = 33,
-    TB_CREATE_TRANSFER_PENDING_TRANSFER_ALREADY_VOIDED = 34,
-    TB_CREATE_TRANSFER_PENDING_TRANSFER_EXPIRED = 35,
-    TB_CREATE_TRANSFER_IMPORTED_EVENT_TIMESTAMP_MUST_NOT_REGRESS = 60,
-    TB_CREATE_TRANSFER_IMPORTED_EVENT_TIMESTAMP_MUST_POSTDATE_DEBIT_ACCOUNT = 61,
-    TB_CREATE_TRANSFER_IMPORTED_EVENT_TIMESTAMP_MUST_POSTDATE_CREDIT_ACCOUNT = 62,
-    TB_CREATE_TRANSFER_IMPORTED_EVENT_TIMEOUT_MUST_BE_ZERO = 63,
-    TB_CREATE_TRANSFER_DEBIT_ACCOUNT_ALREADY_CLOSED = 65,
-    TB_CREATE_TRANSFER_CREDIT_ACCOUNT_ALREADY_CLOSED = 66,
-    TB_CREATE_TRANSFER_OVERFLOWS_DEBITS_PENDING = 47,
-    TB_CREATE_TRANSFER_OVERFLOWS_CREDITS_PENDING = 48,
-    TB_CREATE_TRANSFER_OVERFLOWS_DEBITS_POSTED = 49,
-    TB_CREATE_TRANSFER_OVERFLOWS_CREDITS_POSTED = 50,
-    TB_CREATE_TRANSFER_OVERFLOWS_DEBITS = 51,
-    TB_CREATE_TRANSFER_OVERFLOWS_CREDITS = 52,
-    TB_CREATE_TRANSFER_OVERFLOWS_TIMEOUT = 53,
-    TB_CREATE_TRANSFER_EXCEEDS_CREDITS = 54,
-    TB_CREATE_TRANSFER_EXCEEDS_DEBITS = 55,
-} TB_CREATE_TRANSFER_RESULT;
-
-typedef struct tb_create_accounts_result_t {
+typedef struct insert_geo_events_result_t {
     uint32_t index;
     uint32_t result;
-} tb_create_accounts_result_t;
+} insert_geo_events_result_t;
 
-typedef struct tb_create_transfers_result_t {
+typedef struct delete_entities_result_t {
     uint32_t index;
     uint32_t result;
-} tb_create_transfers_result_t;
+} delete_entities_result_t;
 
-typedef struct tb_account_filter_t {
-    tb_uint128_t account_id;
-    tb_uint128_t user_data_128;
-    uint64_t user_data_64;
-    uint32_t user_data_32;
-    uint16_t code;
-    uint8_t reserved[58];
+typedef struct query_uuid_filter_t {
+    tb_uint128_t entity_id;
+    uint32_t limit;
+    uint8_t reserved[108];
+} query_uuid_filter_t;
+
+typedef struct query_radius_filter_t {
+    int64_t center_lat_nano;
+    int64_t center_lon_nano;
+    uint32_t radius_mm;
+    uint32_t limit;
     uint64_t timestamp_min;
     uint64_t timestamp_max;
+    uint64_t group_id;
+    uint8_t reserved[80];
+} query_radius_filter_t;
+
+typedef struct query_polygon_filter_t {
+    uint32_t vertex_count;
     uint32_t limit;
-    uint32_t flags;
-} tb_account_filter_t;
-
-typedef enum TB_ACCOUNT_FILTER_FLAGS {
-    TB_ACCOUNT_FILTER_DEBITS = 1 << 0,
-    TB_ACCOUNT_FILTER_CREDITS = 1 << 1,
-    TB_ACCOUNT_FILTER_REVERSED = 1 << 2,
-} TB_ACCOUNT_FILTER_FLAGS;
-
-typedef struct tb_account_balance_t {
-    tb_uint128_t debits_pending;
-    tb_uint128_t debits_posted;
-    tb_uint128_t credits_pending;
-    tb_uint128_t credits_posted;
-    uint64_t timestamp;
-    uint8_t reserved[56];
-} tb_account_balance_t;
-
-typedef struct tb_query_filter_t {
-    tb_uint128_t user_data_128;
-    uint64_t user_data_64;
-    uint32_t user_data_32;
-    uint32_t ledger;
-    uint16_t code;
-    uint8_t reserved[6];
     uint64_t timestamp_min;
     uint64_t timestamp_max;
-    uint32_t limit;
-    uint32_t flags;
-} tb_query_filter_t;
+    uint64_t group_id;
+    uint8_t reserved[96];
+} query_polygon_filter_t;
 
-typedef enum TB_QUERY_FILTER_FLAGS {
-    TB_QUERY_FILTER_REVERSED = 1 << 0,
-} TB_QUERY_FILTER_FLAGS;
+typedef struct query_latest_filter_t {
+    uint32_t limit;
+    uint32_t _reserved_align;
+    uint64_t group_id;
+    uint64_t cursor_timestamp;
+    uint8_t reserved[104];
+} query_latest_filter_t;
+
+typedef struct query_response_t {
+    uint32_t count;
+    uint8_t has_more;
+    uint8_t partial_result;
+    uint8_t reserved[10];
+} query_response_t;
+
+typedef struct polygon_vertex_t {
+    int64_t lat_nano;
+    int64_t lon_nano;
+} polygon_vertex_t;
 
 // Opaque struct serving as a handle for the client instance.
 // This struct must be "pinned" (not copyable or movable), as its address must remain stable

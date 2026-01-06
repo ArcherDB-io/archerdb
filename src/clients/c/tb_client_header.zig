@@ -19,20 +19,8 @@ const type_mappings = .{
     .{ exports.query_latest_filter_t, "query_latest_filter_t" },
     .{ exports.query_response_t, "query_response_t" },
     .{ exports.polygon_vertex_t, "polygon_vertex_t" },
-    // Legacy TigerBeetle types (kept for compatibility during migration)
-    .{ exports.tb_account_flags, "TB_ACCOUNT_FLAGS" },
-    .{ exports.tb_account_t, "tb_account_t" },
-    .{ exports.tb_transfer_flags, "TB_TRANSFER_FLAGS" },
-    .{ exports.tb_transfer_t, "tb_transfer_t" },
-    .{ exports.tb_create_account_result, "TB_CREATE_ACCOUNT_RESULT" },
-    .{ exports.tb_create_transfer_result, "TB_CREATE_TRANSFER_RESULT" },
-    .{ exports.tb_create_accounts_result_t, "tb_create_accounts_result_t" },
-    .{ exports.tb_create_transfers_result_t, "tb_create_transfers_result_t" },
-    .{ exports.tb_account_filter_t, "tb_account_filter_t" },
-    .{ exports.tb_account_filter_flags, "TB_ACCOUNT_FILTER_FLAGS" },
-    .{ exports.tb_account_balance_t, "tb_account_balance_t" },
-    .{ exports.tb_query_filter_t, "tb_query_filter_t" },
-    .{ exports.tb_query_filter_flags, "TB_QUERY_FILTER_FLAGS" },
+    // NOTE: Legacy TigerBeetle financial types (Account, Transfer, etc.) have been
+    // removed. ArcherDB is a geospatial database only.
     .{
         exports.tb_client_t, "tb_client_t",
         \\// Opaque struct serving as a handle for the client instance.

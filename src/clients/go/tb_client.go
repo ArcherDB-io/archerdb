@@ -37,39 +37,23 @@ import (
 ///////////////////////////////////////////////////////////////
 // Shared Infrastructure for GeoClient
 // This file provides CGO bindings and callback infrastructure
-// used by geo_client.go. The financial Client interface has
-// been removed - use GeoClient for geospatial operations.
+// used by geo_client.go.
+//
+// NOTE: ArcherDB is a geospatial database only.
+// Legacy TigerBeetle financial operations are not supported.
 ///////////////////////////////////////////////////////////////
 
-// request is the shared request struct used by both the legacy
-// client and GeoClient for async completion handling.
+// request is the shared request struct used by GeoClient for
+// async completion handling.
 type request struct {
 	ready chan []uint8
 }
 
 // getEventSize returns the size of the event structure for a given operation.
 // This is used by onGoPacketCompletion to validate result sizes.
-
+// Only geospatial operations are supported.
 func getEventSize(op C.TB_OPERATION) uintptr {
 	switch op {
-	case C.TB_OPERATION_CREATE_ACCOUNTS:
-		return unsafe.Sizeof(types.Account{})
-	case C.TB_OPERATION_CREATE_TRANSFERS:
-		return unsafe.Sizeof(types.Transfer{})
-	case C.TB_OPERATION_LOOKUP_ACCOUNTS:
-		fallthrough
-	case C.TB_OPERATION_LOOKUP_TRANSFERS:
-		return unsafe.Sizeof(types.Uint128{})
-	case C.TB_OPERATION_GET_ACCOUNT_TRANSFERS:
-		return unsafe.Sizeof(types.AccountFilter{})
-	case C.TB_OPERATION_GET_ACCOUNT_BALANCES:
-		return unsafe.Sizeof(types.AccountFilter{})
-	case C.TB_OPERATION_QUERY_ACCOUNTS:
-		return unsafe.Sizeof(types.QueryFilter{})
-	case C.TB_OPERATION_QUERY_TRANSFERS:
-		return unsafe.Sizeof(types.QueryFilter{})
-	case C.TB_OPERATION_GET_CHANGE_EVENTS:
-		return unsafe.Sizeof(types.ChangeEventsFilter{})
 	// GeoClient operations
 	case C.TB_OPERATION_INSERT_EVENTS, C.TB_OPERATION_UPSERT_EVENTS:
 		return unsafe.Sizeof(types.GeoEvent{})
@@ -90,26 +74,10 @@ func getEventSize(op C.TB_OPERATION) uintptr {
 	}
 }
 
+// getResultSize returns the size of the result structure for a given operation.
+// Only geospatial operations are supported.
 func getResultSize(op C.TB_OPERATION) uintptr {
 	switch op {
-	case C.TB_OPERATION_CREATE_ACCOUNTS:
-		return unsafe.Sizeof(types.AccountEventResult{})
-	case C.TB_OPERATION_CREATE_TRANSFERS:
-		return unsafe.Sizeof(types.TransferEventResult{})
-	case C.TB_OPERATION_LOOKUP_ACCOUNTS:
-		return unsafe.Sizeof(types.Account{})
-	case C.TB_OPERATION_LOOKUP_TRANSFERS:
-		return unsafe.Sizeof(types.Transfer{})
-	case C.TB_OPERATION_GET_ACCOUNT_TRANSFERS:
-		return unsafe.Sizeof(types.Transfer{})
-	case C.TB_OPERATION_GET_ACCOUNT_BALANCES:
-		return unsafe.Sizeof(types.AccountBalance{})
-	case C.TB_OPERATION_QUERY_ACCOUNTS:
-		return unsafe.Sizeof(types.Account{})
-	case C.TB_OPERATION_QUERY_TRANSFERS:
-		return unsafe.Sizeof(types.Transfer{})
-	case C.TB_OPERATION_GET_CHANGE_EVENTS:
-		return unsafe.Sizeof(types.ChangeEvent{})
 	// GeoClient operations - results vary by operation
 	case C.TB_OPERATION_INSERT_EVENTS, C.TB_OPERATION_UPSERT_EVENTS:
 		return unsafe.Sizeof(types.InsertGeoEventsError{})
@@ -150,14 +118,8 @@ func onGoPacketCompletion(
 			panic("invalid result_len:  misaligned for the event")
 		}
 
-		//TODO(batiati): Refine the way we handle events with asymmetric results.
-		if op != C.TB_OPERATION_GET_ACCOUNT_TRANSFERS &&
-			op != C.TB_OPERATION_GET_ACCOUNT_BALANCES &&
-			op != C.TB_OPERATION_QUERY_ACCOUNTS &&
-			op != C.TB_OPERATION_QUERY_TRANSFERS &&
-			op != C.TB_OPERATION_GET_CHANGE_EVENTS &&
-			// GeoClient operations with variable-size responses
-			op != C.TB_OPERATION_INSERT_EVENTS &&
+		// GeoClient operations with variable-size responses skip the asymmetric check
+		if op != C.TB_OPERATION_INSERT_EVENTS &&
 			op != C.TB_OPERATION_UPSERT_EVENTS &&
 			op != C.TB_OPERATION_DELETE_ENTITIES &&
 			op != C.TB_OPERATION_QUERY_UUID &&
