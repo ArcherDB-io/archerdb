@@ -1,9 +1,8 @@
 # Journal Sizing for ArcherDB
 
-This document analyzes TigerBeetle's journal configuration and calculates
-requirements for ArcherDB's target throughput of 1M ops/sec.
+This document calculates requirements for ArcherDB's target throughput of 1M ops/sec.
 
-## Current Configuration (from TigerBeetle)
+## Current Configuration
 
 | Parameter | Value | Notes |
 |-----------|-------|-------|
@@ -89,7 +88,7 @@ For initial 1M ops/sec target, we recommend:
 - 8,192 slots = 8 GiB journal (reasonable for modern NVMe)
 - Retention of 8ms is adequate for replica recovery
 - Larger journals increase memory pressure and startup time
-- GeoEvents are 128 bytes (same as TigerBeetle accounts/transfers)
+- GeoEvents are 128 bytes
 
 ### Scaling Beyond 1M ops/sec
 
@@ -107,5 +106,4 @@ For 10M ops/sec (future):
 
 ## References
 
-- TigerBeetle Design: https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/DESIGN.md
 - ArcherDB Spec: `openspec/changes/add-geospatial-core/specs/state-machine/spec.md`

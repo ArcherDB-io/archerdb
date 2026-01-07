@@ -24,7 +24,7 @@ pub const ConnectionProperties = struct {
     capabilities: *const ClientCapabilities,
 
     pub const default: ConnectionProperties = .{
-        .product = "TigerBeetle",
+        .product = "ArcherDB",
         .version = std.fmt.comptimePrint(
             "{}",
             .{vsr.constants.config.process.release},

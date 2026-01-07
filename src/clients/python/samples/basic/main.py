@@ -1,48 +1,85 @@
+#!/usr/bin/env python3
+"""
+ArcherDB Basic Sample - Insert and Query Geospatial Events
+
+This sample demonstrates:
+1. Connecting to an ArcherDB cluster
+2. Inserting geo events with location data
+3. Querying events within a radius
+"""
 import os
+import time
+import random
 
-import tigerbeetle as tb
+from archerdb import GeoClientSync, GeoClientConfig, GeoEvent
 
-with tb.ClientSync(cluster_id=0, replica_addresses=os.getenv("TB_ADDRESS", "3000")) as client:
-    account_errors = client.create_accounts([
-        tb.Account(
-            id=1,
-            ledger=1,
-            code=1,
-        ),
-        tb.Account(
-            id=2,
-            ledger=1,
-            code=1,
-        ),
-    ])
 
-    print(account_errors)
-    assert len(account_errors) == 0
+def main():
+    # Connect to ArcherDB cluster
+    address = os.getenv("ARCHERDB_ADDRESS", "127.0.0.1:3001")
+    config = GeoClientConfig(
+        cluster_id=0,
+        addresses=[address],
+    )
 
-    transfer_errors = client.create_transfers([
-        tb.Transfer(
-            id=1,
-            debit_account_id=1,
-            credit_account_id=2,
-            amount=10,
-            ledger=1,
-            code=1,
-        ),
-    ])
+    with GeoClientSync(config) as client:
+        print(f"Connected to ArcherDB at {address}")
 
-    print(transfer_errors)
-    assert len(transfer_errors) == 0
+        # Create some geo events representing vehicle positions
+        # San Francisco area coordinates
+        base_lat = 37.7749
+        base_lon = -122.4194
 
-    accounts = client.lookup_accounts([1, 2])
-    assert len(accounts) == 2
-    for account in accounts:
-        if account.id == 1:
-            assert account.debits_posted == 10
-            assert account.credits_posted == 0
-        elif account.id == 2:
-            assert account.debits_posted == 0
-            assert account.credits_posted == 10
+        # Insert events using a batch
+        batch = client.create_batch()
+        entity_ids = []
+
+        for i in range(5):
+            # Slightly offset positions around SF
+            entity_id = random.randint(1, 2**63)
+            entity_ids.append(entity_id)
+
+            event = GeoEvent(
+                entity_id=entity_id,
+                latitude=base_lat + (i * 0.001),  # ~111 meters apart
+                longitude=base_lon + (i * 0.001),
+                timestamp=int(time.time() * 1_000_000_000) + i,  # nanoseconds
+                group_id=1,
+                altitude_mm=0,
+                velocity_mms=0,
+                heading_cdeg=0,
+                accuracy_mm=10_000,  # 10m accuracy
+            )
+            batch.add(event)
+
+        errors = batch.commit()
+        if errors:
+            print(f"Insert errors: {errors}")
         else:
-            raise Exception("Unexpected account: " + account)
+            print(f"Successfully inserted {len(entity_ids)} events")
 
-    print("ok")
+        # Query events within 1km radius of SF center
+        result = client.query_radius(
+            latitude=base_lat,
+            longitude=base_lon,
+            radius_m=1000,
+            limit=100,
+        )
+
+        print(f"\nFound {len(result.events)} events within 1km of SF center:")
+        for event in result.events:
+            print(f"  Entity {event.entity_id}: ({event.latitude:.4f}, {event.longitude:.4f})")
+
+        # Look up a specific entity
+        if entity_ids:
+            event = client.get_latest_by_uuid(entity_ids[0])
+            if event:
+                print(f"\nLatest position for entity {entity_ids[0]}:")
+                print(f"  Location: ({event.latitude:.4f}, {event.longitude:.4f})")
+                print(f"  Timestamp: {event.timestamp}")
+
+        print("\nok")
+
+
+if __name__ == "__main__":
+    main()

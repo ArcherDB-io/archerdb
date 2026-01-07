@@ -3,7 +3,7 @@
 const std = @import("std");
 
 const Shell = @import("../../shell.zig");
-const TmpTigerBeetle = @import("../../testing/tmp_archerdb.zig");
+const TmpArcherDB = @import("../../testing/tmp_archerdb.zig");
 
 pub fn tests(shell: *Shell, gpa: std.mem.Allocator) !void {
     try shell.exec_zig("build clients:rust -Drelease", .{});
@@ -18,20 +18,20 @@ pub fn tests(shell: *Shell, gpa: std.mem.Allocator) !void {
         try shell.exec("cargo fmt --check", .{});
         try shell.exec("cargo clippy -- -D clippy::all", .{});
 
-        var tmp_beetle = try TmpTigerBeetle.init(gpa, .{
+        var tmp_archerdb = try TmpArcherDB.init(gpa, .{
             .development = true,
         });
-        defer tmp_beetle.deinit(gpa);
-        errdefer tmp_beetle.log_stderr();
+        defer tmp_archerdb.deinit(gpa);
+        errdefer tmp_archerdb.log_stderr();
 
-        try shell.env.put("TB_ADDRESS", tmp_beetle.port_str);
+        try shell.env.put("ARCHERDB_ADDRESS", tmp_archerdb.port_str);
         try shell.exec("cargo run", .{});
     }
 }
 
 pub fn validate_release(shell: *Shell, gpa: std.mem.Allocator, options: struct {
     version: []const u8,
-    tigerbeetle: []const u8,
+    archerdb: []const u8,
 }) !void {
     _ = shell;
     _ = gpa;
@@ -44,20 +44,20 @@ pub fn validate_release(shell: *Shell, gpa: std.mem.Allocator, options: struct {
     // try shell.pushd(tmp_dir);
     // defer shell.popd();
 
-    // var tmp_beetle = try TmpTigerBeetle.init(gpa, .{
+    // var tmp_archerdb = try TmpArcherDB.init(gpa, .{
     //     .development = true,
-    //     .prebuilt = options.tigerbeetle,
+    //     .prebuilt = options.archerdb,
     // });
-    // defer tmp_beetle.deinit(gpa);
-    // errdefer tmp_beetle.log_stderr();
+    // defer tmp_archerdb.deinit(gpa);
+    // errdefer tmp_archerdb.log_stderr();
 
-    // try shell.env.put("TB_ADDRESS", tmp_beetle.port_str);
+    // try shell.env.put("ARCHERDB_ADDRESS", tmp_archerdb.port_str);
 
     // // Create a new Rust project to test the published crate
-    // try shell.exec("cargo init --name test_tigerbeetle", .{});
+    // try shell.exec("cargo init --name test_archerdb", .{});
 
-    // // Add tigerbeetle dependency to Cargo.toml
-    // try shell.exec("cargo add tigerbeetle@{version}", .{ .version = options.version });
+    // // Add archerdb dependency to Cargo.toml
+    // try shell.exec("cargo add archerdb@{version}", .{ .version = options.version });
     // try shell.exec("cargo add futures@0.3", .{});
 
     // try Shell.copy_path(

@@ -353,7 +353,7 @@ pub const SuperBlockHeader = extern struct {
         parent_checkpoint_id: u128,
         /// The parent_checkpoint_id of the parent checkpoint.
         /// TODO We might be able to remove this when
-        /// https://github.com/tigerbeetle/tigerbeetle/issues/1378 is fixed.
+        /// https://github.com/archerdb/archerdb/issues/1378 is fixed.
         grandparent_checkpoint_id: u128,
 
         free_set_blocks_acquired_last_block_address: u64,

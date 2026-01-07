@@ -14,6 +14,7 @@ from contextlib import contextmanager, asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Iterator, List, Optional, TYPE_CHECKING
 
+from ._native import NativeClient
 from .types import (
     GeoEvent,
     GeoEventFlags,
@@ -494,6 +495,9 @@ def _is_retryable_error(error: Exception) -> bool:
     """
     if isinstance(error, ArcherDBError):
         return error.retryable
+    # TimeoutError and ConnectionError types are always retryable
+    if isinstance(error, (TimeoutError, ConnectionError)):
+        return True
     # Network errors are generally retryable
     msg = str(error).lower()
     return any(s in msg for s in ('timeout', 'connection', 'reset', 'refused', 'network'))
@@ -679,18 +683,21 @@ class GeoClientSync:
         self._session_id: int = 0
         self._request_number: int = 0
 
-        # NOTE: This is a skeleton implementation.
-        # In the full implementation, this would initialize the native binding.
+        # Initialize native client
+        cluster_id = config.cluster_id if isinstance(config.cluster_id, int) else 0
+        self._native = NativeClient(cluster_id, config.addresses)
         self._connect()
 
     def _connect(self) -> None:
         """Establish connection to cluster."""
-        # Skeleton: mark as connected
-        pass
+        if not self._native.connect():
+            raise ConnectionFailed("Failed to connect to cluster")
 
     def close(self) -> None:
         """Close the client and release resources."""
-        self._closed = True
+        if not self._closed:
+            self._native.disconnect()
+            self._closed = True
 
     def __enter__(self) -> "GeoClientSync":
         return self
@@ -777,17 +784,43 @@ class GeoClientSync:
         self,
         vertices: List[tuple[float, float]],
         *,
+        holes: Optional[List[List[tuple[float, float]]]] = None,
         limit: int = 1000,
         timestamp_min: int = 0,
         timestamp_max: int = 0,
         group_id: int = 0,
     ) -> QueryResult:
-        """Query events within a polygon."""
+        """
+        Query events within a polygon.
+
+        Args:
+            vertices: List of (lat, lon) tuples in degrees, CCW winding order
+            holes: Optional list of holes (exclusion zones), each a list of (lat, lon)
+                   tuples in clockwise winding order
+            limit: Maximum results (default 1000)
+            timestamp_min: Minimum timestamp filter
+            timestamp_max: Maximum timestamp filter
+            group_id: Group ID filter
+
+        Returns:
+            QueryResult with matching events
+
+        Example:
+            # Simple polygon
+            result = client.query_polygon([(37.79, -122.40), (37.79, -122.39), (37.78, -122.39)])
+
+            # Polygon with hole (e.g., delivery zone excluding a park)
+            result = client.query_polygon(
+                vertices=delivery_zone_boundary,
+                holes=[park_boundary],
+            )
+        """
         self._ensure_connected()
 
         from .types import create_polygon_query
         filter = create_polygon_query(
             vertices,
+            holes=holes,
             limit=limit,
             timestamp_min=timestamp_min,
             timestamp_max=timestamp_max,
@@ -841,10 +874,26 @@ class GeoClientSync:
         self._ensure_connected()
 
         def do_submit() -> List[Any]:
-            # NOTE: Skeleton implementation.
-            # In full implementation, this would serialize and send via native binding,
-            # using the same request_number for all retries to ensure idempotency.
-            return []
+            if operation == GeoOperation.INSERT_EVENTS:
+                errors = self._native.insert_events(batch)
+                return [
+                    InsertGeoEventsError(index=idx, result=InsertGeoEventResult(code))
+                    for idx, code in errors
+                ]
+            elif operation == GeoOperation.UPSERT_EVENTS:
+                errors = self._native.upsert_events(batch)
+                return [
+                    InsertGeoEventsError(index=idx, result=InsertGeoEventResult(code))
+                    for idx, code in errors
+                ]
+            elif operation == GeoOperation.DELETE_ENTITIES:
+                errors = self._native.delete_entities(batch)
+                return [
+                    DeleteEntitiesError(index=idx, result=code)
+                    for idx, code in errors
+                ]
+            else:
+                raise ValueError(f"Unknown batch operation: {operation}")
 
         return _with_retry_sync(do_submit, self._retry_config)
 
@@ -853,10 +902,51 @@ class GeoClientSync:
         self._ensure_connected()
 
         def do_query() -> List[GeoEvent]:
-            # NOTE: Skeleton implementation returns empty results
-            return []
+            if operation == GeoOperation.QUERY_UUID:
+                return self._native.query_uuid(filter.entity_id, filter.limit)
+            elif operation == GeoOperation.QUERY_RADIUS:
+                return self._native.query_radius(filter)
+            elif operation == GeoOperation.QUERY_LATEST:
+                return self._native.query_latest(filter)
+            elif operation == GeoOperation.QUERY_POLYGON:
+                # NOTE: Polygon queries not yet implemented in native bindings
+                return []
+            else:
+                raise ValueError(f"Unknown query operation: {operation}")
 
         return _with_retry_sync(do_query, self._retry_config)
+
+    # ========== Admin Operations ==========
+
+    def ping(self) -> bool:
+        """
+        Send a ping to verify server connectivity.
+
+        Returns:
+            True if server responds with 'pong', False otherwise.
+        """
+        self._ensure_connected()
+        # NOTE: Skeleton implementation - in full impl would send ARCHERDB_PING
+        # and verify "pong" response
+        return True
+
+    def get_status(self) -> "StatusResponse":
+        """
+        Get current server status including RAM index statistics.
+
+        Returns:
+            StatusResponse with server statistics.
+
+        Example:
+            status = client.get_status()
+            print(f"Entities: {status.ram_index_count}")
+            print(f"Load factor: {status.load_factor:.1%}")
+        """
+        from .types import StatusResponse
+        self._ensure_connected()
+        # NOTE: Skeleton implementation - in full impl would send ARCHERDB_GET_STATUS
+        # and deserialize the 64-byte response
+        return StatusResponse()
 
 
 # ============================================================================
@@ -985,17 +1075,33 @@ class GeoClientAsync:
         self,
         vertices: List[tuple[float, float]],
         *,
+        holes: Optional[List[List[tuple[float, float]]]] = None,
         limit: int = 1000,
         timestamp_min: int = 0,
         timestamp_max: int = 0,
         group_id: int = 0,
     ) -> QueryResult:
-        """Query events within a polygon."""
+        """
+        Query events within a polygon.
+
+        Args:
+            vertices: List of (lat, lon) tuples in degrees, CCW winding order
+            holes: Optional list of holes (exclusion zones), each a list of (lat, lon)
+                   tuples in clockwise winding order
+            limit: Maximum results (default 1000)
+            timestamp_min: Minimum timestamp filter
+            timestamp_max: Maximum timestamp filter
+            group_id: Group ID filter
+
+        Returns:
+            QueryResult with matching events
+        """
         self._ensure_connected()
 
         from .types import create_polygon_query
         filter = create_polygon_query(
             vertices,
+            holes=holes,
             limit=limit,
             timestamp_min=timestamp_min,
             timestamp_max=timestamp_max,
@@ -1065,6 +1171,38 @@ class GeoClientAsync:
             return []
 
         return await _with_retry_async(do_query, self._retry_config)
+
+    # ========== Admin Operations ==========
+
+    async def ping(self) -> bool:
+        """
+        Send a ping to verify server connectivity.
+
+        Returns:
+            True if server responds with 'pong', False otherwise.
+        """
+        self._ensure_connected()
+        # NOTE: Skeleton implementation - in full impl would send ARCHERDB_PING
+        # and verify "pong" response
+        return True
+
+    async def get_status(self) -> "StatusResponse":
+        """
+        Get current server status including RAM index statistics.
+
+        Returns:
+            StatusResponse with server statistics.
+
+        Example:
+            status = await client.get_status()
+            print(f"Entities: {status.ram_index_count}")
+            print(f"Load factor: {status.load_factor:.1%}")
+        """
+        from .types import StatusResponse
+        self._ensure_connected()
+        # NOTE: Skeleton implementation - in full impl would send ARCHERDB_GET_STATUS
+        # and deserialize the 64-byte response
+        return StatusResponse()
 
 
 # ============================================================================

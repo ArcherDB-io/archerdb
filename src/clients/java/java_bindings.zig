@@ -4,9 +4,9 @@ const std = @import("std");
 
 const vsr = @import("vsr");
 const stdx = vsr.stdx;
-const tb = vsr.tigerbeetle;
-const tb_client = vsr.tb_client;
-const exports = tb_client.exports;
+const tb = vsr.archerdb;
+const arch_client = vsr.arch_client;
+const exports = arch_client.exports;
 const assert = std.debug.assert;
 
 const TypeMapping = struct {
@@ -38,11 +38,7 @@ const TypeMapping = struct {
 /// otherwise they are considered IDs and exposed as an array of bytes.
 const big_integer = struct {
     const fields = .{
-        "credits_posted",
-        "credits_pending",
-        "debits_posted",
-        "debits_pending",
-        "amount",
+        // No financial amount fields in ArcherDB
     };
 
     fn contains(comptime field: []const u8) bool {
@@ -58,96 +54,59 @@ const big_integer = struct {
     }
 };
 
+// ArcherDB geospatial type mappings
 const type_mappings = .{
-    .{ tb.AccountFlags, TypeMapping{
-        .name = "AccountFlags",
+    .{ tb.GeoEventFlags, TypeMapping{
+        .name = "GeoEventFlags",
         .private_fields = &.{"padding"},
-        .docs_link = "reference/account#flags",
+        .docs_link = "reference/geo-event#flags",
     } },
-    .{ tb.TransferFlags, TypeMapping{
-        .name = "TransferFlags",
-        .private_fields = &.{"padding"},
-        .docs_link = "reference/transfer#flags",
-    } },
-    .{ tb.AccountFilterFlags, TypeMapping{
-        .name = "AccountFilterFlags",
-        .private_fields = &.{"padding"},
-        .visibility = .internal,
-    } },
-    .{ tb.QueryFilterFlags, TypeMapping{
-        .name = "QueryFilterFlags",
-        .private_fields = &.{"padding"},
-        .visibility = .internal,
-    } },
-    .{ tb.Account, TypeMapping{
-        .name = "AccountBatch",
+    .{ tb.GeoEvent, TypeMapping{
+        .name = "GeoEventBatch",
         .private_fields = &.{"reserved"},
-        .readonly_fields = &.{
-            "debits_pending",
-            "credits_pending",
-            "debits_posted",
-            "credits_posted",
-        },
-        .docs_link = "reference/account#",
+        .readonly_fields = &.{},
+        .docs_link = "reference/geo-event#",
     } },
-    .{ tb.AccountBalance, TypeMapping{
-        .name = "AccountBalanceBatch",
-        .private_fields = &.{"reserved"},
-        .readonly_fields = &.{
-            "debits_pending",
-            "credits_pending",
-            "debits_posted",
-            "credits_posted",
-            "timestamp",
-        },
-        .docs_link = "reference/account-balances#",
+    .{ tb.InsertGeoEventResult, TypeMapping{
+        .name = "InsertGeoEventResult",
+        .docs_link = "reference/requests/insert_events#",
     } },
-    .{
-        tb.Transfer, TypeMapping{
-            .name = "TransferBatch",
-            .private_fields = &.{"reserved"},
-            .readonly_fields = &.{},
-            .docs_link = "reference/transfer#",
-            .constants =
-            \\    public static final BigInteger AMOUNT_MAX = UInt128.asBigInteger(-1L, -1L);
-            \\
-            ,
-        },
-    },
-    .{ tb.CreateAccountResult, TypeMapping{
-        .name = "CreateAccountResult",
-        .docs_link = "reference/requests/create_accounts#",
-    } },
-    .{ tb.CreateTransferResult, TypeMapping{
-        .name = "CreateTransferResult",
-        .docs_link = "reference/requests/create_transfers#",
-    } },
-    .{ tb.CreateAccountsResult, TypeMapping{
-        .name = "CreateAccountResultBatch",
+    .{ tb.InsertGeoEventsResult, TypeMapping{
+        .name = "InsertGeoEventResultBatch",
         .readonly_fields = &.{ "index", "result" },
     } },
-    .{ tb.CreateTransfersResult, TypeMapping{
-        .name = "CreateTransferResultBatch",
+    .{ tb.DeleteEntitiesResult, TypeMapping{
+        .name = "DeleteEntityResultBatch",
         .readonly_fields = &.{ "index", "result" },
     } },
-    .{ tb.AccountFilter, TypeMapping{
-        .name = "AccountFilterBatch",
-        .visibility = .internal,
+    .{ tb.QueryUuidFilter, TypeMapping{
+        .name = "QueryUuidFilterBatch",
         .private_fields = &.{"reserved"},
+        .docs_link = "reference/query-uuid-filter#",
     } },
-    .{ tb.QueryFilter, TypeMapping{
-        .name = "QueryFilterBatch",
-        .visibility = .internal,
+    .{ tb.QueryRadiusFilter, TypeMapping{
+        .name = "QueryRadiusFilterBatch",
         .private_fields = &.{"reserved"},
+        .docs_link = "reference/query-radius-filter#",
     } },
-    .{ exports.tb_init_status, TypeMapping{
+    .{ tb.QueryPolygonFilter, TypeMapping{
+        .name = "QueryPolygonFilterBatch",
+        .private_fields = &.{"reserved"},
+        .docs_link = "reference/query-polygon-filter#",
+    } },
+    .{ tb.QueryLatestFilter, TypeMapping{
+        .name = "QueryLatestFilterBatch",
+        .private_fields = &.{"reserved"},
+        .docs_link = "reference/query-latest-filter#",
+    } },
+    .{ exports.arch_init_status, TypeMapping{
         .name = "InitializationStatus",
     } },
-    .{ exports.tb_client_status, TypeMapping{
+    .{ exports.arch_client_status, TypeMapping{
         .name = "ClientStatus",
         .visibility = .internal,
     } },
-    .{ exports.tb_packet_status, TypeMapping{
+    .{ exports.arch_packet_status, TypeMapping{
         .name = "PacketStatus",
     } },
 };
@@ -235,7 +194,7 @@ fn emit_enum(
 ) !void {
     try buffer.writer().print(
         \\{[notice]s}
-        \\package com.tigerbeetle;
+        \\package io.archerdb;
         \\
         \\{[visibility]s}enum {[name]s} {{
         \\
@@ -262,7 +221,7 @@ fn emit_enum(
             try buffer.writer().print(
                 \\
                 \\    /**
-                \\     * @see <a href="https://docs.tigerbeetle.com/{[docs_link]s}{[field_name]s}">{[field_name]s}</a>
+                \\     * @see <a href="https://docs.archerdb.io/{[docs_link]s}{[field_name]s}">{[field_name]s}</a>
                 \\     */
                 \\
             , .{
@@ -329,7 +288,7 @@ fn emit_packed_enum(
 ) !void {
     try buffer.writer().print(
         \\{[notice]s}
-        \\package com.tigerbeetle;
+        \\package io.archerdb;
         \\
         \\{[visibility]s}interface {[name]s} {{
         \\    {[int_type]s} NONE = ({[int_type]s}) 0;
@@ -348,7 +307,7 @@ fn emit_packed_enum(
             try buffer.writer().print(
                 \\
                 \\    /**
-                \\     * @see <a href="https://docs.tigerbeetle.com/{[docs_link]s}{[field_name]s}">{[field_name]s}</a>
+                \\     * @see <a href="https://docs.archerdb.io/{[docs_link]s}{[field_name]s}">{[field_name]s}</a>
                 \\     */
                 \\
             , .{
@@ -421,7 +380,7 @@ fn emit_batch(
 ) !void {
     try buffer.writer().print(
         \\{[notice]s}
-        \\package com.tigerbeetle;
+        \\package io.archerdb;
         \\
         \\import java.nio.ByteBuffer;
         \\{[big_integer_import]s}
@@ -519,7 +478,7 @@ fn emit_batch_accessors(
 
     if (mapping.docs_link) |docs_link| {
         try buffer.writer().print(
-            \\     * @see <a href="https://docs.tigerbeetle.com/{[docs_link]s}{[field_name]s}">{[field_name]s}</a>
+            \\     * @see <a href="https://docs.archerdb.io/{[docs_link]s}{[field_name]s}">{[field_name]s}</a>
             \\     */
             \\
         , .{
@@ -578,7 +537,7 @@ fn emit_batch_accessors(
 
     if (mapping.docs_link) |docs_link| {
         try buffer.writer().print(
-            \\     * @see <a href="https://docs.tigerbeetle.com/{[docs_link]s}{[field_name]s}">{[field_name]s}</a>
+            \\     * @see <a href="https://docs.archerdb.io/{[docs_link]s}{[field_name]s}">{[field_name]s}</a>
             \\     */
             \\
         , .{
@@ -632,7 +591,6 @@ fn emit_batch_accessors(
 
 // We offer multiple APIs for dealing with UInt128 in Java:
 // - A byte array, heap-allocated, for ids and user_data;
-// - A BigInteger, heap-allocated, for balances and amounts;
 // - Two 64-bit integers (long), stack-allocated, for both cases;
 fn emit_u128_batch_accessors(
     buffer: *std.ArrayList(u8),
@@ -643,80 +601,40 @@ fn emit_u128_batch_accessors(
     const is_private = comptime mapping.is_private(field.name);
     const is_read_only = comptime mapping.is_read_only(field.name);
 
-    if (big_integer.contains(field.name)) {
-        // Get BigInteger:
-        try buffer.writer().print(
-            \\    /**
-            \\     * @return a {{@link java.math.BigInteger}} representing the 128-bit value.
-            \\     * @throws IllegalStateException if not at a {{@link #isValidPosition valid position}}.
-            \\
-        , .{});
+    // Get array:
+    try buffer.writer().print(
+        \\    /**
+        \\     * @return an array of 16 bytes representing the 128-bit value.
+        \\     * @throws IllegalStateException if not at a {{@link #isValidPosition valid position}}.
+        \\
+    , .{});
 
-        if (mapping.docs_link) |docs_link| {
-            try buffer.writer().print(
-                \\     * @see <a href="https://docs.tigerbeetle.com/{[docs_link]s}{[field_name]s}">{[field_name]s}</a>
-                \\     */
-                \\
-            , .{
-                .docs_link = docs_link,
-                .field_name = field.name,
-            });
-        } else {
-            try buffer.writer().print(
-                \\     */
-                \\
-            , .{});
-        }
-
+    if (mapping.docs_link) |docs_link| {
         try buffer.writer().print(
-            \\    {[visibility]s}BigInteger get{[property]s}() {{
-            \\        final var index = at(Struct.{[property]s});
-            \\        return UInt128.asBigInteger(
-            \\            getUInt128(index, UInt128.LeastSignificant),
-            \\            getUInt128(index, UInt128.MostSignificant));
-            \\    }}
-            \\
+            \\     * @see <a href="https://docs.archerdb.io/{[docs_link]s}{[field_name]s}">{[field_name]s}</a>
+            \\     */
             \\
         , .{
-            .visibility = if (is_private) "" else "public ",
-            .property = to_case(field.name, .pascal),
+            .docs_link = docs_link,
+            .field_name = field.name,
         });
     } else {
-        // Get array:
         try buffer.writer().print(
-            \\    /**
-            \\     * @return an array of 16 bytes representing the 128-bit value.
-            \\     * @throws IllegalStateException if not at a {{@link #isValidPosition valid position}}.
+            \\     */
             \\
         , .{});
-
-        if (mapping.docs_link) |docs_link| {
-            try buffer.writer().print(
-                \\     * @see <a href="https://docs.tigerbeetle.com/{[docs_link]s}{[field_name]s}">{[field_name]s}</a>
-                \\     */
-                \\
-            , .{
-                .docs_link = docs_link,
-                .field_name = field.name,
-            });
-        } else {
-            try buffer.writer().print(
-                \\     */
-                \\
-            , .{});
-        }
-
-        try buffer.writer().print(
-            \\    {[visibility]s}byte[] get{[property]s}() {{
-            \\        return getUInt128(at(Struct.{[property]s}));
-            \\    }}
-            \\
-            \\
-        , .{
-            .visibility = if (is_private) "" else "public ",
-            .property = to_case(field.name, .pascal),
-        });
     }
+
+    try buffer.writer().print(
+        \\    {[visibility]s}byte[] get{[property]s}() {{
+        \\        return getUInt128(at(Struct.{[property]s}));
+        \\    }}
+        \\
+        \\
+    , .{
+        .visibility = if (is_private) "" else "public ",
+        .property = to_case(field.name, .pascal),
+    });
 
     // Get long:
     try buffer.writer().print(
@@ -732,7 +650,7 @@ fn emit_u128_batch_accessors(
 
     if (mapping.docs_link) |docs_link| {
         try buffer.writer().print(
-            \\     * @see <a href="https://docs.tigerbeetle.com/{[docs_link]s}{[field_name]s}">{[field_name]s}</a>
+            \\     * @see <a href="https://docs.archerdb.io/{[docs_link]s}{[field_name]s}">{[field_name]s}</a>
             \\     */
             \\
         , .{
@@ -757,86 +675,45 @@ fn emit_u128_batch_accessors(
         .property = to_case(field.name, .pascal),
     });
 
-    if (big_integer.contains(field.name)) {
-        // Set BigInteger:
+    // Set array:
+    try buffer.writer().print(
+        \\    /**
+        \\     * @param {[param_name]s} an array of 16 bytes representing the 128-bit value.
+        \\     * @throws IllegalArgumentException if {{@code {[param_name]s}}} is not 16 bytes long.
+        \\     * @throws IllegalStateException if not at a {{@link #isValidPosition valid position}}.
+        \\     * @throws IllegalStateException if a {{@link #isReadOnly() read-only}} batch.
+        \\
+    , .{
+        .param_name = to_case(field.name, .camel),
+    });
+
+    if (mapping.docs_link) |docs_link| {
         try buffer.writer().print(
-            \\    /**
-            \\     * @param {[param_name]s} a {{@link java.math.BigInteger}} representing the 128-bit value.
-            \\     * @throws IllegalStateException if not at a {{@link #isValidPosition valid position}}.
-            \\     * @throws IllegalStateException if a {{@link #isReadOnly() read-only}} batch.
+            \\     * @see <a href="https://docs.archerdb.io/{[docs_link]s}{[field_name]s}">{[field_name]s}</a>
+            \\     */
             \\
         , .{
-            .param_name = to_case(field.name, .camel),
-        });
-
-        if (mapping.docs_link) |docs_link| {
-            try buffer.writer().print(
-                \\     * @see <a href="https://docs.tigerbeetle.com/{[docs_link]s}{[field_name]s}">{[field_name]s}</a>
-                \\     */
-                \\
-            , .{
-                .docs_link = docs_link,
-                .field_name = field.name,
-            });
-        } else {
-            try buffer.writer().print(
-                \\     */
-                \\
-            , .{});
-        }
-
-        try buffer.writer().print(
-            \\    {[visibility]s}void set{[property]s}(final BigInteger {[param_name]s}) {{
-            \\        putUInt128(at(Struct.{[property]s}), UInt128.asBytes({[param_name]s}));
-            \\    }}
-            \\
-            \\
-        , .{
-            .visibility = if (is_private or is_read_only) "" else "public ",
-            .property = to_case(field.name, .pascal),
-            .param_name = to_case(field.name, .camel),
+            .docs_link = docs_link,
+            .field_name = field.name,
         });
     } else {
-        // Set array:
         try buffer.writer().print(
-            \\    /**
-            \\     * @param {[param_name]s} an array of 16 bytes representing the 128-bit value.
-            \\     * @throws IllegalArgumentException if {{@code {[param_name]s}}} is not 16 bytes long.
-            \\     * @throws IllegalStateException if not at a {{@link #isValidPosition valid position}}.
-            \\     * @throws IllegalStateException if a {{@link #isReadOnly() read-only}} batch.
+            \\     */
             \\
-        , .{
-            .param_name = to_case(field.name, .camel),
-        });
-
-        if (mapping.docs_link) |docs_link| {
-            try buffer.writer().print(
-                \\     * @see <a href="https://docs.tigerbeetle.com/{[docs_link]s}{[field_name]s}">{[field_name]s}</a>
-                \\     */
-                \\
-            , .{
-                .docs_link = docs_link,
-                .field_name = field.name,
-            });
-        } else {
-            try buffer.writer().print(
-                \\     */
-                \\
-            , .{});
-        }
-
-        try buffer.writer().print(
-            \\    {[visibility]s}void set{[property]s}(final byte[] {[param_name]s}) {{
-            \\        putUInt128(at(Struct.{[property]s}), {[param_name]s});
-            \\    }}
-            \\
-            \\
-        , .{
-            .visibility = if (is_private or is_read_only) "" else "public ",
-            .property = to_case(field.name, .pascal),
-            .param_name = to_case(field.name, .camel),
-        });
+        , .{});
     }
+
+    try buffer.writer().print(
+        \\    {[visibility]s}void set{[property]s}(final byte[] {[param_name]s}) {{
+        \\        putUInt128(at(Struct.{[property]s}), {[param_name]s});
+        \\    }}
+        \\
+        \\
+    , .{
+        .visibility = if (is_private or is_read_only) "" else "public ",
+        .property = to_case(field.name, .pascal),
+        .param_name = to_case(field.name, .camel),
+    });
 
     // Set long:
     try buffer.writer().print(
@@ -850,7 +727,7 @@ fn emit_u128_batch_accessors(
 
     if (mapping.docs_link) |docs_link| {
         try buffer.writer().print(
-            \\     * @see <a href="https://docs.tigerbeetle.com/{[docs_link]s}{[field_name]s}">{[field_name]s}</a>
+            \\     * @see <a href="https://docs.archerdb.io/{[docs_link]s}{[field_name]s}">{[field_name]s}</a>
             \\     */
             \\
         , .{
@@ -886,7 +763,7 @@ fn emit_u128_batch_accessors(
 
     if (mapping.docs_link) |docs_link| {
         try buffer.writer().print(
-            \\     * @see <a href="https://docs.tigerbeetle.com/{[docs_link]s}{[field_name]s}">{[field_name]s}</a>
+            \\     * @see <a href="https://docs.archerdb.io/{[docs_link]s}{[field_name]s}">{[field_name]s}</a>
             \\     */
             \\
         , .{
@@ -979,7 +856,7 @@ pub fn main() !void {
     {
         var buffer = std.ArrayList(u8).init(allocator);
         try buffer.writer().print(
-            \\package com.tigerbeetle;
+            \\package io.archerdb;
             \\
             \\interface TBClient {{
             \\    int SIZE = {};
@@ -987,8 +864,8 @@ pub fn main() !void {
             \\}}
             \\
         , .{
-            @sizeOf(exports.tb_client_t),
-            @alignOf(exports.tb_client_t),
+            @sizeOf(exports.arch_client_t),
+            @alignOf(exports.arch_client_t),
         });
         try target_dir.writeFile(.{
             .sub_path = "TBClient.java",

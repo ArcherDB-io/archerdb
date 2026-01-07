@@ -143,6 +143,15 @@ pub fn u64_from_object(env: c.napi_env, object: c.napi_value, comptime key: [:0]
     return u64_from_value(env, property, key);
 }
 
+pub fn i64_from_object(env: c.napi_env, object: c.napi_value, comptime key: [:0]const u8) !i64 {
+    var property: c.napi_value = undefined;
+    if (c.napi_get_named_property(env, object, key, &property) != c.napi_ok) {
+        return throw(env, key ++ " must be defined");
+    }
+
+    return i64_from_value(env, property, key);
+}
+
 pub fn u32_from_object(env: c.napi_env, object: c.napi_value, comptime key: [:0]const u8) !u32 {
     var property: c.napi_value = undefined;
     if (c.napi_get_named_property(env, object, key, &property) != c.napi_ok) {
@@ -150,6 +159,15 @@ pub fn u32_from_object(env: c.napi_env, object: c.napi_value, comptime key: [:0]
     }
 
     return u32_from_value(env, property, key);
+}
+
+pub fn i32_from_object(env: c.napi_env, object: c.napi_value, comptime key: [:0]const u8) !i32 {
+    var property: c.napi_value = undefined;
+    if (c.napi_get_named_property(env, object, key, &property) != c.napi_ok) {
+        return throw(env, key ++ " must be defined");
+    }
+
+    return i32_from_value(env, property, key);
 }
 
 pub fn u16_from_object(env: c.napi_env, object: c.napi_value, comptime key: [:0]const u8) !u16 {
@@ -161,12 +179,30 @@ pub fn u16_from_object(env: c.napi_env, object: c.napi_value, comptime key: [:0]
     return @as(u16, @intCast(result));
 }
 
+pub fn u8_from_object(env: c.napi_env, object: c.napi_value, comptime key: [:0]const u8) !u8 {
+    const result = try u32_from_object(env, object, key);
+    if (result > std.math.maxInt(u8)) {
+        return throw(env, key ++ " must be a u8.");
+    }
+
+    return @as(u8, @intCast(result));
+}
+
+pub fn i8_from_object(env: c.napi_env, object: c.napi_value, comptime key: [:0]const u8) !i8 {
+    const result = try i32_from_object(env, object, key);
+    if (result > std.math.maxInt(i8) or result < std.math.minInt(i8)) {
+        return throw(env, key ++ " must be a i8.");
+    }
+
+    return @as(i8, @intCast(result));
+}
+
 pub fn u128_from_value(env: c.napi_env, value: c.napi_value, comptime name: [:0]const u8) !u128 {
     // A BigInt's value (using ^ to mean exponent) is
     // (words[0] * (2^64)^0 + words[1] * (2^64)^1 + ...).
 
     // V8 says that the words are little endian. If we were on a big endian machine
-    // we would need to convert, but big endian is not supported by tigerbeetle.
+    // we would need to convert, but big endian is not supported by archerdb.
     var result: u128 = 0;
     var sign_bit: c_int = undefined;
     const words: *[2]u64 = @ptrCast(&result);
@@ -195,12 +231,35 @@ pub fn u64_from_value(env: c.napi_env, value: c.napi_value, comptime name: [:0]c
     return result;
 }
 
+pub fn i64_from_value(env: c.napi_env, value: c.napi_value, comptime name: [:0]const u8) !i64 {
+    var result: i64 = undefined;
+    var lossless: bool = undefined;
+    switch (c.napi_get_value_bigint_int64(env, value, &result, &lossless)) {
+        c.napi_ok => {},
+        c.napi_bigint_expected => return throw(env, name ++ " must be a signed 64-bit BigInt"),
+        else => unreachable,
+    }
+    if (!lossless) return throw(env, name ++ " conversion was lossy");
+
+    return result;
+}
+
 pub fn u32_from_value(env: c.napi_env, value: c.napi_value, comptime name: [:0]const u8) !u32 {
     var result: u32 = undefined;
     // TODO Check whether this will coerce signed numbers to a u32:
     // In that case we need to use the appropriate napi method to do more type checking here.
     // We want to make sure this is: unsigned, and an integer.
     switch (c.napi_get_value_uint32(env, value, &result)) {
+        c.napi_ok => {},
+        c.napi_number_expected => return throw(env, name ++ " must be a number"),
+        else => unreachable,
+    }
+    return result;
+}
+
+pub fn i32_from_value(env: c.napi_env, value: c.napi_value, comptime name: [:0]const u8) !i32 {
+    var result: i32 = undefined;
+    switch (c.napi_get_value_int32(env, value, &result)) {
         c.napi_ok => {},
         c.napi_number_expected => return throw(env, name ++ " must be a number"),
         else => unreachable,
@@ -219,7 +278,7 @@ pub fn u128_into_object(
     // (words[0] * (2^64)^0 + words[1] * (2^64)^1 + ...).
 
     // V8 says that the words are little endian. If we were on a big endian machine
-    // we would need to convert, but big endian is not supported by tigerbeetle.
+    // we would need to convert, but big endian is not supported by archerdb.
     var bigint: c.napi_value = undefined;
     if (c.napi_create_bigint_words(
         env,
@@ -263,6 +322,28 @@ pub fn u64_into_object(
     }
 }
 
+pub fn i64_into_object(
+    env: c.napi_env,
+    object: c.napi_value,
+    comptime key: [:0]const u8,
+    value: i64,
+    comptime error_message: [:0]const u8,
+) !void {
+    var result: c.napi_value = undefined;
+    if (c.napi_create_bigint_int64(env, value, &result) != c.napi_ok) {
+        return throw(env, error_message);
+    }
+
+    if (c.napi_set_named_property(
+        env,
+        object,
+        @ptrCast(key),
+        result,
+    ) != c.napi_ok) {
+        return throw(env, error_message);
+    }
+}
+
 pub fn u32_into_object(
     env: c.napi_env,
     object: c.napi_value,
@@ -280,6 +361,23 @@ pub fn u32_into_object(
     }
 }
 
+pub fn i32_into_object(
+    env: c.napi_env,
+    object: c.napi_value,
+    comptime key: [:0]const u8,
+    value: i32,
+    comptime error_message: [:0]const u8,
+) !void {
+    var result: c.napi_value = undefined;
+    if (c.napi_create_int32(env, value, &result) != c.napi_ok) {
+        return throw(env, error_message);
+    }
+
+    if (c.napi_set_named_property(env, object, @ptrCast(key), result) != c.napi_ok) {
+        return throw(env, error_message);
+    }
+}
+
 pub fn u16_into_object(
     env: c.napi_env,
     object: c.napi_value,
@@ -288,6 +386,26 @@ pub fn u16_into_object(
     comptime error_message: [:0]const u8,
 ) !void {
     try u32_into_object(env, object, key, value, error_message);
+}
+
+pub fn u8_into_object(
+    env: c.napi_env,
+    object: c.napi_value,
+    comptime key: [:0]const u8,
+    value: u8,
+    comptime error_message: [:0]const u8,
+) !void {
+    try u32_into_object(env, object, key, value, error_message);
+}
+
+pub fn i8_into_object(
+    env: c.napi_env,
+    object: c.napi_value,
+    comptime key: [:0]const u8,
+    value: i8,
+    comptime error_message: [:0]const u8,
+) !void {
+    try i32_into_object(env, object, key, value, error_message);
 }
 
 pub fn create_object(env: c.napi_env, comptime error_message: [:0]const u8) !c.napi_value {

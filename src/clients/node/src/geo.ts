@@ -273,15 +273,35 @@ export type PolygonVertex = {
 }
 
 /**
+ * Hole descriptor for polygon with holes.
+ * Each hole is an array of vertices forming an exclusion zone.
+ */
+export type PolygonHole = {
+  /**
+   * Hole vertices in clockwise winding order.
+   * Minimum 3 vertices per hole.
+   */
+  vertices: PolygonVertex[]
+}
+
+/**
  * Filter for polygon queries.
- * Returns events within a polygon region.
+ * Returns events within a polygon region, excluding any holes.
  */
 export type QueryPolygonFilter = {
   /**
-   * Polygon vertices in counter-clockwise winding order.
+   * Outer ring vertices in counter-clockwise winding order.
    * Minimum 3 vertices, maximum 10,000 vertices.
    */
   vertices: PolygonVertex[]
+
+  /**
+   * Hole rings (exclusion zones) within the polygon.
+   * Each hole uses clockwise winding order.
+   * Maximum 100 holes, minimum 3 vertices per hole.
+   * Optional - omit for simple polygons without holes.
+   */
+  holes?: PolygonHole[]
 
   /**
    * Maximum results to return.
@@ -315,6 +335,12 @@ export type QueryLatestFilter = {
   limit: number
 
   /**
+   * Reserved for alignment (must be 0).
+   * @internal
+   */
+  _reserved_align: number
+
+  /**
    * Group ID filter (0 = all groups).
    */
   group_id: bigint
@@ -346,6 +372,55 @@ export type QueryResult = {
 }
 
 /**
+ * Wire format header for query responses (8 bytes).
+ * Matches QueryResponse struct in geo_state_machine.zig.
+ *
+ * The server sends this header followed by an array of GeoEvent records.
+ */
+export type QueryResponse = {
+  /** Number of events in response (u32) */
+  count: number
+  /** More results available beyond limit */
+  has_more: boolean
+  /** Result set was truncated */
+  partial_result: boolean
+}
+
+/**
+ * Flag bit positions in the QueryResponse flags byte.
+ */
+export const QUERY_RESPONSE_FLAG_HAS_MORE = 0x01
+export const QUERY_RESPONSE_FLAG_PARTIAL_RESULT = 0x02
+
+/**
+ * Size of QueryResponse header in bytes.
+ */
+export const QUERY_RESPONSE_HEADER_SIZE = 8
+
+/**
+ * Parse QueryResponse header from raw bytes.
+ *
+ * @param data - At least 8 bytes of response data
+ * @returns Parsed QueryResponse header
+ * @throws Error if data is less than 8 bytes
+ */
+export function parseQueryResponse(data: Uint8Array): QueryResponse {
+  if (data.length < QUERY_RESPONSE_HEADER_SIZE) {
+    throw new Error(`QueryResponse requires ${QUERY_RESPONSE_HEADER_SIZE} bytes, got ${data.length}`)
+  }
+
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength)
+  const count = view.getUint32(0, true) // little-endian
+  const flags = view.getUint8(4)
+
+  return {
+    count,
+    has_more: (flags & QUERY_RESPONSE_FLAG_HAS_MORE) !== 0,
+    partial_result: (flags & QUERY_RESPONSE_FLAG_PARTIAL_RESULT) !== 0,
+  }
+}
+
+/**
  * Result structure for delete operations.
  */
 export type DeleteResult = {
@@ -365,13 +440,127 @@ export type DeleteResult = {
  * Maps to Operation enum in archerdb.zig
  */
 export enum GeoOperation {
-  insert_events = 146,   // vsr_operations_reserved (128) + 18
-  upsert_events = 147,   // vsr_operations_reserved (128) + 19
-  delete_entities = 148, // vsr_operations_reserved (128) + 20
-  query_uuid = 149,      // vsr_operations_reserved (128) + 21
-  query_radius = 150,    // vsr_operations_reserved (128) + 22
-  query_polygon = 151,   // vsr_operations_reserved (128) + 23
-  query_latest = 154,    // vsr_operations_reserved (128) + 26
+  insert_events = 146,      // vsr_operations_reserved (128) + 18
+  upsert_events = 147,      // vsr_operations_reserved (128) + 19
+  delete_entities = 148,    // vsr_operations_reserved (128) + 20
+  query_uuid = 149,         // vsr_operations_reserved (128) + 21
+  query_radius = 150,       // vsr_operations_reserved (128) + 22
+  query_polygon = 151,      // vsr_operations_reserved (128) + 23
+  archerdb_ping = 152,      // vsr_operations_reserved (128) + 24
+  archerdb_get_status = 153, // vsr_operations_reserved (128) + 25
+  query_latest = 154,       // vsr_operations_reserved (128) + 26
+  cleanup_expired = 155,    // vsr_operations_reserved (128) + 27
+}
+
+/**
+ * Server status response from archerdb_get_status operation.
+ * Matches StatusResponse in geo_state_machine.zig (64 bytes).
+ */
+export type StatusResponse = {
+  /** Number of entities in RAM index */
+  ram_index_count: bigint
+  /** Total RAM index capacity */
+  ram_index_capacity: bigint
+  /** Load factor as percentage * 100 (e.g., 7000 = 70%) */
+  ram_index_load_pct: number
+  /** Number of tombstone entries */
+  tombstone_count: bigint
+  /** Total TTL expirations processed */
+  ttl_expirations: bigint
+  /** Total deletions processed */
+  deletion_count: bigint
+}
+
+// ============================================================================
+// S2 Cell ID Computation (Simplified)
+// ============================================================================
+
+/**
+ * Computes S2 cell ID at level 30 (7.5mm precision).
+ * This is a simplified implementation for client-side composite ID generation.
+ *
+ * @param lat_nano - Latitude in nanodegrees
+ * @param lon_nano - Longitude in nanodegrees
+ * @returns S2 cell ID as bigint (u64)
+ */
+export function computeS2CellId(lat_nano: bigint, lon_nano: bigint): bigint {
+  // Convert to radians
+  const lat = Number(lat_nano) / 1e9 * Math.PI / 180
+  const lon = Number(lon_nano) / 1e9 * Math.PI / 180
+
+  // Convert to S2 point (unit sphere)
+  const cos_lat = Math.cos(lat)
+  const x = cos_lat * Math.cos(lon)
+  const y = cos_lat * Math.sin(lon)
+  const z = Math.sin(lat)
+
+  // Determine face (0-5) based on largest absolute coordinate
+  let face: number
+  const ax = Math.abs(x), ay = Math.abs(y), az = Math.abs(z)
+  if (ax >= ay && ax >= az) {
+    face = x > 0 ? 0 : 3
+  } else if (ay >= ax && ay >= az) {
+    face = y > 0 ? 1 : 4
+  } else {
+    face = z > 0 ? 2 : 5
+  }
+
+  // Project to face coordinates (u, v) in [-1, 1]
+  let u: number, v: number
+  switch (face) {
+    case 0: u = y / x; v = z / x; break
+    case 1: u = -x / y; v = z / y; break
+    case 2: u = -x / z; v = -y / z; break
+    case 3: u = z / x; v = y / x; break
+    case 4: u = z / y; v = -x / y; break
+    case 5: u = -y / z; v = -x / z; break
+    default: u = 0; v = 0
+  }
+
+  // Apply quadratic transform for better cell uniformity
+  const stFromUV = (uv: number): number => {
+    if (uv >= 0) {
+      return 0.5 * Math.sqrt(1 + 3 * uv)
+    } else {
+      return 1 - 0.5 * Math.sqrt(1 - 3 * uv)
+    }
+  }
+  const s = stFromUV(u)
+  const t = stFromUV(v)
+
+  // Convert to integer coordinates at level 30
+  const level = 30
+  const maxSize = 1 << level
+  const i = Math.min(maxSize - 1, Math.max(0, Math.floor(s * maxSize)))
+  const j = Math.min(maxSize - 1, Math.max(0, Math.floor(t * maxSize)))
+
+  // Build cell ID using Hilbert curve interleaving
+  // Face bits (3 bits) + pos bits (60 bits) + 1 bit
+  let cellId = BigInt(face) << 61n
+
+  // Interleave i and j bits (simplified - not full Hilbert curve)
+  for (let k = level - 1; k >= 0; k--) {
+    const iBit = (i >> k) & 1
+    const jBit = (j >> k) & 1
+    const bits = (iBit << 1) | jBit
+    cellId |= BigInt(bits) << BigInt(2 * k + 1)
+  }
+
+  // Set the sentinel bit
+  cellId |= 1n
+
+  return cellId
+}
+
+/**
+ * Creates a composite ID from S2 cell ID and timestamp.
+ *
+ * @param s2CellId - S2 cell ID (upper 64 bits)
+ * @param timestamp - Timestamp in nanoseconds (lower 64 bits)
+ * @returns Composite ID as u128
+ */
+export function packCompositeId(s2CellId: bigint, timestamp: bigint): bigint {
+  return (s2CellId << 64n) | timestamp
 }
 
 // ============================================================================
@@ -405,11 +594,21 @@ export const CENTIDEGREES_PER_DEGREE = 100
 
 /**
  * Maximum results per query (spatial query limit).
+ *
+ * NOTE: This assumes production config with 10MB message_size_max.
+ * With the default 1MB message_size_max, the effective limit is ~8,180 events.
+ * The server returns actual limits during client registration (batch_size_limit).
+ * For production deployments, configure message_size_max = 10MB in server config.
  */
 export const QUERY_LIMIT_MAX = 81_000
 
 /**
  * Maximum events per batch.
+ *
+ * NOTE: This assumes production config with 10MB message_size_max.
+ * With the default 1MB message_size_max, the effective limit is ~8,180 events.
+ * The server returns actual limits during client registration (batch_size_limit).
+ * For production deployments, configure message_size_max = 10MB in server config.
  */
 export const BATCH_SIZE_MAX = 10_000
 
@@ -417,6 +616,28 @@ export const BATCH_SIZE_MAX = 10_000
  * Maximum polygon vertices.
  */
 export const POLYGON_VERTICES_MAX = 10_000
+
+/**
+ * Maximum holes per polygon.
+ */
+export const POLYGON_HOLES_MAX = 100
+
+/**
+ * Minimum vertices per hole (must form a valid ring).
+ */
+export const POLYGON_HOLE_VERTICES_MIN = 3
+
+/**
+ * Safe batch size limit for default 1MB message configuration.
+ * Use this if connecting to a server with default configuration.
+ */
+export const BATCH_SIZE_MAX_DEFAULT = 8_000
+
+/**
+ * Safe query limit for default 1MB message configuration.
+ * Use this if connecting to a server with default configuration.
+ */
+export const QUERY_LIMIT_MAX_DEFAULT = 8_000
 
 /**
  * Converts degrees to nanodegrees.
@@ -587,6 +808,8 @@ export interface GeoEventOptions {
  * - Meters to millimeters
  * - Heading degrees to centidegrees
  *
+ * Also computes the composite ID (S2 cell | timestamp) client-side.
+ *
  * @param options - Event options with user-friendly units
  * @returns GeoEvent ready for insertion
  *
@@ -610,15 +833,27 @@ export function createGeoEvent(options: GeoEventOptions): GeoEvent {
     throw new Error(`Invalid longitude: ${options.longitude}. Must be between -180 and +180 degrees.`)
   }
 
+  const lat_nano = degreesToNano(options.latitude)
+  const lon_nano = degreesToNano(options.longitude)
+
+  // Compute timestamp for composite ID (nanoseconds since Unix epoch)
+  // NOTE: Server validates timestamp field must be 0 for non-imported events,
+  // but the composite ID contains the timestamp embedded in it.
+  const now_ns = BigInt(Date.now()) * 1_000_000n
+
+  // Compute S2 cell ID and composite ID
+  const s2CellId = computeS2CellId(lat_nano, lon_nano)
+  const compositeId = packCompositeId(s2CellId, now_ns)
+
   return {
-    id: 0n, // Server-assigned
+    id: compositeId,
     entity_id: options.entity_id,
     correlation_id: options.correlation_id ?? 0n,
     user_data: options.user_data ?? 0n,
-    lat_nano: degreesToNano(options.latitude),
-    lon_nano: degreesToNano(options.longitude),
+    lat_nano,
+    lon_nano,
     group_id: options.group_id ?? 0n,
-    timestamp: 0n, // Server-assigned
+    timestamp: 0n, // Server validates this must be 0 for non-imported events
     altitude_mm: options.altitude_m !== undefined ? metersToMm(options.altitude_m) : 0,
     velocity_mms: options.velocity_mps !== undefined ? metersToMm(options.velocity_mps) : 0,
     ttl_seconds: options.ttl_seconds ?? 0,
@@ -705,10 +940,30 @@ export function createRadiusQuery(options: RadiusQueryOptions): QueryRadiusFilte
  */
 export interface PolygonQueryOptions {
   /**
-   * Polygon vertices as [lat, lon] pairs in degrees.
+   * Outer ring vertices as [lat, lon] pairs in degrees.
    * Counter-clockwise winding order.
    */
   vertices: Array<[number, number]>
+
+  /**
+   * Hole rings (exclusion zones) as arrays of [lat, lon] pairs.
+   * Each hole should use clockwise winding order.
+   * Maximum 100 holes, minimum 3 vertices per hole.
+   * Optional - omit for simple polygons without holes.
+   *
+   * @example
+   * ```typescript
+   * // Polygon with one rectangular hole
+   * const result = await client.queryPolygon({
+   *   vertices: [[0, 0], [0, 10], [10, 10], [10, 0]],  // Outer ring (CCW)
+   *   holes: [
+   *     [[2, 2], [2, 4], [4, 4], [4, 2]]  // Hole (CW)
+   *   ],
+   *   limit: 1000,
+   * })
+   * ```
+   */
+  holes?: Array<Array<[number, number]>>
 
   /**
    * Maximum results (optional, default 1000).
@@ -738,6 +993,7 @@ export interface PolygonQueryOptions {
  * @returns QueryPolygonFilter ready for query
  */
 export function createPolygonQuery(options: PolygonQueryOptions): QueryPolygonFilter {
+  // Validate outer ring
   if (options.vertices.length < 3) {
     throw new Error(`Polygon must have at least 3 vertices, got ${options.vertices.length}`)
   }
@@ -745,6 +1001,7 @@ export function createPolygonQuery(options: PolygonQueryOptions): QueryPolygonFi
     throw new Error(`Polygon exceeds maximum ${POLYGON_VERTICES_MAX} vertices, got ${options.vertices.length}`)
   }
 
+  // Convert outer ring vertices
   const vertices: PolygonVertex[] = options.vertices.map(([lat, lon], i) => {
     if (!isValidLatitude(lat)) {
       throw new Error(`Invalid latitude at vertex ${i}: ${lat}`)
@@ -758,8 +1015,47 @@ export function createPolygonQuery(options: PolygonQueryOptions): QueryPolygonFi
     }
   })
 
+  // Validate and convert holes (if present)
+  let holes: PolygonHole[] | undefined = undefined
+  if (options.holes && options.holes.length > 0) {
+    if (options.holes.length > POLYGON_HOLES_MAX) {
+      throw new Error(`Polygon exceeds maximum ${POLYGON_HOLES_MAX} holes, got ${options.holes.length}`)
+    }
+
+    let totalHoleVertices = 0
+    holes = options.holes.map((holeVertices, holeIndex) => {
+      if (holeVertices.length < POLYGON_HOLE_VERTICES_MIN) {
+        throw new Error(`Hole ${holeIndex} must have at least ${POLYGON_HOLE_VERTICES_MIN} vertices, got ${holeVertices.length}`)
+      }
+
+      totalHoleVertices += holeVertices.length
+
+      const holePolygonVertices: PolygonVertex[] = holeVertices.map(([lat, lon], vertexIndex) => {
+        if (!isValidLatitude(lat)) {
+          throw new Error(`Invalid latitude at hole ${holeIndex} vertex ${vertexIndex}: ${lat}`)
+        }
+        if (!isValidLongitude(lon)) {
+          throw new Error(`Invalid longitude at hole ${holeIndex} vertex ${vertexIndex}: ${lon}`)
+        }
+        return {
+          lat_nano: degreesToNano(lat),
+          lon_nano: degreesToNano(lon),
+        }
+      })
+
+      return { vertices: holePolygonVertices }
+    })
+
+    // Check total vertex count (outer + all holes)
+    const totalVertices = options.vertices.length + totalHoleVertices
+    if (totalVertices > POLYGON_VERTICES_MAX) {
+      throw new Error(`Total vertices (outer + holes) exceeds maximum ${POLYGON_VERTICES_MAX}, got ${totalVertices}`)
+    }
+  }
+
   return {
     vertices,
+    holes,
     limit: options.limit ?? 1000,
     timestamp_min: options.timestamp_min ?? 0n,
     timestamp_max: options.timestamp_max ?? 0n,

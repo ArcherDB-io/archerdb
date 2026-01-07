@@ -1877,7 +1877,7 @@ pub fn CompactionType(
             compaction.compaction_dispatch();
         }
 
-        // The three functions below are hot CPU loops doing the actual merging, TigerBeetle's data
+        // The three functions below are hot CPU loops doing the actual merging, ArcherDB's data
         // plane. To reduce the probability of the optimizer getting confused over pointers, don't
         // use 'self' and instead specify all inputs and outputs explicitly. Its the caller's job to
         // apply control plane changes to the compaction state.

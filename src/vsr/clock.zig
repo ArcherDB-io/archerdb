@@ -2,20 +2,20 @@
 // Copyright (c) 2024-2025 ArcherDB Contributors
 //! Cluster-wide synchronized clock, aggregating timing information from all replicas.
 //!
-//! Time plays a central role in TigerBeetle data model. Because it is so important, TigerBeetle
+//! Time plays a central role in ArcherDB's data model. Because it is so important, ArcherDB
 //! defines its own time. In other words, we don't use time to drive consensus, we use consensus to
 //! drive time!
 //!
-//! Time is important for the domain of accounting (e.g., pending transfers can expire with time),
+//! Time is important for geospatial tracking (e.g., TTL expiration, event ordering),
 //! but it can't be supplied by the client, as its clock can be unreliable. For this reason,
-//! TigerBeetle needs to expose a "time service" to the state machine logic.
+//! ArcherDB needs to expose a "time service" to the state machine logic.
 //!
-//! Additionally, TigerBeetle needs to assign some kind of a sequence number to every event in the
+//! Additionally, ArcherDB needs to assign some kind of a sequence number to every event in the
 //! system, to make it easy to say whether A happened before B or vice versa.
 //!
 //! Finally, to maintain indices, the LSM tree could benefit from a compact synthetic primary key.
 //!
-//! Time solves _all_ of these problems at once: each object in TigerBeetle gets tagged with a u64
+//! Time solves _all_ of these problems at once: each object in ArcherDB gets tagged with a u64
 //! nanosecond-precision creation timestamp. These timestamps are unique across all objects (an
 //! Account and a Transfer can never have the same timestamp), consistent with linearization order
 //! of the events (earlier events get smaller timestamps), and closely match the real wall-clock
@@ -26,7 +26,7 @@
 //!
 //! The ultimate source of timestamps is each replica's operating system. This time is backed by a
 //! replica-local drifty hardware clock which is periodically synchronized through NTP with high
-//! quality clocks elsewhere. Using system time directly as a source of TigerBeetle timestamps
+//! quality clocks elsewhere. Using system time directly as a source of ArcherDB timestamps
 //! doesn't work:
 //!
 //! First, system time differs across replicas. To solve this problem, only the primary assigns
@@ -76,7 +76,7 @@
 //!
 //! Further reading:
 //!
-//! [Three Clocks are Better than One](https://tigerbeetle.com/blog/2021-08-30-three-clocks-are-better-than-one)
+//! [Three Clocks are Better than One](https://archerdb.com/blog/2021-08-30-three-clocks-are-better-than-one)
 //!
 //! And watching:
 //!

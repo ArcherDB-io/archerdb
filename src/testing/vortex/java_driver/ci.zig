@@ -20,7 +20,7 @@ pub fn tests(shell: *Shell, gpa: std.mem.Allocator) !void {
         const base_path = "../../../../";
         const vortex_bin = base_path ++ "zig-out/bin/vortex";
         const class_path_driver = base_path ++
-            "src/clients/java/target/tigerbeetle-java-0.0.1-SNAPSHOT.jar";
+            "src/clients/java/target/archerdb-java-0.0.1-SNAPSHOT.jar";
         const class_path = class_path_driver ++ ":" ++ base_path ++
             "src/testing/vortex/java_driver/target/vortex-driver-java-0.0.1-SNAPSHOT.jar";
         const driver_command = "java -cp " ++ class_path ++ " Main";

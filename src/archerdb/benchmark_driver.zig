@@ -36,7 +36,7 @@ pub fn command_benchmark(
         var random_bytes: [4]u8 = undefined;
         std.crypto.random.bytes(&random_bytes);
         const random_suffix: [8]u8 = std.fmt.bytesToHex(random_bytes, .lower);
-        break :data_file "0_0-" ++ random_suffix ++ ".tigerbeetle.benchmark";
+        break :data_file "0_0-" ++ random_suffix ++ ".archerdb.benchmark";
     };
 
     var data_file_created = false;
@@ -46,8 +46,8 @@ pub fn command_benchmark(
         }
     }
 
-    var tigerbeetle_process: ?TigerBeetleProcess = null;
-    defer if (tigerbeetle_process) |*p| {
+    var archerdb_process: ?ArcherDBProcess = null;
+    defer if (archerdb_process) |*p| {
         _ = p.deinit();
     };
 
@@ -56,21 +56,19 @@ pub fn command_benchmark(
         const me = try std.fs.selfExePathAlloc(allocator);
         defer allocator.free(me);
 
-        try format(allocator, .{ .tigerbeetle = me, .data_file = data_file });
+        try format(allocator, .{ .archerdb = me, .data_file = data_file });
         data_file_created = true;
         maybe_stat_empty = try std.fs.cwd().statFile(data_file);
 
-        tigerbeetle_process = try start(allocator, .{
-            .tigerbeetle = me,
+        archerdb_process = try start(allocator, .{
+            .archerdb = me,
             .data_file = data_file,
             .args = args,
         });
     } else {
         // Arguments forwarded to the replica cannot be used with a cluster started by the user.
         inline for (.{
-            "cache_accounts",
-            "cache_transfers",
-            "cache_transfers_pending",
+            "cache_geo_events",
             "cache_grid",
             "statsd",
             "trace",
@@ -89,12 +87,12 @@ pub fn command_benchmark(
     const addresses = if (args.addresses) |*addresses|
         addresses.const_slice()
     else
-        &.{tigerbeetle_process.?.address};
+        &.{archerdb_process.?.address};
     try benchmark_load.main(allocator, io, time, addresses, args);
 
-    if (tigerbeetle_process) |*p| {
+    if (archerdb_process) |*p| {
         const rusage = p.deinit();
-        tigerbeetle_process = null;
+        archerdb_process = null;
 
         if (rusage.getMaxRss()) |max_rss_bytes| {
             std.io.getStdOut().writer().print("\nrss = {} bytes\n", .{max_rss_bytes}) catch {};
@@ -113,13 +111,13 @@ pub fn command_benchmark(
 }
 
 fn format(allocator: std.mem.Allocator, options: struct {
-    tigerbeetle: []const u8,
+    archerdb: []const u8,
     data_file: []const u8,
 }) !void {
     const format_result = try ChildProcess.run(.{
         .allocator = allocator,
         .argv = &.{
-            options.tigerbeetle,
+            options.archerdb,
             "format",
             "--cluster=0",
             "--replica=0",
@@ -139,11 +137,11 @@ fn format(allocator: std.mem.Allocator, options: struct {
     }
 }
 
-const TigerBeetleProcess = struct {
+const ArcherDBProcess = struct {
     child: std.process.Child,
     address: std.net.Address,
 
-    fn deinit(self: *TigerBeetleProcess) std.process.Child.ResourceUsageStatistics {
+    fn deinit(self: *ArcherDBProcess) std.process.Child.ResourceUsageStatistics {
         // Although we could just kill the child here, let's exercise the "normal" termination logic
         // through stdin closure, such that, from the perspective of the child, there's no
         // difference between the parent process exiting normally or just crashing.
@@ -157,23 +155,21 @@ const TigerBeetleProcess = struct {
 };
 
 fn start(allocator: std.mem.Allocator, options: struct {
-    tigerbeetle: []const u8,
+    archerdb: []const u8,
     data_file: []const u8,
     args: *const cli.Command.Benchmark,
-}) !TigerBeetleProcess {
+}) !ArcherDBProcess {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
 
     var start_args = std.ArrayListUnmanaged([]const u8){};
-    try start_args.append(arena.allocator(), options.tigerbeetle);
+    try start_args.append(arena.allocator(), options.archerdb);
     try start_args.append(arena.allocator(), "start");
     try start_args.append(arena.allocator(), "--addresses=0");
 
-    // Forward the cache options to the tigerbeetle process:
+    // Forward the cache options to the archerdb process:
     const forward_args = &.{
-        .{ options.args.cache_accounts, "cache-accounts" },
-        .{ options.args.cache_transfers, "cache-transfers" },
-        .{ options.args.cache_transfers_pending, "cache-transfers-pending" },
+        .{ options.args.cache_geo_events, "cache-geo-events" },
         .{ options.args.cache_grid, "cache-grid" },
         .{ options.args.statsd, "statsd" },
         .{ options.args.trace, "trace" },
@@ -216,7 +212,7 @@ fn start(allocator: std.mem.Allocator, options: struct {
     }
 
     const port = port: {
-        errdefer log.err("failed to read port number from tigerbeetle process", .{});
+        errdefer log.err("failed to read port number from archerdb process", .{});
         var port_buf: [std.fmt.count("{}\n", .{std.math.maxInt(u16)})]u8 = undefined;
         const port_buf_len = try child.stdout.?.readAll(&port_buf);
         break :port try std.fmt.parseInt(u16, port_buf[0 .. port_buf_len - 1], 10);

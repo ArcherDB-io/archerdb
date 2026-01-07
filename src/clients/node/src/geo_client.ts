@@ -27,6 +27,9 @@ import {
   QUERY_LIMIT_MAX,
 } from './geo'
 
+// Import native binding for cluster communication
+import { binding, Context, Operation } from './index'
+
 // Re-export types for convenience
 export * from './geo'
 
@@ -512,7 +515,7 @@ export class DeleteEntityBatch {
 export class GeoClient {
   private config: Required<Omit<GeoClientConfig, 'retry'>>
   private retryConfig: Required<RetryConfig>
-  private context: object | null = null
+  private context: Context | null = null
   private sessionId: bigint = 0n
   private requestNumber: bigint = 0n
 
@@ -548,25 +551,14 @@ export class GeoClient {
 
   /**
    * Establishes connection to the cluster.
-   * Performs primary discovery and session registration.
+   * Uses the native binding to create a client context.
    */
   private connect(): void {
-    // NOTE: This is a skeleton implementation.
-    // In the full implementation, this would:
-    // 1. Probe all replica addresses in parallel
-    // 2. Identify current primary via ping response
-    // 3. Establish TCP connection (with TLS if configured)
-    // 4. Send register operation to obtain session ID
-    // 5. Store session for request idempotency
-    //
-    // The actual native binding integration would happen here:
-    // this.context = binding.init({
-    //   cluster_id: this.config.cluster_id,
-    //   replica_addresses: Buffer.from(this.config.addresses.join(',')),
-    // })
-
-    // Placeholder: mark as connected
-    this.context = {}
+    // Initialize the native client binding
+    this.context = binding.init({
+      cluster_id: this.config.cluster_id,
+      replica_addresses: Buffer.from(this.config.addresses.join(',')),
+    })
   }
 
   /**
@@ -575,8 +567,9 @@ export class GeoClient {
    * After calling destroy(), all subsequent operations will throw.
    */
   destroy(): void {
-    // NOTE: In full implementation:
-    // if (this.context) binding.deinit(this.context)
+    if (this.context) {
+      binding.deinit(this.context)
+    }
     this.context = null
   }
 
@@ -769,11 +762,12 @@ export class GeoClient {
    * @param options - Query options (limit, group_id, cursor)
    * @returns Query results with pagination info
    */
-  async queryLatest(options?: Partial<QueryLatestFilter>): Promise<QueryResult> {
+  async queryLatest(options?: Partial<Omit<QueryLatestFilter, '_reserved_align'>>): Promise<QueryResult> {
     this.ensureConnected()
 
     const filter: QueryLatestFilter = {
       limit: options?.limit ?? 1000,
+      _reserved_align: 0, // Required for wire format alignment
       group_id: options?.group_id ?? 0n,
       cursor_timestamp: options?.cursor_timestamp ?? 0n,
     }
@@ -817,29 +811,21 @@ export class GeoClient {
 
     // Wrap the actual submission in retry logic
     return withRetry(async () => {
-      // NOTE: This is a skeleton implementation.
-      // In the full implementation, this would:
-      // 1. Serialize events to wire format
-      // 2. Send operation via native binding using same request_number for idempotency
-      // 3. Wait for quorum replication
-      // 4. Parse per-event error codes
-      //
-      // The same request_number is used for all retries to ensure idempotency:
-      // const requestNumber = this.requestNumber
-      //
-      // return new Promise((resolve, reject) => {
-      //   binding.submit(this.context, {
-      //     operation,
-      //     batch,
-      //     request_number: requestNumber,
-      //   }, (error, results) => {
-      //     if (error) reject(error)
-      //     else resolve(results as R[])
-      //   })
-      // })
+      return new Promise<R[]>((resolve, reject) => {
+        // Convert GeoOperation to Operation enum (they share the same values)
+        const op = operation as unknown as Operation
 
-      // Skeleton: return empty results (success)
-      return [] as R[]
+        binding.submit(this.context!, op, batch, (error, results) => {
+          if (error) {
+            reject(error)
+          } else if (results) {
+            resolve(results as unknown as R[])
+          } else {
+            // Empty results array means success with no errors
+            resolve([] as R[])
+          }
+        })
+      })
     }, this.retryConfig)
   }
 
@@ -852,21 +838,22 @@ export class GeoClient {
 
     // Wrap the actual query in retry logic
     return withRetry(async () => {
-      // NOTE: This is a skeleton implementation.
-      // In the full implementation, this would:
-      // 1. Serialize filter to wire format
-      // 2. Send query via native binding
-      // 3. Parse results
-      //
-      // return new Promise((resolve, reject) => {
-      //   binding.submit(this.context, operation, [filter], (error, results) => {
-      //     if (error) reject(error)
-      //     else resolve(results as R[])
-      //   })
-      // })
+      return new Promise<R[]>((resolve, reject) => {
+        // Convert GeoOperation to Operation enum (they share the same values)
+        const op = operation as unknown as Operation
 
-      // Skeleton: return empty results
-      return [] as R[]
+        // Submit the filter as a single-element batch
+        binding.submit(this.context!, op, [filter], (error, results) => {
+          if (error) {
+            reject(error)
+          } else if (results) {
+            resolve(results as unknown as R[])
+          } else {
+            // Empty results array means no matching events
+            resolve([] as R[])
+          }
+        })
+      })
     }, this.retryConfig)
   }
 }

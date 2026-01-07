@@ -6,7 +6,7 @@ const assert = std.debug.assert;
 
 const constants = @import("constants.zig");
 const vsr = @import("vsr.zig");
-const tb = vsr.tigerbeetle;
+const tb = vsr.archerdb;
 
 const stdx = @import("stdx");
 const MessagePool = vsr.message_pool.MessagePool;
@@ -413,9 +413,10 @@ pub fn AOFType(comptime IO: type) type {
                 if (header.operation.vsr_reserved()) return false;
                 const state_machine_operation = header.operation.cast(tb.Operation);
                 switch (state_machine_operation) {
-                    .create_accounts, .create_transfers => return true,
+                    // ArcherDB geospatial operations that modify state
+                    .insert_events, .upsert_events, .delete_entities => return true,
 
-                    // Pulses are replayed to handle pending transfer expiry.
+                    // Pulses are replayed to handle TTL expiry.
                     .pulse => return true,
 
                     else => return false,
@@ -850,7 +851,7 @@ const usage =
     \\
     \\Commands:
     \\
-    \\  recover  Recover a recorded AOF file at <path> to a TigerBeetle cluster running
+    \\  recover  Recover a recorded AOF file at <path> to a ArcherDB cluster running
     \\           at <addresses>. Said cluster must be running with aof_recovery = true
     \\           and have the same cluster ID as the source. The AOF must have a consistent
     \\           hash chain, which can be ensured using the `merge` subcommand.

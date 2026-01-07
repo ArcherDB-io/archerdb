@@ -8,13 +8,62 @@
 //!
 //! Error Code Ranges:
 //!   - 1-10:     Protocol errors
-//!   - 100-116:  Validation errors
-//!   - 200-209:  State errors
-//!   - 300-308:  Resource errors
+//!   - 100-120:  Validation errors (117-120: polygon hole errors)
+//!   - 200-212:  State errors
+//!   - 300-310:  Resource errors
 //!   - 400-404:  Security errors
 //!   - 500-504:  Internal errors
 
 const std = @import("std");
+
+/// Protocol error codes (1-10)
+/// These errors indicate protocol-level issues with message format.
+pub const ProtocolError = enum(u32) {
+    /// Message format is invalid
+    invalid_message = 1,
+    /// Header checksum verification failed
+    checksum_mismatch_header = 2,
+    /// Body checksum verification failed
+    checksum_mismatch_body = 3,
+    /// Message exceeds message_size_max
+    message_too_large = 4,
+    /// Message smaller than header size
+    message_too_small = 5,
+    /// Protocol version not supported
+    unsupported_version = 6,
+    /// Operation code not recognized
+    invalid_operation = 7,
+    /// Message cluster ID does not match
+    cluster_id_mismatch = 8,
+    /// Magic number incorrect (not "ARCH")
+    invalid_magic = 9,
+    /// Reserved field contains non-zero data
+    reserved_field_nonzero = 10,
+
+    /// Returns a human-readable description of the error.
+    pub fn description(self: ProtocolError) []const u8 {
+        return switch (self) {
+            .invalid_message => "Message format is invalid",
+            .checksum_mismatch_header => "Header checksum verification failed",
+            .checksum_mismatch_body => "Body checksum verification failed",
+            .message_too_large => "Message exceeds maximum size",
+            .message_too_small => "Message smaller than header size",
+            .unsupported_version => "Protocol version not supported",
+            .invalid_operation => "Operation code not recognized",
+            .cluster_id_mismatch => "Cluster ID mismatch",
+            .invalid_magic => "Invalid magic number (expected ARCH)",
+            .reserved_field_nonzero => "Reserved field contains non-zero data",
+        };
+    }
+
+    /// Protocol errors are retriable if they're checksum-related (transient network issues).
+    pub fn isRetriable(self: ProtocolError) bool {
+        return switch (self) {
+            .checksum_mismatch_header, .checksum_mismatch_body => true,
+            else => false,
+        };
+    }
+};
 
 /// Validation error codes (100-116)
 /// These errors indicate invalid input data.
@@ -53,6 +102,14 @@ pub const ValidationError = enum(u32) {
     timestamp_in_future = 115,
     /// event_timestamp < current_time - max_age
     timestamp_too_old = 116,
+    /// hole_count exceeds polygon_holes_max (100)
+    too_many_holes = 117,
+    /// Hole has fewer than 3 vertices (minimum for valid ring)
+    hole_vertex_count_invalid = 118,
+    /// Hole ring is not contained within outer ring
+    hole_not_contained = 119,
+    /// Two or more hole rings overlap
+    holes_overlap = 120,
 
     /// Returns a human-readable description of the error.
     pub fn description(self: ValidationError) []const u8 {
@@ -74,6 +131,10 @@ pub const ValidationError = enum(u32) {
             .coordinate_mismatch => "Manually set ID does not match coordinates",
             .timestamp_in_future => "Event timestamp is too far in future",
             .timestamp_too_old => "Event timestamp is too old",
+            .too_many_holes => "Polygon has too many holes (max 100)",
+            .hole_vertex_count_invalid => "Hole has fewer than 3 vertices",
+            .hole_not_contained => "Hole ring is not contained within outer ring",
+            .holes_overlap => "Two or more hole rings overlap",
         };
     }
 };
@@ -223,6 +284,7 @@ pub const InternalError = enum(u32) {
 /// Generic error code that can hold any error type.
 /// Used for returning errors across operation boundaries.
 pub const ErrorCode = union(enum) {
+    protocol: ProtocolError,
     validation: ValidationError,
     state: StateError,
     resource: ResourceError,
@@ -232,6 +294,7 @@ pub const ErrorCode = union(enum) {
     /// Get the numeric error code.
     pub fn code(self: ErrorCode) u32 {
         return switch (self) {
+            .protocol => |p| @intFromEnum(p),
             .validation => |v| @intFromEnum(v),
             .state => |s| @intFromEnum(s),
             .resource => |r| @intFromEnum(r),
@@ -243,6 +306,7 @@ pub const ErrorCode = union(enum) {
     /// Get a human-readable description.
     pub fn description(self: ErrorCode) []const u8 {
         return switch (self) {
+            .protocol => |p| p.description(),
             .validation => |v| v.description(),
             .state => |s| s.description(),
             .resource => |r| r.description(),
@@ -250,12 +314,64 @@ pub const ErrorCode = union(enum) {
             .internal => |i| i.description(),
         };
     }
+
+    /// Returns true if this error can be retried.
+    /// Retry semantics per spec:
+    /// - Protocol checksum errors: Yes (transient network issues)
+    /// - Cluster/view state errors: Yes (wait for cluster recovery)
+    /// - Resource exhaustion: Yes (backoff and retry)
+    /// - Validation errors: No (client must fix input)
+    /// - Security errors: No (authentication required)
+    /// - Internal errors: No (system failure)
+    pub fn isRetriable(self: ErrorCode) bool {
+        return switch (self) {
+            .protocol => |p| p.isRetriable(),
+            .validation => false, // Client errors - must fix input
+            .state => |s| switch (s) {
+                .cluster_unavailable,
+                .view_change_in_progress,
+                .not_primary,
+                .checkpoint_in_progress,
+                .storage_unavailable,
+                .index_rebuilding,
+                .resource_exhausted,
+                .backup_required,
+                => true,
+                // Non-retriable state errors
+                .entity_not_found,
+                .session_expired,
+                .duplicate_request,
+                .stale_read,
+                .entity_expired,
+                => false,
+            },
+            .resource => |r| switch (r) {
+                // Temporary capacity issues - can retry after backoff
+                .too_many_clients,
+                .rate_limit_exceeded,
+                .memory_exhausted,
+                .disk_full,
+                .too_many_queries,
+                .pipeline_full,
+                .index_capacity_exceeded,
+                .index_degraded,
+                => true,
+                // Validation-like errors - must fix input
+                .too_many_events,
+                .message_body_too_large,
+                .result_set_too_large,
+                => false,
+            },
+            .security => false, // Must fix authentication
+            .internal => false, // System failure - not retriable
+        };
+    }
 };
 
 // Tests
 test "validation error codes in expected range" {
     const min = @intFromEnum(ValidationError.invalid_coordinates);
-    const max = @intFromEnum(ValidationError.timestamp_too_old);
+    const max = @intFromEnum(ValidationError.holes_overlap);
     try std.testing.expect(min >= 100);
     try std.testing.expect(max <= 199);
 }
@@ -291,15 +407,24 @@ test "updated error codes 114-116" {
     try std.testing.expectEqual(@as(u32, 116), @intFromEnum(ValidationError.timestamp_too_old));
 }
 
+test "polygon hole error codes 117-120" {
+    // Polygon hole validation error codes per add-polygon-holes spec
+    try std.testing.expectEqual(@as(u32, 117), @intFromEnum(ValidationError.too_many_holes));
+    try std.testing.expectEqual(@as(u32, 118), @intFromEnum(ValidationError.hole_vertex_count_invalid));
+    try std.testing.expectEqual(@as(u32, 119), @intFromEnum(ValidationError.hole_not_contained));
+    try std.testing.expectEqual(@as(u32, 120), @intFromEnum(ValidationError.holes_overlap));
+}
+
 test "spec synchronization - all error codes from spec exist" {
     // F1.2.5: Verify implementation matches spec in:
     // openspec/changes/add-geospatial-core/specs/error-codes/spec.md
     // This test verifies key error codes from each category exist at expected values.
 
-    // Validation errors (100-116)
+    // Validation errors (100-120)
     try std.testing.expectEqual(@as(u32, 100), @intFromEnum(ValidationError.invalid_coordinates));
     try std.testing.expectEqual(@as(u32, 108), @intFromEnum(ValidationError.invalid_polygon));
     try std.testing.expectEqual(@as(u32, 116), @intFromEnum(ValidationError.timestamp_too_old));
+    try std.testing.expectEqual(@as(u32, 120), @intFromEnum(ValidationError.holes_overlap));
 
     // State errors (200-211)
     try std.testing.expectEqual(@as(u32, 200), @intFromEnum(StateError.entity_not_found));
@@ -320,4 +445,67 @@ test "spec synchronization - all error codes from spec exist" {
     // Internal errors (500-504)
     try std.testing.expectEqual(@as(u32, 500), @intFromEnum(InternalError.internal_error));
     try std.testing.expectEqual(@as(u32, 504), @intFromEnum(InternalError.invariant_violation));
+}
+
+test "protocol error codes in expected range" {
+    const min = @intFromEnum(ProtocolError.invalid_message);
+    const max = @intFromEnum(ProtocolError.reserved_field_nonzero);
+    try std.testing.expect(min >= 1);
+    try std.testing.expect(max <= 99);
+}
+
+test "protocol error codes 1-10 per spec" {
+    // F1.2.5: Verify protocol error codes 1-10 exist per spec
+    try std.testing.expectEqual(@as(u32, 1), @intFromEnum(ProtocolError.invalid_message));
+    try std.testing.expectEqual(@as(u32, 2), @intFromEnum(ProtocolError.checksum_mismatch_header));
+    try std.testing.expectEqual(@as(u32, 3), @intFromEnum(ProtocolError.checksum_mismatch_body));
+    try std.testing.expectEqual(@as(u32, 4), @intFromEnum(ProtocolError.message_too_large));
+    try std.testing.expectEqual(@as(u32, 5), @intFromEnum(ProtocolError.message_too_small));
+    try std.testing.expectEqual(@as(u32, 6), @intFromEnum(ProtocolError.unsupported_version));
+    try std.testing.expectEqual(@as(u32, 7), @intFromEnum(ProtocolError.invalid_operation));
+    try std.testing.expectEqual(@as(u32, 8), @intFromEnum(ProtocolError.cluster_id_mismatch));
+    try std.testing.expectEqual(@as(u32, 9), @intFromEnum(ProtocolError.invalid_magic));
+    try std.testing.expectEqual(@as(u32, 10), @intFromEnum(ProtocolError.reserved_field_nonzero));
+}
+
+test "isRetriable semantics per spec" {
+    // Protocol checksum errors are retriable
+    const checksum_header: ErrorCode = .{ .protocol = .checksum_mismatch_header };
+    const checksum_body: ErrorCode = .{ .protocol = .checksum_mismatch_body };
+    try std.testing.expect(checksum_header.isRetriable());
+    try std.testing.expect(checksum_body.isRetriable());
+
+    // Other protocol errors are not retriable
+    const invalid_msg: ErrorCode = .{ .protocol = .invalid_message };
+    const version: ErrorCode = .{ .protocol = .unsupported_version };
+    try std.testing.expect(!invalid_msg.isRetriable());
+    try std.testing.expect(!version.isRetriable());
+
+    // Validation errors are not retriable
+    const invalid_coords: ErrorCode = .{ .validation = .invalid_coordinates };
+    try std.testing.expect(!invalid_coords.isRetriable());
+
+    // Cluster state errors are retriable
+    const cluster_unavail: ErrorCode = .{ .state = .cluster_unavailable };
+    const view_change: ErrorCode = .{ .state = .view_change_in_progress };
+    try std.testing.expect(cluster_unavail.isRetriable());
+    try std.testing.expect(view_change.isRetriable());
+
+    // Entity not found is not retriable
+    const not_found: ErrorCode = .{ .state = .entity_not_found };
+    try std.testing.expect(!not_found.isRetriable());
+
+    // Resource exhaustion is retriable (backoff)
+    const rate_limit: ErrorCode = .{ .resource = .rate_limit_exceeded };
+    try std.testing.expect(rate_limit.isRetriable());
+
+    // Batch too large is not retriable (must fix input)
+    const too_many: ErrorCode = .{ .resource = .too_many_events };
+    try std.testing.expect(!too_many.isRetriable());
+
+    // Security and internal errors are not retriable
+    const auth_fail: ErrorCode = .{ .security = .authentication_failed };
+    const internal: ErrorCode = .{ .internal = .internal_error };
+    try std.testing.expect(!auth_fail.isRetriable());
+    try std.testing.expect(!internal.isRetriable());
 }

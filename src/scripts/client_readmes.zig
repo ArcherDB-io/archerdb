@@ -120,7 +120,7 @@ fn readme_root(ctx: *Context) !void {
         }
 
         if (ctx.docs.install_commands.len > 0) {
-            ctx.paragraph("Then, install the TigerBeetle client:");
+            ctx.paragraph("Then, install the ArcherDB client:");
             ctx.commands(ctx.docs.install_commands);
         }
 
@@ -135,7 +135,7 @@ fn readme_root(ctx: *Context) !void {
 
         ctx.paragraph(
             \\Now that all prerequisites and dependencies are correctly set
-            \\up, let's dig into using TigerBeetle.
+            \\up, let's dig into using ArcherDB.
             ,
         );
     }
@@ -145,7 +145,7 @@ fn readme_root(ctx: *Context) !void {
         ctx.paragraph(
             \\This document is primarily a reference guide to
             \\the client. Below are various sample projects demonstrating
-            \\features of TigerBeetle.
+            \\features of ArcherDB.
             ,
         );
         // Absolute paths here are necessary for resolving within the docs site.
@@ -171,17 +171,17 @@ fn readme_root(ctx: *Context) !void {
             \\A client is created with a cluster ID and replica
             \\addresses for all replicas in the cluster. The cluster
             \\ID and replica addresses are both chosen by the system that
-            \\starts the TigerBeetle cluster.
+            \\starts the ArcherDB cluster.
             \\
             \\Clients are thread-safe and a single instance should be shared
             \\between multiple concurrent tasks. This allows events to be 
-            \\[automatically batched](https://docs.tigerbeetle.com/coding/requests/#batching-events).
+            \\[automatically batched](https://docs.archerdb.com/coding/requests/#batching-events).
             \\
             \\Multiple clients are useful when connecting to more than
-            \\one TigerBeetle cluster.
+            \\one ArcherDB cluster.
             \\
             \\In this example the cluster ID is `0` and there is one
-            \\replica. The address is read from the `TB_ADDRESS`
+            \\replica. The address is read from the `ARCHERDB_ADDRESS`
             \\environment variable and defaults to port `3000`.
         );
         ctx.code_section("client");
@@ -199,13 +199,13 @@ fn readme_root(ctx: *Context) !void {
         ctx.header(2, "Creating Accounts");
         ctx.paragraph(
             \\See details for account fields in the [Accounts
-            \\reference](https://docs.tigerbeetle.com/reference/account).
+            \\reference](https://docs.archerdb.com/reference/account).
         );
         ctx.code_section("create-accounts");
 
         ctx.paragraph(
             \\See details for the recommended ID scheme in
-            \\[time-based identifiers](https://docs.tigerbeetle.com/coding/data-modeling#tigerbeetle-time-based-identifiers-recommended).
+            \\[time-based identifiers](https://docs.archerdb.com/coding/data-modeling#archerdb-time-based-identifiers-recommended).
         );
 
         ctx.paragraph(ctx.docs.create_accounts_documentation);
@@ -214,7 +214,7 @@ fn readme_root(ctx: *Context) !void {
         ctx.paragraph(
             \\The account flags value is a bitfield. See details for
             \\these flags in the [Accounts
-            \\reference](https://docs.tigerbeetle.com/reference/account#flags).
+            \\reference](https://docs.archerdb.com/reference/account#flags).
         );
         ctx.paragraph(ctx.docs.account_flags_documentation);
 
@@ -234,7 +234,7 @@ fn readme_root(ctx: *Context) !void {
             \\batch.
             \\
             \\See all error conditions in the [create_accounts
-            \\reference](https://docs.tigerbeetle.com/reference/requests/create_accounts).
+            \\reference](https://docs.archerdb.com/reference/requests/create_accounts).
         );
 
         ctx.code_section("create-accounts-errors");
@@ -263,13 +263,13 @@ fn readme_root(ctx: *Context) !void {
             \\This creates a journal entry between two accounts.
             \\
             \\See details for transfer fields in the [Transfers
-            \\reference](https://docs.tigerbeetle.com/reference/transfer).
+            \\reference](https://docs.archerdb.com/reference/transfer).
         );
         ctx.code_section("create-transfers");
 
         ctx.paragraph(
             \\See details for the recommended ID scheme in
-            \\[time-based identifiers](https://docs.tigerbeetle.com/coding/data-modeling#tigerbeetle-time-based-identifiers-recommended).
+            \\[time-based identifiers](https://docs.archerdb.com/coding/data-modeling#archerdb-time-based-identifiers-recommended).
         );
 
         ctx.header(3, "Response and Errors");
@@ -281,7 +281,7 @@ fn readme_root(ctx: *Context) !void {
             \\transfer in the request batch.
             \\
             \\See all error conditions in the [create_transfers
-            \\reference](https://docs.tigerbeetle.com/reference/requests/create_transfers).
+            \\reference](https://docs.archerdb.com/reference/requests/create_transfers).
         );
         ctx.code_section("create-transfers-errors");
 
@@ -291,7 +291,7 @@ fn readme_root(ctx: *Context) !void {
     {
         ctx.header(2, "Batching");
         ctx.paragraph(
-            \\TigerBeetle performance is maximized when you batch
+            \\ArcherDB performance is maximized when you batch
             \\API requests.
             \\A client instance shared across multiple threads/tasks can automatically
             \\batch concurrent requests, but the application must still send as many events
@@ -303,15 +303,15 @@ fn readme_root(ctx: *Context) !void {
         ctx.code_section("no-batch");
         ctx.paragraph(
             \\Instead, **always batch as much as you can**.
-            \\The maximum batch size is set in the TigerBeetle server. The default is 8189.
+            \\The maximum batch size is set in the ArcherDB server. The default is 8189.
         );
         ctx.code_section("batch");
 
         ctx.header(3, "Queues and Workers");
         ctx.paragraph(
-            \\If you are making requests to TigerBeetle from workers
+            \\If you are making requests to ArcherDB from workers
             \\pulling jobs from a queue, you can batch requests to
-            \\TigerBeetle by having the worker act on multiple jobs from
+            \\ArcherDB by having the worker act on multiple jobs from
             \\the queue at once rather than one at a time. i.e. pulling
             \\multiple jobs from the queue rather than just one.
         );
@@ -322,7 +322,7 @@ fn readme_root(ctx: *Context) !void {
         ctx.paragraph(
             \\The transfer `flags` value is a bitfield. See details for these flags in
             \\the [Transfers
-            \\reference](https://docs.tigerbeetle.com/reference/transfer#flags).
+            \\reference](https://docs.archerdb.com/reference/transfer#flags).
         );
         ctx.paragraph(ctx.docs.transfer_flags_documentation);
         ctx.paragraph("For example, to link `transfer0` and `transfer1`:");
@@ -331,7 +331,7 @@ fn readme_root(ctx: *Context) !void {
         ctx.header(3, "Two-Phase Transfers");
         ctx.paragraph(
             \\Two-phase transfers are supported natively by toggling the appropriate
-            \\flag. TigerBeetle will then adjust the `credits_pending` and
+            \\flag. ArcherDB will then adjust the `credits_pending` and
             \\`debits_pending` fields of the appropriate accounts. A corresponding
             \\post pending transfer then needs to be sent to post or void the
             \\transfer.
@@ -339,7 +339,7 @@ fn readme_root(ctx: *Context) !void {
         ctx.header(4, "Post a Pending Transfer");
         ctx.paragraph(
             \\With `flags` set to `post_pending_transfer`,
-            \\TigerBeetle will post the transfer. TigerBeetle will atomically roll
+            \\ArcherDB will post the transfer. ArcherDB will atomically roll
             \\back the changes to `debits_pending` and `credits_pending` of the
             \\appropriate accounts and apply them to the `debits_posted` and
             \\`credits_posted` balances.
@@ -349,7 +349,7 @@ fn readme_root(ctx: *Context) !void {
         ctx.header(4, "Void a Pending Transfer");
         ctx.paragraph(
             \\In contrast, with `flags` set to `void_pending_transfer`,
-            \\TigerBeetle will void the transfer. TigerBeetle will roll
+            \\ArcherDB will void the transfer. ArcherDB will roll
             \\back the changes to `debits_pending` and `credits_pending` of the
             \\appropriate accounts and **not** apply them to the `debits_posted` and
             \\`credits_posted` balances.
@@ -400,8 +400,8 @@ fn readme_root(ctx: *Context) !void {
             \\pagination capabilities.
             \\
             \\Only accounts created with the flag
-            \\[`history`](https://docs.tigerbeetle.com/reference/account#flagshistory) set retain
-            \\[historical balances](https://docs.tigerbeetle.com/reference/requests/get_account_balances).
+            \\[`history`](https://docs.archerdb.com/reference/account#flagshistory) set retain
+            \\[historical balances](https://docs.archerdb.com/reference/requests/get_account_balances).
             \\
             \\The balances in the response are sorted by `timestamp` in chronological or
             \\reverse-chronological order.
@@ -515,22 +515,22 @@ fn readme_sample(ctx: *Context, sample: Sample) !void {
     {
         ctx.header(2, "Setup");
         ctx.paragraph(try ctx.shell.fmt(
-            \\First, clone this repo and `cd` into `tigerbeetle/src/clients/{s}/samples/{s}`.
+            \\First, clone this repo and `cd` into `archerdb/src/clients/{s}/samples/{s}`.
         , .{ ctx.docs.directory, sample.directory }));
 
-        ctx.paragraph("Then, install the TigerBeetle client:");
+        ctx.paragraph("Then, install the ArcherDB client:");
         ctx.commands(ctx.docs.install_commands);
     }
 
     {
-        ctx.header(2, "Start the TigerBeetle server");
+        ctx.header(2, "Start the ArcherDB server");
         ctx.paragraph(
             \\Follow steps in the repo README to [run
-            \\TigerBeetle](/README.md#running-tigerbeetle).
+            \\ArcherDB](/README.md#running-archerdb).
             \\
             \\If you are not running on port `localhost:3000`, set
-            \\the environment variable `TB_ADDRESS` to the full
-            \\address of the TigerBeetle server you started.
+            \\the environment variable `ARCHERDB_ADDRESS` to the full
+            \\address of the ArcherDB server you started.
         );
     }
 

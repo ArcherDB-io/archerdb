@@ -15,7 +15,7 @@ The system SHALL be licensed under Apache License 2.0 to maximize adoption and c
 - **WHEN** selecting a project license
 - **THEN** Apache 2.0 SHALL be chosen because:
   - Permissive license allowing commercial use without royalties
-  - Compatible with TigerBeetle's Apache 2.0 license
+  - Compatible with ArcherDB's Apache 2.0 license
   - Widely adopted in infrastructure and database projects
   - Clear patent grant provisions
 - **AND** license text SHALL be included in repository root as `LICENSE`
@@ -29,30 +29,30 @@ The system SHALL be licensed under Apache License 2.0 to maximize adoption and c
   - LGPL dependencies (with careful linking considerations)
 - **AND** GPL dependencies SHALL be avoided to maintain license compatibility
 
-### Requirement: TigerBeetle Attribution
+### Requirement: ArcherDB Attribution
 
-The system SHALL attribute TigerBeetle as the foundational technology through code comments, documentation, and copyright notices as specified in Apache 2.0 License requirements.
+The system SHALL attribute ArcherDB as the foundational technology through code comments, documentation, and copyright notices as specified in Apache 2.0 License requirements.
 
 #### Scenario: Code attribution
 
-- **WHEN** adapting TigerBeetle code patterns
+- **WHEN** adapting ArcherDB code patterns
 - **THEN** source files SHALL include attribution headers:
   ```zig
-  // Portions adapted from TigerBeetle (Apache 2.0 License)
-  // Original: https://github.com/tigerbeetle/tigerbeetle
-  // Copyright TigerBeetle, Inc.
+  // Portions adapted from ArcherDB (Apache 2.0 License)
+  // Original: https://github.com/archerdb/archerdb
+  // Copyright ArcherDB, Inc.
   // Modifications for ArcherDB geospatial database
   ```
-- **AND** attribution SHALL be included in every file using TigerBeetle patterns
+- **AND** attribution SHALL be included in every file using ArcherDB patterns
 
 #### Scenario: Documentation attribution
 
-- **WHEN** referencing TigerBeetle in documentation
+- **WHEN** referencing ArcherDB in documentation
 - **THEN** clear attribution SHALL be provided:
-  - Link to TigerBeetle repository prominently
-  - Acknowledge TigerBeetle as foundational architecture
-  - Credit TigerBeetle team in release notes
-  - Encourage users to support TigerBeetle project
+  - Link to ArcherDB repository prominently
+  - Acknowledge ArcherDB as foundational architecture
+  - Credit ArcherDB team in release notes
+  - Encourage users to support ArcherDB project
 - **AND** attribution SHALL be included in README and documentation
 
 ### Requirement: SDK Licensing Strategy
@@ -90,7 +90,7 @@ The system SHALL carefully manage third-party dependencies to maintain license c
   - Check license text against Apache 2.0 compatibility
   - Review for copyleft clauses or restrictions
   - Assess patent grant provisions
-  - Verify license compatibility with TigerBeetle dependencies
+  - Verify license compatibility with ArcherDB dependencies
 - **AND** dependency licenses SHALL be documented in repository
 
 #### Scenario: Dependency attribution
@@ -428,6 +428,6 @@ The system SHALL implement legal review processes for significant changes and re
 
 ### Related Specifications
 
-- See `specs/implementation-guide/spec.md` for TigerBeetle attribution requirements
+- See `specs/implementation-guide/spec.md` for ArcherDB attribution requirements
 - See `specs/ci-cd/spec.md` for automated license compliance checks
 - See `specs/client-sdk/spec.md` for SDK licensing strategy

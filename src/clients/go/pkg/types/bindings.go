@@ -6,633 +6,180 @@
 package types
 
 /*
-#include "../native/tb_client.h"
+#include "../native/arch_client.h"
 */
 import "C"
 import "strconv"
 
-type AccountFlags struct {
-	Linked                     bool
-	DebitsMustNotExceedCredits bool
-	CreditsMustNotExceedDebits bool
-	History                    bool
-	Imported                   bool
-	Closed                     bool
+type GeoEventFlagsRaw struct {
+	Linked      bool
+	Imported    bool
+	Stationary  bool
+	LowAccuracy bool
+	Offline     bool
+	Deleted     bool
 }
 
-func (f AccountFlags) ToUint16() uint16 {
+func (f GeoEventFlagsRaw) ToUint16() uint16 {
 	var ret uint16 = 0
 
 	if f.Linked {
 		ret |= (1 << 0)
 	}
 
-	if f.DebitsMustNotExceedCredits {
+	if f.Imported {
 		ret |= (1 << 1)
 	}
 
-	if f.CreditsMustNotExceedDebits {
+	if f.Stationary {
 		ret |= (1 << 2)
 	}
 
-	if f.History {
+	if f.LowAccuracy {
 		ret |= (1 << 3)
 	}
 
-	if f.Imported {
+	if f.Offline {
 		ret |= (1 << 4)
 	}
 
-	if f.Closed {
+	if f.Deleted {
 		ret |= (1 << 5)
 	}
 
 	return ret
 }
 
-type TransferFlags struct {
-	Linked              bool
-	Pending             bool
-	PostPendingTransfer bool
-	VoidPendingTransfer bool
-	BalancingDebit      bool
-	BalancingCredit     bool
-	ClosingDebit        bool
-	ClosingCredit       bool
-	Imported            bool
+type GeoEventRaw struct {
+	ID            Uint128
+	EntityID      Uint128
+	CorrelationID Uint128
+	UserData      Uint128
+	LatNano       int64
+	LonNano       int64
+	GroupID       uint64
+	Timestamp     uint64
+	AltitudeMm    int32
+	VelocityMms   uint32
+	TtlSeconds    uint32
+	AccuracyMm    uint32
+	HeadingCdeg   uint16
+	Flags         uint16
+	Reserved      [12]uint8
 }
 
-func (f TransferFlags) ToUint16() uint16 {
-	var ret uint16 = 0
-
-	if f.Linked {
-		ret |= (1 << 0)
-	}
-
-	if f.Pending {
-		ret |= (1 << 1)
-	}
-
-	if f.PostPendingTransfer {
-		ret |= (1 << 2)
-	}
-
-	if f.VoidPendingTransfer {
-		ret |= (1 << 3)
-	}
-
-	if f.BalancingDebit {
-		ret |= (1 << 4)
-	}
-
-	if f.BalancingCredit {
-		ret |= (1 << 5)
-	}
-
-	if f.ClosingDebit {
-		ret |= (1 << 6)
-	}
-
-	if f.ClosingCredit {
-		ret |= (1 << 7)
-	}
-
-	if f.Imported {
-		ret |= (1 << 8)
-	}
-
-	return ret
-}
-
-type AccountFilterFlags struct {
-	Debits   bool
-	Credits  bool
-	Reversed bool
-}
-
-func (f AccountFilterFlags) ToUint32() uint32 {
-	var ret uint32 = 0
-
-	if f.Debits {
-		ret |= (1 << 0)
-	}
-
-	if f.Credits {
-		ret |= (1 << 1)
-	}
-
-	if f.Reversed {
-		ret |= (1 << 2)
-	}
-
-	return ret
-}
-
-type QueryFilterFlags struct {
-	Reversed bool
-}
-
-func (f QueryFilterFlags) ToUint32() uint32 {
-	var ret uint32 = 0
-
-	if f.Reversed {
-		ret |= (1 << 0)
-	}
-
-	return ret
-}
-
-type Account struct {
-	ID             Uint128
-	DebitsPending  Uint128
-	DebitsPosted   Uint128
-	CreditsPending Uint128
-	CreditsPosted  Uint128
-	UserData128    Uint128
-	UserData64     uint64
-	UserData32     uint32
-	Reserved       uint32
-	Ledger         uint32
-	Code           uint16
-	Flags          uint16
-	Timestamp      uint64
-}
-
-func (o Account) AccountFlags() AccountFlags {
-	var f AccountFlags
+func (o GeoEventRaw) GetFlags() GeoEventFlagsRaw {
+	var f GeoEventFlagsRaw
 	f.Linked = ((o.Flags >> 0) & 0x1) == 1
-	f.DebitsMustNotExceedCredits = ((o.Flags >> 1) & 0x1) == 1
-	f.CreditsMustNotExceedDebits = ((o.Flags >> 2) & 0x1) == 1
-	f.History = ((o.Flags >> 3) & 0x1) == 1
-	f.Imported = ((o.Flags >> 4) & 0x1) == 1
-	f.Closed = ((o.Flags >> 5) & 0x1) == 1
+	f.Imported = ((o.Flags >> 1) & 0x1) == 1
+	f.Stationary = ((o.Flags >> 2) & 0x1) == 1
+	f.LowAccuracy = ((o.Flags >> 3) & 0x1) == 1
+	f.Offline = ((o.Flags >> 4) & 0x1) == 1
+	f.Deleted = ((o.Flags >> 5) & 0x1) == 1
 	return f
 }
 
-type Transfer struct {
-	ID              Uint128
-	DebitAccountID  Uint128
-	CreditAccountID Uint128
-	Amount          Uint128
-	PendingID       Uint128
-	UserData128     Uint128
-	UserData64      uint64
-	UserData32      uint32
-	Timeout         uint32
-	Ledger          uint32
-	Code            uint16
-	Flags           uint16
-	Timestamp       uint64
-}
-
-func (o Transfer) TransferFlags() TransferFlags {
-	var f TransferFlags
-	f.Linked = ((o.Flags >> 0) & 0x1) == 1
-	f.Pending = ((o.Flags >> 1) & 0x1) == 1
-	f.PostPendingTransfer = ((o.Flags >> 2) & 0x1) == 1
-	f.VoidPendingTransfer = ((o.Flags >> 3) & 0x1) == 1
-	f.BalancingDebit = ((o.Flags >> 4) & 0x1) == 1
-	f.BalancingCredit = ((o.Flags >> 5) & 0x1) == 1
-	f.ClosingDebit = ((o.Flags >> 6) & 0x1) == 1
-	f.ClosingCredit = ((o.Flags >> 7) & 0x1) == 1
-	f.Imported = ((o.Flags >> 8) & 0x1) == 1
-	return f
-}
-
-type CreateAccountResult uint32
+type InsertGeoEventResultRaw uint32
 
 const (
-	AccountOK                                   CreateAccountResult = 0
-	AccountLinkedEventFailed                    CreateAccountResult = 1
-	AccountLinkedEventChainOpen                 CreateAccountResult = 2
-	AccountImportedEventExpected                CreateAccountResult = 22
-	AccountImportedEventNotExpected             CreateAccountResult = 23
-	AccountTimestampMustBeZero                  CreateAccountResult = 3
-	AccountImportedEventTimestampOutOfRange     CreateAccountResult = 24
-	AccountImportedEventTimestampMustNotAdvance CreateAccountResult = 25
-	AccountReservedField                        CreateAccountResult = 4
-	AccountReservedFlag                         CreateAccountResult = 5
-	AccountIDMustNotBeZero                      CreateAccountResult = 6
-	AccountIDMustNotBeIntMax                    CreateAccountResult = 7
-	AccountExistsWithDifferentFlags             CreateAccountResult = 15
-	AccountExistsWithDifferentUserData128       CreateAccountResult = 16
-	AccountExistsWithDifferentUserData64        CreateAccountResult = 17
-	AccountExistsWithDifferentUserData32        CreateAccountResult = 18
-	AccountExistsWithDifferentLedger            CreateAccountResult = 19
-	AccountExistsWithDifferentCode              CreateAccountResult = 20
-	AccountExists                               CreateAccountResult = 21
-	AccountFlagsAreMutuallyExclusive            CreateAccountResult = 8
-	AccountDebitsPendingMustBeZero              CreateAccountResult = 9
-	AccountDebitsPostedMustBeZero               CreateAccountResult = 10
-	AccountCreditsPendingMustBeZero             CreateAccountResult = 11
-	AccountCreditsPostedMustBeZero              CreateAccountResult = 12
-	AccountLedgerMustNotBeZero                  CreateAccountResult = 13
-	AccountCodeMustNotBeZero                    CreateAccountResult = 14
-	AccountImportedEventTimestampMustNotRegress CreateAccountResult = 26
+	GeoEventOK                             InsertGeoEventResultRaw = 0
+	GeoEventLinkedEventFailed              InsertGeoEventResultRaw = 1
+	GeoEventLinkedEventChainOpen           InsertGeoEventResultRaw = 2
+	GeoEventTimestampMustBeZero            InsertGeoEventResultRaw = 3
+	GeoEventReservedField                  InsertGeoEventResultRaw = 4
+	GeoEventReservedFlag                   InsertGeoEventResultRaw = 5
+	GeoEventIDMustNotBeZero                InsertGeoEventResultRaw = 6
+	GeoEventEntityIDMustNotBeZero          InsertGeoEventResultRaw = 7
+	GeoEventInvalidCoordinates             InsertGeoEventResultRaw = 8
+	GeoEventLatOutOfRange                  InsertGeoEventResultRaw = 9
+	GeoEventLonOutOfRange                  InsertGeoEventResultRaw = 10
+	GeoEventExistsWithDifferentEntityID    InsertGeoEventResultRaw = 11
+	GeoEventExistsWithDifferentCoordinates InsertGeoEventResultRaw = 12
+	GeoEventExists                         InsertGeoEventResultRaw = 13
+	GeoEventHeadingOutOfRange              InsertGeoEventResultRaw = 14
+	GeoEventTtlInvalid                     InsertGeoEventResultRaw = 15
 )
 
-func (i CreateAccountResult) String() string {
+func (i InsertGeoEventResultRaw) String() string {
 	switch i {
-	case AccountOK:
-		return "AccountOK"
-	case AccountLinkedEventFailed:
-		return "AccountLinkedEventFailed"
-	case AccountLinkedEventChainOpen:
-		return "AccountLinkedEventChainOpen"
-	case AccountImportedEventExpected:
-		return "AccountImportedEventExpected"
-	case AccountImportedEventNotExpected:
-		return "AccountImportedEventNotExpected"
-	case AccountTimestampMustBeZero:
-		return "AccountTimestampMustBeZero"
-	case AccountImportedEventTimestampOutOfRange:
-		return "AccountImportedEventTimestampOutOfRange"
-	case AccountImportedEventTimestampMustNotAdvance:
-		return "AccountImportedEventTimestampMustNotAdvance"
-	case AccountReservedField:
-		return "AccountReservedField"
-	case AccountReservedFlag:
-		return "AccountReservedFlag"
-	case AccountIDMustNotBeZero:
-		return "AccountIDMustNotBeZero"
-	case AccountIDMustNotBeIntMax:
-		return "AccountIDMustNotBeIntMax"
-	case AccountExistsWithDifferentFlags:
-		return "AccountExistsWithDifferentFlags"
-	case AccountExistsWithDifferentUserData128:
-		return "AccountExistsWithDifferentUserData128"
-	case AccountExistsWithDifferentUserData64:
-		return "AccountExistsWithDifferentUserData64"
-	case AccountExistsWithDifferentUserData32:
-		return "AccountExistsWithDifferentUserData32"
-	case AccountExistsWithDifferentLedger:
-		return "AccountExistsWithDifferentLedger"
-	case AccountExistsWithDifferentCode:
-		return "AccountExistsWithDifferentCode"
-	case AccountExists:
-		return "AccountExists"
-	case AccountFlagsAreMutuallyExclusive:
-		return "AccountFlagsAreMutuallyExclusive"
-	case AccountDebitsPendingMustBeZero:
-		return "AccountDebitsPendingMustBeZero"
-	case AccountDebitsPostedMustBeZero:
-		return "AccountDebitsPostedMustBeZero"
-	case AccountCreditsPendingMustBeZero:
-		return "AccountCreditsPendingMustBeZero"
-	case AccountCreditsPostedMustBeZero:
-		return "AccountCreditsPostedMustBeZero"
-	case AccountLedgerMustNotBeZero:
-		return "AccountLedgerMustNotBeZero"
-	case AccountCodeMustNotBeZero:
-		return "AccountCodeMustNotBeZero"
-	case AccountImportedEventTimestampMustNotRegress:
-		return "AccountImportedEventTimestampMustNotRegress"
+	case GeoEventOK:
+		return "GeoEventOK"
+	case GeoEventLinkedEventFailed:
+		return "GeoEventLinkedEventFailed"
+	case GeoEventLinkedEventChainOpen:
+		return "GeoEventLinkedEventChainOpen"
+	case GeoEventTimestampMustBeZero:
+		return "GeoEventTimestampMustBeZero"
+	case GeoEventReservedField:
+		return "GeoEventReservedField"
+	case GeoEventReservedFlag:
+		return "GeoEventReservedFlag"
+	case GeoEventIDMustNotBeZero:
+		return "GeoEventIDMustNotBeZero"
+	case GeoEventEntityIDMustNotBeZero:
+		return "GeoEventEntityIDMustNotBeZero"
+	case GeoEventInvalidCoordinates:
+		return "GeoEventInvalidCoordinates"
+	case GeoEventLatOutOfRange:
+		return "GeoEventLatOutOfRange"
+	case GeoEventLonOutOfRange:
+		return "GeoEventLonOutOfRange"
+	case GeoEventExistsWithDifferentEntityID:
+		return "GeoEventExistsWithDifferentEntityID"
+	case GeoEventExistsWithDifferentCoordinates:
+		return "GeoEventExistsWithDifferentCoordinates"
+	case GeoEventExists:
+		return "GeoEventExists"
+	case GeoEventHeadingOutOfRange:
+		return "GeoEventHeadingOutOfRange"
+	case GeoEventTtlInvalid:
+		return "GeoEventTtlInvalid"
 	}
-	return "CreateAccountResult(" + strconv.FormatInt(int64(i+1), 10) + ")"
+	return "InsertGeoEventResultRaw(" + strconv.FormatInt(int64(i+1), 10) + ")"
 }
 
-type CreateTransferResult uint32
+type DeleteEntityResultRaw uint32
 
 const (
-	TransferOK                                              CreateTransferResult = 0
-	TransferLinkedEventFailed                               CreateTransferResult = 1
-	TransferLinkedEventChainOpen                            CreateTransferResult = 2
-	TransferImportedEventExpected                           CreateTransferResult = 56
-	TransferImportedEventNotExpected                        CreateTransferResult = 57
-	TransferTimestampMustBeZero                             CreateTransferResult = 3
-	TransferImportedEventTimestampOutOfRange                CreateTransferResult = 58
-	TransferImportedEventTimestampMustNotAdvance            CreateTransferResult = 59
-	TransferReservedFlag                                    CreateTransferResult = 4
-	TransferIDMustNotBeZero                                 CreateTransferResult = 5
-	TransferIDMustNotBeIntMax                               CreateTransferResult = 6
-	TransferExistsWithDifferentFlags                        CreateTransferResult = 36
-	TransferExistsWithDifferentPendingID                    CreateTransferResult = 40
-	TransferExistsWithDifferentTimeout                      CreateTransferResult = 44
-	TransferExistsWithDifferentDebitAccountID               CreateTransferResult = 37
-	TransferExistsWithDifferentCreditAccountID              CreateTransferResult = 38
-	TransferExistsWithDifferentAmount                       CreateTransferResult = 39
-	TransferExistsWithDifferentUserData128                  CreateTransferResult = 41
-	TransferExistsWithDifferentUserData64                   CreateTransferResult = 42
-	TransferExistsWithDifferentUserData32                   CreateTransferResult = 43
-	TransferExistsWithDifferentLedger                       CreateTransferResult = 67
-	TransferExistsWithDifferentCode                         CreateTransferResult = 45
-	TransferExists                                          CreateTransferResult = 46
-	TransferIDAlreadyFailed                                 CreateTransferResult = 68
-	TransferFlagsAreMutuallyExclusive                       CreateTransferResult = 7
-	TransferDebitAccountIDMustNotBeZero                     CreateTransferResult = 8
-	TransferDebitAccountIDMustNotBeIntMax                   CreateTransferResult = 9
-	TransferCreditAccountIDMustNotBeZero                    CreateTransferResult = 10
-	TransferCreditAccountIDMustNotBeIntMax                  CreateTransferResult = 11
-	TransferAccountsMustBeDifferent                         CreateTransferResult = 12
-	TransferPendingIDMustBeZero                             CreateTransferResult = 13
-	TransferPendingIDMustNotBeZero                          CreateTransferResult = 14
-	TransferPendingIDMustNotBeIntMax                        CreateTransferResult = 15
-	TransferPendingIDMustBeDifferent                        CreateTransferResult = 16
-	TransferTimeoutReservedForPendingTransfer               CreateTransferResult = 17
-	TransferClosingTransferMustBePending                    CreateTransferResult = 64
-	TransferLedgerMustNotBeZero                             CreateTransferResult = 19
-	TransferCodeMustNotBeZero                               CreateTransferResult = 20
-	TransferDebitAccountNotFound                            CreateTransferResult = 21
-	TransferCreditAccountNotFound                           CreateTransferResult = 22
-	TransferAccountsMustHaveTheSameLedger                   CreateTransferResult = 23
-	TransferTransferMustHaveTheSameLedgerAsAccounts         CreateTransferResult = 24
-	TransferPendingTransferNotFound                         CreateTransferResult = 25
-	TransferPendingTransferNotPending                       CreateTransferResult = 26
-	TransferPendingTransferHasDifferentDebitAccountID       CreateTransferResult = 27
-	TransferPendingTransferHasDifferentCreditAccountID      CreateTransferResult = 28
-	TransferPendingTransferHasDifferentLedger               CreateTransferResult = 29
-	TransferPendingTransferHasDifferentCode                 CreateTransferResult = 30
-	TransferExceedsPendingTransferAmount                    CreateTransferResult = 31
-	TransferPendingTransferHasDifferentAmount               CreateTransferResult = 32
-	TransferPendingTransferAlreadyPosted                    CreateTransferResult = 33
-	TransferPendingTransferAlreadyVoided                    CreateTransferResult = 34
-	TransferPendingTransferExpired                          CreateTransferResult = 35
-	TransferImportedEventTimestampMustNotRegress            CreateTransferResult = 60
-	TransferImportedEventTimestampMustPostdateDebitAccount  CreateTransferResult = 61
-	TransferImportedEventTimestampMustPostdateCreditAccount CreateTransferResult = 62
-	TransferImportedEventTimeoutMustBeZero                  CreateTransferResult = 63
-	TransferDebitAccountAlreadyClosed                       CreateTransferResult = 65
-	TransferCreditAccountAlreadyClosed                      CreateTransferResult = 66
-	TransferOverflowsDebitsPending                          CreateTransferResult = 47
-	TransferOverflowsCreditsPending                         CreateTransferResult = 48
-	TransferOverflowsDebitsPosted                           CreateTransferResult = 49
-	TransferOverflowsCreditsPosted                          CreateTransferResult = 50
-	TransferOverflowsDebits                                 CreateTransferResult = 51
-	TransferOverflowsCredits                                CreateTransferResult = 52
-	TransferOverflowsTimeout                                CreateTransferResult = 53
-	TransferExceedsCredits                                  CreateTransferResult = 54
-	TransferExceedsDebits                                   CreateTransferResult = 55
+	EntityOK                    DeleteEntityResultRaw = 0
+	EntityLinkedEventFailed     DeleteEntityResultRaw = 1
+	EntityEntityIDMustNotBeZero DeleteEntityResultRaw = 2
+	EntityEntityNotFound        DeleteEntityResultRaw = 3
 )
 
-func (i CreateTransferResult) String() string {
+func (i DeleteEntityResultRaw) String() string {
 	switch i {
-	case TransferOK:
-		return "TransferOK"
-	case TransferLinkedEventFailed:
-		return "TransferLinkedEventFailed"
-	case TransferLinkedEventChainOpen:
-		return "TransferLinkedEventChainOpen"
-	case TransferImportedEventExpected:
-		return "TransferImportedEventExpected"
-	case TransferImportedEventNotExpected:
-		return "TransferImportedEventNotExpected"
-	case TransferTimestampMustBeZero:
-		return "TransferTimestampMustBeZero"
-	case TransferImportedEventTimestampOutOfRange:
-		return "TransferImportedEventTimestampOutOfRange"
-	case TransferImportedEventTimestampMustNotAdvance:
-		return "TransferImportedEventTimestampMustNotAdvance"
-	case TransferReservedFlag:
-		return "TransferReservedFlag"
-	case TransferIDMustNotBeZero:
-		return "TransferIDMustNotBeZero"
-	case TransferIDMustNotBeIntMax:
-		return "TransferIDMustNotBeIntMax"
-	case TransferExistsWithDifferentFlags:
-		return "TransferExistsWithDifferentFlags"
-	case TransferExistsWithDifferentPendingID:
-		return "TransferExistsWithDifferentPendingID"
-	case TransferExistsWithDifferentTimeout:
-		return "TransferExistsWithDifferentTimeout"
-	case TransferExistsWithDifferentDebitAccountID:
-		return "TransferExistsWithDifferentDebitAccountID"
-	case TransferExistsWithDifferentCreditAccountID:
-		return "TransferExistsWithDifferentCreditAccountID"
-	case TransferExistsWithDifferentAmount:
-		return "TransferExistsWithDifferentAmount"
-	case TransferExistsWithDifferentUserData128:
-		return "TransferExistsWithDifferentUserData128"
-	case TransferExistsWithDifferentUserData64:
-		return "TransferExistsWithDifferentUserData64"
-	case TransferExistsWithDifferentUserData32:
-		return "TransferExistsWithDifferentUserData32"
-	case TransferExistsWithDifferentLedger:
-		return "TransferExistsWithDifferentLedger"
-	case TransferExistsWithDifferentCode:
-		return "TransferExistsWithDifferentCode"
-	case TransferExists:
-		return "TransferExists"
-	case TransferIDAlreadyFailed:
-		return "TransferIDAlreadyFailed"
-	case TransferFlagsAreMutuallyExclusive:
-		return "TransferFlagsAreMutuallyExclusive"
-	case TransferDebitAccountIDMustNotBeZero:
-		return "TransferDebitAccountIDMustNotBeZero"
-	case TransferDebitAccountIDMustNotBeIntMax:
-		return "TransferDebitAccountIDMustNotBeIntMax"
-	case TransferCreditAccountIDMustNotBeZero:
-		return "TransferCreditAccountIDMustNotBeZero"
-	case TransferCreditAccountIDMustNotBeIntMax:
-		return "TransferCreditAccountIDMustNotBeIntMax"
-	case TransferAccountsMustBeDifferent:
-		return "TransferAccountsMustBeDifferent"
-	case TransferPendingIDMustBeZero:
-		return "TransferPendingIDMustBeZero"
-	case TransferPendingIDMustNotBeZero:
-		return "TransferPendingIDMustNotBeZero"
-	case TransferPendingIDMustNotBeIntMax:
-		return "TransferPendingIDMustNotBeIntMax"
-	case TransferPendingIDMustBeDifferent:
-		return "TransferPendingIDMustBeDifferent"
-	case TransferTimeoutReservedForPendingTransfer:
-		return "TransferTimeoutReservedForPendingTransfer"
-	case TransferClosingTransferMustBePending:
-		return "TransferClosingTransferMustBePending"
-	case TransferLedgerMustNotBeZero:
-		return "TransferLedgerMustNotBeZero"
-	case TransferCodeMustNotBeZero:
-		return "TransferCodeMustNotBeZero"
-	case TransferDebitAccountNotFound:
-		return "TransferDebitAccountNotFound"
-	case TransferCreditAccountNotFound:
-		return "TransferCreditAccountNotFound"
-	case TransferAccountsMustHaveTheSameLedger:
-		return "TransferAccountsMustHaveTheSameLedger"
-	case TransferTransferMustHaveTheSameLedgerAsAccounts:
-		return "TransferTransferMustHaveTheSameLedgerAsAccounts"
-	case TransferPendingTransferNotFound:
-		return "TransferPendingTransferNotFound"
-	case TransferPendingTransferNotPending:
-		return "TransferPendingTransferNotPending"
-	case TransferPendingTransferHasDifferentDebitAccountID:
-		return "TransferPendingTransferHasDifferentDebitAccountID"
-	case TransferPendingTransferHasDifferentCreditAccountID:
-		return "TransferPendingTransferHasDifferentCreditAccountID"
-	case TransferPendingTransferHasDifferentLedger:
-		return "TransferPendingTransferHasDifferentLedger"
-	case TransferPendingTransferHasDifferentCode:
-		return "TransferPendingTransferHasDifferentCode"
-	case TransferExceedsPendingTransferAmount:
-		return "TransferExceedsPendingTransferAmount"
-	case TransferPendingTransferHasDifferentAmount:
-		return "TransferPendingTransferHasDifferentAmount"
-	case TransferPendingTransferAlreadyPosted:
-		return "TransferPendingTransferAlreadyPosted"
-	case TransferPendingTransferAlreadyVoided:
-		return "TransferPendingTransferAlreadyVoided"
-	case TransferPendingTransferExpired:
-		return "TransferPendingTransferExpired"
-	case TransferImportedEventTimestampMustNotRegress:
-		return "TransferImportedEventTimestampMustNotRegress"
-	case TransferImportedEventTimestampMustPostdateDebitAccount:
-		return "TransferImportedEventTimestampMustPostdateDebitAccount"
-	case TransferImportedEventTimestampMustPostdateCreditAccount:
-		return "TransferImportedEventTimestampMustPostdateCreditAccount"
-	case TransferImportedEventTimeoutMustBeZero:
-		return "TransferImportedEventTimeoutMustBeZero"
-	case TransferDebitAccountAlreadyClosed:
-		return "TransferDebitAccountAlreadyClosed"
-	case TransferCreditAccountAlreadyClosed:
-		return "TransferCreditAccountAlreadyClosed"
-	case TransferOverflowsDebitsPending:
-		return "TransferOverflowsDebitsPending"
-	case TransferOverflowsCreditsPending:
-		return "TransferOverflowsCreditsPending"
-	case TransferOverflowsDebitsPosted:
-		return "TransferOverflowsDebitsPosted"
-	case TransferOverflowsCreditsPosted:
-		return "TransferOverflowsCreditsPosted"
-	case TransferOverflowsDebits:
-		return "TransferOverflowsDebits"
-	case TransferOverflowsCredits:
-		return "TransferOverflowsCredits"
-	case TransferOverflowsTimeout:
-		return "TransferOverflowsTimeout"
-	case TransferExceedsCredits:
-		return "TransferExceedsCredits"
-	case TransferExceedsDebits:
-		return "TransferExceedsDebits"
+	case EntityOK:
+		return "EntityOK"
+	case EntityLinkedEventFailed:
+		return "EntityLinkedEventFailed"
+	case EntityEntityIDMustNotBeZero:
+		return "EntityEntityIDMustNotBeZero"
+	case EntityEntityNotFound:
+		return "EntityEntityNotFound"
 	}
-	return "CreateTransferResult(" + strconv.FormatInt(int64(i+1), 10) + ")"
+	return "DeleteEntityResultRaw(" + strconv.FormatInt(int64(i+1), 10) + ")"
 }
 
-type AccountEventResult struct {
+type InsertGeoEventsResultRaw struct {
 	Index  uint32
-	Result CreateAccountResult
+	Result InsertGeoEventResultRaw
 }
 
-type TransferEventResult struct {
+type DeleteEntitiesResultRaw struct {
 	Index  uint32
-	Result CreateTransferResult
+	Result DeleteEntityResultRaw
 }
 
-type AccountFilter struct {
-	AccountID    Uint128
-	UserData128  Uint128
-	UserData64   uint64
-	UserData32   uint32
-	Code         uint16
-	Reserved     [58]uint8
-	TimestampMin uint64
-	TimestampMax uint64
-	Limit        uint32
-	Flags        uint32
+type QueryUuidFilterRaw struct {
+	EntityID Uint128
+	Limit    uint32
+	Reserved [108]uint8
 }
 
-func (o AccountFilter) AccountFilterFlags() AccountFilterFlags {
-	var f AccountFilterFlags
-	f.Debits = ((o.Flags >> 0) & 0x1) == 1
-	f.Credits = ((o.Flags >> 1) & 0x1) == 1
-	f.Reversed = ((o.Flags >> 2) & 0x1) == 1
-	return f
-}
-
-type AccountBalance struct {
-	DebitsPending  Uint128
-	DebitsPosted   Uint128
-	CreditsPending Uint128
-	CreditsPosted  Uint128
-	Timestamp      uint64
-	Reserved       [56]uint8
-}
-
-type QueryFilter struct {
-	UserData128  Uint128
-	UserData64   uint64
-	UserData32   uint32
-	Ledger       uint32
-	Code         uint16
-	Reserved     [6]uint8
-	TimestampMin uint64
-	TimestampMax uint64
-	Limit        uint32
-	Flags        uint32
-}
-
-func (o QueryFilter) QueryFilterFlags() QueryFilterFlags {
-	var f QueryFilterFlags
-	f.Reversed = ((o.Flags >> 0) & 0x1) == 1
-	return f
-}
-
-type ChangeEvent struct {
-	TransferID                  Uint128
-	TransferAmount              Uint128
-	TransferPendingID           Uint128
-	TransferUserData128         Uint128
-	TransferUserData64          uint64
-	TransferUserData32          uint32
-	TransferTimeout             uint32
-	TransferCode                uint16
-	TransferFlags               uint16
-	Ledger                      uint32
-	Type                        ChangeEventType
-	Reserved                    [39]uint8
-	DebitAccountID              Uint128
-	DebitAccountDebitsPending   Uint128
-	DebitAccountDebitsPosted    Uint128
-	DebitAccountCreditsPending  Uint128
-	DebitAccountCreditsPosted   Uint128
-	DebitAccountUserData128     Uint128
-	DebitAccountUserData64      uint64
-	DebitAccountUserData32      uint32
-	DebitAccountCode            uint16
-	DebitAccountFlags           uint16
-	CreditAccountID             Uint128
-	CreditAccountDebitsPending  Uint128
-	CreditAccountDebitsPosted   Uint128
-	CreditAccountCreditsPending Uint128
-	CreditAccountCreditsPosted  Uint128
-	CreditAccountUserData128    Uint128
-	CreditAccountUserData64     uint64
-	CreditAccountUserData32     uint32
-	CreditAccountCode           uint16
-	CreditAccountFlags          uint16
-	Timestamp                   uint64
-	TransferTimestamp           uint64
-	DebitAccountTimestamp       uint64
-	CreditAccountTimestamp      uint64
-}
-
-type ChangeEventType uint8
-
-const (
-	ChangeEventSinglePhase     ChangeEventType = 0
-	ChangeEventTwoPhasePending ChangeEventType = 1
-	ChangeEventTwoPhasePosted  ChangeEventType = 2
-	ChangeEventTwoPhaseVoided  ChangeEventType = 3
-	ChangeEventTwoPhaseExpired ChangeEventType = 4
-)
-
-func (i ChangeEventType) String() string {
-	switch i {
-	case ChangeEventSinglePhase:
-		return "ChangeEventSinglePhase"
-	case ChangeEventTwoPhasePending:
-		return "ChangeEventTwoPhasePending"
-	case ChangeEventTwoPhasePosted:
-		return "ChangeEventTwoPhasePosted"
-	case ChangeEventTwoPhaseVoided:
-		return "ChangeEventTwoPhaseVoided"
-	case ChangeEventTwoPhaseExpired:
-		return "ChangeEventTwoPhaseExpired"
-	}
-	return "ChangeEventType(" + strconv.FormatInt(int64(i+1), 10) + ")"
-}
-
-type ChangeEventsFilter struct {
-	TimestampMin uint64
-	TimestampMax uint64
-	Limit        uint32
-	Reserved     [44]uint8
+type QueryResponseRaw struct {
+	Count         uint32
+	HasMore       uint8
+	PartialResult uint8
+	Reserved      [10]uint8
 }

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2024-2025 ArcherDB Contributors
-//! Runs a set of macro-benchmarks whose result is displayed at <https://tigerbeetle.github.io>.
+//! Runs a set of macro-benchmarks whose result is displayed at <https://archerdb.github.io>.
 //!
 //! Specifically:
 //!
@@ -14,17 +14,17 @@
 //! To generate a DEVHUBDB_PAT (used by cfo and CI):
 //! 1. Go to https://github.com/settings/personal-access-tokens/new
 //! 2. Fill out token name (e.g. "cfo/ci devhubdb token").
-//! 3. Resource owner: "tigerbeetle"
+//! 3. Resource owner: "archerdb"
 //! 4. Expiry: "366 days" (maximum available)
 //! 5. Repository access: "Only select repositories"
-//! 6. Select repositories: "tigerbeetle/devhubdb"
+//! 6. Select repositories: "archerdb/devhubdb"
 //! 7. Add permissions: "Metadata"
 //! 8. Add permissions: "Contents"; Access: "Read and write".
 //! 9. "Generate token".
 //! 10. (Copy token.)
 //!
-//! To update token in TigerBeetle CI:
-//! 1. https://github.com/tigerbeetle/tigerbeetle/settings/environments
+//! To update token in ArcherDB CI:
+//! 1. https://github.com/archerdb/archerdb/settings/environments
 //! 2. Click "devhub".
 //! 3. Environment Secrets > Edit DEVHUBDB_PAT
 //! 4. Paste token; "Update secret"
@@ -104,14 +104,14 @@ fn devhub_metrics(shell: *Shell, cli_args: CLIArgs) !void {
         try shell.exec_stdout("git show -s --format=%ct {sha}", .{ .sha = cli_args.sha });
     const commit_timestamp = try std.fmt.parseInt(u64, commit_timestamp_str, 10);
 
-    // Only build the TigerBeetle binary to test build speed and build size. Throw it away once
+    // Only build the ArcherDB binary to test build speed and build size. Throw it away once
     // done, and use a release build from `zig-out/dist/` to run the benchmark.
     var timer = try std.time.Timer.start();
 
     const build_time_debug_ms = blk: {
         timer.reset();
         try shell.exec_zig("build install", .{});
-        defer shell.project_root.deleteFile("tigerbeetle") catch unreachable;
+        defer shell.project_root.deleteFile("archerdb") catch unreachable;
 
         break :blk timer.read() / std.time.ns_per_ms;
     };
@@ -120,11 +120,11 @@ fn devhub_metrics(shell: *Shell, cli_args: CLIArgs) !void {
         timer.reset();
         try shell.project_root.deleteTree(".zig-cache");
         try shell.exec_zig("build -Drelease install", .{});
-        defer shell.project_root.deleteFile("tigerbeetle") catch unreachable;
+        defer shell.project_root.deleteFile("archerdb") catch unreachable;
 
         break :blk .{
             timer.lap() / std.time.ns_per_ms,
-            (try shell.cwd.statFile("tigerbeetle")).size,
+            (try shell.cwd.statFile("archerdb")).size,
         };
     };
 
@@ -164,17 +164,17 @@ fn devhub_metrics(shell: *Shell, cli_args: CLIArgs) !void {
             \\    --language=zig --devhub
         , .{ .sha = cli_args.sha });
     }
-    try shell.project_root.deleteFile("tigerbeetle");
+    try shell.project_root.deleteFile("archerdb");
 
     try shell.unzip_executable(
-        "zig-out/dist/tigerbeetle/tigerbeetle-x86_64-linux.zip",
-        "tigerbeetle",
+        "zig-out/dist/archerdb/archerdb-x86_64-linux.zip",
+        "archerdb",
     );
 
     // `--log-debug-replica` is explicitly enabled, to measure the performance hit from debug
     // logging and count the log lines.
     const benchmark_result, const benchmark_stderr = try shell.exec_stdout_stderr(
-        "./tigerbeetle benchmark --validate --checksum-performance --log-debug-replica " ++
+        "./archerdb benchmark --validate --checksum-performance --log-debug-replica " ++
             "--file=datafile-devhub",
         .{},
     );
@@ -183,7 +183,7 @@ fn devhub_metrics(shell: *Shell, cli_args: CLIArgs) !void {
         timer.reset();
 
         try shell.exec(
-            "./tigerbeetle inspect integrity datafile-devhub",
+            "./archerdb inspect integrity datafile-devhub",
             .{},
         );
 
@@ -208,7 +208,7 @@ fn devhub_metrics(shell: *Shell, cli_args: CLIArgs) !void {
         timer.reset();
 
         try shell.exec(
-            "./tigerbeetle format --cluster=0 --replica=0 --replica-count=1 datafile-devhub",
+            "./archerdb format --cluster=0 --replica=0 --replica-count=1 datafile-devhub",
             .{},
         );
 
@@ -217,7 +217,7 @@ fn devhub_metrics(shell: *Shell, cli_args: CLIArgs) !void {
     defer shell.cwd.deleteFile("datafile-devhub") catch unreachable;
 
     const stats_count = blk: {
-        const stats_inspect_result = try shell.exec_stdout("./tigerbeetle inspect metrics", .{});
+        const stats_inspect_result = try shell.exec_stdout("./archerdb inspect metrics", .{});
         var stats_count: u32 = 0;
         var lines = std.mem.splitScalar(
             u8,
@@ -244,7 +244,7 @@ fn devhub_metrics(shell: *Shell, cli_args: CLIArgs) !void {
                 .stdout_behavior = .Pipe,
                 .stderr_behavior = .Ignore,
             },
-            "./tigerbeetle start --addresses=0 --cache-grid=8GiB datafile-devhub",
+            "./archerdb start --addresses=0 --cache-grid=8GiB datafile-devhub",
             .{},
         );
 
@@ -301,7 +301,7 @@ fn devhub_metrics(shell: *Shell, cli_args: CLIArgs) !void {
         timer.reset();
 
         try shell.exec(
-            "./tigerbeetle repl --addresses={port} --cluster=0 --command={command}",
+            "./archerdb repl --addresses={port} --cluster=0 --command={command}",
             .{ .port = port, .command = "create_accounts id=1 ledger=1 code=1" },
         );
 
@@ -336,7 +336,7 @@ fn devhub_metrics(shell: *Shell, cli_args: CLIArgs) !void {
     const batch = MetricBatch{
         .timestamp = commit_timestamp,
         .attributes = .{
-            .git_repo = "https://github.com/tigerbeetle/tigerbeetle",
+            .git_repo = "https://github.com/archerdb/archerdb",
             .git_commit = cli_args.sha,
             .branch = "main",
         },
@@ -398,7 +398,7 @@ fn upload_run(shell: *Shell, batch: *const MetricBatch) !void {
     const token = try shell.env_get("DEVHUBDB_PAT");
     try shell.exec(
         \\git clone --single-branch --depth 1
-        \\  https://oauth2:{token}@github.com/tigerbeetle/devhubdb.git
+        \\  https://oauth2:{token}@github.com/archerdb/devhubdb.git
         \\  devhubdb
     , .{
         .token = token,

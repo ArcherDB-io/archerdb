@@ -16,11 +16,11 @@ The system SHALL use a custom binary protocol for client-server communication to
 #### Scenario: Protocol design philosophy
 
 - **WHEN** designing the client protocol
-- **THEN** it SHALL follow TigerBeetle's approach:
+- **THEN** it SHALL follow ArcherDB's approach:
   - Zero-copy message passing where possible
   - Fixed-size headers for predictable parsing
   - Batch-oriented API (amortize network/consensus costs)
-  - Direct mapping to VSR/TigerBeetle-style framing (fixed header + body)
+  - Direct mapping to VSR/ArcherDB-style framing (fixed header + body)
 
 #### Scenario: Performance characteristics
 
@@ -462,7 +462,7 @@ The system SHALL manage client sessions with explicit limits and eviction polici
 
 ### Requirement: Error Responses
 
-The system SHALL return structured error responses using TigerBeetle-style status codes.
+The system SHALL return structured error responses using ArcherDB-style status codes.
 
 #### Scenario: Error response format
 
@@ -503,7 +503,7 @@ The system SHALL return structured error responses using TigerBeetle-style statu
   - `not_processed` (255) for events after the first failure
 - **AND** batch is atomic: all succeed or all fail (no partial commits)
 - **AND** total body size = 32 + N + P bytes (where P = padding to 8-byte boundary)
-- **CLARIFICATION**: Per-event status exists for debugging, NOT for partial success. If any event fails validation, the entire batch is rejected. This matches TigerBeetle's batch semantics.
+- **CLARIFICATION**: Per-event status exists for debugging, NOT for partial success. If any event fails validation, the entire batch is rejected. This matches ArcherDB's batch semantics.
 
 ### Requirement: Multi-Language SDK Support
 
@@ -1249,7 +1249,7 @@ Result: 2 responses parsed successfully, partial_result=true
   BYTE ORDER:
   - All u16/u32/u64 values use LITTLE-ENDIAN byte order
   - Example: count=0x0002 is encoded as bytes [0x02, 0x00]
-  - This matches TigerBeetle protocol conventions
+  - This matches ArcherDB protocol conventions
 
   MESSAGE CONSTRAINTS:
   - message_size_max: 10,485,760 bytes (10.4MB)
@@ -1397,7 +1397,7 @@ The system SHALL define precise wire formats for admin operations (ping, get_sta
 
 ### Requirement: Error Code Taxonomy
 
-The system SHALL use a comprehensive error code enum based on TigerBeetle's taxonomy, extended for geospatial operations.
+The system SHALL use a comprehensive error code enum based on ArcherDB's taxonomy, extended for geospatial operations.
 
 #### Scenario: General error codes
 
@@ -1708,3 +1708,37 @@ The system SHALL implement server-side rate limiting to prevent abuse.
 - See `specs/replication/spec.md` for VSR protocol and session management
 - See `specs/security/spec.md` for mTLS authentication requirements
 - See `specs/observability/spec.md` for trace context propagation in message headers
+
+## Implementation Status
+
+**Overall: 85-90% Complete**
+
+### Core Protocol Components
+
+| Component | File | Status |
+|-----------|------|--------|
+| Message Header (256 bytes) | `src/vsr/message_header.zig` | ✓ Complete |
+| Operation Codes | `src/archerdb.zig:704-744` | ✓ Complete (offset 128+) |
+| Error Code Taxonomy | `src/error_codes.zig` | ✓ Complete |
+| Multi-Batch Encoding | `src/vsr/multi_batch.zig` | ✓ Complete |
+| Query Filters (128 bytes) | `src/geo_state_machine.zig` | ✓ Complete |
+| Write Results (8 bytes/event) | `src/geo_state_machine.zig` | ✓ Complete |
+| Admin Responses (128 bytes) | `src/archerdb.zig` | ✓ Complete |
+
+### Design Differences from Spec
+
+| Aspect | Spec | Implementation | Notes |
+|--------|------|----------------|-------|
+| Magic bytes | In header offset 100 | Checkpoint files only | VSR uses command field |
+| Operation codes | 0x01-0x30 | 128+18 to 128+27 | Intentional VSR/SM separation |
+| Error response | 320 bytes unified | 8 bytes per-event | ArcherDB batch model |
+| Response sizes | 64/320 bytes | 128 bytes | GeoEvent alignment |
+| query_uuid_batch | Operation 0x13 | Multi-batch protocol | Protocol-level, not operation |
+
+### Implementation Notes
+
+- Uses **layered protocol model**: VSR (0-127) + State Machine (128+)
+- Per-event 8-byte results more efficient for bulk operations than unified error
+- 128-byte response alignment matches GeoEvent struct size
+- Multi-batch trailer encoding fully implemented with proper truncation
+- All struct sizes verified at compile-time

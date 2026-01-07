@@ -6,7 +6,7 @@ const log = std.log;
 const assert = std.debug.assert;
 
 const Shell = @import("../../shell.zig");
-const TmpTigerBeetle = @import("../../testing/tmp_archerdb.zig");
+const TmpArcherDB = @import("../../testing/tmp_archerdb.zig");
 
 pub fn tests(shell: *Shell, gpa: std.mem.Allocator) !void {
     assert(shell.file_exists("pyproject.toml"));
@@ -38,20 +38,20 @@ pub fn tests(shell: *Shell, gpa: std.mem.Allocator) !void {
 
     {
         log.info("running pytest", .{});
-        var tmp_beetle = try TmpTigerBeetle.init(gpa, .{
+        var tmp_archerdb = try TmpArcherDB.init(gpa, .{
             .development = true,
         });
-        defer tmp_beetle.deinit(gpa);
-        errdefer tmp_beetle.log_stderr();
+        defer tmp_archerdb.deinit(gpa);
+        errdefer tmp_archerdb.log_stderr();
 
-        const tigerbeetle_exe = comptime "tigerbeetle" ++ builtin.target.exeFileExt();
-        const tigerbeetle_path = try shell.project_root.realpathAlloc(
+        const archerdb_exe = comptime "archerdb" ++ builtin.target.exeFileExt();
+        const archerdb_path = try shell.project_root.realpathAlloc(
             shell.arena.allocator(),
-            tigerbeetle_exe,
+            archerdb_exe,
         );
-        try shell.env.put("TIGERBEETLE_BINARY", tigerbeetle_path);
+        try shell.env.put("ARCHERDB_BINARY", archerdb_path);
 
-        try shell.env.put("TB_ADDRESS", tmp_beetle.port_str);
+        try shell.env.put("ARCHERDB_ADDRESS", tmp_archerdb.port_str);
         try shell.exec("python3 -m pytest tests/", .{});
     }
 
@@ -61,13 +61,13 @@ pub fn tests(shell: *Shell, gpa: std.mem.Allocator) !void {
         try shell.pushd("./samples/" ++ sample);
         defer shell.popd();
 
-        var tmp_beetle = try TmpTigerBeetle.init(gpa, .{
+        var tmp_archerdb = try TmpArcherDB.init(gpa, .{
             .development = true,
         });
-        defer tmp_beetle.deinit(gpa);
-        errdefer tmp_beetle.log_stderr();
+        defer tmp_archerdb.deinit(gpa);
+        errdefer tmp_archerdb.log_stderr();
 
-        try shell.env.put("TB_ADDRESS", tmp_beetle.port_str);
+        try shell.env.put("ARCHERDB_ADDRESS", tmp_archerdb.port_str);
         try shell.exec("python3 main.py", .{});
     }
 
@@ -77,7 +77,7 @@ pub fn tests(shell: *Shell, gpa: std.mem.Allocator) !void {
 
 pub fn validate_release(shell: *Shell, gpa: std.mem.Allocator, options: struct {
     version: []const u8,
-    tigerbeetle: []const u8,
+    archerdb: []const u8,
 }) !void {
     const tmp_dir = try shell.create_tmp_dir();
     defer shell.cwd.deleteTree(tmp_dir) catch {};
@@ -85,7 +85,7 @@ pub fn validate_release(shell: *Shell, gpa: std.mem.Allocator, options: struct {
     try shell.exec("python3 -m venv {tmp_dir}", .{ .tmp_dir = tmp_dir });
 
     for (0..9) |_| {
-        if (shell.exec("{tmp_dir}/bin/pip install tigerbeetle=={version}", .{
+        if (shell.exec("{tmp_dir}/bin/pip install archerdb=={version}", .{
             .tmp_dir = tmp_dir,
             .version = options.version,
         })) {
@@ -97,7 +97,7 @@ pub fn validate_release(shell: *Shell, gpa: std.mem.Allocator, options: struct {
             std.time.sleep(5 * std.time.ns_per_min);
         }
     } else {
-        shell.exec("{tmp_dir}/bin/pip install tigerbeetle=={version}", .{
+        shell.exec("{tmp_dir}/bin/pip install archerdb=={version}", .{
             .tmp_dir = tmp_dir,
             .version = options.version,
         }) catch |err| {
@@ -106,14 +106,14 @@ pub fn validate_release(shell: *Shell, gpa: std.mem.Allocator, options: struct {
         };
     }
 
-    var tmp_beetle = try TmpTigerBeetle.init(gpa, .{
+    var tmp_archerdb = try TmpArcherDB.init(gpa, .{
         .development = true,
-        .prebuilt = options.tigerbeetle,
+        .prebuilt = options.archerdb,
     });
-    defer tmp_beetle.deinit(gpa);
-    errdefer tmp_beetle.log_stderr();
+    defer tmp_archerdb.deinit(gpa);
+    errdefer tmp_archerdb.log_stderr();
 
-    try shell.env.put("TB_ADDRESS", tmp_beetle.port_str);
+    try shell.env.put("ARCHERDB_ADDRESS", tmp_archerdb.port_str);
 
     try Shell.copy_path(
         shell.project_root,
@@ -125,7 +125,7 @@ pub fn validate_release(shell: *Shell, gpa: std.mem.Allocator, options: struct {
 }
 
 pub fn release_published_latest(shell: *Shell) ![]const u8 {
-    const output = try shell.exec_stdout("python3 -m pip index versions tigerbeetle", .{});
+    const output = try shell.exec_stdout("python3 -m pip index versions archerdb", .{});
     const version_start = std.mem.indexOf(u8, output, "(").? + 1;
     const version_end = std.mem.indexOf(u8, output, ")").?;
 

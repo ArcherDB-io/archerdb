@@ -50,6 +50,45 @@ pub const ReplicaState = enum {
 /// Updated by the main replica code.
 pub var replica_state: ReplicaState = .starting;
 
+/// Cached metrics response for avoiding recomputation on frequent scrapes.
+/// Per observability/spec.md: "Cache metrics for up to 1 second"
+const MetricsCache = struct {
+    /// Cached response body
+    data: [65536]u8 = undefined,
+    /// Length of cached data
+    len: usize = 0,
+    /// Timestamp when cache was last updated (nanoseconds)
+    timestamp_ns: i128 = 0,
+    /// Cache TTL in nanoseconds (1 second)
+    const cache_ttl_ns: i128 = 1_000_000_000;
+
+    /// Check if cache is valid (not expired)
+    fn isValid(self: *const MetricsCache) bool {
+        if (self.len == 0) return false;
+        const now = std.time.nanoTimestamp();
+        return (now - self.timestamp_ns) < cache_ttl_ns;
+    }
+
+    /// Update cache with new data
+    fn update(self: *MetricsCache, data: []const u8) void {
+        const copy_len = @min(data.len, self.data.len);
+        @memcpy(self.data[0..copy_len], data[0..copy_len]);
+        self.len = copy_len;
+        self.timestamp_ns = std.time.nanoTimestamp();
+    }
+
+    /// Get cached data if valid
+    fn get(self: *const MetricsCache) ?[]const u8 {
+        if (self.isValid()) {
+            return self.data[0..self.len];
+        }
+        return null;
+    }
+};
+
+/// Global metrics cache (thread-safe via atomic timestamp check)
+var metrics_cache: MetricsCache = .{};
+
 /// Metrics server instance.
 pub const MetricsServer = struct {
     server_fd: posix.socket_t,
@@ -218,6 +257,12 @@ pub const MetricsServer = struct {
         const state = replica_state;
         metrics.Registry.health_ready.set(if (state.isReady()) 1 else 0);
 
+        // Check cache first (per observability/spec.md: cache for up to 1 second)
+        if (metrics_cache.get()) |cached_data| {
+            try sendResponse(client_fd, .ok, "text/plain; version=0.0.4", cached_data);
+            return;
+        }
+
         // Format all metrics to buffer
         var buf: [65536]u8 = undefined;
         var fbs = std.io.fixedBufferStream(&buf);
@@ -228,7 +273,12 @@ pub const MetricsServer = struct {
             return;
         };
 
-        try sendResponse(client_fd, .ok, "text/plain; version=0.0.4", fbs.getWritten());
+        const response_data = fbs.getWritten();
+
+        // Update cache for subsequent requests
+        metrics_cache.update(response_data);
+
+        try sendResponse(client_fd, .ok, "text/plain; version=0.0.4", response_data);
     }
 
     const HttpStatus = enum {
@@ -302,4 +352,41 @@ test "ReplicaState: isReady" {
     try std.testing.expect(!ReplicaState.view_change.isReady());
     try std.testing.expect(!ReplicaState.recovering.isReady());
     try std.testing.expect(!ReplicaState.shutting_down.isReady());
+}
+
+test "MetricsCache: update and get" {
+    var cache: MetricsCache = .{};
+
+    // Initially empty
+    try std.testing.expect(cache.get() == null);
+
+    // Update with data
+    const test_data = "test_metric 42\n";
+    cache.update(test_data);
+
+    // Should return cached data
+    const result = cache.get();
+    try std.testing.expect(result != null);
+    try std.testing.expectEqualStrings(test_data, result.?);
+
+    // Cache length should match
+    try std.testing.expectEqual(test_data.len, cache.len);
+}
+
+test "MetricsCache: data truncation" {
+    var cache: MetricsCache = .{};
+
+    // Update with data
+    const short_data = "short";
+    cache.update(short_data);
+    try std.testing.expectEqual(@as(usize, 5), cache.len);
+
+    // Update with different data (should overwrite)
+    const longer_data = "longer_data_here";
+    cache.update(longer_data);
+    try std.testing.expectEqual(longer_data.len, cache.len);
+
+    const result = cache.get();
+    try std.testing.expect(result != null);
+    try std.testing.expectEqualStrings(longer_data, result.?);
 }

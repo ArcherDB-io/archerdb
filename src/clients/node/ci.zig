@@ -6,7 +6,7 @@ const log = std.log;
 const assert = std.debug.assert;
 
 const Shell = @import("../../shell.zig");
-const TmpTigerBeetle = @import("../../testing/tmp_archerdb.zig");
+const TmpArcherDB = @import("../../testing/tmp_archerdb.zig");
 
 pub fn tests(shell: *Shell, gpa: std.mem.Allocator) !void {
     assert(shell.file_exists("package.json"));
@@ -15,19 +15,19 @@ pub fn tests(shell: *Shell, gpa: std.mem.Allocator) !void {
 
     // Integration tests.
 
-    // We need to build the tigerbeetle-node library manually for samples/testers to work.
+    // We need to build the archerdb-node library manually for samples/testers to work.
     try shell.exec("npm install", .{});
 
     for ([_][]const u8{ "test", "benchmark" }) |tester| {
         log.info("testing {s}s", .{tester});
 
-        var tmp_beetle = try TmpTigerBeetle.init(gpa, .{
+        var tmp_archerdb = try TmpArcherDB.init(gpa, .{
             .development = true,
         });
-        defer tmp_beetle.deinit(gpa);
-        errdefer tmp_beetle.log_stderr();
+        defer tmp_archerdb.deinit(gpa);
+        errdefer tmp_archerdb.log_stderr();
 
-        try shell.env.put("TB_ADDRESS", tmp_beetle.port_str);
+        try shell.env.put("ARCHERDB_ADDRESS", tmp_archerdb.port_str);
         try shell.exec("node ./dist/{tester}", .{ .tester = tester });
     }
 
@@ -37,13 +37,13 @@ pub fn tests(shell: *Shell, gpa: std.mem.Allocator) !void {
         try shell.pushd("./samples/" ++ sample);
         defer shell.popd();
 
-        var tmp_beetle = try TmpTigerBeetle.init(gpa, .{
+        var tmp_archerdb = try TmpArcherDB.init(gpa, .{
             .development = true,
         });
-        defer tmp_beetle.deinit(gpa);
-        errdefer tmp_beetle.log_stderr();
+        defer tmp_archerdb.deinit(gpa);
+        errdefer tmp_archerdb.log_stderr();
 
-        try shell.env.put("TB_ADDRESS", tmp_beetle.port_str);
+        try shell.env.put("ARCHERDB_ADDRESS", tmp_archerdb.port_str);
         try shell.exec("npm install", .{});
         try shell.exec("node main.js", .{});
     }
@@ -67,8 +67,8 @@ pub fn tests(shell: *Shell, gpa: std.mem.Allocator) !void {
                 .script =
                 \\set -ex
                 \\mkdir test-project && cd test-project
-                \\npm install /host/tigerbeetle-node-*.tgz
-                \\node -e 'require("tigerbeetle-node"); console.log("SUCCESS!")'
+                \\npm install /host/archerdb-node-*.tgz
+                \\node -e 'require("archerdb-node"); console.log("SUCCESS!")'
                 ,
             });
         }
@@ -77,18 +77,18 @@ pub fn tests(shell: *Shell, gpa: std.mem.Allocator) !void {
 
 pub fn validate_release(shell: *Shell, gpa: std.mem.Allocator, options: struct {
     version: []const u8,
-    tigerbeetle: []const u8,
+    archerdb: []const u8,
 }) !void {
-    var tmp_beetle = try TmpTigerBeetle.init(gpa, .{
+    var tmp_archerdb = try TmpArcherDB.init(gpa, .{
         .development = true,
-        .prebuilt = options.tigerbeetle,
+        .prebuilt = options.archerdb,
     });
-    defer tmp_beetle.deinit(gpa);
-    errdefer tmp_beetle.log_stderr();
+    defer tmp_archerdb.deinit(gpa);
+    errdefer tmp_archerdb.log_stderr();
 
-    try shell.env.put("TB_ADDRESS", tmp_beetle.port_str);
+    try shell.env.put("ARCHERDB_ADDRESS", tmp_archerdb.port_str);
 
-    try shell.exec("npm install tigerbeetle-node@{version}", .{
+    try shell.exec("npm install archerdb-node@{version}", .{
         .version = options.version,
     });
 
@@ -102,5 +102,5 @@ pub fn validate_release(shell: *Shell, gpa: std.mem.Allocator, options: struct {
 }
 
 pub fn release_published_latest(shell: *Shell) ![]const u8 {
-    return try shell.exec_stdout("npm view tigerbeetle-node version", .{});
+    return try shell.exec_stdout("npm view archerdb-node version", .{});
 }

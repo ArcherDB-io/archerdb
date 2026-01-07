@@ -294,4 +294,36 @@ archerdb shards failover --shard 3 --to node-42
 
 - [Cassandra Architecture](https://cassandra.apache.org/doc/latest/architecture/) - Similar sharding approach
 - [Amazon DynamoDB Partitioning](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.Partitions.html) - Partition key distribution
-- [TigerBeetle Single-Node Design](https://docs.tigerbeetle.com/) - Why v1 avoids sharding
+- [ArcherDB Single-Node Design](https://docs.archerdb.com/) - Why v1 avoids sharding
+
+## Implementation Status
+
+**Overall: v1 COMPLIANT (v2 Distributed Features Deferred)**
+
+### v1 Single-Node Components
+
+| Feature | File | Status |
+|---------|------|--------|
+| 256 Logical Shards | `src/ram_index.zig` | ✓ Complete |
+| RAM Index (O(1) lookup) | `src/ram_index.zig` | ✓ Complete |
+| S2 Spatial Covering | `src/s2_index.zig` | ✓ Complete |
+| TTL Lifecycle | `src/ttl.zig` | ✓ Complete |
+| GDPR Deletion Metrics | `src/archerdb/metrics.zig` | ✓ Complete |
+
+### v2 Deferred Features
+
+| Feature | Spec Status | Implementation |
+|---------|-------------|----------------|
+| Distributed Sharding | v2 Planned | Not implemented |
+| Stop-the-world Resharding | v2.0 Recommended | Not implemented |
+| Online Migration | v2.1+ Enhancement | Not implemented |
+| Per-shard VSR Clusters | Required for v2 | Not applicable |
+| Cross-shard Query Routing | Required for v2 | Single-node scan |
+| Topology Service | Required for v2 | Not implemented |
+
+### Implementation Notes
+
+- **v1 Architecture**: Single-node with 256 logical shards for cache contention reduction
+- **Hashing**: Uses wyhash (via `stdx.hash_inline`) for shard distribution (spec recommends murmur3_128 for distributed)
+- **Queries**: O(n) RAM index scan; awaiting LSM for range optimization
+- **Vertical Scaling**: Current design focuses on maximizing single-node capacity before horizontal distribution

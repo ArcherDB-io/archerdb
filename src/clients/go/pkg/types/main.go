@@ -1,7 +1,7 @@
 package types
 
 /*
-#include "../native/tb_client.h"
+#include "../native/arch_client.h"
 */
 import "C"
 import (
@@ -15,7 +15,7 @@ import (
 	"unsafe"
 )
 
-type Uint128 C.tb_uint128_t
+type Uint128 C.arch_uint128_t
 
 func (value Uint128) Bytes() [16]byte {
 	return *(*[16]byte)(unsafe.Pointer(&value))

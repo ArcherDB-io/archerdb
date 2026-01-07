@@ -7,21 +7,21 @@ comptime {
     _ = @import("archerdb/backup_queue.zig");
     _ = @import("archerdb/backup_restore_test.zig");
     _ = @import("archerdb/backup_state.zig");
-    _ = @import("archerdb/bulk_export.zig");
     _ = @import("archerdb/breach_notification.zig");
-    _ = @import("archerdb/consent_management.zig");
+    _ = @import("archerdb/bulk_export.zig");
     _ = @import("archerdb/compliance_audit.zig");
+    _ = @import("archerdb/consent_management.zig");
     _ = @import("archerdb/data_export.zig");
     _ = @import("archerdb/data_export_csv.zig");
     _ = @import("archerdb/data_minimization.zig");
     _ = @import("archerdb/data_subject_rights.zig");
-    _ = @import("archerdb/data_transform.zig");
     _ = @import("archerdb/data_transfer.zig");
+    _ = @import("archerdb/data_transform.zig");
     _ = @import("archerdb/data_validation.zig");
     _ = @import("archerdb/dpia.zig");
-    _ = @import("archerdb/export_control.zig");
     _ = @import("archerdb/ecosystem_validation.zig");
     _ = @import("archerdb/etl_integration.zig");
+    _ = @import("archerdb/export_control.zig");
     _ = @import("archerdb/incremental_load.zig");
     _ = @import("archerdb/metrics.zig");
     _ = @import("archerdb/metrics_server.zig");
@@ -32,10 +32,9 @@ comptime {
     _ = @import("archerdb/tls_config.zig");
     _ = @import("cdc/amqp.zig");
     _ = @import("cdc/amqp/protocol.zig");
-    _ = @import("cdc/runner.zig");
-    _ = @import("clients/c/tb_client.zig");
-    _ = @import("clients/c/tb_client/context.zig");
-    _ = @import("clients/c/tb_client/signal.zig");
+    _ = @import("clients/c/arch_client.zig");
+    _ = @import("clients/c/arch_client/context.zig");
+    _ = @import("clients/c/arch_client/signal.zig");
     _ = @import("clients/c/test.zig");
     _ = @import("copyhound.zig");
     _ = @import("error_codes.zig");
@@ -215,8 +214,8 @@ const quine =
     \\        if (std.mem.startsWith(u8, entry_path, "stdx/")) continue;
     \\        if (std.mem.startsWith(u8, entry_path, "clients/") and
     \\            !std.mem.startsWith(u8, entry_path, "clients/c")) continue;
-    \\        if (std.mem.eql(u8, entry_path, "clients/c/tb_client_header_test.zig")) continue;
-    \\        if (std.mem.eql(u8, entry_path, "tigerbeetle/libtb_client.zig")) continue;
+    \\        if (std.mem.eql(u8, entry_path, "clients/c/arch_client_header_test.zig")) continue;
+    \\        if (std.mem.eql(u8, entry_path, "archerdb/libarch_client.zig")) continue;
     \\
     \\        const contents = try src_dir.readFileAlloc(arena, entry_path, 1 * MiB);
     \\        var line_iterator = std.mem.splitScalar(u8, contents, '\n');
@@ -341,8 +340,8 @@ fn unit_test_files(arena: std.mem.Allocator, src_dir: std.fs.Dir) ![]const []con
         if (std.mem.startsWith(u8, entry_path, "stdx/")) continue;
         if (std.mem.startsWith(u8, entry_path, "clients/") and
             !std.mem.startsWith(u8, entry_path, "clients/c")) continue;
-        if (std.mem.eql(u8, entry_path, "clients/c/tb_client_header_test.zig")) continue;
-        if (std.mem.eql(u8, entry_path, "tigerbeetle/libtb_client.zig")) continue;
+        if (std.mem.eql(u8, entry_path, "clients/c/arch_client_header_test.zig")) continue;
+        if (std.mem.eql(u8, entry_path, "archerdb/libarch_client.zig")) continue;
 
         const contents = try src_dir.readFileAlloc(arena, entry_path, 1 * MiB);
         var line_iterator = std.mem.splitScalar(u8, contents, '\n');

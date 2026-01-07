@@ -3,17 +3,17 @@ use std::{env, path::Path};
 fn main() -> anyhow::Result<()> {
     let cargo_manifest_dir = env::var("CARGO_MANIFEST_DIR")?;
 
-    if !Path::new(&format!("{cargo_manifest_dir}/assets/tb_client.h")).try_exists()? {
+    if !Path::new(&format!("{cargo_manifest_dir}/assets/arch_client.h")).try_exists()? {
         panic!(
             "\n\
-             TigerBeetle assets not found for in-tree build.\n\
+             ArcherDB assets not found for in-tree build.\n\
              Run `zig/zig build clients:rust -Drelease` first.\n"
         );
     }
 
-    assert!(Path::new(&format!("{cargo_manifest_dir}/src/tb_client.rs")).try_exists()?);
+    assert!(Path::new(&format!("{cargo_manifest_dir}/src/arch_client.rs")).try_exists()?);
 
-    println!("cargo:rerun-if-changed={cargo_manifest_dir}/assets/tb_client.h");
+    println!("cargo:rerun-if-changed={cargo_manifest_dir}/assets/arch_client.h");
 
     let unix = env::var("CARGO_CFG_UNIX").is_ok();
     let windows = env::var("CARGO_CFG_WINDOWS").is_ok();
@@ -39,7 +39,7 @@ fn main() -> anyhow::Result<()> {
     };
 
     let libdir = format!("{libprefix}/{archpath}");
-    let libname = "tb_client";
+    let libname = "arch_client";
 
     println!("cargo:rustc-link-search=native={libdir}");
     println!("cargo:rustc-link-lib=static={libname}");
@@ -57,7 +57,7 @@ fn main() -> anyhow::Result<()> {
     println!("cargo:rerun-if-changed={libpath}");
 
     if windows {
-        // tb_client needs access to the random number generator in here.
+        // arch_client needs access to the random number generator in here.
         println!("cargo:rustc-link-lib=advapi32");
     }
 

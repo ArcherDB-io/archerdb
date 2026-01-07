@@ -188,7 +188,7 @@ fn zeta_incremental(
 ///     f(i) = (a * i) mod N
 /// with gcd(a, N) = 1, so every original (Zipfian) index i
 /// maps to a unique “shuffled” index without collisions.
-/// Refer to PR #3070 for further details: https://github.com/tigerbeetle/tigerbeetle/pull/3070
+/// Refer to PR #3070 for further details: https://github.com/archerdb/archerdb/pull/3070
 pub const ZipfianShuffled = struct {
     gen: ZipfianGenerator,
     a: u64,

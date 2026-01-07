@@ -1,37 +1,37 @@
 # Implementation Guide Specification
 
-**Primary Reference:** https://github.com/tigerbeetle/tigerbeetle
+**Primary Reference:** https://github.com/archerdb/archerdb
 
 ---
 
 ## CRITICAL: Implementation Strategy
 
-### Requirement: Fork TigerBeetle (Do Not Build From Scratch)
+### Requirement: Fork ArcherDB (Do Not Build From Scratch)
 
-The system SHALL be implemented by **forking TigerBeetle**, not by building from scratch. This decision is non-negotiable and critical for project success.
+The system SHALL be implemented by **forking ArcherDB**, not by building from scratch. This decision is non-negotiable and critical for project success.
 
 #### Scenario: Strategic rationale
 
 - **WHEN** beginning ArcherDB implementation
 - **THEN** the developer MUST understand why forking is mandatory:
-  1. **Risk Reduction**: VSR consensus took TigerBeetle 5+ years to perfect; reimplementing it introduces unnecessary risk
+  1. **Risk Reduction**: VSR consensus took ArcherDB 5+ years to perfect; reimplementing it introduces unnecessary risk
   2. **Time Savings**: ~70% of codebase is reusable, reducing timeline from 18+ months to 6-9 months
-  3. **Battle-Tested Code**: TigerBeetle's storage engine, I/O layer, and replication are production-proven
-  4. **Specification Alignment**: These specs were written to be compatible with TigerBeetle's architecture
-  5. **Licensing**: TigerBeetle is Apache 2.0 licensed, permitting commercial forks
+  3. **Battle-Tested Code**: ArcherDB's storage engine, I/O layer, and replication are production-proven
+  4. **Specification Alignment**: These specs were written to be compatible with ArcherDB's architecture
+  5. **Licensing**: ArcherDB is Apache 2.0 licensed, permitting commercial forks
 
 #### Scenario: Getting started (Day 1)
 
 - **WHEN** beginning implementation
 - **THEN** the first steps SHALL be:
   ```bash
-  # Step 1: Fork TigerBeetle
-  git clone https://github.com/tigerbeetle/tigerbeetle.git archerdb
+  # Step 1: Fork ArcherDB
+  git clone https://github.com/archerdb/archerdb.git archerdb
   cd archerdb
 
   # Step 2: Verify build works
   zig build
-  ./zig-out/bin/tigerbeetle version
+  ./zig-out/bin/archerdb version
 
   # Step 3: Run existing tests to establish baseline
   zig build test
@@ -40,7 +40,7 @@ The system SHALL be implemented by **forking TigerBeetle**, not by building from
   zig build vopr
 
   # Step 5: Study the codebase (allow 2-4 weeks for knowledge acquisition)
-  # Focus areas: src/vsr/replica.zig, src/tigerbeetle.zig, src/lsm/
+  # Focus areas: src/vsr/replica.zig, src/archerdb.zig, src/lsm/
   ```
 - **AND** modifications SHALL NOT begin until the developer can:
   - Explain VSR message flow (Prepare → PrepareOk → Commit)
@@ -79,21 +79,21 @@ The system SHALL validate Zig language maturity and availability of critical std
 
   Feature Category 2: Concurrency & Async I/O (Required for io_uring, replication)
   ──────────────────────────────────────────────────────────────────────────────
-  ✓ REQUIRED: std.os.linux.io_uring integration (TigerBeetle foundation)
-  ✓ REQUIRED: async/await syntax (if used by TigerBeetle)
+  ✓ REQUIRED: std.os.linux.io_uring integration (ArcherDB foundation)
+  ✓ REQUIRED: async/await syntax (if used by ArcherDB)
   ✓ REQUIRED: Thread-safe atomics (std.atomic.*)
   ✓ REQUIRED: Mutex/RwLock (std.Thread.Mutex, std.Thread.RwLock)
   ✗ OPTIONAL: Go-style channels (Zig doesn't have, use message pool instead)
 
   Validation test:
-    1. Compile TigerBeetle's io_uring code without errors
-    2. Run TigerBeetle's async tests: `zig build test -- io`
+    1. Compile ArcherDB's io_uring code without errors
+    2. Run ArcherDB's async tests: `zig build test -- io`
     3. Measure atomic CAS performance (must be lock-free)
-    4. Result: PASS if TigerBeetle compiles and runs
+    4. Result: PASS if ArcherDB compiles and runs
 
   Feature Category 3: Memory & Allocation (Required for zero-allocation discipline)
   ──────────────────────────────────────────────────────────────────────────────
-  ✓ REQUIRED: StaticAllocator pattern (TigerBeetle's memory discipline)
+  ✓ REQUIRED: StaticAllocator pattern (ArcherDB's memory discipline)
   ✓ REQUIRED: extern struct with exact layout control
   ✓ REQUIRED: @sizeOf, @alignOf, comptime assertions
   ✓ REQUIRED: No runtime allocations in hot path (Zig compiler validation)
@@ -116,7 +116,7 @@ The system SHALL validate Zig language maturity and availability of critical std
 
   Validation test:
     1. Pin Zig version: use exactly version X.Y.Z (e.g., 0.11.0)
-    2. Compile TigerBeetle with pinned version
+    2. Compile ArcherDB with pinned version
     3. Test std.ArrayList, HashMap operations
     4. Test std.crypto.hash.sha256
     5. Verify reproducible builds: same commit → same binary hash
@@ -146,7 +146,7 @@ The system SHALL validate Zig language maturity and availability of critical std
 
   Day 1: Feature detection (4 hours)
   ─────────────────────────────────
-  1. Clone TigerBeetle repo and build with pinned Zig version
+  1. Clone ArcherDB repo and build with pinned Zig version
   2. Run all stdlib feature tests (math, async, memory, fs, crypto)
   3. Document results in: docs/zig_ecosystem_audit_week0.md
   4. List any FAILURES as "Blockers"
@@ -201,14 +201,14 @@ The system SHALL validate Zig language maturity and availability of critical std
 
 ### Requirement: Component Classification (Keep vs Replace vs Add)
 
-The system SHALL clearly classify which TigerBeetle components to keep, replace, or add.
+The system SHALL clearly classify which ArcherDB components to keep, replace, or add.
 
 #### Scenario: Components to KEEP unchanged (~70% of codebase)
 
 - **WHEN** identifying reusable components
 - **THEN** the following SHALL be kept with minimal or no modifications:
 
-  | Component | TigerBeetle Files | Why Keep |
+  | Component | ArcherDB Files | Why Keep |
   |-----------|-------------------|----------|
   | **VSR Consensus** | `src/vsr/replica.zig`, `journal.zig`, `clock.zig` | Core distributed consensus - extremely complex, proven correct |
   | **Storage Engine** | `src/storage.zig`, `src/vsr/superblock.zig`, `src/vsr/free_set.zig` | Crash-safe storage with slot alternation |
@@ -226,9 +226,9 @@ The system SHALL clearly classify which TigerBeetle components to keep, replace,
 - **WHEN** identifying components requiring replacement
 - **THEN** the following SHALL be replaced entirely:
 
-  | TigerBeetle Component | ArcherDB Replacement | Key Changes |
+  | ArcherDB Component | ArcherDB Replacement | Key Changes |
   |----------------------|---------------------|-------------|
-  | `src/tigerbeetle.zig` | `src/archerdb.zig` | GeoEvent state machine instead of Account/Transfer |
+  | `src/archerdb.zig` | `src/archerdb.zig` | GeoEvent state machine instead of Account/Transfer |
   | `src/state_machine.zig` | `src/geo_state_machine.zig` | Geospatial operations, S2 integration |
   | Account struct (128 bytes) | GeoEvent struct (128 bytes) | Same size, different fields |
   | Transfer struct | Query structs | Radius, polygon, UUID queries |
@@ -251,15 +251,15 @@ The system SHALL clearly classify which TigerBeetle components to keep, replace,
 
 ### Requirement: State Machine Interface Preservation
 
-The system SHALL preserve TigerBeetle's state machine interface to minimize VSR layer changes.
+The system SHALL preserve ArcherDB's state machine interface to minimize VSR layer changes.
 
 #### Scenario: State machine contract
 
 - **WHEN** implementing the GeoEvent state machine
-- **THEN** it MUST implement the same interface as TigerBeetle's state machine:
+- **THEN** it MUST implement the same interface as ArcherDB's state machine:
 
   ```zig
-  // This interface is defined by TigerBeetle's VSR layer and MUST be preserved
+  // This interface is defined by ArcherDB's VSR layer and MUST be preserved
   pub const StateMachine = struct {
       // Called during prepare phase - validate operations, compute deterministic results
       pub fn prepare(self: *StateMachine, operation: Operation, input: []const u8) !void;
@@ -282,7 +282,7 @@ The system SHALL preserve TigerBeetle's state machine interface to minimize VSR 
 
   ```zig
   pub const Operation = enum(u8) {
-      // VSR internal operations (TigerBeetle infrastructure, NOT client-facing)
+      // VSR internal operations (ArcherDB infrastructure, NOT client-facing)
       reserved = 254,         // Internal sentinel
       root = 255,             // Internal VSR root operation
 
@@ -322,7 +322,7 @@ The system SHALL be implemented in clearly defined phases.
   1. Forked repository with renamed entry points
   2. GeoEvent struct defined (128 bytes, matching layout requirements)
   3. Basic state machine compiling (no functionality yet)
-  4. TigerBeetle codebase study completed
+  4. ArcherDB codebase study completed
   5. Development environment and CI/CD established
 - **AND** success criteria: `zig build` succeeds, VSR flow understood and documented
 
@@ -391,7 +391,7 @@ The system documentation SHALL warn against common implementation mistakes.
   |---------|----------------|------------|
   | Modifying VSR consensus logic | Breaks correctness proofs, introduces subtle bugs | Treat `src/vsr/replica.zig` as read-only |
   | Non-deterministic state machine | Causes replica divergence, cluster-wide panic | Use consensus timestamps, validate S2 with golden vectors |
-  | Runtime memory allocation in hot paths | Latency spikes, potential OOM | Follow TigerBeetle's static allocation discipline |
+  | Runtime memory allocation in hot paths | Latency spikes, potential OOM | Follow ArcherDB's static allocation discipline |
   | Changing message header layout | Breaks wire protocol compatibility | Keep 256-byte header structure |
   | Skipping VOPR testing | Ships bugs that only manifest under network partitions | Run VOPR with millions of operations before release |
   | Using floating-point in consensus path | Non-determinism across CPU architectures | S2 must be bit-exact; use integer math or validated FP |
@@ -403,44 +403,44 @@ The system documentation SHALL warn against common implementation mistakes.
   - "Let's simplify the VSR protocol" → NO, it's correct as designed
   - "We don't need the simulator" → YES YOU DO, consensus bugs are invisible without it
   - "This works on my machine" → Test on 3+ replicas with fault injection
-  - "We can optimize this later" → Follow TigerBeetle's patterns from day one
+  - "We can optimize this later" → Follow ArcherDB's patterns from day one
   - "Let's use a different hash function" → Ensure identical hashing across all replicas
 
 ---
 
 ## ADDED Requirements
 
-### Requirement: TigerBeetle as Reference Implementation
+### Requirement: ArcherDB as Reference Implementation
 
-The system SHALL use TigerBeetle's actual source code as the authoritative reference for all borrowed patterns and implementations.
+The system SHALL use ArcherDB's actual source code as the authoritative reference for all borrowed patterns and implementations.
 
 #### Scenario: Implementation methodology
 
 - **WHEN** implementing any component described in these specifications
 - **THEN** implementers SHALL:
-  1. Read the corresponding TigerBeetle source code files (listed below)
-  2. Understand the pattern as implemented by TigerBeetle
+  1. Read the corresponding ArcherDB source code files (listed below)
+  2. Understand the pattern as implemented by ArcherDB
   3. Adapt the pattern to ArcherDB's geospatial domain
-  4. Preserve TigerBeetle's safety guarantees and optimizations
-  5. When specification is ambiguous, TigerBeetle's code is authoritative
+  4. Preserve ArcherDB's safety guarantees and optimizations
+  5. When specification is ambiguous, ArcherDB's code is authoritative
 
 #### Scenario: Pattern reuse philosophy
 
 - **WHEN** encountering implementation decisions
 - **THEN** the priority SHALL be:
-  1. **First:** Check if TigerBeetle has solved this problem
-  2. **If yes:** Reuse TigerBeetle's solution (adapt domain types)
-  3. **If no:** Design new solution following TigerBeetle's principles
-  4. **Never:** Reinvent patterns that TigerBeetle has proven
+  1. **First:** Check if ArcherDB has solved this problem
+  2. **If yes:** Reuse ArcherDB's solution (adapt domain types)
+  3. **If no:** Design new solution following ArcherDB's principles
+  4. **Never:** Reinvent patterns that ArcherDB has proven
 
-### Requirement: TigerBeetle File Reference Map
+### Requirement: ArcherDB File Reference Map
 
-The system SHALL document which TigerBeetle files correspond to each ArcherDB component.
+The system SHALL document which ArcherDB files correspond to each ArcherDB component.
 
 #### Scenario: VSR Replication (specs/replication/spec.md)
 
 - **WHEN** implementing VSR replication
-- **THEN** study these TigerBeetle files:
+- **THEN** study these ArcherDB files:
   ```
   src/vsr/replica.zig              → Core VSR state machine
   src/vsr/journal.zig              → WAL with hash-chained prepares
@@ -454,7 +454,7 @@ The system SHALL document which TigerBeetle files correspond to each ArcherDB co
 #### Scenario: Storage Engine (specs/storage-engine/spec.md)
 
 - **WHEN** implementing storage engine
-- **THEN** study these TigerBeetle files:
+- **THEN** study these ArcherDB files:
   ```
   src/storage.zig                  → Data file zones, superblock, grid
   src/vsr/superblock.zig           → Superblock structure with hash-chaining
@@ -469,7 +469,7 @@ The system SHALL document which TigerBeetle files correspond to each ArcherDB co
 #### Scenario: Memory Management (specs/memory-management/spec.md)
 
 - **WHEN** implementing memory management
-- **THEN** study these TigerBeetle files:
+- **THEN** study these ArcherDB files:
   ```
   src/stdx.zig                     → Intrusive data structures, utilities
   src/message_pool.zig             → Message pooling with reference counting
@@ -482,7 +482,7 @@ The system SHALL document which TigerBeetle files correspond to each ArcherDB co
 #### Scenario: I/O Subsystem (specs/io-subsystem/spec.md)
 
 - **WHEN** implementing I/O subsystem
-- **THEN** study these TigerBeetle files:
+- **THEN** study these ArcherDB files:
   ```
   src/io/linux.zig                 → io_uring integration, completion handling
   src/io/darwin.zig                → macOS kqueue fallback
@@ -496,7 +496,7 @@ The system SHALL document which TigerBeetle files correspond to each ArcherDB co
 #### Scenario: Testing & Simulation (specs/testing-simulation/spec.md)
 
 - **WHEN** implementing VOPR simulator
-- **THEN** study these TigerBeetle files:
+- **THEN** study these ArcherDB files:
   ```
   src/simulator.zig                → Deterministic simulation framework
   src/testing/storage.zig          → Storage fault injection
@@ -511,10 +511,10 @@ The system SHALL document which TigerBeetle files correspond to each ArcherDB co
 #### Scenario: Query Engine (specs/query-engine/spec.md)
 
 - **WHEN** implementing state machine
-- **THEN** study these TigerBeetle files:
+- **THEN** study these ArcherDB files:
   ```
   src/state_machine.zig            → StateMachine interface (input_valid, prepare, prefetch, commit)
-  src/tigerbeetle.zig              → State machine for Account/Transfer operations
+  src/archerdb.zig              → State machine for Account/Transfer operations
   ```
 - **AND** implement identical three-phase model
 - **AND** replace Account/Transfer with GeoEvent/SpatialQuery operations
@@ -523,48 +523,48 @@ The system SHALL document which TigerBeetle files correspond to each ArcherDB co
 #### Scenario: Data Model (specs/data-model/spec.md)
 
 - **WHEN** implementing data structures
-- **THEN** study these TigerBeetle files:
+- **THEN** study these ArcherDB files:
   ```
-  src/tigerbeetle.zig              → Account and Transfer struct definitions (128-byte examples)
+  src/archerdb.zig              → Account and Transfer struct definitions (128-byte examples)
   src/stdx.zig                     → no_padding() verification utility
   ```
 - **AND** use extern struct with explicit layout
 - **AND** add comptime size/alignment assertions
 - **AND** follow field ordering (largest alignment first)
 
-### Requirement: TigerBeetle Version Compatibility
+### Requirement: ArcherDB Version Compatibility
 
-The system SHALL document which TigerBeetle version the patterns are based on.
+The system SHALL document which ArcherDB version the patterns are based on.
 
 #### Scenario: Reference version
 
-- **WHEN** implementing from TigerBeetle patterns
+- **WHEN** implementing from ArcherDB patterns
 - **THEN** the reference version SHALL be:
-  - **TigerBeetle version:** 0.15.6 (pinned; see `openspec/changes/add-geospatial-core/DECISIONS.md`)
+  - **ArcherDB version:** 0.15.6 (pinned; see `openspec/changes/add-geospatial-core/DECISIONS.md`)
   - **Commit reference:** `c0178117c4de45a403cda40667e3d608a681f484` (pinned; see `openspec/changes/add-geospatial-core/DECISIONS.md`)
-  - **Repository:** https://github.com/tigerbeetle/tigerbeetle
+  - **Repository:** https://github.com/archerdb/archerdb
 - **AND** document specific commit SHA in implementation code comments
 
 #### Scenario: Pattern evolution
 
-- **WHEN** TigerBeetle releases improvements
+- **WHEN** ArcherDB releases improvements
 - **THEN** ArcherDB MAY adopt them:
-  - Monitor TigerBeetle releases for performance/safety improvements
+  - Monitor ArcherDB releases for performance/safety improvements
   - Backport applicable patterns to ArcherDB
   - Test thoroughly before production deployment
-  - Document TigerBeetle version in release notes
+  - Document ArcherDB version in release notes
 
-### Requirement: Code Comments Referencing TigerBeetle
+### Requirement: Code Comments Referencing ArcherDB
 
-The system SHALL include code comments referencing specific TigerBeetle files for complex implementations.
+The system SHALL include code comments referencing specific ArcherDB files for complex implementations.
 
 #### Scenario: VSR implementation comments
 
 - **WHEN** implementing VSR protocol logic
-- **THEN** code comments SHALL reference TigerBeetle:
+- **THEN** code comments SHALL reference ArcherDB:
   ```zig
-  // Based on TigerBeetle src/vsr/replica.zig:send_prepare_ok()
-  // See: https://github.com/tigerbeetle/tigerbeetle/blob/main/src/vsr/replica.zig
+  // Based on ArcherDB src/vsr/replica.zig:send_prepare_ok()
+  // See: https://github.com/archerdb/archerdb/blob/main/src/vsr/replica.zig
   fn send_prepare_ok(self: *Replica, prepare: *const Header) void {
       // ... implementation ...
   }
@@ -572,23 +572,23 @@ The system SHALL include code comments referencing specific TigerBeetle files fo
 
 #### Scenario: Attribution in complex algorithms
 
-- **WHEN** implementing TigerBeetle algorithms
+- **WHEN** implementing ArcherDB algorithms
 - **THEN** code comments SHALL attribute:
-  - Marzullo's algorithm: `// Based on TigerBeetle src/vsr/clock.zig`
-  - Hash-chained prepares: `// Based on TigerBeetle src/vsr/journal.zig`
-  - CTRL protocol: `// Based on TigerBeetle CTRL view change optimization`
-  - Free set: `// Based on TigerBeetle src/vsr/free_set.zig`
+  - Marzullo's algorithm: `// Based on ArcherDB src/vsr/clock.zig`
+  - Hash-chained prepares: `// Based on ArcherDB src/vsr/journal.zig`
+  - CTRL protocol: `// Based on ArcherDB CTRL view change optimization`
+  - Free set: `// Based on ArcherDB src/vsr/free_set.zig`
 
 ### Requirement: Domain Adaptation Documentation
 
-The system SHALL document how TigerBeetle patterns are adapted to the geospatial domain.
+The system SHALL document how ArcherDB patterns are adapted to the geospatial domain.
 
 #### Scenario: Type substitution
 
-- **WHEN** adapting TigerBeetle patterns
+- **WHEN** adapting ArcherDB patterns
 - **THEN** document type substitutions:
   ```
-  TigerBeetle         →  ArcherDB
+  ArcherDB         →  ArcherDB
   ────────────────────────────────────
   Account (128B)      →  GeoEvent (128B)
   Transfer (128B)     →  (none - we only have events)
@@ -601,10 +601,10 @@ The system SHALL document how TigerBeetle patterns are adapted to the geospatial
 
 #### Scenario: Business logic replacement
 
-- **WHEN** replacing TigerBeetle's financial logic
+- **WHEN** replacing ArcherDB's financial logic
 - **THEN** document the substitution:
   ```
-  TigerBeetle Financial Logic  →  ArcherDB Geospatial Logic
+  ArcherDB Financial Logic  →  ArcherDB Geospatial Logic
   ────────────────────────────────────────────────────────────
   Double-entry bookkeeping     →  Last-write-wins (LWW) upserts
   Debit = Credit invariant     →  Spatial validity (lat/lon ranges)
@@ -613,18 +613,18 @@ The system SHALL document how TigerBeetle patterns are adapted to the geospatial
   Transfer history             →  Movement history (spatial log)
   ```
 
-### Requirement: TigerBeetle License Compliance
+### Requirement: ArcherDB License Compliance
 
-The system SHALL comply with TigerBeetle's Apache 2.0 license when borrowing code.
+The system SHALL comply with ArcherDB's Apache 2.0 license when borrowing code.
 
 #### Scenario: License attribution
 
-- **WHEN** code is directly adapted from TigerBeetle
+- **WHEN** code is directly adapted from ArcherDB
 - **THEN** file headers SHALL include:
   ```zig
-  // Portions adapted from TigerBeetle (Apache 2.0 License)
-  // Original: https://github.com/tigerbeetle/tigerbeetle
-  // Copyright TigerBeetle, Inc.
+  // Portions adapted from ArcherDB (Apache 2.0 License)
+  // Original: https://github.com/archerdb/archerdb
+  // Copyright ArcherDB, Inc.
   // Modifications for ArcherDB geospatial database
   ```
 
@@ -634,26 +634,26 @@ The system SHALL comply with TigerBeetle's Apache 2.0 license when borrowing cod
 - **THEN** standard ArcherDB license applies:
   ```zig
   // Copyright ArcherDB Project
-  // Geospatial extensions to TigerBeetle patterns
+  // Geospatial extensions to ArcherDB patterns
   ```
 
 ### Requirement: Divergence Documentation
 
-The system SHALL document any intentional divergences from TigerBeetle's patterns.
+The system SHALL document any intentional divergences from ArcherDB's patterns.
 
 #### Scenario: Divergence justification
 
-- **WHEN** deviating from TigerBeetle's implementation
+- **WHEN** deviating from ArcherDB's implementation
 - **THEN** code comments SHALL explain:
-  - What differs from TigerBeetle
+  - What differs from ArcherDB
   - Why the divergence is necessary
   - What risks it introduces
   - How safety is maintained
 
 **Example:**
 ```zig
-// DIVERGENCE from TigerBeetle: Added ttl_seconds field to GeoEvent
-// TigerBeetle: Account/Transfer have no TTL (financial records never expire)
+// DIVERGENCE from ArcherDB: Added ttl_seconds field to GeoEvent
+// ArcherDB: Account/Transfer have no TTL (financial records never expire)
 // ArcherDB: Location data expires (configurable per-event TTL)
 // Risk: Additional validation needed during compaction
 // Safety: Lazy expiration checks + background cleanup task
@@ -661,13 +661,13 @@ The system SHALL document any intentional divergences from TigerBeetle's pattern
 
 ### Requirement: Community Contribution
 
-The system SHALL contribute improvements back to TigerBeetle when applicable.
+The system SHALL contribute improvements back to ArcherDB when applicable.
 
 #### Scenario: Upstream contributions
 
-- **WHEN** ArcherDB discovers bugs or improvements in borrowed TigerBeetle patterns
+- **WHEN** ArcherDB discovers bugs or improvements in borrowed ArcherDB patterns
 - **THEN** the project SHALL:
-  - Report bugs to TigerBeetle project
+  - Report bugs to ArcherDB project
   - Contribute fixes upstream if applicable
   - Share performance optimizations discovered
   - Collaborate on shared infrastructure
@@ -676,18 +676,18 @@ The system SHALL contribute improvements back to TigerBeetle when applicable.
 
 - **WHEN** ArcherDB develops geospatial-specific patterns
 - **THEN** these SHALL remain ArcherDB-specific:
-  - S2 integration (not relevant to TigerBeetle)
+  - S2 integration (not relevant to ArcherDB)
   - Spatial query engine (domain-specific)
   - TTL/expiration (financial ledgers don't need this)
 
-### Requirement: TigerBeetle Team Consultation
+### Requirement: ArcherDB Team Consultation
 
-The system SHALL maintain communication with TigerBeetle team during implementation.
+The system SHALL maintain communication with ArcherDB team during implementation.
 
 #### Scenario: Design validation
 
-- **WHEN** adapting complex TigerBeetle patterns
-- **THEN** consider consulting TigerBeetle team:
+- **WHEN** adapting complex ArcherDB patterns
+- **THEN** consider consulting ArcherDB team:
   - VSR protocol implementation questions
   - Performance optimization techniques
   - Correctness verification
@@ -697,107 +697,107 @@ The system SHALL maintain communication with TigerBeetle team during implementat
 
 - **WHEN** releasing ArcherDB
 - **THEN** documentation SHALL:
-  - Credit TigerBeetle as foundational architecture
-  - Link to TigerBeetle project prominently
-  - Acknowledge TigerBeetle team's work
-  - Encourage users to support TigerBeetle project
+  - Credit ArcherDB as foundational architecture
+  - Link to ArcherDB project prominently
+  - Acknowledge ArcherDB team's work
+  - Encourage users to support ArcherDB project
 
-### Requirement: Implementation Priority Based on TigerBeetle Complexity
+### Requirement: Implementation Priority Based on ArcherDB Complexity
 
-The system SHALL prioritize implementing proven TigerBeetle patterns before custom geospatial features.
+The system SHALL prioritize implementing proven ArcherDB patterns before custom geospatial features.
 
 #### Scenario: Implementation order
 
 - **WHEN** planning implementation sequence
 - **THEN** implement in this order:
-  1. **Core Types** (GeoEvent, BlockHeader) - Low risk, TigerBeetle pattern
-  2. **Memory Management** (StaticAllocator, pools) - Critical foundation, copy TigerBeetle
-  3. **Storage Engine** (data file, superblock) - Reuse TigerBeetle exactly
-  4. **I/O Subsystem** (io_uring) - Reuse TigerBeetle exactly
-  5. **VSR Protocol** (replica, view changes) - Most complex, follow TigerBeetle precisely
-  6. **Query Engine** (state machine) - Adapt TigerBeetle's StateMachine interface
+  1. **Core Types** (GeoEvent, BlockHeader) - Low risk, ArcherDB pattern
+  2. **Memory Management** (StaticAllocator, pools) - Critical foundation, copy ArcherDB
+  3. **Storage Engine** (data file, superblock) - Reuse ArcherDB exactly
+  4. **I/O Subsystem** (io_uring) - Reuse ArcherDB exactly
+  5. **VSR Protocol** (replica, view changes) - Most complex, follow ArcherDB precisely
+  6. **Query Engine** (state machine) - Adapt ArcherDB's StateMachine interface
   7. **S2 Integration** (NEW - geospatial-specific) - After foundation stable
   8. **Spatial Queries** (NEW - geospatial-specific) - After S2 works
   9. **TTL/Backup** (NEW - ArcherDB features) - After core proven
-  10. **Client SDKs** (adapt TigerBeetle client patterns) - Final layer
+  10. **Client SDKs** (adapt ArcherDB client patterns) - Final layer
 
 #### Scenario: Risk mitigation
 
 - **WHEN** implementing high-risk components
-- **THEN** TigerBeetle's proven patterns SHALL be used:
-  - **VSR consensus:** Copy TigerBeetle's protocol exactly (proven correct)
-  - **Storage corruption detection:** Use Aegis-128L checksums like TigerBeetle
+- **THEN** ArcherDB's proven patterns SHALL be used:
+  - **VSR consensus:** Copy ArcherDB's protocol exactly (proven correct)
+  - **Storage corruption detection:** Use Aegis-128L checksums like ArcherDB
   - **Memory safety:** Use StaticAllocator discipline exactly
   - **Testing:** Use VOPR simulator pattern before any custom tests
 
-### Requirement: TigerBeetle Debugging Techniques
+### Requirement: ArcherDB Debugging Techniques
 
-The system SHALL adopt TigerBeetle's debugging and verification techniques.
+The system SHALL adopt ArcherDB's debugging and verification techniques.
 
 #### Scenario: Assertions and invariants
 
 - **WHEN** implementing critical code paths
-- **THEN** use TigerBeetle's assertion patterns:
+- **THEN** use ArcherDB's assertion patterns:
   ```zig
-  // Based on TigerBeetle's extensive use of assert()
+  // Based on ArcherDB's extensive use of assert()
   assert(self.status == .normal);
   assert(self.view >= self.log_view);
   assert(prepare.header.checksum == self.calculate_checksum(prepare));
   ```
-- **AND** assertions remain enabled in production (like TigerBeetle)
+- **AND** assertions remain enabled in production (like ArcherDB)
 - **AND** assertion failures cause immediate panic (fail-fast)
 
 #### Scenario: Comptime verification
 
 - **WHEN** defining data structures
-- **THEN** use comptime checks like TigerBeetle:
+- **THEN** use comptime checks like ArcherDB:
   ```zig
   comptime {
       assert(@sizeOf(GeoEvent) == 128);
       assert(@alignOf(GeoEvent) == 16);
-      stdx.no_padding(GeoEvent);  // From TigerBeetle's stdx.zig
+      stdx.no_padding(GeoEvent);  // From ArcherDB's stdx.zig
   }
   ```
 
 #### Scenario: Logging patterns
 
 - **WHEN** adding log statements
-- **THEN** follow TigerBeetle's patterns:
+- **THEN** follow ArcherDB's patterns:
   - Use std.log with structured fields
   - Log state transitions explicitly
   - Include view/op numbers in VSR logs
   - Log timing information for performance debugging
 
-### Requirement: TigerBeetle Constants Reuse
+### Requirement: ArcherDB Constants Reuse
 
-The system SHALL reuse TigerBeetle's constant naming conventions and values where applicable.
+The system SHALL reuse ArcherDB's constant naming conventions and values where applicable.
 
 #### Scenario: Constant naming
 
 - **WHEN** defining constants
-- **THEN** use TigerBeetle's naming pattern:
+- **THEN** use ArcherDB's naming pattern:
   ```zig
-  // TigerBeetle naming style (from src/constants.zig)
+  // ArcherDB naming style (from src/constants.zig)
   // NOTE: ArcherDB values differ - see constants/spec.md for authoritative values
   // Example: ArcherDB uses journal_slot_count = 8192 (not 1024) for 60s checkpoint support
-  pub const message_size_max = 10 * 1024 * 1024;  // Same as TigerBeetle
-  pub const journal_slot_count = 8192;             // ArcherDB: 8192 (TigerBeetle: 1024)
-  pub const pipeline_max = 256;                    // Same as TigerBeetle
-  pub const checkpoint_interval = 256;             // Same as TigerBeetle
+  pub const message_size_max = 10 * 1024 * 1024;  // Same as ArcherDB
+  pub const journal_slot_count = 8192;             // ArcherDB: 8192 (ArcherDB: 1024)
+  pub const pipeline_max = 256;                    // Same as ArcherDB
+  pub const checkpoint_interval = 256;             // Same as ArcherDB
   ```
 - **AND** use snake_case with descriptive suffixes
 - **AND** include comments explaining derivation
 
 #### Scenario: Derived constants
 
-- **WHEN** constants depend on TigerBeetle values
+- **WHEN** constants depend on ArcherDB values
 - **THEN** document the relationship:
   ```zig
-  // Based on TigerBeetle's block_size = 64KB
+  // Based on ArcherDB's block_size = 64KB
   pub const block_size = 64 * 1024;
   pub const block_header_size = 256; // BlockHeader at start of each block
 
-  // Derived from TigerBeetle's events_per_block pattern
+  // Derived from ArcherDB's events_per_block pattern
   // Accounts for 256-byte BlockHeader
   pub const events_per_block = (block_size - block_header_size) / geo_event_size; // 510 events
   ```
@@ -819,7 +819,7 @@ The system SHALL validate that the configured journal_slot_count provides suffic
   ─────────────────
   1. Configuration:
      - Single-node ArcherDB instance (no replication, single replica)
-     - journal_slot_count = 8192 (TigerBeetle: 1024, ArcherDB scaling: 8x)
+     - journal_slot_count = 8192 (ArcherDB: 1024, ArcherDB scaling: 8x)
      - Target throughput: 1M operations/second
      - Measurement duration: 120 seconds (2× desired retention window)
 
@@ -833,7 +833,7 @@ The system SHALL validate that the configured journal_slot_count provides suffic
      - Timer: Record wall-clock time (must run ≥120s without timeout)
      - WAL: Track journal_head and journal_tail pointers continuously
      - Throughput: Count actual operations written per second
-     - Checkpoints: Record when checkpoints occur (every 256 operations per TigerBeetle)
+     - Checkpoints: Record when checkpoints occur (every 256 operations per ArcherDB)
 
   VALIDATION PROCEDURE:
   ────────────────────
@@ -841,7 +841,7 @@ The system SHALL validate that the configured journal_slot_count provides suffic
 
   2. Calculate metrics:
      ops_per_checkpoint = (checkpoint_interval × 2) = 512 operations per checkpoint
-       [Rationale: TigerBeetle's checkpoint_interval=256 pipelines per checkpoint,
+       [Rationale: ArcherDB's checkpoint_interval=256 pipelines per checkpoint,
         each pipeline contains ~2 batches on average, each batch ~1 operation]
 
      ops_per_slot_actual = (total_ops_written) / (checkpoints_executed)
@@ -877,7 +877,7 @@ The system SHALL validate that the configured journal_slot_count provides suffic
      required_slots = (target_throughput × retention_window_seconds) / ops_per_slot
 
      Example FAIL recovery:
-     - Measured ops_per_slot = 1024 (TigerBeetle-like)
+     - Measured ops_per_slot = 1024 (ArcherDB-like)
      - Required for 60s retention: (1M ops/sec × 60s) / 1024 = 58,594 slots
      - Minimum: 65,536 slots (next power of 2)
      - Action: Update F0.4.1 constant to 65536
@@ -904,14 +904,14 @@ The system SHALL validate that the configured journal_slot_count provides suffic
   - Root cause: May indicate GC pauses, I/O delays, or clock drift
   ```
 
-### Requirement: TigerBeetle Testing Patterns
+### Requirement: ArcherDB Testing Patterns
 
-The system SHALL adopt TigerBeetle's testing methodology.
+The system SHALL adopt ArcherDB's testing methodology.
 
 #### Scenario: Simulator-based testing
 
 - **WHEN** testing distributed system behavior
-- **THEN** use TigerBeetle's approach:
+- **THEN** use ArcherDB's approach:
   - Deterministic simulation with PRNG seed
   - Fault injection at multiple layers
   - Two-phase testing (safety properties first, liveness second)
@@ -921,7 +921,7 @@ The system SHALL adopt TigerBeetle's testing methodology.
 #### Scenario: Fuzzing strategy
 
 - **WHEN** fuzzing the system
-- **THEN** follow TigerBeetle's patterns:
+- **THEN** follow ArcherDB's patterns:
   - Generate random but valid operation sequences
   - Inject faults deterministically
   - Verify state machine invariants after each operation
@@ -929,12 +929,12 @@ The system SHALL adopt TigerBeetle's testing methodology.
 
 ### Requirement: Performance Optimization Patterns
 
-The system SHALL adopt TigerBeetle's performance optimization techniques.
+The system SHALL adopt ArcherDB's performance optimization techniques.
 
 #### Scenario: Cache alignment
 
 - **WHEN** defining data structures
-- **THEN** follow TigerBeetle's alignment strategy:
+- **THEN** follow ArcherDB's alignment strategy:
   - Align structures to cache line boundaries (64 or 128 bytes)
   - Use `align(N)` attribute explicitly
   - Pack fields to minimize padding
@@ -943,7 +943,7 @@ The system SHALL adopt TigerBeetle's performance optimization techniques.
 #### Scenario: Zero-copy techniques
 
 - **WHEN** implementing message handling
-- **THEN** use TigerBeetle's zero-copy patterns:
+- **THEN** use ArcherDB's zero-copy patterns:
   - Wire format = memory format (extern struct)
   - @ptrCast for buffer reinterpretation
   - Pre-allocated MessagePool (no runtime malloc)
@@ -952,7 +952,7 @@ The system SHALL adopt TigerBeetle's performance optimization techniques.
 #### Scenario: Batching
 
 - **WHEN** implementing operations
-- **THEN** follow TigerBeetle's batching approach:
+- **THEN** follow ArcherDB's batching approach:
   - Batch-only API (refuse single operations)
   - Multi-batch encoding (amortize consensus cost)
   - Trailer-based batch metadata
@@ -960,12 +960,12 @@ The system SHALL adopt TigerBeetle's performance optimization techniques.
 
 ### Requirement: Safety and Correctness Patterns
 
-The system SHALL adopt TigerBeetle's safety-critical programming practices.
+The system SHALL adopt ArcherDB's safety-critical programming practices.
 
 #### Scenario: Error handling
 
 - **WHEN** handling errors
-- **THEN** follow TigerBeetle's patterns:
+- **THEN** follow ArcherDB's patterns:
   - Use Zig's error unions (`!Type`)
   - Explicit error handling (no try-catch, check every error)
   - Fail-fast on assertions (don't mask bugs)
@@ -974,7 +974,7 @@ The system SHALL adopt TigerBeetle's safety-critical programming practices.
 #### Scenario: Undefined behavior prevention
 
 - **WHEN** writing code
-- **THEN** avoid undefined behavior like TigerBeetle:
+- **THEN** avoid undefined behavior like ArcherDB:
   - No uninitialized memory reads
   - No out-of-bounds array access
   - No integer overflow (check explicitly)
@@ -982,12 +982,12 @@ The system SHALL adopt TigerBeetle's safety-critical programming practices.
 
 ### Requirement: Documentation Style
 
-The system SHALL adopt TigerBeetle's documentation style for code comments.
+The system SHALL adopt ArcherDB's documentation style for code comments.
 
 #### Scenario: Function documentation
 
 - **WHEN** documenting functions
-- **THEN** use TigerBeetle's style:
+- **THEN** use ArcherDB's style:
   ```zig
   /// Prepare operation (primary only, before consensus).
   /// Assigns timestamps and calculates deltas.
@@ -1002,16 +1002,16 @@ The system SHALL adopt TigerBeetle's documentation style for code comments.
   ```
 - **AND** document preconditions (assertions)
 - **AND** document postconditions (what changes)
-- **AND** reference TigerBeetle source for complex algorithms
+- **AND** reference ArcherDB source for complex algorithms
 
 ### Requirement: Build and Deployment Patterns
 
-The system SHALL adopt TigerBeetle's build system patterns where applicable.
+The system SHALL adopt ArcherDB's build system patterns where applicable.
 
 #### Scenario: Build configuration
 
 - **WHEN** setting up build system
-- **THEN** reference TigerBeetle's approach:
+- **THEN** reference ArcherDB's approach:
   - Single `build.zig` for entire project
   - Compile-time configuration (no runtime ifdefs)
   - Cross-compilation support (Linux/macOS/Windows)
@@ -1020,25 +1020,25 @@ The system SHALL adopt TigerBeetle's build system patterns where applicable.
 #### Scenario: Release optimization levels
 
 - **WHEN** building for production
-- **THEN** use TigerBeetle's optimization strategy:
+- **THEN** use ArcherDB's optimization strategy:
   - `-OReleaseSafe` (default) - keep runtime safety checks
   - NOT `-OReleaseFast` (removes bounds checking)
   - Enable LTO (Link-Time Optimization)
   - Enable PGO (Profile-Guided Optimization) for hot paths
 
-### Requirement: Open Questions Resolution via TigerBeetle
+### Requirement: Open Questions Resolution via ArcherDB
 
-The system SHALL resolve specification ambiguities by consulting TigerBeetle's implementation.
+The system SHALL resolve specification ambiguities by consulting ArcherDB's implementation.
 
 #### Scenario: Specification ambiguity
 
 - **WHEN** a specification is unclear or ambiguous
 - **THEN** the resolution process SHALL be:
-  1. Check if TigerBeetle has solved this problem
-  2. Read TigerBeetle's code for that component
-  3. Understand how TigerBeetle handles it
-  4. Adopt TigerBeetle's approach (unless geospatial-specific)
-  5. Document the decision with TigerBeetle reference
+  1. Check if ArcherDB has solved this problem
+  2. Read ArcherDB's code for that component
+  3. Understand how ArcherDB handles it
+  4. Adopt ArcherDB's approach (unless geospatial-specific)
+  5. Document the decision with ArcherDB reference
 
 #### Scenario: Implementation detail omission
 
@@ -1046,24 +1046,24 @@ The system SHALL resolve specification ambiguities by consulting TigerBeetle's i
 - **THEN** implementers SHALL:
   - NOT make assumptions
   - NOT invent custom solutions
-  - Study TigerBeetle's handling of similar cases
-  - Follow TigerBeetle's pattern
+  - Study ArcherDB's handling of similar cases
+  - Follow ArcherDB's pattern
   - Propose specification update if detail is critical
 
 **Example:** Specification doesn't detail exact PrepareOk quorum tracking → Study `src/vsr/replica.zig:on_prepare_ok()` → Implement same bitfield approach.
 
 ### Requirement: Geospatial-Specific Implementation Guidance
 
-The system SHALL distinguish between TigerBeetle-borrowed patterns (marked with `// From TigerBeetle:` comments) and geospatial-specific implementations (marked with `// ArcherDB-specific:`).
+The system SHALL distinguish between ArcherDB-borrowed patterns (marked with `// From ArcherDB:` comments) and geospatial-specific implementations (marked with `// ArcherDB-specific:`).
 
-#### Scenario: S2 Geometry Library (NEW - Not from TigerBeetle)
+#### Scenario: S2 Geometry Library (NEW - Not from ArcherDB)
 
 - **WHEN** implementing S2 spatial indexing
-- **THEN** this is NEW code (not from TigerBeetle):
+- **THEN** this is NEW code (not from ArcherDB):
   - Study S2 geometry papers and Go reference implementation
   - Port core algorithms to Zig (lat/lon ↔ cell_id, Hilbert curve, RegionCoverer)
-  - Follow Zig style but NOT TigerBeetle style (different domain)
-  - Test extensively (this is custom code without TigerBeetle's battle-testing)
+  - Follow Zig style but NOT ArcherDB style (different domain)
+  - Test extensively (this is custom code without ArcherDB's battle-testing)
 
 #### Scenario: S2 Reference Implementation and Test Vectors
 
@@ -1346,20 +1346,20 @@ Recommendation:
 - See `design.md` Decision 3a for complete architecture and rationale
 - See `query-engine/spec.md` for S2 usage in radius/polygon queries (depends on determinism guarantee)
 
-#### Scenario: Hybrid Memory Index (PARTIALLY from TigerBeetle)
+#### Scenario: Hybrid Memory Index (PARTIALLY from ArcherDB)
 
 - **WHEN** implementing RAM index
 - **THEN** this combines patterns:
-  - **From TigerBeetle:** Hash map structure, static allocation, no resizing
-  - **Custom:** LWW conflict resolution (TigerBeetle doesn't have this)
-  - **Custom:** TTL expiration checks (TigerBeetle doesn't have this)
-  - **Custom:** Index checkpointing (TigerBeetle's state is deterministically reproducible)
+  - **From ArcherDB:** Hash map structure, static allocation, no resizing
+  - **Custom:** LWW conflict resolution (ArcherDB doesn't have this)
+  - **Custom:** TTL expiration checks (ArcherDB doesn't have this)
+  - **Custom:** Index checkpointing (ArcherDB's state is deterministically reproducible)
 
 **Guideline:** Borrowed foundation + custom features. Test custom features more heavily.
 
 ### Requirement: Version Tracking
 
-The system SHALL track which ArcherDB version corresponds to which TigerBeetle version.
+The system SHALL track which ArcherDB version corresponds to which ArcherDB version.
 
 #### Scenario: Release notes
 
@@ -1368,9 +1368,9 @@ The system SHALL track which ArcherDB version corresponds to which TigerBeetle v
   ```markdown
   ## ArcherDB v0.1.0
 
-  Based on TigerBeetle v0.15.3 (commit: abc123...)
+  Based on ArcherDB v0.15.3 (commit: abc123...)
 
-  ### TigerBeetle Patterns Used:
+  ### ArcherDB Patterns Used:
   - VSR consensus protocol
   - LSM storage engine
   - Static memory allocation
@@ -1384,10 +1384,10 @@ The system SHALL track which ArcherDB version corresponds to which TigerBeetle v
 
 #### Scenario: Dependency tracking
 
-- **WHEN** updating TigerBeetle reference version
+- **WHEN** updating ArcherDB reference version
 - **THEN** document in CHANGELOG:
-  - Which TigerBeetle version we tracked
-  - What changed in TigerBeetle
+  - Which ArcherDB version we tracked
+  - What changed in ArcherDB
   - What we adopted from the update
   - What we didn't adopt (and why)
 
@@ -1459,7 +1459,7 @@ The system SHALL provide detailed algorithm pseudocode for complex operations to
 
     Result: Replicas 0 and 1 agree, replica 2 is outlier (Byzantine or lagging)
   ```
-- **AND** TigerBeetle implementation: `src/vsr/clock.zig`
+- **AND** ArcherDB implementation: `src/vsr/clock.zig`
 
 #### Scenario: S2 RegionCoverer Algorithm
 
@@ -1527,7 +1527,7 @@ The system SHALL provide detailed algorithm pseudocode for complex operations to
 #### Scenario: LSM Compaction Selection Algorithm
 
 - **WHEN** implementing LSM tree compaction
-- **THEN** use TigerBeetle's selection algorithm:
+- **THEN** use ArcherDB's selection algorithm:
   ```
   LSM Compaction Selection (Leveled Compaction)
   ═══════════════════════════════════════════════
@@ -1572,7 +1572,7 @@ The system SHALL provide detailed algorithm pseudocode for complex operations to
     L5: 327 GB (target)
     L6: 2.6 TB (unbounded, final level)
   ```
-- **AND** TigerBeetle implementation: `src/lsm/compaction.zig`
+- **AND** ArcherDB implementation: `src/lsm/compaction.zig`
 
 #### Scenario: Hash-Chained Prepare Validation
 
@@ -1618,7 +1618,7 @@ The system SHALL provide detailed algorithm pseudocode for complex operations to
     - Whichever replica gets prepare with wrong parent detects fork
     - Fork triggers immediate view change (Byzantine primary detected)
   ```
-- **AND** TigerBeetle implementation: `src/vsr/journal.zig:verify_hash_chain()`
+- **AND** ArcherDB implementation: `src/vsr/journal.zig:verify_hash_chain()`
 
 #### Scenario: Linear Probing Hash Map Algorithm
 
@@ -1699,7 +1699,7 @@ The system SHALL provide detailed algorithm pseudocode for complex operations to
 #### Scenario: Free Set Block Allocation Algorithm
 
 - **WHEN** implementing grid block allocation
-- **THEN** use TigerBeetle's free set algorithm:
+- **THEN** use ArcherDB's free set algorithm:
   ```
   Free Set Block Allocation (Reservation System)
   ══════════════════════════════════════════════
@@ -1743,7 +1743,7 @@ The system SHALL provide detailed algorithm pseudocode for complex operations to
   - Enables parallel compaction (each shard independent)
   - Bounded search time per shard (4096 bits = 64 u64 words)
   ```
-- **AND** TigerBeetle implementation: `src/vsr/free_set.zig`
+- **AND** ArcherDB implementation: `src/vsr/free_set.zig`
 
 #### Scenario: Flexible Paxos Quorum Validation
 
@@ -1835,7 +1835,7 @@ The system SHALL provide detailed algorithm pseudocode for complex operations to
   - Sequence number enables selecting latest valid copy
   - Copy index prevents accidentally using wrong copy slot
   ```
-- **AND** TigerBeetle implementation: `src/vsr/superblock.zig:read_quorum()`
+- **AND** ArcherDB implementation: `src/vsr/superblock.zig:read_quorum()`
 
 #### Scenario: CTRL Protocol Algorithm (View Change Log Selection)
 
@@ -1895,7 +1895,7 @@ The system SHALL provide detailed algorithm pseudocode for complex operations to
   - Fills gaps by requesting prepares from replicas that have them
   - Ensures all replicas converge to identical log
   ```
-- **AND** TigerBeetle implementation: `src/vsr/replica.zig:on_do_view_change()`
+- **AND** ArcherDB implementation: `src/vsr/replica.zig:on_do_view_change()`
 
 #### Scenario: S2 Cell Hierarchy Traversal Algorithm
 
@@ -3431,7 +3431,7 @@ The system SHALL validate distributed correctness using VOPR (Viewstamped Replic
   F4.1 VOPR ADAPTATION (Weeks 27-28):
   ──────────────────────────────────
 
-  Objective: Adapt TigerBeetle's VOPR to GeoEvent operations
+  Objective: Adapt ArcherDB's VOPR to GeoEvent operations
 
   DELIVERABLES:
   1. GeoEvent operation generators:
@@ -3544,7 +3544,7 @@ The system SHALL validate distributed correctness using VOPR (Viewstamped Replic
   F4.3.1 Linearizability Proof (1M+ operations):
   Run VOPR simulator for 1M operations with multiple threads/clients.
   Verify: All operations execute in total order consistent with client observation.
-  Tool: TigerBeetle's existing history validation logic, adapted for GeoEvents.
+  Tool: ArcherDB's existing history validation logic, adapted for GeoEvents.
 
   F4.3.2 Mega-Scale Test (10M+ operations):
   Extended VOPR run with 10M operations.

@@ -1558,7 +1558,7 @@ pub const IO = struct {
                         // We require Direct I/O for safety to handle fsync failure correctly, and
                         // therefore panic in production if it is not supported.
                         log.err("This file system does not support Direct I/O.", .{});
-                        log.err("TigerBeetle uses Direct I/O to bypass the kernel page cache, " ++
+                        log.err("ArcherDB uses Direct I/O to bypass the kernel page cache, " ++
                             "to ensure that data is durable when writes complete.", .{});
                         log.err("If this is a production replica, Direct I/O is required.", .{});
                         log.err("If this is a development/testing replica, " ++
@@ -1605,7 +1605,7 @@ pub const IO = struct {
         // to the fd alive even once a process has been terminated, until all async operations have
         // been completed.
         //
-        // This means that when killing and starting a tigerbeetle process in an automated way, you
+        // This means that when killing and starting a archerdb process in an automated way, you
         // can see "another process holds the data file lock" errors, even though the process really
         // has terminated.
         const lock_acquired = blk: {
@@ -1716,13 +1716,13 @@ pub const IO = struct {
 
                 if (purpose == .format) {
                     // Check that the first superblock_zone_size bytes are 0.
-                    // - It'll ensure that the block device is not directly TigerBeetle.
+                    // - It'll ensure that the block device is not directly ArcherDB.
                     // - It'll be very likely to catch any cases where there's an existing
                     //   other filesystem.
                     // - In the case of there being a partition table (eg, two partitions,
                     //   one starting at 0MiB, one at 1024MiB) and the operator tries to format
                     //   the raw disk (/dev/sda) while a partition later is
-                    //   TigerBeetle (/dev/sda2) it'll be blocked by the MBR/GPT existing.
+                    //   ArcherDB (/dev/sda2) it'll be blocked by the MBR/GPT existing.
                     const superblock_zone_size =
                         @import("../vsr/superblock.zig").superblock_zone_size;
                     var read_buf: [superblock_zone_size]u8 align(constants.sector_size) = undefined;

@@ -14,7 +14,7 @@
 //!
 //! Run:
 //!
-//!     $ zig run -OReleaseSafe src/copyhound.zig -- memcpy --bytes 128 < tigerbeetle.ll \
+//!     $ zig run -OReleaseSafe src/copyhound.zig -- memcpy --bytes 128 < archerdb.ll \
 //!        | sort -n -k 2
 //!
 //! This only detects memory copies with comptime-know size (eg, when you copy a `T`, rather than a
@@ -24,7 +24,7 @@
 //!
 //! Run:
 //!
-//!     $ zig run -OReleaseSafe src/copyhound.zig -- funcsize < tigerbeetle.ll \
+//!     $ zig run -OReleaseSafe src/copyhound.zig -- funcsize < archerdb.ll \
 //!        | awk '{a[$1] += $2; b[$1] += 1} END {for (i in a) print i, b[i], a[i]}' \
 //!        | sort -n -k 3
 //!

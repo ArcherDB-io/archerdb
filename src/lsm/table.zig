@@ -232,7 +232,7 @@ pub fn TableType(
             assert(block_size == @sizeOf(vsr.Header) + data.values_size + data.padding_size);
             assert(block_size == data.padding_offset + data.padding_size);
 
-            // We expect no block padding at least for TigerBeetle's objects and indexes:
+            // We expect no block padding at least for ArcherDB's objects and indexes:
             if ((key_size == 8 and value_size == 128) or
                 (key_size == 8 and value_size == 64) or
                 (key_size == 16 and value_size == 16) or

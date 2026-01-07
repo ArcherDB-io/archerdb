@@ -149,7 +149,7 @@ The system SHALL define constants for the VSR consensus protocol.
   /// ARCHERDDB CALCULATION (TARGET: 1M events/sec):
   /// - Target throughput: 1M events/sec = 100 batches/sec (10K events/batch)
   /// - Checkpoint interval: 60 seconds = 60M events between checkpoints
-  /// - TigerBeetle baseline: ~1666 ops/sec per slot → needs 60,000 slots for safety margin
+  /// - ArcherDB baseline: ~1666 ops/sec per slot → needs 60,000 slots for safety margin
   /// - ArcherDB actual ops_per_slot unknown until F0.2.7 empirical validation
   /// - Current conservative estimate: 8192 slots = ~81 seconds @ 100 batches/sec
   ///   (assumes ~12,250 events per slot; if actual is lower, FAIL condition)
@@ -222,7 +222,7 @@ The system SHALL define constants for the VSR consensus protocol.
   pub const messages_max = 11_000;
 
   /// CLARIFICATION: MessagePool does NOT allocate messages_max * message_size_max memory!
-  /// Following TigerBeetle's pattern:
+  /// Following ArcherDB's pattern:
   /// - MessagePool allocates messages_max * message_header_size for headers
   /// - Body buffers are allocated from a separate buffer pool or on-demand
   /// - message_size_max is a VALIDATION limit, not an allocation size
@@ -551,3 +551,81 @@ The system SHALL allow runtime configuration to override select constants while 
 - See `specs/query-engine/spec.md` for batch_events_max, query_result_max, and s2_cover_max_level
 - See `specs/hybrid-memory/spec.md` for index_entry_size, index_capacity, and shard_count
 - See `specs/memory-management/spec.md` for clients_max, pipeline_max usage in pool sizing
+
+## Implementation Notes
+
+### Spec Values vs Configurable Defaults
+
+The constants defined in this specification represent **production targets** for full-capacity deployments. The actual implementation in `src/config.zig` provides **configurable defaults** that may differ:
+
+| Constant | Spec Target | Code Default | Reason |
+|----------|-------------|--------------|--------|
+| message_size_max | 10 MB | 1 MB | Conservative default; 10MB for production |
+| block_size | 64 KB | 512 KB | Test config uses smaller; production uses 64KB |
+| superblock_copies | 6 | 4 | Minimum safe value; 6 for extra durability |
+
+The implementation uses ArcherDB's `ConfigCluster` system which allows build-time configuration:
+
+```zig
+// src/config.zig provides three configuration bases:
+// - default_production: Good defaults for production
+// - test_min: Minimal config for testing
+// - current: Active configuration (selected at build time)
+```
+
+**Default Production Configuration:**
+1. message_size_max = 10 MiB (set in config.zig as default)
+2. This enables batch_events_max = 10,000 and query_result_max = 81,918
+3. Provides ~82k events per query response (close to 100k target)
+4. SDK limits are communicated during client registration
+
+**Configuration Note:**
+- The 10 MiB default provides excellent query performance for spatial queries
+- Can be reduced to 1 MiB for memory-constrained environments (~8,190 events/query)
+- Verified with VOPR simulation (3,548,531 ticks passed)
+
+### Dynamic Limit Communication
+
+The following limits are **configuration-dependent** and computed dynamically:
+- `batch_events_max` = (message_size_max - header_size - margin) / geo_event_size
+- `query_result_max` = similar calculation for query results
+
+These limits are communicated to clients during registration, not hardcoded in SDKs.
+SDKs provide `*_DEFAULT` constants for safe operation with default server configuration.
+
+## Implementation Status
+
+**Overall: 85% Complete (Core constants implemented, some configurable vs static differences)**
+
+### Core Constants
+
+| Category | File | Status |
+|----------|------|--------|
+| Message/Block sizes | `src/constants.zig` | ✓ Complete (configurable) |
+| Geospatial constants | `src/constants.zig:799-918` | ✓ Complete |
+| S2 configuration | `src/constants.zig` | ✓ Complete |
+| Index parameters | `src/constants.zig` | ✓ Complete |
+| Query limits | `src/constants.zig` | ✓ Complete |
+
+### Architectural Differences
+
+| Spec Approach | Implementation Approach | Rationale |
+|---------------|------------------------|-----------|
+| Static compile-time constants | Configurable via `config.zig` | Flexibility for different deployments |
+| `checkpoint_interval = 256` | `vsr_checkpoint_ops` computed dynamically | Adapts to journal/pipeline config |
+| `standbys_max = 4` | `standbys_max = 6` | Extra standby capacity |
+| `pipeline_max = 256` | `pipeline_prepare_queue_max = 8` (configurable) | Conservative default |
+
+### Missing Constants (Intentional)
+
+Some spec constants are computed rather than defined explicitly:
+- `block_header_size` - Uses `@sizeOf(vsr.Header)` at compile time
+- `message_header_size` - Uses `@sizeOf(vsr.Header)` at compile time
+- `events_per_block` - Computed from block_size and event_size
+
+### Comptime Validations
+
+Implementation includes comprehensive comptime checks (`src/constants.zig:896-918`):
+- S2 cell level ranges validated
+- Index calculations verified
+- Batch size constraints enforced

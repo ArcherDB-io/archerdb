@@ -1,574 +1,132 @@
-// section:imports
-const { id } = require("tigerbeetle-node");
-const { createClient } = require("tigerbeetle-node");
-const process = require("process");
+/**
+ * ArcherDB Entity Tracking Walkthrough
+ *
+ * This sample demonstrates:
+ * 1. Tracking a moving entity over time
+ * 2. Updating entity positions (upsert)
+ * 3. Looking up entity by UUID
+ * 4. Deleting entities
+ * 5. Historical position queries
+ */
+const process = require('process')
 
-console.log("Import ok!");
-// endsection:imports
-
-const {
-  AccountFlags,
-  TransferFlags,
-  CreateTransferError,
-  CreateAccountError,
-  AccountFilterFlags,
-  QueryFilterFlags,
-  amount_max,
-} = require("tigerbeetle-node");
+const { createGeoClient, createGeoEvent } = require('archerdb-node')
 
 async function main() {
-  // section:client
-  const client = createClient({
-    cluster_id: 0n,
-    replica_addresses: [process.env.TB_ADDRESS || "3000"],
-  });
-  // endsection:client
+  const address = process.env.ARCHERDB_ADDRESS || '127.0.0.1:3001'
 
-  // The examples currently throws because the batch is actually invalid (most of fields are
-  // undefined). Ideally, we prepare a correct batch here while keeping the syntax compact,
-  // for the example, but for the time being lets prioritize a readable example and just
-  // swallow the error.
+  const client = createGeoClient({
+    clusterId: 0n,
+    addresses: [address],
+  })
+
+  console.log(`Connected to ArcherDB at ${address}`)
+  console.log('='.repeat(50))
 
   try {
-    // section:create-accounts
-    const account = {
-      id: id(), // TigerBeetle time-based ID.
-      debits_pending: 0n,
-      debits_posted: 0n,
-      credits_pending: 0n,
-      credits_posted: 0n,
-      user_data_128: 0n,
-      user_data_64: 0n,
-      user_data_32: 0,
-      reserved: 0,
-      ledger: 1,
-      code: 718,
-      flags: 0,
-      timestamp: 0n,
-    };
+    // Create a unique entity ID for our tracked vehicle
+    const entityId = BigInt(Math.floor(Math.random() * Number.MAX_SAFE_INTEGER))
+    console.log(`\n1. CREATING ENTITY: Vehicle ${entityId}`)
 
-    const account_errors = await client.createAccounts([account]);
-    // Error handling omitted.
-    // endsection:create-accounts
-  } catch (exception) {}
+    // Simulate a vehicle route from SF Ferry Building to Fisherman's Wharf
+    const route = [
+      { name: 'Ferry Building', lat: 37.7955, lon: -122.3937 },
+      { name: 'Pier 23', lat: 37.8005, lon: -122.4007 },
+      { name: 'Pier 33', lat: 37.8087, lon: -122.4097 },
+      { name: "Fisherman's Wharf", lat: 37.808, lon: -122.4177 },
+    ]
 
-  try {
-    // section:account-flags
-    const account0 = {
-      id: 100n,
-      debits_pending: 0n,
-      debits_posted: 0n,
-      credits_pending: 0n,
-      credits_posted: 0n,
-      user_data_128: 0n,
-      user_data_64: 0n,
-      user_data_32: 0,
-      reserved: 0,
-      ledger: 1,
-      code: 1,
-      timestamp: 0n,
-      flags: AccountFlags.linked | AccountFlags.debits_must_not_exceed_credits,
-    };
-    const account1 = {
-      id: 101n,
-      debits_pending: 0n,
-      debits_posted: 0n,
-      credits_pending: 0n,
-      credits_posted: 0n,
-      user_data_128: 0n,
-      user_data_64: 0n,
-      user_data_32: 0,
-      reserved: 0,
-      ledger: 1,
-      code: 1,
-      timestamp: 0n,
-      flags: AccountFlags.history,
-    };
+    const baseTime = BigInt(Date.now()) * 1000000n
 
-    const account_errors = await client.createAccounts([account0, account1]);
-    // Error handling omitted.
-    // endsection:account-flags
-  } catch (exception) {}
+    // Insert initial position
+    console.log('\n2. INSERTING INITIAL POSITION')
+    let batch = client.createBatch()
+    batch.addFromOptions({
+      entityId,
+      latitude: route[0].lat,
+      longitude: route[0].lon,
+      timestamp: baseTime,
+      velocityMms: 5000, // 5 m/s
+      headingCdeg: 31500, // ~315 degrees (northwest)
+      groupId: 1n,
+    })
+    await batch.commit()
+    console.log(`   Inserted at ${route[0].name}: (${route[0].lat.toFixed(4)}, ${route[0].lon.toFixed(4)})`)
 
-  try {
-    // section:create-accounts-errors
-    const account0 = {
-      id: 102n,
-      debits_pending: 0n,
-      debits_posted: 0n,
-      credits_pending: 0n,
-      credits_posted: 0n,
-      user_data_128: 0n,
-      user_data_64: 0n,
-      user_data_32: 0,
-      reserved: 0,
-      ledger: 1,
-      code: 1,
-      timestamp: 0n,
-      flags: 0,
-    };
-    const account1 = {
-      id: 103n,
-      debits_pending: 0n,
-      debits_posted: 0n,
-      credits_pending: 0n,
-      credits_posted: 0n,
-      user_data_128: 0n,
-      user_data_64: 0n,
-      user_data_32: 0,
-      reserved: 0,
-      ledger: 1,
-      code: 1,
-      timestamp: 0n,
-      flags: 0,
-    };
-    const account2 = {
-      id: 104n,
-      debits_pending: 0n,
-      debits_posted: 0n,
-      credits_pending: 0n,
-      credits_posted: 0n,
-      user_data_128: 0n,
-      user_data_64: 0n,
-      user_data_32: 0,
-      reserved: 0,
-      ledger: 1,
-      code: 1,
-      timestamp: 0n,
-      flags: 0,
-    };
-
-    const account_errors = await client.createAccounts([account0, account1, account2]);
-    for (const error of account_errors) {
-      switch (error.result) {
-        case CreateAccountError.exists:
-          console.error(`Batch account at ${error.index} already exists.`);
-          break;
-        default:
-          console.error(
-            `Batch account at ${error.index} failed to create: ${
-              CreateAccountError[error.result]
-            }.`,
-          );
-      }
+    // Look up the entity
+    console.log('\n3. LOOKING UP ENTITY BY UUID')
+    let found = await client.getLatestByUuid(entityId)
+    if (found) {
+      console.log(`   Found entity ${entityId}`)
+      console.log(`   Position: (${found.latitude.toFixed(4)}, ${found.longitude.toFixed(4)})`)
+      console.log(`   Velocity: ${found.velocityMms / 1000} m/s`)
     }
-    // endsection:create-accounts-errors
-  } catch (exception) {}
 
-  try {
-    // section:lookup-accounts
-    const accounts = await client.lookupAccounts([100n, 101n]);
-    // endsection:lookup-accounts
-   } catch (exception) {}
-
-   try {
-    // section:create-transfers
-    const transfers = [{
-      id: id(), // TigerBeetle time-based ID.
-      debit_account_id: 102n,
-      credit_account_id: 103n,
-      amount: 10n,
-      pending_id: 0n,
-      user_data_128: 0n,
-      user_data_64: 0n,
-      user_data_32: 0,
-      timeout: 0,
-      ledger: 1,
-      code: 720,
-      flags: 0,
-      timestamp: 0n,
-    }];
-
-    const transfer_errors = await client.createTransfers(transfers);
-    // Error handling omitted.
-    // endsection:create-transfers
-  } catch (exception) {}
-
-  try {
-    // section:create-transfers-errors
-    const transfers = [{
-      id: 1n,
-      debit_account_id: 102n,
-      credit_account_id: 103n,
-      amount: 10n,
-      pending_id: 0n,
-      user_data_128: 0n,
-      user_data_64: 0n,
-      user_data_32: 0,
-      timeout: 0,
-      ledger: 1,
-      code: 720,
-      flags: 0,
-      timestamp: 0n,
-    },
-    {
-      id: 2n,
-      debit_account_id: 102n,
-      credit_account_id: 103n,
-      amount: 10n,
-      pending_id: 0n,
-      user_data_128: 0n,
-      user_data_64: 0n,
-      user_data_32: 0,
-      timeout: 0,
-      ledger: 1,
-      code: 720,
-      flags: 0,
-      timestamp: 0n,
-    },
-    {
-      id: 3n,
-      debit_account_id: 102n,
-      credit_account_id: 103n,
-      amount: 10n,
-      pending_id: 0n,
-      user_data_128: 0n,
-      user_data_64: 0n,
-      user_data_32: 0,
-      timeout: 0,
-      ledger: 1,
-      code: 720,
-      flags: 0,
-      timestamp: 0n,
-    }];
-
-    const transfer_errors = await client.createTransfers(batch);
-    for (const error of transfer_errors) {
-      switch (error.result) {
-        case CreateTransferError.exists:
-          console.error(`Batch transfer at ${error.index} already exists.`);
-          break;
-        default:
-          console.error(
-            `Batch transfer at ${error.index} failed to create: ${
-              CreateTransferError[error.result]
-            }.`,
-          );
-      }
+    // Update positions along the route
+    console.log('\n4. UPDATING POSITIONS ALONG ROUTE')
+    for (let i = 1; i < route.length; i++) {
+      const stop = route[i]
+      batch = client.createUpsertBatch()
+      batch.addFromOptions({
+        entityId,
+        latitude: stop.lat,
+        longitude: stop.lon,
+        timestamp: baseTime + BigInt(i) * 60000000000n, // 1 minute apart
+        velocityMms: 5000,
+        headingCdeg: 31500,
+        groupId: 1n,
+      })
+      await batch.commit()
+      console.log(`   Updated to ${stop.name}: (${stop.lat.toFixed(4)}, ${stop.lon.toFixed(4)})`)
     }
-    // endsection:create-transfers-errors
-  } catch (exception) {}
 
-  try {
-    // section:no-batch
-    const batch = []; // Array of transfer to create.
-    for (let i = 0; i < batch.len; i++) {
-      const transfer_errors = await client.createTransfers(batch[i]);
-      // Error handling omitted.
+    // Query to verify latest position
+    console.log('\n5. VERIFYING LATEST POSITION')
+    found = await client.getLatestByUuid(entityId)
+    if (found) {
+      console.log(`   Latest position: (${found.latitude.toFixed(4)}, ${found.longitude.toFixed(4)})`)
+      console.log(
+        `   Expected: Fisherman's Wharf (${route[route.length - 1].lat.toFixed(4)}, ${route[route.length - 1].lon.toFixed(4)})`,
+      )
     }
-    // endsection:no-batch
-  } catch (exception) {}
 
-  try {
-    // section:batch
-    const batch = []; // Array of transfer to create.
-    const BATCH_SIZE = 8189;
-    for (let i = 0; i < batch.length; i += BATCH_SIZE) {
-      const transfer_errors = await client.createTransfers(
-        batch.slice(i, Math.min(batch.length, BATCH_SIZE)),
-      );
-      // Error handling omitted.
+    // Query historical positions in the area
+    console.log('\n6. QUERYING HISTORICAL POSITIONS IN AREA')
+    const result = await client.queryRadius({
+      latitude: 37.802,
+      longitude: -122.4057,
+      radiusM: 2000,
+    })
+    console.log(`   Found ${result.events.length} historical positions in 2km area`)
+
+    // Delete the entity
+    console.log('\n7. DELETING ENTITY')
+    const deleteBatch = client.createDeleteBatch()
+    deleteBatch.add(entityId)
+    const deleteResult = await deleteBatch.commit()
+    console.log(`   Deleted ${deleteResult.deletedCount} entities`)
+    console.log(`   Not found: ${deleteResult.notFoundCount}`)
+
+    // Verify deletion
+    console.log('\n8. VERIFYING DELETION')
+    found = await client.getLatestByUuid(entityId)
+    if (found === null) {
+      console.log('   Entity successfully deleted (not found)')
+    } else {
+      console.log('   Warning: Entity still found after deletion')
     }
-    // endsection:batch
-  } catch (exception) {}
 
-  try {
-    // section:transfer-flags-link
-    const transfer0 = {
-      id: 4n,
-      debit_account_id: 102n,
-      credit_account_id: 103n,
-      amount: 10n,
-      pending_id: 0n,
-      user_data_128: 0n,
-      user_data_64: 0n,
-      user_data_32: 0,
-      timeout: 0,
-      ledger: 1,
-      code: 720,
-      flags: TransferFlags.linked,
-      timestamp: 0n,
-    };
-    const transfer1 = {
-      id: 5n,
-      debit_account_id: 102n,
-      credit_account_id: 103n,
-      amount: 10n,
-      pending_id: 0n,
-      user_data_128: 0n,
-      user_data_64: 0n,
-      user_data_32: 0,
-      timeout: 0,
-      ledger: 1,
-      code: 720,
-      flags: 0,
-      timestamp: 0n,
-    };
-
-    // Create the transfer
-    const transfer_errors = await client.createTransfers([transfer0, transfer1]);
-    // Error handling omitted.
-    // endsection:transfer-flags-link
-  } catch (exception) {}
-
-  try {
-    // section:transfer-flags-post
-    const transfer0 = {
-      id: 6n,
-      debit_account_id: 102n,
-      credit_account_id: 103n,
-      amount: 10n,
-      pending_id: 0n,
-      user_data_128: 0n,
-      user_data_64: 0n,
-      user_data_32: 0,
-      timeout: 0,
-      ledger: 1,
-      code: 720,
-      flags: TransferFlags.pending,
-      timestamp: 0n,
-    };
-
-    let transfer_errors = await client.createTransfers([transfer0]);
-    // Error handling omitted.
-
-    const transfer1 = {
-      id: 7n,
-      debit_account_id: 102n,
-      credit_account_id: 103n,
-      // Post the entire pending amount.
-      amount: amount_max,
-      pending_id: 6n,
-      user_data_128: 0n,
-      user_data_64: 0n,
-      user_data_32: 0,
-      timeout: 0,
-      ledger: 1,
-      code: 720,
-      flags: TransferFlags.post_pending_transfer,
-      timestamp: 0n,
-    };
-
-    transfer_errors = await client.createTransfers([transfer1]);
-    // Error handling omitted.
-    // endsection:transfer-flags-post
-  } catch (exception) {}
-
-  try {
-    // section:transfer-flags-void
-    const transfer0 = {
-      id: 8n,
-      debit_account_id: 102n,
-      credit_account_id: 103n,
-      amount: 10n,
-      pending_id: 0n,
-      user_data_128: 0n,
-      user_data_64: 0n,
-      user_data_32: 0,
-      timeout: 0,
-      ledger: 1,
-      code: 720,
-      flags: TransferFlags.pending,
-      timestamp: 0n,
-    };
-
-    let transfer_errors = await client.createTransfers([transfer0]);
-    // Error handling omitted.
-
-    const transfer1 = {
-      id: 9n,
-      debit_account_id: 102n,
-      credit_account_id: 103n,
-      amount: 0n,
-      pending_id: 8n,
-      user_data_128: 0n,
-      user_data_64: 0n,
-      user_data_32: 0,
-      timeout: 0,
-      ledger: 1,
-      code: 720,
-      flags: TransferFlags.void_pending_transfer,
-      timestamp: 0n,
-    };
-
-    transfer_errors = await client.createTransfers([transfer1]);
-    // Error handling omitted.
-    // endsection:transfer-flags-void
-  } catch (exception) {}
-
-  try {
-    // section:lookup-transfers
-    const transfers = await client.lookupTransfers([1n, 2n]);
-    // endsection:lookup-transfers
-  } catch (exception) {}
-
-  try {
-    // section:get-account-transfers
-    const filter = {
-      account_id: 2n,
-      user_data_128: 0n, // No filter by UserData.
-      user_data_64: 0n,
-      user_data_32: 0,
-      code: 0, // No filter by Code.
-      timestamp_min: 0n, // No filter by Timestamp.
-      timestamp_max: 0n, // No filter by Timestamp.
-      limit: 10, // Limit to ten transfers at most.
-      flags: AccountFilterFlags.debits | // Include transfer from the debit side.
-        AccountFilterFlags.credits | // Include transfer from the credit side.
-        AccountFilterFlags.reversed, // Sort by timestamp in reverse-chronological order.
-    };
-
-    const account_transfers = await client.getAccountTransfers(filter);
-    // endsection:get-account-transfers
-  } catch (exception) {}
-
-  try {
-    // section:get-account-balances
-    const filter = {
-      account_id: 2n,
-      user_data_128: 0n, // No filter by UserData.
-      user_data_64: 0n,
-      user_data_32: 0,
-      code: 0, // No filter by Code.
-      timestamp_min: 0n, // No filter by Timestamp.
-      timestamp_max: 0n, // No filter by Timestamp.
-      limit: 10, // Limit to ten balances at most.
-      flags: AccountFilterFlags.debits | // Include transfer from the debit side.
-        AccountFilterFlags.credits | // Include transfer from the credit side.
-        AccountFilterFlags.reversed, // Sort by timestamp in reverse-chronological order.
-    };
-
-    const account_balances = await client.getAccountBalances(filter);
-    // endsection:get-account-balances
-  } catch (exception) {}
-
-  try {
-    // section:query-accounts
-    const query_filter = {
-      user_data_128: 1000n, // Filter by UserData.
-      user_data_64: 100n,
-      user_data_32: 10,
-      code: 1, // Filter by Code.
-      ledger: 0, // No filter by Ledger.
-      timestamp_min: 0n, // No filter by Timestamp.
-      timestamp_max: 0n, // No filter by Timestamp.
-      limit: 10, // Limit to ten accounts at most.
-      flags: QueryFilterFlags.reversed, // Sort by timestamp in reverse-chronological order.
-    };
-
-    const query_accounts = await client.queryAccounts(query_filter);
-    // endsection:query-accounts
-  } catch (exception) {}
-
-  try {
-    // section:query-transfers
-    const query_filter = {
-      user_data_128: 1000n, // Filter by UserData.
-      user_data_64: 100n,
-      user_data_32: 10,
-      code: 1, // Filter by Code.
-      ledger: 0, // No filter by Ledger.
-      timestamp_min: 0n, // No filter by Timestamp.
-      timestamp_max: 0n, // No filter by Timestamp.
-      limit: 10, // Limit to ten transfers at most.
-      flags: QueryFilterFlags.reversed, // Sort by timestamp in reverse-chronological order.
-    };
-
-    const query_transfers = await client.queryTransfers(query_filter);
-    // endsection:query-transfers
-  } catch (exception) {}
-
-  try {
-      // section:linked-events
-      const batch = []; // Array of transfer to create.
-      let linkedFlag = 0;
-      linkedFlag |= TransferFlags.linked;
-
-      // An individual transfer (successful):
-      batch.push({ id: 1n /* , ... */ });
-
-      // A chain of 4 transfers (the last transfer in the chain closes the chain with linked=false):
-      batch.push({ id: 2n, /* ..., */ flags: linkedFlag }); // Commit/rollback.
-      batch.push({ id: 3n, /* ..., */ flags: linkedFlag }); // Commit/rollback.
-      batch.push({ id: 2n, /* ..., */ flags: linkedFlag }); // Fail with exists
-      batch.push({ id: 4n, /* ..., */ flags: 0 }); // Fail without committing.
-
-      // An individual transfer (successful):
-      // This should not see any effect from the failed chain above.
-      batch.push({ id: 2n, /* ..., */ flags: 0 });
-
-      // A chain of 2 transfers (the first transfer fails the chain):
-      batch.push({ id: 2n, /* ..., */ flags: linkedFlag });
-      batch.push({ id: 3n, /* ..., */ flags: 0 });
-
-      // A chain of 2 transfers (successful):
-      batch.push({ id: 3n, /* ..., */ flags: linkedFlag });
-      batch.push({ id: 4n, /* ..., */ flags: 0 });
-
-      const transfer_errors = await client.createTransfers(batch);
-      // Error handling omitted.
-      // endsection:linked-events
-    } catch (exception) {}
-
-    try {
-      // section:imported-events
-      // External source of time.
-      let historical_timestamp = 0n
-      // Events loaded from an external source.
-      const historical_accounts = []; // Loaded from an external source.
-      const historical_transfers = []; // Loaded from an external source.
-
-      // First, load and import all accounts with their timestamps from the historical source.
-      const accounts = [];
-      for (let index = 0; i < historical_accounts.length; i++) {
-        let account = historical_accounts[i];
-        // Set a unique and strictly increasing timestamp.
-        historical_timestamp += 1;
-        account.timestamp = historical_timestamp;
-        // Set the account as `imported`.
-        account.flags = AccountFlags.imported;
-        // To ensure atomicity, the entire batch (except the last event in the chain)
-        // must be `linked`.
-        if (index < historical_accounts.length - 1) {
-          account.flags |= AccountFlags.linked;
-        }
-
-        accounts.push(account);
-      }
-
-      const account_errors = await client.createAccounts(accounts);
-      // Error handling omitted.
-
-      // Then, load and import all transfers with their timestamps from the historical source.
-      const transfers = [];
-      for (let index = 0; i < historical_transfers.length; i++) {
-        let transfer = historical_transfers[i];
-        // Set a unique and strictly increasing timestamp.
-        historical_timestamp += 1;
-        transfer.timestamp = historical_timestamp;
-        // Set the account as `imported`.
-        transfer.flags = TransferFlags.imported;
-        // To ensure atomicity, the entire batch (except the last event in the chain)
-        // must be `linked`.
-        if (index < historical_transfers.length - 1) {
-          transfer.flags |= TransferFlags.linked;
-        }
-
-        transfers.push(transfer);
-      }
-
-      const transfer_errors = await client.createTransfers(transfers);
-      // Error handling omitted.
-
-      // Since it is a linked chain, in case of any error the entire batch is rolled back and can be retried
-      // with the same historical timestamps without regressing the cluster timestamp.
-      // endsection:imported-events
-    } catch (exception) {}
+    console.log('\n' + '='.repeat(50))
+    console.log('Walkthrough complete!')
+    console.log('ok')
+  } finally {
+    await client.close()
+  }
 }
 
 main()
   .then(() => process.exit(0))
   .catch((e) => {
-    console.error(e);
-    process.exit(1);
-  });
+    console.error(e)
+    process.exit(1)
+  })

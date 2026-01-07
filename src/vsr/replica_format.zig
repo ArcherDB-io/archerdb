@@ -9,7 +9,7 @@ const vsr = @import("../vsr.zig");
 const Header = vsr.Header;
 const data_file_size_min = @import("./superblock.zig").data_file_size_min;
 
-/// Initialize the TigerBeetle replica's data file.
+/// Initialize the ArcherDB replica's data file.
 pub fn format(
     comptime Storage: type,
     gpa: std.mem.Allocator,
@@ -409,7 +409,7 @@ test "format" {
     // Lastly, verify the entire storage contents against a known good checksum for the given
     // cluster, replica and replica count.
     //
-    // This doesn't match the output from `tigerbeetle format ...` since the testing storage / slot
+    // This doesn't match the output from `archerdb format ...` since the testing storage / slot
     // counts are lower.
     try std.testing.expectEqual(
         vsr.checksum(storage.memory),

@@ -4,7 +4,7 @@
 
 ### Requirement: Mutual TLS (mTLS) Authentication
 
-The system SHALL use mutual TLS for client authentication in production deployments, matching TigerBeetle's security model.
+The system SHALL use mutual TLS for client authentication in production deployments, matching ArcherDB's security model.
 
 #### Scenario: mTLS requirement
 
@@ -258,7 +258,7 @@ The system SHALL use mTLS for all inter-replica communication (VSR protocol mess
 
 ### Requirement: Authorization Model (All-or-Nothing)
 
-The system SHALL grant full read/write access to any authenticated client, matching TigerBeetle's authorization model.
+The system SHALL grant full read/write access to any authenticated client, matching ArcherDB's authorization model.
 
 #### Scenario: Access control policy
 
@@ -448,7 +448,7 @@ The system SHALL support encryption of data at rest through either OS-level or a
   - Transparent to ArcherDB (no application changes needed)
   - Leverages hardware AES acceleration (AES-NI)
   - Managed by operating system and infrastructure teams
-- **AND** this is the TigerBeetle-recommended approach
+- **AND** this is the ArcherDB-recommended approach
 - **AND** this separates concerns (database handles consistency, OS handles encryption)
 
 #### Scenario: Encryption at rest compliance requirements
@@ -554,3 +554,62 @@ The system SHALL follow industry security standards for database systems.
 - See `specs/observability/spec.md` for authentication metrics and audit logging
 - See `specs/configuration/spec.md` for TLS configuration flags and certificate paths
 - See `specs/io-subsystem/spec.md` for TCP connection security (TLS integration)
+
+## Implementation Status
+
+### TLS Implementation
+
+| Component | File | Status |
+|-----------|------|--------|
+| TLS Configuration | `src/archerdb/tls_config.zig` | ✓ Complete |
+| Certificate Loading | `src/archerdb/tls_config.zig` | ✓ Complete |
+| Certificate Validation | `src/archerdb/tls_config.zig` | ✓ Complete |
+| TLS Client | Zig std library | ✓ Available |
+| TLS Server | Zig std library | **BLOCKED** |
+| mTLS Handshake | `src/archerdb/replica_tls.zig` | Blocked |
+| CRL/OCSP Checking | `src/archerdb/tls_config.zig` | Stub (awaiting HTTP client) |
+
+### Blocking Dependency: Zig TLS Server
+
+Zig's standard library (`std.crypto.tls`) currently provides **TLS client support only**, not server.
+
+**Impact**: Full mTLS authentication requires a TLS server implementation to:
+- Accept incoming client connections with TLS
+- Verify client certificates during handshake
+- Perform mutual authentication
+
+**Workaround Options** (documented in `src/archerdb/replica_tls.zig`):
+1. Wait for Zig stdlib TLS server implementation
+2. Use external library (e.g., OpenSSL via C bindings)
+3. Custom TLS 1.3 server implementation
+
+**Current State**:
+- TLS client connections (ArcherDB as client) work with Zig std
+- TLS server connections (ArcherDB accepting connections) require workaround
+- Configuration parsing and certificate loading are fully implemented
+- Development mode (`--development`) allows plaintext operation
+
+### Security Error Codes
+
+All security error codes (400-404) are implemented in `src/error_codes.zig`:
+- `authentication_failed` (400)
+- `certificate_expired` (401)
+- `certificate_revoked` (402)
+- `unauthorized` (403)
+- `cluster_key_mismatch` (404)
+
+### Additional Security Components
+
+| Component | File | Status |
+|-----------|------|--------|
+| SIGHUP Certificate Reload | `src/archerdb/signal_handler.zig` | ✓ Complete |
+| Compliance Audit Types | `src/archerdb/compliance_audit.zig` | ✓ Complete |
+| Audit Event Logging | - | ⚠️ Types defined, not wired to TLS layer |
+| Security Metrics | `src/archerdb/metrics.zig` | ⚠️ TLS metrics defined, not all collected |
+| Key Permission Checking | `src/archerdb/tls_config.zig` | ✓ Complete |
+
+### Overall Status: ~40% Complete
+
+**Complete**: Configuration, error codes, signal handler, certificate management infrastructure
+**Blocked**: TLS server (Zig stdlib), CRL/OCSP (HTTP client)
+**Pending**: Audit logging integration, security metrics collection

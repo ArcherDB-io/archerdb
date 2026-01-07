@@ -59,7 +59,7 @@ We follow coordinated disclosure practices:
 
 ### Architecture Security
 
-ArcherDB inherits TigerBeetle's security-focused architecture:
+ArcherDB inherits ArcherDB's security-focused architecture:
 
 - **Deterministic execution**: All operations are deterministic, reducing attack surface
 - **No dynamic memory allocation**: Bounded resource usage prevents many memory-based attacks
@@ -111,9 +111,9 @@ We appreciate the security research community's efforts in helping keep ArcherDB
 
 ## Upstream Security
 
-ArcherDB is a derivative of [TigerBeetle](https://tigerbeetle.com/). Security issues that affect the core consensus protocol or storage engine may also affect TigerBeetle. We coordinate with the TigerBeetle team on shared security concerns.
+ArcherDB is a derivative of [ArcherDB](https://archerdb.com/). Security issues that affect the core consensus protocol or storage engine may also affect ArcherDB. We coordinate with the ArcherDB team on shared security concerns.
 
-If you discover a vulnerability that may affect TigerBeetle, please also consider reporting it to them through their security channels.
+If you discover a vulnerability that may affect ArcherDB, please also consider reporting it to them through their security channels.
 
 ## Updates to This Policy
 

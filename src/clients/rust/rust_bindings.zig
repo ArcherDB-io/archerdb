@@ -2,41 +2,40 @@
 // Copyright (c) 2024-2025 ArcherDB Contributors
 const std = @import("std");
 const vsr = @import("vsr");
-const exports = vsr.tb_client.exports;
+const exports = vsr.arch_client.exports;
 const assert = std.debug.assert;
 
 const type_mappings = .{
-    .{ exports.tb_account_flags, "TB_ACCOUNT_FLAGS" },
-    .{ exports.tb_account_t, "tb_account_t" },
-    .{ exports.tb_transfer_flags, "TB_TRANSFER_FLAGS" },
-    .{ exports.tb_transfer_t, "tb_transfer_t" },
-    .{ exports.tb_create_account_result, "TB_CREATE_ACCOUNT_RESULT" },
-    .{ exports.tb_create_transfer_result, "TB_CREATE_TRANSFER_RESULT" },
-    .{ exports.tb_create_accounts_result_t, "tb_create_accounts_result_t" },
-    .{ exports.tb_create_transfers_result_t, "tb_create_transfers_result_t" },
-    .{ exports.tb_account_filter_t, "tb_account_filter_t" },
-    .{ exports.tb_account_filter_flags, "TB_ACCOUNT_FILTER_FLAGS" },
-    .{ exports.tb_account_balance_t, "tb_account_balance_t" },
-    .{ exports.tb_query_filter_t, "tb_query_filter_t" },
-    .{ exports.tb_query_filter_flags, "TB_QUERY_FILTER_FLAGS" },
+    // ArcherDB GeoEvent types (geospatial database core)
+    .{ exports.geo_event_t, "geo_event_t" },
+    .{ exports.geo_event_flags, "GEO_EVENT_FLAGS" },
+    .{ exports.insert_geo_event_result, "INSERT_GEO_EVENT_RESULT" },
+    .{ exports.insert_geo_events_result_t, "insert_geo_events_result_t" },
+    .{ exports.delete_entities_result_t, "delete_entities_result_t" },
+    .{ exports.query_uuid_filter_t, "query_uuid_filter_t" },
+    .{ exports.query_radius_filter_t, "query_radius_filter_t" },
+    .{ exports.query_polygon_filter_t, "query_polygon_filter_t" },
+    .{ exports.query_latest_filter_t, "query_latest_filter_t" },
+    .{ exports.query_response_t, "query_response_t" },
+    .{ exports.polygon_vertex_t, "polygon_vertex_t" },
     .{
-        exports.tb_client_t, "tb_client_t",
+        exports.arch_client_t, "arch_client_t",
         \\// Opaque struct serving as a handle for the client instance.
         \\// This struct must be "pinned" (not copyable or movable), as its address must remain stable
         \\// throughout the lifetime of the client instance.
     },
     .{
-        exports.tb_packet_t, "tb_packet_t",
+        exports.arch_packet_t, "arch_packet_t",
         \\// Struct containing the state of a request submitted through the client.
         \\// This struct must be "pinned" (not copyable or movable), as its address must remain stable
         \\// throughout the lifetime of the request.
     },
-    .{ exports.tb_operation, "TB_OPERATION" },
-    .{ exports.tb_packet_status, "TB_PACKET_STATUS" },
-    .{ exports.tb_init_status, "TB_INIT_STATUS" },
-    .{ exports.tb_client_status, "TB_CLIENT_STATUS" },
-    .{ exports.tb_register_log_callback_status, "TB_REGISTER_LOG_CALLBACK_STATUS" },
-    .{ exports.tb_log_level, "TB_LOG_LEVEL" },
+    .{ exports.arch_operation, "ARCH_OPERATION" },
+    .{ exports.arch_packet_status, "ARCH_PACKET_STATUS" },
+    .{ exports.arch_init_status, "ARCH_INIT_STATUS" },
+    .{ exports.arch_client_status, "ARCH_CLIENT_STATUS" },
+    .{ exports.arch_register_log_callback_status, "ARCH_REGISTER_LOG_CALLBACK_STATUS" },
+    .{ exports.arch_log_level, "ARCH_LOG_LEVEL" },
 };
 
 fn resolve_rust_type(comptime Type: type) []const u8 {
@@ -46,14 +45,25 @@ fn resolve_rust_type(comptime Type: type) []const u8 {
         .@"struct" => return resolve_rust_type(std.meta.Int(.unsigned, @bitSizeOf(Type))),
         .bool => return "u8", // todo "bool"
         .int => |info| {
-            assert(info.signedness == .unsigned);
-            return switch (info.bits) {
-                8 => "u8",
-                16 => "u16",
-                32 => "u32",
-                64 => "u64",
-                128 => "u128",
-                else => @compileError("invalid int type"),
+            // Support both signed and unsigned integers for GeoEvent fields
+            // (lat_nano, lon_nano are i64; altitude_mm is i32)
+            return switch (info.signedness) {
+                .unsigned => switch (info.bits) {
+                    8 => "u8",
+                    16 => "u16",
+                    32 => "u32",
+                    64 => "u64",
+                    128 => "u128",
+                    else => @compileError("invalid unsigned int type"),
+                },
+                .signed => switch (info.bits) {
+                    8 => "i8",
+                    16 => "i16",
+                    32 => "i32",
+                    64 => "i64",
+                    128 => "i128",
+                    else => @compileError("invalid signed int type"),
+                },
             };
         },
         .optional => |info| switch (@typeInfo(info.child)) {
@@ -106,14 +116,19 @@ fn emit_enum(
     };
     const rust_backing_type_str = switch (@typeInfo(backing_type)) {
         .int => |i| brk: {
-            break :brk switch (i.bits) {
-                32 => switch (i.signedness) {
-                    .unsigned => "u32",
-                    .signed => "i32",
+            break :brk switch (i.signedness) {
+                .unsigned => switch (i.bits) {
+                    8 => "u8",
+                    16 => "u16",
+                    32 => "u32",
+                    else => @panic("unexpected unsigned backing type"),
                 },
-                16 => "u16",
-                8 => "u8",
-                else => @panic("unexpected"),
+                .signed => switch (i.bits) {
+                    8 => "i8",
+                    16 => "i16",
+                    32 => "i32",
+                    else => @panic("unexpected signed backing type"),
+                },
             };
         },
         else => @panic("unexpected"),
@@ -194,7 +209,7 @@ pub fn main() !void {
     var buffer = std.ArrayList(u8).init(allocator);
     try buffer.writer().print(
         \\ //////////////////////////////////////////////////////////
-        \\ // This file was auto-generated by tb_client_header.zig //
+        \\ // This file was auto-generated by arch_client_header.zig //
         \\ //              Do not manually modify.                 //
         \\ //////////////////////////////////////////////////////////
         \\
@@ -228,10 +243,10 @@ pub fn main() !void {
 
     try buffer.writer().print(
         \\extern "C" {{
-        \\    // Initialize a new TigerBeetle client which connects to the addresses provided and
+        \\    // Initialize a new ArcherDB client which connects to the addresses provided and
         \\    // completes submitted packets by invoking the callback with the given context.
-        \\    pub fn tb_client_init(
-        \\        client_out: *mut tb_client_t,
+        \\    pub fn arch_client_init(
+        \\        client_out: *mut arch_client_t,
         \\        // 128-bit unsigned integer represented as a 16-byte little-endian array.
         \\        cluster_id: *const [u8; 16],
         \\        address_ptr: *const ::std::os::raw::c_char,
@@ -240,17 +255,17 @@ pub fn main() !void {
         \\        completion_callback: ::std::option::Option<
         \\            unsafe extern "C" fn(
         \\                arg1: usize,
-        \\                arg3: *mut tb_packet_t,
+        \\                arg3: *mut arch_packet_t,
         \\                arg4: u64,
         \\                arg5: *const u8,
         \\                arg6: u32,
         \\            ),
         \\        >,
-        \\    ) -> TB_INIT_STATUS;
+        \\    ) -> ARCH_INIT_STATUS;
         \\
-        \\    // Initialize a new TigerBeetle client which echos back any data submitted.
-        \\    pub fn tb_client_init_echo(
-        \\        client_out: *mut tb_client_t,
+        \\    // Initialize a new ArcherDB client which echos back any data submitted.
+        \\    pub fn arch_client_init_echo(
+        \\        client_out: *mut arch_client_t,
         \\        // 128-bit unsigned integer represented as a 16-byte little-endian array.
         \\        cluster_id: *const [u8; 16],
         \\        address_ptr: *const ::std::os::raw::c_char,
@@ -259,47 +274,47 @@ pub fn main() !void {
         \\        completion_callback: ::std::option::Option<
         \\            unsafe extern "C" fn(
         \\                arg1: usize,
-        \\                arg3: *mut tb_packet_t,
+        \\                arg3: *mut arch_packet_t,
         \\                arg4: u64,
         \\                arg5: *const u8,
         \\                arg6: u32,
         \\            ),
         \\        >,
-        \\    ) -> TB_INIT_STATUS;
+        \\    ) -> ARCH_INIT_STATUS;
         \\
-        \\    // Retrieve the callback context initially passed into `tb_client_init` or
-        \\    // `tb_client_init_echo`.
-        \\    pub fn tb_client_completion_context(
-        \\        client: *mut tb_client_t,
+        \\    // Retrieve the callback context initially passed into `arch_client_init` or
+        \\    // `arch_client_init_echo`.
+        \\    pub fn arch_client_completion_context(
+        \\        client: *mut arch_client_t,
         \\        completion_ctx_out: *mut usize,
-        \\    ) -> TB_CLIENT_STATUS;
+        \\    ) -> ARCH_CLIENT_STATUS;
         \\
         \\    // Submit a packet with its operation, data, and data_size fields set.
         \\    // Once completed, `on_completion` will be invoked with `on_completion_ctx` and the given
-        \\    // packet on the `tb_client` thread (separate from caller's thread).
-        \\    pub fn tb_client_submit(
-        \\        client: *mut tb_client_t,
-        \\        packet: *mut tb_packet_t,
-        \\    ) -> TB_CLIENT_STATUS;
+        \\    // packet on the `arch_client` thread (separate from caller's thread).
+        \\    pub fn arch_client_submit(
+        \\        client: *mut arch_client_t,
+        \\        packet: *mut arch_packet_t,
+        \\    ) -> ARCH_CLIENT_STATUS;
         \\
         \\    // Closes the client, causing any previously submitted packets to be completed with
-        \\    // `TB_PACKET_CLIENT_SHUTDOWN` before freeing any allocated client resources from init.
+        \\    // `ARCH_PACKET_CLIENT_SHUTDOWN` before freeing any allocated client resources from init.
         \\    // It is undefined behavior to use any functions on the client once deinit is called.
-        \\    pub fn tb_client_deinit(
-        \\        client: *mut tb_client_t,
-        \\    ) -> TB_CLIENT_STATUS;
+        \\    pub fn arch_client_deinit(
+        \\        client: *mut arch_client_t,
+        \\    ) -> ARCH_CLIENT_STATUS;
         \\
         \\    // Registers or unregisters the application log callback.
         \\    pub fn register_log_callback(
         \\        callback: ::std::option::Option<
         \\            unsafe extern "C" fn(
-        \\                TB_LOG_LEVEL,
+        \\                ARCH_LOG_LEVEL,
         \\                *const u8,
         \\                u32,
         \\            ),
         \\        >,
         \\        debug: bool,
-        \\    ) -> TB_REGISTER_LOG_CALLBACK_STATUS;
+        \\    ) -> ARCH_REGISTER_LOG_CALLBACK_STATUS;
         \\}}
     , .{});
 

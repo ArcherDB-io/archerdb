@@ -101,7 +101,7 @@ The system SHALL implement all GDPR data subject rights for location data proces
     - If reinserted timestamp < delete timestamp: Event is ignored (out-of-order, stale data from before deletion)
   - **Implementation**: Compare `T_new` vs `T_delete` during LSM compaction; skip stale events
   - **Testing**: Delete entity, immediately insert with synthetic earlier timestamp, verify not included in queries
-  - **Risk**: If clock skew is large (>1s), older data could reappear; validate clock synchronization via Byzantine clock (Marzullo's algorithm per TigerBeetle)
+  - **Risk**: If clock skew is large (>1s), older data could reappear; validate clock synchronization via Byzantine clock (Marzullo's algorithm per ArcherDB)
   - **Metric**: `archerdb_deletion_out_of_order_reinsertion` counter
 
   **Case 4: Tombstone Retention During Compaction (Compliance Window)**
@@ -513,3 +513,46 @@ The system SHALL support regulatory reporting requirements for location data pro
 - See `specs/security/spec.md` for data protection and encryption requirements
 - See `specs/ttl-retention/spec.md` for GDPR right to erasure implementation
 - See `specs/observability/spec.md` for audit logging and compliance monitoring
+
+## Implementation Status
+
+### GDPR Deletion Edge Cases
+
+The deletion implementation uses a two-phase approach:
+
+| Edge Case | Phase 1 (RAM) | Phase 2 (LSM) | Status |
+|-----------|---------------|---------------|--------|
+| Case 1: Concurrent Deletes | ✓ VSR serializes | ✓ VSR serializes | Complete |
+| Case 2: Partial Failure | ✓ VSR catch-up | ✓ VSR catch-up | Complete |
+| Case 3: Post-Deletion Reinsertion | N/A | Pending Forest | Blocked |
+| Case 4: Tombstone Retention | N/A | Pending Forest | Blocked |
+| Case 5: In-Flight Queries | ✓ RAM removal | Pending timestamp check | Partial |
+| Case 6: TTL Overlap | N/A | Pending Forest | Blocked |
+
+**Phase 1 (Implemented)**: `src/geo_state_machine.zig:execute_delete_entities()`
+- Removes entity from RAM index immediately
+- Returns per-entity results (ok, not_found, invalid_id)
+- Tracks deletion metrics
+- VSR consensus ensures deterministic ordering across replicas
+
+**Phase 2 (Pending)**: Requires Forest integration (F2.5.3)
+- LSM tombstone generation for persistent deletion
+- Tombstone-based compaction for physical data removal
+- LWW timestamp handling for reinsertion edge cases
+
+**Architectural Note**: The two-phase approach is intentional:
+1. RAM index deletion provides immediate query isolation (no GDPR-deleted data returned)
+2. LSM tombstones ensure durable deletion and audit trail
+3. VSR consensus handles Cases 1-2 automatically (no special code needed)
+
+### Data Subject Rights API
+
+| Right | API | Status |
+|-------|-----|--------|
+| Access (Art. 15) | `handleAccessRequest()` | Skeleton implemented |
+| Rectification (Art. 16) | `handleRectificationRequest()` | Skeleton implemented |
+| Erasure (Art. 17) | `handleErasureRequest()` | Skeleton + RAM deletion |
+| Portability (Art. 20) | `handlePortabilityRequest()` | Skeleton implemented |
+
+The `data_subject_rights.zig` API layer is implemented with request tracking, but
+actual data operations await Forest integration for persistent storage operations.

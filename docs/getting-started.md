@@ -306,14 +306,139 @@ const results = await client.queryPolygon({
 ```python
 # Define polygon vertices (counter-clockwise)
 polygon = [
-    archerdb.PolygonVertex(lat=37.78, lon=-122.42),
-    archerdb.PolygonVertex(lat=37.78, lon=-122.40),
-    archerdb.PolygonVertex(lat=37.76, lon=-122.40),
-    archerdb.PolygonVertex(lat=37.76, lon=-122.42),
+    (37.78, -122.42),
+    (37.78, -122.40),
+    (37.76, -122.40),
+    (37.76, -122.42),
 ]
 
 results = client.query_polygon(vertices=polygon, limit=1000)
 ```
+
+#### Go
+
+```go
+vertices := [][]float64{
+    {37.78, -122.42},
+    {37.78, -122.40},
+    {37.76, -122.40},
+    {37.76, -122.42},
+}
+
+filter, err := types.NewPolygonQuery(vertices, 1000)
+if err != nil {
+    log.Fatal(err)
+}
+// Use filter with client.QueryPolygon()
+```
+
+### Polygon Queries with Holes
+
+Exclude regions within a polygon (e.g., parks, lakes, restricted zones):
+
+#### Node.js
+
+```typescript
+// Outer boundary (counter-clockwise)
+const boundary = [
+  { lat: 37.79, lon: -122.42 },
+  { lat: 37.79, lon: -122.39 },
+  { lat: 37.76, lon: -122.39 },
+  { lat: 37.76, lon: -122.42 },
+]
+
+// Hole to exclude (clockwise winding)
+const parkHole = [
+  { lat: 37.78, lon: -122.41 },
+  { lat: 37.775, lon: -122.41 },
+  { lat: 37.775, lon: -122.40 },
+  { lat: 37.78, lon: -122.40 },
+]
+
+const results = await client.queryPolygon({
+  vertices: boundary,
+  holes: [parkHole],  // Can include multiple holes (up to 100)
+  limit: 1000,
+})
+```
+
+#### Python
+
+```python
+# Outer boundary (counter-clockwise)
+boundary = [
+    (37.79, -122.42),
+    (37.79, -122.39),
+    (37.76, -122.39),
+    (37.76, -122.42),
+]
+
+# Hole to exclude (clockwise winding)
+park_hole = [
+    (37.78, -122.41),
+    (37.775, -122.41),
+    (37.775, -122.40),
+    (37.78, -122.40),
+]
+
+results = client.query_polygon(
+    vertices=boundary,
+    holes=[park_hole],  # Can include multiple holes (up to 100)
+    limit=1000,
+)
+```
+
+#### Go
+
+```go
+boundary := [][]float64{
+    {37.79, -122.42},
+    {37.79, -122.39},
+    {37.76, -122.39},
+    {37.76, -122.42},
+}
+
+parkHole := [][]float64{
+    {37.78, -122.41},
+    {37.775, -122.41},
+    {37.775, -122.40},
+    {37.78, -122.40},
+}
+
+filter, err := types.NewPolygonQuery(boundary, 1000, parkHole)
+if err != nil {
+    log.Fatal(err)
+}
+// Points inside the park hole will be excluded from results
+```
+
+#### Java
+
+```java
+QueryPolygonFilter filter = new QueryPolygonFilter.Builder()
+    // Outer boundary (counter-clockwise)
+    .addVertex(37.79, -122.42)
+    .addVertex(37.79, -122.39)
+    .addVertex(37.76, -122.39)
+    .addVertex(37.76, -122.42)
+    // Hole (clockwise)
+    .startHole()
+    .addHoleVertex(37.78, -122.41)
+    .addHoleVertex(37.775, -122.41)
+    .addHoleVertex(37.775, -122.40)
+    .addHoleVertex(37.78, -122.40)
+    .finishHole()
+    .setLimit(1000)
+    .build();
+```
+
+**Polygon Hole Constraints:**
+- Maximum 100 holes per polygon
+- Each hole must have at least 3 vertices
+- Outer boundary: counter-clockwise winding order
+- Holes: clockwise winding order
+- Holes must be fully contained within the outer boundary
+- Holes must not overlap with each other
 
 ### Getting Latest Position
 

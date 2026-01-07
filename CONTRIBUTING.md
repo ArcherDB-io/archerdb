@@ -119,7 +119,7 @@ Fixes #123
 
 ## Code Style
 
-ArcherDB inherits TigerBeetle's engineering philosophy. Key principles:
+ArcherDB inherits ArcherDB's engineering philosophy. Key principles:
 
 ### Safety First
 
@@ -141,7 +141,7 @@ ArcherDB inherits TigerBeetle's engineering philosophy. Key principles:
 - Add comments for non-obvious logic
 - Keep comments up to date with code changes
 
-For detailed coding guidelines, see [TigerBeetle's TIGER_STYLE.md](https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/TIGER_STYLE.md).
+For detailed coding guidelines, see [ArcherDB's TIGER_STYLE.md](https://github.com/archerdb/archerdb/blob/main/docs/TIGER_STYLE.md).
 
 ## Testing
 
@@ -218,7 +218,7 @@ git commit -s -m "Your commit message"
 
 ## Attribution
 
-ArcherDB is a derivative work of [TigerBeetle](https://tigerbeetle.com/). See the [NOTICE](NOTICE) file for full attribution.
+ArcherDB is a derivative work of [ArcherDB](https://archerdb.com/). See the [NOTICE](NOTICE) file for full attribution.
 
 When contributing code that originates from or is inspired by other open source projects, please ensure proper attribution in the code comments and update the NOTICE file if required.
 

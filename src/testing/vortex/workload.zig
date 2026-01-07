@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2024-2025 ArcherDB Contributors
-//! This workload runs in an loop, generating and executing operations on a cluster through a
-//! _driver_.
+//! ArcherDB Vortex Workload - Geospatial Operations
 //!
-//! Any successful operations are reconciled with a model, tracking what accounts exist. Future
+//! This workload runs in a loop, generating and executing geospatial operations on a cluster
+//! through a _driver_.
+//!
+//! Any successful operations are reconciled with a model, tracking what entities exist. Future
 //! operations are generated based on this model.
 //!
-//! After every operation, all accounts are queried, and basic invariants are checked.
+//! After every operation, entities are queried, and basic invariants are checked.
 //!
 //! The workload and drivers communicate with a binary protocol over stdio. The protocol is based
-//! on the extern structs in `src/archerdb.zig` and `src/state_machine.zig`, and it works like
+//! on the extern structs in `src/archerdb.zig` and `src/geo_state_machine.zig`, and it works like
 //! this:
 //!
 //! 1. Workload sends a request, which is:
@@ -33,6 +35,12 @@ const std = @import("std");
 const stdx = @import("stdx");
 const tb = @import("../../archerdb.zig");
 const Operation = tb.Operation;
+const GeoEvent = tb.GeoEvent;
+const GeoEventFlags = tb.GeoEventFlags;
+const InsertGeoEventsResult = tb.InsertGeoEventsResult;
+const InsertGeoEventResult = tb.InsertGeoEventResult;
+const QueryUuidFilter = tb.QueryUuidFilter;
+const QueryLatestFilter = tb.QueryLatestFilter;
 const RingBufferType = stdx.RingBufferType;
 const ratio = stdx.PRNG.ratio;
 
@@ -41,8 +49,7 @@ const assert = std.debug.assert;
 const testing = std.testing;
 
 const events_count_max = 8189;
-const pending_transfers_count_max = 1024;
-const accounts_count_max = 128;
+const entities_count_max = 128;
 
 const DriverStdio = struct { input: std.fs.File, output: std.fs.File };
 
@@ -50,19 +57,18 @@ pub fn main(
     allocator: std.mem.Allocator,
     driver: *const DriverStdio,
 ) !void {
-    var accounts_buffer = std.mem.zeroes([accounts_count_max]tb.Account);
+    var entities_buffer = std.mem.zeroes([entities_count_max]u128);
 
     var model = Model{
-        .accounts = std.ArrayListUnmanaged(tb.Account).initBuffer(&accounts_buffer),
+        .entities = std.ArrayListUnmanaged(u128).initBuffer(&entities_buffer),
     };
-    defer model.pending_transfers.deinit(allocator);
-
-    try model.pending_transfers.ensureTotalCapacity(allocator, pending_transfers_count_max);
 
     const seed = std.crypto.random.int(u64);
     var prng = stdx.PRNG.from_seed(seed);
 
     const stdout = std.io.getStdOut().writer().any();
+
+    _ = allocator;
 
     for (0..std.math.maxInt(u64)) |i| {
         const command_timestamp_start: u64 = @intCast(std.time.microTimestamp());
@@ -77,7 +83,7 @@ pub fn main(
         });
 
         const query_timestamp_start: u64 = @intCast(std.time.microTimestamp());
-        const query = lookup_all_accounts(&model);
+        const query = query_latest_events(&model);
         const query_result = try execute(query, driver) orelse break;
         try reconcile(query_result, &query, &model);
         const query_timestamp_end: u64 = @intCast(std.time.microTimestamp());
@@ -88,11 +94,10 @@ pub fn main(
         });
 
         log.info(
-            "accounts created = {d}, transfers = {d}, pending transfers = {d}, commands run = {d}",
+            "entities created = {d}, events inserted = {d}, commands run = {d}",
             .{
-                model.accounts.items.len,
-                model.transfers_created,
-                model.pending_transfers.count(),
+                model.entities.items.len,
+                model.events_inserted,
                 i + 1,
             },
         );
@@ -100,17 +105,15 @@ pub fn main(
 }
 
 const Command = union(enum) {
-    create_accounts: []tb.Account,
-    create_transfers: []tb.Transfer,
-    lookup_all_accounts: []u128,
-    lookup_latest_transfers: []u128,
+    insert_events: []GeoEvent,
+    query_uuid: []QueryUuidFilter,
+    query_latest: []QueryLatestFilter,
 
     fn event_count(command: Command) usize {
         return switch (command) {
-            .create_accounts => |entries| entries.len,
-            .create_transfers => |entries| entries.len,
-            .lookup_all_accounts => |entries| entries.len,
-            .lookup_latest_transfers => |entries| entries.len,
+            .insert_events => |entries| entries.len,
+            .query_uuid => |entries| entries.len,
+            .query_latest => |entries| entries.len,
         };
     }
 };
@@ -119,10 +122,9 @@ const CommandBuffers = FixedSizeBuffersType(Command);
 var command_buffers: CommandBuffers = std.mem.zeroes(CommandBuffers);
 
 const Result = union(enum) {
-    create_accounts: []tb.CreateAccountsResult,
-    create_transfers: []tb.CreateTransfersResult,
-    lookup_all_accounts: []tb.Account,
-    lookup_latest_transfers: []tb.Transfer,
+    insert_events: []InsertGeoEventsResult,
+    query_uuid: []GeoEvent,
+    query_latest: []GeoEvent,
 };
 const ResultBuffers = FixedSizeBuffersType(Result);
 var result_buffers: ResultBuffers = std.mem.zeroes(ResultBuffers);
@@ -149,324 +151,191 @@ fn execute(command: Command, driver: *const DriverStdio) !?Result {
 /// enum values from command to operation.
 fn operation_from_command(tag: std.meta.Tag(Command)) Operation {
     return switch (tag) {
-        .create_accounts => .create_accounts,
-        .create_transfers => .create_transfers,
-        .lookup_all_accounts => .lookup_accounts,
-        .lookup_latest_transfers => .lookup_transfers,
+        .insert_events => .insert_events,
+        .query_uuid => .query_uuid,
+        .query_latest => .query_latest,
     };
 }
 
 fn reconcile(result: Result, command: *const Command, model: *Model) !void {
     switch (result) {
-        .create_accounts => |entries| {
-            const accounts_new = command.create_accounts;
+        .insert_events => |entries| {
+            const events_new = command.insert_events;
 
-            // Track results for all new accounts, assuming `.ok` if response from driver is
+            // Track results for all new events, assuming `.ok` if response from driver is
             // omitted.
-            var accounts_results: [accounts_count_max]tb.CreateAccountResult = undefined;
-            @memset(accounts_results[0..accounts_new.len], .ok);
+            var events_results: [events_count_max]InsertGeoEventResult = undefined;
+            @memset(events_results[0..events_new.len], .ok);
 
             // Fill in non-ok results.
             for (entries) |entry| {
-                accounts_results[entry.index] = entry.result;
+                events_results[entry.index] = entry.result;
             }
 
             for (
-                accounts_results[0..accounts_new.len],
-                accounts_new,
+                events_results[0..events_new.len],
+                events_new,
                 0..,
-            ) |account_result, account, index| {
-                if (account_result == .ok) {
-                    model.accounts.appendAssumeCapacity(account);
+            ) |event_result, event, index| {
+                if (event_result == .ok) {
+                    // Track unique entity IDs
+                    if (!model.entity_exists(event.entity_id)) {
+                        if (model.entities.items.len < entities_count_max) {
+                            model.entities.appendAssumeCapacity(event.entity_id);
+                        }
+                    }
+                    model.events_inserted += 1;
                 } else {
-                    log.err("got result {s} for event {d}: {any}", .{
-                        @tagName(account_result),
+                    log.err("got result {s} for event {d}: entity_id={d}", .{
+                        @tagName(event_result),
                         index,
-                        account,
+                        event.entity_id,
                     });
                     return error.TestFailed;
                 }
             }
         },
-        .create_transfers => |entries| {
-            const transfers = command.create_transfers;
-
-            // Track results for all new transfers, assuming `.ok` if response from driver is
-            // omitted.
-            var transfers_results: [events_count_max]tb.CreateTransferResult = undefined;
-            @memset(transfers_results[0..transfers.len], .ok);
-
-            // Fill in non-ok results.
-            for (entries) |entry| {
-                transfers_results[entry.index] = entry.result;
-            }
-
-            // Collect all successful transfer IDs.
-            var successful_transfer_ids: stdx.BoundedArrayType(u128, events_count_max) = .{};
-
-            for (
-                transfers,
-                transfers_results[0..transfers.len],
-                0..,
-            ) |transfer, transfer_result, transfer_index| {
-                // Check that linked transfers fail together.
-                if (transfer_index > 0) {
-                    const preceding_transfer = transfers[transfer_index - 1];
-                    if (preceding_transfer.flags.linked) {
-                        const preceding_entry = entries[transfer_index - 1];
-                        try testing.expect(preceding_entry.index == transfer_index - 1);
-                        try testing.expect(preceding_entry.result != .ok);
-                    }
-                }
-
-                // No further validation needed for failed transfers.
-                if (transfer_result != .ok) {
-                    continue;
-                }
-
-                successful_transfer_ids.push(transfer.id);
-
-                if (transfer.flags.pending) {
-                    try testing.expect(!model.pending_transfers.contains(transfer.id));
-                    assert(model.pending_transfers.count() <= pending_transfers_count_max);
-                    model.pending_transfers.putAssumeCapacity(transfer.id, {});
-                }
-
-                if (transfer.flags.void_pending_transfer or transfer.flags.post_pending_transfer) {
-                    try testing.expect(model.pending_transfers.remove(transfer.id));
-                }
-
-                try testing.expect(model.account_exists(transfer.debit_account_id));
-                try testing.expect(model.account_exists(transfer.credit_account_id));
-            }
-
-            // Drop the oldest transfer IDs and add new ones.
-            for (0..@min(successful_transfer_ids.count(), model.latest_transfers.count)) |_| {
-                model.latest_transfers.retreat_tail();
-            }
-            try model.latest_transfers.push_slice(successful_transfer_ids.const_slice());
-
-            model.transfers_created += transfers.len;
-        },
-        .lookup_all_accounts => |accounts_found| {
-            // Get all known account ids.
-            var id_buffer: [accounts_count_max]u128 = undefined;
-            const account_ids_known = model.account_ids(id_buffer[0..]);
-
+        .query_uuid => |events_found| {
             // Check that timestamps are monotonically increasing.
             var timestamp_max: u64 = 0;
-            for (accounts_found) |account| {
-                if (account.timestamp <= timestamp_max) {
+            for (events_found) |event| {
+                if (event.timestamp <= timestamp_max) {
                     log.err(
-                        "account {d} timestamp {d} is not greater than previous timestamp {d}",
-                        .{ account.id, account.timestamp, timestamp_max },
+                        "event entity_id={d} timestamp {d} is not greater than previous timestamp {d}",
+                        .{ event.entity_id, event.timestamp, timestamp_max },
                     );
                     return error.TestFailed;
                 }
-                timestamp_max = account.timestamp;
+                timestamp_max = event.timestamp;
             }
-
-            // Extract and sort all found account ids.
-            var account_ids_found_buffer: [accounts_count_max]u128 = undefined;
-            for (accounts_found, 0..) |account, i| {
-                account_ids_found_buffer[i] = account.id;
-            }
-            const account_ids_found = account_ids_found_buffer[0..accounts_found.len];
-
-            // All known accounts are found by the query, and no others.
-            try testing.expectEqualSlices(u128, account_ids_known, account_ids_found);
-
-            try testing.expectEqual(0, debits_credits_difference(accounts_found));
         },
-        .lookup_latest_transfers => |transfers_found| {
-            // Check that timestamps are monotonically increasing.
+        .query_latest => |events_found| {
+            // Check that timestamps are monotonically increasing within results.
             var timestamp_max: u64 = 0;
-            for (transfers_found) |transfer| {
-                if (transfer.timestamp <= timestamp_max) {
+            for (events_found) |event| {
+                if (event.timestamp <= timestamp_max) {
                     log.err(
-                        "transfer {d} timestamp {d} is not greater than previous timestamp {d}",
-                        .{ transfer.id, transfer.timestamp, timestamp_max },
+                        "event entity_id={d} timestamp {d} is not greater than previous timestamp {d}",
+                        .{ event.entity_id, event.timestamp, timestamp_max },
                     );
                     return error.TestFailed;
                 }
-                timestamp_max = transfer.timestamp;
+                timestamp_max = event.timestamp;
             }
         },
     }
 }
 
-const LatestTransfers = RingBufferType(u128, .{ .array = events_count_max });
+const LatestEvents = RingBufferType(u128, .{ .array = events_count_max });
 
-/// Tracks information about the accounts and transfers created by the workload.
+/// Tracks information about the entities and events created by the workload.
 const Model = struct {
-    accounts: std.ArrayListUnmanaged(tb.Account),
-    transfers_created: u64 = 0,
-    latest_transfers: LatestTransfers = LatestTransfers.init(),
-    pending_transfers: std.AutoHashMapUnmanaged(u128, void) = .{},
+    entities: std.ArrayListUnmanaged(u128),
+    events_inserted: u64 = 0,
+    latest_events: LatestEvents = LatestEvents.init(),
 
-    // O(n) lookup, but it's limited by `accounts_count_max`, so it's OK for this test.
-    fn account_exists(model: @This(), id: u128) bool {
-        for (model.accounts.items) |account| {
-            if (account.id == id) return true;
+    // O(n) lookup, but it's limited by `entities_count_max`, so it's OK for this test.
+    fn entity_exists(model: @This(), id: u128) bool {
+        for (model.entities.items) |entity_id| {
+            if (entity_id == id) return true;
         }
         return false;
     }
 
-    /// Returns a slice of the account ids known by the model.
-    fn account_ids(model: @This(), buffer: []u128) []u128 {
-        assert(buffer.len >= model.accounts.items.len);
-        const ids = buffer[0..model.accounts.items.len];
-        for (model.accounts.items, 0..) |account, i| {
-            ids[i] = account.id;
+    /// Returns a slice of the entity ids known by the model.
+    fn entity_ids(model: @This(), buffer: []u128) []u128 {
+        assert(buffer.len >= model.entities.items.len);
+        const ids = buffer[0..model.entities.items.len];
+        for (model.entities.items, 0..) |entity_id, i| {
+            ids[i] = entity_id;
         }
         return ids;
     }
 };
 
-fn debits_credits_difference(accounts: []tb.Account) i128 {
-    var balance: i128 = 0;
-    for (accounts) |account| {
-        balance += @intCast(account.debits_posted);
-        balance -= @intCast(account.credits_posted);
-    }
-    return balance;
-}
-
 fn random_command(prng: *stdx.PRNG, model: *const Model) Command {
     const command_tag = prng.enum_weighted(std.meta.Tag(Command), .{
-        .create_accounts = if (model.accounts.items.len < accounts_count_max) 1 else 0,
-        .create_transfers = if (model.accounts.items.len > 2) 10 else 0,
-        .lookup_all_accounts = 0,
-        .lookup_latest_transfers = 5,
+        .insert_events = 10,
+        .query_uuid = if (model.entities.items.len > 0) 3 else 0,
+        .query_latest = 2,
     });
     switch (command_tag) {
-        .create_accounts => return random_create_accounts(prng, model),
-        .create_transfers => return random_create_transfers(prng, model),
-        .lookup_latest_transfers => return lookup_latest_transfers(model),
-        .lookup_all_accounts => unreachable,
+        .insert_events => return random_insert_events(prng, model),
+        .query_uuid => return query_by_uuid(prng, model),
+        .query_latest => return query_latest_events(model),
     }
 }
 
-fn random_create_accounts(prng: *stdx.PRNG, model: *const Model) Command {
-    // NOTE: we're not generating closed or imported accounts yet.
-
+fn random_insert_events(prng: *stdx.PRNG, model: *const Model) Command {
     const events_count = prng.range_inclusive(
         usize,
         1,
-        accounts_count_max - model.accounts.items.len,
+        @min(100, events_count_max),
     );
     assert(events_count <= events_count_max);
 
-    var events = command_buffers.create_accounts[0..events_count];
-    for (events, 0..) |*event, i| {
-        var flags = std.mem.zeroes(tb.AccountFlags);
+    var events = command_buffers.insert_events[0..events_count];
+    for (events) |*event| {
+        // Either use existing entity or create new one
+        const entity_id = if (model.entities.items.len > 0 and prng.chance(ratio(3, 10)))
+            model.entities.items[prng.index(model.entities.items)]
+        else
+            prng.range_inclusive(u128, 1, std.math.maxInt(u128));
 
-        flags.history = prng.chance(ratio(1, 10));
+        // Random coordinates: latitude -90 to +90, longitude -180 to +180
+        // Stored as nanodegrees (10^-9 degrees)
+        // Generate as unsigned then shift to signed range
+        const lat_range: u64 = @intCast(GeoEvent.lat_nano_max - GeoEvent.lat_nano_min);
+        const lon_range: u64 = @intCast(GeoEvent.lon_nano_max - GeoEvent.lon_nano_min);
+        const lat_nano: i64 = @as(i64, @intCast(prng.int_inclusive(u64, lat_range))) + GeoEvent.lat_nano_min;
+        const lon_nano: i64 = @as(i64, @intCast(prng.int_inclusive(u64, lon_range))) + GeoEvent.lon_nano_min;
 
-        if (prng.chance(ratio(1, 10))) {
-            flags.debits_must_not_exceed_credits = prng.boolean();
-            flags.credits_must_not_exceed_debits = !flags.debits_must_not_exceed_credits;
-        }
+        // Generate a random S2 cell ID (simplified - actual S2 calculation is complex)
+        // In a real implementation, this would use proper S2 geometry
+        const s2_cell_id: u64 = prng.int(u64);
+        const timestamp_ns: u64 = @as(u64, @intCast(std.time.nanoTimestamp()));
 
-        // The last account in a batch can't be linked.
-        flags.linked = i < events_count - 1 and prng.chance(ratio(1, 100));
-
-        event.* = std.mem.zeroInit(tb.Account, .{
-            .id = prng.range_inclusive(u128, 1, std.math.maxInt(u128)),
-            .ledger = 1,
-            .code = prng.range_inclusive(u16, 1, 100),
-            .flags = flags,
+        event.* = std.mem.zeroInit(GeoEvent, .{
+            .id = GeoEvent.pack_id(s2_cell_id, timestamp_ns),
+            .entity_id = entity_id,
+            .lat_nano = lat_nano,
+            .lon_nano = lon_nano,
+            .timestamp = timestamp_ns,
+            .flags = GeoEventFlags{},
         });
     }
 
-    return .{ .create_accounts = events[0..events_count] };
+    return .{ .insert_events = events[0..events_count] };
 }
 
-fn random_create_transfers(prng: *stdx.PRNG, model: *const Model) Command {
-    const events_count = prng.range_inclusive(usize, 1, events_count_max);
-    assert(events_count <= events_count_max);
+fn query_by_uuid(prng: *stdx.PRNG, model: *const Model) Command {
+    // Query a random subset of known entities
+    const query_count = @min(
+        prng.range_inclusive(usize, 1, 10),
+        model.entities.items.len,
+    );
 
-    var buffer = command_buffers.create_transfers[0..events_count];
-    for (buffer, 0..) |*event, i| {
-        var flags = std.mem.zeroes(tb.TransferFlags);
-        var pending_id: u128 = 0;
-        var code = prng.range_inclusive(u16, 1, 100);
-
-        var debit_account_id = model.accounts.items[prng.index(model.accounts.items)].id;
-        var credit_account_id: u128 = 0;
-        while (credit_account_id == 0 or credit_account_id == debit_account_id) {
-            credit_account_id = model.accounts.items[prng.index(model.accounts.items)].id;
-        }
-
-        if (prng.chance(ratio(1, 10)) and model.pending_transfers.count() > 0) {
-            flags.post_pending_transfer = prng.boolean();
-            flags.void_pending_transfer = !flags.post_pending_transfer;
-        } else if (prng.chance(ratio(1, 100_000))) {
-            flags.closing_debit = prng.boolean();
-            flags.closing_credit = !flags.closing_debit;
-        } else {
-            inline for (.{ .pending, .balancing_debit, .balancing_credit }) |flag| {
-                @field(flags, @tagName(flag)) = prng.boolean();
-            }
-        }
-
-        // The last transfer in a batch can't be linked.
-        flags.linked = i < events_count - 1 and prng.chance(ratio(1, 100));
-
-        if (flags.post_pending_transfer or flags.void_pending_transfer) {
-            pending_id = random_pending_transfer(prng, &model.pending_transfers);
-            code = 0;
-            debit_account_id = 0;
-            credit_account_id = 0;
-        }
-
-        event.* = std.mem.zeroInit(tb.Transfer, .{
-            // Use monotonically increasing IDs from 1 for easier debugging.
-            .id = model.transfers_created + i + 1,
-            .ledger = 1,
-            .debit_account_id = debit_account_id,
-            .credit_account_id = credit_account_id,
-            .amount = prng.int_inclusive(u128, 1 << 32),
-            .code = code,
-            .pending_id = pending_id,
+    var filters = command_buffers.query_uuid[0..query_count];
+    for (filters, 0..) |*filter, i| {
+        const entity_idx = (prng.int(usize) + i) % model.entities.items.len;
+        filter.* = std.mem.zeroInit(QueryUuidFilter, .{
+            .entity_id = model.entities.items[entity_idx],
+            .limit = 100,
         });
     }
 
-    return .{ .create_transfers = buffer[0..events_count] };
+    return .{ .query_uuid = filters[0..query_count] };
 }
 
-fn random_pending_transfer(
-    prng: *stdx.PRNG,
-    pending_transfers: *const std.AutoHashMapUnmanaged(u128, void),
-) u128 {
-    assert(pending_transfers.count() > 0);
-    var pick = prng.int_inclusive(usize, pending_transfers.count() - 1);
-    var iterator = pending_transfers.keyIterator();
-    while (iterator.next()) |item| {
-        if (pick == 0) return item.*;
-        pick -= 1;
-    }
-    unreachable;
-}
+fn query_latest_events(model: *const Model) Command {
+    _ = model;
+    // Query latest events globally
+    var filters = command_buffers.query_latest[0..1];
+    filters[0] = std.mem.zeroInit(QueryLatestFilter, .{
+        .limit = 100,
+    });
 
-fn lookup_all_accounts(model: *const Model) Command {
-    const events_count = model.accounts.items.len;
-    var buffer = command_buffers.lookup_all_accounts[0..events_count];
-    for (buffer, model.accounts.items) |*event, account| {
-        event.* = account.id;
-    }
-    return .{ .lookup_all_accounts = buffer[0..events_count] };
-}
-
-fn lookup_latest_transfers(model: *const Model) Command {
-    const buffer = command_buffers.lookup_latest_transfers[0..model.latest_transfers.count];
-    var ids = model.latest_transfers.iterator();
-    var count: usize = 0;
-    while (ids.next()) |id| {
-        buffer[count] = id;
-        count += 1;
-    }
-    return .{ .lookup_latest_transfers = buffer };
+    return .{ .query_latest = filters[0..1] };
 }
 
 /// Converts a union type, where each field is of a slice type, into a struct of arrays of the

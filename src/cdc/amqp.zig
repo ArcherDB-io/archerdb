@@ -34,11 +34,11 @@ pub const tcp_port_default = protocol.tcp_port_default;
 pub const frame_min_size = protocol.frame_min_size;
 
 /// AMQP (Advanced Message Queuing Protocol) 0.9.1 client.
-/// - Uses TigerBeetle's IO interface.
+/// - Uses ArcherDB's IO interface.
 /// - Single channel only.
 /// - Batched publishing with fixed buffers.
 /// - Limited consumer capabilities.
-/// - Implements only the methods required by TigerBeetle.
+/// - Implements only the methods required by ArcherDB.
 /// - No error handling: **CAN PANIC**.
 pub const Client = struct {
     pub const Callback = *const fn (self: *Client) void;

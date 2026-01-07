@@ -426,3 +426,54 @@ The SDK SHALL maintain compatibility with server versions.
 - See `specs/client-retry/spec.md` for retry logic and exponential backoff
 - See `specs/error-codes/spec.md` for error handling in SDKs
 - See `specs/api-versioning/spec.md` for SDK version compatibility requirements
+
+## Implementation Status
+
+### Python SDK (`src/clients/python/`)
+
+| API | Spec Function | Implemented As | Status |
+|-----|---------------|----------------|--------|
+| Single UUID lookup | `get_latest(entity_id)` | `get_latest_by_uuid(entity_id)` | ✓ Complete |
+| Batch UUID lookup | `get_latest_batch(entity_ids)` | Not implemented | Pending |
+| Radius query | `query_radius(...)` | `query_radius(...)` | ✓ Complete |
+| Polygon query | `query_polygon(...)` | `query_polygon(...)` | ✓ Complete |
+| Latest query | `query_latest(...)` | `query_latest(...)` | ✓ Complete |
+| Insert events | `insert_events(...)` | `insert_events(...)` | ✓ Complete |
+| Delete entities | `delete_entities(...)` | `delete_entities(...)` | ✓ Complete |
+
+**Pending Features**:
+- `get_latest_batch()`: Requires server-side batch query_uuid (geo_state_machine.zig:1055 is TODO)
+- Logging integration: Structured logging for debugging
+- Metrics export: Prometheus/OpenTelemetry metrics
+- Health check API: Connection status monitoring
+
+**Notes**:
+- Both sync (`ArcherDBClient`) and async (`AsyncArcherDBClient`) classes implemented
+- Type hints complete via `types.py`
+- Context manager support via `__enter__`/`__exit__`
+
+### Node.js SDK (`src/clients/node/`)
+
+| Spec Method | SDK Method | Status |
+|-----|---------------|--------|
+| Single UUID lookup | `getLatestByUuid(entityId)` | ✓ Complete |
+| Radius query | `queryRadius(...)` | ✓ Complete |
+| Polygon query | `queryPolygon(...)` | ✓ Complete |
+| Insert events | `createBatch().insert(...)` | ✓ Complete |
+| Delete entities | `deleteEntities(...)` | ✓ Complete |
+| QueryResponse parsing | `parseQueryResponse(data)` | ✓ Complete |
+
+**Notes**:
+- Both sync (`GeoClientSync`) and async (`GeoClientAsync`) classes implemented
+- Full TypeScript type definitions in `geo.ts`
+- QueryResponse wire format parser for has_more/partial_result flags
+
+### Other SDKs
+
+| SDK | Status |
+|-----|--------|
+| Java | Placeholder structure only |
+| Go | Placeholder structure only |
+| Zig | Uses internal API directly |
+
+The Python and Node.js SDKs are the reference implementations. Other SDKs will follow the same patterns once these SDKs are fully validated.

@@ -85,10 +85,10 @@ pub const Multiversion = struct {
 /// x86_64 / arm64) platforms. They were chosen so that it wouldn't be a random value, but also
 /// wouldn't be something that could be realistically encountered.
 pub const section_to_macho_cpu = enum(c_int) {
-    tb_mvb_aarch64 = 0x00000001, // VAX
-    tb_mvh_aarch64 = 0x00000002, // ROMP
-    tb_mvb_x86_64 = 0x00000004, // NS32032
-    tb_mvh_x86_64 = 0x00000005, // NS32332
+    arch_mvb_aarch64 = 0x00000001, // VAX
+    arch_mvh_aarch64 = 0x00000002, // ROMP
+    arch_mvb_x86_64 = 0x00000004, // NS32032
+    arch_mvh_x86_64 = 0x00000005, // NS32332
 };
 
 const log = std.log.scoped(.multiversioning);
@@ -320,7 +320,7 @@ pub const MultiversionHeader = extern struct {
         releases: [past_releases_max]u32 = @splat(0),
         checksums: [past_releases_max]u128 = @splat(0),
 
-        /// Offsets are relative to the start of the body (`.tb_mvb`) offset.
+        /// Offsets are relative to the start of the body (`.arch_mvb`) offset.
         offsets: [past_releases_max]u32 = @splat(0),
 
         sizes: [past_releases_max]u32 = @splat(0),
@@ -438,10 +438,10 @@ pub const MultiversionHeader = extern struct {
     /// Covers MultiversionHeader[@sizeOf(u128)..].
     checksum_header: u128 = undefined,
 
-    /// The AEGIS128L checksum of the binary, if the header (`.tb_mvh`) section were zeroed out.
+    /// The AEGIS128L checksum of the binary, if the header (`.arch_mvh`) section were zeroed out.
     /// Used to validate that the binary itself is not corrupt. Putting this in requires a bit
     /// of trickery:
-    /// * inject a zero `.tb_mvh` section of the correct size,
+    /// * inject a zero `.arch_mvh` section of the correct size,
     /// * compute the hash,
     /// * update the section with the correct data.
     /// Used to ensure we don't try and exec into a corrupt binary.
@@ -642,7 +642,7 @@ test "MultiversionHeader.advertisable" {
     }
 }
 
-const multiversion_uuid = "tigerbeetle-multiversion-1768a738-ef69-4605-8b5c-c6e63580e345";
+const multiversion_uuid = "archerdb-multiversion-1768a738-ef69-4605-8b5c-c6e63580e345";
 
 pub const MultiversionOS = struct {
     const ArgsEnvp = if (builtin.target.os.tag == .windows) struct {
@@ -1453,13 +1453,13 @@ pub const MultiversionOS = struct {
                 // via the inherited environment.
                 assert(
                     std.os.windows.kernel32.SetEnvironmentVariableW(
-                        comptime std.unicode.utf8ToUtf16LeStringLiteral(TB_MULTIVERSION_PIPE),
+                        comptime std.unicode.utf8ToUtf16LeStringLiteral(ARCH_MULTIVERSION_PIPE),
                         pipe_name,
                     ) != 0,
                 );
                 assert(
                     std.os.windows.kernel32.SetEnvironmentVariableW(
-                        comptime std.unicode.utf8ToUtf16LeStringLiteral(TB_MULTIVERSION_EXE),
+                        comptime std.unicode.utf8ToUtf16LeStringLiteral(ARCH_MULTIVERSION_EXE),
                         self.args_envp.exe_path_w,
                     ) != 0,
                 );
@@ -1534,7 +1534,7 @@ pub fn self_exe_path(allocator: std.mem.Allocator) ![:0]const u8 {
         std.mem.eql(u8, native_self_exe_path, "/memfd:" ++ multiversion_uuid ++ " (deleted)"))
     {
         comptime assert(builtin.target.os.tag == .linux);
-        // Technically, "/memfd:tigerbeetle-multiversion-... (deleted)" is a valid path at which you
+        // Technically, "/memfd:archerdb-multiversion-... (deleted)" is a valid path at which you
         // could place your binary - please don't!
         assert(std.fs.cwd().statFile(native_self_exe_path) catch null == null);
 
@@ -1567,7 +1567,7 @@ pub fn self_exe_path(allocator: std.mem.Allocator) ![:0]const u8 {
         // it's not possible to assert this.
 
         // Windows make it error-prone to set argv[0], so the path is passed via env.
-        const path = try std.process.getEnvVarOwned(allocator, TB_MULTIVERSION_EXE);
+        const path = try std.process.getEnvVarOwned(allocator, ARCH_MULTIVERSION_EXE);
         defer allocator.free(path);
 
         assert(std.fs.path.isAbsolute(path));
@@ -1591,8 +1591,8 @@ pub fn random_wstr() [32]u16 {
     return result;
 }
 
-// During upgrades, tigerbeetle dynamically re-executes itself at a different version.
-// There can be only one tigerbeetle instance running at a time, due to any of:
+// During upgrades, archerdb dynamically re-executes itself at a different version.
+// There can be only one archerdb instance running at a time, due to any of:
 // - data file lock,
 // - incoming port,
 // - available RAM.
@@ -1607,14 +1607,14 @@ pub fn random_wstr() [32]u16 {
 // 5. Child gets the name of the pipe trough env.
 // 6. Child receives the parent's handle through the pipe.
 // 7. Child waits for parent to exit.
-const TB_MULTIVERSION_PIPE = "TB_MULTIVERSION_PIPE";
-const TB_MULTIVERSION_EXE = "TB_MULTIVERSION_EXE";
+const ARCH_MULTIVERSION_PIPE = "ARCH_MULTIVERSION_PIPE";
+const ARCH_MULTIVERSION_EXE = "ARCH_MULTIVERSION_EXE";
 pub fn wait_for_parent_to_exit() !void {
     comptime assert(builtin.os.tag == .windows);
 
     var pipe_name_buffer: [64]u16 = undefined;
     const count = std.os.windows.kernel32.GetEnvironmentVariableW(
-        comptime std.unicode.utf8ToUtf16LeStringLiteral(TB_MULTIVERSION_PIPE),
+        comptime std.unicode.utf8ToUtf16LeStringLiteral(ARCH_MULTIVERSION_PIPE),
         &pipe_name_buffer,
         pipe_name_buffer.len,
     );
@@ -1683,7 +1683,7 @@ pub fn parse_elf(buffer: []align(@alignOf(elf.Elf64_Ehdr)) const u8) !HeaderBody
     if (@sizeOf(elf.Elf64_Ehdr) > buffer.len) return error.InvalidELF;
     const elf_header = try elf.Header.parse(buffer[0..@sizeOf(elf.Elf64_Ehdr)]);
 
-    // TigerBeetle only supports little endian on 64 bit platforms.
+    // ArcherDB only supports little endian on 64 bit platforms.
     if (elf_header.endian != .little) return error.WrongEndian;
     if (!elf_header.is_64) return error.Not64bit;
 
@@ -1758,7 +1758,7 @@ pub fn parse_elf(buffer: []align(@alignOf(elf.Elf64_Ehdr)) const u8) !HeaderBody
             0,
         );
 
-        if (std.mem.eql(u8, name, ".tb_mvb")) {
+        if (std.mem.eql(u8, name, ".arch_mvb")) {
             // The body must be the second-last section in the file.
             if (body_offset != null) return error.MultipleMultiversionBody;
             if (i != elf_section_headers_count - 2) return error.InvalidMultiversionBodyLocation;
@@ -1773,7 +1773,7 @@ pub fn parse_elf(buffer: []align(@alignOf(elf.Elf64_Ehdr)) const u8) !HeaderBody
 
             body_offset = @intCast(elf_section_header.sh_offset);
             body_size = @intCast(elf_section_header.sh_size);
-        } else if (std.mem.eql(u8, name, ".tb_mvh")) {
+        } else if (std.mem.eql(u8, name, ".arch_mvh")) {
             // The header must be the last section in the file. (It's _logically_ a header.)
             if (header_offset != null) return error.MultipleMultiversionHeader;
             if (elf_section_header.sh_size != @sizeOf(MultiversionHeader)) {
@@ -1834,21 +1834,21 @@ pub fn parse_macho(buffer: []const u8) !HeaderBodyOffsets {
         const fat_arch_cpu_type = @byteSwap(fat_arch.cputype);
 
         switch (fat_arch_cpu_type) {
-            @intFromEnum(section_to_macho_cpu.tb_mvb_aarch64) => {
+            @intFromEnum(section_to_macho_cpu.arch_mvb_aarch64) => {
                 assert(body_offset_aarch64 == null and body_size_aarch64 == null);
                 body_offset_aarch64 = @byteSwap(fat_arch.offset);
                 body_size_aarch64 = @byteSwap(fat_arch.size);
             },
-            @intFromEnum(section_to_macho_cpu.tb_mvh_aarch64) => {
+            @intFromEnum(section_to_macho_cpu.arch_mvh_aarch64) => {
                 assert(header_offset_aarch64 == null);
                 header_offset_aarch64 = @byteSwap(fat_arch.offset);
             },
-            @intFromEnum(section_to_macho_cpu.tb_mvb_x86_64) => {
+            @intFromEnum(section_to_macho_cpu.arch_mvb_x86_64) => {
                 assert(body_offset_x86_64 == null and body_size_x86_64 == null);
                 body_offset_x86_64 = @byteSwap(fat_arch.offset);
                 body_size_x86_64 = @byteSwap(fat_arch.size);
             },
-            @intFromEnum(section_to_macho_cpu.tb_mvh_x86_64) => {
+            @intFromEnum(section_to_macho_cpu.arch_mvh_x86_64) => {
                 assert(header_offset_x86_64 == null);
                 header_offset_x86_64 = @byteSwap(fat_arch.offset);
             },
@@ -1892,8 +1892,8 @@ pub fn parse_pe(buffer: []const u8) !HeaderBodyOffsets {
 
     if (!coff.is_image) return error.InvalidPE;
 
-    const header_section = coff.getSectionByName(".tb_mvh");
-    const body_section = coff.getSectionByName(".tb_mvb");
+    const header_section = coff.getSectionByName(".arch_mvh");
+    const body_section = coff.getSectionByName(".arch_mvb");
 
     if (header_section == null) return error.MultiversionHeaderOrBodyNotFound;
     if (body_section == null) return error.MultiversionHeaderOrBodyNotFound;
@@ -2021,16 +2021,16 @@ test parse_elf {
         const elf_header = try test_elf_build_header(&buffer);
         const string_table = try test_elf_build_string_table(&buffer, elf_header);
 
-        // The string table can't be 0, and the .tb_mvb and .tb_mvh sections need to be the second
+        // The string table can't be 0, and the .arch_mvb and .arch_mvh sections need to be the second
         // last and last sections in the file respectively. Pad the 0 index with a no-op section.
-        _ = try test_elf_build_section(&buffer, string_table, elf_header, 0, ".tb_nop");
+        _ = try test_elf_build_section(&buffer, string_table, elf_header, 0, ".arch_nop");
 
         const section_mvb = try test_elf_build_section(
             &buffer,
             string_table,
             elf_header,
             2,
-            ".tb_mvb",
+            ".arch_mvb",
         );
         // So it overlaps on purpose, to check the MultiversionBodyOverlapsHeader assert.
         section_mvb.sh_size = 16384;
@@ -2040,7 +2040,7 @@ test parse_elf {
             string_table,
             elf_header,
             3,
-            ".tb_mvh",
+            ".arch_mvh",
         );
         section_mvh.sh_size = 8192; // @sizeOf(MultiversionHeader), but hardcoded.
 

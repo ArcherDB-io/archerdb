@@ -4,7 +4,7 @@
 //!
 //! We have a number of machines which run
 //!
-//!     git clone https://github.com/tigerbeetle/tigerbeetle && cd tigerbeetle
+//!     git clone https://github.com/archerdb/archerdb && cd archerdb
 //!     while True:
 //!         git fetch origin && git reset --hard origin/main
 //!         ./zig/download.sh
@@ -32,7 +32,7 @@
 //! Every `args.refresh`, and at the end of the fuzzing loop:
 //! 1. CFO collects a list of seeds (some of which are failing),
 //! 2. merges this list into the previous set of seeds,
-//! 3. pushes the new list to https://github.com/tigerbeetle/devhubdb/
+//! 3. pushes the new list to https://github.com/archerdb/devhubdb/
 //!
 //! Rules for merging:
 //!
@@ -192,14 +192,14 @@ pub fn main(shell: *Shell, gpa: std.mem.Allocator, cli_args: CLIArgs) !void {
 
     try shell.exec("git --version", .{});
 
-    // Read-write token for <https://github.com/tigerbeetle/devhubdb>.
+    // Read-write token for <https://github.com/archerdb/devhubdb>.
     // See `src/scripts/devhub.zig` for generation instructions.
     const devhub_token_option = shell.env_get_option("DEVHUBDB_PAT");
     if (devhub_token_option == null) {
         log.err("'DEVHUBDB_PAT' environmental variable is not set, will not upload results", .{});
     }
 
-    // Readonly token for PR metadata of <https://github.com/tigerbeetle/tigerbeetle>.
+    // Readonly token for PR metadata of <https://github.com/archerdb/archerdb>.
     const gh_token_option = shell.env_get_option("GH_TOKEN");
     if (gh_token_option == null) {
         log.err("'GH_TOKEN' environmental variable is not set, will not fetch pull requests", .{});
@@ -744,8 +744,8 @@ fn run_fuzzers_prepare_tasks(tasks: *Tasks, shell: *Shell, gh_token: ?[]const u8
                     .fuzzer = fuzzer,
                     .branch = branch,
                     .branch_url = switch (branch) {
-                        .main => "https://github.com/tigerbeetle/tigerbeetle",
-                        .release => "https://github.com/tigerbeetle/tigerbeetle/tree/release",
+                        .main => "https://github.com/archerdb/archerdb",
+                        .release => "https://github.com/archerdb/archerdb/tree/release",
                         else => unreachable,
                     },
                 });
@@ -810,7 +810,7 @@ fn run_fuzzers_prepare_tasks(tasks: *Tasks, shell: *Shell, gh_token: ?[]const u8
                         .fuzzer = fuzzer,
                         .branch = .{ .pull = pr.number },
                         .branch_url = try shell.fmt(
-                            "https://github.com/tigerbeetle/tigerbeetle/pull/{d}",
+                            "https://github.com/archerdb/archerdb/pull/{d}",
                             .{pr.number},
                         ),
                     });
@@ -874,7 +874,7 @@ fn run_fuzzers_prepare_repository(shell: *Shell, target: union(enum) {
 }) !Commit {
     // When possible, reuse checkouts so that we can also reuse the zig cache.
     if (!try shell.dir_exists(".git")) {
-        try shell.exec("git clone https://github.com/tigerbeetle/tigerbeetle .", .{});
+        try shell.exec("git clone https://github.com/archerdb/archerdb .", .{});
     }
 
     switch (target) {
@@ -1012,7 +1012,7 @@ fn upload_results(
     _ = try shell.cwd.deleteTree("./devhubdb");
     try shell.exec(
         \\git clone --single-branch --depth 1
-        \\  https://oauth2:{token}@github.com/tigerbeetle/devhubdb.git
+        \\  https://oauth2:{token}@github.com/archerdb/devhubdb.git
         \\  devhubdb
     , .{
         .token = token,
@@ -1119,9 +1119,9 @@ const SeedRecord = struct {
             release,
             pull: u32,
 
-            const main_url = "https://github.com/tigerbeetle/tigerbeetle";
-            const release_url = "https://github.com/tigerbeetle/tigerbeetle/tree/release";
-            const pull_url_prefix = "https://github.com/tigerbeetle/tigerbeetle/pull/";
+            const main_url = "https://github.com/archerdb/archerdb";
+            const release_url = "https://github.com/archerdb/archerdb/tree/release";
+            const pull_url_prefix = "https://github.com/archerdb/archerdb/pull/";
 
             pub fn parse(string: []const u8) !@This() {
                 if (std.mem.eql(u8, string, main_url)) return .main;
@@ -1404,7 +1404,7 @@ test "cfo: deserialization" {
         \\    "seed_timestamp_end": 1721096949,
         \\    "seed": 17154947449604939200,
         \\    "command": "./zig/zig build -Drelease fuzz -- canary 17154947449604939200",
-        \\    "branch": "https://github.com/tigerbeetle/tigerbeetle/pull/2104",
+        \\    "branch": "https://github.com/archerdb/archerdb/pull/2104",
         \\    "count": 1
         \\}]
     ;
@@ -1429,7 +1429,7 @@ test "cfo: deserialization" {
         \\    "seed_timestamp_end": 1721096949,
         \\    "seed": 17154947449604939200,
         \\    "command": "./zig/zig build -Drelease fuzz -- canary 17154947449604939200",
-        \\    "branch": "https://github.com/tigerbeetle/tigerbeetle/pull/2104"
+        \\    "branch": "https://github.com/archerdb/archerdb/pull/2104"
         \\  }
         \\]
     ).diff(new_json);

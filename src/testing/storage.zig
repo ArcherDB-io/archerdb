@@ -180,7 +180,7 @@ pub const Storage = struct {
     ///   - the misdirected write lands on a convenient offset.
     ///   Thanks to rigorous checksums, misdirections that break these rules just manifest as
     ///   corruptions, and corruption is already well-tested (see `faults`). The goal here is to
-    ///   test how TigerBeetle handles well-formed but incorrectly-located data.
+    ///   test how ArcherDB handles well-formed but incorrectly-located data.
     ///   TODO: Suppose cross-zone misdirects to help find cases where we don't check `command`.
     overlays: IOPSType(struct { zone: vsr.Zone, offset: u64, size: u32 }, overlays_count_max) = .{},
     overlay_buffers: *align(constants.sector_size) OverlayBuffers,

@@ -42,7 +42,7 @@ The ArcherDB project SHALL implement strategies to mitigate technical risks thro
 
 - **WHEN** addressing architecture complexity
 - **THEN** mitigation SHALL include:
-  - **TigerBeetle Reference**: Use proven implementation as architectural guide
+  - **ArcherDB Reference**: Use proven implementation as architectural guide
   - **Incremental Development**: Build and validate core components before advanced features
   - **Expert Consultation**: Engage distributed systems experts for critical components
   - **Prototyping**: Build proofs-of-concept for high-risk components

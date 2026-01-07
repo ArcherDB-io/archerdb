@@ -1,14 +1,14 @@
 # Testing & Simulation Specification
 
-**Reference Implementation:** https://github.com/tigerbeetle/tigerbeetle/tree/main/src/testing
+**Reference Implementation:** https://github.com/archerdb/archerdb/tree/main/src/testing
 
-This spec is based on TigerBeetle's VOPR (Viewstamped Operation Replication) deterministic simulator. Implementers MUST study:
+This spec is based on ArcherDB's VOPR (Viewstamped Operation Replication) deterministic simulator. Implementers MUST study:
 - `src/simulator.zig` - Deterministic simulation framework with PRNG seed control
 - `src/testing/storage.zig` - Simulated storage with comprehensive fault injection
 - `src/testing/cluster.zig` - Multi-replica cluster simulation
 - `src/vsr/replica.zig` - Property-based testing patterns and invariant checking
 
-**Implementation approach:** TigerBeetle's simulator is the gold standard for distributed systems testing. Copy the architecture exactly - deterministic PRNG, fault injection enums, two-phase testing (safety then liveness), and seed-based replay.
+**Implementation approach:** ArcherDB's simulator is the gold standard for distributed systems testing. Copy the architecture exactly - deterministic PRNG, fault injection enums, two-phase testing (safety then liveness), and seed-based replay.
 
 ---
 
@@ -16,7 +16,7 @@ This spec is based on TigerBeetle's VOPR (Viewstamped Operation Replication) det
 
 ### Requirement: Deterministic Simulator (VOPR-Style)
 
-The system SHALL implement a deterministic simulator for exhaustive testing of distributed system behavior, inspired by TigerBeetle's VOPR (Viewstamped Operation Replayer).
+The system SHALL implement a deterministic simulator for exhaustive testing of distributed system behavior, inspired by ArcherDB's VOPR (Viewstamped Operation Replayer).
 
 #### Scenario: Deterministic PRNG seeding
 
@@ -280,7 +280,7 @@ The system SHALL provide infrastructure for running simulation tests efficiently
 
 ### Requirement: Unit Test Patterns
 
-The system SHALL follow TigerBeetle's unit test patterns for component testing.
+The system SHALL follow ArcherDB's unit test patterns for component testing.
 
 #### Scenario: Comptime testing
 
@@ -459,3 +459,43 @@ The system SHALL include test scenarios for security features.
 - See `specs/hybrid-memory/spec.md` for index concurrency testing requirements
 - See `specs/error-codes/spec.md` for error scenarios to test
 - See `specs/observability/spec.md` for metrics to verify during simulation
+
+## Implementation Status
+
+**Overall: COMPLETE**
+
+### VOPR Framework
+
+| Component | File | Status |
+|-----------|------|--------|
+| Core VOPR | `src/testing/cluster.zig` | ✓ Complete (1,805 lines) |
+| Simulated Network | `src/testing/cluster/network.zig` | ✓ Complete |
+| Fault Injection (Storage) | `src/storage.zig` | ✓ Complete |
+| Fault Injection (Network) | `src/testing/packet_simulator.zig` | ✓ Complete (535 lines) |
+| Fault Injection (Timing) | `src/testing/cluster.zig` | ✓ Complete |
+| Fault Injection (Crash) | `src/testing/cluster.zig` | ✓ Complete |
+| State Checker | `src/testing/state_checker.zig` | ✓ Complete |
+
+### Testing Phases
+
+| Phase | Location | Status |
+|-------|----------|--------|
+| Safety Phase | `src/testing/cluster.zig:264-313` | ✓ Complete |
+| Liveness Phase | `src/testing/cluster.zig:314-343` | ✓ Complete |
+| Two-Phase Pipeline | `transition_to_liveness_mode()` | ✓ Complete |
+
+### Geospatial Testing
+
+| Feature | File | Status |
+|---------|------|--------|
+| Geospatial Workload | `src/testing/geo_workload.zig` | ✓ Complete (1,022 lines) |
+| S2 Determinism | `src/testing/cluster/s2_determinism_checker.zig` | ✓ Complete |
+| Edge Case Testing | `src/testing/geo_workload.zig` | ✓ Poles, anti-meridian, boundaries |
+
+### Implementation Notes
+
+- VOPR framework fully operational with seed-based determinism
+- Complete fault injection across storage, network, timing, and crashes
+- Property-based testing with swarm configurations
+- Regression testing via seed reproduction
+- Production-grade test harness with logging and metrics

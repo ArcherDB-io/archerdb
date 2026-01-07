@@ -5,8 +5,8 @@ const vsr = @import("vsr");
 
 const assert = std.debug.assert;
 const stdx = vsr.stdx;
-const tb = vsr.tigerbeetle;
-const exports = vsr.tb_client.exports;
+const tb = vsr.archerdb;
+const exports = vsr.arch_client.exports;
 
 const TypeMapping = struct {
     name: []const u8,
@@ -33,115 +33,80 @@ const TypeMapping = struct {
     }
 };
 
+// ArcherDB geospatial type mappings
 const type_mappings = .{
-    .{ tb.AccountFlags, TypeMapping{
-        .name = "AccountFlags",
+    .{ tb.GeoEventFlags, TypeMapping{
+        .name = "GeoEventFlags",
         .visibility = .public,
         .private_fields = &.{"padding"},
-        .docs_link = "reference/account#flags",
+        .docs_link = "reference/geo-event#flags",
     } },
-    .{ tb.TransferFlags, TypeMapping{
-        .name = "TransferFlags",
-        .visibility = .public,
-        .private_fields = &.{"padding"},
-        .docs_link = "reference/transfer#flags",
-    } },
-    .{ tb.AccountFilterFlags, TypeMapping{
-        .name = "AccountFilterFlags",
-        .visibility = .public,
-        .private_fields = &.{"padding"},
-        .docs_link = "reference/account-filter#flags",
-    } },
-    .{ tb.QueryFilterFlags, TypeMapping{
-        .name = "QueryFilterFlags",
-        .visibility = .public,
-        .private_fields = &.{"padding"},
-        .docs_link = "reference/query-filter#flags",
-    } },
-    .{ tb.Account, TypeMapping{
-        .name = "Account",
+    .{ tb.GeoEvent, TypeMapping{
+        .name = "GeoEvent",
         .visibility = .public,
         .private_fields = &.{"reserved"},
-        .readonly_fields = &.{
-            "debits_pending",
-            "credits_pending",
-            "debits_posted",
-            "credits_posted",
-        },
-        .docs_link = "reference/account#",
+        .docs_link = "reference/geo-event#",
     } },
-    .{
-        tb.Transfer, TypeMapping{
-            .name = "Transfer",
-            .visibility = .public,
-            .private_fields = &.{"reserved"},
-            .readonly_fields = &.{},
-            .docs_link = "reference/transfer#",
-            .constants =
-            \\    public static UInt128 AmountMax => UInt128.MaxValue;
-            \\
-            ,
-        },
-    },
-    .{ tb.CreateAccountResult, TypeMapping{
-        .name = "CreateAccountResult",
+    .{ tb.InsertGeoEventResult, TypeMapping{
+        .name = "InsertGeoEventResult",
         .visibility = .public,
-        .docs_link = "reference/requests/create_accounts#",
+        .docs_link = "reference/requests/insert_events#",
     } },
-    .{ tb.CreateTransferResult, TypeMapping{
-        .name = "CreateTransferResult",
-        .visibility = .public,
-        .docs_link = "reference/requests/create_transfers#",
-    } },
-    .{ tb.CreateAccountsResult, TypeMapping{
-        .name = "CreateAccountsResult",
+    .{ tb.InsertGeoEventsResult, TypeMapping{
+        .name = "InsertGeoEventsResult",
         .visibility = .public,
     } },
-    .{ tb.CreateTransfersResult, TypeMapping{
-        .name = "CreateTransfersResult",
+    .{ tb.DeleteEntitiesResult, TypeMapping{
+        .name = "DeleteEntitiesResult",
         .visibility = .public,
     } },
-    .{ tb.AccountFilter, TypeMapping{
-        .name = "AccountFilter",
+    .{ tb.QueryUuidFilter, TypeMapping{
+        .name = "QueryUuidFilter",
         .visibility = .public,
         .private_fields = &.{"reserved"},
-        .docs_link = "reference/account-filter#",
+        .docs_link = "reference/query-uuid-filter#",
     } },
-    .{ tb.AccountBalance, TypeMapping{
-        .name = "AccountBalance",
+    .{ tb.QueryRadiusFilter, TypeMapping{
+        .name = "QueryRadiusFilter",
         .visibility = .public,
         .private_fields = &.{"reserved"},
-        .docs_link = "reference/account-balances#",
+        .docs_link = "reference/query-radius-filter#",
     } },
-    .{ tb.QueryFilter, TypeMapping{
-        .name = "QueryFilter",
+    .{ tb.QueryPolygonFilter, TypeMapping{
+        .name = "QueryPolygonFilter",
         .visibility = .public,
         .private_fields = &.{"reserved"},
-        .docs_link = "reference/query-filter#",
+        .docs_link = "reference/query-polygon-filter#",
     } },
-    .{ exports.tb_init_status, TypeMapping{
+    .{ tb.QueryLatestFilter, TypeMapping{
+        .name = "QueryLatestFilter",
+        .visibility = .public,
+        .private_fields = &.{"reserved"},
+        .docs_link = "reference/query-latest-filter#",
+    } },
+    .{ exports.arch_init_status, TypeMapping{
         .name = "InitializationStatus",
         .visibility = .public,
     } },
-    .{ exports.tb_client_status, TypeMapping{
+    .{ exports.arch_client_status, TypeMapping{
         .name = "ClientStatus",
         .visibility = .internal,
     } },
-    .{ exports.tb_packet_status, TypeMapping{
+    .{ exports.arch_packet_status, TypeMapping{
         .name = "PacketStatus",
         .visibility = .public,
     } },
-    .{ exports.tb_operation, TypeMapping{
+    .{ exports.arch_operation, TypeMapping{
         .name = "TBOperation",
         .visibility = .internal,
         .private_fields = &.{ "reserved", "root", "register" },
     } },
-    .{ exports.tb_client_t, TypeMapping{
+    .{ exports.arch_client_t, TypeMapping{
         .name = "TBClient",
         .visibility = .internal,
         .private_fields = &.{"opaque"},
     } },
-    .{ exports.tb_packet_t, TypeMapping{
+    .{ exports.arch_packet_t, TypeMapping{
         .name = "TBPacket",
         .visibility = .internal,
         .private_fields = &.{"opaque"},
@@ -420,7 +385,7 @@ fn emit_docs(buffer: anytype, comptime mapping: TypeMapping, comptime field: ?[]
     if (mapping.docs_link) |docs_link| {
         try buffer.writer().print(
             \\    /// <summary>
-            \\    /// https://docs.tigerbeetle.com/{s}{s}
+            \\    /// https://docs.archerdb.io/{s}{s}
             \\    /// </summary>
             \\
         , .{
@@ -442,7 +407,7 @@ pub fn generate_bindings(buffer: *std.ArrayList(u8)) !void {
         \\using System;
         \\using System.Runtime.InteropServices;
         \\
-        \\namespace TigerBeetle;
+        \\namespace ArcherDB;
         \\
         \\
     , .{});
@@ -485,15 +450,13 @@ pub fn generate_bindings(buffer: *std.ArrayList(u8)) !void {
     }
 
     // Emit function declarations.
-    // TODO: use `std.meta.declaractions` and generate with pub + export functions.
-    // Zig 0.9.1 has `decl.data.Fn.arg_names` but it's currently/incorrectly a zero-sized slice.
     try buffer.writer().print(
         \\internal static class Native
         \\{{
-        \\    private const string LIB_NAME = "tb_client";
+        \\    private const string LIB_NAME = "arch_client";
         \\
         \\    [DllImport(LIB_NAME, CallingConvention = CallingConvention.Cdecl)]
-        \\    public static unsafe extern InitializationStatus tb_client_init(
+        \\    public static unsafe extern InitializationStatus arch_client_init(
         \\        TBClient* client_out,
         \\        UInt128Extensions.UnsafeU128* cluster_id,
         \\        byte* address_ptr,
@@ -505,7 +468,7 @@ pub fn generate_bindings(buffer: *std.ArrayList(u8)) !void {
         \\    );
         \\
         \\    [DllImport(LIB_NAME, CallingConvention = CallingConvention.Cdecl)]
-        \\    public static unsafe extern InitializationStatus tb_client_init_echo(
+        \\    public static unsafe extern InitializationStatus arch_client_init_echo(
         \\        TBClient* out_client,
         \\        UInt128Extensions.UnsafeU128* cluster_id,
         \\        byte* address_ptr,
@@ -517,13 +480,13 @@ pub fn generate_bindings(buffer: *std.ArrayList(u8)) !void {
         \\    );
         \\
         \\    [DllImport(LIB_NAME, CallingConvention = CallingConvention.Cdecl)]
-        \\    public static unsafe extern ClientStatus tb_client_submit(
+        \\    public static unsafe extern ClientStatus arch_client_submit(
         \\        TBClient* client,
         \\        TBPacket* packet
         \\    );
         \\
         \\    [DllImport(LIB_NAME, CallingConvention = CallingConvention.Cdecl)]
-        \\    public static unsafe extern ClientStatus tb_client_deinit(
+        \\    public static unsafe extern ClientStatus arch_client_deinit(
         \\        TBClient* client
         \\    );
         \\}}

@@ -2,39 +2,39 @@
 // Copyright (c) 2024-2025 ArcherDB Contributors
 const std = @import("std");
 const vsr = @import("vsr");
-const exports = vsr.tb_client.exports;
+const exports = vsr.arch_client.exports;
 const assert = std.debug.assert;
 
-const tb = vsr.tigerbeetle;
+const tb = vsr.archerdb;
 
 /// VSR type mappings: these will always be the same regardless of state machine.
 const mappings_vsr = .{
-    .{ exports.tb_operation, "Operation" },
-    .{ exports.tb_packet_status, "PacketStatus" },
-    .{ exports.tb_packet_t, "Packet" },
-    .{ exports.tb_client_t, "Client" },
-    .{ exports.tb_init_status, "InitStatus" },
-    .{ exports.tb_client_status, "ClientStatus" },
-    .{ exports.tb_log_level, "LogLevel" },
-    .{ exports.tb_register_log_callback_status, "RegisterLogCallbackStatus" },
+    .{ exports.arch_operation, "Operation" },
+    .{ exports.arch_packet_status, "PacketStatus" },
+    .{ exports.arch_packet_t, "Packet" },
+    .{ exports.arch_client_t, "Client" },
+    .{ exports.arch_init_status, "InitStatus" },
+    .{ exports.arch_client_status, "ClientStatus" },
+    .{ exports.arch_log_level, "LogLevel" },
+    .{ exports.arch_register_log_callback_status, "RegisterLogCallbackStatus" },
 };
 
-/// State machine specific mappings: in future, these should be pulled automatically from the state
-/// machine.
+/// State machine specific mappings for ArcherDB geospatial operations.
+/// NOTE: Financial types have been removed. ArcherDB is a geospatial database only.
 const mappings_state_machine = .{
-    .{ tb.AccountFlags, "AccountFlags" },
-    .{ tb.TransferFlags, "TransferFlags" },
-    .{ tb.AccountFilterFlags, "AccountFilterFlags" },
-    .{ tb.QueryFilterFlags, "QueryFilterFlags" },
-    .{ tb.Account, "Account" },
-    .{ tb.Transfer, "Transfer" },
-    .{ tb.CreateAccountResult, "CreateAccountResult" },
-    .{ tb.CreateTransferResult, "CreateTransferResult" },
-    .{ tb.CreateAccountsResult, "CreateAccountsResult" },
-    .{ tb.CreateTransfersResult, "CreateTransfersResult" },
-    .{ tb.AccountFilter, "AccountFilter" },
-    .{ tb.AccountBalance, "AccountBalance" },
-    .{ tb.QueryFilter, "QueryFilter" },
+    // ArcherDB geospatial types
+    .{ tb.GeoEvent, "GeoEvent" },
+    .{ @import("../../geo_event.zig").GeoEventFlags, "GeoEventFlags" },
+    .{ tb.InsertGeoEventResult, "InsertGeoEventResult" },
+    .{ tb.InsertGeoEventsResult, "InsertGeoEventsResult" },
+    .{ tb.DeleteEntityResult, "DeleteEntityResult" },
+    .{ tb.DeleteEntitiesResult, "DeleteEntitiesResult" },
+    .{ tb.QueryUuidFilter, "QueryUuidFilter" },
+    .{ tb.QueryRadiusFilter, "QueryRadiusFilter" },
+    .{ tb.QueryPolygonFilter, "QueryPolygonFilter" },
+    .{ tb.QueryLatestFilter, "QueryLatestFilter" },
+    .{ tb.QueryResponse, "QueryResponse" },
+    .{ tb.PolygonVertex, "PolygonVertex" },
 };
 
 const mappings_all = mappings_vsr ++ mappings_state_machine;
@@ -79,15 +79,27 @@ fn zig_to_ctype(comptime Type: type) []const u8 {
         .@"struct" => return zig_to_ctype(std.meta.Int(.unsigned, @bitSizeOf(Type))),
         .bool => return "ctypes.c_bool",
         .int => |info| {
-            assert(info.signedness == .unsigned);
-            return switch (info.bits) {
-                8 => "ctypes.c_uint8",
-                16 => "ctypes.c_uint16",
-                32 => "ctypes.c_uint32",
-                64 => "ctypes.c_uint64",
-                128 => "c_uint128",
-                else => @compileError("invalid int type"),
-            };
+            // Support both signed and unsigned integers for ArcherDB's GeoEvent
+            // (lat_nano, lon_nano, altitude_mm are signed i64/i32)
+            if (info.signedness == .signed) {
+                return switch (info.bits) {
+                    8 => "ctypes.c_int8",
+                    16 => "ctypes.c_int16",
+                    32 => "ctypes.c_int32",
+                    64 => "ctypes.c_int64",
+                    128 => "c_int128",
+                    else => @compileError("invalid signed int type"),
+                };
+            } else {
+                return switch (info.bits) {
+                    8 => "ctypes.c_uint8",
+                    16 => "ctypes.c_uint16",
+                    32 => "ctypes.c_uint32",
+                    64 => "ctypes.c_uint64",
+                    128 => "c_uint128",
+                    else => @compileError("invalid unsigned int type"),
+                };
+            }
         },
         .optional => |info| switch (@typeInfo(info.child)) {
             .pointer => return zig_to_ctype(info.child),
@@ -125,7 +137,8 @@ fn zig_to_python(comptime Type: type) []const u8 {
         .@"struct" => return comptime mapping_name_from_type(mappings_state_machine, Type).?,
         .bool => return "bool",
         .int => |info| {
-            assert(info.signedness == .unsigned);
+            // Support both signed and unsigned integers for ArcherDB's GeoEvent
+            // (lat_nano, lon_nano, altitude_mm are signed i64/i32)
             return switch (info.bits) {
                 8 => "int",
                 16 => "int",
@@ -392,7 +405,7 @@ pub fn main() !void {
     var buffer = Buffer.init(allocator);
     buffer.print(
         \\##########################################################
-        \\## This file was auto-generated by tb_client_header.zig ##
+        \\## This file was auto-generated by arch_client_header.zig ##
         \\##              Do not manually modify.                 ##
         \\##########################################################
         \\from __future__ import annotations
@@ -408,7 +421,7 @@ pub fn main() !void {
         \\else:
         \\    from typing_extensions import Self
         \\
-        \\from .lib import c_uint128, tbclient, validate_uint
+        \\from .lib import c_uint128, archclient, validate_uint
         \\
         \\# Use slots=True if the version of Python is new enough (3.10+) to support it.
         \\if sys.version_info >= (3, 10):
@@ -431,7 +444,7 @@ pub fn main() !void {
             },
             .@"enum" => |info| {
                 comptime var skip: []const []const u8 = &.{};
-                if (ZigType == exports.tb_operation) {
+                if (ZigType == exports.arch_operation) {
                     skip = &.{ "reserved", "root", "register" };
                 }
 
@@ -484,7 +497,7 @@ pub fn main() !void {
         }
     }
 
-    // Emit function declarations corresponding to the underlying libtbclient exported functions.
+    // Emit function declarations corresponding to the underlying libarchclient exported functions.
     // TODO: use `std.meta.declaractions` and generate with pub + export functions.
     buffer.print(
         \\# Don't be tempted to use c_char_p for bytes_ptr - it's for null terminated strings only.
@@ -496,46 +509,46 @@ pub fn main() !void {
         \\    _fields_ = [("cluster_id", c_uint128), ("client_id", c_uint128),
         \\                ("addresses_ptr", ctypes.c_void_p), ("addresses_len", ctypes.c_uint64)]
         \\
-        \\# Initialize a new TigerBeetle client which connects to the addresses provided and
+        \\# Initialize a new ArcherDB client which connects to the addresses provided and
         \\# completes submitted packets by invoking the callback with the given context.
-        \\tb_client_init = tbclient.tb_client_init
-        \\tb_client_init.restype = InitStatus
-        \\tb_client_init.argtypes = [ctypes.POINTER(CClient), ctypes.POINTER(ctypes.c_uint8 * 16),
+        \\arch_client_init = archclient.arch_client_init
+        \\arch_client_init.restype = InitStatus
+        \\arch_client_init.argtypes = [ctypes.POINTER(CClient), ctypes.POINTER(ctypes.c_uint8 * 16),
         \\                           ctypes.c_char_p, ctypes.c_uint32, ctypes.c_void_p,
         \\                           OnCompletion]
         \\
-        \\# Initialize a new TigerBeetle client which echos back any data submitted.
-        \\tb_client_init_echo = tbclient.tb_client_init_echo
-        \\tb_client_init_echo.restype = InitStatus
-        \\tb_client_init_echo.argtypes = [ctypes.POINTER(CClient), ctypes.POINTER(ctypes.c_uint8 * 16),
+        \\# Initialize a new ArcherDB client which echos back any data submitted.
+        \\arch_client_init_echo = archclient.arch_client_init_echo
+        \\arch_client_init_echo.restype = InitStatus
+        \\arch_client_init_echo.argtypes = [ctypes.POINTER(CClient), ctypes.POINTER(ctypes.c_uint8 * 16),
         \\                                ctypes.c_char_p, ctypes.c_uint32, ctypes.c_void_p,
         \\                                OnCompletion]
         \\
-        \\# Returns the cluster_id and addresses passed in to either tb_client_init or
-        \\# tb_client_init_echo.
-        \\tb_client_init_parameters = tbclient.tb_client_init_parameters
-        \\tb_client_init_parameters.restype = ClientStatus
-        \\tb_client_init_parameters.argtypes = [ctypes.POINTER(CClient),
+        \\# Returns the cluster_id and addresses passed in to either arch_client_init or
+        \\# arch_client_init_echo.
+        \\arch_client_init_parameters = archclient.arch_client_init_parameters
+        \\arch_client_init_parameters.restype = ClientStatus
+        \\arch_client_init_parameters.argtypes = [ctypes.POINTER(CClient),
         \\                                      ctypes.POINTER(InitParameters)]
         \\
         \\# Closes the client, causing any previously submitted packets to be completed with
-        \\# `TB_PACKET_CLIENT_SHUTDOWN` before freeing any allocated client resources from init.
+        \\# `ARCH_PACKET_CLIENT_SHUTDOWN` before freeing any allocated client resources from init.
         \\# It is undefined behavior to use any functions on the client once deinit is called.
-        \\tb_client_deinit = tbclient.tb_client_deinit
-        \\tb_client_deinit.restype = ClientStatus
-        \\tb_client_deinit.argtypes = [ctypes.POINTER(CClient)]
+        \\arch_client_deinit = archclient.arch_client_deinit
+        \\arch_client_deinit.restype = ClientStatus
+        \\arch_client_deinit.argtypes = [ctypes.POINTER(CClient)]
         \\
         \\# Submit a packet with its operation, data, and data_size fields set.
         \\# Once completed, `on_completion` will be invoked with `on_completion_ctx` and the given
-        \\# packet on the `tb_client` thread (separate from caller's thread).
-        \\tb_client_submit = tbclient.tb_client_submit
-        \\tb_client_submit.restype = ClientStatus
-        \\tb_client_submit.argtypes = [ctypes.POINTER(CClient), ctypes.POINTER(CPacket)]
+        \\# packet on the `arch_client` thread (separate from caller's thread).
+        \\arch_client_submit = archclient.arch_client_submit
+        \\arch_client_submit.restype = ClientStatus
+        \\arch_client_submit.argtypes = [ctypes.POINTER(CClient), ctypes.POINTER(CPacket)]
         \\
-        \\tb_client_register_log_callback = tbclient.tb_client_register_log_callback
-        \\tb_client_register_log_callback.restype = RegisterLogCallbackStatus
+        \\arch_client_register_log_callback = archclient.arch_client_register_log_callback
+        \\arch_client_register_log_callback.restype = RegisterLogCallbackStatus
         \\# Need to pass in None to clear - ctypes will error if argtypes is set.
-        \\# tb_client_register_log_callback.argtypes = [LogHandler, ctypes.c_bool]
+        \\# arch_client_register_log_callback.argtypes = [LogHandler, ctypes.c_bool]
         \\
         \\
         \\
@@ -552,15 +565,16 @@ pub fn main() !void {
             \\
         , .{prefix_class});
 
+        // ArcherDB geospatial operations
+        // NOTE: Financial operations have been removed. ArcherDB is geospatial only.
         const operations: []const tb.Operation = &.{
-            .create_accounts,
-            .create_transfers,
-            .lookup_accounts,
-            .lookup_transfers,
-            .get_account_transfers,
-            .get_account_balances,
-            .query_accounts,
-            .query_transfers,
+            .insert_events,
+            .upsert_events,
+            .delete_entities,
+            .query_uuid,
+            .query_radius,
+            .query_polygon,
+            .query_latest,
         };
         inline for (operations) |operation| {
             emit_method(&buffer, operation, .{ .is_async = is_async });
@@ -575,16 +589,17 @@ pub fn main() !void {
 /// Used by client code generation to make clearer APIs: the name of the Event parameter,
 /// when used as a variable.
 /// Inline function so that `operation` can be known at comptime.
+/// NOTE: Updated for ArcherDB geospatial operations only.
 fn event_name(comptime operation: tb.Operation) []const u8 {
     return switch (operation) {
-        .create_accounts => "accounts",
-        .create_transfers => "transfers",
-        .lookup_accounts => "accounts",
-        .lookup_transfers => "transfers",
-        .get_account_transfers => "filter",
-        .get_account_balances => "filter",
-        .query_accounts => "query_filter",
-        .query_transfers => "query_filter",
+        // ArcherDB geospatial operations
+        .insert_events => "events",
+        .upsert_events => "events",
+        .delete_entities => "entity_ids",
+        .query_uuid => "filter",
+        .query_radius => "filter",
+        .query_polygon => "filter",
+        .query_latest => "filter",
         else => comptime unreachable,
     };
 }

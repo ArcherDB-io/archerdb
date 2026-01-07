@@ -3,7 +3,7 @@
 //! GeoEvent - The core data structure for ArcherDB geospatial events.
 //!
 //! A 128-byte extern struct with explicit memory layout guarantees matching
-//! TigerBeetle's data-oriented design principles.
+//! ArcherDB's data-oriented design principles (inherited from ArcherDB).
 
 const std = @import("std");
 const assert = std.debug.assert;

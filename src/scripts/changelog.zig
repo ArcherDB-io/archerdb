@@ -64,7 +64,7 @@ fn format_changelog(buffer: std.ArrayList(u8).Writer, options: struct {
     try buffer.print(
         \\# Changelog
         \\
-        \\Subscribe to the [tracking issue #2231](https://github.com/tigerbeetle/tigerbeetle/issues/2231)
+        \\Subscribe to the [tracking issue #2231](https://github.com/archerdb/archerdb/issues/2231)
         \\to receive notifications about breaking changes!
         \\
         \\
@@ -76,9 +76,9 @@ fn format_changelog(buffer: std.ArrayList(u8).Writer, options: struct {
             .minor = release.triple().minor,
             .patch = release.triple().patch + 1,
         });
-        try buffer.print("## TigerBeetle {}\n\n", .{release_next});
+        try buffer.print("## ArcherDB {}\n\n", .{release_next});
     } else {
-        try buffer.print("## TigerBeetle (unreleased)\n\n", .{});
+        try buffer.print("## ArcherDB (unreleased)\n\n", .{});
     }
     try buffer.print("Released: {s}\n\n", .{options.today});
 
@@ -87,7 +87,7 @@ fn format_changelog(buffer: std.ArrayList(u8).Writer, options: struct {
         const merge = try format_changelog_cut_single_merge(&merges_left) orelse break;
 
         try buffer.print(
-            \\- [#{d}](https://github.com/tigerbeetle/tigerbeetle/pull/{d})
+            \\- [#{d}](https://github.com/archerdb/archerdb/pull/{d})
             \\
             \\  {s}
             \\
@@ -135,7 +135,7 @@ fn format_changelog_cut_single_merge(merges_left: *[]const u8) !?struct {
     //    Author: protty <45520026+kprotty@users.noreply.github.com>
     //    Date:   Fri Feb 9 18:37:04 2024 +0000
     //
-    //    Merge pull request #1523 from tigerbeetle/king/client-uid
+    //    Merge pull request #1523 from archerdb/king/client-uid
     //
     //    Client: add ULID helper functions
 
@@ -172,7 +172,7 @@ pub const ChangelogIterator = struct {
         const start_index = std.mem.indexOf(u8, rest, "##").?;
         assert(rest[start_index - 1] == '\n');
         rest = rest[start_index..];
-        assert(std.mem.startsWith(u8, rest, "## TigerBeetle"));
+        assert(std.mem.startsWith(u8, rest, "## ArcherDB"));
 
         return .{
             .all_entries = rest,
@@ -182,7 +182,7 @@ pub const ChangelogIterator = struct {
 
     pub fn next_changelog(it: *ChangelogIterator) ?Entry {
         if (it.done()) return null;
-        assert(std.mem.startsWith(u8, it.rest, "## TigerBeetle"));
+        assert(std.mem.startsWith(u8, it.rest, "## ArcherDB"));
         const entry_end_index = std.mem.indexOf(u8, it.rest[2..], "\n\n## ").? + 2;
         const text_full = it.rest[0 .. entry_end_index + 1];
         it.rest = it.rest[entry_end_index + 2 ..];
@@ -207,15 +207,15 @@ pub const ChangelogIterator = struct {
     }
 
     fn parse_entry(text_full: []const u8) Entry {
-        assert(std.mem.startsWith(u8, text_full, "## TigerBeetle"));
+        assert(std.mem.startsWith(u8, text_full, "## ArcherDB"));
         assert(std.mem.endsWith(u8, text_full, "\n"));
         assert(!std.mem.endsWith(u8, text_full, "\n\n"));
 
         const first_line, var body = stdx.cut(text_full, "\n").?;
-        const release = if (std.mem.eql(u8, first_line, "## TigerBeetle (unreleased)"))
+        const release = if (std.mem.eql(u8, first_line, "## ArcherDB (unreleased)"))
             null
         else
-            Release.parse(stdx.cut_prefix(first_line, "## TigerBeetle ").?) catch
+            Release.parse(stdx.cut_prefix(first_line, "## ArcherDB ").?) catch
                 @panic("invalid changelog");
 
         body = stdx.cut_prefix(body, "\nReleased:").?;
@@ -230,7 +230,7 @@ test ChangelogIterator {
         \\
         \\Some preamble here
         \\
-        \\## TigerBeetle 1.2.3
+        \\## ArcherDB 1.2.3
         \\
         \\Released: 2024-10-23
         \\
@@ -240,7 +240,7 @@ test ChangelogIterator {
         \\
         \\- a cool PR
         \\
-        \\## TigerBeetle 1.2.2
+        \\## ArcherDB 1.2.2
         \\
         \\Released: 2024-10-16
         \\
@@ -260,7 +260,7 @@ test ChangelogIterator {
         .patch = 3,
     });
     try std.testing.expectEqualStrings(entry.text_full,
-        \\## TigerBeetle 1.2.3
+        \\## ArcherDB 1.2.3
         \\
         \\Released: 2024-10-23
         \\

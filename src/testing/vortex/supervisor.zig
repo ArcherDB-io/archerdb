@@ -2,7 +2,7 @@
 // Copyright (c) 2024-2025 ArcherDB Contributors
 //! The Vortex _supervisor_ is a program that runs:
 //!
-//! * a set of TigerBeetle replicas, forming a cluster
+//! * a set of ArcherDB replicas, forming a cluster
 //! * a workload that runs commands and queries against the cluster, verifying its correctness
 //!   (whatever that means is up to the workload)
 //!
@@ -51,13 +51,13 @@ const ratio = stdx.PRNG.ratio;
 const Shell = @import("../../shell.zig");
 
 const log = std.log.scoped(.supervisor);
-const tigerbeetle_exe_default: []const u8 = @import("vortex_options").tigerbeetle_exe;
+const archerdb_exe_default: []const u8 = @import("vortex_options").archerdb_exe;
 
 const assert = std.debug.assert;
 const maybe = stdx.maybe;
 
 pub const CLIArgs = struct {
-    tigerbeetle_executable: ?[]const u8 = null,
+    archerdb_executable: ?[]const u8 = null,
     test_duration: stdx.Duration = .minutes(1),
     driver_command: ?[]const u8 = null,
     replica_count: u8 = 1,
@@ -96,7 +96,7 @@ pub fn main(allocator: std.mem.Allocator, args: CLIArgs) !void {
 
     var io = try IO.init(128, 0);
 
-    const tigerbeetle_executable = args.tigerbeetle_executable orelse tigerbeetle_exe_default;
+    const archerdb_executable = args.archerdb_executable orelse archerdb_exe_default;
     const output_directory = args.output_directory orelse try shell.create_tmp_dir();
     defer {
         if (args.output_directory == null) {
@@ -136,18 +136,18 @@ pub fn main(allocator: std.mem.Allocator, args: CLIArgs) !void {
     for (0..args.replica_count) |replica_index| {
         const datafile = try std.fmt.bufPrint(
             datafile_buffers[replica_index][0..],
-            "{s}/{d}_{d}.tigerbeetle",
+            "{s}/{d}_{d}.archerdb",
             .{ output_directory, constants.vortex.cluster_id, replica_index },
         );
 
         shell.exec(
-            \\{tigerbeetle_executable} format
+            \\{archerdb_executable} format
             \\    --cluster={cluster}
             \\    --replica={replica_index}
             \\    --replica-count={replica_count}
             \\    {datafile}
         , .{
-            .tigerbeetle_executable = tigerbeetle_executable,
+            .archerdb_executable = archerdb_executable,
             .cluster = constants.vortex.cluster_id,
             .replica_index = replica_index,
             .replica_count = args.replica_count,
@@ -168,7 +168,7 @@ pub fn main(allocator: std.mem.Allocator, args: CLIArgs) !void {
 
         var replica = try Replica.create(
             allocator,
-            tigerbeetle_executable,
+            archerdb_executable,
             args.replica_count,
             @intCast(replica_index),
             replica_ports,

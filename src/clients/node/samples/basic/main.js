@@ -1,97 +1,89 @@
-const assert = require("assert");
-const process = require("process");
+/**
+ * ArcherDB Basic Sample - Insert and Query Geospatial Events
+ *
+ * This sample demonstrates:
+ * 1. Connecting to an ArcherDB cluster
+ * 2. Inserting geo events with location data
+ * 3. Querying events within a radius
+ */
+const process = require('process')
 
-const {
-    createClient,
-    CreateAccountError,
-    CreateTransferError,
-} = require("tigerbeetle-node");
-
-const client = createClient({
-  cluster_id: 0n,
-  replica_addresses: [process.env.TB_ADDRESS || '3000'],
-});
+const { createGeoClient, createGeoEvent } = require('archerdb-node')
 
 async function main() {
-  let accountErrors = await client.createAccounts([
-    {
-      id: 1n,
-      debits_pending: 0n,
-      debits_posted: 0n,
-      credits_pending: 0n,
-      credits_posted: 0n,
-      user_data_128: 0n,
-      user_data_64: 0n,
-      user_data_32: 0,
-      reserved: 0,
-      ledger: 1,
-      code: 1,
-      flags: 0,
-      timestamp: 0n,
-    },
-    {
-      id: 2n,
-      debits_pending: 0n,
-      debits_posted: 0n,
-      credits_pending: 0n,
-      credits_posted: 0n,
-      user_data_128: 0n,
-      user_data_64: 0n,
-      user_data_32: 0,
-      reserved: 0,
-      ledger: 1,
-      code: 1,
-      flags: 0,
-      timestamp: 0n,
-    },
-  ]);
-  for (const error of accountErrors) {
-    console.error(`Batch account at ${error.index} failed to create: ${CreateAccountError[error.result]}.`);
-  }
-  assert.strictEqual(accountErrors.length, 0);
+  const address = process.env.ARCHERDB_ADDRESS || '127.0.0.1:3001'
 
-  let transferErrors = await client.createTransfers([
-    {
-      id: 1n,
-      debit_account_id: 1n,
-      credit_account_id: 2n,
-      amount: 10n,
-      pending_id: 0n,
-      user_data_128: 0n,
-      user_data_64: 0n,
-      user_data_32: 0,
-      timeout: 0,
-      ledger: 1,
-      code: 1,
-      flags: 0,
-      timestamp: 0n,
-    },
-  ]);
-  for (const error of transferErrors) {
-    console.error(`Batch transfer at ${error.index} failed to create: ${CreateTransferError[error.result]}.`);
-  }
-  assert.strictEqual(transferErrors.length, 0);
+  // Connect to ArcherDB cluster
+  const client = createGeoClient({
+    clusterId: 0n,
+    addresses: [address],
+  })
 
-  let accounts = await client.lookupAccounts([1n, 2n]);
-  assert.strictEqual(accounts.length, 2);
-  for (let account of accounts) {
-    if (account.id === 1n) {
-      assert.strictEqual(account.debits_posted, 10n);
-      assert.strictEqual(account.credits_posted, 0n);
-    } else if (account.id === 2n) {
-      assert.strictEqual(account.debits_posted, 0n);
-      assert.strictEqual(account.credits_posted, 10n);
-    } else {
-      assert.fail("Unexpected account: " + JSON.stringify(account, null, 2));
+  console.log(`Connected to ArcherDB at ${address}`)
+
+  try {
+    // San Francisco area coordinates
+    const baseLat = 37.7749
+    const baseLon = -122.4194
+
+    // Insert events using a batch
+    const batch = client.createBatch()
+    const entityIds = []
+
+    for (let i = 0; i < 5; i++) {
+      // Slightly offset positions around SF
+      const entityId = BigInt(Math.floor(Math.random() * Number.MAX_SAFE_INTEGER))
+      entityIds.push(entityId)
+
+      batch.addFromOptions({
+        entityId,
+        latitude: baseLat + i * 0.001, // ~111 meters apart
+        longitude: baseLon + i * 0.001,
+        timestamp: BigInt(Date.now()) * 1000000n + BigInt(i), // nanoseconds
+        groupId: 1n,
+        accuracyMm: 10000, // 10m accuracy
+      })
     }
-  }
 
-  console.log('ok');
+    const errors = await batch.commit()
+    if (errors.length > 0) {
+      console.error('Insert errors:', errors)
+    } else {
+      console.log(`Successfully inserted ${entityIds.length} events`)
+    }
+
+    // Query events within 1km radius of SF center
+    const result = await client.queryRadius({
+      latitude: baseLat,
+      longitude: baseLon,
+      radiusM: 1000,
+      limit: 100,
+    })
+
+    console.log(`\nFound ${result.events.length} events within 1km of SF center:`)
+    for (const event of result.events) {
+      console.log(`  Entity ${event.entityId}: (${event.latitude.toFixed(4)}, ${event.longitude.toFixed(4)})`)
+    }
+
+    // Look up a specific entity
+    if (entityIds.length > 0) {
+      const found = await client.getLatestByUuid(entityIds[0])
+      if (found) {
+        console.log(`\nLatest position for entity ${entityIds[0]}:`)
+        console.log(`  Location: (${found.latitude.toFixed(4)}, ${found.longitude.toFixed(4)})`)
+        console.log(`  Timestamp: ${found.timestamp}`)
+      }
+    }
+
+    console.log('\nok')
+  } finally {
+    await client.close()
+  }
 }
 
-main().then(() => {
-  process.exit(0);
-}).catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+main()
+  .then(() => process.exit(0))
+  .catch((e) => {
+    console.error(e)
+    process.exit(1)
+  })

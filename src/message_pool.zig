@@ -126,7 +126,7 @@ pub const MessagePool = struct {
         pub const Block = CommandMessageType(.block);
 
         // TODO Avoid the extra level of indirection.
-        // (https://github.com/tigerbeetle/tigerbeetle/pull/1295#discussion_r1394265250)
+        // (https://github.com/archerdb/archerdb/pull/1295#discussion_r1394265250)
         header: *Header,
         buffer: *align(constants.sector_size) [constants.message_size_max]u8,
         references: u32 = 0,

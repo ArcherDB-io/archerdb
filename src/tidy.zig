@@ -652,7 +652,7 @@ fn tidy_ast(
     const tags = tree.nodes.items(.tag);
     const datas = tree.nodes.items(.data);
     // We can implement this in a streaming fashion, but its more convenient to materialize all
-    // functions. 1k functions per file should be enough even for TigerBeetle!
+    // functions. 1k functions per file should be enough even for ArcherDB!
     var functions: [1024]struct {
         line_opening: usize,
         line_closing: usize,
@@ -898,7 +898,7 @@ const DeadFilesDetector = struct {
             "integration_tests.zig",
             "java_bindings.zig",
             "jni_tests.zig",
-            "libtb_client.zig",
+            "libarch_client.zig",
             "main.zig",
             "node_bindings.zig",
             "node.zig",
@@ -909,7 +909,7 @@ const DeadFilesDetector = struct {
             "service_worker_writer.zig",
             "rust_bindings.zig",
             "single_page_writer.zig",
-            "tb_client_header.zig",
+            "arch_client_header.zig",
             "unit_tests.zig",
             "vopr.zig",
             "vortex.zig",
@@ -981,7 +981,7 @@ test "tidy no large blobs" {
         if (std.mem.eql(u8, path, "src/docs_website/package-lock.json")) continue; // :-(
         // ArcherDB-specific exceptions (historical blobs before they were removed)
         if (std.mem.eql(u8, path, "archerdb")) continue;
-        if (std.mem.eql(u8, path, "tigerbeetle")) continue;
+        if (std.mem.eql(u8, path, "archerdb")) continue;
         if (std.mem.eql(u8, path, "testdata/s2/golden_vectors_v1.tsv")) continue;
         if (size > @divExact(MiB, 4)) {
             has_large_blobs = true;
@@ -1061,10 +1061,10 @@ test "tidy extensions" {
         .{"zig/download.win.ps1"},
         .{"src/scripts/cfo_supervisor.sh"},
         .{"src/clients/python/pyproject.toml"},
-        .{"src/clients/python/src/tigerbeetle/py.typed"},
+        .{"src/clients/python/src/archerdb/py.typed"},
         // ArcherDB-specific exceptions
         .{"CLAUDE.md"},
-        .{"LICENSE.tigerbeetle"},
+        .{"LICENSE.archerdb"},
         .{"NOTICE"},
         .{"scripts/add-license-headers.sh"},
     });

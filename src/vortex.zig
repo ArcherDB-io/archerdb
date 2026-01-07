@@ -2,9 +2,9 @@
 // Copyright (c) 2024-2025 ArcherDB Contributors
 /// This is the main entrypoint for the Vortex testing tools, delegating to these programs:
 ///
-/// * _supervisor_: runs a cluster of multiple TigerBeetle replicas, drivers, and a workload, along
+/// * _supervisor_: runs a cluster of multiple ArcherDB replicas, drivers, and a workload, along
 /// with various fault injection, to test the system as a whole.
-/// * _driver_: a separate process communicating over stdio, using `tb_client` to send commands
+/// * _driver_: a separate process communicating over stdio, using `arch_client` to send commands
 /// and queries to the cluster. Drivers in other languages should be implemented elsewhere.
 /// * _workload_: a separate process that, given a driver, runs commands and queries against the
 /// cluster, verifying its correctness.

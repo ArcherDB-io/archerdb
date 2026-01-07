@@ -1,8 +1,8 @@
 # CI/CD Pipeline Specification
 
-**Reference Implementation:** TigerBeetle's GitHub Actions CI/CD pipeline
+**Reference Implementation:** ArcherDB's GitHub Actions CI/CD pipeline
 
-This specification adopts TigerBeetle's comprehensive CI/CD approach with automated testing, cross-platform validation, continuous fuzzing, and performance monitoring.
+This specification adopts ArcherDB's comprehensive CI/CD approach with automated testing, cross-platform validation, continuous fuzzing, and performance monitoring.
 
 ---
 
@@ -35,7 +35,7 @@ The system SHALL use GitHub Actions for comprehensive CI/CD with multiple jobs c
 
 ### Requirement: Code Quality Validation
 
-The system SHALL implement automated code quality checks following TigerBeetle's standards.
+The system SHALL implement automated code quality checks following ArcherDB's standards.
 
 #### Scenario: Static analysis and formatting
 
@@ -87,7 +87,7 @@ The system SHALL validate all SDKs across multiple language versions and platfor
 
 ### Requirement: Continuous Fuzzing
 
-The system SHALL implement continuous fuzzing following TigerBeetle's CFO (Continuous Fuzzing Orchestrator) pattern.
+The system SHALL implement continuous fuzzing following ArcherDB's CFO (Continuous Fuzzing Orchestrator) pattern.
 
 #### Scenario: Fuzzer infrastructure
 
@@ -161,7 +161,7 @@ The system SHALL automate release processes following semantic versioning.
 
 ### Requirement: Test Infrastructure
 
-The system SHALL implement comprehensive test infrastructure following TigerBeetle's patterns.
+The system SHALL implement comprehensive test infrastructure following ArcherDB's patterns.
 
 #### Scenario: Unit test auto-generation
 

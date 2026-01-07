@@ -1,7 +1,7 @@
-# docs.tigerbeetle.com
+# docs.archerdb.com
 
-Documentation generator for <docs.tigerbeetle.com>. Static website is generated via `zig build`
-and is pushed to <https://github.com/tigerbeetle/docs>, which is then hosted on GitHub pages.
+Documentation generator for <docs.archerdb.com>. Static website is generated via `zig build`
+and is pushed to <https://github.com/archerdb/docs>, which is then hosted on GitHub pages.
 
 The website can also be build from the repository root via `./zig/zig build docs`.
 
@@ -14,4 +14,4 @@ Overview of the build process:
 * Outputs are static HTML files in the `./zig-out` directory.
 
 This process is triggered by `ci.zig` in our merge queue (mostly to detect broken links) and by
-`release.zig` to push the rendered docs to <https://github.com/tigerbeetle/docs>.
+`release.zig` to push the rendered docs to <https://github.com/archerdb/docs>.

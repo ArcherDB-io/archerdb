@@ -1,17 +1,16 @@
-export * from './bindings'
-// ArcherDB geospatial types and client
+// ArcherDB Node.js SDK
+// High-performance geospatial database client
+
+// Primary exports: Geospatial types and client
 export * from './geo'
 export * from './geo_client'
+
+// Internal bindings - only Operation enum is needed for geo operations
 import {
-  Account,
-  Transfer,
-  CreateAccountsError,
-  CreateTransfersError,
   Operation,
-  AccountFilter,
-  AccountBalance,
-  QueryFilter,
 } from './bindings'
+export { Operation }
+
 import { randomFillSync } from 'node:crypto'
 
 const binding: Binding = (() => {
@@ -69,87 +68,32 @@ const binding: Binding = (() => {
   return require(filename)
 })()
 
-export type Context = object // tb_client
-export type AccountID = bigint // u128
-export type TransferID = bigint // u128
-export type Event = Account | Transfer | AccountID | TransferID | AccountFilter | QueryFilter
-export type Result = CreateAccountsError | CreateTransfersError | Account | Transfer | AccountBalance
-export type ResultCallback = (error: Error | null, results: Result[] | null) => void
+// Low-level types for native binding
+export type Context = object // arch_client
+export type ResultCallback = (error: Error | null, results: unknown[] | null) => void
 
-export const amount_max: bigint = (2n ** 128n) - 1n
-
-interface BindingInitArgs {
+export interface BindingInitArgs {
   cluster_id: bigint, // u128
   replica_addresses: Buffer,
 }
 
-interface Binding {
+/**
+ * Native binding interface for low-level operations.
+ * Used by GeoClient for geospatial operations.
+ * @internal
+ */
+export interface Binding {
   init: (args: BindingInitArgs) => Context
-  submit: (context: Context, operation: Operation, batch: Event[], callback: ResultCallback) => void
+  init_echo: (args: BindingInitArgs) => Context
+  submit: (context: Context, operation: Operation, batch: unknown[], callback: ResultCallback) => void
   deinit: (context: Context) => void,
 }
 
-export interface ClientInitArgs {
-  cluster_id: bigint, // u128
-  replica_addresses: Array<string | number>,
-}
-
-export interface Client {
-  createAccounts: (batch: Account[]) => Promise<CreateAccountsError[]>
-  createTransfers: (batch: Transfer[]) => Promise<CreateTransfersError[]>
-  lookupAccounts: (batch: AccountID[]) => Promise<Account[]>
-  lookupTransfers: (batch: TransferID[]) => Promise<Transfer[]>
-  getAccountTransfers: (filter: AccountFilter) => Promise<Transfer[]>
-  getAccountBalances: (filter: AccountFilter) => Promise<AccountBalance[]>
-  queryAccounts: (filter: QueryFilter) => Promise<Account[]>
-  queryTransfers: (filter: QueryFilter) => Promise<Transfer[]>
-  destroy: () => void
-}
-
-export function createClient (args: ClientInitArgs): Client {
-  // Context becomes null when `destroy` is called. After that point, further `request` Promises
-  // throw a shutdown Error. This prevents tb_client calls from happening after tb_client_deinit().
-  let context: Context | null = binding.init({
-    cluster_id: args.cluster_id,
-    replica_addresses: Buffer.from(args.replica_addresses.join(',')),
-  })
-
-  const destroy = () => {
-    if (context) binding.deinit(context)
-    context = null;
-  }
-
-  const request = <T extends Result>(operation: Operation, batch: Event[]): Promise<T[]> => {
-    return new Promise((resolve, reject) => {
-      try {
-        if (!context) throw new Error('Client was shutdown.');
-        binding.submit(context, operation, batch, (error, result) => {
-          if (error) {
-            reject(error)
-          } else if (result) {
-            resolve(result as T[])
-          } else {
-            throw new Error("UB: Binding invoked callback without error or result")
-          }
-        })
-      } catch (err) {
-        reject(err)
-      }
-    })
-  }
-
-  return {
-    createAccounts(batch) { return request(Operation.create_accounts, batch) },
-    createTransfers(batch) { return request(Operation.create_transfers, batch) },
-    lookupAccounts(batch) { return request(Operation.lookup_accounts, batch) },
-    lookupTransfers(batch) { return request(Operation.lookup_transfers, batch) },
-    getAccountTransfers(filter) { return request(Operation.get_account_transfers, [filter]) },
-    getAccountBalances(filter) { return request(Operation.get_account_balances, [filter]) },
-    queryAccounts(filter) { return request(Operation.query_accounts, [filter]) },
-    queryTransfers(filter) { return request(Operation.query_transfers, [filter]) },
-    destroy,
-  }
-}
+/**
+ * Export binding for GeoClient integration.
+ * @internal
+ */
+export { binding }
 
 let idLastTimestamp = 0;
 

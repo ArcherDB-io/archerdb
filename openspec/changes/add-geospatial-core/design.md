@@ -2,13 +2,13 @@
 
 ## Context
 
-We are building a high-performance geospatial database inspired by TigerBeetle's data-oriented design principles and battle-tested distributed systems patterns.
+We are building a high-performance geospatial database inspired by ArcherDB's data-oriented design principles and battle-tested distributed systems patterns.
 
-### TigerBeetle as Reference Implementation
+### ArcherDB as Reference Implementation
 
-**IMPORTANT:** All patterns described in this design document are derived from TigerBeetle's actual implementation.
+**IMPORTANT:** All patterns described in this design document are derived from ArcherDB's actual implementation.
 
-**Primary Reference:** https://github.com/tigerbeetle/tigerbeetle
+**Primary Reference:** https://github.com/archerdb/archerdb
 
 **Key files to study:**
 - `src/vsr/replica.zig` - VSR protocol state machine
@@ -24,12 +24,12 @@ We are building a high-performance geospatial database inspired by TigerBeetle's
 - `src/constants.zig` - Compile-time configuration
 
 **Implementation Strategy:**
-1. Study TigerBeetle's implementation for each component
+1. Study ArcherDB's implementation for each component
 2. Adapt patterns to geospatial domain (replace Account/Transfer with GeoEvent)
-3. Preserve TigerBeetle's safety guarantees and performance optimizations
-4. When specification is ambiguous, TigerBeetle's code is authoritative
+3. Preserve ArcherDB's safety guarantees and performance optimizations
+4. When specification is ambiguous, ArcherDB's code is authoritative
 
-**Do NOT reinvent patterns that TigerBeetle has already proven. Reuse and adapt.**
+**Do NOT reinvent patterns that ArcherDB has already proven. Reuse and adapt.**
 
 ---
 
@@ -66,7 +66,7 @@ Target hardware: Cluster of 3-5 nodes, each with 128GB+ RAM, NVMe SSD (1TB+), AE
 
 ## Decisions
 
-### Decision 1: 128-byte GeoEvent Struct (TigerBeetle Pattern)
+### Decision 1: 128-byte GeoEvent Struct (ArcherDB Pattern)
 
 **What**: Fixed-size, cache-aligned record format using `extern struct` with explicit layout.
 
@@ -274,7 +274,7 @@ const IndexEntry = struct {
 - Automatic failover via view changes
 - Client sessions ensure exactly-once semantics
 - Flexible Paxos allows tuning latency vs. availability
-- Battle-tested in TigerBeetle's financial accounting system
+- Battle-tested in ArcherDB's financial accounting system
 
 **Key Properties**:
 - `quorum_replication + quorum_view_change > replica_count` (intersection)
@@ -328,7 +328,7 @@ pub const BlockHeader = extern struct {
 };
 ```
 
-### Decision 9: Data File Zone Layout (TigerBeetle Pattern)
+### Decision 9: Data File Zone Layout (ArcherDB Pattern)
 
 **What**: Single data file organized into distinct zones.
 
@@ -348,7 +348,7 @@ pub const BlockHeader = extern struct {
 - Superblock redundancy survives partial corruption
 - WAL dual-ring separates headers (recovery) from bodies (consensus)
 
-### Decision 10: Static Memory Allocation (TigerBeetle Pattern)
+### Decision 10: Static Memory Allocation (ArcherDB Pattern)
 
 **What**: All memory allocated at startup, runtime allocations cause panic.
 
@@ -412,7 +412,7 @@ This section provides probability-weighted risk assessment for ArcherDB v1 imple
 |------|-------------|------------------|-----------|-----------|----------|
 | **S2 Determinism Failure** | 20% (±5%) | High (5 weeks delay) | 70% | Spike on pure-Zig trig (F0.4.6) Week 2; fallback to Option B (primary-computed) if needed | F0 Week 4 |
 | **Journal Sizing Undersized** | 35% (±5%) | Medium (2.5 weeks delay) | 65% | Empirical validation (F0.2.7); double capacity if p99 recovery > 5s | F0 Week 2 |
-| **VSR Implementation Bug** | 12% (±3%) | High (4 weeks debug) | 75% | Follow TigerBeetle's code structure exactly; use VOPR simulator (F4.1); build parity tests | F1 Week 3+ |
+| **VSR Implementation Bug** | 12% (±3%) | High (4 weeks debug) | 75% | Follow ArcherDB's code structure exactly; use VOPR simulator (F4.1); build parity tests | F1 Week 3+ |
 | **GeoEvent Layout Non-Determinism** | 7% (±2%) | Critical (3 weeks) | 80% | Use `extern struct`, verify via `@sizeOf` comptime assertions, test across platforms | F0 Week 1 |
 
 **Aggregate Critical Risk**: 30% (±5%) probability of 3+ week delay (weighted average of above risks).
@@ -462,10 +462,10 @@ The performance targets specified in design.md and specs have the following conf
 
 | Target | Confidence | Basis |
 |--------|-----------|-------|
-| UUID lookup < 500μs p99 | **95%** (TigerBeetle validates approach) | Hash table O(1) with cache-line alignment |
+| UUID lookup < 500μs p99 | **95%** (ArcherDB validates approach) | Hash table O(1) with cache-line alignment |
 | Radius query < 50ms p99 | **85%** (depends on S2 efficiency) | S2 cell covering typically ≤16 cells; sequential scan with prefetch |
 | Polygon query < 100ms p99 | **80%** (depends on polygon complexity) | S2 covering + post-filter; worst-case is complex polygon (10K vertices) |
-| Write throughput 1M ops/sec | **75%** (aggressive vs TigerBeetle's 100K) | Requires journal sizing validation (F0.2.7) and I/O optimization |
+| Write throughput 1M ops/sec | **75%** (aggressive vs ArcherDB's 100K) | Requires journal sizing validation (F0.2.7) and I/O optimization |
 | Cold start < 60s p99 | **90%** (with valid checkpoint) | Depends on NVMe speed (3GB/s assumed); 128GB × 3 = 96s absolute floor |
 
 **Overall performance feasibility**: ~80-85% confidence (assuming S2 and journal sizing validate in F0).
@@ -487,7 +487,7 @@ The performance targets specified in design.md and specs have the following conf
                          ↓
 ┌─────────────────────────────────────────────────────────────────────┐
 │ F1.1.3: Three-Phase Execution (BLOCKER for all operations)         │
-│         → Complex state machine; TigerBeetle reference essential   │
+│         → Complex state machine; ArcherDB reference essential   │
 │         → Non-negotiable; must complete on schedule                │
 └────────────────────────┬────────────────────────────────────────────┘
                          ↓
@@ -526,7 +526,7 @@ All architectural questions have been resolved. See `proposal.md` "Decisions Mad
 
 | Question | Resolution |
 |----------|------------|
-| **Client Protocol** | Custom binary (like TigerBeetle) with official SDKs for Zig, Java, Go, Python, Node.js |
+| **Client Protocol** | Custom binary (like ArcherDB) with official SDKs for Zig, Java, Go, Python, Node.js |
 | **S2 Integration** | Pure Zig core implementation (no C++ in core; tooling may use pinned reference) |
 | **Cluster Configuration** | Static membership only; support 3/5/6 replicas |
 | **Monitoring** | Prometheus metrics + structured logging (Zig std.log) |

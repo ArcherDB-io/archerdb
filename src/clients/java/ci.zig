@@ -5,7 +5,7 @@ const log = std.log;
 const assert = std.debug.assert;
 
 const Shell = @import("../../shell.zig");
-const TmpTigerBeetle = @import("../../testing/tmp_archerdb.zig");
+const TmpArcherDB = @import("../../testing/tmp_archerdb.zig");
 
 pub fn tests(shell: *Shell, gpa: std.mem.Allocator) !void {
     assert(shell.file_exists("pom.xml"));
@@ -28,13 +28,13 @@ pub fn tests(shell: *Shell, gpa: std.mem.Allocator) !void {
         try shell.pushd("./samples/" ++ sample);
         defer shell.popd();
 
-        var tmp_beetle = try TmpTigerBeetle.init(gpa, .{
+        var tmp_archerdb = try TmpArcherDB.init(gpa, .{
             .development = true,
         });
-        defer tmp_beetle.deinit(gpa);
-        errdefer tmp_beetle.log_stderr();
+        defer tmp_archerdb.deinit(gpa);
+        errdefer tmp_archerdb.log_stderr();
 
-        try shell.env.put("TB_ADDRESS", tmp_beetle.port_str);
+        try shell.env.put("ARCHERDB_ADDRESS", tmp_archerdb.port_str);
         try shell.exec(
             \\mvn --batch-mode --file pom.xml --quiet
             \\  package exec:java
@@ -44,21 +44,21 @@ pub fn tests(shell: *Shell, gpa: std.mem.Allocator) !void {
 
 pub fn validate_release(shell: *Shell, gpa: std.mem.Allocator, options: struct {
     version: []const u8,
-    tigerbeetle: []const u8,
+    archerdb: []const u8,
 }) !void {
-    var tmp_beetle = try TmpTigerBeetle.init(gpa, .{
+    var tmp_archerdb = try TmpArcherDB.init(gpa, .{
         .development = true,
-        .prebuilt = options.tigerbeetle,
+        .prebuilt = options.archerdb,
     });
-    defer tmp_beetle.deinit(gpa);
-    errdefer tmp_beetle.log_stderr();
+    defer tmp_archerdb.deinit(gpa);
+    errdefer tmp_archerdb.log_stderr();
 
-    try shell.env.put("TB_ADDRESS", tmp_beetle.port_str);
+    try shell.env.put("ARCHERDB_ADDRESS", tmp_archerdb.port_str);
 
     try shell.cwd.writeFile(.{ .sub_path = "pom.xml", .data = try shell.fmt(
         \\<project>
         \\  <modelVersion>4.0.0</modelVersion>
-        \\  <groupId>com.tigerbeetle</groupId>
+        \\  <groupId>com.archerdb</groupId>
         \\  <artifactId>samples</artifactId>
         \\  <version>1.0-SNAPSHOT</version>
         \\
@@ -86,7 +86,7 @@ pub fn validate_release(shell: *Shell, gpa: std.mem.Allocator, options: struct {
         \\        <artifactId>exec-maven-plugin</artifactId>
         \\        <version>1.6.0</version>
         \\        <configuration>
-        \\          <mainClass>com.tigerbeetle.samples.Main</mainClass>
+        \\          <mainClass>com.archerdb.samples.Main</mainClass>
         \\        </configuration>
         \\      </plugin>
         \\    </plugins>
@@ -94,8 +94,8 @@ pub fn validate_release(shell: *Shell, gpa: std.mem.Allocator, options: struct {
         \\
         \\  <dependencies>
         \\    <dependency>
-        \\      <groupId>com.tigerbeetle</groupId>
-        \\      <artifactId>tigerbeetle-java</artifactId>
+        \\      <groupId>com.archerdb</groupId>
+        \\      <artifactId>archerdb-java</artifactId>
         \\      <version>{s}</version>
         \\    </dependency>
         \\  </dependencies>
@@ -163,7 +163,7 @@ fn mvn_update(shell: *Shell) !union(enum) { ok, retry: anyerror } {
 pub fn release_published_latest(shell: *Shell) ![]const u8 {
     const url = "https://central.sonatype.com/api/internal/browse/component/versions?" ++
         "sortField=normalizedVersion&sortDirection=desc&page=0&size=1&" ++
-        "filter=namespace%3Acom.tigerbeetle%2Cname%3Atigerbeetle-java";
+        "filter=namespace%3Acom.archerdb%2Cname%3Aarcherdb-java";
 
     const response_body = try shell.http_get(url, .{});
 
@@ -185,8 +185,8 @@ pub fn release_published_latest(shell: *Shell) ![]const u8 {
 
     assert(maven_search_results.components.len == 1);
 
-    assert(std.mem.eql(u8, maven_search_results.components[0].namespace, "com.tigerbeetle"));
-    assert(std.mem.eql(u8, maven_search_results.components[0].name, "tigerbeetle-java"));
+    assert(std.mem.eql(u8, maven_search_results.components[0].namespace, "com.archerdb"));
+    assert(std.mem.eql(u8, maven_search_results.components[0].name, "archerdb-java"));
 
     return maven_search_results.components[0].version;
 }

@@ -1,14 +1,14 @@
 # Storage Engine Specification
 
-**Reference Implementation:** https://github.com/tigerbeetle/tigerbeetle/blob/main/src/storage.zig
+**Reference Implementation:** https://github.com/archerdb/archerdb/blob/main/src/storage.zig
 
-This spec is based on TigerBeetle's data file layout and LSM tree design. Implementers MUST study:
+This spec is based on ArcherDB's data file layout and LSM tree design. Implementers MUST study:
 - `src/storage.zig` - Data file zones, superblock, grid, free set
 - `src/lsm/` - LSM tree implementation (manifest, compaction, table memory)
 - `src/vsr/superblock.zig` - Superblock structure with hash-chaining
 - `src/vsr/free_set.zig` - Block allocation with shard-based bitsets
 
-**Implementation approach:** Use TigerBeetle's storage patterns directly. The data file zones, LSM structure, and free set algorithms are domain-agnostic and can be reused as-is.
+**Implementation approach:** Use ArcherDB's storage patterns directly. The data file zones, LSM structure, and free set algorithms are domain-agnostic and can be reused as-is.
 
 ---
 
@@ -16,7 +16,7 @@ This spec is based on TigerBeetle's data file layout and LSM tree design. Implem
 
 ### Requirement: Data File Zone Layout
 
-The system SHALL organize the data file into distinct zones matching TigerBeetle's layout for crash recovery and efficient access patterns.
+The system SHALL organize the data file into distinct zones matching ArcherDB's layout for crash recovery and efficient access patterns.
 
 #### Scenario: Zone ordering
 
@@ -63,7 +63,7 @@ The system SHALL maintain multiple redundant copies of the superblock for crash 
 **Recommendation for v1**: **Use 6 copies as default** (balanced protection + performance)
 - Provides sector corruption tolerance (survives 2 failures)
 - Minimal write latency penalty vs 4 copies
-- Widely tested in TigerBeetle production deployments
+- Widely tested in ArcherDB production deployments
 - Supports flexible quorum (don't need all 6 to succeed, just 4)
 
 **Configuration**: Make copy count configurable via `--superblock-copies {4|6|8}` (default: 6)
@@ -630,7 +630,7 @@ The system SHALL document expected write amplification to enable capacity planni
   | Update-heavy (LWW)      | 15-25       | Same entities updated frequently   |
   | Delete-heavy (GDPR)     | 20-30       | Tombstones propagate through levels|
   ```
-- **AND** these are estimates based on TigerBeetle-style leveled compaction
+- **AND** these are estimates based on ArcherDB-style leveled compaction
 
 #### Scenario: SSD wear calculation
 
@@ -711,3 +711,29 @@ The system SHALL maintain min/max ID metadata in block headers to enable skippin
 - See `specs/constants/spec.md` for block_size, sector_size, and journal_slot_count
 - See `specs/io-subsystem/spec.md` for Direct I/O and io_uring integration
 - See `specs/error-codes/spec.md` for storage error codes (503 corruption_detected, 208 storage_unavailable)
+
+## Implementation Status
+
+### Core Storage Components
+
+| Component | File | Status |
+|-----------|------|--------|
+| Data File Zones | `src/storage.zig` | ✓ Complete |
+| Superblock | `src/vsr/superblock.zig` | ✓ Complete |
+| Free Set | `src/vsr/free_set.zig` | ✓ Complete |
+| Grid Block Management | `src/vsr/grid.zig` | ✓ Complete |
+| LSM Forest | `src/lsm/forest.zig` | ✓ Complete |
+| Compaction | `src/lsm/compaction.zig` | ✓ Complete |
+
+### Configuration Notes
+
+| Setting | Spec Target | Implementation Default | Notes |
+|---------|-------------|------------------------|-------|
+| `block_size` | 64 KB | 512 KB | Implementation uses larger blocks for throughput |
+| Defragmentation trigger | 90% exhaustion | Not implemented | Free set uses fatal panic on exhaustion |
+
+### Implementation Notes
+
+- **Free Set Exhaustion**: Current implementation panics on block exhaustion rather than triggering defragmentation. This is a design choice inherited from ArcherDB where proper capacity planning prevents exhaustion.
+- **Block Size**: The 512KB block size balances read amplification vs. write amplification for geospatial workloads with larger events.
+- **LSM Integration**: Full Forest integration with compaction, manifest management, and table memory is operational.

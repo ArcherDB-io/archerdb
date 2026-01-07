@@ -11,13 +11,13 @@ pub const JavaDocs = Docs{
 
     .test_source_path = "src/main/java/",
 
-    .name = "tigerbeetle-java",
+    .name = "archerdb-java",
     .description =
-    \\The TigerBeetle client for Java.
+    \\The ArcherDB client for Java.
     \\
-    \\[![javadoc](https://javadoc.io/badge2/com.tigerbeetle/tigerbeetle-java/javadoc.svg)](https://javadoc.io/doc/com.tigerbeetle/tigerbeetle-java)
+    \\[![javadoc](https://javadoc.io/badge2/io.archerdb/archerdb-java/javadoc.svg)](https://javadoc.io/doc/io.archerdb/archerdb-java)
     \\
-    \\[![maven-central](https://img.shields.io/maven-central/v/com.tigerbeetle/tigerbeetle-java)](https://central.sonatype.com/namespace/com.tigerbeetle)
+    \\[![maven-central](https://img.shields.io/maven-central/v/io.archerdb/archerdb-java)](https://central.sonatype.com/namespace/io.archerdb)
     ,
 
     .prerequisites =
@@ -32,7 +32,7 @@ pub const JavaDocs = Docs{
     \\         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     \\  <modelVersion>4.0.0</modelVersion>
     \\
-    \\  <groupId>com.tigerbeetle</groupId>
+    \\  <groupId>io.archerdb</groupId>
     \\  <artifactId>samples</artifactId>
     \\  <version>1.0-SNAPSHOT</version>
     \\
@@ -59,7 +59,7 @@ pub const JavaDocs = Docs{
     \\        <artifactId>exec-maven-plugin</artifactId>
     \\        <version>1.6.0</version>
     \\        <configuration>
-    \\          <mainClass>com.tigerbeetle.samples.Main</mainClass>
+    \\          <mainClass>io.archerdb.samples.Main</mainClass>
     \\        </configuration>
     \\      </plugin>
     \\    </plugins>
@@ -67,10 +67,9 @@ pub const JavaDocs = Docs{
     \\
     \\  <dependencies>
     \\    <dependency>
-    \\      <groupId>com.tigerbeetle</groupId>
-    \\      <artifactId>tigerbeetle-java</artifactId>
-    \\      <!-- Grab the latest commit from: https://repo1.maven.org/maven2/com/tigerbeetle/tigerbeetle-java/maven-metadata.xml -->
-    \\      <version>0.0.1-3431</version>
+    \\      <groupId>io.archerdb</groupId>
+    \\      <artifactId>archerdb-java</artifactId>
+    \\      <version>0.0.1</version>
     \\    </dependency>
     \\  </dependencies>
     \\</project>
@@ -85,44 +84,42 @@ pub const JavaDocs = Docs{
 
     .client_object_documentation = "",
 
-    .create_accounts_documentation =
-    \\The 128-bit fields like `id` and `user_data_128` have a few
-    \\overrides to make it easier to integrate. You can either
-    \\pass in a long, a pair of longs (least and most
-    \\significant bits), or a `byte[]`.
+    .insert_events_documentation =
+    \\The 128-bit fields like `id`, `entityId`, `s2CellId` and `compositeId`
+    \\have a few overrides to make it easier to integrate. You can either
+    \\pass in a long, a pair of longs (least and most significant bits),
+    \\or a `byte[]`.
     \\
-    \\There is also a `com.tigerbeetle.UInt128` helper with static
+    \\There is also an `io.archerdb.UInt128` helper with static
     \\methods for converting 128-bit little-endian unsigned integers
     \\between instances of `long`, `java.util.UUID`, `java.math.BigInteger` and `byte[]`.
-    \\
-    \\The fields for transfer amounts and account balances are also 128-bit,
-    \\but they are always represented as a `java.math.BigInteger`.
     ,
 
-    .account_flags_documentation =
-    \\To toggle behavior for an account, combine enum values stored in the
-    \\`AccountFlags` object with bitwise-or:
+    .geo_event_flags_documentation =
+    \\To toggle behavior for a geo event, combine enum values stored in the
+    \\`GeoEventFlags` object with bitwise-or:
     \\
-    \\* `AccountFlags.LINKED`
-    \\* `AccountFlags.DEBITS_MUST_NOT_EXCEED_CREDITS`
-    \\* `AccountFlags.CREDITS_MUST_NOT_EXCEED_CREDITS`
-    \\* `AccountFlags.HISTORY`
+    \\* `GeoEventFlags.HAS_ALTITUDE`
+    \\* `GeoEventFlags.TOMBSTONE`
     ,
 
-    .create_accounts_errors_documentation = "",
+    .insert_events_errors_documentation =
+    \\To handle errors, check the result returned from `client.insertEvents()`.
+    \\Each result contains an `index` field to map back to the input event
+    \\and a `result` field with the `InsertGeoEventResult` enum.
+    ,
 
-    .create_transfers_documentation = "",
-
-    .create_transfers_errors_documentation = "",
-
-    .transfer_flags_documentation =
-    \\To toggle behavior for an account, combine enum values stored in the
-    \\`TransferFlags` object with bitwise-or:
+    .query_operations_documentation =
+    \\ArcherDB supports several query operations:
     \\
-    \\* `TransferFlags.NONE`
-    \\* `TransferFlags.LINKED`
-    \\* `TransferFlags.PENDING`
-    \\* `TransferFlags.POST_PENDING_TRANSFER`
-    \\* `TransferFlags.VOID_PENDING_TRANSFER`
+    \\* `queryUuid()` - Query events by entity UUID
+    \\* `queryLatest()` - Query latest events for entities
+    \\* `queryRadius()` - Query events within a radius of a point
+    \\* `queryPolygon()` - Query events within a polygon
+    ,
+
+    .delete_entities_documentation =
+    \\To delete entities, pass an array of entity IDs to `deleteEntities()`.
+    \\This will mark all events for those entities as tombstoned.
     ,
 };

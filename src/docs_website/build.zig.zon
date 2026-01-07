@@ -1,5 +1,5 @@
 .{
-    .name = .tigerbeetle_docs,
+    .name = .archerdb_docs,
     .version = "0.0.0",
     .dependencies = .{
         .pandoc_macos_arm64 = .{

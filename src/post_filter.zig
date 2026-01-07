@@ -50,6 +50,9 @@ pub const PostFilterStats = struct {
     /// Number of candidates that passed polygon post-filter
     passed_polygon_filter: u64 = 0,
 
+    /// Number of candidates excluded by polygon holes
+    excluded_by_hole: u64 = 0,
+
     /// Number of candidates that failed distance post-filter (false positives eliminated)
     failed_distance_filter: u64 = 0,
 
@@ -95,6 +98,7 @@ pub const PostFilterStats = struct {
         try writer.print("archerdb_pf_dist_failed {d}\n", .{s.failed_distance_filter});
         try writer.print("archerdb_pf_poly_passed {d}\n", .{s.passed_polygon_filter});
         try writer.print("archerdb_pf_poly_failed {d}\n", .{s.failed_polygon_filter});
+        try writer.print("archerdb_pf_poly_excluded_by_hole {d}\n", .{s.excluded_by_hole});
         try writer.print("archerdb_pf_deleted {d}\n", .{s.filtered_by_deletion});
         try writer.print("archerdb_pf_ts_filtered {d}\n", .{s.filtered_by_timestamp});
         try writer.print("archerdb_pf_ttl_filtered {d}\n", .{s.filtered_by_ttl});
@@ -200,6 +204,50 @@ pub const PostFilterContext = struct {
         }
 
         return passes;
+    }
+
+    /// Check if a point passes the polygon post-filter with holes.
+    ///
+    /// A point passes if it is inside the outer ring AND outside all hole rings.
+    ///
+    /// Arguments:
+    /// - point_lat_nano: Point latitude in nanodegrees
+    /// - point_lon_nano: Point longitude in nanodegrees
+    /// - outer: Outer ring vertices (counter-clockwise winding)
+    /// - holes: Array of hole ring vertices (clockwise winding)
+    ///
+    /// Returns: true if point is inside polygon and outside all holes
+    pub fn checkPolygonWithHoles(
+        self: *PostFilterContext,
+        point_lat_nano: i64,
+        point_lon_nano: i64,
+        outer: []const s2_index.LatLon,
+        holes: []const []const s2_index.LatLon,
+    ) bool {
+        self.stats.candidates_from_coarse += 1;
+
+        const point = s2_index.LatLon{
+            .lat_nano = point_lat_nano,
+            .lon_nano = point_lon_nano,
+        };
+
+        // First check outer ring
+        if (!S2.pointInPolygon(point, outer)) {
+            self.stats.failed_polygon_filter += 1;
+            return false;
+        }
+
+        // Check all holes - if point is inside any hole, it's excluded
+        for (holes) |hole| {
+            if (S2.pointInPolygon(point, hole)) {
+                self.stats.excluded_by_hole += 1;
+                self.stats.failed_polygon_filter += 1;
+                return false;
+            }
+        }
+
+        self.stats.passed_polygon_filter += 1;
+        return true;
     }
 
     /// Check if an entity passes the deletion tombstone filter.
@@ -353,6 +401,44 @@ pub const PostFilterContext = struct {
 
         // Check polygon containment (expensive, do last)
         if (!self.checkPolygon(point_lat_nano, point_lon_nano, polygon)) {
+            return .fail_polygon;
+        }
+
+        return .pass;
+    }
+
+    /// Perform all post-filter checks for a polygon query candidate with holes.
+    ///
+    /// Returns: FilterResult indicating pass or failure reason
+    pub fn filterPolygonCandidateWithHoles(
+        self: *PostFilterContext,
+        entity_id: u128,
+        point_lat_nano: i64,
+        point_lon_nano: i64,
+        event_timestamp: u64,
+        ttl_seconds: u32,
+        outer: []const s2_index.LatLon,
+        holes: []const []const s2_index.LatLon,
+        timestamp_min: u64,
+        timestamp_max: u64,
+    ) FilterResult {
+        // Check deletion first
+        if (!self.checkNotDeleted(entity_id)) {
+            return .fail_deleted;
+        }
+
+        // Check timestamp range
+        if (!self.checkTimestamp(event_timestamp, timestamp_min, timestamp_max)) {
+            return .fail_timestamp;
+        }
+
+        // Check TTL expiration
+        if (!self.checkNotExpired(event_timestamp, ttl_seconds)) {
+            return .fail_ttl;
+        }
+
+        // Check polygon containment with holes (expensive, do last)
+        if (!self.checkPolygonWithHoles(point_lat_nano, point_lon_nano, outer, holes)) {
             return .fail_polygon;
         }
 

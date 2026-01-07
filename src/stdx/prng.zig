@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2024-2025 ArcherDB Contributors
-//! TigerBeetle standard Pseudo Random Number generator.
+//! ArcherDB standard Pseudo Random Number generator.
 //!
 //! Import qualified and use `prng` for field/variable name:
 //!
@@ -12,7 +12,7 @@
 //! order to:
 //! - remove floating point from the API, to ensure determinism
 //! - isolate our test suite from stdlib API churn
-//! - isolate TigerBeetle from the churn in the PRNG algorithms
+//! - isolate ArcherDB from the churn in the PRNG algorithms
 //! - simplify and extend the API
 //! - remove dynamic-dispatch indirection (a minor bonus).
 

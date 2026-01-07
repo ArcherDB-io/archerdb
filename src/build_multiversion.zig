@@ -39,15 +39,15 @@ const CLIArgs = struct {
     target: []const u8,
     debug: bool = false,
     llvm_objcopy: []const u8,
-    tigerbeetle_current: ?[]const u8 = null,
-    tigerbeetle_current_x86_64: ?[]const u8 = null, // NB: Will be x86-64 on the CLI!
-    tigerbeetle_current_aarch64: ?[]const u8 = null,
-    tigerbeetle_past: []const u8,
+    archerdb_current: ?[]const u8 = null,
+    archerdb_current_x86_64: ?[]const u8 = null, // NB: Will be x86-64 on the CLI!
+    archerdb_current_aarch64: ?[]const u8 = null,
+    archerdb_past: []const u8,
     output: []const u8,
     tmp: []const u8,
 };
 
-// These are the options for cli_args.tigerbeetle_current. Ideally, they should be passed at
+// These are the options for cli_args.archerdb_current. Ideally, they should be passed at
 // runtime, but passing them at comptime is more convenient.
 const vsr_options = @import("vsr_options");
 
@@ -86,8 +86,8 @@ pub fn main() !void {
             .tmp_path = tmp_dir_path,
             .target = target,
             .debug = cli_args.debug,
-            .tigerbeetle_current = cli_args.tigerbeetle_current.?,
-            .tigerbeetle_past = cli_args.tigerbeetle_past,
+            .archerdb_current = cli_args.archerdb_current.?,
+            .archerdb_past = cli_args.archerdb_past,
             .output = cli_args.output,
         }),
         .macos => try build_multiversion_universal(shell, .{
@@ -95,9 +95,9 @@ pub fn main() !void {
             .tmp_path = tmp_dir_path,
             .target = target,
             .debug = cli_args.debug,
-            .tigerbeetle_current_x86_64 = cli_args.tigerbeetle_current_x86_64.?,
-            .tigerbeetle_current_aarch64 = cli_args.tigerbeetle_current_aarch64.?,
-            .tigerbeetle_past = cli_args.tigerbeetle_past,
+            .archerdb_current_x86_64 = cli_args.archerdb_current_x86_64.?,
+            .archerdb_current_aarch64 = cli_args.archerdb_current_aarch64.?,
+            .archerdb_past = cli_args.archerdb_past,
             .output = cli_args.output,
         }),
     }
@@ -115,19 +115,19 @@ fn build_multiversion_single_arch(shell: *Shell, options: struct {
     tmp_path: []const u8,
     target: Target,
     debug: bool,
-    tigerbeetle_current: []const u8,
-    tigerbeetle_past: []const u8,
+    archerdb_current: []const u8,
+    archerdb_past: []const u8,
     output: []const u8,
 }) !void {
     assert(options.target != .macos);
 
     // We will be modifying this binary in-place.
-    const tigerbeetle_working = try shell.fmt("{s}/tigerbeetle-working", .{options.tmp_path});
+    const archerdb_working = try shell.fmt("{s}/archerdb-working", .{options.tmp_path});
 
     const current_checksum = try make_deterministic(shell, .{
         .llvm_objcopy = options.llvm_objcopy,
-        .source = options.tigerbeetle_current,
-        .output = tigerbeetle_working,
+        .source = options.archerdb_current,
+        .output = archerdb_working,
     });
 
     const sections = .{
@@ -151,7 +151,7 @@ fn build_multiversion_single_arch(shell: *Shell, options: struct {
             inline .windows, .linux => |arch| arch,
             .macos => unreachable,
         },
-        .tigerbeetle_past = options.tigerbeetle_past,
+        .archerdb_past = options.archerdb_past,
         .output = sections.body,
         .debug = options.debug,
     });
@@ -161,23 +161,23 @@ fn build_multiversion_single_arch(shell: *Shell, options: struct {
     try shell.exec(
         \\{llvm_objcopy} --enable-deterministic-archives --keep-undefined
         \\
-        \\    --add-section .tb_mvb={body}
-        \\    --set-section-flags .tb_mvb=contents,noload,readonly
+        \\    --add-section .arch_mvb={body}
+        \\    --set-section-flags .arch_mvb=contents,noload,readonly
         \\
-        \\    --add-section .tb_mvh={header_zero}
-        \\    --set-section-flags .tb_mvh=contents,noload,readonly
+        \\    --add-section .arch_mvh={header_zero}
+        \\    --set-section-flags .arch_mvh=contents,noload,readonly
         \\
         \\    {working}
     , .{
         .llvm_objcopy = options.llvm_objcopy,
         .body = sections.body,
         .header_zero = sections.header_zero,
-        .working = tigerbeetle_working,
+        .working = archerdb_working,
     });
 
     const checksum_binary_without_header = try checksum_file(
         shell,
-        tigerbeetle_working,
+        archerdb_working,
         multiversion.multiversion_binary_size_max,
     );
 
@@ -208,18 +208,18 @@ fn build_multiversion_single_arch(shell: *Shell, options: struct {
     try shell.exec(
         \\{llvm_objcopy} --enable-deterministic-archives --keep-undefined
         \\
-        \\   --remove-section .tb_mvh
-        \\   --add-section .tb_mvh={header}
-        \\   --set-section-flags .tb_mvh=contents,noload,readonly
+        \\   --remove-section .arch_mvh
+        \\   --add-section .arch_mvh={header}
+        \\   --set-section-flags .arch_mvh=contents,noload,readonly
         \\
         \\  {working}
     , .{
         .header = sections.header,
         .llvm_objcopy = options.llvm_objcopy,
-        .working = tigerbeetle_working,
+        .working = archerdb_working,
     });
 
-    try shell.cwd.copyFile(tigerbeetle_working, shell.cwd, options.output, .{});
+    try shell.cwd.copyFile(archerdb_working, shell.cwd, options.output, .{});
 
     if (self_check_enabled(options.target)) {
         try self_check(shell, options.output, past_versions.unpacked);
@@ -231,14 +231,14 @@ fn build_multiversion_universal(shell: *Shell, options: struct {
     tmp_path: []const u8,
     target: Target,
     debug: bool,
-    tigerbeetle_current_x86_64: []const u8,
-    tigerbeetle_current_aarch64: []const u8,
-    tigerbeetle_past: []const u8,
+    archerdb_current_x86_64: []const u8,
+    archerdb_current_aarch64: []const u8,
+    archerdb_past: []const u8,
     output: []const u8,
 }) !void {
     assert(options.target == .macos);
 
-    const tigerbeetle_zero_header = try shell.fmt("{s}/tigerbeetle-zero-header", .{
+    const archerdb_zero_header = try shell.fmt("{s}/archerdb-zero-header", .{
         options.tmp_path,
     });
 
@@ -267,7 +267,7 @@ fn build_multiversion_universal(shell: *Shell, options: struct {
         .tmp_path = options.tmp_path,
         .target = .macos,
         .arch = .aarch64,
-        .tigerbeetle_past = options.tigerbeetle_past,
+        .archerdb_past = options.archerdb_past,
         .output = sections.aarch64.body,
         .debug = options.debug,
     });
@@ -277,7 +277,7 @@ fn build_multiversion_universal(shell: *Shell, options: struct {
         .tmp_path = options.tmp_path,
         .target = .macos,
         .arch = .x86_64,
-        .tigerbeetle_past = options.tigerbeetle_past,
+        .archerdb_past = options.archerdb_past,
         .output = sections.x86_64.body,
         .debug = options.debug,
     });
@@ -285,35 +285,35 @@ fn build_multiversion_universal(shell: *Shell, options: struct {
 
     try macos_universal_binary_build(
         shell,
-        tigerbeetle_zero_header,
+        archerdb_zero_header,
         &.{
             .{
                 .cpu_type = std.macho.CPU_TYPE_ARM64,
                 .cpu_subtype = std.macho.CPU_SUBTYPE_ARM_ALL,
-                .path = options.tigerbeetle_current_aarch64,
+                .path = options.archerdb_current_aarch64,
             },
             .{
                 .cpu_type = std.macho.CPU_TYPE_X86_64,
                 .cpu_subtype = std.macho.CPU_SUBTYPE_X86_64_ALL,
-                .path = options.tigerbeetle_current_x86_64,
+                .path = options.archerdb_current_x86_64,
             },
             .{
-                .cpu_type = @intFromEnum(section_to_macho_cpu.tb_mvb_aarch64),
+                .cpu_type = @intFromEnum(section_to_macho_cpu.arch_mvb_aarch64),
                 .cpu_subtype = 0x00000000,
                 .path = sections.aarch64.body,
             },
             .{
-                .cpu_type = @intFromEnum(section_to_macho_cpu.tb_mvh_aarch64),
+                .cpu_type = @intFromEnum(section_to_macho_cpu.arch_mvh_aarch64),
                 .cpu_subtype = 0x00000000,
                 .path = sections.header_zero,
             },
             .{
-                .cpu_type = @intFromEnum(section_to_macho_cpu.tb_mvb_x86_64),
+                .cpu_type = @intFromEnum(section_to_macho_cpu.arch_mvb_x86_64),
                 .cpu_subtype = 0x00000000,
                 .path = sections.x86_64.body,
             },
             .{
-                .cpu_type = @intFromEnum(section_to_macho_cpu.tb_mvh_x86_64),
+                .cpu_type = @intFromEnum(section_to_macho_cpu.arch_mvh_x86_64),
                 .cpu_subtype = 0x00000000,
                 .path = sections.header_zero,
             },
@@ -321,18 +321,18 @@ fn build_multiversion_universal(shell: *Shell, options: struct {
     );
     const checksum_binary_without_header = try checksum_file(
         shell,
-        tigerbeetle_zero_header,
+        archerdb_zero_header,
         multiversion_binary_size_max,
     );
 
     inline for (
-        .{ options.tigerbeetle_current_aarch64, options.tigerbeetle_current_x86_64 },
+        .{ options.archerdb_current_aarch64, options.archerdb_current_x86_64 },
         .{ past_versions_aarch64, past_versions_x86_64 },
         .{ sections.aarch64.header, sections.x86_64.header },
-    ) |tigerbeetle_current, past_versions, header_name| {
+    ) |archerdb_current, past_versions, header_name| {
         const current_checksum = try checksum_file(
             shell,
-            tigerbeetle_current,
+            archerdb_current,
             multiversion_binary_size_max,
         );
 
@@ -364,30 +364,30 @@ fn build_multiversion_universal(shell: *Shell, options: struct {
         .{
             .cpu_type = std.macho.CPU_TYPE_ARM64,
             .cpu_subtype = std.macho.CPU_SUBTYPE_ARM_ALL,
-            .path = options.tigerbeetle_current_aarch64,
+            .path = options.archerdb_current_aarch64,
         },
         .{
             .cpu_type = std.macho.CPU_TYPE_X86_64,
             .cpu_subtype = std.macho.CPU_SUBTYPE_X86_64_ALL,
-            .path = options.tigerbeetle_current_x86_64,
+            .path = options.archerdb_current_x86_64,
         },
         .{
-            .cpu_type = @intFromEnum(section_to_macho_cpu.tb_mvb_aarch64),
+            .cpu_type = @intFromEnum(section_to_macho_cpu.arch_mvb_aarch64),
             .cpu_subtype = 0x00000000,
             .path = sections.aarch64.body,
         },
         .{
-            .cpu_type = @intFromEnum(section_to_macho_cpu.tb_mvh_aarch64),
+            .cpu_type = @intFromEnum(section_to_macho_cpu.arch_mvh_aarch64),
             .cpu_subtype = 0x00000000,
             .path = sections.aarch64.header,
         },
         .{
-            .cpu_type = @intFromEnum(section_to_macho_cpu.tb_mvb_x86_64),
+            .cpu_type = @intFromEnum(section_to_macho_cpu.arch_mvb_x86_64),
             .cpu_subtype = 0x00000000,
             .path = sections.x86_64.body,
         },
         .{
-            .cpu_type = @intFromEnum(section_to_macho_cpu.tb_mvh_x86_64),
+            .cpu_type = @intFromEnum(section_to_macho_cpu.arch_mvh_x86_64),
             .cpu_subtype = 0x00000000,
             .path = sections.x86_64.header,
         },
@@ -426,7 +426,7 @@ fn build_multiversion_body(shell: *Shell, options: struct {
     tmp_path: []const u8,
     target: Target,
     arch: Target.Arch,
-    tigerbeetle_past: []const u8,
+    archerdb_past: []const u8,
     output: []const u8,
     debug: bool,
 }) !struct {
@@ -435,7 +435,7 @@ fn build_multiversion_body(shell: *Shell, options: struct {
 } {
     const past_binary_contents: []align(8) const u8 = try shell.cwd.readFileAllocOptions(
         shell.arena.allocator(),
-        options.tigerbeetle_past,
+        options.archerdb_past,
         multiversion_binary_size_max,
         null,
         8,
@@ -471,7 +471,7 @@ fn build_multiversion_body(shell: *Shell, options: struct {
     // Extract the old current release - this is the release that was the current release, and not
     // embedded in the past pack.
     const old_current_release = header.current_release;
-    const old_current_release_output_name = try shell.fmt("{s}/tigerbeetle-past-{}-{s}", .{
+    const old_current_release_output_name = try shell.fmt("{s}/archerdb-past-{}-{s}", .{
         options.tmp_path,
         multiversion.Release{ .value = old_current_release },
         @tagName(options.arch),
@@ -485,19 +485,19 @@ fn build_multiversion_body(shell: *Shell, options: struct {
 
         try macos_universal_binary_extract(
             shell,
-            options.tigerbeetle_past,
+            options.archerdb_past,
             .{ .cpu_type = cpu_type, .cpu_subtype = cpu_subtype },
             old_current_release_output_name,
         );
     } else {
         try shell.exec(
             \\{llvm_objcopy} --enable-deterministic-archives --keep-undefined
-            \\     --remove-section .tb_mvb --remove-section .tb_mvh
-            \\     {tigerbeetle_past} {tigerbeetle_old_current}
+            \\     --remove-section .arch_mvb --remove-section .arch_mvh
+            \\     {archerdb_past} {archerdb_old_current}
         , .{
             .llvm_objcopy = options.llvm_objcopy,
-            .tigerbeetle_past = options.tigerbeetle_past,
-            .tigerbeetle_old_current = old_current_release_output_name,
+            .archerdb_past = options.archerdb_past,
+            .archerdb_old_current = old_current_release_output_name,
         });
     }
 
@@ -527,7 +527,7 @@ fn build_multiversion_body(shell: *Shell, options: struct {
     // * 1 old current release (extracted from the release downloaded),
     // * 1 current release (that was just built).
     // This will be improved soon:
-    // https://github.com/tigerbeetle/tigerbeetle/pull/2165#discussion_r1698114401
+    // https://github.com/archerdb/archerdb/pull/2165#discussion_r1698114401
     //
     // No size limits are explicitly checked here; they're validated later by using the
     // `multiversion` subcommand to test the final built binary against all past binaries that are
@@ -556,7 +556,7 @@ fn build_multiversion_body(shell: *Shell, options: struct {
         past_commit,
         past_release_client_min,
     | {
-        const past_name = try shell.fmt("{s}/tigerbeetle-past-{}-{s}", .{
+        const past_name = try shell.fmt("{s}/archerdb-past-{}-{s}", .{
             options.tmp_path,
             multiversion.Release{ .value = past_release },
             @tagName(options.arch),
@@ -589,7 +589,7 @@ fn build_multiversion_body(shell: *Shell, options: struct {
     const old_current_release_flags = blk: {
         var old_current_release_flags = header.current_flags;
 
-        // Visit https://github.com/tigerbeetle/tigerbeetle/pull/2181.
+        // Visit https://github.com/archerdb/archerdb/pull/2181.
         old_current_release_flags.visit = true;
 
         break :blk old_current_release_flags;
@@ -616,7 +616,7 @@ fn build_multiversion_body(shell: *Shell, options: struct {
         past_releases.offsets[0..past_releases.count],
         past_releases.sizes[0..past_releases.count],
     ) |release, offset, size| {
-        const past_name = try shell.fmt("{s}/tigerbeetle-past-{}-{s}", .{
+        const past_name = try shell.fmt("{s}/archerdb-past-{}-{s}", .{
             options.tmp_path,
             multiversion.Release{ .value = release },
             @tagName(options.arch),
@@ -769,18 +769,18 @@ fn self_check_enabled(target: Target) bool {
     };
 }
 
-fn self_check(shell: *Shell, tigerbeetle: []const u8, past_releases: []const []const u8) !void {
+fn self_check(shell: *Shell, archerdb: []const u8, past_releases: []const []const u8) !void {
     assert(past_releases.len > 0);
     try shell.exec(
-        "{tigerbeetle} multiversion {tigerbeetle}",
-        .{ .tigerbeetle = tigerbeetle },
+        "{archerdb} multiversion {archerdb}",
+        .{ .archerdb = archerdb },
     );
     for (past_releases) |past_release| {
         // 0.15.3 didn't have the multiversion subcommand since it was the epoch.
         if (std.mem.indexOf(u8, past_release, "0.15.3") != null) continue;
         try shell.exec(
-            "{past_release} multiversion {tigerbeetle}",
-            .{ .tigerbeetle = tigerbeetle, .past_release = past_release },
+            "{past_release} multiversion {archerdb}",
+            .{ .archerdb = archerdb, .past_release = past_release },
         );
     }
 }

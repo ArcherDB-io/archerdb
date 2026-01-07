@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	sdk_errors "github.com/tigerbeetle/tigerbeetle-go/pkg/errors"
+	sdk_errors "github.com/archerdb/archerdb-go/pkg/errors"
 )
 
 // Config holds retry configuration options.

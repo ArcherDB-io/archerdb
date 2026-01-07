@@ -8,23 +8,35 @@ const RingBuffer = stdx.RingBufferType;
 const BoundedArray = stdx.BoundedArrayType;
 
 const keywords = [_][]const u8{
-    "create_accounts",
-    "create_transfers",
-    "lookup_accounts",
-    "lookup_transfers",
-    "get_account_transfers",
-    "get_account_balances",
-    "query_accounts",
-    "query_transfers",
+    // ArcherDB geospatial operations
+    "insert_events",
+    "upsert_events",
+    "delete_entities",
+    "query_uuid",
+    "query_radius",
+    "query_polygon",
+    "query_latest",
     "help",
+    // GeoEvent fields
     "id",
-    "code",
-    "ledger",
+    "entity_id",
+    "correlation_id",
+    "lat_nano",
+    "lon_nano",
+    "group_id",
+    "timestamp",
+    "altitude_mm",
+    "velocity_mms",
+    "ttl_seconds",
+    "accuracy_mm",
+    "heading_cdeg",
     "flags",
-    "account_id",
-    "debit_account_id",
-    "credit_account_id",
-    "amount",
+    "user_data",
+    // Query filter fields
+    "limit",
+    "center_lat_nano",
+    "center_lon_nano",
+    "radius_meters",
 };
 const completion_entries = keywords.len;
 const completion_entry_bytes = 512;
@@ -141,34 +153,34 @@ test "completion.zig: Split buffer and complete" {
             .matches = try BoundedArray([]const u8, 5).from_slice(&.{}),
         },
         .{
-            .buffer = "creat",
+            .buffer = "inser",
             .idx = 5,
             .prefix = try BoundedArray(u8, completion_entry_bytes).from_slice(""),
             .suffix = try BoundedArray(u8, completion_entry_bytes).from_slice(""),
-            .query = try BoundedArray(u8, completion_entry_bytes).from_slice("creat"),
+            .query = try BoundedArray(u8, completion_entry_bytes).from_slice("inser"),
             .matches = try BoundedArray([]const u8, 5).from_slice(
-                &.{ "create_accounts", "create_transfers" },
+                &.{"insert_events"},
             ),
         },
         .{
-            .buffer = "create_accounts id=1 co",
-            .idx = 23,
+            .buffer = "insert_events entity_id=1 co",
+            .idx = 28,
             .prefix = try BoundedArray(u8, completion_entry_bytes).from_slice(
-                "create_accounts id=1 ",
+                "insert_events entity_id=1 ",
             ),
             .suffix = try BoundedArray(u8, completion_entry_bytes).from_slice(""),
             .query = try BoundedArray(u8, completion_entry_bytes).from_slice("co"),
-            .matches = try BoundedArray([]const u8, 5).from_slice(&.{"code"}),
+            .matches = try BoundedArray([]const u8, 5).from_slice(&.{"correlation_id"}),
         },
         .{
-            .buffer = "create_accounts id=1 co ledger=700",
-            .idx = 23,
+            .buffer = "insert_events entity_id=1 co group_id=100",
+            .idx = 28,
             .prefix = try BoundedArray(u8, completion_entry_bytes).from_slice(
-                "create_accounts id=1 ",
+                "insert_events entity_id=1 ",
             ),
-            .suffix = try BoundedArray(u8, completion_entry_bytes).from_slice(" ledger=700"),
+            .suffix = try BoundedArray(u8, completion_entry_bytes).from_slice(" group_id=100"),
             .query = try BoundedArray(u8, completion_entry_bytes).from_slice("co"),
-            .matches = try BoundedArray([]const u8, 5).from_slice(&.{"code"}),
+            .matches = try BoundedArray([]const u8, 5).from_slice(&.{"correlation_id"}),
         },
     };
 

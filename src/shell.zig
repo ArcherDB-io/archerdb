@@ -662,12 +662,12 @@ pub fn git_env_setup(shell: *Shell, options: struct { use_hostname: bool }) !voi
         try shell.env.put("GIT_AUTHOR_NAME", hostname);
         try shell.env.put("GIT_COMMITTER_NAME", hostname);
     } else {
-        try shell.env.put("GIT_AUTHOR_NAME", "TigerBeetle Bot");
-        try shell.env.put("GIT_COMMITTER_NAME", "TigerBeetle Bot");
+        try shell.env.put("GIT_AUTHOR_NAME", "ArcherDB Bot");
+        try shell.env.put("GIT_COMMITTER_NAME", "ArcherDB Bot");
     }
 
-    try shell.env.put("GIT_AUTHOR_EMAIL", "bot@tigerbeetle.com");
-    try shell.env.put("GIT_COMMITTER_EMAIL", "bot@tigerbeetle.com");
+    try shell.env.put("GIT_AUTHOR_EMAIL", "bot@archerdb.io");
+    try shell.env.put("GIT_COMMITTER_EMAIL", "bot@archerdb.io");
 }
 
 const Argv = struct {
@@ -725,8 +725,8 @@ fn expand_argv(argv: *Argv, comptime cmd: []const u8, cmd_args: anytype) !void {
 
     comptime var pos: usize = 0;
 
-    // For arguments like `tigerbeetle-{version}.exe`, we want to concatenate literal suffix
-    // ("tigerbeetle-") and prefix (".exe") to the value of `version` interpolated argument.
+    // For arguments like `archerdb-{version}.exe`, we want to concatenate literal suffix
+    // ("archerdb-") and prefix (".exe") to the value of `version` interpolated argument.
     //
     // These two variables track the spaces around `{}` syntax.
     comptime var concat_left: bool = false;
@@ -884,7 +884,7 @@ test "shell: expand_argv" {
     );
 }
 
-/// Finds the root of TigerBeetle repo.
+/// Finds the root of ArcherDB repo.
 ///
 /// Caller is responsible for closing the dir.
 fn discover_project_root() !std.fs.Dir {

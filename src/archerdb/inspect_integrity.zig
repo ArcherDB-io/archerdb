@@ -205,13 +205,7 @@ fn init(
             .batch_size_limit = constants.message_body_size_max,
             .lsm_forest_compaction_block_count = Forest.Options.compaction_block_count_min,
             .lsm_forest_node_count = lsm_forest_node_count,
-
-            .cache_entries_accounts = 0,
-            .cache_entries_transfers = 0,
-            .cache_entries_transfers_pending = 0,
-            .cache_entries_geo_events = 0, // F1.3.1
-
-            .log_trace = false,
+            .cache_entries_geo_events = 0,
         }),
     );
     errdefer integrity.forest.deinit(gpa);

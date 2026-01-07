@@ -18,15 +18,15 @@ while true
 do
     # Drop the cache every ~24 hours.
     if [ $((RANDOM % 24 )) -eq 0 ]
-    then rm -rf ./tigerbeetle
+    then rm -rf ./archerdb
     fi
 
     (
-        if ! [ -d ./tigerbeetle ]
-        then git clone https://github.com/tigerbeetle/tigerbeetle tigerbeetle
+        if ! [ -d ./archerdb ]
+        then git clone https://github.com/archerdb/archerdb archerdb
         fi
 
-        cd tigerbeetle
+        cd archerdb
         git fetch
         git switch --discard-changes --detach origin/main
         ./zig/download.sh

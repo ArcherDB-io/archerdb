@@ -355,7 +355,7 @@ pub fn ClusterType(comptime StateMachineType: anytype) type {
             var manifest_checker = ManifestChecker.init(allocator);
             errdefer manifest_checker.deinit();
 
-            // Format each replica's storage (equivalent to "tigerbeetle format ...").
+            // Format each replica's storage (equivalent to "archerdb format ...").
             for (storages, 0..) |*storage, replica_index| {
                 try vsr.format(
                     Storage,

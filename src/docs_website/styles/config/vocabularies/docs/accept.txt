@@ -332,9 +332,9 @@ Telegraf
 tenatus
 tensorush
 threadpools
-TigerBeetle
-tigerbeetledb
-tigerbeetlex
+ArcherDB
+archerdbdb
+archerdbx
 Timeloop
 timestamp_max
 timestamping

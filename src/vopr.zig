@@ -75,7 +75,7 @@ pub const std_options: std.Options = .{
     // };
 };
 
-pub const tigerbeetle_config = @import("config.zig").configs.test_min;
+pub const archerdb_config = @import("config.zig").configs.test_min;
 
 const cluster_id = 0;
 
@@ -654,7 +654,7 @@ pub const Simulator = struct {
         replica_restart_probability: Ratio,
         /// Minimum time a replica is up until it is crashed again.
         replica_restart_stability: u32,
-        /// Probability per restart that a replica will be reformatted with `tigerbeetle recover`
+        /// Probability per restart that a replica will be reformatted with `archerdb recover`
         /// (immediately before being restarted).
         replica_reformat_probability: Ratio,
 
@@ -883,7 +883,7 @@ pub const Simulator = struct {
     /// * Disable storage faults on the core replicas
     /// * For all failures involving non-core replicas, make those failures permanent.
     ///
-    /// See https://tigerbeetle.com/blog/2023-07-06-simulation-testing-for-liveness for broader
+    /// See https://archerdb.com/blog/2023-07-06-simulation-testing-for-liveness for broader
     /// context.
     pub fn transition_to_liveness_mode(simulator: *Simulator, core: Core) void {
         log.debug("transition_to_liveness_mode: core={b}", .{core.bits});

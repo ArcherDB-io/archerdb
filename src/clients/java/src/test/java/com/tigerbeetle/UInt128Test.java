@@ -1,4 +1,4 @@
-package com.tigerbeetle;
+package com.archerdb.core;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;

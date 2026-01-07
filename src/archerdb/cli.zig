@@ -21,20 +21,20 @@ const net = std.net;
 const vsr = @import("vsr");
 const stdx = vsr.stdx;
 const constants = vsr.constants;
-const tigerbeetle = vsr.tigerbeetle;
+const archerdb = vsr.archerdb;
 const data_file_size_min = vsr.superblock.data_file_size_min;
 const StateMachine = @import("./main.zig").StateMachine;
 const Grid = @import("./main.zig").Grid;
 const Ratio = stdx.PRNG.Ratio;
 const ByteSize = stdx.ByteSize;
-const Operation = tigerbeetle.Operation;
+const Operation = archerdb.Operation;
 const tls_config = vsr.tls_config;
 const Duration = stdx.Duration;
 const backup_config = vsr.backup_config;
 
 comptime {
     // Make sure we are running the Accounting StateMachine.
-    assert(StateMachine.Operation == tigerbeetle.Operation);
+    assert(StateMachine.Operation == archerdb.Operation);
 }
 
 const KiB = stdx.KiB;
@@ -140,10 +140,7 @@ const CLIArgs = union(enum) {
         limit_storage: ?ByteSize = null,
         limit_pipeline_requests: ?u32 = null,
         limit_request: ?ByteSize = null,
-        cache_accounts: ?ByteSize = null,
-        cache_transfers: ?ByteSize = null,
-        cache_transfers_pending: ?ByteSize = null,
-        cache_geo_events: ?ByteSize = null, // F1.3.1
+        cache_geo_events: ?ByteSize = null,
         memory_lsm_manifest: ?ByteSize = null,
         memory_lsm_compaction: ?ByteSize = null,
         trace: ?[]const u8 = null,
@@ -190,33 +187,15 @@ const CLIArgs = union(enum) {
     };
 
     // Experimental: the interface is subject to change.
+    // ArcherDB geospatial benchmark configuration
     const Benchmark = struct {
-        cache_accounts: ?[]const u8 = null,
-        cache_transfers: ?[]const u8 = null,
-        cache_transfers_pending: ?[]const u8 = null,
-        cache_geo_events: ?[]const u8 = null, // F1.3.1
+        cache_geo_events: ?[]const u8 = null,
         cache_grid: ?[]const u8 = null,
-        account_count: u32 = 10_000,
-        account_count_hot: u32 = 0,
         log_level: LogLevel = .info,
         log_debug_replica: bool = false,
-        /// The probability distribution used to select accounts when making transfers or queries.
-        account_distribution: Command.Benchmark.Distribution = .uniform,
-        flag_history: bool = false,
         flag_imported: bool = false,
-        account_batch_size: u32 = Operation.create_accounts.event_max(
-            constants.message_body_size_max,
-        ),
-        transfer_count: u64 = 10_000_000,
-        transfer_hot_percent: u32 = 100,
-        transfer_pending: bool = false,
-        transfer_batch_size: u32 = Operation.create_transfers.event_max(
-            constants.message_body_size_max,
-        ),
-        transfer_batch_delay: Duration = .ms(0),
         validate: bool = false,
         checksum_performance: bool = false,
-        query_count: u32 = 100,
         print_batch_timings: bool = false,
         id_order: Command.Benchmark.IdOrder = .sequential,
         clients: u32 = 1,
@@ -226,21 +205,23 @@ const CLIArgs = union(enum) {
         file: ?[]const u8 = null,
         addresses: ?[]const u8 = null,
         seed: ?[]const u8 = null,
-        // F5.1.1-F5.1.4: GeoEvent benchmarking parameters
-        /// Enable geospatial benchmarking mode (upsert_events, query_uuid, query_radius)
-        geo: bool = false,
+        // GeoEvent benchmarking parameters
         /// Number of GeoEvents to insert (default: 1M for throughput target)
-        geo_event_count: u64 = 1_000_000,
+        event_count: u64 = 1_000_000,
         /// Number of unique entities (default: 100K)
-        geo_entity_count: u32 = 100_000,
+        entity_count: u32 = 100_000,
+        /// Batch size for insert operations
+        event_batch_size: u32 = Operation.insert_events.event_max(
+            constants.message_body_size_max,
+        ),
         /// Number of UUID lookup queries
-        geo_query_uuid_count: u32 = 10_000,
+        query_uuid_count: u32 = 10_000,
         /// Number of radius queries
-        geo_query_radius_count: u32 = 1_000,
+        query_radius_count: u32 = 1_000,
         /// Number of polygon queries
-        geo_query_polygon_count: u32 = 100,
+        query_polygon_count: u32 = 100,
         /// Radius for geo queries in meters (default: 1km)
-        geo_query_radius_meters: u32 = 1_000,
+        query_radius_meters: u32 = 1_000,
     };
 
     // Experimental: the interface is subject to change.
@@ -572,13 +553,11 @@ const CLIArgs = union(enum) {
     });
 };
 
+// ArcherDB geospatial defaults (F1.3.1)
 const StartDefaults = struct {
     limit_pipeline_requests: u32,
     limit_request: ByteSize,
-    cache_accounts: ByteSize,
-    cache_transfers: ByteSize,
-    cache_transfers_pending: ByteSize,
-    cache_geo_events: ByteSize, // F1.3.1
+    cache_geo_events: ByteSize,
     cache_grid: ByteSize,
     memory_lsm_compaction: ByteSize,
 };
@@ -587,10 +566,7 @@ const start_defaults_production = StartDefaults{
     .limit_pipeline_requests = vsr.stdx.div_ceil(constants.clients_max, 2) -
         constants.pipeline_prepare_queue_max,
     .limit_request = .{ .value = constants.message_size_max },
-    .cache_accounts = .{ .value = constants.cache_accounts_size_default },
-    .cache_transfers = .{ .value = constants.cache_transfers_size_default },
-    .cache_transfers_pending = .{ .value = constants.cache_transfers_pending_size_default },
-    .cache_geo_events = .{ .value = 0 }, // F1.3.1: default to no cache, will be configurable later
+    .cache_geo_events = .{ .value = constants.cache_geo_events_size_default },
     .cache_grid = .{ .value = constants.grid_cache_size_default },
     .memory_lsm_compaction = .{
         // By default, add a few extra blocks for beat-scoped work.
@@ -601,10 +577,7 @@ const start_defaults_production = StartDefaults{
 const start_defaults_development = StartDefaults{
     .limit_pipeline_requests = 0,
     .limit_request = .{ .value = 32 * KiB },
-    .cache_accounts = .{ .value = 0 },
-    .cache_transfers = .{ .value = 0 },
-    .cache_transfers_pending = .{ .value = 0 },
-    .cache_geo_events = .{ .value = 0 }, // F1.3.1
+    .cache_geo_events = .{ .value = 0 },
     .cache_grid = .{ .value = constants.block_size * Grid.Cache.value_count_max_multiple },
     .memory_lsm_compaction = .{ .value = lsm_compaction_block_memory_min },
 };
@@ -637,16 +610,14 @@ pub const Command = union(enum) {
         log_level: LogLevel,
     };
 
+    // ArcherDB geospatial Start command structure (F1.3.1)
     pub const Start = struct {
         addresses: Addresses,
         // true when the value of `--addresses` is exactly `0`. Used to enable "magic zero" mode for
         // testing. We check the raw string rather then the parsed address to prevent triggering
         // this logic by accident.
         addresses_zero: bool,
-        cache_accounts: u32,
-        cache_transfers: u32,
-        cache_transfers_pending: u32,
-        cache_geo_events: u32, // F1.3.1
+        cache_geo_events: u32,
         storage_size_limit: u64,
         pipeline_requests_limit: u32,
         request_size_limit: u32,
@@ -714,42 +685,20 @@ pub const Command = union(enum) {
         log_level: LogLevel,
     };
 
+    // ArcherDB geospatial benchmark command structure
     pub const Benchmark = struct {
         /// The ID order can affect the results of a benchmark significantly. Specifically,
         /// sequential is expected to be the best (since it can take advantage of various
         /// optimizations such as avoiding negative prefetch) while random/reversed can't.
         pub const IdOrder = enum { sequential, random, reversed };
 
-        pub const Distribution = enum {
-            /// Shuffled zipfian numbers where relatively few indexes are selected frequently.
-            zipfian,
-            /// Also zipfian, but the most recent indexes are selected frequently.
-            latest,
-            /// Uniform distribution; unrealistic workloads.
-            uniform,
-        };
-
-        cache_accounts: ?[]const u8,
-        cache_transfers: ?[]const u8,
-        cache_transfers_pending: ?[]const u8,
-        cache_geo_events: ?[]const u8, // F1.3.1
+        cache_geo_events: ?[]const u8,
         cache_grid: ?[]const u8,
         log_level: LogLevel,
         log_debug_replica: bool,
-        account_count: u32,
-        account_count_hot: u32,
-        account_distribution: Distribution,
-        flag_history: bool,
         flag_imported: bool,
-        account_batch_size: u32,
-        transfer_count: u64,
-        transfer_hot_percent: u32,
-        transfer_pending: bool,
-        transfer_batch_size: u32,
-        transfer_batch_delay: Duration,
         validate: bool,
         checksum_performance: bool,
-        query_count: u32,
         print_batch_timings: bool,
         id_order: IdOrder,
         clients: u32,
@@ -758,14 +707,14 @@ pub const Command = union(enum) {
         file: ?[]const u8,
         addresses: ?Addresses,
         seed: ?[]const u8,
-        // F5.1.1-F5.1.4: GeoEvent benchmarking
-        geo: bool,
-        geo_event_count: u64,
-        geo_entity_count: u32,
-        geo_query_uuid_count: u32,
-        geo_query_radius_count: u32,
-        geo_query_polygon_count: u32,
-        geo_query_radius_meters: u32,
+        // GeoEvent benchmarking parameters
+        event_count: u64,
+        entity_count: u32,
+        event_batch_size: u32,
+        query_uuid_count: u32,
+        query_radius_count: u32,
+        query_polygon_count: u32,
+        query_radius_meters: u32,
     };
 
     pub const Inspect = union(enum) {
@@ -1023,11 +972,9 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
         }
     } else unreachable;
 
+    // ArcherDB geospatial cache configuration (F1.3.1)
     const groove_config = StateMachine.Forest.groove_config;
-    const AccountsValuesCache = groove_config.accounts.ObjectsCache.Cache;
-    const TransfersValuesCache = groove_config.transfers.ObjectsCache.Cache;
-    const TransfersPendingValuesCache = groove_config.transfers_pending.ObjectsCache.Cache;
-    const GeoEventsValuesCache = groove_config.geo_events.ObjectsCache.Cache; // F1.3.1
+    const GeoEventsValuesCache = groove_config.geo_events.ObjectsCache.Cache;
 
     const addresses = parse_addresses(start.addresses, "--addresses", Command.Addresses);
     const defaults =
@@ -1209,26 +1156,8 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
         .storage_size_limit = storage_size_limit,
         .pipeline_requests_limit = pipeline_limit,
         .request_size_limit = @intCast(request_size_limit.bytes()),
-        .cache_accounts = parse_cache_size_to_count(
-            tigerbeetle.Account,
-            AccountsValuesCache,
-            start.cache_accounts orelse defaults.cache_accounts,
-            "--cache-accounts",
-        ),
-        .cache_transfers = parse_cache_size_to_count(
-            tigerbeetle.Transfer,
-            TransfersValuesCache,
-            start.cache_transfers orelse defaults.cache_transfers,
-            "--cache-transfers",
-        ),
-        .cache_transfers_pending = parse_cache_size_to_count(
-            vsr.state_machine.TransferPending,
-            TransfersPendingValuesCache,
-            start.cache_transfers_pending orelse defaults.cache_transfers_pending,
-            "--cache-transfers-pending",
-        ),
         .cache_geo_events = parse_cache_size_to_count(
-            tigerbeetle.GeoEvent,
+            archerdb.GeoEvent,
             GeoEventsValuesCache,
             start.cache_geo_events orelse defaults.cache_geo_events,
             "--cache-geo-events",
@@ -1335,14 +1264,9 @@ fn parse_args_repl(repl: CLIArgs.Repl) Command.Repl {
     };
 }
 
-const account_batch_size_max = @divExact(
+const event_batch_size_max = @divExact(
     constants.message_size_max - @sizeOf(vsr.Header),
-    @sizeOf(tigerbeetle.Account),
-);
-
-const transfer_batch_size_max = @divExact(
-    constants.message_size_max - @sizeOf(vsr.Header),
-    @sizeOf(tigerbeetle.Transfer),
+    @sizeOf(archerdb.GeoEvent),
 );
 
 fn parse_args_benchmark(benchmark: CLIArgs.Benchmark) Command.Benchmark {
@@ -1355,52 +1279,26 @@ fn parse_args_benchmark(benchmark: CLIArgs.Benchmark) Command.Benchmark {
         vsr.fatal(.cli, "--file: --addresses and --file are mutually exclusive", .{});
     }
 
-    if (benchmark.account_batch_size == 0) {
-        vsr.fatal(.cli, "--account-batch-size must be greater than 0", .{});
+    if (benchmark.event_batch_size == 0) {
+        vsr.fatal(.cli, "--event-batch-size must be greater than 0", .{});
     }
 
-    if (benchmark.account_batch_size > account_batch_size_max) {
+    if (benchmark.event_batch_size > event_batch_size_max) {
         vsr.fatal(
             .cli,
-            "--account-batch-size must be less than or equal to {}",
-            .{account_batch_size_max},
-        );
-    }
-
-    if (benchmark.transfer_batch_size == 0) {
-        vsr.fatal(.cli, "--transfer-batch-size must be greater than 0", .{});
-    }
-
-    if (benchmark.transfer_batch_size > transfer_batch_size_max) {
-        vsr.fatal(
-            .cli,
-            "--transfer-batch-size must be less than or equal to {}",
-            .{transfer_batch_size_max},
+            "--event-batch-size must be less than or equal to {}",
+            .{event_batch_size_max},
         );
     }
 
     return .{
-        .cache_accounts = benchmark.cache_accounts,
-        .cache_transfers = benchmark.cache_transfers,
-        .cache_transfers_pending = benchmark.cache_transfers_pending,
-        .cache_geo_events = benchmark.cache_geo_events, // F1.3.1
+        .cache_geo_events = benchmark.cache_geo_events,
         .cache_grid = benchmark.cache_grid,
         .log_level = benchmark.log_level,
         .log_debug_replica = benchmark.log_debug_replica,
-        .account_count = benchmark.account_count,
-        .account_count_hot = benchmark.account_count_hot,
-        .account_distribution = benchmark.account_distribution,
-        .flag_history = benchmark.flag_history,
         .flag_imported = benchmark.flag_imported,
-        .account_batch_size = benchmark.account_batch_size,
-        .transfer_count = benchmark.transfer_count,
-        .transfer_hot_percent = benchmark.transfer_hot_percent,
-        .transfer_pending = benchmark.transfer_pending,
-        .transfer_batch_size = benchmark.transfer_batch_size,
-        .transfer_batch_delay = benchmark.transfer_batch_delay,
         .validate = benchmark.validate,
         .checksum_performance = benchmark.checksum_performance,
-        .query_count = benchmark.query_count,
         .print_batch_timings = benchmark.print_batch_timings,
         .clients = benchmark.clients,
         .id_order = benchmark.id_order,
@@ -1409,14 +1307,14 @@ fn parse_args_benchmark(benchmark: CLIArgs.Benchmark) Command.Benchmark {
         .file = benchmark.file,
         .addresses = addresses,
         .seed = benchmark.seed,
-        // F5.1.1-F5.1.4: GeoEvent benchmarking
-        .geo = benchmark.geo,
-        .geo_event_count = benchmark.geo_event_count,
-        .geo_entity_count = benchmark.geo_entity_count,
-        .geo_query_uuid_count = benchmark.geo_query_uuid_count,
-        .geo_query_radius_count = benchmark.geo_query_radius_count,
-        .geo_query_polygon_count = benchmark.geo_query_polygon_count,
-        .geo_query_radius_meters = benchmark.geo_query_radius_meters,
+        // GeoEvent benchmarking parameters
+        .event_count = benchmark.event_count,
+        .entity_count = benchmark.entity_count,
+        .event_batch_size = benchmark.event_batch_size,
+        .query_uuid_count = benchmark.query_uuid_count,
+        .query_radius_count = benchmark.query_radius_count,
+        .query_polygon_count = benchmark.query_polygon_count,
+        .query_radius_meters = benchmark.query_radius_meters,
     };
 }
 

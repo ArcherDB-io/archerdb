@@ -16,5 +16,5 @@
     "suppressImplicitAnyIndexErrors": true,
     "outDir": "./dist"
   },
-  "files": ["src/index.ts", "src/test.ts", "src/benchmark.ts", "src/geo.ts", "src/geo_client.ts", "src/geo_test.ts", "src/wire_format_test.ts"]
+  "files": ["src/index.ts", "src/geo.ts", "src/geo_client.ts", "src/geo_test.ts", "src/wire_format_test.ts"]
 }

@@ -528,7 +528,8 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
             filter.timestamp_min = 0;
             filter.timestamp_max = 0;
             filter.group_id = 0;
-            filter.reserved = [_]u8{0} ** 96;
+            filter.hole_count = 0; // Simple polygon (no holes)
+            filter.reserved = [_]u8{0} ** 88;
 
             const PV = geo_state_machine_types.PolygonVertex;
             const vertices = stdx.bytes_as_slice(.inexact, PV, vertices_bytes);
@@ -589,7 +590,8 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
             filter.timestamp_min = 0;
             filter.timestamp_max = 0;
             filter.group_id = 0;
-            filter.reserved = [_]u8{0} ** 96;
+            filter.hole_count = 0; // Simple polygon (no holes)
+            filter.reserved = [_]u8{0} ** 88;
 
             const vertices_bytes = body[vertices_start..];
             const PV = geo_state_machine_types.PolygonVertex;
@@ -719,7 +721,8 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
             filter.timestamp_min = 0;
             filter.timestamp_max = 0;
             filter.group_id = 0;
-            filter.reserved = [_]u8{0} ** 96;
+            filter.hole_count = 0; // Simple polygon (no holes)
+            filter.reserved = [_]u8{0} ** 88;
             const vertices_bytes = body[vertices_start..];
             const PV = geo_state_machine_types.PolygonVertex;
             const vertices = stdx.bytes_as_slice(.inexact, PV, vertices_bytes);

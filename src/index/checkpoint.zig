@@ -749,7 +749,7 @@ pub const IndexAlertThresholds = struct {
 
 /// Recovery configuration parameters.
 pub const RecoveryConfig = struct {
-    /// WAL journal slot count (TigerBeetle default: 8192).
+    /// WAL journal slot count (default: 8192).
     /// Recovery Case A is viable when gap <= journal_slot_count.
     journal_slot_count: u64 = 8192,
 

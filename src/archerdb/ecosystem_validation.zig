@@ -105,8 +105,8 @@ test "Category2: io_uring availability" {
     if (builtin.os.tag == .linux) {
         // Check if io_uring types are available in std.os.linux
         // In Zig 0.15.x, io_uring may be accessed differently
-        // The key is that TigerBeetle has its own io_uring implementation
-        // which will be validated when we fork TigerBeetle
+        // The key is that ArcherDB has its own io_uring implementation
+        // which will be validated when we fork ArcherDB
 
         // Test basic Linux syscall availability
         _ = std.os.linux.SYS;

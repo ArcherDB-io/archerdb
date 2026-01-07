@@ -1,29 +1,29 @@
-//! The official TigerBeetle client for Rust.
+//! The official ArcherDB client for Rust.
 //!
-//! This is a client library for the [TigerBeetle] financial database.
+//! This is a client library for the [ArcherDB] financial database.
 //! To use, create a [`Client`] and call its methods to make requests.
 //!
 //! The client presents an async interface, but does not depend on a specific
 //! Rust async runtime. Instead it contains its own off-thread event loop,
-//! shared by all official TigerBeetle clients. Thus it should integrate
+//! shared by all official ArcherDB clients. Thus it should integrate
 //! seamlessly into any Rust codebase.
 //!
 //! The cost of this though is that it does link to a non-Rust static library
-//! (called `tb_client`), and it does need to context switch between threads for
+//! (called `arch_client`), and it does need to context switch between threads for
 //! every request. The native linking should be handled seamlessly on all
 //! supported platforms, and the context switching overhead is expected to be
 //! low compared to the cost of networking and disk I/O.
 //!
-//! [TigerBeetle]: https://tigerbeetle.com
+//! [ArcherDB]: https://archerdb.com
 //!
 //!
 //! # Example
 //!
 //! ```no_run
-//! use tigerbeetle as tb;
+//! use archerdb as tb;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! // Connect to TigerBeetle
+//! // Connect to ArcherDB
 //! let client = tb::Client::new(0, "127.0.0.1:3000")?;
 //!
 //! // Create accounts
@@ -87,25 +87,25 @@
 //! Most transaction and query operations support multiple events of the same
 //! type at once (this can be seen in the request method signatures accepting
 //! slices of their input types) and it is strongly recommended to submit many
-//! events in a single request at once as TigerBeetle will only reach its
+//! events in a single request at once as ArcherDB will only reach its
 //! performance limits when events are received in large batches. The client
 //! _does_ implement its own internal batching and will attempt to create them
 //! efficiently, but it is more efficient for applications to create their own
 //! batches based on understanding of their own architectural needs and
 //! limitations.
 //!
-//! In TigerBeetle's standard build-time configuration **the maximum number of
+//! In ArcherDB's standard build-time configuration **the maximum number of
 //! events per batch is 8189**. If the events in a request exceed this number
 //! its future will return [`PacketStatus::TooMuchData`].
 //!
 //!
 //! # Range query limits
 //!
-//! TigerBeetle's range queries, [`get_account_transfers`],
+//! ArcherDB's range queries, [`get_account_transfers`],
 //! [`get_account_balances`], [`query_accounts`] and [`query_transfers`], also
 //! have a limit to how many results they return.
 //!
-//! In TigerBeetle's standard build-time configuration **the maximum number of
+//! In ArcherDB's standard build-time configuration **the maximum number of
 //! results returned is 8189**.
 //!
 //! If the server returns a full batch for a range query, then further results
@@ -122,7 +122,7 @@
 //! Here is an example of paging to get started with:
 //!
 //! ```no_run
-//! use tigerbeetle as tb;
+//! use archerdb as tb;
 //! use futures::{stream, Stream};
 //!
 //! fn get_account_transfers_paged(
@@ -242,24 +242,24 @@
 //! [`Arc`]: `std::sync::Arc`
 //!
 //!
-//! # TigerBeetle time-based identifiers
+//! # ArcherDB time-based identifiers
 //!
 //! Accounts and transfers must have globally unique identifiers. The generation
 //! of these is application-specific, and any scheme that guarantees unique IDs
-//! will work. Barring other constraints, TigerBeetle recommends using
-//! [TigerBeetle time-based identifiers][tbid]. This crate provides an
+//! will work. Barring other constraints, ArcherDB recommends using
+//! [ArcherDB time-based identifiers][tbid]. This crate provides an
 //! implementation in the [`id`] function.
 //!
 //! For additional considerations when choosing an ID scheme
-//! see [the TigerBeetle documentation on data modeling][tbdataid].
+//! see [the ArcherDB documentation on data modeling][tbdataid].
 //!
-//! [tbid]: https://docs.tigerbeetle.com/coding/data-modeling/#tigerbeetle-time-based-identifiers-recommended
-//! [tbdataid]: https://docs.tigerbeetle.com/coding/data-modeling/#id
+//! [tbid]: https://docs.archerdb.com/coding/data-modeling/#archerdb-time-based-identifiers-recommended
+//! [tbdataid]: https://docs.archerdb.com/coding/data-modeling/#id
 //!
 //!
 //! # Use in non-async codebases
 //!
-//! The TigerBeetle client is async-only, but if you're working in a synchronous
+//! The ArcherDB client is async-only, but if you're working in a synchronous
 //! codebase, you can use [`futures::executor::block_on`] to run async operations
 //! to completion.
 //!
@@ -267,7 +267,7 @@
 //!
 //! ```no_run
 //! use futures::executor::block_on;
-//! use tigerbeetle as tb;
+//! use archerdb as tb;
 //!
 //! fn synchronous_function() -> Result<(), Box<dyn std::error::Error>> {
 //!     block_on(async {
@@ -289,10 +289,10 @@
 //!
 //! Note that `block_on` will block the current thread until the async operation
 //! completes, so this approach works best for simple use cases or when you need
-//! to integrate TigerBeetle into an existing synchronous application.
+//! to integrate ArcherDB into an existing synchronous application.
 //!
 //!
-//! # Rust structure binary representation and the TigerBeetle protocol
+//! # Rust structure binary representation and the ArcherDB protocol
 //!
 //! Many types in this library are ABI-compatible with the underlying protocol
 //! definition and can be cast (unsafely) directly to and from byte buffers
@@ -313,7 +313,7 @@
 //!
 //! # References
 //!
-//! [The TigerBeetle Reference](https://docs.tigerbeetle.com/reference/).
+//! [The ArcherDB Reference](https://docs.archerdb.com/reference/).
 
 use bitflags::bitflags;
 use futures_channel::oneshot::{channel, Receiver};
@@ -332,29 +332,29 @@ use std::{fmt, mem, ptr};
 #[allow(non_snake_case)]
 #[rustfmt::skip]
 #[doc(hidden)]
-pub mod tb_client;
+pub mod arch_client;
 
-use tb_client as tbc;
+use arch_client as tbc;
 
 mod conversions;
 mod time_based_id;
 
 pub use time_based_id::id;
 
-/// The tb_client completion context is unused by the Rust bindings.
+/// The arch_client completion context is unused by the Rust bindings.
 /// This is just a magic number to jump out of logs.
 const COMPLETION_CONTEXT: usize = 0xAB;
 
-/// The TigerBeetle client.
+/// The ArcherDB client.
 pub struct Client {
-    client: *mut tbc::tb_client_t,
+    client: *mut tbc::arch_client_t,
 }
 
 unsafe impl Send for Client {}
 unsafe impl Sync for Client {}
 
 impl Client {
-    /// Create a new TigerBeetle client.
+    /// Create a new ArcherDB client.
     ///
     /// # Addresses
     ///
@@ -365,29 +365,29 @@ impl Client {
     /// `127.0.0.1,3002,127.0.0.1:3003`. The default IP address is `127.0.0.1`
     /// and default port is `3001`.
     ///
-    /// This is the same address format supported by the TigerBeetle CLI.
+    /// This is the same address format supported by the ArcherDB CLI.
     ///
     /// # References
     ///
-    /// [Client Sessions](https://docs.tigerbeetle.com/reference/sessions/).
+    /// [Client Sessions](https://docs.archerdb.com/reference/sessions/).
     pub fn new(cluster_id: u128, addresses: &str) -> Result<Client, InitStatus> {
         assert_abi_compatibility();
 
         unsafe {
-            let tb_client = Box::new(tbc::tb_client_t {
+            let arch_client = Box::new(tbc::arch_client_t {
                 opaque: Default::default(),
             });
-            let tb_client = Box::into_raw(tb_client);
-            let status = tbc::tb_client_init(
-                tb_client,
+            let arch_client = Box::into_raw(arch_client);
+            let status = tbc::arch_client_init(
+                arch_client,
                 &cluster_id.to_le_bytes(),
                 addresses.as_ptr() as *const c_char,
                 addresses.len() as u32,
                 COMPLETION_CONTEXT,
                 Some(on_completion),
             );
-            if status == tbc::TB_INIT_STATUS_TB_INIT_SUCCESS {
-                Ok(Client { client: tb_client })
+            if status == tbc::ARCH_INIT_STATUS_ARCH_INIT_SUCCESS {
+                Ok(Client { client: arch_client })
             } else {
                 Err(status.into())
             }
@@ -434,7 +434,7 @@ impl Client {
     /// # Example
     ///
     /// ```no_run
-    /// use tigerbeetle as tb;
+    /// use archerdb as tb;
     ///
     /// async fn make_create_accounts_request(
     ///     client: &tb::Client,
@@ -490,28 +490,28 @@ impl Client {
     ///
     /// If the length of the `events` argument exceeds the maximum batch size
     /// the future will return [`Err`] of [`PacketStatus::TooMuchData`]. In
-    /// TigerBeetle's standard build-time configuration the maximum batch size
+    /// ArcherDB's standard build-time configuration the maximum batch size
     /// is 8189.
     ///
     /// # Protocol reference
     ///
-    /// [`create_accounts`](https://docs.tigerbeetle.com/reference/requests/create_accounts).
+    /// [`create_accounts`](https://docs.archerdb.com/reference/requests/create_accounts).
     pub fn create_accounts(
         &self,
         events: &[Account],
     ) -> impl Future<Output = Result<Vec<CreateAccountsResult>, PacketStatus>> {
         let (packet, rx) =
-            create_packet::<Account>(tbc::TB_OPERATION_TB_OPERATION_CREATE_ACCOUNTS, events);
+            create_packet::<Account>(tbc::ARCH_OPERATION_ARCH_OPERATION_CREATE_ACCOUNTS, events);
 
         unsafe {
-            let status = tbc::tb_client_submit(self.client, Box::into_raw(packet));
-            assert_eq!(status, tbc::TB_CLIENT_STATUS_TB_CLIENT_OK);
+            let status = tbc::arch_client_submit(self.client, Box::into_raw(packet));
+            assert_eq!(status, tbc::ARCH_CLIENT_STATUS_ARCH_CLIENT_OK);
         }
 
         async {
             let msg = rx.await.expect("channel");
 
-            let responses: &[tbc::tb_create_accounts_result_t] = handle_message(&msg)?;
+            let responses: &[tbc::arch_create_accounts_result_t] = handle_message(&msg)?;
 
             Ok(responses
                 .iter()
@@ -566,7 +566,7 @@ impl Client {
     /// # Example
     ///
     /// ```no_run
-    /// use tigerbeetle as tb;
+    /// use archerdb as tb;
     ///
     /// async fn make_create_transfers_request(
     ///     client: &tb::Client,
@@ -622,28 +622,28 @@ impl Client {
     ///
     /// If the length of the `events` argument exceeds the maximum batch size
     /// the future will return [`Err`] of [`PacketStatus::TooMuchData`]. In
-    /// TigerBeetle's standard build-time configuration the maximum batch size
+    /// ArcherDB's standard build-time configuration the maximum batch size
     /// is 8189.
     ///
     /// # Protocol reference
     ///
-    /// [`create_transfers`](https://docs.tigerbeetle.com/reference/requests/create_transfers).
+    /// [`create_transfers`](https://docs.archerdb.com/reference/requests/create_transfers).
     pub fn create_transfers(
         &self,
         events: &[Transfer],
     ) -> impl Future<Output = Result<Vec<CreateTransfersResult>, PacketStatus>> {
         let (packet, rx) =
-            create_packet::<Transfer>(tbc::TB_OPERATION_TB_OPERATION_CREATE_TRANSFERS, events);
+            create_packet::<Transfer>(tbc::ARCH_OPERATION_ARCH_OPERATION_CREATE_TRANSFERS, events);
 
         unsafe {
-            let status = tbc::tb_client_submit(self.client, Box::into_raw(packet));
-            assert_eq!(status, tbc::TB_CLIENT_STATUS_TB_CLIENT_OK);
+            let status = tbc::arch_client_submit(self.client, Box::into_raw(packet));
+            assert_eq!(status, tbc::ARCH_CLIENT_STATUS_ARCH_CLIENT_OK);
         }
 
         async {
             let msg = rx.await.expect("channel");
 
-            let responses: &[tbc::tb_create_transfers_result_t] = handle_message(&msg)?;
+            let responses: &[tbc::arch_create_transfers_result_t] = handle_message(&msg)?;
 
             Ok(responses
                 .iter()
@@ -674,7 +674,7 @@ impl Client {
     /// # Example
     ///
     /// ```no_run
-    /// use tigerbeetle as tb;
+    /// use archerdb as tb;
     ///
     /// async fn make_lookup_accounts_request(
     ///     client: &tb::Client,
@@ -723,7 +723,7 @@ impl Client {
     ///
     /// If the length of the `events` argument exceeds the maximum batch size
     /// the future will return [`Err`] of [`PacketStatus::TooMuchData`]. In
-    /// TigerBeetle's standard build-time configuration the maximum batch size
+    /// ArcherDB's standard build-time configuration the maximum batch size
     /// is 8189.
     ///
     /// # Errors
@@ -735,17 +735,17 @@ impl Client {
     ///
     /// # Protocol reference
     ///
-    /// [`lookup_accounts`](https://docs.tigerbeetle.com/reference/requests/lookup_accounts).
+    /// [`lookup_accounts`](https://docs.archerdb.com/reference/requests/lookup_accounts).
     pub fn lookup_accounts(
         &self,
         events: &[u128],
     ) -> impl Future<Output = Result<Vec<Account>, PacketStatus>> {
         let (packet, rx) =
-            create_packet::<u128>(tbc::TB_OPERATION_TB_OPERATION_LOOKUP_ACCOUNTS, events);
+            create_packet::<u128>(tbc::ARCH_OPERATION_ARCH_OPERATION_LOOKUP_ACCOUNTS, events);
 
         unsafe {
-            let status = tbc::tb_client_submit(self.client, Box::into_raw(packet));
-            assert_eq!(status, tbc::TB_CLIENT_STATUS_TB_CLIENT_OK);
+            let status = tbc::arch_client_submit(self.client, Box::into_raw(packet));
+            assert_eq!(status, tbc::ARCH_CLIENT_STATUS_ARCH_CLIENT_OK);
         }
 
         async {
@@ -764,7 +764,7 @@ impl Client {
     ///
     /// If the length of the `events` argument exceeds the maximum batch size
     /// the future will return [`Err`] of [`PacketStatus::TooMuchData`]. In
-    /// TigerBeetle's standard build-time configuration the maximum batch size
+    /// ArcherDB's standard build-time configuration the maximum batch size
     /// is 8189.
     ///
     /// # Errors
@@ -777,7 +777,7 @@ impl Client {
     /// # Example
     ///
     /// ```
-    /// use tigerbeetle as tb;
+    /// use archerdb as tb;
     ///
     /// async fn make_lookup_transfers_request(
     ///     client: &tb::Client,
@@ -824,17 +824,17 @@ impl Client {
     ///
     /// # Protocol reference
     ///
-    /// [`lookup_transfers`](https://docs.tigerbeetle.com/reference/requests/lookup_transfers).
+    /// [`lookup_transfers`](https://docs.archerdb.com/reference/requests/lookup_transfers).
     pub fn lookup_transfers(
         &self,
         events: &[u128],
     ) -> impl Future<Output = Result<Vec<Transfer>, PacketStatus>> {
         let (packet, rx) =
-            create_packet::<u128>(tbc::TB_OPERATION_TB_OPERATION_LOOKUP_TRANSFERS, events);
+            create_packet::<u128>(tbc::ARCH_OPERATION_ARCH_OPERATION_LOOKUP_TRANSFERS, events);
 
         unsafe {
-            let status = tbc::tb_client_submit(self.client, Box::into_raw(packet));
-            assert_eq!(status, tbc::TB_CLIENT_STATUS_TB_CLIENT_OK);
+            let status = tbc::arch_client_submit(self.client, Box::into_raw(packet));
+            assert_eq!(status, tbc::ARCH_CLIENT_STATUS_ARCH_CLIENT_OK);
         }
 
         async {
@@ -855,19 +855,19 @@ impl Client {
     ///
     /// # Protocol reference
     ///
-    /// [`get_account_transfers`](https://docs.tigerbeetle.com/reference/requests/get_account_transfers).
+    /// [`get_account_transfers`](https://docs.archerdb.com/reference/requests/get_account_transfers).
     pub fn get_account_transfers(
         &self,
         event: AccountFilter,
     ) -> impl Future<Output = Result<Vec<Transfer>, PacketStatus>> {
         let (packet, rx) = create_packet::<AccountFilter>(
-            tbc::TB_OPERATION_TB_OPERATION_GET_ACCOUNT_TRANSFERS,
+            tbc::ARCH_OPERATION_ARCH_OPERATION_GET_ACCOUNT_TRANSFERS,
             &[event],
         );
 
         unsafe {
-            let status = tbc::tb_client_submit(self.client, Box::into_raw(packet));
-            assert_eq!(status, tbc::TB_CLIENT_STATUS_TB_CLIENT_OK);
+            let status = tbc::arch_client_submit(self.client, Box::into_raw(packet));
+            assert_eq!(status, tbc::ARCH_CLIENT_STATUS_ARCH_CLIENT_OK);
         }
 
         async {
@@ -889,19 +889,19 @@ impl Client {
     ///
     /// # Protocol reference
     ///
-    /// [`get_account_balances`](https://docs.tigerbeetle.com/reference/requests/get_account_balances).
+    /// [`get_account_balances`](https://docs.archerdb.com/reference/requests/get_account_balances).
     pub fn get_account_balances(
         &self,
         event: AccountFilter,
     ) -> impl Future<Output = Result<Vec<AccountBalance>, PacketStatus>> {
         let (packet, rx) = create_packet::<AccountFilter>(
-            tbc::TB_OPERATION_TB_OPERATION_GET_ACCOUNT_BALANCES,
+            tbc::ARCH_OPERATION_ARCH_OPERATION_GET_ACCOUNT_BALANCES,
             &[event],
         );
 
         unsafe {
-            let status = tbc::tb_client_submit(self.client, Box::into_raw(packet));
-            assert_eq!(status, tbc::TB_CLIENT_STATUS_TB_CLIENT_OK);
+            let status = tbc::arch_client_submit(self.client, Box::into_raw(packet));
+            assert_eq!(status, tbc::ARCH_CLIENT_STATUS_ARCH_CLIENT_OK);
         }
 
         async {
@@ -923,17 +923,17 @@ impl Client {
     ///
     /// # Protocol reference
     ///
-    /// [`query_accounts`](https://docs.tigerbeetle.com/reference/requests/query_accounts).
+    /// [`query_accounts`](https://docs.archerdb.com/reference/requests/query_accounts).
     pub fn query_accounts(
         &self,
         event: QueryFilter,
     ) -> impl Future<Output = Result<Vec<Account>, PacketStatus>> {
         let (packet, rx) =
-            create_packet::<QueryFilter>(tbc::TB_OPERATION_TB_OPERATION_QUERY_ACCOUNTS, &[event]);
+            create_packet::<QueryFilter>(tbc::ARCH_OPERATION_ARCH_OPERATION_QUERY_ACCOUNTS, &[event]);
 
         unsafe {
-            let status = tbc::tb_client_submit(self.client, Box::into_raw(packet));
-            assert_eq!(status, tbc::TB_CLIENT_STATUS_TB_CLIENT_OK);
+            let status = tbc::arch_client_submit(self.client, Box::into_raw(packet));
+            assert_eq!(status, tbc::ARCH_CLIENT_STATUS_ARCH_CLIENT_OK);
         }
 
         async {
@@ -955,17 +955,17 @@ impl Client {
     ///
     /// # Protocol reference
     ///
-    /// [`query_transfers`](https://docs.tigerbeetle.com/reference/requests/query_transfers).
+    /// [`query_transfers`](https://docs.archerdb.com/reference/requests/query_transfers).
     pub fn query_transfers(
         &self,
         event: QueryFilter,
     ) -> impl Future<Output = Result<Vec<Transfer>, PacketStatus>> {
         let (packet, rx) =
-            create_packet::<QueryFilter>(tbc::TB_OPERATION_TB_OPERATION_QUERY_TRANSFERS, &[event]);
+            create_packet::<QueryFilter>(tbc::ARCH_OPERATION_ARCH_OPERATION_QUERY_TRANSFERS, &[event]);
 
         unsafe {
-            let status = tbc::tb_client_submit(self.client, Box::into_raw(packet));
-            assert_eq!(status, tbc::TB_CLIENT_STATUS_TB_CLIENT_OK);
+            let status = tbc::arch_client_submit(self.client, Box::into_raw(packet));
+            assert_eq!(status, tbc::ARCH_CLIENT_STATUS_ARCH_CLIENT_OK);
         }
 
         async {
@@ -985,7 +985,7 @@ impl Client {
     /// Calling `close` will cancel any pending requests. This is only possible
     /// if the futures for those requests were dropped without awaiting them.
     pub fn close(mut self) -> impl Future<Output = ()> {
-        struct SendClient(*mut tbc::tb_client_t);
+        struct SendClient(*mut tbc::arch_client_t);
         unsafe impl Send for SendClient {}
 
         let client = std::mem::replace(&mut self.client, std::ptr::null_mut());
@@ -997,8 +997,8 @@ impl Client {
             let client = client;
             unsafe {
                 // This is a blocking function so we're calling it offthread.
-                let status = tbc::tb_client_deinit(client.0);
-                assert_eq!(status, tbc::TB_CLIENT_STATUS_TB_CLIENT_OK);
+                let status = tbc::arch_client_deinit(client.0);
+                assert_eq!(status, tbc::ARCH_CLIENT_STATUS_ARCH_CLIENT_OK);
                 std::mem::drop(Box::from_raw(client.0));
             }
             drop(tx);
@@ -1040,83 +1040,83 @@ impl fmt::Debug for Client {
 fn assert_abi_compatibility() {
     assert_eq!(
         std::mem::size_of::<Account>(),
-        std::mem::size_of::<tbc::tb_account_t>()
+        std::mem::size_of::<tbc::arch_account_t>()
     );
     assert_eq!(
         std::mem::align_of::<Account>(),
-        std::mem::align_of::<tbc::tb_account_t>()
+        std::mem::align_of::<tbc::arch_account_t>()
     );
     assert_eq!(
         std::mem::size_of::<AccountFlags>(),
-        std::mem::size_of::<tbc::TB_ACCOUNT_FLAGS>()
+        std::mem::size_of::<tbc::ARCH_ACCOUNT_FLAGS>()
     );
     assert_eq!(
         std::mem::align_of::<AccountFlags>(),
-        std::mem::align_of::<tbc::TB_ACCOUNT_FLAGS>()
+        std::mem::align_of::<tbc::ARCH_ACCOUNT_FLAGS>()
     );
     assert_eq!(
         std::mem::size_of::<Transfer>(),
-        std::mem::size_of::<tbc::tb_transfer_t>()
+        std::mem::size_of::<tbc::arch_transfer_t>()
     );
     assert_eq!(
         std::mem::align_of::<Transfer>(),
-        std::mem::align_of::<tbc::tb_transfer_t>()
+        std::mem::align_of::<tbc::arch_transfer_t>()
     );
     assert_eq!(
         std::mem::size_of::<TransferFlags>(),
-        std::mem::size_of::<tbc::TB_TRANSFER_FLAGS>()
+        std::mem::size_of::<tbc::ARCH_TRANSFER_FLAGS>()
     );
     assert_eq!(
         std::mem::align_of::<TransferFlags>(),
-        std::mem::align_of::<tbc::TB_TRANSFER_FLAGS>()
+        std::mem::align_of::<tbc::ARCH_TRANSFER_FLAGS>()
     );
     assert_eq!(
         std::mem::size_of::<AccountFilter>(),
-        std::mem::size_of::<tbc::tb_account_filter_t>()
+        std::mem::size_of::<tbc::arch_account_filter_t>()
     );
     assert_eq!(
         std::mem::align_of::<AccountFilter>(),
-        std::mem::align_of::<tbc::tb_account_filter_t>()
+        std::mem::align_of::<tbc::arch_account_filter_t>()
     );
     assert_eq!(
         std::mem::size_of::<AccountFilterFlags>(),
-        std::mem::size_of::<tbc::TB_ACCOUNT_FILTER_FLAGS>()
+        std::mem::size_of::<tbc::ARCH_ACCOUNT_FILTER_FLAGS>()
     );
     assert_eq!(
         std::mem::align_of::<AccountFilterFlags>(),
-        std::mem::align_of::<tbc::TB_ACCOUNT_FILTER_FLAGS>()
+        std::mem::align_of::<tbc::ARCH_ACCOUNT_FILTER_FLAGS>()
     );
     assert_eq!(
         std::mem::size_of::<AccountBalance>(),
-        std::mem::size_of::<tbc::tb_account_balance_t>()
+        std::mem::size_of::<tbc::arch_account_balance_t>()
     );
     assert_eq!(
         std::mem::align_of::<AccountBalance>(),
-        std::mem::align_of::<tbc::tb_account_balance_t>()
+        std::mem::align_of::<tbc::arch_account_balance_t>()
     );
     assert_eq!(
         std::mem::size_of::<QueryFilter>(),
-        std::mem::size_of::<tbc::tb_query_filter_t>()
+        std::mem::size_of::<tbc::arch_query_filter_t>()
     );
     assert_eq!(
         std::mem::align_of::<QueryFilter>(),
-        std::mem::align_of::<tbc::tb_query_filter_t>()
+        std::mem::align_of::<tbc::arch_query_filter_t>()
     );
     assert_eq!(
         std::mem::size_of::<QueryFilterFlags>(),
-        std::mem::size_of::<tbc::TB_QUERY_FILTER_FLAGS>()
+        std::mem::size_of::<tbc::ARCH_QUERY_FILTER_FLAGS>()
     );
     assert_eq!(
         std::mem::align_of::<QueryFilterFlags>(),
-        std::mem::align_of::<tbc::TB_QUERY_FILTER_FLAGS>()
+        std::mem::align_of::<tbc::ARCH_QUERY_FILTER_FLAGS>()
     );
 }
 
-/// A TigerBeetle account.
+/// A ArcherDB account.
 ///
 /// # Protocol reference
 ///
-/// [`Account`](https://docs.tigerbeetle.com/reference/account/).
+/// [`Account`](https://docs.archerdb.com/reference/account/).
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct Account {
@@ -1142,18 +1142,18 @@ bitflags! {
     ///
     /// # Protocol reference
     ///
-    /// [`Account.flags`](https://docs.tigerbeetle.com/reference/account/#flags).
+    /// [`Account.flags`](https://docs.archerdb.com/reference/account/#flags).
     #[repr(transparent)]
     #[derive(Copy, Clone, Debug, Default)]
     #[derive(Eq, PartialEq, Ord, PartialOrd, Hash)]
     pub struct AccountFlags: u16 {
         const None = 0;
-        const Linked = tbc::TB_ACCOUNT_FLAGS_TB_ACCOUNT_LINKED;
-        const DebitsMustNotExceedCredits = tbc::TB_ACCOUNT_FLAGS_TB_ACCOUNT_DEBITS_MUST_NOT_EXCEED_CREDITS;
-        const CreditsMustNotExceedDebits = tbc::TB_ACCOUNT_FLAGS_TB_ACCOUNT_CREDITS_MUST_NOT_EXCEED_DEBITS;
-        const History = tbc::TB_ACCOUNT_FLAGS_TB_ACCOUNT_HISTORY;
-        const Imported = tbc::TB_ACCOUNT_FLAGS_TB_ACCOUNT_IMPORTED;
-        const Closed = tbc::TB_ACCOUNT_FLAGS_TB_ACCOUNT_CLOSED;
+        const Linked = tbc::ARCH_ACCOUNT_FLAGS_ARCH_ACCOUNT_LINKED;
+        const DebitsMustNotExceedCredits = tbc::ARCH_ACCOUNT_FLAGS_ARCH_ACCOUNT_DEBITS_MUST_NOT_EXCEED_CREDITS;
+        const CreditsMustNotExceedDebits = tbc::ARCH_ACCOUNT_FLAGS_ARCH_ACCOUNT_CREDITS_MUST_NOT_EXCEED_DEBITS;
+        const History = tbc::ARCH_ACCOUNT_FLAGS_ARCH_ACCOUNT_HISTORY;
+        const Imported = tbc::ARCH_ACCOUNT_FLAGS_ARCH_ACCOUNT_IMPORTED;
+        const Closed = tbc::ARCH_ACCOUNT_FLAGS_ARCH_ACCOUNT_CLOSED;
     }
 }
 
@@ -1161,7 +1161,7 @@ bitflags! {
 ///
 /// # Protocol reference
 ///
-/// [`Transfer`](https://docs.tigerbeetle.com/reference/transfer).
+/// [`Transfer`](https://docs.archerdb.com/reference/transfer).
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct Transfer {
@@ -1187,20 +1187,20 @@ bitflags! {
     ///
     /// # Protocol reference
     ///
-    /// [`Transfer.flags`](https://docs.tigerbeetle.com/reference/transfer/#flags).
+    /// [`Transfer.flags`](https://docs.archerdb.com/reference/transfer/#flags).
     #[repr(transparent)]
     #[derive(Copy, Clone, Debug, Default)]
     #[derive(Eq, PartialEq, Ord, PartialOrd, Hash)]
     pub struct TransferFlags: u16 {
-        const Linked = tbc::TB_TRANSFER_FLAGS_TB_TRANSFER_LINKED;
-        const Pending = tbc::TB_TRANSFER_FLAGS_TB_TRANSFER_PENDING;
-        const PostPendingTransfer = tbc::TB_TRANSFER_FLAGS_TB_TRANSFER_POST_PENDING_TRANSFER;
-        const VoidPendingTransfer = tbc::TB_TRANSFER_FLAGS_TB_TRANSFER_VOID_PENDING_TRANSFER;
-        const BalancingDebit = tbc::TB_TRANSFER_FLAGS_TB_TRANSFER_BALANCING_DEBIT;
-        const BalancingCredit = tbc::TB_TRANSFER_FLAGS_TB_TRANSFER_BALANCING_CREDIT;
-        const ClosingDebit = tbc::TB_TRANSFER_FLAGS_TB_TRANSFER_CLOSING_DEBIT;
-        const ClosingCredit = tbc::TB_TRANSFER_FLAGS_TB_TRANSFER_CLOSING_CREDIT;
-        const Imported = tbc::TB_TRANSFER_FLAGS_TB_TRANSFER_IMPORTED;
+        const Linked = tbc::ARCH_TRANSFER_FLAGS_ARCH_TRANSFER_LINKED;
+        const Pending = tbc::ARCH_TRANSFER_FLAGS_ARCH_TRANSFER_PENDING;
+        const PostPendingTransfer = tbc::ARCH_TRANSFER_FLAGS_ARCH_TRANSFER_POST_PENDING_TRANSFER;
+        const VoidPendingTransfer = tbc::ARCH_TRANSFER_FLAGS_ARCH_TRANSFER_VOID_PENDING_TRANSFER;
+        const BalancingDebit = tbc::ARCH_TRANSFER_FLAGS_ARCH_TRANSFER_BALANCING_DEBIT;
+        const BalancingCredit = tbc::ARCH_TRANSFER_FLAGS_ARCH_TRANSFER_BALANCING_CREDIT;
+        const ClosingDebit = tbc::ARCH_TRANSFER_FLAGS_ARCH_TRANSFER_CLOSING_DEBIT;
+        const ClosingCredit = tbc::ARCH_TRANSFER_FLAGS_ARCH_TRANSFER_CLOSING_CREDIT;
+        const Imported = tbc::ARCH_TRANSFER_FLAGS_ARCH_TRANSFER_IMPORTED;
     }
 }
 
@@ -1208,7 +1208,7 @@ bitflags! {
 ///
 /// # Protocol reference
 ///
-/// [`AccountFilter`](https://docs.tigerbeetle.com/reference/account-filter).
+/// [`AccountFilter`](https://docs.archerdb.com/reference/account-filter).
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct AccountFilter {
@@ -1231,14 +1231,14 @@ bitflags! {
     ///
     /// # Protocol reference
     ///
-    /// [`AccountFilter.flags`](https://docs.tigerbeetle.com/reference/account-filter/#flags).
+    /// [`AccountFilter.flags`](https://docs.archerdb.com/reference/account-filter/#flags).
     #[repr(transparent)]
     #[derive(Copy, Clone, Debug, Default)]
     #[derive(Eq, PartialEq, Ord, PartialOrd, Hash)]
     pub struct AccountFilterFlags: u32 {
-        const Debits = tbc::TB_ACCOUNT_FILTER_FLAGS_TB_ACCOUNT_FILTER_DEBITS;
-        const Credits = tbc::TB_ACCOUNT_FILTER_FLAGS_TB_ACCOUNT_FILTER_CREDITS;
-        const Reversed = tbc::TB_ACCOUNT_FILTER_FLAGS_TB_ACCOUNT_FILTER_REVERSED;
+        const Debits = tbc::ARCH_ACCOUNT_FILTER_FLAGS_ARCH_ACCOUNT_FILTER_DEBITS;
+        const Credits = tbc::ARCH_ACCOUNT_FILTER_FLAGS_ARCH_ACCOUNT_FILTER_CREDITS;
+        const Reversed = tbc::ARCH_ACCOUNT_FILTER_FLAGS_ARCH_ACCOUNT_FILTER_REVERSED;
     }
 }
 
@@ -1246,7 +1246,7 @@ bitflags! {
 ///
 /// # Protocol reference
 ///
-/// [`AccountBalance`](https://docs.tigerbeetle.com/reference/account-balance/).
+/// [`AccountBalance`](https://docs.archerdb.com/reference/account-balance/).
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct AccountBalance {
@@ -1262,7 +1262,7 @@ pub struct AccountBalance {
 ///
 /// # Protocol reference
 ///
-/// [`QueryFilter`](https://docs.tigerbeetle.com/reference/query-filter/).
+/// [`QueryFilter`](https://docs.archerdb.com/reference/query-filter/).
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct QueryFilter {
@@ -1285,12 +1285,12 @@ bitflags! {
     ///
     /// # Protocol reference
     ///
-    /// [`QueryFilter.flags`](https://docs.tigerbeetle.com/reference/query-filter/#flags).
+    /// [`QueryFilter.flags`](https://docs.archerdb.com/reference/query-filter/#flags).
     #[repr(transparent)]
     #[derive(Copy, Clone, Debug, Default)]
     #[derive(Eq, PartialEq, Ord, PartialOrd, Hash)]
     pub struct QueryFilterFlags: u32 {
-        const Reversed = tbc::TB_QUERY_FILTER_FLAGS_TB_QUERY_FILTER_REVERSED;
+        const Reversed = tbc::ARCH_QUERY_FILTER_FLAGS_ARCH_QUERY_FILTER_REVERSED;
     }
 }
 
@@ -1306,7 +1306,7 @@ bitflags! {
 ///
 /// # Protocol reference
 ///
-/// [`CreateAccountResult`](https://docs.tigerbeetle.com/reference/requests/create_accounts/#result).
+/// [`CreateAccountResult`](https://docs.archerdb.com/reference/requests/create_accounts/#result).
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 #[non_exhaustive]
 pub enum CreateAccountResult {
@@ -1345,7 +1345,7 @@ pub enum CreateAccountResult {
 ///
 /// # Protocol reference
 ///
-/// [`CreateAccountResult`](https://docs.tigerbeetle.com/reference/requests/create_accounts/#result).
+/// [`CreateAccountResult`](https://docs.archerdb.com/reference/requests/create_accounts/#result).
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct CreateAccountsResult {
     pub index: usize,
@@ -1410,7 +1410,7 @@ impl core::fmt::Display for CreateAccountResult {
 ///
 /// # Protocol reference
 ///
-/// [`CreateTransferResult`](https://docs.tigerbeetle.com/reference/requests/create_transfers/#result).
+/// [`CreateTransferResult`](https://docs.archerdb.com/reference/requests/create_transfers/#result).
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 #[non_exhaustive]
 pub enum CreateTransferResult {
@@ -1490,7 +1490,7 @@ pub enum CreateTransferResult {
 ///
 /// # Protocol reference
 ///
-/// [`CreateTransferResult`](https://docs.tigerbeetle.com/reference/requests/create_transfers/#result).
+/// [`CreateTransferResult`](https://docs.archerdb.com/reference/requests/create_transfers/#result).
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct CreateTransfersResult {
     pub index: usize,
@@ -1719,9 +1719,9 @@ impl<const N: usize> Default for Reserved<N> {
 }
 
 fn create_packet<Event>(
-    op: u8, // TB_OPERATION
+    op: u8, // ARCH_OPERATION
     events: &[Event],
-) -> (Box<tbc::tb_packet_t>, Receiver<CompletionMessage<Event>>)
+) -> (Box<tbc::arch_packet_t>, Receiver<CompletionMessage<Event>>)
 where
     Event: Copy + 'static,
 {
@@ -1758,13 +1758,13 @@ where
     let events_ptr = events.as_mut_ptr();
     mem::forget(events);
 
-    let packet = Box::new(tbc::tb_packet_t {
+    let packet = Box::new(tbc::arch_packet_t {
         user_data: Box::into_raw(callback) as *mut c_void,
         data: events_ptr as *mut c_void,
         data_size: (mem::size_of::<Event>() * events_len) as u32,
         user_tag: 0xABCD,
         operation: op,
-        status: tbc::TB_PACKET_STATUS_TB_PACKET_OK,
+        status: tbc::ARCH_PACKET_STATUS_ARCH_PACKET_OK,
         opaque: [0; 64],
     });
 
@@ -1777,7 +1777,7 @@ fn handle_message<CEvent, CResult>(
     let packet = &msg.packet.0;
     let result = &msg.result;
 
-    if packet.status != tbc::TB_PACKET_STATUS_TB_PACKET_OK {
+    if packet.status != tbc::ARCH_PACKET_STATUS_ARCH_PACKET_OK {
         return Err(packet.status.into());
     }
 
@@ -1799,7 +1799,7 @@ fn handle_message<CEvent, CResult>(
 }
 
 // Thread-sendable wrapper for the owned packet.
-struct Packet(Box<tbc::tb_packet_t>);
+struct Packet(Box<tbc::arch_packet_t>);
 
 // Safety: after completion, zig no longer touches the packet; we own it exclusively.
 unsafe impl Send for Packet {}
@@ -1812,11 +1812,11 @@ struct CompletionMessage<E> {
     _events: Vec<E>,
 }
 
-type OnCompletion = Box<dyn FnOnce(usize, *mut tbc::tb_packet_t, u64, *const u8, u32)>;
+type OnCompletion = Box<dyn FnOnce(usize, *mut tbc::arch_packet_t, u64, *const u8, u32)>;
 
 extern "C" fn on_completion(
     context: usize,
-    packet: *mut tbc::tb_packet_t,
+    packet: *mut tbc::arch_packet_t,
     timestamp: u64,
     result_ptr: *const u8,
     result_len: u32,

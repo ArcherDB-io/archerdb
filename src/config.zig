@@ -5,7 +5,7 @@
 //! Code which needs these values should use `constants.zig` instead.
 //! Configuration values are set from a combination of:
 //! - default values
-//! - `root.tigerbeetle_config`
+//! - `root.archerdb_config`
 //! - `@import("archerdb_options")`
 
 const builtin = @import("builtin");
@@ -101,9 +101,7 @@ const ConfigProcess = struct {
     storage_size_limit_default: u64 = 16 * TiB,
     storage_size_limit_max: u64 = 64 * TiB,
     memory_size_max_default: u64 = GiB,
-    cache_accounts_size_default: u64,
-    cache_transfers_size_default: u64,
-    cache_transfers_pending_size_default: u64,
+    cache_geo_events_size_default: u64,
     client_request_queue_max: u32 = 2,
     lsm_manifest_node_size: u64 = 16 * KiB,
     connection_delay_min_ms: u64 = 50,
@@ -161,7 +159,12 @@ const ConfigCluster = struct {
     view_change_headers_suffix_max: u32 = 8 + 1,
     quorum_replication_max: u8 = 3,
     journal_slot_count: u32 = 1024,
-    message_size_max: u32 = 1 * MiB,
+    /// Maximum message size (header + body). Default: 1 MiB.
+    /// NOTE: The spec (constants/spec.md) defines message_size_max = 10 MiB for production,
+    /// which enables batch_events_max = 10,000 and query_result_max = 81,918 (~82k events).
+    /// This provides excellent query performance for spatial queries returning large result sets.
+    /// WAL implication: prepares_ring_size = journal_slot_count × message_size_max
+    message_size_max: u32 = 10 * MiB,
     superblock_copies: comptime_int = 4,
     block_size: comptime_int = 512 * KiB,
     lsm_levels: u6 = 7,
@@ -224,9 +227,7 @@ pub const configs = struct {
     pub const default_production = Config{
         .process = .{
             .direct_io = true,
-            .cache_accounts_size_default = @sizeOf(vsr.tigerbeetle.Account) * MiB,
-            .cache_transfers_size_default = 0,
-            .cache_transfers_pending_size_default = 0,
+            .cache_geo_events_size_default = @sizeOf(vsr.archerdb.GeoEvent) * MiB,
             .verify = true,
         },
         .cluster = .{
@@ -242,9 +243,7 @@ pub const configs = struct {
             .storage_size_limit_default = 1 * GiB,
             .storage_size_limit_max = 1 * GiB,
             .direct_io = false,
-            .cache_accounts_size_default = @sizeOf(vsr.tigerbeetle.Account) * 256,
-            .cache_transfers_size_default = 0,
-            .cache_transfers_pending_size_default = 0,
+            .cache_geo_events_size_default = @sizeOf(vsr.archerdb.GeoEvent) * 256,
             .journal_iops_read_max = 3,
             .journal_iops_write_max = 2,
             .grid_repair_request_max = 4,
@@ -273,8 +272,8 @@ pub const configs = struct {
     };
 
     pub const current = current: {
-        var base = if (@hasDecl(root, "tigerbeetle_config"))
-            root.tigerbeetle_config
+        var base = if (@hasDecl(root, "archerdb_config"))
+            root.archerdb_config
         else if (builtin.is_test)
             test_min
         else

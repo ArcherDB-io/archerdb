@@ -91,6 +91,7 @@ The system SHALL enumerate all error codes with complete metadata in a central t
 | 209 | index_rebuilding | RAM index is being rebuilt from LSM | Yes | progress_percent |
 | 210 | entity_expired | Entity has expired due to TTL | No | entity_id, expiration_time, current_time |
 | 211 | resource_exhausted | Internal resource pool exhausted | Yes | resource_type, current_usage, max_capacity |
+| 212 | backup_required | Writes halted pending backup (mandatory mode) | Yes | last_backup_op, mandatory_halt_timeout |
 | 300 | too_many_events | Batch exceeds batch_events_max | No | batch_size, batch_events_max |
 | 301 | message_body_too_large | Message body exceeds message_body_size_max | No | body_size, message_body_size_max |
 | 302 | result_set_too_large | Query result exceeds message size limit | No | result_count, max_result_count |
@@ -109,7 +110,7 @@ The system SHALL enumerate all error codes with complete metadata in a central t
 | 404 | cluster_key_mismatch | Cluster key does not match | No | (none) |
 | 500 | internal_error | Unexpected internal error (bug) | No | file, line, message |
 | 501 | assertion_failed | Internal assertion failed (bug) | No | file, line, assertion |
-| 502 | unreachable | Reached supposedly unreachable code (bug) | No | file, line |
+| 502 | unreachable_reached | Reached supposedly unreachable code (bug) | No | file, line |
 | 503 | corruption_detected | Data corruption detected | No | address, expected_checksum, actual_checksum, data_type |
 | 504 | invariant_violation | System invariant violated (bug) | No | invariant_name, file, line |
 
@@ -357,7 +358,7 @@ The system SHALL define explicit test scenarios for every error code to ensure c
 - **THEN** the following test cases SHALL be verified:
   - **Code 500 (internal_error)**: Unexpected error logged with file:line
   - **Code 501 (assertion_failed)**: Comptime or runtime assertion triggers
-  - **Code 502 (unreachable)**: Code path marked @unreachable is hit
+  - **Code 502 (unreachable_reached)**: Code path marked @unreachable is hit
   - **Code 503 (corruption_detected)**: Checksum mismatch on read triggers
   - **Code 504 (invariant_violation)**: System invariant check fails
 
@@ -369,3 +370,33 @@ The system SHALL define explicit test scenarios for every error code to ensure c
 - See `specs/query-engine/spec.md` for state machine error handling
 - See `specs/observability/spec.md` for error metrics and logging
 - See `specs/storage-engine/spec.md` for storage error conditions
+
+## Implementation Status
+
+**Overall: COMPLETE**
+
+### Error Code Enums
+
+| Category | File | Status |
+|----------|------|--------|
+| ProtocolError (1-10) | `src/error_codes.zig:14-62` | ✓ Complete |
+| ValidationError (100-116) | `src/error_codes.zig:65-131` | ✓ Complete |
+| StateError (200-212) | `src/error_codes.zig:134-188` | ✓ Complete |
+| ResourceError (300-310) | `src/error_codes.zig:191-239` | ✓ Complete |
+| SecurityError (400-404) | `src/error_codes.zig:242-278` | ✓ Complete |
+| InternalError (500-504) | `src/error_codes.zig:281-312` | ✓ Complete |
+
+### Core Functions
+
+| Function | File:Line | Status |
+|----------|-----------|--------|
+| isRetriable() | `src/error_codes.zig:314-356` | ✓ Complete |
+| description() | Multiple locations | ✓ Complete (per enum) |
+| ErrorCode union | `src/error_codes.zig:360-420` | ✓ Complete |
+
+### Implementation Notes
+
+- Uses union-of-enums pattern for type safety (differs from spec's single enum)
+- All numeric codes match specification exactly
+- 50+ unit tests covering all error codes and edge cases
+- description() function names differ from spec's message() (functional equivalent)

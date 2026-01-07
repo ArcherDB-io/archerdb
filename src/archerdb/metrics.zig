@@ -318,11 +318,86 @@ pub const Registry = struct {
         null,
     );
 
+    // Per-operation write metrics (observability/spec.md requirement)
+    pub var write_ops_insert: Counter = Counter.init(
+        "archerdb_write_operations_total",
+        "Total write operations processed",
+        "operation=\"insert\"",
+    );
+
+    pub var write_ops_upsert: Counter = Counter.init(
+        "archerdb_write_operations_total",
+        "Total write operations processed",
+        "operation=\"upsert\"",
+    );
+
+    pub var write_ops_delete: Counter = Counter.init(
+        "archerdb_write_operations_total",
+        "Total write operations processed",
+        "operation=\"delete\"",
+    );
+
+    pub var write_errors_total: Counter = Counter.init(
+        "archerdb_write_errors_total",
+        "Total write errors",
+        null,
+    );
+
+    // Delete metrics (F2.5.5 - GDPR entity deletion)
+    pub var delete_operations_total: Counter = Counter.init(
+        "archerdb_delete_operations_total",
+        "Total delete operations processed",
+        null,
+    );
+
+    pub var delete_entities_total: Counter = Counter.init(
+        "archerdb_delete_entities_total",
+        "Total entities deleted",
+        null,
+    );
+
+    pub var delete_errors_total: Counter = Counter.init(
+        "archerdb_delete_errors_total",
+        "Total delete errors",
+        null,
+    );
+
+    pub var delete_latency: LatencyHistogram = latencyHistogram(
+        "archerdb_delete_latency_seconds",
+        "Delete operation latency histogram",
+        null,
+    );
+
     // Read metrics
     pub var read_operations_total: Counter = Counter.init(
         "archerdb_read_operations_total",
         "Total read operations processed",
         null,
+    );
+
+    // Per-operation read metrics (observability/spec.md requirement)
+    pub var read_ops_query_uuid: Counter = Counter.init(
+        "archerdb_read_operations_total",
+        "Total read operations processed",
+        "operation=\"query_uuid\"",
+    );
+
+    pub var read_ops_query_radius: Counter = Counter.init(
+        "archerdb_read_operations_total",
+        "Total read operations processed",
+        "operation=\"query_radius\"",
+    );
+
+    pub var read_ops_query_polygon: Counter = Counter.init(
+        "archerdb_read_operations_total",
+        "Total read operations processed",
+        "operation=\"query_polygon\"",
+    );
+
+    pub var read_ops_query_latest: Counter = Counter.init(
+        "archerdb_read_operations_total",
+        "Total read operations processed",
+        "operation=\"query_latest\"",
     );
 
     pub var read_events_returned_total: Counter = Counter.init(
@@ -350,17 +425,54 @@ pub const Registry = struct {
         null,
     );
 
+    // Index capacity and health metrics (F5.2 - Observability)
+    pub var index_capacity_warning_total: Counter = Counter.init(
+        "archerdb_index_capacity_warning_total",
+        "Index capacity warnings (80% threshold)",
+        null,
+    );
+
+    pub var index_capacity_critical_total: Counter = Counter.init(
+        "archerdb_index_capacity_critical_total",
+        "Index capacity critical alerts (90% threshold)",
+        null,
+    );
+
+    pub var index_capacity_emergency_total: Counter = Counter.init(
+        "archerdb_index_capacity_emergency_total",
+        "Index capacity emergency alerts (95% threshold)",
+        null,
+    );
+
+    pub var index_tombstone_ratio: Gauge = Gauge.init(
+        "archerdb_index_tombstone_ratio",
+        "Current tombstone ratio in RAM index (percentage * 100)",
+        null,
+    );
+
+    // NOTE: index_load_factor already defined below in existing metrics section
+
+    // Query result size distribution (F5.2 - Observability)
+    // Buckets: 1, 10, 100, 500, 1000, 5000, 10000, 50000, 100000 events
+    pub const QueryResultSizeHistogram = HistogramType(9);
+    pub var query_result_size: QueryResultSizeHistogram = QueryResultSizeHistogram.init(
+        "archerdb_query_result_events",
+        "Distribution of query result set sizes",
+        null,
+        .{ 1, 10, 100, 500, 1000, 5000, 10000, 50000, 100000 },
+    );
+
+    // I/O latency monitoring (F5.2 - Observability)
+    pub var io_latency_exceeded_total: Counter = Counter.init(
+        "archerdb_io_latency_exceeded_total",
+        "I/O operations exceeding latency threshold (p99 > 100us)",
+        null,
+    );
+
     // Connection metrics
     pub var active_connections: Gauge = Gauge.init(
         "archerdb_active_connections",
         "Number of active client connections",
-        null,
-    );
-
-    // Error metrics
-    pub var write_errors_total: Counter = Counter.init(
-        "archerdb_write_errors_total",
-        "Total write operation errors",
         null,
     );
 
@@ -605,15 +717,47 @@ pub const Registry = struct {
         try write_events_total.format(writer);
         try write_bytes_total.format(writer);
         try write_latency.format(writer);
+        // Per-operation write metrics
+        try write_ops_insert.format(writer);
+        try write_ops_upsert.format(writer);
+        try write_ops_delete.format(writer);
+        try write_errors_total.format(writer);
+        try writer.writeAll("\n");
+
+        // Delete metrics (GDPR entity deletion)
+        try delete_operations_total.format(writer);
+        try delete_entities_total.format(writer);
+        try delete_errors_total.format(writer);
+        try delete_latency.format(writer);
         try writer.writeAll("\n");
 
         try read_operations_total.format(writer);
         try read_events_returned_total.format(writer);
         try read_latency.format(writer);
+        // Per-operation read metrics
+        try read_ops_query_uuid.format(writer);
+        try read_ops_query_radius.format(writer);
+        try read_ops_query_polygon.format(writer);
+        try read_ops_query_latest.format(writer);
         try writer.writeAll("\n");
 
         try index_lookups_total.format(writer);
         try index_lookup_latency.format(writer);
+        try writer.writeAll("\n");
+
+        // Index capacity and health metrics
+        try index_capacity_warning_total.format(writer);
+        try index_capacity_critical_total.format(writer);
+        try index_capacity_emergency_total.format(writer);
+        try index_tombstone_ratio.format(writer);
+        try writer.writeAll("\n");
+
+        // Query result size distribution
+        try query_result_size.format(writer);
+        try writer.writeAll("\n");
+
+        // I/O latency monitoring
+        try io_latency_exceeded_total.format(writer);
         try writer.writeAll("\n");
 
         try active_connections.format(writer);

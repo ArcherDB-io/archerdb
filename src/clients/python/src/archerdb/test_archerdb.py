@@ -20,6 +20,8 @@ from . import (
     BATCH_SIZE_MAX,
     QUERY_LIMIT_MAX,
     POLYGON_VERTICES_MAX,
+    POLYGON_HOLES_MAX,
+    POLYGON_HOLE_VERTICES_MIN,
     # Enums
     GeoEventFlags,
     GeoOperation,
@@ -112,6 +114,8 @@ class TestConstants(unittest.TestCase):
         self.assertEqual(BATCH_SIZE_MAX, 10_000)
         self.assertEqual(QUERY_LIMIT_MAX, 81_000)
         self.assertEqual(POLYGON_VERTICES_MAX, 10_000)
+        self.assertEqual(POLYGON_HOLES_MAX, 100)
+        self.assertEqual(POLYGON_HOLE_VERTICES_MIN, 3)
 
 
 class TestGeoEventFlags(unittest.TestCase):
@@ -427,6 +431,64 @@ class TestCreatePolygonQuery(unittest.TestCase):
         with self.assertRaises(ValueError) as ctx:
             create_polygon_query([(0, 0), (91, 0), (0, 1)])
         self.assertIn("Invalid latitude", str(ctx.exception))
+
+    def test_polygon_with_hole(self):
+        """Create polygon query with a hole."""
+        # Outer boundary (square)
+        outer = [(0.0, 0.0), (0.0, 1.0), (1.0, 1.0), (1.0, 0.0)]
+        # Hole (smaller square inside)
+        hole = [(0.25, 0.25), (0.25, 0.75), (0.75, 0.75), (0.75, 0.25)]
+
+        query = create_polygon_query(outer, holes=[hole])
+        self.assertEqual(len(query.vertices), 4)
+        self.assertEqual(len(query.holes), 1)
+        self.assertEqual(len(query.holes[0].vertices), 4)
+
+    def test_polygon_with_multiple_holes(self):
+        """Create polygon query with multiple holes."""
+        outer = [(0.0, 0.0), (0.0, 10.0), (10.0, 10.0), (10.0, 0.0)]
+        hole1 = [(1.0, 1.0), (1.0, 2.0), (2.0, 2.0), (2.0, 1.0)]
+        hole2 = [(3.0, 3.0), (3.0, 4.0), (4.0, 4.0), (4.0, 3.0)]
+
+        query = create_polygon_query(outer, holes=[hole1, hole2])
+        self.assertEqual(len(query.holes), 2)
+        self.assertEqual(len(query.holes[0].vertices), 4)
+        self.assertEqual(len(query.holes[1].vertices), 4)
+
+    def test_too_few_hole_vertices_raises(self):
+        """Hole with less than 3 vertices raises ValueError."""
+        outer = [(0.0, 0.0), (0.0, 1.0), (1.0, 1.0), (1.0, 0.0)]
+        hole = [(0.25, 0.25), (0.25, 0.75)]  # Only 2 vertices
+
+        with self.assertRaises(ValueError) as ctx:
+            create_polygon_query(outer, holes=[hole])
+        self.assertIn("at least", str(ctx.exception))
+        self.assertIn("vertices", str(ctx.exception))
+
+    def test_too_many_holes_raises(self):
+        """More than 100 holes raises ValueError."""
+        from . import POLYGON_HOLES_MAX
+
+        outer = [(0.0, 0.0), (0.0, 1.0), (1.0, 1.0), (1.0, 0.0)]
+        # Create 101 holes (exceeds max of 100)
+        holes = [
+            [(0.1 + i * 0.001, 0.1), (0.1 + i * 0.001, 0.2), (0.2 + i * 0.001, 0.2)]
+            for i in range(POLYGON_HOLES_MAX + 1)
+        ]
+
+        with self.assertRaises(ValueError) as ctx:
+            create_polygon_query(outer, holes=holes)
+        self.assertIn("Too many holes", str(ctx.exception))
+
+    def test_invalid_hole_vertex_raises(self):
+        """Invalid hole vertex coordinates raise ValueError."""
+        outer = [(0.0, 0.0), (0.0, 1.0), (1.0, 1.0), (1.0, 0.0)]
+        hole = [(91.0, 0.0), (91.0, 0.5), (91.5, 0.5)]  # Invalid latitude
+
+        with self.assertRaises(ValueError) as ctx:
+            create_polygon_query(outer, holes=[hole])
+        self.assertIn("Invalid latitude", str(ctx.exception))
+        self.assertIn("hole", str(ctx.exception))
 
 
 class TestQueryResult(unittest.TestCase):

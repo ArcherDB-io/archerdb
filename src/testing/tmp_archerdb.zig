@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2024-2025 ArcherDB Contributors
-//! TmpTigerBeetle is an utility for integration tests, which spawns a single node TigerBeetle
+//! TmpArcherDB is an utility for integration tests, which spawns a single node ArcherDB
 //! cluster in a temporary directory.
 
 const std = @import("std");
@@ -12,13 +12,13 @@ const Shell = @import("../shell.zig");
 
 const MiB = stdx.MiB;
 
-const log = std.log.scoped(.tmptigerbeetle);
+const log = std.log.scoped(.tmparcherdb);
 
-const TmpTigerBeetle = @This();
+const TmpArcherDB = @This();
 
 /// Path to the executable.
-tigerbeetle_exe: []const u8,
-/// Port the TigerBeetle instance is listening on.
+archerdb_exe: []const u8,
+/// Port the ArcherDB instance is listening on.
 port: u16,
 /// For convenience, the same port pre-converted to string.
 port_str: []const u8,
@@ -39,7 +39,7 @@ pub fn init(
         development: bool,
         prebuilt: ?[]const u8 = null,
     },
-) !TmpTigerBeetle {
+) !TmpArcherDB {
     const shell = try Shell.create(gpa);
     defer shell.destroy();
 
@@ -47,28 +47,28 @@ pub fn init(
     defer if (from_source_path) |path| gpa.free(path);
 
     if (options.prebuilt == null) {
-        const tigerbeetle_exe = comptime "tigerbeetle" ++ builtin.target.exeFileExt();
+        const archerdb_exe = comptime "archerdb" ++ builtin.target.exeFileExt();
 
-        // If tigerbeetle binary does not exist yet, build it.
+        // If archerdb binary does not exist yet, build it.
         //
         // TODO: just run `zig build run` unconditionally here, when that doesn't do spurious
         // rebuilds.
-        _ = shell.project_root.statFile(tigerbeetle_exe) catch {
-            log.info("building TigerBeetle", .{});
+        _ = shell.project_root.statFile(archerdb_exe) catch {
+            log.info("building ArcherDB", .{});
             try shell.exec_zig("build", .{});
 
-            _ = try shell.project_root.statFile(tigerbeetle_exe);
+            _ = try shell.project_root.statFile(archerdb_exe);
         };
 
-        from_source_path = try shell.project_root.realpathAlloc(gpa, tigerbeetle_exe);
+        from_source_path = try shell.project_root.realpathAlloc(gpa, archerdb_exe);
     }
 
-    const tigerbeetle_exe: []const u8 = try gpa.dupe(
+    const archerdb_exe: []const u8 = try gpa.dupe(
         u8,
         options.prebuilt orelse from_source_path.?,
     );
-    errdefer gpa.free(tigerbeetle_exe);
-    assert(std.fs.path.isAbsolute(tigerbeetle_exe));
+    errdefer gpa.free(archerdb_exe);
+    assert(std.fs.path.isAbsolute(archerdb_exe));
 
     var tmp_dir = std.testing.tmpDir(.{});
     errdefer tmp_dir.cleanup();
@@ -76,12 +76,12 @@ pub fn init(
     const tmp_dir_path = try tmp_dir.dir.realpathAlloc(gpa, ".");
     defer gpa.free(tmp_dir_path);
 
-    const data_file: []const u8 = try std.fs.path.join(gpa, &.{ tmp_dir_path, "0_0.tigerbeetle" });
+    const data_file: []const u8 = try std.fs.path.join(gpa, &.{ tmp_dir_path, "0_0.archerdb" });
     defer gpa.free(data_file);
 
     try shell.exec(
-        "{tigerbeetle} format --cluster=0 --replica=0 --replica-count=1 {data_file}",
-        .{ .tigerbeetle = tigerbeetle_exe, .data_file = data_file },
+        "{archerdb} format --cluster=0 --replica=0 --replica-count=1 {data_file}",
+        .{ .archerdb = archerdb_exe, .data_file = data_file },
     );
 
     var reader_maybe: ?*StreamReader = null;
@@ -92,9 +92,9 @@ pub fn init(
             .stdout_behavior = .Pipe,
             .stderr_behavior = .Pipe,
         },
-        "{tigerbeetle} start --development={development} --addresses=0 {data_file}",
+        "{archerdb} start --development={development} --addresses=0 {data_file}",
         .{
-            .tigerbeetle = tigerbeetle_exe,
+            .archerdb = archerdb_exe,
             .development = if (options.development) "true" else "false",
             .data_file = data_file,
         },
@@ -113,7 +113,7 @@ pub fn init(
     const port = port: {
         var exit_status: ?std.process.Child.Term = null;
         errdefer log.err(
-            "failed to read port number from tigerbeetle process: {?}",
+            "failed to read port number from archerdb process: {?}",
             .{exit_status},
         );
 
@@ -130,8 +130,8 @@ pub fn init(
     const port_str = try std.fmt.allocPrint(gpa, "{d}", .{port});
     errdefer gpa.free(port_str);
 
-    return TmpTigerBeetle{
-        .tigerbeetle_exe = tigerbeetle_exe,
+    return TmpArcherDB{
+        .archerdb_exe = archerdb_exe,
         .port = port,
         .port_str = port_str,
         .tmp_dir = tmp_dir,
@@ -140,7 +140,7 @@ pub fn init(
     };
 }
 
-pub fn deinit(tb: *TmpTigerBeetle, gpa: std.mem.Allocator) void {
+pub fn deinit(tb: *TmpArcherDB, gpa: std.mem.Allocator) void {
     if (tb.stderr_reader.log_stderr.load(.seq_cst) == .on_early_exit) {
         tb.stderr_reader.log_stderr.store(.no, .seq_cst);
     }
@@ -149,10 +149,10 @@ pub fn deinit(tb: *TmpTigerBeetle, gpa: std.mem.Allocator) void {
     assert(tb.process.term != null);
     gpa.free(tb.port_str);
     tb.tmp_dir.cleanup();
-    gpa.free(tb.tigerbeetle_exe);
+    gpa.free(tb.archerdb_exe);
 }
 
-pub fn log_stderr(tb: *TmpTigerBeetle) void {
+pub fn log_stderr(tb: *TmpArcherDB) void {
     tb.stderr_reader.log_stderr.store(.yes, .seq_cst);
 }
 
@@ -206,7 +206,7 @@ const StreamReader = struct {
         reader.file.reader().readAllArrayList(&buffer, 100 * MiB) catch {};
         switch (reader.log_stderr.load(.seq_cst)) {
             .on_early_exit, .yes => {
-                log.err("tigerbeetle stderr:\n++++\n{s}\n++++", .{buffer.items});
+                log.err("archerdb stderr:\n++++\n{s}\n++++", .{buffer.items});
             },
             .no => {},
         }

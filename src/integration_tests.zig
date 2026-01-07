@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2024-2025 ArcherDB Contributors
-//! Integration tests for TigerBeetle. Although the term is not particularly well-defined, here
+//! Integration tests for ArcherDB. Although the term is not particularly well-defined, here
 //! it means a specific thing:
 //!
-//!   * the test binary itself doesn't contain any code from TigerBeetle,
-//!   * but it has access to a pre-build `./tigerbeetle` binary.
+//!   * the test binary itself doesn't contain any code from ArcherDB,
+//!   * but it has access to a pre-build `./archerdb` binary.
 //!
-//! All the testing is done through interacting with a separate tigerbeetle process.
+//! All the testing is done through interacting with a separate ArcherDB process.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -16,17 +16,17 @@ const assert = std.debug.assert;
 const Shell = @import("./shell.zig");
 const Snap = stdx.Snap;
 const snap = Snap.snap_fn("src");
-const TmpTigerBeetle = @import("./testing/tmp_archerdb.zig");
+const TmpArcherDB = @import("./testing/tmp_archerdb.zig");
 
 const stdx = @import("stdx");
 const ratio = stdx.PRNG.ratio;
 
 const vortex_exe: []const u8 = @import("test_options").vortex_exe;
-const tigerbeetle: []const u8 = @import("test_options").tigerbeetle_exe;
-const tigerbeetle_past: []const u8 = @import("test_options").tigerbeetle_exe_past;
+const archerdb: []const u8 = @import("test_options").archerdb_exe;
+const archerdb_past: []const u8 = @import("test_options").archerdb_exe_past;
 
 comptime {
-    _ = @import("clients/c/tb_client_header_test.zig");
+    _ = @import("clients/c/arch_client_header_test.zig");
 }
 
 test "repl integration" {
@@ -34,38 +34,38 @@ test "repl integration" {
         const Context = @This();
 
         shell: *Shell,
-        tigerbeetle_exe: []const u8,
-        tmp_beetle: TmpTigerBeetle,
+        archerdb_exe: []const u8,
+        tmp_archerdb: TmpArcherDB,
 
         fn init() !Context {
             const shell = try Shell.create(std.testing.allocator);
             errdefer shell.destroy();
 
-            var tmp_beetle = try TmpTigerBeetle.init(std.testing.allocator, .{
+            var tmp_archerdb = try TmpArcherDB.init(std.testing.allocator, .{
                 .development = true,
-                .prebuilt = tigerbeetle,
+                .prebuilt = archerdb,
             });
-            errdefer tmp_beetle.deinit(std.testing.allocator);
+            errdefer tmp_archerdb.deinit(std.testing.allocator);
 
             return Context{
                 .shell = shell,
-                .tigerbeetle_exe = tigerbeetle,
-                .tmp_beetle = tmp_beetle,
+                .archerdb_exe = archerdb,
+                .tmp_archerdb = tmp_archerdb,
             };
         }
 
         fn deinit(context: *Context) void {
-            context.tmp_beetle.deinit(std.testing.allocator);
+            context.tmp_archerdb.deinit(std.testing.allocator);
             context.shell.destroy();
             context.* = undefined;
         }
 
         fn repl_command(context: *Context, command: []const u8) ![]const u8 {
             return try context.shell.exec_stdout(
-                \\{tigerbeetle} repl --cluster=0 --addresses={addresses} --command={command}
+                \\{archerdb} repl --cluster=0 --addresses={addresses} --command={command}
             , .{
-                .tigerbeetle = context.tigerbeetle_exe,
-                .addresses = context.tmp_beetle.port_str,
+                .archerdb = context.archerdb_exe,
+                .addresses = context.tmp_archerdb.port_str,
                 .command = command,
             });
         }
@@ -79,163 +79,28 @@ test "repl integration" {
     var context = try Context.init();
     defer context.deinit();
 
+    // Insert a geo event for entity 100 at NYC coordinates
     try context.check(
-        \\create_accounts id=1 flags=linked|history code=10 ledger=700, id=2 code=10 ledger=700
+        \\insert_events entity_id=100 lat_nano=40712800000000000 lon_nano=-74006000000000000 group_id=1
     , snap(@src(), ""));
 
+    // Insert another event for the same entity
     try context.check(
-        \\create_transfers id=1 debit_account_id=1
-        \\  credit_account_id=2 amount=10 ledger=700 code=10
+        \\insert_events entity_id=100 lat_nano=40714000000000000 lon_nano=-74005000000000000 group_id=1 velocity_mms=5000
     , snap(@src(), ""));
 
+    // Query events by UUID (entity_id)
     try context.check(
-        \\lookup_accounts id=1
+        \\query_uuid entity_id=100 limit=10
     , snap(@src(),
-        \\{
-        \\  "id": "1",
-        \\  "debits_pending": "0",
-        \\  "debits_posted": "10",
-        \\  "credits_pending": "0",
-        \\  "credits_posted": "0",
-        \\  "user_data_128": "0",
-        \\  "user_data_64": "0",
-        \\  "user_data_32": "0",
-        \\  "ledger": "700",
-        \\  "code": "10",
-        \\  "flags": ["linked","history"],
-        \\  "timestamp": "<snap:ignore>"
-        \\}
-        \\
+        \\<snap:ignore>
     ));
 
+    // Query latest events globally
     try context.check(
-        \\lookup_accounts id=2
+        \\query_latest limit=10
     , snap(@src(),
-        \\{
-        \\  "id": "2",
-        \\  "debits_pending": "0",
-        \\  "debits_posted": "0",
-        \\  "credits_pending": "0",
-        \\  "credits_posted": "10",
-        \\  "user_data_128": "0",
-        \\  "user_data_64": "0",
-        \\  "user_data_32": "0",
-        \\  "ledger": "700",
-        \\  "code": "10",
-        \\  "flags": [],
-        \\  "timestamp": "<snap:ignore>"
-        \\}
-        \\
-    ));
-
-    try context.check(
-        \\query_accounts code=10 ledger=700
-    , snap(@src(),
-        \\{
-        \\  "id": "1",
-        \\  "debits_pending": "0",
-        \\  "debits_posted": "10",
-        \\  "credits_pending": "0",
-        \\  "credits_posted": "0",
-        \\  "user_data_128": "0",
-        \\  "user_data_64": "0",
-        \\  "user_data_32": "0",
-        \\  "ledger": "700",
-        \\  "code": "10",
-        \\  "flags": ["linked","history"],
-        \\  "timestamp": "<snap:ignore>"
-        \\}
-        \\{
-        \\  "id": "2",
-        \\  "debits_pending": "0",
-        \\  "debits_posted": "0",
-        \\  "credits_pending": "0",
-        \\  "credits_posted": "10",
-        \\  "user_data_128": "0",
-        \\  "user_data_64": "0",
-        \\  "user_data_32": "0",
-        \\  "ledger": "700",
-        \\  "code": "10",
-        \\  "flags": [],
-        \\  "timestamp": "<snap:ignore>"
-        \\}
-        \\
-    ));
-
-    try context.check(
-        \\lookup_transfers id=1
-    , snap(@src(),
-        \\{
-        \\  "id": "1",
-        \\  "debit_account_id": "1",
-        \\  "credit_account_id": "2",
-        \\  "amount": "10",
-        \\  "pending_id": "0",
-        \\  "user_data_128": "0",
-        \\  "user_data_64": "0",
-        \\  "user_data_32": "0",
-        \\  "timeout": "0",
-        \\  "ledger": "700",
-        \\  "code": "10",
-        \\  "flags": [],
-        \\  "timestamp": "<snap:ignore>"
-        \\}
-        \\
-    ));
-
-    try context.check(
-        \\query_transfers code=10 ledger=700
-    , snap(@src(),
-        \\{
-        \\  "id": "1",
-        \\  "debit_account_id": "1",
-        \\  "credit_account_id": "2",
-        \\  "amount": "10",
-        \\  "pending_id": "0",
-        \\  "user_data_128": "0",
-        \\  "user_data_64": "0",
-        \\  "user_data_32": "0",
-        \\  "timeout": "0",
-        \\  "ledger": "700",
-        \\  "code": "10",
-        \\  "flags": [],
-        \\  "timestamp": "<snap:ignore>"
-        \\}
-        \\
-    ));
-
-    try context.check(
-        \\get_account_transfers account_id=2
-    , snap(@src(),
-        \\{
-        \\  "id": "1",
-        \\  "debit_account_id": "1",
-        \\  "credit_account_id": "2",
-        \\  "amount": "10",
-        \\  "pending_id": "0",
-        \\  "user_data_128": "0",
-        \\  "user_data_64": "0",
-        \\  "user_data_32": "0",
-        \\  "timeout": "0",
-        \\  "ledger": "700",
-        \\  "code": "10",
-        \\  "flags": [],
-        \\  "timestamp": "<snap:ignore>"
-        \\}
-        \\
-    ));
-
-    try context.check(
-        \\get_account_balances account_id=1
-    , snap(@src(),
-        \\{
-        \\  "debits_pending": "0",
-        \\  "debits_posted": "10",
-        \\  "credits_pending": "0",
-        \\  "credits_posted": "0",
-        \\  "timestamp": "<snap:ignore>"
-        \\}
-        \\
+        \\<snap:ignore>
     ));
 }
 
@@ -244,7 +109,7 @@ test "benchmark/inspect smoke" {
         var random_bytes: [4]u8 = undefined;
         std.crypto.random.bytes(&random_bytes);
         const random_suffix: [8]u8 = std.fmt.bytesToHex(random_bytes, .lower);
-        break :data_file "0_0-" ++ random_suffix ++ ".tigerbeetle.benchmark";
+        break :data_file "0_0-" ++ random_suffix ++ ".archerdb.benchmark";
     };
     defer std.fs.cwd().deleteFile(data_file) catch {};
 
@@ -255,52 +120,52 @@ test "benchmark/inspect smoke" {
     defer shell.destroy();
 
     try shell.exec(
-        "{tigerbeetle} benchmark" ++
-            " --transfer-count=10_000" ++
-            " --transfer-batch-size=10" ++
+        "{archerdb} benchmark" ++
+            " --event-count=10_000" ++
+            " --event-batch-size=10" ++
             " --validate" ++
             " --trace={trace_file}" ++
             " --statsd=127.0.0.1:65535" ++
             " --file={data_file}",
         .{
-            .tigerbeetle = tigerbeetle,
+            .archerdb = archerdb,
             .trace_file = trace_file,
             .data_file = data_file,
         },
     );
 
     inline for (.{
-        "{tigerbeetle} inspect constants",
-        "{tigerbeetle} inspect metrics",
+        "{archerdb} inspect constants",
+        "{archerdb} inspect metrics",
     }) |command| {
         log.debug("{s}", .{command});
-        try shell.exec(command, .{ .tigerbeetle = tigerbeetle });
+        try shell.exec(command, .{ .archerdb = archerdb });
     }
 
     inline for (.{
-        "{tigerbeetle} inspect superblock              {path}",
-        "{tigerbeetle} inspect wal --slot=0            {path}",
-        "{tigerbeetle} inspect replies                 {path}",
-        "{tigerbeetle} inspect replies --slot=0        {path}",
-        "{tigerbeetle} inspect grid                    {path}",
-        "{tigerbeetle} inspect manifest                {path}",
-        "{tigerbeetle} inspect tables --tree=transfers {path}",
-        "{tigerbeetle} inspect integrity               {path}",
+        "{archerdb} inspect superblock              {path}",
+        "{archerdb} inspect wal --slot=0            {path}",
+        "{archerdb} inspect replies                 {path}",
+        "{archerdb} inspect replies --slot=0        {path}",
+        "{archerdb} inspect grid                    {path}",
+        "{archerdb} inspect manifest                {path}",
+        "{archerdb} inspect tables --tree=geo_events {path}",
+        "{archerdb} inspect integrity               {path}",
     }) |command| {
         log.debug("{s}", .{command});
 
         try shell.exec(
             command,
-            .{ .tigerbeetle = tigerbeetle, .path = data_file },
+            .{ .archerdb = archerdb, .path = data_file },
         );
     }
 
     // Corrupt the data file, and ensure the integrity check fails. Due to how it works, the
     // corruption has to be in a spot that's actually used. Take the first offset from
-    // `tigerbeetle inspect tables --tree=transfers`.
+    // `archerdb inspect tables --tree=geo_events`.
     const tables_output = try shell.exec_stdout(
-        "{tigerbeetle} inspect tables --tree=transfers {path}",
-        .{ .tigerbeetle = tigerbeetle, .path = data_file },
+        "{archerdb} inspect tables --tree=geo_events {path}",
+        .{ .archerdb = archerdb, .path = data_file },
     );
 
     const offset = try std.fmt.parseInt(
@@ -323,7 +188,7 @@ test "benchmark/inspect smoke" {
     // `shell.exec` assumes that success is a zero exit code; but in this case the test expects
     // corruption to be found and wants to assert a non-zero exit code.
     var child = std.process.Child.init(
-        &.{ tigerbeetle, "inspect", "integrity", data_file },
+        &.{ archerdb, "inspect", "integrity", data_file },
         std.testing.allocator,
     );
     child.stdout_behavior = .Ignore;
@@ -343,12 +208,12 @@ test "help/version smoke" {
     // The substring is chosen to be mostly stable, but from (near) the end of the output, to catch
     // a missed buffer flush.
     inline for (.{
-        .{ .command = "{tigerbeetle} --help", .substring = "tigerbeetle repl" },
-        .{ .command = "{tigerbeetle} inspect --help", .substring = "tables --tree" },
-        .{ .command = "{tigerbeetle} version", .substring = "ArcherDB version" },
-        .{ .command = "{tigerbeetle} version --verbose", .substring = "process.aof_recovery=" },
+        .{ .command = "{archerdb} --help", .substring = "archerdb repl" },
+        .{ .command = "{archerdb} inspect --help", .substring = "tables --tree" },
+        .{ .command = "{archerdb} version", .substring = "ArcherDB version" },
+        .{ .command = "{archerdb} version --verbose", .substring = "process.aof_recovery=" },
     }) |check| {
-        const output = try shell.exec_stdout(check.command, .{ .tigerbeetle = tigerbeetle });
+        const output = try shell.exec_stdout(check.command, .{ .archerdb = archerdb });
         try std.testing.expect(output.len > 0);
         try std.testing.expect(std.mem.indexOf(u8, output, check.substring) != null);
     }
@@ -357,7 +222,7 @@ test "help/version smoke" {
 test "in-place upgrade" {
     // Smoke test that in-place upgrades work.
     //
-    // Starts a cluster of three replicas using the previous release of TigerBeetle and then
+    // Starts a cluster of three replicas using the previous release of ArcherDB and then
     // replaces the binaries on disk with a new version.
     //
     // Against this upgrading cluster, we are running a benchmark load and checking that it finishes
@@ -378,7 +243,7 @@ test "in-place upgrade" {
         try cluster.replica_install(replica_index, .past);
         try cluster.replica_format(replica_index);
     }
-    try cluster.workload_start(.{ .transfer_count = 2_000_000 });
+    try cluster.workload_start(.{ .event_count = 2_000_000 });
 
     for (0..replica_count) |replica_index| {
         try cluster.replica_spawn(replica_index);
@@ -438,7 +303,7 @@ test "recover smoke" {
     try cluster.replica_format(0);
     try cluster.replica_format(1);
     try cluster.replica_format(2);
-    try cluster.workload_start(.{ .transfer_count = 200_000 });
+    try cluster.workload_start(.{ .event_count = 200_000 });
     try cluster.replica_spawn(0);
     try cluster.replica_spawn(1);
     try cluster.replica_spawn(2);
@@ -495,12 +360,12 @@ const TmpCluster = struct {
         var replica_exe: [replica_count][]const u8 = @splat("");
         var replica_datafile: [replica_count][]const u8 = @splat("");
         for (0..replica_count) |replica_index| {
-            replica_exe[replica_index] = try shell.fmt("{s}/tigerbeetle{}{s}", .{
+            replica_exe[replica_index] = try shell.fmt("{s}/archerdb{}{s}", .{
                 tmp,
                 replica_index,
                 builtin.target.exeFileExt(),
             });
-            replica_datafile[replica_index] = try shell.fmt("{s}/0_{}.tigerbeetle", .{
+            replica_datafile[replica_index] = try shell.fmt("{s}/0_{}.archerdb", .{
                 tmp,
                 replica_index,
             });
@@ -542,8 +407,8 @@ const TmpCluster = struct {
         const destination = cluster.replica_exe[replica_index];
         try cluster.shell.cwd.copyFile(
             switch (version) {
-                .past => tigerbeetle_past,
-                .current => tigerbeetle,
+                .past => archerdb_past,
+                .current => archerdb,
             },
             cluster.shell.cwd,
             destination,
@@ -556,9 +421,9 @@ const TmpCluster = struct {
         assert(cluster.replicas[replica_index] == null);
 
         try cluster.shell.exec(
-            \\{tigerbeetle} format --cluster=0 --replica={replica} --replica-count=3 {datafile}
+            \\{archerdb} format --cluster=0 --replica={replica} --replica-count=3 {datafile}
         , .{
-            .tigerbeetle = cluster.replica_exe[replica_index],
+            .archerdb = cluster.replica_exe[replica_index],
             .replica = replica_index,
             .datafile = cluster.replica_datafile[replica_index],
         });
@@ -570,14 +435,14 @@ const TmpCluster = struct {
         cluster.shell.cwd.deleteFile(cluster.replica_datafile[replica_index]) catch {};
 
         try cluster.shell.exec(
-            \\{tigerbeetle} recover
+            \\{archerdb} recover
             \\    --cluster=0
             \\    --replica={replica}
             \\    --replica-count=3
             \\    --addresses={addresses}
             \\    {datafile}
         , .{
-            .tigerbeetle = cluster.replica_exe[replica_index],
+            .archerdb = cluster.replica_exe[replica_index],
             .replica = replica_index,
             .addresses = addresses,
             .datafile = cluster.replica_datafile[replica_index],
@@ -609,9 +474,9 @@ const TmpCluster = struct {
     fn replica_spawn(cluster: *TmpCluster, replica_index: usize) !void {
         assert(cluster.replicas[replica_index] == null);
         cluster.replicas[replica_index] = try cluster.shell.spawn(.{},
-            \\{tigerbeetle} start --addresses={addresses} {datafile}
+            \\{archerdb} start --addresses={addresses} {datafile}
         , .{
-            .tigerbeetle = cluster.replica_exe[replica_index],
+            .archerdb = cluster.replica_exe[replica_index],
             .addresses = addresses,
             .datafile = cluster.replica_datafile[replica_index],
         });
@@ -624,7 +489,7 @@ const TmpCluster = struct {
     }
 
     const WorkloadStartOptions = struct {
-        transfer_count: usize,
+        event_count: usize,
     };
 
     fn workload_start(cluster: *TmpCluster, options: WorkloadStartOptions) !void {
@@ -635,25 +500,25 @@ const TmpCluster = struct {
         cluster.workload_thread = try std.Thread.spawn(.{}, struct {
             fn thread_main(
                 workload_exit_ok_ptr: *bool,
-                tigerbeetle_path: []const u8,
+                archerdb_path: []const u8,
                 benchmark_options: WorkloadStartOptions,
             ) !void {
                 const shell = try Shell.create(std.testing.allocator);
                 defer shell.destroy();
 
                 try shell.exec_options(.{ .timeout = .minutes(10) },
-                    \\{tigerbeetle} benchmark
+                    \\{archerdb} benchmark
                     \\    --print-batch-timings
-                    \\    --transfer-count={transfer_count}
+                    \\    --event-count={event_count}
                     \\    --addresses={addresses}
                 , .{
-                    .tigerbeetle = tigerbeetle_path,
+                    .archerdb = archerdb_path,
                     .addresses = addresses,
-                    .transfer_count = benchmark_options.transfer_count,
+                    .event_count = benchmark_options.event_count,
                 });
                 workload_exit_ok_ptr.* = true;
             }
-        }.thread_main, .{ &cluster.workload_exit_ok, tigerbeetle_past, options });
+        }.thread_main, .{ &cluster.workload_exit_ok, archerdb_past, options });
     }
 
     fn workload_finish(cluster: *TmpCluster) void {
