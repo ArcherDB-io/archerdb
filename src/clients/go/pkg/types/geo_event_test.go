@@ -35,6 +35,12 @@ func TestConstants(t *testing.T) {
 	if PolygonVerticesMax != 10_000 {
 		t.Errorf("PolygonVerticesMax = %v, want 10000", PolygonVerticesMax)
 	}
+	if PolygonHolesMax != 100 {
+		t.Errorf("PolygonHolesMax = %v, want 100", PolygonHolesMax)
+	}
+	if PolygonHoleVerticesMin != 3 {
+		t.Errorf("PolygonHoleVerticesMin = %v, want 3", PolygonHoleVerticesMin)
+	}
 }
 
 // ============================================================================
@@ -427,6 +433,103 @@ func TestNewPolygonQuery_MalformedVertex(t *testing.T) {
 	}
 }
 
+func TestNewPolygonQuery_WithHole(t *testing.T) {
+	outer := [][]float64{
+		{0, 0},
+		{0, 10},
+		{10, 10},
+		{10, 0},
+	}
+	hole := [][]float64{
+		{2, 2},
+		{2, 8},
+		{8, 8},
+		{8, 2},
+	}
+
+	filter, err := NewPolygonQuery(outer, 100, hole)
+	if err != nil {
+		t.Fatalf("NewPolygonQuery with hole failed: %v", err)
+	}
+
+	if len(filter.Vertices) != 4 {
+		t.Errorf("Vertices count = %v, want 4", len(filter.Vertices))
+	}
+	if len(filter.Holes) != 1 {
+		t.Errorf("Holes count = %v, want 1", len(filter.Holes))
+	}
+	if len(filter.Holes[0].Vertices) != 4 {
+		t.Errorf("Hole vertices count = %v, want 4", len(filter.Holes[0].Vertices))
+	}
+}
+
+func TestNewPolygonQuery_WithMultipleHoles(t *testing.T) {
+	outer := [][]float64{
+		{0, 0},
+		{0, 20},
+		{20, 20},
+		{20, 0},
+	}
+	hole1 := [][]float64{
+		{1, 1},
+		{1, 5},
+		{5, 5},
+		{5, 1},
+	}
+	hole2 := [][]float64{
+		{10, 10},
+		{10, 15},
+		{15, 15},
+		{15, 10},
+	}
+
+	filter, err := NewPolygonQuery(outer, 100, hole1, hole2)
+	if err != nil {
+		t.Fatalf("NewPolygonQuery with multiple holes failed: %v", err)
+	}
+
+	if len(filter.Holes) != 2 {
+		t.Errorf("Holes count = %v, want 2", len(filter.Holes))
+	}
+}
+
+func TestNewPolygonQuery_TooFewHoleVertices(t *testing.T) {
+	outer := [][]float64{
+		{0, 0},
+		{0, 10},
+		{10, 10},
+		{10, 0},
+	}
+	hole := [][]float64{
+		{2, 2},
+		{2, 8}, // Only 2 vertices
+	}
+
+	_, err := NewPolygonQuery(outer, 100, hole)
+	if err == nil {
+		t.Error("Expected error for hole with too few vertices")
+	}
+}
+
+func TestNewPolygonQuery_InvalidHoleVertex(t *testing.T) {
+	outer := [][]float64{
+		{0, 0},
+		{0, 10},
+		{10, 10},
+		{10, 0},
+	}
+	hole := [][]float64{
+		{91, 0}, // Invalid latitude
+		{2, 8},
+		{8, 8},
+	}
+
+	_, err := NewPolygonQuery(outer, 100, hole)
+	if err == nil {
+		t.Error("Expected error for invalid hole vertex")
+	}
+}
+
 // ============================================================================
 // S2 Cell ID Tests
 // ============================================================================
@@ -693,5 +796,66 @@ func BenchmarkPrepareGeoEvent(b *testing.B) {
 func BenchmarkIDGeneration(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		ID()
+	}
+}
+
+func BenchmarkNewPolygonQuery_Simple(b *testing.B) {
+	vertices := [][]float64{
+		{0, 0},
+		{0, 10},
+		{10, 10},
+		{10, 0},
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		NewPolygonQuery(vertices, 100)
+	}
+}
+
+func BenchmarkNewPolygonQuery_WithOneHole(b *testing.B) {
+	vertices := [][]float64{
+		{0, 0},
+		{0, 10},
+		{10, 10},
+		{10, 0},
+	}
+	hole := [][]float64{
+		{2, 2},
+		{2, 8},
+		{8, 8},
+		{8, 2},
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		NewPolygonQuery(vertices, 100, hole)
+	}
+}
+
+func BenchmarkNewPolygonQuery_WithTenHoles(b *testing.B) {
+	vertices := [][]float64{
+		{0, 0},
+		{0, 100},
+		{100, 100},
+		{100, 0},
+	}
+
+	// Create 10 holes
+	var holes [][][]float64
+	for i := 0; i < 10; i++ {
+		offset := float64(i * 10)
+		hole := [][]float64{
+			{1 + offset, 1},
+			{1 + offset, 5},
+			{5 + offset, 5},
+			{5 + offset, 1},
+		}
+		holes = append(holes, hole)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		NewPolygonQuery(vertices, 100, holes...)
 	}
 }

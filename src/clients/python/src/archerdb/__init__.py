@@ -44,6 +44,8 @@ from .types import (
     BATCH_SIZE_MAX,
     QUERY_LIMIT_MAX,
     POLYGON_VERTICES_MAX,
+    POLYGON_HOLES_MAX,
+    POLYGON_HOLE_VERTICES_MIN,
     # Enums
     GeoEventFlags,
     GeoOperation,
@@ -56,6 +58,7 @@ from .types import (
     QueryUuidFilter,
     QueryRadiusFilter,
     PolygonVertex,
+    PolygonHole,
     QueryPolygonFilter,
     QueryLatestFilter,
     QueryResponse,
@@ -133,6 +136,8 @@ __all__ = [
     "BATCH_SIZE_MAX",
     "QUERY_LIMIT_MAX",
     "POLYGON_VERTICES_MAX",
+    "POLYGON_HOLES_MAX",
+    "POLYGON_HOLE_VERTICES_MIN",
     # Enums
     "GeoEventFlags",
     "GeoOperation",
@@ -145,6 +150,7 @@ __all__ = [
     "QueryUuidFilter",
     "QueryRadiusFilter",
     "PolygonVertex",
+    "PolygonHole",
     "QueryPolygonFilter",
     "QueryLatestFilter",
     "QueryResponse",

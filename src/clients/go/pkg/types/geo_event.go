@@ -1,7 +1,7 @@
 package types
 
 /*
-#include "../native/tb_client.h"
+#include "../native/arch_client.h"
 */
 import "C"
 import (
@@ -29,6 +29,10 @@ const (
 	BatchSizeMax       int = 10_000
 	QueryLimitMax      int = 81_000
 	PolygonVerticesMax int = 10_000
+
+	// Polygon hole limits (per spec)
+	PolygonHolesMax        int = 100
+	PolygonHoleVerticesMin int = 3
 
 	// Safe limits for default 1MB message configuration
 	BatchSizeMaxDefault   int = 8_000
@@ -229,9 +233,20 @@ type PolygonVertex struct {
 	LonNano int64
 }
 
+// PolygonHole represents a polygon hole (exclusion zone within the outer boundary).
+// A hole is defined by a list of vertices in clockwise winding order.
+// Points inside a hole are excluded from query results.
+type PolygonHole struct {
+	Vertices []PolygonVertex
+}
+
 // QueryPolygonFilter is a filter for polygon queries.
+// A polygon can optionally have holes (exclusion zones). The outer boundary
+// should be in counter-clockwise (CCW) winding order, while holes should
+// be in clockwise (CW) winding order.
 type QueryPolygonFilter struct {
 	Vertices     []PolygonVertex
+	Holes        []PolygonHole
 	Limit        uint32
 	TimestampMin uint64
 	TimestampMax uint64
@@ -402,7 +417,10 @@ func NewRadiusQuery(latitude, longitude, radiusM float64, limit uint32) (QueryRa
 }
 
 // NewPolygonQuery creates a QueryPolygonFilter from vertices in degrees.
-func NewPolygonQuery(vertices [][]float64, limit uint32) (QueryPolygonFilter, error) {
+// vertices: outer boundary vertices in [lat, lon] format, CCW winding order
+// holes: optional list of holes, each hole is a list of [lat, lon] vertices in CW winding order
+// limit: maximum number of results to return
+func NewPolygonQuery(vertices [][]float64, limit uint32, holes ...[][]float64) (QueryPolygonFilter, error) {
 	if len(vertices) < 3 {
 		return QueryPolygonFilter{}, fmt.Errorf("polygon must have at least 3 vertices, got %d", len(vertices))
 	}
@@ -428,8 +446,45 @@ func NewPolygonQuery(vertices [][]float64, limit uint32) (QueryPolygonFilter, er
 		}
 	}
 
+	// Process holes
+	var polyHoles []PolygonHole
+	if len(holes) > 0 {
+		if len(holes) > PolygonHolesMax {
+			return QueryPolygonFilter{}, fmt.Errorf("too many holes: %d exceeds maximum %d", len(holes), PolygonHolesMax)
+		}
+
+		polyHoles = make([]PolygonHole, len(holes))
+		for holeIdx, holeVertices := range holes {
+			if len(holeVertices) < PolygonHoleVerticesMin {
+				return QueryPolygonFilter{}, fmt.Errorf("hole %d must have at least %d vertices, got %d",
+					holeIdx, PolygonHoleVerticesMin, len(holeVertices))
+			}
+
+			holeVerts := make([]PolygonVertex, len(holeVertices))
+			for i, v := range holeVertices {
+				if len(v) != 2 {
+					return QueryPolygonFilter{}, fmt.Errorf("hole %d vertex %d must have 2 elements [lat, lon], got %d",
+						holeIdx, i, len(v))
+				}
+				lat, lon := v[0], v[1]
+				if !IsValidLatitude(lat) {
+					return QueryPolygonFilter{}, fmt.Errorf("invalid latitude at hole %d vertex %d: %f", holeIdx, i, lat)
+				}
+				if !IsValidLongitude(lon) {
+					return QueryPolygonFilter{}, fmt.Errorf("invalid longitude at hole %d vertex %d: %f", holeIdx, i, lon)
+				}
+				holeVerts[i] = PolygonVertex{
+					LatNano: DegreesToNano(lat),
+					LonNano: DegreesToNano(lon),
+				}
+			}
+			polyHoles[holeIdx] = PolygonHole{Vertices: holeVerts}
+		}
+	}
+
 	return QueryPolygonFilter{
 		Vertices: polyVertices,
+		Holes:    polyHoles,
 		Limit:    limit,
 	}, nil
 }

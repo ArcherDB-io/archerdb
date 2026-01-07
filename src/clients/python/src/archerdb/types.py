@@ -34,6 +34,10 @@ BATCH_SIZE_MAX: int = 10_000
 QUERY_LIMIT_MAX: int = 81_000
 POLYGON_VERTICES_MAX: int = 10_000
 
+# Polygon hole limits (per spec)
+POLYGON_HOLES_MAX: int = 100
+POLYGON_HOLE_VERTICES_MIN: int = 3
+
 # Safe limits for default 1MB message configuration
 # Use these if connecting to a server with default configuration
 BATCH_SIZE_MAX_DEFAULT: int = 8_000
@@ -195,9 +199,27 @@ class PolygonVertex:
 
 
 @dataclass
-class QueryPolygonFilter:
-    """Filter for polygon queries."""
+class PolygonHole:
+    """
+    Polygon hole (exclusion zone within the outer boundary).
+
+    A hole is defined by a list of vertices in clockwise winding order.
+    Points inside a hole are excluded from query results.
+    """
     vertices: List[PolygonVertex] = field(default_factory=list)
+
+
+@dataclass
+class QueryPolygonFilter:
+    """
+    Filter for polygon queries.
+
+    A polygon can optionally have holes (exclusion zones). The outer boundary
+    should be in counter-clockwise (CCW) winding order, while holes should
+    be in clockwise (CW) winding order.
+    """
+    vertices: List[PolygonVertex] = field(default_factory=list)
+    holes: List[PolygonHole] = field(default_factory=list)
     limit: int = 1000
     timestamp_min: int = 0
     timestamp_max: int = 0
@@ -488,6 +510,7 @@ def create_radius_query(
 def create_polygon_query(
     vertices: List[tuple[float, float]],
     *,
+    holes: Optional[List[List[tuple[float, float]]]] = None,
     limit: int = 1000,
     timestamp_min: int = 0,
     timestamp_max: int = 0,
@@ -498,6 +521,8 @@ def create_polygon_query(
 
     Args:
         vertices: List of (lat, lon) tuples in degrees, CCW winding order
+        holes: Optional list of holes, each hole is a list of (lat, lon) tuples
+               in clockwise winding order
         limit: Maximum results (default 1000)
         timestamp_min: Minimum timestamp filter (optional)
         timestamp_max: Maximum timestamp filter (optional)
@@ -507,7 +532,19 @@ def create_polygon_query(
         QueryPolygonFilter ready for query
 
     Raises:
-        ValueError: If polygon is invalid
+        ValueError: If polygon or holes are invalid
+
+    Example:
+        # Simple polygon (no holes)
+        query = create_polygon_query([(37.79, -122.40), (37.79, -122.39), (37.78, -122.39)])
+
+        # Polygon with a hole (e.g., park with a lake)
+        query = create_polygon_query(
+            vertices=[(37.79, -122.40), (37.79, -122.39), (37.78, -122.39), (37.78, -122.40)],
+            holes=[
+                [(37.785, -122.395), (37.787, -122.395), (37.787, -122.393), (37.785, -122.393)]
+            ]
+        )
     """
     if len(vertices) < 3:
         raise ValueError(f"Polygon must have at least 3 vertices, got {len(vertices)}")
@@ -527,8 +564,37 @@ def create_polygon_query(
             lon_nano=degrees_to_nano(lon),
         ))
 
+    # Process holes
+    polygon_holes = []
+    if holes:
+        if len(holes) > POLYGON_HOLES_MAX:
+            raise ValueError(
+                f"Too many holes: {len(holes)} exceeds maximum {POLYGON_HOLES_MAX}"
+            )
+
+        for hole_idx, hole_vertices in enumerate(holes):
+            if len(hole_vertices) < POLYGON_HOLE_VERTICES_MIN:
+                raise ValueError(
+                    f"Hole {hole_idx} must have at least {POLYGON_HOLE_VERTICES_MIN} vertices, "
+                    f"got {len(hole_vertices)}"
+                )
+
+            hole_vertex_list = []
+            for i, (lat, lon) in enumerate(hole_vertices):
+                if not is_valid_latitude(lat):
+                    raise ValueError(f"Invalid latitude at hole {hole_idx} vertex {i}: {lat}")
+                if not is_valid_longitude(lon):
+                    raise ValueError(f"Invalid longitude at hole {hole_idx} vertex {i}: {lon}")
+                hole_vertex_list.append(PolygonVertex(
+                    lat_nano=degrees_to_nano(lat),
+                    lon_nano=degrees_to_nano(lon),
+                ))
+
+            polygon_holes.append(PolygonHole(vertices=hole_vertex_list))
+
     return QueryPolygonFilter(
         vertices=polygon_vertices,
+        holes=polygon_holes,
         limit=limit,
         timestamp_min=timestamp_min,
         timestamp_max=timestamp_max,

@@ -784,17 +784,43 @@ class GeoClientSync:
         self,
         vertices: List[tuple[float, float]],
         *,
+        holes: Optional[List[List[tuple[float, float]]]] = None,
         limit: int = 1000,
         timestamp_min: int = 0,
         timestamp_max: int = 0,
         group_id: int = 0,
     ) -> QueryResult:
-        """Query events within a polygon."""
+        """
+        Query events within a polygon.
+
+        Args:
+            vertices: List of (lat, lon) tuples in degrees, CCW winding order
+            holes: Optional list of holes (exclusion zones), each a list of (lat, lon)
+                   tuples in clockwise winding order
+            limit: Maximum results (default 1000)
+            timestamp_min: Minimum timestamp filter
+            timestamp_max: Maximum timestamp filter
+            group_id: Group ID filter
+
+        Returns:
+            QueryResult with matching events
+
+        Example:
+            # Simple polygon
+            result = client.query_polygon([(37.79, -122.40), (37.79, -122.39), (37.78, -122.39)])
+
+            # Polygon with hole (e.g., delivery zone excluding a park)
+            result = client.query_polygon(
+                vertices=delivery_zone_boundary,
+                holes=[park_boundary],
+            )
+        """
         self._ensure_connected()
 
         from .types import create_polygon_query
         filter = create_polygon_query(
             vertices,
+            holes=holes,
             limit=limit,
             timestamp_min=timestamp_min,
             timestamp_max=timestamp_max,
@@ -1049,17 +1075,33 @@ class GeoClientAsync:
         self,
         vertices: List[tuple[float, float]],
         *,
+        holes: Optional[List[List[tuple[float, float]]]] = None,
         limit: int = 1000,
         timestamp_min: int = 0,
         timestamp_max: int = 0,
         group_id: int = 0,
     ) -> QueryResult:
-        """Query events within a polygon."""
+        """
+        Query events within a polygon.
+
+        Args:
+            vertices: List of (lat, lon) tuples in degrees, CCW winding order
+            holes: Optional list of holes (exclusion zones), each a list of (lat, lon)
+                   tuples in clockwise winding order
+            limit: Maximum results (default 1000)
+            timestamp_min: Minimum timestamp filter
+            timestamp_max: Maximum timestamp filter
+            group_id: Group ID filter
+
+        Returns:
+            QueryResult with matching events
+        """
         self._ensure_connected()
 
         from .types import create_polygon_query
         filter = create_polygon_query(
             vertices,
+            holes=holes,
             limit=limit,
             timestamp_min=timestamp_min,
             timestamp_max=timestamp_max,

@@ -27,6 +27,10 @@ public final class CoordinateUtils {
     public static final int QUERY_LIMIT_MAX = 81_000;
     public static final int POLYGON_VERTICES_MAX = 10_000;
 
+    // Polygon hole limits (per spec)
+    public static final int POLYGON_HOLES_MAX = 100;
+    public static final int POLYGON_HOLE_VERTICES_MIN = 3;
+
     // Safe limits for default 1MB message configuration
     public static final int BATCH_SIZE_MAX_DEFAULT = 8_000;
     public static final int QUERY_LIMIT_MAX_DEFAULT = 8_000;

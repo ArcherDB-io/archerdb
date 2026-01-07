@@ -273,15 +273,35 @@ export type PolygonVertex = {
 }
 
 /**
+ * Hole descriptor for polygon with holes.
+ * Each hole is an array of vertices forming an exclusion zone.
+ */
+export type PolygonHole = {
+  /**
+   * Hole vertices in clockwise winding order.
+   * Minimum 3 vertices per hole.
+   */
+  vertices: PolygonVertex[]
+}
+
+/**
  * Filter for polygon queries.
- * Returns events within a polygon region.
+ * Returns events within a polygon region, excluding any holes.
  */
 export type QueryPolygonFilter = {
   /**
-   * Polygon vertices in counter-clockwise winding order.
+   * Outer ring vertices in counter-clockwise winding order.
    * Minimum 3 vertices, maximum 10,000 vertices.
    */
   vertices: PolygonVertex[]
+
+  /**
+   * Hole rings (exclusion zones) within the polygon.
+   * Each hole uses clockwise winding order.
+   * Maximum 100 holes, minimum 3 vertices per hole.
+   * Optional - omit for simple polygons without holes.
+   */
+  holes?: PolygonHole[]
 
   /**
    * Maximum results to return.
@@ -598,6 +618,16 @@ export const BATCH_SIZE_MAX = 10_000
 export const POLYGON_VERTICES_MAX = 10_000
 
 /**
+ * Maximum holes per polygon.
+ */
+export const POLYGON_HOLES_MAX = 100
+
+/**
+ * Minimum vertices per hole (must form a valid ring).
+ */
+export const POLYGON_HOLE_VERTICES_MIN = 3
+
+/**
  * Safe batch size limit for default 1MB message configuration.
  * Use this if connecting to a server with default configuration.
  */
@@ -910,10 +940,30 @@ export function createRadiusQuery(options: RadiusQueryOptions): QueryRadiusFilte
  */
 export interface PolygonQueryOptions {
   /**
-   * Polygon vertices as [lat, lon] pairs in degrees.
+   * Outer ring vertices as [lat, lon] pairs in degrees.
    * Counter-clockwise winding order.
    */
   vertices: Array<[number, number]>
+
+  /**
+   * Hole rings (exclusion zones) as arrays of [lat, lon] pairs.
+   * Each hole should use clockwise winding order.
+   * Maximum 100 holes, minimum 3 vertices per hole.
+   * Optional - omit for simple polygons without holes.
+   *
+   * @example
+   * ```typescript
+   * // Polygon with one rectangular hole
+   * const result = await client.queryPolygon({
+   *   vertices: [[0, 0], [0, 10], [10, 10], [10, 0]],  // Outer ring (CCW)
+   *   holes: [
+   *     [[2, 2], [2, 4], [4, 4], [4, 2]]  // Hole (CW)
+   *   ],
+   *   limit: 1000,
+   * })
+   * ```
+   */
+  holes?: Array<Array<[number, number]>>
 
   /**
    * Maximum results (optional, default 1000).
@@ -943,6 +993,7 @@ export interface PolygonQueryOptions {
  * @returns QueryPolygonFilter ready for query
  */
 export function createPolygonQuery(options: PolygonQueryOptions): QueryPolygonFilter {
+  // Validate outer ring
   if (options.vertices.length < 3) {
     throw new Error(`Polygon must have at least 3 vertices, got ${options.vertices.length}`)
   }
@@ -950,6 +1001,7 @@ export function createPolygonQuery(options: PolygonQueryOptions): QueryPolygonFi
     throw new Error(`Polygon exceeds maximum ${POLYGON_VERTICES_MAX} vertices, got ${options.vertices.length}`)
   }
 
+  // Convert outer ring vertices
   const vertices: PolygonVertex[] = options.vertices.map(([lat, lon], i) => {
     if (!isValidLatitude(lat)) {
       throw new Error(`Invalid latitude at vertex ${i}: ${lat}`)
@@ -963,8 +1015,47 @@ export function createPolygonQuery(options: PolygonQueryOptions): QueryPolygonFi
     }
   })
 
+  // Validate and convert holes (if present)
+  let holes: PolygonHole[] | undefined = undefined
+  if (options.holes && options.holes.length > 0) {
+    if (options.holes.length > POLYGON_HOLES_MAX) {
+      throw new Error(`Polygon exceeds maximum ${POLYGON_HOLES_MAX} holes, got ${options.holes.length}`)
+    }
+
+    let totalHoleVertices = 0
+    holes = options.holes.map((holeVertices, holeIndex) => {
+      if (holeVertices.length < POLYGON_HOLE_VERTICES_MIN) {
+        throw new Error(`Hole ${holeIndex} must have at least ${POLYGON_HOLE_VERTICES_MIN} vertices, got ${holeVertices.length}`)
+      }
+
+      totalHoleVertices += holeVertices.length
+
+      const holePolygonVertices: PolygonVertex[] = holeVertices.map(([lat, lon], vertexIndex) => {
+        if (!isValidLatitude(lat)) {
+          throw new Error(`Invalid latitude at hole ${holeIndex} vertex ${vertexIndex}: ${lat}`)
+        }
+        if (!isValidLongitude(lon)) {
+          throw new Error(`Invalid longitude at hole ${holeIndex} vertex ${vertexIndex}: ${lon}`)
+        }
+        return {
+          lat_nano: degreesToNano(lat),
+          lon_nano: degreesToNano(lon),
+        }
+      })
+
+      return { vertices: holePolygonVertices }
+    })
+
+    // Check total vertex count (outer + all holes)
+    const totalVertices = options.vertices.length + totalHoleVertices
+    if (totalVertices > POLYGON_VERTICES_MAX) {
+      throw new Error(`Total vertices (outer + holes) exceeds maximum ${POLYGON_VERTICES_MAX}, got ${totalVertices}`)
+    }
+  }
+
   return {
     vertices,
+    holes,
     limit: options.limit ?? 1000,
     timestamp_min: options.timestamp_min ?? 0n,
     timestamp_max: options.timestamp_max ?? 0n,
