@@ -5,10 +5,10 @@ const assert = std.debug.assert;
 
 const testing = std.testing;
 
-const tb_client = @import("tb_client.zig");
-const stdx = tb_client.vsr.stdx;
+const arch_client = @import("arch_client.zig");
+const stdx = arch_client.vsr.stdx;
 const constants = @import("../../constants.zig");
-const tb = tb_client.vsr.tigerbeetle;
+const tb = arch_client.vsr.archerdb;
 
 const Mutex = std.Thread.Mutex;
 const Condition = std.Thread.Condition;
@@ -18,30 +18,30 @@ fn RequestContextType(comptime request_size_max: comptime_int) type {
         const RequestContext = @This();
 
         completion: *Completion,
-        packet: tb_client.Packet,
+        packet: arch_client.Packet,
         sent_data: [request_size_max]u8 = undefined,
         sent_data_size: u32,
         reply: ?struct {
-            tb_context: usize,
-            tb_packet: *tb_client.Packet,
+            arch_context: usize,
+            arch_packet: *arch_client.Packet,
             timestamp: u64,
             result: ?[request_size_max]u8,
             result_len: u32,
         } = null,
 
         pub fn on_complete(
-            tb_context: usize,
-            tb_packet: *tb_client.Packet,
+            arch_context: usize,
+            arch_packet: *arch_client.Packet,
             timestamp: u64,
             result_ptr: ?[*]const u8,
             result_len: u32,
         ) callconv(.c) void {
-            var self: *RequestContext = @ptrCast(@alignCast(tb_packet.*.user_data.?));
+            var self: *RequestContext = @ptrCast(@alignCast(arch_packet.*.user_data.?));
             defer self.completion.complete();
 
             self.reply = .{
-                .tb_context = tb_context,
-                .tb_packet = tb_packet,
+                .arch_context = arch_context,
+                .arch_packet = arch_packet,
                 .timestamp = timestamp,
                 .result = if (result_ptr != null and result_len > 0) blk: {
                     // Copy the message's body to the context buffer:
@@ -102,47 +102,47 @@ test "u128 consistency test" {
     try testing.expectEqual(pair, @as(@TypeOf(pair), @bitCast(decimal)));
 }
 
-// When initialized with `init_echo`, the tb_client uses a test context that echoes
+// When initialized with `init_echo`, the arch_client uses a test context that echoes
 // the data back without creating an actual client or connecting to a cluster.
 //
 // This same test should be implemented by all the target programming languages, asserting that:
-// 1. the tb_client api was initialized correctly.
+// 1. the arch_client api was initialized correctly.
 // 2. the application can submit messages and receive replies through the completion callback.
 // 3. the data marshaling is correct, and exactly the same data sent was received back.
-test "tb_client echo" {
+test "arch_client echo" {
     // Using the insert_events operation for this test.
     const RequestContext = RequestContextType(constants.message_body_size_max);
 
     // Test multiple ArcherDB geospatial operations (F1.3.7)
-    const operations = [_]tb_client.Operation{
-        tb_client.Operation.insert_events,
-        tb_client.Operation.upsert_events,
-        tb_client.Operation.delete_entities,
-        tb_client.Operation.query_uuid,
-        tb_client.Operation.query_latest,
-        tb_client.Operation.query_radius,
-        tb_client.Operation.query_polygon,
+    const operations = [_]arch_client.Operation{
+        arch_client.Operation.insert_events,
+        arch_client.Operation.upsert_events,
+        arch_client.Operation.delete_entities,
+        arch_client.Operation.query_uuid,
+        arch_client.Operation.query_latest,
+        arch_client.Operation.query_radius,
+        arch_client.Operation.query_polygon,
     };
 
     // Initializing an echo client for testing purposes.
     // We ensure that the retry mechanism is being tested
     // by allowing more simultaneous packets than "client_request_queue_max".
-    var client: tb_client.ClientInterface = undefined;
+    var client: arch_client.ClientInterface = undefined;
     const cluster_id: u128 = 0;
     const address = "3000";
     const concurrency_max: u32 = constants.client_request_queue_max * operations.len;
-    const tb_context: usize = 42;
-    try tb_client.init_echo(
+    const arch_context: usize = 42;
+    try arch_client.init_echo(
         testing.allocator,
         &client,
         cluster_id,
         address,
-        tb_context,
+        arch_context,
         RequestContext.on_complete,
     );
 
     defer client.deinit() catch unreachable;
-    var prng = stdx.PRNG.from_seed(tb_context);
+    var prng = stdx.PRNG.from_seed(arch_context);
 
     const requests: []RequestContext = try testing.allocator.alloc(
         RequestContext,
@@ -154,11 +154,11 @@ test "tb_client echo" {
     // cycle of message exhaustion followed by completions.
     const repetitions_max = 100;
     var repetition: u32 = 0;
-    var operation_current: ?tb_client.Operation = null;
+    var operation_current: ?arch_client.Operation = null;
     while (repetition < repetitions_max) : (repetition += 1) {
         var completion = Completion{ .pending = concurrency_max };
 
-        const operation: tb_client.Operation = operation: {
+        const operation: arch_client.Operation = operation: {
             if (operation_current == null or
                 // Sometimes repeat the same operation for testing multi-batch.
                 prng.boolean())
@@ -227,11 +227,11 @@ test "tb_client echo" {
         // Checking if the received echo matches the data we sent:
         for (requests) |*request| {
             try testing.expect(request.reply != null);
-            try testing.expectEqual(tb_context, request.reply.?.tb_context);
-            try testing.expectEqual(tb_client.PacketStatus.ok, request.packet.status);
+            try testing.expectEqual(arch_context, request.reply.?.arch_context);
+            try testing.expectEqual(arch_client.PacketStatus.ok, request.packet.status);
             try testing.expectEqual(
                 @intFromPtr(&request.packet),
-                @intFromPtr(request.reply.?.tb_packet),
+                @intFromPtr(request.reply.?.arch_packet),
             );
             try testing.expect(request.reply.?.result != null);
             try testing.expectEqual(request.sent_data_size, request.reply.?.result_len);
@@ -244,21 +244,21 @@ test "tb_client echo" {
 }
 
 // Asserts the validation rules associated with the `init*` functions.
-test "tb_client init" {
+test "arch_client init" {
     const assert_status = struct {
         pub fn action(
             addresses: []const u8,
-            expected: tb_client.InitError!void,
+            expected: arch_client.InitError!void,
         ) !void {
-            var client_out: tb_client.ClientInterface = undefined;
+            var client_out: arch_client.ClientInterface = undefined;
             const cluster_id: u128 = 0;
-            const tb_context: usize = 0;
-            const result = tb_client.init_echo(
+            const arch_context: usize = 0;
+            const result = arch_client.init_echo(
                 testing.allocator,
                 &client_out,
                 cluster_id,
                 addresses,
-                tb_context,
+                arch_context,
                 RequestContextType(0).on_complete,
             );
             defer if (!std.meta.isError(result)) client_out.deinit() catch unreachable;
@@ -266,7 +266,7 @@ test "tb_client init" {
         }
     }.action;
 
-    // Valid addresses should return TB_STATUS_SUCCESS:
+    // Valid addresses should return ARCH_STATUS_SUCCESS:
     try assert_status("3000", {});
     try assert_status("127.0.0.1", {});
     try assert_status("127.0.0.1:3000", {});
@@ -274,11 +274,11 @@ test "tb_client init" {
     try assert_status("127.0.0.1,127.0.0.2,172.0.0.3", {});
     try assert_status("127.0.0.1:3000,127.0.0.1:3002,127.0.0.1:3003", {});
 
-    // Invalid or empty address should return "TB_STATUS_ADDRESS_INVALID":
+    // Invalid or empty address should return "ARCH_STATUS_ADDRESS_INVALID":
     try assert_status("invalid", error.AddressInvalid);
     try assert_status("", error.AddressInvalid);
 
-    // More addresses than "replicas_max" should return "TB_STATUS_ADDRESS_LIMIT_EXCEEDED":
+    // More addresses than "replicas_max" should return "ARCH_STATUS_ADDRESS_LIMIT_EXCEEDED":
     try assert_status(
         ("3000," ** constants.replicas_max) ++ "3001",
         error.AddressLimitExceeded,
@@ -288,18 +288,18 @@ test "tb_client init" {
 }
 
 // Asserts the validation rules associated with the client status.
-test "tb_client client status" {
+test "arch_client client status" {
     const RequestContext = RequestContextType(0);
-    var client: tb_client.ClientInterface = undefined;
+    var client: arch_client.ClientInterface = undefined;
     const cluster_id: u128 = 0;
     const addresses = "3000";
-    const tb_context: usize = 0;
-    try tb_client.init_echo(
+    const arch_context: usize = 0;
+    try arch_client.init_echo(
         testing.allocator,
         &client,
         cluster_id,
         addresses,
-        tb_context,
+        arch_context,
         RequestContext.on_complete,
     );
     errdefer client.deinit() catch unreachable;
@@ -312,7 +312,7 @@ test "tb_client client status" {
     };
 
     const packet = &request.packet;
-    packet.operation = @intFromEnum(tb_client.Operation.insert_events);
+    packet.operation = @intFromEnum(arch_client.Operation.insert_events);
     packet.user_data = &request;
     packet.data = null;
     packet.data_size = 0;
@@ -334,19 +334,19 @@ test "tb_client client status" {
 }
 
 // Asserts the validation rules associated with the "PacketStatus" enum.
-test "tb_client PacketStatus" {
+test "arch_client PacketStatus" {
     const RequestContext = RequestContextType(constants.message_body_size_max);
 
-    var client_out: tb_client.ClientInterface = undefined;
+    var client_out: arch_client.ClientInterface = undefined;
     const cluster_id: u128 = 0;
     const addresses = "3000";
-    const tb_context: usize = 42;
-    try tb_client.init_echo(
+    const arch_context: usize = 42;
+    try arch_client.init_echo(
         testing.allocator,
         &client_out,
         cluster_id,
         addresses,
-        tb_context,
+        arch_context,
         RequestContext.on_complete,
     );
     defer client_out.deinit() catch unreachable;
@@ -355,10 +355,10 @@ test "tb_client PacketStatus" {
         // Asserts if the packet's status matches the expected status
         // for a given operation and request_size.
         pub fn action(
-            client: *tb_client.ClientInterface,
+            client: *arch_client.ClientInterface,
             operation: u8,
             request_size: u32,
-            packet_status_expected: tb_client.PacketStatus,
+            packet_status_expected: arch_client.PacketStatus,
         ) !void {
             var completion = Completion{ .pending = 1 };
             var request = RequestContext{
@@ -380,10 +380,10 @@ test "tb_client PacketStatus" {
             completion.wait_pending();
 
             try testing.expect(request.reply != null);
-            try testing.expectEqual(tb_context, request.reply.?.tb_context);
+            try testing.expectEqual(arch_context, request.reply.?.arch_context);
             try testing.expectEqual(
                 @intFromPtr(&request.packet),
-                @intFromPtr(request.reply.?.tb_packet),
+                @intFromPtr(request.reply.?.arch_packet),
             );
             try testing.expectEqual(packet_status_expected, request.packet.status);
         }
@@ -392,8 +392,8 @@ test "tb_client PacketStatus" {
     // Messages larger than constants.message_body_size_max should return "too_much_data":
     try assert_result(
         &client_out,
-        @intFromEnum(tb_client.Operation.insert_events),
-        constants.message_body_size_max + @sizeOf(tb_client.exports.geo_event_t),
+        @intFromEnum(arch_client.Operation.insert_events),
+        constants.message_body_size_max + @sizeOf(arch_client.exports.geo_event_t),
         .too_much_data,
     );
 
@@ -427,19 +427,19 @@ test "tb_client PacketStatus" {
     // should return "invalid_data_size":
     try assert_result(
         &client_out,
-        @intFromEnum(tb_client.Operation.insert_events),
-        @sizeOf(tb_client.exports.geo_event_t) - 1,
+        @intFromEnum(arch_client.Operation.insert_events),
+        @sizeOf(arch_client.exports.geo_event_t) - 1,
         .invalid_data_size,
     );
     try assert_result(
         &client_out,
-        @intFromEnum(tb_client.Operation.delete_entities),
+        @intFromEnum(arch_client.Operation.delete_entities),
         @sizeOf(u128) + 1,
         .invalid_data_size,
     );
     try assert_result(
         &client_out,
-        @intFromEnum(tb_client.Operation.delete_entities),
+        @intFromEnum(arch_client.Operation.delete_entities),
         @sizeOf(u128) * 2.5,
         .invalid_data_size,
     );
@@ -447,20 +447,20 @@ test "tb_client PacketStatus" {
     // Messages with zero length or multiple of the event size are valid.
     try assert_result(
         &client_out,
-        @intFromEnum(tb_client.Operation.insert_events),
+        @intFromEnum(arch_client.Operation.insert_events),
         0,
         .ok,
     );
     try assert_result(
         &client_out,
-        @intFromEnum(tb_client.Operation.insert_events),
-        @sizeOf(tb_client.exports.geo_event_t),
+        @intFromEnum(arch_client.Operation.insert_events),
+        @sizeOf(arch_client.exports.geo_event_t),
         .ok,
     );
     try assert_result(
         &client_out,
-        @intFromEnum(tb_client.Operation.insert_events),
-        @sizeOf(tb_client.exports.geo_event_t) * 2,
+        @intFromEnum(arch_client.Operation.insert_events),
+        @sizeOf(arch_client.exports.geo_event_t) * 2,
         .ok,
     );
 }

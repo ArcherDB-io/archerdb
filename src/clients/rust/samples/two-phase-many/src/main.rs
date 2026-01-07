@@ -1,4 +1,4 @@
-use tigerbeetle as tb;
+use archerdb as tb;
 
 async fn assert_account_balances(
     client: &tb::Client,
@@ -47,7 +47,7 @@ async fn assert_account_balances(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let port = std::env::var("TB_ADDRESS").unwrap_or_else(|_| "3000".to_string());
+    let port = std::env::var("ARCHERDB_ADDRESS").unwrap_or_else(|_| "3000".to_string());
     let client = tb::Client::new(0, &port)?;
 
     // Create two accounts

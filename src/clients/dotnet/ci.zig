@@ -6,10 +6,10 @@ const log = std.log;
 const assert = std.debug.assert;
 
 const Shell = @import("../../shell.zig");
-const TmpTigerBeetle = @import("../../testing/tmp_archerdb.zig");
+const TmpArcherDB = @import("../../testing/tmp_archerdb.zig");
 
 pub fn tests(shell: *Shell, gpa: std.mem.Allocator) !void {
-    assert(shell.file_exists("TigerBeetle.sln"));
+    assert(shell.file_exists("ArcherDB.sln"));
 
     try shell.exec_zig("build clients:dotnet -Drelease", .{});
     try shell.exec_zig("build -Drelease", .{});
@@ -41,13 +41,13 @@ pub fn tests(shell: *Shell, gpa: std.mem.Allocator) !void {
         try shell.pushd("./samples/" ++ sample);
         defer shell.popd();
 
-        var tmp_beetle = try TmpTigerBeetle.init(gpa, .{
+        var tmp_archerdb = try TmpArcherDB.init(gpa, .{
             .development = true,
         });
-        defer tmp_beetle.deinit(gpa);
-        errdefer tmp_beetle.log_stderr();
+        defer tmp_archerdb.deinit(gpa);
+        errdefer tmp_archerdb.log_stderr();
 
-        try shell.env.put("TB_ADDRESS", tmp_beetle.port_str);
+        try shell.env.put("ARCHERDB_ADDRESS", tmp_archerdb.port_str);
         try shell.exec("dotnet run", .{});
     }
 
@@ -82,7 +82,7 @@ pub fn tests(shell: *Shell, gpa: std.mem.Allocator) !void {
             try shell.exec(
                 \\docker run
                 \\--security-opt seccomp=unconfined
-                \\--volume ./TigerBeetle/bin/Release:/host
+                \\--volume ./ArcherDB/bin/Release:/host
                 \\{image}
                 \\sh
                 \\-c {script}
@@ -93,10 +93,10 @@ pub fn tests(shell: *Shell, gpa: std.mem.Allocator) !void {
                 \\mkdir test-project && cd test-project
                 \\dotnet nuget add source /host
                 \\dotnet new console
-                \\dotnet add package tigerbeetle --source /host > /dev/null
+                \\dotnet add package archerdb --source /host > /dev/null
                 \\cat <<EOF > Program.cs
                 \\using System;
-                \\using TigerBeetle;
+                \\using ArcherDB;
                 \\public class Program {
                 \\  public static void Main() {
                 \\    new Client(UInt128.Zero, new [] {"3001"}).Dispose();
@@ -113,16 +113,16 @@ pub fn tests(shell: *Shell, gpa: std.mem.Allocator) !void {
 
 pub fn validate_release(shell: *Shell, gpa: std.mem.Allocator, options: struct {
     version: []const u8,
-    tigerbeetle: []const u8,
+    archerdb: []const u8,
 }) !void {
-    var tmp_beetle = try TmpTigerBeetle.init(gpa, .{
+    var tmp_archerdb = try TmpArcherDB.init(gpa, .{
         .development = true,
-        .prebuilt = options.tigerbeetle,
+        .prebuilt = options.archerdb,
     });
-    defer tmp_beetle.deinit(gpa);
-    errdefer tmp_beetle.log_stderr();
+    defer tmp_archerdb.deinit(gpa);
+    errdefer tmp_archerdb.log_stderr();
 
-    try shell.env.put("TB_ADDRESS", tmp_beetle.port_str);
+    try shell.env.put("ARCHERDB_ADDRESS", tmp_archerdb.port_str);
     try shell.exec("dotnet new console", .{});
 
     // NuGet may take a few minutes to make the new package available for download.
@@ -154,7 +154,7 @@ pub fn validate_release(shell: *Shell, gpa: std.mem.Allocator, options: struct {
 fn nuget_install(shell: *Shell, options: struct {
     version: []const u8,
 }) !union(enum) { ok, retry: anyerror } {
-    const command: []const u8 = "dotnet add package tigerbeetle --version {version}";
+    const command: []const u8 = "dotnet add package archerdb --version {version}";
     if (shell.exec(command, options)) {
         return .ok;
     } else |err| {
@@ -165,7 +165,7 @@ fn nuget_install(shell: *Shell, options: struct {
         }
 
         // Error message:
-        // NU1102: Unable to find package tigerbeetle with version (>= {version}).
+        // NU1102: Unable to find package archerdb with version (>= {version}).
         const package_missing = std.mem.indexOf(
             u8,
             exec_result.stdout,
@@ -188,7 +188,7 @@ pub fn release_published_latest(shell: *Shell) ![]const u8 {
         searchResult: []SearchResult,
     };
 
-    const output = try shell.exec_stdout("dotnet package search tigerbeetle --format json", .{});
+    const output = try shell.exec_stdout("dotnet package search archerdb --format json", .{});
     const dotnet_search_results = try std.json.parseFromSliceLeaky(
         DotnetSearch,
         shell.arena.allocator(),
@@ -199,7 +199,7 @@ pub fn release_published_latest(shell: *Shell) ![]const u8 {
     assert(dotnet_search_results.searchResult.len == 1);
     assert(dotnet_search_results.searchResult[0].packages.len == 1);
 
-    assert(std.mem.eql(u8, dotnet_search_results.searchResult[0].packages[0].id, "tigerbeetle"));
+    assert(std.mem.eql(u8, dotnet_search_results.searchResult[0].packages[0].id, "archerdb"));
 
     return dotnet_search_results.searchResult[0].packages[0].latestVersion;
 }

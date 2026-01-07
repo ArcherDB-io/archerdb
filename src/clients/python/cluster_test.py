@@ -3,7 +3,7 @@
 ArcherDB Cluster Connectivity Test
 
 This script verifies that the ArcherDB cluster is running and accepts GeoEvent operations.
-It uses the low-level TigerBeetle bindings to test INSERT_EVENTS operations.
+It uses the low-level ArcherDB bindings to test INSERT_EVENTS operations.
 """
 
 import ctypes
@@ -14,8 +14,8 @@ import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
-from tigerbeetle import bindings
-from tigerbeetle.lib import c_uint128
+from archerdb import bindings
+from archerdb.lib import c_uint128
 
 
 # GeoEvent struct matching the Zig extern struct definition (128 bytes)
@@ -136,7 +136,7 @@ def test_cluster_connectivity():
     print()
     print("  Initializing client...")
 
-    init_status = bindings.tb_client_init(
+    init_status = bindings.arch_client_init(
         ctypes.byref(client),
         ctypes.cast(ctypes.byref(cluster_id), ctypes.POINTER(ctypes.c_uint8 * 16)),
         addresses,
@@ -185,18 +185,18 @@ def test_cluster_connectivity():
     print()
 
     callback_received.clear()
-    client_status = bindings.tb_client_submit(ctypes.byref(client), ctypes.byref(packet))
+    client_status = bindings.arch_client_submit(ctypes.byref(client), ctypes.byref(packet))
 
     if client_status != bindings.ClientStatus.OK:
         print(f"  FAIL: Submit returned status {client_status.name}")
-        bindings.tb_client_deinit(ctypes.byref(client))
+        bindings.arch_client_deinit(ctypes.byref(client))
         return False
 
     print("  Waiting for response...")
 
     if not callback_received.wait(timeout=30.0):
         print("  FAIL: Timeout waiting for INSERT response")
-        bindings.tb_client_deinit(ctypes.byref(client))
+        bindings.arch_client_deinit(ctypes.byref(client))
         return False
 
     status_name = bindings.PacketStatus(callback_result[0]).name
@@ -217,7 +217,7 @@ def test_cluster_connectivity():
                     print(f"    Error {i}: index={idx}, code={code}")
     else:
         print(f"  FAIL: INSERT returned {status_name}")
-        bindings.tb_client_deinit(ctypes.byref(client))
+        bindings.arch_client_deinit(ctypes.byref(client))
         return False
 
     print()
@@ -259,18 +259,18 @@ def test_cluster_connectivity():
     callback_result[1] = None
     callback_result[2] = None
 
-    client_status = bindings.tb_client_submit(ctypes.byref(client), ctypes.byref(query_packet))
+    client_status = bindings.arch_client_submit(ctypes.byref(client), ctypes.byref(query_packet))
 
     if client_status != bindings.ClientStatus.OK:
         print(f"  FAIL: Submit returned status {client_status.name}")
-        bindings.tb_client_deinit(ctypes.byref(client))
+        bindings.arch_client_deinit(ctypes.byref(client))
         return False
 
     print("  Waiting for response...")
 
     if not callback_received.wait(timeout=30.0):
         print("  FAIL: Timeout waiting for QUERY_UUID response")
-        bindings.tb_client_deinit(ctypes.byref(client))
+        bindings.arch_client_deinit(ctypes.byref(client))
         return False
 
     status_name = bindings.PacketStatus(callback_result[0]).name
@@ -295,14 +295,14 @@ def test_cluster_connectivity():
             print(f"  INFO: Unexpected response size {callback_result[1]} bytes")
     else:
         print(f"  FAIL: QUERY_UUID returned {status_name}")
-        bindings.tb_client_deinit(ctypes.byref(client))
+        bindings.arch_client_deinit(ctypes.byref(client))
         return False
 
     print()
 
     # Cleanup
     print("  Closing client...")
-    bindings.tb_client_deinit(ctypes.byref(client))
+    bindings.arch_client_deinit(ctypes.byref(client))
     print("  Client closed successfully!")
 
     print()

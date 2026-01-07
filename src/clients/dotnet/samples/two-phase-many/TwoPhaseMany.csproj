@@ -11,10 +11,10 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Content Include="..\..\TigerBeetle\runtimes\$(RuntimeIdentifier)\native\*.*">
+    <Content Include="..\..\ArcherDB\runtimes\$(RuntimeIdentifier)\native\*.*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <ProjectReference Include="..\..\TigerBeetle/TigerBeetle.csproj" />
+    <ProjectReference Include="..\..\ArcherDB/ArcherDB.csproj" />
   </ItemGroup>
 
 </Project>

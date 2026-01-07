@@ -21,20 +21,20 @@ const net = std.net;
 const vsr = @import("vsr");
 const stdx = vsr.stdx;
 const constants = vsr.constants;
-const tigerbeetle = vsr.tigerbeetle;
+const archerdb = vsr.archerdb;
 const data_file_size_min = vsr.superblock.data_file_size_min;
 const StateMachine = @import("./main.zig").StateMachine;
 const Grid = @import("./main.zig").Grid;
 const Ratio = stdx.PRNG.Ratio;
 const ByteSize = stdx.ByteSize;
-const Operation = tigerbeetle.Operation;
+const Operation = archerdb.Operation;
 const tls_config = vsr.tls_config;
 const Duration = stdx.Duration;
 const backup_config = vsr.backup_config;
 
 comptime {
     // Make sure we are running the Accounting StateMachine.
-    assert(StateMachine.Operation == tigerbeetle.Operation);
+    assert(StateMachine.Operation == archerdb.Operation);
 }
 
 const KiB = stdx.KiB;
@@ -1157,7 +1157,7 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
         .pipeline_requests_limit = pipeline_limit,
         .request_size_limit = @intCast(request_size_limit.bytes()),
         .cache_geo_events = parse_cache_size_to_count(
-            tigerbeetle.GeoEvent,
+            archerdb.GeoEvent,
             GeoEventsValuesCache,
             start.cache_geo_events orelse defaults.cache_geo_events,
             "--cache-geo-events",
@@ -1266,7 +1266,7 @@ fn parse_args_repl(repl: CLIArgs.Repl) Command.Repl {
 
 const event_batch_size_max = @divExact(
     constants.message_size_max - @sizeOf(vsr.Header),
-    @sizeOf(tigerbeetle.GeoEvent),
+    @sizeOf(archerdb.GeoEvent),
 );
 
 fn parse_args_benchmark(benchmark: CLIArgs.Benchmark) Command.Benchmark {

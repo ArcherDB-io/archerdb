@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2024-2025 ArcherDB Contributors
-///! Java Native Interfaces for TigerBeetle Client
+///! Java Native Interfaces for ArcherDB Client
 ///! Please refer to the JNI Best Practices Guide:
 ///! https://developer.ibm.com/articles/j-jni/
 
@@ -23,9 +23,9 @@ comptime {
 
 pub const vsr = @import("vsr");
 
-const tb = vsr.tb_client;
+const tb = vsr.arch_client;
 
-const log = std.log.scoped(.tb_client_jni);
+const log = std.log.scoped(.arch_client_jni);
 const assert = std.debug.assert;
 
 const jni_version = jni.jni_version_10;
@@ -63,7 +63,7 @@ const NativeClient = struct {
         const addresses = JNIHelper.get_string_utf(env, addresses_obj) orelse {
             ReflectionHelper.initialization_exception_throw(
                 env,
-                tb.exports.tb_init_status.address_invalid,
+                tb.exports.arch_init_status.address_invalid,
             );
             return;
         };
@@ -185,7 +185,7 @@ const NativeClient = struct {
 // Declares and exports all functions using the JNI naming/calling convention.
 comptime {
     // https://docs.oracle.com/en/java/javase/17/docs/specs/jni/design.html#compiling-loading-and-linking-native-methods.
-    const prefix = "Java_com_tigerbeetle_NativeClient_";
+    const prefix = "Java_com_archerdb_core_NativeClient_";
 
     const Exports = struct {
         fn on_load(vm: *jni.JavaVM) callconv(.c) jni.JInt {
@@ -199,7 +199,7 @@ comptime {
         fn client_init(
             env: *jni.JNIEnv,
             class: jni.JClass,
-            tb_client_buffer: jni.JObject,
+            arch_client_buffer: jni.JObject,
             cluster_id: jni.JByteArray,
             addresses: jni.JString,
         ) callconv(.c) void {
@@ -212,7 +212,7 @@ comptime {
             NativeClient.client_init(
                 false,
                 env,
-                ReflectionHelper.get_client_from_buffer(env, tb_client_buffer),
+                ReflectionHelper.get_client_from_buffer(env, arch_client_buffer),
                 @bitCast(cluster_id_elements[0..16].*),
                 addresses,
             );
@@ -221,7 +221,7 @@ comptime {
         fn client_init_echo(
             env: *jni.JNIEnv,
             class: jni.JClass,
-            tb_client_buffer: jni.JObject,
+            arch_client_buffer: jni.JObject,
             cluster_id: jni.JByteArray,
             addresses: jni.JString,
         ) callconv(.c) void {
@@ -234,7 +234,7 @@ comptime {
             NativeClient.client_init(
                 true,
                 env,
-                ReflectionHelper.get_client_from_buffer(env, tb_client_buffer),
+                ReflectionHelper.get_client_from_buffer(env, arch_client_buffer),
                 @as(u128, @bitCast(cluster_id_elements[0..16].*)),
                 addresses,
             );
@@ -243,24 +243,24 @@ comptime {
         fn client_deinit(
             env: *jni.JNIEnv,
             class: jni.JClass,
-            tb_client_buffer: jni.JObject,
+            arch_client_buffer: jni.JObject,
         ) callconv(.c) void {
             _ = class;
             NativeClient.client_deinit(
-                ReflectionHelper.get_client_from_buffer(env, tb_client_buffer),
+                ReflectionHelper.get_client_from_buffer(env, arch_client_buffer),
             );
         }
 
         fn submit(
             env: *jni.JNIEnv,
             class: jni.JClass,
-            tb_client_buffer: jni.JObject,
+            arch_client_buffer: jni.JObject,
             request_obj: jni.JObject,
         ) callconv(.c) void {
             _ = class;
             NativeClient.submit(
                 env,
-                ReflectionHelper.get_client_from_buffer(env, tb_client_buffer),
+                ReflectionHelper.get_client_from_buffer(env, arch_client_buffer),
                 request_obj,
             );
         }
@@ -304,7 +304,7 @@ const ReflectionHelper = struct {
 
         initialization_exception_class = JNIHelper.find_class(
             env,
-            "com/tigerbeetle/InitializationException",
+            "com/archerdb/core/InitializationException",
         );
         initialization_exception_ctor_id = JNIHelper.find_method(
             env,
@@ -315,17 +315,17 @@ const ReflectionHelper = struct {
 
         client_closed_exception_class = JNIHelper.find_class(
             env,
-            "com/tigerbeetle/ClientClosedException",
+            "com/archerdb/core/ClientClosedException",
         );
 
         assertion_error_class = JNIHelper.find_class(
             env,
-            "com/tigerbeetle/AssertionError",
+            "com/archerdb/core/AssertionError",
         );
 
         request_class = JNIHelper.find_class(
             env,
-            "com/tigerbeetle/Request",
+            "com/archerdb/core/Request",
         );
         request_send_buffer_field_id = JNIHelper.find_field(
             env,
@@ -391,7 +391,7 @@ const ReflectionHelper = struct {
 
     pub fn initialization_exception_throw(
         env: *jni.JNIEnv,
-        status: tb.exports.tb_init_status,
+        status: tb.exports.arch_init_status,
     ) void {
         assert(initialization_exception_class != null);
         assert(initialization_exception_ctor_id != null);
@@ -455,10 +455,10 @@ const ReflectionHelper = struct {
         assert(buffer_capacity >= @sizeOf(tb.ClientInterface) + @alignOf(tb.ClientInterface));
 
         const address = env.get_direct_buffer_address(buffer) orelse {
-            // Unexpected here: `tb_client_buffer` should be initialized by the Java side.
+            // Unexpected here: `arch_client_buffer` should be initialized by the Java side.
             JNIHelper.vm_panic(
                 env,
-                "Unexpected tb_client direct nio buffer.",
+                "Unexpected arch_client direct nio buffer.",
                 .{},
             );
         };

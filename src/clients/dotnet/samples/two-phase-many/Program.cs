@@ -1,12 +1,12 @@
 using System;
 using System.Diagnostics;
 
-using TigerBeetle;
+using ArcherDB;
 
-var tbAddress = Environment.GetEnvironmentVariable("TB_ADDRESS");
+var archerdbAddress = Environment.GetEnvironmentVariable("ARCHERDB_ADDRESS");
 using (var client = new Client(
        clusterID: UInt128.Zero,
-       addresses: new[] { tbAddress != null ? tbAddress : "3000" }
+       addresses: new[] { archerdbAddress != null ? archerdbAddress : "3000" }
        ))
 {
 

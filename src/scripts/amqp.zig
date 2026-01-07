@@ -19,7 +19,7 @@ const amqp = @import("../cdc/amqp.zig");
 
 const JSONMessage = @import("../cdc/runner.zig").Message;
 const Shell = @import("../shell.zig");
-const TmpTigerBeetle = @import("../testing/tmp_archerdb.zig");
+const TmpArcherDB = @import("../testing/tmp_archerdb.zig");
 
 pub const CLIArgs = struct {
     transfer_count: u32,
@@ -393,7 +393,7 @@ fn run_cdc_test(
         .arguments = .{},
     });
 
-    var tmp_beetle = try TmpTigerBeetle.init(gpa, .{
+    var tmp_beetle = try TmpArcherDB.init(gpa, .{
         .development = false,
     });
     defer tmp_beetle.deinit(gpa);
@@ -404,13 +404,13 @@ fn run_cdc_test(
     // Starting the CDC job:
     var cdc_job = try shell.spawn(
         .{},
-        "{tigerbeetle} amqp " ++
+        "{archerdb} amqp " ++
             "--cluster=0 --addresses={addresses} " ++
             "--host=127.0.0.1:{port} --vhost=/ --user=guest --password=guest " ++
             "--publish-routing-key={queue} " ++
             "--idle-interval-ms={idle_interval_ms}",
         .{
-            .tigerbeetle = tmp_beetle.tigerbeetle_exe,
+            .archerdb = tmp_beetle.archerdb_exe,
             .addresses = tmp_beetle.port_str,
             .port = options.host.getPort(),
             .queue = queue,
@@ -423,12 +423,12 @@ fn run_cdc_test(
     assert(options.transfer_count > 0);
     var benchmark = try shell.spawn(
         .{},
-        "{tigerbeetle} benchmark " ++
+        "{archerdb} benchmark " ++
             "--addresses={addresses} " ++
             "--transfer-count={transfer_count} " ++
             "--transfer-pending",
         .{
-            .tigerbeetle = tmp_beetle.tigerbeetle_exe,
+            .archerdb = tmp_beetle.archerdb_exe,
             .addresses = tmp_beetle.port_str,
             .transfer_count = options.transfer_count,
         },

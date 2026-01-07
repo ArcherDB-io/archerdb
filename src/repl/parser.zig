@@ -2,7 +2,7 @@
 // Copyright (c) 2024-2025 ArcherDB Contributors
 //! REPL Parser Stub - ArcherDB Geospatial Database
 //!
-//! The REPL was designed for TigerBeetle financial operations.
+//! The REPL was designed for ArcherDB financial operations.
 //! ArcherDB uses client SDKs for all geospatial operations.
 //!
 //! This file is preserved as a stub to maintain the module structure.
@@ -33,6 +33,6 @@ pub const Parser = struct {
 };
 
 test "parser: stub - REPL not implemented for ArcherDB" {
-    // ArcherDB uses client SDKs, not the TigerBeetle REPL.
+    // ArcherDB uses client SDKs, not the ArcherDB REPL.
     try std.testing.expect(true);
 }

@@ -2,7 +2,7 @@
 
 High-performance geospatial database for fleet tracking, logistics, and real-time location applications.
 
-ArcherDB extends [TigerBeetle](https://tigerbeetle.com/)'s battle-tested distributed systems foundation with specialized geospatial capabilities.
+ArcherDB extends [ArcherDB](https://archerdb.com/)'s battle-tested distributed systems foundation with specialized geospatial capabilities.
 
 ## Features
 
@@ -44,7 +44,7 @@ ArcherDB extends [TigerBeetle](https://tigerbeetle.com/)'s battle-tested distrib
 
 ## Architecture
 
-ArcherDB inherits TigerBeetle's core architecture:
+ArcherDB inherits ArcherDB's core architecture:
 
 - **Consensus**: Viewstamped Replication (VR) for strong consistency
 - **Storage**: LSM-tree optimized for append-heavy workloads
@@ -99,7 +99,7 @@ ArcherDB is licensed under the Apache License 2.0. See [LICENSE](LICENSE) for de
 
 ## Acknowledgments
 
-ArcherDB is a derivative work of [TigerBeetle](https://tigerbeetle.com/), an open-source distributed financial database. We are grateful to the TigerBeetle team for their excellent work on:
+ArcherDB is a derivative work of [ArcherDB](https://archerdb.com/), an open-source distributed financial database. We are grateful to the ArcherDB team for their excellent work on:
 
 - Deterministic simulation testing (VOPR)
 - Viewstamped Replication consensus

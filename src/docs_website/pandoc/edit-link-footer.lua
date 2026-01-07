@@ -4,7 +4,7 @@ function Pandoc(doc)
   local website_path = "/src/docs_website";
   local repo_path = cwd_path:sub(1, -#website_path)
   local rel_path = pandoc.path.make_relative(abs_path, repo_path)
-  local edit_url = "https://github.com/tigerbeetle/tigerbeetle/edit/main/"..rel_path
+  local edit_url = "https://github.com/archerdb/archerdb/edit/main/"..rel_path
 
   local footer = pandoc.RawBlock("html", [[
 <a class="edit-link" href="]]..edit_url..[[">

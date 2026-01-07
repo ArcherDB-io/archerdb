@@ -25,7 +25,7 @@
 //! # Memory Management
 //!
 //! All covering operations use scratch buffers for temporary allocations,
-//! following TigerBeetle's static allocation pattern. The `s2_scratch_size`
+//! following ArcherDB's static allocation pattern. The `s2_scratch_size`
 //! constant defines the required scratch buffer size.
 
 const std = @import("std");
@@ -291,6 +291,38 @@ pub const S2 = struct {
         return inside;
     }
 
+    /// Test if a point is inside a polygon with holes (multi-ring polygon)
+    ///
+    /// A point is inside a polygon with holes if:
+    /// 1. The point is inside the outer ring, AND
+    /// 2. The point is NOT inside any hole ring
+    ///
+    /// Arguments:
+    /// - point: The point to test
+    /// - outer: The outer ring vertices (counter-clockwise winding)
+    /// - holes: Array of hole ring vertices (each hole clockwise winding)
+    ///
+    /// Returns: true if point is inside outer ring and outside all holes
+    pub fn pointInPolygonWithHoles(
+        point: LatLon,
+        outer: []const LatLon,
+        holes: []const []const LatLon,
+    ) bool {
+        // Must be inside outer ring first
+        if (!pointInPolygon(point, outer)) {
+            return false;
+        }
+
+        // Must be outside all holes
+        for (holes) |hole| {
+            if (pointInPolygon(point, hole)) {
+                return false; // Point is inside a hole, so excluded
+            }
+        }
+
+        return true;
+    }
+
     // =========================================================================
     // Polygon Validation
     // =========================================================================
@@ -419,6 +451,132 @@ pub const S2 = struct {
         // 350 degrees in nanodegrees
         const max_span: i64 = 350_000_000_000;
         return (max_lon - min_lon) > max_span;
+    }
+
+    // =========================================================================
+    // Polygon Hole Validation
+    // =========================================================================
+
+    /// Bounding box for a polygon ring
+    pub const BoundingBox = struct {
+        min_lat: i64,
+        max_lat: i64,
+        min_lon: i64,
+        max_lon: i64,
+
+        /// Check if this bounding box contains a point
+        pub fn containsPoint(self: BoundingBox, point: LatLon) bool {
+            return point.lat_nano >= self.min_lat and
+                point.lat_nano <= self.max_lat and
+                point.lon_nano >= self.min_lon and
+                point.lon_nano <= self.max_lon;
+        }
+
+        /// Check if two bounding boxes overlap
+        pub fn overlaps(self: BoundingBox, other: BoundingBox) bool {
+            return self.min_lat <= other.max_lat and
+                self.max_lat >= other.min_lat and
+                self.min_lon <= other.max_lon and
+                self.max_lon >= other.min_lon;
+        }
+    };
+
+    /// Compute the bounding box of a polygon ring
+    pub fn getPolygonBoundingBox(polygon: []const LatLon) ?BoundingBox {
+        if (polygon.len == 0) return null;
+
+        var bbox = BoundingBox{
+            .min_lat = polygon[0].lat_nano,
+            .max_lat = polygon[0].lat_nano,
+            .min_lon = polygon[0].lon_nano,
+            .max_lon = polygon[0].lon_nano,
+        };
+
+        for (polygon[1..]) |v| {
+            if (v.lat_nano < bbox.min_lat) bbox.min_lat = v.lat_nano;
+            if (v.lat_nano > bbox.max_lat) bbox.max_lat = v.lat_nano;
+            if (v.lon_nano < bbox.min_lon) bbox.min_lon = v.lon_nano;
+            if (v.lon_nano > bbox.max_lon) bbox.max_lon = v.lon_nano;
+        }
+
+        return bbox;
+    }
+
+    /// Check if a hole ring is fully contained within the outer ring
+    ///
+    /// Uses a conservative approach:
+    /// 1. First checks bounding box containment (fast)
+    /// 2. Then checks if all hole vertices are inside outer ring
+    ///
+    /// Returns: true if hole is fully contained, false otherwise
+    pub fn isHoleContained(outer: []const LatLon, hole: []const LatLon) bool {
+        if (outer.len < 3 or hole.len < 3) return false;
+
+        const outer_bbox = getPolygonBoundingBox(outer) orelse return false;
+        const hole_bbox = getPolygonBoundingBox(hole) orelse return false;
+
+        // Quick bounding box check
+        if (hole_bbox.min_lat < outer_bbox.min_lat or
+            hole_bbox.max_lat > outer_bbox.max_lat or
+            hole_bbox.min_lon < outer_bbox.min_lon or
+            hole_bbox.max_lon > outer_bbox.max_lon)
+        {
+            return false;
+        }
+
+        // Check that all hole vertices are inside the outer ring
+        for (hole) |vertex| {
+            if (!pointInPolygon(vertex, outer)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// Check if two hole rings have overlapping bounding boxes
+    ///
+    /// This is a conservative check - overlapping bounding boxes don't
+    /// guarantee the holes actually intersect, but non-overlapping boxes
+    /// guarantee they don't.
+    ///
+    /// Returns: true if bounding boxes overlap, false otherwise
+    pub fn doHolesBoundingBoxesOverlap(hole1: []const LatLon, hole2: []const LatLon) bool {
+        const bbox1 = getPolygonBoundingBox(hole1) orelse return false;
+        const bbox2 = getPolygonBoundingBox(hole2) orelse return false;
+        return bbox1.overlaps(bbox2);
+    }
+
+    /// Compute the signed area of a polygon (for winding order detection)
+    ///
+    /// Positive area = counter-clockwise winding
+    /// Negative area = clockwise winding
+    ///
+    /// Uses the shoelace formula with i128 to avoid overflow.
+    pub fn signedArea(polygon: []const LatLon) i128 {
+        if (polygon.len < 3) return 0;
+
+        var area: i128 = 0;
+        const n = polygon.len;
+
+        for (0..n) |i| {
+            const j = (i + 1) % n;
+            // Shoelace formula: sum of (x[i] * y[i+1] - x[i+1] * y[i])
+            area += @as(i128, polygon[i].lon_nano) * @as(i128, polygon[j].lat_nano);
+            area -= @as(i128, polygon[j].lon_nano) * @as(i128, polygon[i].lat_nano);
+        }
+
+        return area; // Divide by 2 for actual area, but sign is what matters
+    }
+
+    /// Check if polygon has counter-clockwise winding order
+    pub fn isCounterClockwise(polygon: []const LatLon) bool {
+        return signedArea(polygon) > 0;
+    }
+
+    /// Check if polygon has clockwise winding order
+    pub fn isClockwise(polygon: []const LatLon) bool {
+        return signedArea(polygon) < 0;
     }
 
     // =========================================================================
@@ -685,4 +843,202 @@ test "S2.isPolygonTooLarge: globe-spanning polygon" {
         .{ .lat_nano = 0, .lon_nano = 179_000_000_000 },
     };
     try std.testing.expect(S2.isPolygonTooLarge(&huge));
+}
+
+// =========================================================================
+// Polygon with Holes Tests
+// =========================================================================
+
+test "S2.pointInPolygonWithHoles: point outside outer ring" {
+    // Square outer ring: 0-10° lat, 0-10° lon
+    const outer = [_]LatLon{
+        .{ .lat_nano = 0, .lon_nano = 0 },
+        .{ .lat_nano = 10_000_000_000, .lon_nano = 0 },
+        .{ .lat_nano = 10_000_000_000, .lon_nano = 10_000_000_000 },
+        .{ .lat_nano = 0, .lon_nano = 10_000_000_000 },
+    };
+
+    // Small hole in the center: 4-6° lat, 4-6° lon
+    const hole1 = [_]LatLon{
+        .{ .lat_nano = 4_000_000_000, .lon_nano = 4_000_000_000 },
+        .{ .lat_nano = 6_000_000_000, .lon_nano = 4_000_000_000 },
+        .{ .lat_nano = 6_000_000_000, .lon_nano = 6_000_000_000 },
+        .{ .lat_nano = 4_000_000_000, .lon_nano = 6_000_000_000 },
+    };
+
+    const holes = [_][]const LatLon{&hole1};
+
+    // Point completely outside outer ring - should be false
+    const outside_point = LatLon{ .lat_nano = 20_000_000_000, .lon_nano = 20_000_000_000 };
+    try std.testing.expect(!S2.pointInPolygonWithHoles(outside_point, &outer, &holes));
+}
+
+test "S2.pointInPolygonWithHoles: point inside hole" {
+    // Square outer ring: 0-10° lat, 0-10° lon
+    const outer = [_]LatLon{
+        .{ .lat_nano = 0, .lon_nano = 0 },
+        .{ .lat_nano = 10_000_000_000, .lon_nano = 0 },
+        .{ .lat_nano = 10_000_000_000, .lon_nano = 10_000_000_000 },
+        .{ .lat_nano = 0, .lon_nano = 10_000_000_000 },
+    };
+
+    // Small hole in the center: 4-6° lat, 4-6° lon
+    const hole1 = [_]LatLon{
+        .{ .lat_nano = 4_000_000_000, .lon_nano = 4_000_000_000 },
+        .{ .lat_nano = 6_000_000_000, .lon_nano = 4_000_000_000 },
+        .{ .lat_nano = 6_000_000_000, .lon_nano = 6_000_000_000 },
+        .{ .lat_nano = 4_000_000_000, .lon_nano = 6_000_000_000 },
+    };
+
+    const holes = [_][]const LatLon{&hole1};
+
+    // Point inside the hole (5°, 5°) - should be excluded
+    const hole_point = LatLon{ .lat_nano = 5_000_000_000, .lon_nano = 5_000_000_000 };
+    try std.testing.expect(!S2.pointInPolygonWithHoles(hole_point, &outer, &holes));
+}
+
+test "S2.pointInPolygonWithHoles: point inside outer, outside holes" {
+    // Square outer ring: 0-10° lat, 0-10° lon
+    const outer = [_]LatLon{
+        .{ .lat_nano = 0, .lon_nano = 0 },
+        .{ .lat_nano = 10_000_000_000, .lon_nano = 0 },
+        .{ .lat_nano = 10_000_000_000, .lon_nano = 10_000_000_000 },
+        .{ .lat_nano = 0, .lon_nano = 10_000_000_000 },
+    };
+
+    // Small hole in the center: 4-6° lat, 4-6° lon
+    const hole1 = [_]LatLon{
+        .{ .lat_nano = 4_000_000_000, .lon_nano = 4_000_000_000 },
+        .{ .lat_nano = 6_000_000_000, .lon_nano = 4_000_000_000 },
+        .{ .lat_nano = 6_000_000_000, .lon_nano = 6_000_000_000 },
+        .{ .lat_nano = 4_000_000_000, .lon_nano = 6_000_000_000 },
+    };
+
+    const holes = [_][]const LatLon{&hole1};
+
+    // Point inside outer but outside hole (2°, 2°) - should be included
+    const valid_point = LatLon{ .lat_nano = 2_000_000_000, .lon_nano = 2_000_000_000 };
+    try std.testing.expect(S2.pointInPolygonWithHoles(valid_point, &outer, &holes));
+}
+
+test "S2.pointInPolygonWithHoles: multiple holes" {
+    // Square outer ring: 0-20° lat, 0-20° lon
+    const outer = [_]LatLon{
+        .{ .lat_nano = 0, .lon_nano = 0 },
+        .{ .lat_nano = 20_000_000_000, .lon_nano = 0 },
+        .{ .lat_nano = 20_000_000_000, .lon_nano = 20_000_000_000 },
+        .{ .lat_nano = 0, .lon_nano = 20_000_000_000 },
+    };
+
+    // Hole 1: bottom-left quadrant (2-8° lat, 2-8° lon)
+    const hole1 = [_]LatLon{
+        .{ .lat_nano = 2_000_000_000, .lon_nano = 2_000_000_000 },
+        .{ .lat_nano = 8_000_000_000, .lon_nano = 2_000_000_000 },
+        .{ .lat_nano = 8_000_000_000, .lon_nano = 8_000_000_000 },
+        .{ .lat_nano = 2_000_000_000, .lon_nano = 8_000_000_000 },
+    };
+
+    // Hole 2: top-right quadrant (12-18° lat, 12-18° lon)
+    const hole2 = [_]LatLon{
+        .{ .lat_nano = 12_000_000_000, .lon_nano = 12_000_000_000 },
+        .{ .lat_nano = 18_000_000_000, .lon_nano = 12_000_000_000 },
+        .{ .lat_nano = 18_000_000_000, .lon_nano = 18_000_000_000 },
+        .{ .lat_nano = 12_000_000_000, .lon_nano = 18_000_000_000 },
+    };
+
+    const holes = [_][]const LatLon{ &hole1, &hole2 };
+
+    // Point in hole1 (5°, 5°) - excluded
+    const in_hole1 = LatLon{ .lat_nano = 5_000_000_000, .lon_nano = 5_000_000_000 };
+    try std.testing.expect(!S2.pointInPolygonWithHoles(in_hole1, &outer, &holes));
+
+    // Point in hole2 (15°, 15°) - excluded
+    const in_hole2 = LatLon{ .lat_nano = 15_000_000_000, .lon_nano = 15_000_000_000 };
+    try std.testing.expect(!S2.pointInPolygonWithHoles(in_hole2, &outer, &holes));
+
+    // Point between holes (10°, 10°) - included
+    const between_holes = LatLon{ .lat_nano = 10_000_000_000, .lon_nano = 10_000_000_000 };
+    try std.testing.expect(S2.pointInPolygonWithHoles(between_holes, &outer, &holes));
+
+    // Point in corner (1°, 1°) - included (outside both holes)
+    const corner = LatLon{ .lat_nano = 1_000_000_000, .lon_nano = 1_000_000_000 };
+    try std.testing.expect(S2.pointInPolygonWithHoles(corner, &outer, &holes));
+}
+
+test "S2.pointInPolygonWithHoles: no holes (backwards compatible)" {
+    // Square outer ring: 0-10° lat, 0-10° lon
+    const outer = [_]LatLon{
+        .{ .lat_nano = 0, .lon_nano = 0 },
+        .{ .lat_nano = 10_000_000_000, .lon_nano = 0 },
+        .{ .lat_nano = 10_000_000_000, .lon_nano = 10_000_000_000 },
+        .{ .lat_nano = 0, .lon_nano = 10_000_000_000 },
+    };
+
+    const holes = [_][]const LatLon{};
+
+    // With no holes, should behave like simple pointInPolygon
+    const inside = LatLon{ .lat_nano = 5_000_000_000, .lon_nano = 5_000_000_000 };
+    try std.testing.expect(S2.pointInPolygonWithHoles(inside, &outer, &holes));
+
+    const outside = LatLon{ .lat_nano = 20_000_000_000, .lon_nano = 20_000_000_000 };
+    try std.testing.expect(!S2.pointInPolygonWithHoles(outside, &outer, &holes));
+}
+
+test "S2.getPolygonBoundingBox: basic square" {
+    const square = [_]LatLon{
+        .{ .lat_nano = 0, .lon_nano = 0 },
+        .{ .lat_nano = 10_000_000_000, .lon_nano = 0 },
+        .{ .lat_nano = 10_000_000_000, .lon_nano = 10_000_000_000 },
+        .{ .lat_nano = 0, .lon_nano = 10_000_000_000 },
+    };
+
+    const bbox = S2.getPolygonBoundingBox(&square).?;
+    try std.testing.expectEqual(@as(i64, 0), bbox.min_lat);
+    try std.testing.expectEqual(@as(i64, 10_000_000_000), bbox.max_lat);
+    try std.testing.expectEqual(@as(i64, 0), bbox.min_lon);
+    try std.testing.expectEqual(@as(i64, 10_000_000_000), bbox.max_lon);
+}
+
+test "S2.BoundingBox.containsPoint" {
+    const bbox = S2.BoundingBox{
+        .min_lat = 0,
+        .max_lat = 10_000_000_000,
+        .min_lon = 0,
+        .max_lon = 10_000_000_000,
+    };
+
+    // Inside
+    try std.testing.expect(bbox.containsPoint(.{ .lat_nano = 5_000_000_000, .lon_nano = 5_000_000_000 }));
+
+    // On boundary (inclusive)
+    try std.testing.expect(bbox.containsPoint(.{ .lat_nano = 0, .lon_nano = 0 }));
+    try std.testing.expect(bbox.containsPoint(.{ .lat_nano = 10_000_000_000, .lon_nano = 10_000_000_000 }));
+
+    // Outside
+    try std.testing.expect(!bbox.containsPoint(.{ .lat_nano = -1, .lon_nano = 5_000_000_000 }));
+    try std.testing.expect(!bbox.containsPoint(.{ .lat_nano = 20_000_000_000, .lon_nano = 5_000_000_000 }));
+}
+
+test "S2.signedArea and winding order" {
+    // Counter-clockwise square (positive area)
+    const ccw_square = [_]LatLon{
+        .{ .lat_nano = 0, .lon_nano = 0 },
+        .{ .lat_nano = 0, .lon_nano = 10_000_000_000 },
+        .{ .lat_nano = 10_000_000_000, .lon_nano = 10_000_000_000 },
+        .{ .lat_nano = 10_000_000_000, .lon_nano = 0 },
+    };
+    try std.testing.expect(S2.signedArea(&ccw_square) > 0);
+    try std.testing.expect(S2.isCounterClockwise(&ccw_square));
+    try std.testing.expect(!S2.isClockwise(&ccw_square));
+
+    // Clockwise square (negative area)
+    const cw_square = [_]LatLon{
+        .{ .lat_nano = 0, .lon_nano = 0 },
+        .{ .lat_nano = 10_000_000_000, .lon_nano = 0 },
+        .{ .lat_nano = 10_000_000_000, .lon_nano = 10_000_000_000 },
+        .{ .lat_nano = 0, .lon_nano = 10_000_000_000 },
+    };
+    try std.testing.expect(S2.signedArea(&cw_square) < 0);
+    try std.testing.expect(!S2.isCounterClockwise(&cw_square));
+    try std.testing.expect(S2.isClockwise(&cw_square));
 }

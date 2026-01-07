@@ -1,6 +1,6 @@
 package com.archerdb.geo;
 
-import com.tigerbeetle.Batch;
+import com.archerdb.core.Batch;
 
 // Uses Batch for native communication
 

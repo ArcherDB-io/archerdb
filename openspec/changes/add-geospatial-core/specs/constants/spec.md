@@ -149,7 +149,7 @@ The system SHALL define constants for the VSR consensus protocol.
   /// ARCHERDDB CALCULATION (TARGET: 1M events/sec):
   /// - Target throughput: 1M events/sec = 100 batches/sec (10K events/batch)
   /// - Checkpoint interval: 60 seconds = 60M events between checkpoints
-  /// - TigerBeetle baseline: ~1666 ops/sec per slot → needs 60,000 slots for safety margin
+  /// - ArcherDB baseline: ~1666 ops/sec per slot → needs 60,000 slots for safety margin
   /// - ArcherDB actual ops_per_slot unknown until F0.2.7 empirical validation
   /// - Current conservative estimate: 8192 slots = ~81 seconds @ 100 batches/sec
   ///   (assumes ~12,250 events per slot; if actual is lower, FAIL condition)
@@ -222,7 +222,7 @@ The system SHALL define constants for the VSR consensus protocol.
   pub const messages_max = 11_000;
 
   /// CLARIFICATION: MessagePool does NOT allocate messages_max * message_size_max memory!
-  /// Following TigerBeetle's pattern:
+  /// Following ArcherDB's pattern:
   /// - MessagePool allocates messages_max * message_header_size for headers
   /// - Body buffers are allocated from a separate buffer pool or on-demand
   /// - message_size_max is a VALIDATION limit, not an allocation size
@@ -564,7 +564,7 @@ The constants defined in this specification represent **production targets** for
 | block_size | 64 KB | 512 KB | Test config uses smaller; production uses 64KB |
 | superblock_copies | 6 | 4 | Minimum safe value; 6 for extra durability |
 
-The implementation uses TigerBeetle's `ConfigCluster` system which allows build-time configuration:
+The implementation uses ArcherDB's `ConfigCluster` system which allows build-time configuration:
 
 ```zig
 // src/config.zig provides three configuration bases:

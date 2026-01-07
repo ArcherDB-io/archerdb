@@ -4,7 +4,7 @@
 
 ### Requirement: Mutual TLS (mTLS) Authentication
 
-The system SHALL use mutual TLS for client authentication in production deployments, matching TigerBeetle's security model.
+The system SHALL use mutual TLS for client authentication in production deployments, matching ArcherDB's security model.
 
 #### Scenario: mTLS requirement
 
@@ -258,7 +258,7 @@ The system SHALL use mTLS for all inter-replica communication (VSR protocol mess
 
 ### Requirement: Authorization Model (All-or-Nothing)
 
-The system SHALL grant full read/write access to any authenticated client, matching TigerBeetle's authorization model.
+The system SHALL grant full read/write access to any authenticated client, matching ArcherDB's authorization model.
 
 #### Scenario: Access control policy
 
@@ -448,7 +448,7 @@ The system SHALL support encryption of data at rest through either OS-level or a
   - Transparent to ArcherDB (no application changes needed)
   - Leverages hardware AES acceleration (AES-NI)
   - Managed by operating system and infrastructure teams
-- **AND** this is the TigerBeetle-recommended approach
+- **AND** this is the ArcherDB-recommended approach
 - **AND** this separates concerns (database handles consistency, OS handles encryption)
 
 #### Scenario: Encryption at rest compliance requirements

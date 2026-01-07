@@ -202,7 +202,7 @@ pub fn u128_from_value(env: c.napi_env, value: c.napi_value, comptime name: [:0]
     // (words[0] * (2^64)^0 + words[1] * (2^64)^1 + ...).
 
     // V8 says that the words are little endian. If we were on a big endian machine
-    // we would need to convert, but big endian is not supported by tigerbeetle.
+    // we would need to convert, but big endian is not supported by archerdb.
     var result: u128 = 0;
     var sign_bit: c_int = undefined;
     const words: *[2]u64 = @ptrCast(&result);
@@ -278,7 +278,7 @@ pub fn u128_into_object(
     // (words[0] * (2^64)^0 + words[1] * (2^64)^1 + ...).
 
     // V8 says that the words are little endian. If we were on a big endian machine
-    // we would need to convert, but big endian is not supported by tigerbeetle.
+    // we would need to convert, but big endian is not supported by archerdb.
     var bigint: c.napi_value = undefined;
     if (c.napi_create_bigint_words(
         env,

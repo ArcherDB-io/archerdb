@@ -7,8 +7,8 @@ use anyhow::{bail, Context};
 use futures::executor::block_on;
 use std::mem;
 use std::str::FromStr;
-use tb::tb_client as tbc;
-use tigerbeetle as tb;
+use tb::arch_client as tbc;
+use archerdb as tb;
 
 struct CliArgs {
     cluster_id: u128,
@@ -127,7 +127,7 @@ impl Input {
         };
 
         match op {
-            tbc::TB_OPERATION_TB_OPERATION_CREATE_ACCOUNTS => {
+            tbc::ARCH_OPERATION_ARCH_OPERATION_CREATE_ACCOUNTS => {
                 let mut events = Vec::with_capacity(event_count as usize);
                 for i in 0..event_count {
                     let mut bytes = [0; mem::size_of::<tb::Account>()];
@@ -137,7 +137,7 @@ impl Input {
                 }
                 Ok(Some(Request::CreateAccounts(events)))
             }
-            tbc::TB_OPERATION_TB_OPERATION_CREATE_TRANSFERS => {
+            tbc::ARCH_OPERATION_ARCH_OPERATION_CREATE_TRANSFERS => {
                 let mut events = Vec::with_capacity(event_count as usize);
                 for i in 0..event_count {
                     let mut bytes = [0; mem::size_of::<tb::Account>()];
@@ -147,7 +147,7 @@ impl Input {
                 }
                 Ok(Some(Request::CreateTransfers(events)))
             }
-            tbc::TB_OPERATION_TB_OPERATION_LOOKUP_ACCOUNTS => {
+            tbc::ARCH_OPERATION_ARCH_OPERATION_LOOKUP_ACCOUNTS => {
                 let mut events = Vec::with_capacity(event_count as usize);
                 for i in 0..event_count {
                     let mut bytes = [0; mem::size_of::<u128>()];
@@ -157,7 +157,7 @@ impl Input {
                 }
                 Ok(Some(Request::LookupAccounts(events)))
             }
-            tbc::TB_OPERATION_TB_OPERATION_LOOKUP_TRANSFERS => {
+            tbc::ARCH_OPERATION_ARCH_OPERATION_LOOKUP_TRANSFERS => {
                 let mut events = Vec::with_capacity(event_count as usize);
                 for i in 0..event_count {
                     let mut bytes = [0; mem::size_of::<u128>()];
@@ -191,11 +191,11 @@ impl Output {
                 let results_length = u32::try_from(results.len())?;
                 self.writer.write_all(&results_length.to_le_bytes())?;
                 for result in results {
-                    let result = tbc::tb_create_accounts_result_t {
+                    let result = tbc::arch_create_accounts_result_t {
                         index: u32::try_from(result.index)?,
                         result: u32::from(result.result),
                     };
-                    let bytes: [u8; mem::size_of::<tbc::tb_create_accounts_result_t>()] =
+                    let bytes: [u8; mem::size_of::<tbc::arch_create_accounts_result_t>()] =
                         unsafe { mem::transmute(result) };
                     self.writer.write_all(&bytes)?;
                 }
@@ -204,11 +204,11 @@ impl Output {
                 let results_length = u32::try_from(results.len())?;
                 self.writer.write_all(&results_length.to_le_bytes())?;
                 for result in results {
-                    let result = tbc::tb_create_transfers_result_t {
+                    let result = tbc::arch_create_transfers_result_t {
                         index: u32::try_from(result.index)?,
                         result: u32::from(result.result),
                     };
-                    let bytes: [u8; mem::size_of::<tbc::tb_create_transfers_result_t>()] =
+                    let bytes: [u8; mem::size_of::<tbc::arch_create_transfers_result_t>()] =
                         unsafe { mem::transmute(result) };
                     self.writer.write_all(&bytes)?;
                 }

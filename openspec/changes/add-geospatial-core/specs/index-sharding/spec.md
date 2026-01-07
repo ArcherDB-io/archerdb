@@ -294,7 +294,7 @@ archerdb shards failover --shard 3 --to node-42
 
 - [Cassandra Architecture](https://cassandra.apache.org/doc/latest/architecture/) - Similar sharding approach
 - [Amazon DynamoDB Partitioning](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.Partitions.html) - Partition key distribution
-- [TigerBeetle Single-Node Design](https://docs.tigerbeetle.com/) - Why v1 avoids sharding
+- [ArcherDB Single-Node Design](https://docs.archerdb.com/) - Why v1 avoids sharding
 
 ## Implementation Status
 

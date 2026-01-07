@@ -5,8 +5,8 @@ const assert = std.debug.assert;
 
 const c = @import("src/c.zig").c;
 const translate = @import("src/translate.zig");
-const tb = vsr.tigerbeetle;
-const tb_client = vsr.tb_client;
+const tb = vsr.archerdb;
+const arch_client = vsr.arch_client;
 
 const Operation = tb.Operation;
 const Account = tb.Account;
@@ -35,7 +35,7 @@ const global_allocator = std.heap.c_allocator;
 
 pub const std_options: std.Options = .{
     .log_level = .debug,
-    .logFn = tb_client.exports.Logging.application_logger,
+    .logFn = arch_client.exports.Logging.application_logger,
 };
 
 // Cached value for JS (null).
@@ -125,7 +125,7 @@ fn submit(env: c.napi_env, info: c.napi_callback_info) callconv(.c) c.napi_value
 
     request(
         env,
-        args[0], // tb_client
+        args[0], // arch_client
         @enumFromInt(@as(u8, @intCast(operation_int))),
         args[2], // request array
         args[3], // callback
@@ -133,7 +133,7 @@ fn submit(env: c.napi_env, info: c.napi_callback_info) callconv(.c) c.napi_value
     return null;
 }
 
-// tb_client Logic
+// arch_client Logic
 
 fn create(
     env: c.napi_env,
@@ -142,7 +142,7 @@ fn create(
     comptime echo_mode: bool,
 ) !c.napi_value {
     var tsfn_name: c.napi_value = undefined;
-    if (c.napi_create_string_utf8(env, "tb_client", c.NAPI_AUTO_LENGTH, &tsfn_name) != c.napi_ok) {
+    if (c.napi_create_string_utf8(env, "arch_client", c.NAPI_AUTO_LENGTH, &tsfn_name) != c.napi_ok) {
         return translate.throw(
             env,
             "Failed to create resource name for thread-safe function.",
@@ -172,12 +172,12 @@ fn create(
         std.log.warn("Failed to release allocated thread-safe function on error.", .{});
     };
 
-    const client = global_allocator.create(tb_client.ClientInterface) catch {
+    const client = global_allocator.create(arch_client.ClientInterface) catch {
         return translate.throw(env, "Failed to allocated the client interface.");
     };
     errdefer global_allocator.destroy(client);
 
-    const init_fn = if (echo_mode) tb_client.init_echo else tb_client.init;
+    const init_fn = if (echo_mode) arch_client.init_echo else arch_client.init;
     init_fn(
         global_allocator,
         client,
@@ -205,7 +205,7 @@ fn destroy(env: c.napi_env, context: c.napi_value) !void {
         context,
         "Failed to get client context pointer.",
     );
-    const client: *tb_client.ClientInterface = @ptrCast(@alignCast(client_ptr.?));
+    const client: *arch_client.ClientInterface = @ptrCast(@alignCast(client_ptr.?));
     defer {
         client.deinit() catch unreachable;
         global_allocator.destroy(client);
@@ -233,7 +233,7 @@ fn request(
         context,
         "Failed to get client context pointer.",
     );
-    const client: *tb_client.ClientInterface = @ptrCast(@alignCast(client_ptr.?));
+    const client: *arch_client.ClientInterface = @ptrCast(@alignCast(client_ptr.?));
 
     // Create a reference to the callback so it stay alive until the packet completes.
     var callback_ref: c.napi_ref = undefined;
@@ -250,13 +250,13 @@ fn request(
             const Event = operation_comptime.EventType();
 
             // Avoid allocating memory for requests that are known to be too large.
-            // However, the final validation happens in `tb_client` against the runtime-known
+            // However, the final validation happens in `arch_client` against the runtime-known
             // maximum size.
             if (array_length * @sizeOf(Event) > constants.message_body_size_max) {
                 return translate.throw(env, "Too much data provided on this batch.");
             }
 
-            const packet = global_allocator.create(tb_client.Packet) catch {
+            const packet = global_allocator.create(arch_client.Packet) catch {
                 return translate.throw(env, "Failed to allocated a new packet.");
             };
             errdefer global_allocator.destroy(packet);
@@ -288,7 +288,7 @@ fn request(
 
 fn on_completion(
     completion_ctx: usize,
-    packet_extern: *tb_client.Packet,
+    packet_extern: *arch_client.Packet,
     timestamp: u64,
     result_ptr: ?[*]const u8,
     result_len: u32,
@@ -305,7 +305,7 @@ fn on_completion(
 
                     const packet = packet_extern.cast();
                     const request_buffer: []align(@alignOf(Event)) u8 =
-                        @constCast(@alignCast(packet.slice()));
+                        @alignCast(@constCast(packet.slice()));
                     // Trying to reallocate the request buffer instead of allocating a new one.
                     // This is optimal for create_* operations.
                     const reply_buffer: []align(@alignOf(Result)) u8 = @alignCast(global_allocator.realloc(
@@ -377,7 +377,7 @@ fn on_completion_js(
     _ = unused_context;
 
     // Extract the remaining packet information from the packet before it's freed.
-    const packet_extern: *tb_client.Packet = @ptrCast(@alignCast(packet_argument.?));
+    const packet_extern: *arch_client.Packet = @ptrCast(@alignCast(packet_argument.?));
     const callback_ref: c.napi_ref = @ptrCast(@alignCast(packet_extern.user_data.?));
 
     // Decode the packet's Buffer results into an array then free the packet/Buffer.

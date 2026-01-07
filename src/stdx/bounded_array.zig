@@ -4,7 +4,7 @@ const std = @import("std");
 const stdx = @import("stdx.zig");
 const assert = std.debug.assert;
 
-/// A version of standard `BoundedArray` with TigerBeetle-idiomatic APIs.
+/// A version of standard `BoundedArray` with ArcherDB-idiomatic APIs.
 pub fn BoundedArrayType(comptime T: type, comptime buffer_capacity: usize) type {
     return struct {
         buffer: [buffer_capacity]T = undefined,

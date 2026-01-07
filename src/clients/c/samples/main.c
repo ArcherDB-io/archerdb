@@ -12,7 +12,7 @@
 #include <windows.h>
 #endif
 
-#include "../tb_client.h"
+#include "../arch_client.h"
 
 // config.message_size_max - @sizeOf(vsr.Header):
 #define MAX_MESSAGE_SIZE (1024 * 1024) - 256
@@ -38,38 +38,38 @@ void completion_context_init(completion_context_t *ctx);
 void completion_context_destroy(completion_context_t *ctx);
 
 // Sends and blocks the current thread until the reply arrives.
-TB_CLIENT_STATUS send_request(
-    tb_client_t *client,
-    tb_packet_t *packet,
+ARCH_CLIENT_STATUS send_request(
+    arch_client_t *client,
+    arch_packet_t *packet,
     completion_context_t *ctx
 );
 
 // For benchmarking purposes.
 long long get_time_ms(void);
 
-// Completion function, called by tb_client no notify that a request as completed.
+// Completion function, called by arch_client no notify that a request as completed.
 void on_completion(
     uintptr_t context,
-    tb_packet_t *packet,
+    arch_packet_t *packet,
     uint64_t timestamp,
     const uint8_t *data,
     uint32_t size
 );
 
 int main(int argc, char **argv) {
-    printf("TigerBeetle C Sample\n");
+    printf("ArcherDB C Sample\n");
     fflush(stdout);
     printf("Connecting...\n");
     fflush(stdout);
-    tb_client_t client;
+    arch_client_t client;
 
-    const char *address = getenv("TB_ADDRESS");
+    const char *address = getenv("ARCHERDB_ADDRESS");
     if (address == NULL) address = "3000";
 
     uint8_t cluster_id[16];
     memset(&cluster_id, 0, 16);
 
-    TB_INIT_STATUS init_status = tb_client_init(
+    ARCH_INIT_STATUS init_status = arch_client_init(
         &client,              // Output client.
         cluster_id,           // Cluster ID.
         address,              // Cluster addresses.
@@ -78,23 +78,23 @@ int main(int argc, char **argv) {
         &on_completion        // Completion callback.
     );
 
-    if (init_status != TB_INIT_SUCCESS) {
-        printf("Failed to initialize tb_client\n");
+    if (init_status != ARCH_INIT_SUCCESS) {
+        printf("Failed to initialize arch_client\n");
         exit(-1);
     }
 
     completion_context_t ctx;
     completion_context_init(&ctx);
 
-    tb_packet_t packet;
+    arch_packet_t packet;
 
     ////////////////////////////////////////////////////////////
     // Submitting a batch of accounts:                        //
     ////////////////////////////////////////////////////////////
 
     #define ACCOUNTS_LEN 2
-    #define ACCOUNTS_SIZE sizeof(tb_account_t) * ACCOUNTS_LEN
-    tb_account_t accounts[ACCOUNTS_LEN];
+    #define ACCOUNTS_SIZE sizeof(arch_account_t) * ACCOUNTS_LEN
+    arch_account_t accounts[ACCOUNTS_LEN];
 
     // Zeroing the memory, so we don't have to initialize every field.
     memset(&accounts, 0, ACCOUNTS_SIZE);
@@ -107,21 +107,21 @@ int main(int argc, char **argv) {
     accounts[1].code = 2;
     accounts[1].ledger = 777;
 
-    packet.operation = TB_OPERATION_CREATE_ACCOUNTS;  // The operation to be performed.
+    packet.operation = ARCH_OPERATION_CREATE_ACCOUNTS;  // The operation to be performed.
     packet.data = accounts;                           // The data to be sent.
     packet.data_size = ACCOUNTS_SIZE;                 //
     packet.user_data = &ctx;                          // User-defined context.
-    packet.status = TB_PACKET_OK;                     // Will be set when the reply arrives.
+    packet.status = ARCH_PACKET_OK;                     // Will be set when the reply arrives.
 
     printf("Creating accounts...\n");
 
-    TB_CLIENT_STATUS client_status = send_request(&client, &packet, &ctx);
-    if (client_status != TB_CLIENT_OK) {
+    ARCH_CLIENT_STATUS client_status = send_request(&client, &packet, &ctx);
+    if (client_status != ARCH_CLIENT_OK) {
         printf("Failed to send the request\n");
         exit(-1);
     }
 
-    if (packet.status != TB_PACKET_OK) {
+    if (packet.status != ARCH_PACKET_OK) {
         // Checking if the request failed:
         printf("Error calling create_accounts (ret=%d)\n", packet.status);
         exit(-1);
@@ -129,8 +129,8 @@ int main(int argc, char **argv) {
 
     if (ctx.size != 0) {
         // Checking for errors creating the accounts:
-        tb_create_accounts_result_t *results = (tb_create_accounts_result_t*)ctx.reply;
-        int results_len = ctx.size / sizeof(tb_create_accounts_result_t);
+        arch_create_accounts_result_t *results = (arch_create_accounts_result_t*)ctx.reply;
+        int results_len = ctx.size / sizeof(arch_create_accounts_result_t);
         printf("create_account results:\n");
         for(int i=0;i<results_len;i++) {
             printf("index=%d, ret=%d\n", results[i].index, results[i].result);
@@ -146,12 +146,12 @@ int main(int argc, char **argv) {
 
     printf("Creating transfers...\n");
     #define MAX_BATCHES 100
-    #define TRANSFERS_PER_BATCH ((MAX_MESSAGE_SIZE) / sizeof(tb_transfer_t))
-    #define TRANSFERS_SIZE (sizeof(tb_transfer_t) * TRANSFERS_PER_BATCH)
+    #define TRANSFERS_PER_BATCH ((MAX_MESSAGE_SIZE) / sizeof(arch_transfer_t))
+    #define TRANSFERS_SIZE (sizeof(arch_transfer_t) * TRANSFERS_PER_BATCH)
     long max_latency_ms = 0;
     long total_time_ms = 0;
     for (int i=0; i< MAX_BATCHES;i++) {
-        tb_transfer_t transfers[TRANSFERS_PER_BATCH];
+        arch_transfer_t transfers[TRANSFERS_PER_BATCH];
 
         // Zeroing the memory, so we don't have to initialize every field.
         memset(transfers, 0, TRANSFERS_SIZE);
@@ -165,16 +165,16 @@ int main(int argc, char **argv) {
             transfers[j].amount = 1;
         }
 
-        packet.operation = TB_OPERATION_CREATE_TRANSFERS;  // The operation to be performed.
+        packet.operation = ARCH_OPERATION_CREATE_TRANSFERS;  // The operation to be performed.
         packet.data = transfers;                           // The data to be sent.
         packet.data_size = MAX_MESSAGE_SIZE;               //
         packet.user_data = &ctx;                           // User-defined context.
-        packet.status = TB_PACKET_OK;                      // Will be set when the reply arrives.
+        packet.status = ARCH_PACKET_OK;                      // Will be set when the reply arrives.
 
         long long now = get_time_ms();
 
         client_status = send_request(&client, &packet, &ctx);
-        if (client_status != TB_CLIENT_OK) {
+        if (client_status != ARCH_CLIENT_OK) {
             printf("Failed to send the request\n");
             exit(-1);
         }
@@ -184,7 +184,7 @@ int main(int argc, char **argv) {
         if (elapsed_ms > max_latency_ms) max_latency_ms = elapsed_ms;
         total_time_ms += elapsed_ms;
 
-        if (packet.status != TB_PACKET_OK) {
+        if (packet.status != ARCH_PACKET_OK) {
             // Checking if the request failed:
             printf("Error calling create_transfers (ret=%d)\n", packet.status);
             exit(-1);
@@ -192,8 +192,8 @@ int main(int argc, char **argv) {
 
         if (ctx.size != 0) {
             // Checking for errors creating the accounts:
-            tb_create_transfers_result_t *results = (tb_create_transfers_result_t*)ctx.reply;
-            int results_len = ctx.size / sizeof(tb_create_transfers_result_t);
+            arch_create_transfers_result_t *results = (arch_create_transfers_result_t*)ctx.reply;
+            int results_len = ctx.size / sizeof(arch_create_transfers_result_t);
             printf("create_transfers results:\n");
             for(int i=0;i<results_len;i++) {
                 printf("index=%d, ret=%d\n", results[i].index, results[i].result);
@@ -215,22 +215,22 @@ int main(int argc, char **argv) {
     ////////////////////////////////////////////////////////////
 
     printf("Looking up accounts ...\n");
-    tb_uint128_t ids[ACCOUNTS_LEN] = { accounts[0].id, accounts[1].id };
+    arch_uint128_t ids[ACCOUNTS_LEN] = { accounts[0].id, accounts[1].id };
 
-    packet.operation = TB_OPERATION_LOOKUP_ACCOUNTS;
+    packet.operation = ARCH_OPERATION_LOOKUP_ACCOUNTS;
     packet.data = ids;
-    packet.data_size = sizeof(tb_uint128_t) * ACCOUNTS_LEN;
+    packet.data_size = sizeof(arch_uint128_t) * ACCOUNTS_LEN;
     packet.user_data = &ctx;
-    packet.status = TB_PACKET_OK;
+    packet.status = ARCH_PACKET_OK;
 
     client_status = send_request(&client, &packet, &ctx);
-    if (client_status != TB_CLIENT_OK) {
+    if (client_status != ARCH_CLIENT_OK) {
         printf("Failed to send the request\n");
         exit(-1);
     }
 
 
-    if (packet.status != TB_PACKET_OK) {
+    if (packet.status != ARCH_PACKET_OK) {
         // Checking if the request failed:
         printf("Error calling lookup_accounts (ret=%d)", packet.status);
         exit(-1);
@@ -241,8 +241,8 @@ int main(int argc, char **argv) {
         exit(-1);
     } else {
         // Printing the account's balance:
-        tb_account_t *results = (tb_account_t*)ctx.reply;
-        int results_len = ctx.size / sizeof(tb_account_t);
+        arch_account_t *results = (arch_account_t*)ctx.reply;
+        int results_len = ctx.size / sizeof(arch_account_t);
         printf("%d Account(s) found\n", results_len);
         printf("============================================\n");
 
@@ -256,8 +256,8 @@ int main(int argc, char **argv) {
 
     // Cleanup:
     completion_context_destroy(&ctx);
-    client_status = tb_client_deinit(&client);
-    if (client_status != TB_CLIENT_OK) {
+    client_status = arch_client_deinit(&client);
+    if (client_status != ARCH_CLIENT_OK) {
         printf("Failed to deinit the client\n");
         exit(-1);
     }
@@ -267,7 +267,7 @@ int main(int argc, char **argv) {
 
 void on_completion(
     uintptr_t context,
-    tb_packet_t *packet,
+    arch_packet_t *packet,
     uint64_t timestamp,
     const uint8_t *data,
     uint32_t size
@@ -288,9 +288,9 @@ void on_completion(
     pthread_mutex_unlock(&ctx->lock);
 }
 
-TB_CLIENT_STATUS send_request(
-    tb_client_t *client,
-    tb_packet_t *packet,
+ARCH_CLIENT_STATUS send_request(
+    arch_client_t *client,
+    arch_packet_t *packet,
     completion_context_t *ctx
 ) {
     // Locks the mutex:
@@ -301,8 +301,8 @@ TB_CLIENT_STATUS send_request(
 
     // Submits the request asynchronously:
     ctx->completed = false;
-    TB_CLIENT_STATUS client_status = tb_client_submit(client, packet);
-    if (client_status == TB_CLIENT_OK) {
+    ARCH_CLIENT_STATUS client_status = arch_client_submit(client, packet);
+    if (client_status == ARCH_CLIENT_OK) {
         // Uses a condvar to sync this thread with the callback:
         while (!ctx->completed) {
             if (pthread_cond_wait(&ctx->cv, &ctx->lock) != 0) {
@@ -350,7 +350,7 @@ long long get_time_ms(void) {
 
 void on_completion(
     uintptr_t context,
-    tb_packet_t *packet,
+    arch_packet_t *packet,
     uint64_t timestamp,
     const uint8_t *data,
     uint32_t size
@@ -370,9 +370,9 @@ void on_completion(
     LeaveCriticalSection(&ctx->lock);
 }
 
-TB_CLIENT_STATUS send_request(
-    tb_client_t *client,
-    tb_packet_t *packet,
+ARCH_CLIENT_STATUS send_request(
+    arch_client_t *client,
+    arch_packet_t *packet,
     completion_context_t *ctx
 ) {
     // Locks the mutex:
@@ -380,8 +380,8 @@ TB_CLIENT_STATUS send_request(
 
     // Submits the request asynchronously:
     ctx->completed = false;
-    TB_CLIENT_STATUS client_status = tb_client_submit(client, packet);
-    if (client_status == TB_CLIENT_OK) {
+    ARCH_CLIENT_STATUS client_status = arch_client_submit(client, packet);
+    if (client_status == ARCH_CLIENT_OK) {
         // Uses a condvar to sync this thread with the callback:
         while (!ctx->completed) {
             SleepConditionVariableCS (&ctx->cv, &ctx->lock, INFINITE);

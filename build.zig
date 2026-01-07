@@ -8,7 +8,7 @@ const Query = std.Target.Query;
 const VoprStateMachine = enum { testing, accounting, geo };
 const VoprLog = enum { short, full };
 
-// TigerBeetle binary requires certain CPU feature and supports a closed set of CPUs. Here, we
+// ArcherDB binary requires certain CPU features and supports a closed set of CPUs. Here, we
 // specify exactly which features the binary needs.
 fn resolve_target(b: *std.Build, target_requested: ?[]const u8) !std.Build.ResolvedTarget {
     const target_host = @tagName(builtin.target.cpu.arch) ++ "-" ++ @tagName(builtin.target.os.tag);
@@ -66,8 +66,8 @@ pub fn build(b: *std.Build) !void {
 
     // Top-level steps you can invoke on the command line.
     const build_steps = .{
-        .aof = b.step("aof", "Run TigerBeetle AOF Utility"),
-        .check = b.step("check", "Check if TigerBeetle compiles"),
+        .aof = b.step("aof", "Run ArcherDB AOF Utility"),
+        .check = b.step("check", "Check if ArcherDB compiles"),
         .clients_c = b.step("clients:c", "Build C client library"),
         .clients_c_sample = b.step("clients:c:sample", "Build C client sample"),
         .clients_dotnet = b.step("clients:dotnet", "Build dotnet client shared library"),
@@ -79,7 +79,7 @@ pub fn build(b: *std.Build) !void {
         .docs = b.step("docs", "Build docs"),
         .fuzz = b.step("fuzz", "Run non-VOPR fuzzers"),
         .fuzz_build = b.step("fuzz:build", "Build non-VOPR fuzzers"),
-        .run = b.step("run", "Run TigerBeetle"),
+        .run = b.step("run", "Run ArcherDB"),
         .ci = b.step("ci", "Run the full suite of CI checks"),
         .scripts = b.step("scripts", "Free form automation scripts"),
         .scripts_build = b.step("scripts:build", "Build automation scripts"),
@@ -126,7 +126,7 @@ pub fn build(b: *std.Build) !void {
             "Minimum client release triple.",
         ),
         .emit_llvm_ir = b.option(bool, "emit-llvm-ir", "Emit LLVM IR (.ll file)") orelse false,
-        // The "tigerbeetle version" command includes the build-time commit hash.
+        // The "archerdb version" command includes the build-time commit hash.
         .git_commit = b.option(
             []const u8,
             "git-commit",
@@ -167,19 +167,19 @@ pub fn build(b: *std.Build) !void {
         .config_aof_recovery = build_options.config_aof_recovery,
     });
 
-    const tb_client_header = blk: {
-        const tb_client_header_generator = b.addExecutable(.{
-            .name = "tb_client_header",
+    const arch_client_header = blk: {
+        const arch_client_header_generator = b.addExecutable(.{
+            .name = "arch_client_header",
             .root_module = b.createModule(.{
-                .root_source_file = b.path("src/clients/c/tb_client_header.zig"),
+                .root_source_file = b.path("src/clients/c/arch_client_header.zig"),
                 .target = b.graph.host,
             }),
         });
-        tb_client_header_generator.root_module.addImport("vsr", vsr_module);
-        tb_client_header_generator.root_module.addOptions("vsr_options", vsr_options);
+        arch_client_header_generator.root_module.addImport("vsr", vsr_module);
+        arch_client_header_generator.root_module.addOptions("vsr_options", vsr_options);
         break :blk Generated.file(b, .{
-            .generator = tb_client_header_generator,
-            .path = "./src/clients/c/tb_client.h",
+            .generator = arch_client_header_generator,
+            .path = "./src/clients/c/arch_client.h",
         });
     };
 
@@ -192,7 +192,7 @@ pub fn build(b: *std.Build) !void {
     });
 
     // zig build, zig build run
-    build_tigerbeetle(b, .{
+    build_archerdb(b, .{
         .run = build_steps.run,
         .install = b.getInstallStep(),
     }, .{
@@ -227,7 +227,7 @@ pub fn build(b: *std.Build) !void {
         .stdx_module = stdx_module,
         .vsr_options = vsr_options,
         .llvm_objcopy = build_options.llvm_objcopy,
-        .tb_client_header = tb_client_header,
+        .arch_client_header = arch_client_header,
         .target = target,
         .mode = mode,
     });
@@ -284,7 +284,7 @@ pub fn build(b: *std.Build) !void {
         .vsr_options = vsr_options,
         .target = target,
         .mode = mode,
-        .tb_client_header = tb_client_header.path,
+        .arch_client_header = arch_client_header.path,
         .print_exe = build_options.print_exe,
     });
 
@@ -292,13 +292,13 @@ pub fn build(b: *std.Build) !void {
     build_rust_client(b, build_steps.clients_rust, .{
         .vsr_module = vsr_module,
         .vsr_options = vsr_options,
-        .tb_client_header = tb_client_header.path,
+        .arch_client_header = arch_client_header.path,
         .mode = mode,
     });
     build_go_client(b, build_steps.clients_go, .{
         .vsr_module = vsr_module,
         .vsr_options = vsr_options,
-        .tb_client_header = tb_client_header.path,
+        .arch_client_header = arch_client_header.path,
         .mode = mode,
     });
     build_java_client(b, build_steps.clients_java, .{
@@ -319,13 +319,13 @@ pub fn build(b: *std.Build) !void {
     build_python_client(b, build_steps.clients_python, .{
         .vsr_module = vsr_module,
         .vsr_options = vsr_options,
-        .tb_client_header = tb_client_header.path,
+        .arch_client_header = arch_client_header.path,
         .mode = mode,
     });
     build_c_client(b, build_steps.clients_c, .{
         .vsr_module = vsr_module,
         .vsr_options = vsr_options,
-        .tb_client_header = tb_client_header,
+        .arch_client_header = arch_client_header,
         .mode = mode,
     });
 
@@ -559,7 +559,7 @@ fn hide_stderr(run: *std.Build.Step.Run) void {
     run.step.makeFn = &override.make;
 }
 
-// Run a tigerbeetle build without running codegen and waiting for llvm
+// Run an archerdb build without running codegen and waiting for llvm
 // see <https://github.com/ziglang/zig/commit/5c0181841081170a118d8e50af2a09f5006f59e1>
 // how it's supposed to work.
 // In short, codegen only runs if zig build sees a dependency on the binary output of
@@ -576,7 +576,7 @@ fn build_check(
         mode: std.builtin.OptimizeMode,
     },
 ) void {
-    const tigerbeetle = b.addExecutable(.{
+    const archerdb = b.addExecutable(.{
         .name = "archerdb",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/archerdb/main.zig"),
@@ -584,12 +584,12 @@ fn build_check(
             .optimize = options.mode,
         }),
     });
-    tigerbeetle.root_module.addImport("stdx", options.stdx_module);
-    tigerbeetle.root_module.addImport("vsr", options.vsr_module);
-    step_check.dependOn(&tigerbeetle.step);
+    archerdb.root_module.addImport("stdx", options.stdx_module);
+    archerdb.root_module.addImport("vsr", options.vsr_module);
+    step_check.dependOn(&archerdb.step);
 }
 
-fn build_tigerbeetle(
+fn build_archerdb(
     b: *std.Build,
     steps: struct {
         run: *std.Build.Step,
@@ -614,19 +614,19 @@ fn build_tigerbeetle(
     else
         null;
 
-    const tigerbeetle_bin = if (multiversion_file) |multiversion_lazy_path| bin: {
+    const archerdb_bin = if (multiversion_file) |multiversion_lazy_path| bin: {
         assert(!options.emit_llvm_ir);
-        break :bin build_tigerbeetle_executable_multiversion(b, .{
+        break :bin build_archerdb_executable_multiversion(b, .{
             .stdx_module = options.stdx_module,
             .vsr_module = options.vsr_module,
             .vsr_options = options.vsr_options,
             .llvm_objcopy = options.llvm_objcopy,
-            .tigerbeetle_previous = multiversion_lazy_path,
+            .archerdb_previous = multiversion_lazy_path,
             .target = options.target,
             .mode = options.mode,
         });
     } else bin: {
-        const tigerbeetle_exe = build_tigerbeetle_executable(b, .{
+        const archerdb_exe = build_archerdb_executable(b, .{
             .vsr_module = options.vsr_module,
             .vsr_options = options.vsr_options,
             .target = options.target,
@@ -634,32 +634,32 @@ fn build_tigerbeetle(
         });
         if (options.emit_llvm_ir) {
             steps.install.dependOn(&b.addInstallBinFile(
-                tigerbeetle_exe.getEmittedLlvmIr(),
-                "tigerbeetle.ll",
+                archerdb_exe.getEmittedLlvmIr(),
+                "archerdb.ll",
             ).step);
         }
-        break :bin tigerbeetle_exe.getEmittedBin();
+        break :bin archerdb_exe.getEmittedBin();
     };
 
     const out_filename = if (options.target.result.os.tag == .windows)
-        "tigerbeetle.exe"
+        "archerdb.exe"
     else
         "archerdb";
 
-    steps.install.dependOn(&b.addInstallBinFile(tigerbeetle_bin, out_filename).step);
+    steps.install.dependOn(&b.addInstallBinFile(archerdb_bin, out_filename).step);
     // "zig build install" moves the server executable to the root folder:
     steps.install.dependOn(&b.addInstallFile(
-        tigerbeetle_bin,
+        archerdb_bin,
         b.pathJoin(&.{ "../", out_filename }),
     ).step);
 
-    const run_cmd = std.Build.Step.Run.create(b, b.fmt("run tigerbeetle", .{}));
-    run_cmd.addFileArg(tigerbeetle_bin);
+    const run_cmd = std.Build.Step.Run.create(b, b.fmt("run archerdb", .{}));
+    run_cmd.addFileArg(archerdb_bin);
     if (b.args) |args| run_cmd.addArgs(args);
     steps.run.dependOn(&run_cmd.step);
 }
 
-fn build_tigerbeetle_executable(b: *std.Build, options: struct {
+fn build_archerdb_executable(b: *std.Build, options: struct {
     vsr_module: *std.Build.Module,
     vsr_options: *std.Build.Step.Options,
     target: std.Build.ResolvedTarget,
@@ -674,20 +674,20 @@ fn build_tigerbeetle_executable(b: *std.Build, options: struct {
     root_module.addOptions("vsr_options", options.vsr_options);
     if (options.mode == .ReleaseSafe) strip_root_module(root_module);
 
-    const tigerbeetle = b.addExecutable(.{
+    const archerdb = b.addExecutable(.{
         .name = "archerdb",
         .root_module = root_module,
     });
 
-    return tigerbeetle;
+    return archerdb;
 }
 
-fn build_tigerbeetle_executable_multiversion(b: *std.Build, options: struct {
+fn build_archerdb_executable_multiversion(b: *std.Build, options: struct {
     stdx_module: *std.Build.Module,
     vsr_module: *std.Build.Module,
     vsr_options: *std.Build.Step.Options,
     llvm_objcopy: ?[]const u8,
-    tigerbeetle_previous: std.Build.LazyPath,
+    archerdb_previous: std.Build.LazyPath,
     target: std.Build.ResolvedTarget,
     mode: std.builtin.OptimizeMode,
 }) std.Build.LazyPath {
@@ -711,15 +711,15 @@ fn build_tigerbeetle_executable_multiversion(b: *std.Build, options: struct {
     } else {
         build_multiversion.addPrefixedFileArg(
             "--llvm-objcopy=",
-            build_tigerbeetle_executable_get_objcopy(b),
+            build_archerdb_executable_get_objcopy(b),
         );
     }
     if (options.target.result.os.tag == .macos) {
         build_multiversion.addArg("--target=macos");
         inline for (.{ "x86_64", "aarch64" }, .{ "x86-64", "aarch64" }) |arch, flag| {
             build_multiversion.addPrefixedFileArg(
-                "--tigerbeetle-current-" ++ flag ++ "=",
-                build_tigerbeetle_executable(b, .{
+                "--archerdb-current-" ++ flag ++ "=",
+                build_archerdb_executable(b, .{
                     .vsr_module = options.vsr_module,
                     .vsr_options = options.vsr_options,
                     .target = resolve_target(b, arch ++ "-macos") catch unreachable,
@@ -733,8 +733,8 @@ fn build_tigerbeetle_executable_multiversion(b: *std.Build, options: struct {
             @tagName(options.target.result.os.tag),
         }));
         build_multiversion.addPrefixedFileArg(
-            "--tigerbeetle-current=",
-            build_tigerbeetle_executable(b, .{
+            "--archerdb-current=",
+            build_archerdb_executable(b, .{
                 .vsr_module = options.vsr_module,
                 .vsr_options = options.vsr_options,
                 .target = options.target,
@@ -747,20 +747,20 @@ fn build_tigerbeetle_executable_multiversion(b: *std.Build, options: struct {
         build_multiversion.addArg("--debug");
     }
 
-    build_multiversion.addPrefixedFileArg("--tigerbeetle-past=", options.tigerbeetle_previous);
+    build_multiversion.addPrefixedFileArg("--archerdb-past=", options.archerdb_previous);
     build_multiversion.addArg(b.fmt(
         "--tmp={s}",
         .{b.cache_root.join(b.allocator, &.{"tmp"}) catch @panic("OOM")},
     ));
     const basename = if (options.target.result.os.tag == .windows)
-        "tigerbeetle.exe"
+        "archerdb.exe"
     else
         "archerdb";
     return build_multiversion.addPrefixedOutputFileArg("--output=", basename);
 }
 
 // Downloads a pre-build llvm-objcopy from <https://github.com/archerdb/dependencies>.
-fn build_tigerbeetle_executable_get_objcopy(b: *std.Build) std.Build.LazyPath {
+fn build_archerdb_executable_get_objcopy(b: *std.Build) std.Build.LazyPath {
     switch (b.graph.host.result.os.tag) {
         .linux => {
             switch (b.graph.host.result.cpu.arch) {
@@ -845,7 +845,7 @@ fn build_test(
         llvm_objcopy: ?[]const u8,
         stdx_module: *std.Build.Module,
         vsr_options: *std.Build.Step.Options,
-        tb_client_header: *Generated,
+        arch_client_header: *Generated,
         target: std.Build.ResolvedTarget,
         mode: std.builtin.OptimizeMode,
     },
@@ -902,7 +902,7 @@ fn build_test(
         .test_integration = steps.test_integration,
         .test_integration_build = steps.test_integration_build,
     }, .{
-        .tb_client_header = options.tb_client_header.path,
+        .arch_client_header = options.arch_client_header.path,
         .llvm_objcopy = options.llvm_objcopy,
         .stdx_module = options.stdx_module,
         .target = options.target,
@@ -931,36 +931,36 @@ fn build_test_integration(
         test_integration_build: *std.Build.Step,
     },
     options: struct {
-        tb_client_header: std.Build.LazyPath,
+        arch_client_header: std.Build.LazyPath,
         llvm_objcopy: ?[]const u8,
         stdx_module: *std.Build.Module,
         target: std.Build.ResolvedTarget,
         mode: std.builtin.OptimizeMode,
     },
 ) void {
-    // For integration tests, we build an independent copy of TigerBeetle with "real" config and
+    // For integration tests, we build an independent copy of ArcherDB with "real" config and
     // multiversioning.
     const vsr_options, const vsr_module = build_vsr_module(b, .{
         .stdx_module = options.stdx_module,
-        .git_commit = "bee71e0000000000000000000000000000bee71e".*, // Beetle-hash!
+        .git_commit = "a2c4e2db00000000000000000000000000a2c4e2".*, // ArcherDB-hash!
         .config_verify = true,
         .config_release = "65535.0.0",
         .config_release_client_min = "0.16.4",
         .config_aof_recovery = false,
     });
-    const tigerbeetle_previous = download_release(b, "latest", options.target, options.mode);
-    const tigerbeetle = build_tigerbeetle_executable_multiversion(b, .{
+    const archerdb_previous = download_release(b, "latest", options.target, options.mode);
+    const archerdb = build_archerdb_executable_multiversion(b, .{
         .stdx_module = options.stdx_module,
         .vsr_module = vsr_module,
         .vsr_options = vsr_options,
         .llvm_objcopy = options.llvm_objcopy,
-        .tigerbeetle_previous = tigerbeetle_previous,
+        .archerdb_previous = archerdb_previous,
         .target = options.target,
         .mode = options.mode,
     });
 
     const vortex = build_vortex_executable(b, .{
-        .tb_client_header = options.tb_client_header,
+        .arch_client_header = options.arch_client_header,
         .stdx_module = options.stdx_module,
         .vsr_module = vsr_module,
         .vsr_options = vsr_options,
@@ -970,8 +970,8 @@ fn build_test_integration(
     const vortex_artifact = b.addInstallArtifact(vortex, .{});
 
     const integration_tests_options = b.addOptions();
-    integration_tests_options.addOptionPath("tigerbeetle_exe", tigerbeetle);
-    integration_tests_options.addOptionPath("tigerbeetle_exe_past", tigerbeetle_previous);
+    integration_tests_options.addOptionPath("archerdb_exe", archerdb);
+    integration_tests_options.addOptionPath("archerdb_exe_past", archerdb_previous);
     integration_tests_options.addOptionPath("vortex_exe", vortex_artifact.emitted_bin.?);
     const integration_tests = b.addTest(.{
         .name = "test-integration",
@@ -985,7 +985,7 @@ fn build_test_integration(
     integration_tests.root_module.addImport("stdx", options.stdx_module);
     integration_tests.root_module.addOptions("vsr_options", vsr_options);
     integration_tests.root_module.addOptions("test_options", integration_tests_options);
-    integration_tests.addIncludePath(options.tb_client_header.dirname());
+    integration_tests.addIncludePath(options.arch_client_header.dirname());
     steps.test_integration_build.dependOn(&b.addInstallArtifact(integration_tests, .{}).step);
 
     const run_integration_tests = b.addRunArtifact(integration_tests);
@@ -1186,7 +1186,7 @@ fn build_vortex(
         vortex_run: *std.Build.Step,
     },
     options: struct {
-        tb_client_header: std.Build.LazyPath,
+        arch_client_header: std.Build.LazyPath,
         stdx_module: *std.Build.Module,
         vsr_module: *std.Build.Module,
         vsr_options: *std.Build.Step.Options,
@@ -1196,7 +1196,7 @@ fn build_vortex(
     },
 ) void {
     const vortex = build_vortex_executable(b, .{
-        .tb_client_header = options.tb_client_header,
+        .arch_client_header = options.arch_client_header,
         .stdx_module = options.stdx_module,
         .vsr_module = options.vsr_module,
         .vsr_options = options.vsr_options,
@@ -1215,7 +1215,7 @@ fn build_vortex(
 fn build_vortex_executable(
     b: *std.Build,
     options: struct {
-        tb_client_header: std.Build.LazyPath,
+        arch_client_header: std.Build.LazyPath,
         stdx_module: *std.Build.Module,
         vsr_module: *std.Build.Module,
         vsr_options: *std.Build.Step.Options,
@@ -1223,26 +1223,26 @@ fn build_vortex_executable(
         mode: std.builtin.OptimizeMode,
     },
 ) *std.Build.Step.Compile {
-    const tb_client = b.addLibrary(.{
-        .name = "tb_client",
+    const arch_client = b.addLibrary(.{
+        .name = "arch_client",
         .linkage = .static,
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/archerdb/libtb_client.zig"),
+            .root_source_file = b.path("src/archerdb/libarch_client.zig"),
             .target = options.target,
             .optimize = options.mode,
         }),
     });
-    tb_client.linkLibC();
-    tb_client.pie = true;
-    tb_client.bundle_compiler_rt = true;
-    tb_client.root_module.addImport("vsr", options.vsr_module);
-    tb_client.root_module.addOptions("vsr_options", options.vsr_options);
+    arch_client.linkLibC();
+    arch_client.pie = true;
+    arch_client.bundle_compiler_rt = true;
+    arch_client.root_module.addImport("vsr", options.vsr_module);
+    arch_client.root_module.addOptions("vsr_options", options.vsr_options);
     if (options.target.result.os.tag == .windows) {
-        tb_client.linkSystemLibrary("ws2_32");
-        tb_client.linkSystemLibrary("advapi32");
+        arch_client.linkSystemLibrary("ws2_32");
+        arch_client.linkSystemLibrary("advapi32");
     }
 
-    const tigerbeetle = build_tigerbeetle_executable(b, .{
+    const archerdb = build_archerdb_executable(b, .{
         .vsr_module = options.vsr_module,
         .vsr_options = options.vsr_options,
         .target = options.target,
@@ -1250,7 +1250,7 @@ fn build_vortex_executable(
     });
 
     const vortex_options = b.addOptions();
-    vortex_options.addOptionPath("tigerbeetle_exe", tigerbeetle.getEmittedBin());
+    vortex_options.addOptionPath("archerdb_exe", archerdb.getEmittedBin());
 
     const vortex = b.addExecutable(.{
         .name = "vortex",
@@ -1263,8 +1263,8 @@ fn build_vortex_executable(
     });
     vortex.root_module.addImport("stdx", options.stdx_module);
     vortex.linkLibC();
-    vortex.linkLibrary(tb_client);
-    vortex.addIncludePath(options.tb_client_header.dirname());
+    vortex.linkLibrary(arch_client);
+    vortex.addIncludePath(options.arch_client_header.dirname());
     vortex.root_module.addOptions("vsr_options", options.vsr_options);
     vortex.root_module.addOptions("vortex_options", vortex_options);
     return vortex;
@@ -1295,19 +1295,19 @@ fn build_rust_client(
     options: struct {
         vsr_module: *std.Build.Module,
         vsr_options: *std.Build.Step.Options,
-        tb_client_header: std.Build.LazyPath,
+        arch_client_header: std.Build.LazyPath,
         mode: std.builtin.OptimizeMode,
     },
 ) void {
-    // The Rust test suite runs tigerbeetle directly. This ensures it is available.
+    // The Rust test suite runs archerdb directly. This ensures it is available.
     step_clients_rust.dependOn(b.getInstallStep());
 
     // Copy the generated header file to the Rust client assets directory:
-    const tb_client_header_copy = Generated.file_copy(b, .{
-        .from = options.tb_client_header,
-        .path = "./src/clients/rust/assets/tb_client.h",
+    const arch_client_header_copy = Generated.file_copy(b, .{
+        .from = options.arch_client_header,
+        .path = "./src/clients/rust/assets/arch_client.h",
     });
-    step_clients_rust.dependOn(&tb_client_header_copy.step);
+    step_clients_rust.dependOn(&arch_client_header_copy.step);
 
     inline for (platforms) |platform| {
         const query = Query.parse(.{
@@ -1317,7 +1317,7 @@ fn build_rust_client(
         const resolved_target = b.resolveTargetQuery(query);
 
         const root_module = b.createModule(.{
-            .root_source_file = b.path("src/archerdb/libtb_client.zig"),
+            .root_source_file = b.path("src/archerdb/libarch_client.zig"),
             .target = resolved_target,
             .optimize = options.mode,
         });
@@ -1326,7 +1326,7 @@ fn build_rust_client(
         if (options.mode == .ReleaseSafe) strip_root_module(root_module);
 
         const static_lib = b.addLibrary(.{
-            .name = "tb_client",
+            .name = "arch_client",
             .linkage = .static,
             .root_module = root_module,
         });
@@ -1352,7 +1352,7 @@ fn build_rust_client(
     rust_bindings_generator.root_module.addOptions("vsr_options", options.vsr_options);
     const bindings = Generated.file(b, .{
         .generator = rust_bindings_generator,
-        .path = "./src/clients/rust/src/tb_client.rs",
+        .path = "./src/clients/rust/src/arch_client.rs",
     });
 
     step_clients_rust.dependOn(&bindings.step);
@@ -1364,14 +1364,14 @@ fn build_go_client(
     options: struct {
         vsr_module: *std.Build.Module,
         vsr_options: *std.Build.Step.Options,
-        tb_client_header: std.Build.LazyPath,
+        arch_client_header: std.Build.LazyPath,
         mode: std.builtin.OptimizeMode,
     },
 ) void {
     // Updates the generated header file:
-    const tb_client_header_copy = Generated.file_copy(b, .{
-        .from = options.tb_client_header,
-        .path = "./src/clients/go/pkg/native/tb_client.h",
+    const arch_client_header_copy = Generated.file_copy(b, .{
+        .from = options.arch_client_header,
+        .path = "./src/clients/go/pkg/native/arch_client.h",
     });
 
     const go_bindings_generator = b.addExecutable(.{
@@ -1383,7 +1383,7 @@ fn build_go_client(
     });
     go_bindings_generator.root_module.addImport("vsr", options.vsr_module);
     go_bindings_generator.root_module.addOptions("vsr_options", options.vsr_options);
-    go_bindings_generator.step.dependOn(&tb_client_header_copy.step);
+    go_bindings_generator.step.dependOn(&arch_client_header_copy.step);
     const bindings = Generated.file(b, .{
         .generator = go_bindings_generator,
         .path = "./src/clients/go/pkg/types/bindings.go",
@@ -1407,7 +1407,7 @@ fn build_go_client(
         const resolved_target = b.resolveTargetQuery(query);
 
         const root_module = b.createModule(.{
-            .root_source_file = b.path("src/archerdb/libtb_client.zig"),
+            .root_source_file = b.path("src/archerdb/libarch_client.zig"),
             .target = resolved_target,
             .optimize = options.mode,
             .stack_protector = false,
@@ -1417,7 +1417,7 @@ fn build_go_client(
         if (options.mode == .ReleaseSafe) strip_root_module(root_module);
 
         const lib = b.addLibrary(.{
-            .name = "tb_client",
+            .name = "arch_client",
             .linkage = .static,
             .root_module = root_module,
         });
@@ -1485,7 +1485,7 @@ fn build_java_client(
         if (options.mode == .ReleaseSafe) strip_root_module(root_module);
 
         const lib = b.addLibrary(.{
-            .name = "tb_jniclient",
+            .name = "arch_jniclient",
             .linkage = .dynamic,
             .root_module = root_module,
         });
@@ -1525,7 +1525,7 @@ fn build_dotnet_client(
     dotnet_bindings_generator.root_module.addOptions("vsr_options", options.vsr_options);
     const bindings = Generated.file(b, .{
         .generator = dotnet_bindings_generator,
-        .path = "./src/clients/dotnet/TigerBeetle/Bindings.cs",
+        .path = "./src/clients/dotnet/ArcherDB/Bindings.cs",
     });
 
     inline for (platforms) |platform| {
@@ -1536,7 +1536,7 @@ fn build_dotnet_client(
         const resolved_target = b.resolveTargetQuery(query);
 
         const root_module = b.createModule(.{
-            .root_source_file = b.path("src/archerdb/libtb_client.zig"),
+            .root_source_file = b.path("src/archerdb/libarch_client.zig"),
             .target = resolved_target,
             .optimize = options.mode,
         });
@@ -1545,7 +1545,7 @@ fn build_dotnet_client(
         if (options.mode == .ReleaseSafe) strip_root_module(root_module);
 
         const lib = b.addLibrary(.{
-            .name = "tb_client",
+            .name = "arch_client",
             .linkage = .dynamic,
             .root_module = root_module,
         });
@@ -1557,7 +1557,7 @@ fn build_dotnet_client(
         lib.step.dependOn(&bindings.step);
 
         step_clients_dotnet.dependOn(&b.addInstallFile(lib.getEmittedBin(), b.pathJoin(&.{
-            "../src/clients/dotnet/TigerBeetle/runtimes/",
+            "../src/clients/dotnet/ArcherDB/runtimes/",
             platform[1],
             "native",
             lib.out_filename,
@@ -1640,7 +1640,7 @@ fn build_node_client(
         if (options.mode == .ReleaseSafe) strip_root_module(root_module);
 
         const lib = b.addLibrary(.{
-            .name = "tb_nodeclient",
+            .name = "arch_nodeclient",
             .linkage = .dynamic,
             .root_module = root_module,
         });
@@ -1674,7 +1674,7 @@ fn build_python_client(
     options: struct {
         vsr_module: *std.Build.Module,
         vsr_options: *std.Build.Step.Options,
-        tb_client_header: std.Build.LazyPath,
+        arch_client_header: std.Build.LazyPath,
         mode: std.builtin.OptimizeMode,
     },
 ) void {
@@ -1700,7 +1700,7 @@ fn build_python_client(
         const resolved_target = b.resolveTargetQuery(query);
 
         const root_module = b.createModule(.{
-            .root_source_file = b.path("src/archerdb/libtb_client.zig"),
+            .root_source_file = b.path("src/archerdb/libarch_client.zig"),
             .target = resolved_target,
             .optimize = options.mode,
         });
@@ -1709,7 +1709,7 @@ fn build_python_client(
         if (options.mode == .ReleaseSafe) strip_root_module(root_module);
 
         const shared_lib = b.addLibrary(.{
-            .name = "tb_client",
+            .name = "arch_client",
             .linkage = .dynamic,
             .root_module = root_module,
         });
@@ -1738,11 +1738,11 @@ fn build_c_client(
     options: struct {
         vsr_module: *std.Build.Module,
         vsr_options: *std.Build.Step.Options,
-        tb_client_header: *Generated,
+        arch_client_header: *Generated,
         mode: std.builtin.OptimizeMode,
     },
 ) void {
-    step_clients_c.dependOn(&options.tb_client_header.step);
+    step_clients_c.dependOn(&options.arch_client_header.step);
 
     inline for (platforms) |platform| {
         const query = Query.parse(.{
@@ -1752,7 +1752,7 @@ fn build_c_client(
         const resolved_target = b.resolveTargetQuery(query);
 
         const root_module = b.createModule(.{
-            .root_source_file = b.path("src/archerdb/libtb_client.zig"),
+            .root_source_file = b.path("src/archerdb/libarch_client.zig"),
             .target = resolved_target,
             .optimize = options.mode,
         });
@@ -1761,13 +1761,13 @@ fn build_c_client(
         if (options.mode == .ReleaseSafe) strip_root_module(root_module);
 
         const shared_lib = b.addLibrary(.{
-            .name = "tb_client",
+            .name = "arch_client",
             .linkage = .dynamic,
             .root_module = root_module,
         });
 
         const static_lib = b.addLibrary(.{
-            .name = "tb_client",
+            .name = "arch_client",
             .linkage = .static,
             .root_module = root_module,
         });
@@ -1801,10 +1801,10 @@ fn build_clients_c_sample(
     },
 ) void {
     const static_lib = b.addLibrary(.{
-        .name = "tb_client",
+        .name = "arch_client",
         .linkage = .static,
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/archerdb/libtb_client.zig"),
+            .root_source_file = b.path("src/archerdb/libarch_client.zig"),
             .target = options.target,
             .optimize = options.mode,
         }),
@@ -2147,14 +2147,14 @@ fn download_release(
     };
 
     const url = b.fmt(
-        "https://github.com/archerdb/tigerbeetle" ++
-            "/releases/{s}/tigerbeetle-{s}-{s}{s}.zip",
+        "https://github.com/archerdb/archerdb" ++
+            "/releases/{s}/archerdb-{s}-{s}{s}.zip",
         .{ release_slug, arch, os, debug },
     );
 
     return fetch(b, .{
         .url = url,
-        .file_name = if (target.result.os.tag == .windows) "tigerbeetle.exe" else "archerdb",
+        .file_name = if (target.result.os.tag == .windows) "archerdb.exe" else "archerdb",
         .hash = null,
     });
 }

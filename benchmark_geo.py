@@ -24,9 +24,9 @@ from typing import List
 # Add the client library to the path
 sys.path.insert(0, str(Path(__file__).parent / "src" / "clients" / "python" / "src"))
 
-# Import from the tigerbeetle package (which has the working native bindings)
-from tigerbeetle import bindings
-from tigerbeetle.lib import c_uint128, tbclient, validate_uint
+# Import from the archerdb package (which has the working native bindings)
+from archerdb import bindings
+from archerdb.lib import c_uint128, archclient, validate_uint
 
 # ============================================================================
 # S2 Cell ID Computation (simplified implementation)
@@ -179,7 +179,7 @@ class CGeoEvent(ctypes.Structure):
 assert ctypes.sizeof(CGeoEvent) == 128, f"GeoEvent size mismatch: {ctypes.sizeof(CGeoEvent)} != 128"
 
 # GeoEvent operation codes (from archerdb.zig)
-# These are different from TigerBeetle's Account/Transfer operations
+# These are different from ArcherDB's Account/Transfer operations
 OP_INSERT_EVENTS = 146  # vsr_operations_reserved (128) + 18
 
 # ============================================================================
@@ -291,7 +291,7 @@ class GeoClient:
             _request_counter += 1
             self._context = _request_counter
 
-        status = bindings.tb_client_init(
+        status = bindings.arch_client_init(
             ctypes.byref(self._client),
             ctypes.byref(cluster_bytes),
             addr_bytes,
@@ -340,7 +340,7 @@ class GeoClient:
         self._current_packet = packet
 
         # Submit request
-        status = bindings.tb_client_submit(ctypes.byref(self._client), ctypes.byref(packet))
+        status = bindings.arch_client_submit(ctypes.byref(self._client), ctypes.byref(packet))
         if status != bindings.ClientStatus.OK:
             del _requests[req_id]
             raise RuntimeError(f"Submit failed with status {status}")
@@ -359,7 +359,7 @@ class GeoClient:
 
     def close(self):
         if not self._closed:
-            bindings.tb_client_deinit(ctypes.byref(self._client))
+            bindings.arch_client_deinit(ctypes.byref(self._client))
             self._closed = True
 
 

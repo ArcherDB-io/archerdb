@@ -11,18 +11,18 @@ support. But for ease of development we also support macOS and Windows.
 
 ## Setup
 
-First, clone this repo and `cd` into `tigerbeetle/src/clients/rust/samples/two-phase-many`.
+First, clone this repo and `cd` into `archerdb/src/clients/rust/samples/two-phase-many`.
 
-Then, install the TigerBeetle client:
+Then, install the ArcherDB client:
 
-## Start the TigerBeetle server
+## Start the ArcherDB server
 
 Follow steps in the repo README to [run
-TigerBeetle](/README.md#running-tigerbeetle).
+ArcherDB](/README.md#running-archerdb).
 
 If you are not running on port `localhost:3000`, set
-the environment variable `TB_ADDRESS` to the full
-address of the TigerBeetle server you started.
+the environment variable `ARCHERDB_ADDRESS` to the full
+address of the ArcherDB server you started.
 
 ## Run this sample
 

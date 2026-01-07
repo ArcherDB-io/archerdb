@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2024-2025 ArcherDB Contributors
-//! Orchestrates building and publishing a distribution of tigerbeetle --- a collection of (source
+//! Orchestrates building and publishing a distribution of archerdb --- a collection of (source
 //! and binary) artifacts which constitutes a release and which we upload to various registries.
 //!
 //! Concretely, the artifacts are:
 //!
-//! - TigerBeetle binary build for all supported architectures
-//! - TigerBeetle clients build for all supported languages
+//! - ArcherDB binary build for all supported architectures
+//! - ArcherDB clients build for all supported languages
 //!
 //! This is implemented as a standalone zig script, rather as a step in build.zig, because this is
 //! a "meta" build system --- we need to orchestrate `zig build`, `go build`, `npm publish` and
@@ -182,18 +182,18 @@ fn build(shell: *Shell, languages: LanguageSet, info: VersionInfo, devhub: bool)
     var dist_dir = try shell.project_root.makeOpenPath("zig-out/dist", .{});
     defer dist_dir.close();
 
-    log.info("building TigerBeetle distribution into {s}", .{
+    log.info("building ArcherDB distribution into {s}", .{
         try dist_dir.realpathAlloc(shell.arena.allocator(), "."),
     });
 
     if (languages.contains(.zig)) {
-        var dist_dir_tigerbeetle = try dist_dir.makeOpenPath("tigerbeetle", .{});
-        defer dist_dir_tigerbeetle.close();
+        var dist_dir_archerdb = try dist_dir.makeOpenPath("archerdb", .{});
+        defer dist_dir_archerdb.close();
 
         if (devhub) {
-            try build_tigerbeetle_target(shell, info, dist_dir_tigerbeetle, false, "x86_64-linux");
+            try build_archerdb_target(shell, info, dist_dir_archerdb, false, "x86_64-linux");
         } else {
-            try build_tigerbeetle(shell, info, dist_dir_tigerbeetle);
+            try build_archerdb(shell, info, dist_dir_archerdb);
         }
     }
 
@@ -237,7 +237,7 @@ fn build(shell: *Shell, languages: LanguageSet, info: VersionInfo, devhub: bool)
     }
 }
 
-fn build_tigerbeetle(shell: *Shell, info: VersionInfo, dist_dir: std.fs.Dir) !void {
+fn build_archerdb(shell: *Shell, info: VersionInfo, dist_dir: std.fs.Dir) !void {
     const targets = .{
         "x86_64-linux",
         "x86_64-windows",
@@ -247,12 +247,12 @@ fn build_tigerbeetle(shell: *Shell, info: VersionInfo, dist_dir: std.fs.Dir) !vo
 
     inline for (.{ true, false }) |debug| {
         inline for (targets) |target| {
-            try build_tigerbeetle_target(shell, info, dist_dir, debug, target);
+            try build_archerdb_target(shell, info, dist_dir, debug, target);
         }
     }
 }
 
-fn build_tigerbeetle_target(
+fn build_archerdb_target(
     shell: *Shell,
     info: VersionInfo,
     dist_dir: std.fs.Dir,
@@ -260,7 +260,7 @@ fn build_tigerbeetle_target(
     comptime target: []const u8,
 ) !void {
     var section = try shell.open_section(
-        "build tigerbeetle - " ++ target ++ " debug: " ++ if (debug) "true" else "false",
+        "build archerdb - " ++ target ++ " debug: " ++ if (debug) "true" else "false",
     );
     defer section.close();
 
@@ -273,7 +273,7 @@ fn build_tigerbeetle_target(
         );
     };
 
-    // Build tigerbeetle binary for all OS/CPU combinations we support and copy the result to
+    // Build archerdb binary for all OS/CPU combinations we support and copy the result to
     // `dist`.
     try shell.exec_zig(
         \\build
@@ -295,8 +295,8 @@ fn build_tigerbeetle_target(
     const windows = comptime std.mem.eql(u8, target, "x86_64-windows");
     const macos = comptime std.mem.eql(u8, target, "aarch64-macos");
 
-    const exe_name = "tigerbeetle" ++ if (windows) ".exe" else "";
-    const zip_name = "tigerbeetle-" ++
+    const exe_name = "archerdb" ++ if (windows) ".exe" else "";
+    const zip_name = "archerdb-" ++
         (if (macos) "universal-macos" else target) ++
         (if (debug) "-debug" else "") ++
         ".zip";
@@ -349,15 +349,15 @@ fn build_dotnet(shell: *Shell, info: VersionInfo, dist_dir: std.fs.Dir) !void {
         .release_triple_client_min = info.release_triple_client_min,
     });
     try shell.exec(
-        \\dotnet pack TigerBeetle --configuration Release
+        \\dotnet pack ArcherDB --configuration Release
         \\/p:AssemblyVersion={tag} /p:Version={tag}
     , .{ .tag = info.tag });
 
     try Shell.copy_path(
         shell.cwd,
-        try shell.fmt("TigerBeetle/bin/Release/tigerbeetle.{s}.nupkg", .{info.tag}),
+        try shell.fmt("ArcherDB/bin/Release/archerdb.{s}.nupkg", .{info.tag}),
         dist_dir,
-        try shell.fmt("tigerbeetle.{s}.nupkg", .{info.tag}),
+        try shell.fmt("archerdb.{s}.nupkg", .{info.tag}),
     );
 }
 
@@ -398,13 +398,13 @@ fn build_go(shell: *Shell, info: VersionInfo, dist_dir: std.fs.Dir) !void {
     assert(copied_count == 5);
 
     const readme = try shell.fmt(
-        \\# tigerbeetle-go
+        \\# archerdb-go
         \\This repo has been automatically generated from
-        \\[tigerbeetle/tigerbeetle@{[sha]s}](https://github.com/tigerbeetle/tigerbeetle/commit/{[sha]s})
+        \\[archerdb/archerdb@{[sha]s}](https://github.com/archerdb/archerdb/commit/{[sha]s})
         \\to keep binary blobs out of the monorepo.
         \\
         \\Please see
-        \\<https://github.com/tigerbeetle/tigerbeetle/tree/main/src/clients/go>
+        \\<https://github.com/archerdb/archerdb/tree/main/src/clients/go>
         \\for documentation and contributions.
     , .{ .sha = info.sha });
     try dist_dir.writeFile(.{ .sub_path = "README.md", .data = readme });
@@ -446,9 +446,9 @@ fn build_java(shell: *Shell, info: VersionInfo, dist_dir: std.fs.Dir) !void {
 
     try Shell.copy_path(
         shell.cwd,
-        try shell.fmt("target/tigerbeetle-java-{s}.jar", .{info.tag}),
+        try shell.fmt("target/archerdb-java-{s}.jar", .{info.tag}),
         dist_dir,
-        try shell.fmt("tigerbeetle-java-{s}.jar", .{info.tag}),
+        try shell.fmt("archerdb-java-{s}.jar", .{info.tag}),
     );
 }
 
@@ -487,9 +487,9 @@ fn build_node(shell: *Shell, info: VersionInfo, dist_dir: std.fs.Dir) !void {
 
     try Shell.copy_path(
         shell.cwd,
-        try shell.fmt("tigerbeetle-node-{s}.tgz", .{info.tag}),
+        try shell.fmt("archerdb-node-{s}.tgz", .{info.tag}),
         dist_dir,
-        try shell.fmt("tigerbeetle-node-{s}.tgz", .{info.tag}),
+        try shell.fmt("archerdb-node-{s}.tgz", .{info.tag}),
     );
 }
 
@@ -543,9 +543,9 @@ fn build_python(shell: *Shell, info: VersionInfo, dist_dir: std.fs.Dir) !void {
 
     try Shell.copy_path(
         shell.cwd,
-        try shell.fmt("dist/tigerbeetle-{s}-py3-none-any.whl", .{info.tag}),
+        try shell.fmt("dist/archerdb-{s}-py3-none-any.whl", .{info.tag}),
         dist_dir,
-        try shell.fmt("tigerbeetle-{s}-py3-none-any.whl", .{info.tag}),
+        try shell.fmt("archerdb-{s}-py3-none-any.whl", .{info.tag}),
     );
 }
 
@@ -589,17 +589,17 @@ fn publish(
         log.info("gh version {s}", .{gh_version});
 
         const release_included_min = blk: {
-            shell.project_root.deleteFile("tigerbeetle") catch {};
-            defer shell.project_root.deleteFile("tigerbeetle") catch {};
+            shell.project_root.deleteFile("archerdb") catch {};
+            defer shell.project_root.deleteFile("archerdb") catch {};
 
             try shell.unzip_executable(
-                "zig-out/dist/tigerbeetle/tigerbeetle-x86_64-linux.zip",
-                "tigerbeetle",
+                "zig-out/dist/archerdb/archerdb-x86_64-linux.zip",
+                "archerdb",
             );
 
             const past_binary_contents = try shell.cwd.readFileAllocOptions(
                 shell.arena.allocator(),
-                "tigerbeetle",
+                "archerdb",
                 multiversion_binary_size_max,
                 null,
                 8,
@@ -631,8 +631,8 @@ fn publish(
             \\## Server
             \\
             \\* Binary: Download the zip for your OS and architecture from this page and unzip.
-            \\* Docker: `docker pull ghcr.io/tigerbeetle/tigerbeetle:{[tag]s}`
-            \\* Docker (debug image): `docker pull ghcr.io/tigerbeetle/tigerbeetle:{[tag]s}-debug`
+            \\* Docker: `docker pull ghcr.io/archerdb/archerdb:{[tag]s}`
+            \\* Docker (debug image): `docker pull ghcr.io/archerdb/archerdb:{[tag]s}-debug`
             \\
             \\## Clients
             \\
@@ -644,12 +644,12 @@ fn publish(
             \\with replicas from their own release *or newer*, subject to the newer release's
             \\`Oldest supported client version`.
             \\
-            \\* .NET: `dotnet add package tigerbeetle --version {[tag]s}`
-            \\* Go: `go mod edit -require github.com/tigerbeetle/tigerbeetle-go@v{[tag]s}`
-            \\* Java: Update the version of `com.tigerbeetle.tigerbeetle-java` in `pom.xml`
+            \\* .NET: `dotnet add package archerdb --version {[tag]s}`
+            \\* Go: `go mod edit -require github.com/archerdb/archerdb-go@v{[tag]s}`
+            \\* Java: Update the version of `com.archerdb.archerdb-java` in `pom.xml`
             \\  to `{[tag]s}`.
-            \\* Node.js: `npm install --save-exact tigerbeetle-node@{[tag]s}`
-            \\* Python: `pip install tigerbeetle=={[tag]s}`
+            \\* Node.js: `npm install --save-exact archerdb-node@{[tag]s}`
+            \\* Python: `pip install archerdb=={[tag]s}`
             \\
             \\## Changelog
             \\
@@ -675,14 +675,14 @@ fn publish(
         // Here and elsewhere for publishing we explicitly spell out the files we are uploading
         // instead of using a for loop to double-check the logic in `build`.
         const artifacts: []const []const u8 = &.{
-            "zig-out/dist/tigerbeetle/tigerbeetle-aarch64-linux-debug.zip",
-            "zig-out/dist/tigerbeetle/tigerbeetle-aarch64-linux.zip",
-            "zig-out/dist/tigerbeetle/tigerbeetle-universal-macos-debug.zip",
-            "zig-out/dist/tigerbeetle/tigerbeetle-universal-macos.zip",
-            "zig-out/dist/tigerbeetle/tigerbeetle-x86_64-linux-debug.zip",
-            "zig-out/dist/tigerbeetle/tigerbeetle-x86_64-linux.zip",
-            "zig-out/dist/tigerbeetle/tigerbeetle-x86_64-windows-debug.zip",
-            "zig-out/dist/tigerbeetle/tigerbeetle-x86_64-windows.zip",
+            "zig-out/dist/archerdb/archerdb-aarch64-linux-debug.zip",
+            "zig-out/dist/archerdb/archerdb-aarch64-linux.zip",
+            "zig-out/dist/archerdb/archerdb-universal-macos-debug.zip",
+            "zig-out/dist/archerdb/archerdb-universal-macos.zip",
+            "zig-out/dist/archerdb/archerdb-x86_64-linux-debug.zip",
+            "zig-out/dist/archerdb/archerdb-x86_64-linux.zip",
+            "zig-out/dist/archerdb/archerdb-x86_64-windows-debug.zip",
+            "zig-out/dist/archerdb/archerdb-x86_64-windows.zip",
         };
         try shell.exec("gh release upload {tag} {artifacts}", .{
             .tag = info.tag,
@@ -722,7 +722,7 @@ fn publish_dotnet(shell: *Shell, info: VersionInfo) !void {
         \\    {package}
     , .{
         .nuget_key = nuget_key,
-        .package = try shell.fmt("zig-out/dist/dotnet/tigerbeetle.{s}.nupkg", .{
+        .package = try shell.fmt("zig-out/dist/dotnet/archerdb.{s}.nupkg", .{
             info.tag,
         }),
     });
@@ -737,10 +737,10 @@ fn publish_go(shell: *Shell, info: VersionInfo) !void {
     const token = try shell.env_get("TIGERBEETLE_GO_PAT");
     try shell.exec(
         \\git clone --no-checkout --depth 1
-        \\  https://oauth2:{token}@github.com/tigerbeetle/tigerbeetle-go.git tigerbeetle-go
+        \\  https://oauth2:{token}@github.com/archerdb/archerdb-go.git archerdb-go
     , .{ .token = token });
     defer {
-        shell.project_root.deleteTree("tigerbeetle-go") catch {};
+        shell.project_root.deleteTree("archerdb-go") catch {};
     }
 
     const dist_files = try shell.find(.{ .where = &.{"zig-out/dist/go"} });
@@ -755,32 +755,32 @@ fn publish_go(shell: *Shell, info: VersionInfo) !void {
                 shell.arena.allocator(),
                 file,
                 "zig-out/dist/go",
-                "tigerbeetle-go",
+                "archerdb-go",
             ),
         );
     }
 
-    try shell.pushd("./tigerbeetle-go");
+    try shell.pushd("./archerdb-go");
     defer shell.popd();
 
     try shell.exec("git add .", .{});
     // Native libraries are ignored in this repository, but we want to push them to the
-    // tigerbeetle-go one!
+    // archerdb-go one!
     try shell.exec("git add --force pkg/native", .{});
 
     try shell.git_env_setup(.{ .use_hostname = false });
     try shell.exec("git commit --message {message}", .{
         .message = try shell.fmt(
-            "Autogenerated commit from tigerbeetle/tigerbeetle@{s}",
+            "Autogenerated commit from archerdb/archerdb@{s}",
             .{info.sha},
         ),
     });
 
-    try shell.exec("git tag tigerbeetle-{sha}", .{ .sha = info.sha });
+    try shell.exec("git tag archerdb-{sha}", .{ .sha = info.sha });
     try shell.exec("git tag v{tag}", .{ .tag = info.tag });
 
     try shell.exec("git push origin main", .{});
-    try shell.exec("git push origin tigerbeetle-{sha}", .{ .sha = info.sha });
+    try shell.exec("git push origin archerdb-{sha}", .{ .sha = info.sha });
     try shell.exec("git push origin v{tag}", .{ .tag = info.tag });
 }
 
@@ -842,7 +842,7 @@ fn publish_node(shell: *Shell, info: VersionInfo) !void {
     assert(try shell.dir_exists("zig-out/dist/node"));
 
     try shell.exec("npm publish {package}", .{
-        .package = try shell.fmt("zig-out/dist/node/tigerbeetle-node-{s}.tgz", .{
+        .package = try shell.fmt("zig-out/dist/node/archerdb-node-{s}.tgz", .{
             info.tag,
         }),
     });
@@ -858,22 +858,22 @@ fn publish_python(shell: *Shell, info: VersionInfo) !void {
     _ = try shell.env_get("TWINE_PASSWORD");
 
     try shell.exec("python3 -m twine upload {package}", .{
-        .package = try shell.fmt("zig-out/dist/python/tigerbeetle-{s}-py3-none-any.whl", .{
+        .package = try shell.fmt("zig-out/dist/python/archerdb-{s}-py3-none-any.whl", .{
             info.tag,
         }),
     });
 }
 
-// Docker is not required and not recommended for running TigerBeetle. A container is published
+// Docker is not required and not recommended for running ArcherDB. A container is published
 // just for convenience of consumers expecting one!
 fn publish_docker(shell: *Shell, info: VersionInfo) !void {
     var section = try shell.open_section("publish docker");
     defer section.close();
 
-    assert(try shell.dir_exists("zig-out/dist/tigerbeetle"));
+    assert(try shell.dir_exists("zig-out/dist/archerdb"));
 
     try shell.exec(
-        \\docker login --username tigerbeetle --password {password} ghcr.io
+        \\docker login --username archerdb --password {password} ghcr.io
     , .{
         .password = try shell.env_get("GITHUB_TOKEN"),
     });
@@ -888,22 +888,22 @@ fn publish_docker(shell: *Shell, info: VersionInfo) !void {
         for (triples, docker_arches) |triple, docker_arch| {
             // We need to unzip binaries from dist. For simplicity, don't bother with a temporary
             // directory.
-            shell.project_root.deleteFile("tigerbeetle") catch {};
+            shell.project_root.deleteFile("archerdb") catch {};
 
             const zip_path = try shell.fmt(
-                "./zig-out/dist/tigerbeetle/tigerbeetle-{s}{s}.zip",
+                "./zig-out/dist/archerdb/archerdb-{s}{s}.zip",
                 .{ triple, if (debug) "-debug" else "" },
             );
-            try shell.unzip_executable(zip_path, "tigerbeetle");
+            try shell.unzip_executable(zip_path, "archerdb");
 
             try shell.project_root.rename(
-                "tigerbeetle",
-                try shell.fmt("tigerbeetle-{s}", .{docker_arch}),
+                "archerdb",
+                try shell.fmt("archerdb-{s}", .{docker_arch}),
             );
         }
         // Build docker container by copying pre-build executable inside.
         //
-        // TigerBeetle doesn't install its own signal handlers, and PID 1 doesn't have a default
+        // ArcherDB doesn't install its own signal handlers, and PID 1 doesn't have a default
         // SIGTERM signal handler. (See https://github.com/krallin/tini#why-tini). Using "tini" as
         // PID 1 ensures that signals work as expected, so e.g. "docker stop" will not hang.
         try shell.exec_options(
@@ -915,14 +915,14 @@ fn publish_docker(shell: *Shell, info: VersionInfo) !void {
                 \\RUN apk upgrade --scripts=no apk-tools
                 \\RUN apk add --no-cache tini
                 \\ARG TARGETARCH
-                \\COPY tigerbeetle-${TARGETARCH} /tigerbeetle
-                \\ENTRYPOINT ["tini", "--", "/tigerbeetle"]
+                \\COPY archerdb-${TARGETARCH} /archerdb
+                \\ENTRYPOINT ["tini", "--", "/archerdb"]
                 ,
             },
             \\docker buildx build
             \\   --file - .
             \\   --platform linux/amd64,linux/arm64
-            \\   --tag ghcr.io/tigerbeetle/tigerbeetle:{tag}{debug}
+            \\   --tag ghcr.io/archerdb/archerdb:{tag}{debug}
             \\   {tag_latest}
             \\   --push
         ,
@@ -931,7 +931,7 @@ fn publish_docker(shell: *Shell, info: VersionInfo) !void {
                 .debug = if (debug) "-debug" else "",
                 .tag_latest = @as(
                     []const []const u8,
-                    if (debug) &.{} else &.{ "--tag", "ghcr.io/tigerbeetle/tigerbeetle:latest" },
+                    if (debug) &.{} else &.{ "--tag", "ghcr.io/archerdb/archerdb:latest" },
                 ),
             },
         );
@@ -940,7 +940,7 @@ fn publish_docker(shell: *Shell, info: VersionInfo) !void {
         // pushing it out to the registry first. As docker testing isn't covered under not rocket
         // science rule, let's do a best effort after-the-fact testing here.
         const version_verbose = try shell.exec_stdout(
-            \\docker run ghcr.io/tigerbeetle/tigerbeetle:{tag}{debug} version --verbose
+            \\docker run ghcr.io/archerdb/archerdb:{tag}{debug} version --verbose
         , .{
             .tag = info.tag,
             .debug = if (debug) "-debug" else "",
@@ -965,10 +965,10 @@ fn publish_docs(shell: *Shell, info: VersionInfo) !void {
     const token = try shell.env_get("TIGERBEETLE_DOCS_PAT");
     try shell.exec(
         \\git clone --no-checkout --depth 1
-        \\  https://oauth2:{token}@github.com/tigerbeetle/docs.git tigerbeetle-docs
+        \\  https://oauth2:{token}@github.com/archerdb/docs.git archerdb-docs
     , .{ .token = token });
     defer {
-        shell.project_root.deleteTree("tigerbeetle-docs") catch {};
+        shell.project_root.deleteTree("archerdb-docs") catch {};
     }
 
     const docs_files = try shell.find(.{ .where = &.{"src/docs_website/zig-out"} });
@@ -983,25 +983,25 @@ fn publish_docs(shell: *Shell, info: VersionInfo) !void {
                 shell.arena.allocator(),
                 file,
                 "src/docs_website/zig-out",
-                "tigerbeetle-docs/",
+                "archerdb-docs/",
             ),
         );
     }
 
-    try shell.pushd("./tigerbeetle-docs");
+    try shell.pushd("./archerdb-docs");
     defer shell.popd();
 
     try shell.exec("git add .", .{});
-    try shell.env.put("GIT_AUTHOR_NAME", "TigerBeetle Bot");
-    try shell.env.put("GIT_AUTHOR_EMAIL", "bot@tigerbeetle.com");
-    try shell.env.put("GIT_COMMITTER_NAME", "TigerBeetle Bot");
-    try shell.env.put("GIT_COMMITTER_EMAIL", "bot@tigerbeetle.com");
+    try shell.env.put("GIT_AUTHOR_NAME", "ArcherDB Bot");
+    try shell.env.put("GIT_AUTHOR_EMAIL", "bot@archerdb.com");
+    try shell.env.put("GIT_COMMITTER_NAME", "ArcherDB Bot");
+    try shell.env.put("GIT_COMMITTER_EMAIL", "bot@archerdb.com");
     // We want to push a commit even if there are no changes to the docs, to make sure
-    // that the latest commit message on the docs repo points to the latest tigerbeetle
+    // that the latest commit message on the docs repo points to the latest archerdb
     // release.
     try shell.exec("git commit --allow-empty --message {message}", .{
         .message = try shell.fmt(
-            "Autogenerated commit from tigerbeetle/tigerbeetle@{s}",
+            "Autogenerated commit from archerdb/archerdb@{s}",
             .{info.sha},
         ),
     });

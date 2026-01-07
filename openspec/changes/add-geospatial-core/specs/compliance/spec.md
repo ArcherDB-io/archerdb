@@ -101,7 +101,7 @@ The system SHALL implement all GDPR data subject rights for location data proces
     - If reinserted timestamp < delete timestamp: Event is ignored (out-of-order, stale data from before deletion)
   - **Implementation**: Compare `T_new` vs `T_delete` during LSM compaction; skip stale events
   - **Testing**: Delete entity, immediately insert with synthetic earlier timestamp, verify not included in queries
-  - **Risk**: If clock skew is large (>1s), older data could reappear; validate clock synchronization via Byzantine clock (Marzullo's algorithm per TigerBeetle)
+  - **Risk**: If clock skew is large (>1s), older data could reappear; validate clock synchronization via Byzantine clock (Marzullo's algorithm per ArcherDB)
   - **Metric**: `archerdb_deletion_out_of_order_reinsertion` counter
 
   **Case 4: Tombstone Retention During Compaction (Compliance Window)**

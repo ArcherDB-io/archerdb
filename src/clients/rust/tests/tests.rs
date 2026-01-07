@@ -11,7 +11,7 @@ use futures::executor::block_on;
 use futures::pin_mut;
 use futures::{Stream, StreamExt};
 
-use tigerbeetle as tb;
+use archerdb as tb;
 
 // Singleton test database.
 // This can be a OnceLock in Rust 1.70+, and LazyLock in 1.80.
@@ -54,12 +54,12 @@ impl TestDb {
         // between test runs. If the tests choose their IDs correctly there
         // should never be any collisions, and that one database should work
         // forever, just taking up a lot of space.
-        let tigerbeetle_bin = format!("{manifest_dir}/../../../tigerbeetle{EXE_SUFFIX}");
+        let archerdb_bin = format!("{manifest_dir}/../../../archerdb{EXE_SUFFIX}");
         let work_dir = env!("CARGO_TARGET_TMPDIR");
-        let database_name = "0_0.testdb.tigerbeetle";
+        let database_name = "0_0.testdb.archerdb";
 
         if !Path::new(&format!("{work_dir}/{database_name}")).try_exists()? {
-            let mut cmd = Command::new(&tigerbeetle_bin);
+            let mut cmd = Command::new(&archerdb_bin);
             cmd.current_dir(&work_dir);
             cmd.args([
                 "format",
@@ -72,7 +72,7 @@ impl TestDb {
             assert!(status.success());
         }
 
-        let mut cmd = Command::new(&tigerbeetle_bin);
+        let mut cmd = Command::new(&archerdb_bin);
         cmd.current_dir(&work_dir);
         cmd.args([
             "start",
@@ -639,7 +639,7 @@ fn client_drop_loses_pending_transactions() -> anyhow::Result<()> {
         }
     }
 
-    // Some of those transactions will have been dropped by tb_client.
+    // Some of those transactions will have been dropped by arch_client.
     let client = test_client()?;
 
     // Reverse because later transactions most likely to be lost.
@@ -664,7 +664,7 @@ fn client_drop_loses_pending_transactions() -> anyhow::Result<()> {
 ///
 /// The [`AccountFilter`]'s `limit` field should be set to greater than 1
 /// to set the page size. `limit` must be less than or equal to the build-time
-/// configuration of the TigerBeetle server's batch size (default 8189).
+/// configuration of the ArcherDB server's batch size (default 8189).
 ///
 /// To perform a reverse query set [`AccountFilterFlag::Reversed`].
 //

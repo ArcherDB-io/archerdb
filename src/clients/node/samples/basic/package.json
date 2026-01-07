@@ -1,5 +1,5 @@
 {
   "dependencies": {
-    "tigerbeetle-node": "file:../../"
+    "archerdb-node": "file:../../"
   }
 }

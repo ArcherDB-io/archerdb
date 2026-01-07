@@ -3,7 +3,7 @@
 //! The purpose of `flags` is to define standard behavior for parsing CLI arguments and provide
 //! a specific parsing library, implementing this behavior.
 //!
-//! These are TigerBeetle CLI guidelines:
+//! These are ArcherDB CLI guidelines:
 //!
 //!    - The main principle is robustness --- make operator errors harder to make.
 //!    - For production usage, avoid defaults.
@@ -68,8 +68,8 @@ fn fatal(comptime fmt_string: []const u8, args: anytype) noreturn {
 ///    },
 ///
 ///    pub const help =
-///        \\ tigerbeetle start --addresses=<addresses> --replica=<replica>
-///        \\ tigerbeetle format [--verbose] <path>
+///        \\ archerdb start --addresses=<addresses> --replica=<replica>
+///        \\ archerdb format [--verbose] <path>
 /// }
 ///
 /// const cli_args = parse_commands(&args, CLIArgs);

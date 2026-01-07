@@ -23,7 +23,7 @@ Existing `Docs` struct implementations are in:
 
 Go to the repo root.
 
-If you don't already have the TigerBeetle version of `zig` run:
+If you don't already have the ArcherDB version of `zig` run:
 
 ```console
 ./zig/download.[sh|bat]

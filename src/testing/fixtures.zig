@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2024-2025 ArcherDB Contributors
-//! Convenient constructs for TigerBeetle components, for fuzzing and testing.
+//! Convenient constructs for ArcherDB components, for fuzzing and testing.
 //!
 //! Consider the Grid. In the actual database, there is only single call to Grid.init.
 //! However, Grid is needed for most of our tests and fuzzers. If the init call is repeated

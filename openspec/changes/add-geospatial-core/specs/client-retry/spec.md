@@ -4,7 +4,7 @@
 
 ### Requirement: Automatic Retry in Client SDKs
 
-The system SHALL implement automatic retry logic with exponential backoff in all official client SDKs, matching TigerBeetle's client behavior.
+The system SHALL implement automatic retry logic with exponential backoff in all official client SDKs, matching ArcherDB's client behavior.
 
 #### Scenario: Retry-enabled by default
 
@@ -35,7 +35,7 @@ The system SHALL implement automatic retry logic with exponential backoff in all
 
 ### Requirement: Exponential Backoff Strategy
 
-The system SHALL use exponential backoff with jitter for retry delays, matching TigerBeetle's approach.
+The system SHALL use exponential backoff with jitter for retry delays, matching ArcherDB's approach.
 
 #### Scenario: Backoff schedule
 

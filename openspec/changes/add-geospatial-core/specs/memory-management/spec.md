@@ -1,14 +1,14 @@
 # Memory Management Specification
 
-**Reference Implementation:** https://github.com/tigerbeetle/tigerbeetle/blob/main/src/stdx.zig
+**Reference Implementation:** https://github.com/archerdb/archerdb/blob/main/src/stdx.zig
 
-This spec is based on TigerBeetle's static memory allocation discipline. Implementers MUST study:
+This spec is based on ArcherDB's static memory allocation discipline. Implementers MUST study:
 - `src/stdx.zig` - Intrusive data structures (QueueType, StackType, RingBufferType)
 - `src/message_pool.zig` - Message pooling with reference counting
 - `src/lsm/node_pool.zig` - NodePool with bitset tracking
-- TigerBeetle's allocator patterns throughout codebase
+- ArcherDB's allocator patterns throughout codebase
 
-**Implementation approach:** TigerBeetle's memory management is core to its reliability. Do NOT deviate from these patterns. Copy the allocator discipline exactly.
+**Implementation approach:** ArcherDB's memory management is core to its reliability. Do NOT deviate from these patterns. Copy the allocator discipline exactly.
 
 ---
 

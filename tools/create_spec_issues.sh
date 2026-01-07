@@ -1,11 +1,11 @@
 #!/bin/bash
 # Script to create spec implementation issues from tasks.md sections 1.x-36.x
-# These are detailed reference tasks that map to TigerBeetle adaptation
+# These are detailed reference tasks that map to ArcherDB adaptation
 
 REPO="ArcherDB-io/archerdb"
 
 # Create a milestone for spec implementation
-gh api repos/$REPO/milestones -f title="Spec Implementation Reference" -f description="Detailed implementation tasks from original build-from-scratch spec (now TigerBeetle adaptation)" -f state="open" 2>&1 | jq -r '.number'
+gh api repos/$REPO/milestones -f title="Spec Implementation Reference" -f description="Detailed implementation tasks from original build-from-scratch spec (now ArcherDB adaptation)" -f state="open" 2>&1 | jq -r '.number'
 
 # Create labels for spec categories
 gh label create "spec:core" --repo $REPO --color "0366d6" --description "Core types and constants" 2>/dev/null || true
@@ -25,7 +25,7 @@ gh issue create --repo $REPO \
   --milestone "Spec Implementation Reference" \
   --body "## Reference Implementation Tasks
 
-These tasks define WHAT needs to be implemented. For ArcherDB, adapt from TigerBeetle rather than build from scratch.
+These tasks define WHAT needs to be implemented. For ArcherDB, adapt from ArcherDB rather than build from scratch.
 
 ### 1.x Core Types & Constants
 - [ ] 1.1 Update \`src/constants.zig\` with compile-time configuration
@@ -47,8 +47,8 @@ These tasks define WHAT needs to be implemented. For ArcherDB, adapt from TigerB
 - [ ] 4.5 Implement sticky checksum caching
 - [ ] 4.6 Write tests including known-answer tests
 
-## TigerBeetle Adaptation Notes
-- Most checksum code can be reused from TigerBeetle
+## ArcherDB Adaptation Notes
+- Most checksum code can be reused from ArcherDB
 - GeoEvent struct is NEW (replaces Account)
 - Constants need updating for geospatial workload
 
@@ -86,9 +86,9 @@ gh issue create --repo $REPO \
 - [ ] 3.16 Add index statistics
 - [ ] 3.17 Write tests for LWW and checkpoint/rebuild
 
-## TigerBeetle Adaptation Notes
+## ArcherDB Adaptation Notes
 - Memory management code largely reusable
-- Hybrid index is NEW (not in TigerBeetle)
+- Hybrid index is NEW (not in ArcherDB)
 
 ## Reference
 See \`tasks.md\` sections 2.x and 3.x, \`specs/hybrid-memory/spec.md\`."
@@ -125,7 +125,7 @@ gh issue create --repo $REPO \
 - [ ] 7.10-7.11 Create manifest.zig and compaction
 - [ ] 7.12 Write LSM integration tests
 
-## TigerBeetle Adaptation Notes
+## ArcherDB Adaptation Notes
 - I/O and storage code is KEEP (minimal changes)
 - LSM needs adaptation for GeoEvent
 
@@ -166,7 +166,7 @@ gh issue create --repo $REPO \
 - [ ] 11.1-11.7 Implement all pipeline stages
 - [ ] 11.8 Write pipeline tests
 
-## TigerBeetle Adaptation Notes
+## ArcherDB Adaptation Notes
 - VSR code is KEEP - DO NOT MODIFY core consensus
 - Only adapt state machine interface
 
@@ -200,9 +200,9 @@ gh issue create --repo $REPO \
 - [ ] 13.10-13.11 Implement skip-scan and post-filter
 - [ ] 13.12 Write query tests
 
-## TigerBeetle Adaptation Notes
+## ArcherDB Adaptation Notes
 - S2 is entirely NEW (geospatial-specific)
-- Query engine adapts TigerBeetle state machine pattern
+- Query engine adapts ArcherDB state machine pattern
 
 ## Reference
 See \`tasks.md\` sections 12.x and 13.x, \`specs/query-engine/spec.md\`."
@@ -225,7 +225,7 @@ gh issue create --repo $REPO \
 - [ ] 14.11 Implement seed regression suite
 - [ ] 14.12 Write simulator tests
 
-## TigerBeetle Adaptation Notes
+## ArcherDB Adaptation Notes
 - VOPR simulator is KEEP
 - Adapt workloads for GeoEvent operations
 
@@ -259,7 +259,7 @@ gh issue create --repo $REPO \
 - [ ] 16.8-16.9 Add audit logging and cert reload
 - [ ] 16.10 Write security tests
 
-## TigerBeetle Adaptation Notes
+## ArcherDB Adaptation Notes
 - Wire format changes for GeoEvent operations
 - Security code largely reusable
 
@@ -333,7 +333,7 @@ These sections cover additional specification requirements. Create detailed issu
 
 ### 26.x Licensing & Legal
 - Apache 2.0 compliance
-- TigerBeetle attribution
+- ArcherDB attribution
 
 ### 27.x TTL & Retention
 - TTL implementation details

@@ -17,7 +17,7 @@ class IntegerOverflowError(ValueError):
     pass
 
 
-def _load_tbclient() -> ctypes.CDLL:
+def _load_archclient() -> ctypes.CDLL:
     prefix = ""
     arch = ""
     system = ""
@@ -57,7 +57,7 @@ def _load_tbclient() -> ctypes.CDLL:
     source_path = Path(__file__)
     source_dir = source_path.parent
     library_path = (
-        source_dir / "lib" / f"{arch}-{system}{linux_libc}" / f"{prefix}tb_client{suffix}"
+        source_dir / "lib" / f"{arch}-{system}{linux_libc}" / f"{prefix}arch_client{suffix}"
     )
     return ctypes.CDLL(str(library_path))
 
@@ -79,7 +79,7 @@ class c_uint128(ctypes.Structure):  # noqa: N801
     def to_python(self) -> int:
         return int(self._high << 64 | self._low)
 
-def tb_assert(value: Any) -> None:
+def arch_assert(value: Any) -> None:
     """
     Python's built-in assert can be silently disabled if Python is run with -O.
     """
@@ -87,4 +87,4 @@ def tb_assert(value: Any) -> None:
         raise AssertionError()
 
 
-tbclient = _load_tbclient()
+archclient = _load_archclient()

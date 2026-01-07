@@ -3,8 +3,8 @@ target
 src/main/resources/lib/**
 examples/build
 examples/target
-*tigerbeetle.benchmark
-*tigerbeetle.examples
-*tigerbeetle.tests
+*archerdb.benchmark
+*archerdb.examples
+*archerdb.tests
 *.log
 lib/

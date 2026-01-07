@@ -1,16 +1,16 @@
 // section:imports
 using System;
 
-using TigerBeetle;
+using ArcherDB;
 
 // Validate import works.
 Console.WriteLine("SUCCESS");
 // endsection:imports
 
 // section:client
-var tbAddress = Environment.GetEnvironmentVariable("TB_ADDRESS");
+var archerdbAddress = Environment.GetEnvironmentVariable("ARCHERDB_ADDRESS");
 var clusterID = UInt128.Zero;
-var addresses = new[] { tbAddress != null ? tbAddress : "3000" };
+var addresses = new[] { archerdbAddress != null ? archerdbAddress : "3000" };
 using (var client = new Client(clusterID, addresses))
 {
     // Use client
@@ -30,7 +30,7 @@ using (var client = new Client(clusterID, addresses))
         var accounts = new[] {
             new Account
             {
-                Id = ID.Create(), // TigerBeetle time-based ID.
+                Id = ID.Create(), // ArcherDB time-based ID.
                 UserData128 = 0,
                 UserData64 = 0,
                 UserData32 = 0,
@@ -128,7 +128,7 @@ using (var client = new Client(clusterID, addresses))
         var transfers = new[] {
             new Transfer
             {
-                Id = ID.Create(), // TigerBeetle time-based ID.
+                Id = ID.Create(), // ArcherDB time-based ID.
                 DebitAccountId = 102,
                 CreditAccountId = 103,
                 Amount = 10,

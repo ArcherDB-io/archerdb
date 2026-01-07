@@ -1,12 +1,12 @@
 package com.archerdb.geo;
 
-import com.tigerbeetle.Batch;
+import com.archerdb.core.Batch;
 import java.nio.ByteBuffer;
 
-// Internal batch methods use the TigerBeetle UInt128 enum for accessing lo/hi parts
+// Internal batch methods use the ArcherDB UInt128 enum for accessing lo/hi parts
 
 /**
- * Native batch class for GeoEvent wire format. Extends TigerBeetle's Batch to use ByteBuffer for
+ * Native batch class for GeoEvent wire format. Extends ArcherDB's Batch to use ByteBuffer for
  * zero-copy native communication.
  *
  * Wire format (128 bytes per GeoEvent): offset 0: id (Uint128, 16 bytes) offset 16: entity_id
@@ -59,7 +59,7 @@ public final class NativeGeoEventBatch extends Batch {
         return getUInt128(at(Struct.Id));
     }
 
-    public long getId(final com.tigerbeetle.UInt128 part) {
+    public long getId(final com.archerdb.UInt128 part) {
         return getUInt128(at(Struct.Id), part);
     }
 
@@ -77,7 +77,7 @@ public final class NativeGeoEventBatch extends Batch {
         return getUInt128(at(Struct.EntityId));
     }
 
-    public long getEntityId(final com.tigerbeetle.UInt128 part) {
+    public long getEntityId(final com.archerdb.UInt128 part) {
         return getUInt128(at(Struct.EntityId), part);
     }
 
@@ -224,10 +224,10 @@ public final class NativeGeoEventBatch extends Batch {
      */
     public GeoEvent toGeoEvent() {
         return new GeoEvent.Builder()
-                .id(getId(com.tigerbeetle.UInt128.LeastSignificant),
-                        getId(com.tigerbeetle.UInt128.MostSignificant))
-                .entityId(getEntityId(com.tigerbeetle.UInt128.LeastSignificant),
-                        getEntityId(com.tigerbeetle.UInt128.MostSignificant))
+                .id(getId(com.archerdb.UInt128.LeastSignificant),
+                        getId(com.archerdb.UInt128.MostSignificant))
+                .entityId(getEntityId(com.archerdb.UInt128.LeastSignificant),
+                        getEntityId(com.archerdb.UInt128.MostSignificant))
                 .latitude(CoordinateUtils.nanoToDegrees(getLatNano()))
                 .longitude(CoordinateUtils.nanoToDegrees(getLonNano())).groupId(getGroupId())
                 .timestamp(getTimestamp()).altitudeMm(getAltitudeMm()).velocityMms(getVelocityMms())

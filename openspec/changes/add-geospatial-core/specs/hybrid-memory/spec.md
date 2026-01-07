@@ -260,11 +260,11 @@ The system SHALL periodically checkpoint the RAM index to disk using an incremen
     - This catch detects silent checkpoint corruption before it causes data loss
 
   Compaction Retention Policy:
-  - L0 tables: retain 256 ops (TigerBeetle default)
+  - L0 tables: retain 256 ops (ArcherDB default)
   - L1-L5 tables: retain until next compaction
   - Index checkpoint interval: 60s (default), configurable
-  - WAL retention: TigerBeetle default 8192 slots
-    - At 100K ops/sec (TigerBeetle): ~80s coverage ⚠️ VERIFY FOR ARCHERDB!
+  - WAL retention: ArcherDB default 8192 slots
+    - At 100K ops/sec (ArcherDB): ~80s coverage ⚠️ VERIFY FOR ARCHERDB!
     - At 1M ops/sec (ArcherDB target): ~8.2 seconds coverage (INSUFFICIENT!)
     - **CRITICAL: ArcherDB likely needs 10x larger journal_slot_count (~131,072) to cover 60s+ at 1M ops/sec**
     - See F0.2.7-F0.2.8 tasks for validation & sizing calculations

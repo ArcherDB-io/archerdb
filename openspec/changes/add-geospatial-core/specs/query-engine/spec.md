@@ -37,7 +37,7 @@ The system SHALL check TTL validity during query execution and return errors for
 
 ### Requirement: Three-Phase Execution Model
 
-The system SHALL implement TigerBeetle's three-phase execution model: prepare, prefetch, and commit (execute) to ensure deterministic behavior and optimal I/O patterns.
+The system SHALL implement ArcherDB's three-phase execution model: prepare, prefetch, and commit (execute) to ensure deterministic behavior and optimal I/O patterns.
 
 #### Scenario: Phase ordering
 
@@ -1258,7 +1258,7 @@ The system SHALL assign unique deterministic timestamps to each event in a batch
 
 ### Requirement: Performance SLAs
 
-The system SHALL meet aggressive performance targets matching TigerBeetle-class throughput and latency.
+The system SHALL meet aggressive performance targets matching ArcherDB-class throughput and latency.
 
 #### Scenario: Write throughput target
 
@@ -1331,7 +1331,7 @@ The system SHALL meet aggressive performance targets matching TigerBeetle-class 
   - ≤ 3 seconds to elect new primary and resume operations
   - ≤ 1 second for failure detection (via aggressive heartbeats)
   - ≤ 2 seconds for view change protocol execution
-- **AND** this requires all TigerBeetle optimizations:
+- **AND** this requires all ArcherDB optimizations:
   - Ping every 200-500ms for fast failure detection
   - CTRL protocol for efficient log reconciliation
   - Pre-prepared replicas (backups maintain full state)
@@ -1589,7 +1589,7 @@ The system SHALL support high concurrency for client operations.
 
 - **WHEN** processing operations
 - **THEN** the system SHALL:
-  - Support pipeline depth matching TigerBeetle's configuration
+  - Support pipeline depth matching ArcherDB's configuration
   - Allow multiple in-flight operations per client session
   - Maintain request ordering per client
 

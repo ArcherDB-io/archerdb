@@ -12,20 +12,20 @@ import java.util.Random;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 
-import com.tigerbeetle.AccountBatch;
-import com.tigerbeetle.AccountFlags;
-import com.tigerbeetle.Client;
-import com.tigerbeetle.CreateAccountResult;
-import com.tigerbeetle.CreateAccountResultBatch;
-import com.tigerbeetle.CreateTransferResult;
-import com.tigerbeetle.CreateTransferResultBatch;
-import com.tigerbeetle.IdBatch;
-import com.tigerbeetle.TransferBatch;
-import com.tigerbeetle.TransferFlags;
-import com.tigerbeetle.UInt128;
+import com.archerdb.AccountBatch;
+import com.archerdb.AccountFlags;
+import com.archerdb.Client;
+import com.archerdb.CreateAccountResult;
+import com.archerdb.CreateAccountResultBatch;
+import com.archerdb.CreateTransferResult;
+import com.archerdb.CreateTransferResultBatch;
+import com.archerdb.IdBatch;
+import com.archerdb.TransferBatch;
+import com.archerdb.TransferFlags;
+import com.archerdb.UInt128;
 
 /**
- * A Vortex driver using the Java language client for TigerBeetle.
+ * A Vortex driver using the Java language client for ArcherDB.
  */
 public final class Main {
   public static void main(String[] args) throws Exception {

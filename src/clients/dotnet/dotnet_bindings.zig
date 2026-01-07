@@ -5,8 +5,8 @@ const vsr = @import("vsr");
 
 const assert = std.debug.assert;
 const stdx = vsr.stdx;
-const tb = vsr.tigerbeetle;
-const exports = vsr.tb_client.exports;
+const tb = vsr.archerdb;
+const exports = vsr.arch_client.exports;
 
 const TypeMapping = struct {
     name: []const u8,
@@ -84,29 +84,29 @@ const type_mappings = .{
         .private_fields = &.{"reserved"},
         .docs_link = "reference/query-latest-filter#",
     } },
-    .{ exports.tb_init_status, TypeMapping{
+    .{ exports.arch_init_status, TypeMapping{
         .name = "InitializationStatus",
         .visibility = .public,
     } },
-    .{ exports.tb_client_status, TypeMapping{
+    .{ exports.arch_client_status, TypeMapping{
         .name = "ClientStatus",
         .visibility = .internal,
     } },
-    .{ exports.tb_packet_status, TypeMapping{
+    .{ exports.arch_packet_status, TypeMapping{
         .name = "PacketStatus",
         .visibility = .public,
     } },
-    .{ exports.tb_operation, TypeMapping{
+    .{ exports.arch_operation, TypeMapping{
         .name = "TBOperation",
         .visibility = .internal,
         .private_fields = &.{ "reserved", "root", "register" },
     } },
-    .{ exports.tb_client_t, TypeMapping{
+    .{ exports.arch_client_t, TypeMapping{
         .name = "TBClient",
         .visibility = .internal,
         .private_fields = &.{"opaque"},
     } },
-    .{ exports.tb_packet_t, TypeMapping{
+    .{ exports.arch_packet_t, TypeMapping{
         .name = "TBPacket",
         .visibility = .internal,
         .private_fields = &.{"opaque"},
@@ -453,10 +453,10 @@ pub fn generate_bindings(buffer: *std.ArrayList(u8)) !void {
     try buffer.writer().print(
         \\internal static class Native
         \\{{
-        \\    private const string LIB_NAME = "tb_client";
+        \\    private const string LIB_NAME = "arch_client";
         \\
         \\    [DllImport(LIB_NAME, CallingConvention = CallingConvention.Cdecl)]
-        \\    public static unsafe extern InitializationStatus tb_client_init(
+        \\    public static unsafe extern InitializationStatus arch_client_init(
         \\        TBClient* client_out,
         \\        UInt128Extensions.UnsafeU128* cluster_id,
         \\        byte* address_ptr,
@@ -468,7 +468,7 @@ pub fn generate_bindings(buffer: *std.ArrayList(u8)) !void {
         \\    );
         \\
         \\    [DllImport(LIB_NAME, CallingConvention = CallingConvention.Cdecl)]
-        \\    public static unsafe extern InitializationStatus tb_client_init_echo(
+        \\    public static unsafe extern InitializationStatus arch_client_init_echo(
         \\        TBClient* out_client,
         \\        UInt128Extensions.UnsafeU128* cluster_id,
         \\        byte* address_ptr,
@@ -480,13 +480,13 @@ pub fn generate_bindings(buffer: *std.ArrayList(u8)) !void {
         \\    );
         \\
         \\    [DllImport(LIB_NAME, CallingConvention = CallingConvention.Cdecl)]
-        \\    public static unsafe extern ClientStatus tb_client_submit(
+        \\    public static unsafe extern ClientStatus arch_client_submit(
         \\        TBClient* client,
         \\        TBPacket* packet
         \\    );
         \\
         \\    [DllImport(LIB_NAME, CallingConvention = CallingConvention.Cdecl)]
-        \\    public static unsafe extern ClientStatus tb_client_deinit(
+        \\    public static unsafe extern ClientStatus arch_client_deinit(
         \\        TBClient* client
         \\    );
         \\}}

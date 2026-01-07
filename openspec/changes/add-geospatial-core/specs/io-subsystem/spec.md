@@ -1,14 +1,14 @@
 # I/O Subsystem Specification
 
-**Reference Implementation:** https://github.com/tigerbeetle/tigerbeetle/tree/main/src/io
+**Reference Implementation:** https://github.com/archerdb/archerdb/tree/main/src/io
 
-This spec is based on TigerBeetle's async I/O subsystem. Implementers MUST study:
+This spec is based on ArcherDB's async I/O subsystem. Implementers MUST study:
 - `src/io/linux.zig` - io_uring integration with zero-copy optimizations
 - `src/io/darwin.zig` - macOS kqueue fallback
 - `src/io/windows.zig` - Windows IOCP implementation
 - `src/message_bus.zig` - Connection state machine, send/receive logic
 
-**Implementation approach:** TigerBeetle's I/O layer is highly optimized. Reuse the io_uring patterns, completion handling, and zero-copy techniques directly. Only adapt the message types.
+**Implementation approach:** ArcherDB's I/O layer is highly optimized. Reuse the io_uring patterns, completion handling, and zero-copy techniques directly. Only adapt the message types.
 
 ---
 

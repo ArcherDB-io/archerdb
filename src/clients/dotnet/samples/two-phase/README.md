@@ -18,23 +18,23 @@ dotnet nuget add source https://api.nuget.org/v3/index.json -n nuget.org
 
 ## Setup
 
-First, clone this repo and `cd` into `tigerbeetle/src/clients/dotnet/samples/two-phase`.
+First, clone this repo and `cd` into `archerdb/src/clients/dotnet/samples/two-phase`.
 
-Then, install the TigerBeetle client:
+Then, install the ArcherDB client:
 
 ```console
 dotnet new console
-dotnet add package tigerbeetle
+dotnet add package archerdb
 ```
 
-## Start the TigerBeetle server
+## Start the ArcherDB server
 
 Follow steps in the repo README to [run
-TigerBeetle](/README.md#running-tigerbeetle).
+ArcherDB](/README.md#running-archerdb).
 
 If you are not running on port `localhost:3000`, set
-the environment variable `TB_ADDRESS` to the full
-address of the TigerBeetle server you started.
+the environment variable `ARCHERDB_ADDRESS` to the full
+address of the ArcherDB server you started.
 
 ## Run this sample
 

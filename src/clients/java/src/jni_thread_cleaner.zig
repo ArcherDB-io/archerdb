@@ -4,7 +4,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const jni = @import("jni.zig");
 
-const log = std.log.scoped(.tb_client_jni);
+const log = std.log.scoped(.arch_client_jni);
 const assert = std.debug.assert;
 
 /// Helper for managing the `AttachCurrentThread`/`DetachCurrentThread` lifecycle

@@ -8,9 +8,9 @@
 //!
 //! Error Code Ranges:
 //!   - 1-10:     Protocol errors
-//!   - 100-116:  Validation errors
-//!   - 200-209:  State errors
-//!   - 300-308:  Resource errors
+//!   - 100-120:  Validation errors (117-120: polygon hole errors)
+//!   - 200-212:  State errors
+//!   - 300-310:  Resource errors
 //!   - 400-404:  Security errors
 //!   - 500-504:  Internal errors
 
@@ -102,6 +102,14 @@ pub const ValidationError = enum(u32) {
     timestamp_in_future = 115,
     /// event_timestamp < current_time - max_age
     timestamp_too_old = 116,
+    /// hole_count exceeds polygon_holes_max (100)
+    too_many_holes = 117,
+    /// Hole has fewer than 3 vertices (minimum for valid ring)
+    hole_vertex_count_invalid = 118,
+    /// Hole ring is not contained within outer ring
+    hole_not_contained = 119,
+    /// Two or more hole rings overlap
+    holes_overlap = 120,
 
     /// Returns a human-readable description of the error.
     pub fn description(self: ValidationError) []const u8 {
@@ -123,6 +131,10 @@ pub const ValidationError = enum(u32) {
             .coordinate_mismatch => "Manually set ID does not match coordinates",
             .timestamp_in_future => "Event timestamp is too far in future",
             .timestamp_too_old => "Event timestamp is too old",
+            .too_many_holes => "Polygon has too many holes (max 100)",
+            .hole_vertex_count_invalid => "Hole has fewer than 3 vertices",
+            .hole_not_contained => "Hole ring is not contained within outer ring",
+            .holes_overlap => "Two or more hole rings overlap",
         };
     }
 };
@@ -359,7 +371,7 @@ pub const ErrorCode = union(enum) {
 // Tests
 test "validation error codes in expected range" {
     const min = @intFromEnum(ValidationError.invalid_coordinates);
-    const max = @intFromEnum(ValidationError.timestamp_too_old);
+    const max = @intFromEnum(ValidationError.holes_overlap);
     try std.testing.expect(min >= 100);
     try std.testing.expect(max <= 199);
 }
@@ -395,15 +407,24 @@ test "updated error codes 114-116" {
     try std.testing.expectEqual(@as(u32, 116), @intFromEnum(ValidationError.timestamp_too_old));
 }
 
+test "polygon hole error codes 117-120" {
+    // Polygon hole validation error codes per add-polygon-holes spec
+    try std.testing.expectEqual(@as(u32, 117), @intFromEnum(ValidationError.too_many_holes));
+    try std.testing.expectEqual(@as(u32, 118), @intFromEnum(ValidationError.hole_vertex_count_invalid));
+    try std.testing.expectEqual(@as(u32, 119), @intFromEnum(ValidationError.hole_not_contained));
+    try std.testing.expectEqual(@as(u32, 120), @intFromEnum(ValidationError.holes_overlap));
+}
+
 test "spec synchronization - all error codes from spec exist" {
     // F1.2.5: Verify implementation matches spec in:
     // openspec/changes/add-geospatial-core/specs/error-codes/spec.md
     // This test verifies key error codes from each category exist at expected values.
 
-    // Validation errors (100-116)
+    // Validation errors (100-120)
     try std.testing.expectEqual(@as(u32, 100), @intFromEnum(ValidationError.invalid_coordinates));
     try std.testing.expectEqual(@as(u32, 108), @intFromEnum(ValidationError.invalid_polygon));
     try std.testing.expectEqual(@as(u32, 116), @intFromEnum(ValidationError.timestamp_too_old));
+    try std.testing.expectEqual(@as(u32, 120), @intFromEnum(ValidationError.holes_overlap));
 
     // State errors (200-211)
     try std.testing.expectEqual(@as(u32, 200), @intFromEnum(StateError.entity_not_found));

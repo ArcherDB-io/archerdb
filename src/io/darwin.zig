@@ -908,7 +908,7 @@ pub const IO = struct {
 
         // Normally, O_DSYNC enables us to omit fsync() calls in the data plane, since we sync to
         // the disk on every write, but that's not the case for Darwin:
-        // https://x.com/TigerBeetleDB/status/1536628729031581697
+        // https://x.com/ArcherDBDB/status/1536628729031581697
         // To work around this, fs_sync() is explicitly called after writing in do_operation.
         var flags: posix.O = .{
             .CLOEXEC = true,
@@ -990,7 +990,7 @@ pub const IO = struct {
 
     /// Darwin's fsync() syscall does not flush past the disk cache. We must use F_FULLFSYNC
     /// instead.
-    /// https://twitter.com/TigerBeetleDB/status/1422491736224436225
+    /// https://twitter.com/ArcherDBDB/status/1422491736224436225
     fn fs_sync(fd: fd_t) !void {
         // TODO: This is of dubious safety - it's _not_ safe to fall back on posix.fsync unless it's
         // known at startup that the disk (eg, an external disk on a Mac) doesn't support

@@ -15,7 +15,6 @@ zig-out/
 
 # Binaries
 /archerdb
-/tigerbeetle
 
 # Development cluster data
 .dev-cluster/

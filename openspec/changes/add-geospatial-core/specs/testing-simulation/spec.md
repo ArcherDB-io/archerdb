@@ -1,14 +1,14 @@
 # Testing & Simulation Specification
 
-**Reference Implementation:** https://github.com/tigerbeetle/tigerbeetle/tree/main/src/testing
+**Reference Implementation:** https://github.com/archerdb/archerdb/tree/main/src/testing
 
-This spec is based on TigerBeetle's VOPR (Viewstamped Operation Replication) deterministic simulator. Implementers MUST study:
+This spec is based on ArcherDB's VOPR (Viewstamped Operation Replication) deterministic simulator. Implementers MUST study:
 - `src/simulator.zig` - Deterministic simulation framework with PRNG seed control
 - `src/testing/storage.zig` - Simulated storage with comprehensive fault injection
 - `src/testing/cluster.zig` - Multi-replica cluster simulation
 - `src/vsr/replica.zig` - Property-based testing patterns and invariant checking
 
-**Implementation approach:** TigerBeetle's simulator is the gold standard for distributed systems testing. Copy the architecture exactly - deterministic PRNG, fault injection enums, two-phase testing (safety then liveness), and seed-based replay.
+**Implementation approach:** ArcherDB's simulator is the gold standard for distributed systems testing. Copy the architecture exactly - deterministic PRNG, fault injection enums, two-phase testing (safety then liveness), and seed-based replay.
 
 ---
 
@@ -16,7 +16,7 @@ This spec is based on TigerBeetle's VOPR (Viewstamped Operation Replication) det
 
 ### Requirement: Deterministic Simulator (VOPR-Style)
 
-The system SHALL implement a deterministic simulator for exhaustive testing of distributed system behavior, inspired by TigerBeetle's VOPR (Viewstamped Operation Replayer).
+The system SHALL implement a deterministic simulator for exhaustive testing of distributed system behavior, inspired by ArcherDB's VOPR (Viewstamped Operation Replayer).
 
 #### Scenario: Deterministic PRNG seeding
 
@@ -280,7 +280,7 @@ The system SHALL provide infrastructure for running simulation tests efficiently
 
 ### Requirement: Unit Test Patterns
 
-The system SHALL follow TigerBeetle's unit test patterns for component testing.
+The system SHALL follow ArcherDB's unit test patterns for component testing.
 
 #### Scenario: Comptime testing
 

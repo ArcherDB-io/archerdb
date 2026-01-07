@@ -2,7 +2,7 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <groupId>com.tigerbeetle</groupId>
+  <groupId>com.archerdb</groupId>
   <artifactId>samples</artifactId>
   <version>1.0-SNAPSHOT</version>
 
@@ -29,7 +29,7 @@
         <artifactId>exec-maven-plugin</artifactId>
         <version>1.6.0</version>
         <configuration>
-          <mainClass>com.tigerbeetle.samples.Main</mainClass>
+          <mainClass>com.archerdb.samples.Main</mainClass>
         </configuration>
       </plugin>
     </plugins>
@@ -37,8 +37,8 @@
 
   <dependencies>
     <dependency>
-      <groupId>com.tigerbeetle</groupId>
-      <artifactId>tigerbeetle-java</artifactId>
+      <groupId>com.archerdb</groupId>
+      <artifactId>archerdb-java</artifactId>
       <version>0.0.1-SNAPSHOT</version>
     </dependency>
   </dependencies>

@@ -1,14 +1,14 @@
 # Replication Specification (VSR - Viewstamped Replication)
 
-**Reference Implementation:** https://github.com/tigerbeetle/tigerbeetle/tree/main/src/vsr
+**Reference Implementation:** https://github.com/archerdb/archerdb/tree/main/src/vsr
 
-This spec is based on TigerBeetle's Viewstamped Replication (VSR) protocol. Implementers MUST study TigerBeetle's actual VSR code:
+This spec is based on ArcherDB's Viewstamped Replication (VSR) protocol. Implementers MUST study ArcherDB's actual VSR code:
 - `src/vsr/replica.zig` - Core replica state machine and protocol logic
 - `src/vsr/journal.zig` - WAL (journal) with hash-chained prepares
 - `src/vsr/clock.zig` - Byzantine clock synchronization (Marzullo's algorithm)
 - `src/vsr/client_sessions.zig` - Client session management for idempotency
 
-**Implementation approach:** Adapt TigerBeetle's VSR to operate on GeoEvent instead of Account/Transfer structs. The protocol logic remains identical.
+**Implementation approach:** Adapt ArcherDB's VSR to operate on GeoEvent instead of Account/Transfer structs. The protocol logic remains identical.
 
 ---
 
@@ -1205,7 +1205,7 @@ The system SHALL clarify the fault model and which Byzantine failures are NOT to
   - **Malicious replicas**: Actively attack protocol
   - **Colluding replicas**: Multiple replicas cooperate to violate safety
   - **Silent data corruption**: Writes succeed but data is wrong
-- **AND** TigerBeetle's VSR is **NOT** BFT (Byzantine Fault Tolerant)
+- **AND** ArcherDB's VSR is **NOT** BFT (Byzantine Fault Tolerant)
 - **AND** defense against Byzantine failures:
   - Checksums (detect corruption)
   - Hash chains (detect forks)

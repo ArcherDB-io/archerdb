@@ -1,7 +1,7 @@
 #![allow(unused)]
 
 // section:imports
-use tigerbeetle as tb;
+use archerdb as tb;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     futures::executor::block_on(main_async())
@@ -13,7 +13,7 @@ async fn main_async() -> Result<(), Box<dyn std::error::Error>> {
 
     // section:client
     let cluster_id = 0;
-    let replica_address = std::env::var("TB_ADDRESS")
+    let replica_address = std::env::var("ARCHERDB_ADDRESS")
         .ok()
         .unwrap_or_else(|| String::from("3000"));
     let client = tb::Client::new(cluster_id, &replica_address)?;

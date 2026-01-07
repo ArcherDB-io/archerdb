@@ -5,7 +5,7 @@
 //! Code which needs these values should use `constants.zig` instead.
 //! Configuration values are set from a combination of:
 //! - default values
-//! - `root.tigerbeetle_config`
+//! - `root.archerdb_config`
 //! - `@import("archerdb_options")`
 
 const builtin = @import("builtin");
@@ -227,7 +227,7 @@ pub const configs = struct {
     pub const default_production = Config{
         .process = .{
             .direct_io = true,
-            .cache_geo_events_size_default = @sizeOf(vsr.tigerbeetle.GeoEvent) * MiB,
+            .cache_geo_events_size_default = @sizeOf(vsr.archerdb.GeoEvent) * MiB,
             .verify = true,
         },
         .cluster = .{
@@ -243,7 +243,7 @@ pub const configs = struct {
             .storage_size_limit_default = 1 * GiB,
             .storage_size_limit_max = 1 * GiB,
             .direct_io = false,
-            .cache_geo_events_size_default = @sizeOf(vsr.tigerbeetle.GeoEvent) * 256,
+            .cache_geo_events_size_default = @sizeOf(vsr.archerdb.GeoEvent) * 256,
             .journal_iops_read_max = 3,
             .journal_iops_write_max = 2,
             .grid_repair_request_max = 4,
@@ -272,8 +272,8 @@ pub const configs = struct {
     };
 
     pub const current = current: {
-        var base = if (@hasDecl(root, "tigerbeetle_config"))
-            root.tigerbeetle_config
+        var base = if (@hasDecl(root, "archerdb_config"))
+            root.archerdb_config
         else if (builtin.is_test)
             test_min
         else

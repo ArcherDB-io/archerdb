@@ -227,7 +227,7 @@ fn write_404_page(
     try html.write(template, .{
         .url_prefix = website.url_prefix,
         .title = "Page not found",
-        .author = "TigerBeetle Team",
+        .author = "ArcherDB Team",
     });
     _ = docs.add("404.html", html.string());
 }

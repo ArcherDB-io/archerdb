@@ -32,9 +32,9 @@ comptime {
     _ = @import("archerdb/tls_config.zig");
     _ = @import("cdc/amqp.zig");
     _ = @import("cdc/amqp/protocol.zig");
-    _ = @import("clients/c/tb_client.zig");
-    _ = @import("clients/c/tb_client/context.zig");
-    _ = @import("clients/c/tb_client/signal.zig");
+    _ = @import("clients/c/arch_client.zig");
+    _ = @import("clients/c/arch_client/context.zig");
+    _ = @import("clients/c/arch_client/signal.zig");
     _ = @import("clients/c/test.zig");
     _ = @import("copyhound.zig");
     _ = @import("error_codes.zig");
@@ -214,8 +214,8 @@ const quine =
     \\        if (std.mem.startsWith(u8, entry_path, "stdx/")) continue;
     \\        if (std.mem.startsWith(u8, entry_path, "clients/") and
     \\            !std.mem.startsWith(u8, entry_path, "clients/c")) continue;
-    \\        if (std.mem.eql(u8, entry_path, "clients/c/tb_client_header_test.zig")) continue;
-    \\        if (std.mem.eql(u8, entry_path, "tigerbeetle/libtb_client.zig")) continue;
+    \\        if (std.mem.eql(u8, entry_path, "clients/c/arch_client_header_test.zig")) continue;
+    \\        if (std.mem.eql(u8, entry_path, "archerdb/libarch_client.zig")) continue;
     \\
     \\        const contents = try src_dir.readFileAlloc(arena, entry_path, 1 * MiB);
     \\        var line_iterator = std.mem.splitScalar(u8, contents, '\n');
@@ -340,8 +340,8 @@ fn unit_test_files(arena: std.mem.Allocator, src_dir: std.fs.Dir) ![]const []con
         if (std.mem.startsWith(u8, entry_path, "stdx/")) continue;
         if (std.mem.startsWith(u8, entry_path, "clients/") and
             !std.mem.startsWith(u8, entry_path, "clients/c")) continue;
-        if (std.mem.eql(u8, entry_path, "clients/c/tb_client_header_test.zig")) continue;
-        if (std.mem.eql(u8, entry_path, "tigerbeetle/libtb_client.zig")) continue;
+        if (std.mem.eql(u8, entry_path, "clients/c/arch_client_header_test.zig")) continue;
+        if (std.mem.eql(u8, entry_path, "archerdb/libarch_client.zig")) continue;
 
         const contents = try src_dir.readFileAlloc(arena, entry_path, 1 * MiB);
         var line_iterator = std.mem.splitScalar(u8, contents, '\n');

@@ -1,8 +1,8 @@
 # API Versioning and Compatibility Specification
 
-**Reference Implementation:** https://docs.tigerbeetle.com/operating/upgrading/
+**Reference Implementation:** https://docs.archerdb.com/operating/upgrading/
 
-This specification adopts TigerBeetle's upgrade philosophy: storage stability, forward compatibility, and clear version compatibility guarantees.
+This specification adopts ArcherDB's upgrade philosophy: storage stability, forward compatibility, and clear version compatibility guarantees.
 
 ---
 
@@ -10,7 +10,7 @@ This specification adopts TigerBeetle's upgrade philosophy: storage stability, f
 
 ### Requirement: Storage Stability Guarantee
 
-The system SHALL guarantee storage stability and forward upgradeability, following TigerBeetle's data persistence contract.
+The system SHALL guarantee storage stability and forward upgradeability, following ArcherDB's data persistence contract.
 
 #### Scenario: Data file compatibility
 
@@ -56,7 +56,7 @@ The system SHALL provide clear API stability guarantees and deprecation policies
 
 ### Requirement: Client Compatibility Matrix
 
-The system SHALL maintain a client compatibility matrix similar to TigerBeetle's upgrade policies.
+The system SHALL maintain a client compatibility matrix similar to ArcherDB's upgrade policies.
 
 #### Scenario: Version compatibility
 

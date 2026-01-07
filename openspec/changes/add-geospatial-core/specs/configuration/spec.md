@@ -1,8 +1,8 @@
 # Configuration Management Specification
 
-**Reference Implementation:** TigerBeetle's CLI flag-based configuration
+**Reference Implementation:** ArcherDB's CLI flag-based configuration
 
-This specification adopts TigerBeetle's philosophy of CLI-first configuration with no config files, keeping deployment simple and avoiding configuration drift.
+This specification adopts ArcherDB's philosophy of CLI-first configuration with no config files, keeping deployment simple and avoiding configuration drift.
 
 ---
 
@@ -10,7 +10,7 @@ This specification adopts TigerBeetle's philosophy of CLI-first configuration wi
 
 ### Requirement: CLI-Only Configuration
 
-The system SHALL use command-line arguments exclusively for configuration, following TigerBeetle's simplicity principle.
+The system SHALL use command-line arguments exclusively for configuration, following ArcherDB's simplicity principle.
 
 #### Scenario: No configuration files
 
@@ -92,7 +92,7 @@ The system SHALL operate as a single-tenant database where each cluster serves o
      - Easier GDPR data isolation
 
   5. TIGHERBEETLE HERITAGE
-     - Follows TigerBeetle's proven model
+     - Follows ArcherDB's proven model
      - One database = one ledger
      - Deterministic resource allocation
   ```
@@ -186,7 +186,7 @@ The system SHALL provide storage-related configuration options.
 
 - **WHEN** configuring storage
 - **THEN** system SHALL support:
-  - `--data-file=path` - Data file path (default: cluster_replica.tigerbeetle)
+  - `--data-file=path` - Data file path (default: cluster_replica.archerdb)
   - `--cache-grid=size` - Grid cache size in MB (default: 1GB)
   - `--cache-grid-size-min=size` - Minimum cache size
   - `--cache-grid-size-max=size` - Maximum cache size
@@ -348,7 +348,7 @@ The system SHALL provide security-related configuration options.
   - `--admin-access=true/false` - Administrative access control
   - `--audit-log=path` - Audit log file path
   - `--audit-level=read|write|all` - Audit logging level
-- **AND** all-or-nothing authorization SHALL be default (TigerBeetle pattern)
+- **AND** all-or-nothing authorization SHALL be default (ArcherDB pattern)
 
 ### Requirement: Operational Configuration
 

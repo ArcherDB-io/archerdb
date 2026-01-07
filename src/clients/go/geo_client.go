@@ -2,27 +2,27 @@ package archerdb
 
 /*
 #cgo CFLAGS: -g -Wall
-#cgo darwin,arm64 LDFLAGS: ${SRCDIR}/pkg/native/libtb_client_aarch64-macos.a -ldl -lm
-#cgo darwin,amd64 LDFLAGS: ${SRCDIR}/pkg/native/libtb_client_x86_64-macos.a -ldl -lm
-#cgo linux,arm64 LDFLAGS: ${SRCDIR}/pkg/native/libtb_client_aarch64-linux.a -ldl -lm
-#cgo linux,amd64 LDFLAGS: ${SRCDIR}/pkg/native/libtb_client_x86_64-linux.a -ldl -lm
-#cgo windows,amd64 LDFLAGS: -L${SRCDIR}/pkg/native -ltb_client_x86_64-windows -lws2_32 -lntdll
+#cgo darwin,arm64 LDFLAGS: ${SRCDIR}/pkg/native/libarch_client_aarch64-macos.a -ldl -lm
+#cgo darwin,amd64 LDFLAGS: ${SRCDIR}/pkg/native/libarch_client_x86_64-macos.a -ldl -lm
+#cgo linux,arm64 LDFLAGS: ${SRCDIR}/pkg/native/libarch_client_aarch64-linux.a -ldl -lm
+#cgo linux,amd64 LDFLAGS: ${SRCDIR}/pkg/native/libarch_client_x86_64-linux.a -ldl -lm
+#cgo windows,amd64 LDFLAGS: -L${SRCDIR}/pkg/native -larch_client_x86_64-windows -lws2_32 -lntdll
 
 #include <stdlib.h>
 #include <string.h>
-#include "./pkg/native/tb_client.h"
+#include "./pkg/native/arch_client.h"
 
 #ifndef __declspec
 	#define __declspec(x)
 #endif
 
-typedef const uint8_t* tb_result_bytes_t;
+typedef const uint8_t* arch_result_bytes_t;
 
 extern __declspec(dllexport) void onGoPacketCompletion(
 	uintptr_t ctx,
-	tb_packet_t* packet,
+	arch_packet_t* packet,
 	uint64_t timestamp,
-	tb_result_bytes_t result_ptr,
+	arch_result_bytes_t result_ptr,
 	uint32_t result_len
 );
 */
@@ -321,7 +321,7 @@ func (b *DeleteEntityBatch) Commit() (types.DeleteResult, error) {
 // ============================================================================
 
 type geoClient struct {
-	tb_client   *C.tb_client_t
+	arch_client   *C.arch_client_t
 	config      GeoClientConfig
 	retryConfig RetryConfig
 	closed      bool
@@ -344,11 +344,11 @@ func NewGeoClient(config GeoClientConfig) (GeoClient, error) {
 	cAddresses := C.CString(addressesRaw)
 	defer C.free(unsafe.Pointer(cAddresses))
 
-	tbClient := new(C.tb_client_t)
-	clusterID := C.tb_uint128_t(config.ClusterID)
+	tbClient := new(C.arch_client_t)
+	clusterID := C.arch_uint128_t(config.ClusterID)
 
-	// Create the tb_client
-	initStatus := C.tb_client_init(
+	// Create the arch_client
+	initStatus := C.arch_client_init(
 		tbClient,
 		(*C.uint8_t)(unsafe.Pointer(&clusterID)),
 		cAddresses,
@@ -357,27 +357,27 @@ func NewGeoClient(config GeoClientConfig) (GeoClient, error) {
 		(*[0]byte)(C.onGoPacketCompletion),
 	)
 
-	if initStatus != C.TB_INIT_SUCCESS {
+	if initStatus != C.ARCH_INIT_SUCCESS {
 		switch initStatus {
-		case C.TB_INIT_UNEXPECTED:
+		case C.ARCH_INIT_UNEXPECTED:
 			return nil, errors.ErrUnexpected{}
-		case C.TB_INIT_OUT_OF_MEMORY:
+		case C.ARCH_INIT_OUT_OF_MEMORY:
 			return nil, errors.ErrOutOfMemory{}
-		case C.TB_INIT_ADDRESS_INVALID:
+		case C.ARCH_INIT_ADDRESS_INVALID:
 			return nil, errors.ErrInvalidAddress{}
-		case C.TB_INIT_ADDRESS_LIMIT_EXCEEDED:
+		case C.ARCH_INIT_ADDRESS_LIMIT_EXCEEDED:
 			return nil, errors.ErrAddressLimitExceeded{}
-		case C.TB_INIT_SYSTEM_RESOURCES:
+		case C.ARCH_INIT_SYSTEM_RESOURCES:
 			return nil, errors.ErrSystemResources{}
-		case C.TB_INIT_NETWORK_SUBSYSTEM:
+		case C.ARCH_INIT_NETWORK_SUBSYSTEM:
 			return nil, errors.ErrNetworkSubsystem{}
 		default:
-			panic("tb_client_init(): invalid error code")
+			panic("arch_client_init(): invalid error code")
 		}
 	}
 
 	return &geoClient{
-		tb_client:   tbClient,
+		arch_client:   tbClient,
 		config:      config,
 		retryConfig: retryConfig,
 		closed:      false,
@@ -399,10 +399,10 @@ func NewGeoClientEcho(config GeoClientConfig) (GeoClient, error) {
 	cAddresses := C.CString(addressesRaw)
 	defer C.free(unsafe.Pointer(cAddresses))
 
-	tbClient := new(C.tb_client_t)
-	clusterID := C.tb_uint128_t(config.ClusterID)
+	tbClient := new(C.arch_client_t)
+	clusterID := C.arch_uint128_t(config.ClusterID)
 
-	initStatus := C.tb_client_init_echo(
+	initStatus := C.arch_client_init_echo(
 		tbClient,
 		(*C.uint8_t)(unsafe.Pointer(&clusterID)),
 		cAddresses,
@@ -411,12 +411,12 @@ func NewGeoClientEcho(config GeoClientConfig) (GeoClient, error) {
 		(*[0]byte)(C.onGoPacketCompletion),
 	)
 
-	if initStatus != C.TB_INIT_SUCCESS {
+	if initStatus != C.ARCH_INIT_SUCCESS {
 		return nil, errors.ErrUnexpected{}
 	}
 
 	return &geoClient{
-		tb_client:   tbClient,
+		arch_client:   tbClient,
 		config:      config,
 		retryConfig: retryConfig,
 		closed:      false,
@@ -426,7 +426,7 @@ func NewGeoClientEcho(config GeoClientConfig) (GeoClient, error) {
 // Close closes the client and releases resources.
 func (c *geoClient) Close() {
 	if !c.closed {
-		C.tb_client_deinit(c.tb_client)
+		C.arch_client_deinit(c.arch_client)
 		c.closed = true
 	}
 }
@@ -436,12 +436,12 @@ func (c *geoClient) Close() {
 // ============================================================================
 
 // doGeoRequest submits a request to the server and waits for the response.
-// Uses the same request struct as tb_client.go to share the onGoPacketCompletion callback.
+// Uses the same request struct as arch_client.go to share the onGoPacketCompletion callback.
 func (c *geoClient) doGeoRequest(op types.GeoOperation, count int, eventSize uintptr, data unsafe.Pointer) ([]uint8, error) {
 	var req request
 	req.ready = make(chan []uint8, 1)
 
-	packet := new(C.tb_packet_t)
+	packet := new(C.arch_packet_t)
 	packet.user_data = unsafe.Pointer(&req)
 	packet.user_tag = 0
 	packet.operation = C.uint8_t(op)
@@ -457,30 +457,30 @@ func (c *geoClient) doGeoRequest(op types.GeoOperation, count int, eventSize uin
 		pinner.Pin(data)
 	}
 
-	clientStatus := C.tb_client_submit(c.tb_client, packet)
-	if clientStatus == C.TB_CLIENT_INVALID {
+	clientStatus := C.arch_client_submit(c.arch_client, packet)
+	if clientStatus == C.ARCH_CLIENT_INVALID {
 		return nil, errors.ErrClientClosed{}
 	}
 
 	// Wait for completion
 	reply := <-req.ready
-	packetStatus := C.TB_PACKET_STATUS(packet.status)
+	packetStatus := C.ARCH_PACKET_STATUS(packet.status)
 
-	if packetStatus != C.TB_PACKET_OK {
+	if packetStatus != C.ARCH_PACKET_OK {
 		switch packetStatus {
-		case C.TB_PACKET_TOO_MUCH_DATA:
+		case C.ARCH_PACKET_TOO_MUCH_DATA:
 			return nil, errors.ErrMaximumBatchSizeExceeded{}
-		case C.TB_PACKET_CLIENT_EVICTED:
+		case C.ARCH_PACKET_CLIENT_EVICTED:
 			return nil, errors.ErrClientEvicted{}
-		case C.TB_PACKET_CLIENT_RELEASE_TOO_LOW:
+		case C.ARCH_PACKET_CLIENT_RELEASE_TOO_LOW:
 			return nil, errors.ErrClientReleaseTooLow{}
-		case C.TB_PACKET_CLIENT_RELEASE_TOO_HIGH:
+		case C.ARCH_PACKET_CLIENT_RELEASE_TOO_HIGH:
 			return nil, errors.ErrClientReleaseTooHigh{}
-		case C.TB_PACKET_CLIENT_SHUTDOWN:
+		case C.ARCH_PACKET_CLIENT_SHUTDOWN:
 			return nil, errors.ErrClientClosed{}
-		case C.TB_PACKET_INVALID_OPERATION:
+		case C.ARCH_PACKET_INVALID_OPERATION:
 			return nil, errors.ErrInvalidOperation{}
-		case C.TB_PACKET_INVALID_DATA_SIZE:
+		case C.ARCH_PACKET_INVALID_DATA_SIZE:
 			return nil, fmt.Errorf("invalid data size")
 		default:
 			return nil, fmt.Errorf("unknown packet status: %d", packetStatus)

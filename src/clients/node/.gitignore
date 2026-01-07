@@ -1,15 +1,15 @@
 build/
 dist/
 node_modules/
-tigerbeetle
+archerdb
 zig/
 zig-cache/
 
-# TigerBeetle
-*.tigerbeetle
+# ArcherDB
+*.archerdb
 benchmark.log
-tigerbeetle_test.log
+archerdb_test.log
 benchmark/
 test/
-tigerbeetle-node-*.tgz
+archerdb-node-*.tgz
 node.lib

@@ -19,7 +19,7 @@ const std = @import("std");
 const vsr = @import("vsr.zig");
 const IO = vsr.io.IO;
 const Time = vsr.time.Time;
-const tb = vsr.tigerbeetle;
+const tb = vsr.archerdb;
 
 pub fn ReplType(comptime MessageBus: type) type {
     _ = MessageBus;

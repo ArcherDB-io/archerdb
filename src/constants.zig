@@ -90,7 +90,7 @@ comptime {
 /// in each ping message body.
 pub const vsr_releases_max = config.cluster.vsr_releases_max;
 
-/// The maximum cumulative size of a final TigerBeetle output binary - including potential past
+/// The maximum cumulative size of a final ArcherDB output binary - including potential past
 /// releases and metadata.
 pub fn multiversion_binary_platform_size_max(options: struct { macos: bool, debug: bool }) u64 {
     // {Linux, Windows} get the base value. macOS gets 2x since it has universal binaries. All cases
@@ -706,7 +706,7 @@ comptime {
     assert(lsm_table_coalescing_threshold_percent < 100); // Don't coalesce full tables.
 }
 
-/// The number of milliseconds between each replica tick, the basic unit of time in TigerBeetle.
+/// The number of milliseconds between each replica tick, the basic unit of time in ArcherDB.
 /// Used to regulate heartbeats, retries and timeouts, all specified as multiples of a tick.
 pub const tick_ms = config.process.tick_ms;
 
@@ -752,7 +752,7 @@ pub const clock_synchronization_window_min_ms = config.process.clock_synchroniza
 /// If a window expires because of this then it is likely that the clock epoch will also be expired.
 pub const clock_synchronization_window_max_ms = config.process.clock_synchronization_window_max_ms;
 
-/// TigerBeetle uses asserts proactively, unless they severely degrade performance. For production,
+/// ArcherDB uses asserts proactively, unless they severely degrade performance. For production,
 /// 5% slow down might be deemed critical, tests tolerate slowdowns up to 5x. Tests should be
 /// reasonably fast to make deterministic simulation effective. `constants.verify` disambiguate the
 /// two cases.
@@ -863,7 +863,14 @@ pub const index_memory_bytes: u64 = index_capacity * index_entry_size;
 pub const query_result_max: u32 = @divFloor(message_body_size_max - 1024, geo_event_size);
 
 /// Maximum polygon vertices in spatial queries.
+/// This limit applies to total vertices (outer ring + all hole rings).
 pub const polygon_vertices_max: u32 = 10_000;
+
+/// Maximum number of holes in a polygon query.
+pub const polygon_holes_max: u32 = 100;
+
+/// Minimum vertices per hole ring (must form valid polygon).
+pub const polygon_hole_vertices_min: u32 = 3;
 
 /// Maximum radius in meters for radius queries.
 pub const radius_max_meters: u32 = 1_000_000; // 1000 km

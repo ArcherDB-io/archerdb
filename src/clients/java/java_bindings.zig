@@ -4,9 +4,9 @@ const std = @import("std");
 
 const vsr = @import("vsr");
 const stdx = vsr.stdx;
-const tb = vsr.tigerbeetle;
-const tb_client = vsr.tb_client;
-const exports = tb_client.exports;
+const tb = vsr.archerdb;
+const arch_client = vsr.arch_client;
+const exports = arch_client.exports;
 const assert = std.debug.assert;
 
 const TypeMapping = struct {
@@ -99,14 +99,14 @@ const type_mappings = .{
         .private_fields = &.{"reserved"},
         .docs_link = "reference/query-latest-filter#",
     } },
-    .{ exports.tb_init_status, TypeMapping{
+    .{ exports.arch_init_status, TypeMapping{
         .name = "InitializationStatus",
     } },
-    .{ exports.tb_client_status, TypeMapping{
+    .{ exports.arch_client_status, TypeMapping{
         .name = "ClientStatus",
         .visibility = .internal,
     } },
-    .{ exports.tb_packet_status, TypeMapping{
+    .{ exports.arch_packet_status, TypeMapping{
         .name = "PacketStatus",
     } },
 };
@@ -864,8 +864,8 @@ pub fn main() !void {
             \\}}
             \\
         , .{
-            @sizeOf(exports.tb_client_t),
-            @alignOf(exports.tb_client_t),
+            @sizeOf(exports.arch_client_t),
+            @alignOf(exports.arch_client_t),
         });
         try target_dir.writeFile(.{
             .sub_path = "TBClient.java",

@@ -69,7 +69,7 @@ const binding: Binding = (() => {
 })()
 
 // Low-level types for native binding
-export type Context = object // tb_client
+export type Context = object // arch_client
 export type ResultCallback = (error: Error | null, results: unknown[] | null) => void
 
 export interface BindingInitArgs {

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2024-2025 ArcherDB Contributors
-//! Decode a TigerBeetle data file without running a replica or modifying the data file.
+//! Decode a ArcherDB data file without running a replica or modifying the data file.
 //!
-//! This tool is intended for TigerBeetle developers, for debugging and understanding data files.
+//! This tool is intended for ArcherDB developers, for debugging and understanding data files.
 //!
 //! Principles:
 //! - Never modify the data file.

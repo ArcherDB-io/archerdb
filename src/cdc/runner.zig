@@ -3,7 +3,7 @@
 //! CDC Runner Stub - ArcherDB Geospatial Database
 //!
 //! The Change Data Capture (CDC) feature is not yet implemented for ArcherDB's
-//! geospatial operations. The original TigerBeetle CDC was for financial
+//! geospatial operations. The original ArcherDB CDC was for financial
 //! change events.
 //!
 //! ArcherDB will implement geospatial event streaming in a future release.

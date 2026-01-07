@@ -27,7 +27,7 @@ The ArcherDB project SHALL be implemented by a solo developer with AI coding ass
 - **THEN** effective patterns SHALL include:
   - **Context provision**: Provide relevant code context for better AI suggestions
   - **Iterative refinement**: Review and refine AI-generated code
-  - **Knowledge extraction**: Use AI to explain complex TigerBeetle patterns
+  - **Knowledge extraction**: Use AI to explain complex ArcherDB patterns
   - **Code review**: Have AI review code for bugs, security issues, and style
   - **Documentation generation**: Use AI to help document complex systems
 - **AND** human judgment SHALL remain the final arbiter of all decisions
@@ -36,11 +36,11 @@ The ArcherDB project SHALL be implemented by a solo developer with AI coding ass
 
 The ArcherDB project SHALL define the learning path for solo developer mastery.
 
-#### Scenario: TigerBeetle codebase learning
+#### Scenario: ArcherDB codebase learning
 
-- **WHEN** acquiring TigerBeetle knowledge
+- **WHEN** acquiring ArcherDB knowledge
 - **THEN** the learning path SHALL include:
-  - **Week 1**: Core data structures (`src/tigerbeetle.zig`, `src/state_machine.zig`)
+  - **Week 1**: Core data structures (`src/archerdb.zig`, `src/state_machine.zig`)
   - **Week 2**: VSR protocol (`src/vsr/replica.zig`, VSR paper)
   - **Week 3**: Storage engine (`src/storage.zig`, `src/lsm/*`)
   - **Week 4**: Testing approach (VOPR simulator, deterministic replay)
@@ -124,7 +124,7 @@ The ArcherDB project SHALL maintain comprehensive knowledge documentation.
 
 - **WHEN** acquiring new knowledge
 - **THEN** documentation SHALL include:
-  - **TigerBeetle patterns**: Document reusable patterns discovered
+  - **ArcherDB patterns**: Document reusable patterns discovered
   - **Gotchas and pitfalls**: Record issues encountered and solutions
   - **AI conversation summaries**: Save valuable AI-assisted insights
   - **Code comments**: Explain non-obvious code inline

@@ -26,40 +26,40 @@ jobs:
           echo "version=$LATEST" >> "$GITHUB_OUTPUT"
           echo "Latest Zig release: $LATEST"
 
-      - name: Check TigerBeetle Zig version
-        id: tigerbeetle
+      - name: Check ArcherDB Zig version
+        id: archerdb
         run: |
-          TB_ZIG=$(curl -s https://raw.githubusercontent.com/tigerbeetle/tigerbeetle/main/zig/download.sh | grep 'ZIG_RELEASE=' | head -1 | cut -d'"' -f2)
+          TB_ZIG=$(curl -s https://raw.githubusercontent.com/archerdb/archerdb/main/zig/download.sh | grep 'ZIG_RELEASE=' | head -1 | cut -d'"' -f2)
           echo "version=$TB_ZIG" >> "$GITHUB_OUTPUT"
-          echo "TigerBeetle Zig version: $TB_ZIG"
+          echo "ArcherDB Zig version: $TB_ZIG"
 
       - name: Compare versions
         env:
           CURRENT: ${{ steps.current.outputs.version }}
           LATEST_ZIG: ${{ steps.latest-zig.outputs.version }}
-          TB_ZIG: ${{ steps.tigerbeetle.outputs.version }}
+          TB_ZIG: ${{ steps.archerdb.outputs.version }}
         run: |
           echo "=== Zig Version Report ==="
           echo "ArcherDB pinned: $CURRENT"
-          echo "TigerBeetle uses: $TB_ZIG"
+          echo "ArcherDB uses: $TB_ZIG"
           echo "Latest Zig release: $LATEST_ZIG"
           echo ""
 
           if [ "$CURRENT" != "$TB_ZIG" ]; then
-            echo "WARNING: TigerBeetle updated to Zig $TB_ZIG"
-            echo "ACTION REQUIRED: Update zig/download.sh to match TigerBeetle"
+            echo "WARNING: ArcherDB updated to Zig $TB_ZIG"
+            echo "ACTION REQUIRED: Update zig/download.sh to match ArcherDB"
           fi
 
           if [ "$CURRENT" != "$LATEST_ZIG" ]; then
             echo "INFO: Newer Zig version available: $LATEST_ZIG"
-            echo "(Wait for TigerBeetle to upgrade before updating ArcherDB)"
+            echo "(Wait for ArcherDB to upgrade before updating ArcherDB)"
           fi
 
-      - name: Create issue if TigerBeetle updated
-        if: steps.tigerbeetle.outputs.version != steps.current.outputs.version
+      - name: Create issue if ArcherDB updated
+        if: steps.archerdb.outputs.version != steps.current.outputs.version
         env:
           GH_TOKEN: ${{ github.token }}
-          TB_ZIG: ${{ steps.tigerbeetle.outputs.version }}
+          TB_ZIG: ${{ steps.archerdb.outputs.version }}
           CURRENT: ${{ steps.current.outputs.version }}
         run: |
           # Check if issue already exists
@@ -68,7 +68,7 @@ jobs:
             gh issue create \
               --title "Zig version update: $CURRENT -> $TB_ZIG" \
               --label "zig-update" \
-              --body "TigerBeetle has updated their Zig version from $CURRENT to $TB_ZIG.
+              --body "ArcherDB has updated their Zig version from $CURRENT to $TB_ZIG.
 
           ## Action Required
           1. Update zig/download.sh to use Zig $TB_ZIG
@@ -76,7 +76,7 @@ jobs:
           3. Verify all builds pass
 
           ## References
-          - TigerBeetle download.sh: https://github.com/tigerbeetle/tigerbeetle/blob/main/zig/download.sh
+          - ArcherDB download.sh: https://github.com/archerdb/archerdb/blob/main/zig/download.sh
           - Zig releases: https://ziglang.org/download/
 
           This issue was automatically created by the Zig Release Monitor workflow."

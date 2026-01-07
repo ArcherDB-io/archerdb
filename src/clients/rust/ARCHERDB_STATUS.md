@@ -6,19 +6,19 @@ The Rust SDK has **partially migrated** to ArcherDB geospatial types:
 
 ### Completed
 - ✅ `rust_bindings.zig` - Updated type mappings from financial to geospatial
-- ✅ `tb_client.rs` - Regenerated with geospatial structs (geo_event_t, query filters)
-- ✅ `tb_client.h` - Regenerated with geospatial C headers
+- ✅ `arch_client.rs` - Regenerated with geospatial structs (geo_event_t, query filters)
+- ✅ `arch_client.h` - Regenerated with geospatial C headers
 - ✅ Signed integer support added (i8/i16/i32/i64/i128) for lat_nano, lon_nano, altitude_mm
 
 ### Needs Rewrite (~2600 lines)
-- ❌ `lib.rs` (1829 lines) - Still contains TigerBeetle Account/Transfer API
-- ❌ `README.md` (752 lines) - Still documents TigerBeetle financial operations
+- ❌ `lib.rs` (1829 lines) - Still contains ArcherDB Account/Transfer API
+- ❌ `README.md` (752 lines) - Still documents ArcherDB financial operations
 
 ## Required Changes for lib.rs
 
 Replace financial types with geospatial equivalents:
 
-| TigerBeetle (Remove) | ArcherDB (Add) |
+| ArcherDB (Remove) | ArcherDB (Add) |
 |---------------------|----------------|
 | `Account` | `GeoEvent` |
 | `Transfer` | (not applicable) |
@@ -30,7 +30,7 @@ Replace financial types with geospatial equivalents:
 
 Replace client methods:
 
-| TigerBeetle (Remove) | ArcherDB (Add) |
+| ArcherDB (Remove) | ArcherDB (Add) |
 |---------------------|----------------|
 | `create_accounts()` | `insert_events()`, `upsert_events()` |
 | `create_transfers()` | (not applicable) |
@@ -43,7 +43,7 @@ Replace client methods:
 
 ## Wire Format
 
-The low-level bindings in `tb_client.rs` now correctly define:
+The low-level bindings in `arch_client.rs` now correctly define:
 
 ```rust
 pub struct geo_event_t {

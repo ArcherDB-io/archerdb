@@ -19,9 +19,9 @@ pub const vsr_options = .{
 };
 
 // NB: this changes values in `constants.zig`!
-pub const tigerbeetle_config = @import("config.zig").configs.test_min;
+pub const archerdb_config = @import("config.zig").configs.test_min;
 comptime {
-    assert(constants.storage_size_limit_max == tigerbeetle_config.process.storage_size_limit_max);
+    assert(constants.storage_size_limit_max == archerdb_config.process.storage_size_limit_max);
 }
 
 pub const std_options: std.Options = .{
@@ -49,7 +49,7 @@ const Fuzzers = .{
     .vsr_superblock = @import("./vsr/superblock_fuzz.zig"),
     .vsr_superblock_quorums = @import("./vsr/superblock_quorums_fuzz.zig"),
     .vsr_multi_batch = @import("./vsr/multi_batch_fuzz.zig"),
-    .signal = @import("./clients/c/tb_client/signal_fuzz.zig"),
+    .signal = @import("./clients/c/arch_client/signal_fuzz.zig"),
     .state_machine = @import("./state_machine_fuzz.zig"),
     // A fuzzer that intentionally fails, to test fuzzing infrastructure itself
     .canary = {},

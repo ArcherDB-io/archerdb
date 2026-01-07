@@ -1,7 +1,7 @@
 import ctypes
 import itertools
 
-import tigerbeetle as tb
+import archerdb as arch
 tb.configure_logging(debug=True)
 
 cluster_ids = [
@@ -33,7 +33,7 @@ def test_init_parameters():
             client = tb.ClientSync(cluster_id=cluster_id, replica_addresses=address_permutation)
             init_parameters_out = tb.InitParameters()
 
-            status = tb.bindings.tb_client_init_parameters(
+            status = tb.bindings.arch_client_init_parameters(
                 client._client,
                 ctypes.byref(init_parameters_out),
             )

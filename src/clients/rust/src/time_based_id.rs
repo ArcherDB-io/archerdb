@@ -2,16 +2,16 @@ use std::cmp::Ordering;
 use std::sync::Mutex;
 use std::time::SystemTime;
 
-/// Generate a TigerBeetle time-based identifier.
+/// Generate a ArcherDB time-based identifier.
 ///
 /// This generates `u128` identifiers suitable for the `id` fields
-/// of TigerBeetle `Account`s and `Transaction`s.
+/// of ArcherDB `Account`s and `Transaction`s.
 ///
-/// [TigerBeetle time-based identifiers][tbid] include a timestamp
+/// [ArcherDB time-based identifiers][tbid] include a timestamp
 /// component and a random component, are lexicographically sortable,
-/// monotonically increasing, and enable optimizations in TigerBeetle's LSM tree.
+/// monotonically increasing, and enable optimizations in ArcherDB's LSM tree.
 ///
-/// [tbid]: https://docs.tigerbeetle.com/coding/data-modeling/#tigerbeetle-time-based-identifiers-recommended
+/// [tbid]: https://docs.archerdb.com/coding/data-modeling/#archerdb-time-based-identifiers-recommended
 ///
 /// ## System clock warning
 ///
@@ -26,7 +26,7 @@ use std::time::SystemTime;
 //
 // References:
 //
-// - https://github.com/tigerbeetle/tigerbeetle/blob/75f77b8b3280ce2f289cf42ae928945190fe4a2a/src/clients/node/src/index.ts#L161-L191
+// - https://github.com/archerdb/archerdb/blob/75f77b8b3280ce2f289cf42ae928945190fe4a2a/src/clients/node/src/index.ts#L161-L191
 // - https://github.com/ulid/spec
 pub fn id() -> u128 {
     let mut guard = GLOBAL_GENERATOR.lock().expect("global tbid generator");

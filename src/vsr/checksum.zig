@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2024-2025 ArcherDB Contributors
-//! This file implements vsr.checksum. TigerBeetle uses this checksum to:
+//! This file implements vsr.checksum. ArcherDB uses this checksum to:
 //!
 //! - detect bitrot in data on disk,
 //! - validate network messages before casting raw bytes to an `extern struct` type,
@@ -46,11 +46,11 @@ var seed_once = std.once(seed_init);
 var seed_state: Aegis128LMac_128 = undefined;
 
 comptime {
-    // As described above, TigerBeetle uses Aegis (and thus AES Blocks), for its checksumming.
+    // As described above, ArcherDB uses Aegis (and thus AES Blocks), for its checksumming.
     // While there is a software implementation, it's much slower and we don't expect to ever be
     // using it considering we target platforms with AES hardware acceleration.
     //
-    // If you're trying to compile TigerBeetle for an older CPU without AES hardware acceleration,
+    // If you're trying to compile ArcherDB for an older CPU without AES hardware acceleration,
     // you'll need to disable the following assert.
     assert(std.crypto.core.aes.has_hardware_support);
 }
@@ -103,7 +103,7 @@ pub const ChecksumStream = struct {
 // don't zero all of (nonce, key, secret message). However, the as underlying AEAD implementation
 // matches those test vectors, the entries here are correct.
 //
-// They can be used to smoke-test independent implementations of TigerBeetle checksum.
+// They can be used to smoke-test independent implementations of ArcherDB checksum.
 //
 // "checksum stability" test further nails down the exact behavior.
 test "checksum test vectors" {

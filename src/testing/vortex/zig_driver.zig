@@ -4,12 +4,12 @@ const std = @import("std");
 const stdx = @import("stdx");
 const vsr = @import("../../vsr.zig");
 const constants = vsr.constants;
-const Operation = vsr.tigerbeetle.Operation;
+const Operation = vsr.archerdb.Operation;
 
-// We could have used the idiomatic Zig API exposed by `vsr.tb_client`,
-// but we want to test the actual FFI exposed by `libtb_client`.
+// We could have used the idiomatic Zig API exposed by `vsr.arch_client`,
+// but we want to test the actual FFI exposed by `libarch_client`.
 const c = @cImport({
-    @cInclude("tb_client.h");
+    @cInclude("arch_client.h");
 });
 
 const assert = std.debug.assert;
@@ -35,21 +35,21 @@ pub fn main(_: std.mem.Allocator, args: CLIArgs) !void {
 
     const cluster_id = args.@"cluster-id";
 
-    var tb_client: c.tb_client_t = undefined;
-    const init_status = c.tb_client_init(
-        &tb_client,
+    var arch_client: c.arch_client_t = undefined;
+    const init_status = c.arch_client_init(
+        &arch_client,
         std.mem.asBytes(&cluster_id),
         args.addresses.ptr,
         @intCast(args.addresses.len),
         0,
         on_complete,
     );
-    if (init_status != c.TB_INIT_SUCCESS) {
+    if (init_status != c.ARCH_INIT_SUCCESS) {
         return error.ClientInitError;
     }
     defer {
-        const client_status = c.tb_client_deinit(&tb_client);
-        assert(client_status == c.TB_CLIENT_OK);
+        const client_status = c.arch_client_deinit(&arch_client);
+        assert(client_status == c.ARCH_CLIENT_OK);
     }
 
     const stdin = std.io.getStdIn().reader().any();
@@ -70,16 +70,16 @@ pub fn main(_: std.mem.Allocator, args: CLIArgs) !void {
             context.lock.lock();
             defer context.lock.unlock();
 
-            var packet: c.tb_packet_t = undefined;
+            var packet: c.arch_packet_t = undefined;
             packet.operation = @intFromEnum(operation);
-            packet.user_data = @constCast(@ptrCast(&context));
+            packet.user_data = @ptrCast(@constCast(&context));
             packet.data = @constCast(events.ptr);
             packet.data_size = @intCast(events.len);
             packet.user_tag = 0;
-            packet.status = c.TB_PACKET_OK;
+            packet.status = c.ARCH_PACKET_OK;
 
-            const client_status = c.tb_client_submit(&tb_client, &packet);
-            assert(client_status == c.TB_CLIENT_OK);
+            const client_status = c.arch_client_submit(&arch_client, &packet);
+            assert(client_status == c.ARCH_CLIENT_OK);
 
             while (!context.completed) {
                 context.condition.wait(&context.lock);
@@ -107,20 +107,20 @@ const RequestContext = struct {
 };
 
 pub fn on_complete(
-    tb_context: usize,
-    tb_packet: [*c]c.tb_packet_t,
+    arch_context: usize,
+    arch_packet: [*c]c.arch_packet_t,
     timestamp: u64,
     result_ptr: [*c]const u8,
     result_len: u32,
 ) callconv(.c) void {
-    _ = tb_context;
+    _ = arch_context;
     _ = timestamp;
-    const context: *RequestContext = @ptrCast(@alignCast(tb_packet.*.user_data.?));
+    const context: *RequestContext = @ptrCast(@alignCast(arch_packet.*.user_data.?));
 
     context.lock.lock();
     defer context.lock.unlock();
 
-    assert(tb_packet.*.status == c.TB_PACKET_OK);
+    assert(arch_packet.*.status == c.ARCH_PACKET_OK);
     assert(result_ptr != null);
 
     stdx.copy_disjoint(.exact, u8, context.result[0..result_len], result_ptr[0..result_len]);

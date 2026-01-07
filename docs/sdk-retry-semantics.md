@@ -61,7 +61,7 @@ client = archerdb.GeoClientSync(archerdb.GeoClientConfig(
 
 ```go
 import (
-    "github.com/tigerbeetle/tigerbeetle-go/pkg/retry"
+    "github.com/archerdb/archerdb-go/pkg/retry"
 )
 
 config := retry.DefaultConfig()
@@ -210,7 +210,7 @@ except OperationTimeout:
 ### Go
 
 ```go
-import "github.com/tigerbeetle/tigerbeetle-go/pkg/types"
+import "github.com/archerdb/archerdb-go/pkg/types"
 
 accounts := generateLargeAccountList()
 
@@ -293,7 +293,7 @@ except RetryExhausted as e:
 ### Go
 
 ```go
-import "github.com/tigerbeetle/tigerbeetle-go/pkg/retry"
+import "github.com/archerdb/archerdb-go/pkg/retry"
 
 err := retry.Do(func() error {
     _, err := client.CreateAccounts(accounts)

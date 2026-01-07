@@ -29,6 +29,7 @@ pub const QueryRadiusFilter = geo_state_machine.QueryRadiusFilter;
 pub const QueryPolygonFilter = geo_state_machine.QueryPolygonFilter;
 pub const QueryResponse = geo_state_machine.QueryResponse;
 pub const PolygonVertex = geo_state_machine.PolygonVertex;
+pub const HoleDescriptor = geo_state_machine.HoleDescriptor;
 pub const InsertGeoEventResult = geo_state_machine.InsertGeoEventResult;
 pub const InsertGeoEventsResult = geo_state_machine.InsertGeoEventsResult;
 pub const DeleteEntityResult = geo_state_machine.DeleteEntityResult;

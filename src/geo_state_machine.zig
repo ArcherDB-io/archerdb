@@ -5,7 +5,7 @@
 //! This module implements the StateMachine interface required by VSR,
 //! handling geospatial operations on GeoEvent data.
 //!
-//! The state machine follows TigerBeetle's three-phase execution model:
+//! The state machine follows ArcherDB's three-phase execution model:
 //! 1. prepare() - Calculate timestamps (primary only, before consensus)
 //! 2. prefetch() - Load required data into cache (async I/O)
 //! 3. commit() - Apply state changes (deterministic, after consensus)
@@ -569,11 +569,26 @@ pub const QueryRadiusFilter = extern struct {
 };
 
 /// Filter for polygon queries.
+/// Supports polygons with holes (multi-ring polygons).
+///
+/// Wire format for polygon with holes:
+/// ```
+/// [QueryPolygonFilter: 128 bytes]
+/// [OuterVertex[0..vertex_count]: 16 bytes each]
+/// [HoleDescriptor[0..hole_count]: 8 bytes each]
+/// [Hole0Vertices[0..hole_0_count]: 16 bytes each]
+/// [Hole1Vertices[0..hole_1_count]: 16 bytes each]
+/// ...
+/// ```
 pub const QueryPolygonFilter = extern struct {
-    /// Number of vertices in polygon (vertices follow in message body)
+    /// Number of vertices in outer ring (vertices follow in message body)
     vertex_count: u32,
+    /// Number of hole rings (0 for simple polygon, max 100)
+    hole_count: u32,
     /// Maximum results to return
     limit: u32,
+    /// Reserved for alignment
+    _reserved_align: u32 = 0,
     /// Minimum timestamp (inclusive, 0 = no filter)
     timestamp_min: u64,
     /// Maximum timestamp (inclusive, 0 = no filter)
@@ -581,7 +596,7 @@ pub const QueryPolygonFilter = extern struct {
     /// Group ID filter (0 = no filter)
     group_id: u64,
     /// Reserved for future use
-    reserved: [96]u8 = @splat(0),
+    reserved: [88]u8 = @splat(0),
 
     comptime {
         assert(@sizeOf(QueryPolygonFilter) == 128);
@@ -589,10 +604,32 @@ pub const QueryPolygonFilter = extern struct {
     }
 };
 
+/// Descriptor for a polygon hole ring.
+/// Placed after outer ring vertices, before hole vertices.
+pub const HoleDescriptor = extern struct {
+    /// Number of vertices in this hole ring (min 3)
+    vertex_count: u32,
+    /// Reserved for future use
+    reserved: u32 = 0,
+
+    comptime {
+        assert(@sizeOf(HoleDescriptor) == 8);
+        assert(stdx.no_padding(HoleDescriptor));
+    }
+};
+
 /// Polygon vertex (lat/lon pair).
 pub const PolygonVertex = extern struct {
     lat_nano: i64,
     lon_nano: i64,
+
+    /// Convert to s2_index.LatLon for spatial operations
+    pub fn toLatLon(self: PolygonVertex) s2_index.LatLon {
+        return .{
+            .lat_nano = self.lat_nano,
+            .lon_nano = self.lon_nano,
+        };
+    }
 
     comptime {
         assert(@sizeOf(PolygonVertex) == 16);
@@ -2066,31 +2103,76 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 return 0;
             }
 
-            // Validate input contains vertices
-            const vertices_size = filter.vertex_count * @sizeOf(PolygonVertex);
-            const total_size = @sizeOf(QueryPolygonFilter) + vertices_size;
+            // Validate hole count (per spec: max 100 holes)
+            if (filter.hole_count > constants.polygon_holes_max) {
+                log.warn("query_polygon: too_many_holes ({d} > {d})", .{
+                    filter.hole_count,
+                    constants.polygon_holes_max,
+                });
+                if (output.len >= 4) {
+                    mem.writeInt(u32, output[0..4], 117, .little); // too_many_holes
+                }
+                return 4;
+            }
+
+            // Calculate total message size including holes
+            const outer_vertices_size = filter.vertex_count * @sizeOf(PolygonVertex);
+            const hole_descriptors_size = filter.hole_count * @sizeOf(HoleDescriptor);
+            var total_hole_vertices: u32 = 0;
+
+            // First pass: validate hole descriptors and calculate total hole vertices
+            const descriptors_offset = @sizeOf(QueryPolygonFilter) + outer_vertices_size;
+            if (filter.hole_count > 0) {
+                // Validate we have room for hole descriptors
+                if (input.len < descriptors_offset + hole_descriptors_size) {
+                    log.warn("query_polygon: input too small for hole descriptors", .{});
+                    return 0;
+                }
+
+                const descriptors_bytes = input[descriptors_offset..][0..hole_descriptors_size];
+                const hole_descriptors = mem.bytesAsSlice(HoleDescriptor, descriptors_bytes);
+
+                for (hole_descriptors) |desc| {
+                    // Validate each hole has at least 3 vertices
+                    if (desc.vertex_count < constants.polygon_hole_vertices_min) {
+                        log.warn("query_polygon: hole_vertex_count_invalid ({d} < 3)", .{
+                            desc.vertex_count,
+                        });
+                        if (output.len >= 4) {
+                            mem.writeInt(u32, output[0..4], 118, .little); // hole_vertex_count_invalid
+                        }
+                        return 4;
+                    }
+                    total_hole_vertices += desc.vertex_count;
+                }
+            }
+
+            const hole_vertices_size = total_hole_vertices * @sizeOf(PolygonVertex);
+            const total_size = @sizeOf(QueryPolygonFilter) + outer_vertices_size + hole_descriptors_size + hole_vertices_size;
+
             if (input.len < total_size) {
-                log.warn("query_polygon: input too small for vertices ({d} < {d})", .{
+                log.warn("query_polygon: input too small ({d} < {d})", .{
                     input.len,
                     total_size,
                 });
                 return 0;
             }
 
-            // Extract vertices
-            const vertices_bytes = input[@sizeOf(QueryPolygonFilter)..][0..vertices_size];
+            // Extract outer ring vertices
+            const vertices_bytes = input[@sizeOf(QueryPolygonFilter)..][0..outer_vertices_size];
             const vertices = mem.bytesAsSlice(PolygonVertex, vertices_bytes);
 
             // Convert to s2_index.LatLon format for coverPolygon and pointInPolygon
-            // Note: We need a stack-allocated array since we can't do dynamic allocation
-            // For production, this should use a scratch buffer pool (F3.3.6)
+            // Stack allocation limits for vertices
             const max_vertices_stack: usize = 256;
+            const max_holes_stack: usize = 32;
+            const max_hole_vertices_stack: usize = 128;
+
             if (vertices.len > max_vertices_stack) {
-                log.warn("query_polygon: too many vertices for stack allocation ({d} > {d})", .{
+                log.warn("query_polygon: too many outer vertices for stack allocation ({d} > {d})", .{
                     vertices.len,
                     max_vertices_stack,
                 });
-                // For very complex polygons, we'd use the scratch buffer pool
                 return 0;
             }
 
@@ -2102,6 +2184,51 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 };
             }
             const polygon_slice = latlon_vertices[0..vertices.len];
+
+            // Parse and convert holes to LatLon format
+            var hole_slices: [max_holes_stack][]const s2_index.LatLon = undefined;
+            var hole_vertices_storage: [max_holes_stack * max_hole_vertices_stack]s2_index.LatLon = undefined;
+            var hole_count: usize = 0;
+            var hole_vertex_offset: usize = 0;
+
+            if (filter.hole_count > 0) {
+                if (filter.hole_count > max_holes_stack) {
+                    log.warn("query_polygon: too many holes for stack allocation ({d} > {d})", .{
+                        filter.hole_count,
+                        max_holes_stack,
+                    });
+                    return 0;
+                }
+
+                const descriptors_bytes = input[descriptors_offset..][0..hole_descriptors_size];
+                const hole_descriptors = mem.bytesAsSlice(HoleDescriptor, descriptors_bytes);
+                var hole_data_offset = descriptors_offset + hole_descriptors_size;
+
+                for (hole_descriptors) |desc| {
+                    const hole_size = desc.vertex_count * @sizeOf(PolygonVertex);
+                    const hole_bytes = input[hole_data_offset..][0..hole_size];
+                    const hole_verts = mem.bytesAsSlice(PolygonVertex, hole_bytes);
+
+                    if (hole_vertex_offset + hole_verts.len > max_holes_stack * max_hole_vertices_stack) {
+                        log.warn("query_polygon: too many total hole vertices for stack allocation", .{});
+                        return 0;
+                    }
+
+                    // Convert hole vertices to LatLon
+                    const start_idx = hole_vertex_offset;
+                    for (hole_verts) |hv| {
+                        hole_vertices_storage[hole_vertex_offset] = .{
+                            .lat_nano = hv.lat_nano,
+                            .lon_nano = hv.lon_nano,
+                        };
+                        hole_vertex_offset += 1;
+                    }
+                    hole_slices[hole_count] = hole_vertices_storage[start_idx..hole_vertex_offset];
+                    hole_count += 1;
+                    hole_data_offset += hole_size;
+                }
+            }
+            const holes_slice = hole_slices[0..hole_count];
 
             // Polygon validation (per spec: query-engine/spec.md)
             // Check for degenerate polygon (collinear vertices)
@@ -2169,9 +2296,10 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 }
             }
 
-            log.debug("query_polygon: covering generated with {d} ranges for {d}-vertex polygon", .{
+            log.debug("query_polygon: covering generated with {d} ranges for {d}-vertex polygon with {d} holes", .{
                 num_ranges,
                 vertices.len,
+                hole_count,
             });
 
             // Scan RAM index and collect matching entries
@@ -2227,12 +2355,19 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 const cell_center = S2.cellIdToLatLon(cell_id);
 
                 // Post-filter: Point-in-polygon test using ray casting algorithm
+                // If holes are present, use pointInPolygonWithHoles which excludes points inside holes
                 const point = s2_index.LatLon{
                     .lat_nano = cell_center.lat_nano,
                     .lon_nano = cell_center.lon_nano,
                 };
-                if (!S2.pointInPolygon(point, polygon_slice)) {
-                    continue;
+                if (hole_count > 0) {
+                    if (!S2.pointInPolygonWithHoles(point, polygon_slice, holes_slice)) {
+                        continue;
+                    }
+                } else {
+                    if (!S2.pointInPolygon(point, polygon_slice)) {
+                        continue;
+                    }
                 }
 
                 // Build GeoEvent result
@@ -2913,6 +3048,45 @@ test "QueryPolygonFilter size" {
 
 test "PolygonVertex size" {
     try std.testing.expectEqual(@as(usize, 16), @sizeOf(PolygonVertex));
+}
+
+test "HoleDescriptor size" {
+    // HoleDescriptor must be exactly 8 bytes (vertex_count + reserved)
+    try std.testing.expectEqual(@as(usize, 8), @sizeOf(HoleDescriptor));
+}
+
+test "QueryPolygonFilter hole_count field" {
+    // Verify hole_count field exists and is at expected offset
+    const filter = QueryPolygonFilter{
+        .vertex_count = 4,
+        .hole_count = 2,
+        .limit = 100,
+        .timestamp_min = 0,
+        .timestamp_max = 0,
+        .group_id = 0,
+    };
+    try std.testing.expectEqual(@as(u32, 4), filter.vertex_count);
+    try std.testing.expectEqual(@as(u32, 2), filter.hole_count);
+    try std.testing.expectEqual(@as(u32, 100), filter.limit);
+}
+
+test "Polygon with holes wire format calculation" {
+    // Test wire format size calculation for polygon with holes
+    // Format: QueryPolygonFilter (128) + outer vertices (16 * N) + HoleDescriptors (8 * H) + hole vertices (16 * M)
+    const outer_vertices: u32 = 4; // Square
+    const holes: u32 = 2;
+    const hole1_vertices: u32 = 4;
+    const hole2_vertices: u32 = 3;
+
+    const header_size = @sizeOf(QueryPolygonFilter);
+    const outer_size = outer_vertices * @sizeOf(PolygonVertex);
+    const descriptors_size = holes * @sizeOf(HoleDescriptor);
+    const hole_vertices_size = (hole1_vertices + hole2_vertices) * @sizeOf(PolygonVertex);
+
+    const total = header_size + outer_size + descriptors_size + hole_vertices_size;
+
+    // 128 + (4 * 16) + (2 * 8) + (7 * 16) = 128 + 64 + 16 + 112 = 320
+    try std.testing.expectEqual(@as(usize, 320), total);
 }
 
 test "batch_max_events calculation" {

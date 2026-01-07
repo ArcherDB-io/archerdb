@@ -74,7 +74,7 @@ fn run_tests(shell: *Shell, gpa: std.mem.Allocator, language_requested: ?Languag
             // Test the vortex drivers.
             // These may expect the above driver tests to have run,
             // in order to build the driver.
-            // They expect the vortex and tigerbeetle drivers to be built.
+            // They expect the vortex and archerdb drivers to be built.
             if (@hasField(@TypeOf(LanguageCIVortex), @tagName(language))) {
                 const ci = @field(LanguageCIVortex, @tagName(language));
                 var section = try shell.open_section(@tagName(language) ++ " vortex ci");
@@ -99,14 +99,14 @@ fn validate_release(shell: *Shell, gpa: std.mem.Allocator, language_requested: ?
     defer shell.popd();
 
     const release_info = try shell.exec_stdout(
-        "gh release --repo tigerbeetle/tigerbeetle list --limit 1",
+        "gh release --repo archerdb/archerdb list --limit 1",
         .{},
     );
     const tag, _ = stdx.cut(release_info, "\t").?;
     log.info("validating release {s}", .{tag});
 
     try shell.exec(
-        "gh release --repo tigerbeetle/tigerbeetle download {tag}",
+        "gh release --repo archerdb/archerdb download {tag}",
         .{ .tag = tag },
     );
 
@@ -118,14 +118,14 @@ fn validate_release(shell: *Shell, gpa: std.mem.Allocator, language_requested: ?
     //
     // At minimum, `installation.md` requires an update.
     const artifacts = [_][]const u8{
-        "tigerbeetle-aarch64-linux-debug.zip",
-        "tigerbeetle-aarch64-linux.zip",
-        "tigerbeetle-universal-macos-debug.zip",
-        "tigerbeetle-universal-macos.zip",
-        "tigerbeetle-x86_64-linux-debug.zip",
-        "tigerbeetle-x86_64-linux.zip",
-        "tigerbeetle-x86_64-windows-debug.zip",
-        "tigerbeetle-x86_64-windows.zip",
+        "archerdb-aarch64-linux-debug.zip",
+        "archerdb-aarch64-linux.zip",
+        "archerdb-universal-macos-debug.zip",
+        "archerdb-universal-macos.zip",
+        "archerdb-x86_64-linux-debug.zip",
+        "archerdb-x86_64-linux.zip",
+        "archerdb-x86_64-windows-debug.zip",
+        "archerdb-x86_64-windows.zip",
     };
     for (artifacts) |artifact| {
         assert(shell.file_exists(artifact));
@@ -144,7 +144,7 @@ fn validate_release(shell: *Shell, gpa: std.mem.Allocator, language_requested: ?
 
         shell.popd();
         const checksum_built = try shell.sha256sum(try shell.fmt(
-            "zig-out/dist/tigerbeetle/{s}",
+            "zig-out/dist/archerdb/{s}",
             .{
                 artifact,
             },
@@ -160,20 +160,20 @@ fn validate_release(shell: *Shell, gpa: std.mem.Allocator, language_requested: ?
         }
     }
 
-    try shell.unzip_executable("tigerbeetle-x86_64-linux.zip", "tigerbeetle");
+    try shell.unzip_executable("archerdb-x86_64-linux.zip", "archerdb");
 
-    const version = try shell.exec_stdout("./tigerbeetle version --verbose", .{});
+    const version = try shell.exec_stdout("./archerdb version --verbose", .{});
     assert(std.mem.indexOf(u8, version, tag) != null);
     assert(std.mem.indexOf(u8, version, "ReleaseSafe") != null);
 
-    const tigerbeetle_absolute_path = try shell.cwd.realpathAlloc(gpa, "tigerbeetle");
-    defer gpa.free(tigerbeetle_absolute_path);
+    const archerdb_absolute_path = try shell.cwd.realpathAlloc(gpa, "archerdb");
+    defer gpa.free(archerdb_absolute_path);
 
     inline for (comptime std.enums.values(Language)) |language| {
         if (language_requested == language or language_requested == null) {
             const ci = @field(LanguageCI, @tagName(language));
             try ci.validate_release(shell, gpa, .{
-                .tigerbeetle = tigerbeetle_absolute_path,
+                .archerdb = archerdb_absolute_path,
                 .version = tag,
             });
         }
@@ -210,7 +210,7 @@ fn validate_release(shell: *Shell, gpa: std.mem.Allocator, language_requested: ?
     }
 
     const docker_version = try shell.exec_stdout(
-        \\docker run ghcr.io/tigerbeetle/tigerbeetle:{version} version --verbose
+        \\docker run ghcr.io/archerdb/archerdb:{version} version --verbose
     , .{ .version = tag });
     assert(std.mem.indexOf(u8, docker_version, tag) != null);
     assert(std.mem.indexOf(u8, docker_version, "ReleaseSafe") != null);
@@ -218,11 +218,11 @@ fn validate_release(shell: *Shell, gpa: std.mem.Allocator, language_requested: ?
 
 fn docker_digest(shell: *Shell, version: []const u8) ![]const u8 {
     try shell.exec(
-        \\docker pull ghcr.io/tigerbeetle/tigerbeetle:{version}
+        \\docker pull ghcr.io/archerdb/archerdb:{version}
     , .{ .version = version });
 
     return try shell.exec_stdout("docker inspect --format={format} " ++
-        "ghcr.io/tigerbeetle/tigerbeetle:{version}", .{
+        "ghcr.io/archerdb/archerdb:{version}", .{
         .format = "{{index .RepoDigests 0}}",
         .version = version,
     });

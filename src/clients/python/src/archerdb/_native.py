@@ -13,12 +13,12 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, List, Optional, Tuple
 
-# Add tigerbeetle bindings to path
+# Add archerdb bindings to path
 _sdk_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _sdk_dir)
 
-from tigerbeetle import bindings
-from tigerbeetle.lib import c_uint128
+from archerdb import bindings
+from archerdb.lib import c_uint128
 
 from .types import (
     GeoEvent,
@@ -255,7 +255,7 @@ class NativeClient:
     """
     Low-level native client for ArcherDB.
 
-    Thread-safe wrapper around the TigerBeetle native bindings.
+    Thread-safe wrapper around the ArcherDB native bindings.
     """
 
     def __init__(self, cluster_id: int, addresses: List[str]):
@@ -291,7 +291,7 @@ class NativeClient:
             cluster_id = c_uint128.from_param(self._cluster_id)
             addresses = ",".join(self._addresses).encode()
 
-            init_status = bindings.tb_client_init(
+            init_status = bindings.arch_client_init(
                 ctypes.byref(self._client),
                 ctypes.cast(ctypes.byref(cluster_id), ctypes.POINTER(ctypes.c_uint8 * 16)),
                 addresses,
@@ -309,7 +309,7 @@ class NativeClient:
         """Disconnect from the cluster."""
         with self._lock:
             if self._client and self._connected:
-                bindings.tb_client_deinit(ctypes.byref(self._client))
+                bindings.arch_client_deinit(ctypes.byref(self._client))
                 self._connected = False
                 self._client = None
 
@@ -341,7 +341,7 @@ class NativeClient:
             self._callback_result[1] = None
             self._callback_result[2] = None
 
-            client_status = bindings.tb_client_submit(
+            client_status = bindings.arch_client_submit(
                 ctypes.byref(self._client),
                 ctypes.byref(packet)
             )

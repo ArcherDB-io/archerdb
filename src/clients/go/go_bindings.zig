@@ -5,7 +5,7 @@ const vsr = @import("vsr");
 const assert = std.debug.assert;
 
 const stdx = vsr.stdx;
-const tb = vsr.tigerbeetle;
+const tb = vsr.archerdb;
 
 // ArcherDB geospatial type mappings
 // Note: The Go SDK uses hand-written types in geo_event.go which provide
@@ -332,7 +332,7 @@ pub fn generate_bindings(buffer: *std.ArrayList(u8)) !void {
         \\package types
         \\
         \\/*
-        \\#include "../native/tb_client.h"
+        \\#include "../native/arch_client.h"
         \\*/
         \\import "C"
         \\import "strconv"

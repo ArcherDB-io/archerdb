@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2024-2025 ArcherDB Contributors
-//! TigerBeetle replication routing protocol.
+//! ArcherDB replication routing protocol.
 //!
 //! Eight fallacies of distributed computing:
 //!

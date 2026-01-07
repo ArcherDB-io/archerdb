@@ -45,7 +45,7 @@ gh issue create --repo $REPO \
   --label "phase:F2" --label "critical" \
   --milestone "F2: RAM Index Integration" \
   --body "## Objective
-Integrate RAM index with TigerBeetle's LSM storage.
+Integrate RAM index with ArcherDB's LSM storage.
 
 ## Tasks
 - [ ] F2.2.1 Modify state machine to update index on upsert
@@ -240,7 +240,7 @@ gh issue create --repo $REPO \
   --label "phase:F4" --label "critical" \
   --milestone "F4: VOPR & Hardening" \
   --body "## Objective
-Adapt TigerBeetle's VOPR simulator for GeoEvent workloads.
+Adapt ArcherDB's VOPR simulator for GeoEvent workloads.
 
 ## Tasks
 - [ ] F4.1.1 Study existing VOPR workload generators

@@ -1,6 +1,6 @@
-// We are going to try to test the Rust redefinitions of TigerBeetle status
+// We are going to try to test the Rust redefinitions of ArcherDB status
 // codes and bitflags with a round-trip between the C status codes and the Rust
-// representations. This will involve parsing the defs out of the tb_client.h
+// representations. This will involve parsing the defs out of the arch_client.h
 // header.
 //
 // We want to do this because the addition of new status codes will not trigger
@@ -11,13 +11,13 @@
 // exactly how it would do that anyway. But at least we can do it for the Rust
 // client. Rust client is best client!
 
-use tigerbeetle as tb;
+use archerdb as tb;
 
-static TB_CLIENT_H: &str = include_str!("../assets/tb_client.h");
+static ARCH_CLIENT_H: &str = include_str!("../assets/arch_client.h");
 
 /// Parse the enum values out of a C source.
 fn parse_c_enum_values(name: &str) -> Vec<u32> {
-    let enum_body_lines = find_enum_body_lines(TB_CLIENT_H, name);
+    let enum_body_lines = find_enum_body_lines(ARCH_CLIENT_H, name);
 
     if enum_body_lines.is_empty() {
         panic!("enum {name} has no parsable body");
@@ -83,15 +83,15 @@ fn parse_enum_value(text: &str) -> u32 {
 
 #[test]
 fn does_our_c_enum_parser_even_work() {
-    let tb_log_level_values_expected = [0, 1, 2, 3];
-    let tb_log_level_values_actual = parse_c_enum_values("TB_LOG_LEVEL");
+    let arch_log_level_values_expected = [0, 1, 2, 3];
+    let arch_log_level_values_actual = parse_c_enum_values("ARCH_LOG_LEVEL");
 
-    for val in tb_log_level_values_expected.iter() {
-        assert!(tb_log_level_values_actual.contains(val));
+    for val in arch_log_level_values_expected.iter() {
+        assert!(arch_log_level_values_actual.contains(val));
     }
 
-    for val in tb_log_level_values_actual.iter() {
-        assert!(tb_log_level_values_expected.contains(val));
+    for val in arch_log_level_values_actual.iter() {
+        assert!(arch_log_level_values_expected.contains(val));
     }
 }
 
@@ -123,7 +123,7 @@ fn round_trip_test<RustType, CType>(
 #[test]
 fn round_trip_create_account_result() {
     round_trip_test::<tb::CreateAccountResult, u32>(
-        "TB_CREATE_ACCOUNT_RESULT",
+        "ARCH_CREATE_ACCOUNT_RESULT",
         &[],
         |c_value| tb::CreateAccountResult::from(c_value),
         |rust_value| u32::from(rust_value),
@@ -133,7 +133,7 @@ fn round_trip_create_account_result() {
 #[test]
 fn round_trip_create_transfer_result() {
     round_trip_test::<tb::CreateTransferResult, u32>(
-        "TB_CREATE_TRANSFER_RESULT",
+        "ARCH_CREATE_TRANSFER_RESULT",
         &[],
         |c_value| tb::CreateTransferResult::from(c_value),
         |rust_value| u32::from(rust_value),
@@ -143,7 +143,7 @@ fn round_trip_create_transfer_result() {
 #[test]
 fn round_trip_init_status() {
     round_trip_test::<tb::InitStatus, i32>(
-        "TB_INIT_STATUS",
+        "ARCH_INIT_STATUS",
         // Success not represented in tb::InitStatus
         &[0],
         |c_value| tb::InitStatus::from(c_value),
@@ -154,7 +154,7 @@ fn round_trip_init_status() {
 #[test]
 fn round_trip_packet_status() {
     round_trip_test::<tb::PacketStatus, u8>(
-        "TB_PACKET_STATUS",
+        "ARCH_PACKET_STATUS",
         // Success not represented in tb::PacketStatus
         &[0],
         |c_value| tb::PacketStatus::from(c_value),
@@ -165,7 +165,7 @@ fn round_trip_packet_status() {
 #[test]
 fn round_trip_account_flags() {
     round_trip_test::<tb::AccountFlags, u16>(
-        "TB_ACCOUNT_FLAGS",
+        "ARCH_ACCOUNT_FLAGS",
         &[],
         // We use from_bits_truncate here to discard unknown flags.
         // This will fail a round-trip test if we see one.
@@ -177,7 +177,7 @@ fn round_trip_account_flags() {
 #[test]
 fn round_trip_transfer_flags() {
     round_trip_test::<tb::TransferFlags, u16>(
-        "TB_TRANSFER_FLAGS",
+        "ARCH_TRANSFER_FLAGS",
         &[],
         |c_value| tb::TransferFlags::from_bits_truncate(c_value),
         |rust_value| rust_value.bits(),
@@ -187,7 +187,7 @@ fn round_trip_transfer_flags() {
 #[test]
 fn round_trip_account_filter_flags() {
     round_trip_test::<tb::AccountFilterFlags, u32>(
-        "TB_ACCOUNT_FILTER_FLAGS",
+        "ARCH_ACCOUNT_FILTER_FLAGS",
         &[],
         |c_value| tb::AccountFilterFlags::from_bits_truncate(c_value),
         |rust_value| rust_value.bits(),
@@ -197,7 +197,7 @@ fn round_trip_account_filter_flags() {
 #[test]
 fn round_trip_query_filter_flags() {
     round_trip_test::<tb::QueryFilterFlags, u32>(
-        "TB_QUERY_FILTER_FLAGS",
+        "ARCH_QUERY_FILTER_FLAGS",
         &[],
         |c_value| tb::QueryFilterFlags::from_bits_truncate(c_value),
         |rust_value| rust_value.bits(),

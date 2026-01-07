@@ -6,7 +6,7 @@ const assert = std.debug.assert;
 
 const constants = @import("constants.zig");
 const vsr = @import("vsr.zig");
-const tb = vsr.tigerbeetle;
+const tb = vsr.archerdb;
 
 const stdx = @import("stdx");
 const MessagePool = vsr.message_pool.MessagePool;
@@ -851,7 +851,7 @@ const usage =
     \\
     \\Commands:
     \\
-    \\  recover  Recover a recorded AOF file at <path> to a TigerBeetle cluster running
+    \\  recover  Recover a recorded AOF file at <path> to a ArcherDB cluster running
     \\           at <addresses>. Said cluster must be running with aof_recovery = true
     \\           and have the same cluster ID as the source. The AOF must have a consistent
     \\           hash chain, which can be ensured using the `merge` subcommand.

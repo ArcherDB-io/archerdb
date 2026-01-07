@@ -4,7 +4,7 @@
 
 ### Requirement: GeoEvent Structure
 
-The system SHALL store geospatial events in a fixed-size 128-byte `extern struct` with explicit memory layout guarantees matching TigerBeetle's data-oriented design.
+The system SHALL store geospatial events in a fixed-size 128-byte `extern struct` with explicit memory layout guarantees matching ArcherDB's data-oriented design.
 
 #### Scenario: Struct size and alignment validation
 
@@ -70,7 +70,7 @@ The system SHALL use a packed struct backed by u16 for boolean flags with explic
 
 ### Requirement: BlockHeader Structure
 
-The system SHALL wrap batches of GeoEvent records in blocks with a 256-byte header matching TigerBeetle's block header layout for defense-in-depth checksumming.
+The system SHALL wrap batches of GeoEvent records in blocks with a 256-byte header matching ArcherDB's block header layout for defense-in-depth checksumming.
 
 #### Scenario: Header size validation
 

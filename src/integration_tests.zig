@@ -22,11 +22,11 @@ const stdx = @import("stdx");
 const ratio = stdx.PRNG.ratio;
 
 const vortex_exe: []const u8 = @import("test_options").vortex_exe;
-const archerdb: []const u8 = @import("test_options").tigerbeetle_exe;
-const archerdb_past: []const u8 = @import("test_options").tigerbeetle_exe_past;
+const archerdb: []const u8 = @import("test_options").archerdb_exe;
+const archerdb_past: []const u8 = @import("test_options").archerdb_exe_past;
 
 comptime {
-    _ = @import("clients/c/tb_client_header_test.zig");
+    _ = @import("clients/c/arch_client_header_test.zig");
 }
 
 test "repl integration" {

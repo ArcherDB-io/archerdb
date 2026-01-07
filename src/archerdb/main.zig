@@ -422,6 +422,8 @@ fn command_version(gpa: mem.Allocator, verbose: bool) !void {
     const stdout = stdout_writer.any();
 
     try std.fmt.format(stdout, "ArcherDB version {}\n", .{constants.semver});
+    try stdout.writeAll("Copyright (c) 2026 ArcherDB by Gevorg Galstyan\n");
+    try stdout.writeAll("https://archerdb.io\n");
 
     if (verbose) {
         try stdout.writeAll("\n");
@@ -767,7 +769,7 @@ fn command_start(
     if (constants.aof_recovery) {
         log.warn(
             "{}: started in AOF recovery mode. This is potentially dangerous - if it's" ++
-                " unexpected, please recompile TigerBeetle with -Dconfig-aof-recovery=false.",
+                " unexpected, please recompile ArcherDB with -Dconfig-aof-recovery=false.",
             .{replica.replica},
         );
     }

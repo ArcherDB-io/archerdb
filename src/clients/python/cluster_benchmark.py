@@ -2,7 +2,7 @@
 """
 ArcherDB Low-Level Performance Benchmark
 
-This benchmark uses the native TigerBeetle bindings directly to measure
+This benchmark uses the native ArcherDB bindings directly to measure
 actual server performance, bypassing the high-level SDK skeleton.
 
 Target specs from design doc:
@@ -25,8 +25,8 @@ from typing import List, Optional
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
-from tigerbeetle import bindings
-from tigerbeetle.lib import c_uint128
+from archerdb import bindings
+from archerdb.lib import c_uint128
 
 
 # ============================================================================
@@ -202,7 +202,7 @@ class BenchmarkClient:
         cluster_id = c_uint128.from_param(self.cluster_id)
         addresses = self.addresses.encode()
 
-        init_status = bindings.tb_client_init(
+        init_status = bindings.arch_client_init(
             ctypes.byref(self.client),
             ctypes.cast(ctypes.byref(cluster_id), ctypes.POINTER(ctypes.c_uint8 * 16)),
             addresses,
@@ -216,7 +216,7 @@ class BenchmarkClient:
     def disconnect(self) -> None:
         """Disconnect from cluster."""
         if self.client:
-            bindings.tb_client_deinit(ctypes.byref(self.client))
+            bindings.arch_client_deinit(ctypes.byref(self.client))
             self.client = None
 
     def _submit_and_wait(self, operation: int, data: ctypes.Array, timeout: float = 30.0) -> tuple:
@@ -234,7 +234,7 @@ class BenchmarkClient:
         self._callback_result[1] = None
         self._callback_result[2] = None
 
-        client_status = bindings.tb_client_submit(ctypes.byref(self.client), ctypes.byref(packet))
+        client_status = bindings.arch_client_submit(ctypes.byref(self.client), ctypes.byref(packet))
         if client_status != bindings.ClientStatus.OK:
             return (None, 0, None)
 

@@ -20,8 +20,8 @@ pub const message_pool = @import("message_pool.zig");
 // ArcherDB uses the geospatial state machine (financial state_machine.zig removed)
 pub const state_machine = @import("geo_state_machine.zig");
 pub const storage = @import("storage.zig");
-pub const tb_client = @import("clients/c/tb_client.zig");
-pub const tigerbeetle = @import("archerdb.zig");
+pub const arch_client = @import("clients/c/arch_client.zig");
+pub const archerdb = @import("archerdb.zig");
 pub const time = @import("time.zig");
 pub const trace = @import("trace.zig");
 pub const stdx = @import("stdx");

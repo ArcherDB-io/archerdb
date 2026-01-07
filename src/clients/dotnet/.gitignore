@@ -3,6 +3,6 @@ bin/
 obj/
 cobertura/
 TestResults/
-TigerBeetle/runtimes/
-TigerBeetle.Tests/coverage.*.json
-*tigerbeetle.benchmark
+ArcherDB/runtimes/
+ArcherDB.Tests/coverage.*.json
+*archerdb.benchmark

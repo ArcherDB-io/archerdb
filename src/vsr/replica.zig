@@ -7102,7 +7102,7 @@ pub fn ReplicaType(
                 if (vsr.Checkpoint.durable(self.op_checkpoint_sync(), self.commit_max)) {
                     if (self.op == self.op_checkpoint_sync()) {
                         // Don't allow "op_repair_min > op_head".
-                        // See https://github.com/tigerbeetle/tigerbeetle/pull/1589 for why
+                        // See https://github.com/archerdb/archerdb/pull/1589 for why
                         // this is required.
                         break :repair_min self.op_checkpoint_sync();
                     }
@@ -7615,7 +7615,7 @@ pub fn ReplicaType(
         /// change, which could be committed by a higher `commit_max` number in a commit message.
         ///
         /// See this commit message for an example:
-        /// https://github.com/coilhq/tigerbeetle/commit/6119c7f759f924d09c088422d5c60ac6334d03de
+        /// https://github.com/coilhq/archerdb/commit/6119c7f759f924d09c088422d5c60ac6334d03de
         ///
         /// Our guiding principles around repairs in general:
         ///
@@ -10826,7 +10826,7 @@ pub fn ReplicaType(
             // At this point, depending on the implementation of release_execute():
             // - For testing/cluster.zig: `self` is no longer valid – the replica has been
             //   deinitialized and re-opened on the new version.
-            // - For tigerbeetle/main.zig: This is unreachable (release_execute() will not return).
+            // - For archerdb/main.zig: This is unreachable (release_execute() will not return).
         }
 
         /// Returns the next checkpoint's `CheckpointState.release`.

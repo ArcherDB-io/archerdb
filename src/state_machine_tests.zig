@@ -2,7 +2,7 @@
 // Copyright (c) 2024-2025 ArcherDB Contributors
 //! State Machine Tests Stub - ArcherDB Geospatial Database
 //!
-//! The original TigerBeetle state machine tests are not applicable to ArcherDB's
+//! The original ArcherDB state machine tests are not applicable to ArcherDB's
 //! geospatial-only implementation. ArcherDB uses GeoStateMachine for all operations.
 //!
 //! For geospatial operation tests, see:
@@ -15,7 +15,7 @@ const std = @import("std");
 const testing = std.testing;
 
 test "state_machine_tests: stub - geospatial tests are in geo_state_machine.zig" {
-    // ArcherDB uses GeoStateMachine, not the TigerBeetle financial StateMachine.
+    // ArcherDB uses GeoStateMachine, not the ArcherDB financial StateMachine.
     // Geospatial operation tests are in src/geo_state_machine.zig and related files.
     try testing.expect(true);
 }

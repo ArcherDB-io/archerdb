@@ -14,7 +14,7 @@ pub const Docs = struct {
     // Name of the directory (relative to /src/clients)
     directory: String,
 
-    // Package name (i.e. tigerbeetle-go, tigerbeetle-node, etc.)
+    // Package name (i.e. archerdb-go, archerdb-node, etc.)
     name: String,
 
     // Name for syntax highlighting (i.e. javascript for node, go for go, etc.)
@@ -46,7 +46,7 @@ pub const Docs = struct {
 
     // Any setup needed for a project before compiling and running
     // such as `go mod init myProject && go mod tidy` or `npm install
-    // tigerbeetle-node`.
+    // archerdb-node`.
     install_commands: Code,
 
     // Commands for building and running code.

@@ -6,7 +6,7 @@ function Link (link)
   local is_absolute = link.target:sub(1, 1) == "/"
   local is_anchor = link.target:sub(1, 1) == "#"
 
-  local docs = "https://docs.tigerbeetle.com/"
+  local docs = "https://docs.archerdb.com/"
   if link.target:sub(1, #docs) == docs then
     link.target = link.target:gsub(docs, "/")
     is_external = false
@@ -30,7 +30,7 @@ function Link (link)
       link.target = "/coding" .. link.target:sub(5) -- Cut "/src"
     else
       -- Make GitHub link
-      link.target = "https://github.com/tigerbeetle/tigerbeetle/blob/main" .. link.target
+      link.target = "https://github.com/archerdb/archerdb/blob/main" .. link.target
     end
   end
 

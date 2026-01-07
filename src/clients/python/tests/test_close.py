@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-import tigerbeetle as tb
+import archerdb as arch
 tb.configure_logging(debug=True)
 
 def _blocking_lookup(client, result):
@@ -19,12 +19,12 @@ def _blocking_lookup(client, result):
         result.append(e)
 
 def test_close_sync():
-    # Bind a socket to a free port to get a socket that's definitely not TigerBeetle.
-    not_tigerbeetle = socket.socket()
-    not_tigerbeetle.bind(('127.0.0.1', 0))
-    not_tigerbeetle_port = not_tigerbeetle.getsockname()[1]
+    # Bind a socket to a free port to get a socket that's definitely not ArcherDB.
+    not_archerdb = socket.socket()
+    not_archerdb.bind(('127.0.0.1', 0))
+    not_archerdb_port = not_archerdb.getsockname()[1]
 
-    client = tb.ClientSync(cluster_id=1234, replica_addresses=f"127.0.0.1:{not_tigerbeetle_port}")
+    client = tb.ClientSync(cluster_id=1234, replica_addresses=f"127.0.0.1:{not_archerdb_port}")
 
     # Submit a request, which would normally block.
     thread_result = []
@@ -57,12 +57,12 @@ def test_close_async():
     asyncio.run(_test_close_async())
 
 async def _test_close_async():
-    # Bind a socket to a free port to get a socket that's definitely not TigerBeetle.
-    not_tigerbeetle = socket.socket()
-    not_tigerbeetle.bind(('127.0.0.1', 0))
-    not_tigerbeetle_port = not_tigerbeetle.getsockname()[1]
+    # Bind a socket to a free port to get a socket that's definitely not ArcherDB.
+    not_archerdb = socket.socket()
+    not_archerdb.bind(('127.0.0.1', 0))
+    not_archerdb_port = not_archerdb.getsockname()[1]
 
-    client = tb.ClientAsync(cluster_id=1234, replica_addresses=f"127.0.0.1:{not_tigerbeetle_port}")
+    client = tb.ClientAsync(cluster_id=1234, replica_addresses=f"127.0.0.1:{not_archerdb_port}")
 
     # Submit a request, as a task.
     lookup_task = asyncio.create_task(client.lookup_accounts([1]))

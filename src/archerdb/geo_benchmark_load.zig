@@ -20,7 +20,7 @@ const assert = std.debug.assert;
 const log = std.log.scoped(.geo_benchmark);
 
 const vsr = @import("vsr");
-const tb = vsr.tigerbeetle;
+const tb = vsr.archerdb;
 const constants = vsr.constants;
 const stdx = vsr.stdx;
 const flags = vsr.flags;
@@ -426,7 +426,7 @@ const GeoBenchmark = struct {
         const entity_idx = b.prng.int(u32) % b.entity_count;
         const entity_id = b.entity_ids[entity_idx];
 
-        const filter: *QueryUuidFilter = @alignCast(@ptrCast(&b.client_requests[client_index]));
+        const filter: *QueryUuidFilter = @ptrCast(@alignCast(&b.client_requests[client_index]));
         filter.* = .{
             .entity_id = entity_id,
             .limit = 1, // We expect at most 1 result for UUID lookup
@@ -492,7 +492,7 @@ const GeoBenchmark = struct {
         const lon_raw = b.prng.range_inclusive(u64, 0, 360_000_000_000);
         const lon_nano: i64 = @as(i64, @intCast(lon_raw)) - 180_000_000_000;
 
-        const filter: *QueryRadiusFilter = @alignCast(@ptrCast(&b.client_requests[client_index]));
+        const filter: *QueryRadiusFilter = @ptrCast(@alignCast(&b.client_requests[client_index]));
         filter.* = .{
             .center_lat_nano = lat_nano,
             .center_lon_nano = lon_nano,
@@ -568,9 +568,10 @@ const GeoBenchmark = struct {
         // Rectangle size: roughly 0.1 degrees (about 10km at equator)
         const half_size: i64 = 50_000_000; // 0.05 degrees in nanodegrees
 
-        const filter: *QueryPolygonFilter = @alignCast(@ptrCast(&b.client_requests[client_index]));
+        const filter: *QueryPolygonFilter = @ptrCast(@alignCast(&b.client_requests[client_index]));
         filter.* = .{
             .vertex_count = 4,
+            .hole_count = 0, // Simple polygon (no holes)
             .limit = 100,
             .timestamp_min = 0,
             .timestamp_max = 0,
@@ -580,7 +581,7 @@ const GeoBenchmark = struct {
         // Add vertices after filter (4 corners of rectangle)
         const request_buf = &b.client_requests[client_index];
         const offset = @sizeOf(QueryPolygonFilter);
-        const vertices_ptr: [*]PolygonVertex = @alignCast(@ptrCast(&request_buf[offset]));
+        const vertices_ptr: [*]PolygonVertex = @ptrCast(@alignCast(&request_buf[offset]));
         const min_lat = center_lat - half_size;
         const max_lat = center_lat + half_size;
         const min_lon = center_lon - half_size;

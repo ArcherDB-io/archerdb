@@ -26,8 +26,8 @@ pub fn init(b: *std.Build, url_prefix: []const u8, pandoc_bin: LazyPath) Website
 }
 
 pub fn write_page(self: Website, options: struct {
-    title: []const u8 = "TigerBeetle",
-    author: []const u8 = "TigerBeetle Team",
+    title: []const u8 = "ArcherDB",
+    author: []const u8 = "ArcherDB Team",
     page_path: []const u8,
     include_search: bool = true,
     nav: []const u8,

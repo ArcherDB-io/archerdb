@@ -6,7 +6,7 @@
 package types
 
 /*
-#include "../native/tb_client.h"
+#include "../native/arch_client.h"
 */
 import "C"
 import "strconv"

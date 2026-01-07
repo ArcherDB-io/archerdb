@@ -1,4 +1,4 @@
-// Code powering "developer dashboard" aka devhub, at <https://tigerbeetle.github.io/tigerbeetle>.
+// Code powering "developer dashboard" aka devhub, at <https://archerdb.github.io/archerdb>.
 //
 // At the moment, it isn't clear what's the right style for this kind of non-Zig developer facing
 // code, so the following is somewhat arbitrary:
@@ -54,11 +54,11 @@ function main_release_rotation() {
 
 async function main_seeds() {
   const data_url =
-    "https://raw.githubusercontent.com/tigerbeetle/devhubdb/main/fuzzing/data.json";
+    "https://raw.githubusercontent.com/archerdb/devhubdb/main/fuzzing/data.json";
   const issues_url =
-    "https://api.github.com/repos/tigerbeetle/tigerbeetle/issues?per_page=200";
+    "https://api.github.com/repos/archerdb/archerdb/issues?per_page=200";
   const logs_base =
-    "https://raw.githubusercontent.com/tigerbeetle/devhubdb/main/";
+    "https://raw.githubusercontent.com/archerdb/devhubdb/main/";
 
   const [records, issues] = await Promise.all([
     fetch_json(data_url),
@@ -168,7 +168,7 @@ async function main_seeds() {
     const log_link = record.log ? ` <a href="${logs_base + record.log}">(log)</a>` : "";
     row_dom.innerHTML = `
           <td>
-            <a href="https://github.com/tigerbeetle/tigerbeetle/commit/${record.commit_sha}"><code>${
+            <a href="https://github.com/archerdb/archerdb/commit/${record.commit_sha}"><code>${
       record.commit_sha.substring(0, 7)
     }</code></a>
             ${commit_extra}
@@ -215,7 +215,7 @@ async function main_seeds() {
 
 async function main_metrics() {
   const data_url =
-    "https://raw.githubusercontent.com/tigerbeetle/devhubdb/main/devhub/data.json";
+    "https://raw.githubusercontent.com/archerdb/devhubdb/main/devhub/data.json";
   const data = await (await fetch(data_url)).text();
   const max_batches = 200;
   const batches = data.split("\n")
@@ -229,16 +229,16 @@ async function main_metrics() {
 }
 
 function is_main(record) {
-  return record.branch === "https://github.com/tigerbeetle/tigerbeetle";
+  return record.branch === "https://github.com/archerdb/archerdb";
 }
 
 function is_release(record) {
   return record.branch ===
-    "https://github.com/tigerbeetle/tigerbeetle/tree/release";
+    "https://github.com/archerdb/archerdb/tree/release";
 }
 
 function pull_request_number(record) {
-  const pr_prefix = "https://github.com/tigerbeetle/tigerbeetle/pull/";
+  const pr_prefix = "https://github.com/archerdb/archerdb/pull/";
   if (record.branch.startsWith(pr_prefix)) {
     const pr_number = record.branch.substring(
       pr_prefix.length,
@@ -375,7 +375,7 @@ function plot_series(series_list, root_node, batch_count) {
         events: {
           dataPointSelection: (event, chartContext, { dataPointIndex }) => {
             window.open(
-              "https://github.com/tigerbeetle/tigerbeetle/commit/" +
+              "https://github.com/archerdb/archerdb/commit/" +
                 series.git_commit[dataPointIndex],
             );
           },

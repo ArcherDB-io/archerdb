@@ -4,7 +4,7 @@ zig-out/
 
 tb
 zigcc*
-*.tigerbeetle
+*.archerdb
 main
 main.exe
 

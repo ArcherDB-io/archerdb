@@ -4,8 +4,8 @@ const std = @import("std");
 const vsr = @import("vsr");
 
 const assert = std.debug.assert;
-const tb = vsr.tigerbeetle;
-const tb_client = vsr.tb_client;
+const tb = vsr.archerdb;
+const arch_client = vsr.arch_client;
 
 const TypeMapping = struct {
     name: []const u8,
@@ -22,7 +22,7 @@ const TypeMapping = struct {
 };
 
 // ArcherDB geospatial type mappings
-// NOTE: Legacy TigerBeetle financial types (Account, Transfer, etc.) have been removed.
+// NOTE: Legacy ArcherDB financial types (Account, Transfer, etc.) have been removed.
 // ArcherDB is a geospatial database only.
 const type_mappings = .{
     // GeoEvent and related types
@@ -71,7 +71,7 @@ const type_mappings = .{
         .name = "PolygonVertex",
     } },
     // VSR operations
-    .{ tb_client.Operation, TypeMapping{
+    .{ arch_client.Operation, TypeMapping{
         .name = "Operation",
         .hidden_fields = &.{ "reserved", "root", "register" },
     } },
@@ -210,7 +210,7 @@ fn emit_docs(
         try buffer.writer().print(
             \\
             \\{[indent]s}/**
-            \\{[indent]s}* See [{[name]s}](https://docs.tigerbeetle.com/{[docs_link]s}{[field]s})
+            \\{[indent]s}* See [{[name]s}](https://docs.archerdb.io/{[docs_link]s}{[field]s})
             \\{[indent]s}*/
             \\
         , .{

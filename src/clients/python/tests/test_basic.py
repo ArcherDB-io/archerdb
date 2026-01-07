@@ -5,12 +5,12 @@ from dataclasses import asdict
 
 import pytest
 
-import tigerbeetle as tb
+import archerdb as arch
 tb.configure_logging(debug=True)
 
-replica_addresses = os.getenv("TB_ADDRESS")
+replica_addresses = os.getenv("ARCHERDB_ADDRESS")
 if not replica_addresses:
-    print('error: missing TB_ADDRESS environment variable')
+    print('error: missing ARCHERDB_ADDRESS environment variable')
     sys.exit(1)
 
 @pytest.fixture
@@ -128,7 +128,7 @@ def test_create_a_transfer(client):
         ledger=1,
         code=1,
         flags=0,
-        timestamp=0, # this will be set correctly by the TigerBeetle server
+        timestamp=0, # this will be set correctly by the ArcherDB server
     )
 
     errors = client.create_transfers([transfer])
@@ -160,7 +160,7 @@ def test_create_a_two_phase_transfer(client):
         ledger=1,
         code=1,
         flags=tb.TransferFlags.PENDING,
-        timestamp=0, # this will be set correctly by the TigerBeetle server
+        timestamp=0, # this will be set correctly by the ArcherDB server
     )
 
     errors = client.create_transfers([transfer])
@@ -207,7 +207,7 @@ def test_post_a_two_phase_transfer(client):
         ledger=1,
         code=1,
         flags=tb.TransferFlags.POST_PENDING_TRANSFER,
-        timestamp=0, # this will be set correctly by the TigerBeetle server
+        timestamp=0, # this will be set correctly by the ArcherDB server
     )
 
     errors = client.create_transfers([commit])
@@ -240,7 +240,7 @@ def test_reject_a_two_phase_transfer(client):
         ledger=1,
         code=1,
         flags=tb.TransferFlags.PENDING,
-        timestamp=0, # this will be set correctly by the TigerBeetle server
+        timestamp=0, # this will be set correctly by the ArcherDB server
     )
     transfer_errors = client.create_transfers([transfer])
     assert transfer_errors == []
@@ -259,7 +259,7 @@ def test_reject_a_two_phase_transfer(client):
         ledger=1,
         code=1,
         flags=tb.TransferFlags.VOID_PENDING_TRANSFER,
-        timestamp=0, # this will be set correctly by the TigerBeetle server
+        timestamp=0, # this will be set correctly by the ArcherDB server
     )
 
     errors = client.create_transfers([reject])
@@ -291,7 +291,7 @@ def test_link_transfers(client):
         ledger=1,
         code=1,
         flags=tb.TransferFlags.LINKED, # points to transfer2
-        timestamp=0, # will be set correctly by the TigerBeetle server
+        timestamp=0, # will be set correctly by the ArcherDB server
     )
     transfer2 = tb.Transfer(
         id=6,
@@ -308,7 +308,7 @@ def test_link_transfers(client):
         # Does not have linked flag as it is the end of the chain.
         # This will also cause it to fail as this is now a duplicate with different flags
         flags=0,
-        timestamp=0, # will be set correctly by the TigerBeetle server
+        timestamp=0, # will be set correctly by the ArcherDB server
     )
 
     errors = client.create_transfers([transfer1, transfer2])
@@ -349,7 +349,7 @@ def test_cannot_void_an_expired_transfer(client):
         ledger=1,
         code=1,
         flags=tb.TransferFlags.PENDING,
-        timestamp=0, # this will be set correctly by the TigerBeetle server
+        timestamp=0, # this will be set correctly by the ArcherDB server
     )
     transfer_errors = client.create_transfers([transfer])
     assert transfer_errors == []
@@ -399,7 +399,7 @@ def test_cannot_void_an_expired_transfer(client):
         ledger=1,
         code=1,
         flags=tb.TransferFlags.VOID_PENDING_TRANSFER,
-        timestamp=0, # this will be set correctly by the TigerBeetle server
+        timestamp=0, # this will be set correctly by the ArcherDB server
     )
 
     errors = client.create_transfers([reject])
@@ -423,7 +423,7 @@ def test_close_accounts(client):
         ledger=1,
         code=1,
         flags=tb.TransferFlags.CLOSING_DEBIT | tb.TransferFlags.CLOSING_CREDIT | tb.TransferFlags.PENDING,
-        timestamp=0, # will be set correctly by the TigerBeetle server
+        timestamp=0, # will be set correctly by the ArcherDB server
     )
     errors = client.create_transfers([closing_transfer])
     assert len(errors) == 0
@@ -449,7 +449,7 @@ def test_close_accounts(client):
         code=1,
         flags=tb.TransferFlags.VOID_PENDING_TRANSFER,
         pending_id=closing_transfer.id,
-        timestamp=0, # will be set correctly by the TigerBeetle server
+        timestamp=0, # will be set correctly by the ArcherDB server
     )
 
     errors = client.create_transfers([voiding_transfer])
@@ -1382,10 +1382,10 @@ def test_uint128(client):
 
     assert accounts[0] == expected_repl_response_as_account
 
-    tigerbeetle = os.getenv("TIGERBEETLE_BINARY", "tigerbeetle")
+    archerdb_bin = os.getenv("ARCHERDB_BINARY", "archerdb")
     repl_output = subprocess.run(
         [
-            tigerbeetle,
+            archerdb_bin,
             "repl",
             "--cluster=0",
             "--addresses=" + replica_addresses,
