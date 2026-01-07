@@ -2182,6 +2182,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     .lat_nano = v.lat_nano,
                     .lon_nano = v.lon_nano,
                 };
+                log.debug("query_polygon: vertex[{d}] = lat={d}, lon={d}", .{
+                    i, v.lat_nano, v.lon_nano,
+                });
             }
             const polygon_slice = latlon_vertices[0..vertices.len];
 
@@ -2313,6 +2316,8 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 
             var result_count: usize = 0;
             var has_more: bool = false;
+            var entries_seen: usize = 0;
+            var covering_passed: usize = 0;
 
             // Scan entire RAM index (temporary until LSM scan is available)
             var position: u64 = 0;
@@ -2333,15 +2338,19 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 if (entry.is_empty() or entry.is_tombstone()) {
                     continue;
                 }
+                entries_seen += 1;
 
                 // Extract S2 cell ID and timestamp from composite latest_id
                 const cell_id = @as(u64, @truncate(entry.latest_id >> 64));
                 const timestamp = @as(u64, @truncate(entry.latest_id));
 
                 // Coarse filter: Check if cell is in any covering range
+                // This is an optimization - cells outside the covering can be skipped
+                // without the more expensive point-in-polygon test
                 if (!cellInCovering(cell_id, &covering)) {
                     continue;
                 }
+                covering_passed += 1;
 
                 // Apply timestamp filter if specified
                 if (filter.timestamp_min > 0 and timestamp < filter.timestamp_min) {
@@ -2360,14 +2369,17 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     .lat_nano = cell_center.lat_nano,
                     .lon_nano = cell_center.lon_nano,
                 };
-                if (hole_count > 0) {
-                    if (!S2.pointInPolygonWithHoles(point, polygon_slice, holes_slice)) {
-                        continue;
-                    }
-                } else {
-                    if (!S2.pointInPolygon(point, polygon_slice)) {
-                        continue;
-                    }
+                const in_polygon = if (hole_count > 0)
+                    S2.pointInPolygonWithHoles(point, polygon_slice, holes_slice)
+                else
+                    S2.pointInPolygon(point, polygon_slice);
+
+                log.debug("query_polygon: cell_center lat={d}, lon={d}, in_polygon={}", .{
+                    cell_center.lat_nano, cell_center.lon_nano, in_polygon,
+                });
+
+                if (!in_polygon) {
+                    continue;
                 }
 
                 // Build GeoEvent result
@@ -2415,7 +2427,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 header.* = QueryResponse.complete(@intCast(result_count));
             }
 
-            log.debug("query_polygon: returning {d} results, has_more={}", .{ result_count, has_more });
+            log.debug("query_polygon: scan complete: entries_seen={d}, covering_passed={d}, result_count={d}, has_more={}", .{
+                entries_seen, covering_passed, result_count, has_more,
+            });
 
             return @sizeOf(QueryResponse) + result_count * @sizeOf(GeoEvent);
         }

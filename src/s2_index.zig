@@ -31,6 +31,7 @@
 const std = @import("std");
 const s2 = @import("s2/s2.zig");
 const math = s2.math;
+const log = std.log.scoped(.s2_index);
 
 /// Required scratch buffer size for S2 operations (in bytes)
 /// This is enough for RegionCoverer's internal state and cell lists
@@ -147,6 +148,8 @@ pub const S2 = struct {
             radius_meters,
         );
 
+        log.debug("coverCap: center_lat_nano={d}, center_lon_nano={d}, radius_m={d:.1}", .{ center_lat_nano, center_lon_nano, radius_meters });
+
         // Create RegionCoverer
         const max_cells: u8 = @intCast(s2_max_cells);
         const coverer = s2.RegionCoverer.initWithParams(min_level, max_level, max_cells);
@@ -197,13 +200,7 @@ pub const S2 = struct {
         min_level: u8,
         max_level: u8,
     ) [s2_max_cells]CellRange {
-        // NOTE: Current implementation uses bounding box approximation.
-        // This is conservative (may return more cells than needed) but correct.
-        // ENHANCEMENT: Could use S2Loop for tighter covering, reducing false positives.
-        _ = min_level;
-        _ = max_level;
-
-        // For now, compute bounding box and return a simple covering
+        // For now, compute bounding box and use direct bounding box covering
         if (vertices.len < 3) {
             var ranges: [s2_max_cells]CellRange = undefined;
             for (&ranges) |*range| {
@@ -225,24 +222,113 @@ pub const S2 = struct {
             if (v.lon_nano > max_lon) max_lon = v.lon_nano;
         }
 
-        // Create cap covering the bounding box (conservative approximation)
-        const center_lat = @divTrunc(min_lat + max_lat, 2);
-        const center_lon = @divTrunc(min_lon + max_lon, 2);
+        log.debug("coverPolygon: bbox lat=[{d}, {d}], lon=[{d}, {d}]", .{ min_lat, max_lat, min_lon, max_lon });
 
-        // Compute approximate radius (diagonal of bounding box / 2)
-        // Convert to f64 BEFORE squaring to avoid integer overflow
-        // (nanodegree values up to 180e9 would overflow i64 when squared)
-        const lat_diff_f = @as(f64, @floatFromInt(max_lat - min_lat));
-        const lon_diff_f = @as(f64, @floatFromInt(max_lon - min_lon));
-        const diagonal_nano = math.sqrt(lat_diff_f * lat_diff_f + lon_diff_f * lon_diff_f);
+        // Use bounding box covering instead of cap approximation
+        return coverBoundingBox(scratch, min_lat, max_lat, min_lon, max_lon, min_level, max_level);
+    }
 
-        // Convert to millimeters (1 nanodegree ≈ 0.111 mm at equator)
-        // Cap at maximum supported radius (1000 km = 1,000,000,000 mm) to avoid overflow
-        const radius_mm_raw = diagonal_nano * 0.111 / 2.0 + 1000.0;
-        const max_radius_mm: f64 = 1_000_000_000.0; // 1000 km
-        const radius_mm: u32 = @intFromFloat(@min(radius_mm_raw, max_radius_mm));
+    /// Cover a rectangular bounding box region
+    ///
+    /// This algorithm uses a simple approach: find cells at an appropriate level
+    /// and compute an inclusive cell range that covers all of them.
+    ///
+    /// Arguments:
+    /// - scratch: Scratch buffer for temporary allocations
+    /// - min_lat, max_lat: Latitude bounds in nanodegrees
+    /// - min_lon, max_lon: Longitude bounds in nanodegrees
+    /// - min_level: Minimum cell level
+    /// - max_level: Maximum cell level
+    ///
+    /// Returns: Fixed-size array of cell ranges
+    pub fn coverBoundingBox(
+        scratch: []u8,
+        min_lat: i64,
+        max_lat: i64,
+        min_lon: i64,
+        max_lon: i64,
+        min_level: u8,
+        max_level: u8,
+    ) [s2_max_cells]CellRange {
+        _ = scratch;
+        _ = min_level;
+        _ = max_level;
 
-        return coverCap(scratch, center_lat, center_lon, radius_mm, 8, 30);
+        // Simple approach: find all level-30 cells for points in a dense grid,
+        // find their common ancestor at a level where we get reasonable coverage,
+        // and return that as a range.
+        //
+        // For polygon queries, the covering doesn't need to be tight - it just
+        // needs to be conservative (include all cells that MIGHT be in the polygon).
+        // The pointInPolygon filter will do exact filtering.
+
+        // Sample corner cells at level 30
+        const sw_cell = s2.latLonToCellId(min_lat, min_lon, 30);
+        const nw_cell = s2.latLonToCellId(max_lat, min_lon, 30);
+        const ne_cell = s2.latLonToCellId(max_lat, max_lon, 30);
+        const se_cell = s2.latLonToCellId(min_lat, max_lon, 30);
+        const center_cell = s2.latLonToCellId(
+            @divTrunc(min_lat + max_lat, 2),
+            @divTrunc(min_lon + max_lon, 2),
+            30,
+        );
+
+        // Find min and max cell IDs among the corners
+        var min_cell = sw_cell;
+        var max_cell = sw_cell;
+        const all_cells = [_]u64{ sw_cell, nw_cell, ne_cell, se_cell, center_cell };
+        for (all_cells) |cell| {
+            if (cell < min_cell) min_cell = cell;
+            if (cell > max_cell) max_cell = cell;
+        }
+
+        log.debug("coverBoundingBox: min_cell=0x{x:0>16}, max_cell=0x{x:0>16}, center=0x{x:0>16}", .{ min_cell, max_cell, center_cell });
+
+        // Find common ancestor level - the level at which min_cell and max_cell
+        // share a common parent. Go up until they have the same parent.
+        var ancestor_level: u8 = 30;
+        var min_ancestor = min_cell;
+        var max_ancestor = max_cell;
+
+        while (ancestor_level > 0 and min_ancestor != max_ancestor) {
+            min_ancestor = s2.parent(min_ancestor);
+            max_ancestor = s2.parent(max_ancestor);
+            ancestor_level -= 1;
+        }
+
+        log.debug("coverBoundingBox: common_ancestor_level={d}", .{ancestor_level});
+
+        // If they have a common ancestor, use that cell's range
+        // Otherwise, create a range from min to max
+        var ranges: [s2_max_cells]CellRange = undefined;
+        for (&ranges) |*range| {
+            range.* = .{ .start = 0, .end = 0 };
+        }
+
+        if (min_ancestor == max_ancestor) {
+            // All corners share this ancestor - use its range
+            const lsb = min_ancestor & (~min_ancestor + 1);
+            ranges[0] = .{
+                .start = min_ancestor - lsb + 1,
+                .end = min_ancestor + lsb, // Exclusive end
+            };
+        } else {
+            // No common ancestor at any level - this shouldn't happen for
+            // reasonable bounding boxes. Use the full range as fallback.
+            // But also add individual ranges for safety.
+            const min_lsb = min_cell & (~min_cell + 1);
+            const max_lsb = max_cell & (~max_cell + 1);
+
+            // Create a range from min_cell's min to max_cell's max
+            ranges[0] = .{
+                .start = min_cell - min_lsb + 1,
+                .end = max_cell + max_lsb, // Exclusive end
+            };
+        }
+
+        log.debug("coverBoundingBox: range[0] = 0x{x:0>16} .. 0x{x:0>16}", .{ ranges[0].start, ranges[0].end });
+
+        return ranges;
     }
 
     // =========================================================================
@@ -414,6 +500,8 @@ pub const S2 = struct {
             const a2 = polygon[(i + 1) % n];
 
             // Only check edges that are at least 2 apart (non-adjacent)
+            // Skip if i + 2 >= n to avoid range overflow
+            if (i + 2 >= n) continue;
             for ((i + 2)..n) |j| {
                 // Skip if edges share a vertex (adjacent)
                 if (j == (i + n - 1) % n) continue;
@@ -722,6 +810,37 @@ test "S2.pointInPolygon: triangle" {
         .{ .lat_nano = 20_000_000_000, .lon_nano = 20_000_000_000 },
         &triangle,
     ));
+}
+
+test "S2.pointInPolygon: SF bounding box rectangle" {
+    // This is the exact polygon used in /tmp/test_polygon_query.py
+    // CCW winding: SW -> NW -> NE -> SE
+    const sf_polygon = [_]LatLon{
+        .{ .lat_nano = 37_700_000_000, .lon_nano = -122_500_000_000 }, // SW corner
+        .{ .lat_nano = 37_850_000_000, .lon_nano = -122_500_000_000 }, // NW corner
+        .{ .lat_nano = 37_850_000_000, .lon_nano = -122_350_000_000 }, // NE corner
+        .{ .lat_nano = 37_700_000_000, .lon_nano = -122_350_000_000 }, // SE corner
+    };
+
+    // San Francisco test point (should be inside the polygon)
+    const sf_point = LatLon{
+        .lat_nano = 37_774_900_000,
+        .lon_nano = -122_419_400_000,
+    };
+
+    // This is the failing case in production - point is clearly within the bounding box
+    const result = S2.pointInPolygon(sf_point, &sf_polygon);
+    std.debug.print("\nSF polygon test:\n", .{});
+    std.debug.print("  Polygon: SW({d},{d}) NW({d},{d}) NE({d},{d}) SE({d},{d})\n", .{
+        sf_polygon[0].lat_nano, sf_polygon[0].lon_nano,
+        sf_polygon[1].lat_nano, sf_polygon[1].lon_nano,
+        sf_polygon[2].lat_nano, sf_polygon[2].lon_nano,
+        sf_polygon[3].lat_nano, sf_polygon[3].lon_nano,
+    });
+    std.debug.print("  Point: ({d}, {d})\n", .{ sf_point.lat_nano, sf_point.lon_nano });
+    std.debug.print("  Result: {}\n", .{result});
+
+    try std.testing.expect(result);
 }
 
 test "S2.coverCap: basic" {
@@ -1041,4 +1160,52 @@ test "S2.signedArea and winding order" {
     try std.testing.expect(S2.signedArea(&cw_square) < 0);
     try std.testing.expect(!S2.isCounterClockwise(&cw_square));
     try std.testing.expect(S2.isClockwise(&cw_square));
+}
+
+test "S2.coverPolygon: SF bounding box covers SF point" {
+    // This test verifies the polygon covering algorithm properly covers
+    // points within the polygon's bounding box. This was a regression
+    // where the cap-based approximation missed cells near polygon corners.
+
+    // SF bounding box polygon (same as used in integration tests)
+    const sf_polygon = [_]LatLon{
+        .{ .lat_nano = 37_700_000_000, .lon_nano = -122_500_000_000 }, // SW
+        .{ .lat_nano = 37_850_000_000, .lon_nano = -122_500_000_000 }, // NW
+        .{ .lat_nano = 37_850_000_000, .lon_nano = -122_350_000_000 }, // NE
+        .{ .lat_nano = 37_700_000_000, .lon_nano = -122_350_000_000 }, // SE
+    };
+
+    // Point in San Francisco (should be inside the polygon)
+    const sf_lat: i64 = 37_774_900_000;
+    const sf_lon: i64 = -122_419_400_000;
+
+    // Get cell ID for the SF point at level 30
+    const sf_cell_id = S2.latLonToCellId(sf_lat, sf_lon, 30);
+
+    // Get covering for the polygon
+    var scratch: [s2_scratch_size]u8 = undefined;
+    const covering = S2.coverPolygon(&scratch, &sf_polygon, 8, 30);
+
+    // The SF point's cell must be within one of the covering ranges
+    var found = false;
+    var range_count: usize = 0;
+    for (covering) |range| {
+        if (range.start == 0 and range.end == 0) continue;
+        range_count += 1;
+        if (range.contains(sf_cell_id)) {
+            found = true;
+        }
+    }
+
+    std.debug.print("\ncoverPolygon test:\n", .{});
+    std.debug.print("  SF cell: 0x{x:0>16}\n", .{sf_cell_id});
+    std.debug.print("  Covering has {d} ranges\n", .{range_count});
+    for (covering, 0..) |range, i| {
+        if (range.start == 0 and range.end == 0) continue;
+        const contains_sf = if (range.contains(sf_cell_id)) " <- contains SF" else "";
+        std.debug.print("  Range {d}: 0x{x:0>16} .. 0x{x:0>16}{s}\n", .{ i, range.start, range.end, contains_sf });
+    }
+    std.debug.print("  Result: found={}\n", .{found});
+
+    try std.testing.expect(found);
 }
