@@ -26,10 +26,7 @@ comptime {
     _ = @import("archerdb/metrics.zig");
     _ = @import("archerdb/metrics_server.zig");
     _ = @import("archerdb/parallel_export.zig");
-    _ = @import("archerdb/replica_tls.zig");
     _ = @import("archerdb/restore.zig");
-    _ = @import("archerdb/signal_handler.zig");
-    _ = @import("archerdb/tls_config.zig");
     _ = @import("cdc/amqp.zig");
     _ = @import("cdc/amqp/protocol.zig");
     _ = @import("clients/c/arch_client.zig");

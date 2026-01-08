@@ -28,7 +28,6 @@ const Grid = @import("./main.zig").Grid;
 const Ratio = stdx.PRNG.Ratio;
 const ByteSize = stdx.ByteSize;
 const Operation = archerdb.Operation;
-const tls_config = vsr.tls_config;
 const Duration = stdx.Duration;
 const backup_config = vsr.backup_config;
 
@@ -101,20 +100,6 @@ const CLIArgs = union(enum) {
         log_rotate_count: ?u32 = null,
         metrics_port: ?u16 = null,
         metrics_bind: ?[]const u8 = null,
-
-        // TLS configuration (F5.3 - Security)
-        tls_required: bool = false,
-        tls_cert_path: ?[]const u8 = null,
-        tls_key_path: ?[]const u8 = null,
-        tls_ca_path: ?[]const u8 = null,
-
-        // Certificate revocation checking (F5.4.4)
-        tls_revocation_check: tls_config.RevocationCheckMode = .disabled,
-        tls_crl_path: ?[]const u8 = null,
-        tls_crl_refresh_interval: u32 = 3600,
-        tls_ocsp_responder_url: ?[]const u8 = null,
-        tls_ocsp_timeout: u32 = 5,
-        tls_revocation_failure_mode: tls_config.RevocationFailureMode = .fail_closed,
 
         // Backup configuration (F5.5 - Backup & Restore)
         backup_enabled: bool = false,
@@ -641,16 +626,6 @@ pub const Command = union(enum) {
         log_trace: bool,
         metrics_port: ?u16,
         metrics_bind: []const u8,
-        tls_required: bool,
-        tls_cert_path: ?[]const u8,
-        tls_key_path: ?[]const u8,
-        tls_ca_path: ?[]const u8,
-        tls_revocation_check: tls_config.RevocationCheckMode,
-        tls_crl_path: ?[]const u8,
-        tls_crl_refresh_interval: u32,
-        tls_ocsp_responder_url: ?[]const u8,
-        tls_ocsp_timeout: u32,
-        tls_revocation_failure_mode: tls_config.RevocationFailureMode,
         // Backup configuration (F5.5)
         backup_enabled: bool,
         backup_provider: backup_config.StorageProvider,
@@ -926,12 +901,7 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
         "log_level",                   "log_format",
         "log_file",                    "log_rotate_size",
         "log_rotate_count",            "metrics_port",
-        "metrics_bind",                "tls_required",
-        "tls_cert_path",               "tls_key_path",
-        "tls_ca_path",                 "tls_revocation_check",
-        "tls_crl_path",                "tls_crl_refresh_interval",
-        "tls_ocsp_responder_url",      "tls_ocsp_timeout",
-        "tls_revocation_failure_mode", "backup_enabled",
+        "metrics_bind",                "backup_enabled",
         "backup_provider",             "backup_bucket",
         "backup_region",               "backup_credentials",
         "backup_mode",                 "backup_encryption",
@@ -1198,18 +1168,6 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
             parse_address_and_port(statsd_address, "--statsd", 8125)
         else
             null,
-        // TLS configuration (F5.3 - Security)
-        .tls_required = start.tls_required,
-        .tls_cert_path = start.tls_cert_path,
-        .tls_key_path = start.tls_key_path,
-        .tls_ca_path = start.tls_ca_path,
-        // Certificate revocation checking (F5.4.4)
-        .tls_revocation_check = start.tls_revocation_check,
-        .tls_crl_path = start.tls_crl_path,
-        .tls_crl_refresh_interval = start.tls_crl_refresh_interval,
-        .tls_ocsp_responder_url = start.tls_ocsp_responder_url,
-        .tls_ocsp_timeout = start.tls_ocsp_timeout,
-        .tls_revocation_failure_mode = start.tls_revocation_failure_mode,
         // Backup configuration (F5.5 - Backup & Restore)
         .backup_enabled = start.backup_enabled,
         .backup_provider = if (start.backup_provider) |p|

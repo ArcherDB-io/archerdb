@@ -234,12 +234,8 @@ pub const ResourceError = enum(u32) {
 /// Security error codes (400-404)
 /// These errors indicate security/authorization issues.
 pub const SecurityError = enum(u32) {
-    /// Invalid mTLS certificate
+    /// Authentication failed
     authentication_failed = 400,
-    /// Certificate past expiration
-    certificate_expired = 401,
-    /// Certificate revoked
-    certificate_revoked = 402,
     /// Missing authorization
     unauthorized = 403,
     /// Wrong cluster key
@@ -247,9 +243,7 @@ pub const SecurityError = enum(u32) {
 
     pub fn description(self: SecurityError) []const u8 {
         return switch (self) {
-            .authentication_failed => "Authentication failed - invalid certificate",
-            .certificate_expired => "Certificate has expired",
-            .certificate_revoked => "Certificate has been revoked",
+            .authentication_failed => "Authentication failed",
             .unauthorized => "Unauthorized - missing permissions",
             .cluster_key_mismatch => "Cluster key mismatch",
         };
