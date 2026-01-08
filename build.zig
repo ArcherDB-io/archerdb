@@ -7,6 +7,7 @@ const Query = std.Target.Query;
 
 const VoprStateMachine = enum { testing, accounting, geo };
 const VoprLog = enum { short, full };
+const ConfigBase = enum { production, lite };
 
 // ArcherDB binary requires certain CPU features and supports a closed set of CPUs. Here, we
 // specify exactly which features the binary needs.
@@ -119,6 +120,11 @@ pub fn build(b: *std.Build) !void {
             "config-aof-recovery",
             "Enable AOF Recovery mode.",
         ) orelse false,
+        .config_base = b.option(
+            ConfigBase,
+            "config",
+            "Build configuration preset: 'production' (7+ GiB RAM) or 'lite' (~130 MiB RAM).",
+        ),
         .config_release = b.option([]const u8, "config-release", "Release triple."),
         .config_release_client_min = b.option(
             []const u8,
@@ -165,6 +171,7 @@ pub fn build(b: *std.Build) !void {
         .config_release = build_options.config_release,
         .config_release_client_min = build_options.config_release_client_min,
         .config_aof_recovery = build_options.config_aof_recovery,
+        .config_base = build_options.config_base,
     });
 
     const arch_client_header = blk: {
@@ -358,6 +365,7 @@ fn build_vsr_module(b: *std.Build, options: struct {
     config_release: ?[]const u8,
     config_release_client_min: ?[]const u8,
     config_aof_recovery: bool,
+    config_base: ?ConfigBase = null,
 }) struct { *std.Build.Step.Options, *std.Build.Module } {
     // Ideally, we would return _just_ the module here, and keep options an implementation detail.
     // However, currently Zig makes it awkward to provide multiple entry points for a module:
@@ -375,6 +383,12 @@ fn build_vsr_module(b: *std.Build, options: struct {
         options.config_release_client_min,
     );
     vsr_options.addOption(bool, "config_aof_recovery", options.config_aof_recovery);
+    // Pass config_base as string to avoid enum serialization issues
+    const config_base_str: ?[]const u8 = if (options.config_base) |config_base|
+        @tagName(config_base)
+    else
+        null;
+    vsr_options.addOption(?[]const u8, "config_base", config_base_str);
 
     const vsr_module = b.createModule(.{
         .root_source_file = b.path("src/vsr.zig"),

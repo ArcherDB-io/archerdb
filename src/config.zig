@@ -26,6 +26,15 @@ const BuildOptions = struct {
     release: ?[]const u8,
     release_client_min: ?[]const u8,
     config_aof_recovery: bool,
+    config_base: ?[]const u8, // "production" or "lite" as string
+};
+
+/// Build configuration presets.
+/// - `production`: Full-featured, optimized for throughput (7+ GiB RAM)
+/// - `lite`: Minimal footprint for evaluation/testing (~130 MiB RAM)
+pub const ConfigBase = enum {
+    production,
+    lite,
 };
 
 // Allow setting build-time config either via `build.zig` `Options`, or via a struct in the root
@@ -60,6 +69,17 @@ fn launder_type(comptime T: type, comptime value: anytype) T {
     if (@typeInfo(T) == .@"enum") {
         assert(@typeInfo(@TypeOf(value)) == .@"enum" or @typeInfo(@TypeOf(value)) == .enum_literal);
         return @field(T, @tagName(value));
+    }
+    // Handle optional enums (e.g., ?ConfigBase)
+    if (@typeInfo(T) == .optional) {
+        const Child = @typeInfo(T).optional.child;
+        if (@typeInfo(Child) == .@"enum") {
+            if (value) |v| {
+                return @field(Child, @tagName(v));
+            } else {
+                return null;
+            }
+        }
     }
     unreachable;
 }
@@ -216,11 +236,7 @@ const ConfigCluster = struct {
     }
 };
 
-pub const ConfigBase = enum {
-    production,
-    test_min,
-    default,
-};
+// ConfigBase enum is now defined earlier in the file
 
 pub const configs = struct {
     /// A good default config for production.
@@ -235,10 +251,10 @@ pub const configs = struct {
         },
     };
 
-    /// Minimal test configuration — small WAL, small grid block size, etc.
-    /// Not suitable for production, but good for testing code that would be otherwise hard to
-    /// reach.
-    pub const test_min = Config{
+    /// Lite configuration — minimal memory footprint (~130 MiB) for evaluation and testing.
+    /// Uses small WAL, small messages, and minimal caches. Great for trying out ArcherDB
+    /// without requiring 7+ GiB of RAM. Tradeoff: smaller batch sizes (~30 events max).
+    pub const lite = Config{
         .process = .{
             .storage_size_limit_default = 1 * GiB,
             .storage_size_limit_max = 1 * GiB,
@@ -272,10 +288,18 @@ pub const configs = struct {
     };
 
     pub const current = current: {
-        var base = if (@hasDecl(root, "archerdb_config"))
+        // Priority: 1) build option -Dconfig, 2) root config, 3) test default, 4) production
+        var base = if (build_options.config_base) |config_base_str|
+            if (std.mem.eql(u8, config_base_str, "lite"))
+                lite
+            else if (std.mem.eql(u8, config_base_str, "production"))
+                default_production
+            else
+                @compileError("Invalid config_base: expected 'lite' or 'production'")
+        else if (@hasDecl(root, "archerdb_config"))
             root.archerdb_config
         else if (builtin.is_test)
-            test_min
+            lite
         else
             default_production;
 
