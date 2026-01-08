@@ -18,8 +18,6 @@ const benchmark_driver = @import("benchmark_driver.zig");
 const cli = @import("cli.zig");
 const inspect = @import("inspect.zig");
 const metrics_server = @import("metrics_server.zig");
-const tls_config = vsr.tls_config;
-const signal_handler = vsr.signal_handler;
 
 const IO = vsr.io.IO;
 const Time = vsr.time.Time;
@@ -569,27 +567,6 @@ fn command_start(
     var counting_allocator = vsr.CountingAllocator.init(base_allocator);
     const gpa = counting_allocator.allocator();
 
-    // Initialize TLS configuration (F5.4.1 - Security)
-    // Validates certificate paths and loads certificates if TLS is required.
-    var tls = tls_config.TlsConfig.init(gpa, .{
-        .required = args.tls_required,
-        .cert_path = args.tls_cert_path,
-        .key_path = args.tls_key_path,
-        .ca_path = args.tls_ca_path,
-    }) catch |err| {
-        log.err("TLS configuration error: {}", .{err});
-        return err;
-    };
-    defer tls.deinit();
-
-    // Update TLS metrics
-    archerdb_metrics.Registry.setTlsEnabled(tls.isEnabled());
-
-    // Install SIGHUP handler for certificate reload (F5.4.3)
-    if (tls.isEnabled()) {
-        signal_handler.install();
-    }
-
     // TODO Panic if the data file's size is larger that args.storage_size_limit.
     // (Here or in Replica.open()?).
 
@@ -840,18 +817,6 @@ fn command_start(
 
     while (true) {
         replica.tick();
-
-        // Check for SIGHUP-triggered certificate reload (F5.4.3)
-        if (tls.isEnabled() and signal_handler.shouldReloadCertificates()) {
-            log.info("SIGHUP received, reloading TLS certificates", .{});
-            if (tls.reload()) |_| {
-                log.info("TLS certificates reloaded successfully", .{});
-                archerdb_metrics.Registry.recordCertReload();
-            } else |err| {
-                log.err("certificate reload failed: {} - keeping old certificates", .{err});
-                archerdb_metrics.Registry.recordCertReloadFailure();
-            }
-        }
 
         // Update VSR metrics (F5.2.2 - Observability)
         const status_code: i64 = switch (replica.status) {
