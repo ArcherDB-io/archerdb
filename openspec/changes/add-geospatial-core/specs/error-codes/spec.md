@@ -103,11 +103,11 @@ The system SHALL enumerate all error codes with complete metadata in a central t
 | 308 | pipeline_full | VSR pipeline cannot accept more operations | Yes | pipeline_depth, pipeline_max |
 | 309 | index_capacity_exceeded | RAM index capacity limit reached | No | entity_count, index_capacity, entities_max_per_node |
 | 310 | index_degraded | Hash table probe length exceeded max_probe_length | No | avg_probe_length, max_probe_length, probe_limit_hits |
-| 400 | authentication_failed | mTLS authentication failed | No | reason, certificate_subject |
-| 401 | certificate_expired | Client certificate has expired | No | certificate_subject, expiry_date |
-| 402 | certificate_revoked | Client certificate has been revoked | No | certificate_subject, revocation_date |
+| 400 | reserved_400 | Reserved for future use | No | (none) |
+| 401 | reserved_401 | Reserved for future use | No | (none) |
+| 402 | reserved_402 | Reserved for future use | No | (none) |
 | 403 | unauthorized | Client not authorized for this operation | No | client_id, operation |
-| 404 | cluster_key_mismatch | Cluster key does not match | No | (none) |
+| 404 | cluster_id_mismatch | Cluster ID does not match | No | expected_cluster, received_cluster |
 | 500 | internal_error | Unexpected internal error (bug) | No | file, line, message |
 | 501 | assertion_failed | Internal assertion failed (bug) | No | file, line, assertion |
 | 502 | unreachable_reached | Reached supposedly unreachable code (bug) | No | file, line |
@@ -346,11 +346,8 @@ The system SHALL define explicit test scenarios for every error code to ensure c
 
 - **WHEN** testing security error handling
 - **THEN** the following test cases SHALL be executed:
-  - **Code 400 (authentication_failed)**: Connect without valid mTLS certificate
-  - **Code 401 (certificate_expired)**: Use certificate past expiration date
-  - **Code 402 (certificate_revoked)**: Use revoked certificate (if CRL enabled)
   - **Code 403 (unauthorized)**: Attempt operation without proper authorization
-  - **Code 404 (cluster_key_mismatch)**: Send message with wrong cluster key
+  - **Code 404 (cluster_id_mismatch)**: Send message with wrong cluster ID
 
 #### Scenario: Internal error tests (codes 500-504)
 

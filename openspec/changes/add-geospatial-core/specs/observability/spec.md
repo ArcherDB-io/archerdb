@@ -20,7 +20,6 @@ The system SHALL expose operational metrics via a Prometheus-compatible HTTP end
   - **Default to localhost binding** (`--metrics-bind=127.0.0.1`) for security
   - Optionally bind to all interfaces via `--metrics-bind=0.0.0.0` (requires explicit opt-in)
   - Support optional bearer token authentication via `--metrics-token=<secret>`
-  - Support optional TLS via `--metrics-tls-cert` and `--metrics-tls-key`
   - Log warning if binding to 0.0.0.0 without authentication enabled
 - **AND** metrics expose operational intelligence (replica count, lag, view changes)
 - **AND** unauthenticated exposure is a security risk in untrusted networks
@@ -791,7 +790,6 @@ Example Prometheus queries:
 | HTTP endpoint | ✓ Implemented |
 | Localhost binding | ✓ Implemented |
 | Bearer token auth | Pending |
-| TLS support | Pending |
 | Response caching | ✓ Implemented (1-second TTL) |
 
 ### Health Endpoints

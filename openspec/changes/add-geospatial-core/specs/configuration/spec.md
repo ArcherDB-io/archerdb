@@ -168,16 +168,6 @@ The system SHALL support flexible network configuration for different deployment
   - Port ranges SHALL be configurable (default: 3000-3005)
 - **AND** all replicas SHALL use identical address list
 
-#### Scenario: TLS configuration
-
-- **WHEN** enabling TLS
-- **THEN** TLS SHALL be configured with:
-  - `--tls-certificate=path` - Server certificate file
-  - `--tls-key=path` - Private key file
-  - `--tls-ca=path` - Certificate authority file
-  - `--tls-required=true/false` - Enforce TLS (default: true in production)
-- **AND** certificate hot-reload SHALL be supported via SIGHUP
-
 ### Requirement: Storage Configuration
 
 The system SHALL provide storage-related configuration options.
@@ -212,8 +202,8 @@ The system SHALL distinguish development and production configurations through s
 - **THEN** system SHALL support:
   - Single-replica clusters (`--replica-count=1`)
   - In-memory storage options (for testing)
-  - Relaxed TLS requirements (`--tls-required=false`)
   - Verbose logging (`--log-level=debug`)
+  - Reduced memory footprint (`--development` flag)
   - Development defaults SHALL prioritize ease of use
 - **AND** development mode SHALL be indicated in startup logs with "WARNING: Development mode enabled - NOT for production" banner
 
@@ -269,7 +259,7 @@ The system SHALL support a standalone mode for development and testing that diff
 - **WHEN** running in production
 - **THEN** system SHALL enforce:
   - Multi-replica clusters (minimum 3 replicas)
-  - TLS required by default
+  - Network isolation (private VPC/VPN recommended)
   - Structured logging (`--log-format=json`)
   - Conservative resource limits
   - Production mode SHALL require explicit safety flags
@@ -314,7 +304,6 @@ The system SHALL configure metrics export through command-line options.
   - `--metrics-port=9091` (default: 9091)
   - `--metrics-bind=127.0.0.1|0.0.0.0` (default: 127.0.0.1)
   - `--metrics-token=<secret>` (optional bearer token)
-  - `--metrics-tls-cert=<path>` and `--metrics-tls-key=<path>` (optional TLS)
 - **AND** this MUST be consistent with `observability/spec.md` (Prometheus text format)
 - **AND** the secure default is enabled + localhost bind
 
@@ -332,10 +321,8 @@ The system SHALL provide security-related configuration options.
 
 #### Scenario: Authentication configuration
 
-- **WHEN** configuring authentication
+- **WHEN** configuring connections
 - **THEN** system SHALL support:
-  - `--tls-required=true/false` - Require TLS
-  - `--client-certificate-cn=cn` - Expected client certificate CN
   - `--max-connections=N` - Maximum concurrent connections
   - `--connection-timeout=seconds` - Connection timeout
 - **AND** authentication SHALL be enforced by default in production
@@ -386,7 +373,6 @@ The system SHALL validate configuration at startup and provide helpful error mes
   - Network address reachability
   - File system permissions
   - Hardware requirements (AES-NI, RAM, disk space)
-  - TLS certificate validity
 - **AND** validation SHALL fail fast with specific error messages
 
 #### Scenario: Configuration help
@@ -432,7 +418,6 @@ The system SHALL support limited runtime configuration changes.
 - **WHEN** changing configuration at runtime
 - **THEN** system SHALL support:
   - Log level changes via signals (SIGHUP)
-  - TLS certificate reload via signals
   - Metrics configuration changes
   - Connection limit adjustments
 - **AND** runtime changes SHALL be atomic and safe
@@ -792,32 +777,6 @@ The system SHALL provide documented procedures for common emergency scenarios.
      - Verify no gaps in backup sequence
      - Consider manual full backup if gaps detected
 
-#### Scenario: Runbook - Certificate Expiration
-
-- **WHEN** TLS certificates are expiring or have expired
-- **THEN** the operator SHALL follow this runbook:
-  1. **If certificates not yet expired**:
-     - Generate new certificates with extended validity
-     - Follow Zero-Downtime Certificate Rotation procedure
-     - Rotate all replicas before expiration
-  2. **If certificates already expired**:
-     - New connections will fail (TLS handshake failure)
-     - Existing connections may continue working
-     - Priority: rotate certificates immediately
-  3. **Emergency rotation**:
-     - Generate new certificates
-     - Stop replica, replace certs, start replica
-     - Accept brief downtime for affected replica
-     - Repeat for all replicas (parallel if needed)
-  4. **If cluster completely down**:
-     - Replace certificates on all replicas
-     - Start replicas (they will reform cluster)
-     - Brief cluster-wide unavailability
-  5. **Prevention**:
-     - Set up certificate expiration alerting (30 days, 7 days, 1 day)
-     - Automate certificate renewal (cert-manager, ACME)
-     - Use certificates with reasonable validity (90-365 days)
-
 #### Scenario: Runbook - Memory Exhaustion
 
 - **WHEN** a replica is running out of memory
@@ -848,6 +807,6 @@ The system SHALL provide documented procedures for common emergency scenarios.
 
 - See `specs/constants/spec.md` for all default configuration values and compile-time constants
 - See `specs/replication/spec.md` for cluster configuration (replica_count, quorums)
-- See `specs/security/spec.md` for TLS configuration flags and certificate paths
+- See `specs/security/spec.md` for security configuration and network isolation
 - See `specs/observability/spec.md` for metrics endpoint and logging configuration
 - See `specs/error-codes/spec.md` for configuration validation error codes
