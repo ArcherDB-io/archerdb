@@ -475,11 +475,18 @@ pub fn ContextType(
                 const slice: []const u8 = packet.slice();
                 assert(slice.len == packet.data_size);
                 maybe(slice.len == 0);
-                if (slice.len % event_size != 0) {
+
+                // Variable-length operations (like query_polygon) have header + variable data,
+                // so skip the fixed-size divisibility check for them
+                if (!operation.is_variable_length() and slice.len % event_size != 0) {
                     return self.notify_completion(packet, error.InvalidDataSize);
                 }
 
-                const event_count: u32 = @intCast(@divExact(slice.len, event_size));
+                // For variable-length ops, event_count is 1 (single query with variable payload)
+                const event_count: u32 = if (operation.is_variable_length())
+                    1
+                else
+                    @intCast(@divExact(slice.len, event_size));
                 const event_max: u32 = operation.event_max(self.batch_size_limit.?);
                 if (event_count > event_max) {
                     return self.notify_completion(packet, error.TooMuchData);
@@ -493,11 +500,14 @@ pub fn ContextType(
                 break :batch .{
                     .event_size = event_size,
                     .result_size = result_size,
-                    .event_count = @intCast(@divExact(slice.len, event_size)),
+                    .event_count = event_count,
                     .result_count_expected = result_count_expected,
                 };
             };
-            assert(packet.data_size == batch.event_count * batch.event_size);
+            // For variable-length ops, data_size != event_count * event_size
+            if (!operation.is_variable_length()) {
+                assert(packet.data_size == batch.event_count * batch.event_size);
+            }
             maybe(batch.event_count == 0);
             maybe(batch.result_count_expected == 0);
 
@@ -654,7 +664,10 @@ pub fn ContextType(
 
                 break :request_size message_encoder.finish();
             };
-            assert(request_size % event_size == 0);
+            // Variable-length ops (like query_polygon) don't follow fixed-size divisibility
+            if (!operation.is_variable_length()) {
+                assert(request_size % event_size == 0);
+            }
             assert(request_size <= self.batch_size_limit.?);
 
             // Sending the request.

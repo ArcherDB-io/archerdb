@@ -251,6 +251,10 @@ pub const EchoOperation = enum(u8) {
         return operation.cast().is_multi_batch();
     }
 
+    pub inline fn is_variable_length(operation: EchoOperation) bool {
+        return operation.cast().is_variable_length();
+    }
+
     pub inline fn event_max(operation: EchoOperation, batch_size_limit: u32) u32 {
         return operation.cast().event_max(batch_size_limit);
     }

@@ -70,11 +70,6 @@ export class ConnectionTimeout extends ArcherDBError {
   readonly retryable = true
 }
 
-export class TLSError extends ArcherDBError {
-  readonly code = 1003
-  readonly retryable = false
-}
-
 // Cluster Errors
 
 export class ClusterUnavailable extends ArcherDBError {
@@ -141,26 +136,6 @@ export class SessionExpired extends ArcherDBError {
 // ============================================================================
 
 /**
- * TLS configuration for secure connections.
- */
-export interface TLSConfig {
-  /**
-   * Path to client certificate file (for mTLS).
-   */
-  cert_path?: string
-
-  /**
-   * Path to client private key file.
-   */
-  key_path?: string
-
-  /**
-   * Path to CA certificate for server validation.
-   */
-  ca_path?: string
-}
-
-/**
  * Retry configuration options (per client-retry/spec.md).
  */
 export interface RetryConfig {
@@ -212,11 +187,6 @@ export interface GeoClientConfig {
    * List of replica addresses (host:port).
    */
   addresses: string[]
-
-  /**
-   * TLS configuration (optional).
-   */
-  tls?: TLSConfig
 
   /**
    * Connection timeout in milliseconds (default: 5000).
@@ -524,7 +494,6 @@ export class GeoClient {
     this.config = {
       cluster_id: config.cluster_id,
       addresses: config.addresses,
-      tls: config.tls ?? {},
       connect_timeout_ms: config.connect_timeout_ms ?? 5000,
       request_timeout_ms: config.request_timeout_ms ?? 30000,
       pool_size: config.pool_size ?? 1,
@@ -901,7 +870,7 @@ export class RetryExhausted extends ArcherDBError {
  * - Invalid coordinates/data
  * - Polygon too complex
  * - Batch/query too large
- * - TLS errors
+ * - Authentication errors
  */
 function isRetryableError(error: unknown): boolean {
   if (error instanceof ArcherDBError) {

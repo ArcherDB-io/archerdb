@@ -92,11 +92,13 @@ typedef struct query_radius_filter_t {
 
 typedef struct query_polygon_filter_t {
     uint32_t vertex_count;
+    uint32_t hole_count;
     uint32_t limit;
+    uint32_t _reserved_align;
     uint64_t timestamp_min;
     uint64_t timestamp_max;
     uint64_t group_id;
-    uint8_t reserved[96];
+    uint8_t reserved[88];
 } query_polygon_filter_t;
 
 typedef struct query_latest_filter_t {
@@ -118,6 +120,11 @@ typedef struct polygon_vertex_t {
     int64_t lat_nano;
     int64_t lon_nano;
 } polygon_vertex_t;
+
+typedef struct hole_descriptor_t {
+    uint32_t vertex_count;
+    uint32_t reserved;
+} hole_descriptor_t;
 
 // Opaque struct serving as a handle for the client instance.
 // This struct must be "pinned" (not copyable or movable), as its address must remain stable
@@ -141,15 +148,6 @@ typedef struct arch_packet_t {
 
 typedef enum ARCH_OPERATION {
     ARCH_OPERATION_PULSE = 128,
-    ARCH_OPERATION_GET_CHANGE_EVENTS = 137,
-    ARCH_OPERATION_CREATE_ACCOUNTS = 138,
-    ARCH_OPERATION_CREATE_TRANSFERS = 139,
-    ARCH_OPERATION_LOOKUP_ACCOUNTS = 140,
-    ARCH_OPERATION_LOOKUP_TRANSFERS = 141,
-    ARCH_OPERATION_GET_ACCOUNT_TRANSFERS = 142,
-    ARCH_OPERATION_GET_ACCOUNT_BALANCES = 143,
-    ARCH_OPERATION_QUERY_ACCOUNTS = 144,
-    ARCH_OPERATION_QUERY_TRANSFERS = 145,
     ARCH_OPERATION_INSERT_EVENTS = 146,
     ARCH_OPERATION_UPSERT_EVENTS = 147,
     ARCH_OPERATION_DELETE_ENTITIES = 148,

@@ -119,13 +119,6 @@ func (e RetryExhaustedError) Retryable() bool { return false }
 // Configuration
 // ============================================================================
 
-// TLSConfig contains TLS configuration for secure connections.
-type TLSConfig struct {
-	CertPath string // Client certificate (mTLS)
-	KeyPath  string // Client private key
-	CAPath   string // CA certificate for server validation
-}
-
 // RetryConfig contains retry configuration options (per client-retry/spec.md).
 type RetryConfig struct {
 	Enabled        bool          // Whether automatic retry is enabled (default: true)
@@ -152,7 +145,6 @@ func DefaultRetryConfig() RetryConfig {
 type GeoClientConfig struct {
 	ClusterID      types.Uint128
 	Addresses      []string
-	TLS            *TLSConfig
 	ConnectTimeout time.Duration
 	RequestTimeout time.Duration
 	Retry          *RetryConfig

@@ -55,7 +55,6 @@ import {
   ViewChangeInProgress,
   NotPrimary,
   ConnectionFailed,
-  TLSError,
   PolygonTooComplex,
   QueryResultTooLarge,
 
@@ -753,7 +752,6 @@ function test_isRetryableError_nonRetryableErrors() {
   assert.strictEqual(isRetryableError(new InvalidCoordinates('bad coords')), false)
   assert.strictEqual(isRetryableError(new BatchTooLarge('too big')), false)
   assert.strictEqual(isRetryableError(new InvalidEntityId('bad id')), false)
-  assert.strictEqual(isRetryableError(new TLSError('tls failed')), false)
   assert.strictEqual(isRetryableError(new PolygonTooComplex('too complex')), false)
   assert.strictEqual(isRetryableError(new QueryResultTooLarge('too large')), false)
 

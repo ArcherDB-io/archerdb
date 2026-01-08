@@ -92,11 +92,13 @@ typedef struct query_radius_filter_t {
 
 typedef struct query_polygon_filter_t {
     uint32_t vertex_count;
+    uint32_t hole_count;
     uint32_t limit;
+    uint32_t _reserved_align;
     uint64_t timestamp_min;
     uint64_t timestamp_max;
     uint64_t group_id;
-    uint8_t reserved[96];
+    uint8_t reserved[88];
 } query_polygon_filter_t;
 
 typedef struct query_latest_filter_t {
@@ -118,6 +120,11 @@ typedef struct polygon_vertex_t {
     int64_t lat_nano;
     int64_t lon_nano;
 } polygon_vertex_t;
+
+typedef struct hole_descriptor_t {
+    uint32_t vertex_count;
+    uint32_t reserved;
+} hole_descriptor_t;
 
 // Opaque struct serving as a handle for the client instance.
 // This struct must be "pinned" (not copyable or movable), as its address must remain stable
