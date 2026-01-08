@@ -22,3 +22,10 @@ zig-out/
 # IDE
 .vscode/
 .idea/
+
+# Database files
+*.archerdb
+0_*.archerdb
+
+# Compiled client libraries
+src/clients/c/lib/
