@@ -54,14 +54,12 @@ from archerdb import (
     # ID generation
     id,
     # Configuration
-    TLSConfig,
     RetryConfig,
     GeoClientConfig,
     # Errors
     ArcherDBError,
     ConnectionFailed,
     ConnectionTimeout,
-    TLSError,
     ClusterUnavailable,
     ViewChangeInProgress,
     NotPrimary,
@@ -136,14 +134,12 @@ __all__ = [
     # ID generation
     "id",
     # Configuration
-    "TLSConfig",
     "RetryConfig",
     "GeoClientConfig",
     # Errors
     "ArcherDBError",
     "ConnectionFailed",
     "ConnectionTimeout",
-    "TLSError",
     "ClusterUnavailable",
     "ViewChangeInProgress",
     "NotPrimary",

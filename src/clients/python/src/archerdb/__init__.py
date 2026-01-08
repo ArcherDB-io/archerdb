@@ -85,7 +85,6 @@ from .client import (
     # ID generation
     id,
     # Configuration
-    TLSConfig,
     RetryConfig,
     GeoClientConfig,
     # Errors - Base
@@ -93,7 +92,6 @@ from .client import (
     # Errors - Connection
     ConnectionFailed,
     ConnectionTimeout,
-    TLSError,
     # Errors - Cluster
     ClusterUnavailable,
     ViewChangeInProgress,
@@ -172,7 +170,6 @@ __all__ = [
     # ID generation
     "id",
     # Configuration
-    "TLSConfig",
     "RetryConfig",
     "GeoClientConfig",
     # Errors - Base
@@ -180,7 +177,6 @@ __all__ = [
     # Errors - Connection
     "ConnectionFailed",
     "ConnectionTimeout",
-    "TLSError",
     # Errors - Cluster
     "ClusterUnavailable",
     "ViewChangeInProgress",

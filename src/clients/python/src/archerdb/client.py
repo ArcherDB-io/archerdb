@@ -61,12 +61,6 @@ class ConnectionTimeout(ArcherDBError):
     retryable = True
 
 
-class TLSError(ArcherDBError):
-    """TLS handshake or certificate error."""
-    code = 1003
-    retryable = False
-
-
 # Cluster Errors
 
 class ClusterUnavailable(ArcherDBError):
@@ -208,14 +202,6 @@ def id() -> int:
 # ============================================================================
 
 @dataclass
-class TLSConfig:
-    """TLS configuration for secure connections."""
-    cert_path: Optional[str] = None  # Client certificate (mTLS)
-    key_path: Optional[str] = None   # Client private key
-    ca_path: Optional[str] = None    # CA certificate for server validation
-
-
-@dataclass
 class RetryConfig:
     """Retry configuration options (per client-retry/spec.md)."""
     enabled: bool = True              # Whether automatic retry is enabled
@@ -231,7 +217,6 @@ class GeoClientConfig:
     """Client configuration options."""
     cluster_id: int
     addresses: List[str]
-    tls: Optional[TLSConfig] = None
     connect_timeout_ms: int = 5000
     request_timeout_ms: int = 30000
     pool_size: int = 1
@@ -491,7 +476,7 @@ def _is_retryable_error(error: Exception) -> bool:
     Determines if an error is retryable.
 
     Retryable: timeouts, view changes, not primary, cluster unavailable, session expired.
-    Non-retryable: invalid coordinates, polygon too complex, batch/query too large, TLS errors.
+    Non-retryable: invalid coordinates, polygon too complex, batch/query too large.
     """
     if isinstance(error, ArcherDBError):
         return error.retryable
@@ -909,8 +894,7 @@ class GeoClientSync:
             elif operation == GeoOperation.QUERY_LATEST:
                 return self._native.query_latest(filter)
             elif operation == GeoOperation.QUERY_POLYGON:
-                # NOTE: Polygon queries not yet implemented in native bindings
-                return []
+                return self._native.query_polygon(filter)
             else:
                 raise ValueError(f"Unknown query operation: {operation}")
 

@@ -189,6 +189,7 @@ class QueryRadiusFilter:
     timestamp_min: int = 0
     timestamp_max: int = 0
     group_id: int = 0
+    flags: int = 0  # Reserved for future use
 
 
 @dataclass

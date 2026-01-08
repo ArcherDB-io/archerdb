@@ -25,15 +25,6 @@ if sys.version_info >= (3, 10):
 
 class Operation(enum.IntEnum):
     PULSE = 128
-    GET_CHANGE_EVENTS = 137
-    CREATE_ACCOUNTS = 138
-    CREATE_TRANSFERS = 139
-    LOOKUP_ACCOUNTS = 140
-    LOOKUP_TRANSFERS = 141
-    GET_ACCOUNT_TRANSFERS = 142
-    GET_ACCOUNT_BALANCES = 143
-    QUERY_ACCOUNTS = 144
-    QUERY_TRANSFERS = 145
     INSERT_EVENTS = 146
     UPSERT_EVENTS = 147
     DELETE_ENTITIES = 148
@@ -171,7 +162,9 @@ class QueryRadiusFilter:
 @dataclass
 class QueryPolygonFilter:
     vertex_count: int = 0
+    hole_count: int = 0
     limit: int = 0
+    _reserved_align: int = 0
     timestamp_min: int = 0
     timestamp_max: int = 0
     group_id: int = 0
@@ -424,13 +417,17 @@ class CQueryPolygonFilter(ctypes.Structure):
     @classmethod
     def from_param(cls, obj: Any) -> Self:
         validate_uint(bits=32, name="vertex_count", number=obj.vertex_count)
+        validate_uint(bits=32, name="hole_count", number=obj.hole_count)
         validate_uint(bits=32, name="limit", number=obj.limit)
+        validate_uint(bits=32, name="_reserved_align", number=obj._reserved_align)
         validate_uint(bits=64, name="timestamp_min", number=obj.timestamp_min)
         validate_uint(bits=64, name="timestamp_max", number=obj.timestamp_max)
         validate_uint(bits=64, name="group_id", number=obj.group_id)
         return cls(
             vertex_count=obj.vertex_count,
+            hole_count=obj.hole_count,
             limit=obj.limit,
+            _reserved_align=obj._reserved_align,
             timestamp_min=obj.timestamp_min,
             timestamp_max=obj.timestamp_max,
             group_id=obj.group_id,
@@ -440,7 +437,9 @@ class CQueryPolygonFilter(ctypes.Structure):
     def to_python(self) -> QueryPolygonFilter:
         return QueryPolygonFilter(
             vertex_count=self.vertex_count,
+            hole_count=self.hole_count,
             limit=self.limit,
+            _reserved_align=self._reserved_align,
             timestamp_min=self.timestamp_min,
             timestamp_max=self.timestamp_max,
             group_id=self.group_id,
@@ -448,11 +447,13 @@ class CQueryPolygonFilter(ctypes.Structure):
 
 CQueryPolygonFilter._fields_ = [ # noqa: SLF001
     ("vertex_count", ctypes.c_uint32),
+    ("hole_count", ctypes.c_uint32),
     ("limit", ctypes.c_uint32),
+    ("_reserved_align", ctypes.c_uint32),
     ("timestamp_min", ctypes.c_uint64),
     ("timestamp_max", ctypes.c_uint64),
     ("group_id", ctypes.c_uint64),
-    ("reserved", ctypes.c_uint8 * 96),
+    ("reserved", ctypes.c_uint8 * 88),
 ]
 
 

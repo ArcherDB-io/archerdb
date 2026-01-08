@@ -54,14 +54,12 @@ from . import (
     # ID generation
     id as archerdb_id,
     # Configuration
-    TLSConfig,
     GeoClientConfig,
     RetryConfig,
     # Errors
     ArcherDBError,
     ConnectionFailed,
     ConnectionTimeout,
-    TLSError,
     ClusterUnavailable,
     ViewChangeInProgress,
     NotPrimary,
@@ -554,13 +552,6 @@ class TestErrorHierarchy(unittest.TestCase):
         self.assertTrue(err.retryable)
         self.assertEqual(err.code, 1002)
 
-    def test_tls_error_not_retryable(self):
-        """TLS error is not retryable."""
-        err = TLSError("certificate error")
-        self.assertIsInstance(err, ArcherDBError)
-        self.assertFalse(err.retryable)
-        self.assertEqual(err.code, 1003)
-
     def test_cluster_errors(self):
         """Cluster errors inherit from ArcherDBError."""
         err = ClusterUnavailable("cluster down")
@@ -614,17 +605,6 @@ class TestErrorHierarchy(unittest.TestCase):
 class TestConfiguration(unittest.TestCase):
     """Test configuration classes."""
 
-    def test_tls_config(self):
-        """TLSConfig can be created."""
-        config = TLSConfig(
-            ca_path="/path/to/ca.crt",
-            cert_path="/path/to/client.crt",
-            key_path="/path/to/client.key",
-        )
-        self.assertEqual(config.ca_path, "/path/to/ca.crt")
-        self.assertEqual(config.cert_path, "/path/to/client.crt")
-        self.assertEqual(config.key_path, "/path/to/client.key")
-
     def test_geo_client_config_defaults(self):
         """GeoClientConfig has sensible defaults."""
         config = GeoClientConfig(
@@ -634,15 +614,12 @@ class TestConfiguration(unittest.TestCase):
         self.assertEqual(config.connect_timeout_ms, 5000)
         self.assertEqual(config.request_timeout_ms, 30000)
         self.assertEqual(config.pool_size, 1)
-        self.assertIsNone(config.tls)
 
     def test_geo_client_config_custom(self):
         """GeoClientConfig accepts custom values."""
-        tls = TLSConfig(ca_path="/path/to/ca.crt")
         config = GeoClientConfig(
             cluster_id=archerdb_id(),
             addresses=["127.0.0.1:3001", "127.0.0.1:3002"],
-            tls=tls,
             connect_timeout_ms=10000,
             request_timeout_ms=60000,
             pool_size=4,
@@ -651,7 +628,6 @@ class TestConfiguration(unittest.TestCase):
         self.assertEqual(config.connect_timeout_ms, 10000)
         self.assertEqual(config.request_timeout_ms, 60000)
         self.assertEqual(config.pool_size, 4)
-        self.assertIsNotNone(config.tls)
 
 
 class TestGeoEventBatch(unittest.TestCase):
@@ -948,7 +924,6 @@ class TestErrorClassification(unittest.TestCase):
         self.assertFalse(_is_retryable_error(InvalidCoordinates("bad coords")))
         self.assertFalse(_is_retryable_error(BatchTooLarge("too big")))
         self.assertFalse(_is_retryable_error(InvalidEntityId("bad id")))
-        self.assertFalse(_is_retryable_error(TLSError("tls failed")))
         self.assertFalse(_is_retryable_error(PolygonTooComplex("too complex")))
         self.assertFalse(_is_retryable_error(QueryResultTooLarge("too large")))
         self.assertFalse(_is_retryable_error(OutOfSpace("no space")))
