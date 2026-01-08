@@ -66,7 +66,7 @@ def on_completion(ctx, packet, timestamp, data_ptr, data_size):
 client = bindings.CClient()
 cluster_id_u128 = c_uint128.from_param(0)
 
-init_status = bindings.tb_client_init_echo(
+init_status = bindings.arch_client_init_echo(
     ctypes.byref(client),
     ctypes.cast(ctypes.byref(cluster_id_u128), ctypes.POINTER(ctypes.c_uint8 * 16)),
     b"3000", 4, 42, on_completion
@@ -76,23 +76,39 @@ if init_status != bindings.InitStatus.SUCCESS:
     print(f"FAIL: Init returned status {init_status}")
     sys.exit(1)
 
-# Create an account packet
+# Create a geo event packet
 packet = bindings.CPacket()
 packet.user_data = 1
 packet.user_tag = 0
-packet.operation = bindings.Operation.CREATE_ACCOUNTS
+packet.operation = bindings.Operation.INSERT_EVENTS
 packet.status = bindings.PacketStatus.OK
 
-account = bindings.CAccount()
-account.id = c_uint128.from_param(12345)
-account.ledger = 1
-account.code = 1
+# Create a GeoEvent using the dataclass, then convert to C struct
+geo_event_py = bindings.GeoEvent(
+    id=1,
+    entity_id=12345,
+    correlation_id=0,
+    user_data=0,
+    lat_nano=int(37.7749 * 1_000_000_000),  # San Francisco latitude
+    lon_nano=int(-122.4194 * 1_000_000_000),  # San Francisco longitude
+    group_id=1,
+    timestamp=0,
+    altitude_mm=0,
+    velocity_mms=0,
+    ttl_seconds=86400,
+    accuracy_mm=5000,
+    heading_cdeg=0,
+    flags=bindings.GeoEventFlags.NONE
+)
 
-account_array = (bindings.CAccount * 1)(account)
-packet.data = ctypes.cast(account_array, ctypes.c_void_p)
-packet.data_size = ctypes.sizeof(account_array)
+# Convert to C struct
+geo_event = bindings.CGeoEvent.from_param(geo_event_py)
 
-client_status = bindings.tb_client_submit(ctypes.byref(client), ctypes.byref(packet))
+event_array = (bindings.CGeoEvent * 1)(geo_event)
+packet.data = ctypes.cast(event_array, ctypes.c_void_p)
+packet.data_size = ctypes.sizeof(event_array)
+
+client_status = bindings.arch_client_submit(ctypes.byref(client), ctypes.byref(packet))
 
 if client_status != bindings.ClientStatus.OK:
     print(f"FAIL: Submit returned status {client_status}")
@@ -102,11 +118,11 @@ if not callback_received.wait(timeout=5.0):
     print("FAIL: Timeout waiting for callback")
     sys.exit(1)
 
-if callback_result[0] != ctypes.sizeof(account_array):
-    print(f"FAIL: Expected size {ctypes.sizeof(account_array)}, got {callback_result[0]}")
+if callback_result[0] != ctypes.sizeof(event_array):
+    print(f"FAIL: Expected size {ctypes.sizeof(event_array)}, got {callback_result[0]}")
     sys.exit(1)
 
-bindings.tb_client_deinit(ctypes.byref(client))
+bindings.arch_client_deinit(ctypes.byref(client))
 print("PASS: Python client echo test")
 PYEOF
 
