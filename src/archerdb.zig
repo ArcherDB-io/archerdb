@@ -329,11 +329,10 @@ pub const Operation = enum(u8) {
                 break :count @intCast(@divExact(batch.len, event_size_bytes));
             },
 
-            // ArcherDB geospatial query operations
+            // ArcherDB geospatial query operations (fixed-size filters)
             inline .query_uuid,
             .query_latest,
             .query_radius,
-            .query_polygon,
             => |operation_comptime| count: {
                 comptime assert(!operation_comptime.is_batchable());
 
@@ -348,6 +347,28 @@ pub const Operation = enum(u8) {
                 break :count @min(
                     filter.limit,
                     operation_comptime.result_max(constants.message_body_size_max),
+                );
+            },
+
+            // ArcherDB polygon query (variable-length: header + vertices + holes)
+            .query_polygon => count: {
+                comptime assert(!Operation.query_polygon.is_batchable());
+                comptime assert(Operation.query_polygon.is_variable_length());
+
+                const Filter = QueryPolygonFilter;
+                comptime assert(@sizeOf(Filter) == 128);
+
+                // Must have at least the header
+                if (batch.len < @sizeOf(Filter)) {
+                    break :count 0;
+                }
+
+                const filter: Filter = std.mem.bytesToValue(Filter, batch[0..@sizeOf(Filter)]);
+                maybe(filter.limit == 0);
+
+                break :count @min(
+                    filter.limit,
+                    Operation.query_polygon.result_max(constants.message_body_size_max),
                 );
             },
 
