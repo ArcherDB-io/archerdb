@@ -137,6 +137,11 @@ pub const RegionCoverer = struct {
     }
 
     /// Generate a covering for a Cap (used for radius queries).
+    ///
+    /// This algorithm ensures the cap's center point is always covered by:
+    /// 1. Finding the cell that contains the center at each level
+    /// 2. Prioritizing that cell by adding it last to the stack (processed first)
+    /// 3. Expanding outward from the center to cover the rest of the cap
     pub fn coverCap(self: RegionCoverer, cap: Cap, allocator: Allocator) !Covering {
         // Calculate appropriate levels based on cap radius
         const radius = cap.radiusMeters();
@@ -145,7 +150,7 @@ pub const RegionCoverer = struct {
         const actual_min = @max(self.min_level, suggested_min);
         const actual_max = @min(self.max_level, @min(actual_min + 4, default_max_level));
 
-        // Work list of cells to process
+        // Work list of cells to process (stack - LIFO order)
         var candidates = std.ArrayList(u64).init(allocator);
         defer candidates.deinit();
 
@@ -153,13 +158,26 @@ pub const RegionCoverer = struct {
         var result_cells = std.ArrayList(u64).init(allocator);
         defer result_cells.deinit();
 
-        // Start with the 6 face cells at LEVEL 0 (face cells only exist at level 0)
-        // Then we'll subdivide down to actual_min
+        // Find the cell at level 0 that contains the cap's center
+        const center_cell_level0 = cell_id.fromPoint(
+            cap.center_x,
+            cap.center_y,
+            cap.center_z,
+            0,
+        );
+
+        // Start with the 6 face cells at LEVEL 0, but add the center cell LAST
+        // so it gets processed FIRST (stack is LIFO).
+        // First add non-center face cells that intersect
         for (0..6) |f| {
             const face_cell = makeFaceCell(@intCast(f), 0);
-            if (cap.mayIntersectCell(face_cell)) {
+            if (face_cell != center_cell_level0 and cap.mayIntersectCell(face_cell)) {
                 try candidates.append(face_cell);
             }
+        }
+        // Then add the center cell (will be processed first)
+        if (cap.mayIntersectCell(center_cell_level0)) {
+            try candidates.append(center_cell_level0);
         }
 
         // Process candidates
@@ -169,9 +187,24 @@ pub const RegionCoverer = struct {
 
             // For cells below actual_min, always subdivide
             if (current_level < actual_min) {
+                // Find which child contains the cap's center
+                const center_at_next_level = cell_id.fromPoint(
+                    cap.center_x,
+                    cap.center_y,
+                    cap.center_z,
+                    current_level + 1,
+                );
+
                 const kids = cell_id.children(current);
+                // Add non-center children first
                 for (kids) |kid| {
-                    if (cap.mayIntersectCell(kid)) {
+                    if (kid != center_at_next_level and cap.mayIntersectCell(kid)) {
+                        try candidates.append(kid);
+                    }
+                }
+                // Add center child last (processed first due to LIFO)
+                for (kids) |kid| {
+                    if (kid == center_at_next_level and cap.mayIntersectCell(kid)) {
                         try candidates.append(kid);
                     }
                 }
@@ -186,10 +219,25 @@ pub const RegionCoverer = struct {
                 if (current_level < actual_max and
                     result_cells.items.len + candidates.items.len < self.max_cells * 4)
                 {
-                    // Subdivide into children
+                    // Find which child contains the cap's center
+                    const center_at_next_level = cell_id.fromPoint(
+                        cap.center_x,
+                        cap.center_y,
+                        cap.center_z,
+                        current_level + 1,
+                    );
+
+                    // Subdivide into children, prioritizing center child
                     const kids = cell_id.children(current);
+                    // Add non-center children first
                     for (kids) |kid| {
-                        if (cap.mayIntersectCell(kid)) {
+                        if (kid != center_at_next_level and cap.mayIntersectCell(kid)) {
+                            try candidates.append(kid);
+                        }
+                    }
+                    // Add center child last (processed first due to LIFO)
+                    for (kids) |kid| {
+                        if (kid == center_at_next_level and cap.mayIntersectCell(kid)) {
                             try candidates.append(kid);
                         }
                     }
@@ -392,4 +440,90 @@ test "cellToRange: basic" {
 
     // Cell itself should be in range
     try std.testing.expect(range.contains(c));
+}
+
+test "radius query scenario: level-30 cell found in covering" {
+    // This test simulates the exact scenario of radius queries:
+    // 1. Insert creates a cell at level 30 for a location
+    // 2. Query creates a covering for a radius around that location
+    // 3. The level-30 cell should be within one of the covering ranges
+
+    const allocator = std.testing.allocator;
+
+    // San Francisco coordinates in nanodegrees
+    const lat_nano: i64 = 37_774900000;
+    const lon_nano: i64 = -122_419400000;
+
+    // Create cell at level 30 (what insert does)
+    const cell_level_30 = cell_id.fromLatLonNano(lat_nano, lon_nano, 30);
+
+    // Create cap for 10km radius query
+    const cap = Cap.fromLatLonNanoRadius(lat_nano, lon_nano, 10000.0);
+
+    // Create covering with levels 9-13 (what 10km radius query uses)
+    const rc = RegionCoverer.initWithParams(9, 13, default_max_cells);
+    var covering = try rc.coverCap(cap, allocator);
+    defer covering.deinit();
+
+    // The level-30 cell must be within one of the ranges
+    var found = false;
+    for (covering.ranges) |range| {
+        if (range.contains(cell_level_30)) {
+            found = true;
+            break;
+        }
+    }
+
+    try std.testing.expect(found);
+}
+
+test "radius query scenario: multiple radii" {
+    // Test various radius sizes to ensure covering works
+    const allocator = std.testing.allocator;
+
+    // Test locations
+    const locations = [_][2]i64{
+        .{ 37_774900000, -122_419400000 }, // San Francisco
+        .{ 40_712800000, -74_006000000 }, // New York
+        .{ 51_507400000, -127800000 }, // London
+        .{ 0, 0 }, // Null Island
+        .{ 35_689500000, 139_691700000 }, // Tokyo
+    };
+
+    // Test radii (in meters)
+    const radii = [_]f64{ 100.0, 1000.0, 10000.0, 100000.0 };
+
+    for (locations) |loc| {
+        const lat_nano = loc[0];
+        const lon_nano = loc[1];
+
+        for (radii) |radius| {
+            // Create cell at level 30
+            const cell_level_30 = cell_id.fromLatLonNano(lat_nano, lon_nano, 30);
+
+            // Create cap
+            const cap = Cap.fromLatLonNanoRadius(lat_nano, lon_nano, radius);
+
+            // Create covering
+            const rc = RegionCoverer.init();
+            var covering = try rc.coverCap(cap, allocator);
+            defer covering.deinit();
+
+            // Check if cell is in any range
+            var found = false;
+            for (covering.ranges) |range| {
+                if (range.contains(cell_level_30)) {
+                    found = true;
+                    break;
+                }
+            }
+
+            if (!found) {
+                std.debug.print("\nFailed for lat={}, lon={}, radius={}\n", .{ lat_nano, lon_nano, radius });
+                std.debug.print("Cell 0x{x:0>16} (level {}) not in any covering range\n", .{ cell_level_30, cell_id.level(cell_level_30) });
+            }
+
+            try std.testing.expect(found);
+        }
+    }
 }
