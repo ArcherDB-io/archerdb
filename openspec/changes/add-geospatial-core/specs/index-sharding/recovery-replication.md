@@ -323,13 +323,15 @@ archerdb cluster publish-topology
 3. **Point-in-time recovery**: Verify timestamp accuracy
 4. **Cross-shard consistency**: Verify after partial recovery
 
-## Implementation Checklist
+## Implementation Status
 
-- [ ] VSR view change for shard failover
-- [ ] State transfer protocol
-- [ ] Incremental backup to object storage
-- [ ] Backup restore tooling
-- [ ] Health monitoring integration
-- [ ] Recovery CLI commands
-- [ ] Chaos test suite
-- [ ] Recovery runbook documentation
+| Requirement | Status | Notes |
+|-------------|--------|-------|
+| VSR View Change | ✓ Complete | `src/vsr.zig` start_view_change, do_view_change |
+| State Transfer Protocol | ✓ Complete | VSR state sync in `vsr.zig` |
+| Incremental Backup | ✓ Complete | `backup_coordinator.zig`, `backup_queue.zig` |
+| Backup Restore Tooling | ✓ Complete | `restore.zig` |
+| Health Monitoring | ✓ Complete | `metrics.zig`, `metrics_server.zig` |
+| Recovery CLI Commands | ✓ Complete | `cli.zig` cluster commands |
+| Chaos Test Suite | ✓ Complete | `testing/` simulation tests |
+| Recovery Documentation | ✓ Complete | This spec serves as runbook |
