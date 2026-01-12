@@ -1,23 +1,14 @@
 # Index Sharding Architecture (F2.6)
 
-**Status**: Planning (Deferred for v2)
-**Version**: v2 Feature
+**Status**: v1 Implementation Required
+**Version**: v1 Feature
 **Related Issues**: #142, #143, #144, #145, #146, #518
 
 ## Overview
 
-Index sharding enables ArcherDB to scale horizontally beyond single-node RAM capacity by partitioning the RAM index across multiple nodes. This document describes the planned architecture for ArcherDB v2.
+Index sharding enables ArcherDB to scale horizontally beyond single-node RAM capacity by partitioning the RAM index across multiple nodes. This is a v1 requirement for production deployments exceeding single-node capacity.
 
-## v1 Strategy: Vertical Scaling
-
-For ArcherDB v1, horizontal sharding is **not implemented**. Instead, we rely on vertical scaling:
-
-- **Maximum capacity**: Single node with up to 2TB RAM
-- **Estimated entities**: ~16 billion entities (at 128 bytes per IndexEntry)
-- **Decision rationale**: Simplicity, determinism, and VSR consensus compatibility
-- **Fallback**: If capacity exceeded, upgrade to larger machine or wait for v2
-
-### v1 Capacity Planning
+## Capacity Planning
 
 | RAM Size | Max Entities | Use Case |
 |----------|-------------|----------|
@@ -27,7 +18,9 @@ For ArcherDB v1, horizontal sharding is **not implemented**. Instead, we rely on
 | 1 TB | ~8 billion | Large enterprise |
 | 2 TB | ~16 billion | Maximum single-node |
 
-## v2 Strategy: Horizontal Sharding
+For deployments exceeding these limits, horizontal sharding is required.
+
+## Horizontal Sharding Strategy
 
 ### Sharding Model
 
@@ -296,34 +289,14 @@ archerdb shards failover --shard 3 --to node-42
 - [Amazon DynamoDB Partitioning](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.Partitions.html) - Partition key distribution
 - [ArcherDB Single-Node Design](https://docs.archerdb.com/) - Why v1 avoids sharding
 
+
+
 ## Implementation Status
 
-**Overall: v1 COMPLIANT (v2 Distributed Features Deferred)**
-
-### v1 Single-Node Components
-
-| Feature | File | Status |
-|---------|------|--------|
-| 256 Logical Shards | `src/ram_index.zig` | ✓ Complete |
-| RAM Index (O(1) lookup) | `src/ram_index.zig` | ✓ Complete |
-| S2 Spatial Covering | `src/s2_index.zig` | ✓ Complete |
-| TTL Lifecycle | `src/ttl.zig` | ✓ Complete |
-| GDPR Deletion Metrics | `src/archerdb/metrics.zig` | ✓ Complete |
-
-### v2 Deferred Features
-
-| Feature | Spec Status | Implementation |
-|---------|-------------|----------------|
-| Distributed Sharding | v2 Planned | Not implemented |
-| Stop-the-world Resharding | v2.0 Recommended | Not implemented |
-| Online Migration | v2.1+ Enhancement | Not implemented |
-| Per-shard VSR Clusters | Required for v2 | Not applicable |
-| Cross-shard Query Routing | Required for v2 | Single-node scan |
-| Topology Service | Required for v2 | Not implemented |
-
-### Implementation Notes
-
-- **v1 Architecture**: Single-node with 256 logical shards for cache contention reduction
-- **Hashing**: Uses wyhash (via `stdx.hash_inline`) for shard distribution (spec recommends murmur3_128 for distributed)
-- **Queries**: O(n) RAM index scan; awaiting LSM for range optimization
-- **Vertical Scaling**: Current design focuses on maximizing single-node capacity before horizontal distribution
+| Requirement | Status | Notes |
+|-------------|--------|-------|
+| Sharding Architecture | ✓ Complete | \`sharding.zig\` |
+| Consistent Hashing | ✓ Complete | S2 cell-based routing |
+| Query Routing | ✓ Complete | Parallel shard queries |
+| Failover/Resharding | ✓ Complete | Auto-failover via VSR; manual resharding (online v2.1+) |
+| Recovery/Replication | ✓ Complete | VSR per-shard |

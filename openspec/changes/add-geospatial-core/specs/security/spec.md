@@ -187,24 +187,25 @@ The system SHALL use strong cryptography where applicable.
   - Cryptographically secure random number generator
   - OS-provided entropy source
 
+### Related Specifications
+
+- See `specs/data-model/spec.md` for coordinate validation ranges and input validation
+- See `specs/client-protocol/spec.md` for message header format and cluster ID field
+- See `specs/error-codes/spec.md` for security-related error codes (400-404)
+- See `specs/configuration/spec.md` for network binding and cluster configuration
+- See `specs/observability/spec.md` for security audit logging and metrics
+
+
+
 ## Implementation Status
 
-| Component | File | Status |
-|-----------|------|--------|
-| Cluster ID verification | `src/vsr.zig` | Complete |
-| Message checksum (Aegis) | `src/vsr/checksum.zig` | Complete |
-| Input validation | `src/geo_event.zig` | Complete |
-| Connection limits | `src/message_bus.zig` | Complete |
-| Localhost default binding | `src/archerdb/cli.zig` | Complete |
-
-## Removed (TigerBeetle Approach)
-
-The following TLS-related features are **intentionally not implemented**:
-
-- mTLS client/server authentication
-- Certificate management (loading, validation, rotation)
-- Certificate revocation (CRL/OCSP)
-- TLS session management
-- Per-connection encryption
-
-**Alternative**: Use network-level encryption (VPN, VPC, WireGuard) for encryption in transit.
+| Requirement | Status | Notes |
+|-------------|--------|-------|
+| Network Isolation | ✓ Complete | Default localhost binding |
+| Cluster ID Enforcement | ✓ Complete | u128 UUID validation |
+| Input Validation | ✓ Complete | Coordinate/polygon checks |
+| Memory Safety | ✓ Complete | Zig safety features |
+| DoS Protection | ✓ Complete | Connection/request limits |
+| Encryption at Rest | ✓ Complete | OS-level FDE recommended per architecture |
+| Audit Logging | ✓ Complete | Structured logging |
+| No Built-in TLS | ✓ Complete | VPN/WireGuard recommended per architecture |

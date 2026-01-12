@@ -810,3 +810,17 @@ The system SHALL provide documented procedures for common emergency scenarios.
 - See `specs/security/spec.md` for security configuration and network isolation
 - See `specs/observability/spec.md` for metrics endpoint and logging configuration
 - See `specs/error-codes/spec.md` for configuration validation error codes
+
+
+
+## Implementation Status
+
+| Requirement | Status | Notes |
+|-------------|--------|-------|
+| CLI Configuration | ✓ Complete | \`cli.zig\` |
+| Environment Variables | ✓ Complete | ARCHERDB_* vars |
+| Config File Support | ✓ Complete | YAML/JSON config |
+| Runtime Reconfiguration | ✓ Complete | Limited runtime params by design; others require restart |
+| Address Configuration | ✓ Complete | --addresses flag |
+| Memory Configuration | ✓ Complete | --memory-size flag |
+| Metrics Configuration | ✓ Complete | --metrics-port flag |
