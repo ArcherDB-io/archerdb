@@ -339,6 +339,16 @@ use arch_client as tbc;
 mod conversions;
 mod time_based_id;
 
+pub mod circuit_breaker;
+pub mod observability;
+pub mod retry_policy;
+
+pub use circuit_breaker::{CircuitBreaker, CircuitBreakerConfig, CircuitBreakerOpenError, CircuitState};
+pub use observability::{
+    ConsoleLogger, Counter, Gauge, HealthTracker, Histogram, LogLevel, Logger, NullLogger,
+    RequestTimer, SdkMetrics,
+};
+pub use retry_policy::{error_codes, RetryConfig, RetryError, RetryExhaustedException, RetryPolicy, RetryableError};
 pub use time_based_id::id;
 
 /// The arch_client completion context is unused by the Rust bindings.
