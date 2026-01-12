@@ -2,16 +2,36 @@ package archerdb
 
 import (
 	"fmt"
+	"net"
+	"os"
 	"testing"
+	"time"
 
 	"github.com/archerdb/archerdb-go/pkg/types"
 )
 
+// isServerAvailable checks if an ArcherDB server is running at the given address.
+func isServerAvailable(address string) bool {
+	conn, err := net.DialTimeout("tcp", address, 1*time.Second)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
 func TestGeoClientWiring(t *testing.T) {
+	// Integration tests require ARCHERDB_INTEGRATION env var to be set
+	// This prevents accidentally running against non-ArcherDB services on the same port
+	serverAddr := "127.0.0.1:3001"
+	if os.Getenv("ARCHERDB_INTEGRATION") == "" {
+		t.Skip("Skipping integration test: set ARCHERDB_INTEGRATION=1 to run against server at " + serverAddr)
+	}
+
 	// Create client connecting to local cluster
 	config := GeoClientConfig{
 		ClusterID: types.ToUint128(0),
-		Addresses: []string{"127.0.0.1:3001"},
+		Addresses: []string{serverAddr},
 	}
 
 	client, err := NewGeoClient(config)

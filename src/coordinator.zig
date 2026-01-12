@@ -1,0 +1,599 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
+//! Coordinator for Complex Deployments - ArcherDB Query Router.
+//!
+//! Implements an optional coordinator/proxy for complex multi-shard deployments:
+//! - Centralized topology management
+//! - Fan-out queries to multiple shards
+//! - Result aggregation and merging
+//! - Load balancing across replicas
+//! - Simple client interface (clients connect to coordinator only)
+//!
+//! Architecture:
+//! ```
+//! ┌────────┐      ┌─────────────┐      ┌─────────┐
+//! │ Client │─────>│ Coordinator │─────>│ Shard 0 │
+//! └────────┘      │   (Proxy)   │      └─────────┘
+//!                 │             │      ┌─────────┐
+//!                 │             │─────>│ Shard 1 │
+//!                 │             │      └─────────┘
+//!                 │             │      ┌─────────┐
+//!                 │             │─────>│ Shard N │
+//!                 └─────────────┘      └─────────┘
+//! ```
+//!
+//! See specs/index-sharding/query-routing.md for full requirements.
+
+const std = @import("std");
+const assert = std.debug.assert;
+const Allocator = std.mem.Allocator;
+
+const sharding = @import("sharding.zig");
+const geo_event = @import("geo_event.zig");
+const GeoEvent = geo_event.GeoEvent;
+
+/// Maximum number of shards supported.
+pub const MAX_SHARDS: u32 = 256;
+
+/// Maximum results per shard for fan-out queries.
+pub const MAX_RESULTS_PER_SHARD: u32 = 1000;
+
+/// Shard status.
+pub const ShardStatus = enum {
+    /// Shard is healthy and accepting requests.
+    active,
+    /// Shard is unavailable (connection failed).
+    unavailable,
+    /// Shard is in maintenance mode.
+    maintenance,
+    /// Shard is being migrated.
+    migrating,
+};
+
+/// Information about a single shard.
+pub const ShardInfo = struct {
+    /// Shard ID (0 to num_shards - 1).
+    id: u32,
+    /// Primary replica address.
+    primary: Address,
+    /// Secondary replica addresses.
+    replicas: [3]?Address,
+    /// Current shard status.
+    status: ShardStatus,
+    /// Virtual node assignments for consistent hashing.
+    bucket_mask: u64,
+    /// Last health check timestamp.
+    last_health_check_ns: u64,
+    /// Consecutive failures count.
+    failure_count: u32,
+};
+
+/// Network address.
+pub const Address = struct {
+    host: [64]u8,
+    host_len: u8,
+    port: u16,
+
+    pub fn init(host: []const u8, port: u16) Address {
+        var addr = Address{
+            .host = [_]u8{0} ** 64,
+            .host_len = @intCast(@min(host.len, 64)),
+            .port = port,
+        };
+        @memcpy(addr.host[0..addr.host_len], host[0..addr.host_len]);
+        return addr;
+    }
+
+    pub fn getHost(self: *const Address) []const u8 {
+        return self.host[0..self.host_len];
+    }
+};
+
+/// Cluster topology snapshot.
+pub const Topology = struct {
+    /// Topology version (incremented on changes).
+    version: u64,
+    /// Number of active shards.
+    num_shards: u32,
+    /// Shard information.
+    shards: [MAX_SHARDS]ShardInfo,
+    /// Last update timestamp.
+    last_updated_ns: u64,
+
+    pub fn init() Topology {
+        return .{
+            .version = 0,
+            .num_shards = 0,
+            .shards = [_]ShardInfo{.{
+                .id = 0,
+                .primary = Address.init("", 0),
+                .replicas = [_]?Address{null} ** 3,
+                .status = .unavailable,
+                .bucket_mask = 0,
+                .last_health_check_ns = 0,
+                .failure_count = 0,
+            }} ** MAX_SHARDS,
+            .last_updated_ns = 0,
+        };
+    }
+
+    /// Get the shard responsible for an entity.
+    pub fn getShardForEntity(self: *const Topology, entity_id: u128) u32 {
+        // Use consistent hashing via MurmurHash3-style hash.
+        const hash = sharding.computeShardKey(entity_id);
+        return @intCast(hash % @as(u64, self.num_shards));
+    }
+
+    /// Get all active shards.
+    pub fn getActiveShards(self: *const Topology) []const ShardInfo {
+        return self.shards[0..self.num_shards];
+    }
+};
+
+/// Query type for fan-out determination.
+pub const QueryType = enum {
+    /// Single-entity lookup (routes to single shard).
+    uuid_lookup,
+    /// Batch UUID lookup (may route to multiple shards).
+    uuid_batch,
+    /// Radius query (fans out to all shards).
+    radius,
+    /// Polygon query (fans out to all shards).
+    polygon,
+    /// Latest N events (fans out to all shards).
+    latest,
+};
+
+/// Fan-out query result.
+pub const FanOutResult = struct {
+    /// Merged results from all shards.
+    events: []GeoEvent,
+    /// Number of shards queried.
+    shards_queried: u32,
+    /// Number of shards that succeeded.
+    shards_succeeded: u32,
+    /// Total query time in nanoseconds.
+    total_time_ns: u64,
+};
+
+/// Coordinator configuration.
+pub const CoordinatorConfig = struct {
+    /// Bind address for client connections.
+    bind_address: Address = Address.init("0.0.0.0", 5000),
+    /// Maximum concurrent client connections.
+    max_connections: u32 = 10000,
+    /// Query timeout in milliseconds.
+    query_timeout_ms: u32 = 30_000,
+    /// Health check interval in milliseconds.
+    health_check_interval_ms: u32 = 5_000,
+    /// Topology refresh interval in milliseconds.
+    topology_refresh_interval_ms: u32 = 60_000,
+    /// Maximum retries per shard.
+    max_retries: u32 = 3,
+    /// Enable read-from-replica for load balancing.
+    read_from_replicas: bool = true,
+};
+
+/// Coordinator statistics.
+pub const CoordinatorStats = struct {
+    /// Total queries received.
+    queries_total: u64 = 0,
+    /// Single-shard queries.
+    queries_single_shard: u64 = 0,
+    /// Fan-out queries.
+    queries_fan_out: u64 = 0,
+    /// Query errors.
+    queries_error: u64 = 0,
+    /// Average query latency (nanoseconds).
+    avg_latency_ns: u64 = 0,
+    /// Total latency sum for averaging.
+    total_latency_ns: u64 = 0,
+    /// Current active connections.
+    active_connections: u32 = 0,
+    /// Topology updates received.
+    topology_updates: u64 = 0,
+    /// Shard failovers performed.
+    failovers: u64 = 0,
+
+    pub fn recordQuery(self: *CoordinatorStats, latency_ns: u64, is_fan_out: bool, success: bool) void {
+        self.queries_total += 1;
+        if (is_fan_out) {
+            self.queries_fan_out += 1;
+        } else {
+            self.queries_single_shard += 1;
+        }
+        if (!success) {
+            self.queries_error += 1;
+        }
+        self.total_latency_ns += latency_ns;
+        if (self.queries_total > 0) {
+            self.avg_latency_ns = self.total_latency_ns / self.queries_total;
+        }
+    }
+};
+
+/// Coordinator state.
+pub const CoordinatorState = enum {
+    /// Not started.
+    stopped,
+    /// Starting up, discovering topology.
+    starting,
+    /// Running and accepting requests.
+    running,
+    /// Shutting down gracefully.
+    shutting_down,
+    /// Error state.
+    error_state,
+};
+
+/// The Coordinator manages query routing for complex multi-shard deployments.
+pub const Coordinator = struct {
+    const Self = @This();
+
+    allocator: Allocator,
+    config: CoordinatorConfig,
+    state: CoordinatorState,
+    topology: Topology,
+    stats: CoordinatorStats,
+
+    /// Pending fan-out queries.
+    pending_queries: std.AutoHashMap(u64, PendingQuery),
+    /// Next query ID.
+    next_query_id: u64,
+
+    /// Load balancer state for replica selection.
+    replica_round_robin: [MAX_SHARDS]u8,
+
+    const PendingQuery = struct {
+        query_type: QueryType,
+        start_time_ns: u64,
+        shards_pending: u32,
+        shards_completed: u32,
+        results: std.ArrayList(GeoEvent),
+    };
+
+    /// Initialize coordinator.
+    pub fn init(allocator: Allocator, config: CoordinatorConfig) Self {
+        return .{
+            .allocator = allocator,
+            .config = config,
+            .state = .stopped,
+            .topology = Topology.init(),
+            .stats = .{},
+            .pending_queries = std.AutoHashMap(u64, PendingQuery).init(allocator),
+            .next_query_id = 0,
+            .replica_round_robin = [_]u8{0} ** MAX_SHARDS,
+        };
+    }
+
+    /// Deinitialize coordinator.
+    pub fn deinit(self: *Self) void {
+        var iter = self.pending_queries.valueIterator();
+        while (iter.next()) |pq| {
+            pq.results.deinit();
+        }
+        self.pending_queries.deinit();
+    }
+
+    /// Start the coordinator.
+    pub fn start(self: *Self) !void {
+        if (self.state != .stopped) return error.InvalidState;
+
+        self.state = .starting;
+
+        // Discover initial topology from seed nodes.
+        // In real implementation, this would connect to seed nodes.
+        // For now, we just mark as running.
+
+        self.state = .running;
+    }
+
+    /// Stop the coordinator.
+    pub fn stop(self: *Self) void {
+        self.state = .shutting_down;
+        // Drain pending queries.
+        self.state = .stopped;
+    }
+
+    /// Update topology from a shard response.
+    pub fn updateTopology(self: *Self, new_topology: Topology) void {
+        if (new_topology.version > self.topology.version) {
+            self.topology = new_topology;
+            self.stats.topology_updates += 1;
+        }
+    }
+
+    /// Add a shard to the topology.
+    pub fn addShard(self: *Self, shard_id: u32, primary: Address) !void {
+        if (shard_id >= MAX_SHARDS) return error.ShardIdOutOfRange;
+        if (shard_id >= self.topology.num_shards) {
+            self.topology.num_shards = shard_id + 1;
+        }
+
+        self.topology.shards[shard_id] = .{
+            .id = shard_id,
+            .primary = primary,
+            .replicas = [_]?Address{null} ** 3,
+            .status = .active,
+            .bucket_mask = 0,
+            .last_health_check_ns = @intCast(std.time.nanoTimestamp()),
+            .failure_count = 0,
+        };
+        self.topology.version += 1;
+    }
+
+    /// Route a single-entity query to the appropriate shard.
+    pub fn routeQuery(self: *Self, entity_id: u128) RouteResult {
+        const shard_id = self.topology.getShardForEntity(entity_id);
+
+        if (shard_id >= self.topology.num_shards) {
+            return .{ .error_code = .no_shards_available };
+        }
+
+        const shard = &self.topology.shards[shard_id];
+
+        if (shard.status != .active) {
+            return .{ .error_code = .shard_unavailable };
+        }
+
+        // Select replica for load balancing.
+        const target = if (self.config.read_from_replicas)
+            self.selectReplica(shard_id, shard)
+        else
+            shard.primary;
+
+        return .{
+            .shard_id = shard_id,
+            .target = target,
+            .error_code = null,
+        };
+    }
+
+    /// Select a replica using round-robin for load balancing.
+    fn selectReplica(self: *Self, shard_id: u32, shard: *const ShardInfo) Address {
+        const rr_idx = &self.replica_round_robin[shard_id];
+        rr_idx.* = (rr_idx.* + 1) % 4;
+
+        if (rr_idx.* == 0) {
+            return shard.primary;
+        }
+
+        const replica_idx = rr_idx.* - 1;
+        if (shard.replicas[replica_idx]) |replica| {
+            return replica;
+        }
+
+        return shard.primary;
+    }
+
+    /// Get shards for fan-out query.
+    pub fn getFanOutShards(self: *const Self) []const ShardInfo {
+        return self.topology.getActiveShards();
+    }
+
+    /// Determine if query requires fan-out.
+    pub fn requiresFanOut(query_type: QueryType) bool {
+        return switch (query_type) {
+            .uuid_lookup => false,
+            .uuid_batch => true, // May span multiple shards.
+            .radius => true,
+            .polygon => true,
+            .latest => true,
+        };
+    }
+
+    /// Start a fan-out query.
+    pub fn startFanOutQuery(self: *Self, query_type: QueryType) !u64 {
+        const query_id = self.next_query_id;
+        self.next_query_id += 1;
+
+        const now: u64 = @intCast(std.time.nanoTimestamp());
+        try self.pending_queries.put(query_id, .{
+            .query_type = query_type,
+            .start_time_ns = now,
+            .shards_pending = self.topology.num_shards,
+            .shards_completed = 0,
+            .results = std.ArrayList(GeoEvent).init(self.allocator),
+        });
+
+        return query_id;
+    }
+
+    /// Record results from a shard.
+    pub fn recordShardResult(self: *Self, query_id: u64, events: []const GeoEvent) !void {
+        if (self.pending_queries.getPtr(query_id)) |pq| {
+            try pq.results.appendSlice(events);
+            pq.shards_completed += 1;
+        }
+    }
+
+    /// Check if fan-out query is complete.
+    pub fn isFanOutComplete(self: *const Self, query_id: u64) bool {
+        if (self.pending_queries.get(query_id)) |pq| {
+            return pq.shards_completed >= pq.shards_pending;
+        }
+        return true;
+    }
+
+    /// Finalize and get fan-out query results.
+    pub fn finalizeFanOutQuery(self: *Self, query_id: u64) !FanOutResult {
+        const pq = self.pending_queries.get(query_id) orelse return error.QueryNotFound;
+        const now: u64 = @intCast(std.time.nanoTimestamp());
+        const latency = now - pq.start_time_ns;
+
+        self.stats.recordQuery(latency, true, true);
+
+        _ = self.pending_queries.remove(query_id);
+
+        return .{
+            .events = pq.results.items,
+            .shards_queried = pq.shards_pending,
+            .shards_succeeded = pq.shards_completed,
+            .total_time_ns = latency,
+        };
+    }
+
+    /// Get current statistics.
+    pub fn getStats(self: *const Self) CoordinatorStats {
+        return self.stats;
+    }
+
+    /// Get current topology.
+    pub fn getTopology(self: *const Self) Topology {
+        return self.topology;
+    }
+
+    /// Mark a shard as unhealthy.
+    pub fn markShardUnhealthy(self: *Self, shard_id: u32) void {
+        if (shard_id < self.topology.num_shards) {
+            self.topology.shards[shard_id].failure_count += 1;
+            if (self.topology.shards[shard_id].failure_count >= self.config.max_retries) {
+                self.topology.shards[shard_id].status = .unavailable;
+                self.stats.failovers += 1;
+            }
+        }
+    }
+
+    /// Mark a shard as healthy.
+    pub fn markShardHealthy(self: *Self, shard_id: u32) void {
+        if (shard_id < self.topology.num_shards) {
+            self.topology.shards[shard_id].failure_count = 0;
+            self.topology.shards[shard_id].status = .active;
+            self.topology.shards[shard_id].last_health_check_ns = @intCast(std.time.nanoTimestamp());
+        }
+    }
+};
+
+/// Result of routing a query.
+pub const RouteResult = struct {
+    shard_id: u32 = 0,
+    target: Address = Address.init("", 0),
+    error_code: ?RouteError = null,
+};
+
+/// Routing errors.
+pub const RouteError = enum {
+    no_shards_available,
+    shard_unavailable,
+    invalid_entity_id,
+};
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+test "Coordinator: initialization" {
+    const allocator = std.testing.allocator;
+
+    var coordinator = Coordinator.init(allocator, .{});
+    defer coordinator.deinit();
+
+    try std.testing.expectEqual(CoordinatorState.stopped, coordinator.state);
+    try std.testing.expectEqual(@as(u32, 0), coordinator.topology.num_shards);
+}
+
+test "Coordinator: add shards" {
+    const allocator = std.testing.allocator;
+
+    var coordinator = Coordinator.init(allocator, .{});
+    defer coordinator.deinit();
+
+    try coordinator.addShard(0, Address.init("node-0", 5000));
+    try coordinator.addShard(1, Address.init("node-1", 5000));
+    try coordinator.addShard(2, Address.init("node-2", 5000));
+
+    try std.testing.expectEqual(@as(u32, 3), coordinator.topology.num_shards);
+    try std.testing.expectEqual(@as(u64, 3), coordinator.topology.version);
+}
+
+test "Coordinator: route query" {
+    const allocator = std.testing.allocator;
+
+    var coordinator = Coordinator.init(allocator, .{});
+    defer coordinator.deinit();
+
+    // Add shards.
+    try coordinator.addShard(0, Address.init("node-0", 5000));
+    try coordinator.addShard(1, Address.init("node-1", 5000));
+
+    try coordinator.start();
+    try std.testing.expectEqual(CoordinatorState.running, coordinator.state);
+
+    // Route a query.
+    const result = coordinator.routeQuery(0x12345678);
+    try std.testing.expect(result.error_code == null);
+    try std.testing.expect(result.shard_id < 2);
+}
+
+test "Coordinator: fan-out determination" {
+    try std.testing.expect(!Coordinator.requiresFanOut(.uuid_lookup));
+    try std.testing.expect(Coordinator.requiresFanOut(.radius));
+    try std.testing.expect(Coordinator.requiresFanOut(.polygon));
+    try std.testing.expect(Coordinator.requiresFanOut(.latest));
+}
+
+test "Coordinator: shard health tracking" {
+    const allocator = std.testing.allocator;
+
+    var coordinator = Coordinator.init(allocator, .{ .max_retries = 3 });
+    defer coordinator.deinit();
+
+    try coordinator.addShard(0, Address.init("node-0", 5000));
+
+    // Initial state is healthy.
+    try std.testing.expectEqual(ShardStatus.active, coordinator.topology.shards[0].status);
+
+    // Mark unhealthy multiple times.
+    coordinator.markShardUnhealthy(0);
+    coordinator.markShardUnhealthy(0);
+    try std.testing.expectEqual(ShardStatus.active, coordinator.topology.shards[0].status);
+
+    // Third failure triggers unavailable.
+    coordinator.markShardUnhealthy(0);
+    try std.testing.expectEqual(ShardStatus.unavailable, coordinator.topology.shards[0].status);
+    try std.testing.expectEqual(@as(u64, 1), coordinator.stats.failovers);
+
+    // Mark healthy again.
+    coordinator.markShardHealthy(0);
+    try std.testing.expectEqual(ShardStatus.active, coordinator.topology.shards[0].status);
+    try std.testing.expectEqual(@as(u32, 0), coordinator.topology.shards[0].failure_count);
+}
+
+test "CoordinatorStats: recording" {
+    var stats = CoordinatorStats{};
+
+    stats.recordQuery(1000, false, true);
+    try std.testing.expectEqual(@as(u64, 1), stats.queries_total);
+    try std.testing.expectEqual(@as(u64, 1), stats.queries_single_shard);
+
+    stats.recordQuery(2000, true, true);
+    try std.testing.expectEqual(@as(u64, 2), stats.queries_total);
+    try std.testing.expectEqual(@as(u64, 1), stats.queries_fan_out);
+
+    stats.recordQuery(3000, false, false);
+    try std.testing.expectEqual(@as(u64, 1), stats.queries_error);
+}
+
+test "Address: initialization" {
+    const addr = Address.init("localhost", 5000);
+    try std.testing.expectEqualStrings("localhost", addr.getHost());
+    try std.testing.expectEqual(@as(u16, 5000), addr.port);
+}
+
+test "Topology: shard routing" {
+    var topology = Topology.init();
+    topology.num_shards = 4;
+
+    // Different entity IDs should route to different shards.
+    const shard_1 = topology.getShardForEntity(0x1111);
+    const shard_2 = topology.getShardForEntity(0x2222);
+    const shard_3 = topology.getShardForEntity(0x3333);
+
+    // All should be valid shard IDs.
+    try std.testing.expect(shard_1 < 4);
+    try std.testing.expect(shard_2 < 4);
+    try std.testing.expect(shard_3 < 4);
+
+    // Same entity should always route to same shard.
+    try std.testing.expectEqual(shard_1, topology.getShardForEntity(0x1111));
+}

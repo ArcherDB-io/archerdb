@@ -7,9 +7,9 @@ import java.util.List;
 /**
  * Filter for polygon queries.
  *
- * <p>A polygon can optionally have holes (exclusion zones). The outer boundary
- * should be in counter-clockwise (CCW) winding order, while holes should
- * be in clockwise (CW) winding order.
+ * <p>
+ * A polygon can optionally have holes (exclusion zones). The outer boundary should be in
+ * counter-clockwise (CCW) winding order, while holes should be in clockwise (CW) winding order.
  */
 public final class QueryPolygonFilter {
 
@@ -85,8 +85,9 @@ public final class QueryPolygonFilter {
     /**
      * A polygon hole (exclusion zone within the outer boundary).
      *
-     * <p>A hole is defined by a list of vertices in clockwise winding order.
-     * Points inside a hole are excluded from query results.
+     * <p>
+     * A hole is defined by a list of vertices in clockwise winding order. Points inside a hole are
+     * excluded from query results.
      */
     public static final class PolygonHole {
         private final List<PolygonVertex> vertices;
@@ -134,12 +135,13 @@ public final class QueryPolygonFilter {
         }
 
         /**
-         * Starts building a new hole. Call addHoleVertex() to add vertices,
-         * then finishHole() to complete it.
+         * Starts building a new hole. Call addHoleVertex() to add vertices, then finishHole() to
+         * complete it.
          */
         public Builder startHole() {
             if (currentHoleVertices != null) {
-                throw new IllegalStateException("Already building a hole. Call finishHole() first.");
+                throw new IllegalStateException(
+                        "Already building a hole. Call finishHole() first.");
             }
             currentHoleVertices = new ArrayList<>();
             return this;
@@ -186,19 +188,20 @@ public final class QueryPolygonFilter {
         }
 
         /**
-         * Adds a complete hole from a list of vertices in degrees.
-         * Each vertex is a double[] with [latitude, longitude].
+         * Adds a complete hole from a list of vertices in degrees. Each vertex is a double[] with
+         * [latitude, longitude].
          */
         public Builder addHole(double[][] holeVertices) {
             if (holeVertices.length < CoordinateUtils.POLYGON_HOLE_VERTICES_MIN) {
-                throw new IllegalArgumentException(String.format(
-                        "Hole must have at least %d vertices, got %d",
-                        CoordinateUtils.POLYGON_HOLE_VERTICES_MIN, holeVertices.length));
+                throw new IllegalArgumentException(
+                        String.format("Hole must have at least %d vertices, got %d",
+                                CoordinateUtils.POLYGON_HOLE_VERTICES_MIN, holeVertices.length));
             }
             List<PolygonVertex> verts = new ArrayList<>();
             for (double[] v : holeVertices) {
                 if (v.length != 2) {
-                    throw new IllegalArgumentException("Each vertex must have 2 elements [lat, lon]");
+                    throw new IllegalArgumentException(
+                            "Each vertex must have 2 elements [lat, lon]");
                 }
                 verts.add(new PolygonVertex(CoordinateUtils.degreesToNano(v[0]),
                         CoordinateUtils.degreesToNano(v[1])));
@@ -242,8 +245,8 @@ public final class QueryPolygonFilter {
             }
             if (holes.size() > CoordinateUtils.POLYGON_HOLES_MAX) {
                 throw new IllegalArgumentException(
-                        String.format("Too many holes: %d exceeds maximum %d",
-                                holes.size(), CoordinateUtils.POLYGON_HOLES_MAX));
+                        String.format("Too many holes: %d exceeds maximum %d", holes.size(),
+                                CoordinateUtils.POLYGON_HOLES_MAX));
             }
             return new QueryPolygonFilter(this);
         }

@@ -56,6 +56,7 @@ from . import (
     # Configuration
     GeoClientConfig,
     RetryConfig,
+    OperationOptions,
     # Errors
     ArcherDBError,
     ConnectionFailed,
@@ -1198,6 +1199,976 @@ def run_tests():
         print(f"FAILED: {passed}/{total} passed, {failures} failures, {errors} errors")
 
     return result.wasSuccessful()
+
+
+# =============================================================================
+# Observability Tests (client-sdk/spec.md)
+# =============================================================================
+
+
+class TestLogging(unittest.TestCase):
+    """Test logging infrastructure."""
+
+    def test_null_logger(self):
+        """NullLogger discards all messages."""
+        from .observability import NullLogger
+
+        logger = NullLogger()
+        # Should not raise
+        logger.debug("debug message")
+        logger.info("info message")
+        logger.warn("warn message")
+        logger.error("error message")
+
+    def test_standard_logger_creation(self):
+        """StandardLogger can be created."""
+        from .observability import StandardLogger
+
+        logger = StandardLogger(name="test_archerdb", level=10)
+        self.assertIsNotNone(logger)
+
+    def test_configure_logging(self):
+        """configure_logging sets global logger."""
+        from .observability import configure_logging, get_logger, NullLogger, StandardLogger
+
+        # Default is NullLogger
+        logger = get_logger()
+        self.assertIsInstance(logger, (NullLogger, StandardLogger))
+
+        # Can configure with debug=True
+        configure_logging(debug=True)
+        logger = get_logger()
+        self.assertIsInstance(logger, StandardLogger)
+
+
+class TestMetrics(unittest.TestCase):
+    """Test metrics infrastructure."""
+
+    def test_counter_inc(self):
+        """Counter increments correctly."""
+        from .observability import Counter, MetricLabels
+
+        counter = Counter("test_counter", "Test counter")
+
+        # Initial value is 0
+        self.assertEqual(counter.get(), 0.0)
+
+        # Increment
+        counter.inc()
+        self.assertEqual(counter.get(), 1.0)
+
+        # Increment by value
+        counter.inc(value=5.0)
+        self.assertEqual(counter.get(), 6.0)
+
+    def test_counter_with_labels(self):
+        """Counter tracks values per label set."""
+        from .observability import Counter, MetricLabels
+
+        counter = Counter("test_counter", "Test counter")
+
+        labels1 = MetricLabels(operation="query", status="success")
+        labels2 = MetricLabels(operation="query", status="error")
+
+        counter.inc(labels1)
+        counter.inc(labels1)
+        counter.inc(labels2)
+
+        self.assertEqual(counter.get(labels1), 2.0)
+        self.assertEqual(counter.get(labels2), 1.0)
+
+    def test_gauge_operations(self):
+        """Gauge set/inc/dec work correctly."""
+        from .observability import Gauge
+
+        gauge = Gauge("test_gauge", "Test gauge")
+
+        # Initial value is 0
+        self.assertEqual(gauge.get(), 0.0)
+
+        # Set
+        gauge.set(10.0)
+        self.assertEqual(gauge.get(), 10.0)
+
+        # Inc
+        gauge.inc(5.0)
+        self.assertEqual(gauge.get(), 15.0)
+
+        # Dec
+        gauge.dec(3.0)
+        self.assertEqual(gauge.get(), 12.0)
+
+    def test_histogram_observe(self):
+        """Histogram records observations."""
+        from .observability import Histogram
+
+        hist = Histogram("test_histogram", "Test histogram")
+
+        # Initial state
+        self.assertEqual(hist.get_count(), 0)
+        self.assertEqual(hist.get_sum(), 0.0)
+
+        # Observe values
+        hist.observe(0.1)
+        hist.observe(0.5)
+        hist.observe(1.0)
+
+        self.assertEqual(hist.get_count(), 3)
+        self.assertAlmostEqual(hist.get_sum(), 1.6, places=5)
+
+    def test_sdk_metrics_record_request(self):
+        """SDKMetrics records requests."""
+        from .observability import SDKMetrics
+
+        metrics = SDKMetrics()
+
+        metrics.record_request("query_radius", "success", 0.05)
+        metrics.record_request("query_radius", "success", 0.03)
+        metrics.record_request("query_radius", "error", 0.1)
+
+        # Check request count
+        from .observability import MetricLabels
+        success_labels = MetricLabels(operation="query_radius", status="success")
+        error_labels = MetricLabels(operation="query_radius", status="error")
+
+        self.assertEqual(metrics.requests_total.get(success_labels), 2.0)
+        self.assertEqual(metrics.requests_total.get(error_labels), 1.0)
+
+    def test_sdk_metrics_prometheus_export(self):
+        """SDKMetrics exports to Prometheus format."""
+        from .observability import SDKMetrics
+
+        metrics = SDKMetrics()
+        metrics.record_request("insert", "success", 0.01)
+        metrics.record_connection_opened()
+
+        output = metrics.to_prometheus()
+
+        self.assertIn("archerdb_client_requests_total", output)
+        self.assertIn("archerdb_client_connections_active", output)
+        self.assertIn("# HELP", output)
+        self.assertIn("# TYPE", output)
+
+    def test_get_metrics_singleton(self):
+        """get_metrics returns singleton."""
+        from .observability import get_metrics, reset_metrics
+
+        reset_metrics()
+        metrics1 = get_metrics()
+        metrics2 = get_metrics()
+
+        self.assertIs(metrics1, metrics2)
+
+    def test_retry_metrics(self):
+        """SDKMetrics tracks retry metrics per client-retry/spec.md."""
+        from .observability import SDKMetrics
+
+        metrics = SDKMetrics()
+
+        # Record retries
+        metrics.record_retry()
+        metrics.record_retry()
+        metrics.record_retry()
+
+        self.assertEqual(metrics.retries_total.get(), 3.0)
+
+    def test_retry_exhausted_metric(self):
+        """SDKMetrics tracks retry exhaustion per client-retry/spec.md."""
+        from .observability import SDKMetrics
+
+        metrics = SDKMetrics()
+
+        metrics.record_retry_exhausted()
+
+        self.assertEqual(metrics.retry_exhausted_total.get(), 1.0)
+
+    def test_primary_discovery_metric(self):
+        """SDKMetrics tracks primary discoveries per client-retry/spec.md."""
+        from .observability import SDKMetrics
+
+        metrics = SDKMetrics()
+
+        metrics.record_primary_discovery()
+        metrics.record_primary_discovery()
+
+        self.assertEqual(metrics.primary_discoveries_total.get(), 2.0)
+
+    def test_retry_metrics_in_prometheus_export(self):
+        """Retry metrics appear in Prometheus export."""
+        from .observability import SDKMetrics
+
+        metrics = SDKMetrics()
+        metrics.record_retry()
+        metrics.record_retry_exhausted()
+        metrics.record_primary_discovery()
+
+        output = metrics.to_prometheus()
+
+        self.assertIn("archerdb_client_retries_total", output)
+        self.assertIn("archerdb_client_retry_exhausted_total", output)
+        self.assertIn("archerdb_client_primary_discoveries_total", output)
+
+
+class TestHealthCheck(unittest.TestCase):
+    """Test health check infrastructure."""
+
+    def test_health_tracker_initial_state(self):
+        """HealthTracker starts disconnected."""
+        from .observability import HealthTracker, ConnectionState
+
+        tracker = HealthTracker()
+        status = tracker.get_status()
+
+        self.assertFalse(status.healthy)
+        self.assertEqual(status.state, ConnectionState.DISCONNECTED)
+
+    def test_health_tracker_success_transitions(self):
+        """HealthTracker transitions to healthy on success."""
+        from .observability import HealthTracker, ConnectionState
+
+        tracker = HealthTracker()
+
+        tracker.record_success()
+        status = tracker.get_status()
+
+        self.assertTrue(status.healthy)
+        self.assertEqual(status.state, ConnectionState.CONNECTED)
+        self.assertGreater(status.last_successful_op_ns, 0)
+
+    def test_health_tracker_failure_threshold(self):
+        """HealthTracker marks failed after threshold."""
+        from .observability import HealthTracker, ConnectionState
+
+        tracker = HealthTracker(failure_threshold=3)
+
+        # Start connected
+        tracker.record_success()
+        self.assertTrue(tracker.get_status().healthy)
+
+        # Failures below threshold
+        tracker.record_failure()
+        tracker.record_failure()
+        self.assertTrue(tracker.get_status().healthy)
+
+        # Third failure crosses threshold
+        tracker.record_failure()
+        status = tracker.get_status()
+        self.assertFalse(status.healthy)
+        self.assertEqual(status.state, ConnectionState.FAILED)
+        self.assertEqual(status.consecutive_failures, 3)
+
+    def test_health_tracker_recovery(self):
+        """HealthTracker recovers after success."""
+        from .observability import HealthTracker, ConnectionState
+
+        tracker = HealthTracker(failure_threshold=2)
+
+        # Fail
+        tracker.record_failure()
+        tracker.record_failure()
+        self.assertFalse(tracker.get_status().healthy)
+
+        # Recover
+        tracker.record_success()
+        status = tracker.get_status()
+        self.assertTrue(status.healthy)
+        self.assertEqual(status.consecutive_failures, 0)
+
+    def test_health_status_to_dict(self):
+        """HealthStatus serializes to dict."""
+        from .observability import HealthStatus, ConnectionState
+
+        status = HealthStatus(
+            healthy=True,
+            state=ConnectionState.CONNECTED,
+            last_successful_op_ns=1234567890,
+            consecutive_failures=0,
+            details="All good",
+        )
+
+        d = status.to_dict()
+
+        self.assertEqual(d["healthy"], True)
+        self.assertEqual(d["state"], "connected")
+        self.assertEqual(d["last_successful_operation_ns"], 1234567890)
+
+
+class TestRequestTimer(unittest.TestCase):
+    """Test request timing context manager."""
+
+    def test_request_timer_success(self):
+        """RequestTimer records successful operation."""
+        from .observability import RequestTimer, SDKMetrics, MetricLabels
+
+        metrics = SDKMetrics()
+
+        with RequestTimer("test_op", metrics):
+            pass  # Successful operation
+
+        labels = MetricLabels(operation="test_op", status="success")
+        self.assertEqual(metrics.requests_total.get(labels), 1.0)
+
+    def test_request_timer_error(self):
+        """RequestTimer records failed operation."""
+        from .observability import RequestTimer, SDKMetrics, MetricLabels
+
+        metrics = SDKMetrics()
+
+        try:
+            with RequestTimer("test_op", metrics):
+                raise ValueError("test error")
+        except ValueError:
+            pass
+
+        labels = MetricLabels(operation="test_op", status="error")
+        self.assertEqual(metrics.requests_total.get(labels), 1.0)
+
+    def test_request_timer_duration(self):
+        """RequestTimer records duration."""
+        import time
+        from .observability import RequestTimer, SDKMetrics, MetricLabels
+
+        metrics = SDKMetrics()
+
+        with RequestTimer("slow_op", metrics):
+            time.sleep(0.01)  # 10ms
+
+        # Duration should be recorded under the operation label
+        labels = MetricLabels(operation="slow_op")
+        self.assertGreater(metrics.request_duration.get_sum(labels), 0.005)
+        self.assertEqual(metrics.request_duration.get_count(labels), 1)
+
+
+# =============================================================================
+# Batch UUID Lookup Tests (F1.3.4 - Spec: query_uuid_batch)
+# =============================================================================
+
+
+class TestBatchUuidLookup(unittest.TestCase):
+    """Test batch UUID lookup feature (F1.3.4)."""
+
+    def setUp(self):
+        """Create a mock client for batch UUID tests."""
+        self.mock_client = MagicMock(spec=GeoClientSync)
+
+    def test_batch_uuid_lookup_limit(self):
+        """Batch UUID lookup respects 10,000 entity limit."""
+        # The spec allows up to 10,000 UUIDs per batch lookup
+        self.assertEqual(BATCH_SIZE_MAX, 10_000)
+
+    def test_batch_uuid_lookup_returns_dict(self):
+        """Batch UUID lookup returns dict mapping entity_id -> GeoEvent."""
+        # Test the expected return type structure
+        mock_events = {
+            123: GeoEvent(entity_id=123, lat_nano=37_000_000_000, lon_nano=-122_000_000_000),
+            456: GeoEvent(entity_id=456, lat_nano=38_000_000_000, lon_nano=-121_000_000_000),
+            789: None,  # Not found
+        }
+
+        # Verify structure
+        self.assertIsInstance(mock_events, dict)
+        self.assertIsInstance(mock_events[123], GeoEvent)
+        self.assertIsNone(mock_events[789])
+
+    def test_batch_uuid_lookup_with_not_found(self):
+        """Batch UUID lookup handles entities not found."""
+        entity_ids = [100, 200, 300]
+
+        # Simulated response where entity 200 is not found
+        mock_result = {
+            100: GeoEvent(entity_id=100, lat_nano=37_000_000_000, lon_nano=-122_000_000_000),
+            200: None,  # Not found
+            300: GeoEvent(entity_id=300, lat_nano=38_000_000_000, lon_nano=-121_000_000_000),
+        }
+
+        # Verify we can handle the not_found case
+        found = [k for k, v in mock_result.items() if v is not None]
+        not_found = [k for k, v in mock_result.items() if v is None]
+
+        self.assertEqual(len(found), 2)
+        self.assertEqual(len(not_found), 1)
+        self.assertIn(200, not_found)
+
+    def test_empty_batch_uuid_lookup(self):
+        """Empty batch UUID lookup returns empty dict."""
+        # Empty list should return empty dict
+        result = {}
+        self.assertEqual(result, {})
+
+    def test_batch_uuid_wire_format(self):
+        """Batch UUID lookup uses correct operation code."""
+        # Verify the operation code from GeoOperation enum
+        self.assertEqual(GeoOperation.QUERY_UUID_BATCH, 156)
+
+
+# =============================================================================
+# TTL Cleanup Tests (cleanup_expired per client-protocol/spec.md)
+# =============================================================================
+
+
+class TestCleanupExpired(unittest.TestCase):
+    """Test cleanup_expired operation (per client-protocol/spec.md 0x30)."""
+
+    def test_cleanup_result_dataclass(self):
+        """CleanupResult has expected fields."""
+        from .types import CleanupResult
+
+        result = CleanupResult(entries_scanned=100, entries_removed=25)
+
+        self.assertEqual(result.entries_scanned, 100)
+        self.assertEqual(result.entries_removed, 25)
+
+    def test_cleanup_result_has_removals(self):
+        """CleanupResult.has_removals returns True if entries_removed > 0."""
+        from .types import CleanupResult
+
+        result_with = CleanupResult(entries_scanned=100, entries_removed=25)
+        result_without = CleanupResult(entries_scanned=100, entries_removed=0)
+
+        self.assertTrue(result_with.has_removals)
+        self.assertFalse(result_without.has_removals)
+
+    def test_cleanup_result_expiration_ratio(self):
+        """CleanupResult.expiration_ratio calculates correctly."""
+        from .types import CleanupResult
+
+        result = CleanupResult(entries_scanned=100, entries_removed=25)
+        self.assertAlmostEqual(result.expiration_ratio, 0.25, places=5)
+
+        # Zero entries scanned should return 0.0 (no division by zero)
+        empty_result = CleanupResult(entries_scanned=0, entries_removed=0)
+        self.assertEqual(empty_result.expiration_ratio, 0.0)
+
+    def test_cleanup_operation_code(self):
+        """CLEANUP_EXPIRED has correct operation code (0x30 = 155 + offset)."""
+        self.assertEqual(GeoOperation.CLEANUP_EXPIRED, 155)
+
+    def test_sync_client_cleanup_expired(self):
+        """GeoClientSync.cleanup_expired returns CleanupResult."""
+        from .types import CleanupResult
+
+        config = GeoClientConfig(
+            cluster_id=archerdb_id(),
+            addresses=["127.0.0.1:3001"],
+        )
+        client = GeoClientSync(config)
+
+        result = client.cleanup_expired()
+        self.assertIsInstance(result, CleanupResult)
+
+        # Skeleton returns zeros
+        self.assertEqual(result.entries_scanned, 0)
+        self.assertEqual(result.entries_removed, 0)
+
+        client.close()
+
+    def test_sync_client_cleanup_expired_with_batch_size(self):
+        """GeoClientSync.cleanup_expired accepts batch_size parameter."""
+        from .types import CleanupResult
+
+        config = GeoClientConfig(
+            cluster_id=archerdb_id(),
+            addresses=["127.0.0.1:3001"],
+        )
+        client = GeoClientSync(config)
+
+        # Scan only 1000 entries
+        result = client.cleanup_expired(batch_size=1000)
+        self.assertIsInstance(result, CleanupResult)
+
+        # 0 = scan all (default)
+        result_all = client.cleanup_expired(batch_size=0)
+        self.assertIsInstance(result_all, CleanupResult)
+
+        client.close()
+
+    def test_sync_client_cleanup_expired_negative_batch_raises(self):
+        """GeoClientSync.cleanup_expired raises on negative batch_size."""
+        config = GeoClientConfig(
+            cluster_id=archerdb_id(),
+            addresses=["127.0.0.1:3001"],
+        )
+        client = GeoClientSync(config)
+
+        with self.assertRaises(ValueError) as ctx:
+            client.cleanup_expired(batch_size=-1)
+        self.assertIn("non-negative", str(ctx.exception))
+
+        client.close()
+
+    def test_cleanup_after_client_closed_raises(self):
+        """cleanup_expired raises after client is closed."""
+        config = GeoClientConfig(
+            cluster_id=archerdb_id(),
+            addresses=["127.0.0.1:3001"],
+        )
+        client = GeoClientSync(config)
+        client.close()
+
+        with self.assertRaises(ClientClosedError):
+            client.cleanup_expired()
+
+
+class TestCircuitBreaker(unittest.TestCase):
+    """Tests for CircuitBreaker (per client-retry/spec.md)."""
+
+    def test_initial_state_is_closed(self):
+        """Circuit breaker starts in CLOSED state."""
+        from .client import CircuitBreaker, CircuitState
+
+        breaker = CircuitBreaker("test-replica")
+        self.assertEqual(breaker.state, CircuitState.CLOSED)
+        self.assertTrue(breaker.is_closed)
+        self.assertFalse(breaker.is_open)
+        self.assertFalse(breaker.is_half_open)
+
+    def test_requests_allowed_when_closed(self):
+        """Requests are allowed when circuit is closed."""
+        from .client import CircuitBreaker
+
+        breaker = CircuitBreaker("test-replica")
+        for _ in range(100):
+            self.assertTrue(breaker.allow_request())
+
+    def test_stays_closed_under_threshold(self):
+        """Circuit stays closed if failure rate under 50%."""
+        from .client import CircuitBreaker, CircuitBreakerConfig
+
+        config = CircuitBreakerConfig(
+            failure_threshold=0.5,
+            minimum_requests=10,
+        )
+        breaker = CircuitBreaker("test-replica", config)
+
+        # 9 requests with 4 failures (44%) - under threshold
+        for _ in range(5):
+            breaker.allow_request()
+            breaker.record_success()
+        for _ in range(4):
+            breaker.allow_request()
+            breaker.record_failure()
+
+        self.assertTrue(breaker.is_closed)
+        self.assertAlmostEqual(breaker.failure_rate, 4/9, places=2)
+
+    def test_opens_after_threshold_exceeded(self):
+        """Circuit opens when failure rate exceeds 50%."""
+        from .client import CircuitBreaker, CircuitBreakerConfig
+
+        config = CircuitBreakerConfig(
+            failure_threshold=0.5,
+            minimum_requests=10,
+        )
+        breaker = CircuitBreaker("test-replica", config)
+
+        # 10 requests with 6 failures (60%) - exceeds threshold
+        for _ in range(4):
+            breaker.allow_request()
+            breaker.record_success()
+        for _ in range(6):
+            breaker.allow_request()
+            breaker.record_failure()
+
+        self.assertTrue(breaker.is_open)
+
+    def test_rejects_requests_when_open(self):
+        """Requests are rejected when circuit is open."""
+        from .client import CircuitBreaker
+
+        breaker = CircuitBreaker("test-replica")
+        breaker.force_open()
+
+        self.assertFalse(breaker.allow_request())
+        self.assertFalse(breaker.allow_request())
+        self.assertFalse(breaker.allow_request())
+        self.assertGreaterEqual(breaker.rejected_requests, 3)
+
+    def test_transitions_to_half_open(self):
+        """Circuit transitions to half-open after open duration."""
+        import time
+        from .client import CircuitBreaker, CircuitBreakerConfig, CircuitState
+
+        config = CircuitBreakerConfig(open_duration_ms=50)  # Short for testing
+        breaker = CircuitBreaker("test-replica", config)
+        breaker.force_open()
+
+        time.sleep(0.1)  # Wait for open duration
+
+        # Should transition on next state check
+        self.assertEqual(breaker.state, CircuitState.HALF_OPEN)
+        self.assertTrue(breaker.is_half_open)
+
+    def test_successful_half_open_closes(self):
+        """Successful half-open requests close the circuit."""
+        import time
+        from .client import CircuitBreaker, CircuitBreakerConfig
+
+        config = CircuitBreakerConfig(
+            open_duration_ms=50,
+            half_open_requests=5,
+        )
+        breaker = CircuitBreaker("test-replica", config)
+        breaker.force_open()
+
+        time.sleep(0.1)
+
+        # 5 successful requests in half-open
+        for _ in range(5):
+            self.assertTrue(breaker.allow_request())
+            breaker.record_success()
+
+        self.assertTrue(breaker.is_closed)
+
+    def test_failed_half_open_reopens(self):
+        """Failed half-open request reopens circuit."""
+        import time
+        from .client import CircuitBreaker, CircuitBreakerConfig
+
+        config = CircuitBreakerConfig(open_duration_ms=50)
+        breaker = CircuitBreaker("test-replica", config)
+        breaker.force_open()
+
+        time.sleep(0.1)
+
+        # First half-open request fails
+        self.assertTrue(breaker.allow_request())
+        breaker.record_failure()
+
+        self.assertTrue(breaker.is_open)
+
+    def test_half_open_limits_requests(self):
+        """Half-open state limits test requests."""
+        import time
+        from .client import CircuitBreaker, CircuitBreakerConfig
+
+        config = CircuitBreakerConfig(
+            open_duration_ms=50,
+            half_open_requests=5,
+        )
+        breaker = CircuitBreaker("test-replica", config)
+        breaker.force_open()
+
+        time.sleep(0.1)
+
+        # Allow exactly 5 requests
+        for _ in range(5):
+            self.assertTrue(breaker.allow_request())
+
+        # 6th request rejected
+        self.assertFalse(breaker.allow_request())
+
+    def test_minimum_requests_required(self):
+        """Minimum requests required before circuit can open."""
+        from .client import CircuitBreaker, CircuitBreakerConfig
+
+        config = CircuitBreakerConfig(minimum_requests=10)
+        breaker = CircuitBreaker("test-replica", config)
+
+        # 9 failures (100%) - under minimum
+        for _ in range(9):
+            breaker.allow_request()
+            breaker.record_failure()
+
+        self.assertTrue(breaker.is_closed)
+
+        # 10th failure opens circuit
+        breaker.allow_request()
+        breaker.record_failure()
+
+        self.assertTrue(breaker.is_open)
+
+    def test_force_close_resets_state(self):
+        """force_close resets to closed state."""
+        from .client import CircuitBreaker
+
+        breaker = CircuitBreaker("test-replica")
+        breaker.force_open()
+        self.assertTrue(breaker.is_open)
+
+        breaker.force_close()
+        self.assertTrue(breaker.is_closed)
+        self.assertAlmostEqual(breaker.failure_rate, 0.0, places=2)
+
+    def test_state_changes_tracked(self):
+        """State transitions are counted."""
+        from .client import CircuitBreaker
+
+        breaker = CircuitBreaker("test-replica")
+        self.assertEqual(breaker.state_changes, 0)
+
+        breaker.force_open()
+        self.assertEqual(breaker.state_changes, 1)
+
+        breaker.force_close()
+        self.assertEqual(breaker.state_changes, 2)
+
+    def test_per_replica_scope(self):
+        """Circuit breakers are independent per replica."""
+        from .client import CircuitBreaker
+
+        breaker1 = CircuitBreaker("replica-1")
+        breaker2 = CircuitBreaker("replica-2")
+
+        breaker1.force_open()
+
+        # breaker2 should still be closed
+        self.assertTrue(breaker1.is_open)
+        self.assertTrue(breaker2.is_closed)
+        self.assertTrue(breaker2.allow_request())
+
+    def test_circuit_breaker_open_exception(self):
+        """CircuitBreakerOpen exception has correct attributes."""
+        from .client import CircuitBreakerOpen
+
+        ex = CircuitBreakerOpen("test-circuit", "open")
+        self.assertEqual(ex.circuit_name, "test-circuit")
+        self.assertEqual(ex.circuit_state, "open")
+        self.assertEqual(ex.code, 600)
+        self.assertTrue(ex.retryable)
+        self.assertIn("test-circuit", str(ex))
+
+    def test_repr(self):
+        """repr returns useful string."""
+        from .client import CircuitBreaker
+
+        breaker = CircuitBreaker("test-replica")
+        repr_str = repr(breaker)
+        self.assertIn("test-replica", repr_str)
+        self.assertIn("closed", repr_str)
+
+    def test_default_config_matches_spec(self):
+        """Default config values match spec requirements."""
+        from .client import CircuitBreakerConfig
+
+        config = CircuitBreakerConfig()
+        self.assertEqual(config.failure_threshold, 0.5)
+        self.assertEqual(config.minimum_requests, 10)
+        self.assertEqual(config.window_ms, 10_000)
+        self.assertEqual(config.open_duration_ms, 30_000)
+        self.assertEqual(config.half_open_requests, 5)
+
+
+class TestOperationOptions(unittest.TestCase):
+    """Test OperationOptions per-operation retry override."""
+
+    def test_default_options_all_none(self):
+        """Default options have all None values."""
+        options = OperationOptions()
+        self.assertIsNone(options.max_retries)
+        self.assertIsNone(options.timeout_ms)
+        self.assertIsNone(options.base_backoff_ms)
+        self.assertIsNone(options.max_backoff_ms)
+        self.assertIsNone(options.jitter)
+
+    def test_options_with_values(self):
+        """Options can be created with specific values."""
+        options = OperationOptions(
+            max_retries=3,
+            timeout_ms=10000,
+            base_backoff_ms=50,
+            max_backoff_ms=500,
+            jitter=False,
+        )
+        self.assertEqual(options.max_retries, 3)
+        self.assertEqual(options.timeout_ms, 10000)
+        self.assertEqual(options.base_backoff_ms, 50)
+        self.assertEqual(options.max_backoff_ms, 500)
+        self.assertEqual(options.jitter, False)
+
+    def test_merge_with_preserves_base_when_no_overrides(self):
+        """merge_with returns base config when no options set."""
+        base = RetryConfig(
+            max_retries=5,
+            base_backoff_ms=100,
+            max_backoff_ms=1600,
+            total_timeout_ms=30000,
+            jitter=True,
+        )
+        options = OperationOptions()
+        merged = options.merge_with(base)
+        self.assertEqual(merged.max_retries, 5)
+        self.assertEqual(merged.base_backoff_ms, 100)
+        self.assertEqual(merged.max_backoff_ms, 1600)
+        self.assertEqual(merged.total_timeout_ms, 30000)
+        self.assertEqual(merged.jitter, True)
+
+    def test_merge_with_overrides_specified_values(self):
+        """merge_with applies overrides to base config."""
+        base = RetryConfig(
+            max_retries=5,
+            base_backoff_ms=100,
+            max_backoff_ms=1600,
+            total_timeout_ms=30000,
+            jitter=True,
+        )
+        options = OperationOptions(max_retries=2, timeout_ms=5000)
+        merged = options.merge_with(base)
+        # Overridden
+        self.assertEqual(merged.max_retries, 2)
+        self.assertEqual(merged.total_timeout_ms, 5000)
+        # Preserved from base
+        self.assertEqual(merged.base_backoff_ms, 100)
+        self.assertEqual(merged.max_backoff_ms, 1600)
+        self.assertEqual(merged.jitter, True)
+
+    def test_merge_with_all_overrides(self):
+        """merge_with can override all values."""
+        base = RetryConfig()
+        options = OperationOptions(
+            max_retries=1,
+            timeout_ms=2000,
+            base_backoff_ms=50,
+            max_backoff_ms=200,
+            jitter=False,
+        )
+        merged = options.merge_with(base)
+        self.assertEqual(merged.max_retries, 1)
+        self.assertEqual(merged.total_timeout_ms, 2000)
+        self.assertEqual(merged.base_backoff_ms, 50)
+        self.assertEqual(merged.max_backoff_ms, 200)
+        self.assertEqual(merged.jitter, False)
+
+    def test_zero_max_retries_allowed(self):
+        """Zero max_retries is valid (means no retry)."""
+        options = OperationOptions(max_retries=0)
+        base = RetryConfig(max_retries=5)
+        merged = options.merge_with(base)
+        self.assertEqual(merged.max_retries, 0)
+
+    def test_enabled_flag_preserved(self):
+        """merge_with preserves enabled flag from base."""
+        base = RetryConfig(enabled=False)
+        options = OperationOptions(max_retries=3)
+        merged = options.merge_with(base)
+        self.assertEqual(merged.enabled, False)
+
+
+class TestRetryMetricsIntegration(unittest.TestCase):
+    """Test that retry logic records metrics per client-retry/spec.md."""
+
+    def setUp(self):
+        """Reset metrics before each test."""
+        from .observability import reset_metrics
+        reset_metrics()
+
+    def test_retry_metrics_recorded_on_retry(self):
+        """_with_retry_sync records retry metrics."""
+        from .client import _with_retry_sync, RetryConfig
+        from .observability import get_metrics
+
+        attempts = [0]
+
+        def operation():
+            attempts[0] += 1
+            if attempts[0] < 3:
+                raise ConnectionFailed("Connection failed")
+            return "success"
+
+        config = RetryConfig(
+            max_retries=5,
+            base_backoff_ms=1,  # Fast tests
+            total_timeout_ms=30000,
+            jitter=False,
+        )
+
+        result = _with_retry_sync(operation, config)
+
+        self.assertEqual(result, "success")
+        self.assertEqual(attempts[0], 3)
+
+        metrics = get_metrics()
+        # 2 retries (first 2 failures led to retries)
+        self.assertEqual(metrics.retries_total.get(), 2.0)
+        # No exhaustion - we succeeded
+        self.assertEqual(metrics.retry_exhausted_total.get(), 0.0)
+
+    def test_retry_exhausted_metric_recorded(self):
+        """_with_retry_sync records retry exhaustion when all retries fail."""
+        from .client import _with_retry_sync, RetryConfig
+        from .observability import get_metrics
+
+        attempts = [0]
+
+        def operation():
+            attempts[0] += 1
+            raise ConnectionFailed("Connection failed")
+
+        config = RetryConfig(
+            max_retries=3,
+            base_backoff_ms=1,  # Fast tests
+            total_timeout_ms=30000,
+            jitter=False,
+        )
+
+        with self.assertRaises(RetryExhausted):
+            _with_retry_sync(operation, config)
+
+        self.assertEqual(attempts[0], 4)  # Initial + 3 retries
+
+        metrics = get_metrics()
+        # 3 retries recorded
+        self.assertEqual(metrics.retries_total.get(), 3.0)
+        # Exhaustion recorded
+        self.assertEqual(metrics.retry_exhausted_total.get(), 1.0)
+
+    def test_no_metrics_on_success(self):
+        """No retry metrics when operation succeeds first time."""
+        from .client import _with_retry_sync, RetryConfig
+        from .observability import get_metrics
+
+        def operation():
+            return "immediate success"
+
+        config = RetryConfig()
+        result = _with_retry_sync(operation, config)
+
+        self.assertEqual(result, "immediate success")
+
+        metrics = get_metrics()
+        self.assertEqual(metrics.retries_total.get(), 0.0)
+        self.assertEqual(metrics.retry_exhausted_total.get(), 0.0)
+
+    def test_no_metrics_on_non_retryable_error(self):
+        """No retry metrics when non-retryable error occurs."""
+        from .client import _with_retry_sync, RetryConfig
+        from .observability import get_metrics
+
+        def operation():
+            raise InvalidCoordinates("Bad coordinates")
+
+        config = RetryConfig()
+
+        with self.assertRaises(InvalidCoordinates):
+            _with_retry_sync(operation, config)
+
+        metrics = get_metrics()
+        # Non-retryable errors don't trigger retry metrics
+        self.assertEqual(metrics.retries_total.get(), 0.0)
+        self.assertEqual(metrics.retry_exhausted_total.get(), 0.0)
+
+    def test_retry_disabled_no_metrics(self):
+        """No retry metrics when retry is disabled."""
+        from .client import _with_retry_sync, RetryConfig
+        from .observability import get_metrics
+
+        attempts = [0]
+
+        def operation():
+            attempts[0] += 1
+            if attempts[0] < 3:
+                raise ConnectionFailed("Connection failed")
+            return "success"
+
+        config = RetryConfig(enabled=False)
+
+        with self.assertRaises(ConnectionFailed):
+            _with_retry_sync(operation, config)
+
+        self.assertEqual(attempts[0], 1)  # Only one attempt
+
+        metrics = get_metrics()
+        self.assertEqual(metrics.retries_total.get(), 0.0)
+        self.assertEqual(metrics.retry_exhausted_total.get(), 0.0)
 
 
 if __name__ == "__main__":

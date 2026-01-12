@@ -24,15 +24,16 @@ comptime {
     _ = @import("archerdb/export_control.zig");
     _ = @import("archerdb/incremental_load.zig");
     _ = @import("archerdb/metrics.zig");
-    _ = @import("archerdb/metrics_server.zig");
     _ = @import("archerdb/parallel_export.zig");
     _ = @import("archerdb/restore.zig");
     _ = @import("cdc/amqp.zig");
     _ = @import("cdc/amqp/protocol.zig");
+    _ = @import("cdc/runner.zig");
     _ = @import("clients/c/arch_client.zig");
     _ = @import("clients/c/arch_client/context.zig");
     _ = @import("clients/c/arch_client/signal.zig");
     _ = @import("clients/c/test.zig");
+    _ = @import("coordinator.zig");
     _ = @import("copyhound.zig");
     _ = @import("error_codes.zig");
     _ = @import("ewah.zig");
@@ -78,6 +79,7 @@ comptime {
     _ = @import("s2_scratch_pool.zig");
     _ = @import("scripts/cfo.zig");
     _ = @import("scripts/changelog.zig");
+    _ = @import("sharding.zig");
     _ = @import("shell.zig");
     _ = @import("skip_scan.zig");
     _ = @import("stack.zig");
@@ -94,6 +96,7 @@ comptime {
     _ = @import("testing/vortex/logged_process.zig");
     _ = @import("testing/vortex/supervisor.zig");
     _ = @import("tidy.zig");
+    _ = @import("tiering.zig");
     _ = @import("time.zig");
     _ = @import("trace.zig");
     _ = @import("trace/event.zig");
@@ -213,6 +216,15 @@ const quine =
     \\            !std.mem.startsWith(u8, entry_path, "clients/c")) continue;
     \\        if (std.mem.eql(u8, entry_path, "clients/c/arch_client_header_test.zig")) continue;
     \\        if (std.mem.eql(u8, entry_path, "archerdb/libarch_client.zig")) continue;
+    \\        // Skip files that depend on vsr module (application entry points)
+    \\        if (std.mem.eql(u8, entry_path, "archerdb/cli.zig")) continue;
+    \\        if (std.mem.eql(u8, entry_path, "archerdb/main.zig")) continue;
+    \\        if (std.mem.eql(u8, entry_path, "archerdb/metrics_server.zig")) continue;
+    \\        if (std.mem.eql(u8, entry_path, "archerdb/benchmark_driver.zig")) continue;
+    \\        if (std.mem.eql(u8, entry_path, "archerdb/benchmark_load.zig")) continue;
+    \\        if (std.mem.eql(u8, entry_path, "archerdb/geo_benchmark_load.zig")) continue;
+    \\        if (std.mem.eql(u8, entry_path, "archerdb/inspect.zig")) continue;
+    \\        if (std.mem.eql(u8, entry_path, "archerdb/inspect_integrity.zig")) continue;
     \\
     \\        const contents = try src_dir.readFileAlloc(arena, entry_path, 1 * MiB);
     \\        var line_iterator = std.mem.splitScalar(u8, contents, '\n');
@@ -339,6 +351,15 @@ fn unit_test_files(arena: std.mem.Allocator, src_dir: std.fs.Dir) ![]const []con
             !std.mem.startsWith(u8, entry_path, "clients/c")) continue;
         if (std.mem.eql(u8, entry_path, "clients/c/arch_client_header_test.zig")) continue;
         if (std.mem.eql(u8, entry_path, "archerdb/libarch_client.zig")) continue;
+        // Skip files that depend on vsr module (application entry points)
+        if (std.mem.eql(u8, entry_path, "archerdb/cli.zig")) continue;
+        if (std.mem.eql(u8, entry_path, "archerdb/main.zig")) continue;
+        if (std.mem.eql(u8, entry_path, "archerdb/metrics_server.zig")) continue;
+        if (std.mem.eql(u8, entry_path, "archerdb/benchmark_driver.zig")) continue;
+        if (std.mem.eql(u8, entry_path, "archerdb/benchmark_load.zig")) continue;
+        if (std.mem.eql(u8, entry_path, "archerdb/geo_benchmark_load.zig")) continue;
+        if (std.mem.eql(u8, entry_path, "archerdb/inspect.zig")) continue;
+        if (std.mem.eql(u8, entry_path, "archerdb/inspect_integrity.zig")) continue;
 
         const contents = try src_dir.readFileAlloc(arena, entry_path, 1 * MiB);
         var line_iterator = std.mem.splitScalar(u8, contents, '\n');

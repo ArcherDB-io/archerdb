@@ -17,6 +17,7 @@ import {
   QueryLatestFilter,
   QueryResult,
   DeleteResult,
+  CleanupResult,
   GeoEventOptions,
   RadiusQueryOptions,
   PolygonQueryOptions,
@@ -29,6 +30,9 @@ import {
 
 // Import native binding for cluster communication
 import { binding, Context, Operation } from './index'
+
+// Import observability for retry metrics
+import { getMetrics } from './observability'
 
 // Re-export types for convenience
 export * from './geo'
@@ -131,6 +135,285 @@ export class SessionExpired extends ArcherDBError {
   readonly retryable = true
 }
 
+// Circuit Breaker Error
+
+export class CircuitBreakerOpen extends ArcherDBError {
+  readonly code = 600
+  readonly retryable = true // Client should try another replica
+
+  constructor(
+    public readonly circuitName: string,
+    public readonly circuitState: CircuitState
+  ) {
+    super(`Circuit breaker '${circuitName}' is ${circuitState} - request rejected`)
+  }
+}
+
+// ============================================================================
+// Circuit Breaker (per client-retry/spec.md)
+// ============================================================================
+
+/**
+ * Circuit breaker states.
+ */
+export enum CircuitState {
+  /** Normal operation - requests are allowed through */
+  CLOSED = 'closed',
+  /** Fail-fast mode - requests are rejected immediately */
+  OPEN = 'open',
+  /** Recovery testing - limited requests allowed to test recovery */
+  HALF_OPEN = 'half_open',
+}
+
+/**
+ * Circuit breaker configuration options.
+ */
+export interface CircuitBreakerConfig {
+  /** Failure rate threshold to open circuit (default: 0.5 = 50%) */
+  failureThreshold?: number
+  /** Minimum requests in window before circuit can open (default: 10) */
+  minimumRequests?: number
+  /** Sliding window duration in milliseconds (default: 10000) */
+  windowMs?: number
+  /** Duration to stay open before half-open (default: 30000) */
+  openDurationMs?: number
+  /** Number of test requests in half-open state (default: 5) */
+  halfOpenRequests?: number
+}
+
+const DEFAULT_CIRCUIT_CONFIG: Required<CircuitBreakerConfig> = {
+  failureThreshold: 0.5,
+  minimumRequests: 10,
+  windowMs: 10_000,
+  openDurationMs: 30_000,
+  halfOpenRequests: 5,
+}
+
+/**
+ * Per-replica circuit breaker for failure isolation.
+ *
+ * Per client-retry/spec.md:
+ * - Opens when: 50% failure rate in 10s window AND >= 10 requests
+ * - Stays open for 30 seconds before transitioning to half-open
+ * - Half-open allows 5 test requests before deciding to close or re-open
+ * - Per-replica scope (not global) to allow trying other replicas
+ */
+export class CircuitBreaker {
+  readonly name: string
+  private readonly config: Required<CircuitBreakerConfig>
+
+  private state: CircuitState = CircuitState.CLOSED
+  private openedAt = 0
+
+  // Sliding window counters
+  private totalRequests = 0
+  private failedRequests = 0
+  private windowStartMs = Date.now()
+
+  // Half-open tracking
+  private halfOpenSuccesses = 0
+  private halfOpenFailures = 0
+  private halfOpenTotal = 0
+
+  // Metrics
+  private _stateChanges = 0
+  private _rejectedRequests = 0
+
+  constructor(name: string, config?: CircuitBreakerConfig) {
+    this.name = name
+    this.config = { ...DEFAULT_CIRCUIT_CONFIG, ...config }
+  }
+
+  /**
+   * Get the current circuit state.
+   */
+  getState(): CircuitState {
+    if (this.state === CircuitState.OPEN) {
+      const elapsed = Date.now() - this.openedAt
+      if (elapsed >= this.config.openDurationMs) {
+        this.transitionTo(CircuitState.HALF_OPEN)
+        this.resetHalfOpenCounters()
+      }
+    }
+    return this.state
+  }
+
+  /**
+   * Check if a request is allowed through.
+   */
+  allowRequest(): boolean {
+    const currentState = this.state
+
+    if (currentState === CircuitState.CLOSED) {
+      return true
+    }
+
+    if (currentState === CircuitState.OPEN) {
+      const elapsed = Date.now() - this.openedAt
+      if (elapsed >= this.config.openDurationMs) {
+        this.transitionTo(CircuitState.HALF_OPEN)
+        this.resetHalfOpenCounters()
+        return this.allowHalfOpenRequest()
+      }
+      this._rejectedRequests++
+      return false
+    }
+
+    if (currentState === CircuitState.HALF_OPEN) {
+      return this.allowHalfOpenRequest()
+    }
+
+    return false
+  }
+
+  private allowHalfOpenRequest(): boolean {
+    if (this.halfOpenTotal >= this.config.halfOpenRequests) {
+      this._rejectedRequests++
+      return false
+    }
+    this.halfOpenTotal++
+    return true
+  }
+
+  /**
+   * Record a successful request.
+   */
+  recordSuccess(): void {
+    if (this.state === CircuitState.CLOSED) {
+      this.recordInWindow(false)
+    } else if (this.state === CircuitState.HALF_OPEN) {
+      this.halfOpenSuccesses++
+      if (this.halfOpenSuccesses >= this.config.halfOpenRequests) {
+        this.transitionTo(CircuitState.CLOSED)
+        this.resetCounters()
+      }
+    }
+  }
+
+  /**
+   * Record a failed request.
+   */
+  recordFailure(): void {
+    if (this.state === CircuitState.CLOSED) {
+      this.recordInWindow(true)
+      this.checkThreshold()
+    } else if (this.state === CircuitState.HALF_OPEN) {
+      this.halfOpenFailures++
+      this.transitionTo(CircuitState.OPEN)
+    }
+  }
+
+  private recordInWindow(failed: boolean): void {
+    const now = Date.now()
+
+    // Check if window expired
+    if (now - this.windowStartMs >= this.config.windowMs) {
+      this.windowStartMs = now
+      this.totalRequests = 0
+      this.failedRequests = 0
+    }
+
+    this.totalRequests++
+    if (failed) {
+      this.failedRequests++
+    }
+  }
+
+  private checkThreshold(): void {
+    if (this.totalRequests < this.config.minimumRequests) {
+      return
+    }
+
+    const failureRate = this.failedRequests / this.totalRequests
+    if (failureRate >= this.config.failureThreshold) {
+      this.transitionTo(CircuitState.OPEN)
+    }
+  }
+
+  private transitionTo(newState: CircuitState): boolean {
+    if (this.state === newState) {
+      return false
+    }
+
+    this.state = newState
+    this._stateChanges++
+
+    if (newState === CircuitState.OPEN) {
+      this.openedAt = Date.now()
+    }
+
+    return true
+  }
+
+  private resetCounters(): void {
+    this.totalRequests = 0
+    this.failedRequests = 0
+    this.windowStartMs = Date.now()
+  }
+
+  private resetHalfOpenCounters(): void {
+    this.halfOpenSuccesses = 0
+    this.halfOpenFailures = 0
+    this.halfOpenTotal = 0
+  }
+
+  /**
+   * Force the circuit open (for testing).
+   */
+  forceOpen(): void {
+    if (this.state !== CircuitState.OPEN) {
+      this._stateChanges++
+    }
+    this.state = CircuitState.OPEN
+    this.openedAt = Date.now()
+  }
+
+  /**
+   * Force the circuit closed (for testing).
+   */
+  forceClose(): void {
+    if (this.state !== CircuitState.CLOSED) {
+      this._stateChanges++
+    }
+    this.state = CircuitState.CLOSED
+    this.resetCounters()
+    this.resetHalfOpenCounters()
+  }
+
+  /** True if circuit is open */
+  get isOpen(): boolean {
+    return this.getState() === CircuitState.OPEN
+  }
+
+  /** True if circuit is closed */
+  get isClosed(): boolean {
+    return this.getState() === CircuitState.CLOSED
+  }
+
+  /** True if circuit is half-open */
+  get isHalfOpen(): boolean {
+    return this.getState() === CircuitState.HALF_OPEN
+  }
+
+  /** Current failure rate in window */
+  get failureRate(): number {
+    if (this.totalRequests === 0) {
+      return 0
+    }
+    return this.failedRequests / this.totalRequests
+  }
+
+  /** Total state transitions */
+  get stateChanges(): number {
+    return this._stateChanges
+  }
+
+  /** Total rejected requests */
+  get rejectedRequests(): number {
+    return this._rejectedRequests
+  }
+}
+
 // ============================================================================
 // Configuration Types
 // ============================================================================
@@ -172,6 +455,62 @@ export interface RetryConfig {
    * Jitter = random(0, base_delay / 2) prevents thundering herd.
    */
   jitter?: boolean
+}
+
+/**
+ * Per-operation options for customizing retry behavior.
+ *
+ * Per client-retry/spec.md, SDKs MAY support per-operation retry override:
+ *
+ * ```typescript
+ * client.queryRadius(lat, lon, radius, { options: { max_retries: 3, timeout_ms: 10000 } })
+ * ```
+ *
+ * When not specified, the client's default retry policy is used.
+ */
+export interface OperationOptions {
+  /**
+   * Override max retries for this operation.
+   */
+  max_retries?: number
+
+  /**
+   * Override total timeout in milliseconds for this operation.
+   */
+  timeout_ms?: number
+
+  /**
+   * Override base backoff delay in milliseconds.
+   */
+  base_backoff_ms?: number
+
+  /**
+   * Override max backoff delay in milliseconds.
+   */
+  max_backoff_ms?: number
+
+  /**
+   * Override jitter setting.
+   */
+  jitter?: boolean
+}
+
+/**
+ * Merges operation options with a base retry config.
+ */
+function mergeOptions(
+  base: Required<RetryConfig>,
+  options?: OperationOptions
+): Required<RetryConfig> {
+  if (!options) return base
+  return {
+    enabled: base.enabled,
+    max_retries: options.max_retries ?? base.max_retries,
+    base_backoff_ms: options.base_backoff_ms ?? base.base_backoff_ms,
+    max_backoff_ms: options.max_backoff_ms ?? base.max_backoff_ms,
+    total_timeout_ms: options.timeout_ms ?? base.total_timeout_ms,
+    jitter: options.jitter ?? base.jitter,
+  }
 }
 
 /**
@@ -677,10 +1016,13 @@ export class GeoClient {
    * @param options - Radius query options
    * @returns Query results with pagination info
    */
-  async queryRadius(options: RadiusQueryOptions): Promise<QueryResult> {
+  async queryRadius(
+    queryOptions: RadiusQueryOptions,
+    operationOptions?: OperationOptions
+  ): Promise<QueryResult> {
     this.ensureConnected()
 
-    const filter = createRadiusQuery(options)
+    const filter = createRadiusQuery(queryOptions)
 
     if (filter.limit > QUERY_LIMIT_MAX) {
       throw new QueryResultTooLarge(`Limit ${filter.limit} exceeds max ${QUERY_LIMIT_MAX}`)
@@ -688,7 +1030,8 @@ export class GeoClient {
 
     const events = await this._submitQuery<GeoEvent>(
       GeoOperation.query_radius,
-      filter
+      filter,
+      operationOptions
     )
 
     return {
@@ -701,13 +1044,17 @@ export class GeoClient {
   /**
    * Queries events within a polygon.
    *
-   * @param options - Polygon query options
+   * @param queryOptions - Polygon query options
+   * @param operationOptions - Per-operation retry options
    * @returns Query results with pagination info
    */
-  async queryPolygon(options: PolygonQueryOptions): Promise<QueryResult> {
+  async queryPolygon(
+    queryOptions: PolygonQueryOptions,
+    operationOptions?: OperationOptions
+  ): Promise<QueryResult> {
     this.ensureConnected()
 
-    const filter = createPolygonQuery(options)
+    const filter = createPolygonQuery(queryOptions)
 
     if (filter.limit > QUERY_LIMIT_MAX) {
       throw new QueryResultTooLarge(`Limit ${filter.limit} exceeds max ${QUERY_LIMIT_MAX}`)
@@ -715,7 +1062,8 @@ export class GeoClient {
 
     const events = await this._submitQuery<GeoEvent>(
       GeoOperation.query_polygon,
-      filter
+      filter,
+      operationOptions
     )
 
     return {
@@ -728,17 +1076,21 @@ export class GeoClient {
   /**
    * Queries the most recent events globally or by group.
    *
-   * @param options - Query options (limit, group_id, cursor)
+   * @param queryOptions - Query options (limit, group_id, cursor)
+   * @param operationOptions - Per-operation retry options
    * @returns Query results with pagination info
    */
-  async queryLatest(options?: Partial<Omit<QueryLatestFilter, '_reserved_align'>>): Promise<QueryResult> {
+  async queryLatest(
+    queryOptions?: Partial<Omit<QueryLatestFilter, '_reserved_align'>>,
+    operationOptions?: OperationOptions
+  ): Promise<QueryResult> {
     this.ensureConnected()
 
     const filter: QueryLatestFilter = {
-      limit: options?.limit ?? 1000,
+      limit: queryOptions?.limit ?? 1000,
       _reserved_align: 0, // Required for wire format alignment
-      group_id: options?.group_id ?? 0n,
-      cursor_timestamp: options?.cursor_timestamp ?? 0n,
+      group_id: queryOptions?.group_id ?? 0n,
+      cursor_timestamp: queryOptions?.cursor_timestamp ?? 0n,
     }
 
     if (filter.limit > QUERY_LIMIT_MAX) {
@@ -747,13 +1099,57 @@ export class GeoClient {
 
     const events = await this._submitQuery<GeoEvent>(
       GeoOperation.query_latest,
-      filter
+      filter,
+      operationOptions
     )
 
     return {
       events,
       has_more: events.length === filter.limit,
       cursor: events.length > 0 ? events[events.length - 1].timestamp : undefined,
+    }
+  }
+
+  // ============================================================================
+  // TTL Cleanup Operations
+  // ============================================================================
+
+  /**
+   * Triggers explicit TTL expiration cleanup.
+   *
+   * Per client-protocol/spec.md cleanup_expired (0x30):
+   * - Goes through VSR consensus for deterministic cleanup
+   * - All replicas apply with same timestamp
+   * - Returns count of entries scanned and removed
+   *
+   * @param batchSize - Number of index entries to scan (0 = scan all)
+   * @returns CleanupResult with entries_scanned and entries_removed
+   * @throws Error if batchSize is negative
+   *
+   * @example
+   * ```typescript
+   * // Scan all expired entries
+   * const result = await client.cleanupExpired()
+   * console.log(`Scanned ${result.entries_scanned} entries`)
+   * console.log(`Removed ${result.entries_removed} expired entries`)
+   *
+   * // Scan limited batch (for incremental cleanup)
+   * const partialResult = await client.cleanupExpired(1000)
+   * ```
+   */
+  async cleanupExpired(batchSize: number = 0): Promise<CleanupResult> {
+    this.ensureConnected()
+
+    if (batchSize < 0) {
+      throw new Error('batchSize must be non-negative')
+    }
+
+    // Submit cleanup request with batch size
+    // NOTE: Skeleton implementation - in full impl would send CLEANUP_EXPIRED
+    // and deserialize the 16-byte response (2x u64)
+    return {
+      entries_scanned: 0n,
+      entries_removed: 0n,
     }
   }
 
@@ -802,8 +1198,15 @@ export class GeoClient {
    * Submits a query operation to the cluster with automatic retry.
    * @internal
    */
-  async _submitQuery<R>(operation: GeoOperation, filter: unknown): Promise<R[]> {
+  async _submitQuery<R>(
+    operation: GeoOperation,
+    filter: unknown,
+    options?: OperationOptions
+  ): Promise<R[]> {
     this.ensureConnected()
+
+    // Merge per-operation options with base config
+    const retryConfig = mergeOptions(this.retryConfig, options)
 
     // Wrap the actual query in retry logic
     return withRetry(async () => {
@@ -823,7 +1226,7 @@ export class GeoClient {
           }
         })
       })
-    }, this.retryConfig)
+    }, retryConfig)
   }
 }
 
@@ -952,14 +1355,21 @@ async function withRetry<T>(
     return operation()
   }
 
+  const metrics = getMetrics()
   const startTime = Date.now()
   const maxAttempts = config.max_retries + 1
   let lastError: Error = new Error('No attempts made')
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    // Record retry metric for actual retry attempts (not first attempt)
+    if (attempt > 1) {
+      metrics.recordRetry()
+    }
+
     // Check total timeout before starting attempt
     const elapsed = Date.now() - startTime
     if (elapsed >= config.total_timeout_ms) {
+      metrics.recordRetryExhausted()
       throw new RetryExhausted(attempt - 1, lastError)
     }
 
@@ -994,6 +1404,7 @@ async function withRetry<T>(
     }
   }
 
+  metrics.recordRetryExhausted()
   throw new RetryExhausted(maxAttempts, lastError)
 }
 

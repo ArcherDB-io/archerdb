@@ -203,9 +203,12 @@ test "Integration: BackupQueue enqueue/dequeue cycle" {
     try testing.expect(!queue.isOverHardLimit());
 
     // Dequeue and verify order (FIFO)
+    // Note: dequeue() returns a pointer but doesn't remove; use markUploaded() to consume
     var expected_seq: u64 = 1;
     while (queue.dequeue()) |entry| {
         try testing.expectEqual(expected_seq, entry.block.sequence);
+        const seq = entry.block.sequence;
+        try queue.markUploaded(seq);
         expected_seq += 1;
     }
 
@@ -247,14 +250,20 @@ test "Integration: BackupQueue soft/hard limit behavior" {
 
     try testing.expect(queue.isOverHardLimit());
 
-    // In best-effort mode, enqueue returns 'abandoned' at hard limit
+    // In best-effort mode, enqueue abandons OLDEST block to make room for new one
+    // (newer data is more valuable, so we keep accepting new blocks)
     const result = queue.enqueue(.{
         .sequence = 6,
         .address = 1005,
         .checksum = 0xABCD0005,
         .closed_timestamp = 1704067200,
     });
-    try testing.expectEqual(EnqueueResult.abandoned, result);
+    // After abandoning oldest and adding new, queue is still at hard limit (>= soft limit)
+    try testing.expectEqual(EnqueueResult.queued_over_soft_limit, result);
+
+    // Verify oldest was abandoned and newest was kept
+    try testing.expect(!queue.pending_sequences.contains(1)); // Block 1 abandoned
+    try testing.expect(queue.pending_sequences.contains(6)); // Block 6 added
 }
 
 // =============================================================================

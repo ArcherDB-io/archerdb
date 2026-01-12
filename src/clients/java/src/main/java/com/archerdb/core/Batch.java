@@ -3,7 +3,7 @@ package com.archerdb.core;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Objects;
-import static com.archerdb.AssertionError.assertTrue;
+import static com.archerdb.core.AssertionError.assertTrue;
 
 /**
  * A Batch is contiguous memory block representing a collection of elements of the same type with a

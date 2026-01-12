@@ -100,6 +100,7 @@ const CLIArgs = union(enum) {
         log_rotate_count: ?u32 = null,
         metrics_port: ?u16 = null,
         metrics_bind: ?[]const u8 = null,
+        metrics_auth_token: ?[]const u8 = null,
 
         // Backup configuration (F5.5 - Backup & Restore)
         backup_enabled: bool = false,
@@ -115,6 +116,12 @@ const CLIArgs = union(enum) {
         backup_queue_hard_limit: u32 = 100,
         backup_retention_days: u32 = 0,
         backup_primary_only: bool = false,
+
+        // Per ttl-retention/spec.md: Global default TTL for events
+        // default_ttl_days = 0 means infinite (no expiration)
+        // default_ttl_days > 0 means events expire after that many days by default
+        // When clients set event.ttl_seconds = 0, this default is applied
+        default_ttl_days: ?u32 = null,
 
         // Everything from here until positional arguments is considered experimental, and requires
         // `--experimental` to be set. Experimental flags disable automatic upgrades with
@@ -372,6 +379,130 @@ const CLIArgs = union(enum) {
         log_level: LogLevel = .info,
     };
 
+    // Data export command (F-Data-Portability).
+    const Export = struct {
+        /// Export format: json, geojson, ndjson, csv
+        format: []const u8 = "json",
+        /// Output file path (stdout if not specified)
+        output: ?[]const u8 = null,
+        /// Entity ID filter (optional)
+        entity_id: ?[]const u8 = null,
+        /// Start timestamp filter (nanoseconds, optional)
+        start_time: ?u64 = null,
+        /// End timestamp filter (nanoseconds, optional)
+        end_time: ?u64 = null,
+        /// Exclude metadata from export (default: include metadata)
+        no_metadata: bool = false,
+        /// Pretty-print output (json/geojson only)
+        pretty: bool = false,
+        /// Maximum events to export (0 = unlimited)
+        limit: u64 = 0,
+        log_level: LogLevel = .info,
+
+        @"--": void,
+        /// Path to the data file to export from
+        path: []const u8,
+
+        pub const help =
+            \\Usage:
+            \\
+            \\  archerdb export [options] <path>
+            \\
+            \\Options:
+            \\
+            \\  --format=<json|geojson|ndjson|csv>
+            \\        Export format. Defaults to json.
+            \\
+            \\  --output=<file>
+            \\        Output file path. Writes to stdout if not specified.
+            \\
+            \\  --entity-id=<uuid>
+            \\        Filter by entity ID.
+            \\
+            \\  --start-time=<ns>
+            \\        Filter events after this timestamp (nanoseconds).
+            \\
+            \\  --end-time=<ns>
+            \\        Filter events before this timestamp (nanoseconds).
+            \\
+            \\  --no-metadata
+            \\        Exclude schema version and metadata from output. Metadata included by default.
+            \\
+            \\  --pretty
+            \\        Pretty-print output with indentation (json/geojson only).
+            \\
+            \\  --limit=<n>
+            \\        Maximum events to export. 0 for unlimited.
+            \\
+            \\Examples:
+            \\
+            \\  archerdb export 0_0.archerdb > events.json
+            \\  archerdb export --format=geojson --output=locations.geojson 0_0.archerdb
+            \\  archerdb export --format=csv --entity-id=abc123 0_0.archerdb
+            \\  archerdb export --start-time=1704067200000000000 --limit=1000 0_0.archerdb
+            \\
+        ;
+    };
+
+    // Data import command (F-Data-Portability).
+    const Import = struct {
+        /// Import format: json, geojson, csv (auto-detected from file extension if not specified)
+        format: ?[]const u8 = null,
+        /// Validate only, don't actually import
+        dry_run: bool = false,
+        /// Skip records with validation errors
+        skip_errors: bool = false,
+        /// Batch size for import operations
+        batch_size: u32 = 1000,
+        /// Hide progress during import (default: show progress)
+        no_progress: bool = false,
+        /// ArcherDB cluster addresses
+        addresses: []const u8,
+        /// Cluster ID
+        cluster: u128,
+        log_level: LogLevel = .info,
+
+        @"--": void,
+        /// Path to the file to import
+        path: []const u8,
+
+        pub const help =
+            \\Usage:
+            \\
+            \\  archerdb import [options] --addresses=<addresses> --cluster=<id> <path>
+            \\
+            \\Options:
+            \\
+            \\  --format=<json|geojson|csv>
+            \\        Import format. Auto-detected from file extension if not specified.
+            \\
+            \\  --addresses=<addresses>
+            \\        ArcherDB cluster addresses (required).
+            \\
+            \\  --cluster=<integer>
+            \\        Cluster ID (required).
+            \\
+            \\  --dry-run
+            \\        Validate the file without importing.
+            \\
+            \\  --skip-errors
+            \\        Continue importing even if some records fail validation.
+            \\
+            \\  --batch-size=<n>
+            \\        Number of events per batch. Defaults to 1000.
+            \\
+            \\  --no-progress
+            \\        Hide import progress. Progress is shown by default.
+            \\
+            \\Examples:
+            \\
+            \\  archerdb import --addresses=3000 --cluster=0 events.json
+            \\  archerdb import --format=geojson --addresses=3000,3001,3002 --cluster=0 locations.geojson
+            \\  archerdb import --dry-run --addresses=3000 --cluster=0 data.csv
+            \\
+        ;
+    };
+
     format: Format,
     recover: Recover,
     start: Start,
@@ -382,6 +513,8 @@ const CLIArgs = union(enum) {
     inspect: Inspect,
     multiversion: Multiversion,
     amqp: AMQP,
+    @"export": Export,
+    import: Import,
 
     // TODO Document --cache-accounts, --cache-transfers, --cache-transfers-posted, --limit-storage,
     // --limit-pipeline-requests
@@ -420,6 +553,10 @@ const CLIArgs = union(enum) {
         \\  repl       Enter the ArcherDB client REPL.
         \\
         \\  amqp       CDC connector for AMQP targets.
+        \\
+        \\  export     Export data from a replica data file (JSON, GeoJSON, NDJSON, CSV).
+        \\
+        \\  import     Import data into an ArcherDB cluster (JSON, GeoJSON, CSV).
         \\
         \\Options:
         \\
@@ -484,6 +621,11 @@ const CLIArgs = union(enum) {
         \\
         \\  --metrics-bind=<address>
         \\        Bind address for the metrics endpoint.
+        \\
+        \\  --metrics-auth-token=<token>
+        \\        Bearer token for authenticating /metrics endpoint requests.
+        \\        When set, requests must include "Authorization: Bearer <token>" header.
+        \\        Recommended for production deployments with public binding.
         \\        Defaults to "127.0.0.1" for security (localhost only).
         \\        Use "0.0.0.0" to listen on all interfaces (requires explicit opt-in).
         \\
@@ -626,6 +768,7 @@ pub const Command = union(enum) {
         log_trace: bool,
         metrics_port: ?u16,
         metrics_bind: []const u8,
+        metrics_auth_token: ?[]const u8,
         // Backup configuration (F5.5)
         backup_enabled: bool,
         backup_provider: backup_config.StorageProvider,
@@ -641,6 +784,9 @@ pub const Command = union(enum) {
         backup_retention_days: u32,
         backup_primary_only: bool,
         statsd: ?std.net.Address,
+        // Per ttl-retention/spec.md: Global default TTL in days
+        // 0 = infinite (no expiration), > 0 = events expire after that many days
+        default_ttl_days: u32,
     };
 
     pub const Version = struct {
@@ -757,6 +903,48 @@ pub const Command = union(enum) {
         log_level: LogLevel,
     };
 
+    /// Export format enumeration.
+    pub const ExportFormat = enum {
+        json,
+        geojson,
+        ndjson,
+        csv,
+    };
+
+    /// Import format enumeration.
+    pub const ImportFormat = enum {
+        json,
+        geojson,
+        csv,
+    };
+
+    /// Data export command (F-Data-Portability).
+    pub const Export = struct {
+        format: ExportFormat,
+        output: ?[]const u8,
+        entity_id: ?[]const u8,
+        start_time: ?u64,
+        end_time: ?u64,
+        include_metadata: bool,
+        pretty: bool,
+        limit: u64,
+        path: []const u8,
+        log_level: LogLevel,
+    };
+
+    /// Data import command (F-Data-Portability).
+    pub const Import = struct {
+        addresses: Addresses,
+        cluster: u128,
+        format: ImportFormat,
+        dry_run: bool,
+        skip_errors: bool,
+        batch_size: u32,
+        progress: bool,
+        path: []const u8,
+        log_level: LogLevel,
+    };
+
     format: Format,
     recover: Recover,
     start: Start,
@@ -767,6 +955,8 @@ pub const Command = union(enum) {
     inspect: Inspect,
     multiversion: Multiversion,
     amqp: AMQP,
+    @"export": Export,
+    import: Import,
 };
 
 /// Parse the command line arguments passed to the `archerdb` binary.
@@ -785,6 +975,8 @@ pub fn parse_args(args_iterator: *std.process.ArgIterator) Command {
         .inspect => |inspect| .{ .inspect = parse_args_inspect(inspect) },
         .multiversion => |multiversion| .{ .multiversion = parse_args_multiversion(multiversion) },
         .amqp => |amqp| .{ .amqp = parse_args_amqp(amqp) },
+        .@"export" => |exp| .{ .@"export" = parse_args_export(exp) },
+        .import => |imp| .{ .import = parse_args_import(imp) },
     };
 }
 
@@ -896,18 +1088,19 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
     // Allowlist of stable flags. --development will disable automatic multiversion
     // upgrades too, but the flag itself is stable.
     const stable_args = .{
-        "addresses",                   "cache_grid",
-        "development",                 "experimental",
-        "log_level",                   "log_format",
-        "log_file",                    "log_rotate_size",
-        "log_rotate_count",            "metrics_port",
-        "metrics_bind",                "backup_enabled",
-        "backup_provider",             "backup_bucket",
-        "backup_region",               "backup_credentials",
-        "backup_mode",                 "backup_encryption",
-        "backup_kms_key_id",           "backup_compress",
-        "backup_queue_soft_limit",     "backup_queue_hard_limit",
-        "backup_retention_days",       "backup_primary_only",
+        "addresses",               "cache_grid",
+        "development",             "experimental",
+        "log_level",               "log_format",
+        "log_file",                "log_rotate_size",
+        "log_rotate_count",        "metrics_port",
+        "metrics_bind",            "metrics_auth_token",
+        "backup_enabled",          "backup_provider",
+        "backup_bucket",           "backup_region",
+        "backup_credentials",      "backup_mode",
+        "backup_encryption",       "backup_kms_key_id",
+        "backup_compress",         "backup_queue_soft_limit",
+        "backup_queue_hard_limit", "backup_retention_days",
+        "backup_primary_only",
     };
     @setEvalBranchQuota(96_000);
     inline for (std.meta.fields(@TypeOf(start))) |field| {
@@ -1164,6 +1357,7 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
         .log_trace = start.log_trace,
         .metrics_port = start.metrics_port,
         .metrics_bind = start.metrics_bind orelse "127.0.0.1",
+        .metrics_auth_token = start.metrics_auth_token,
         .statsd = if (start.statsd) |statsd_address|
             parse_address_and_port(statsd_address, "--statsd", 8125)
         else
@@ -1194,6 +1388,8 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
         .backup_queue_hard_limit = start.backup_queue_hard_limit,
         .backup_retention_days = start.backup_retention_days,
         .backup_primary_only = start.backup_primary_only,
+        // Per ttl-retention/spec.md: Global default TTL (0 = infinite, >0 = days)
+        .default_ttl_days = start.default_ttl_days orelse 0,
     };
 }
 
@@ -1415,6 +1611,82 @@ fn parse_args_amqp(amqp: CLIArgs.AMQP) Command.AMQP {
     };
 }
 
+fn parse_args_export(exp: CLIArgs.Export) Command.Export {
+    // Parse format string to enum
+    const format = parse_export_format(exp.format);
+
+    // Validate time range if both specified
+    if (exp.start_time != null and exp.end_time != null) {
+        if (exp.start_time.? > exp.end_time.?) {
+            vsr.fatal(.cli, "--start-time must be less than or equal to --end-time", .{});
+        }
+    }
+
+    return .{
+        .format = format,
+        .output = exp.output,
+        .entity_id = exp.entity_id,
+        .start_time = exp.start_time,
+        .end_time = exp.end_time,
+        .include_metadata = !exp.no_metadata, // Inverted: --no-metadata flag
+        .pretty = exp.pretty,
+        .limit = exp.limit,
+        .path = exp.path,
+        .log_level = exp.log_level,
+    };
+}
+
+fn parse_export_format(format_str: []const u8) Command.ExportFormat {
+    if (std.mem.eql(u8, format_str, "json")) return .json;
+    if (std.mem.eql(u8, format_str, "geojson")) return .geojson;
+    if (std.mem.eql(u8, format_str, "ndjson")) return .ndjson;
+    if (std.mem.eql(u8, format_str, "csv")) return .csv;
+    vsr.fatal(.cli, "--format: invalid format '{s}', expected json, geojson, ndjson, or csv", .{format_str});
+}
+
+fn parse_args_import(imp: CLIArgs.Import) Command.Import {
+    const addresses = parse_addresses(imp.addresses, "--addresses", Command.Addresses);
+
+    // Auto-detect format from file extension if not specified
+    const format = if (imp.format) |fmt_str|
+        parse_import_format(fmt_str)
+    else
+        detect_import_format(imp.path);
+
+    // Validate batch size
+    if (imp.batch_size == 0) {
+        vsr.fatal(.cli, "--batch-size must be greater than 0", .{});
+    }
+
+    return .{
+        .addresses = addresses,
+        .cluster = imp.cluster,
+        .format = format,
+        .dry_run = imp.dry_run,
+        .skip_errors = imp.skip_errors,
+        .batch_size = imp.batch_size,
+        .progress = !imp.no_progress, // Inverted: --no-progress flag
+        .path = imp.path,
+        .log_level = imp.log_level,
+    };
+}
+
+fn parse_import_format(format_str: []const u8) Command.ImportFormat {
+    if (std.mem.eql(u8, format_str, "json")) return .json;
+    if (std.mem.eql(u8, format_str, "geojson")) return .geojson;
+    if (std.mem.eql(u8, format_str, "csv")) return .csv;
+    vsr.fatal(.cli, "--format: invalid format '{s}', expected json, geojson, or csv", .{format_str});
+}
+
+fn detect_import_format(path: []const u8) Command.ImportFormat {
+    if (std.mem.endsWith(u8, path, ".json")) return .json;
+    if (std.mem.endsWith(u8, path, ".geojson")) return .geojson;
+    if (std.mem.endsWith(u8, path, ".csv")) return .csv;
+    if (std.mem.endsWith(u8, path, ".ndjson")) return .json; // NDJSON is a subset of JSON
+    // Default to JSON if extension not recognized
+    return .json;
+}
+
 /// Parse and allocate the addresses returning a slice into that array.
 fn parse_addresses(
     raw_addresses: []const u8,
@@ -1514,4 +1786,78 @@ fn parse_timeout_to_ticks(timeout_ms: ?u64, cli_flag: []const u8) ?u64 {
     } else {
         return null;
     }
+}
+
+// ============================================================================
+// Unit Tests (F-Data-Portability CLI)
+// ============================================================================
+
+test "parse_export_format: valid formats" {
+    try std.testing.expectEqual(Command.ExportFormat.json, parse_export_format("json"));
+    try std.testing.expectEqual(Command.ExportFormat.geojson, parse_export_format("geojson"));
+    try std.testing.expectEqual(Command.ExportFormat.ndjson, parse_export_format("ndjson"));
+    try std.testing.expectEqual(Command.ExportFormat.csv, parse_export_format("csv"));
+}
+
+test "parse_import_format: valid formats" {
+    try std.testing.expectEqual(Command.ImportFormat.json, parse_import_format("json"));
+    try std.testing.expectEqual(Command.ImportFormat.geojson, parse_import_format("geojson"));
+    try std.testing.expectEqual(Command.ImportFormat.csv, parse_import_format("csv"));
+}
+
+test "detect_import_format: file extension detection" {
+    try std.testing.expectEqual(Command.ImportFormat.json, detect_import_format("data.json"));
+    try std.testing.expectEqual(Command.ImportFormat.geojson, detect_import_format("locations.geojson"));
+    try std.testing.expectEqual(Command.ImportFormat.csv, detect_import_format("events.csv"));
+    try std.testing.expectEqual(Command.ImportFormat.json, detect_import_format("stream.ndjson"));
+    // Unknown extension defaults to JSON
+    try std.testing.expectEqual(Command.ImportFormat.json, detect_import_format("data.txt"));
+    try std.testing.expectEqual(Command.ImportFormat.json, detect_import_format("noextension"));
+}
+
+test "parse_args_export: basic parsing" {
+    const cli_export = CLIArgs.Export{
+        .format = "geojson",
+        .output = "/tmp/output.geojson",
+        .entity_id = "abc123",
+        .start_time = 1000,
+        .end_time = 2000,
+        .no_metadata = false,
+        .pretty = true,
+        .limit = 100,
+        .log_level = .info,
+        .@"--" = {},
+        .path = "/data/0_0.archerdb",
+    };
+
+    const cmd = parse_args_export(cli_export);
+
+    try std.testing.expectEqual(Command.ExportFormat.geojson, cmd.format);
+    try std.testing.expectEqualStrings("/tmp/output.geojson", cmd.output.?);
+    try std.testing.expectEqualStrings("abc123", cmd.entity_id.?);
+    try std.testing.expectEqual(@as(u64, 1000), cmd.start_time.?);
+    try std.testing.expectEqual(@as(u64, 2000), cmd.end_time.?);
+    try std.testing.expect(cmd.include_metadata); // no_metadata=false -> include_metadata=true
+    try std.testing.expect(cmd.pretty);
+    try std.testing.expectEqual(@as(u64, 100), cmd.limit);
+}
+
+test "parse_args_export: no_metadata flag inversion" {
+    const cli_export = CLIArgs.Export{
+        .format = "json",
+        .output = null,
+        .entity_id = null,
+        .start_time = null,
+        .end_time = null,
+        .no_metadata = true, // User wants no metadata
+        .pretty = false,
+        .limit = 0,
+        .log_level = .info,
+        .@"--" = {},
+        .path = "test.archerdb",
+    };
+
+    const cmd = parse_args_export(cli_export);
+
+    try std.testing.expect(!cmd.include_metadata); // no_metadata=true -> include_metadata=false
 }

@@ -19,6 +19,7 @@ import (
 	"flag"
 	"fmt"
 	"math/rand"
+	"os"
 	"sort"
 	"testing"
 	"time"
@@ -417,6 +418,11 @@ func printResult(result benchmarkResult) {
 // BenchmarkArcherDB runs the full benchmark suite.
 func BenchmarkArcherDB(b *testing.B) {
 	flag.Parse()
+
+	// Benchmarks require ARCHERDB_INTEGRATION env var to be set
+	if os.Getenv("ARCHERDB_INTEGRATION") == "" {
+		b.Skip("Skipping benchmark: set ARCHERDB_INTEGRATION=1 to run against server at " + *benchAddresses)
+	}
 
 	bench := NewArcherDBBenchmark(
 		*benchClusterID,

@@ -255,7 +255,9 @@ pub fn StateMachineType(comptime Storage: type) type {
             assert(state_machine.callback == null);
 
             state_machine.callback = callback;
-            state_machine.forest.compact(compact_callback, op);
+            // For testing, use current time for TTL expiration checks
+            const compaction_timestamp_ns: u64 = @intCast(std.time.nanoTimestamp());
+            state_machine.forest.compact(compact_callback, op, compaction_timestamp_ns);
         }
 
         fn compact_callback(forest: *Forest) void {

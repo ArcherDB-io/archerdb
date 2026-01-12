@@ -342,6 +342,12 @@ pub fn main() !void {
             // Initialize metrics server if --metrics-port is set
             if (args.metrics_port) |port| {
                 const bind = args.metrics_bind;
+
+                // Configure bearer token authentication if specified
+                if (args.metrics_auth_token) |token| {
+                    metrics_server.setAuthToken(token);
+                }
+
                 metrics_srv = metrics_server.MetricsServer.start(bind, port) catch |err| {
                     const err_msg = "error starting metrics server on {s}:{d}: {}";
                     log.err(err_msg, .{ bind, port, err });
@@ -411,6 +417,8 @@ pub fn main() !void {
             try stdout_buffer.flush();
         },
         .amqp => |*args| try command_amqp(gpa, time, args),
+        .@"export" => |*args| try command_export(gpa, &io, &tracer, args),
+        .import => |*args| try command_import(gpa, &io, time, args),
     }
 }
 
@@ -686,6 +694,8 @@ fn command_start(
                 .lsm_forest_compaction_block_count = args.lsm_forest_compaction_block_count,
                 .lsm_forest_node_count = args.lsm_forest_node_count,
                 .cache_entries_geo_events = args.cache_geo_events,
+                // Per ttl-retention/spec.md: Global default TTL configuration
+                .default_ttl_days = args.default_ttl_days,
             },
             .message_bus_options = .{
                 .configuration = args.addresses.const_slice(),
@@ -762,6 +772,18 @@ fn command_start(
         );
     }
 
+    // Development mode warning per configuration/spec.md
+    if (args.development) {
+        log.warn(
+            "WARNING: Development mode enabled - NOT for production use. " ++
+                "Direct I/O may be disabled, cache sizes reduced.",
+            .{},
+        );
+    }
+
+    // Note: Standalone mode (replica_count=1) warning is logged after replica init
+    // at line 833-840, when the replica count is read from the data file superblock.
+
     // It is possible to start archerdb passing `0` as an address:
     //     $ archerdb start --addresses=0 0_0.archerdb
     // This enables a couple of special behaviors, useful in tests:
@@ -809,6 +831,15 @@ fn command_start(
         if (replica.cluster == 0) {
             log.warn("a cluster id of 0 is reserved for testing and benchmarking, " ++
                 "do not use in production", .{});
+        }
+
+        // Standalone mode warning per configuration/spec.md
+        if (replica.replica_count == 1) {
+            log.warn(
+                "Running in standalone mode (replica_count=1) - no fault tolerance. " ++
+                    "Data is not replicated. Suitable for development/testing only.",
+                .{},
+            );
         }
     }
 
@@ -988,4 +1019,238 @@ fn print_value(
             value,
         }),
     }
+}
+
+// Data Export command (F-Data-Portability)
+fn command_export(
+    gpa: mem.Allocator,
+    io: *IO,
+    tracer: *Tracer,
+    args: *const cli.Command.Export,
+) !void {
+    // Open output file or use stdout
+    var output_file: std.fs.File = undefined;
+    var output_buffered: std.io.BufferedWriter(4096, std.fs.File.Writer) = undefined;
+
+    if (args.output) |output_path| {
+        output_file = std.fs.cwd().createFile(output_path, .{}) catch |err| {
+            log.err("error creating output file '{s}': {}", .{ output_path, err });
+            return err;
+        };
+    } else {
+        output_file = std.io.getStdOut();
+    }
+    defer if (args.output != null) output_file.close();
+
+    output_buffered = std.io.bufferedWriter(output_file.writer());
+    const output_writer = output_buffered.writer();
+
+    // Open the data file for reading
+    var storage = try Storage.init(io, tracer, .{
+        .path = args.path,
+        .size_min = data_file_size_min,
+        .purpose = .open,
+        .direct_io = if (constants.direct_io) .direct_io_optional else .direct_io_disabled,
+    });
+    defer storage.deinit();
+
+    // For now, export from data file is a stub - full implementation requires
+    // LSM tree traversal which is complex. We document the CLI interface.
+    const stderr = std.io.getStdErr().writer();
+    _ = gpa;
+    _ = output_writer;
+
+    try stderr.print(
+        \\
+        \\ArcherDB Export - Data File Export
+        \\====================================
+        \\
+        \\Export format: {s}
+        \\Data file: {s}
+        \\Output: {s}
+        \\
+        \\Note: Direct data file export requires LSM tree traversal.
+        \\For runtime data access, use the client SDKs or REPL:
+        \\
+        \\  archerdb repl --addresses=3000 --cluster=0
+        \\  > SELECT * FROM events WHERE entity_id = 'abc123'
+        \\
+        \\Or use the SDK export methods after querying:
+        \\
+        \\  // Node.js example
+        \\  const events = await client.queryLatest({{ entityId: 'abc123' }});
+        \\  const exporter = new DataExporter({{ format: 'geojson' }});
+        \\  exporter.export(events, 'output.geojson');
+        \\
+    , .{
+        @tagName(args.format),
+        args.path,
+        args.output orelse "stdout",
+    });
+
+    try output_buffered.flush();
+}
+
+// Data Import command (F-Data-Portability)
+fn command_import(
+    gpa: mem.Allocator,
+    io: *IO,
+    time: Time,
+    args: *const cli.Command.Import,
+) !void {
+    // Use vsr module's data_export to avoid duplicate module issues
+    const data_export = vsr.data_export;
+
+    // Open input file
+    const input_file = std.fs.cwd().openFile(args.path, .{}) catch |err| {
+        log.err("error opening input file '{s}': {}", .{ args.path, err });
+        return err;
+    };
+    defer input_file.close();
+
+    // Get file size for progress reporting
+    const file_stat = try input_file.stat();
+    const file_size = file_stat.size;
+
+    const stderr = std.io.getStdErr().writer();
+
+    if (args.dry_run) {
+        try stderr.print(
+            \\
+            \\ArcherDB Import - Dry Run Mode
+            \\================================
+            \\
+            \\Input file: {s}
+            \\File size: {} bytes
+            \\Format: {s}
+            \\
+            \\Validating file structure...
+            \\
+        , .{
+            args.path,
+            file_size,
+            @tagName(args.format),
+        });
+    }
+
+    // Initialize message pool and client for actual import
+    var message_pool = try MessagePool.init(gpa, .client);
+    defer message_pool.deinit(gpa);
+
+    var client = try Client.init(
+        gpa,
+        time,
+        &message_pool,
+        .{
+            .id = stdx.unique_u128(),
+            .cluster = args.cluster,
+            .replica_count = @intCast(args.addresses.count()),
+
+            .message_bus_options = .{
+                .configuration = args.addresses.const_slice(),
+                .io = io,
+                .clients_limit = null,
+            },
+            .eviction_callback = &import_client_eviction_callback,
+        },
+    );
+    defer client.deinit(gpa);
+
+    // Read file content for parsing
+    var reader = input_file.reader();
+    var content = std.ArrayList(u8).init(gpa);
+    defer content.deinit();
+
+    try reader.readAllArrayList(&content, 100 * 1024 * 1024); // Max 100MB
+
+    var events_imported: usize = 0;
+    var events_failed: usize = 0;
+
+    // Parse based on format
+    switch (args.format) {
+        .json => {
+            var importer = data_export.JsonImporter.init(gpa, .{});
+
+            // Simple line-by-line parsing for NDJSON-like format
+            var lines = std.mem.splitScalar(u8, content.items, '\n');
+            while (lines.next()) |line| {
+                if (line.len == 0) continue;
+                if (std.mem.startsWith(u8, line, "{") and std.mem.indexOf(u8, line, "entity_id") != null) {
+                    const result = importer.parseEvent(line);
+                    if (result) |_| {
+                        events_imported += 1;
+                        // In non-dry-run mode, would send to cluster via client
+                    } else |_| {
+                        events_failed += 1;
+                        if (!args.skip_errors) {
+                            log.err("Failed to parse line, stopping import", .{});
+                            break;
+                        }
+                    }
+                }
+            }
+        },
+        .geojson => {
+            var importer = data_export.GeoJsonImporter.init(gpa, .{});
+
+            // Look for features array and parse each feature
+            if (std.mem.indexOf(u8, content.items, "\"features\"")) |_| {
+                // Simple feature extraction - find each Feature object
+                var pos: usize = 0;
+                while (std.mem.indexOfPos(u8, content.items, pos, "\"type\":\"Feature\"")) |feature_start| {
+                    // Find the end of this feature (next Feature or end of array)
+                    const search_start = feature_start + 10;
+                    const feature_end = std.mem.indexOfPos(u8, content.items, search_start, "\"type\":\"Feature\"") orelse content.items.len;
+
+                    // Extract feature substring (rough extraction)
+                    const brace_start = if (feature_start > 0) std.mem.lastIndexOfScalar(u8, content.items[0..feature_start], '{') else null;
+                    if (brace_start) |start| {
+                        const feature_str = content.items[start..feature_end];
+                        const result = importer.parseFeature(feature_str);
+                        if (result) |_| {
+                            events_imported += 1;
+                        } else |_| {
+                            events_failed += 1;
+                            if (!args.skip_errors) break;
+                        }
+                    }
+                    pos = feature_end;
+                }
+            }
+        },
+        .csv => {
+            // CSV import would use data_export_csv module
+            try stderr.print("CSV import parsing...\n", .{});
+            // Placeholder - would parse CSV and convert to GeoEvents
+        },
+    }
+
+    if (args.progress) {
+        try stderr.print(
+            \\
+            \\Import Summary
+            \\==============
+            \\Events imported: {}
+            \\Events failed: {}
+            \\Dry run: {}
+            \\
+        , .{
+            events_imported,
+            events_failed,
+            args.dry_run,
+        });
+    }
+
+    if (!args.dry_run and events_imported > 0) {
+        try stderr.print("Note: Events were validated but not sent to cluster in this version.\n", .{});
+        try stderr.print("Use SDK clients for production data import.\n", .{});
+    }
+}
+
+fn import_client_eviction_callback(
+    client: *Client,
+    eviction: *const MessagePool.Message.Eviction,
+) void {
+    _ = client;
+    log.err("import client evicted: {s}", .{@tagName(eviction.header.reason)});
 }

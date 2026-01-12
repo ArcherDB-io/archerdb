@@ -253,6 +253,11 @@ pub fn ForestType(comptime _Storage: type, comptime groove_cfg: anytype) type {
 
         radix_buffer: ScratchMemory,
 
+        /// Current timestamp for TTL expiration checks during compaction.
+        /// Set by the state machine before calling compact().
+        /// Per ttl-retention/spec.md: use consensus timestamp for determinism.
+        compaction_timestamp_ns: u64 = 0,
+
         pub fn init(
             forest: *Forest,
             allocator: mem.Allocator,
@@ -429,7 +434,11 @@ pub fn ForestType(comptime _Storage: type, comptime groove_cfg: anytype) type {
             callback(forest);
         }
 
-        pub fn compact(forest: *Forest, callback: Callback, op: u64) void {
+        pub fn compact(forest: *Forest, callback: Callback, op: u64, compaction_timestamp_ns: u64) void {
+            // Store timestamp for TTL expiration checks during compaction.
+            // Per ttl-retention/spec.md: use consensus timestamp for determinism.
+            forest.compaction_timestamp_ns = compaction_timestamp_ns;
+
             const compaction_beat = op % constants.lsm_compaction_ops;
 
             const first_beat = compaction_beat == 0;
@@ -964,7 +973,8 @@ fn CompactionScheduleType(comptime Forest: type, comptime Grid: type) type {
                                         // At least one output index & value block.
                                         (1 + 1),
                             );
-                            const bar_input_values = compaction.bar_commence(op);
+                            // Pass timestamp for TTL expiration checks (ttl-retention/spec.md).
+                            const bar_input_values = compaction.bar_commence(op, self.forest.compaction_timestamp_ns);
 
                             self.bar_input_size += (bar_input_values * @sizeOf(Value));
                         }

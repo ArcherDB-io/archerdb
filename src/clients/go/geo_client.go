@@ -28,6 +28,7 @@ extern __declspec(dllexport) void onGoPacketCompletion(
 */
 import "C"
 import (
+	"encoding/binary"
 	"fmt"
 	"math/rand"
 	"runtime"
@@ -36,6 +37,7 @@ import (
 	"unsafe"
 
 	"github.com/archerdb/archerdb-go/pkg/errors"
+	"github.com/archerdb/archerdb-go/pkg/observability"
 	"github.com/archerdb/archerdb-go/pkg/types"
 )
 
@@ -316,6 +318,7 @@ type geoClient struct {
 	arch_client   *C.arch_client_t
 	config      GeoClientConfig
 	retryConfig RetryConfig
+	metrics     *observability.SDKMetrics
 	closed      bool
 }
 
@@ -372,6 +375,7 @@ func NewGeoClient(config GeoClientConfig) (GeoClient, error) {
 		arch_client:   tbClient,
 		config:      config,
 		retryConfig: retryConfig,
+		metrics:     observability.GetMetrics(),
 		closed:      false,
 	}, nil
 }
@@ -411,6 +415,7 @@ func NewGeoClientEcho(config GeoClientConfig) (GeoClient, error) {
 		arch_client:   tbClient,
 		config:      config,
 		retryConfig: retryConfig,
+		metrics:     observability.GetMetrics(),
 		closed:      false,
 	}, nil
 }
@@ -448,6 +453,59 @@ func (c *geoClient) doGeoRequest(op types.GeoOperation, count int, eventSize uin
 	if data != nil {
 		pinner.Pin(data)
 	}
+
+	clientStatus := C.arch_client_submit(c.arch_client, packet)
+	if clientStatus == C.ARCH_CLIENT_INVALID {
+		return nil, errors.ErrClientClosed{}
+	}
+
+	// Wait for completion
+	reply := <-req.ready
+	packetStatus := C.ARCH_PACKET_STATUS(packet.status)
+
+	if packetStatus != C.ARCH_PACKET_OK {
+		switch packetStatus {
+		case C.ARCH_PACKET_TOO_MUCH_DATA:
+			return nil, errors.ErrMaximumBatchSizeExceeded{}
+		case C.ARCH_PACKET_CLIENT_EVICTED:
+			return nil, errors.ErrClientEvicted{}
+		case C.ARCH_PACKET_CLIENT_RELEASE_TOO_LOW:
+			return nil, errors.ErrClientReleaseTooLow{}
+		case C.ARCH_PACKET_CLIENT_RELEASE_TOO_HIGH:
+			return nil, errors.ErrClientReleaseTooHigh{}
+		case C.ARCH_PACKET_CLIENT_SHUTDOWN:
+			return nil, errors.ErrClientClosed{}
+		case C.ARCH_PACKET_INVALID_OPERATION:
+			return nil, errors.ErrInvalidOperation{}
+		case C.ARCH_PACKET_INVALID_DATA_SIZE:
+			return nil, fmt.Errorf("invalid data size")
+		default:
+			return nil, fmt.Errorf("unknown packet status: %d", packetStatus)
+		}
+	}
+
+	return reply, nil
+}
+
+// doGeoRequestBytes submits a request with raw byte data to the server.
+// Used for variable-length messages like polygon queries.
+func (c *geoClient) doGeoRequestBytes(op types.GeoOperation, data []byte) ([]uint8, error) {
+	var req request
+	req.ready = make(chan []uint8, 1)
+
+	packet := new(C.arch_packet_t)
+	packet.user_data = unsafe.Pointer(&req)
+	packet.user_tag = 0
+	packet.operation = C.uint8_t(op)
+	packet.data_size = C.uint32_t(len(data))
+	packet.data = unsafe.Pointer(&data[0])
+
+	// Pin all go-allocated refs accessed by onGoPacketCompletion
+	var pinner runtime.Pinner
+	defer pinner.Unpin()
+	pinner.Pin(&req)
+	pinner.Pin(packet)
+	pinner.Pin(&data[0])
 
 	clientStatus := C.arch_client_submit(c.arch_client, packet)
 	if clientStatus == C.ARCH_CLIENT_INVALID {
@@ -689,8 +747,7 @@ func (c *geoClient) QueryRadius(filter types.QueryRadiusFilter) (types.QueryResu
 }
 
 // QueryPolygon queries events within a polygon.
-// NOTE: Polygon queries require variable-length vertex data and are not yet implemented.
-// Use QueryRadius for spatial queries in the current release.
+// The polygon can optionally contain holes (exclusion zones).
 func (c *geoClient) QueryPolygon(filter types.QueryPolygonFilter) (types.QueryResult, error) {
 	if c.closed {
 		return types.QueryResult{}, ClientClosedError{Msg: "client has been closed"}
@@ -702,9 +759,92 @@ func (c *geoClient) QueryPolygon(filter types.QueryPolygonFilter) (types.QueryRe
 		}
 	}
 
-	// TODO: Polygon queries require serializing variable-length vertex data
-	// For now, return not implemented error
-	return types.QueryResult{}, fmt.Errorf("polygon queries not yet implemented in Go SDK")
+	if len(filter.Vertices) < 3 {
+		return types.QueryResult{}, InvalidCoordinatesError{
+			Msg: fmt.Sprintf("polygon must have at least 3 vertices, got %d", len(filter.Vertices)),
+		}
+	}
+
+	if len(filter.Vertices) > types.PolygonVerticesMax {
+		return types.QueryResult{}, InvalidCoordinatesError{
+			Msg: fmt.Sprintf("polygon exceeds maximum %d vertices, got %d", types.PolygonVerticesMax, len(filter.Vertices)),
+		}
+	}
+
+	if len(filter.Holes) > types.PolygonHolesMax {
+		return types.QueryResult{}, InvalidCoordinatesError{
+			Msg: fmt.Sprintf("too many holes: %d exceeds maximum %d", len(filter.Holes), types.PolygonHolesMax),
+		}
+	}
+
+	// Serialize to wire format:
+	// 1. QueryPolygonFilter header (128 bytes)
+	// 2. Outer vertices (vertex_count * 16 bytes)
+	// 3. Hole descriptors (hole_count * 8 bytes)
+	// 4. Hole vertices (sum of all hole vertex counts * 16 bytes)
+
+	// Calculate total size
+	headerSize := 128 // QueryPolygonFilter header
+	outerVerticesSize := len(filter.Vertices) * 16
+	holeDescriptorsSize := len(filter.Holes) * 8
+
+	totalHoleVertices := 0
+	for _, hole := range filter.Holes {
+		if len(hole.Vertices) < 3 {
+			return types.QueryResult{}, InvalidCoordinatesError{
+				Msg: fmt.Sprintf("hole must have at least 3 vertices, got %d", len(hole.Vertices)),
+			}
+		}
+		totalHoleVertices += len(hole.Vertices)
+	}
+	holeVerticesSize := totalHoleVertices * 16
+
+	totalSize := headerSize + outerVerticesSize + holeDescriptorsSize + holeVerticesSize
+	data := make([]byte, totalSize)
+
+	// Write header (little-endian)
+	binary.LittleEndian.PutUint32(data[0:4], uint32(len(filter.Vertices)))  // vertex_count
+	binary.LittleEndian.PutUint32(data[4:8], uint32(len(filter.Holes)))     // hole_count
+	binary.LittleEndian.PutUint32(data[8:12], filter.Limit)                  // limit
+	binary.LittleEndian.PutUint32(data[12:16], 0)                            // _reserved_align
+	binary.LittleEndian.PutUint64(data[16:24], filter.TimestampMin)          // timestamp_min
+	binary.LittleEndian.PutUint64(data[24:32], filter.TimestampMax)          // timestamp_max
+	// Extract group_id as u64 from Uint128 (lower 8 bytes in little-endian)
+	groupIDBytes := filter.GroupID.Bytes()
+	copy(data[32:40], groupIDBytes[:8])  // group_id (lower 64 bits)
+	// bytes 40-128 are reserved (zeroed by make)
+
+	// Write outer vertices
+	offset := headerSize
+	for _, v := range filter.Vertices {
+		binary.LittleEndian.PutUint64(data[offset:offset+8], uint64(v.LatNano))
+		binary.LittleEndian.PutUint64(data[offset+8:offset+16], uint64(v.LonNano))
+		offset += 16
+	}
+
+	// Write hole descriptors
+	for _, hole := range filter.Holes {
+		binary.LittleEndian.PutUint32(data[offset:offset+4], uint32(len(hole.Vertices)))
+		binary.LittleEndian.PutUint32(data[offset+4:offset+8], 0) // reserved
+		offset += 8
+	}
+
+	// Write hole vertices
+	for _, hole := range filter.Holes {
+		for _, v := range hole.Vertices {
+			binary.LittleEndian.PutUint64(data[offset:offset+8], uint64(v.LatNano))
+			binary.LittleEndian.PutUint64(data[offset+8:offset+16], uint64(v.LonNano))
+			offset += 16
+		}
+	}
+
+	// Submit request with raw byte data
+	reply, err := c.doGeoRequestBytes(types.GeoOperationQueryPolygon, data)
+	if err != nil {
+		return types.QueryResult{}, err
+	}
+
+	return c.parseQueryResponse(reply, int(filter.Limit))
 }
 
 // QueryLatest queries the most recent events globally or by group.
@@ -835,8 +975,17 @@ func (c *geoClient) withRetry(operation func() ([]types.InsertGeoEventsError, er
 	var lastError error
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		// Record retry metric for actual retry attempts (not first attempt)
+		// Per client-retry/spec.md: metrics recorded during retry operations
+		if attempt > 1 && c.metrics != nil {
+			c.metrics.RecordRetry()
+		}
+
 		// Check total timeout
 		if time.Since(startTime) >= c.retryConfig.TotalTimeout {
+			if c.metrics != nil {
+				c.metrics.RecordRetryExhausted()
+			}
 			return nil, RetryExhaustedError{Attempts: attempt - 1, LastError: lastError}
 		}
 
@@ -868,6 +1017,10 @@ func (c *geoClient) withRetry(operation func() ([]types.InsertGeoEventsError, er
 		time.Sleep(delay)
 	}
 
+	// All retries exhausted - record exhaustion metric
+	if c.metrics != nil {
+		c.metrics.RecordRetryExhausted()
+	}
 	return nil, RetryExhaustedError{Attempts: maxAttempts, LastError: lastError}
 }
 

@@ -108,11 +108,42 @@ class CQueryLatestFilter(ctypes.Structure):
     ]
 
 
+class CQueryUuidBatchFilter(ctypes.Structure):
+    """8-byte QueryUuidBatchFilter header (F1.3.4).
+
+    Wire format:
+      [CQueryUuidBatchFilter: 8 bytes]
+      [entity_ids[0..count]: 16 bytes each (u128)]
+    """
+    _fields_ = [
+        ("count", ctypes.c_uint32),        # u32, 4 bytes
+        ("reserved", ctypes.c_uint32),     # u32, 4 bytes (must be zero)
+    ]
+
+
+class CQueryUuidBatchResult(ctypes.Structure):
+    """16-byte QueryUuidBatchResult header (F1.3.4).
+
+    Wire format:
+      [CQueryUuidBatchResult: 16 bytes]
+      [not_found_indices[0..not_found_count]: 2 bytes each (u16)]
+      [padding to 16-byte alignment]
+      [events[0..found_count]: 128 bytes each (GeoEvent)]
+    """
+    _fields_ = [
+        ("found_count", ctypes.c_uint32),      # u32, 4 bytes
+        ("not_found_count", ctypes.c_uint32),  # u32, 4 bytes
+        ("reserved", ctypes.c_uint8 * 8),      # [8]u8
+    ]
+
+
 # Verify sizes
 assert ctypes.sizeof(CGeoEvent) == 128, f"CGeoEvent size mismatch: {ctypes.sizeof(CGeoEvent)}"
 assert ctypes.sizeof(CQueryUuidFilter) == 128
 assert ctypes.sizeof(CQueryRadiusFilter) == 128
 assert ctypes.sizeof(CQueryLatestFilter) == 128
+assert ctypes.sizeof(CQueryUuidBatchFilter) == 8
+assert ctypes.sizeof(CQueryUuidBatchResult) == 16
 
 
 # ============================================================================
@@ -581,6 +612,104 @@ class NativeClient:
                 events.append(wire_to_geo_event(c_event))
 
         return events
+
+    def query_uuid_batch(self, entity_ids: List[int]) -> "QueryUuidBatchResult":
+        """
+        Query multiple entities by UUID in a single request (F1.3.4).
+
+        Args:
+            entity_ids: List of entity UUIDs to look up (max 10,000)
+
+        Returns:
+            QueryUuidBatchResult with found events and not-found indices
+        """
+        from .types import QueryUuidBatchResult
+
+        count = len(entity_ids)
+        if count == 0:
+            return QueryUuidBatchResult(
+                found_count=0,
+                not_found_count=0,
+                not_found_indices=[],
+                events=[],
+            )
+
+        # Build wire format: 8-byte header + entity_ids array
+        # Header: count(u32) + reserved(u32)
+        header = CQueryUuidBatchFilter(count=count, reserved=0)
+        header_bytes = bytes(header)
+
+        # Entity IDs: each is 16 bytes (u128)
+        entity_bytes = b''
+        for eid in entity_ids:
+            entity_bytes += eid.to_bytes(16, 'little')
+
+        # Combine into single buffer
+        request_data = header_bytes + entity_bytes
+
+        # Create ctypes array for submission
+        request_array = (ctypes.c_uint8 * len(request_data))(*request_data)
+
+        result = self.submit(GeoOperation.QUERY_UUID_BATCH.value, request_array)
+
+        if result.status < 0 or result.status != bindings.PacketStatus.OK.value:
+            # On error, return empty result with all as not found
+            return QueryUuidBatchResult(
+                found_count=0,
+                not_found_count=count,
+                not_found_indices=list(range(count)),
+                events=[],
+            )
+
+        # Parse response:
+        # [CQueryUuidBatchResult: 16 bytes header]
+        # [not_found_indices[0..not_found_count]: 2 bytes each (u16)]
+        # [padding to 16-byte alignment]
+        # [events[0..found_count]: 128 bytes each (GeoEvent)]
+        HEADER_SIZE = 16
+
+        if result.data_size < HEADER_SIZE or not result.data:
+            return QueryUuidBatchResult(
+                found_count=0,
+                not_found_count=count,
+                not_found_indices=list(range(count)),
+                events=[],
+            )
+
+        # Parse header
+        header_result = CQueryUuidBatchResult.from_buffer_copy(result.data[:HEADER_SIZE])
+        found_count = header_result.found_count
+        not_found_count = header_result.not_found_count
+
+        # Parse not_found_indices
+        not_found_size = not_found_count * 2
+        not_found_indices = []
+        offset = HEADER_SIZE
+        for i in range(not_found_count):
+            if offset + 2 <= result.data_size:
+                idx = int.from_bytes(result.data[offset:offset+2], 'little')
+                not_found_indices.append(idx)
+                offset += 2
+
+        # Calculate events offset (aligned to 16 bytes)
+        events_offset_unaligned = HEADER_SIZE + not_found_size
+        events_offset = (events_offset_unaligned + 15) & ~15
+
+        # Parse events
+        events = []
+        offset = events_offset
+        for i in range(found_count):
+            if offset + 128 <= result.data_size:
+                c_event = CGeoEvent.from_buffer_copy(result.data[offset:offset+128])
+                events.append(wire_to_geo_event(c_event))
+                offset += 128
+
+        return QueryUuidBatchResult(
+            found_count=found_count,
+            not_found_count=not_found_count,
+            not_found_indices=not_found_indices,
+            events=events,
+        )
 
     def query_radius(self, filter: QueryRadiusFilter) -> List[GeoEvent]:
         """Query by radius."""

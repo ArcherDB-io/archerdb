@@ -1,6 +1,6 @@
 package com.archerdb.core;
 
-import static com.archerdb.AssertionError.assertTrue;
+import static com.archerdb.core.AssertionError.assertTrue;
 
 /**
  * Generic blocking request infrastructure.

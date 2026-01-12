@@ -471,6 +471,45 @@ export type StatusResponse = {
   deletion_count: bigint
 }
 
+/**
+ * Result of cleanup_expired operation.
+ *
+ * Per client-protocol/spec.md cleanup_expired (0x30) response format:
+ * - entries_scanned: u64 - Number of index entries examined
+ * - entries_removed: u64 - Number of expired entries cleaned up
+ */
+export type CleanupResult = {
+  /** Number of index entries examined */
+  entries_scanned: bigint
+  /** Number of expired entries cleaned up */
+  entries_removed: bigint
+}
+
+/**
+ * Wire format size of CleanupResult response (16 bytes: 2x u64).
+ */
+export const CLEANUP_RESULT_SIZE = 16
+
+/**
+ * Check if any entries were removed during cleanup.
+ */
+export function hasCleanupRemovals(result: CleanupResult): boolean {
+  return result.entries_removed > 0n
+}
+
+/**
+ * Calculate the percentage of scanned entries that were expired.
+ *
+ * @param result - CleanupResult from cleanup_expired operation
+ * @returns Expiration ratio (0.0 to 1.0), or 0.0 if no entries scanned
+ */
+export function getCleanupExpirationRatio(result: CleanupResult): number {
+  if (result.entries_scanned === 0n) {
+    return 0.0
+  }
+  return Number(result.entries_removed) / Number(result.entries_scanned)
+}
+
 // ============================================================================
 // S2 Cell ID Computation (Simplified)
 // ============================================================================

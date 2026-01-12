@@ -86,6 +86,7 @@ from .client import (
     id,
     # Configuration
     RetryConfig,
+    OperationOptions,
     GeoClientConfig,
     # Errors - Base
     ArcherDBError,
@@ -119,6 +120,31 @@ from .client import (
     GeoClientAsync,
     # Batch helpers
     split_batch,
+)
+
+# Observability (per client-sdk/spec.md)
+from .observability import (
+    # Logging
+    LogLevel,
+    SDKLogger,
+    StandardLogger,
+    NullLogger,
+    configure_logging,
+    get_logger,
+    # Metrics
+    MetricLabels,
+    SDKMetrics,
+    Counter,
+    Gauge,
+    Histogram,
+    get_metrics,
+    reset_metrics,
+    # Health check
+    ConnectionState,
+    HealthStatus,
+    HealthTracker,
+    # Timing
+    RequestTimer,
 )
 
 # Public API
@@ -171,6 +197,7 @@ __all__ = [
     "id",
     # Configuration
     "RetryConfig",
+    "OperationOptions",
     "GeoClientConfig",
     # Errors - Base
     "ArcherDBError",
@@ -204,4 +231,25 @@ __all__ = [
     "GeoClientAsync",
     # Batch helpers
     "split_batch",
+    # Observability - Logging
+    "LogLevel",
+    "SDKLogger",
+    "StandardLogger",
+    "NullLogger",
+    "configure_logging",
+    "get_logger",
+    # Observability - Metrics
+    "MetricLabels",
+    "SDKMetrics",
+    "Counter",
+    "Gauge",
+    "Histogram",
+    "get_metrics",
+    "reset_metrics",
+    # Observability - Health check
+    "ConnectionState",
+    "HealthStatus",
+    "HealthTracker",
+    # Observability - Timing
+    "RequestTimer",
 ]

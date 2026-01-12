@@ -805,3 +805,367 @@ test "TtlPrometheusMetrics: format_scanner_state" {
         "archerdb_ttl_scanner_total_removed{} 250",
     ));
 }
+
+// =============================================================================
+// TTL-Aware Compaction Prioritization (v2.1+ Feature)
+// =============================================================================
+//
+// Per ttl-retention/spec.md Non-Goals:
+// Implements TTL-aware compaction prioritization to automatically compact
+// levels/tables with high expired data ratios.
+//
+
+/// Per-level TTL statistics for compaction prioritization.
+pub const LevelTtlStats = struct {
+    /// LSM level (0-7 typically).
+    level: u8,
+
+    /// Total events in this level.
+    total_events: u64,
+
+    /// Estimated expired events (sampled).
+    estimated_expired: u64,
+
+    /// Last sample timestamp.
+    last_sample_ns: u64,
+
+    /// Sample count used for estimation.
+    sample_count: u64,
+
+    /// Get expiration ratio for this level.
+    pub fn expirationRatio(self: LevelTtlStats) f64 {
+        if (self.total_events == 0) return 0.0;
+        return @as(f64, @floatFromInt(self.estimated_expired)) /
+            @as(f64, @floatFromInt(self.total_events));
+    }
+
+    /// Check if this level should be prioritized for compaction.
+    /// Threshold: > 30% expired data triggers priority compaction.
+    pub fn shouldPrioritize(self: LevelTtlStats) bool {
+        return self.expirationRatio() > 0.30;
+    }
+};
+
+/// TTL-aware compaction prioritizer.
+pub const CompactionPrioritizer = struct {
+    const Self = @This();
+    const MAX_LEVELS: usize = 8;
+
+    /// Statistics per level.
+    level_stats: [MAX_LEVELS]LevelTtlStats,
+
+    /// Compaction debt ratio (expired bytes / total bytes).
+    debt_ratio: f64,
+
+    /// High water mark for triggering aggressive compaction.
+    high_water_mark: f64,
+
+    /// Low water mark for normal compaction.
+    low_water_mark: f64,
+
+    /// Initialize the compaction prioritizer.
+    pub fn init() Self {
+        var stats: [MAX_LEVELS]LevelTtlStats = undefined;
+        for (&stats, 0..) |*s, i| {
+            s.* = .{
+                .level = @intCast(i),
+                .total_events = 0,
+                .estimated_expired = 0,
+                .last_sample_ns = 0,
+                .sample_count = 0,
+            };
+        }
+
+        return .{
+            .level_stats = stats,
+            .debt_ratio = 0.0,
+            .high_water_mark = 0.50, // 50% expired triggers aggressive compaction
+            .low_water_mark = 0.20, // 20% expired is normal
+        };
+    }
+
+    /// Update level statistics from sampling.
+    pub fn updateLevelStats(
+        self: *Self,
+        level: u8,
+        total_events: u64,
+        sampled_expired: u64,
+        sample_size: u64,
+        current_time_ns: u64,
+    ) void {
+        if (level >= MAX_LEVELS) return;
+
+        // Extrapolate expired count from sample
+        const ratio = if (sample_size > 0)
+            @as(f64, @floatFromInt(sampled_expired)) / @as(f64, @floatFromInt(sample_size))
+        else
+            0.0;
+        const estimated = @as(u64, @intFromFloat(ratio * @as(f64, @floatFromInt(total_events))));
+
+        self.level_stats[level] = .{
+            .level = level,
+            .total_events = total_events,
+            .estimated_expired = estimated,
+            .last_sample_ns = current_time_ns,
+            .sample_count = sample_size,
+        };
+
+        self.updateDebtRatio();
+    }
+
+    /// Update overall compaction debt ratio.
+    fn updateDebtRatio(self: *Self) void {
+        var total_events: u64 = 0;
+        var total_expired: u64 = 0;
+
+        for (&self.level_stats) |*s| {
+            total_events += s.total_events;
+            total_expired += s.estimated_expired;
+        }
+
+        self.debt_ratio = if (total_events > 0)
+            @as(f64, @floatFromInt(total_expired)) / @as(f64, @floatFromInt(total_events))
+        else
+            0.0;
+    }
+
+    /// Get levels that should be prioritized for compaction.
+    pub fn getPriorityLevels(self: *const Self) []const u8 {
+        var result: [MAX_LEVELS]u8 = undefined;
+        var count: usize = 0;
+
+        for (&self.level_stats) |*s| {
+            if (s.shouldPrioritize()) {
+                result[count] = s.level;
+                count += 1;
+            }
+        }
+
+        return result[0..count];
+    }
+
+    /// Check if aggressive compaction is needed.
+    pub fn isAggressiveCompactionNeeded(self: *const Self) bool {
+        return self.debt_ratio > self.high_water_mark;
+    }
+
+    /// Get the compaction debt ratio gauge.
+    pub fn getDebtRatio(self: *const Self) f64 {
+        return self.debt_ratio;
+    }
+};
+
+// =============================================================================
+// TTL Cliff Mitigation (v2.1+ Feature)
+// =============================================================================
+//
+// Per ttl-retention/spec.md Non-Goals:
+// Automatic detection and mitigation of upcoming TTL expiration cliffs
+// that could cause compaction storms.
+//
+
+/// TTL expiration cliff detector and mitigator.
+pub const CliffMitigator = struct {
+    const Self = @This();
+
+    /// Histogram bucket size for expiration time distribution (1 hour).
+    const BUCKET_SIZE_NS: u64 = 3600 * ns_per_second;
+
+    /// Number of histogram buckets (24 hours lookahead).
+    const NUM_BUCKETS: usize = 24;
+
+    /// Expiration time histogram.
+    expiration_histogram: [NUM_BUCKETS]u64,
+
+    /// Peak threshold for cliff detection.
+    cliff_threshold: f64,
+
+    /// Last analysis timestamp.
+    last_analysis_ns: u64,
+
+    /// Initialize cliff mitigator.
+    pub fn init() Self {
+        return .{
+            .expiration_histogram = [_]u64{0} ** NUM_BUCKETS,
+            .cliff_threshold = 3.0, // 3x average = cliff
+            .last_analysis_ns = 0,
+        };
+    }
+
+    /// Reset histogram for new analysis.
+    pub fn reset(self: *Self) void {
+        self.expiration_histogram = [_]u64{0} ** NUM_BUCKETS;
+    }
+
+    /// Record an event's expiration time.
+    pub fn recordExpiration(self: *Self, expiration_time_ns: u64, current_time_ns: u64) void {
+        if (expiration_time_ns <= current_time_ns) return;
+
+        const delta = expiration_time_ns - current_time_ns;
+        const bucket = @min(delta / BUCKET_SIZE_NS, NUM_BUCKETS - 1);
+        self.expiration_histogram[bucket] += 1;
+    }
+
+    /// Analyze histogram for cliffs.
+    pub fn analyzeForCliffs(self: *Self, current_time_ns: u64) ?CliffInfo {
+        self.last_analysis_ns = current_time_ns;
+
+        // Calculate average events per bucket
+        var total: u64 = 0;
+        for (self.expiration_histogram) |count| {
+            total += count;
+        }
+
+        if (total == 0) return null;
+
+        const average = @as(f64, @floatFromInt(total)) / @as(f64, NUM_BUCKETS);
+        const threshold = average * self.cliff_threshold;
+
+        // Find cliffs (buckets significantly above average)
+        for (self.expiration_histogram, 0..) |count, bucket| {
+            const count_f = @as(f64, @floatFromInt(count));
+            if (count_f > threshold) {
+                const start_time = current_time_ns + bucket * BUCKET_SIZE_NS;
+                return CliffInfo{
+                    .start_time_ns = start_time,
+                    .end_time_ns = start_time + BUCKET_SIZE_NS,
+                    .expected_expirations = count,
+                    .severity = count_f / average,
+                };
+            }
+        }
+
+        return null;
+    }
+
+    /// Get recommended action for cliff mitigation.
+    pub fn getRecommendation(self: *const Self, cliff: CliffInfo) CliffMitigation {
+        _ = self;
+
+        if (cliff.severity > 10.0) {
+            return .{ .action = .emergency_compact, .reason = "Severe cliff detected (>10x average)" };
+        } else if (cliff.severity > 5.0) {
+            return .{ .action = .pre_compact, .reason = "Significant cliff detected (>5x average)" };
+        } else {
+            return .{ .action = .monitor, .reason = "Moderate cliff detected, monitoring" };
+        }
+    }
+};
+
+/// Information about a detected TTL cliff.
+pub const CliffInfo = struct {
+    /// Start of cliff window.
+    start_time_ns: u64,
+    /// End of cliff window.
+    end_time_ns: u64,
+    /// Expected expirations in this window.
+    expected_expirations: u64,
+    /// Severity (ratio to average).
+    severity: f64,
+};
+
+/// Cliff mitigation action.
+pub const CliffMitigation = struct {
+    /// Recommended action.
+    action: enum {
+        /// No action needed.
+        none,
+        /// Monitor closely.
+        monitor,
+        /// Pre-emptively compact before cliff.
+        pre_compact,
+        /// Emergency compaction (severe cliff).
+        emergency_compact,
+    },
+    /// Human-readable reason.
+    reason: []const u8,
+};
+
+// === TTL Optimization Tests ===
+
+test "LevelTtlStats expirationRatio" {
+    const stats = LevelTtlStats{
+        .level = 0,
+        .total_events = 1000,
+        .estimated_expired = 250,
+        .last_sample_ns = 0,
+        .sample_count = 100,
+    };
+
+    try std.testing.expectApproxEqAbs(@as(f64, 0.25), stats.expirationRatio(), 0.001);
+    try std.testing.expect(!stats.shouldPrioritize()); // 25% < 30% threshold
+}
+
+test "LevelTtlStats shouldPrioritize" {
+    const high_ratio = LevelTtlStats{
+        .level = 1,
+        .total_events = 1000,
+        .estimated_expired = 400, // 40% expired
+        .last_sample_ns = 0,
+        .sample_count = 100,
+    };
+
+    try std.testing.expect(high_ratio.shouldPrioritize()); // 40% > 30% threshold
+}
+
+test "CompactionPrioritizer basic" {
+    var prioritizer = CompactionPrioritizer.init();
+
+    // Initially no debt
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), prioritizer.getDebtRatio(), 0.001);
+    try std.testing.expect(!prioritizer.isAggressiveCompactionNeeded());
+
+    // Add level stats with high expiration
+    prioritizer.updateLevelStats(0, 10000, 6000, 1000, 1000); // 60% expired
+
+    try std.testing.expect(prioritizer.getDebtRatio() > 0.5);
+    try std.testing.expect(prioritizer.isAggressiveCompactionNeeded());
+}
+
+test "CliffMitigator detection" {
+    var mitigator = CliffMitigator.init();
+
+    const current_time = 1000 * ns_per_second;
+
+    // Record uniform distribution
+    for (0..100) |_| {
+        mitigator.recordExpiration(current_time + 3600 * ns_per_second, current_time);
+    }
+
+    // Record cliff at bucket 5 (5 hours from now)
+    for (0..500) |_| {
+        mitigator.recordExpiration(current_time + 5 * 3600 * ns_per_second + 100, current_time);
+    }
+
+    const cliff = mitigator.analyzeForCliffs(current_time);
+    try std.testing.expect(cliff != null);
+
+    if (cliff) |c| {
+        try std.testing.expect(c.severity > 3.0);
+        try std.testing.expectEqual(@as(u64, 500), c.expected_expirations);
+    }
+}
+
+test "CliffMitigation recommendations" {
+    const mitigator = CliffMitigator.init();
+
+    // Severe cliff
+    const severe = CliffInfo{
+        .start_time_ns = 0,
+        .end_time_ns = 0,
+        .expected_expirations = 1000,
+        .severity = 12.0,
+    };
+    const severe_rec = mitigator.getRecommendation(severe);
+    try std.testing.expectEqual(severe_rec.action, .emergency_compact);
+
+    // Moderate cliff
+    const moderate = CliffInfo{
+        .start_time_ns = 0,
+        .end_time_ns = 0,
+        .expected_expirations = 500,
+        .severity = 4.0,
+    };
+    const moderate_rec = mitigator.getRecommendation(moderate);
+    try std.testing.expectEqual(moderate_rec.action, .monitor);
+}

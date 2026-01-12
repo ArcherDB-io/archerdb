@@ -48,3 +48,10 @@ pub extern "kernel32" fn ConnectNamedPipe(
     hNamedPipe: windows.HANDLE,
     lpOverlapped: ?*windows.OVERLAPPED,
 ) callconv(.winapi) windows.BOOL;
+
+/// Cancels a specific I/O operation on a file handle.
+/// If lpOverlapped is null, all pending I/O on the handle is cancelled.
+pub extern "kernel32" fn CancelIoEx(
+    hFile: windows.HANDLE,
+    lpOverlapped: ?*windows.OVERLAPPED,
+) callconv(.winapi) windows.BOOL;

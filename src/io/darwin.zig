@@ -289,8 +289,23 @@ pub const IO = struct {
         }
     }
 
-    pub fn cancel_all(_: *IO) void {
-        // TODO Cancel in-flight async IO and wait for all completions.
+    pub fn cancel_all(self: *IO) void {
+        // Drain all pending operations from the queues
+        // Operations already submitted to the kernel will complete naturally
+
+        // Clear io_pending queue
+        while (self.io_pending.pop()) |_| {}
+
+        // Clear timeouts queue
+        while (self.timeouts.pop()) |_| {}
+
+        // Clear completed queue (callbacks won't be invoked)
+        while (self.completed.pop()) |_| {}
+
+        // Reset inflight counter - kernel operations will complete but won't be processed
+        self.io_inflight = 0;
+
+        log.info("cancel_all: cleared all pending I/O operations", .{});
     }
 
     pub const CancelError = error{
@@ -299,20 +314,81 @@ pub const IO = struct {
     } || posix.UnexpectedError;
 
     pub fn cancel(
-        _: *IO,
+        self: *IO,
         comptime Context: type,
-        _: Context,
-        comptime _: fn (
+        context: Context,
+        comptime callback: fn (
             context: Context,
             completion: *Completion,
             result: CancelError!void,
         ) void,
-        _: struct {
+        args: struct {
             completion: *Completion,
             target: *Completion,
         },
     ) void {
-        @panic("cancelation is not supported on darwin");
+        const target = args.target;
+
+        // Check if target is in io_pending queue - if so, remove it and delete kevent
+        var io_pending_iter = self.io_pending.iterate();
+        while (io_pending_iter.next()) |completion| {
+            if (completion == target) {
+                // Found in io_pending - remove and try to delete the kevent interest
+                self.io_pending.remove(target);
+
+                // Delete the kevent interest for this operation
+                const event_info: ?[2]c_int = switch (target.operation) {
+                    .accept => |op| [2]c_int{ op.socket, posix.system.EVFILT.READ },
+                    .connect => |op| [2]c_int{ op.socket, posix.system.EVFILT.WRITE },
+                    .read => |op| [2]c_int{ op.fd, posix.system.EVFILT.READ },
+                    .write => |op| [2]c_int{ op.fd, posix.system.EVFILT.WRITE },
+                    .recv => |op| [2]c_int{ op.socket, posix.system.EVFILT.READ },
+                    .send => |op| [2]c_int{ op.socket, posix.system.EVFILT.WRITE },
+                    else => null,
+                };
+
+                if (event_info) |info| {
+                    var kev: [1]posix.Kevent = undefined;
+                    kev[0] = .{
+                        .ident = @as(u32, @intCast(info[0])),
+                        .filter = @as(i16, @intCast(info[1])),
+                        .flags = posix.system.EV.DELETE,
+                        .fflags = 0,
+                        .data = 0,
+                        .udata = 0,
+                    };
+                    // Try to delete - ignore errors as event may not exist yet
+                    _ = posix.kevent(self.kq, &kev, kev[0..0], null) catch {};
+                }
+
+                callback(context, args.completion, {});
+                return;
+            }
+        }
+
+        // Check if target is in timeouts queue
+        var timeouts_iter = self.timeouts.iterate();
+        while (timeouts_iter.next()) |completion| {
+            if (completion == target) {
+                // Found in timeouts - remove it
+                self.timeouts.remove(target);
+                callback(context, args.completion, {});
+                return;
+            }
+        }
+
+        // Check if target is in completed queue (already finished, can't cancel)
+        var completed_iter = self.completed.iterate();
+        while (completed_iter.next()) |completion| {
+            if (completion == target) {
+                // Already completed - too late to cancel
+                callback(context, args.completion, error.NotInterruptable);
+                return;
+            }
+        }
+
+        // Target not found in any queue - either already processed or never submitted
+        callback(context, args.completion, error.NotRunning);
     }
 
     pub const AcceptError = posix.AcceptError || posix.SetSockOptError;

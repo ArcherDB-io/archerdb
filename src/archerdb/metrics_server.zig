@@ -89,6 +89,24 @@ const MetricsCache = struct {
 /// Global metrics cache (thread-safe via atomic timestamp check)
 var metrics_cache: MetricsCache = .{};
 
+/// Bearer token for metrics authentication (optional).
+/// If set, requests to /metrics must include "Authorization: Bearer <token>" header.
+/// Per observability/spec.md: Bearer token auth for production deployments.
+var bearer_token: ?[]const u8 = null;
+
+/// Set the bearer token for metrics authentication.
+/// Call before start() to enable authentication.
+pub fn setAuthToken(token: []const u8) void {
+    bearer_token = token;
+    log.info("metrics server authentication enabled", .{});
+}
+
+/// Clear the bearer token (disable authentication).
+pub fn clearAuthToken() void {
+    bearer_token = null;
+    log.info("metrics server authentication disabled", .{});
+}
+
 /// Metrics server instance.
 pub const MetricsServer = struct {
     server_fd: posix.socket_t,
@@ -199,6 +217,14 @@ pub const MetricsServer = struct {
         } else if (std.mem.eql(u8, path, "/health")) {
             try handleHealthReady(client_fd);
         } else if (std.mem.eql(u8, path, "/metrics")) {
+            // Check bearer token authentication if configured
+            if (bearer_token) |expected_token| {
+                const auth_header = parseAuthHeader(request);
+                if (auth_header == null or !std.mem.eql(u8, auth_header.?, expected_token)) {
+                    try sendResponse(client_fd, .unauthorized, "text/plain", "Unauthorized");
+                    return;
+                }
+            }
             try handleMetrics(client_fd);
         } else {
             try sendResponse(client_fd, .not_found, "text/plain", "Not Found");
@@ -222,6 +248,34 @@ pub const MetricsServer = struct {
             return path[0..query_start];
         }
         return path;
+    }
+
+    /// Parse Authorization header and extract bearer token.
+    /// Returns the token value if "Authorization: Bearer <token>" header is found.
+    fn parseAuthHeader(request: []const u8) ?[]const u8 {
+        const auth_prefix = "Authorization: Bearer ";
+        const auth_prefix_lower = "authorization: bearer ";
+
+        // Search for Authorization header (case-insensitive prefix match)
+        var lines = std.mem.splitSequence(u8, request, "\r\n");
+        while (lines.next()) |line| {
+            // Check both cases for the header name
+            if (std.mem.startsWith(u8, line, auth_prefix)) {
+                return std.mem.trim(u8, line[auth_prefix.len..], " \t");
+            }
+            // Case-insensitive check (lowercase)
+            if (line.len >= auth_prefix_lower.len) {
+                var lower_line: [256]u8 = undefined;
+                const copy_len = @min(line.len, lower_line.len);
+                for (line[0..copy_len], 0..) |c, i| {
+                    lower_line[i] = if (c >= 'A' and c <= 'Z') c + 32 else c;
+                }
+                if (std.mem.startsWith(u8, lower_line[0..copy_len], auth_prefix_lower)) {
+                    return std.mem.trim(u8, line[auth_prefix.len..], " \t");
+                }
+            }
+        }
+        return null;
     }
 
     fn handleHealthLive(client_fd: posix.socket_t) !void {
@@ -284,6 +338,7 @@ pub const MetricsServer = struct {
     const HttpStatus = enum {
         ok,
         bad_request,
+        unauthorized,
         not_found,
         service_unavailable,
 
@@ -291,6 +346,7 @@ pub const MetricsServer = struct {
             return switch (self) {
                 .ok => "200 OK",
                 .bad_request => "400 Bad Request",
+                .unauthorized => "401 Unauthorized",
                 .not_found => "404 Not Found",
                 .service_unavailable => "503 Service Unavailable",
             };
@@ -389,4 +445,49 @@ test "MetricsCache: data truncation" {
     const result = cache.get();
     try std.testing.expect(result != null);
     try std.testing.expectEqualStrings(longer_data, result.?);
+}
+
+test "MetricsServer: parseAuthHeader" {
+    const TestCase = struct {
+        input: []const u8,
+        expected: ?[]const u8,
+    };
+
+    const cases = [_]TestCase{
+        // Valid Authorization header
+        .{
+            .input = "GET /metrics HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer secret123\r\n\r\n",
+            .expected = "secret123",
+        },
+        // Lowercase header name
+        .{
+            .input = "GET /metrics HTTP/1.1\r\nauthorization: bearer mytoken\r\n\r\n",
+            .expected = "mytoken",
+        },
+        // No Authorization header
+        .{
+            .input = "GET /metrics HTTP/1.1\r\nHost: localhost\r\n\r\n",
+            .expected = null,
+        },
+        // Empty request
+        .{
+            .input = "",
+            .expected = null,
+        },
+        // Token with spaces trimmed
+        .{
+            .input = "GET /metrics HTTP/1.1\r\nAuthorization: Bearer   spaced_token   \r\n\r\n",
+            .expected = "spaced_token",
+        },
+    };
+
+    for (cases) |case| {
+        const result = MetricsServer.parseAuthHeader(case.input);
+        if (case.expected) |expected| {
+            try std.testing.expect(result != null);
+            try std.testing.expectEqualStrings(expected, result.?);
+        } else {
+            try std.testing.expect(result == null);
+        }
+    }
 }

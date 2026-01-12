@@ -5,6 +5,9 @@
 export * from './geo'
 export * from './geo_client'
 
+// Observability (per client-sdk/spec.md)
+export * from './observability'
+
 // Internal bindings - only Operation enum is needed for geo operations
 import {
   Operation,

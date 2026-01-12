@@ -9,12 +9,16 @@ from __future__ import annotations
 
 import asyncio
 import os
+import random
+import threading
 import time
 from contextlib import contextmanager, asynccontextmanager
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, AsyncIterator, Iterator, List, Optional, TYPE_CHECKING
 
 from ._native import NativeClient
+from .observability import get_metrics
 from .types import (
     GeoEvent,
     GeoEventFlags,
@@ -29,6 +33,7 @@ from .types import (
     QueryLatestFilter,
     QueryResult,
     DeleteResult,
+    CleanupResult,
     BATCH_SIZE_MAX,
     QUERY_LIMIT_MAX,
 )
@@ -150,6 +155,241 @@ class RetryExhausted(ArcherDBError):
         self.last_error = last_error
 
 
+class CircuitBreakerOpen(ArcherDBError):
+    """Circuit breaker is open, request rejected."""
+    code = 600
+    retryable = True  # Client should try another replica
+
+    def __init__(self, name: str, state: str) -> None:
+        super().__init__(f"Circuit breaker '{name}' is {state} - request rejected")
+        self.circuit_name = name
+        self.circuit_state = state
+
+
+# ============================================================================
+# Circuit Breaker (per client-retry/spec.md)
+# ============================================================================
+
+class CircuitState(Enum):
+    """Circuit breaker states."""
+    CLOSED = "closed"       # Normal operation
+    OPEN = "open"           # Fail-fast mode
+    HALF_OPEN = "half_open" # Recovery testing
+
+
+@dataclass
+class CircuitBreakerConfig:
+    """Circuit breaker configuration options."""
+    failure_threshold: float = 0.5      # 50% failure rate to open
+    minimum_requests: int = 10          # Min requests before circuit can open
+    window_ms: int = 10_000             # 10s sliding window
+    open_duration_ms: int = 30_000      # 30s before half-open
+    half_open_requests: int = 5         # Test requests in half-open
+
+
+class CircuitBreaker:
+    """
+    Per-replica circuit breaker for failure isolation.
+
+    Per client-retry/spec.md:
+    - Opens when: 50% failure rate in 10s window AND >= 10 requests
+    - Stays open for 30 seconds before transitioning to half-open
+    - Half-open allows 5 test requests before deciding to close or re-open
+    - Per-replica scope (not global) to allow trying other replicas
+
+    Thread-safe implementation.
+    """
+
+    def __init__(self, name: str, config: Optional[CircuitBreakerConfig] = None) -> None:
+        self.name = name
+        self.config = config or CircuitBreakerConfig()
+
+        self._lock = threading.Lock()
+        self._state = CircuitState.CLOSED
+        self._opened_at = 0
+
+        # Sliding window counters
+        self._total_requests = 0
+        self._failed_requests = 0
+        self._window_start_ms = self._now_ms()
+
+        # Half-open tracking
+        self._half_open_successes = 0
+        self._half_open_failures = 0
+        self._half_open_total = 0
+
+        # Metrics
+        self._state_changes = 0
+        self._rejected_requests = 0
+
+    @staticmethod
+    def _now_ms() -> int:
+        return int(time.time() * 1000)
+
+    @property
+    def state(self) -> CircuitState:
+        """Get current state, checking for automatic transitions."""
+        with self._lock:
+            if self._state == CircuitState.OPEN:
+                elapsed = self._now_ms() - self._opened_at
+                if elapsed >= self.config.open_duration_ms:
+                    self._transition_to(CircuitState.HALF_OPEN)
+                    self._reset_half_open_counters()
+            return self._state
+
+    def allow_request(self) -> bool:
+        """Check if a request is allowed through."""
+        with self._lock:
+            current_state = self._state
+
+            if current_state == CircuitState.CLOSED:
+                return True
+
+            if current_state == CircuitState.OPEN:
+                elapsed = self._now_ms() - self._opened_at
+                if elapsed >= self.config.open_duration_ms:
+                    self._transition_to(CircuitState.HALF_OPEN)
+                    self._reset_half_open_counters()
+                    return self._allow_half_open_request()
+                self._rejected_requests += 1
+                return False
+
+            if current_state == CircuitState.HALF_OPEN:
+                return self._allow_half_open_request()
+
+            return False
+
+    def _allow_half_open_request(self) -> bool:
+        """Check if a half-open request is allowed."""
+        if self._half_open_total >= self.config.half_open_requests:
+            self._rejected_requests += 1
+            return False
+        self._half_open_total += 1
+        return True
+
+    def record_success(self) -> None:
+        """Record a successful request."""
+        with self._lock:
+            if self._state == CircuitState.CLOSED:
+                self._record_in_window(failed=False)
+            elif self._state == CircuitState.HALF_OPEN:
+                self._half_open_successes += 1
+                if self._half_open_successes >= self.config.half_open_requests:
+                    self._transition_to(CircuitState.CLOSED)
+                    self._reset_counters()
+
+    def record_failure(self) -> None:
+        """Record a failed request."""
+        with self._lock:
+            if self._state == CircuitState.CLOSED:
+                self._record_in_window(failed=True)
+                self._check_threshold()
+            elif self._state == CircuitState.HALF_OPEN:
+                self._half_open_failures += 1
+                self._transition_to(CircuitState.OPEN)
+
+    def _record_in_window(self, failed: bool) -> None:
+        """Record a request in the sliding window."""
+        now = self._now_ms()
+
+        # Check if window expired
+        if now - self._window_start_ms >= self.config.window_ms:
+            self._window_start_ms = now
+            self._total_requests = 0
+            self._failed_requests = 0
+
+        self._total_requests += 1
+        if failed:
+            self._failed_requests += 1
+
+    def _check_threshold(self) -> None:
+        """Check if failure threshold exceeded."""
+        if self._total_requests < self.config.minimum_requests:
+            return
+
+        failure_rate = self._failed_requests / self._total_requests
+        if failure_rate >= self.config.failure_threshold:
+            self._transition_to(CircuitState.OPEN)
+
+    def _transition_to(self, new_state: CircuitState) -> bool:
+        """Transition to new state."""
+        if self._state == new_state:
+            return False
+
+        self._state = new_state
+        self._state_changes += 1
+
+        if new_state == CircuitState.OPEN:
+            self._opened_at = self._now_ms()
+
+        return True
+
+    def _reset_counters(self) -> None:
+        """Reset window counters."""
+        self._total_requests = 0
+        self._failed_requests = 0
+        self._window_start_ms = self._now_ms()
+
+    def _reset_half_open_counters(self) -> None:
+        """Reset half-open counters."""
+        self._half_open_successes = 0
+        self._half_open_failures = 0
+        self._half_open_total = 0
+
+    def force_open(self) -> None:
+        """Force circuit open (for testing)."""
+        with self._lock:
+            if self._state != CircuitState.OPEN:
+                self._state_changes += 1
+            self._state = CircuitState.OPEN
+            self._opened_at = self._now_ms()
+
+    def force_close(self) -> None:
+        """Force circuit closed (for testing)."""
+        with self._lock:
+            if self._state != CircuitState.CLOSED:
+                self._state_changes += 1
+            self._state = CircuitState.CLOSED
+            self._reset_counters()
+            self._reset_half_open_counters()
+
+    @property
+    def is_open(self) -> bool:
+        """True if circuit is open."""
+        return self.state == CircuitState.OPEN
+
+    @property
+    def is_closed(self) -> bool:
+        """True if circuit is closed."""
+        return self.state == CircuitState.CLOSED
+
+    @property
+    def is_half_open(self) -> bool:
+        """True if circuit is half-open."""
+        return self.state == CircuitState.HALF_OPEN
+
+    @property
+    def failure_rate(self) -> float:
+        """Current failure rate in window."""
+        with self._lock:
+            if self._total_requests == 0:
+                return 0.0
+            return self._failed_requests / self._total_requests
+
+    @property
+    def state_changes(self) -> int:
+        """Total state transitions."""
+        return self._state_changes
+
+    @property
+    def rejected_requests(self) -> int:
+        """Total rejected requests."""
+        return self._rejected_requests
+
+    def __repr__(self) -> str:
+        return f"CircuitBreaker(name={self.name!r}, state={self.state.value}, failure_rate={self.failure_rate:.2%})"
+
+
 # ============================================================================
 # ID Generation
 # ============================================================================
@@ -210,6 +450,35 @@ class RetryConfig:
     max_backoff_ms: int = 1600        # Maximum backoff delay
     total_timeout_ms: int = 30000     # Total timeout for all retry attempts
     jitter: bool = True               # Add random jitter to prevent thundering herd
+
+
+@dataclass
+class OperationOptions:
+    """
+    Per-operation options for customizing retry behavior.
+
+    Per client-retry/spec.md, SDKs MAY support per-operation retry override:
+
+        client.insert_events(events, options=OperationOptions(max_retries=3, timeout_ms=10000))
+
+    When not specified, the client's default retry policy is used.
+    """
+    max_retries: Optional[int] = None    # Override max retries (None = use default)
+    timeout_ms: Optional[int] = None     # Override total timeout (None = use default)
+    base_backoff_ms: Optional[int] = None  # Override base backoff (None = use default)
+    max_backoff_ms: Optional[int] = None   # Override max backoff (None = use default)
+    jitter: Optional[bool] = None        # Override jitter (None = use default)
+
+    def merge_with(self, base: RetryConfig) -> RetryConfig:
+        """Create a new RetryConfig by merging these options with a base config."""
+        return RetryConfig(
+            enabled=base.enabled,
+            max_retries=self.max_retries if self.max_retries is not None else base.max_retries,
+            base_backoff_ms=self.base_backoff_ms if self.base_backoff_ms is not None else base.base_backoff_ms,
+            max_backoff_ms=self.max_backoff_ms if self.max_backoff_ms is not None else base.max_backoff_ms,
+            total_timeout_ms=self.timeout_ms if self.timeout_ms is not None else base.total_timeout_ms,
+            jitter=self.jitter if self.jitter is not None else base.jitter,
+        )
 
 
 @dataclass
@@ -541,14 +810,20 @@ def _with_retry_sync(operation: Callable[[], _T], config: RetryConfig) -> _T:
     if not config.enabled:
         return operation()
 
+    metrics = get_metrics()
     start_time = time.time() * 1000  # Convert to ms
     max_attempts = config.max_retries + 1
     last_error: Exception = Exception("No attempts made")
 
     for attempt in range(1, max_attempts + 1):
+        # Record retry metric for actual retry attempts (not first attempt)
+        if attempt > 1:
+            metrics.record_retry()
+
         # Check total timeout before starting attempt
         elapsed = (time.time() * 1000) - start_time
         if elapsed >= config.total_timeout_ms:
+            metrics.record_retry_exhausted()
             raise RetryExhausted(attempt - 1, last_error)
 
         try:
@@ -576,6 +851,7 @@ def _with_retry_sync(operation: Callable[[], _T], config: RetryConfig) -> _T:
             if delay > 0:
                 time.sleep(delay / 1000)  # Convert ms to seconds
 
+    metrics.record_retry_exhausted()
     raise RetryExhausted(max_attempts, last_error)
 
 
@@ -597,14 +873,20 @@ async def _with_retry_async(operation: Callable[[], Any], config: RetryConfig) -
     if not config.enabled:
         return await operation()
 
+    metrics = get_metrics()
     start_time = time.time() * 1000  # Convert to ms
     max_attempts = config.max_retries + 1
     last_error: Exception = Exception("No attempts made")
 
     for attempt in range(1, max_attempts + 1):
+        # Record retry metric for actual retry attempts (not first attempt)
+        if attempt > 1:
+            metrics.record_retry()
+
         # Check total timeout before starting attempt
         elapsed = (time.time() * 1000) - start_time
         if elapsed >= config.total_timeout_ms:
+            metrics.record_retry_exhausted()
             raise RetryExhausted(attempt - 1, last_error)
 
         try:
@@ -632,6 +914,7 @@ async def _with_retry_async(operation: Callable[[], Any], config: RetryConfig) -
             if delay > 0:
                 await asyncio.sleep(delay / 1000)  # Convert ms to seconds
 
+    metrics.record_retry_exhausted()
     raise RetryExhausted(max_attempts, last_error)
 
 
@@ -732,6 +1015,60 @@ class GeoClientSync:
         results = self._submit_query(GeoOperation.QUERY_UUID, filter)
         return results[0] if results else None
 
+    def get_latest_batch(
+        self,
+        entity_ids: List[int],
+    ) -> dict[int, Optional[GeoEvent]]:
+        """
+        Look up the latest events for multiple entities by UUID (F1.3.4).
+
+        This is more efficient than calling get_latest_by_uuid() in a loop
+        as it uses a single network round-trip.
+
+        Args:
+            entity_ids: List of entity UUIDs to look up (max 10,000)
+
+        Returns:
+            Dictionary mapping entity_id -> GeoEvent or None if not found
+
+        Example:
+            results = client.get_latest_batch([entity1_id, entity2_id, entity3_id])
+            for entity_id, event in results.items():
+                if event:
+                    print(f"Entity {entity_id} at ({event.lat_nano}, {event.lon_nano})")
+                else:
+                    print(f"Entity {entity_id} not found")
+        """
+        self._ensure_connected()
+
+        if not entity_ids:
+            return {}
+
+        if len(entity_ids) > 10_000:
+            raise BatchTooLarge(f"Batch size {len(entity_ids)} exceeds max 10,000")
+
+        # Submit batch query
+        from .types import QueryUuidBatchFilter
+        filter = QueryUuidBatchFilter(count=len(entity_ids), entity_ids=entity_ids)
+        result = self._submit_batch_uuid_query(filter)
+
+        # Build result dictionary
+        results: dict[int, Optional[GeoEvent]] = {}
+        not_found_set = set(result.not_found_indices)
+
+        event_idx = 0
+        for i, entity_id in enumerate(entity_ids):
+            if i in not_found_set:
+                results[entity_id] = None
+            else:
+                if event_idx < len(result.events):
+                    results[entity_id] = result.events[event_idx]
+                    event_idx += 1
+                else:
+                    results[entity_id] = None
+
+        return results
+
     def query_radius(
         self,
         latitude: float,
@@ -742,8 +1079,21 @@ class GeoClientSync:
         timestamp_min: int = 0,
         timestamp_max: int = 0,
         group_id: int = 0,
+        options: Optional["OperationOptions"] = None,
     ) -> QueryResult:
-        """Query events within a radius."""
+        """
+        Query events within a radius.
+
+        Args:
+            latitude: Center latitude in degrees
+            longitude: Center longitude in degrees
+            radius_m: Radius in meters
+            limit: Maximum events to return
+            timestamp_min: Minimum timestamp filter
+            timestamp_max: Maximum timestamp filter
+            group_id: Group ID filter
+            options: Per-operation retry options (optional)
+        """
         self._ensure_connected()
 
         from .types import create_radius_query
@@ -758,7 +1108,7 @@ class GeoClientSync:
         if filter.limit > QUERY_LIMIT_MAX:
             raise QueryResultTooLarge(f"Limit {filter.limit} exceeds max {QUERY_LIMIT_MAX}")
 
-        events = self._submit_query(GeoOperation.QUERY_RADIUS, filter)
+        events = self._submit_query(GeoOperation.QUERY_RADIUS, filter, options)
         return QueryResult(
             events=events,
             has_more=len(events) == filter.limit,
@@ -774,6 +1124,7 @@ class GeoClientSync:
         timestamp_min: int = 0,
         timestamp_max: int = 0,
         group_id: int = 0,
+        options: Optional["OperationOptions"] = None,
     ) -> QueryResult:
         """
         Query events within a polygon.
@@ -786,6 +1137,7 @@ class GeoClientSync:
             timestamp_min: Minimum timestamp filter
             timestamp_max: Maximum timestamp filter
             group_id: Group ID filter
+            options: Per-operation retry options (optional)
 
         Returns:
             QueryResult with matching events
@@ -815,7 +1167,7 @@ class GeoClientSync:
         if filter.limit > QUERY_LIMIT_MAX:
             raise QueryResultTooLarge(f"Limit {filter.limit} exceeds max {QUERY_LIMIT_MAX}")
 
-        events = self._submit_query(GeoOperation.QUERY_POLYGON, filter)
+        events = self._submit_query(GeoOperation.QUERY_POLYGON, filter, options)
         return QueryResult(
             events=events,
             has_more=len(events) == filter.limit,
@@ -828,8 +1180,17 @@ class GeoClientSync:
         limit: int = 1000,
         group_id: int = 0,
         cursor_timestamp: int = 0,
+        options: Optional["OperationOptions"] = None,
     ) -> QueryResult:
-        """Query the most recent events globally or by group."""
+        """
+        Query the most recent events globally or by group.
+
+        Args:
+            limit: Maximum events to return
+            group_id: Group ID filter (0 = all groups)
+            cursor_timestamp: Pagination cursor
+            options: Per-operation retry options (optional)
+        """
         self._ensure_connected()
 
         filter = QueryLatestFilter(
@@ -841,7 +1202,7 @@ class GeoClientSync:
         if filter.limit > QUERY_LIMIT_MAX:
             raise QueryResultTooLarge(f"Limit {filter.limit} exceeds max {QUERY_LIMIT_MAX}")
 
-        events = self._submit_query(GeoOperation.QUERY_LATEST, filter)
+        events = self._submit_query(GeoOperation.QUERY_LATEST, filter, options)
         return QueryResult(
             events=events,
             has_more=len(events) == filter.limit,
@@ -882,9 +1243,21 @@ class GeoClientSync:
 
         return _with_retry_sync(do_submit, self._retry_config)
 
-    def _submit_query(self, operation: GeoOperation, filter: Any) -> List[GeoEvent]:
+    def _submit_query(
+        self,
+        operation: GeoOperation,
+        filter: Any,
+        options: Optional["OperationOptions"] = None,
+    ) -> List[GeoEvent]:
         """Submit a query operation to the cluster with automatic retry."""
         self._ensure_connected()
+
+        # Merge per-operation options with base config
+        retry_config = (
+            options.merge_with(self._retry_config)
+            if options is not None
+            else self._retry_config
+        )
 
         def do_query() -> List[GeoEvent]:
             if operation == GeoOperation.QUERY_UUID:
@@ -897,6 +1270,17 @@ class GeoClientSync:
                 return self._native.query_polygon(filter)
             else:
                 raise ValueError(f"Unknown query operation: {operation}")
+
+        return _with_retry_sync(do_query, retry_config)
+
+    def _submit_batch_uuid_query(self, filter: "QueryUuidBatchFilter") -> "QueryUuidBatchResult":
+        """Submit a batch UUID query operation to the cluster with automatic retry."""
+        from .types import QueryUuidBatchResult
+
+        self._ensure_connected()
+
+        def do_query() -> QueryUuidBatchResult:
+            return self._native.query_uuid_batch(filter.entity_ids)
 
         return _with_retry_sync(do_query, self._retry_config)
 
@@ -931,6 +1315,44 @@ class GeoClientSync:
         # NOTE: Skeleton implementation - in full impl would send ARCHERDB_GET_STATUS
         # and deserialize the 64-byte response
         return StatusResponse()
+
+    def cleanup_expired(self, batch_size: int = 0) -> CleanupResult:
+        """
+        Trigger explicit TTL expiration cleanup.
+
+        Per client-protocol/spec.md cleanup_expired (0x30):
+        - Goes through VSR consensus for deterministic cleanup
+        - All replicas apply with same timestamp
+        - Returns count of entries scanned and removed
+
+        Args:
+            batch_size: Number of index entries to scan (0 = scan all)
+
+        Returns:
+            CleanupResult with entries_scanned and entries_removed
+
+        Raises:
+            ValueError: If batch_size is negative
+            ClientClosedError: If client has been closed
+
+        Example:
+            result = client.cleanup_expired()
+            print(f"Scanned {result.entries_scanned} entries")
+            print(f"Removed {result.entries_removed} expired entries")
+            if result.has_removals:
+                print(f"Expiration rate: {result.expiration_ratio:.1%}")
+        """
+        self._ensure_connected()
+
+        if batch_size < 0:
+            raise ValueError("batch_size must be non-negative")
+
+        def do_cleanup() -> CleanupResult:
+            # NOTE: Skeleton implementation - in full impl would send CLEANUP_EXPIRED
+            # and deserialize the 16-byte response (2x u64)
+            return CleanupResult(entries_scanned=0, entries_removed=0)
+
+        return _with_retry_sync(do_cleanup, self._retry_config)
 
 
 # ============================================================================
@@ -1021,6 +1443,52 @@ class GeoClientAsync:
         filter = QueryUuidFilter(entity_id=entity_id, limit=1)
         results = await self._submit_query(GeoOperation.QUERY_UUID, filter)
         return results[0] if results else None
+
+    async def get_latest_batch(
+        self,
+        entity_ids: List[int],
+    ) -> dict[int, Optional[GeoEvent]]:
+        """
+        Look up the latest events for multiple entities by UUID (F1.3.4).
+
+        This is more efficient than calling get_latest_by_uuid() in a loop
+        as it uses a single network round-trip.
+
+        Args:
+            entity_ids: List of entity UUIDs to look up (max 10,000)
+
+        Returns:
+            Dictionary mapping entity_id -> GeoEvent or None if not found
+        """
+        self._ensure_connected()
+
+        if not entity_ids:
+            return {}
+
+        if len(entity_ids) > 10_000:
+            raise BatchTooLarge(f"Batch size {len(entity_ids)} exceeds max 10,000")
+
+        # Submit batch query
+        from .types import QueryUuidBatchFilter
+        filter = QueryUuidBatchFilter(count=len(entity_ids), entity_ids=entity_ids)
+        result = await self._submit_batch_uuid_query(filter)
+
+        # Build result dictionary
+        results: dict[int, Optional[GeoEvent]] = {}
+        not_found_set = set(result.not_found_indices)
+
+        event_idx = 0
+        for i, entity_id in enumerate(entity_ids):
+            if i in not_found_set:
+                results[entity_id] = None
+            else:
+                if event_idx < len(result.events):
+                    results[entity_id] = result.events[event_idx]
+                    event_idx += 1
+                else:
+                    results[entity_id] = None
+
+        return results
 
     async def query_radius(
         self,
@@ -1156,6 +1624,23 @@ class GeoClientAsync:
 
         return await _with_retry_async(do_query, self._retry_config)
 
+    async def _submit_batch_uuid_query(self, filter: "QueryUuidBatchFilter") -> "QueryUuidBatchResult":
+        """Submit a batch UUID query operation to the cluster with automatic retry."""
+        from .types import QueryUuidBatchResult
+
+        self._ensure_connected()
+
+        async def do_query() -> QueryUuidBatchResult:
+            # NOTE: Skeleton implementation - in full impl would call native async
+            return QueryUuidBatchResult(
+                found_count=0,
+                not_found_count=len(filter.entity_ids),
+                not_found_indices=list(range(len(filter.entity_ids))),
+                events=[],
+            )
+
+        return await _with_retry_async(do_query, self._retry_config)
+
     # ========== Admin Operations ==========
 
     async def ping(self) -> bool:
@@ -1187,6 +1672,42 @@ class GeoClientAsync:
         # NOTE: Skeleton implementation - in full impl would send ARCHERDB_GET_STATUS
         # and deserialize the 64-byte response
         return StatusResponse()
+
+    async def cleanup_expired(self, batch_size: int = 0) -> CleanupResult:
+        """
+        Trigger explicit TTL expiration cleanup (async).
+
+        Per client-protocol/spec.md cleanup_expired (0x30):
+        - Goes through VSR consensus for deterministic cleanup
+        - All replicas apply with same timestamp
+        - Returns count of entries scanned and removed
+
+        Args:
+            batch_size: Number of index entries to scan (0 = scan all)
+
+        Returns:
+            CleanupResult with entries_scanned and entries_removed
+
+        Raises:
+            ValueError: If batch_size is negative
+            ClientClosedError: If client has been closed
+
+        Example:
+            result = await client.cleanup_expired()
+            print(f"Scanned {result.entries_scanned} entries")
+            print(f"Removed {result.entries_removed} expired entries")
+        """
+        self._ensure_connected()
+
+        if batch_size < 0:
+            raise ValueError("batch_size must be non-negative")
+
+        async def do_cleanup() -> CleanupResult:
+            # NOTE: Skeleton implementation - in full impl would send CLEANUP_EXPIRED
+            # and deserialize the 16-byte response (2x u64)
+            return CleanupResult(entries_scanned=0, entries_removed=0)
+
+        return await _with_retry_async(do_cleanup, self._retry_config)
 
 
 # ============================================================================

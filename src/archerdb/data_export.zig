@@ -438,6 +438,377 @@ pub fn eventToJson(allocator: mem.Allocator, event: *const GeoEvent, pretty: boo
 }
 
 // =============================================================================
+// JSON Import (F6.1 Data Portability - Import)
+// =============================================================================
+
+/// JSON import errors.
+pub const JsonImportError = error{
+    InvalidJson,
+    MissingRequiredField,
+    InvalidCoordinate,
+    InvalidTimestamp,
+    InvalidEntityId,
+    OutOfMemory,
+};
+
+/// Import options for JSON data.
+pub const ImportOptions = struct {
+    /// Whether to validate coordinates are in valid range.
+    validate_coordinates: bool = true,
+    /// Whether to generate IDs for events that don't have them.
+    generate_ids: bool = false,
+    /// Default TTL to apply if not specified in JSON.
+    default_ttl_seconds: u32 = 0,
+};
+
+/// JSON importer for GeoEvent data.
+pub const JsonImporter = struct {
+    allocator: mem.Allocator,
+    options: ImportOptions,
+
+    pub fn init(allocator: mem.Allocator, options: ImportOptions) JsonImporter {
+        return .{
+            .allocator = allocator,
+            .options = options,
+        };
+    }
+
+    /// Parse a single JSON object into a GeoEvent.
+    /// Expected format matches the export format from DataExporter.
+    pub fn parseEvent(self: *JsonImporter, json_str: []const u8) JsonImportError!GeoEvent {
+        var event = GeoEvent.zero();
+
+        // Simple JSON parsing - look for key fields
+        // This is a basic implementation; a full JSON parser would be more robust
+
+        // Parse entity_id (required)
+        if (findJsonString(json_str, "entity_id")) |entity_id_str| {
+            event.entity_id = parseHexU128(entity_id_str) orelse return error.InvalidEntityId;
+        } else {
+            return error.MissingRequiredField;
+        }
+
+        // Parse latitude (required)
+        if (findJsonNumber(json_str, "latitude")) |lat_str| {
+            const lat = std.fmt.parseFloat(f64, lat_str) catch return error.InvalidCoordinate;
+            if (self.options.validate_coordinates) {
+                if (lat < -90.0 or lat > 90.0) return error.InvalidCoordinate;
+            }
+            event.lat_nano = GeoEvent.lat_from_float(lat);
+        } else {
+            return error.MissingRequiredField;
+        }
+
+        // Parse longitude (required)
+        if (findJsonNumber(json_str, "longitude")) |lon_str| {
+            const lon = std.fmt.parseFloat(f64, lon_str) catch return error.InvalidCoordinate;
+            if (self.options.validate_coordinates) {
+                if (lon < -180.0 or lon > 180.0) return error.InvalidCoordinate;
+            }
+            event.lon_nano = GeoEvent.lon_from_float(lon);
+        } else {
+            return error.MissingRequiredField;
+        }
+
+        // Parse optional fields
+        // Try timestamp_ns first (exported format), then timestamp (generic format)
+        if (findJsonNumber(json_str, "timestamp_ns")) |ts_str| {
+            event.timestamp = std.fmt.parseInt(u64, ts_str, 10) catch return error.InvalidTimestamp;
+        } else if (findJsonNumber(json_str, "timestamp")) |ts_str| {
+            event.timestamp = std.fmt.parseInt(u64, ts_str, 10) catch return error.InvalidTimestamp;
+        }
+
+        if (findJsonNumber(json_str, "group_id")) |gid_str| {
+            event.group_id = std.fmt.parseInt(u64, gid_str, 10) catch 0;
+        }
+
+        if (findJsonNumber(json_str, "altitude_m")) |alt_str| {
+            const alt = std.fmt.parseFloat(f64, alt_str) catch 0.0;
+            event.altitude_mm = @intFromFloat(alt * 1000.0);
+        }
+
+        if (findJsonNumber(json_str, "velocity_ms")) |vel_str| {
+            const vel = std.fmt.parseFloat(f64, vel_str) catch 0.0;
+            event.velocity_mms = @intFromFloat(vel * 1000.0);
+        }
+
+        if (findJsonNumber(json_str, "heading_deg")) |hdg_str| {
+            const hdg = std.fmt.parseFloat(f64, hdg_str) catch 0.0;
+            event.heading_cdeg = @intFromFloat(hdg * 100.0);
+        }
+
+        if (findJsonNumber(json_str, "accuracy_m")) |acc_str| {
+            const acc = std.fmt.parseFloat(f64, acc_str) catch 0.0;
+            event.accuracy_mm = @intFromFloat(acc * 1000.0);
+        }
+
+        if (findJsonNumber(json_str, "ttl_seconds")) |ttl_str| {
+            event.ttl_seconds = std.fmt.parseInt(u32, ttl_str, 10) catch self.options.default_ttl_seconds;
+        } else {
+            event.ttl_seconds = self.options.default_ttl_seconds;
+        }
+
+        // Parse id if present, otherwise it will be generated during insert
+        if (findJsonString(json_str, "id")) |id_str| {
+            event.id = parseHexU128(id_str) orelse 0;
+        }
+
+        return event;
+    }
+
+    /// Parse multiple events from JSON array format.
+    pub fn parseEvents(self: *JsonImporter, json_str: []const u8) ![]GeoEvent {
+        var events = std.ArrayList(GeoEvent).init(self.allocator);
+        errdefer events.deinit();
+
+        // Find events array
+        const events_start = mem.indexOf(u8, json_str, "\"events\":[") orelse
+            mem.indexOf(u8, json_str, "[") orelse
+            return error.InvalidJson;
+
+        var pos = events_start;
+        while (pos < json_str.len) {
+            // Find next object start
+            const obj_start = mem.indexOfPos(u8, json_str, pos, "{") orelse break;
+            const obj_end = findMatchingBrace(json_str, obj_start) orelse break;
+
+            const obj_str = json_str[obj_start .. obj_end + 1];
+            const event = try self.parseEvent(obj_str);
+            try events.append(event);
+
+            pos = obj_end + 1;
+        }
+
+        return events.toOwnedSlice();
+    }
+};
+
+/// GeoJSON importer for RFC 7946 compliant data.
+pub const GeoJsonImporter = struct {
+    allocator: mem.Allocator,
+    options: ImportOptions,
+
+    pub fn init(allocator: mem.Allocator, options: ImportOptions) GeoJsonImporter {
+        return .{
+            .allocator = allocator,
+            .options = options,
+        };
+    }
+
+    /// Parse a single GeoJSON Feature into a GeoEvent.
+    /// Expects Point geometry with [longitude, latitude] coordinates.
+    pub fn parseFeature(self: *GeoJsonImporter, feature_str: []const u8) JsonImportError!GeoEvent {
+        var event = GeoEvent.zero();
+
+        // Verify it's a Feature
+        if (findJsonString(feature_str, "type")) |type_str| {
+            if (!mem.eql(u8, type_str, "Feature")) {
+                return error.InvalidJson;
+            }
+        }
+
+        // Parse geometry - expect Point type
+        // Look for coordinates array: [longitude, latitude] or [lon, lat, altitude]
+        const coords_start = mem.indexOf(u8, feature_str, "\"coordinates\":[") orelse
+            mem.indexOf(u8, feature_str, "\"coordinates\": [") orelse
+            return error.MissingRequiredField;
+
+        const bracket_pos = mem.indexOfPos(u8, feature_str, coords_start, "[") orelse
+            return error.InvalidJson;
+        const bracket_end = mem.indexOfPos(u8, feature_str, bracket_pos, "]") orelse
+            return error.InvalidJson;
+
+        const coords_str = feature_str[bracket_pos + 1 .. bracket_end];
+
+        // Parse [lon, lat] or [lon, lat, alt]
+        var coords = mem.splitScalar(u8, coords_str, ',');
+
+        // Longitude (first coordinate in GeoJSON)
+        const lon_str = mem.trim(u8, coords.next() orelse return error.InvalidCoordinate, " \t");
+        const lon = std.fmt.parseFloat(f64, lon_str) catch return error.InvalidCoordinate;
+        if (self.options.validate_coordinates) {
+            if (lon < -180.0 or lon > 180.0) return error.InvalidCoordinate;
+        }
+        event.lon_nano = GeoEvent.lon_from_float(lon);
+
+        // Latitude (second coordinate in GeoJSON)
+        const lat_str = mem.trim(u8, coords.next() orelse return error.InvalidCoordinate, " \t");
+        const lat = std.fmt.parseFloat(f64, lat_str) catch return error.InvalidCoordinate;
+        if (self.options.validate_coordinates) {
+            if (lat < -90.0 or lat > 90.0) return error.InvalidCoordinate;
+        }
+        event.lat_nano = GeoEvent.lat_from_float(lat);
+
+        // Optional altitude (third coordinate in geometry)
+        if (coords.next()) |alt_str_raw| {
+            const alt_str = mem.trim(u8, alt_str_raw, " \t");
+            const alt = std.fmt.parseFloat(f64, alt_str) catch 0.0;
+            event.altitude_mm = @intFromFloat(alt * 1000.0);
+        }
+
+        // Parse properties
+        if (mem.indexOf(u8, feature_str, "\"properties\":")) |props_start| {
+            const props_brace = mem.indexOfPos(u8, feature_str, props_start, "{") orelse props_start;
+            const props_end = findMatchingBrace(feature_str, props_brace) orelse feature_str.len - 1;
+            const props = feature_str[props_brace .. props_end + 1];
+
+            // entity_id (required in properties)
+            if (findJsonString(props, "entity_id")) |entity_id_str| {
+                event.entity_id = parseHexU128(entity_id_str) orelse return error.InvalidEntityId;
+            } else {
+                return error.MissingRequiredField;
+            }
+
+            // Optional properties
+            if (findJsonNumber(props, "timestamp_ns")) |ts_str| {
+                event.timestamp = std.fmt.parseInt(u64, ts_str, 10) catch 0;
+            } else if (findJsonNumber(props, "timestamp")) |ts_str| {
+                event.timestamp = std.fmt.parseInt(u64, ts_str, 10) catch 0;
+            }
+            if (findJsonNumber(props, "group_id")) |gid_str| {
+                event.group_id = std.fmt.parseInt(u64, gid_str, 10) catch 0;
+            }
+            // Altitude from properties (if not in coordinates)
+            if (event.altitude_mm == 0) {
+                if (findJsonNumber(props, "altitude_m")) |alt_str| {
+                    const alt = std.fmt.parseFloat(f64, alt_str) catch 0.0;
+                    event.altitude_mm = @intFromFloat(alt * 1000.0);
+                }
+            }
+            if (findJsonNumber(props, "velocity_ms")) |vel_str| {
+                const vel = std.fmt.parseFloat(f64, vel_str) catch 0.0;
+                event.velocity_mms = @intFromFloat(vel * 1000.0);
+            }
+            if (findJsonNumber(props, "heading_deg")) |hdg_str| {
+                const hdg = std.fmt.parseFloat(f64, hdg_str) catch 0.0;
+                event.heading_cdeg = @intFromFloat(hdg * 100.0);
+            }
+            if (findJsonNumber(props, "accuracy_m")) |acc_str| {
+                const acc = std.fmt.parseFloat(f64, acc_str) catch 0.0;
+                event.accuracy_mm = @intFromFloat(acc * 1000.0);
+            }
+            if (findJsonNumber(props, "ttl_seconds")) |ttl_str| {
+                event.ttl_seconds = std.fmt.parseInt(u32, ttl_str, 10) catch self.options.default_ttl_seconds;
+            } else {
+                event.ttl_seconds = self.options.default_ttl_seconds;
+            }
+        } else {
+            return error.MissingRequiredField;
+        }
+
+        return event;
+    }
+
+    /// Parse a GeoJSON FeatureCollection into multiple GeoEvents.
+    pub fn parseFeatureCollection(self: *GeoJsonImporter, geojson: []const u8) ![]GeoEvent {
+        var events = std.ArrayList(GeoEvent).init(self.allocator);
+        errdefer events.deinit();
+
+        // Verify it's a FeatureCollection
+        if (findJsonString(geojson, "type")) |type_str| {
+            if (!mem.eql(u8, type_str, "FeatureCollection")) {
+                return error.InvalidJson;
+            }
+        }
+
+        // Find features array
+        const features_start = mem.indexOf(u8, geojson, "\"features\":[") orelse
+            mem.indexOf(u8, geojson, "\"features\": [") orelse
+            return error.InvalidJson;
+
+        var pos = features_start;
+        while (pos < geojson.len) {
+            // Find next Feature object
+            const obj_start = mem.indexOfPos(u8, geojson, pos, "{") orelse break;
+            const obj_end = findMatchingBrace(geojson, obj_start) orelse break;
+
+            const feature_str = geojson[obj_start .. obj_end + 1];
+
+            // Only parse if it's a Feature (skip other objects)
+            if (findJsonString(feature_str, "type")) |type_str| {
+                if (mem.eql(u8, type_str, "Feature")) {
+                    const event = try self.parseFeature(feature_str);
+                    try events.append(event);
+                }
+            }
+
+            pos = obj_end + 1;
+        }
+
+        return events.toOwnedSlice();
+    }
+};
+
+/// Find a JSON string value for a given key.
+fn findJsonString(json: []const u8, key: []const u8) ?[]const u8 {
+    // Search for "key":"value" pattern
+    var search_key: [64]u8 = undefined;
+    const search = std.fmt.bufPrint(&search_key, "\"{s}\":\"", .{key}) catch return null;
+
+    const key_pos = mem.indexOf(u8, json, search) orelse return null;
+    const value_start = key_pos + search.len;
+
+    const value_end = mem.indexOfPos(u8, json, value_start, "\"") orelse return null;
+    return json[value_start..value_end];
+}
+
+/// Find a JSON number value for a given key.
+fn findJsonNumber(json: []const u8, key: []const u8) ?[]const u8 {
+    // Search for "key":number pattern
+    var search_key: [64]u8 = undefined;
+    const search = std.fmt.bufPrint(&search_key, "\"{s}\":", .{key}) catch return null;
+
+    const key_pos = mem.indexOf(u8, json, search) orelse return null;
+    var value_start = key_pos + search.len;
+
+    // Skip whitespace
+    while (value_start < json.len and (json[value_start] == ' ' or json[value_start] == '\t')) {
+        value_start += 1;
+    }
+
+    // Find end of number (until comma, brace, or whitespace)
+    var value_end = value_start;
+    while (value_end < json.len) {
+        const c = json[value_end];
+        if (c == ',' or c == '}' or c == ']' or c == ' ' or c == '\n' or c == '\r') break;
+        value_end += 1;
+    }
+
+    if (value_end > value_start) {
+        return json[value_start..value_end];
+    }
+    return null;
+}
+
+/// Parse a hex string (with or without 0x prefix) to u128.
+fn parseHexU128(str: []const u8) ?u128 {
+    const hex = if (mem.startsWith(u8, str, "0x")) str[2..] else str;
+    return std.fmt.parseInt(u128, hex, 16) catch null;
+}
+
+/// Find the matching closing brace for an opening brace.
+fn findMatchingBrace(json: []const u8, start: usize) ?usize {
+    if (start >= json.len or json[start] != '{') return null;
+
+    var depth: usize = 1;
+    var pos = start + 1;
+    var in_string = false;
+
+    while (pos < json.len and depth > 0) {
+        const c = json[pos];
+        if (c == '"' and (pos == 0 or json[pos - 1] != '\\')) {
+            in_string = !in_string;
+        } else if (!in_string) {
+            if (c == '{') depth += 1 else if (c == '}') depth -= 1;
+        }
+        pos += 1;
+    }
+
+    if (depth == 0) return pos - 1;
+    return null;
+}
+
+// =============================================================================
 // Tests
 // =============================================================================
 
@@ -624,4 +995,214 @@ test "DataExporter: empty event slice" {
     // Should still produce valid JSON with empty array
     try std.testing.expect(std.mem.indexOf(u8, output, "\"events\":[]") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "\"count\":0") != null);
+}
+
+// =============================================================================
+// JSON Import Tests
+// =============================================================================
+
+test "JsonImporter: parse single event" {
+    const allocator = std.testing.allocator;
+
+    const json =
+        \\{"entity_id":"12345678abcdef0012345678abcdef00","latitude":37.7749,"longitude":-122.4194,"timestamp":1704067200000000000}
+    ;
+
+    var importer = JsonImporter.init(allocator, .{});
+    const event = try importer.parseEvent(json);
+
+    try std.testing.expectEqual(@as(u128, 0x12345678abcdef0012345678abcdef00), event.entity_id);
+    try std.testing.expect(event.lat_nano > 37_700000000 and event.lat_nano < 37_800000000);
+    try std.testing.expect(event.lon_nano > -122_500000000 and event.lon_nano < -122_400000000);
+    try std.testing.expectEqual(@as(u64, 1704067200000000000), event.timestamp);
+}
+
+test "JsonImporter: parse event with optional fields" {
+    const allocator = std.testing.allocator;
+
+    const json =
+        \\{"entity_id":"1","latitude":40.7128,"longitude":-74.006,"timestamp":1704067200000000000,"altitude_m":10.5,"velocity_ms":5.0,"heading_deg":90.0,"accuracy_m":15.0,"ttl_seconds":3600,"group_id":42}
+    ;
+
+    var importer = JsonImporter.init(allocator, .{});
+    const event = try importer.parseEvent(json);
+
+    try std.testing.expectEqual(@as(u128, 1), event.entity_id);
+    try std.testing.expectEqual(@as(i32, 10500), event.altitude_mm);
+    try std.testing.expectEqual(@as(u32, 5000), event.velocity_mms);
+    try std.testing.expectEqual(@as(u16, 9000), event.heading_cdeg);
+    try std.testing.expectEqual(@as(u32, 15000), event.accuracy_mm);
+    try std.testing.expectEqual(@as(u32, 3600), event.ttl_seconds);
+    try std.testing.expectEqual(@as(u64, 42), event.group_id);
+}
+
+test "JsonImporter: invalid coordinates rejected" {
+    const allocator = std.testing.allocator;
+
+    // Latitude out of range
+    const bad_lat =
+        \\{"entity_id":"1","latitude":91.0,"longitude":0.0}
+    ;
+
+    var importer = JsonImporter.init(allocator, .{ .validate_coordinates = true });
+    try std.testing.expectError(error.InvalidCoordinate, importer.parseEvent(bad_lat));
+
+    // Longitude out of range
+    const bad_lon =
+        \\{"entity_id":"1","latitude":0.0,"longitude":181.0}
+    ;
+    try std.testing.expectError(error.InvalidCoordinate, importer.parseEvent(bad_lon));
+}
+
+test "JsonImporter: missing required field" {
+    const allocator = std.testing.allocator;
+
+    // Missing entity_id
+    const missing_entity =
+        \\{"latitude":37.7749,"longitude":-122.4194}
+    ;
+
+    var importer = JsonImporter.init(allocator, .{});
+    try std.testing.expectError(error.MissingRequiredField, importer.parseEvent(missing_entity));
+
+    // Missing latitude
+    const missing_lat =
+        \\{"entity_id":"1","longitude":-122.4194}
+    ;
+    try std.testing.expectError(error.MissingRequiredField, importer.parseEvent(missing_lat));
+}
+
+test "JsonImporter: roundtrip export-import" {
+    const allocator = std.testing.allocator;
+
+    // Create original event
+    var original = GeoEvent.zero();
+    original.entity_id = 0x12345678_ABCDEF00_12345678_ABCDEF00;
+    original.lat_nano = GeoEvent.lat_from_float(37.7749);
+    original.lon_nano = GeoEvent.lon_from_float(-122.4194);
+    original.timestamp = 1704067200000000000;
+    original.group_id = 42;
+    original.altitude_mm = 10000;
+
+    // Export to JSON
+    const json = try eventToJson(allocator, &original, false);
+    defer allocator.free(json);
+
+    // Import back
+    var importer = JsonImporter.init(allocator, .{});
+    const imported = try importer.parseEvent(json);
+
+    // Verify key fields match
+    try std.testing.expectEqual(original.entity_id, imported.entity_id);
+    try std.testing.expectEqual(original.timestamp, imported.timestamp);
+    try std.testing.expectEqual(original.group_id, imported.group_id);
+    try std.testing.expectEqual(original.altitude_mm, imported.altitude_mm);
+    // Allow small floating point tolerance for lat/lon
+    try std.testing.expect(@abs(original.lat_nano - imported.lat_nano) < 1000);
+    try std.testing.expect(@abs(original.lon_nano - imported.lon_nano) < 1000);
+}
+
+test "findJsonString: basic parsing" {
+    const json =
+        \\{"name":"test","value":"hello"}
+    ;
+
+    try std.testing.expectEqualStrings("test", findJsonString(json, "name").?);
+    try std.testing.expectEqualStrings("hello", findJsonString(json, "value").?);
+    try std.testing.expect(findJsonString(json, "missing") == null);
+}
+
+test "findJsonNumber: basic parsing" {
+    const json =
+        \\{"count":42,"price":19.99,"negative":-5}
+    ;
+
+    try std.testing.expectEqualStrings("42", findJsonNumber(json, "count").?);
+    try std.testing.expectEqualStrings("19.99", findJsonNumber(json, "price").?);
+    try std.testing.expectEqualStrings("-5", findJsonNumber(json, "negative").?);
+    try std.testing.expect(findJsonNumber(json, "missing") == null);
+}
+
+test "parseHexU128: various formats" {
+    try std.testing.expectEqual(@as(u128, 0x12345678), parseHexU128("12345678").?);
+    try std.testing.expectEqual(@as(u128, 0xABCDEF), parseHexU128("0xABCDEF").?);
+    try std.testing.expectEqual(@as(u128, 1), parseHexU128("1").?);
+    try std.testing.expect(parseHexU128("invalid") == null);
+}
+
+// =============================================================================
+// GeoJSON Import Tests
+// =============================================================================
+
+test "GeoJsonImporter: parse single Feature" {
+    const allocator = std.testing.allocator;
+
+    const geojson =
+        \\{"type":"Feature","geometry":{"type":"Point","coordinates":[-74.006,40.7128]},"properties":{"entity_id":"1","timestamp":1704067200000000000}}
+    ;
+
+    var importer = GeoJsonImporter.init(allocator, .{});
+    const event = try importer.parseFeature(geojson);
+
+    try std.testing.expectEqual(@as(u128, 1), event.entity_id);
+    // GeoJSON coordinates are [lon, lat]
+    try std.testing.expect(event.lon_nano > -74_100000000 and event.lon_nano < -73_900000000);
+    try std.testing.expect(event.lat_nano > 40_600000000 and event.lat_nano < 40_800000000);
+    try std.testing.expectEqual(@as(u64, 1704067200000000000), event.timestamp);
+}
+
+test "GeoJsonImporter: parse Feature with altitude" {
+    const allocator = std.testing.allocator;
+
+    const geojson =
+        \\{"type":"Feature","geometry":{"type":"Point","coordinates":[-122.4194,37.7749,100.5]},"properties":{"entity_id":"2","group_id":42}}
+    ;
+
+    var importer = GeoJsonImporter.init(allocator, .{});
+    const event = try importer.parseFeature(geojson);
+
+    try std.testing.expectEqual(@as(u128, 2), event.entity_id);
+    try std.testing.expectEqual(@as(i32, 100500), event.altitude_mm);
+    try std.testing.expectEqual(@as(u64, 42), event.group_id);
+}
+
+test "GeoJsonImporter: roundtrip GeoJSON export-import" {
+    const allocator = std.testing.allocator;
+
+    // Create original event
+    var original = GeoEvent.zero();
+    original.entity_id = 0x12345678_ABCDEF00_12345678_ABCDEF00;
+    original.lat_nano = GeoEvent.lat_from_float(40.7128);
+    original.lon_nano = GeoEvent.lon_from_float(-74.006);
+    original.timestamp = 1704067200000000000;
+    original.group_id = 42;
+    original.altitude_mm = 10000;
+
+    // Export to GeoJSON
+    const geojson = try eventToGeoJson(allocator, &original, false);
+    defer allocator.free(geojson);
+
+    // Import back
+    var importer = GeoJsonImporter.init(allocator, .{});
+    const imported = try importer.parseFeature(geojson);
+
+    // Verify key fields match
+    try std.testing.expectEqual(original.entity_id, imported.entity_id);
+    try std.testing.expectEqual(original.group_id, imported.group_id);
+    try std.testing.expectEqual(original.altitude_mm, imported.altitude_mm);
+    // Allow small floating point tolerance for lat/lon
+    try std.testing.expect(@abs(original.lat_nano - imported.lat_nano) < 1000);
+    try std.testing.expect(@abs(original.lon_nano - imported.lon_nano) < 1000);
+}
+
+test "GeoJsonImporter: invalid coordinates rejected" {
+    const allocator = std.testing.allocator;
+
+    // Latitude out of range (91 degrees)
+    const bad_lat =
+        \\{"type":"Feature","geometry":{"type":"Point","coordinates":[0,91]},"properties":{"entity_id":"1"}}
+    ;
+
+    var importer = GeoJsonImporter.init(allocator, .{ .validate_coordinates = true });
+    try std.testing.expectError(error.InvalidCoordinate, importer.parseFeature(bad_lat));
 }

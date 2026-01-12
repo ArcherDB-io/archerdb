@@ -1,6 +1,6 @@
 package com.archerdb.core;
 
-import static com.archerdb.AssertionError.assertTrue;
+import static com.archerdb.core.AssertionError.assertTrue;
 
 import java.lang.ref.Cleaner;
 import java.nio.ByteBuffer;
@@ -92,8 +92,8 @@ final class NativeClient implements AutoCloseable {
     private static native void submit(ByteBuffer arch_client, Request<?> request)
             throws ClientClosedException;
 
-    private static native void clientInit(ByteBuffer arch_client, byte[] clusterID, String addresses)
-            throws InitializationException;
+    private static native void clientInit(ByteBuffer arch_client, byte[] clusterID,
+            String addresses) throws InitializationException;
 
     private static native void clientInitEcho(ByteBuffer arch_client, byte[] clusterID,
             String addresses) throws InitializationException;

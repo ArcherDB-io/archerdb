@@ -77,6 +77,7 @@ class GeoOperation(IntEnum):
     ARCHERDB_GET_STATUS = 153  # vsr_operations_reserved (128) + 25
     QUERY_LATEST = 154     # vsr_operations_reserved (128) + 26
     CLEANUP_EXPIRED = 155  # vsr_operations_reserved (128) + 27
+    QUERY_UUID_BATCH = 156 # vsr_operations_reserved (128) + 28
 
 
 class InsertGeoEventResult(IntEnum):
@@ -177,6 +178,22 @@ class QueryUuidFilter:
     """Filter for UUID lookup queries."""
     entity_id: int
     limit: int = 1
+
+
+@dataclass
+class QueryUuidBatchFilter:
+    """Filter for batch UUID lookup queries (F1.3.4)."""
+    count: int
+    entity_ids: List[int]
+
+
+@dataclass
+class QueryUuidBatchResult:
+    """Result of batch UUID lookup (F1.3.4)."""
+    found_count: int
+    not_found_count: int
+    not_found_indices: List[int]  # Indices of entity_ids that were not found
+    events: List['GeoEvent']  # Found events in request order
 
 
 @dataclass
@@ -318,6 +335,36 @@ class StatusResponse:
     def load_factor(self) -> float:
         """Return the load factor as a decimal (e.g., 0.70)."""
         return self.ram_index_load_pct / 10000.0
+
+
+@dataclass
+class CleanupResult:
+    """
+    Result of a cleanup_expired operation.
+
+    Per client-protocol/spec.md cleanup_expired (0x30) response format:
+    - entries_scanned: u64 - Number of index entries examined
+    - entries_removed: u64 - Number of expired entries cleaned up
+    """
+    entries_scanned: int = 0
+    entries_removed: int = 0
+
+    @property
+    def has_removals(self) -> bool:
+        """Return True if any entries were removed."""
+        return self.entries_removed > 0
+
+    @property
+    def expiration_ratio(self) -> float:
+        """
+        Return the percentage of scanned entries that were expired.
+
+        Returns:
+            Expiration ratio (0.0 to 1.0)
+        """
+        if self.entries_scanned == 0:
+            return 0.0
+        return self.entries_removed / self.entries_scanned
 
 
 # ============================================================================

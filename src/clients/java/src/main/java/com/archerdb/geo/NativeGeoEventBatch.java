@@ -1,6 +1,7 @@
 package com.archerdb.geo;
 
 import com.archerdb.core.Batch;
+import com.archerdb.core.UInt128;
 import java.nio.ByteBuffer;
 
 // Internal batch methods use the ArcherDB UInt128 enum for accessing lo/hi parts
@@ -59,7 +60,7 @@ public final class NativeGeoEventBatch extends Batch {
         return getUInt128(at(Struct.Id));
     }
 
-    public long getId(final com.archerdb.UInt128 part) {
+    public long getId(final UInt128 part) {
         return getUInt128(at(Struct.Id), part);
     }
 
@@ -77,7 +78,7 @@ public final class NativeGeoEventBatch extends Batch {
         return getUInt128(at(Struct.EntityId));
     }
 
-    public long getEntityId(final com.archerdb.UInt128 part) {
+    public long getEntityId(final UInt128 part) {
         return getUInt128(at(Struct.EntityId), part);
     }
 
@@ -224,10 +225,9 @@ public final class NativeGeoEventBatch extends Batch {
      */
     public GeoEvent toGeoEvent() {
         return new GeoEvent.Builder()
-                .id(getId(com.archerdb.UInt128.LeastSignificant),
-                        getId(com.archerdb.UInt128.MostSignificant))
-                .entityId(getEntityId(com.archerdb.UInt128.LeastSignificant),
-                        getEntityId(com.archerdb.UInt128.MostSignificant))
+                .id(getId(UInt128.LeastSignificant), getId(UInt128.MostSignificant))
+                .entityId(getEntityId(UInt128.LeastSignificant),
+                        getEntityId(UInt128.MostSignificant))
                 .latitude(CoordinateUtils.nanoToDegrees(getLatNano()))
                 .longitude(CoordinateUtils.nanoToDegrees(getLonNano())).groupId(getGroupId())
                 .timestamp(getTimestamp()).altitudeMm(getAltitudeMm()).velocityMms(getVelocityMms())

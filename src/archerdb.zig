@@ -25,6 +25,8 @@ const ttl = @import("ttl.zig");
 pub const GeoEvent = geo_event.GeoEvent;
 pub const GeoEventFlags = geo_event.GeoEventFlags;
 pub const QueryUuidFilter = geo_state_machine.QueryUuidFilter;
+pub const QueryUuidBatchFilter = geo_state_machine.QueryUuidBatchFilter;
+pub const QueryUuidBatchResult = geo_state_machine.QueryUuidBatchResult;
 pub const QueryRadiusFilter = geo_state_machine.QueryRadiusFilter;
 pub const QueryPolygonFilter = geo_state_machine.QueryPolygonFilter;
 pub const QueryResponse = geo_state_machine.QueryResponse;
@@ -104,6 +106,7 @@ pub const Operation = enum(u8) {
     query_radius = constants.vsr_operations_reserved + 22,
     query_polygon = constants.vsr_operations_reserved + 23,
     query_latest = constants.vsr_operations_reserved + 26, // F1.3.3: Most recent events globally
+    query_uuid_batch = constants.vsr_operations_reserved + 28, // F1.3.4: Batch UUID lookup
 
     // ArcherDB admin operations (F1.2.6)
     archerdb_ping = constants.vsr_operations_reserved + 24,
@@ -121,6 +124,7 @@ pub const Operation = enum(u8) {
             .upsert_events => GeoEvent,
             .delete_entities => u128, // entity_id to delete
             .query_uuid => QueryUuidFilter,
+            .query_uuid_batch => QueryUuidBatchFilter,
             .query_radius => QueryRadiusFilter,
             .query_polygon => QueryPolygonFilter,
             .query_latest => QueryLatestFilter,
@@ -143,6 +147,7 @@ pub const Operation = enum(u8) {
             .upsert_events => InsertGeoEventsResult,
             .delete_entities => DeleteEntitiesResult,
             .query_uuid => GeoEvent,
+            .query_uuid_batch => QueryUuidBatchResult,
             .query_radius => GeoEvent,
             .query_polygon => GeoEvent,
             .query_latest => GeoEvent,
@@ -182,6 +187,7 @@ pub const Operation = enum(u8) {
 
             // ArcherDB query operations (single filter per request)
             .query_uuid => false,
+            .query_uuid_batch => false, // Variable-length, not batchable
             .query_radius => false,
             .query_polygon => false,
             .query_latest => false,
@@ -205,6 +211,7 @@ pub const Operation = enum(u8) {
             .upsert_events,
             .delete_entities,
             .query_uuid,
+            .query_uuid_batch,
             .query_latest,
             .query_radius,
             .query_polygon,
@@ -224,6 +231,8 @@ pub const Operation = enum(u8) {
         return switch (operation) {
             // query_polygon body = QueryPolygonFilter + PolygonVertex[]
             .query_polygon => true,
+            // query_uuid_batch body = QueryUuidBatchFilter + entity_ids[]
+            .query_uuid_batch => true,
             else => false,
         };
     }
@@ -369,6 +378,29 @@ pub const Operation = enum(u8) {
                 break :count @min(
                     filter.limit,
                     Operation.query_polygon.result_max(constants.message_body_size_max),
+                );
+            },
+
+            // ArcherDB batch UUID query (variable-length: header + entity_ids)
+            .query_uuid_batch => count: {
+                comptime assert(!Operation.query_uuid_batch.is_batchable());
+                comptime assert(Operation.query_uuid_batch.is_variable_length());
+
+                const Filter = QueryUuidBatchFilter;
+                comptime assert(@sizeOf(Filter) == 8);
+
+                // Must have at least the header
+                if (batch.len < @sizeOf(Filter)) {
+                    break :count 0;
+                }
+
+                const filter: Filter = std.mem.bytesToValue(Filter, batch[0..@sizeOf(Filter)]);
+
+                // For batch UUID, result count = count of UUIDs (each may return 0 or 1 event)
+                // Maximum is the count itself since each UUID returns at most one event
+                break :count @min(
+                    filter.count,
+                    QueryUuidBatchFilter.max_count,
                 );
             },
 

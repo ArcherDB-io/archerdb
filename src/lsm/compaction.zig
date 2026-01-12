@@ -338,6 +338,11 @@ pub fn CompactionType(
         /// This invariant is always true for the last level as it doesn't have any lower ones.
         drop_tombstones: bool = false,
 
+        /// Current timestamp in nanoseconds for TTL expiration checks.
+        /// Set during bar_commence() from Forest.compaction_timestamp_ns.
+        /// Per ttl-retention/spec.md: use consensus timestamp for determinism.
+        compaction_timestamp_ns: u64 = 0,
+
         /// Counters track physical IO and are not fully deterministic. In particular, `in` and
         /// `dropped` values can vary between the replicas.
         ///
@@ -557,7 +562,8 @@ pub fn CompactionType(
         ///   compacted,
         /// - compute the bar quota (just the total number of values in all input tables),
         /// - execute move table optimization if range_b turns out to be empty.
-        pub fn bar_commence(compaction: *Compaction, op: u64) u64 {
+        /// @param compaction_timestamp_ns Current timestamp for TTL expiration checks.
+        pub fn bar_commence(compaction: *Compaction, op: u64, compaction_timestamp_ns: u64) u64 {
             assert(compaction.idle());
             assert(compaction.block_queues_empty_output());
             assert(compaction.block_queues_empty_input());
@@ -567,6 +573,7 @@ pub fn CompactionType(
 
             compaction.stage = .paused;
             compaction.op_min = op;
+            compaction.compaction_timestamp_ns = compaction_timestamp_ns;
 
             if (compaction.level_b == 0) {
                 // Do not start compaction if the immutable table does not require compaction.
@@ -1570,40 +1577,46 @@ pub fn CompactionType(
             }
 
             // Do the actual merge from inputs to the output (table builder).
+            // Determine if this is the final LSM level (for TTL tombstone handling).
+            const is_final_level = compaction.level_b == constants.lsm_levels - 1;
+
             const merge_result: MergeResult = if (values_source_a == null) blk: {
-                const consumed = values_copy(values_target, values_source_b.?);
+                // Only source B available - copy with TTL filtering (no tombstone filtering).
+                const copy_result = values_copy_with_filtering(
+                    values_target,
+                    values_source_b.?,
+                    false, // No tombstone filtering for source B only
+                    compaction.compaction_timestamp_ns,
+                    is_final_level,
+                );
                 break :blk .{
                     .consumed_a = 0,
-                    .consumed_b = consumed,
-                    .dropped = 0,
-                    .produced = consumed,
+                    .consumed_b = copy_result.consumed,
+                    .dropped = copy_result.dropped,
+                    .produced = copy_result.produced,
                 };
             } else if (values_source_b == null) blk: {
-                if (compaction.drop_tombstones) {
-                    const copy_result = values_copy_drop_tombstones(
-                        values_target,
-                        values_source_a.?,
-                    );
-                    break :blk .{
-                        .consumed_a = copy_result.consumed,
-                        .consumed_b = 0,
-                        .dropped = copy_result.dropped,
-                        .produced = copy_result.produced,
-                    };
-                } else {
-                    const consumed = values_copy(values_target, values_source_a.?);
-                    break :blk .{
-                        .consumed_a = consumed,
-                        .consumed_b = 0,
-                        .dropped = 0,
-                        .produced = consumed,
-                    };
-                }
+                // Only source A available - copy with tombstone and TTL filtering.
+                const copy_result = values_copy_with_filtering(
+                    values_target,
+                    values_source_a.?,
+                    compaction.drop_tombstones, // Tombstone filtering based on level
+                    compaction.compaction_timestamp_ns,
+                    is_final_level,
+                );
+                break :blk .{
+                    .consumed_a = copy_result.consumed,
+                    .consumed_b = 0,
+                    .dropped = copy_result.dropped,
+                    .produced = copy_result.produced,
+                };
             } else values_merge(
                 values_target,
                 values_source_a.?,
                 values_source_b.?,
                 compaction.drop_tombstones,
+                compaction.compaction_timestamp_ns,
+                is_final_level,
             );
 
             compaction.level_a_position.value += merge_result.consumed_a;
@@ -1901,16 +1914,21 @@ pub fn CompactionType(
             return len;
         }
 
-        const CopyDropTombstonesResult = struct {
+        const CopyFilterResult = struct {
             consumed: u32,
             dropped: u32,
             produced: u32,
         };
-        /// Copy values from values_source to values_target, dropping tombstones as we go.
-        fn values_copy_drop_tombstones(
+        /// Copy values from values_source to values_target, optionally dropping tombstones
+        /// and always dropping TTL-expired values (for types that support TTL).
+        /// Per ttl-retention/spec.md: expired events are discarded during compaction.
+        fn values_copy_with_filtering(
             values_target: []Value,
             values_source: []const Value,
-        ) CopyDropTombstonesResult {
+            drop_tombstones: bool,
+            compaction_timestamp_ns: u64,
+            is_final_level: bool,
+        ) CopyFilterResult {
             assert(values_source.len > 0);
             assert(values_source.len <= Table.data.value_count_max);
             assert(values_target.len > 0);
@@ -1924,14 +1942,22 @@ pub fn CompactionType(
             {
                 const value_in = &values_source[index_source];
                 index_source += 1;
-                if (tombstone(value_in)) {
+                // Tombstone filtering (conditional on drop_tombstones flag).
+                if (drop_tombstones and tombstone(value_in)) {
                     assert(Table.usage != .secondary_index);
                     continue;
+                }
+                // TTL filtering: check if value has should_copy_forward method.
+                // Per ttl-retention/spec.md: skip expired values during compaction.
+                if (comptime @hasDecl(Value, "should_copy_forward")) {
+                    if (!value_in.should_copy_forward(compaction_timestamp_ns, is_final_level)) {
+                        continue;
+                    }
                 }
                 values_target[index_target] = value_in.*;
                 index_target += 1;
             }
-            const copy_result: CopyDropTombstonesResult = .{
+            const copy_result: CopyFilterResult = .{
                 .consumed = @intCast(index_source),
                 .dropped = @intCast(index_source - index_target),
                 .produced = @intCast(index_target),
@@ -1952,12 +1978,16 @@ pub fn CompactionType(
         };
 
         /// Merge values from table_a and table_b, with table_a taking precedence. Tombstones may
-        /// or may not be dropped depending on bar.drop_tombstones.
+        /// or may not be dropped depending on bar.drop_tombstones. TTL-expired values are also
+        /// dropped if the Value type has a should_copy_forward method.
+        /// Per ttl-retention/spec.md: expired events are discarded during compaction.
         fn values_merge(
             values_target: []Value,
             values_source_a: []const Value,
             values_source_b: []const Value,
             drop_tombstones: bool,
+            compaction_timestamp_ns: u64,
+            is_final_level: bool,
         ) MergeResult {
             assert(values_source_a.len > 0);
             assert(values_source_a.len <= Table.data.value_count_max);
@@ -1983,11 +2013,23 @@ pub fn CompactionType(
                             assert(Table.usage != .secondary_index);
                             continue;
                         }
+                        // TTL filtering for level A value.
+                        if (comptime @hasDecl(Value, "should_copy_forward")) {
+                            if (!value_a.should_copy_forward(compaction_timestamp_ns, is_final_level)) {
+                                continue;
+                            }
+                        }
                         values_target[index_target] = value_a.*;
                         index_target += 1;
                     },
                     .gt => { // Pick value from level b.
                         index_source_b += 1;
+                        // TTL filtering for level B value.
+                        if (comptime @hasDecl(Value, "should_copy_forward")) {
+                            if (!value_b.should_copy_forward(compaction_timestamp_ns, is_final_level)) {
+                                continue;
+                            }
+                        }
                         values_target[index_target] = value_b.*;
                         index_target += 1;
                     },
@@ -2000,6 +2042,12 @@ pub fn CompactionType(
                             assert(tombstone(value_a) != tombstone(value_b));
                         } else {
                             if (drop_tombstones and tombstone(value_a)) continue;
+                            // TTL filtering for merged value (A takes precedence).
+                            if (comptime @hasDecl(Value, "should_copy_forward")) {
+                                if (!value_a.should_copy_forward(compaction_timestamp_ns, is_final_level)) {
+                                    continue;
+                                }
+                            }
                             values_target[index_target] = value_a.*;
                             index_target += 1;
                         }

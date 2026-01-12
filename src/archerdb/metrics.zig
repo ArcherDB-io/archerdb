@@ -653,6 +653,28 @@ pub const Registry = struct {
     pub var free_set_blocks_reserved: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
     pub var free_set_total_blocks: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
 
+    // Free set exhaustion thresholds (storage-engine/spec.md)
+    // - 10% free: Warning threshold
+    // - 5% free: Critical threshold (reject writes)
+    // - 2% free: Emergency threshold (force compaction)
+    pub var free_set_low_warning_total: Counter = Counter.init(
+        "archerdb_free_set_low_warning_total",
+        "Free set below 10% - warning threshold exceeded",
+        null,
+    );
+
+    pub var free_set_critical_total: Counter = Counter.init(
+        "archerdb_free_set_critical_total",
+        "Free set below 5% - writes suspended",
+        null,
+    );
+
+    pub var free_set_emergency_total: Counter = Counter.init(
+        "archerdb_free_set_emergency_total",
+        "Free set below 2% - emergency compaction triggered",
+        null,
+    );
+
     // Backup metrics (F5.5.6 - Observability)
     // See backup-restore/spec.md for metric definitions
     pub var backup_blocks_uploaded_total: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
@@ -1018,6 +1040,12 @@ pub const Registry = struct {
         }
         try writer.writeAll("\n");
 
+        // Free set exhaustion threshold counters (storage-engine/spec.md)
+        try free_set_low_warning_total.format(writer);
+        try free_set_critical_total.format(writer);
+        try free_set_emergency_total.format(writer);
+        try writer.writeAll("\n");
+
         // Backup metrics (F5.5.6)
         try writer.writeAll("# HELP archerdb_backup_blocks_uploaded_total " ++
             "Total blocks uploaded to object storage\n");
@@ -1259,6 +1287,74 @@ pub const Registry = struct {
         free_set_blocks_free.store(blocks_free, .monotonic);
         free_set_blocks_reserved.store(blocks_reserved, .monotonic);
         free_set_total_blocks.store(total_blocks, .monotonic);
+    }
+
+    // ==========================================================================
+    // Free Set Threshold Monitoring (storage-engine/spec.md)
+    // ==========================================================================
+
+    /// Free set exhaustion state for backpressure decisions.
+    pub const FreeSetState = enum {
+        /// Normal operation - more than 10% free
+        normal,
+        /// Warning threshold - 5-10% free, log warning
+        warning,
+        /// Critical threshold - 2-5% free, reject writes
+        critical,
+        /// Emergency threshold - less than 2% free, force compaction
+        emergency,
+    };
+
+    /// Check free set exhaustion thresholds and record appropriate metrics.
+    /// Returns the current free set state for backpressure decisions.
+    ///
+    /// Thresholds (storage-engine/spec.md):
+    /// - 10% free: Warning - log warning, increment warning counter
+    /// - 5% free: Critical - reject new writes, allow compaction
+    /// - 2% free: Emergency - force immediate compaction
+    ///
+    /// Args:
+    ///   blocks_free: Number of free blocks available
+    ///   total_blocks: Total blocks in the free set
+    ///
+    /// Returns: The current FreeSetState based on thresholds
+    pub fn checkFreeSetThresholds(blocks_free: u64, total_blocks: u64) FreeSetState {
+        if (total_blocks == 0) return .normal;
+
+        // Calculate percentage of free blocks (scaled by 1000 for precision)
+        const free_pct_scaled = (blocks_free * 1000) / total_blocks;
+
+        // Check thresholds from most severe to least
+        if (free_pct_scaled < 20) { // < 2%
+            free_set_emergency_total.inc();
+            return .emergency;
+        } else if (free_pct_scaled < 50) { // < 5%
+            free_set_critical_total.inc();
+            return .critical;
+        } else if (free_pct_scaled < 100) { // < 10%
+            free_set_low_warning_total.inc();
+            return .warning;
+        }
+
+        return .normal;
+    }
+
+    /// Check if writes should be rejected due to free set exhaustion.
+    /// Returns true if the system should reject new write operations.
+    ///
+    /// This should be called before accepting write batches. If true,
+    /// the operation should return `out_of_space` error.
+    pub fn shouldRejectWrites(blocks_free: u64, total_blocks: u64) bool {
+        const state = checkFreeSetThresholds(blocks_free, total_blocks);
+        return state == .critical or state == .emergency;
+    }
+
+    /// Check if emergency compaction should be triggered.
+    /// Returns true if the system should force immediate compaction.
+    pub fn shouldTriggerEmergencyCompaction(blocks_free: u64, total_blocks: u64) bool {
+        if (total_blocks == 0) return false;
+        const free_pct_scaled = (blocks_free * 1000) / total_blocks;
+        return free_pct_scaled < 20; // < 2%
     }
 
     // ==========================================================================
@@ -1570,4 +1666,99 @@ test "Registry: backup metrics format output" {
 
     const bypass_key = "archerdb_backup_mandatory_bypass_total";
     try std.testing.expect(std.mem.indexOf(u8, output, bypass_key) != null);
+}
+
+// =============================================================================
+// Free Set Threshold Tests (storage-engine/spec.md)
+// =============================================================================
+
+test "Registry: free set threshold - normal" {
+    // Reset counters
+    Registry.free_set_low_warning_total = Counter.init(
+        "archerdb_free_set_low_warning_total",
+        "Free set below 10% - warning threshold exceeded",
+        null,
+    );
+
+    // 50% free - should be normal
+    const state = Registry.checkFreeSetThresholds(500, 1000);
+    try std.testing.expectEqual(Registry.FreeSetState.normal, state);
+    try std.testing.expectEqual(@as(u64, 0), Registry.free_set_low_warning_total.get());
+}
+
+test "Registry: free set threshold - warning" {
+    // Reset counters
+    Registry.free_set_low_warning_total = Counter.init(
+        "archerdb_free_set_low_warning_total",
+        "Free set below 10% - warning threshold exceeded",
+        null,
+    );
+
+    // 8% free - should trigger warning
+    const state = Registry.checkFreeSetThresholds(80, 1000);
+    try std.testing.expectEqual(Registry.FreeSetState.warning, state);
+    try std.testing.expectEqual(@as(u64, 1), Registry.free_set_low_warning_total.get());
+}
+
+test "Registry: free set threshold - critical" {
+    // Reset counters
+    Registry.free_set_critical_total = Counter.init(
+        "archerdb_free_set_critical_total",
+        "Free set below 5% - writes suspended",
+        null,
+    );
+
+    // 3% free - should trigger critical
+    const state = Registry.checkFreeSetThresholds(30, 1000);
+    try std.testing.expectEqual(Registry.FreeSetState.critical, state);
+    try std.testing.expectEqual(@as(u64, 1), Registry.free_set_critical_total.get());
+}
+
+test "Registry: free set threshold - emergency" {
+    // Reset counters
+    Registry.free_set_emergency_total = Counter.init(
+        "archerdb_free_set_emergency_total",
+        "Free set below 2% - emergency compaction triggered",
+        null,
+    );
+
+    // 1% free - should trigger emergency
+    const state = Registry.checkFreeSetThresholds(10, 1000);
+    try std.testing.expectEqual(Registry.FreeSetState.emergency, state);
+    try std.testing.expectEqual(@as(u64, 1), Registry.free_set_emergency_total.get());
+}
+
+test "Registry: shouldRejectWrites" {
+    // Normal state - don't reject
+    try std.testing.expect(!Registry.shouldRejectWrites(500, 1000)); // 50% free
+    try std.testing.expect(!Registry.shouldRejectWrites(100, 1000)); // 10% free
+
+    // Warning state (5-10%) - don't reject
+    try std.testing.expect(!Registry.shouldRejectWrites(80, 1000)); // 8% free
+
+    // Critical state (<5%) - reject
+    try std.testing.expect(Registry.shouldRejectWrites(40, 1000)); // 4% free
+
+    // Emergency state (<2%) - reject
+    try std.testing.expect(Registry.shouldRejectWrites(10, 1000)); // 1% free
+}
+
+test "Registry: shouldTriggerEmergencyCompaction" {
+    // Above 2% - no emergency
+    try std.testing.expect(!Registry.shouldTriggerEmergencyCompaction(100, 1000)); // 10%
+    try std.testing.expect(!Registry.shouldTriggerEmergencyCompaction(30, 1000)); // 3%
+
+    // Below 2% - trigger emergency
+    try std.testing.expect(Registry.shouldTriggerEmergencyCompaction(19, 1000)); // 1.9%
+    try std.testing.expect(Registry.shouldTriggerEmergencyCompaction(10, 1000)); // 1%
+    try std.testing.expect(Registry.shouldTriggerEmergencyCompaction(0, 1000)); // 0%
+}
+
+test "Registry: free set threshold with zero total" {
+    // Edge case: zero total blocks should return normal
+    const state = Registry.checkFreeSetThresholds(0, 0);
+    try std.testing.expectEqual(Registry.FreeSetState.normal, state);
+
+    // Zero total should not trigger emergency compaction
+    try std.testing.expect(!Registry.shouldTriggerEmergencyCompaction(0, 0));
 }

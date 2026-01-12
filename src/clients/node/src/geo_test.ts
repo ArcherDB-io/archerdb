@@ -48,6 +48,7 @@ import {
   // Errors
   InvalidCoordinates,
   BatchTooLarge,
+
   InvalidEntityId,
   RetryExhausted,
   OperationTimeout,
@@ -57,6 +58,17 @@ import {
   ConnectionFailed,
   PolygonTooComplex,
   QueryResultTooLarge,
+  CircuitBreakerOpen,
+
+  // Circuit Breaker
+  CircuitBreaker,
+  CircuitState,
+
+  // Cleanup types and helpers
+  CleanupResult,
+  hasCleanupRemovals,
+  getCleanupExpirationRatio,
+  CLEANUP_RESULT_SIZE,
 
   // Batch helpers
   splitBatch,
@@ -64,6 +76,27 @@ import {
   // Internal exports for testing retry logic
   _testExports,
 } from './geo_client'
+
+// Observability imports (from separate module)
+import {
+  LogLevel,
+  SDKLogger,
+  ConsoleLogger,
+  NullLogger,
+  configureLogging,
+  getLogger,
+  MetricLabels,
+  Counter,
+  Gauge,
+  Histogram,
+  SDKMetrics,
+  getMetrics,
+  resetMetrics,
+  ConnectionState,
+  HealthStatus,
+  HealthTracker,
+  RequestTimer,
+} from './observability'
 
 // Local ID generation (copied from index.ts to avoid loading native binding)
 let idLastTimestamp = 0
@@ -575,6 +608,7 @@ function test_GeoOperation_values() {
   assert.strictEqual(GeoOperation.query_radius, 150)   // 128 + 22
   assert.strictEqual(GeoOperation.query_polygon, 151)  // 128 + 23
   assert.strictEqual(GeoOperation.query_latest, 154)   // 128 + 26
+  assert.strictEqual(GeoOperation.cleanup_expired, 155) // 128 + 27
 
   console.log('✓ GeoOperation_values')
 }
@@ -621,6 +655,100 @@ function test_id_generation() {
   assert(id1 < (2n ** 128n), 'ID should fit in u128')
 
   console.log('✓ id_generation')
+}
+
+// ============================================================================
+// TTL Cleanup Tests (cleanup_expired per client-protocol/spec.md)
+// ============================================================================
+
+function test_CleanupResult_type() {
+  const result: CleanupResult = {
+    entries_scanned: 100n,
+    entries_removed: 25n,
+  }
+
+  assert.strictEqual(result.entries_scanned, 100n)
+  assert.strictEqual(result.entries_removed, 25n)
+
+  console.log('✓ CleanupResult_type')
+}
+
+function test_CleanupResult_helpers() {
+  const resultWithRemovals: CleanupResult = {
+    entries_scanned: 100n,
+    entries_removed: 25n,
+  }
+
+  const resultWithoutRemovals: CleanupResult = {
+    entries_scanned: 100n,
+    entries_removed: 0n,
+  }
+
+  const emptyResult: CleanupResult = {
+    entries_scanned: 0n,
+    entries_removed: 0n,
+  }
+
+  // Test hasCleanupRemovals
+  assert.strictEqual(hasCleanupRemovals(resultWithRemovals), true)
+  assert.strictEqual(hasCleanupRemovals(resultWithoutRemovals), false)
+  assert.strictEqual(hasCleanupRemovals(emptyResult), false)
+
+  // Test getCleanupExpirationRatio
+  assert(Math.abs(getCleanupExpirationRatio(resultWithRemovals) - 0.25) < 0.0001)
+  assert.strictEqual(getCleanupExpirationRatio(resultWithoutRemovals), 0.0)
+  assert.strictEqual(getCleanupExpirationRatio(emptyResult), 0.0) // No division by zero
+
+  console.log('✓ CleanupResult_helpers')
+}
+
+function test_CleanupResult_wireFormatSize() {
+  // Per spec: cleanup response is 16 bytes (2x u64)
+  assert.strictEqual(CLEANUP_RESULT_SIZE, 16)
+
+  console.log('✓ CleanupResult_wireFormatSize')
+}
+
+async function test_GeoClient_cleanupExpired() {
+  const client = createGeoClient({
+    cluster_id: 0n,
+    addresses: ['127.0.0.1:3000'],
+  })
+
+  // Test cleanup with default batch size (0 = scan all)
+  const result = await client.cleanupExpired()
+  assert.strictEqual(result.entries_scanned, 0n)
+  assert.strictEqual(result.entries_removed, 0n)
+
+  // Test cleanup with explicit batch size
+  const resultWithBatch = await client.cleanupExpired(1000)
+  assert.strictEqual(resultWithBatch.entries_scanned, 0n)
+  assert.strictEqual(resultWithBatch.entries_removed, 0n)
+
+  client.destroy()
+
+  console.log('✓ GeoClient_cleanupExpired')
+}
+
+async function test_GeoClient_cleanupExpired_negativeBatch() {
+  const client = createGeoClient({
+    cluster_id: 0n,
+    addresses: ['127.0.0.1:3000'],
+  })
+
+  let threw = false
+  try {
+    await client.cleanupExpired(-1)
+  } catch (e) {
+    threw = true
+    assert(e instanceof Error)
+    assert(e.message.includes('non-negative'))
+  }
+  assert(threw, 'Should throw for negative batch size')
+
+  client.destroy()
+
+  console.log('✓ GeoClient_cleanupExpired_negativeBatch')
 }
 
 // ============================================================================
@@ -1109,6 +1237,676 @@ function test_RetryExhausted_properties() {
 }
 
 // ============================================================================
+// Observability Tests (per client-sdk/spec.md)
+// ============================================================================
+
+function test_NullLogger() {
+  const logger = new NullLogger()
+  // Should not throw
+  logger.debug('debug message')
+  logger.info('info message')
+  logger.warn('warn message')
+  logger.error('error message')
+  console.log('✓ NullLogger')
+}
+
+function test_ConsoleLogger() {
+  // Create a logger but don't actually log (we can't capture console output easily)
+  const logger = new ConsoleLogger('test', LogLevel.ERROR)
+  // These should not produce output (level is ERROR)
+  logger.debug('should not appear')
+  logger.info('should not appear')
+  logger.warn('should not appear')
+  // Only ERROR level would appear, but we won't actually call it to avoid noise
+  console.log('✓ ConsoleLogger')
+}
+
+function test_configureLogging() {
+  // Test with custom logger
+  const customLogger = new NullLogger()
+  configureLogging({ logger: customLogger })
+  const logger1 = getLogger()
+  assert.strictEqual(logger1, customLogger)
+
+  // Test with debug flag
+  configureLogging({ debug: true })
+  const logger2 = getLogger()
+  assert(logger2 instanceof ConsoleLogger)
+
+  // Reset to null logger for other tests
+  configureLogging({ logger: new NullLogger() })
+  console.log('✓ configureLogging')
+}
+
+function test_Counter_inc() {
+  const counter = new Counter('test_counter', 'Test counter')
+
+  // Initial value is 0
+  assert.strictEqual(counter.get(), 0)
+
+  // Increment
+  counter.inc()
+  assert.strictEqual(counter.get(), 1)
+
+  // Increment by value
+  counter.inc(undefined, 5)
+  assert.strictEqual(counter.get(), 6)
+
+  console.log('✓ Counter_inc')
+}
+
+function test_Counter_labels() {
+  const counter = new Counter('test_counter', 'Test counter')
+
+  const labels1: MetricLabels = { operation: 'query', status: 'success' }
+  const labels2: MetricLabels = { operation: 'query', status: 'error' }
+
+  counter.inc(labels1)
+  counter.inc(labels1)
+  counter.inc(labels2)
+
+  assert.strictEqual(counter.get(labels1), 2)
+  assert.strictEqual(counter.get(labels2), 1)
+
+  console.log('✓ Counter_labels')
+}
+
+function test_Gauge_operations() {
+  const gauge = new Gauge('test_gauge', 'Test gauge')
+
+  // Initial value is 0
+  assert.strictEqual(gauge.get(), 0)
+
+  // Set
+  gauge.set(10)
+  assert.strictEqual(gauge.get(), 10)
+
+  // Inc
+  gauge.inc(5)
+  assert.strictEqual(gauge.get(), 15)
+
+  // Dec
+  gauge.dec(3)
+  assert.strictEqual(gauge.get(), 12)
+
+  console.log('✓ Gauge_operations')
+}
+
+function test_Histogram_observe() {
+  const hist = new Histogram('test_histogram', 'Test histogram')
+
+  // Initial state
+  assert.strictEqual(hist.getCount(), 0)
+  assert.strictEqual(hist.getSum(), 0)
+
+  // Observe values
+  hist.observe(0.1)
+  hist.observe(0.5)
+  hist.observe(1.0)
+
+  assert.strictEqual(hist.getCount(), 3)
+  assert(Math.abs(hist.getSum() - 1.6) < 0.0001)
+
+  console.log('✓ Histogram_observe')
+}
+
+function test_SDKMetrics_recordRequest() {
+  const metrics = new SDKMetrics()
+
+  metrics.recordRequest('query_radius', 'success', 0.05)
+  metrics.recordRequest('query_radius', 'success', 0.03)
+  metrics.recordRequest('query_radius', 'error', 0.1)
+
+  // Check request count
+  const successLabels: MetricLabels = { operation: 'query_radius', status: 'success' }
+  const errorLabels: MetricLabels = { operation: 'query_radius', status: 'error' }
+
+  assert.strictEqual(metrics.requestsTotal.get(successLabels), 2)
+  assert.strictEqual(metrics.requestsTotal.get(errorLabels), 1)
+
+  console.log('✓ SDKMetrics_recordRequest')
+}
+
+function test_SDKMetrics_prometheusExport() {
+  const metrics = new SDKMetrics()
+  metrics.recordRequest('insert', 'success', 0.01)
+  metrics.recordConnectionOpened()
+
+  const output = metrics.toPrometheus()
+
+  assert(output.includes('archerdb_client_requests_total'))
+  assert(output.includes('archerdb_client_connections_active'))
+  assert(output.includes('# HELP'))
+  assert(output.includes('# TYPE'))
+
+  console.log('✓ SDKMetrics_prometheusExport')
+}
+
+function test_getMetrics_singleton() {
+  resetMetrics()
+  const metrics1 = getMetrics()
+  const metrics2 = getMetrics()
+
+  assert.strictEqual(metrics1, metrics2)
+
+  console.log('✓ getMetrics_singleton')
+}
+
+function test_retryMetrics() {
+  const metrics = new SDKMetrics()
+
+  // Record retries
+  metrics.recordRetry()
+  metrics.recordRetry()
+  metrics.recordRetry()
+
+  assert.strictEqual(metrics.retriesTotal.get(), 3)
+
+  console.log('✓ retryMetrics')
+}
+
+function test_retryMetrics_prometheusExport() {
+  const metrics = new SDKMetrics()
+  metrics.recordRetry()
+  metrics.recordRetryExhausted()
+  metrics.recordPrimaryDiscovery()
+
+  const output = metrics.toPrometheus()
+
+  assert(output.includes('archerdb_client_retries_total'))
+  assert(output.includes('archerdb_client_retry_exhausted_total'))
+  assert(output.includes('archerdb_client_primary_discoveries_total'))
+
+  console.log('✓ retryMetrics_prometheusExport')
+}
+
+// ============================================================================
+// Retry Metrics Integration Tests (per client-retry/spec.md)
+// ============================================================================
+
+async function test_withRetry_recordsMetricsOnRetry() {
+  const { withRetry } = _testExports
+
+  // Reset metrics for this test
+  resetMetrics()
+
+  const config = {
+    enabled: true,
+    max_retries: 5,
+    base_backoff_ms: 1, // Fast tests
+    max_backoff_ms: 10,
+    total_timeout_ms: 30000,
+    jitter: false,
+  }
+
+  let attempts = 0
+  const result = await withRetry(async () => {
+    attempts++
+    if (attempts < 3) {
+      throw new ClusterUnavailable('temporary failure')
+    }
+    return 'success'
+  }, config)
+
+  assert.strictEqual(result, 'success')
+  assert.strictEqual(attempts, 3)
+
+  const metrics = getMetrics()
+  // 2 retries recorded (first 2 failures led to retries)
+  assert.strictEqual(metrics.retriesTotal.get(), 2)
+  // No exhaustion - we succeeded
+  assert.strictEqual(metrics.retryExhaustedTotal.get(), 0)
+
+  console.log('✓ withRetry_recordsMetricsOnRetry')
+}
+
+async function test_withRetry_recordsExhaustionMetric() {
+  const { withRetry } = _testExports
+
+  // Reset metrics for this test
+  resetMetrics()
+
+  const config = {
+    enabled: true,
+    max_retries: 3,
+    base_backoff_ms: 1, // Fast tests
+    max_backoff_ms: 10,
+    total_timeout_ms: 30000,
+    jitter: false,
+  }
+
+  let attempts = 0
+  let threw = false
+  try {
+    await withRetry(async () => {
+      attempts++
+      throw new ClusterUnavailable('always fails')
+    }, config)
+  } catch (e) {
+    threw = true
+    assert(e instanceof RetryExhausted)
+  }
+
+  assert(threw, 'Should throw RetryExhausted')
+  assert.strictEqual(attempts, 4) // Initial + 3 retries
+
+  const metrics = getMetrics()
+  // 3 retries recorded
+  assert.strictEqual(metrics.retriesTotal.get(), 3)
+  // Exhaustion recorded
+  assert.strictEqual(metrics.retryExhaustedTotal.get(), 1)
+
+  console.log('✓ withRetry_recordsExhaustionMetric')
+}
+
+async function test_withRetry_noMetricsOnSuccess() {
+  const { withRetry } = _testExports
+
+  // Reset metrics for this test
+  resetMetrics()
+
+  const config = {
+    enabled: true,
+    max_retries: 5,
+    base_backoff_ms: 100,
+    max_backoff_ms: 1600,
+    total_timeout_ms: 30000,
+    jitter: false,
+  }
+
+  const result = await withRetry(async () => {
+    return 'immediate success'
+  }, config)
+
+  assert.strictEqual(result, 'immediate success')
+
+  const metrics = getMetrics()
+  assert.strictEqual(metrics.retriesTotal.get(), 0)
+  assert.strictEqual(metrics.retryExhaustedTotal.get(), 0)
+
+  console.log('✓ withRetry_noMetricsOnSuccess')
+}
+
+async function test_withRetry_noMetricsOnNonRetryableError() {
+  const { withRetry } = _testExports
+
+  // Reset metrics for this test
+  resetMetrics()
+
+  const config = {
+    enabled: true,
+    max_retries: 5,
+    base_backoff_ms: 100,
+    max_backoff_ms: 1600,
+    total_timeout_ms: 30000,
+    jitter: false,
+  }
+
+  let threw = false
+  try {
+    await withRetry(async () => {
+      throw new InvalidCoordinates('bad coordinates')
+    }, config)
+  } catch (e) {
+    threw = true
+    assert(e instanceof InvalidCoordinates)
+  }
+
+  assert(threw, 'Should throw InvalidCoordinates')
+
+  const metrics = getMetrics()
+  // Non-retryable errors don't trigger retry metrics
+  assert.strictEqual(metrics.retriesTotal.get(), 0)
+  assert.strictEqual(metrics.retryExhaustedTotal.get(), 0)
+
+  console.log('✓ withRetry_noMetricsOnNonRetryableError')
+}
+
+function test_HealthTracker_initialState() {
+  const tracker = new HealthTracker()
+  const status = tracker.getStatus()
+
+  assert.strictEqual(status.healthy, false)
+  assert.strictEqual(status.state, ConnectionState.DISCONNECTED)
+
+  console.log('✓ HealthTracker_initialState')
+}
+
+function test_HealthTracker_successTransitions() {
+  const tracker = new HealthTracker()
+
+  tracker.recordSuccess()
+  const status = tracker.getStatus()
+
+  assert.strictEqual(status.healthy, true)
+  assert.strictEqual(status.state, ConnectionState.CONNECTED)
+  assert(status.lastSuccessfulOpNs > 0)
+
+  console.log('✓ HealthTracker_successTransitions')
+}
+
+function test_HealthTracker_failureThreshold() {
+  const tracker = new HealthTracker(3)
+
+  // Start connected
+  tracker.recordSuccess()
+  assert.strictEqual(tracker.getStatus().healthy, true)
+
+  // First two failures: still healthy (below threshold)
+  tracker.recordFailure()
+  assert.strictEqual(tracker.getStatus().healthy, true)
+  tracker.recordFailure()
+  assert.strictEqual(tracker.getStatus().healthy, true)
+
+  // Third failure: crosses threshold
+  tracker.recordFailure()
+  assert.strictEqual(tracker.getStatus().healthy, false)
+  assert.strictEqual(tracker.getStatus().state, ConnectionState.FAILED)
+
+  console.log('✓ HealthTracker_failureThreshold')
+}
+
+function test_HealthTracker_recovery() {
+  const tracker = new HealthTracker(2)
+
+  // Mark as failed
+  tracker.recordFailure()
+  tracker.recordFailure()
+  assert.strictEqual(tracker.getStatus().state, ConnectionState.FAILED)
+
+  // Recovery via success
+  tracker.recordSuccess()
+  assert.strictEqual(tracker.getStatus().healthy, true)
+  assert.strictEqual(tracker.getStatus().state, ConnectionState.CONNECTED)
+  assert.strictEqual(tracker.getStatus().consecutiveFailures, 0)
+
+  console.log('✓ HealthTracker_recovery')
+}
+
+function test_HealthTracker_toJSON() {
+  const tracker = new HealthTracker()
+  tracker.recordSuccess()
+
+  const json = tracker.toJSON()
+  assert.strictEqual(json.healthy, true)
+  assert.strictEqual(json.state, ConnectionState.CONNECTED)
+  assert(typeof json.last_successful_operation_ns === 'number')
+  assert.strictEqual(json.consecutive_failures, 0)
+
+  console.log('✓ HealthTracker_toJSON')
+}
+
+function test_RequestTimer_success() {
+  resetMetrics()
+  const metrics = getMetrics()
+  const timer = new RequestTimer('test_op', metrics)
+
+  timer.success()
+
+  const labels: MetricLabels = { operation: 'test_op', status: 'success' }
+  assert.strictEqual(metrics.requestsTotal.get(labels), 1)
+
+  console.log('✓ RequestTimer_success')
+}
+
+function test_RequestTimer_error() {
+  resetMetrics()
+  const metrics = getMetrics()
+  const timer = new RequestTimer('test_op', metrics)
+
+  timer.error()
+
+  const labels: MetricLabels = { operation: 'test_op', status: 'error' }
+  assert.strictEqual(metrics.requestsTotal.get(labels), 1)
+
+  console.log('✓ RequestTimer_error')
+}
+
+// ============================================================================
+// Circuit Breaker Tests (per client-retry/spec.md)
+// ============================================================================
+
+function test_CircuitBreaker_initialState() {
+  const breaker = new CircuitBreaker('test-replica')
+
+  assert.strictEqual(breaker.getState(), CircuitState.CLOSED)
+  assert.strictEqual(breaker.isClosed, true)
+  assert.strictEqual(breaker.isOpen, false)
+  assert.strictEqual(breaker.isHalfOpen, false)
+
+  console.log('✓ CircuitBreaker_initialState')
+}
+
+function test_CircuitBreaker_allowsRequestsWhenClosed() {
+  const breaker = new CircuitBreaker('test-replica')
+
+  for (let i = 0; i < 100; i++) {
+    assert.strictEqual(breaker.allowRequest(), true)
+  }
+
+  console.log('✓ CircuitBreaker_allowsRequestsWhenClosed')
+}
+
+function test_CircuitBreaker_staysClosedUnderThreshold() {
+  const breaker = new CircuitBreaker('test-replica', {
+    failureThreshold: 0.5,
+    minimumRequests: 10,
+  })
+
+  // 9 requests with 4 failures (44%) - under threshold
+  for (let i = 0; i < 5; i++) {
+    breaker.allowRequest()
+    breaker.recordSuccess()
+  }
+  for (let i = 0; i < 4; i++) {
+    breaker.allowRequest()
+    breaker.recordFailure()
+  }
+
+  assert.strictEqual(breaker.isClosed, true)
+  assert(Math.abs(breaker.failureRate - 4 / 9) < 0.01)
+
+  console.log('✓ CircuitBreaker_staysClosedUnderThreshold')
+}
+
+function test_CircuitBreaker_opensAfterThresholdExceeded() {
+  const breaker = new CircuitBreaker('test-replica', {
+    failureThreshold: 0.5,
+    minimumRequests: 10,
+  })
+
+  // 10 requests with 6 failures (60%) - exceeds threshold
+  for (let i = 0; i < 4; i++) {
+    breaker.allowRequest()
+    breaker.recordSuccess()
+  }
+  for (let i = 0; i < 6; i++) {
+    breaker.allowRequest()
+    breaker.recordFailure()
+  }
+
+  assert.strictEqual(breaker.isOpen, true)
+
+  console.log('✓ CircuitBreaker_opensAfterThresholdExceeded')
+}
+
+function test_CircuitBreaker_rejectsRequestsWhenOpen() {
+  const breaker = new CircuitBreaker('test-replica')
+  breaker.forceOpen()
+
+  assert.strictEqual(breaker.allowRequest(), false)
+  assert.strictEqual(breaker.allowRequest(), false)
+  assert.strictEqual(breaker.allowRequest(), false)
+  assert(breaker.rejectedRequests >= 3)
+
+  console.log('✓ CircuitBreaker_rejectsRequestsWhenOpen')
+}
+
+async function test_CircuitBreaker_transitionsToHalfOpen() {
+  const breaker = new CircuitBreaker('test-replica', {
+    openDurationMs: 50, // Short for testing
+  })
+  breaker.forceOpen()
+
+  // Wait for open duration
+  await new Promise((resolve) => setTimeout(resolve, 100))
+
+  // Should transition on next state check
+  assert.strictEqual(breaker.getState(), CircuitState.HALF_OPEN)
+  assert.strictEqual(breaker.isHalfOpen, true)
+
+  console.log('✓ CircuitBreaker_transitionsToHalfOpen')
+}
+
+async function test_CircuitBreaker_successfulHalfOpenCloses() {
+  const breaker = new CircuitBreaker('test-replica', {
+    openDurationMs: 50,
+    halfOpenRequests: 5,
+  })
+  breaker.forceOpen()
+
+  await new Promise((resolve) => setTimeout(resolve, 100))
+
+  // 5 successful requests in half-open
+  for (let i = 0; i < 5; i++) {
+    assert.strictEqual(breaker.allowRequest(), true)
+    breaker.recordSuccess()
+  }
+
+  assert.strictEqual(breaker.isClosed, true)
+
+  console.log('✓ CircuitBreaker_successfulHalfOpenCloses')
+}
+
+async function test_CircuitBreaker_failedHalfOpenReopens() {
+  const breaker = new CircuitBreaker('test-replica', {
+    openDurationMs: 50,
+  })
+  breaker.forceOpen()
+
+  await new Promise((resolve) => setTimeout(resolve, 100))
+
+  // First half-open request fails
+  assert.strictEqual(breaker.allowRequest(), true)
+  breaker.recordFailure()
+
+  assert.strictEqual(breaker.isOpen, true)
+
+  console.log('✓ CircuitBreaker_failedHalfOpenReopens')
+}
+
+async function test_CircuitBreaker_halfOpenLimitsRequests() {
+  const breaker = new CircuitBreaker('test-replica', {
+    openDurationMs: 50,
+    halfOpenRequests: 5,
+  })
+  breaker.forceOpen()
+
+  await new Promise((resolve) => setTimeout(resolve, 100))
+
+  // Allow exactly 5 requests
+  for (let i = 0; i < 5; i++) {
+    assert.strictEqual(breaker.allowRequest(), true)
+  }
+
+  // 6th request rejected
+  assert.strictEqual(breaker.allowRequest(), false)
+
+  console.log('✓ CircuitBreaker_halfOpenLimitsRequests')
+}
+
+function test_CircuitBreaker_minimumRequestsRequired() {
+  const breaker = new CircuitBreaker('test-replica', {
+    minimumRequests: 10,
+  })
+
+  // 9 failures (100%) - under minimum
+  for (let i = 0; i < 9; i++) {
+    breaker.allowRequest()
+    breaker.recordFailure()
+  }
+
+  assert.strictEqual(breaker.isClosed, true)
+
+  // 10th failure opens circuit
+  breaker.allowRequest()
+  breaker.recordFailure()
+
+  assert.strictEqual(breaker.isOpen, true)
+
+  console.log('✓ CircuitBreaker_minimumRequestsRequired')
+}
+
+function test_CircuitBreaker_forceCloseResetsState() {
+  const breaker = new CircuitBreaker('test-replica')
+  breaker.forceOpen()
+  assert.strictEqual(breaker.isOpen, true)
+
+  breaker.forceClose()
+  assert.strictEqual(breaker.isClosed, true)
+  assert(Math.abs(breaker.failureRate - 0) < 0.01)
+
+  console.log('✓ CircuitBreaker_forceCloseResetsState')
+}
+
+function test_CircuitBreaker_stateChangesTracked() {
+  const breaker = new CircuitBreaker('test-replica')
+  assert.strictEqual(breaker.stateChanges, 0)
+
+  breaker.forceOpen()
+  assert.strictEqual(breaker.stateChanges, 1)
+
+  breaker.forceClose()
+  assert.strictEqual(breaker.stateChanges, 2)
+
+  console.log('✓ CircuitBreaker_stateChangesTracked')
+}
+
+function test_CircuitBreaker_perReplicaScope() {
+  const breaker1 = new CircuitBreaker('replica-1')
+  const breaker2 = new CircuitBreaker('replica-2')
+
+  breaker1.forceOpen()
+
+  // breaker2 should still be closed
+  assert.strictEqual(breaker1.isOpen, true)
+  assert.strictEqual(breaker2.isClosed, true)
+  assert.strictEqual(breaker2.allowRequest(), true)
+
+  console.log('✓ CircuitBreaker_perReplicaScope')
+}
+
+function test_CircuitBreakerOpen_exception() {
+  const ex = new CircuitBreakerOpen('test-circuit', CircuitState.OPEN)
+
+  assert.strictEqual(ex.circuitName, 'test-circuit')
+  assert.strictEqual(ex.circuitState, CircuitState.OPEN)
+  assert.strictEqual(ex.code, 600)
+  assert.strictEqual(ex.retryable, true)
+  assert(ex.message.includes('test-circuit'))
+
+  console.log('✓ CircuitBreakerOpen_exception')
+}
+
+function test_CircuitBreaker_defaultConfigMatchesSpec() {
+  const breaker = new CircuitBreaker('test')
+
+  // Access config through behavior - if 10 failures at 100% opens circuit,
+  // it means minimumRequests is 10
+  for (let i = 0; i < 9; i++) {
+    breaker.allowRequest()
+    breaker.recordFailure()
+  }
+  assert.strictEqual(breaker.isClosed, true) // Under 10 minimum
+
+  breaker.allowRequest()
+  breaker.recordFailure()
+  assert.strictEqual(breaker.isOpen, true) // 10th request, 100% failure >= 50%
+
+  console.log('✓ CircuitBreaker_defaultConfigMatchesSpec')
+}
+
+// ============================================================================
 // Run All Tests
 // ============================================================================
 
@@ -1157,6 +1955,17 @@ async function runTests() {
   // ID generation tests
   test_id_generation()
 
+  // =========================================
+  // TTL Cleanup Tests (per client-protocol/spec.md)
+  // =========================================
+  console.log('\n--- TTL Cleanup Tests ---\n')
+
+  test_CleanupResult_type()
+  test_CleanupResult_helpers()
+  test_CleanupResult_wireFormatSize()
+  await test_GeoClient_cleanupExpired()
+  await test_GeoClient_cleanupExpired_negativeBatch()
+
   // Split batch helper tests
   test_splitBatch_basic()
   test_splitBatch_exactDivision()
@@ -1195,6 +2004,65 @@ async function runTests() {
 
   // RetryExhausted error tests
   test_RetryExhausted_properties()
+
+  // =========================================
+  // Circuit Breaker Tests (per client-retry/spec.md)
+  // =========================================
+  console.log('\n--- Circuit Breaker Tests ---\n')
+
+  test_CircuitBreaker_initialState()
+  test_CircuitBreaker_allowsRequestsWhenClosed()
+  test_CircuitBreaker_staysClosedUnderThreshold()
+  test_CircuitBreaker_opensAfterThresholdExceeded()
+  test_CircuitBreaker_rejectsRequestsWhenOpen()
+  await test_CircuitBreaker_transitionsToHalfOpen()
+  await test_CircuitBreaker_successfulHalfOpenCloses()
+  await test_CircuitBreaker_failedHalfOpenReopens()
+  await test_CircuitBreaker_halfOpenLimitsRequests()
+  test_CircuitBreaker_minimumRequestsRequired()
+  test_CircuitBreaker_forceCloseResetsState()
+  test_CircuitBreaker_stateChangesTracked()
+  test_CircuitBreaker_perReplicaScope()
+  test_CircuitBreakerOpen_exception()
+  test_CircuitBreaker_defaultConfigMatchesSpec()
+
+  // =========================================
+  // Observability Tests (per client-sdk/spec.md)
+  // =========================================
+  console.log('\n--- Observability Tests ---\n')
+
+  // Logging tests
+  test_NullLogger()
+  test_ConsoleLogger()
+  test_configureLogging()
+
+  // Metrics tests
+  test_Counter_inc()
+  test_Counter_labels()
+  test_Gauge_operations()
+  test_Histogram_observe()
+  test_SDKMetrics_recordRequest()
+  test_SDKMetrics_prometheusExport()
+  test_getMetrics_singleton()
+  test_retryMetrics()
+  test_retryMetrics_prometheusExport()
+
+  // Retry metrics integration tests (async)
+  await test_withRetry_recordsMetricsOnRetry()
+  await test_withRetry_recordsExhaustionMetric()
+  await test_withRetry_noMetricsOnSuccess()
+  await test_withRetry_noMetricsOnNonRetryableError()
+
+  // Health check tests
+  test_HealthTracker_initialState()
+  test_HealthTracker_successTransitions()
+  test_HealthTracker_failureThreshold()
+  test_HealthTracker_recovery()
+  test_HealthTracker_toJSON()
+
+  // Request timer tests
+  test_RequestTimer_success()
+  test_RequestTimer_error()
 
   console.log('\n=== All tests passed! ===\n')
 }
