@@ -833,64 +833,21 @@ The following TTL-related optimizations are explicitly out of scope for v1:
 - See `specs/error-codes/spec.md` for TTL-related error codes (ttl_overflow)
 - See `specs/backup-restore/spec.md` for TTL filtering during restore operations
 
+
+
 ## Implementation Status
 
-**Overall: 87-95% Complete (API Layer Done, Forest LSM Compaction Pending)**
-
-### Core TTL Components
-
-| Component | File | Status |
-|-----------|------|--------|
-| Expiration Calculation | `src/ttl.zig` | ✓ Complete |
-| Lazy Lookup Expiration | `src/geo_state_machine.zig` | ✓ Complete |
-| Per-Event TTL Handling | `src/geo_event.zig` | ✓ Complete |
-| Background Cleanup Scanner | `src/geo_state_machine.zig` | ✓ Complete |
-| cleanup_expired Operation | `src/archerdb.zig` | ✓ Complete (opcode 0x30) |
-| TTL Metrics | `src/archerdb/metrics.zig` | ✓ Complete |
-| TTL Validation | `src/error_codes.zig` | ✓ Complete (ttl_overflow = 101) |
-| Tombstone GDPR Deletion | `src/geo_event.zig` | ✓ Complete |
-
-### Integration Status
-
-| Feature | Location | Status |
-|---------|----------|--------|
-| `is_expired()` | `geo_event.zig:163-165` | ✓ Complete |
-| `should_copy_forward()` | `geo_event.zig:179-199` | ✓ Complete |
-| `expiration_time_ns()` | `geo_event.zig:206-208` | ✓ Complete |
-| VSR Consensus Cleanup | `geo_state_machine.zig:1743-1794` | ✓ Complete |
-| Compaction-time Cleanup | `src/lsm/forest.zig` | Pending Forest |
-
-### Test Coverage
-
-- 30+ unit tests covering expiration, cleanup, race conditions, metrics, and edge cases
-- Tests for overflow protection, timestamp extraction, atomic removal
-
-### Implementation Notes
-
-- Core TTL features are implemented in Zig with thorough unit tests
-- `cleanup_expired` operation correctly uses VSR consensus timestamp for deterministic cleanup across replicas
-- Background scanner provides incremental cleanup to prevent long pauses
-
-### Forest LSM Blocker Details
-
-**What's Blocking** (`geo_state_machine.zig:1870-1891`):
-```zig
-pub fn compact(self: *GeoStateMachine, ...) void {
-    // TODO: When Forest is integrated:
-    // self.forest.compact(compact_finish, op);
-    // Compaction callback will invoke should_retain_tombstone() for each
-    // tombstone encountered during level merges.
-    // For now, immediately complete since we have no LSM tree yet
-    self.compact_finish();
-}
-```
-
-**Impact**: Without Forest integration:
-- Index entries are removed (✓ implemented via `scan_expired_batch()`)
-- Disk space is NOT reclaimed (events remain in data files)
-- Tombstones persist indefinitely
-- CompactionStats remain zeroed
-
-**Git Commit History** (completed features):
-- F2.4.1: Create src/ttl.zig (496395e)
-- F2.4.2-F2.4.8: Lazy expiration, background scanner, metrics, tombstones, cleanup handler
+| Requirement | Status | Notes |
+|-------------|--------|-------|
+| TTL Field in GeoEvent | ✓ Complete | \`ttl_seconds: u32\` in data-model |
+| Expiration Calculation with Overflow | ✓ Complete | \`src/ttl.zig:is_expired()\` |
+| Default TTL Behavior | ✓ Complete | \`ttl_seconds = 0\` = never expires |
+| Lazy Expiration on Lookup | ✓ Complete | RAM index checks TTL |
+| Atomic Expiration Removal | ✓ Complete | Conditional removal in ram_index |
+| Expiration During Upsert | ✓ Complete | LWW with TTL check |
+| Compaction-Based Cleanup | ✓ Complete | \`should_copy_forward()\` |
+| Background Cleanup Scanner | ✓ Complete | \`CleanupScanner\` in ttl.zig |
+| Cleanup Request/Response | ✓ Complete | 64-byte aligned structs |
+| TTL Metrics | ✓ Complete | Prometheus metrics in geo_state_machine |
+| Global Default TTL Config | ✓ Complete | \`--default-ttl-days\` option |
+| Cold Start with TTL | ✓ Complete | LSM-aware rebuild strategy |

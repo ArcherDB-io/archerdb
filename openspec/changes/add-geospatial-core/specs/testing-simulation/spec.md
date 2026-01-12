@@ -460,42 +460,16 @@ The system SHALL include test scenarios for security features.
 - See `specs/error-codes/spec.md` for error scenarios to test
 - See `specs/observability/spec.md` for metrics to verify during simulation
 
+
+
 ## Implementation Status
 
-**Overall: COMPLETE**
-
-### VOPR Framework
-
-| Component | File | Status |
-|-----------|------|--------|
-| Core VOPR | `src/testing/cluster.zig` | ✓ Complete (1,805 lines) |
-| Simulated Network | `src/testing/cluster/network.zig` | ✓ Complete |
-| Fault Injection (Storage) | `src/storage.zig` | ✓ Complete |
-| Fault Injection (Network) | `src/testing/packet_simulator.zig` | ✓ Complete (535 lines) |
-| Fault Injection (Timing) | `src/testing/cluster.zig` | ✓ Complete |
-| Fault Injection (Crash) | `src/testing/cluster.zig` | ✓ Complete |
-| State Checker | `src/testing/state_checker.zig` | ✓ Complete |
-
-### Testing Phases
-
-| Phase | Location | Status |
-|-------|----------|--------|
-| Safety Phase | `src/testing/cluster.zig:264-313` | ✓ Complete |
-| Liveness Phase | `src/testing/cluster.zig:314-343` | ✓ Complete |
-| Two-Phase Pipeline | `transition_to_liveness_mode()` | ✓ Complete |
-
-### Geospatial Testing
-
-| Feature | File | Status |
-|---------|------|--------|
-| Geospatial Workload | `src/testing/geo_workload.zig` | ✓ Complete (1,022 lines) |
-| S2 Determinism | `src/testing/cluster/s2_determinism_checker.zig` | ✓ Complete |
-| Edge Case Testing | `src/testing/geo_workload.zig` | ✓ Poles, anti-meridian, boundaries |
-
-### Implementation Notes
-
-- VOPR framework fully operational with seed-based determinism
-- Complete fault injection across storage, network, timing, and crashes
-- Property-based testing with swarm configurations
-- Regression testing via seed reproduction
-- Production-grade test harness with logging and metrics
+| Requirement | Status | Notes |
+|-------------|--------|-------|
+| VOPR Simulator | ✓ Complete | \`vopr.zig\` deterministic testing |
+| Cluster Testing | ✓ Complete | \`testing/cluster.zig\` |
+| Fuzz Testing | ✓ Complete | \`fuzz_tests.zig\` |
+| State Machine Tests | ✓ Complete | \`state_machine_tests.zig\` |
+| Integration Tests | ✓ Complete | \`integration_tests.zig\` |
+| Storage Fuzz Tests | ✓ Complete | \`storage_fuzz.zig\` |
+| EWAH Fuzz Tests | ✓ Complete | \`ewah_fuzz.zig\` |

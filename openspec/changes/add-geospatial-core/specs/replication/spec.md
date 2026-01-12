@@ -1397,36 +1397,21 @@ Estimated RTO for 1B entities: 60-90 minutes (see backup-restore RTO targets).
 
 These features will be specified in a separate v2 proposal.
 
+
+
 ## Implementation Status
 
-### Core VSR Components
-
-| Feature | File | Status |
-|---------|------|--------|
-| Flexible Paxos Quorums | `src/vsr/vsr.zig:1143-1200` | ✓ Complete |
-| Quorum Intersection | `src/vsr/replica.zig` | ✓ Complete |
-| StartViewChange | `src/vsr/replica.zig:2456` | ✓ Complete |
-| DoViewChange | `src/vsr/replica.zig:2515` | ✓ Complete |
-| Log Selection (CTRL) | `src/vsr/replica.zig:9622-9750` | ✓ Complete |
-| StartView Broadcast | `src/vsr/replica.zig:2666` | ✓ Complete |
-| Checkpoint Interval | `src/constants.zig:42` | ✓ Complete |
-| Backpressure | `src/vsr/replica.zig:2141` | ✓ Complete |
-| State Sync | `src/vsr/replica.zig:2761-2810` | ✓ Complete |
-| Superblock Quorums | `src/vsr/superblock_quorums.zig` | ✓ Complete |
-| Recovery from Crash | `src/vsr/superblock.zig` | ✓ Complete |
-
-### Test Coverage
-
-| Test Suite | File | Coverage |
-|------------|------|----------|
-| Replica Tests | `src/vsr/replica_test.zig` | 2,909 lines, 15+ dedicated tests |
-| View Change Tests | `src/testing/cluster/cluster_tests.zig` | ✓ Multiple scenarios |
-| Checkpoint Tests | `src/testing/cluster/cluster_tests.zig` | ✓ Recovery validation |
-| Network Partition | `src/testing/cluster/cluster_tests.zig` | ✓ Flexible quorum |
-
-### Implementation Notes
-
-- All quorum configurations (f=1, f=2) are fully supported with dynamic calculation
-- View change protocol implements full CTRL (Consistent Timestamps for Replicated Logs)
-- Checkpoint coordination integrates with state machine and index recovery
-- State sync handles far-behind replicas with checkpoint transfer
+| Requirement | Status | Notes |
+|-------------|--------|-------|
+| VSR Protocol Core | ✓ Complete | \`vsr/replica.zig\` |
+| Flexible Paxos Quorums | ✓ Complete | Configurable qr+qvc |
+| Message Protocol (256-byte) | ✓ Complete | \`vsr/message_header.zig\` |
+| Aegis-128L Checksums | ✓ Complete | \`vsr/checksum.zig\` |
+| View Change Protocol | ✓ Complete | CTRL log reconciliation |
+| Checkpoint Coordination | ✓ Complete | Superblock state |
+| Client Sessions | ✓ Complete | \`vsr/client_sessions.zig\` |
+| State Synchronization | ✓ Complete | WAL repair + state sync |
+| Clock Synchronization | ✓ Complete | Marzullo's algorithm |
+| Primary Selection | ✓ Complete | view % replica_count |
+| Prepare/PrepareOk | ✓ Complete | Hash-chained replication |
+| Grid Block Repair | ✓ Complete | Cross-replica repair |

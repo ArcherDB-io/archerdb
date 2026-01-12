@@ -514,3 +514,8 @@ The system SHALL provide a plugin architecture enabling community-developed exte
 - See `specs/developer-tools/spec.md` for community development infrastructure
 - See `specs/success-metrics/spec.md` for community growth KPIs
 - **IMPLEMENTATION**: See `src/plugins.zig` for plugin interface, `tools/sdk_generator/` for SDK tooling, `.github/workflows/` for CI automation
+
+
+## Implementation Status
+
+*This specification covers community/governance requirements.*

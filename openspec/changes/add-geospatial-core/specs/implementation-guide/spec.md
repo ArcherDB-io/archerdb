@@ -2309,7 +2309,7 @@ The system SHALL provide a comprehensive disaster recovery runbook.
 
 #### Scenario: Full cluster restoration from backup
 
-- **WHEN** entire cluster must be restored from backup
+- **WHEN** entire cluster MUST be restored from backup
 - **THEN** recovery procedure SHALL be:
   ```
   FULL CLUSTER RESTORE FROM BACKUP
@@ -3758,3 +3758,8 @@ The system SHALL define explicit retry logic for multi-batch failures in client 
 - See `specs/backup-restore/spec.md` for backup/restore procedures and RTO/RPO targets
 - See `specs/ttl-retention/spec.md` for TTL-aware capacity planning
 - See `specs/observability/spec.md` for metrics and alerting configuration
+
+
+## Implementation Status
+
+*This specification covers implementation guidance, not specific requirements.*

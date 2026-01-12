@@ -593,39 +593,19 @@ The following limits are **configuration-dependent** and computed dynamically:
 These limits are communicated to clients during registration, not hardcoded in SDKs.
 SDKs provide `*_DEFAULT` constants for safe operation with default server configuration.
 
+
+
 ## Implementation Status
 
-**Overall: 85% Complete (Core constants implemented, some configurable vs static differences)**
-
-### Core Constants
-
-| Category | File | Status |
-|----------|------|--------|
-| Message/Block sizes | `src/constants.zig` | ✓ Complete (configurable) |
-| Geospatial constants | `src/constants.zig:799-918` | ✓ Complete |
-| S2 configuration | `src/constants.zig` | ✓ Complete |
-| Index parameters | `src/constants.zig` | ✓ Complete |
-| Query limits | `src/constants.zig` | ✓ Complete |
-
-### Architectural Differences
-
-| Spec Approach | Implementation Approach | Rationale |
-|---------------|------------------------|-----------|
-| Static compile-time constants | Configurable via `config.zig` | Flexibility for different deployments |
-| `checkpoint_interval = 256` | `vsr_checkpoint_ops` computed dynamically | Adapts to journal/pipeline config |
-| `standbys_max = 4` | `standbys_max = 6` | Extra standby capacity |
-| `pipeline_max = 256` | `pipeline_prepare_queue_max = 8` (configurable) | Conservative default |
-
-### Missing Constants (Intentional)
-
-Some spec constants are computed rather than defined explicitly:
-- `block_header_size` - Uses `@sizeOf(vsr.Header)` at compile time
-- `message_header_size` - Uses `@sizeOf(vsr.Header)` at compile time
-- `events_per_block` - Computed from block_size and event_size
-
-### Comptime Validations
-
-Implementation includes comprehensive comptime checks (`src/constants.zig:896-918`):
-- S2 cell level ranges validated
-- Index calculations verified
-- Batch size constraints enforced
+| Requirement | Status | Notes |
+|-------------|--------|-------|
+| Constants File | ✓ Complete | \`constants.zig\` central config |
+| Replica Count Max | ✓ Complete | replicas_max = 6 |
+| Standbys Max | ✓ Complete | standbys_max = 6 |
+| Checkpoint Interval | ✓ Complete | vsr_checkpoint_ops |
+| Clients Max | ✓ Complete | Configurable |
+| Message Size Max | ✓ Complete | ~10MB |
+| Batch Size Limits | ✓ Complete | 10,000 events |
+| Port Configuration | ✓ Complete | Default 3000 |
+| Address Configuration | ✓ Complete | Default localhost |
+| Memory Size Default | ✓ Complete | Configurable |

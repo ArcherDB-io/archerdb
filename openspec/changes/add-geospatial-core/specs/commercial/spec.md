@@ -521,3 +521,8 @@ The system SHALL expose cost tracking metrics via the observability interface fo
 - See `specs/configuration/spec.md` for resource optimization settings
 - See `specs/licensing/spec.md` for commercial licensing strategy
 - **IMPLEMENTATION**: See `src/observability.zig` for metric definitions and `src/state_machine.zig` for operation metering hooks
+
+
+## Implementation Status
+
+*This specification covers business/organizational requirements. Technical implementations are tracked in related technical specs.*

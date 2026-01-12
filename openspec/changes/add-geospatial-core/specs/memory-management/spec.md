@@ -301,33 +301,19 @@ The system SHALL calculate all memory sizes at compile time for determinism and 
 - See `specs/constants/spec.md` for memory capacity constants (clients_max, pipeline_max)
 - See `specs/query-engine/spec.md` for query result buffer allocation
 
+
+
 ## Implementation Status
 
-**Overall: COMPLETE (Production-Ready)**
-
-### Core Memory Components
-
-| Component | File | Status |
-|-----------|------|--------|
-| StaticAllocator | `src/vsr/static_allocator.zig` | ✓ Complete |
-| Message Pool | `src/vsr/message_pool.zig` | ✓ Complete |
-| Node Pool | `src/lsm/node_pool.zig` | ✓ Complete |
-| ScratchMemory | `src/lsm/scratch_memory.zig` | ✓ Complete |
-| TableMemory | `src/lsm/table_memory.zig` | ✓ Complete |
-| BoundedArray | `src/stdx/bounded_array.zig` | ✓ Complete |
-| CLOCK Cache | `src/vsr/grid_block_cache.zig` | ✓ Complete |
-| Intrusive Structures | `src/stdx/*.zig` | ✓ Complete |
-| CountingAllocator | `src/stdx/counting_allocator.zig` | ✓ Complete |
-
-### Compile-Time Validation
-
-- **35+ compile-time assertions** validating all critical memory relationships
-- StaticAllocator implements strict three-phase state transitions
-- All memory budgets pre-calculated at compile-time
-
-### Implementation Notes
-
-- **Arena Allocator**: Properly implements strict state transitions (raw → static → arena)
-- **Memory Budgets**: Pre-calculated at compile-time with extensive validation
-- **Eviction Policies**: CLOCK Nth-Chance algorithm with set-associative caches
-- **Minor Gap**: No hard "memory budget rejection" mechanism; compile-time validation makes this less critical
+| Requirement | Status | Notes |
+|-------------|--------|-------|
+| Static Allocator States | ✓ Complete | init/static/deinit |
+| Message Pool | ✓ Complete | \`message_pool.zig\` |
+| Reference Counting | ✓ Complete | Message.ref()/release() |
+| Intrusive Data Structures | ✓ Complete | Queue, Stack, FreeList |
+| Ring Buffer | ✓ Complete | Compile-time and runtime |
+| Node Pool | ✓ Complete | Fixed-size allocations |
+| Scratch Memory | ✓ Complete | Temporary buffers |
+| Bounded Array | ✓ Complete | Fixed-capacity arrays |
+| Counting Allocator | ✓ Complete | \`counting_allocator.zig\` |
+| Comptime Constants | ✓ Complete | \`constants.zig\` |

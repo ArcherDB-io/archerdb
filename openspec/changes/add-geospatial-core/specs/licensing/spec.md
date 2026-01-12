@@ -431,3 +431,8 @@ The system SHALL implement legal review processes for significant changes and re
 - See `specs/implementation-guide/spec.md` for ArcherDB attribution requirements
 - See `specs/ci-cd/spec.md` for automated license compliance checks
 - See `specs/client-sdk/spec.md` for SDK licensing strategy
+
+
+## Implementation Status
+
+*This specification covers licensing requirements.*

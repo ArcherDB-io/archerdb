@@ -1,6 +1,6 @@
 # Consistent Hashing Design (F2.6.2)
 
-**Status**: Planning (Deferred for v2)
+**Status**: v1 Implementation Required
 **Related Issues**: #143
 
 ## Design Goals

@@ -1,6 +1,6 @@
 # Shard-Aware Query Routing (F2.6.3)
 
-**Status**: Planning (Deferred for v2)
+**Status**: v1 Implementation Required
 **Related Issues**: #144
 
 ## Overview

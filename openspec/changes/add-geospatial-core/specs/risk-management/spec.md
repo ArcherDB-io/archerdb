@@ -379,3 +379,8 @@ The ArcherDB project SHALL continuously improve risk management processes and ca
 
 - See `specs/team-resources/spec.md` for team-related execution risks
 - See `specs/success-metrics/spec.md` for risk impact on success criteria
+
+
+## Implementation Status
+
+*This specification covers risk management processes.*

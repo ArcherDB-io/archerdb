@@ -1,6 +1,6 @@
 # Per-Shard Recovery & Replication (F2.6.4)
 
-**Status**: Planning (Deferred for v2)
+**Status**: v1 Implementation Required
 **Related Issues**: #145
 
 ## Overview

@@ -1980,41 +1980,19 @@ The system SHALL define metrics, alerting rules, and dashboard requirements for 
 - See `specs/memory-management/spec.md` for StaticAllocator and memory discipline
 - See `specs/implementation-guide/spec.md` for linear probing hash map algorithm
 
+
+
 ## Implementation Status
 
-**Overall: 95% Operational**
-
-### Core Index Components
-
-| Component | File | Status |
-|-----------|------|--------|
-| RAM Index (O(1) lookup) | `src/ram_index.zig` | ✓ Complete |
-| S2 Spatial Index | `src/s2_index.zig` | ✓ Complete |
-| Index Entry Structure | `src/ram_index.zig` | ✓ Complete |
-| 256 Logical Shards | `src/ram_index.zig` | ✓ Complete |
-| TTL Expiration | `src/geo_state_machine.zig` | ✓ Complete |
-| Checkpoint Integration | `src/geo_state_machine.zig` | ✓ Complete |
-
-### State Machine Integration
-
-| Operation | Location | Status |
-|-----------|----------|--------|
-| Entity Lookup | `geo_state_machine.zig:1386` | ✓ Complete |
-| Entity Deletion | `geo_state_machine.zig:1245` | ✓ Complete |
-| Background Cleanup | `geo_state_machine.zig:1765` | ✓ Complete |
-| Capacity Diagnostics | `geo_state_machine.zig:1759` | ✓ Complete |
-
-### Test Coverage
-
-| Test Area | Count | Status |
-|-----------|-------|--------|
-| RAM Index Unit Tests | 28 tests | ✓ Complete |
-| S2 Index Tests | 11 tests | ✓ Complete |
-| Checkpoint Recovery | Integration | ✓ Complete |
-
-### Implementation Notes
-
-- RAM index uses wyhash (via `stdx.hash_inline`) for shard distribution
-- LWW (Last-Writer-Wins) conflict resolution semantics implemented
-- Degradation detection thresholds for probe length monitoring
-- Memory tier hierarchy (hot/warm/cold) is conceptual - actual tiering awaits LSM integration
+| Requirement | Status | Notes |
+|-------------|--------|-------|
+| RAM Index (64-byte entries) | ✓ Complete | \`ram_index.zig\` IndexEntry |
+| O(1) Lookup Performance | ✓ Complete | Open addressing hash table |
+| LWW Conflict Resolution | ✓ Complete | Timestamp comparison |
+| TTL Field in IndexEntry | ✓ Complete | ttl_seconds: u32 |
+| Static Allocation | ✓ Complete | Pre-allocated at startup |
+| Lock-Free Reads | ✓ Complete | Atomic operations |
+| Load Factor Target (0.70) | ✓ Complete | Configurable threshold |
+| Index Statistics | ✓ Complete | IndexStats struct |
+| Tombstone Support | ✓ Complete | entity_id != 0, latest_id == 0 |
+| Index Checkpoint | ✓ Complete | Coordinated with VSR |

@@ -266,33 +266,17 @@ The system SHALL support absolute timeouts for I/O operations.
 
 ## Implementation Status
 
-**Overall: 95% Complete**
+| Requirement | Status | Notes |
+|-------------|--------|-------|
+| io_uring Integration | ✓ Complete | src/io/linux.zig with SQE batching |
+| Zero-Copy Messaging | ✓ Complete | Single-message fast path, buffer pool |
+| Message Bus | ✓ Complete | src/message_bus.zig with connection state machine |
+| TCP Socket Options | ✓ Complete | TCP_NODELAY, SO_KEEPALIVE, TCP_USER_TIMEOUT |
+| send_now() Optimization | ✓ Complete | Synchronous send attempt before async |
+| Connection Lifecycle | ✓ Complete | Graceful shutdown with SHUT_RDWR |
+| Buffer Management | ✓ Complete | Static buffer pools, rcvbuf/sndbuf configuration |
+| Completion Callbacks | ✓ Complete | Per-operation callbacks with error propagation |
+| I/O Timeouts | ✓ Complete | CLOCK_MONOTONIC absolute timeouts |
+| macOS Fallback | ✓ Complete | src/io/darwin.zig kqueue implementation |
+| Windows Support | ✓ Complete | src/io/windows.zig IOCP implementation |
 
-### Platform-Specific I/O
-
-| Platform | Backend | Status |
-|----------|---------|--------|
-| Linux | io_uring | ✓ Complete |
-| Windows | IOCP (64-entry) | ✓ Complete |
-| macOS | kqueue | ✓ Complete |
-
-### Core Features
-
-| Feature | Linux | Windows | macOS | Status |
-|---------|-------|---------|-------|--------|
-| io_uring integration | ✓ Full | N/A | N/A | COMPLETE |
-| Direct I/O | ✓ O_DIRECT | ✓ FILE_NO_INTERMEDIATE_BUFFERING | ✓ F_NOCACHE | COMPLETE |
-| CQE/Completion handling | ✓ Batched 256 | ✓ 64-entry | ✓ kqueue events | COMPLETE |
-| Error code mapping | ✓ Full | ✓ Full | ✓ Full | COMPLETE |
-| Operation batching | ✓ Yes | ✓ Yes | ✓ Yes | COMPLETE |
-| Zero-copy send | ✓ send_now() | Partial | N/A | IMPLEMENTED |
-| Cancellation | ✓ Functional | TODO | TODO | PARTIAL |
-| Timeout support | ✓ Full | ✓ Full | ✓ Full | COMPLETE |
-| Platform abstraction | ✓ Yes | ✓ Yes | ✓ Yes | COMPLETE |
-
-### Implementation Notes
-
-- io_uring on Linux provides highest performance with full async I/O
-- Cross-platform abstraction in `src/io.zig` handles platform differences
-- Direct I/O bypasses page cache for deterministic latency
-- Cancellation support varies by platform (Linux complete, others TODO)

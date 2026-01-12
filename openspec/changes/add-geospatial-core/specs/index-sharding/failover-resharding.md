@@ -1,6 +1,6 @@
 # Failover & Resharding Procedures (F2.6.5)
 
-**Status**: Planning (Deferred for v2)
+**Status**: v1 Implementation Required
 **Related Issues**: #146
 
 ## Overview

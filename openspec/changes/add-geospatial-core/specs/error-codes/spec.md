@@ -368,32 +368,18 @@ The system SHALL define explicit test scenarios for every error code to ensure c
 - See `specs/observability/spec.md` for error metrics and logging
 - See `specs/storage-engine/spec.md` for storage error conditions
 
+
+
 ## Implementation Status
 
-**Overall: COMPLETE**
-
-### Error Code Enums
-
-| Category | File | Status |
-|----------|------|--------|
-| ProtocolError (1-10) | `src/error_codes.zig:14-62` | ✓ Complete |
-| ValidationError (100-116) | `src/error_codes.zig:65-131` | ✓ Complete |
-| StateError (200-212) | `src/error_codes.zig:134-188` | ✓ Complete |
-| ResourceError (300-310) | `src/error_codes.zig:191-239` | ✓ Complete |
-| SecurityError (400-404) | `src/error_codes.zig:242-278` | ✓ Complete |
-| InternalError (500-504) | `src/error_codes.zig:281-312` | ✓ Complete |
-
-### Core Functions
-
-| Function | File:Line | Status |
-|----------|-----------|--------|
-| isRetriable() | `src/error_codes.zig:314-356` | ✓ Complete |
-| description() | Multiple locations | ✓ Complete (per enum) |
-| ErrorCode union | `src/error_codes.zig:360-420` | ✓ Complete |
-
-### Implementation Notes
-
-- Uses union-of-enums pattern for type safety (differs from spec's single enum)
-- All numeric codes match specification exactly
-- 50+ unit tests covering all error codes and edge cases
-- description() function names differ from spec's message() (functional equivalent)
+| Requirement | Status | Notes |
+|-------------|--------|-------|
+| Protocol Errors (1-10) | ✓ Complete | \`ProtocolError\` enum |
+| Validation Errors (100-120) | ✓ Complete | \`ValidationError\` enum |
+| State Errors (200-212) | ✓ Complete | \`StateError\` enum |
+| Resource Errors (300-310) | ✓ Complete | \`ResourceError\` enum |
+| Security Errors (400-404) | ✓ Complete | \`SecurityError\` enum |
+| Internal Errors (500-504) | ✓ Complete | \`InternalError\` enum |
+| Error Descriptions | ✓ Complete | \`.description()\` methods |
+| Retryable Classification | ✓ Complete | \`.isRetriable()\` methods |
+| Wire Format Encoding | ✓ Complete | \`u32\` code in response |

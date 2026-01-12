@@ -1709,36 +1709,17 @@ The system SHALL implement server-side rate limiting to prevent abuse.
 - See `specs/security/spec.md` for mTLS authentication requirements
 - See `specs/observability/spec.md` for trace context propagation in message headers
 
+
+
 ## Implementation Status
 
-**Overall: 85-90% Complete**
-
-### Core Protocol Components
-
-| Component | File | Status |
-|-----------|------|--------|
-| Message Header (256 bytes) | `src/vsr/message_header.zig` | ✓ Complete |
-| Operation Codes | `src/archerdb.zig:704-744` | ✓ Complete (offset 128+) |
-| Error Code Taxonomy | `src/error_codes.zig` | ✓ Complete |
-| Multi-Batch Encoding | `src/vsr/multi_batch.zig` | ✓ Complete |
-| Query Filters (128 bytes) | `src/geo_state_machine.zig` | ✓ Complete |
-| Write Results (8 bytes/event) | `src/geo_state_machine.zig` | ✓ Complete |
-| Admin Responses (128 bytes) | `src/archerdb.zig` | ✓ Complete |
-
-### Design Differences from Spec
-
-| Aspect | Spec | Implementation | Notes |
-|--------|------|----------------|-------|
-| Magic bytes | In header offset 100 | Checkpoint files only | VSR uses command field |
-| Operation codes | 0x01-0x30 | 128+18 to 128+27 | Intentional VSR/SM separation |
-| Error response | 320 bytes unified | 8 bytes per-event | ArcherDB batch model |
-| Response sizes | 64/320 bytes | 128 bytes | GeoEvent alignment |
-| query_uuid_batch | Operation 0x13 | Multi-batch protocol | Protocol-level, not operation |
-
-### Implementation Notes
-
-- Uses **layered protocol model**: VSR (0-127) + State Machine (128+)
-- Per-event 8-byte results more efficient for bulk operations than unified error
-- 128-byte response alignment matches GeoEvent struct size
-- Multi-batch trailer encoding fully implemented with proper truncation
-- All struct sizes verified at compile-time
+| Requirement | Status | Notes |
+|-------------|--------|-------|
+| Message Header Structure | ✓ Complete | 256-byte header |
+| Wire Format Encoding | ✓ Complete | Little-endian |
+| Operation Codes | ✓ Complete | Geospatial ops defined |
+| Batch Message Format | ✓ Complete | Multi-event batching |
+| Query Message Format | ✓ Complete | Radius/polygon/UUID |
+| Response Format | ✓ Complete | Per-event results |
+| Checksum Verification | ✓ Complete | Aegis-128L |
+| Session Protocol | ✓ Complete | Register/request/reply |

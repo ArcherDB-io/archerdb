@@ -222,7 +222,7 @@ The system SHALL support forward-compatible schema evolution for GeoEvent and ot
 
 #### Scenario: Schema version identification
 
-- **WHEN** GeoEvent format may change in future versions
+- **WHEN** GeoEvent format MAY change in future versions
 - **THEN** the schema version SHALL be tracked via:
   1. **Wire format version**: Stored in superblock metadata (cluster-wide)
   2. **Reserved bytes**: High byte of `reserved` field MAY encode per-event features
@@ -494,3 +494,18 @@ The system SHALL validate all GeoEvent fields systematically during input_valid(
 - See `specs/query-engine/spec.md` for input_valid() phase execution
 - See `specs/ttl-retention/spec.md` for TTL overflow protection during expiration
 - See `specs/client-protocol/spec.md` for wire format validation
+
+
+
+## Implementation Status
+
+| Requirement | Status | Notes |
+|-------------|--------|-------|
+| GeoEvent 128-byte Layout | ✓ Complete | \`geo_event.zig\` extern struct |
+| Composite ID (S2 + timestamp) | ✓ Complete | Upper 64 + lower 64 bits |
+| Coordinate Fields (nanodegrees) | ✓ Complete | lat_nano, lon_nano |
+| Motion Fields | ✓ Complete | velocity, heading, accuracy |
+| TTL Field | ✓ Complete | ttl_seconds: u32 |
+| Flags Field | ✓ Complete | GeoEventFlags bitfield |
+| Wire Format | ✓ Complete | Little-endian encoding |
+| Validation Functions | ✓ Complete | Range checks, S2 validation |
