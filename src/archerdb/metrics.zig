@@ -800,6 +800,29 @@ pub const Registry = struct {
     /// Resharding duration (nanoseconds, updated on completion)
     pub var resharding_duration_ns: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
 
+    // ========================================================================
+    // v2.1 Online Resharding Metrics
+    // See openspec/changes/add-v2-distributed-features/specs/index-sharding/spec.md
+    // ========================================================================
+
+    /// Online resharding mode (0=none, 1=offline, 2=online)
+    pub var resharding_mode: std.atomic.Value(u8) = std.atomic.Value(u8).init(0);
+
+    /// Migration rate (entities per second, scaled by 100 for precision)
+    pub var resharding_migration_rate: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
+
+    /// Batches processed during online migration
+    pub var resharding_batches_processed: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
+    /// Failed migration attempts
+    pub var resharding_migration_failures: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
+    /// Dual-write enabled (1=true, 0=false)
+    pub var resharding_dual_write_enabled: std.atomic.Value(u8) = std.atomic.Value(u8).init(0);
+
+    /// Estimated time to completion (seconds)
+    pub var resharding_eta_seconds: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
     /// Scatter-gather queries total
     pub var scatter_gather_queries_total: Counter = Counter.init(
         "archerdb_scatter_gather_queries_total",
@@ -1377,6 +1400,56 @@ pub const Registry = struct {
             const duration_sec: f64 = @as(f64, @floatFromInt(duration_ns)) / 1e9;
             try writer.print("archerdb_resharding_duration_seconds {d:.3}\n", .{duration_sec});
             try writer.writeAll("\n");
+        }
+
+        // v2.1 Online resharding metrics
+        const reshard_mode = resharding_mode.load(.monotonic);
+        if (reshard_mode > 0) {
+            try writer.writeAll("# HELP archerdb_resharding_mode " ++
+                "Resharding mode (0=none, 1=offline, 2=online)\n");
+            try writer.writeAll("# TYPE archerdb_resharding_mode gauge\n");
+            try writer.print("archerdb_resharding_mode {d}\n", .{reshard_mode});
+            try writer.writeAll("\n");
+
+            try writer.writeAll("# HELP archerdb_resharding_dual_write " ++
+                "Dual-write mode enabled (1=true, 0=false)\n");
+            try writer.writeAll("# TYPE archerdb_resharding_dual_write gauge\n");
+            try writer.print("archerdb_resharding_dual_write {d}\n", .{resharding_dual_write_enabled.load(.monotonic)});
+            try writer.writeAll("\n");
+
+            const migration_rate = resharding_migration_rate.load(.monotonic);
+            if (migration_rate > 0) {
+                try writer.writeAll("# HELP archerdb_resharding_migration_rate " ++
+                    "Migration rate (entities per second)\n");
+                try writer.writeAll("# TYPE archerdb_resharding_migration_rate gauge\n");
+                const rate_f: f64 = @as(f64, @floatFromInt(migration_rate)) / 100.0;
+                try writer.print("archerdb_resharding_migration_rate {d:.2}\n", .{rate_f});
+                try writer.writeAll("\n");
+            }
+
+            try writer.writeAll("# HELP archerdb_resharding_batches_processed " ++
+                "Number of migration batches processed\n");
+            try writer.writeAll("# TYPE archerdb_resharding_batches_processed counter\n");
+            try writer.print("archerdb_resharding_batches_processed {d}\n", .{resharding_batches_processed.load(.monotonic)});
+            try writer.writeAll("\n");
+
+            const migration_fail_count = resharding_migration_failures.load(.monotonic);
+            if (migration_fail_count > 0) {
+                try writer.writeAll("# HELP archerdb_resharding_migration_failures " ++
+                    "Number of failed migration attempts\n");
+                try writer.writeAll("# TYPE archerdb_resharding_migration_failures counter\n");
+                try writer.print("archerdb_resharding_migration_failures {d}\n", .{migration_fail_count});
+                try writer.writeAll("\n");
+            }
+
+            const eta = resharding_eta_seconds.load(.monotonic);
+            if (eta > 0) {
+                try writer.writeAll("# HELP archerdb_resharding_eta_seconds " ++
+                    "Estimated time to completion (seconds)\n");
+                try writer.writeAll("# TYPE archerdb_resharding_eta_seconds gauge\n");
+                try writer.print("archerdb_resharding_eta_seconds {d}\n", .{eta});
+                try writer.writeAll("\n");
+            }
         }
 
         try scatter_gather_queries_total.format(writer);

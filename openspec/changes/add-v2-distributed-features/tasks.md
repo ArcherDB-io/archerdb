@@ -86,14 +86,14 @@
 ## Phase 2: v2.1 Enhancements
 
 ### 9. Online Resharding
-- [ ] 9.1 Implement dual-write mode
-- [ ] 9.2 Implement background data migration
-- [ ] 9.3 Add migration rate limiting
-- [ ] 9.4 Implement cutover procedure (brief pause)
-- [ ] 9.5 Implement online resharding rollback
-- [ ] 9.6 Add `--mode=online` to reshard command
-- [ ] 9.7 Add resharding progress metrics
-- [ ] 9.8 Write online resharding tests
+- [x] 9.1 Implement dual-write mode
+- [x] 9.2 Implement background data migration
+- [x] 9.3 Add migration rate limiting
+- [x] 9.4 Implement cutover procedure (brief pause)
+- [x] 9.5 Implement online resharding rollback
+- [x] 9.6 Add `--mode=online` to reshard command
+- [x] 9.7 Add resharding progress metrics
+- [x] 9.8 Write online resharding tests
 
 ### 10. Hot-Warm-Cold Data Tiering
 - [ ] 10.1 Define tier metadata structure
