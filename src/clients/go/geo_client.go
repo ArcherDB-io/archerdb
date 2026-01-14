@@ -185,6 +185,18 @@ type GeoClient interface {
 	// GetStatus returns current server status.
 	GetStatus() (types.StatusResponse, error)
 
+	// GetTopology fetches the current cluster topology (F5.1).
+	GetTopology() (*types.TopologyResponse, error)
+
+	// GetTopologyCache returns the topology cache for direct access (F5.1).
+	GetTopologyCache() *types.TopologyCache
+
+	// RefreshTopology forces a topology refresh from the cluster (F5.1).
+	RefreshTopology() error
+
+	// GetShardRouter returns a shard router for shard-aware operations (F5.1.4).
+	GetShardRouter() *types.ShardRouter
+
 	// Close closes the client and releases resources.
 	Close()
 }
@@ -316,10 +328,12 @@ func (b *DeleteEntityBatch) Commit() (types.DeleteResult, error) {
 
 type geoClient struct {
 	arch_client   *C.arch_client_t
-	config      GeoClientConfig
-	retryConfig RetryConfig
-	metrics     *observability.SDKMetrics
-	closed      bool
+	config        GeoClientConfig
+	retryConfig   RetryConfig
+	metrics       *observability.SDKMetrics
+	topologyCache *types.TopologyCache
+	shardRouter   *types.ShardRouter
+	closed        bool
 }
 
 // NewGeoClient creates a new ArcherDB geospatial client.
@@ -371,13 +385,18 @@ func NewGeoClient(config GeoClientConfig) (GeoClient, error) {
 		}
 	}
 
-	return &geoClient{
+	topologyCache := types.NewTopologyCache()
+	client := &geoClient{
 		arch_client:   tbClient,
-		config:      config,
-		retryConfig: retryConfig,
-		metrics:     observability.GetMetrics(),
-		closed:      false,
-	}, nil
+		config:        config,
+		retryConfig:   retryConfig,
+		metrics:       observability.GetMetrics(),
+		topologyCache: topologyCache,
+		closed:        false,
+	}
+	// Initialize shard router with refresh callback
+	client.shardRouter = types.NewShardRouter(topologyCache, client.RefreshTopology)
+	return client, nil
 }
 
 // NewGeoClientEcho creates an echo client for testing without a running server.
@@ -411,13 +430,17 @@ func NewGeoClientEcho(config GeoClientConfig) (GeoClient, error) {
 		return nil, errors.ErrUnexpected{}
 	}
 
-	return &geoClient{
+	topologyCache := types.NewTopologyCache()
+	client := &geoClient{
 		arch_client:   tbClient,
-		config:      config,
-		retryConfig: retryConfig,
-		metrics:     observability.GetMetrics(),
-		closed:      false,
-	}, nil
+		config:        config,
+		retryConfig:   retryConfig,
+		metrics:       observability.GetMetrics(),
+		topologyCache: topologyCache,
+		closed:        false,
+	}
+	client.shardRouter = types.NewShardRouter(topologyCache, client.RefreshTopology)
+	return client, nil
 }
 
 // Close closes the client and releases resources.
@@ -917,6 +940,149 @@ func (c *geoClient) GetStatus() (types.StatusResponse, error) {
 
 	status := (*types.StatusResponse)(unsafe.Pointer(&reply[0]))
 	return *status, nil
+}
+
+// ============================================================================
+// Topology Discovery (F5.1 Smart Client)
+// ============================================================================
+
+// GetTopology fetches the current cluster topology from the server.
+func (c *geoClient) GetTopology() (*types.TopologyResponse, error) {
+	if c.closed {
+		return nil, ClientClosedError{Msg: "client has been closed"}
+	}
+
+	// Send empty topology request
+	var dummy [1]byte
+	reply, err := c.doGeoRequest(
+		types.GeoOperationGetTopology,
+		1,
+		1,
+		unsafe.Pointer(&dummy[0]),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	if reply == nil || len(reply) == 0 {
+		return nil, fmt.Errorf("empty topology response")
+	}
+
+	// Parse topology response from wire format
+	topology, err := c.parseTopologyResponse(reply)
+	if err != nil {
+		return nil, err
+	}
+
+	// Update cache
+	c.topologyCache.Update(topology)
+
+	return topology, nil
+}
+
+// parseTopologyResponse parses a topology response from wire format.
+func (c *geoClient) parseTopologyResponse(reply []uint8) (*types.TopologyResponse, error) {
+	// Minimum size: version(8) + num_shards(4) + cluster_id(16) + last_change_ns(16) +
+	//               resharding_status(1) + flags(1) + padding(6) = 52 bytes header
+	if len(reply) < 52 {
+		return nil, fmt.Errorf("topology response too short: %d bytes", len(reply))
+	}
+
+	topology := &types.TopologyResponse{}
+
+	// Parse header
+	topology.Version = binary.LittleEndian.Uint64(reply[0:8])
+	topology.NumShards = binary.LittleEndian.Uint32(reply[8:12])
+
+	// Parse cluster_id (16 bytes at offset 12)
+	var clusterIDBytes [16]byte
+	copy(clusterIDBytes[:], reply[12:28])
+	topology.ClusterID = types.BytesToUint128(clusterIDBytes)
+
+	// Parse last_change_ns (16 bytes at offset 28, we use first 8 as int64)
+	topology.LastChangeNs = int64(binary.LittleEndian.Uint64(reply[28:36]))
+
+	// Parse resharding_status (1 byte at offset 44)
+	topology.ReshardingStatus = reply[44]
+
+	// Parse shards (each shard info follows header)
+	// ShardInfo wire format: id(4) + primary(64) + replicas(64*6) + replica_count(1) +
+	//                       status(1) + entity_count(8) + size_bytes(8) = 470 bytes
+	const shardInfoSize = 470
+	const headerSize = 52
+
+	expectedSize := headerSize + int(topology.NumShards)*shardInfoSize
+	if len(reply) < expectedSize {
+		// Simplified response format - just header with shard count
+		// Create minimal shard info
+		topology.Shards = make([]types.ShardInfo, topology.NumShards)
+		for i := uint32(0); i < topology.NumShards; i++ {
+			topology.Shards[i] = types.ShardInfo{
+				ID:     i,
+				Status: types.ShardActive,
+			}
+		}
+		return topology, nil
+	}
+
+	// Parse full shard info
+	topology.Shards = make([]types.ShardInfo, topology.NumShards)
+	offset := headerSize
+	for i := uint32(0); i < topology.NumShards; i++ {
+		shard := &topology.Shards[i]
+		shard.ID = binary.LittleEndian.Uint32(reply[offset : offset+4])
+		offset += 4
+
+		// Parse primary address (64 bytes, null-terminated)
+		primaryEnd := offset + 64
+		shard.Primary = strings.TrimRight(string(reply[offset:primaryEnd]), "\x00")
+		offset = primaryEnd
+
+		// Parse replicas (6 * 64 bytes)
+		shard.Replicas = make([]string, 0, 6)
+		for j := 0; j < 6; j++ {
+			replicaEnd := offset + 64
+			replica := strings.TrimRight(string(reply[offset:replicaEnd]), "\x00")
+			if replica != "" {
+				shard.Replicas = append(shard.Replicas, replica)
+			}
+			offset = replicaEnd
+		}
+
+		// Skip replica_count (1 byte) - we derive from parsed replicas
+		offset++
+
+		// Parse status (1 byte)
+		shard.Status = types.ShardStatus(reply[offset])
+		offset++
+
+		// Parse entity_count (8 bytes)
+		shard.EntityCount = binary.LittleEndian.Uint64(reply[offset : offset+8])
+		offset += 8
+
+		// Parse size_bytes (8 bytes)
+		shard.SizeBytes = binary.LittleEndian.Uint64(reply[offset : offset+8])
+		offset += 8
+	}
+
+	return topology, nil
+}
+
+// GetTopologyCache returns the topology cache for direct access.
+func (c *geoClient) GetTopologyCache() *types.TopologyCache {
+	return c.topologyCache
+}
+
+// RefreshTopology forces a topology refresh from the cluster.
+func (c *geoClient) RefreshTopology() error {
+	c.topologyCache.Invalidate()
+	_, err := c.GetTopology()
+	return err
+}
+
+// GetShardRouter returns a shard router for shard-aware operations.
+func (c *geoClient) GetShardRouter() *types.ShardRouter {
+	return c.shardRouter
 }
 
 // parseQueryResponse parses a query response into QueryResult.

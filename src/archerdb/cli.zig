@@ -123,6 +123,20 @@ const CLIArgs = union(enum) {
         // When clients set event.ttl_seconds = 0, this default is applied
         default_ttl_days: ?u32 = null,
 
+        // v2.0 Multi-Region Replication options
+        // Per openspec/changes/add-v2-distributed-features/specs/replication/spec.md
+        region_role: ?[]const u8 = null, // "primary" or "follower"
+        region_id: ?u32 = null, // Unique region identifier
+        primary_region: ?[]const u8 = null, // Primary endpoint (follower only)
+        follower_regions: ?[]const u8 = null, // Comma-separated follower endpoints (primary only)
+
+        // v2.0 Encryption at Rest options
+        // Per openspec/changes/add-v2-distributed-features/specs/security/spec.md
+        encryption_enabled: bool = false,
+        encryption_key_provider: ?[]const u8 = null, // "aws-kms", "vault", "file"
+        encryption_key_id: ?[]const u8 = null, // KMS ARN, Vault path, or key name
+        encryption_key_file: ?[]const u8 = null, // Path to key file (file provider)
+
         // Everything from here until positional arguments is considered experimental, and requires
         // `--experimental` to be set. Experimental flags disable automatic upgrades with
         // multiversion binaries; each replica has to be manually restarted. Experimental flags must
@@ -503,6 +517,131 @@ const CLIArgs = union(enum) {
         ;
     };
 
+    // v2.0 Shard management commands
+    // Per openspec/changes/add-v2-distributed-features/specs/index-sharding/spec.md
+    const Shard = union(enum) {
+        /// List all shards in the cluster
+        list: struct {
+            /// ArcherDB cluster addresses
+            addresses: []const u8,
+            /// Cluster ID
+            cluster: u128,
+            /// Output format (text, json)
+            format: ?[]const u8 = null,
+            @"log-level": LogLevel = .info,
+        },
+        /// Show status of a specific shard
+        status: struct {
+            /// ArcherDB cluster addresses
+            addresses: []const u8,
+            /// Cluster ID
+            cluster: u128,
+            /// Shard ID to query
+            shard: u32,
+            /// Output format (text, json)
+            format: ?[]const u8 = null,
+            @"log-level": LogLevel = .info,
+        },
+        /// Initiate resharding operation
+        reshard: struct {
+            /// ArcherDB cluster addresses
+            addresses: []const u8,
+            /// Cluster ID
+            cluster: u128,
+            /// Target shard count (must be power of 2)
+            to: u32,
+            /// Resharding mode (offline, online)
+            mode: ?[]const u8 = null,
+            /// Dry run - show what would happen
+            @"dry-run": bool = false,
+            @"log-level": LogLevel = .info,
+        },
+
+        pub const help =
+            \\Usage:
+            \\
+            \\  archerdb shard [-h | --help]
+            \\
+            \\  archerdb shard list --addresses=<addresses> --cluster=<id> [--format=<text|json>]
+            \\
+            \\  archerdb shard status --addresses=<addresses> --cluster=<id> --shard=<id>
+            \\                        [--format=<text|json>]
+            \\
+            \\  archerdb shard reshard --addresses=<addresses> --cluster=<id> --to=<count>
+            \\                         [--mode=<offline|online>] [--dry-run]
+            \\
+            \\Commands:
+            \\
+            \\  list       List all shards in the cluster with their status.
+            \\
+            \\  status     Show detailed status for a specific shard.
+            \\
+            \\  reshard    Initiate resharding to change the number of shards.
+            \\             The target count must be a power of 2.
+            \\             Default mode is 'offline' (stop-the-world).
+            \\
+            \\Options:
+            \\
+            \\  --addresses=<addresses>
+            \\        ArcherDB cluster addresses (required).
+            \\
+            \\  --cluster=<integer>
+            \\        Cluster ID (required).
+            \\
+            \\  --shard=<integer>
+            \\        Shard ID for status command.
+            \\
+            \\  --to=<integer>
+            \\        Target shard count for resharding. Must be a power of 2.
+            \\
+            \\  --mode=<offline|online>
+            \\        Resharding mode. 'offline' is stop-the-world (default).
+            \\        'online' allows reads during migration (v2.1+).
+            \\
+            \\  --format=<text|json>
+            \\        Output format. Defaults to 'text'.
+            \\
+            \\  --dry-run
+            \\        Show what resharding would do without making changes.
+            \\
+            \\Examples:
+            \\
+            \\  archerdb shard list --addresses=3000 --cluster=0
+            \\  archerdb shard status --addresses=3000 --cluster=0 --shard=0
+            \\  archerdb shard reshard --addresses=3000 --cluster=0 --to=8 --dry-run
+            \\
+        ;
+    };
+
+    // v2.0 Encryption verification command
+    const Verify = struct {
+        /// Verify encryption status
+        encryption: bool = false,
+        @"log-level": LogLevel = .info,
+
+        /// Path to data file
+        @"--": void,
+        path: []const u8,
+
+        pub const help =
+            \\Usage:
+            \\
+            \\  archerdb verify [--encryption] <path>
+            \\
+            \\Options:
+            \\
+            \\  --encryption
+            \\        Verify encryption status and integrity of all data files.
+            \\        Checks that all files have valid encryption headers,
+            \\        DEKs can be unwrapped, and GCM auth tags are valid.
+            \\
+            \\Examples:
+            \\
+            \\  archerdb verify --encryption /data/archerdb/0_0.archerdb
+            \\
+        ;
+    };
+
     format: Format,
     recover: Recover,
     start: Start,
@@ -515,6 +654,8 @@ const CLIArgs = union(enum) {
     amqp: AMQP,
     @"export": Export,
     import: Import,
+    shard: Shard,
+    verify: Verify,
 
     // TODO Document --cache-accounts, --cache-transfers, --cache-transfers-posted, --limit-storage,
     // --limit-pipeline-requests
@@ -557,6 +698,10 @@ const CLIArgs = union(enum) {
         \\  export     Export data from a replica data file (JSON, GeoJSON, NDJSON, CSV).
         \\
         \\  import     Import data into an ArcherDB cluster (JSON, GeoJSON, CSV).
+        \\
+        \\  shard      Manage cluster shards (list, status, reshard).
+        \\
+        \\  verify     Verify data file integrity (encryption, checksums).
         \\
         \\Options:
         \\
@@ -945,6 +1090,50 @@ pub const Command = union(enum) {
         log_level: LogLevel,
     };
 
+    /// Output format for shard commands.
+    pub const OutputFormat = enum {
+        text,
+        json,
+    };
+
+    /// Resharding mode.
+    pub const ReshardMode = enum {
+        offline,
+        online,
+    };
+
+    /// v2.0 Shard management command.
+    pub const Shard = union(enum) {
+        list: struct {
+            addresses: Addresses,
+            cluster: u128,
+            format: OutputFormat,
+            log_level: LogLevel,
+        },
+        status: struct {
+            addresses: Addresses,
+            cluster: u128,
+            shard_id: u32,
+            format: OutputFormat,
+            log_level: LogLevel,
+        },
+        reshard: struct {
+            addresses: Addresses,
+            cluster: u128,
+            to: u32,
+            mode: ReshardMode,
+            dry_run: bool,
+            log_level: LogLevel,
+        },
+    };
+
+    /// v2.0 Verification command.
+    pub const Verify = struct {
+        encryption: bool,
+        path: []const u8,
+        log_level: LogLevel,
+    };
+
     format: Format,
     recover: Recover,
     start: Start,
@@ -957,6 +1146,8 @@ pub const Command = union(enum) {
     amqp: AMQP,
     @"export": Export,
     import: Import,
+    shard: Shard,
+    verify: Verify,
 };
 
 /// Parse the command line arguments passed to the `archerdb` binary.
@@ -977,6 +1168,8 @@ pub fn parse_args(args_iterator: *std.process.ArgIterator) Command {
         .amqp => |amqp| .{ .amqp = parse_args_amqp(amqp) },
         .@"export" => |exp| .{ .@"export" = parse_args_export(exp) },
         .import => |imp| .{ .import = parse_args_import(imp) },
+        .shard => |shard| .{ .shard = parse_args_shard(shard) },
+        .verify => |verify| .{ .verify = parse_args_verify(verify) },
     };
 }
 
@@ -1687,6 +1880,66 @@ fn detect_import_format(path: []const u8) Command.ImportFormat {
     return .json;
 }
 
+fn parse_args_shard(shard: CLIArgs.Shard) Command.Shard {
+    return switch (shard) {
+        .list => |list| .{
+            .list = .{
+                .addresses = parse_addresses(list.addresses, "--addresses", Command.Addresses),
+                .cluster = list.cluster,
+                .format = parse_output_format(list.format),
+                .log_level = list.@"log-level",
+            },
+        },
+        .status => |status| .{
+            .status = .{
+                .addresses = parse_addresses(status.addresses, "--addresses", Command.Addresses),
+                .cluster = status.cluster,
+                .shard_id = status.shard,
+                .format = parse_output_format(status.format),
+                .log_level = status.@"log-level",
+            },
+        },
+        .reshard => |reshard| blk: {
+            // Validate that target shard count is a power of 2
+            if (reshard.to == 0 or (reshard.to & (reshard.to - 1)) != 0) {
+                vsr.fatal(.cli, "--to: shard count must be a power of 2, got {d}", .{reshard.to});
+            }
+            break :blk .{
+                .reshard = .{
+                    .addresses = parse_addresses(reshard.addresses, "--addresses", Command.Addresses),
+                    .cluster = reshard.cluster,
+                    .to = reshard.to,
+                    .mode = parse_reshard_mode(reshard.mode),
+                    .dry_run = reshard.@"dry-run",
+                    .log_level = reshard.@"log-level",
+                },
+            };
+        },
+    };
+}
+
+fn parse_output_format(format_str: ?[]const u8) Command.OutputFormat {
+    const format_value = format_str orelse return .text;
+    if (std.mem.eql(u8, format_value, "text")) return .text;
+    if (std.mem.eql(u8, format_value, "json")) return .json;
+    vsr.fatal(.cli, "--format: invalid format '{s}', expected text or json", .{format_value});
+}
+
+fn parse_reshard_mode(mode_str: ?[]const u8) Command.ReshardMode {
+    const mode = mode_str orelse return .offline;
+    if (std.mem.eql(u8, mode, "offline")) return .offline;
+    if (std.mem.eql(u8, mode, "online")) return .online;
+    vsr.fatal(.cli, "--mode: invalid mode '{s}', expected offline or online", .{mode});
+}
+
+fn parse_args_verify(verify: CLIArgs.Verify) Command.Verify {
+    return .{
+        .encryption = verify.encryption,
+        .path = verify.path,
+        .log_level = verify.@"log-level",
+    };
+}
+
 /// Parse and allocate the addresses returning a slice into that array.
 fn parse_addresses(
     raw_addresses: []const u8,
@@ -1860,4 +2113,147 @@ test "parse_args_export: no_metadata flag inversion" {
     const cmd = parse_args_export(cli_export);
 
     try std.testing.expect(!cmd.include_metadata); // no_metadata=true -> include_metadata=false
+}
+
+// ============================================================================
+// Unit Tests (v2.0 Shard CLI)
+// ============================================================================
+
+test "parse_output_format: valid formats" {
+    try std.testing.expectEqual(Command.OutputFormat.text, parse_output_format(null));
+    try std.testing.expectEqual(Command.OutputFormat.text, parse_output_format("text"));
+    try std.testing.expectEqual(Command.OutputFormat.json, parse_output_format("json"));
+}
+
+test "parse_reshard_mode: valid modes" {
+    try std.testing.expectEqual(Command.ReshardMode.offline, parse_reshard_mode(null));
+    try std.testing.expectEqual(Command.ReshardMode.offline, parse_reshard_mode("offline"));
+    try std.testing.expectEqual(Command.ReshardMode.online, parse_reshard_mode("online"));
+}
+
+test "parse_args_shard: list command" {
+    const cli_shard = CLIArgs.Shard{
+        .list = .{
+            .addresses = "127.0.0.1:3000",
+            .cluster = 12345,
+            .format = "json",
+            .@"log-level" = .info,
+        },
+    };
+
+    const cmd = parse_args_shard(cli_shard);
+
+    switch (cmd) {
+        .list => |list| {
+            try std.testing.expectEqual(@as(u128, 12345), list.cluster);
+            try std.testing.expectEqual(Command.OutputFormat.json, list.format);
+            try std.testing.expectEqual(LogLevel.info, list.log_level);
+            try std.testing.expectEqual(@as(usize, 1), list.addresses.len());
+        },
+        else => unreachable,
+    }
+}
+
+test "parse_args_shard: status command" {
+    const cli_shard = CLIArgs.Shard{
+        .status = .{
+            .addresses = "127.0.0.1:3000,127.0.0.1:3001",
+            .cluster = 67890,
+            .shard = 5,
+            .format = "text",
+            .@"log-level" = .debug,
+        },
+    };
+
+    const cmd = parse_args_shard(cli_shard);
+
+    switch (cmd) {
+        .status => |status| {
+            try std.testing.expectEqual(@as(u128, 67890), status.cluster);
+            try std.testing.expectEqual(@as(u32, 5), status.shard_id);
+            try std.testing.expectEqual(Command.OutputFormat.text, status.format);
+            try std.testing.expectEqual(LogLevel.debug, status.log_level);
+            try std.testing.expectEqual(@as(usize, 2), status.addresses.len());
+        },
+        else => unreachable,
+    }
+}
+
+test "parse_args_shard: reshard command with valid power of 2" {
+    const cli_shard = CLIArgs.Shard{
+        .reshard = .{
+            .addresses = "127.0.0.1:3000",
+            .cluster = 11111,
+            .to = 8, // Valid power of 2
+            .mode = "online",
+            .@"dry-run" = true,
+            .@"log-level" = .warn,
+        },
+    };
+
+    const cmd = parse_args_shard(cli_shard);
+
+    switch (cmd) {
+        .reshard => |reshard| {
+            try std.testing.expectEqual(@as(u128, 11111), reshard.cluster);
+            try std.testing.expectEqual(@as(u32, 8), reshard.to);
+            try std.testing.expectEqual(Command.ReshardMode.online, reshard.mode);
+            try std.testing.expect(reshard.dry_run);
+            try std.testing.expectEqual(LogLevel.warn, reshard.log_level);
+        },
+        else => unreachable,
+    }
+}
+
+test "parse_args_shard: reshard command defaults" {
+    const cli_shard = CLIArgs.Shard{
+        .reshard = .{
+            .addresses = "127.0.0.1:3000",
+            .cluster = 22222,
+            .to = 4,
+            .mode = null, // Default to offline
+            .@"dry-run" = false,
+            .@"log-level" = .info,
+        },
+    };
+
+    const cmd = parse_args_shard(cli_shard);
+
+    switch (cmd) {
+        .reshard => |reshard| {
+            try std.testing.expectEqual(@as(u32, 4), reshard.to);
+            try std.testing.expectEqual(Command.ReshardMode.offline, reshard.mode);
+            try std.testing.expect(!reshard.dry_run);
+        },
+        else => unreachable,
+    }
+}
+
+test "parse_args_verify: encryption flag" {
+    const cli_verify = CLIArgs.Verify{
+        .encryption = true,
+        .@"log-level" = .info,
+        .@"--" = {},
+        .path = "/data/archerdb/0_0.archerdb",
+    };
+
+    const cmd = parse_args_verify(cli_verify);
+
+    try std.testing.expect(cmd.encryption);
+    try std.testing.expectEqualStrings("/data/archerdb/0_0.archerdb", cmd.path);
+    try std.testing.expectEqual(LogLevel.info, cmd.log_level);
+}
+
+test "parse_args_verify: no encryption flag" {
+    const cli_verify = CLIArgs.Verify{
+        .encryption = false,
+        .@"log-level" = .debug,
+        .@"--" = {},
+        .path = "test.archerdb",
+    };
+
+    const cmd = parse_args_verify(cli_verify);
+
+    try std.testing.expect(!cmd.encryption);
+    try std.testing.expectEqualStrings("test.archerdb", cmd.path);
 }

@@ -76,6 +76,8 @@ const (
 	GeoOperationGetStatus       GeoOperation = 153 // vsr_operations_reserved (128) + 25
 	GeoOperationQueryLatest     GeoOperation = 154 // vsr_operations_reserved (128) + 26
 	GeoOperationCleanupExpired  GeoOperation = 155 // vsr_operations_reserved (128) + 27
+	GeoOperationQueryUUIDBatch  GeoOperation = 156 // vsr_operations_reserved (128) + 28
+	GeoOperationGetTopology     GeoOperation = 157 // vsr_operations_reserved (128) + 29
 )
 
 // ============================================================================

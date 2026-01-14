@@ -1,0 +1,144 @@
+# ArcherDB Kubernetes StatefulSet
+# Per developer-tools/spec.md: Kubernetes development manifests
+#
+# Deploy: kubectl apply -f deploy/k8s/
+#
+# StatefulSet provides:
+# - Stable network identity (archerdb-0, archerdb-1, archerdb-2)
+# - Persistent storage per replica
+# - Ordered startup (required for VSR consensus)
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: archerdb
+  labels:
+    app: archerdb
+spec:
+  serviceName: archerdb-headless
+  replicas: 3
+  podManagementPolicy: OrderedReady
+  selector:
+    matchLabels:
+      app: archerdb
+  template:
+    metadata:
+      labels:
+        app: archerdb
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9100"
+        prometheus.io/path: "/metrics"
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: archerdb
+          image: archerdb:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: client
+              containerPort: 3000
+              protocol: TCP
+            - name: metrics
+              containerPort: 9100
+              protocol: TCP
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: ARCHERDB_DEVELOPMENT
+              value: "true"
+          command:
+            - /bin/sh
+            - -c
+            - |
+              # Extract replica index from pod name (archerdb-0 -> 0)
+              REPLICA_INDEX=${POD_NAME##*-}
+              ADDRESSES="archerdb-0.archerdb-headless:3000,archerdb-1.archerdb-headless:3000,archerdb-2.archerdb-headless:3000"
+              DATA_FILE="/data/0_${REPLICA_INDEX}.archerdb"
+
+              # Format data file if it doesn't exist
+              if [ ! -f "$DATA_FILE" ]; then
+                archerdb format --cluster=0 --replica=${REPLICA_INDEX} --replica-count=3 "$DATA_FILE"
+              fi
+
+              # Start the replica
+              exec archerdb start --addresses="$ADDRESSES" --development "$DATA_FILE"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests:
+              memory: "2Gi"
+              cpu: "1000m"
+            limits:
+              memory: "8Gi"
+              cpu: "4000m"
+          livenessProbe:
+            exec:
+              command:
+                - archerdb
+                - ping
+                - --addresses=localhost:3000
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command:
+                - archerdb
+                - ping
+                - --addresses=localhost:3000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: standard
+        resources:
+          requests:
+            storage: 10Gi
+---
+# Headless service for StatefulSet DNS
+apiVersion: v1
+kind: Service
+metadata:
+  name: archerdb-headless
+  labels:
+    app: archerdb
+spec:
+  clusterIP: None
+  selector:
+    app: archerdb
+  ports:
+    - name: client
+      port: 3000
+      targetPort: 3000
+    - name: metrics
+      port: 9100
+      targetPort: 9100
+---
+# Client-facing service (load balanced)
+apiVersion: v1
+kind: Service
+metadata:
+  name: archerdb
+  labels:
+    app: archerdb
+spec:
+  type: ClusterIP
+  selector:
+    app: archerdb
+  ports:
+    - name: client
+      port: 3000
+      targetPort: 3000
+    - name: metrics
+      port: 9100
+      targetPort: 9100

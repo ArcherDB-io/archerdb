@@ -35,6 +35,7 @@ comptime {
     _ = @import("clients/c/test.zig");
     _ = @import("coordinator.zig");
     _ = @import("copyhound.zig");
+    _ = @import("encryption.zig");
     _ = @import("error_codes.zig");
     _ = @import("ewah.zig");
     _ = @import("ewah_benchmark.zig");
@@ -70,6 +71,7 @@ comptime {
     _ = @import("repl/completion.zig");
     _ = @import("repl/parser.zig");
     _ = @import("repl/terminal.zig");
+    _ = @import("replication.zig");
     _ = @import("s2/cap.zig");
     _ = @import("s2/cell_id.zig");
     _ = @import("s2/math.zig");
@@ -98,6 +100,7 @@ comptime {
     _ = @import("tidy.zig");
     _ = @import("tiering.zig");
     _ = @import("time.zig");
+    _ = @import("topology.zig");
     _ = @import("trace.zig");
     _ = @import("trace/event.zig");
     _ = @import("ttl.zig");

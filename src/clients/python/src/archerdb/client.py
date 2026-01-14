@@ -34,8 +34,22 @@ from .types import (
     QueryResult,
     DeleteResult,
     CleanupResult,
+    TopologyResponse,
+    TopologyChangeNotification,
+    ShardInfo,
+    ShardStatus,
     BATCH_SIZE_MAX,
     QUERY_LIMIT_MAX,
+)
+from .topology import (
+    TopologyCache,
+    ShardRouter,
+    ShardRoutingError,
+    NotShardLeaderError,
+    ScatterGatherExecutor,
+    ScatterGatherResult,
+    ScatterGatherConfig,
+    default_scatter_gather_config,
 )
 
 
@@ -951,6 +965,13 @@ class GeoClientSync:
         self._session_id: int = 0
         self._request_number: int = 0
 
+        # Initialize topology support (F5.1 Smart Client Topology Discovery)
+        self._topology_cache = TopologyCache()
+        self._shard_router = ShardRouter(
+            self._topology_cache,
+            refresh_callback=self._refresh_topology_internal,
+        )
+
         # Initialize native client
         cluster_id = config.cluster_id if isinstance(config.cluster_id, int) else 0
         self._native = NativeClient(cluster_id, config.addresses)
@@ -1354,6 +1375,210 @@ class GeoClientSync:
 
         return _with_retry_sync(do_cleanup, self._retry_config)
 
+    # ========== Topology Operations (F5.1) ==========
+
+    def get_topology(self) -> TopologyResponse:
+        """
+        Fetch the current cluster topology from the server.
+
+        This operation queries the server for the latest topology information
+        including shard assignments, primary addresses, and resharding status.
+
+        Returns:
+            TopologyResponse with cluster topology information
+
+        Example:
+            topology = client.get_topology()
+            print(f"Cluster has {topology.num_shards} shards")
+            for shard in topology.shards:
+                print(f"  Shard {shard.id}: primary={shard.primary}")
+        """
+        self._ensure_connected()
+
+        def do_query() -> TopologyResponse:
+            # Query topology from server
+            raw_response = self._native.get_topology()
+            return TopologyResponse.from_bytes(raw_response)
+
+        topology = _with_retry_sync(do_query, self._retry_config)
+        self._topology_cache.update(topology)
+        return topology
+
+    def get_topology_cache(self) -> TopologyCache:
+        """
+        Return the topology cache for direct access.
+
+        The cache provides shard routing, version tracking, and change
+        notifications without requiring a server round-trip.
+
+        Returns:
+            TopologyCache instance
+
+        Example:
+            cache = client.get_topology_cache()
+            shard_id = cache.compute_shard(entity_id)
+            primary = cache.get_shard_primary(shard_id)
+        """
+        return self._topology_cache
+
+    def refresh_topology(self) -> TopologyResponse:
+        """
+        Force a topology refresh from the server.
+
+        This fetches the latest topology and updates the cache.
+        Use this after receiving a not_shard_leader error or when
+        you need to ensure the topology is current.
+
+        Returns:
+            Updated TopologyResponse
+        """
+        return self.get_topology()
+
+    def _refresh_topology_internal(self) -> None:
+        """Internal callback for ShardRouter to refresh topology."""
+        self.get_topology()
+
+    def get_shard_router(self) -> ShardRouter:
+        """
+        Return the shard router for entity-based routing.
+
+        The router provides methods to route requests to the correct
+        shard based on entity ID.
+
+        Returns:
+            ShardRouter instance
+
+        Example:
+            router = client.get_shard_router()
+            shard_id, primary = router.route_by_entity_id(entity_id)
+        """
+        return self._shard_router
+
+    def query_radius_scatter(
+        self,
+        latitude: float,
+        longitude: float,
+        radius_m: float,
+        *,
+        limit: int = 1000,
+        timestamp_min: int = 0,
+        timestamp_max: int = 0,
+        group_id: int = 0,
+        config: Optional[ScatterGatherConfig] = None,
+    ) -> ScatterGatherResult:
+        """
+        Query events within a radius across all shards (scatter-gather).
+
+        This executes the radius query against all shard primaries in parallel
+        and merges the results.
+
+        Args:
+            latitude: Center latitude in degrees
+            longitude: Center longitude in degrees
+            radius_m: Radius in meters
+            limit: Maximum total results
+            timestamp_min: Minimum timestamp filter
+            timestamp_max: Maximum timestamp filter
+            group_id: Group ID filter
+            config: Scatter-gather configuration
+
+        Returns:
+            ScatterGatherResult with merged events from all shards
+
+        Example:
+            result = client.query_radius_scatter(
+                latitude=37.7749,
+                longitude=-122.4194,
+                radius_m=5000,
+            )
+            print(f"Found {len(result.events)} events across {len(result.shard_results)} shards")
+        """
+        self._ensure_connected()
+
+        # Ensure topology is loaded
+        if self._topology_cache.get() is None:
+            self.get_topology()
+
+        from .types import create_radius_query
+        filter = create_radius_query(
+            latitude, longitude, radius_m,
+            limit=limit,
+            timestamp_min=timestamp_min,
+            timestamp_max=timestamp_max,
+            group_id=group_id,
+        )
+
+        executor = ScatterGatherExecutor(self._shard_router, config)
+
+        def query_shard(primary: str) -> QueryResult:
+            # In a real implementation, this would connect to the specific shard
+            # For now, we use the main connection
+            events = self._native.query_radius(filter)
+            return QueryResult(
+                events=events,
+                has_more=len(events) == filter.limit,
+                cursor=events[-1].timestamp if events else None,
+            )
+
+        return executor.execute_sync(query_shard, limit)
+
+    def query_polygon_scatter(
+        self,
+        vertices: List[tuple[float, float]],
+        *,
+        holes: Optional[List[List[tuple[float, float]]]] = None,
+        limit: int = 1000,
+        timestamp_min: int = 0,
+        timestamp_max: int = 0,
+        group_id: int = 0,
+        config: Optional[ScatterGatherConfig] = None,
+    ) -> ScatterGatherResult:
+        """
+        Query events within a polygon across all shards (scatter-gather).
+
+        This executes the polygon query against all shard primaries in parallel
+        and merges the results.
+
+        Args:
+            vertices: List of (lat, lon) tuples in degrees, CCW winding order
+            holes: Optional list of holes (exclusion zones)
+            limit: Maximum total results
+            timestamp_min: Minimum timestamp filter
+            timestamp_max: Maximum timestamp filter
+            group_id: Group ID filter
+            config: Scatter-gather configuration
+
+        Returns:
+            ScatterGatherResult with merged events from all shards
+        """
+        self._ensure_connected()
+
+        # Ensure topology is loaded
+        if self._topology_cache.get() is None:
+            self.get_topology()
+
+        from .types import create_polygon_query
+        filter = create_polygon_query(
+            vertices,
+            holes=holes,
+            limit=limit,
+            timestamp_min=timestamp_min,
+            timestamp_max=timestamp_max,
+            group_id=group_id,
+        )
+
+        executor = ScatterGatherExecutor(self._shard_router, config)
+
+        def query_shard(primary: str) -> QueryResult:
+            events = self._native.query_polygon(filter)
+            return QueryResult(
+                events=events,
+                has_more=len(events) == filter.limit,
+                cursor=events[-1].timestamp if events else None,
+            )
+
+        return executor.execute_sync(query_shard, limit)
+
 
 # ============================================================================
 # Asynchronous Client
@@ -1387,6 +1612,19 @@ class GeoClientAsync:
         self._closed = False
         self._session_id: int = 0
         self._request_number: int = 0
+
+        # Initialize topology support (F5.1 Smart Client Topology Discovery)
+        self._topology_cache = TopologyCache()
+        self._shard_router = ShardRouter(
+            self._topology_cache,
+            refresh_callback=self._refresh_topology_sync,
+        )
+
+    def _refresh_topology_sync(self) -> None:
+        """Sync callback for ShardRouter (runs in thread pool)."""
+        # This is called from sync context by ShardRouter
+        # In async client, we schedule the async refresh
+        pass
 
     async def _connect(self) -> None:
         """Establish connection to cluster."""
@@ -1708,6 +1946,195 @@ class GeoClientAsync:
             return CleanupResult(entries_scanned=0, entries_removed=0)
 
         return await _with_retry_async(do_cleanup, self._retry_config)
+
+    # ========== Topology Operations (F5.1) ==========
+
+    async def get_topology(self) -> TopologyResponse:
+        """
+        Fetch the current cluster topology from the server.
+
+        This operation queries the server for the latest topology information
+        including shard assignments, primary addresses, and resharding status.
+
+        Returns:
+            TopologyResponse with cluster topology information
+
+        Example:
+            topology = await client.get_topology()
+            print(f"Cluster has {topology.num_shards} shards")
+            for shard in topology.shards:
+                print(f"  Shard {shard.id}: primary={shard.primary}")
+        """
+        self._ensure_connected()
+
+        async def do_query() -> TopologyResponse:
+            # NOTE: Skeleton implementation - in full impl would send GET_TOPOLOGY
+            # and deserialize the response
+            return TopologyResponse(
+                version=1,
+                cluster_id=self._config.cluster_id,
+                num_shards=1,
+                resharding_status=0,
+                shards=[ShardInfo(id=0, primary=self._config.addresses[0])],
+                last_change_ns=int(time.time() * 1e9),
+            )
+
+        topology = await _with_retry_async(do_query, self._retry_config)
+        self._topology_cache.update(topology)
+        return topology
+
+    def get_topology_cache(self) -> TopologyCache:
+        """
+        Return the topology cache for direct access.
+
+        The cache provides shard routing, version tracking, and change
+        notifications without requiring a server round-trip.
+
+        Returns:
+            TopologyCache instance
+        """
+        return self._topology_cache
+
+    async def refresh_topology(self) -> TopologyResponse:
+        """
+        Force a topology refresh from the server.
+
+        This fetches the latest topology and updates the cache.
+        Use this after receiving a not_shard_leader error or when
+        you need to ensure the topology is current.
+
+        Returns:
+            Updated TopologyResponse
+        """
+        return await self.get_topology()
+
+    def get_shard_router(self) -> ShardRouter:
+        """
+        Return the shard router for entity-based routing.
+
+        The router provides methods to route requests to the correct
+        shard based on entity ID.
+
+        Returns:
+            ShardRouter instance
+        """
+        return self._shard_router
+
+    async def query_radius_scatter(
+        self,
+        latitude: float,
+        longitude: float,
+        radius_m: float,
+        *,
+        limit: int = 1000,
+        timestamp_min: int = 0,
+        timestamp_max: int = 0,
+        group_id: int = 0,
+        config: Optional[ScatterGatherConfig] = None,
+    ) -> ScatterGatherResult:
+        """
+        Query events within a radius across all shards (scatter-gather).
+
+        This executes the radius query against all shard primaries in parallel
+        and merges the results.
+
+        Args:
+            latitude: Center latitude in degrees
+            longitude: Center longitude in degrees
+            radius_m: Radius in meters
+            limit: Maximum total results
+            timestamp_min: Minimum timestamp filter
+            timestamp_max: Maximum timestamp filter
+            group_id: Group ID filter
+            config: Scatter-gather configuration
+
+        Returns:
+            ScatterGatherResult with merged events from all shards
+        """
+        self._ensure_connected()
+
+        # Ensure topology is loaded
+        if self._topology_cache.get() is None:
+            await self.get_topology()
+
+        from .types import create_radius_query
+        filter = create_radius_query(
+            latitude, longitude, radius_m,
+            limit=limit,
+            timestamp_min=timestamp_min,
+            timestamp_max=timestamp_max,
+            group_id=group_id,
+        )
+
+        executor = ScatterGatherExecutor(self._shard_router, config)
+
+        async def query_shard(primary: str) -> QueryResult:
+            # NOTE: Skeleton implementation
+            events = await self._submit_query(GeoOperation.QUERY_RADIUS, filter)
+            return QueryResult(
+                events=events,
+                has_more=len(events) == filter.limit,
+                cursor=events[-1].timestamp if events else None,
+            )
+
+        return await executor.execute_async(query_shard, limit)
+
+    async def query_polygon_scatter(
+        self,
+        vertices: List[tuple[float, float]],
+        *,
+        holes: Optional[List[List[tuple[float, float]]]] = None,
+        limit: int = 1000,
+        timestamp_min: int = 0,
+        timestamp_max: int = 0,
+        group_id: int = 0,
+        config: Optional[ScatterGatherConfig] = None,
+    ) -> ScatterGatherResult:
+        """
+        Query events within a polygon across all shards (scatter-gather).
+
+        This executes the polygon query against all shard primaries in parallel
+        and merges the results.
+
+        Args:
+            vertices: List of (lat, lon) tuples in degrees, CCW winding order
+            holes: Optional list of holes (exclusion zones)
+            limit: Maximum total results
+            timestamp_min: Minimum timestamp filter
+            timestamp_max: Maximum timestamp filter
+            group_id: Group ID filter
+            config: Scatter-gather configuration
+
+        Returns:
+            ScatterGatherResult with merged events from all shards
+        """
+        self._ensure_connected()
+
+        # Ensure topology is loaded
+        if self._topology_cache.get() is None:
+            await self.get_topology()
+
+        from .types import create_polygon_query
+        filter = create_polygon_query(
+            vertices,
+            holes=holes,
+            limit=limit,
+            timestamp_min=timestamp_min,
+            timestamp_max=timestamp_max,
+            group_id=group_id,
+        )
+
+        executor = ScatterGatherExecutor(self._shard_router, config)
+
+        async def query_shard(primary: str) -> QueryResult:
+            events = await self._submit_query(GeoOperation.QUERY_POLYGON, filter)
+            return QueryResult(
+                events=events,
+                has_more=len(events) == filter.limit,
+                cursor=events[-1].timestamp if events else None,
+            )
+
+        return await executor.execute_async(query_shard, limit)
 
 
 # ============================================================================

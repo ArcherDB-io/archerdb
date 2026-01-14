@@ -293,6 +293,9 @@ pub fn main() !void {
             .integrity => |integrity| integrity.log_level.toStdLogLevel(),
             else => .info,
         },
+        .shard => |shard_cmd| switch (shard_cmd) {
+            inline else => |*args| args.log_level.toStdLogLevel(),
+        },
         inline else => |*args| args.log_level.toStdLogLevel(),
     };
 
@@ -419,6 +422,8 @@ pub fn main() !void {
         .amqp => |*args| try command_amqp(gpa, time, args),
         .@"export" => |*args| try command_export(gpa, &io, &tracer, args),
         .import => |*args| try command_import(gpa, &io, time, args),
+        .shard => |*args| try command_shard(gpa, &io, time, args),
+        .verify => |*args| try command_verify(gpa, &io, &tracer, args),
     }
 }
 
@@ -1253,4 +1258,69 @@ fn import_client_eviction_callback(
 ) void {
     _ = client;
     log.err("import client evicted: {s}", .{@tagName(eviction.header.reason)});
+}
+
+/// v2.0 Shard management command handler.
+fn command_shard(
+    gpa: mem.Allocator,
+    io: *IO,
+    time: Time,
+    args: *const cli.Command.Shard,
+) !void {
+    _ = gpa;
+    _ = io;
+    _ = time;
+
+    var stderr_buffer = std.io.bufferedWriter(std.io.getStdErr().writer());
+    var stderr_writer = stderr_buffer.writer();
+    const stderr = stderr_writer.any();
+
+    switch (args.*) {
+        .list => |list| {
+            try stderr.print("Shard list for cluster {d}:\n", .{list.cluster});
+            try stderr.print("  (Shard management not yet implemented - v2.0 feature)\n", .{});
+        },
+        .status => |status| {
+            try stderr.print("Status for shard {d} in cluster {d}:\n", .{ status.shard_id, status.cluster });
+            try stderr.print("  (Shard management not yet implemented - v2.0 feature)\n", .{});
+        },
+        .reshard => |reshard| {
+            if (reshard.dry_run) {
+                try stderr.print("Dry run: Would reshard cluster {d} to {d} shards\n", .{ reshard.cluster, reshard.to });
+            } else {
+                try stderr.print("Resharding cluster {d} to {d} shards (mode: {s}):\n", .{
+                    reshard.cluster,
+                    reshard.to,
+                    @tagName(reshard.mode),
+                });
+            }
+            try stderr.print("  (Resharding not yet implemented - v2.0 feature)\n", .{});
+        },
+    }
+    try stderr_buffer.flush();
+}
+
+/// v2.0 Verification command handler.
+fn command_verify(
+    gpa: mem.Allocator,
+    io: *IO,
+    tracer: *Tracer,
+    args: *const cli.Command.Verify,
+) !void {
+    _ = gpa;
+    _ = io;
+    _ = tracer;
+
+    var stderr_buffer = std.io.bufferedWriter(std.io.getStdErr().writer());
+    var stderr_writer = stderr_buffer.writer();
+    const stderr = stderr_writer.any();
+
+    try stderr.print("Verifying data file: {s}\n", .{args.path});
+    if (args.encryption) {
+        try stderr.print("  Checking encryption status...\n", .{});
+        try stderr.print("  (Encryption verification not yet implemented - v2.0 feature)\n", .{});
+    } else {
+        try stderr.print("  (Verification not yet implemented - v2.0 feature)\n", .{});
+    }
+    try stderr_buffer.flush();
 }

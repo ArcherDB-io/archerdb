@@ -46,11 +46,15 @@ from .types import (
     POLYGON_VERTICES_MAX,
     POLYGON_HOLES_MAX,
     POLYGON_HOLE_VERTICES_MIN,
+    MAX_SHARDS,
+    MAX_REPLICAS_PER_SHARD,
     # Enums
     GeoEventFlags,
     GeoOperation,
     InsertGeoEventResult,
     DeleteEntityResult,
+    ShardStatus,
+    TopologyChangeType,
     # Data classes
     GeoEvent,
     InsertGeoEventsError,
@@ -65,6 +69,9 @@ from .types import (
     QueryResult,
     DeleteResult,
     StatusResponse,
+    ShardInfo,
+    TopologyResponse,
+    TopologyChangeNotification,
     # Conversion helpers
     degrees_to_nano,
     nano_to_degrees,
@@ -78,6 +85,18 @@ from .types import (
     create_geo_event,
     create_radius_query,
     create_polygon_query,
+)
+
+# Topology support (F5.1 Smart Client Topology Discovery)
+from .topology import (
+    TopologyCache,
+    ShardRouter,
+    ShardRoutingError,
+    NotShardLeaderError,
+    ScatterGatherExecutor,
+    ScatterGatherResult,
+    ScatterGatherConfig,
+    default_scatter_gather_config,
 )
 
 # Client classes and utilities
@@ -147,6 +166,35 @@ from .observability import (
     RequestTimer,
 )
 
+# v2 Error codes (multi-region, sharding, encryption)
+from .errors import (
+    # Multi-region errors (213-218)
+    MultiRegionError,
+    MULTI_REGION_ERROR_MESSAGES,
+    MULTI_REGION_ERROR_RETRYABLE,
+    is_multi_region_error,
+    multi_region_error_message,
+    # Sharding errors (220-224)
+    ShardingError,
+    SHARDING_ERROR_MESSAGES,
+    SHARDING_ERROR_RETRYABLE,
+    is_sharding_error,
+    sharding_error_message,
+    # Encryption errors (410-414)
+    EncryptionError,
+    ENCRYPTION_ERROR_MESSAGES,
+    ENCRYPTION_ERROR_RETRYABLE,
+    is_encryption_error,
+    encryption_error_message,
+    # Exception classes
+    MultiRegionException,
+    ShardingException,
+    EncryptionException,
+    # Utilities
+    is_retryable,
+    error_message,
+)
+
 # Public API
 __all__ = [
     # Version
@@ -162,11 +210,15 @@ __all__ = [
     "POLYGON_VERTICES_MAX",
     "POLYGON_HOLES_MAX",
     "POLYGON_HOLE_VERTICES_MIN",
+    "MAX_SHARDS",
+    "MAX_REPLICAS_PER_SHARD",
     # Enums
     "GeoEventFlags",
     "GeoOperation",
     "InsertGeoEventResult",
     "DeleteEntityResult",
+    "ShardStatus",
+    "TopologyChangeType",
     # Data classes
     "GeoEvent",
     "InsertGeoEventsError",
@@ -180,6 +232,9 @@ __all__ = [
     "QueryResponse",
     "QueryResult",
     "DeleteResult",
+    "ShardInfo",
+    "TopologyResponse",
+    "TopologyChangeNotification",
     # Conversion helpers
     "degrees_to_nano",
     "nano_to_degrees",
@@ -221,6 +276,9 @@ __all__ = [
     "ClientClosedError",
     # Errors - Retry
     "RetryExhausted",
+    # Errors - Topology
+    "ShardRoutingError",
+    "NotShardLeaderError",
     # Batch classes
     "GeoEventBatch",
     "GeoEventBatchAsync",
@@ -231,6 +289,13 @@ __all__ = [
     "GeoClientAsync",
     # Batch helpers
     "split_batch",
+    # Topology support (F5.1)
+    "TopologyCache",
+    "ShardRouter",
+    "ScatterGatherExecutor",
+    "ScatterGatherResult",
+    "ScatterGatherConfig",
+    "default_scatter_gather_config",
     # Observability - Logging
     "LogLevel",
     "SDKLogger",
@@ -252,4 +317,29 @@ __all__ = [
     "HealthTracker",
     # Observability - Timing
     "RequestTimer",
+    # v2 Error codes - Multi-region (213-218)
+    "MultiRegionError",
+    "MULTI_REGION_ERROR_MESSAGES",
+    "MULTI_REGION_ERROR_RETRYABLE",
+    "is_multi_region_error",
+    "multi_region_error_message",
+    # v2 Error codes - Sharding (220-224)
+    "ShardingError",
+    "SHARDING_ERROR_MESSAGES",
+    "SHARDING_ERROR_RETRYABLE",
+    "is_sharding_error",
+    "sharding_error_message",
+    # v2 Error codes - Encryption (410-414)
+    "EncryptionError",
+    "ENCRYPTION_ERROR_MESSAGES",
+    "ENCRYPTION_ERROR_RETRYABLE",
+    "is_encryption_error",
+    "encryption_error_message",
+    # v2 Exception classes
+    "MultiRegionException",
+    "ShardingException",
+    "EncryptionException",
+    # v2 Utilities
+    "is_retryable",
+    "error_message",
 ]

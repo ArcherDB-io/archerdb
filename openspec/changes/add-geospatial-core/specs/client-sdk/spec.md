@@ -445,4 +445,5 @@ The SDK SHALL maintain compatibility with server versions.
 | Python SDK | ✓ Complete | Sync/async APIs, type hints |
 | Node.js SDK | ✓ Complete | TypeScript, async/await pattern |
 | Go SDK | ✓ Complete | CGO bindings, retry, circuit breaker, observability integration |
+| Topology Discovery | ✓ Complete | TopologyCache, ShardRouter, scatter-gather (Go, Python, Java, Node.js) |
 

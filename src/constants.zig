@@ -892,6 +892,63 @@ pub const ttl_check_interval_ms: u64 = 60_000; // 1 minute
 /// Limits CPU impact of TTL cleanup during high-throughput periods.
 pub const ttl_batch_size: u32 = 10_000;
 
+// === v2.0 Replication Constants ===
+
+/// Default interval for async log shipping to followers (milliseconds).
+/// Lower values reduce replication lag but increase CPU/network overhead.
+pub const async_ship_interval_ms: u64 = 100;
+
+/// Maximum entries to buffer in memory before shipping.
+/// When exceeded, entries spill to disk if spillover is configured.
+pub const ship_buffer_max: u32 = 10_000;
+
+/// Maximum retry attempts for shipping before dropping entry.
+pub const ship_retry_max: u32 = 10;
+
+/// Initial backoff delay for shipping retries (milliseconds).
+pub const ship_retry_backoff_initial_ms: u64 = 100;
+
+/// Maximum backoff delay for shipping retries (milliseconds).
+pub const ship_retry_backoff_max_ms: u64 = 30_000;
+
+/// Default connection timeout for Direct TCP transport (milliseconds).
+pub const ship_connect_timeout_ms: u32 = 5_000;
+
+/// Default ship operation timeout (milliseconds).
+pub const ship_timeout_ms: u32 = 30_000;
+
+/// Maximum follower regions per primary.
+pub const followers_max: u32 = 16;
+
+// === v2.0 Encryption Constants ===
+
+/// DEK (Data Encryption Key) size in bytes (AES-256 = 32 bytes)
+pub const encryption_dek_size: u32 = 32;
+
+/// Wrapped DEK size (DEK + GCM auth tag)
+pub const encryption_wrapped_dek_size: u32 = 48;
+
+/// GCM initialization vector size
+pub const encryption_iv_size: u32 = 12;
+
+/// GCM authentication tag size
+pub const encryption_auth_tag_size: u32 = 16;
+
+/// Encrypted file header size (must be 96 bytes for alignment)
+pub const encryption_header_size: u32 = 96;
+
+/// Maximum retries for key provider unavailability
+pub const encryption_key_retry_max: u32 = 10;
+
+/// Base retry delay for key provider (milliseconds)
+pub const encryption_key_retry_base_ms: u64 = 1_000;
+
+/// Maximum retry delay for key provider (milliseconds)
+pub const encryption_key_retry_max_ms: u64 = 60_000;
+
+/// KEK cache TTL in seconds (for cloud providers)
+pub const encryption_kek_cache_ttl_seconds: u32 = 3_600;
+
 comptime {
     // Verify S2 cell level is in valid range (1-30)
     assert(s2_cell_level >= 1 and s2_cell_level <= 30);

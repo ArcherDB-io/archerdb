@@ -1,0 +1,96 @@
+# ArcherDB Prometheus ServiceMonitor
+# Per observability/spec.md: Prometheus metrics integration
+#
+# Requires: prometheus-operator installed in cluster
+# Install: helm install prometheus prometheus-community/kube-prometheus-stack
+
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: archerdb
+  labels:
+    app: archerdb
+    release: prometheus  # Match your Prometheus operator release
+spec:
+  selector:
+    matchLabels:
+      app: archerdb
+  namespaceSelector:
+    matchNames:
+      - default  # Update to your namespace
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s
+      honorLabels: true
+---
+# PrometheusRule for ArcherDB alerts
+# Per observability/spec.md: Alerting configuration
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: archerdb-alerts
+  labels:
+    app: archerdb
+    release: prometheus
+spec:
+  groups:
+    - name: archerdb.rules
+      rules:
+        # Cluster health alerts
+        - alert: ArcherDBReplicaDown
+          expr: up{job="archerdb"} == 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "ArcherDB replica {{ $labels.instance }} is down"
+            description: "ArcherDB replica has been unreachable for more than 1 minute."
+
+        - alert: ArcherDBViewChangeFrequent
+          expr: increase(archerdb_view_changes_total[5m]) > 3
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Frequent view changes in ArcherDB cluster"
+            description: "More than 3 view changes in 5 minutes indicates potential instability."
+
+        # Performance alerts per observability/spec.md
+        - alert: ArcherDBHighLatency
+          expr: histogram_quantile(0.99, rate(archerdb_request_duration_seconds_bucket[5m])) > 0.1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High p99 latency in ArcherDB"
+            description: "p99 request latency is above 100ms for more than 5 minutes."
+
+        - alert: ArcherDBIndexDegraded
+          expr: archerdb_index_probe_limit_hits_total > 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "ArcherDB index is degraded"
+            description: "Index probe limit hit - requires rebuild with larger capacity."
+
+        # Storage alerts per storage-engine/spec.md
+        - alert: ArcherDBDiskSpaceLow
+          expr: (1 - (archerdb_storage_free_bytes / archerdb_storage_total_bytes)) > 0.85
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "ArcherDB disk space above 85%"
+            description: "Consider adding storage capacity or adjusting TTL retention."
+
+        - alert: ArcherDBCompactionBacklog
+          expr: archerdb_compaction_pending_bytes > 1073741824
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "ArcherDB compaction backlog exceeds 1GB"
+            description: "Compaction is falling behind - may impact query performance."

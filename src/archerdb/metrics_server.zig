@@ -5,6 +5,9 @@
 //! Provides:
 //! - `/health/live` - Kubernetes liveness probe (always 200 if process is running)
 //! - `/health/ready` - Kubernetes readiness probe (200 if replica is ready to serve)
+//! - `/health/region` - v2.0 Multi-region replication status (role, lag metrics)
+//! - `/health/shards` - v2.0 Shard distribution and resharding status
+//! - `/health/encryption` - v2.0 Encryption at rest status and metrics
 //! - `/metrics` - Prometheus-format metrics endpoint
 //!
 //! The server runs in a dedicated thread to avoid blocking the main event loop.
@@ -216,6 +219,12 @@ pub const MetricsServer = struct {
             try handleHealthReady(client_fd);
         } else if (std.mem.eql(u8, path, "/health")) {
             try handleHealthReady(client_fd);
+        } else if (std.mem.eql(u8, path, "/health/region")) {
+            try handleHealthRegion(client_fd);
+        } else if (std.mem.eql(u8, path, "/health/shards")) {
+            try handleHealthShards(client_fd);
+        } else if (std.mem.eql(u8, path, "/health/encryption")) {
+            try handleHealthEncryption(client_fd);
         } else if (std.mem.eql(u8, path, "/metrics")) {
             // Check bearer token authentication if configured
             if (bearer_token) |expected_token| {
@@ -304,6 +313,111 @@ pub const MetricsServer = struct {
             const ctype = "application/json";
             try sendResponse(client_fd, .service_unavailable, ctype, body);
         }
+    }
+
+    /// v2.0 Health endpoint: Multi-region replication status.
+    /// Per openspec/changes/add-v2-distributed-features/specs/replication/spec.md
+    fn handleHealthRegion(client_fd: posix.socket_t) !void {
+        // Get region metrics from the registry (raw atomics use .load())
+        const role = metrics.Registry.region_role.load(.monotonic);
+        const region_id_val = metrics.Registry.region_id.load(.monotonic);
+        const lag_ops = metrics.Registry.replication_lag_ops.load(.monotonic);
+        const lag_ns = metrics.Registry.replication_lag_ns.load(.monotonic);
+
+        // Sum ship queue depth across all followers
+        var total_queue_depth: u64 = 0;
+        for (metrics.Registry.replication_ship_queue_depth) |depth| {
+            total_queue_depth += depth.load(.monotonic);
+        }
+
+        // Calculate lag in seconds
+        const lag_seconds: f64 = @as(f64, @floatFromInt(lag_ns)) / 1e9;
+
+        // Determine health status based on lag
+        // Healthy if lag is under 10 seconds or if we're primary (no lag expected)
+        const is_healthy = (role == 1) or (lag_seconds < 10.0);
+        const status = if (is_healthy) "ok" else "degraded";
+        const role_str = if (role == 1) "primary" else "follower";
+
+        var body_buf: [512]u8 = undefined;
+        const fmt =
+            \\{{"status":"{s}","role":"{s}","region_id":{d},"ship_queue_depth":{d},"lag_ops":{d},"lag_seconds":{d:.3}}}
+        ;
+        const body = std.fmt.bufPrint(&body_buf, fmt, .{
+            status,
+            role_str,
+            region_id_val,
+            total_queue_depth,
+            lag_ops,
+            lag_seconds,
+        }) catch "{\"status\":\"error\"}";
+
+        const http_status: HttpStatus = if (is_healthy) .ok else .service_unavailable;
+        try sendResponse(client_fd, http_status, "application/json", body);
+    }
+
+    /// v2.0 Health endpoint: Shard distribution and status.
+    /// Per openspec/changes/add-v2-distributed-features/specs/index-sharding/spec.md
+    fn handleHealthShards(client_fd: posix.socket_t) !void {
+        // Get sharding metrics from the registry (raw atomics use .load())
+        const shard_count_val = metrics.Registry.shard_count.load(.monotonic);
+        const resharding_status_val = metrics.Registry.resharding_status.load(.monotonic);
+        const resharding_progress_val = metrics.Registry.resharding_progress.load(.monotonic);
+
+        // Status is healthy if not resharding or resharding is complete
+        const is_resharding = resharding_status_val == 1;
+        const status = if (is_resharding) "resharding" else "ok";
+
+        // Progress is stored as 0-1000, convert to percentage
+        const progress_pct: f64 = @as(f64, @floatFromInt(resharding_progress_val)) / 10.0;
+
+        var body_buf: [512]u8 = undefined;
+        const fmt =
+            \\{{"status":"{s}","shard_count":{d},"resharding":{s},"resharding_progress":{d:.1}}}
+        ;
+        const body = std.fmt.bufPrint(&body_buf, fmt, .{
+            status,
+            shard_count_val,
+            if (is_resharding) "true" else "false",
+            progress_pct,
+        }) catch "{\"status\":\"error\"}";
+
+        try sendResponse(client_fd, .ok, "application/json", body);
+    }
+
+    /// v2.0 Health endpoint: Encryption at rest status.
+    /// Per openspec/changes/add-v2-distributed-features/specs/security/spec.md
+    fn handleHealthEncryption(client_fd: posix.socket_t) !void {
+        // Get encryption metrics from the registry (Counters use .get())
+        const encrypt_ops = metrics.Registry.encryption_ops_total.get();
+        const decrypt_ops = metrics.Registry.decryption_ops_total.get();
+        const cache_hits = metrics.Registry.encryption_cache_hits_total.get();
+        const cache_misses = metrics.Registry.encryption_cache_misses_total.get();
+
+        // Encryption is enabled if we have any encrypt/decrypt operations
+        const is_enabled = (encrypt_ops > 0) or (decrypt_ops > 0);
+        const status = if (is_enabled) "enabled" else "disabled";
+
+        // Calculate cache hit ratio
+        const total_cache_ops = cache_hits + cache_misses;
+        const cache_hit_ratio: f64 = if (total_cache_ops > 0)
+            @as(f64, @floatFromInt(cache_hits)) / @as(f64, @floatFromInt(total_cache_ops))
+        else
+            0.0;
+
+        var body_buf: [512]u8 = undefined;
+        const fmt =
+            \\{{"status":"{s}","enabled":{s},"encrypt_ops":{d},"decrypt_ops":{d},"key_cache_hit_ratio":{d:.3}}}
+        ;
+        const body = std.fmt.bufPrint(&body_buf, fmt, .{
+            status,
+            if (is_enabled) "true" else "false",
+            encrypt_ops,
+            decrypt_ops,
+            cache_hit_ratio,
+        }) catch "{\"status\":\"error\"}";
+
+        try sendResponse(client_fd, .ok, "application/json", body);
     }
 
     fn handleMetrics(client_fd: posix.socket_t) !void {

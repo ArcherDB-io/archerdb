@@ -331,6 +331,23 @@ test "vortex smoke" {
     );
 }
 
+// ============================================================================
+// v2.0 Multi-Region Replication Integration Tests
+// ============================================================================
+
+// NOTE: Multi-region replication tests require:
+// - --region-role=primary|follower CLI flags
+// - WAL shipping infrastructure
+// - Follower read-only enforcement (error 213)
+//
+// These tests verify the Phase 1 v2.0 multi-region features:
+// - Primary region accepts writes
+// - Follower region rejects writes with FOLLOWER_READ_ONLY (213)
+// - Follower region can serve reads
+// - Replication lag metrics are exposed
+//
+// To run: zig build test:integration -- --test-filter "primary-follower"
+
 const TmpCluster = struct {
     const replica_count = 3;
     // The test uses this hard-coded address, so only one instance can be running at a time.

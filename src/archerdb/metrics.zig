@@ -724,6 +724,135 @@ pub const Registry = struct {
     /// This replica's index in the cluster.
     pub var vsr_replica_index: std.atomic.Value(u8) = std.atomic.Value(u8).init(0);
 
+    // ========================================================================
+    // v2.0 Multi-Region Replication Metrics
+    // See openspec/changes/add-v2-distributed-features/specs/replication/spec.md
+    // ========================================================================
+
+    /// Maximum number of follower regions per primary
+    pub const max_followers: usize = 16;
+
+    /// Region role (0=primary, 1=follower)
+    pub var region_role: std.atomic.Value(u8) = std.atomic.Value(u8).init(0);
+
+    /// Region identifier
+    pub var region_id: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
+
+    /// Ship queue depth per follower region
+    pub var replication_ship_queue_depth: [max_followers]std.atomic.Value(u64) = [_]std.atomic.Value(u64){std.atomic.Value(u64).init(0)} ** max_followers;
+
+    /// Total bytes shipped per follower region
+    pub var replication_ship_bytes_total: [max_followers]std.atomic.Value(u64) = [_]std.atomic.Value(u64){std.atomic.Value(u64).init(0)} ** max_followers;
+
+    /// Ship failures per follower region
+    pub var replication_ship_failures_total: [max_followers]std.atomic.Value(u64) = [_]std.atomic.Value(u64){std.atomic.Value(u64).init(0)} ** max_followers;
+
+    /// Last ship latency in nanoseconds per follower
+    pub var replication_ship_latency_ns: [max_followers]std.atomic.Value(u64) = [_]std.atomic.Value(u64){std.atomic.Value(u64).init(0)} ** max_followers;
+
+    /// Replication lag in operations (follower perspective)
+    pub var replication_lag_ops: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
+    /// Replication lag in nanoseconds (follower perspective)
+    pub var replication_lag_ns: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
+    /// WAL entries applied per second (follower perspective)
+    pub var replication_apply_rate: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
+    /// Region availability status (1=available, 0=unavailable)
+    pub var region_available: std.atomic.Value(u8) = std.atomic.Value(u8).init(1);
+
+    // ========================================================================
+    // v2.0 Sharding Metrics
+    // See openspec/changes/add-v2-distributed-features/specs/index-sharding/spec.md
+    // ========================================================================
+
+    /// Maximum number of shards
+    pub const max_shards: usize = 256;
+
+    /// Number of active shards
+    pub var shard_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1);
+
+    /// Entities per shard (approximate)
+    pub var shard_entity_count: [max_shards]std.atomic.Value(u64) = [_]std.atomic.Value(u64){std.atomic.Value(u64).init(0)} ** max_shards;
+
+    /// Resharding status (0=idle, 1=preparing, 2=migrating, 3=finalizing)
+    pub var resharding_status: std.atomic.Value(u8) = std.atomic.Value(u8).init(0);
+
+    /// Resharding progress (0.0 to 1.0, stored as fixed-point * 1000)
+    pub var resharding_progress: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
+
+    /// Entities exported during resharding
+    pub var resharding_entities_exported: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
+    /// Entities imported during resharding
+    pub var resharding_entities_imported: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
+    /// Source shard count before resharding
+    pub var resharding_source_shards: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
+
+    /// Target shard count for resharding
+    pub var resharding_target_shards: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
+
+    /// Resharding start timestamp (nanoseconds since epoch)
+    pub var resharding_start_ns: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
+    /// Resharding duration (nanoseconds, updated on completion)
+    pub var resharding_duration_ns: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
+    /// Scatter-gather queries total
+    pub var scatter_gather_queries_total: Counter = Counter.init(
+        "archerdb_scatter_gather_queries_total",
+        "Total scatter-gather queries across shards",
+        null,
+    );
+
+    // ========================================================================
+    // v2.0 Encryption Metrics
+    // See openspec/changes/add-v2-distributed-features/specs/security/spec.md
+    // ========================================================================
+
+    /// Total encryption operations
+    pub var encryption_ops_total: Counter = Counter.init(
+        "archerdb_encryption_operations_total",
+        "Total encryption operations",
+        "op=\"encrypt\"",
+    );
+
+    /// Total decryption operations
+    pub var decryption_ops_total: Counter = Counter.init(
+        "archerdb_encryption_operations_total",
+        "Total decryption operations",
+        "op=\"decrypt\"",
+    );
+
+    /// Key cache hits
+    pub var encryption_cache_hits_total: Counter = Counter.init(
+        "archerdb_encryption_key_cache_hits_total",
+        "Encryption key cache hits",
+        null,
+    );
+
+    /// Key cache misses
+    pub var encryption_cache_misses_total: Counter = Counter.init(
+        "archerdb_encryption_key_cache_misses_total",
+        "Encryption key cache misses",
+        null,
+    );
+
+    /// Decryption failures (auth tag mismatch)
+    pub var encryption_failures_total: Counter = Counter.init(
+        "archerdb_encryption_failures_total",
+        "Encryption/decryption failures",
+        "reason=\"auth_tag_mismatch\"",
+    );
+
+    /// Key rotation status (0=idle, 1=rotating)
+    pub var encryption_rotation_status: std.atomic.Value(u8) = std.atomic.Value(u8).init(0);
+
+    /// Key rotation progress (0.0 to 1.0, stored as fixed-point * 1000)
+    pub var encryption_rotation_progress: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
+
     /// Format all metrics as Prometheus text format.
     pub fn format(writer: anytype) !void {
         // Set info gauge to 1 (it's always present)
@@ -1099,6 +1228,186 @@ pub const Registry = struct {
         // Backup upload latency histogram
         try backup_upload_latency.format(writer);
         try writer.writeAll("\n");
+
+        // ====================================================================
+        // v2.0 Multi-Region Metrics
+        // ====================================================================
+
+        // Region info
+        try writer.writeAll("# HELP archerdb_region_info Region information\n");
+        try writer.writeAll("# TYPE archerdb_region_info gauge\n");
+        const role = region_role.load(.monotonic);
+        const role_str = if (role == 0) "primary" else "follower";
+        try writer.print(
+            "archerdb_region_info{{region_id=\"{d}\",role=\"{s}\"}} 1\n",
+            .{ region_id.load(.monotonic), role_str },
+        );
+        try writer.writeAll("\n");
+
+        // Region availability
+        try writer.writeAll("# HELP archerdb_region_available Region availability (1=available)\n");
+        try writer.writeAll("# TYPE archerdb_region_available gauge\n");
+        try writer.print("archerdb_region_available {d}\n", .{region_available.load(.monotonic)});
+        try writer.writeAll("\n");
+
+        // Replication shipping metrics (primary only)
+        if (role == 0) {
+            try writer.writeAll("# HELP archerdb_replication_ship_queue_depth " ++
+                "Entries pending shipping per follower\n");
+            try writer.writeAll("# TYPE archerdb_replication_ship_queue_depth gauge\n");
+            for (replication_ship_queue_depth, 0..) |depth, i| {
+                const d = depth.load(.monotonic);
+                if (d > 0) {
+                    try writer.print(
+                        "archerdb_replication_ship_queue_depth{{follower=\"{d}\"}} {d}\n",
+                        .{ i, d },
+                    );
+                }
+            }
+            try writer.writeAll("\n");
+
+            try writer.writeAll("# HELP archerdb_replication_ship_bytes_total " ++
+                "Total bytes shipped per follower\n");
+            try writer.writeAll("# TYPE archerdb_replication_ship_bytes_total counter\n");
+            for (replication_ship_bytes_total, 0..) |bytes, i| {
+                const b = bytes.load(.monotonic);
+                if (b > 0) {
+                    try writer.print(
+                        "archerdb_replication_ship_bytes_total{{follower=\"{d}\"}} {d}\n",
+                        .{ i, b },
+                    );
+                }
+            }
+            try writer.writeAll("\n");
+
+            try writer.writeAll("# HELP archerdb_replication_ship_failures_total " ++
+                "Ship failures per follower\n");
+            try writer.writeAll("# TYPE archerdb_replication_ship_failures_total counter\n");
+            for (replication_ship_failures_total, 0..) |fail, i| {
+                const f = fail.load(.monotonic);
+                if (f > 0) {
+                    try writer.print(
+                        "archerdb_replication_ship_failures_total{{follower=\"{d}\"}} {d}\n",
+                        .{ i, f },
+                    );
+                }
+            }
+            try writer.writeAll("\n");
+        }
+
+        // Replication lag metrics (follower only)
+        if (role == 1) {
+            try writer.writeAll("# HELP archerdb_replication_lag_ops " ++
+                "Replication lag in operations\n");
+            try writer.writeAll("# TYPE archerdb_replication_lag_ops gauge\n");
+            try writer.print("archerdb_replication_lag_ops {d}\n", .{replication_lag_ops.load(.monotonic)});
+            try writer.writeAll("\n");
+
+            try writer.writeAll("# HELP archerdb_replication_lag_seconds " ++
+                "Replication lag in seconds\n");
+            try writer.writeAll("# TYPE archerdb_replication_lag_seconds gauge\n");
+            const lag_ns_val = replication_lag_ns.load(.monotonic);
+            const lag_sec: f64 = @as(f64, @floatFromInt(lag_ns_val)) / 1e9;
+            try writer.print("archerdb_replication_lag_seconds {d:.6}\n", .{lag_sec});
+            try writer.writeAll("\n");
+
+            try writer.writeAll("# HELP archerdb_replication_apply_rate " ++
+                "WAL entries applied per second\n");
+            try writer.writeAll("# TYPE archerdb_replication_apply_rate gauge\n");
+            try writer.print("archerdb_replication_apply_rate {d}\n", .{replication_apply_rate.load(.monotonic)});
+            try writer.writeAll("\n");
+        }
+
+        // ====================================================================
+        // v2.0 Sharding Metrics
+        // ====================================================================
+
+        try writer.writeAll("# HELP archerdb_shard_count Number of active shards\n");
+        try writer.writeAll("# TYPE archerdb_shard_count gauge\n");
+        try writer.print("archerdb_shard_count {d}\n", .{shard_count.load(.monotonic)});
+        try writer.writeAll("\n");
+
+        try writer.writeAll("# HELP archerdb_resharding_status " ++
+            "Resharding status (0=idle, 1=preparing, 2=migrating, 3=finalizing)\n");
+        try writer.writeAll("# TYPE archerdb_resharding_status gauge\n");
+        try writer.print("archerdb_resharding_status {d}\n", .{resharding_status.load(.monotonic)});
+        try writer.writeAll("\n");
+
+        const resharding_prog = resharding_progress.load(.monotonic);
+        const resharding_stat = resharding_status.load(.monotonic);
+        if (resharding_stat > 0 or resharding_prog > 0) {
+            try writer.writeAll("# HELP archerdb_resharding_progress " ++
+                "Resharding progress (0.0 to 1.0)\n");
+            try writer.writeAll("# TYPE archerdb_resharding_progress gauge\n");
+            const prog: f64 = @as(f64, @floatFromInt(resharding_prog)) / 1000.0;
+            try writer.print("archerdb_resharding_progress {d:.3}\n", .{prog});
+            try writer.writeAll("\n");
+
+            try writer.writeAll("# HELP archerdb_resharding_entities_exported " ++
+                "Entities exported during resharding\n");
+            try writer.writeAll("# TYPE archerdb_resharding_entities_exported counter\n");
+            try writer.print("archerdb_resharding_entities_exported {d}\n", .{resharding_entities_exported.load(.monotonic)});
+            try writer.writeAll("\n");
+
+            try writer.writeAll("# HELP archerdb_resharding_entities_imported " ++
+                "Entities imported during resharding\n");
+            try writer.writeAll("# TYPE archerdb_resharding_entities_imported counter\n");
+            try writer.print("archerdb_resharding_entities_imported {d}\n", .{resharding_entities_imported.load(.monotonic)});
+            try writer.writeAll("\n");
+
+            try writer.writeAll("# HELP archerdb_resharding_source_shards " ++
+                "Source shard count before resharding\n");
+            try writer.writeAll("# TYPE archerdb_resharding_source_shards gauge\n");
+            try writer.print("archerdb_resharding_source_shards {d}\n", .{resharding_source_shards.load(.monotonic)});
+            try writer.writeAll("\n");
+
+            try writer.writeAll("# HELP archerdb_resharding_target_shards " ++
+                "Target shard count for resharding\n");
+            try writer.writeAll("# TYPE archerdb_resharding_target_shards gauge\n");
+            try writer.print("archerdb_resharding_target_shards {d}\n", .{resharding_target_shards.load(.monotonic)});
+            try writer.writeAll("\n");
+        }
+
+        // Always show resharding duration if completed (non-zero)
+        const duration_ns = resharding_duration_ns.load(.monotonic);
+        if (duration_ns > 0) {
+            try writer.writeAll("# HELP archerdb_resharding_duration_seconds " ++
+                "Duration of last resharding operation\n");
+            try writer.writeAll("# TYPE archerdb_resharding_duration_seconds gauge\n");
+            const duration_sec: f64 = @as(f64, @floatFromInt(duration_ns)) / 1e9;
+            try writer.print("archerdb_resharding_duration_seconds {d:.3}\n", .{duration_sec});
+            try writer.writeAll("\n");
+        }
+
+        try scatter_gather_queries_total.format(writer);
+        try writer.writeAll("\n");
+
+        // ====================================================================
+        // v2.0 Encryption Metrics
+        // ====================================================================
+
+        try encryption_ops_total.format(writer);
+        try decryption_ops_total.format(writer);
+        try encryption_cache_hits_total.format(writer);
+        try encryption_cache_misses_total.format(writer);
+        try encryption_failures_total.format(writer);
+        try writer.writeAll("\n");
+
+        try writer.writeAll("# HELP archerdb_encryption_rotation_status " ++
+            "Key rotation status (0=idle, 1=rotating)\n");
+        try writer.writeAll("# TYPE archerdb_encryption_rotation_status gauge\n");
+        try writer.print("archerdb_encryption_rotation_status {d}\n", .{encryption_rotation_status.load(.monotonic)});
+        try writer.writeAll("\n");
+
+        const rotation_prog = encryption_rotation_progress.load(.monotonic);
+        if (rotation_prog > 0) {
+            try writer.writeAll("# HELP archerdb_encryption_rotation_progress " ++
+                "Key rotation progress (0.0 to 1.0)\n");
+            try writer.writeAll("# TYPE archerdb_encryption_rotation_progress gauge\n");
+            const prog: f64 = @as(f64, @floatFromInt(rotation_prog)) / 1000.0;
+            try writer.print("archerdb_encryption_rotation_progress {d:.3}\n", .{prog});
+            try writer.writeAll("\n");
+        }
     }
 
     /// Update VSR metrics from replica state.

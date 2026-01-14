@@ -78,6 +78,7 @@ class GeoOperation(IntEnum):
     QUERY_LATEST = 154     # vsr_operations_reserved (128) + 26
     CLEANUP_EXPIRED = 155  # vsr_operations_reserved (128) + 27
     QUERY_UUID_BATCH = 156 # vsr_operations_reserved (128) + 28
+    GET_TOPOLOGY = 157     # vsr_operations_reserved (128) + 29
 
 
 class InsertGeoEventResult(IntEnum):
@@ -365,6 +366,150 @@ class CleanupResult:
         if self.entries_scanned == 0:
             return 0.0
         return self.entries_removed / self.entries_scanned
+
+
+# ============================================================================
+# Topology Types (F5.1 Smart Client Topology Discovery)
+# ============================================================================
+
+# Maximum shards supported
+MAX_SHARDS = 256
+MAX_REPLICAS_PER_SHARD = 6
+
+
+class ShardStatus(IntEnum):
+    """
+    Shard status indicator.
+    Maps to ShardStatus in topology.zig
+    """
+    ACTIVE = 0              # Shard is active and accepting requests
+    SYNCING = 1             # Shard is syncing data (read-only)
+    UNAVAILABLE = 2         # Shard is unavailable
+    MIGRATING = 3           # Shard is being migrated during resharding
+    DECOMMISSIONING = 4     # Shard is being decommissioned
+
+
+class TopologyChangeType(IntEnum):
+    """
+    Type of topology change notification.
+    Maps to TopologyChangeNotification.ChangeType in topology.zig
+    """
+    LEADER_CHANGE = 0       # Shard leader changed (failover)
+    REPLICA_ADDED = 1       # Replica added to a shard
+    REPLICA_REMOVED = 2     # Replica removed from a shard
+    RESHARDING_STARTED = 3  # Resharding operation started
+    RESHARDING_COMPLETED = 4  # Resharding operation completed
+    STATUS_CHANGE = 5       # Shard status changed
+
+
+@dataclass
+class ShardInfo:
+    """
+    Information about a single shard.
+    Matches ShardInfo in topology.zig (192 bytes).
+    """
+    id: int = 0                     # Shard identifier (0 to num_shards-1)
+    primary: str = ""               # Primary/leader node address
+    replicas: List[str] = field(default_factory=list)  # Replica node addresses
+    status: ShardStatus = ShardStatus.ACTIVE
+    entity_count: int = 0           # Approximate number of entities
+    size_bytes: int = 0             # Approximate size in bytes
+
+    @classmethod
+    def from_bytes(cls, data: bytes) -> "ShardInfo":
+        """Parse ShardInfo from raw bytes (192 bytes)."""
+        import struct
+        if len(data) < 192:
+            raise ValueError(f"ShardInfo requires 192 bytes, got {len(data)}")
+
+        # Format: u32 id, u8 status, 3 bytes padding, u64 entity_count, u64 size_bytes
+        # Then addresses (null-terminated strings in fixed-size buffers)
+        shard_id, status, _, entity_count, size_bytes = struct.unpack("<IBHQQ", data[:24])
+
+        # Primary address: 64 bytes starting at offset 24
+        primary_raw = data[24:88]
+        primary = primary_raw.split(b'\x00')[0].decode('utf-8')
+
+        # Replicas: 6 * 64 bytes starting at offset 88
+        replicas = []
+        for i in range(MAX_REPLICAS_PER_SHARD):
+            start = 88 + i * 64
+            end = start + 64
+            if end <= len(data):
+                replica_raw = data[start:end]
+                replica = replica_raw.split(b'\x00')[0].decode('utf-8')
+                if replica:
+                    replicas.append(replica)
+
+        return cls(
+            id=shard_id,
+            primary=primary,
+            replicas=replicas,
+            status=ShardStatus(status),
+            entity_count=entity_count,
+            size_bytes=size_bytes,
+        )
+
+
+@dataclass
+class TopologyResponse:
+    """
+    Cluster topology information.
+    Matches TopologyResponse in topology.zig.
+    """
+    version: int = 0                # Topology version (increments on changes)
+    cluster_id: int = 0             # Cluster identifier (128-bit as int)
+    num_shards: int = 0             # Number of shards in the cluster
+    resharding_status: int = 0      # 0=idle, 1=preparing, 2=migrating, 3=finalizing
+    shards: List[ShardInfo] = field(default_factory=list)
+    last_change_ns: int = 0         # Timestamp of last topology change (ns since epoch)
+
+    @classmethod
+    def from_bytes(cls, data: bytes) -> "TopologyResponse":
+        """Parse TopologyResponse from raw bytes."""
+        import struct
+        if len(data) < 48:  # Minimum header size
+            raise ValueError(f"TopologyResponse requires at least 48 bytes, got {len(data)}")
+
+        # Header format: u64 version, u128 cluster_id (as 2x u64), u32 num_shards,
+        # u8 resharding_status, 3 bytes padding, i64 last_change_ns
+        version = struct.unpack("<Q", data[0:8])[0]
+        cluster_id_lo = struct.unpack("<Q", data[8:16])[0]
+        cluster_id_hi = struct.unpack("<Q", data[16:24])[0]
+        cluster_id = cluster_id_lo | (cluster_id_hi << 64)
+        num_shards, resharding_status = struct.unpack("<IB", data[24:29])
+        last_change_ns = struct.unpack("<q", data[32:40])[0]
+
+        # Parse shards (192 bytes each)
+        shards = []
+        shard_data_start = 48  # After header
+        for i in range(num_shards):
+            start = shard_data_start + i * 192
+            end = start + 192
+            if end <= len(data):
+                shard = ShardInfo.from_bytes(data[start:end])
+                shards.append(shard)
+
+        return cls(
+            version=version,
+            cluster_id=cluster_id,
+            num_shards=num_shards,
+            resharding_status=resharding_status,
+            shards=shards,
+            last_change_ns=last_change_ns,
+        )
+
+
+@dataclass
+class TopologyChangeNotification:
+    """
+    Notification of a topology change event.
+    """
+    new_version: int = 0            # New topology version
+    old_version: int = 0            # Previous topology version
+    change_type: TopologyChangeType = TopologyChangeType.STATUS_CHANGE
+    affected_shard: int = 0         # Shard affected by the change
+    timestamp_ns: int = 0           # Timestamp of the change (ns since epoch)
 
 
 # ============================================================================

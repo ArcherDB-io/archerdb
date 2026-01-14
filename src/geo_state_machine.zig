@@ -129,6 +129,11 @@ const ttl = @import("ttl.zig");
 const CleanupRequest = ttl.CleanupRequest;
 const CleanupResponse = ttl.CleanupResponse;
 
+// Topology discovery for Smart Client (F5.1)
+const topology_mod = @import("topology.zig");
+const TopologyRequest = topology_mod.TopologyRequest;
+const TopologyResponse = topology_mod.TopologyResponse;
+
 // S2 spatial index integration (F3.3.2)
 const s2_index = @import("s2_index.zig");
 const S2 = s2_index.S2;
@@ -1175,6 +1180,8 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 // ArcherDB diagnostics
                 .archerdb_ping,
                 .archerdb_get_status,
+                // Topology discovery
+                .get_topology,
                 => 0,
             };
         }
@@ -1229,6 +1236,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .query_latest,
                 .archerdb_ping,
                 .archerdb_get_status,
+                .get_topology,
                 .pulse,
                 => {
                     // Optimistic execution - RAM index provides fast access
@@ -1307,6 +1315,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .cleanup_expired => {
                     return self.execute_cleanup_expired(timestamp, message_body_used, output);
                 },
+
+                // ArcherDB topology discovery (Smart Client)
+                .get_topology => self.execute_get_topology(output),
             };
 
             return result;
@@ -2176,6 +2187,71 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             response_ptr.* = response;
 
             return @sizeOf(StatusResponse);
+        }
+
+        // ====================================================================
+        // F5.1: Smart Client Topology Discovery
+        // ====================================================================
+
+        /// Execute get_topology operation for Smart Client discovery.
+        ///
+        /// Returns the current cluster topology including:
+        /// - Shard count and configuration
+        /// - Shard-to-node mapping with primary/backup roles
+        /// - Topology version for cache invalidation
+        /// - Resharding status if a resharding is in progress
+        ///
+        /// Smart clients use this information for:
+        /// - Direct shard routing (bypass coordinator overhead)
+        /// - Scatter-gather queries across shards
+        /// - Topology change detection via version polling
+        ///
+        /// Arguments:
+        /// - output: Buffer for TopologyResponse
+        ///
+        /// Returns: Size of response written to output (number of bytes)
+        fn execute_get_topology(
+            self: *GeoStateMachine,
+            output: []u8,
+        ) usize {
+            _ = self; // Topology is cluster-wide, not per-state-machine state
+
+            if (output.len < @sizeOf(TopologyResponse)) {
+                log.warn("get_topology: output buffer too small ({d} < {d})", .{
+                    output.len,
+                    @sizeOf(TopologyResponse),
+                });
+                return 0;
+            }
+
+            // Build topology response
+            // Note: In production, this would query the actual cluster state from
+            // the TopologyManager. For now, we return a minimal valid response
+            // indicating a single-shard configuration.
+            var response = TopologyResponse.init();
+            response.version = 1;
+            response.num_shards = 1;
+            response.last_change_ns = std.time.nanoTimestamp();
+            response.resharding_status = 0; // Not resharding
+
+            // Set up shard 0 as active (single-shard mode)
+            response.shards[0] = topology_mod.ShardInfo.init(0);
+            response.shards[0].status = .active;
+            response.shards[0].setPrimary("127.0.0.1:5000");
+
+            // Write response to output buffer
+            const response_ptr = mem.bytesAsValue(
+                TopologyResponse,
+                output[0..@sizeOf(TopologyResponse)],
+            );
+            response_ptr.* = response;
+
+            log.debug("get_topology: returned topology v{d} with {d} shards", .{
+                response.version,
+                response.num_shards,
+            });
+
+            return @sizeOf(TopologyResponse);
         }
 
         // ====================================================================

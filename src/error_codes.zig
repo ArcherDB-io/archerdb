@@ -9,9 +9,14 @@
 //! Error Code Ranges:
 //!   - 1-10:     Protocol errors
 //!   - 100-120:  Validation errors (117-120: polygon hole errors)
-//!   - 200-212:  State errors
+//!   - 200-212:  State errors (v1)
+//!   - 213-218:  Multi-region errors (v2.0)
+//!   - 220-224:  Sharding errors (v2.0)
+//!   - 230-233:  Tiering errors (v2.1)
+//!   - 240-243:  TTL extension errors (v2.1)
 //!   - 300-310:  Resource errors
-//!   - 400-404:  Security errors
+//!   - 400-404:  Security errors (v1)
+//!   - 410-414:  Encryption errors (v2.0)
 //!   - 500-504:  Internal errors
 
 const std = @import("std");
@@ -139,9 +144,11 @@ pub const ValidationError = enum(u32) {
     }
 };
 
-/// State error codes (200-209)
+/// State error codes (200-243)
 /// These errors indicate system state issues.
+/// Ranges: 200-212 (v1), 213-218 (multi-region), 220-224 (sharding), 230-233 (tiering), 240-243 (TTL)
 pub const StateError = enum(u32) {
+    // === v1 Core State Errors (200-212) ===
     /// Query UUID that doesn't exist in index
     entity_not_found = 200,
     /// Cluster is unavailable (quorum lost)
@@ -169,8 +176,55 @@ pub const StateError = enum(u32) {
     /// Writes halted pending backup (mandatory mode)
     backup_required = 212,
 
+    // === v2.0 Multi-Region Errors (213-218) ===
+    /// Write sent to follower region (follower is read-only)
+    follower_read_only = 213,
+    /// Follower has not caught up to requested min_commit_op
+    stale_follower = 214,
+    /// Target region is not reachable
+    region_unavailable = 215,
+    /// Cross-region operation timed out
+    cross_region_timeout = 216,
+    /// Write conflict detected in active-active replication
+    conflict_detected = 217,
+    /// Entity geo-shard does not match target region
+    geo_shard_mismatch = 218,
+
+    // === v2.0 Sharding Errors (220-224) ===
+    /// This node is not the leader for target shard
+    not_shard_leader = 220,
+    /// Target shard has no available replicas
+    shard_unavailable = 221,
+    /// Cluster is currently resharding
+    resharding_in_progress = 222,
+    /// Target shard count is invalid
+    invalid_shard_count = 223,
+    /// Data migration to new shard failed
+    shard_migration_failed = 224,
+
+    // === v2.1 Tiering Errors (230-233) ===
+    /// Cannot access cold tier storage (S3)
+    cold_tier_unavailable = 230,
+    /// Cold tier fetch exceeded timeout
+    cold_tier_fetch_timeout = 231,
+    /// Tier migration failed
+    migration_failed = 232,
+    /// Target tier storage is full
+    tier_storage_full = 233,
+
+    // === v2.1 TTL Extension Errors (240-243) ===
+    /// TTL extension is not enabled
+    ttl_extension_disabled = 240,
+    /// Entity has reached maximum TTL
+    ttl_extension_max_reached = 241,
+    /// Entity has reached maximum extension count
+    ttl_extension_count_exceeded = 242,
+    /// TTL extension cooldown period active
+    ttl_cooldown_active = 243,
+
     pub fn description(self: StateError) []const u8 {
         return switch (self) {
+            // v1 Core
             .entity_not_found => "Entity not found in index",
             .cluster_unavailable => "Cluster is unavailable - quorum lost",
             .view_change_in_progress => "View change is in progress",
@@ -184,6 +238,74 @@ pub const StateError = enum(u32) {
             .entity_expired => "Entity has expired due to TTL",
             .resource_exhausted => "Internal resource pool exhausted",
             .backup_required => "Writes halted pending backup completion (mandatory mode)",
+            // Multi-Region
+            .follower_read_only => "Follower region cannot accept writes",
+            .stale_follower => "Follower has not caught up to requested op",
+            .region_unavailable => "Target region is not reachable",
+            .cross_region_timeout => "Cross-region operation timed out",
+            .conflict_detected => "Write conflict detected (active-active)",
+            .geo_shard_mismatch => "Entity geo-shard does not match target region",
+            // Sharding
+            .not_shard_leader => "This node is not the leader for target shard",
+            .shard_unavailable => "Target shard has no available replicas",
+            .resharding_in_progress => "Cluster is currently resharding",
+            .invalid_shard_count => "Target shard count is invalid",
+            .shard_migration_failed => "Data migration to new shard failed",
+            // Tiering
+            .cold_tier_unavailable => "Cannot access cold tier storage",
+            .cold_tier_fetch_timeout => "Cold tier fetch exceeded timeout",
+            .migration_failed => "Tier migration failed",
+            .tier_storage_full => "Target tier storage is full",
+            // TTL Extension
+            .ttl_extension_disabled => "TTL extension is not enabled",
+            .ttl_extension_max_reached => "Entity has reached maximum TTL",
+            .ttl_extension_count_exceeded => "Entity has reached maximum extension count",
+            .ttl_cooldown_active => "TTL extension cooldown period active",
+        };
+    }
+
+    /// Returns true if this state error can be retried
+    pub fn isRetriable(self: StateError) bool {
+        return switch (self) {
+            // v1 retriable
+            .cluster_unavailable,
+            .view_change_in_progress,
+            .not_primary,
+            .checkpoint_in_progress,
+            .storage_unavailable,
+            .index_rebuilding,
+            .resource_exhausted,
+            .backup_required,
+            // Multi-region retriable
+            .stale_follower,
+            .region_unavailable,
+            .cross_region_timeout,
+            // Sharding retriable
+            .not_shard_leader,
+            .shard_unavailable,
+            .resharding_in_progress,
+            // Tiering retriable
+            .cold_tier_unavailable,
+            .cold_tier_fetch_timeout,
+            => true,
+            // Non-retriable
+            .entity_not_found,
+            .session_expired,
+            .duplicate_request,
+            .stale_read,
+            .entity_expired,
+            .follower_read_only,
+            .conflict_detected,
+            .geo_shard_mismatch,
+            .invalid_shard_count,
+            .shard_migration_failed,
+            .migration_failed,
+            .tier_storage_full,
+            .ttl_extension_disabled,
+            .ttl_extension_max_reached,
+            .ttl_extension_count_exceeded,
+            .ttl_cooldown_active,
+            => false,
         };
     }
 };
@@ -231,9 +353,11 @@ pub const ResourceError = enum(u32) {
     }
 };
 
-/// Security error codes (400-404)
+/// Security error codes (400-414)
 /// These errors indicate security/authorization issues.
+/// Ranges: 400-404 (v1 auth), 410-414 (v2.0 encryption)
 pub const SecurityError = enum(u32) {
+    // === v1 Authentication Errors (400-404) ===
     /// Authentication failed
     authentication_failed = 400,
     /// Missing authorization
@@ -241,11 +365,48 @@ pub const SecurityError = enum(u32) {
     /// Wrong cluster key
     cluster_key_mismatch = 404,
 
+    // === v2.0 Encryption Errors (410-414) ===
+    /// Cannot retrieve encryption key from provider (KMS/Vault)
+    encryption_key_unavailable = 410,
+    /// Failed to decrypt data (auth tag mismatch)
+    decryption_failed = 411,
+    /// Encryption required but not configured
+    encryption_not_enabled = 412,
+    /// Key rotation in progress, retry later
+    key_rotation_in_progress = 413,
+    /// File encrypted with unsupported version
+    unsupported_encryption_version = 414,
+
     pub fn description(self: SecurityError) []const u8 {
         return switch (self) {
+            // Authentication
             .authentication_failed => "Authentication failed",
             .unauthorized => "Unauthorized - missing permissions",
             .cluster_key_mismatch => "Cluster key mismatch",
+            // Encryption
+            .encryption_key_unavailable => "Cannot retrieve encryption key from provider",
+            .decryption_failed => "Failed to decrypt data (auth tag mismatch)",
+            .encryption_not_enabled => "Encryption required but not configured",
+            .key_rotation_in_progress => "Key rotation in progress, retry later",
+            .unsupported_encryption_version => "File encrypted with unsupported version",
+        };
+    }
+
+    /// Returns true if this security error can be retried
+    pub fn isRetriable(self: SecurityError) bool {
+        return switch (self) {
+            // Encryption retriable
+            .encryption_key_unavailable,
+            .key_rotation_in_progress,
+            => true,
+            // Non-retriable
+            .authentication_failed,
+            .unauthorized,
+            .cluster_key_mismatch,
+            .decryption_failed,
+            .encryption_not_enabled,
+            .unsupported_encryption_version,
+            => false,
         };
     }
 };
@@ -312,33 +473,16 @@ pub const ErrorCode = union(enum) {
     /// Returns true if this error can be retried.
     /// Retry semantics per spec:
     /// - Protocol checksum errors: Yes (transient network issues)
-    /// - Cluster/view state errors: Yes (wait for cluster recovery)
+    /// - Cluster/view/region state errors: Yes (wait for recovery)
     /// - Resource exhaustion: Yes (backoff and retry)
     /// - Validation errors: No (client must fix input)
-    /// - Security errors: No (authentication required)
+    /// - Some security errors: Yes (key unavailable, rotation in progress)
     /// - Internal errors: No (system failure)
     pub fn isRetriable(self: ErrorCode) bool {
         return switch (self) {
             .protocol => |p| p.isRetriable(),
             .validation => false, // Client errors - must fix input
-            .state => |s| switch (s) {
-                .cluster_unavailable,
-                .view_change_in_progress,
-                .not_primary,
-                .checkpoint_in_progress,
-                .storage_unavailable,
-                .index_rebuilding,
-                .resource_exhausted,
-                .backup_required,
-                => true,
-                // Non-retriable state errors
-                .entity_not_found,
-                .session_expired,
-                .duplicate_request,
-                .stale_read,
-                .entity_expired,
-                => false,
-            },
+            .state => |s| s.isRetriable(),
             .resource => |r| switch (r) {
                 // Temporary capacity issues - can retry after backoff
                 .too_many_clients,
@@ -356,7 +500,7 @@ pub const ErrorCode = union(enum) {
                 .result_set_too_large,
                 => false,
             },
-            .security => false, // Must fix authentication
+            .security => |sec| sec.isRetriable(),
             .internal => false, // System failure - not retriable
         };
     }
@@ -372,7 +516,7 @@ test "validation error codes in expected range" {
 
 test "state error codes in expected range" {
     const min = @intFromEnum(StateError.entity_not_found);
-    const max = @intFromEnum(StateError.resource_exhausted);
+    const max = @intFromEnum(StateError.ttl_cooldown_active);
     try std.testing.expect(min >= 200);
     try std.testing.expect(max <= 299);
 }
@@ -502,4 +646,82 @@ test "isRetriable semantics per spec" {
     const internal: ErrorCode = .{ .internal = .internal_error };
     try std.testing.expect(!auth_fail.isRetriable());
     try std.testing.expect(!internal.isRetriable());
+}
+
+// === v2.0 Error Code Tests ===
+
+test "v2.0 multi-region error codes 213-218" {
+    // Multi-region error codes per add-v2-distributed-features spec
+    try std.testing.expectEqual(@as(u32, 213), @intFromEnum(StateError.follower_read_only));
+    try std.testing.expectEqual(@as(u32, 214), @intFromEnum(StateError.stale_follower));
+    try std.testing.expectEqual(@as(u32, 215), @intFromEnum(StateError.region_unavailable));
+    try std.testing.expectEqual(@as(u32, 216), @intFromEnum(StateError.cross_region_timeout));
+    try std.testing.expectEqual(@as(u32, 217), @intFromEnum(StateError.conflict_detected));
+    try std.testing.expectEqual(@as(u32, 218), @intFromEnum(StateError.geo_shard_mismatch));
+}
+
+test "v2.0 sharding error codes 220-224" {
+    // Sharding error codes per add-v2-distributed-features spec
+    try std.testing.expectEqual(@as(u32, 220), @intFromEnum(StateError.not_shard_leader));
+    try std.testing.expectEqual(@as(u32, 221), @intFromEnum(StateError.shard_unavailable));
+    try std.testing.expectEqual(@as(u32, 222), @intFromEnum(StateError.resharding_in_progress));
+    try std.testing.expectEqual(@as(u32, 223), @intFromEnum(StateError.invalid_shard_count));
+    try std.testing.expectEqual(@as(u32, 224), @intFromEnum(StateError.shard_migration_failed));
+}
+
+test "v2.1 tiering error codes 230-233" {
+    // Tiering error codes per add-v2-distributed-features spec
+    try std.testing.expectEqual(@as(u32, 230), @intFromEnum(StateError.cold_tier_unavailable));
+    try std.testing.expectEqual(@as(u32, 231), @intFromEnum(StateError.cold_tier_fetch_timeout));
+    try std.testing.expectEqual(@as(u32, 232), @intFromEnum(StateError.migration_failed));
+    try std.testing.expectEqual(@as(u32, 233), @intFromEnum(StateError.tier_storage_full));
+}
+
+test "v2.1 TTL extension error codes 240-243" {
+    // TTL extension error codes per add-v2-distributed-features spec
+    try std.testing.expectEqual(@as(u32, 240), @intFromEnum(StateError.ttl_extension_disabled));
+    try std.testing.expectEqual(@as(u32, 241), @intFromEnum(StateError.ttl_extension_max_reached));
+    try std.testing.expectEqual(@as(u32, 242), @intFromEnum(StateError.ttl_extension_count_exceeded));
+    try std.testing.expectEqual(@as(u32, 243), @intFromEnum(StateError.ttl_cooldown_active));
+}
+
+test "v2.0 encryption error codes 410-414" {
+    // Encryption error codes per add-v2-distributed-features spec
+    try std.testing.expectEqual(@as(u32, 410), @intFromEnum(SecurityError.encryption_key_unavailable));
+    try std.testing.expectEqual(@as(u32, 411), @intFromEnum(SecurityError.decryption_failed));
+    try std.testing.expectEqual(@as(u32, 412), @intFromEnum(SecurityError.encryption_not_enabled));
+    try std.testing.expectEqual(@as(u32, 413), @intFromEnum(SecurityError.key_rotation_in_progress));
+    try std.testing.expectEqual(@as(u32, 414), @intFromEnum(SecurityError.unsupported_encryption_version));
+}
+
+test "v2.0 isRetriable semantics for distributed errors" {
+    // Multi-region: some are retriable
+    const stale_follower: ErrorCode = .{ .state = .stale_follower };
+    const region_unavail: ErrorCode = .{ .state = .region_unavailable };
+    const follower_ro: ErrorCode = .{ .state = .follower_read_only };
+    try std.testing.expect(stale_follower.isRetriable());
+    try std.testing.expect(region_unavail.isRetriable());
+    try std.testing.expect(!follower_ro.isRetriable()); // Must redirect to primary
+
+    // Sharding: leader/availability issues are retriable
+    const not_leader: ErrorCode = .{ .state = .not_shard_leader };
+    const shard_unavail: ErrorCode = .{ .state = .shard_unavailable };
+    const invalid_count: ErrorCode = .{ .state = .invalid_shard_count };
+    try std.testing.expect(not_leader.isRetriable());
+    try std.testing.expect(shard_unavail.isRetriable());
+    try std.testing.expect(!invalid_count.isRetriable()); // Client must fix
+
+    // Tiering: availability issues are retriable
+    const cold_unavail: ErrorCode = .{ .state = .cold_tier_unavailable };
+    const tier_full: ErrorCode = .{ .state = .tier_storage_full };
+    try std.testing.expect(cold_unavail.isRetriable());
+    try std.testing.expect(!tier_full.isRetriable()); // Admin action required
+
+    // Encryption: key availability issues are retriable
+    const key_unavail: ErrorCode = .{ .security = .encryption_key_unavailable };
+    const key_rotation: ErrorCode = .{ .security = .key_rotation_in_progress };
+    const decrypt_fail: ErrorCode = .{ .security = .decryption_failed };
+    try std.testing.expect(key_unavail.isRetriable());
+    try std.testing.expect(key_rotation.isRetriable());
+    try std.testing.expect(!decrypt_fail.isRetriable()); // Data corruption
 }

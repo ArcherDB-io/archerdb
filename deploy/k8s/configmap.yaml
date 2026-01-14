@@ -1,0 +1,28 @@
+# ArcherDB Kubernetes ConfigMap
+# Per configuration/spec.md: Environment-specific configuration
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: archerdb-config
+  labels:
+    app: archerdb
+data:
+  # Cluster configuration
+  ARCHERDB_CLUSTER_ID: "0"
+  ARCHERDB_REPLICA_COUNT: "3"
+
+  # Network configuration
+  ARCHERDB_CLIENT_PORT: "3000"
+  ARCHERDB_METRICS_PORT: "9100"
+
+  # Development mode settings (disable for production)
+  ARCHERDB_DEVELOPMENT: "true"
+
+  # Cache configuration (per memory-management/spec.md)
+  # Default: 256 MiB grid cache for development
+  ARCHERDB_CACHE_GRID_SIZE: "256MiB"
+
+  # Timeout configuration (per client-retry/spec.md)
+  ARCHERDB_CONNECT_TIMEOUT_MS: "5000"
+  ARCHERDB_REQUEST_TIMEOUT_MS: "30000"

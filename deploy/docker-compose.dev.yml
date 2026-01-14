@@ -1,0 +1,111 @@
+# ArcherDB Development Cluster - Docker Compose Configuration
+# Per developer-tools/spec.md: Local orchestration requiring <=3 commands to start
+#
+# Usage:
+#   1. Build: docker compose -f deploy/docker-compose.dev.yml build
+#   2. Format: docker compose -f deploy/docker-compose.dev.yml run --rm archerdb-0 format
+#   3. Start:  docker compose -f deploy/docker-compose.dev.yml up
+#
+# This configuration creates a 3-node ArcherDB cluster for development/testing.
+
+version: "3.9"
+
+services:
+  archerdb-0:
+    image: archerdb:dev
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: archerdb-replica-0
+    hostname: archerdb-0
+    ports:
+      - "3000:3000"    # Client port
+      - "9100:9100"    # Metrics port
+    volumes:
+      - archerdb-data-0:/data
+    environment:
+      - ARCHERDB_REPLICA_INDEX=0
+      - ARCHERDB_ADDRESSES=archerdb-0:3000,archerdb-1:3001,archerdb-2:3002
+      - ARCHERDB_DATA_FILE=/data/0_0.archerdb
+      - ARCHERDB_DEVELOPMENT=true
+    command: ["start", "--addresses=archerdb-0:3000,archerdb-1:3001,archerdb-2:3002", "--development", "/data/0_0.archerdb"]
+    networks:
+      - archerdb-net
+    healthcheck:
+      test: ["CMD", "archerdb", "ping", "--addresses=localhost:3000"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  archerdb-1:
+    image: archerdb:dev
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: archerdb-replica-1
+    hostname: archerdb-1
+    ports:
+      - "3001:3001"
+      - "9101:9100"
+    volumes:
+      - archerdb-data-1:/data
+    environment:
+      - ARCHERDB_REPLICA_INDEX=1
+      - ARCHERDB_ADDRESSES=archerdb-0:3000,archerdb-1:3001,archerdb-2:3002
+      - ARCHERDB_DATA_FILE=/data/0_1.archerdb
+      - ARCHERDB_DEVELOPMENT=true
+    command: ["start", "--addresses=archerdb-0:3000,archerdb-1:3001,archerdb-2:3002", "--development", "/data/0_1.archerdb"]
+    networks:
+      - archerdb-net
+    depends_on:
+      archerdb-0:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "archerdb", "ping", "--addresses=localhost:3001"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  archerdb-2:
+    image: archerdb:dev
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: archerdb-replica-2
+    hostname: archerdb-2
+    ports:
+      - "3002:3002"
+      - "9102:9100"
+    volumes:
+      - archerdb-data-2:/data
+    environment:
+      - ARCHERDB_REPLICA_INDEX=2
+      - ARCHERDB_ADDRESSES=archerdb-0:3000,archerdb-1:3001,archerdb-2:3002
+      - ARCHERDB_DATA_FILE=/data/0_2.archerdb
+      - ARCHERDB_DEVELOPMENT=true
+    command: ["start", "--addresses=archerdb-0:3000,archerdb-1:3001,archerdb-2:3002", "--development", "/data/0_2.archerdb"]
+    networks:
+      - archerdb-net
+    depends_on:
+      archerdb-0:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "archerdb", "ping", "--addresses=localhost:3002"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+networks:
+  archerdb-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes:
+  archerdb-data-0:
+  archerdb-data-1:
+  archerdb-data-2:

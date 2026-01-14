@@ -17,6 +17,7 @@ const maybe = stdx.maybe;
 const geo_event = @import("geo_event.zig");
 const geo_state_machine = @import("geo_state_machine.zig");
 const ttl = @import("ttl.zig");
+const topology_mod = @import("topology.zig");
 
 // ============================================================================
 // ArcherDB Geospatial Types
@@ -41,6 +42,12 @@ pub const QueryLatestFilter = geo_state_machine.QueryLatestFilter;
 // TTL cleanup types (F2.4.8)
 pub const CleanupRequest = ttl.CleanupRequest;
 pub const CleanupResponse = ttl.CleanupResponse;
+
+// Topology types (Smart Client Discovery)
+pub const TopologyRequest = topology_mod.TopologyRequest;
+pub const TopologyResponse = topology_mod.TopologyResponse;
+pub const ShardInfo = topology_mod.ShardInfo;
+pub const ShardStatus = topology_mod.ShardStatus;
 
 // ============================================================================
 // ArcherDB Admin Response Types
@@ -115,6 +122,9 @@ pub const Operation = enum(u8) {
     // ArcherDB TTL cleanup operation (F2.4.8)
     cleanup_expired = constants.vsr_operations_reserved + 27,
 
+    // ArcherDB topology discovery operation (Smart Client)
+    get_topology = constants.vsr_operations_reserved + 29,
+
     pub fn EventType(comptime operation: Operation) type {
         return switch (operation) {
             .pulse => void,
@@ -135,6 +145,9 @@ pub const Operation = enum(u8) {
 
             // ArcherDB TTL cleanup (F2.4.8)
             .cleanup_expired => CleanupRequest,
+
+            // ArcherDB topology discovery (Smart Client)
+            .get_topology => TopologyRequest,
         };
     }
 
@@ -158,6 +171,9 @@ pub const Operation = enum(u8) {
 
             // ArcherDB TTL cleanup (F2.4.8)
             .cleanup_expired => CleanupResponse,
+
+            // ArcherDB topology discovery (Smart Client)
+            .get_topology => TopologyResponse,
         };
     }
 
@@ -198,6 +214,9 @@ pub const Operation = enum(u8) {
 
             // ArcherDB TTL cleanup (F2.4.8)
             .cleanup_expired => false,
+
+            // ArcherDB topology discovery (Smart Client)
+            .get_topology => false,
         };
     }
 
@@ -223,6 +242,9 @@ pub const Operation = enum(u8) {
 
             // ArcherDB TTL cleanup (F2.4.8)
             .cleanup_expired => false,
+
+            // ArcherDB topology discovery (Smart Client)
+            .get_topology => false,
         };
     }
 
@@ -409,6 +431,9 @@ pub const Operation = enum(u8) {
 
             // ArcherDB TTL cleanup (F2.4.8) - returns exactly 1 CleanupResponse
             .cleanup_expired => 1,
+
+            // ArcherDB topology discovery (Smart Client) - returns exactly 1 TopologyResponse
+            .get_topology => 1,
         };
     }
 

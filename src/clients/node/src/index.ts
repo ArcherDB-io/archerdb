@@ -5,6 +5,12 @@
 export * from './geo'
 export * from './geo_client'
 
+// v2 Error codes and exceptions (multi-region, sharding, encryption)
+export * from './errors'
+
+// Topology support (F5.1 Smart Client Topology Discovery)
+export * from './topology'
+
 // Observability (per client-sdk/spec.md)
 export * from './observability'
 
