@@ -56,6 +56,10 @@ const type_mappings = .{
         .name = "InsertGeoEventsResult",
         .visibility = .public,
     } },
+    .{ tb.DeleteEntityResult, TypeMapping{
+        .name = "DeleteEntityResult",
+        .visibility = .public,
+    } },
     .{ tb.DeleteEntitiesResult, TypeMapping{
         .name = "DeleteEntitiesResult",
         .visibility = .public,
@@ -83,6 +87,48 @@ const type_mappings = .{
         .visibility = .public,
         .private_fields = &.{"reserved"},
         .docs_link = "reference/query-latest-filter#",
+    } },
+    // TTL operation types
+    .{ tb.TtlOperationResult, TypeMapping{
+        .name = "TtlOperationResult",
+        .visibility = .public,
+        .docs_link = "reference/ttl#result",
+    } },
+    .{ tb.TtlSetRequest, TypeMapping{
+        .name = "TtlSetRequest",
+        .visibility = .public,
+        .private_fields = &.{"reserved"},
+        .docs_link = "reference/ttl#set",
+    } },
+    .{ tb.TtlSetResponse, TypeMapping{
+        .name = "TtlSetResponse",
+        .visibility = .public,
+        .private_fields = &.{ "reserved", "_padding" },
+        .docs_link = "reference/ttl#set-response",
+    } },
+    .{ tb.TtlExtendRequest, TypeMapping{
+        .name = "TtlExtendRequest",
+        .visibility = .public,
+        .private_fields = &.{"reserved"},
+        .docs_link = "reference/ttl#extend",
+    } },
+    .{ tb.TtlExtendResponse, TypeMapping{
+        .name = "TtlExtendResponse",
+        .visibility = .public,
+        .private_fields = &.{ "reserved", "_padding" },
+        .docs_link = "reference/ttl#extend-response",
+    } },
+    .{ tb.TtlClearRequest, TypeMapping{
+        .name = "TtlClearRequest",
+        .visibility = .public,
+        .private_fields = &.{"reserved"},
+        .docs_link = "reference/ttl#clear",
+    } },
+    .{ tb.TtlClearResponse, TypeMapping{
+        .name = "TtlClearResponse",
+        .visibility = .public,
+        .private_fields = &.{ "reserved", "_padding" },
+        .docs_link = "reference/ttl#clear-response",
     } },
     .{ exports.arch_init_status, TypeMapping{
         .name = "InitializationStatus",
@@ -119,14 +165,23 @@ fn dotnet_type(comptime Type: type) []const u8 {
             @compileError("Type " ++ @typeName(Type) ++ " not mapped."),
         .bool => return "byte",
         .int => |info| {
-            assert(info.signedness == .unsigned);
-            return switch (info.bits) {
-                8 => "byte",
-                16 => "ushort",
-                32 => "uint",
-                64 => "ulong",
-                128 => "UInt128",
-                else => @compileError("invalid int type"),
+            return switch (info.signedness) {
+                .unsigned => switch (info.bits) {
+                    8 => "byte",
+                    16 => "ushort",
+                    32 => "uint",
+                    64 => "ulong",
+                    128 => "UInt128",
+                    else => @compileError("invalid unsigned int type"),
+                },
+                .signed => switch (info.bits) {
+                    8 => "sbyte",
+                    16 => "short",
+                    32 => "int",
+                    64 => "long",
+                    128 => "Int128",
+                    else => @compileError("invalid signed int type"),
+                },
             };
         },
         .optional => |info| switch (@typeInfo(info.child)) {
