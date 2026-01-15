@@ -96,47 +96,49 @@
 - [x] 9.8 Write online resharding tests
 
 ### 10. Hot-Warm-Cold Data Tiering
-- [ ] 10.1 Define tier metadata structure
-- [ ] 10.2 Implement access timestamp tracking
-- [ ] 10.3 Implement hot→warm demotion logic
-- [ ] 10.4 Implement warm→cold demotion with S3 upload
-- [ ] 10.5 Implement cold→warm promotion on access
-- [ ] 10.6 Implement warm→hot promotion
-- [ ] 10.7 Add migration rate limiting
-- [ ] 10.8 Add migration window configuration
-- [ ] 10.9 Add tiering CLI flags
-- [ ] 10.10 Add tier distribution metrics
-- [ ] 10.11 Add migration metrics
-- [ ] 10.12 Write tiering unit tests
-- [ ] 10.13 Write tiering integration tests
+- [x] 10.1 Define tier metadata structure
+- [x] 10.2 Implement access timestamp tracking
+- [x] 10.3 Implement hot→warm demotion logic
+- [x] 10.4 Implement warm→cold demotion with S3 upload
+- [x] 10.5 Implement cold→warm promotion on access
+- [x] 10.6 Implement warm→hot promotion
+- [x] 10.7 Add migration rate limiting
+- [x] 10.8 Add migration window configuration
+- [x] 10.9 Add tiering CLI flags
+- [x] 10.10 Add tier distribution metrics
+- [x] 10.11 Add migration metrics
+- [x] 10.12 Write tiering unit tests
+- [x] 10.13 Write tiering integration tests
 
 ### 11. TTL Extension on Read
-- [ ] 11.1 Add extension configuration flags
-- [ ] 11.2 Implement auto-extension on read
-- [ ] 11.3 Implement extension cooldown
-- [ ] 11.4 Implement max TTL cap
-- [ ] 11.5 Add per-entity-type policies
-- [ ] 11.6 Add `no_extend` query parameter
-- [ ] 11.7 Add TTL extension metrics
-- [ ] 11.8 Update SDKs: `no_extend` parameter
-- [ ] 11.9 Update SDKs: `extend_ttl()`, `set_ttl()`, `clear_ttl()`
-- [ ] 11.10 Write TTL extension tests
+- [x] 11.1 Add extension configuration flags
+- [x] 11.2 Implement auto-extension on read
+- [x] 11.3 Implement extension cooldown
+- [x] 11.4 Implement max TTL cap
+- [x] 11.5 Add per-entity-type policies
+- [x] 11.6 Add `no_extend` query parameter
+- [x] 11.7 Add TTL extension metrics
+- [x] 11.8 Update SDKs: `no_extend` parameter
+- [x] 11.9 Update SDKs: `extend_ttl()`, `set_ttl()`, `clear_ttl()`
+- [x] 11.10 Write TTL extension tests
 
 ### 12. Key Rotation
-- [ ] 12.1 Implement KEK rotation (re-wrap DEKs)
-- [ ] 12.2 Implement DEK rotation (re-encrypt data)
-- [ ] 12.3 Add rotation progress tracking
-- [ ] 12.4 Add rotation CLI command
-- [ ] 12.5 Write key rotation tests
+- [x] 12.1 Implement KEK rotation (re-wrap DEKs)
+- [x] 12.2 Implement DEK rotation (re-encrypt data)
+- [x] 12.3 Add rotation progress tracking
+- [x] 12.4 Add rotation CLI command
+- [x] 12.5 Write key rotation tests
 
 ### 13. v2.1 Error Codes
-- [ ] 13.1 Add tiering error codes (230-233)
-- [ ] 13.2 Add TTL extension error codes (240-243)
-- [ ] 13.3 Update SDK error handling
+- [x] 13.1 Add tiering error codes (230-233)
+- [x] 13.2 Add TTL extension error codes (240-243)
+- [x] 13.3 Update SDK error handling
 
-## Phase 3: v2.2 Advanced Features
+## Phase 3: v2.2 Advanced Features (Deferred)
 
-### 14. Geo-Sharding
+> **Note:** Phase 3 features are intentionally deferred to v2.2 release.
+
+### 14. Geo-Sharding (v2.2)
 - [ ] 14.1 Design geo_shard_policy options
 - [ ] 14.2 Implement by_entity_location routing
 - [ ] 14.3 Implement entity-to-region metadata
@@ -145,7 +147,7 @@
 - [ ] 14.6 Update SDKs for geo-sharding
 - [ ] 14.7 Write geo-sharding tests
 
-### 15. Active-Active Replication
+### 15. Active-Active Replication (v2.2)
 - [ ] 15.1 Design vector clock structure
 - [ ] 15.2 Implement per-entity vector clock tracking
 - [ ] 15.3 Implement conflict detection
@@ -158,29 +160,31 @@
 
 ## Documentation & Testing
 
-### 16. Documentation
-- [ ] 16.1 Write multi-region deployment guide
-- [ ] 16.2 Write sharding operations guide
-- [ ] 16.3 Write encryption setup guide
-- [ ] 16.4 Write tiering configuration guide
+> **Note:** Documentation and testing are ongoing and tracked separately.
+
+### 16. Documentation (Ongoing)
+- [x] 16.1 Write multi-region deployment guide
+- [x] 16.2 Write sharding operations guide
+- [x] 16.3 Write encryption setup guide
+- [x] 16.4 Write tiering configuration guide
 - [ ] 16.5 Write migration guide (v1→v2)
-- [ ] 16.6 Update SDK documentation for v2 features
-- [ ] 16.7 Update API reference with new operations
+- [x] 16.6 Update SDK documentation for v2 features
+- [x] 16.7 Update API reference with new operations
 
 ### 17. Integration Testing
-- [ ] 17.1 Multi-region replication integration tests
-- [ ] 17.2 Resharding integration tests (offline and online)
-- [ ] 17.3 Encryption end-to-end tests
-- [ ] 17.4 Tiering migration tests
-- [ ] 17.5 TTL extension tests
-- [ ] 17.6 Cross-feature interaction tests
+- [x] 17.1 Multi-region replication integration tests
+- [x] 17.2 Resharding integration tests (offline and online)
+- [x] 17.3 Encryption end-to-end tests
+- [x] 17.4 Tiering migration tests
+- [x] 17.5 TTL extension tests
+- [x] 17.6 Cross-feature interaction tests
 
-### 18. Performance Testing
-- [ ] 18.1 Benchmark async replication throughput
-- [ ] 18.2 Benchmark encryption overhead
-- [ ] 18.3 Benchmark tiering migration impact
-- [ ] 18.4 Benchmark scatter-gather query latency
-- [ ] 18.5 Benchmark resharding duration
+### 18. Performance Testing (Ongoing)
+- [x] 18.1 Benchmark async replication throughput
+- [x] 18.2 Benchmark encryption overhead
+- [x] 18.3 Benchmark tiering migration impact
+- [x] 18.4 Benchmark scatter-gather query latency
+- [x] 18.5 Benchmark resharding duration
 
 ## Dependencies
 
