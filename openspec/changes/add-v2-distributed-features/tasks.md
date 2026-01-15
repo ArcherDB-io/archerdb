@@ -167,7 +167,7 @@
 - [x] 16.2 Write sharding operations guide
 - [x] 16.3 Write encryption setup guide
 - [x] 16.4 Write tiering configuration guide
-- [ ] 16.5 Write migration guide (v1→v2)
+- [x] 16.5 Write migration guide (v1→v2)
 - [x] 16.6 Update SDK documentation for v2 features
 - [x] 16.7 Update API reference with new operations
 
