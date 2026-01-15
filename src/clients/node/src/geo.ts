@@ -450,6 +450,11 @@ export enum GeoOperation {
   archerdb_get_status = 153, // vsr_operations_reserved (128) + 25
   query_latest = 154,       // vsr_operations_reserved (128) + 26
   cleanup_expired = 155,    // vsr_operations_reserved (128) + 27
+  query_uuid_batch = 156,   // vsr_operations_reserved (128) + 28
+  get_topology = 157,       // vsr_operations_reserved (128) + 29
+  ttl_set = 158,            // vsr_operations_reserved (128) + 30
+  ttl_extend = 159,         // vsr_operations_reserved (128) + 31
+  ttl_clear = 160,          // vsr_operations_reserved (128) + 32
 }
 
 /**
@@ -508,6 +513,153 @@ export function getCleanupExpirationRatio(result: CleanupResult): number {
     return 0.0
   }
   return Number(result.entries_removed) / Number(result.entries_scanned)
+}
+
+// ============================================================================
+// TTL Operations (v2.1 Manual TTL Support)
+// ============================================================================
+
+/**
+ * Result codes for TTL operations.
+ * Maps to TtlOperationResult enum in ttl.zig
+ */
+export enum TtlOperationResult {
+  success = 0,
+  entity_not_found = 1,
+  invalid_ttl = 2,
+  not_permitted = 3,
+  entity_immutable = 4,
+}
+
+/**
+ * Request to set an absolute TTL for an entity.
+ * Wire format: 64 bytes
+ */
+export type TtlSetRequest = {
+  /**
+   * Entity UUID to set TTL for.
+   */
+  entity_id: bigint
+
+  /**
+   * Absolute TTL in seconds (0 = never expires).
+   */
+  ttl_seconds: number
+
+  /**
+   * Reserved flags (must be 0).
+   */
+  flags: number
+}
+
+/**
+ * Response from a TTL set operation.
+ * Wire format: 64 bytes
+ */
+export type TtlSetResponse = {
+  /**
+   * Entity UUID that was modified.
+   */
+  entity_id: bigint
+
+  /**
+   * Previous TTL value in seconds.
+   */
+  previous_ttl_seconds: number
+
+  /**
+   * New TTL value in seconds.
+   */
+  new_ttl_seconds: number
+
+  /**
+   * Operation result code.
+   */
+  result: TtlOperationResult
+}
+
+/**
+ * Request to extend an entity's TTL by a relative amount.
+ * Wire format: 64 bytes
+ */
+export type TtlExtendRequest = {
+  /**
+   * Entity UUID to extend TTL for.
+   */
+  entity_id: bigint
+
+  /**
+   * Number of seconds to extend the TTL by.
+   */
+  extend_by_seconds: number
+
+  /**
+   * Reserved flags (must be 0).
+   */
+  flags: number
+}
+
+/**
+ * Response from a TTL extend operation.
+ * Wire format: 64 bytes
+ */
+export type TtlExtendResponse = {
+  /**
+   * Entity UUID that was modified.
+   */
+  entity_id: bigint
+
+  /**
+   * Previous TTL value in seconds.
+   */
+  previous_ttl_seconds: number
+
+  /**
+   * New TTL value in seconds.
+   */
+  new_ttl_seconds: number
+
+  /**
+   * Operation result code.
+   */
+  result: TtlOperationResult
+}
+
+/**
+ * Request to clear an entity's TTL (make it never expire).
+ * Wire format: 64 bytes
+ */
+export type TtlClearRequest = {
+  /**
+   * Entity UUID to clear TTL for.
+   */
+  entity_id: bigint
+
+  /**
+   * Reserved flags (must be 0).
+   */
+  flags: number
+}
+
+/**
+ * Response from a TTL clear operation.
+ * Wire format: 64 bytes
+ */
+export type TtlClearResponse = {
+  /**
+   * Entity UUID that was modified.
+   */
+  entity_id: bigint
+
+  /**
+   * Previous TTL value in seconds.
+   */
+  previous_ttl_seconds: number
+
+  /**
+   * Operation result code.
+   */
+  result: TtlOperationResult
 }
 
 // ============================================================================
@@ -875,17 +1027,10 @@ export function createGeoEvent(options: GeoEventOptions): GeoEvent {
   const lat_nano = degreesToNano(options.latitude)
   const lon_nano = degreesToNano(options.longitude)
 
-  // Compute timestamp for composite ID (nanoseconds since Unix epoch)
-  // NOTE: Server validates timestamp field must be 0 for non-imported events,
-  // but the composite ID contains the timestamp embedded in it.
-  const now_ns = BigInt(Date.now()) * 1_000_000n
-
-  // Compute S2 cell ID and composite ID
-  const s2CellId = computeS2CellId(lat_nano, lon_nano)
-  const compositeId = packCompositeId(s2CellId, now_ns)
-
+  // Create event with id=0 per wire format spec.
+  // Call prepareGeoEvent() before sending to generate the composite ID.
   return {
-    id: compositeId,
+    id: 0n,
     entity_id: options.entity_id,
     correlation_id: options.correlation_id ?? 0n,
     user_data: options.user_data ?? 0n,
@@ -900,6 +1045,38 @@ export function createGeoEvent(options: GeoEventOptions): GeoEvent {
     heading_cdeg: options.heading !== undefined ? headingToCentidegrees(options.heading) : 0,
     flags: options.flags ?? GeoEventFlags.none,
   }
+}
+
+/**
+ * Prepares a GeoEvent for sending by generating a composite ID.
+ *
+ * The composite ID encodes the S2 cell (from coordinates) and current timestamp.
+ * This should be called just before sending the event to the server.
+ *
+ * @param event - The GeoEvent to prepare (modified in place)
+ * @returns The same event with id field populated
+ *
+ * @example
+ * ```typescript
+ * const event = createGeoEvent({ entity_id: id(), latitude: 37.7749, longitude: -122.4194 })
+ * prepareGeoEvent(event) // Sets event.id
+ * await client.upsert([event])
+ * ```
+ */
+export function prepareGeoEvent(event: GeoEvent): GeoEvent {
+  if (event.id !== 0n) {
+    // Already prepared
+    return event
+  }
+
+  // Compute timestamp for composite ID (nanoseconds since Unix epoch)
+  const now_ns = BigInt(Date.now()) * 1_000_000n
+
+  // Compute S2 cell ID and composite ID from coordinates
+  const s2CellId = computeS2CellId(event.lat_nano, event.lon_nano)
+  event.id = packCompositeId(s2CellId, now_ns)
+
+  return event
 }
 
 // ============================================================================

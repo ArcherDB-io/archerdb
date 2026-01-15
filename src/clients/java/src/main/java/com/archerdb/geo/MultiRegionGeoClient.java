@@ -153,6 +153,28 @@ final class MultiRegionGeoClient implements GeoClient {
     }
 
     // ========================================================================
+    // TTL Operations (v2.1 Manual TTL Support) - Write to primary
+    // ========================================================================
+
+    @Override
+    public TtlSetResponse setTtl(UInt128 entityId, int ttlSeconds) {
+        ensureOpen();
+        return primaryClient.setTtl(entityId, ttlSeconds);
+    }
+
+    @Override
+    public TtlExtendResponse extendTtl(UInt128 entityId, int extendBySeconds) {
+        ensureOpen();
+        return primaryClient.extendTtl(entityId, extendBySeconds);
+    }
+
+    @Override
+    public TtlClearResponse clearTtl(UInt128 entityId) {
+        ensureOpen();
+        return primaryClient.clearTtl(entityId);
+    }
+
+    // ========================================================================
     // Admin Operations
     // ========================================================================
 

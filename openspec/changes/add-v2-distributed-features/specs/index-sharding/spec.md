@@ -223,3 +223,14 @@ The system SHALL define error codes for sharding operations.
   | 222 | resharding_in_progress | Cluster is currently resharding | Yes |
   | 223 | invalid_shard_count | Target shard count is invalid | No |
   | 224 | shard_migration_failed | Data migration to new shard failed | No |
+
+## Implementation Status
+
+| Requirement | Status | Notes |
+|-------------|--------|-------|
+| Stop-the-World Resharding | ✓ Complete | `sharding.zig` drain/migrate/restart |
+| Online Resharding (v2.1) | ✓ Complete | Background migration |
+| Shard Management CLI | ✓ Complete | `archerdb shard` commands |
+| Topology Discovery | ✓ Complete | `topology.zig`, get_topology op |
+| Shard Health Monitoring | ✓ Complete | Per-shard metrics |
+| Sharding Error Codes (220-224) | ✓ Complete | `error_codes.zig` |

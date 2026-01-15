@@ -67,6 +67,13 @@
       <version>[4.13.1,)</version>
       <scope>test</scope>
     </dependency>
+    <!-- Gson for JSON parsing in wire format tests -->
+    <dependency>
+      <groupId>com.google.code.gson</groupId>
+      <artifactId>gson</artifactId>
+      <version>2.10.1</version>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <profiles>

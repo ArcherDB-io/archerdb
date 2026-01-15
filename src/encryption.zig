@@ -186,6 +186,8 @@ pub const KeyProvider = struct {
         isRotating: *const fn (ptr: *anyopaque) bool,
         /// Get provider type
         getType: *const fn (ptr: *anyopaque) KeyProviderType,
+        /// Destroy the provider and free resources
+        destroy: *const fn (ptr: *anyopaque, allocator: Allocator) void,
     };
 
     pub fn getMasterKey(self: KeyProvider) EncryptionError![DEK_SIZE]u8 {
@@ -210,6 +212,11 @@ pub const KeyProvider = struct {
 
     pub fn getType(self: KeyProvider) KeyProviderType {
         return self.vtable.getType(self.ptr);
+    }
+
+    /// Destroy the provider and free all resources.
+    pub fn destroy(self: KeyProvider, allocator: Allocator) void {
+        self.vtable.destroy(self.ptr, allocator);
     }
 };
 
@@ -338,6 +345,12 @@ pub const FileKeyProvider = struct {
         return .file;
     }
 
+    fn destroyImpl(ctx: *anyopaque, allocator: Allocator) void {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        self.deinit();
+        allocator.destroy(self);
+    }
+
     pub const vtable = KeyProvider.VTable{
         .getMasterKey = getMasterKeyImpl,
         .getKeyId = getKeyIdImpl,
@@ -345,6 +358,7 @@ pub const FileKeyProvider = struct {
         .unwrapDek = unwrapDekImpl,
         .isRotating = isRotatingImpl,
         .getType = getTypeImpl,
+        .destroy = destroyImpl,
     };
 
     pub fn provider(self: *Self) KeyProvider {
@@ -648,6 +662,12 @@ pub const AwsKmsKeyProvider = struct {
         return .aws_kms;
     }
 
+    fn destroyImpl(ctx: *anyopaque, allocator: Allocator) void {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        self.deinit();
+        allocator.destroy(self);
+    }
+
     pub const vtable = KeyProvider.VTable{
         .getMasterKey = getMasterKeyImpl,
         .getKeyId = getKeyIdImpl,
@@ -655,6 +675,7 @@ pub const AwsKmsKeyProvider = struct {
         .unwrapDek = unwrapDekImpl,
         .isRotating = isRotatingImpl,
         .getType = getTypeImpl,
+        .destroy = destroyImpl,
     };
 
     pub fn provider(self: *Self) KeyProvider {
@@ -1052,6 +1073,12 @@ pub const VaultKeyProvider = struct {
         return .vault;
     }
 
+    fn destroyImpl(ctx: *anyopaque, allocator: Allocator) void {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        self.deinit();
+        allocator.destroy(self);
+    }
+
     pub const vtable = KeyProvider.VTable{
         .getMasterKey = getMasterKeyImpl,
         .getKeyId = getKeyIdImpl,
@@ -1059,6 +1086,7 @@ pub const VaultKeyProvider = struct {
         .unwrapDek = unwrapDekImpl,
         .isRotating = isRotatingImpl,
         .getType = getTypeImpl,
+        .destroy = destroyImpl,
     };
 
     pub fn provider(self: *Self) KeyProvider {
@@ -1077,6 +1105,7 @@ pub fn createKeyProvider(
     return switch (config.provider_type) {
         .file => blk: {
             var file_provider = try allocator.create(FileKeyProvider);
+            errdefer allocator.destroy(file_provider);
             file_provider.* = try FileKeyProvider.init(
                 allocator,
                 config.key_file_path,
@@ -1086,6 +1115,7 @@ pub fn createKeyProvider(
         },
         .aws_kms => blk: {
             var kms_provider = try allocator.create(AwsKmsKeyProvider);
+            errdefer allocator.destroy(kms_provider);
             kms_provider.* = try AwsKmsKeyProvider.init(
                 allocator,
                 config.key_id, // KMS ARN
@@ -1100,6 +1130,7 @@ pub fn createKeyProvider(
             // Parse Vault key ID format: vault_address/mount_path/key_name
             // e.g., https://vault.example.com:8200/transit/my-key
             var vault_provider = try allocator.create(VaultKeyProvider);
+            errdefer allocator.destroy(vault_provider);
             vault_provider.* = try VaultKeyProvider.init(
                 allocator,
                 "https://127.0.0.1:8200", // Default address
@@ -1762,7 +1793,8 @@ test "createKeyProvider: file provider" {
         try std.testing.expect(err == error.OutOfMemory or @errorName(err).len > 0);
         return;
     };
-    _ = provider; // If we get here, test passed
+    defer provider.destroy(allocator);
+    // If we get here, factory pattern works - test passed
 }
 
 // ============================================================================

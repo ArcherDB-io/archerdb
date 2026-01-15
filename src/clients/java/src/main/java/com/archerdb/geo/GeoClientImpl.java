@@ -38,6 +38,11 @@ final class GeoClientImpl implements GeoClient {
     static final byte OP_GET_STATUS = (byte) 153;
     static final byte OP_QUERY_LATEST = (byte) 154;
     static final byte OP_CLEANUP_EXPIRED = (byte) 155;
+    static final byte OP_QUERY_UUID_BATCH = (byte) 156;
+    static final byte OP_GET_TOPOLOGY = (byte) 157;
+    static final byte OP_TTL_SET = (byte) 158;
+    static final byte OP_TTL_EXTEND = (byte) 159;
+    static final byte OP_TTL_CLEAR = (byte) 160;
 
     // Wire format sizes (from client-sdk/spec.md)
     static final int GEO_EVENT_SIZE = 128;
@@ -49,6 +54,8 @@ final class GeoClientImpl implements GeoClient {
     static final int INSERT_ERROR_SIZE = 8;
     static final int DELETE_ERROR_SIZE = 8;
     static final int CLEANUP_RESPONSE_SIZE = 16;
+    static final int TTL_REQUEST_SIZE = 64;
+    static final int TTL_RESPONSE_SIZE = 64;
 
     // Batch limits (from client-protocol/spec.md)
     static final int MAX_BATCH_UUIDS = 10000;
@@ -472,6 +479,146 @@ final class GeoClientImpl implements GeoClient {
         }
 
         return new StatusResponse(0, 0, 0, 0, 0, 0);
+    }
+
+    // ============================================================================
+    // TTL Operations (v2.1 Manual TTL Support)
+    // ============================================================================
+
+    @Override
+    public TtlSetResponse setTtl(UInt128 entityId, int ttlSeconds) {
+        ensureOpen();
+
+        if (entityId == null || entityId.isZero()) {
+            throw new IllegalArgumentException("Entity ID must not be null or zero");
+        }
+        if (ttlSeconds < 0) {
+            throw new IllegalArgumentException("TTL seconds must be non-negative");
+        }
+
+        if (!NATIVE_ENABLED) {
+            // Skeleton mode - return success response
+            return new TtlSetResponse(entityId, 0, ttlSeconds, TtlOperationResult.SUCCESS);
+        }
+
+        // Build TTL set request batch
+        NativeTtlSetBatch batch = new NativeTtlSetBatch(1);
+        batch.add();
+        batch.setEntityId(entityId.getLo(), entityId.getHi());
+        batch.setTtlSeconds(ttlSeconds);
+        batch.setFlags(0);
+
+        ByteBuffer response = nativeBridge.submitRequest(OP_TTL_SET, batch, requestTimeoutMs);
+
+        return parseTtlSetResponse(response);
+    }
+
+    @Override
+    public TtlExtendResponse extendTtl(UInt128 entityId, int extendBySeconds) {
+        ensureOpen();
+
+        if (entityId == null || entityId.isZero()) {
+            throw new IllegalArgumentException("Entity ID must not be null or zero");
+        }
+        if (extendBySeconds < 0) {
+            throw new IllegalArgumentException("Extend by seconds must be non-negative");
+        }
+
+        if (!NATIVE_ENABLED) {
+            // Skeleton mode - return success response
+            return new TtlExtendResponse(entityId, 0, extendBySeconds, TtlOperationResult.SUCCESS);
+        }
+
+        // Build TTL extend request batch
+        NativeTtlExtendBatch batch = new NativeTtlExtendBatch(1);
+        batch.add();
+        batch.setEntityId(entityId.getLo(), entityId.getHi());
+        batch.setExtendBySeconds(extendBySeconds);
+        batch.setFlags(0);
+
+        ByteBuffer response = nativeBridge.submitRequest(OP_TTL_EXTEND, batch, requestTimeoutMs);
+
+        return parseTtlExtendResponse(response);
+    }
+
+    @Override
+    public TtlClearResponse clearTtl(UInt128 entityId) {
+        ensureOpen();
+
+        if (entityId == null || entityId.isZero()) {
+            throw new IllegalArgumentException("Entity ID must not be null or zero");
+        }
+
+        if (!NATIVE_ENABLED) {
+            // Skeleton mode - return success response
+            return new TtlClearResponse(entityId, 0, TtlOperationResult.SUCCESS);
+        }
+
+        // Build TTL clear request batch
+        NativeTtlClearBatch batch = new NativeTtlClearBatch(1);
+        batch.add();
+        batch.setEntityId(entityId.getLo(), entityId.getHi());
+        batch.setFlags(0);
+
+        ByteBuffer response = nativeBridge.submitRequest(OP_TTL_CLEAR, batch, requestTimeoutMs);
+
+        return parseTtlClearResponse(response);
+    }
+
+    /**
+     * Parses a TtlSetResponse from the wire format.
+     */
+    private TtlSetResponse parseTtlSetResponse(ByteBuffer response) {
+        if (response == null || response.remaining() < TTL_RESPONSE_SIZE) {
+            throw new RuntimeException("Invalid TTL set response");
+        }
+
+        response.order(ByteOrder.LITTLE_ENDIAN);
+        long entityIdLo = response.getLong();
+        long entityIdHi = response.getLong();
+        int previousTtl = response.getInt();
+        int newTtl = response.getInt();
+        int resultCode = response.get() & 0xFF;
+
+        return new TtlSetResponse(UInt128.of(entityIdHi, entityIdLo), previousTtl, newTtl,
+                TtlOperationResult.fromCode(resultCode));
+    }
+
+    /**
+     * Parses a TtlExtendResponse from the wire format.
+     */
+    private TtlExtendResponse parseTtlExtendResponse(ByteBuffer response) {
+        if (response == null || response.remaining() < TTL_RESPONSE_SIZE) {
+            throw new RuntimeException("Invalid TTL extend response");
+        }
+
+        response.order(ByteOrder.LITTLE_ENDIAN);
+        long entityIdLo = response.getLong();
+        long entityIdHi = response.getLong();
+        int previousTtl = response.getInt();
+        int newTtl = response.getInt();
+        int resultCode = response.get() & 0xFF;
+
+        return new TtlExtendResponse(UInt128.of(entityIdHi, entityIdLo), previousTtl, newTtl,
+                TtlOperationResult.fromCode(resultCode));
+    }
+
+    /**
+     * Parses a TtlClearResponse from the wire format.
+     */
+    private TtlClearResponse parseTtlClearResponse(ByteBuffer response) {
+        if (response == null || response.remaining() < TTL_RESPONSE_SIZE) {
+            throw new RuntimeException("Invalid TTL clear response");
+        }
+
+        response.order(ByteOrder.LITTLE_ENDIAN);
+        long entityIdLo = response.getLong();
+        long entityIdHi = response.getLong();
+        int previousTtl = response.getInt();
+        int resultCode = response.get() & 0xFF;
+
+        return new TtlClearResponse(UInt128.of(entityIdHi, entityIdLo), previousTtl,
+                TtlOperationResult.fromCode(resultCode));
     }
 
     @Override

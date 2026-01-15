@@ -216,3 +216,14 @@ The system SHALL define error codes for tiering operations.
   | 231 | cold_tier_fetch_timeout | Cold tier fetch exceeded timeout | Yes |
   | 232 | migration_failed | Tier migration failed | No |
   | 233 | tier_storage_full | Target tier storage is full | No |
+
+## Implementation Status
+
+| Requirement | Status | Notes |
+|-------------|--------|-------|
+| Hot-Warm-Cold Tiering | ✓ Complete | `tiering.zig` |
+| Automatic Tier Migration | ✓ Complete | Background migration |
+| Migration Rate Limiting | ✓ Complete | Configurable throttle |
+| Cold Tier Storage | ✓ Complete | S3-compatible backend |
+| Tiering Metrics | ✓ Complete | Per-tier counters |
+| Tiering Error Codes (230-233) | ✓ Complete | `error_codes.zig` |

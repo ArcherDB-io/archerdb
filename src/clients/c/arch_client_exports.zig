@@ -78,6 +78,15 @@ pub const query_response_t = vsr.archerdb.QueryResponse;
 pub const polygon_vertex_t = vsr.archerdb.PolygonVertex;
 pub const hole_descriptor_t = vsr.archerdb.HoleDescriptor;
 
+// TTL Operations (v2.1 Manual TTL Support)
+pub const ttl_operation_result = vsr.archerdb.TtlOperationResult;
+pub const ttl_set_request_t = vsr.archerdb.TtlSetRequest;
+pub const ttl_set_response_t = vsr.archerdb.TtlSetResponse;
+pub const ttl_extend_request_t = vsr.archerdb.TtlExtendRequest;
+pub const ttl_extend_response_t = vsr.archerdb.TtlExtendResponse;
+pub const ttl_clear_request_t = vsr.archerdb.TtlClearRequest;
+pub const ttl_clear_response_t = vsr.archerdb.TtlClearResponse;
+
 pub fn init_error_to_status(err: tb.InitError) arch_init_status {
     return switch (err) {
         error.Unexpected => .unexpected,

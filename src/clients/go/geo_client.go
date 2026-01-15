@@ -197,6 +197,15 @@ type GeoClient interface {
 	// GetShardRouter returns a shard router for shard-aware operations (F5.1.4).
 	GetShardRouter() *types.ShardRouter
 
+	// SetTTL sets an absolute TTL for an entity (v2.1 Manual TTL Support).
+	SetTTL(entityID types.Uint128, ttlSeconds uint32) (*types.TtlSetResponse, error)
+
+	// ExtendTTL extends an entity's TTL by a relative amount (v2.1 Manual TTL Support).
+	ExtendTTL(entityID types.Uint128, extendBySeconds uint32) (*types.TtlExtendResponse, error)
+
+	// ClearTTL removes an entity's TTL, making it never expire (v2.1 Manual TTL Support).
+	ClearTTL(entityID types.Uint128) (*types.TtlClearResponse, error)
+
 	// Close closes the client and releases resources.
 	Close()
 }
@@ -1083,6 +1092,99 @@ func (c *geoClient) RefreshTopology() error {
 // GetShardRouter returns a shard router for shard-aware operations.
 func (c *geoClient) GetShardRouter() *types.ShardRouter {
 	return c.shardRouter
+}
+
+// ============================================================================
+// TTL Operations (v2.1 Manual TTL Support)
+// ============================================================================
+
+// SetTTL sets an absolute TTL for an entity.
+func (c *geoClient) SetTTL(entityID types.Uint128, ttlSeconds uint32) (*types.TtlSetResponse, error) {
+	if c.closed {
+		return nil, ClientClosedError{Msg: "client has been closed"}
+	}
+
+	request := types.TtlSetRequest{
+		EntityID:   entityID,
+		TTLSeconds: ttlSeconds,
+	}
+
+	reply, err := c.doGeoRequest(
+		types.GeoOperationTTLSet,
+		1,
+		unsafe.Sizeof(types.TtlSetRequest{}),
+		unsafe.Pointer(&request),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	if reply == nil || len(reply) < int(unsafe.Sizeof(types.TtlSetResponse{})) {
+		return nil, fmt.Errorf("invalid TTL set response")
+	}
+
+	response := (*types.TtlSetResponse)(unsafe.Pointer(&reply[0]))
+	responseCopy := *response
+	return &responseCopy, nil
+}
+
+// ExtendTTL extends an entity's TTL by a relative amount.
+func (c *geoClient) ExtendTTL(entityID types.Uint128, extendBySeconds uint32) (*types.TtlExtendResponse, error) {
+	if c.closed {
+		return nil, ClientClosedError{Msg: "client has been closed"}
+	}
+
+	request := types.TtlExtendRequest{
+		EntityID:        entityID,
+		ExtendBySeconds: extendBySeconds,
+	}
+
+	reply, err := c.doGeoRequest(
+		types.GeoOperationTTLExtend,
+		1,
+		unsafe.Sizeof(types.TtlExtendRequest{}),
+		unsafe.Pointer(&request),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	if reply == nil || len(reply) < int(unsafe.Sizeof(types.TtlExtendResponse{})) {
+		return nil, fmt.Errorf("invalid TTL extend response")
+	}
+
+	response := (*types.TtlExtendResponse)(unsafe.Pointer(&reply[0]))
+	responseCopy := *response
+	return &responseCopy, nil
+}
+
+// ClearTTL removes an entity's TTL, making it never expire.
+func (c *geoClient) ClearTTL(entityID types.Uint128) (*types.TtlClearResponse, error) {
+	if c.closed {
+		return nil, ClientClosedError{Msg: "client has been closed"}
+	}
+
+	request := types.TtlClearRequest{
+		EntityID: entityID,
+	}
+
+	reply, err := c.doGeoRequest(
+		types.GeoOperationTTLClear,
+		1,
+		unsafe.Sizeof(types.TtlClearRequest{}),
+		unsafe.Pointer(&request),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	if reply == nil || len(reply) < int(unsafe.Sizeof(types.TtlClearResponse{})) {
+		return nil, fmt.Errorf("invalid TTL clear response")
+	}
+
+	response := (*types.TtlClearResponse)(unsafe.Pointer(&reply[0]))
+	responseCopy := *response
+	return &responseCopy, nil
 }
 
 // parseQueryResponse parses a query response into QueryResult.

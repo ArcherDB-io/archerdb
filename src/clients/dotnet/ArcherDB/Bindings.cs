@@ -9,844 +9,325 @@ using System.Runtime.InteropServices;
 namespace ArcherDB;
 
 [Flags]
-public enum AccountFlags : ushort
+public enum GeoEventFlags : ushort
 {
     None = 0,
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/account#flagslinked
+    /// https://docs.archerdb.io/reference/geo-event#flagslinked
     /// </summary>
     Linked = 1 << 0,
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/account#flagsdebits_must_not_exceed_credits
+    /// https://docs.archerdb.io/reference/geo-event#flagsimported
     /// </summary>
-    DebitsMustNotExceedCredits = 1 << 1,
+    Imported = 1 << 1,
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/account#flagscredits_must_not_exceed_debits
+    /// https://docs.archerdb.io/reference/geo-event#flagsstationary
     /// </summary>
-    CreditsMustNotExceedDebits = 1 << 2,
+    Stationary = 1 << 2,
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/account#flagshistory
+    /// https://docs.archerdb.io/reference/geo-event#flagslow_accuracy
     /// </summary>
-    History = 1 << 3,
+    LowAccuracy = 1 << 3,
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/account#flagsimported
+    /// https://docs.archerdb.io/reference/geo-event#flagsoffline
     /// </summary>
-    Imported = 1 << 4,
+    Offline = 1 << 4,
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/account#flagsclosed
+    /// https://docs.archerdb.io/reference/geo-event#flagsdeleted
     /// </summary>
-    Closed = 1 << 5,
-
-}
-
-[Flags]
-public enum TransferFlags : ushort
-{
-    None = 0,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/transfer#flagslinked
-    /// </summary>
-    Linked = 1 << 0,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/transfer#flagspending
-    /// </summary>
-    Pending = 1 << 1,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/transfer#flagspost_pending_transfer
-    /// </summary>
-    PostPendingTransfer = 1 << 2,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/transfer#flagsvoid_pending_transfer
-    /// </summary>
-    VoidPendingTransfer = 1 << 3,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/transfer#flagsbalancing_debit
-    /// </summary>
-    BalancingDebit = 1 << 4,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/transfer#flagsbalancing_credit
-    /// </summary>
-    BalancingCredit = 1 << 5,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/transfer#flagsclosing_debit
-    /// </summary>
-    ClosingDebit = 1 << 6,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/transfer#flagsclosing_credit
-    /// </summary>
-    ClosingCredit = 1 << 7,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/transfer#flagsimported
-    /// </summary>
-    Imported = 1 << 8,
-
-}
-
-[Flags]
-public enum AccountFilterFlags : uint
-{
-    None = 0,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/account-filter#flagsdebits
-    /// </summary>
-    Debits = 1 << 0,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/account-filter#flagscredits
-    /// </summary>
-    Credits = 1 << 1,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/account-filter#flagsreversed
-    /// </summary>
-    Reversed = 1 << 2,
-
-}
-
-[Flags]
-public enum QueryFilterFlags : uint
-{
-    None = 0,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/query-filter#flagsreversed
-    /// </summary>
-    Reversed = 1 << 0,
+    Deleted = 1 << 5,
 
 }
 
 [StructLayout(LayoutKind.Sequential, Size = SIZE)]
-public struct Account
+public struct GeoEvent
 {
     public const int SIZE = 128;
 
 
+    [StructLayout(LayoutKind.Sequential, Size = ReservedData.SIZE)]
+    private unsafe struct ReservedData
+    {
+        public const int SIZE = 12;
+        private const int LENGTH = 12;
+
+        private fixed byte raw[LENGTH];
+
+        public byte[] GetData()
+        {
+            fixed (void* ptr = raw)
+            {
+                return new ReadOnlySpan<byte>(ptr, LENGTH).ToArray();
+            }
+        }
+
+        public void SetData(byte[] value)
+        {
+            if (value == null) throw new ArgumentNullException(nameof(value));
+            if (value.Length != LENGTH)
+            {
+                throw new ArgumentException(
+                    "Expected a byte[" + LENGTH + "] array",
+                    nameof(value));
+            }
+
+            fixed (void* ptr = raw)
+            {
+                value.CopyTo(new Span<byte>(ptr, LENGTH));
+            }
+        }
+    }
+
     private UInt128 id;
 
-    private UInt128 debitsPending;
+    private UInt128 entityId;
 
-    private UInt128 debitsPosted;
+    private UInt128 correlationId;
 
-    private UInt128 creditsPending;
+    private UInt128 userData;
 
-    private UInt128 creditsPosted;
+    private long latNano;
 
-    private UInt128 userData128;
+    private long lonNano;
 
-    private ulong userData64;
-
-    private uint userData32;
-
-    private uint reserved;
-
-    private uint ledger;
-
-    private ushort code;
-
-    private AccountFlags flags;
+    private ulong groupId;
 
     private ulong timestamp;
 
+    private int altitudeMm;
+
+    private uint velocityMms;
+
+    private uint ttlSeconds;
+
+    private uint accuracyMm;
+
+    private ushort headingCdeg;
+
+    private GeoEventFlags flags;
+
+    private ReservedData reserved;
+
     /// <summary>
-    /// https://docs.archerdb.io/reference/account#id
+    /// https://docs.archerdb.io/reference/geo-event#id
     /// </summary>
     public UInt128 Id { get => id; set => id = value; }
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/account#debits_pending
+    /// https://docs.archerdb.io/reference/geo-event#entity_id
     /// </summary>
-    public UInt128 DebitsPending { get => debitsPending; internal set => debitsPending = value; }
+    public UInt128 EntityId { get => entityId; set => entityId = value; }
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/account#debits_posted
+    /// https://docs.archerdb.io/reference/geo-event#correlation_id
     /// </summary>
-    public UInt128 DebitsPosted { get => debitsPosted; internal set => debitsPosted = value; }
+    public UInt128 CorrelationId { get => correlationId; set => correlationId = value; }
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/account#credits_pending
+    /// https://docs.archerdb.io/reference/geo-event#user_data
     /// </summary>
-    public UInt128 CreditsPending { get => creditsPending; internal set => creditsPending = value; }
+    public UInt128 UserData { get => userData; set => userData = value; }
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/account#credits_posted
+    /// https://docs.archerdb.io/reference/geo-event#lat_nano
     /// </summary>
-    public UInt128 CreditsPosted { get => creditsPosted; internal set => creditsPosted = value; }
+    public long LatNano { get => latNano; set => latNano = value; }
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/account#user_data_128
+    /// https://docs.archerdb.io/reference/geo-event#lon_nano
     /// </summary>
-    public UInt128 UserData128 { get => userData128; set => userData128 = value; }
+    public long LonNano { get => lonNano; set => lonNano = value; }
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/account#user_data_64
+    /// https://docs.archerdb.io/reference/geo-event#group_id
     /// </summary>
-    public ulong UserData64 { get => userData64; set => userData64 = value; }
+    public ulong GroupId { get => groupId; set => groupId = value; }
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/account#user_data_32
-    /// </summary>
-    public uint UserData32 { get => userData32; set => userData32 = value; }
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/account#reserved
-    /// </summary>
-    internal uint Reserved { get => reserved; set => reserved = value; }
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/account#ledger
-    /// </summary>
-    public uint Ledger { get => ledger; set => ledger = value; }
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/account#code
-    /// </summary>
-    public ushort Code { get => code; set => code = value; }
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/account#flags
-    /// </summary>
-    public AccountFlags Flags { get => flags; set => flags = value; }
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/account#timestamp
+    /// https://docs.archerdb.io/reference/geo-event#timestamp
     /// </summary>
     public ulong Timestamp { get => timestamp; set => timestamp = value; }
 
-}
-
-[StructLayout(LayoutKind.Sequential, Size = SIZE)]
-public struct Transfer
-{
-    public const int SIZE = 128;
-
-    public static UInt128 AmountMax => UInt128.MaxValue;
-
-    private UInt128 id;
-
-    private UInt128 debitAccountId;
-
-    private UInt128 creditAccountId;
-
-    private UInt128 amount;
-
-    private UInt128 pendingId;
-
-    private UInt128 userData128;
-
-    private ulong userData64;
-
-    private uint userData32;
-
-    private uint timeout;
-
-    private uint ledger;
-
-    private ushort code;
-
-    private TransferFlags flags;
-
-    private ulong timestamp;
+    /// <summary>
+    /// https://docs.archerdb.io/reference/geo-event#altitude_mm
+    /// </summary>
+    public int AltitudeMm { get => altitudeMm; set => altitudeMm = value; }
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/transfer#id
+    /// https://docs.archerdb.io/reference/geo-event#velocity_mms
     /// </summary>
-    public UInt128 Id { get => id; set => id = value; }
+    public uint VelocityMms { get => velocityMms; set => velocityMms = value; }
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/transfer#debit_account_id
+    /// https://docs.archerdb.io/reference/geo-event#ttl_seconds
     /// </summary>
-    public UInt128 DebitAccountId { get => debitAccountId; set => debitAccountId = value; }
+    public uint TtlSeconds { get => ttlSeconds; set => ttlSeconds = value; }
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/transfer#credit_account_id
+    /// https://docs.archerdb.io/reference/geo-event#accuracy_mm
     /// </summary>
-    public UInt128 CreditAccountId { get => creditAccountId; set => creditAccountId = value; }
+    public uint AccuracyMm { get => accuracyMm; set => accuracyMm = value; }
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/transfer#amount
+    /// https://docs.archerdb.io/reference/geo-event#heading_cdeg
     /// </summary>
-    public UInt128 Amount { get => amount; set => amount = value; }
+    public ushort HeadingCdeg { get => headingCdeg; set => headingCdeg = value; }
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/transfer#pending_id
+    /// https://docs.archerdb.io/reference/geo-event#flags
     /// </summary>
-    public UInt128 PendingId { get => pendingId; set => pendingId = value; }
+    public GeoEventFlags Flags { get => flags; set => flags = value; }
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/transfer#user_data_128
+    /// https://docs.archerdb.io/reference/geo-event#reserved
     /// </summary>
-    public UInt128 UserData128 { get => userData128; set => userData128 = value; }
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/transfer#user_data_64
-    /// </summary>
-    public ulong UserData64 { get => userData64; set => userData64 = value; }
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/transfer#user_data_32
-    /// </summary>
-    public uint UserData32 { get => userData32; set => userData32 = value; }
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/transfer#timeout
-    /// </summary>
-    public uint Timeout { get => timeout; set => timeout = value; }
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/transfer#ledger
-    /// </summary>
-    public uint Ledger { get => ledger; set => ledger = value; }
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/transfer#code
-    /// </summary>
-    public ushort Code { get => code; set => code = value; }
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/transfer#flags
-    /// </summary>
-    public TransferFlags Flags { get => flags; set => flags = value; }
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/transfer#timestamp
-    /// </summary>
-    public ulong Timestamp { get => timestamp; set => timestamp = value; }
+    internal byte[] Reserved { get => reserved.GetData(); set => reserved.SetData(value); }
 
 }
 
-public enum CreateAccountResult : uint
+public enum InsertGeoEventResult : uint
 {
     /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_accounts#ok
+    /// https://docs.archerdb.io/reference/requests/insert_events#ok
     /// </summary>
     Ok = 0,
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_accounts#linked_event_failed
+    /// https://docs.archerdb.io/reference/requests/insert_events#linked_event_failed
     /// </summary>
     LinkedEventFailed = 1,
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_accounts#linked_event_chain_open
+    /// https://docs.archerdb.io/reference/requests/insert_events#linked_event_chain_open
     /// </summary>
     LinkedEventChainOpen = 2,
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_accounts#imported_event_expected
-    /// </summary>
-    ImportedEventExpected = 22,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_accounts#imported_event_not_expected
-    /// </summary>
-    ImportedEventNotExpected = 23,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_accounts#timestamp_must_be_zero
+    /// https://docs.archerdb.io/reference/requests/insert_events#timestamp_must_be_zero
     /// </summary>
     TimestampMustBeZero = 3,
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_accounts#imported_event_timestamp_out_of_range
-    /// </summary>
-    ImportedEventTimestampOutOfRange = 24,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_accounts#imported_event_timestamp_must_not_advance
-    /// </summary>
-    ImportedEventTimestampMustNotAdvance = 25,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_accounts#reserved_field
+    /// https://docs.archerdb.io/reference/requests/insert_events#reserved_field
     /// </summary>
     ReservedField = 4,
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_accounts#reserved_flag
+    /// https://docs.archerdb.io/reference/requests/insert_events#reserved_flag
     /// </summary>
     ReservedFlag = 5,
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_accounts#id_must_not_be_zero
+    /// https://docs.archerdb.io/reference/requests/insert_events#id_must_not_be_zero
     /// </summary>
     IdMustNotBeZero = 6,
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_accounts#id_must_not_be_int_max
+    /// https://docs.archerdb.io/reference/requests/insert_events#entity_id_must_not_be_zero
     /// </summary>
-    IdMustNotBeIntMax = 7,
+    EntityIdMustNotBeZero = 7,
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_accounts#exists_with_different_flags
+    /// https://docs.archerdb.io/reference/requests/insert_events#invalid_coordinates
     /// </summary>
-    ExistsWithDifferentFlags = 15,
+    InvalidCoordinates = 8,
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_accounts#exists_with_different_user_data_128
+    /// https://docs.archerdb.io/reference/requests/insert_events#lat_out_of_range
     /// </summary>
-    ExistsWithDifferentUserData128 = 16,
+    LatOutOfRange = 9,
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_accounts#exists_with_different_user_data_64
+    /// https://docs.archerdb.io/reference/requests/insert_events#lon_out_of_range
     /// </summary>
-    ExistsWithDifferentUserData64 = 17,
+    LonOutOfRange = 10,
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_accounts#exists_with_different_user_data_32
+    /// https://docs.archerdb.io/reference/requests/insert_events#exists_with_different_entity_id
     /// </summary>
-    ExistsWithDifferentUserData32 = 18,
+    ExistsWithDifferentEntityId = 11,
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_accounts#exists_with_different_ledger
+    /// https://docs.archerdb.io/reference/requests/insert_events#exists_with_different_coordinates
     /// </summary>
-    ExistsWithDifferentLedger = 19,
+    ExistsWithDifferentCoordinates = 12,
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_accounts#exists_with_different_code
+    /// https://docs.archerdb.io/reference/requests/insert_events#exists
     /// </summary>
-    ExistsWithDifferentCode = 20,
+    Exists = 13,
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_accounts#exists
+    /// https://docs.archerdb.io/reference/requests/insert_events#heading_out_of_range
     /// </summary>
-    Exists = 21,
+    HeadingOutOfRange = 14,
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_accounts#flags_are_mutually_exclusive
+    /// https://docs.archerdb.io/reference/requests/insert_events#ttl_invalid
     /// </summary>
-    FlagsAreMutuallyExclusive = 8,
+    TtlInvalid = 15,
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_accounts#debits_pending_must_be_zero
+    /// https://docs.archerdb.io/reference/requests/insert_events#entity_id_must_not_be_int_max
     /// </summary>
-    DebitsPendingMustBeZero = 9,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_accounts#debits_posted_must_be_zero
-    /// </summary>
-    DebitsPostedMustBeZero = 10,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_accounts#credits_pending_must_be_zero
-    /// </summary>
-    CreditsPendingMustBeZero = 11,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_accounts#credits_posted_must_be_zero
-    /// </summary>
-    CreditsPostedMustBeZero = 12,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_accounts#ledger_must_not_be_zero
-    /// </summary>
-    LedgerMustNotBeZero = 13,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_accounts#code_must_not_be_zero
-    /// </summary>
-    CodeMustNotBeZero = 14,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_accounts#imported_event_timestamp_must_not_regress
-    /// </summary>
-    ImportedEventTimestampMustNotRegress = 26,
+    EntityIdMustNotBeIntMax = 16,
 
 }
 
-public enum CreateTransferResult : uint
+[StructLayout(LayoutKind.Sequential, Size = SIZE)]
+public struct InsertGeoEventsResult
 {
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#ok
-    /// </summary>
+    public const int SIZE = 8;
+
+
+    private uint index;
+
+    private InsertGeoEventResult result;
+
+    public uint Index { get => index; set => index = value; }
+
+    public InsertGeoEventResult Result { get => result; set => result = value; }
+
+}
+
+public enum DeleteEntityResult : uint
+{
     Ok = 0,
 
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#linked_event_failed
-    /// </summary>
     LinkedEventFailed = 1,
 
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#linked_event_chain_open
-    /// </summary>
-    LinkedEventChainOpen = 2,
+    EntityIdMustNotBeZero = 2,
 
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#imported_event_expected
-    /// </summary>
-    ImportedEventExpected = 56,
+    EntityNotFound = 3,
 
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#imported_event_not_expected
-    /// </summary>
-    ImportedEventNotExpected = 57,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#timestamp_must_be_zero
-    /// </summary>
-    TimestampMustBeZero = 3,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#imported_event_timestamp_out_of_range
-    /// </summary>
-    ImportedEventTimestampOutOfRange = 58,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#imported_event_timestamp_must_not_advance
-    /// </summary>
-    ImportedEventTimestampMustNotAdvance = 59,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#reserved_flag
-    /// </summary>
-    ReservedFlag = 4,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#id_must_not_be_zero
-    /// </summary>
-    IdMustNotBeZero = 5,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#id_must_not_be_int_max
-    /// </summary>
-    IdMustNotBeIntMax = 6,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#exists_with_different_flags
-    /// </summary>
-    ExistsWithDifferentFlags = 36,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#exists_with_different_pending_id
-    /// </summary>
-    ExistsWithDifferentPendingId = 40,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#exists_with_different_timeout
-    /// </summary>
-    ExistsWithDifferentTimeout = 44,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#exists_with_different_debit_account_id
-    /// </summary>
-    ExistsWithDifferentDebitAccountId = 37,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#exists_with_different_credit_account_id
-    /// </summary>
-    ExistsWithDifferentCreditAccountId = 38,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#exists_with_different_amount
-    /// </summary>
-    ExistsWithDifferentAmount = 39,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#exists_with_different_user_data_128
-    /// </summary>
-    ExistsWithDifferentUserData128 = 41,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#exists_with_different_user_data_64
-    /// </summary>
-    ExistsWithDifferentUserData64 = 42,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#exists_with_different_user_data_32
-    /// </summary>
-    ExistsWithDifferentUserData32 = 43,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#exists_with_different_ledger
-    /// </summary>
-    ExistsWithDifferentLedger = 67,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#exists_with_different_code
-    /// </summary>
-    ExistsWithDifferentCode = 45,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#exists
-    /// </summary>
-    Exists = 46,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#id_already_failed
-    /// </summary>
-    IdAlreadyFailed = 68,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#flags_are_mutually_exclusive
-    /// </summary>
-    FlagsAreMutuallyExclusive = 7,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#debit_account_id_must_not_be_zero
-    /// </summary>
-    DebitAccountIdMustNotBeZero = 8,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#debit_account_id_must_not_be_int_max
-    /// </summary>
-    DebitAccountIdMustNotBeIntMax = 9,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#credit_account_id_must_not_be_zero
-    /// </summary>
-    CreditAccountIdMustNotBeZero = 10,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#credit_account_id_must_not_be_int_max
-    /// </summary>
-    CreditAccountIdMustNotBeIntMax = 11,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#accounts_must_be_different
-    /// </summary>
-    AccountsMustBeDifferent = 12,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#pending_id_must_be_zero
-    /// </summary>
-    PendingIdMustBeZero = 13,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#pending_id_must_not_be_zero
-    /// </summary>
-    PendingIdMustNotBeZero = 14,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#pending_id_must_not_be_int_max
-    /// </summary>
-    PendingIdMustNotBeIntMax = 15,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#pending_id_must_be_different
-    /// </summary>
-    PendingIdMustBeDifferent = 16,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#timeout_reserved_for_pending_transfer
-    /// </summary>
-    TimeoutReservedForPendingTransfer = 17,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#closing_transfer_must_be_pending
-    /// </summary>
-    ClosingTransferMustBePending = 64,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#ledger_must_not_be_zero
-    /// </summary>
-    LedgerMustNotBeZero = 19,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#code_must_not_be_zero
-    /// </summary>
-    CodeMustNotBeZero = 20,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#debit_account_not_found
-    /// </summary>
-    DebitAccountNotFound = 21,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#credit_account_not_found
-    /// </summary>
-    CreditAccountNotFound = 22,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#accounts_must_have_the_same_ledger
-    /// </summary>
-    AccountsMustHaveTheSameLedger = 23,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#transfer_must_have_the_same_ledger_as_accounts
-    /// </summary>
-    TransferMustHaveTheSameLedgerAsAccounts = 24,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#pending_transfer_not_found
-    /// </summary>
-    PendingTransferNotFound = 25,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#pending_transfer_not_pending
-    /// </summary>
-    PendingTransferNotPending = 26,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#pending_transfer_has_different_debit_account_id
-    /// </summary>
-    PendingTransferHasDifferentDebitAccountId = 27,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#pending_transfer_has_different_credit_account_id
-    /// </summary>
-    PendingTransferHasDifferentCreditAccountId = 28,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#pending_transfer_has_different_ledger
-    /// </summary>
-    PendingTransferHasDifferentLedger = 29,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#pending_transfer_has_different_code
-    /// </summary>
-    PendingTransferHasDifferentCode = 30,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#exceeds_pending_transfer_amount
-    /// </summary>
-    ExceedsPendingTransferAmount = 31,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#pending_transfer_has_different_amount
-    /// </summary>
-    PendingTransferHasDifferentAmount = 32,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#pending_transfer_already_posted
-    /// </summary>
-    PendingTransferAlreadyPosted = 33,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#pending_transfer_already_voided
-    /// </summary>
-    PendingTransferAlreadyVoided = 34,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#pending_transfer_expired
-    /// </summary>
-    PendingTransferExpired = 35,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#imported_event_timestamp_must_not_regress
-    /// </summary>
-    ImportedEventTimestampMustNotRegress = 60,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#imported_event_timestamp_must_postdate_debit_account
-    /// </summary>
-    ImportedEventTimestampMustPostdateDebitAccount = 61,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#imported_event_timestamp_must_postdate_credit_account
-    /// </summary>
-    ImportedEventTimestampMustPostdateCreditAccount = 62,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#imported_event_timeout_must_be_zero
-    /// </summary>
-    ImportedEventTimeoutMustBeZero = 63,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#debit_account_already_closed
-    /// </summary>
-    DebitAccountAlreadyClosed = 65,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#credit_account_already_closed
-    /// </summary>
-    CreditAccountAlreadyClosed = 66,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#overflows_debits_pending
-    /// </summary>
-    OverflowsDebitsPending = 47,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#overflows_credits_pending
-    /// </summary>
-    OverflowsCreditsPending = 48,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#overflows_debits_posted
-    /// </summary>
-    OverflowsDebitsPosted = 49,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#overflows_credits_posted
-    /// </summary>
-    OverflowsCreditsPosted = 50,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#overflows_debits
-    /// </summary>
-    OverflowsDebits = 51,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#overflows_credits
-    /// </summary>
-    OverflowsCredits = 52,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#overflows_timeout
-    /// </summary>
-    OverflowsTimeout = 53,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#exceeds_credits
-    /// </summary>
-    ExceedsCredits = 54,
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/requests/create_transfers#exceeds_debits
-    /// </summary>
-    ExceedsDebits = 55,
+    EntityIdMustNotBeIntMax = 4,
 
 }
 
 [StructLayout(LayoutKind.Sequential, Size = SIZE)]
-public struct CreateAccountsResult
+public struct DeleteEntitiesResult
 {
     public const int SIZE = 8;
 
 
     private uint index;
 
-    private CreateAccountResult result;
+    private DeleteEntityResult result;
 
     public uint Index { get => index; set => index = value; }
 
-    public CreateAccountResult Result { get => result; set => result = value; }
+    public DeleteEntityResult Result { get => result; set => result = value; }
 
 }
 
 [StructLayout(LayoutKind.Sequential, Size = SIZE)]
-public struct CreateTransfersResult
-{
-    public const int SIZE = 8;
-
-
-    private uint index;
-
-    private CreateTransferResult result;
-
-    public uint Index { get => index; set => index = value; }
-
-    public CreateTransferResult Result { get => result; set => result = value; }
-
-}
-
-[StructLayout(LayoutKind.Sequential, Size = SIZE)]
-public struct AccountFilter
+public struct QueryUuidFilter
 {
     public const int SIZE = 128;
 
@@ -854,8 +335,8 @@ public struct AccountFilter
     [StructLayout(LayoutKind.Sequential, Size = ReservedData.SIZE)]
     private unsafe struct ReservedData
     {
-        public const int SIZE = 58;
-        private const int LENGTH = 58;
+        public const int SIZE = 108;
+        private const int LENGTH = 108;
 
         private fixed byte raw[LENGTH];
 
@@ -884,80 +365,31 @@ public struct AccountFilter
         }
     }
 
-    private UInt128 accountId;
-
-    private UInt128 userData128;
-
-    private ulong userData64;
-
-    private uint userData32;
-
-    private ushort code;
-
-    private ReservedData reserved;
-
-    private ulong timestampMin;
-
-    private ulong timestampMax;
+    private UInt128 entityId;
 
     private uint limit;
 
-    private AccountFilterFlags flags;
+    private ReservedData reserved;
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/account-filter#account_id
+    /// https://docs.archerdb.io/reference/query-uuid-filter#entity_id
     /// </summary>
-    public UInt128 AccountId { get => accountId; set => accountId = value; }
+    public UInt128 EntityId { get => entityId; set => entityId = value; }
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/account-filter#user_data_128
-    /// </summary>
-    public UInt128 UserData128 { get => userData128; set => userData128 = value; }
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/account-filter#user_data_64
-    /// </summary>
-    public ulong UserData64 { get => userData64; set => userData64 = value; }
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/account-filter#user_data_32
-    /// </summary>
-    public uint UserData32 { get => userData32; set => userData32 = value; }
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/account-filter#code
-    /// </summary>
-    public ushort Code { get => code; set => code = value; }
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/account-filter#reserved
-    /// </summary>
-    internal byte[] Reserved { get => reserved.GetData(); set => reserved.SetData(value); }
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/account-filter#timestamp_min
-    /// </summary>
-    public ulong TimestampMin { get => timestampMin; set => timestampMin = value; }
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/account-filter#timestamp_max
-    /// </summary>
-    public ulong TimestampMax { get => timestampMax; set => timestampMax = value; }
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/account-filter#limit
+    /// https://docs.archerdb.io/reference/query-uuid-filter#limit
     /// </summary>
     public uint Limit { get => limit; set => limit = value; }
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/account-filter#flags
+    /// https://docs.archerdb.io/reference/query-uuid-filter#reserved
     /// </summary>
-    public AccountFilterFlags Flags { get => flags; set => flags = value; }
+    internal byte[] Reserved { get => reserved.GetData(); set => reserved.SetData(value); }
 
 }
 
 [StructLayout(LayoutKind.Sequential, Size = SIZE)]
-public struct AccountBalance
+public struct QueryRadiusFilter
 {
     public const int SIZE = 128;
 
@@ -965,8 +397,8 @@ public struct AccountBalance
     [StructLayout(LayoutKind.Sequential, Size = ReservedData.SIZE)]
     private unsafe struct ReservedData
     {
-        public const int SIZE = 56;
-        private const int LENGTH = 56;
+        public const int SIZE = 80;
+        private const int LENGTH = 80;
 
         private fixed byte raw[LENGTH];
 
@@ -995,61 +427,75 @@ public struct AccountBalance
         }
     }
 
-    private UInt128 debitsPending;
+    private long centerLatNano;
 
-    private UInt128 debitsPosted;
+    private long centerLonNano;
 
-    private UInt128 creditsPending;
+    private uint radiusMm;
 
-    private UInt128 creditsPosted;
+    private uint limit;
 
-    private ulong timestamp;
+    private ulong timestampMin;
+
+    private ulong timestampMax;
+
+    private ulong groupId;
 
     private ReservedData reserved;
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/account-balances#debits_pending
+    /// https://docs.archerdb.io/reference/query-radius-filter#center_lat_nano
     /// </summary>
-    public UInt128 DebitsPending { get => debitsPending; set => debitsPending = value; }
+    public long CenterLatNano { get => centerLatNano; set => centerLatNano = value; }
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/account-balances#debits_posted
+    /// https://docs.archerdb.io/reference/query-radius-filter#center_lon_nano
     /// </summary>
-    public UInt128 DebitsPosted { get => debitsPosted; set => debitsPosted = value; }
+    public long CenterLonNano { get => centerLonNano; set => centerLonNano = value; }
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/account-balances#credits_pending
+    /// https://docs.archerdb.io/reference/query-radius-filter#radius_mm
     /// </summary>
-    public UInt128 CreditsPending { get => creditsPending; set => creditsPending = value; }
+    public uint RadiusMm { get => radiusMm; set => radiusMm = value; }
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/account-balances#credits_posted
+    /// https://docs.archerdb.io/reference/query-radius-filter#limit
     /// </summary>
-    public UInt128 CreditsPosted { get => creditsPosted; set => creditsPosted = value; }
+    public uint Limit { get => limit; set => limit = value; }
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/account-balances#timestamp
+    /// https://docs.archerdb.io/reference/query-radius-filter#timestamp_min
     /// </summary>
-    public ulong Timestamp { get => timestamp; set => timestamp = value; }
+    public ulong TimestampMin { get => timestampMin; set => timestampMin = value; }
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/account-balances#reserved
+    /// https://docs.archerdb.io/reference/query-radius-filter#timestamp_max
+    /// </summary>
+    public ulong TimestampMax { get => timestampMax; set => timestampMax = value; }
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/query-radius-filter#group_id
+    /// </summary>
+    public ulong GroupId { get => groupId; set => groupId = value; }
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/query-radius-filter#reserved
     /// </summary>
     internal byte[] Reserved { get => reserved.GetData(); set => reserved.SetData(value); }
 
 }
 
 [StructLayout(LayoutKind.Sequential, Size = SIZE)]
-public struct QueryFilter
+public struct QueryPolygonFilter
 {
-    public const int SIZE = 64;
+    public const int SIZE = 128;
 
 
     [StructLayout(LayoutKind.Sequential, Size = ReservedData.SIZE)]
     private unsafe struct ReservedData
     {
-        public const int SIZE = 6;
-        private const int LENGTH = 6;
+        public const int SIZE = 88;
+        private const int LENGTH = 88;
 
         private fixed byte raw[LENGTH];
 
@@ -1078,75 +524,137 @@ public struct QueryFilter
         }
     }
 
-    private UInt128 userData128;
+    private uint vertexCount;
 
-    private ulong userData64;
+    private uint holeCount;
 
-    private uint userData32;
+    private uint limit;
 
-    private uint ledger;
-
-    private ushort code;
-
-    private ReservedData reserved;
+    private uint reservedAlign;
 
     private ulong timestampMin;
 
     private ulong timestampMax;
 
-    private uint limit;
+    private ulong groupId;
 
-    private QueryFilterFlags flags;
+    private ReservedData reserved;
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/query-filter#user_data_128
+    /// https://docs.archerdb.io/reference/query-polygon-filter#vertex_count
     /// </summary>
-    public UInt128 UserData128 { get => userData128; set => userData128 = value; }
+    public uint VertexCount { get => vertexCount; set => vertexCount = value; }
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/query-filter#user_data_64
+    /// https://docs.archerdb.io/reference/query-polygon-filter#hole_count
     /// </summary>
-    public ulong UserData64 { get => userData64; set => userData64 = value; }
+    public uint HoleCount { get => holeCount; set => holeCount = value; }
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/query-filter#user_data_32
-    /// </summary>
-    public uint UserData32 { get => userData32; set => userData32 = value; }
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/query-filter#ledger
-    /// </summary>
-    public uint Ledger { get => ledger; set => ledger = value; }
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/query-filter#code
-    /// </summary>
-    public ushort Code { get => code; set => code = value; }
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/query-filter#reserved
-    /// </summary>
-    internal byte[] Reserved { get => reserved.GetData(); set => reserved.SetData(value); }
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/query-filter#timestamp_min
-    /// </summary>
-    public ulong TimestampMin { get => timestampMin; set => timestampMin = value; }
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/query-filter#timestamp_max
-    /// </summary>
-    public ulong TimestampMax { get => timestampMax; set => timestampMax = value; }
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/query-filter#limit
+    /// https://docs.archerdb.io/reference/query-polygon-filter#limit
     /// </summary>
     public uint Limit { get => limit; set => limit = value; }
 
     /// <summary>
-    /// https://docs.archerdb.io/reference/query-filter#flags
+    /// https://docs.archerdb.io/reference/query-polygon-filter#_reserved_align
     /// </summary>
-    public QueryFilterFlags Flags { get => flags; set => flags = value; }
+    public uint ReservedAlign { get => reservedAlign; set => reservedAlign = value; }
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/query-polygon-filter#timestamp_min
+    /// </summary>
+    public ulong TimestampMin { get => timestampMin; set => timestampMin = value; }
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/query-polygon-filter#timestamp_max
+    /// </summary>
+    public ulong TimestampMax { get => timestampMax; set => timestampMax = value; }
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/query-polygon-filter#group_id
+    /// </summary>
+    public ulong GroupId { get => groupId; set => groupId = value; }
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/query-polygon-filter#reserved
+    /// </summary>
+    internal byte[] Reserved { get => reserved.GetData(); set => reserved.SetData(value); }
+
+}
+
+[StructLayout(LayoutKind.Sequential, Size = SIZE)]
+public struct QueryLatestFilter
+{
+    public const int SIZE = 128;
+
+
+    [StructLayout(LayoutKind.Sequential, Size = ReservedData.SIZE)]
+    private unsafe struct ReservedData
+    {
+        public const int SIZE = 104;
+        private const int LENGTH = 104;
+
+        private fixed byte raw[LENGTH];
+
+        public byte[] GetData()
+        {
+            fixed (void* ptr = raw)
+            {
+                return new ReadOnlySpan<byte>(ptr, LENGTH).ToArray();
+            }
+        }
+
+        public void SetData(byte[] value)
+        {
+            if (value == null) throw new ArgumentNullException(nameof(value));
+            if (value.Length != LENGTH)
+            {
+                throw new ArgumentException(
+                    "Expected a byte[" + LENGTH + "] array",
+                    nameof(value));
+            }
+
+            fixed (void* ptr = raw)
+            {
+                value.CopyTo(new Span<byte>(ptr, LENGTH));
+            }
+        }
+    }
+
+    private uint limit;
+
+    private uint reservedAlign;
+
+    private ulong groupId;
+
+    private ulong cursorTimestamp;
+
+    private ReservedData reserved;
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/query-latest-filter#limit
+    /// </summary>
+    public uint Limit { get => limit; set => limit = value; }
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/query-latest-filter#_reserved_align
+    /// </summary>
+    public uint ReservedAlign { get => reservedAlign; set => reservedAlign = value; }
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/query-latest-filter#group_id
+    /// </summary>
+    public ulong GroupId { get => groupId; set => groupId = value; }
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/query-latest-filter#cursor_timestamp
+    /// </summary>
+    public ulong CursorTimestamp { get => cursorTimestamp; set => cursorTimestamp = value; }
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/query-latest-filter#reserved
+    /// </summary>
+    internal byte[] Reserved { get => reserved.GetData(); set => reserved.SetData(value); }
 
 }
 
@@ -1200,24 +708,6 @@ internal enum TBOperation : byte
 {
     Pulse = 128,
 
-    GetChangeEvents = 137,
-
-    CreateAccounts = 138,
-
-    CreateTransfers = 139,
-
-    LookupAccounts = 140,
-
-    LookupTransfers = 141,
-
-    GetAccountTransfers = 142,
-
-    GetAccountBalances = 143,
-
-    QueryAccounts = 144,
-
-    QueryTransfers = 145,
-
     InsertEvents = 146,
 
     UpsertEvents = 147,
@@ -1232,11 +722,21 @@ internal enum TBOperation : byte
 
     QueryLatest = 154,
 
+    QueryUuidBatch = 156,
+
     ArcherdbPing = 152,
 
     ArcherdbGetStatus = 153,
 
     CleanupExpired = 155,
+
+    GetTopology = 157,
+
+    TtlSet = 158,
+
+    TtlExtend = 159,
+
+    TtlClear = 160,
 
 }
 

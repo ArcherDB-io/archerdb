@@ -78,6 +78,9 @@ const (
 	GeoOperationCleanupExpired  GeoOperation = 155 // vsr_operations_reserved (128) + 27
 	GeoOperationQueryUUIDBatch  GeoOperation = 156 // vsr_operations_reserved (128) + 28
 	GeoOperationGetTopology     GeoOperation = 157 // vsr_operations_reserved (128) + 29
+	GeoOperationTTLSet          GeoOperation = 158 // vsr_operations_reserved (128) + 30
+	GeoOperationTTLExtend       GeoOperation = 159 // vsr_operations_reserved (128) + 31
+	GeoOperationTTLClear        GeoOperation = 160 // vsr_operations_reserved (128) + 32
 )
 
 // ============================================================================
@@ -116,6 +119,80 @@ const (
 	DeleteResultEntityIDMustNotBeZero DeleteEntityResult = 2
 	DeleteResultEntityNotFound        DeleteEntityResult = 3
 )
+
+// TtlOperationResult represents result codes for TTL operations.
+// Maps to TtlOperationResult in ttl.zig
+type TtlOperationResult uint8
+
+const (
+	TtlResultSuccess        TtlOperationResult = 0
+	TtlResultEntityNotFound TtlOperationResult = 1
+	TtlResultInvalidTTL     TtlOperationResult = 2
+	TtlResultNotPermitted   TtlOperationResult = 3
+	TtlResultEntityImmutable TtlOperationResult = 4
+)
+
+// ============================================================================
+// TTL Request/Response Types (v2.1 Manual TTL Support)
+// ============================================================================
+
+// TtlSetRequest is the request type for setting an absolute TTL.
+// Wire format: 64 bytes total, must match server's TtlSetRequest.
+type TtlSetRequest struct {
+	EntityID   Uint128    // 16 bytes
+	TTLSeconds uint32     // 4 bytes
+	Flags      uint32     // 4 bytes
+	Reserved   [40]uint8  // 40 bytes padding
+}
+
+// TtlSetResponse is the response type for TTL set operations.
+// Wire format: 64 bytes total, must match server's TtlSetResponse.
+type TtlSetResponse struct {
+	EntityID           Uint128             // 16 bytes
+	PreviousTTLSeconds uint32              // 4 bytes
+	NewTTLSeconds      uint32              // 4 bytes
+	Result             TtlOperationResult  // 1 byte
+	Padding            [3]uint8            // 3 bytes
+	Reserved           [32]uint8           // 32 bytes padding
+}
+
+// TtlExtendRequest is the request type for extending an entity's TTL.
+// Wire format: 64 bytes total, must match server's TtlExtendRequest.
+type TtlExtendRequest struct {
+	EntityID         Uint128    // 16 bytes
+	ExtendBySeconds  uint32     // 4 bytes
+	Flags            uint32     // 4 bytes
+	Reserved         [40]uint8  // 40 bytes padding
+}
+
+// TtlExtendResponse is the response type for TTL extend operations.
+// Wire format: 64 bytes total, must match server's TtlExtendResponse.
+type TtlExtendResponse struct {
+	EntityID           Uint128             // 16 bytes
+	PreviousTTLSeconds uint32              // 4 bytes
+	NewTTLSeconds      uint32              // 4 bytes
+	Result             TtlOperationResult  // 1 byte
+	Padding            [3]uint8            // 3 bytes
+	Reserved           [32]uint8           // 32 bytes padding
+}
+
+// TtlClearRequest is the request type for clearing an entity's TTL.
+// Wire format: 64 bytes total, must match server's TtlClearRequest.
+type TtlClearRequest struct {
+	EntityID Uint128    // 16 bytes
+	Flags    uint32     // 4 bytes
+	Reserved [44]uint8  // 44 bytes padding
+}
+
+// TtlClearResponse is the response type for TTL clear operations.
+// Wire format: 64 bytes total, must match server's TtlClearResponse.
+type TtlClearResponse struct {
+	EntityID           Uint128             // 16 bytes
+	PreviousTTLSeconds uint32              // 4 bytes
+	Result             TtlOperationResult  // 1 byte
+	Padding            [3]uint8            // 3 bytes
+	Reserved           [36]uint8           // 36 bytes padding
+}
 
 // ============================================================================
 // GeoEvent - Core Data Structure
@@ -324,7 +401,7 @@ func NanoToDegrees(nano int64) float64 {
 
 // MetersToMM converts meters to millimeters.
 func MetersToMM(meters float64) int32 {
-	return int32(meters * float64(MmPerMeter))
+	return int32(math.Round(meters * float64(MmPerMeter)))
 }
 
 // MMToMeters converts millimeters to meters.

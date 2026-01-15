@@ -147,3 +147,14 @@ The SDK SHALL provide utilities for winding order management.
   const correctedOuter = ensureCounterClockwise(outerRing);
   const correctedHole = ensureClockwise(hole);
   ```
+
+## Implementation Status
+
+| Requirement | Status | Notes |
+|-------------|--------|-------|
+| Polygon Query with Holes API | ✓ Complete | Java, Python, Node.js, Go SDKs |
+| Holes Parameter (optional) | ✓ Complete | Backwards compatible |
+| Client-side Hole Validation | ✓ Complete | Vertex count, hole count limits |
+| PolygonBuilder API | ✓ Complete | Node.js, Java SDKs |
+| Winding Order Helpers | ✓ Complete | isClockwise, ensureClockwise utilities |
+| Wire Format Encoding | ✓ Complete | HoleDescriptor + vertex arrays |

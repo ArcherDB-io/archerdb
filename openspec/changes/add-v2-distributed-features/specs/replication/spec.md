@@ -190,3 +190,14 @@ The system SHALL define error codes for multi-region operations.
   | 216 | cross_region_timeout | Cross-region operation timed out | Yes |
   | 217 | conflict_detected | Write conflict detected (active-active) | No |
   | 218 | geo_shard_mismatch | Entity geo-shard does not match target region | No |
+
+## Implementation Status
+
+| Requirement | Status | Notes |
+|-------------|--------|-------|
+| Async Log Shipping | ✓ Complete | `replication_log.zig` |
+| Read-Only Followers | ✓ Complete | Follower mode in VSR |
+| Geo-Sharding | ✓ Complete | S2-based region routing |
+| Active-Active (v2.2+) | ⚠ Deferred | Conflict resolution v2.2 |
+| Multi-Region Metrics | ✓ Complete | Replication lag gauges |
+| Multi-Region Error Codes (213-218) | ✓ Complete | `error_codes.zig` |

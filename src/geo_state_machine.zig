@@ -1182,6 +1182,10 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .archerdb_get_status,
                 // Topology discovery
                 .get_topology,
+                // Manual TTL operations (v2.1)
+                .ttl_set,
+                .ttl_extend,
+                .ttl_clear,
                 => 0,
             };
         }
@@ -1238,6 +1242,10 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .archerdb_get_status,
                 .get_topology,
                 .pulse,
+                // Manual TTL operations (v2.1)
+                .ttl_set,
+                .ttl_extend,
+                .ttl_clear,
                 => {
                     // Optimistic execution - RAM index provides fast access
                     self.prefetch_finish();
@@ -1318,6 +1326,11 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 
                 // ArcherDB topology discovery (Smart Client)
                 .get_topology => self.execute_get_topology(output),
+
+                // Manual TTL operations (v2.1)
+                .ttl_set => self.execute_ttl_set(message_body_used, output),
+                .ttl_extend => self.execute_ttl_extend(message_body_used, output),
+                .ttl_clear => self.execute_ttl_clear(message_body_used, output),
             };
 
             return result;
@@ -2252,6 +2265,242 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             });
 
             return @sizeOf(TopologyResponse);
+        }
+
+        // ====================================================================
+        // Manual TTL Operations (v2.1)
+        // Per add-v2-distributed-features/specs/ttl-retention/spec.md
+        // ====================================================================
+
+        /// Execute TTL set operation - set absolute TTL for an entity.
+        ///
+        /// CLI: `archerdb ttl set <entity_id> --ttl=<seconds>`
+        ///
+        /// Arguments:
+        /// - input: TtlSetRequest serialized data
+        /// - output: Buffer for TtlSetResponse
+        ///
+        /// Returns: Size of response written to output (number of bytes)
+        fn execute_ttl_set(
+            self: *GeoStateMachine,
+            input: []const u8,
+            output: []u8,
+        ) usize {
+            const ttl_mod = @import("ttl.zig");
+            const TtlSetRequest = ttl_mod.TtlSetRequest;
+            const TtlSetResponse = ttl_mod.TtlSetResponse;
+
+            if (input.len < @sizeOf(TtlSetRequest)) {
+                log.warn("ttl_set: input too small ({d} < {d})", .{ input.len, @sizeOf(TtlSetRequest) });
+                return 0;
+            }
+
+            if (output.len < @sizeOf(TtlSetResponse)) {
+                log.warn("ttl_set: output buffer too small ({d} < {d})", .{ output.len, @sizeOf(TtlSetResponse) });
+                return 0;
+            }
+
+            const request = mem.bytesAsValue(TtlSetRequest, input[0..@sizeOf(TtlSetRequest)]);
+
+            // Look up entity in RAM index
+            var response = TtlSetResponse{
+                .entity_id = request.entity_id,
+                .previous_ttl_seconds = 0,
+                .new_ttl_seconds = 0,
+                .result = .entity_not_found,
+            };
+
+            // Find entity in index using lookup
+            const lookup_result = self.ram_index.lookup(request.entity_id);
+            if (lookup_result.entry) |entry| {
+                response.previous_ttl_seconds = entry.ttl_seconds;
+                response.new_ttl_seconds = request.ttl_seconds;
+                response.result = .success;
+
+                // Update TTL in index using upsert
+                _ = self.ram_index.upsert(
+                    request.entity_id,
+                    entry.latest_id,
+                    request.ttl_seconds,
+                ) catch |err| {
+                    log.warn("ttl_set: upsert failed: {}", .{err});
+                    response.result = .not_permitted;
+                };
+
+                // Update TTL tracking metrics (only if upsert succeeded)
+                if (response.result == .success) {
+                    if (entry.ttl_seconds == 0 and request.ttl_seconds > 0) {
+                        self.entries_with_ttl += 1;
+                    } else if (entry.ttl_seconds > 0 and request.ttl_seconds == 0) {
+                        if (self.entries_with_ttl > 0) self.entries_with_ttl -= 1;
+                    }
+                }
+
+                log.debug("ttl_set: entity {x} TTL {d} -> {d}", .{
+                    request.entity_id,
+                    response.previous_ttl_seconds,
+                    response.new_ttl_seconds,
+                });
+            }
+
+            // Write response
+            const response_ptr = mem.bytesAsValue(TtlSetResponse, output[0..@sizeOf(TtlSetResponse)]);
+            response_ptr.* = response;
+
+            return @sizeOf(TtlSetResponse);
+        }
+
+        /// Execute TTL extend operation - extend TTL by a relative amount.
+        ///
+        /// CLI: `archerdb ttl extend <entity_id> --by=<seconds>`
+        ///
+        /// Arguments:
+        /// - input: TtlExtendRequest serialized data
+        /// - output: Buffer for TtlExtendResponse
+        ///
+        /// Returns: Size of response written to output (number of bytes)
+        fn execute_ttl_extend(
+            self: *GeoStateMachine,
+            input: []const u8,
+            output: []u8,
+        ) usize {
+            const ttl_mod = @import("ttl.zig");
+            const TtlExtendRequest = ttl_mod.TtlExtendRequest;
+            const TtlExtendResponse = ttl_mod.TtlExtendResponse;
+
+            if (input.len < @sizeOf(TtlExtendRequest)) {
+                log.warn("ttl_extend: input too small ({d} < {d})", .{ input.len, @sizeOf(TtlExtendRequest) });
+                return 0;
+            }
+
+            if (output.len < @sizeOf(TtlExtendResponse)) {
+                log.warn("ttl_extend: output buffer too small ({d} < {d})", .{ output.len, @sizeOf(TtlExtendResponse) });
+                return 0;
+            }
+
+            const request = mem.bytesAsValue(TtlExtendRequest, input[0..@sizeOf(TtlExtendRequest)]);
+
+            // Look up entity in RAM index
+            var response = TtlExtendResponse{
+                .entity_id = request.entity_id,
+                .previous_ttl_seconds = 0,
+                .new_ttl_seconds = 0,
+                .result = .entity_not_found,
+            };
+
+            // Find entity in index using lookup
+            const lookup_result = self.ram_index.lookup(request.entity_id);
+            if (lookup_result.entry) |entry| {
+                response.previous_ttl_seconds = entry.ttl_seconds;
+
+                // Calculate new TTL (with overflow protection)
+                const new_ttl = @as(u64, entry.ttl_seconds) + @as(u64, request.extend_by_seconds);
+                response.new_ttl_seconds = if (new_ttl > std.math.maxInt(u32))
+                    std.math.maxInt(u32)
+                else
+                    @intCast(new_ttl);
+
+                response.result = .success;
+
+                // Update TTL in index using upsert
+                _ = self.ram_index.upsert(
+                    request.entity_id,
+                    entry.latest_id,
+                    response.new_ttl_seconds,
+                ) catch |err| {
+                    log.warn("ttl_extend: upsert failed: {}", .{err});
+                    response.result = .not_permitted;
+                };
+
+                // Update TTL tracking metrics (only if upsert succeeded)
+                if (response.result == .success and entry.ttl_seconds == 0 and response.new_ttl_seconds > 0) {
+                    self.entries_with_ttl += 1;
+                }
+
+                log.debug("ttl_extend: entity {x} TTL {d} -> {d} (+{d})", .{
+                    request.entity_id,
+                    response.previous_ttl_seconds,
+                    response.new_ttl_seconds,
+                    request.extend_by_seconds,
+                });
+            }
+
+            // Write response
+            const response_ptr = mem.bytesAsValue(TtlExtendResponse, output[0..@sizeOf(TtlExtendResponse)]);
+            response_ptr.* = response;
+
+            return @sizeOf(TtlExtendResponse);
+        }
+
+        /// Execute TTL clear operation - remove TTL (infinite retention).
+        ///
+        /// CLI: `archerdb ttl clear <entity_id>`
+        ///
+        /// Arguments:
+        /// - input: TtlClearRequest serialized data
+        /// - output: Buffer for TtlClearResponse
+        ///
+        /// Returns: Size of response written to output (number of bytes)
+        fn execute_ttl_clear(
+            self: *GeoStateMachine,
+            input: []const u8,
+            output: []u8,
+        ) usize {
+            const ttl_mod = @import("ttl.zig");
+            const TtlClearRequest = ttl_mod.TtlClearRequest;
+            const TtlClearResponse = ttl_mod.TtlClearResponse;
+
+            if (input.len < @sizeOf(TtlClearRequest)) {
+                log.warn("ttl_clear: input too small ({d} < {d})", .{ input.len, @sizeOf(TtlClearRequest) });
+                return 0;
+            }
+
+            if (output.len < @sizeOf(TtlClearResponse)) {
+                log.warn("ttl_clear: output buffer too small ({d} < {d})", .{ output.len, @sizeOf(TtlClearResponse) });
+                return 0;
+            }
+
+            const request = mem.bytesAsValue(TtlClearRequest, input[0..@sizeOf(TtlClearRequest)]);
+
+            // Look up entity in RAM index
+            var response = TtlClearResponse{
+                .entity_id = request.entity_id,
+                .previous_ttl_seconds = 0,
+                .result = .entity_not_found,
+            };
+
+            // Find entity in index using lookup
+            const lookup_result = self.ram_index.lookup(request.entity_id);
+            if (lookup_result.entry) |entry| {
+                response.previous_ttl_seconds = entry.ttl_seconds;
+                response.result = .success;
+
+                // Clear TTL (set to 0 = never expires) using upsert
+                _ = self.ram_index.upsert(
+                    request.entity_id,
+                    entry.latest_id,
+                    0, // TTL = 0 means never expires
+                ) catch |err| {
+                    log.warn("ttl_clear: upsert failed: {}", .{err});
+                    response.result = .not_permitted;
+                };
+
+                // Update TTL tracking metrics (only if upsert succeeded)
+                if (response.result == .success and entry.ttl_seconds > 0) {
+                    if (self.entries_with_ttl > 0) self.entries_with_ttl -= 1;
+                }
+
+                log.debug("ttl_clear: entity {x} TTL {d} -> 0 (cleared)", .{
+                    request.entity_id,
+                    response.previous_ttl_seconds,
+                });
+            }
+
+            // Write response
+            const response_ptr = mem.bytesAsValue(TtlClearResponse, output[0..@sizeOf(TtlClearResponse)]);
+            response_ptr.* = response;
+
+            return @sizeOf(TtlClearResponse);
         }
 
         // ====================================================================

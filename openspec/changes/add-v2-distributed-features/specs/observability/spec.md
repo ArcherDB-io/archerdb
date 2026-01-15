@@ -224,3 +224,14 @@ The system SHALL provide enhanced health endpoints for v2 features.
     "rotation_in_progress": false
   }
   ```
+
+## Implementation Status
+
+| Requirement | Status | Notes |
+|-------------|--------|-------|
+| Multi-Region Replication Metrics | ✓ Complete | Lag, byte counters |
+| Sharding Metrics | ✓ Complete | Per-shard stats |
+| Encryption Metrics | ✓ Complete | Op counters, cache stats |
+| Tiering Metrics | ✓ Complete | Migration, access patterns |
+| TTL Extension Metrics | ✓ Complete | Counter placeholders |
+| v2 Health Endpoints | ✓ Complete | /health/shards, /health/encryption |

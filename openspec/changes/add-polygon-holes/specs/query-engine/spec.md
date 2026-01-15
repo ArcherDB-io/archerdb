@@ -40,13 +40,13 @@ The system SHALL enforce limits on polygon holes to ensure query performance.
 #### Scenario: Maximum hole count
 
 - **WHEN** a polygon query specifies more than 100 holes
-- **THEN** the system SHALL return error code 120 (`polygon_too_many_holes`)
+- **THEN** the system SHALL return error code 117 (`too_many_holes`)
 - **AND** the error context SHALL include the requested hole count
 
 #### Scenario: Minimum hole vertices
 
 - **WHEN** any hole ring has fewer than 3 vertices
-- **THEN** the system SHALL return error code 121 (`polygon_hole_too_simple`)
+- **THEN** the system SHALL return error code 118 (`hole_vertex_count_invalid`)
 - **AND** the error context SHALL include the hole index and vertex count
 
 #### Scenario: Total vertex limit with holes
@@ -62,14 +62,14 @@ The system SHALL validate hole geometry to ensure correct query results.
 #### Scenario: Hole containment validation
 
 - **WHEN** a hole ring is not fully contained within the outer ring
-- **THEN** the system SHALL return error code 122 (`polygon_hole_outside`)
+- **THEN** the system SHALL return error code 119 (`hole_not_contained`)
 - **AND** the error context SHALL include the hole index
 - **AND** containment SHALL be checked using bounding box first, then point-in-polygon for edge cases
 
 #### Scenario: Hole overlap detection
 
 - **WHEN** two or more hole rings have overlapping bounding boxes
-- **THEN** the system SHALL return error code 123 (`polygon_holes_overlap`)
+- **THEN** the system SHALL return error code 120 (`holes_overlap`)
 - **AND** the error context SHALL include the indices of overlapping holes
 - **AND** this validation is conservative (may reject valid but touching holes)
 
@@ -125,3 +125,15 @@ The `checkPolygon` method SHALL:
   archerdb_pf_polygon_holes_checked counter
   archerdb_pf_polygon_excluded_by_hole counter
   ```
+
+## Implementation Status
+
+| Requirement | Status | Notes |
+|-------------|--------|-------|
+| Polygon Hole Support | ✓ Complete | `geo_state_machine.zig` query_polygon |
+| Multi-ring Point-in-Polygon | ✓ Complete | Outer + hole check algorithm |
+| Hole Count Limit (100) | ✓ Complete | `constants.polygon_holes_max` |
+| Hole Validation | ✓ Complete | Vertex count, containment checks |
+| S2 Covering (outer ring) | ✓ Complete | Conservative covering approach |
+| Post-filter with Holes | ✓ Complete | Early-exit on hole match |
+| Backwards Compatibility | ✓ Complete | hole_count=0 = simple polygon |

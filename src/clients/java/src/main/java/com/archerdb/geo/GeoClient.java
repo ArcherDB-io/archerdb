@@ -241,6 +241,101 @@ public interface GeoClient extends AutoCloseable {
         return cleanupExpired(0);
     }
 
+    // ============================================================================
+    // TTL Operations (v2.1 Manual TTL Support)
+    // ============================================================================
+
+    /**
+     * Sets an absolute TTL for an entity.
+     *
+     * <p>
+     * Per client-sdk/spec.md TTL Extension Client section:
+     * <ul>
+     * <li>Sets the entity's TTL to the specified value in seconds</li>
+     * <li>A TTL of 0 means never expires</li>
+     * <li>Returns previous and new TTL values for confirmation</li>
+     * </ul>
+     *
+     * <p>
+     * Example usage:
+     *
+     * <pre>
+     * {
+     *     &#64;code
+     *     // Set 24-hour TTL
+     *     TtlSetResponse response = client.setTtl(entityId, 86400);
+     *     System.out.println("Previous TTL: " + response.getPreviousTtlSeconds());
+     *     System.out.println("New TTL: " + response.getNewTtlSeconds());
+     * }
+     * </pre>
+     *
+     * @param entityId the entity UUID to set TTL for
+     * @param ttlSeconds the absolute TTL in seconds (0 = never expires)
+     * @return TTL set response with previous and new TTL values
+     * @throws IllegalArgumentException if entityId is null/zero or ttlSeconds is negative
+     */
+    TtlSetResponse setTtl(UInt128 entityId, int ttlSeconds);
+
+    /**
+     * Extends an entity's TTL by a relative amount.
+     *
+     * <p>
+     * Per client-sdk/spec.md TTL Extension Client section:
+     * <ul>
+     * <li>Adds the specified seconds to the entity's current TTL</li>
+     * <li>If entity has no TTL, sets it to the extension amount</li>
+     * <li>Returns previous and new TTL values for confirmation</li>
+     * </ul>
+     *
+     * <p>
+     * Example usage:
+     *
+     * <pre>
+     * {
+     *     &#64;code
+     *     // Extend TTL by 1 day
+     *     TtlExtendResponse response = client.extendTtl(entityId, 86400);
+     *     System.out.println("Previous TTL: " + response.getPreviousTtlSeconds());
+     *     System.out.println("New TTL: " + response.getNewTtlSeconds());
+     * }
+     * </pre>
+     *
+     * @param entityId the entity UUID to extend TTL for
+     * @param extendBySeconds number of seconds to extend the TTL by
+     * @return TTL extend response with previous and new TTL values
+     * @throws IllegalArgumentException if entityId is null/zero or extendBySeconds is negative
+     */
+    TtlExtendResponse extendTtl(UInt128 entityId, int extendBySeconds);
+
+    /**
+     * Clears an entity's TTL, making it never expire.
+     *
+     * <p>
+     * Per client-sdk/spec.md TTL Extension Client section:
+     * <ul>
+     * <li>Removes the entity's TTL (sets to 0)</li>
+     * <li>Entity will not expire until TTL is set again</li>
+     * <li>Returns previous TTL value for confirmation</li>
+     * </ul>
+     *
+     * <p>
+     * Example usage:
+     *
+     * <pre>
+     * {
+     *     &#64;code
+     *     // Make entity permanent (no expiration)
+     *     TtlClearResponse response = client.clearTtl(entityId);
+     *     System.out.println("Previous TTL: " + response.getPreviousTtlSeconds());
+     * }
+     * </pre>
+     *
+     * @param entityId the entity UUID to clear TTL for
+     * @return TTL clear response with previous TTL value
+     * @throws IllegalArgumentException if entityId is null or zero
+     */
+    TtlClearResponse clearTtl(UInt128 entityId);
+
     /**
      * Sends a ping to verify server connectivity.
      *

@@ -1,307 +1,148 @@
-pub use super::*;
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2025 Anthus Labs, Inc.
 
-#[rustfmt::skip]
-impl From<u32> for CreateAccountResult {
-    fn from(other: u32) -> CreateAccountResult {
-        use tbc::*;
-        use CreateAccountResult::*;
+//! Type conversions for ArcherDB Rust SDK.
+//!
+//! This module provides conversions between Rust types and native C bindings.
 
-        match other {
-            ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_OK => Ok,
-            ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_LINKED_EVENT_FAILED => LinkedEventFailed,
-            ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_LINKED_EVENT_CHAIN_OPEN => LinkedEventChainOpen,
-            ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_IMPORTED_EVENT_EXPECTED => ImportedEventExpected,
-            ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_IMPORTED_EVENT_NOT_EXPECTED => ImportedEventNotExpected,
-            ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_TIMESTAMP_MUST_BE_ZERO => TimestampMustBeZero,
-            ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_IMPORTED_EVENT_TIMESTAMP_OUT_OF_RANGE => ImportedEventTimestampOutOfRange,
-            ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_IMPORTED_EVENT_TIMESTAMP_MUST_NOT_ADVANCE => ImportedEventTimestampMustNotAdvance,
-            ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_RESERVED_FIELD => ReservedField,
-            ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_RESERVED_FLAG => ReservedFlag,
-            ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_ID_MUST_NOT_BE_ZERO => IdMustNotBeZero,
-            ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_ID_MUST_NOT_BE_INT_MAX => IdMustNotBeIntMax,
-            ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_EXISTS_WITH_DIFFERENT_FLAGS => ExistsWithDifferentFlags,
-            ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_EXISTS_WITH_DIFFERENT_USER_DATA_128 => ExistsWithDifferentUserData128,
-            ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_EXISTS_WITH_DIFFERENT_USER_DATA_64 => ExistsWithDifferentUserData64,
-            ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_EXISTS_WITH_DIFFERENT_USER_DATA_32 => ExistsWithDifferentUserData32,
-            ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_EXISTS_WITH_DIFFERENT_LEDGER => ExistsWithDifferentLedger,
-            ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_EXISTS_WITH_DIFFERENT_CODE => ExistsWithDifferentCode,
-            ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_EXISTS => Exists,
-            ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_FLAGS_ARE_MUTUALLY_EXCLUSIVE => FlagsAreMutuallyExclusive,
-            ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_DEBITS_PENDING_MUST_BE_ZERO => DebitsPendingMustBeZero,
-            ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_DEBITS_POSTED_MUST_BE_ZERO => DebitsPostedMustBeZero,
-            ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_CREDITS_PENDING_MUST_BE_ZERO => CreditsPendingMustBeZero,
-            ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_CREDITS_POSTED_MUST_BE_ZERO => CreditsPostedMustBeZero,
-            ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_LEDGER_MUST_NOT_BE_ZERO => LedgerMustNotBeZero,
-            ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_CODE_MUST_NOT_BE_ZERO => CodeMustNotBeZero,
-            ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_IMPORTED_EVENT_TIMESTAMP_MUST_NOT_REGRESS => ImportedEventTimestampMustNotRegress,
-            v => panic!("Unknown CreateAccountResult: {v}"),
+use crate::arch_client as tbc;
+use crate::{GeoEvent, GeoEventFlags, InsertGeoEventResult};
+
+// ============================================================================
+// GeoEvent Conversions
+// ============================================================================
+
+impl From<tbc::geo_event_t> for GeoEvent {
+    fn from(c: tbc::geo_event_t) -> Self {
+        GeoEvent {
+            id: c.id,
+            entity_id: c.entity_id,
+            correlation_id: c.correlation_id,
+            user_data: c.user_data,
+            lat_nano: c.lat_nano,
+            lon_nano: c.lon_nano,
+            group_id: c.group_id,
+            timestamp: c.timestamp,
+            altitude_mm: c.altitude_mm,
+            velocity_mms: c.velocity_mms,
+            ttl_seconds: c.ttl_seconds,
+            accuracy_mm: c.accuracy_mm,
+            heading_cdeg: c.heading_cdeg,
+            flags: GeoEventFlags::from_bits_truncate(c.flags),
+            reserved: c.reserved,
         }
     }
 }
 
-#[rustfmt::skip]
-impl From<CreateAccountResult> for u32 {
-    fn from(other: CreateAccountResult) -> u32 {
-        use tbc::*;
-        use CreateAccountResult::*;
-
-        match other {
-            Ok => ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_OK,
-            LinkedEventFailed => ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_LINKED_EVENT_FAILED,
-            LinkedEventChainOpen => ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_LINKED_EVENT_CHAIN_OPEN,
-            ImportedEventExpected => ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_IMPORTED_EVENT_EXPECTED,
-            ImportedEventNotExpected => ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_IMPORTED_EVENT_NOT_EXPECTED,
-            TimestampMustBeZero => ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_TIMESTAMP_MUST_BE_ZERO,
-            ImportedEventTimestampOutOfRange => ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_IMPORTED_EVENT_TIMESTAMP_OUT_OF_RANGE,
-            ImportedEventTimestampMustNotAdvance => ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_IMPORTED_EVENT_TIMESTAMP_MUST_NOT_ADVANCE,
-            ReservedField => ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_RESERVED_FIELD,
-            ReservedFlag => ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_RESERVED_FLAG,
-            IdMustNotBeZero => ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_ID_MUST_NOT_BE_ZERO,
-            IdMustNotBeIntMax => ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_ID_MUST_NOT_BE_INT_MAX,
-            ExistsWithDifferentFlags => ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_EXISTS_WITH_DIFFERENT_FLAGS,
-            ExistsWithDifferentUserData128 => ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_EXISTS_WITH_DIFFERENT_USER_DATA_128,
-            ExistsWithDifferentUserData64 => ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_EXISTS_WITH_DIFFERENT_USER_DATA_64,
-            ExistsWithDifferentUserData32 => ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_EXISTS_WITH_DIFFERENT_USER_DATA_32,
-            ExistsWithDifferentLedger => ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_EXISTS_WITH_DIFFERENT_LEDGER,
-            ExistsWithDifferentCode => ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_EXISTS_WITH_DIFFERENT_CODE,
-            Exists => ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_EXISTS,
-            FlagsAreMutuallyExclusive => ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_FLAGS_ARE_MUTUALLY_EXCLUSIVE,
-            DebitsPendingMustBeZero => ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_DEBITS_PENDING_MUST_BE_ZERO,
-            DebitsPostedMustBeZero => ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_DEBITS_POSTED_MUST_BE_ZERO,
-            CreditsPendingMustBeZero => ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_CREDITS_PENDING_MUST_BE_ZERO,
-            CreditsPostedMustBeZero => ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_CREDITS_POSTED_MUST_BE_ZERO,
-            LedgerMustNotBeZero => ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_LEDGER_MUST_NOT_BE_ZERO,
-            CodeMustNotBeZero => ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_CODE_MUST_NOT_BE_ZERO,
-            ImportedEventTimestampMustNotRegress => ARCH_CREATE_ACCOUNT_RESULT_ARCH_CREATE_ACCOUNT_IMPORTED_EVENT_TIMESTAMP_MUST_NOT_REGRESS,
+impl From<GeoEvent> for tbc::geo_event_t {
+    fn from(e: GeoEvent) -> Self {
+        tbc::geo_event_t {
+            id: e.id,
+            entity_id: e.entity_id,
+            correlation_id: e.correlation_id,
+            user_data: e.user_data,
+            lat_nano: e.lat_nano,
+            lon_nano: e.lon_nano,
+            group_id: e.group_id,
+            timestamp: e.timestamp,
+            altitude_mm: e.altitude_mm,
+            velocity_mms: e.velocity_mms,
+            ttl_seconds: e.ttl_seconds,
+            accuracy_mm: e.accuracy_mm,
+            heading_cdeg: e.heading_cdeg,
+            flags: e.flags.bits(),
+            reserved: e.reserved,
         }
     }
 }
 
-#[rustfmt::skip]
-impl From<u32> for CreateTransferResult {
-    fn from(other: u32) -> CreateTransferResult {
-        use tbc::*;
-        use CreateTransferResult::*;
+// ============================================================================
+// InsertGeoEventResult Conversions
+// ============================================================================
 
-        match other {
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_OK => Ok,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_LINKED_EVENT_FAILED => LinkedEventFailed,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_LINKED_EVENT_CHAIN_OPEN => LinkedEventChainOpen,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_IMPORTED_EVENT_EXPECTED => ImportedEventExpected,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_IMPORTED_EVENT_NOT_EXPECTED => ImportedEventNotExpected,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_TIMESTAMP_MUST_BE_ZERO => TimestampMustBeZero,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_IMPORTED_EVENT_TIMESTAMP_OUT_OF_RANGE => ImportedEventTimestampOutOfRange,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_IMPORTED_EVENT_TIMESTAMP_MUST_NOT_ADVANCE => ImportedEventTimestampMustNotAdvance,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_RESERVED_FLAG => ReservedFlag,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_ID_MUST_NOT_BE_ZERO => IdMustNotBeZero,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_ID_MUST_NOT_BE_INT_MAX => IdMustNotBeIntMax,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_EXISTS_WITH_DIFFERENT_FLAGS => ExistsWithDifferentFlags,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_EXISTS_WITH_DIFFERENT_PENDING_ID => ExistsWithDifferentPendingId,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_EXISTS_WITH_DIFFERENT_TIMEOUT => ExistsWithDifferentTimeout,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_EXISTS_WITH_DIFFERENT_DEBIT_ACCOUNT_ID => ExistsWithDifferentDebitAccountId,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_EXISTS_WITH_DIFFERENT_CREDIT_ACCOUNT_ID => ExistsWithDifferentCreditAccountId,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_EXISTS_WITH_DIFFERENT_AMOUNT => ExistsWithDifferentAmount,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_EXISTS_WITH_DIFFERENT_USER_DATA_128 => ExistsWithDifferentUserData128,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_EXISTS_WITH_DIFFERENT_USER_DATA_64 => ExistsWithDifferentUserData64,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_EXISTS_WITH_DIFFERENT_USER_DATA_32 => ExistsWithDifferentUserData32,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_EXISTS_WITH_DIFFERENT_LEDGER => ExistsWithDifferentLedger,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_EXISTS_WITH_DIFFERENT_CODE => ExistsWithDifferentCode,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_EXISTS => Exists,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_ID_ALREADY_FAILED => IdAlreadyFailed,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_FLAGS_ARE_MUTUALLY_EXCLUSIVE => FlagsAreMutuallyExclusive,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_DEBIT_ACCOUNT_ID_MUST_NOT_BE_ZERO => DebitAccountIdMustNotBeZero,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_DEBIT_ACCOUNT_ID_MUST_NOT_BE_INT_MAX => DebitAccountIdMustNotBeIntMax,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_CREDIT_ACCOUNT_ID_MUST_NOT_BE_ZERO => CreditAccountIdMustNotBeZero,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_CREDIT_ACCOUNT_ID_MUST_NOT_BE_INT_MAX => CreditAccountIdMustNotBeIntMax,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_ACCOUNTS_MUST_BE_DIFFERENT => AccountsMustBeDifferent,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_PENDING_ID_MUST_BE_ZERO => PendingIdMustBeZero,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_PENDING_ID_MUST_NOT_BE_ZERO => PendingIdMustNotBeZero,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_PENDING_ID_MUST_NOT_BE_INT_MAX => PendingIdMustNotBeIntMax,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_PENDING_ID_MUST_BE_DIFFERENT => PendingIdMustBeDifferent,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_TIMEOUT_RESERVED_FOR_PENDING_TRANSFER => TimeoutReservedForPendingTransfer,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_CLOSING_TRANSFER_MUST_BE_PENDING => ClosingTransferMustBePending,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_LEDGER_MUST_NOT_BE_ZERO => LedgerMustNotBeZero,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_CODE_MUST_NOT_BE_ZERO => CodeMustNotBeZero,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_DEBIT_ACCOUNT_NOT_FOUND => DebitAccountNotFound,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_CREDIT_ACCOUNT_NOT_FOUND => CreditAccountNotFound,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_ACCOUNTS_MUST_HAVE_THE_SAME_LEDGER => AccountsMustHaveTheSameLedger,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_TRANSFER_MUST_HAVE_THE_SAME_LEDGER_AS_ACCOUNTS => TransferMustHaveTheSameLedgerAsAccounts,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_PENDING_TRANSFER_NOT_FOUND => PendingTransferNotFound,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_PENDING_TRANSFER_NOT_PENDING => PendingTransferNotPending,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_PENDING_TRANSFER_HAS_DIFFERENT_DEBIT_ACCOUNT_ID => PendingTransferHasDifferentDebitAccountId,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_PENDING_TRANSFER_HAS_DIFFERENT_CREDIT_ACCOUNT_ID => PendingTransferHasDifferentCreditAccountId,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_PENDING_TRANSFER_HAS_DIFFERENT_LEDGER => PendingTransferHasDifferentLedger,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_PENDING_TRANSFER_HAS_DIFFERENT_CODE => PendingTransferHasDifferentCode,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_EXCEEDS_PENDING_TRANSFER_AMOUNT => ExceedsPendingTransferAmount,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_PENDING_TRANSFER_HAS_DIFFERENT_AMOUNT => PendingTransferHasDifferentAmount,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_PENDING_TRANSFER_ALREADY_POSTED => PendingTransferAlreadyPosted,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_PENDING_TRANSFER_ALREADY_VOIDED => PendingTransferAlreadyVoided,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_PENDING_TRANSFER_EXPIRED => PendingTransferExpired,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_IMPORTED_EVENT_TIMESTAMP_MUST_NOT_REGRESS => ImportedEventTimestampMustNotRegress,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_IMPORTED_EVENT_TIMESTAMP_MUST_POSTDATE_DEBIT_ACCOUNT => ImportedEventTimestampMustPostdateDebitAccount,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_IMPORTED_EVENT_TIMESTAMP_MUST_POSTDATE_CREDIT_ACCOUNT => ImportedEventTimestampMustPostdateCreditAccount,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_IMPORTED_EVENT_TIMEOUT_MUST_BE_ZERO => ImportedEventTimeoutMustBeZero,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_DEBIT_ACCOUNT_ALREADY_CLOSED => DebitAccountAlreadyClosed,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_CREDIT_ACCOUNT_ALREADY_CLOSED => CreditAccountAlreadyClosed,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_OVERFLOWS_DEBITS_PENDING => OverflowsDebitsPending,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_OVERFLOWS_CREDITS_PENDING => OverflowsCreditsPending,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_OVERFLOWS_DEBITS_POSTED => OverflowsDebitsPosted,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_OVERFLOWS_CREDITS_POSTED => OverflowsCreditsPosted,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_OVERFLOWS_DEBITS => OverflowsDebits,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_OVERFLOWS_CREDITS => OverflowsCredits,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_OVERFLOWS_TIMEOUT => OverflowsTimeout,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_EXCEEDS_CREDITS => ExceedsCredits,
-            ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_EXCEEDS_DEBITS => ExceedsDebits,
-            v => panic!("Unknown CreateTransferResult: {v}"),
+impl From<tbc::INSERT_GEO_EVENT_RESULT> for InsertGeoEventResult {
+    fn from(value: tbc::INSERT_GEO_EVENT_RESULT) -> Self {
+        use tbc::*;
+        match value {
+            INSERT_GEO_EVENT_RESULT_INSERT_GEO_EVENT_OK => InsertGeoEventResult::Ok,
+            INSERT_GEO_EVENT_RESULT_INSERT_GEO_EVENT_LINKED_EVENT_FAILED => InsertGeoEventResult::LinkedEventFailed,
+            INSERT_GEO_EVENT_RESULT_INSERT_GEO_EVENT_LINKED_EVENT_CHAIN_OPEN => InsertGeoEventResult::LinkedEventChainOpen,
+            INSERT_GEO_EVENT_RESULT_INSERT_GEO_EVENT_TIMESTAMP_MUST_BE_ZERO => InsertGeoEventResult::TimestampMustBeZero,
+            INSERT_GEO_EVENT_RESULT_INSERT_GEO_EVENT_RESERVED_FIELD => InsertGeoEventResult::ReservedField,
+            INSERT_GEO_EVENT_RESULT_INSERT_GEO_EVENT_RESERVED_FLAG => InsertGeoEventResult::ReservedFlag,
+            INSERT_GEO_EVENT_RESULT_INSERT_GEO_EVENT_ID_MUST_NOT_BE_ZERO => InsertGeoEventResult::IdMustNotBeZero,
+            INSERT_GEO_EVENT_RESULT_INSERT_GEO_EVENT_ENTITY_ID_MUST_NOT_BE_ZERO => InsertGeoEventResult::EntityIdMustNotBeZero,
+            INSERT_GEO_EVENT_RESULT_INSERT_GEO_EVENT_INVALID_COORDINATES => InsertGeoEventResult::InvalidCoordinates,
+            INSERT_GEO_EVENT_RESULT_INSERT_GEO_EVENT_LAT_OUT_OF_RANGE => InsertGeoEventResult::LatOutOfRange,
+            INSERT_GEO_EVENT_RESULT_INSERT_GEO_EVENT_LON_OUT_OF_RANGE => InsertGeoEventResult::LonOutOfRange,
+            INSERT_GEO_EVENT_RESULT_INSERT_GEO_EVENT_EXISTS_WITH_DIFFERENT_ENTITY_ID => InsertGeoEventResult::ExistsWithDifferentEntityId,
+            INSERT_GEO_EVENT_RESULT_INSERT_GEO_EVENT_EXISTS_WITH_DIFFERENT_COORDINATES => InsertGeoEventResult::ExistsWithDifferentCoordinates,
+            INSERT_GEO_EVENT_RESULT_INSERT_GEO_EVENT_EXISTS => InsertGeoEventResult::Exists,
+            INSERT_GEO_EVENT_RESULT_INSERT_GEO_EVENT_HEADING_OUT_OF_RANGE => InsertGeoEventResult::HeadingOutOfRange,
+            INSERT_GEO_EVENT_RESULT_INSERT_GEO_EVENT_TTL_INVALID => InsertGeoEventResult::TtlInvalid,
+            INSERT_GEO_EVENT_RESULT_INSERT_GEO_EVENT_ENTITY_ID_MUST_NOT_BE_INT_MAX => InsertGeoEventResult::EntityIdMustNotBeIntMax,
+            _ => InsertGeoEventResult::Ok,
         }
     }
 }
 
-#[rustfmt::skip]
-impl From<CreateTransferResult> for u32 {
-    fn from(other: CreateTransferResult) -> u32 {
+impl From<InsertGeoEventResult> for tbc::INSERT_GEO_EVENT_RESULT {
+    fn from(value: InsertGeoEventResult) -> Self {
         use tbc::*;
-        use CreateTransferResult::*;
-
-        match other {
-            Ok => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_OK,
-            LinkedEventFailed => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_LINKED_EVENT_FAILED,
-            LinkedEventChainOpen => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_LINKED_EVENT_CHAIN_OPEN,
-            ImportedEventExpected => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_IMPORTED_EVENT_EXPECTED,
-            ImportedEventNotExpected => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_IMPORTED_EVENT_NOT_EXPECTED,
-            TimestampMustBeZero => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_TIMESTAMP_MUST_BE_ZERO,
-            ImportedEventTimestampOutOfRange => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_IMPORTED_EVENT_TIMESTAMP_OUT_OF_RANGE,
-            ImportedEventTimestampMustNotAdvance => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_IMPORTED_EVENT_TIMESTAMP_MUST_NOT_ADVANCE,
-            ReservedFlag => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_RESERVED_FLAG,
-            IdMustNotBeZero => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_ID_MUST_NOT_BE_ZERO,
-            IdMustNotBeIntMax => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_ID_MUST_NOT_BE_INT_MAX,
-            ExistsWithDifferentFlags => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_EXISTS_WITH_DIFFERENT_FLAGS,
-            ExistsWithDifferentPendingId => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_EXISTS_WITH_DIFFERENT_PENDING_ID,
-            ExistsWithDifferentTimeout => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_EXISTS_WITH_DIFFERENT_TIMEOUT,
-            ExistsWithDifferentDebitAccountId => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_EXISTS_WITH_DIFFERENT_DEBIT_ACCOUNT_ID,
-            ExistsWithDifferentCreditAccountId => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_EXISTS_WITH_DIFFERENT_CREDIT_ACCOUNT_ID,
-            ExistsWithDifferentAmount => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_EXISTS_WITH_DIFFERENT_AMOUNT,
-            ExistsWithDifferentUserData128 => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_EXISTS_WITH_DIFFERENT_USER_DATA_128,
-            ExistsWithDifferentUserData64 => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_EXISTS_WITH_DIFFERENT_USER_DATA_64,
-            ExistsWithDifferentUserData32 => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_EXISTS_WITH_DIFFERENT_USER_DATA_32,
-            ExistsWithDifferentLedger => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_EXISTS_WITH_DIFFERENT_LEDGER,
-            ExistsWithDifferentCode => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_EXISTS_WITH_DIFFERENT_CODE,
-            Exists => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_EXISTS,
-            IdAlreadyFailed => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_ID_ALREADY_FAILED,
-            FlagsAreMutuallyExclusive => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_FLAGS_ARE_MUTUALLY_EXCLUSIVE,
-            DebitAccountIdMustNotBeZero => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_DEBIT_ACCOUNT_ID_MUST_NOT_BE_ZERO,
-            DebitAccountIdMustNotBeIntMax => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_DEBIT_ACCOUNT_ID_MUST_NOT_BE_INT_MAX,
-            CreditAccountIdMustNotBeZero => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_CREDIT_ACCOUNT_ID_MUST_NOT_BE_ZERO,
-            CreditAccountIdMustNotBeIntMax => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_CREDIT_ACCOUNT_ID_MUST_NOT_BE_INT_MAX,
-            AccountsMustBeDifferent => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_ACCOUNTS_MUST_BE_DIFFERENT,
-            PendingIdMustBeZero => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_PENDING_ID_MUST_BE_ZERO,
-            PendingIdMustNotBeZero => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_PENDING_ID_MUST_NOT_BE_ZERO,
-            PendingIdMustNotBeIntMax => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_PENDING_ID_MUST_NOT_BE_INT_MAX,
-            PendingIdMustBeDifferent => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_PENDING_ID_MUST_BE_DIFFERENT,
-            TimeoutReservedForPendingTransfer => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_TIMEOUT_RESERVED_FOR_PENDING_TRANSFER,
-            ClosingTransferMustBePending => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_CLOSING_TRANSFER_MUST_BE_PENDING,
-            LedgerMustNotBeZero => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_LEDGER_MUST_NOT_BE_ZERO,
-            CodeMustNotBeZero => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_CODE_MUST_NOT_BE_ZERO,
-            DebitAccountNotFound => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_DEBIT_ACCOUNT_NOT_FOUND,
-            CreditAccountNotFound => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_CREDIT_ACCOUNT_NOT_FOUND,
-            AccountsMustHaveTheSameLedger => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_ACCOUNTS_MUST_HAVE_THE_SAME_LEDGER,
-            TransferMustHaveTheSameLedgerAsAccounts => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_TRANSFER_MUST_HAVE_THE_SAME_LEDGER_AS_ACCOUNTS,
-            PendingTransferNotFound => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_PENDING_TRANSFER_NOT_FOUND,
-            PendingTransferNotPending => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_PENDING_TRANSFER_NOT_PENDING,
-            PendingTransferHasDifferentDebitAccountId => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_PENDING_TRANSFER_HAS_DIFFERENT_DEBIT_ACCOUNT_ID,
-            PendingTransferHasDifferentCreditAccountId => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_PENDING_TRANSFER_HAS_DIFFERENT_CREDIT_ACCOUNT_ID,
-            PendingTransferHasDifferentLedger => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_PENDING_TRANSFER_HAS_DIFFERENT_LEDGER,
-            PendingTransferHasDifferentCode => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_PENDING_TRANSFER_HAS_DIFFERENT_CODE,
-            ExceedsPendingTransferAmount => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_EXCEEDS_PENDING_TRANSFER_AMOUNT,
-            PendingTransferHasDifferentAmount => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_PENDING_TRANSFER_HAS_DIFFERENT_AMOUNT,
-            PendingTransferAlreadyPosted => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_PENDING_TRANSFER_ALREADY_POSTED,
-            PendingTransferAlreadyVoided => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_PENDING_TRANSFER_ALREADY_VOIDED,
-            PendingTransferExpired => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_PENDING_TRANSFER_EXPIRED,
-            ImportedEventTimestampMustNotRegress => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_IMPORTED_EVENT_TIMESTAMP_MUST_NOT_REGRESS,
-            ImportedEventTimestampMustPostdateDebitAccount => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_IMPORTED_EVENT_TIMESTAMP_MUST_POSTDATE_DEBIT_ACCOUNT,
-            ImportedEventTimestampMustPostdateCreditAccount => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_IMPORTED_EVENT_TIMESTAMP_MUST_POSTDATE_CREDIT_ACCOUNT,
-            ImportedEventTimeoutMustBeZero => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_IMPORTED_EVENT_TIMEOUT_MUST_BE_ZERO,
-            DebitAccountAlreadyClosed => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_DEBIT_ACCOUNT_ALREADY_CLOSED,
-            CreditAccountAlreadyClosed => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_CREDIT_ACCOUNT_ALREADY_CLOSED,
-            OverflowsDebitsPending => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_OVERFLOWS_DEBITS_PENDING,
-            OverflowsCreditsPending => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_OVERFLOWS_CREDITS_PENDING,
-            OverflowsDebitsPosted => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_OVERFLOWS_DEBITS_POSTED,
-            OverflowsCreditsPosted => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_OVERFLOWS_CREDITS_POSTED,
-            OverflowsDebits => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_OVERFLOWS_DEBITS,
-            OverflowsCredits => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_OVERFLOWS_CREDITS,
-            OverflowsTimeout => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_OVERFLOWS_TIMEOUT,
-            ExceedsCredits => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_EXCEEDS_CREDITS,
-            ExceedsDebits => ARCH_CREATE_TRANSFER_RESULT_ARCH_CREATE_TRANSFER_EXCEEDS_DEBITS,
+        match value {
+            InsertGeoEventResult::Ok => INSERT_GEO_EVENT_RESULT_INSERT_GEO_EVENT_OK,
+            InsertGeoEventResult::LinkedEventFailed => INSERT_GEO_EVENT_RESULT_INSERT_GEO_EVENT_LINKED_EVENT_FAILED,
+            InsertGeoEventResult::LinkedEventChainOpen => INSERT_GEO_EVENT_RESULT_INSERT_GEO_EVENT_LINKED_EVENT_CHAIN_OPEN,
+            InsertGeoEventResult::TimestampMustBeZero => INSERT_GEO_EVENT_RESULT_INSERT_GEO_EVENT_TIMESTAMP_MUST_BE_ZERO,
+            InsertGeoEventResult::ReservedField => INSERT_GEO_EVENT_RESULT_INSERT_GEO_EVENT_RESERVED_FIELD,
+            InsertGeoEventResult::ReservedFlag => INSERT_GEO_EVENT_RESULT_INSERT_GEO_EVENT_RESERVED_FLAG,
+            InsertGeoEventResult::IdMustNotBeZero => INSERT_GEO_EVENT_RESULT_INSERT_GEO_EVENT_ID_MUST_NOT_BE_ZERO,
+            InsertGeoEventResult::EntityIdMustNotBeZero => INSERT_GEO_EVENT_RESULT_INSERT_GEO_EVENT_ENTITY_ID_MUST_NOT_BE_ZERO,
+            InsertGeoEventResult::InvalidCoordinates => INSERT_GEO_EVENT_RESULT_INSERT_GEO_EVENT_INVALID_COORDINATES,
+            InsertGeoEventResult::LatOutOfRange => INSERT_GEO_EVENT_RESULT_INSERT_GEO_EVENT_LAT_OUT_OF_RANGE,
+            InsertGeoEventResult::LonOutOfRange => INSERT_GEO_EVENT_RESULT_INSERT_GEO_EVENT_LON_OUT_OF_RANGE,
+            InsertGeoEventResult::ExistsWithDifferentEntityId => INSERT_GEO_EVENT_RESULT_INSERT_GEO_EVENT_EXISTS_WITH_DIFFERENT_ENTITY_ID,
+            InsertGeoEventResult::ExistsWithDifferentCoordinates => INSERT_GEO_EVENT_RESULT_INSERT_GEO_EVENT_EXISTS_WITH_DIFFERENT_COORDINATES,
+            InsertGeoEventResult::Exists => INSERT_GEO_EVENT_RESULT_INSERT_GEO_EVENT_EXISTS,
+            InsertGeoEventResult::HeadingOutOfRange => INSERT_GEO_EVENT_RESULT_INSERT_GEO_EVENT_HEADING_OUT_OF_RANGE,
+            InsertGeoEventResult::TtlInvalid => INSERT_GEO_EVENT_RESULT_INSERT_GEO_EVENT_TTL_INVALID,
+            InsertGeoEventResult::EntityIdMustNotBeIntMax => INSERT_GEO_EVENT_RESULT_INSERT_GEO_EVENT_ENTITY_ID_MUST_NOT_BE_INT_MAX,
         }
     }
 }
 
-impl From<i32> for InitStatus {
-    fn from(other: i32) -> InitStatus {
-        use tbc::*;
-        use InitStatus::*;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-        match other {
-            ARCH_INIT_STATUS_ARCH_INIT_SUCCESS => panic!(),
-            ARCH_INIT_STATUS_ARCH_INIT_UNEXPECTED => Unexpected,
-            ARCH_INIT_STATUS_ARCH_INIT_OUT_OF_MEMORY => OutOfMemory,
-            ARCH_INIT_STATUS_ARCH_INIT_ADDRESS_INVALID => AddressInvalid,
-            ARCH_INIT_STATUS_ARCH_INIT_ADDRESS_LIMIT_EXCEEDED => AddressLimitExceeded,
-            ARCH_INIT_STATUS_ARCH_INIT_SYSTEM_RESOURCES => SystemResources,
-            ARCH_INIT_STATUS_ARCH_INIT_NETWORK_SUBSYSTEM => NetworkSubsystem,
-            v => panic!("Unknown InitStatus: {v}"),
-        }
+    #[test]
+    fn test_geo_event_roundtrip() {
+        let event = GeoEvent {
+            entity_id: 12345,
+            lat_nano: 37_774_900_000,
+            lon_nano: -122_419_400_000,
+            group_id: 1,
+            ttl_seconds: 86400,
+            flags: GeoEventFlags::STATIONARY,
+            ..Default::default()
+        };
+
+        let c_event: tbc::geo_event_t = event.into();
+        let back: GeoEvent = c_event.into();
+
+        assert_eq!(back.entity_id, 12345);
+        assert_eq!(back.lat_nano, 37_774_900_000);
+        assert_eq!(back.lon_nano, -122_419_400_000);
+        assert_eq!(back.group_id, 1);
+        assert_eq!(back.ttl_seconds, 86400);
+        assert!(back.flags.contains(GeoEventFlags::STATIONARY));
     }
-}
 
-impl From<InitStatus> for i32 {
-    fn from(other: InitStatus) -> i32 {
-        use tbc::*;
-        use InitStatus::*;
-
-        match other {
-            Unexpected => ARCH_INIT_STATUS_ARCH_INIT_UNEXPECTED,
-            OutOfMemory => ARCH_INIT_STATUS_ARCH_INIT_OUT_OF_MEMORY,
-            AddressInvalid => ARCH_INIT_STATUS_ARCH_INIT_ADDRESS_INVALID,
-            AddressLimitExceeded => ARCH_INIT_STATUS_ARCH_INIT_ADDRESS_LIMIT_EXCEEDED,
-            SystemResources => ARCH_INIT_STATUS_ARCH_INIT_SYSTEM_RESOURCES,
-            NetworkSubsystem => ARCH_INIT_STATUS_ARCH_INIT_NETWORK_SUBSYSTEM,
-        }
-    }
-}
-
-impl From<u8> for PacketStatus {
-    fn from(other: u8) -> PacketStatus {
-        use tbc::*;
-        use PacketStatus::*;
-
-        match other {
-            ARCH_PACKET_STATUS_ARCH_PACKET_OK => panic!(),
-            ARCH_PACKET_STATUS_ARCH_PACKET_TOO_MUCH_DATA => TooMuchData,
-            ARCH_PACKET_STATUS_ARCH_PACKET_CLIENT_EVICTED => ClientEvicted,
-            ARCH_PACKET_STATUS_ARCH_PACKET_CLIENT_RELEASE_TOO_LOW => ClientReleaseTooLow,
-            ARCH_PACKET_STATUS_ARCH_PACKET_CLIENT_RELEASE_TOO_HIGH => ClientReleaseTooHigh,
-            ARCH_PACKET_STATUS_ARCH_PACKET_CLIENT_SHUTDOWN => ClientShutdown,
-            ARCH_PACKET_STATUS_ARCH_PACKET_INVALID_OPERATION => InvalidOperation,
-            ARCH_PACKET_STATUS_ARCH_PACKET_INVALID_DATA_SIZE => InvalidDataSize,
-            v => panic!("Unknown PacketStatus: {v}"),
-        }
-    }
-}
-
-impl From<PacketStatus> for u8 {
-    fn from(other: PacketStatus) -> u8 {
-        use tbc::*;
-        use PacketStatus::*;
-
-        match other {
-            TooMuchData => ARCH_PACKET_STATUS_ARCH_PACKET_TOO_MUCH_DATA,
-            ClientEvicted => ARCH_PACKET_STATUS_ARCH_PACKET_CLIENT_EVICTED,
-            ClientReleaseTooLow => ARCH_PACKET_STATUS_ARCH_PACKET_CLIENT_RELEASE_TOO_LOW,
-            ClientReleaseTooHigh => ARCH_PACKET_STATUS_ARCH_PACKET_CLIENT_RELEASE_TOO_HIGH,
-            ClientShutdown => ARCH_PACKET_STATUS_ARCH_PACKET_CLIENT_SHUTDOWN,
-            InvalidOperation => ARCH_PACKET_STATUS_ARCH_PACKET_INVALID_OPERATION,
-            InvalidDataSize => ARCH_PACKET_STATUS_ARCH_PACKET_INVALID_DATA_SIZE,
-        }
+    #[test]
+    fn test_insert_result_roundtrip() {
+        let result = InsertGeoEventResult::InvalidCoordinates;
+        let c_result: tbc::INSERT_GEO_EVENT_RESULT = result.into();
+        let back: InsertGeoEventResult = c_result.into();
+        assert_eq!(back, InsertGeoEventResult::InvalidCoordinates);
     }
 }

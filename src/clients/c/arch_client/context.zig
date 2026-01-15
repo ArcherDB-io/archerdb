@@ -169,6 +169,12 @@ pub fn ContextType(
             // ArcherDB admin operations (F1.3.7)
             .archerdb_ping,
             .archerdb_get_status,
+            // ArcherDB topology discovery (Smart Client)
+            .get_topology,
+            // Manual TTL operations (v2.1)
+            .ttl_set,
+            .ttl_extend,
+            .ttl_clear,
         };
 
         const UserData = extern struct {

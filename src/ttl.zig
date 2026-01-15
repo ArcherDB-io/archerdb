@@ -46,6 +46,168 @@ pub const Config = struct {
 /// Default TTL configuration.
 pub const default_config = Config{};
 
+// ============================================================================
+// TTL Extension on Read (v2.1)
+// ============================================================================
+
+/// TTL Extension configuration per add-v2-distributed-features/specs/ttl-retention/spec.md
+pub const ExtensionConfig = struct {
+    /// Whether TTL extension on read is enabled.
+    enabled: bool = false,
+
+    /// Amount of time to extend TTL by (seconds).
+    /// Default: 1 day = 86,400 seconds.
+    extension_amount_seconds: u32 = 86_400,
+
+    /// Maximum total TTL after extension (seconds).
+    /// Default: 30 days = 2,592,000 seconds.
+    max_ttl_seconds: u32 = 2_592_000,
+
+    /// Minimum time between extensions for same entity (seconds).
+    /// Default: 1 hour = 3,600 seconds.
+    cooldown_seconds: u32 = 3_600,
+
+    /// Maximum number of extensions allowed per entity (0 = unlimited).
+    max_extension_count: u32 = 0,
+};
+
+/// Default TTL extension configuration (disabled by default).
+pub const default_extension_config = ExtensionConfig{};
+
+/// Result of attempting to extend an entity's TTL.
+pub const ExtensionResult = enum(u8) {
+    /// TTL was successfully extended.
+    extended,
+    /// Extension is disabled globally.
+    disabled,
+    /// Entity has reached maximum TTL.
+    max_ttl_reached,
+    /// Entity has reached maximum extension count.
+    max_count_exceeded,
+    /// Cooldown period has not elapsed.
+    cooldown_active,
+    /// Entity has no_auto_extend flag set.
+    no_auto_extend,
+    /// Entity has no TTL (ttl_seconds = 0).
+    no_ttl,
+};
+
+/// Metadata for tracking TTL extension state per entity.
+/// This is stored alongside the IndexEntry (or in extended metadata).
+pub const ExtensionMetadata = struct {
+    /// Original TTL at insertion time (seconds).
+    original_ttl_seconds: u32 = 0,
+    /// Current effective TTL (seconds).
+    current_ttl_seconds: u32 = 0,
+    /// Number of times TTL has been extended.
+    extension_count: u32 = 0,
+    /// Timestamp of last extension (nanoseconds).
+    last_extension_time_ns: u64 = 0,
+    /// Whether auto-extension is disabled for this entity.
+    no_auto_extend: bool = false,
+};
+
+/// Check if an entity's TTL can be extended and calculate the new TTL.
+///
+/// Arguments:
+/// - current_ttl_seconds: The entity's current TTL
+/// - metadata: Extension metadata for this entity (may be null for first read)
+/// - config: Extension configuration
+/// - current_time_ns: Current timestamp (nanoseconds)
+///
+/// Returns:
+/// - ExtensionResult indicating whether extension is allowed
+/// - New TTL value (only valid if result is .extended)
+pub fn check_extension(
+    current_ttl_seconds: u32,
+    metadata: ?ExtensionMetadata,
+    config: ExtensionConfig,
+    current_time_ns: u64,
+) struct { result: ExtensionResult, new_ttl_seconds: u32 } {
+    // Check if extension is globally disabled.
+    if (!config.enabled) {
+        return .{ .result = .disabled, .new_ttl_seconds = current_ttl_seconds };
+    }
+
+    // Check if entity has no TTL (infinite retention).
+    if (current_ttl_seconds == 0) {
+        return .{ .result = .no_ttl, .new_ttl_seconds = 0 };
+    }
+
+    // Check metadata constraints if present.
+    if (metadata) |m| {
+        // Check no_auto_extend flag.
+        if (m.no_auto_extend) {
+            return .{ .result = .no_auto_extend, .new_ttl_seconds = current_ttl_seconds };
+        }
+
+        // Check max extension count.
+        if (config.max_extension_count > 0 and m.extension_count >= config.max_extension_count) {
+            return .{ .result = .max_count_exceeded, .new_ttl_seconds = current_ttl_seconds };
+        }
+
+        // Check cooldown period.
+        if (m.last_extension_time_ns > 0) {
+            const cooldown_ns: u64 = @as(u64, config.cooldown_seconds) * ns_per_second;
+            const elapsed = current_time_ns -| m.last_extension_time_ns;
+            if (elapsed < cooldown_ns) {
+                return .{ .result = .cooldown_active, .new_ttl_seconds = current_ttl_seconds };
+            }
+        }
+    }
+
+    // Calculate new TTL (current + extension amount, capped at max).
+    const new_ttl = @min(
+        current_ttl_seconds + config.extension_amount_seconds,
+        config.max_ttl_seconds,
+    );
+
+    // Check if already at max TTL.
+    if (new_ttl == current_ttl_seconds) {
+        return .{ .result = .max_ttl_reached, .new_ttl_seconds = current_ttl_seconds };
+    }
+
+    return .{ .result = .extended, .new_ttl_seconds = new_ttl };
+}
+
+/// TTL Extension metrics for observability.
+pub const ExtensionMetrics = struct {
+    /// Total extensions performed.
+    extensions_total: u64 = 0,
+    /// Extensions skipped due to cooldown.
+    skipped_cooldown: u64 = 0,
+    /// Extensions skipped due to max TTL reached.
+    skipped_max_ttl: u64 = 0,
+    /// Extensions skipped due to max count exceeded.
+    skipped_max_count: u64 = 0,
+    /// Extensions skipped due to no_auto_extend flag.
+    skipped_no_auto_extend: u64 = 0,
+    /// Extensions skipped due to disabled.
+    skipped_disabled: u64 = 0,
+
+    /// Record an extension attempt result.
+    pub fn record(self: *ExtensionMetrics, result: ExtensionResult) void {
+        switch (result) {
+            .extended => self.extensions_total += 1,
+            .cooldown_active => self.skipped_cooldown += 1,
+            .max_ttl_reached => self.skipped_max_ttl += 1,
+            .max_count_exceeded => self.skipped_max_count += 1,
+            .no_auto_extend => self.skipped_no_auto_extend += 1,
+            .disabled => self.skipped_disabled += 1,
+            .no_ttl => {}, // Not counted as a skip
+        }
+    }
+
+    /// Get total skipped extensions.
+    pub fn total_skipped(self: ExtensionMetrics) u64 {
+        return self.skipped_cooldown +
+            self.skipped_max_ttl +
+            self.skipped_max_count +
+            self.skipped_no_auto_extend +
+            self.skipped_disabled;
+    }
+};
+
 /// Result of expiration check.
 pub const ExpirationResult = struct {
     /// Whether the entry is expired.
@@ -148,6 +310,157 @@ pub const CleanupResponse = extern struct {
 
     comptime {
         assert(@sizeOf(CleanupResponse) == 64);
+    }
+};
+
+// ============================================================================
+// Manual TTL Operations (v2.1)
+// Per add-v2-distributed-features/specs/ttl-retention/spec.md
+// ============================================================================
+
+/// TTL operation result codes.
+pub const TtlOperationResult = enum(u8) {
+    /// Operation succeeded.
+    success = 0,
+    /// Entity not found.
+    entity_not_found = 1,
+    /// Invalid TTL value.
+    invalid_ttl = 2,
+    /// Operation not permitted.
+    not_permitted = 3,
+    /// Entity is immutable (system entity).
+    entity_immutable = 4,
+};
+
+/// Request to set absolute TTL for an entity (64 bytes).
+///
+/// CLI: `archerdb ttl set <entity_id> --ttl=<seconds>`
+pub const TtlSetRequest = extern struct {
+    /// Entity ID to modify.
+    entity_id: u128,
+
+    /// New TTL value in seconds (0 = infinite, see ttl_clear for explicit clear).
+    ttl_seconds: u32,
+
+    /// Reserved for future flags.
+    flags: u32 = 0,
+
+    /// Reserved for future use.
+    reserved: [40]u8 = [_]u8{0} ** 40,
+
+    comptime {
+        assert(@sizeOf(TtlSetRequest) == 64);
+    }
+};
+
+/// Response from TTL set operation (64 bytes).
+pub const TtlSetResponse = extern struct {
+    /// Entity ID that was modified.
+    entity_id: u128,
+
+    /// Previous TTL value in seconds.
+    previous_ttl_seconds: u32,
+
+    /// New TTL value in seconds.
+    new_ttl_seconds: u32,
+
+    /// Operation result.
+    result: TtlOperationResult,
+
+    /// Reserved for alignment.
+    _padding: [3]u8 = [_]u8{0} ** 3,
+
+    /// Reserved for future use.
+    reserved: [32]u8 = [_]u8{0} ** 32,
+
+    comptime {
+        assert(@sizeOf(TtlSetResponse) == 64);
+    }
+};
+
+/// Request to extend TTL for an entity by a relative amount (64 bytes).
+///
+/// CLI: `archerdb ttl extend <entity_id> --by=<seconds>`
+pub const TtlExtendRequest = extern struct {
+    /// Entity ID to modify.
+    entity_id: u128,
+
+    /// Amount to extend TTL by (seconds).
+    extend_by_seconds: u32,
+
+    /// Reserved for future flags.
+    flags: u32 = 0,
+
+    /// Reserved for future use.
+    reserved: [40]u8 = [_]u8{0} ** 40,
+
+    comptime {
+        assert(@sizeOf(TtlExtendRequest) == 64);
+    }
+};
+
+/// Response from TTL extend operation (64 bytes).
+pub const TtlExtendResponse = extern struct {
+    /// Entity ID that was modified.
+    entity_id: u128,
+
+    /// Previous TTL value in seconds.
+    previous_ttl_seconds: u32,
+
+    /// New TTL value in seconds.
+    new_ttl_seconds: u32,
+
+    /// Operation result.
+    result: TtlOperationResult,
+
+    /// Reserved for alignment.
+    _padding: [3]u8 = [_]u8{0} ** 3,
+
+    /// Reserved for future use.
+    reserved: [32]u8 = [_]u8{0} ** 32,
+
+    comptime {
+        assert(@sizeOf(TtlExtendResponse) == 64);
+    }
+};
+
+/// Request to clear TTL for an entity (infinite retention) (64 bytes).
+///
+/// CLI: `archerdb ttl clear <entity_id>`
+pub const TtlClearRequest = extern struct {
+    /// Entity ID to modify.
+    entity_id: u128,
+
+    /// Reserved for future flags.
+    flags: u32 = 0,
+
+    /// Reserved for future use.
+    reserved: [44]u8 = [_]u8{0} ** 44,
+
+    comptime {
+        assert(@sizeOf(TtlClearRequest) == 64);
+    }
+};
+
+/// Response from TTL clear operation (64 bytes).
+pub const TtlClearResponse = extern struct {
+    /// Entity ID that was modified.
+    entity_id: u128,
+
+    /// Previous TTL value in seconds.
+    previous_ttl_seconds: u32,
+
+    /// Operation result.
+    result: TtlOperationResult,
+
+    /// Reserved for alignment.
+    _padding: [3]u8 = [_]u8{0} ** 3,
+
+    /// Reserved for future use.
+    reserved: [36]u8 = [_]u8{0} ** 36,
+
+    comptime {
+        assert(@sizeOf(TtlClearResponse) == 64);
     }
 };
 
@@ -1007,6 +1320,7 @@ pub const CliffMitigator = struct {
     }
 
     /// Analyze histogram for cliffs.
+    /// Returns the most severe cliff (highest severity) if any bucket exceeds the threshold.
     pub fn analyzeForCliffs(self: *Self, current_time_ns: u64) ?CliffInfo {
         self.last_analysis_ns = current_time_ns;
 
@@ -1021,18 +1335,31 @@ pub const CliffMitigator = struct {
         const average = @as(f64, @floatFromInt(total)) / @as(f64, NUM_BUCKETS);
         const threshold = average * self.cliff_threshold;
 
-        // Find cliffs (buckets significantly above average)
+        // Find the most severe cliff (bucket with highest severity above threshold)
+        var max_severity: f64 = 0;
+        var max_bucket: ?usize = null;
+        var max_count: u64 = 0;
+
         for (self.expiration_histogram, 0..) |count, bucket| {
             const count_f = @as(f64, @floatFromInt(count));
             if (count_f > threshold) {
-                const start_time = current_time_ns + bucket * BUCKET_SIZE_NS;
-                return CliffInfo{
-                    .start_time_ns = start_time,
-                    .end_time_ns = start_time + BUCKET_SIZE_NS,
-                    .expected_expirations = count,
-                    .severity = count_f / average,
-                };
+                const severity = count_f / average;
+                if (severity > max_severity) {
+                    max_severity = severity;
+                    max_bucket = bucket;
+                    max_count = count;
+                }
             }
+        }
+
+        if (max_bucket) |bucket| {
+            const start_time = current_time_ns + bucket * BUCKET_SIZE_NS;
+            return CliffInfo{
+                .start_time_ns = start_time,
+                .end_time_ns = start_time + BUCKET_SIZE_NS,
+                .expected_expirations = max_count,
+                .severity = max_severity,
+            };
         }
 
         return null;
@@ -1168,4 +1495,211 @@ test "CliffMitigation recommendations" {
     };
     const moderate_rec = mitigator.getRecommendation(moderate);
     try std.testing.expectEqual(moderate_rec.action, .monitor);
+}
+
+// ============================================================================
+// TTL Extension Tests (v2.1)
+// ============================================================================
+
+test "TTL Extension: disabled by default" {
+    const config = default_extension_config;
+    const result = check_extension(3600, null, config, 1_000_000_000);
+    try std.testing.expectEqual(result.result, ExtensionResult.disabled);
+    try std.testing.expectEqual(result.new_ttl_seconds, 3600);
+}
+
+test "TTL Extension: no TTL entities not extended" {
+    var config = default_extension_config;
+    config.enabled = true;
+    const result = check_extension(0, null, config, 1_000_000_000);
+    try std.testing.expectEqual(result.result, ExtensionResult.no_ttl);
+    try std.testing.expectEqual(result.new_ttl_seconds, 0);
+}
+
+test "TTL Extension: successful extension" {
+    var config = default_extension_config;
+    config.enabled = true;
+    config.extension_amount_seconds = 3600; // 1 hour
+    config.max_ttl_seconds = 86400; // 1 day
+
+    const result = check_extension(7200, null, config, 1_000_000_000);
+    try std.testing.expectEqual(result.result, ExtensionResult.extended);
+    try std.testing.expectEqual(result.new_ttl_seconds, 10800); // 7200 + 3600
+}
+
+test "TTL Extension: capped at max TTL" {
+    var config = default_extension_config;
+    config.enabled = true;
+    config.extension_amount_seconds = 3600;
+    config.max_ttl_seconds = 10000;
+
+    const result = check_extension(9000, null, config, 1_000_000_000);
+    try std.testing.expectEqual(result.result, ExtensionResult.extended);
+    try std.testing.expectEqual(result.new_ttl_seconds, 10000); // capped at max
+}
+
+test "TTL Extension: max TTL already reached" {
+    var config = default_extension_config;
+    config.enabled = true;
+    config.extension_amount_seconds = 3600;
+    config.max_ttl_seconds = 10000;
+
+    const result = check_extension(10000, null, config, 1_000_000_000);
+    try std.testing.expectEqual(result.result, ExtensionResult.max_ttl_reached);
+    try std.testing.expectEqual(result.new_ttl_seconds, 10000);
+}
+
+test "TTL Extension: cooldown active" {
+    var config = default_extension_config;
+    config.enabled = true;
+    config.cooldown_seconds = 3600; // 1 hour cooldown
+
+    const metadata = ExtensionMetadata{
+        .last_extension_time_ns = 1_000_000_000, // Extended at t=1s
+        .extension_count = 1,
+    };
+
+    // Only 30 minutes have passed
+    const current_time = 1_000_000_000 + (1800 * ns_per_second);
+    const result = check_extension(7200, metadata, config, current_time);
+    try std.testing.expectEqual(result.result, ExtensionResult.cooldown_active);
+}
+
+test "TTL Extension: cooldown elapsed" {
+    var config = default_extension_config;
+    config.enabled = true;
+    config.cooldown_seconds = 3600;
+    config.extension_amount_seconds = 1800;
+
+    const metadata = ExtensionMetadata{
+        .last_extension_time_ns = 1_000_000_000,
+        .extension_count = 1,
+    };
+
+    // 2 hours have passed
+    const current_time = 1_000_000_000 + (7200 * ns_per_second);
+    const result = check_extension(7200, metadata, config, current_time);
+    try std.testing.expectEqual(result.result, ExtensionResult.extended);
+    try std.testing.expectEqual(result.new_ttl_seconds, 9000);
+}
+
+test "TTL Extension: max extension count exceeded" {
+    var config = default_extension_config;
+    config.enabled = true;
+    config.max_extension_count = 5;
+
+    const metadata = ExtensionMetadata{
+        .extension_count = 5, // Already at max
+    };
+
+    const result = check_extension(7200, metadata, config, 1_000_000_000);
+    try std.testing.expectEqual(result.result, ExtensionResult.max_count_exceeded);
+}
+
+test "TTL Extension: no_auto_extend flag respected" {
+    var config = default_extension_config;
+    config.enabled = true;
+
+    const metadata = ExtensionMetadata{
+        .no_auto_extend = true,
+    };
+
+    const result = check_extension(7200, metadata, config, 1_000_000_000);
+    try std.testing.expectEqual(result.result, ExtensionResult.no_auto_extend);
+}
+
+test "TTL Extension metrics recording" {
+    var metrics = ExtensionMetrics{};
+
+    metrics.record(.extended);
+    metrics.record(.extended);
+    metrics.record(.cooldown_active);
+    metrics.record(.max_ttl_reached);
+
+    try std.testing.expectEqual(metrics.extensions_total, 2);
+    try std.testing.expectEqual(metrics.skipped_cooldown, 1);
+    try std.testing.expectEqual(metrics.skipped_max_ttl, 1);
+    try std.testing.expectEqual(metrics.total_skipped(), 2);
+}
+
+// ============================================================================
+// Manual TTL Operations Tests (v2.1)
+// ============================================================================
+
+test "TtlSetRequest: size is 64 bytes" {
+    try std.testing.expectEqual(@as(usize, 64), @sizeOf(TtlSetRequest));
+}
+
+test "TtlSetResponse: size is 64 bytes" {
+    try std.testing.expectEqual(@as(usize, 64), @sizeOf(TtlSetResponse));
+}
+
+test "TtlExtendRequest: size is 64 bytes" {
+    try std.testing.expectEqual(@as(usize, 64), @sizeOf(TtlExtendRequest));
+}
+
+test "TtlExtendResponse: size is 64 bytes" {
+    try std.testing.expectEqual(@as(usize, 64), @sizeOf(TtlExtendResponse));
+}
+
+test "TtlClearRequest: size is 64 bytes" {
+    try std.testing.expectEqual(@as(usize, 64), @sizeOf(TtlClearRequest));
+}
+
+test "TtlClearResponse: size is 64 bytes" {
+    try std.testing.expectEqual(@as(usize, 64), @sizeOf(TtlClearResponse));
+}
+
+test "TtlOperationResult: enum values" {
+    try std.testing.expectEqual(@as(u8, 0), @intFromEnum(TtlOperationResult.success));
+    try std.testing.expectEqual(@as(u8, 1), @intFromEnum(TtlOperationResult.entity_not_found));
+    try std.testing.expectEqual(@as(u8, 2), @intFromEnum(TtlOperationResult.invalid_ttl));
+    try std.testing.expectEqual(@as(u8, 3), @intFromEnum(TtlOperationResult.not_permitted));
+    try std.testing.expectEqual(@as(u8, 4), @intFromEnum(TtlOperationResult.entity_immutable));
+}
+
+test "TtlSetRequest: field initialization" {
+    const request = TtlSetRequest{
+        .entity_id = 0x12345678_9ABCDEF0_12345678_9ABCDEF0,
+        .ttl_seconds = 86400,
+        .flags = 0,
+    };
+    try std.testing.expectEqual(@as(u128, 0x12345678_9ABCDEF0_12345678_9ABCDEF0), request.entity_id);
+    try std.testing.expectEqual(@as(u32, 86400), request.ttl_seconds);
+}
+
+test "TtlSetResponse: default result is entity_not_found" {
+    const response = TtlSetResponse{
+        .entity_id = 1,
+        .previous_ttl_seconds = 0,
+        .new_ttl_seconds = 0,
+        .result = .entity_not_found,
+    };
+    try std.testing.expectEqual(TtlOperationResult.entity_not_found, response.result);
+}
+
+test "TtlExtendRequest: extend by amount" {
+    const request = TtlExtendRequest{
+        .entity_id = 12345,
+        .extend_by_seconds = 3600, // 1 hour
+    };
+    try std.testing.expectEqual(@as(u128, 12345), request.entity_id);
+    try std.testing.expectEqual(@as(u32, 3600), request.extend_by_seconds);
+}
+
+test "TtlClearRequest: entity_id field" {
+    const request = TtlClearRequest{
+        .entity_id = 0xFFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF,
+    };
+    try std.testing.expectEqual(@as(u128, 0xFFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF), request.entity_id);
+}
+
+test "TtlClearResponse: reports previous TTL" {
+    const response = TtlClearResponse{
+        .entity_id = 12345,
+        .previous_ttl_seconds = 86400,
+        .result = .success,
+    };
+    try std.testing.expectEqual(@as(u32, 86400), response.previous_ttl_seconds);
+    try std.testing.expectEqual(TtlOperationResult.success, response.result);
 }

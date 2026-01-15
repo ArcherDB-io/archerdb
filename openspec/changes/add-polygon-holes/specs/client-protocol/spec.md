@@ -92,3 +92,14 @@ The protocol SHALL define constants for polygon hole limits.
   3. Check total vertices <= `polygon_vertices_max`
   4. Validate hole containment within outer ring
   5. Check for hole overlaps
+
+## Implementation Status
+
+| Requirement | Status | Notes |
+|-------------|--------|-------|
+| QueryPolygonFilter 128-byte | ✓ Complete | `geo_state_machine.zig:634` |
+| HoleDescriptor 8-byte | ✓ Complete | `geo_state_machine.zig:660` |
+| Message Layout with Holes | ✓ Complete | Variable-length body parsing |
+| polygon_holes_max (100) | ✓ Complete | `constants.zig` |
+| polygon_hole_vertices_min (3) | ✓ Complete | `constants.zig` |
+| Validation Order | ✓ Complete | query_polygon validation logic |

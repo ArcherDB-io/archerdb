@@ -20,6 +20,14 @@ const type_mappings = .{
     .{ exports.query_response_t, "query_response_t" },
     .{ exports.polygon_vertex_t, "polygon_vertex_t" },
     .{ exports.hole_descriptor_t, "hole_descriptor_t" },
+    // TTL Operations (v2.1 Manual TTL Support)
+    .{ exports.ttl_operation_result, "TTL_OPERATION_RESULT" },
+    .{ exports.ttl_set_request_t, "ttl_set_request_t" },
+    .{ exports.ttl_set_response_t, "ttl_set_response_t" },
+    .{ exports.ttl_extend_request_t, "ttl_extend_request_t" },
+    .{ exports.ttl_extend_response_t, "ttl_extend_response_t" },
+    .{ exports.ttl_clear_request_t, "ttl_clear_request_t" },
+    .{ exports.ttl_clear_response_t, "ttl_clear_response_t" },
     // NOTE: Legacy ArcherDB financial types (Account, Transfer, etc.) have been
     // removed. ArcherDB is a geospatial database only.
     .{

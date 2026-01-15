@@ -216,6 +216,14 @@ pub const EchoOperation = enum(u8) {
     archerdb_ping = @intFromEnum(Operation.archerdb_ping),
     archerdb_get_status = @intFromEnum(Operation.archerdb_get_status),
 
+    // ArcherDB topology discovery (Smart Client)
+    get_topology = @intFromEnum(Operation.get_topology),
+
+    // Manual TTL operations (v2.1)
+    ttl_set = @intFromEnum(Operation.ttl_set),
+    ttl_extend = @intFromEnum(Operation.ttl_extend),
+    ttl_clear = @intFromEnum(Operation.ttl_clear),
+
     comptime {
         const operation_type_info = @typeInfo(Operation).@"enum";
         const echo_type_info = @typeInfo(EchoOperation).@"enum";

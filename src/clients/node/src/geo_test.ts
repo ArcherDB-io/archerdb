@@ -29,6 +29,7 @@ import {
   isValidLatitude,
   isValidLongitude,
   createGeoEvent,
+  prepareGeoEvent,
   createRadiusQuery,
   createPolygonQuery,
 
@@ -257,12 +258,36 @@ function test_createGeoEvent() {
   assert.strictEqual(event.accuracy_mm, 5000)
   assert.strictEqual(event.ttl_seconds, 86400)
   assert.strictEqual(event.group_id, 100n)
-  // ID is a composite key (S2 cell ID + timestamp) computed client-side, should be non-zero
-  assert.notStrictEqual(event.id, 0n)
+  // ID should be 0 until prepareGeoEvent is called
+  assert.strictEqual(event.id, 0n)
   assert.strictEqual(event.timestamp, 0n) // Server-assigned (timestamp field, not the ID timestamp component)
   assert.strictEqual(event.flags, GeoEventFlags.none)
 
   console.log('✓ createGeoEvent')
+}
+
+function test_prepareGeoEvent() {
+  const event = createGeoEvent({
+    entity_id: id(),
+    latitude: 37.7749,
+    longitude: -122.4194,
+  })
+
+  // Before prepare, id should be 0
+  assert.strictEqual(event.id, 0n)
+
+  // Prepare the event
+  prepareGeoEvent(event)
+
+  // After prepare, id should be a non-zero composite key (S2 cell ID + timestamp)
+  assert.notStrictEqual(event.id, 0n)
+
+  // Calling prepare again should not change the ID (already prepared)
+  const originalId = event.id
+  prepareGeoEvent(event)
+  assert.strictEqual(event.id, originalId)
+
+  console.log('✓ prepareGeoEvent')
 }
 
 function test_createGeoEvent_invalidCoordinates() {
@@ -1923,6 +1948,7 @@ async function runTests() {
 
   // GeoEvent creation tests
   test_createGeoEvent()
+  test_prepareGeoEvent()
   test_createGeoEvent_invalidCoordinates()
 
   // Query builder tests

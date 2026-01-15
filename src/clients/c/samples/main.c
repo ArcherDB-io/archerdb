@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2025 Anthus Labs, Inc.
+
 #define IS_POSIX __unix__ || __APPLE__ || !_WIN32
 
 #include <stdlib.h>
@@ -56,8 +59,19 @@ void on_completion(
     uint32_t size
 );
 
+// Helper to convert degrees to nanodegrees
+static int64_t degrees_to_nano(double degrees) {
+    return (int64_t)(degrees * 1e9);
+}
+
+// Simple pseudo-random ID generator
+static arch_uint128_t next_id = 1;
+static arch_uint128_t generate_id(void) {
+    return next_id++;
+}
+
 int main(int argc, char **argv) {
-    printf("ArcherDB C Sample\n");
+    printf("ArcherDB C Sample - Geospatial Operations\n");
     fflush(stdout);
     printf("Connecting...\n");
     fflush(stdout);
@@ -89,31 +103,46 @@ int main(int argc, char **argv) {
     arch_packet_t packet;
 
     ////////////////////////////////////////////////////////////
-    // Submitting a batch of accounts:                        //
+    // Submitting a batch of geo events:                      //
     ////////////////////////////////////////////////////////////
 
-    #define ACCOUNTS_LEN 2
-    #define ACCOUNTS_SIZE sizeof(arch_account_t) * ACCOUNTS_LEN
-    arch_account_t accounts[ACCOUNTS_LEN];
+    #define EVENTS_LEN 2
+    #define EVENTS_SIZE sizeof(geo_event_t) * EVENTS_LEN
+    geo_event_t events[EVENTS_LEN];
 
     // Zeroing the memory, so we don't have to initialize every field.
-    memset(&accounts, 0, ACCOUNTS_SIZE);
+    memset(&events, 0, EVENTS_SIZE);
 
-    accounts[0].id = 1;
-    accounts[0].code = 2;
-    accounts[0].ledger = 777;
+    // Event 1: San Francisco
+    events[0].id = generate_id();
+    events[0].entity_id = 1001;
+    events[0].lat_nano = degrees_to_nano(37.7749);
+    events[0].lon_nano = degrees_to_nano(-122.4194);
+    events[0].group_id = 1;
+    events[0].altitude_mm = 10000;  // 10 meters
+    events[0].velocity_mms = 5000;  // 5 m/s
+    events[0].accuracy_mm = 3000;   // 3 meters
+    events[0].heading_cdeg = 9000;  // 90 degrees (East)
 
-    accounts[1].id = 2;
-    accounts[1].code = 2;
-    accounts[1].ledger = 777;
+    // Event 2: Near San Francisco
+    events[1].id = generate_id();
+    events[1].entity_id = 1002;
+    events[1].lat_nano = degrees_to_nano(37.7850);
+    events[1].lon_nano = degrees_to_nano(-122.4094);
+    events[1].group_id = 1;
+    events[1].altitude_mm = 15000;  // 15 meters
+    events[1].velocity_mms = 0;     // Stationary
+    events[1].accuracy_mm = 5000;   // 5 meters
+    events[1].heading_cdeg = 0;
+    events[1].flags = GEO_EVENT_STATIONARY;
 
-    packet.operation = ARCH_OPERATION_CREATE_ACCOUNTS;  // The operation to be performed.
-    packet.data = accounts;                           // The data to be sent.
-    packet.data_size = ACCOUNTS_SIZE;                 //
+    packet.operation = ARCH_OPERATION_INSERT_EVENTS;  // The operation to be performed.
+    packet.data = events;                             // The data to be sent.
+    packet.data_size = EVENTS_SIZE;                   //
     packet.user_data = &ctx;                          // User-defined context.
-    packet.status = ARCH_PACKET_OK;                     // Will be set when the reply arrives.
+    packet.status = ARCH_PACKET_OK;                   // Will be set when the reply arrives.
 
-    printf("Creating accounts...\n");
+    printf("Inserting geo events...\n");
 
     ARCH_CLIENT_STATUS client_status = send_request(&client, &packet, &ctx);
     if (client_status != ARCH_CLIENT_OK) {
@@ -123,53 +152,54 @@ int main(int argc, char **argv) {
 
     if (packet.status != ARCH_PACKET_OK) {
         // Checking if the request failed:
-        printf("Error calling create_accounts (ret=%d)\n", packet.status);
+        printf("Error calling insert_events (ret=%d)\n", packet.status);
         exit(-1);
     }
 
     if (ctx.size != 0) {
-        // Checking for errors creating the accounts:
-        arch_create_accounts_result_t *results = (arch_create_accounts_result_t*)ctx.reply;
-        int results_len = ctx.size / sizeof(arch_create_accounts_result_t);
-        printf("create_account results:\n");
+        // Checking for errors inserting the events:
+        insert_geo_events_result_t *results = (insert_geo_events_result_t*)ctx.reply;
+        int results_len = ctx.size / sizeof(insert_geo_events_result_t);
+        printf("insert_events results:\n");
         for(int i=0;i<results_len;i++) {
             printf("index=%d, ret=%d\n", results[i].index, results[i].result);
         }
         exit(-1);
     }
 
-    printf("Accounts created successfully\n");
+    printf("Geo events inserted successfully\n");
 
     ////////////////////////////////////////////////////////////
-    // Submitting multiple batches of transfers:              //
+    // Submitting multiple batches of geo events:             //
     ////////////////////////////////////////////////////////////
 
-    printf("Creating transfers...\n");
+    printf("Creating more events for performance test...\n");
     #define MAX_BATCHES 100
-    #define TRANSFERS_PER_BATCH ((MAX_MESSAGE_SIZE) / sizeof(arch_transfer_t))
-    #define TRANSFERS_SIZE (sizeof(arch_transfer_t) * TRANSFERS_PER_BATCH)
+    #define EVENTS_PER_BATCH ((MAX_MESSAGE_SIZE) / sizeof(geo_event_t))
+    #define BATCH_EVENTS_SIZE (sizeof(geo_event_t) * EVENTS_PER_BATCH)
     long max_latency_ms = 0;
     long total_time_ms = 0;
     for (int i=0; i< MAX_BATCHES;i++) {
-        arch_transfer_t transfers[TRANSFERS_PER_BATCH];
+        geo_event_t batch_events[EVENTS_PER_BATCH];
 
         // Zeroing the memory, so we don't have to initialize every field.
-        memset(transfers, 0, TRANSFERS_SIZE);
+        memset(batch_events, 0, BATCH_EVENTS_SIZE);
 
-        for (int j=0; j<TRANSFERS_PER_BATCH; j++) {
-            transfers[j].id = j + 1 + (i * TRANSFERS_PER_BATCH);
-            transfers[j].debit_account_id = accounts[0].id;
-            transfers[j].credit_account_id = accounts[1].id;
-            transfers[j].code = 2;
-            transfers[j].ledger = 777;
-            transfers[j].amount = 1;
+        for (int j=0; j<EVENTS_PER_BATCH; j++) {
+            batch_events[j].id = generate_id();
+            batch_events[j].entity_id = 2000 + j;
+            // Spread events around San Francisco
+            batch_events[j].lat_nano = degrees_to_nano(37.7 + (j % 100) * 0.001);
+            batch_events[j].lon_nano = degrees_to_nano(-122.4 + (j % 100) * 0.001);
+            batch_events[j].group_id = 1;
+            batch_events[j].accuracy_mm = 5000;
         }
 
-        packet.operation = ARCH_OPERATION_CREATE_TRANSFERS;  // The operation to be performed.
-        packet.data = transfers;                           // The data to be sent.
-        packet.data_size = MAX_MESSAGE_SIZE;               //
-        packet.user_data = &ctx;                           // User-defined context.
-        packet.status = ARCH_PACKET_OK;                      // Will be set when the reply arrives.
+        packet.operation = ARCH_OPERATION_INSERT_EVENTS;  // The operation to be performed.
+        packet.data = batch_events;                       // The data to be sent.
+        packet.data_size = BATCH_EVENTS_SIZE;             //
+        packet.user_data = &ctx;                          // User-defined context.
+        packet.status = ARCH_PACKET_OK;                   // Will be set when the reply arrives.
 
         long long now = get_time_ms();
 
@@ -186,15 +216,15 @@ int main(int argc, char **argv) {
 
         if (packet.status != ARCH_PACKET_OK) {
             // Checking if the request failed:
-            printf("Error calling create_transfers (ret=%d)\n", packet.status);
+            printf("Error calling insert_events (ret=%d)\n", packet.status);
             exit(-1);
         }
 
         if (ctx.size != 0) {
-            // Checking for errors creating the accounts:
-            arch_create_transfers_result_t *results = (arch_create_transfers_result_t*)ctx.reply;
-            int results_len = ctx.size / sizeof(arch_create_transfers_result_t);
-            printf("create_transfers results:\n");
+            // Checking for errors inserting the events:
+            insert_geo_events_result_t *results = (insert_geo_events_result_t*)ctx.reply;
+            int results_len = ctx.size / sizeof(insert_geo_events_result_t);
+            printf("insert_events results:\n");
             for(int i=0;i<results_len;i++) {
                 printf("index=%d, ret=%d\n", results[i].index, results[i].result);
             }
@@ -202,24 +232,31 @@ int main(int argc, char **argv) {
         }
     }
 
-    printf("Transfers created successfully\n");
+    printf("Geo events created successfully\n");
     printf("============================================\n");
 
-    printf("%llu transfers per second\n", (MAX_BATCHES * TRANSFERS_PER_BATCH * 1000) / total_time_ms);
-    printf("create_transfers max p100 latency per %llu transfers = %ldms\n", TRANSFERS_PER_BATCH, max_latency_ms);
-    printf("total %llu transfers in %ldms\n", MAX_BATCHES * TRANSFERS_PER_BATCH, total_time_ms);
+    printf("%llu events per second\n", (MAX_BATCHES * EVENTS_PER_BATCH * 1000) / total_time_ms);
+    printf("insert_events max p100 latency per %llu events = %ldms\n", EVENTS_PER_BATCH, max_latency_ms);
+    printf("total %llu events in %ldms\n", MAX_BATCHES * EVENTS_PER_BATCH, total_time_ms);
     printf("\n");
 
     ////////////////////////////////////////////////////////////
-    // Looking up accounts:                                   //
+    // Querying events by radius:                             //
     ////////////////////////////////////////////////////////////
 
-    printf("Looking up accounts ...\n");
-    arch_uint128_t ids[ACCOUNTS_LEN] = { accounts[0].id, accounts[1].id };
+    printf("Querying events by radius...\n");
+    query_radius_filter_t radius_filter;
+    memset(&radius_filter, 0, sizeof(radius_filter));
 
-    packet.operation = ARCH_OPERATION_LOOKUP_ACCOUNTS;
-    packet.data = ids;
-    packet.data_size = sizeof(arch_uint128_t) * ACCOUNTS_LEN;
+    radius_filter.center_lat_nano = degrees_to_nano(37.7749);
+    radius_filter.center_lon_nano = degrees_to_nano(-122.4194);
+    radius_filter.radius_mm = 5000000;  // 5 km radius
+    radius_filter.limit = 100;
+    radius_filter.group_id = 1;
+
+    packet.operation = ARCH_OPERATION_QUERY_RADIUS;
+    packet.data = &radius_filter;
+    packet.data_size = sizeof(query_radius_filter_t);
     packet.user_data = &ctx;
     packet.status = ARCH_PACKET_OK;
 
@@ -229,28 +266,30 @@ int main(int argc, char **argv) {
         exit(-1);
     }
 
-
     if (packet.status != ARCH_PACKET_OK) {
         // Checking if the request failed:
-        printf("Error calling lookup_accounts (ret=%d)", packet.status);
+        printf("Error calling query_radius (ret=%d)", packet.status);
         exit(-1);
     }
 
     if (ctx.size == 0) {
-        printf("No accounts found");
-        exit(-1);
+        printf("No events found in radius\n");
     } else {
-        // Printing the account's balance:
-        arch_account_t *results = (arch_account_t*)ctx.reply;
-        int results_len = ctx.size / sizeof(arch_account_t);
-        printf("%d Account(s) found\n", results_len);
+        // Parse response header and events
+        query_response_t *response = (query_response_t*)ctx.reply;
+        printf("%d Event(s) found in radius query\n", response->count);
+        printf("has_more=%d, partial_result=%d\n", response->has_more, response->partial_result);
         printf("============================================\n");
 
-        for(int i=0;i<results_len;i++) {
-            printf("id=%ld\n", (long)results[i].id);
-            printf("debits_posted=%ld\n", (long)results[i].debits_posted);
-            printf("credits_posted=%ld\n", (long)results[i].credits_posted);
-            printf("\n");
+        geo_event_t *results = (geo_event_t*)(ctx.reply + sizeof(query_response_t));
+        for(int i=0; i < response->count && i < 5; i++) {  // Print first 5
+            printf("entity_id=%lu, lat=%.6f, lon=%.6f\n",
+                (unsigned long)results[i].entity_id,
+                results[i].lat_nano / 1e9,
+                results[i].lon_nano / 1e9);
+        }
+        if (response->count > 5) {
+            printf("... and %d more events\n", response->count - 5);
         }
     }
 
@@ -261,6 +300,9 @@ int main(int argc, char **argv) {
         printf("Failed to deinit the client\n");
         exit(-1);
     }
+
+    printf("\nDone!\n");
+    return 0;
 }
 
 #if IS_POSIX

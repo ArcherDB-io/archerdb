@@ -258,7 +258,7 @@ Phase 4: Cleanup
 - Decommission old shard processes
 ```
 
-**Status**: Not implemented in v2.0
+**Status**: ✓ Implemented in v2.1 (`src/sharding.zig` ReshardingManager)
 
 ### Rollback Procedure
 
@@ -408,5 +408,5 @@ groups:
 | Manual Failover | ✓ Complete | CLI `cluster transfer-leadership` |
 | Node Replacement | ✓ Complete | CLI `cluster add-node/remove-node` |
 | Stop-the-World Resharding | ✓ Complete | CLI `resharding` commands |
-| Online Resharding | Deferred | v2.1+ (zero-downtime migration) |
+| Online Resharding | ✓ Complete | `sharding.zig` ReshardingManager |
 | Monitoring Alerts | ✓ Complete | Prometheus alert rules defined |

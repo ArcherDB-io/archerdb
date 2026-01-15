@@ -202,3 +202,15 @@ Client SDKs SHALL expose additional metrics for v2 features.
   archerdb_sdk_topology_refreshes_total 100
   archerdb_sdk_routing_errors_total{reason="stale_topology"} 5
   ```
+
+## Implementation Status
+
+| Requirement | Status | Notes |
+|-------------|--------|-------|
+| Multi-Region Client Config | ✓ Complete | RegionConfig in all SDKs |
+| Shard-Aware Routing | ✓ Complete | ShardRouter, scatter-gather |
+| Connection Pool Management | ✓ Complete | Per-shard pools |
+| Encryption-Aware Client | ✓ Complete | TLS config, cert handling |
+| Tiering-Aware Client | ✓ Complete | Cold tier fetch handling |
+| TTL Extension Client | ✓ Complete | set_ttl, extend_ttl, clear_ttl in all SDKs |
+| v2 SDK Metrics | ✓ Complete | All metric types exposed |

@@ -32,9 +32,14 @@ class Operation(enum.IntEnum):
     QUERY_RADIUS = 150
     QUERY_POLYGON = 151
     QUERY_LATEST = 154
+    QUERY_UUID_BATCH = 156
     ARCHERDB_PING = 152
     ARCHERDB_GET_STATUS = 153
     CLEANUP_EXPIRED = 155
+    GET_TOPOLOGY = 157
+    TTL_SET = 158
+    TTL_EXTEND = 159
+    TTL_CLEAR = 160
 
 
 class PacketStatus(enum.IntEnum):
@@ -103,6 +108,7 @@ class InsertGeoEventResult(enum.IntEnum):
     EXISTS = 13
     HEADING_OUT_OF_RANGE = 14
     TTL_INVALID = 15
+    ENTITY_ID_MUST_NOT_BE_INT_MAX = 16
 
 
 class DeleteEntityResult(enum.IntEnum):
@@ -110,6 +116,15 @@ class DeleteEntityResult(enum.IntEnum):
     LINKED_EVENT_FAILED = 1
     ENTITY_ID_MUST_NOT_BE_ZERO = 2
     ENTITY_NOT_FOUND = 3
+    ENTITY_ID_MUST_NOT_BE_INT_MAX = 4
+
+
+class TtlOperationResult(enum.IntEnum):
+    SUCCESS = 0
+    ENTITY_NOT_FOUND = 1
+    INVALID_TTL = 2
+    NOT_PERMITTED = 3
+    ENTITY_IMMUTABLE = 4
 
 
 @dataclass
@@ -189,6 +204,52 @@ class QueryResponse:
 class PolygonVertex:
     lat_nano: int = 0
     lon_nano: int = 0
+
+
+@dataclass
+class TtlSetRequest:
+    entity_id: int = 0
+    ttl_seconds: int = 0
+    flags: int = 0
+
+
+@dataclass
+class TtlSetResponse:
+    entity_id: int = 0
+    previous_ttl_seconds: int = 0
+    new_ttl_seconds: int = 0
+    result: TtlOperationResult = TtlOperationResult.SUCCESS
+    _padding: int[3] = 0
+
+
+@dataclass
+class TtlExtendRequest:
+    entity_id: int = 0
+    extend_by_seconds: int = 0
+    flags: int = 0
+
+
+@dataclass
+class TtlExtendResponse:
+    entity_id: int = 0
+    previous_ttl_seconds: int = 0
+    new_ttl_seconds: int = 0
+    result: TtlOperationResult = TtlOperationResult.SUCCESS
+    _padding: int[3] = 0
+
+
+@dataclass
+class TtlClearRequest:
+    entity_id: int = 0
+    flags: int = 0
+
+
+@dataclass
+class TtlClearResponse:
+    entity_id: int = 0
+    previous_ttl_seconds: int = 0
+    result: TtlOperationResult = TtlOperationResult.SUCCESS
+    _padding: int[3] = 0
 
 
 class CPacket(ctypes.Structure):
@@ -540,6 +601,184 @@ CPolygonVertex._fields_ = [ # noqa: SLF001
 ]
 
 
+class CTtlSetRequest(ctypes.Structure):
+    @classmethod
+    def from_param(cls, obj: Any) -> Self:
+        validate_uint(bits=128, name="entity_id", number=obj.entity_id)
+        validate_uint(bits=32, name="ttl_seconds", number=obj.ttl_seconds)
+        validate_uint(bits=32, name="flags", number=obj.flags)
+        return cls(
+            entity_id=c_uint128.from_param(obj.entity_id),
+            ttl_seconds=obj.ttl_seconds,
+            flags=obj.flags,
+        )
+
+
+    def to_python(self) -> TtlSetRequest:
+        return TtlSetRequest(
+            entity_id=self.entity_id.to_python(),
+            ttl_seconds=self.ttl_seconds,
+            flags=self.flags,
+        )
+
+CTtlSetRequest._fields_ = [ # noqa: SLF001
+    ("entity_id", c_uint128),
+    ("ttl_seconds", ctypes.c_uint32),
+    ("flags", ctypes.c_uint32),
+    ("reserved", ctypes.c_uint8 * 40),
+]
+
+
+class CTtlSetResponse(ctypes.Structure):
+    @classmethod
+    def from_param(cls, obj: Any) -> Self:
+        validate_uint(bits=128, name="entity_id", number=obj.entity_id)
+        validate_uint(bits=32, name="previous_ttl_seconds", number=obj.previous_ttl_seconds)
+        validate_uint(bits=32, name="new_ttl_seconds", number=obj.new_ttl_seconds)
+        return cls(
+            entity_id=c_uint128.from_param(obj.entity_id),
+            previous_ttl_seconds=obj.previous_ttl_seconds,
+            new_ttl_seconds=obj.new_ttl_seconds,
+            result=obj.result,
+            _padding=obj._padding,
+        )
+
+
+    def to_python(self) -> TtlSetResponse:
+        return TtlSetResponse(
+            entity_id=self.entity_id.to_python(),
+            previous_ttl_seconds=self.previous_ttl_seconds,
+            new_ttl_seconds=self.new_ttl_seconds,
+            result=TtlOperationResult(self.result),
+            _padding=self._padding,
+        )
+
+CTtlSetResponse._fields_ = [ # noqa: SLF001
+    ("entity_id", c_uint128),
+    ("previous_ttl_seconds", ctypes.c_uint32),
+    ("new_ttl_seconds", ctypes.c_uint32),
+    ("result", ctypes.c_uint8),
+    ("_padding", ctypes.c_uint8 * 3),
+    ("reserved", ctypes.c_uint8 * 32),
+]
+
+
+class CTtlExtendRequest(ctypes.Structure):
+    @classmethod
+    def from_param(cls, obj: Any) -> Self:
+        validate_uint(bits=128, name="entity_id", number=obj.entity_id)
+        validate_uint(bits=32, name="extend_by_seconds", number=obj.extend_by_seconds)
+        validate_uint(bits=32, name="flags", number=obj.flags)
+        return cls(
+            entity_id=c_uint128.from_param(obj.entity_id),
+            extend_by_seconds=obj.extend_by_seconds,
+            flags=obj.flags,
+        )
+
+
+    def to_python(self) -> TtlExtendRequest:
+        return TtlExtendRequest(
+            entity_id=self.entity_id.to_python(),
+            extend_by_seconds=self.extend_by_seconds,
+            flags=self.flags,
+        )
+
+CTtlExtendRequest._fields_ = [ # noqa: SLF001
+    ("entity_id", c_uint128),
+    ("extend_by_seconds", ctypes.c_uint32),
+    ("flags", ctypes.c_uint32),
+    ("reserved", ctypes.c_uint8 * 40),
+]
+
+
+class CTtlExtendResponse(ctypes.Structure):
+    @classmethod
+    def from_param(cls, obj: Any) -> Self:
+        validate_uint(bits=128, name="entity_id", number=obj.entity_id)
+        validate_uint(bits=32, name="previous_ttl_seconds", number=obj.previous_ttl_seconds)
+        validate_uint(bits=32, name="new_ttl_seconds", number=obj.new_ttl_seconds)
+        return cls(
+            entity_id=c_uint128.from_param(obj.entity_id),
+            previous_ttl_seconds=obj.previous_ttl_seconds,
+            new_ttl_seconds=obj.new_ttl_seconds,
+            result=obj.result,
+            _padding=obj._padding,
+        )
+
+
+    def to_python(self) -> TtlExtendResponse:
+        return TtlExtendResponse(
+            entity_id=self.entity_id.to_python(),
+            previous_ttl_seconds=self.previous_ttl_seconds,
+            new_ttl_seconds=self.new_ttl_seconds,
+            result=TtlOperationResult(self.result),
+            _padding=self._padding,
+        )
+
+CTtlExtendResponse._fields_ = [ # noqa: SLF001
+    ("entity_id", c_uint128),
+    ("previous_ttl_seconds", ctypes.c_uint32),
+    ("new_ttl_seconds", ctypes.c_uint32),
+    ("result", ctypes.c_uint8),
+    ("_padding", ctypes.c_uint8 * 3),
+    ("reserved", ctypes.c_uint8 * 32),
+]
+
+
+class CTtlClearRequest(ctypes.Structure):
+    @classmethod
+    def from_param(cls, obj: Any) -> Self:
+        validate_uint(bits=128, name="entity_id", number=obj.entity_id)
+        validate_uint(bits=32, name="flags", number=obj.flags)
+        return cls(
+            entity_id=c_uint128.from_param(obj.entity_id),
+            flags=obj.flags,
+        )
+
+
+    def to_python(self) -> TtlClearRequest:
+        return TtlClearRequest(
+            entity_id=self.entity_id.to_python(),
+            flags=self.flags,
+        )
+
+CTtlClearRequest._fields_ = [ # noqa: SLF001
+    ("entity_id", c_uint128),
+    ("flags", ctypes.c_uint32),
+    ("reserved", ctypes.c_uint8 * 44),
+]
+
+
+class CTtlClearResponse(ctypes.Structure):
+    @classmethod
+    def from_param(cls, obj: Any) -> Self:
+        validate_uint(bits=128, name="entity_id", number=obj.entity_id)
+        validate_uint(bits=32, name="previous_ttl_seconds", number=obj.previous_ttl_seconds)
+        return cls(
+            entity_id=c_uint128.from_param(obj.entity_id),
+            previous_ttl_seconds=obj.previous_ttl_seconds,
+            result=obj.result,
+            _padding=obj._padding,
+        )
+
+
+    def to_python(self) -> TtlClearResponse:
+        return TtlClearResponse(
+            entity_id=self.entity_id.to_python(),
+            previous_ttl_seconds=self.previous_ttl_seconds,
+            result=TtlOperationResult(self.result),
+            _padding=self._padding,
+        )
+
+CTtlClearResponse._fields_ = [ # noqa: SLF001
+    ("entity_id", c_uint128),
+    ("previous_ttl_seconds", ctypes.c_uint32),
+    ("result", ctypes.c_uint8),
+    ("_padding", ctypes.c_uint8 * 3),
+    ("reserved", ctypes.c_uint8 * 36),
+]
+
+
 # Don't be tempted to use c_char_p for bytes_ptr - it's for null terminated strings only.
 OnCompletion = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.POINTER(CPacket),
                                 ctypes.c_uint64, ctypes.c_void_p, ctypes.c_uint32)
@@ -649,6 +888,30 @@ class AsyncStateMachineMixin:
             CGeoEvent,
         )
 
+    # TTL Operations (v2.1 Manual TTL Support)
+    async def ttl_set(self, request: TtlSetRequest) -> list[TtlSetResponse]:
+        return await self._submit(  # type: ignore[no-any-return]
+            Operation.TTL_SET,
+            [request],
+            CTtlSetRequest,
+            CTtlSetResponse,
+        )
+
+    async def ttl_extend(self, request: TtlExtendRequest) -> list[TtlExtendResponse]:
+        return await self._submit(  # type: ignore[no-any-return]
+            Operation.TTL_EXTEND,
+            [request],
+            CTtlExtendRequest,
+            CTtlExtendResponse,
+        )
+
+    async def ttl_clear(self, request: TtlClearRequest) -> list[TtlClearResponse]:
+        return await self._submit(  # type: ignore[no-any-return]
+            Operation.TTL_CLEAR,
+            [request],
+            CTtlClearRequest,
+            CTtlClearResponse,
+        )
 
 
 class StateMachineMixin:
@@ -709,5 +972,29 @@ class StateMachineMixin:
             CGeoEvent,
         )
 
+    # TTL Operations (v2.1 Manual TTL Support)
+    def ttl_set(self, request: TtlSetRequest) -> list[TtlSetResponse]:
+        return self._submit(  # type: ignore[no-any-return]
+            Operation.TTL_SET,
+            [request],
+            CTtlSetRequest,
+            CTtlSetResponse,
+        )
+
+    def ttl_extend(self, request: TtlExtendRequest) -> list[TtlExtendResponse]:
+        return self._submit(  # type: ignore[no-any-return]
+            Operation.TTL_EXTEND,
+            [request],
+            CTtlExtendRequest,
+            CTtlExtendResponse,
+        )
+
+    def ttl_clear(self, request: TtlClearRequest) -> list[TtlClearResponse]:
+        return self._submit(  # type: ignore[no-any-return]
+            Operation.TTL_CLEAR,
+            [request],
+            CTtlClearRequest,
+            CTtlClearResponse,
+        )
 
 

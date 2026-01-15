@@ -35,6 +35,14 @@ const mappings_state_machine = .{
     .{ tb.QueryLatestFilter, "QueryLatestFilter" },
     .{ tb.QueryResponse, "QueryResponse" },
     .{ tb.PolygonVertex, "PolygonVertex" },
+    // TTL Operations (v2.1 Manual TTL Support)
+    .{ tb.TtlOperationResult, "TtlOperationResult" },
+    .{ tb.TtlSetRequest, "TtlSetRequest" },
+    .{ tb.TtlSetResponse, "TtlSetResponse" },
+    .{ tb.TtlExtendRequest, "TtlExtendRequest" },
+    .{ tb.TtlExtendResponse, "TtlExtendResponse" },
+    .{ tb.TtlClearRequest, "TtlClearRequest" },
+    .{ tb.TtlClearResponse, "TtlClearResponse" },
 };
 
 const mappings_all = mappings_vsr ++ mappings_state_machine;

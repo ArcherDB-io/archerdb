@@ -208,3 +208,16 @@ The system SHALL define error codes for encryption operations.
   | 412 | encryption_not_enabled | Encryption required but not configured | No |
   | 413 | key_rotation_in_progress | Key rotation in progress, retry later | Yes |
   | 414 | unsupported_encryption_version | File encrypted with unsupported version | No |
+
+## Implementation Status
+
+| Requirement | Status | Notes |
+|-------------|--------|-------|
+| AES-256-GCM Encryption | ✓ Complete | `encryption.zig` |
+| FileKeyProvider | ✓ Complete | File-based key for dev/testing |
+| AwsKmsKeyProvider | ✓ Complete | AWS KMS integration |
+| VaultKeyProvider | ✓ Complete | HashiCorp Vault integration |
+| DEK Wrapping/Unwrapping | ✓ Complete | AEAD with nonce |
+| Key Rotation Support | ✓ Complete | Re-wrap DEKs mechanism |
+| Encryption Error Codes (410-414) | ✓ Complete | `error_codes.zig` |
+| Encryption Metrics | ✓ Complete | Operations counters |

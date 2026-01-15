@@ -22,10 +22,19 @@ import {
   RadiusQueryOptions,
   PolygonQueryOptions,
   createGeoEvent,
+  prepareGeoEvent,
   createRadiusQuery,
   createPolygonQuery,
   BATCH_SIZE_MAX,
   QUERY_LIMIT_MAX,
+  // TTL types (v2.1 Manual TTL Support)
+  TtlOperationResult,
+  TtlSetRequest,
+  TtlSetResponse,
+  TtlExtendRequest,
+  TtlExtendResponse,
+  TtlClearRequest,
+  TtlClearResponse,
 } from './geo'
 
 // Import native binding for cluster communication
@@ -639,6 +648,7 @@ export class GeoEventBatch {
    * Commits the batch to the cluster.
    *
    * Blocks until all events are replicated to quorum.
+   * Automatically prepares events (generates IDs) before sending.
    *
    * @returns Per-event results (only errors are included)
    * @throws OperationTimeout if commit times out
@@ -647,6 +657,11 @@ export class GeoEventBatch {
   async commit(): Promise<InsertGeoEventsError[]> {
     if (this.events.length === 0) {
       return []
+    }
+
+    // Prepare all events (generate IDs) before sending
+    for (const event of this.events) {
+      prepareGeoEvent(event)
     }
 
     const op = this.operation === 'insert'
@@ -1151,6 +1166,133 @@ export class GeoClient {
       entries_scanned: 0n,
       entries_removed: 0n,
     }
+  }
+
+  // ============================================================================
+  // TTL Operations (v2.1 Manual TTL Support)
+  // ============================================================================
+
+  /**
+   * Sets an absolute TTL for an entity.
+   *
+   * @param entityId - Entity UUID to set TTL for
+   * @param ttlSeconds - Absolute TTL in seconds (0 = never expires)
+   * @returns TTL set response with previous and new TTL values
+   *
+   * @example
+   * ```typescript
+   * // Set 24-hour TTL
+   * const response = await client.setTtl(entityId, 86400)
+   * console.log(`Previous TTL: ${response.previous_ttl_seconds}s`)
+   * console.log(`New TTL: ${response.new_ttl_seconds}s`)
+   * ```
+   */
+  async setTtl(entityId: bigint, ttlSeconds: number): Promise<TtlSetResponse> {
+    this.ensureConnected()
+
+    if (entityId === 0n) {
+      throw new InvalidEntityId('entity_id must not be zero')
+    }
+    if (ttlSeconds < 0) {
+      throw new Error('ttlSeconds must be non-negative')
+    }
+
+    const request: TtlSetRequest = {
+      entity_id: entityId,
+      ttl_seconds: ttlSeconds,
+      flags: 0,
+    }
+
+    const results = await this._submitQuery<TtlSetResponse>(
+      GeoOperation.ttl_set,
+      request
+    )
+
+    if (results.length === 0) {
+      throw new Error('No response from TTL set operation')
+    }
+
+    return results[0]
+  }
+
+  /**
+   * Extends an entity's TTL by a relative amount.
+   *
+   * @param entityId - Entity UUID to extend TTL for
+   * @param extendBySeconds - Number of seconds to extend the TTL by
+   * @returns TTL extend response with previous and new TTL values
+   *
+   * @example
+   * ```typescript
+   * // Extend TTL by 1 day
+   * const response = await client.extendTtl(entityId, 86400)
+   * console.log(`Previous TTL: ${response.previous_ttl_seconds}s`)
+   * console.log(`New TTL: ${response.new_ttl_seconds}s`)
+   * ```
+   */
+  async extendTtl(entityId: bigint, extendBySeconds: number): Promise<TtlExtendResponse> {
+    this.ensureConnected()
+
+    if (entityId === 0n) {
+      throw new InvalidEntityId('entity_id must not be zero')
+    }
+    if (extendBySeconds < 0) {
+      throw new Error('extendBySeconds must be non-negative')
+    }
+
+    const request: TtlExtendRequest = {
+      entity_id: entityId,
+      extend_by_seconds: extendBySeconds,
+      flags: 0,
+    }
+
+    const results = await this._submitQuery<TtlExtendResponse>(
+      GeoOperation.ttl_extend,
+      request
+    )
+
+    if (results.length === 0) {
+      throw new Error('No response from TTL extend operation')
+    }
+
+    return results[0]
+  }
+
+  /**
+   * Clears an entity's TTL, making it never expire.
+   *
+   * @param entityId - Entity UUID to clear TTL for
+   * @returns TTL clear response with previous TTL value
+   *
+   * @example
+   * ```typescript
+   * // Make entity permanent (no expiration)
+   * const response = await client.clearTtl(entityId)
+   * console.log(`Previous TTL: ${response.previous_ttl_seconds}s`)
+   * ```
+   */
+  async clearTtl(entityId: bigint): Promise<TtlClearResponse> {
+    this.ensureConnected()
+
+    if (entityId === 0n) {
+      throw new InvalidEntityId('entity_id must not be zero')
+    }
+
+    const request: TtlClearRequest = {
+      entity_id: entityId,
+      flags: 0,
+    }
+
+    const results = await this._submitQuery<TtlClearResponse>(
+      GeoOperation.ttl_clear,
+      request
+    )
+
+    if (results.length === 0) {
+      throw new Error('No response from TTL clear operation')
+    }
+
+    return results[0]
   }
 
   // ============================================================================

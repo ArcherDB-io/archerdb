@@ -79,6 +79,22 @@ class GeoOperation(IntEnum):
     CLEANUP_EXPIRED = 155  # vsr_operations_reserved (128) + 27
     QUERY_UUID_BATCH = 156 # vsr_operations_reserved (128) + 28
     GET_TOPOLOGY = 157     # vsr_operations_reserved (128) + 29
+    # Manual TTL Operations (v2.1)
+    TTL_SET = 158          # vsr_operations_reserved (128) + 30
+    TTL_EXTEND = 159       # vsr_operations_reserved (128) + 31
+    TTL_CLEAR = 160        # vsr_operations_reserved (128) + 32
+
+
+class TtlOperationResult(IntEnum):
+    """
+    Result codes for TTL operations (v2.1).
+    Maps to TtlOperationResult in ttl.zig
+    """
+    SUCCESS = 0
+    ENTITY_NOT_FOUND = 1
+    INVALID_TTL = 2
+    NOT_PERMITTED = 3
+    ENTITY_IMMUTABLE = 4
 
 
 class InsertGeoEventResult(IntEnum):
@@ -366,6 +382,137 @@ class CleanupResult:
         if self.entries_scanned == 0:
             return 0.0
         return self.entries_removed / self.entries_scanned
+
+
+# ============================================================================
+# TTL Operations (v2.1 Manual TTL Support)
+# ============================================================================
+
+@dataclass
+class TtlSetRequest:
+    """
+    Request to set absolute TTL for an entity (64 bytes).
+    CLI: `archerdb ttl set <entity_id> --ttl=<seconds>`
+    """
+    entity_id: int = 0
+    ttl_seconds: int = 0  # 0 = infinite (use ttl_clear for explicit clear)
+    flags: int = 0
+
+    def to_bytes(self) -> bytes:
+        """Serialize to wire format (64 bytes)."""
+        import struct
+        # u128 entity_id + u32 ttl_seconds + u32 flags + 40 bytes reserved
+        entity_bytes = self.entity_id.to_bytes(16, "little")
+        return entity_bytes + struct.pack("<II", self.ttl_seconds, self.flags) + b"\x00" * 40
+
+
+@dataclass
+class TtlSetResponse:
+    """
+    Response from TTL set operation (64 bytes).
+    """
+    entity_id: int = 0
+    previous_ttl_seconds: int = 0
+    new_ttl_seconds: int = 0
+    result: TtlOperationResult = TtlOperationResult.SUCCESS
+
+    @classmethod
+    def from_bytes(cls, data: bytes) -> "TtlSetResponse":
+        """Parse response from wire format."""
+        if len(data) < 64:
+            raise ValueError(f"TtlSetResponse requires 64 bytes, got {len(data)}")
+        import struct
+        entity_id = int.from_bytes(data[:16], "little")
+        prev_ttl, new_ttl, result_code = struct.unpack("<IIB", data[16:25])
+        return cls(
+            entity_id=entity_id,
+            previous_ttl_seconds=prev_ttl,
+            new_ttl_seconds=new_ttl,
+            result=TtlOperationResult(result_code),
+        )
+
+
+@dataclass
+class TtlExtendRequest:
+    """
+    Request to extend TTL by an amount (64 bytes).
+    CLI: `archerdb ttl extend <entity_id> --by=<seconds>`
+    """
+    entity_id: int = 0
+    extend_by_seconds: int = 0
+    flags: int = 0
+
+    def to_bytes(self) -> bytes:
+        """Serialize to wire format (64 bytes)."""
+        import struct
+        entity_bytes = self.entity_id.to_bytes(16, "little")
+        return entity_bytes + struct.pack("<II", self.extend_by_seconds, self.flags) + b"\x00" * 40
+
+
+@dataclass
+class TtlExtendResponse:
+    """
+    Response from TTL extend operation (64 bytes).
+    """
+    entity_id: int = 0
+    previous_ttl_seconds: int = 0
+    new_ttl_seconds: int = 0
+    result: TtlOperationResult = TtlOperationResult.SUCCESS
+
+    @classmethod
+    def from_bytes(cls, data: bytes) -> "TtlExtendResponse":
+        """Parse response from wire format."""
+        if len(data) < 64:
+            raise ValueError(f"TtlExtendResponse requires 64 bytes, got {len(data)}")
+        import struct
+        entity_id = int.from_bytes(data[:16], "little")
+        prev_ttl, new_ttl, result_code = struct.unpack("<IIB", data[16:25])
+        return cls(
+            entity_id=entity_id,
+            previous_ttl_seconds=prev_ttl,
+            new_ttl_seconds=new_ttl,
+            result=TtlOperationResult(result_code),
+        )
+
+
+@dataclass
+class TtlClearRequest:
+    """
+    Request to clear TTL (entity never expires) (64 bytes).
+    CLI: `archerdb ttl clear <entity_id>`
+    """
+    entity_id: int = 0
+    flags: int = 0
+
+    def to_bytes(self) -> bytes:
+        """Serialize to wire format (64 bytes)."""
+        import struct
+        entity_bytes = self.entity_id.to_bytes(16, "little")
+        return entity_bytes + struct.pack("<I", self.flags) + b"\x00" * 44
+
+
+@dataclass
+class TtlClearResponse:
+    """
+    Response from TTL clear operation (64 bytes).
+    """
+    entity_id: int = 0
+    previous_ttl_seconds: int = 0
+    result: TtlOperationResult = TtlOperationResult.SUCCESS
+
+    @classmethod
+    def from_bytes(cls, data: bytes) -> "TtlClearResponse":
+        """Parse response from wire format."""
+        if len(data) < 64:
+            raise ValueError(f"TtlClearResponse requires 64 bytes, got {len(data)}")
+        import struct
+        entity_id = int.from_bytes(data[:16], "little")
+        prev_ttl, result_code = struct.unpack("<IB", data[16:21])
+        return cls(
+            entity_id=entity_id,
+            previous_ttl_seconds=prev_ttl,
+            result=TtlOperationResult(result_code),
+        )
 
 
 # ============================================================================

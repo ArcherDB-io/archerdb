@@ -169,3 +169,13 @@ The system SHALL define error codes for TTL extension operations.
   | 241 | ttl_extension_max_reached | Entity has reached maximum TTL | No |
   | 242 | ttl_extension_count_exceeded | Entity has reached maximum extension count | No |
   | 243 | ttl_cooldown_active | TTL extension cooldown period active | No |
+
+## Implementation Status
+
+| Requirement | Status | Notes |
+|-------------|--------|-------|
+| TTL Extension on Read | ✓ Complete | `ttl.zig` ExtensionConfig, check_extension |
+| TTL Extension Policies | ✓ Complete | no_auto_extend flag, max_extension_count |
+| TTL Extension Metrics | ✓ Complete | ExtensionMetrics struct in `ttl.zig` |
+| Manual TTL Operations | ✓ Complete | State machine handlers, request/response types |
+| TTL Extension Error Codes (240-243) | ✓ Complete | `error_codes.zig` |
