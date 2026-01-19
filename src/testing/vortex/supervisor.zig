@@ -76,12 +76,23 @@ pub fn main(allocator: std.mem.Allocator, args: CLIArgs) !void {
         return error.NotSupported;
     }
 
+    var namespaces_enabled = false;
     if (builtin.os.tag == .linux) {
+        namespaces_enabled = true;
         // Relaunch in fresh pid / network namespaces.
-        try stdx.unshare.maybe_unshare_and_relaunch(allocator, .{
+        stdx.unshare.maybe_unshare_and_relaunch(allocator, .{
             .pid = true,
             .network = true,
-        });
+        }) catch |err| switch (err) {
+            error.UnshareFailure, error.IpLink => {
+                namespaces_enabled = false;
+                log.warn(
+                    "unshare unavailable ({s}); continuing without namespaces",
+                    .{@errorName(err)},
+                );
+            },
+            else => return err,
+        };
     } else {
         log.warn("vortex may spawn runaway processes when run on a non-Linux OS", .{});
         log.warn("vortex may encounter port collisions non-Linux OS", .{});
@@ -190,7 +201,11 @@ pub fn main(allocator: std.mem.Allocator, args: CLIArgs) !void {
     const workload = try Workload.spawn(allocator, &io, proxy_ports[0..args.replica_count], args);
     defer {
         if (workload.process.state == .running) {
-            _ = workload.process.terminate() catch {};
+            if (namespaces_enabled) {
+                _ = workload.process.terminate() catch {};
+            } else {
+                _ = workload.process.terminate_graceful(.seconds(2)) catch {};
+            }
         }
         workload.destroy(allocator);
     }
@@ -203,6 +218,7 @@ pub fn main(allocator: std.mem.Allocator, args: CLIArgs) !void {
         .prng = &prng,
         .test_duration = args.test_duration,
         .faulty = !args.disable_faults,
+        .namespaces_enabled = namespaces_enabled,
     });
     defer supervisor.destroy(allocator);
 
@@ -217,6 +233,7 @@ const Supervisor = struct {
     prng: *stdx.PRNG,
     test_deadline: i128,
     faulty: bool,
+    namespaces_enabled: bool,
 
     fn create(allocator: std.mem.Allocator, options: struct {
         io: *IO,
@@ -226,6 +243,7 @@ const Supervisor = struct {
         prng: *stdx.PRNG,
         test_duration: stdx.Duration,
         faulty: bool,
+        namespaces_enabled: bool,
     }) !*Supervisor {
         const supervisor = try allocator.create(Supervisor);
         errdefer allocator.destroy(supervisor);
@@ -238,6 +256,7 @@ const Supervisor = struct {
             .prng = options.prng,
             .test_deadline = std.time.nanoTimestamp() + options.test_duration.ns,
             .faulty = options.faulty,
+            .namespaces_enabled = options.namespaces_enabled,
         };
         return supervisor;
     }
@@ -442,17 +461,36 @@ const Supervisor = struct {
             }
         } else blk: {
             log.info("terminating workload due to max duration", .{});
-            break :blk try supervisor.workload.process.terminate();
+            if (supervisor.namespaces_enabled) {
+                break :blk try supervisor.workload.process.terminate();
+            }
+            break :blk try supervisor.workload.process.terminate_graceful(.seconds(2));
         };
 
         switch (workload_result) {
             .Signal => |signal| {
                 switch (signal) {
                     std.posix.SIG.KILL => log.info("workload terminated as requested", .{}),
+                    std.posix.SIG.TERM => {
+                        if (!supervisor.namespaces_enabled) {
+                            log.info("workload terminated as requested", .{});
+                        } else {
+                            log.err("workload exited unexpectedly with signal {d}", .{signal});
+                            return error.TestFailed;
+                        }
+                    },
                     else => {
                         log.err("workload exited unexpectedly with signal {d}", .{signal});
                         return error.TestFailed;
                     },
+                }
+            },
+            .Exited => |code| {
+                if (!supervisor.namespaces_enabled and code == 0) {
+                    log.info("workload exited cleanly", .{});
+                } else {
+                    log.err("unexpected workload result: {any}", .{workload_result});
+                    return error.TestFailed;
                 }
             },
             else => {
@@ -679,6 +717,7 @@ const Workload = struct {
 
         const process = try LoggedProcess.spawn(allocator, argv, .{
             .stdout_behavior = .Pipe,
+            .setpgid = true,
         });
         errdefer process.destroy(allocator);
 

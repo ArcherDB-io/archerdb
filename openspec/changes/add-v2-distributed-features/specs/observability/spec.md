@@ -229,9 +229,9 @@ The system SHALL provide enhanced health endpoints for v2 features.
 
 | Requirement | Status | Notes |
 |-------------|--------|-------|
-| Multi-Region Replication Metrics | ✓ Complete | Lag, byte counters |
-| Sharding Metrics | ✓ Complete | Per-shard stats |
-| Encryption Metrics | ✓ Complete | Op counters, cache stats |
-| Tiering Metrics | ✓ Complete | Migration, access patterns |
-| TTL Extension Metrics | ✓ Complete | Counter placeholders |
-| v2 Health Endpoints | ✓ Complete | /health/shards, /health/encryption |
+| Multi-Region Replication Metrics | IMPLEMENTED | `src/replication.zig` |
+| Sharding Metrics | IMPLEMENTED | `src/geo_sharding.zig` |
+| Encryption Metrics | IMPLEMENTED | `src/encryption.zig` |
+| Tiering Metrics | IMPLEMENTED | `src/replication.zig` |
+| TTL Extension Metrics | IMPLEMENTED | `src/replication.zig` |
+| v2 Health Endpoints | IMPLEMENTED | `src/replication.zig` |

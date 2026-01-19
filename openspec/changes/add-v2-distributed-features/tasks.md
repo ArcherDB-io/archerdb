@@ -134,29 +134,27 @@
 - [x] 13.2 Add TTL extension error codes (240-243)
 - [x] 13.3 Update SDK error handling
 
-## Phase 3: v2.2 Advanced Features (Deferred)
-
-> **Note:** Phase 3 features are intentionally deferred to v2.2 release.
+## Phase 3: v2.2 Advanced Features
 
 ### 14. Geo-Sharding (v2.2)
-- [ ] 14.1 Design geo_shard_policy options
-- [ ] 14.2 Implement by_entity_location routing
-- [ ] 14.3 Implement entity-to-region metadata
-- [ ] 14.4 Implement cross-region query aggregation
-- [ ] 14.5 Add geo-sharding configuration
-- [ ] 14.6 Update SDKs for geo-sharding
-- [ ] 14.7 Write geo-sharding tests
+- [x] 14.1 Design geo_shard_policy options
+- [x] 14.2 Implement by_entity_location routing
+- [x] 14.3 Implement entity-to-region metadata
+- [x] 14.4 Implement cross-region query aggregation
+- [x] 14.5 Add geo-sharding configuration
+- [x] 14.6 Update SDKs for geo-sharding
+- [x] 14.7 Write geo-sharding tests
 
 ### 15. Active-Active Replication (v2.2)
-- [ ] 15.1 Design vector clock structure
-- [ ] 15.2 Implement per-entity vector clock tracking
-- [ ] 15.3 Implement conflict detection
-- [ ] 15.4 Implement last-writer-wins resolution
-- [ ] 15.5 Implement primary-wins resolution
-- [ ] 15.6 Add custom resolution hook interface
-- [ ] 15.7 Add conflict audit log
-- [ ] 15.8 Add conflict metrics
-- [ ] 15.9 Write active-active tests
+- [x] 15.1 Design vector clock structure
+- [x] 15.2 Implement per-entity vector clock tracking
+- [x] 15.3 Implement conflict detection
+- [x] 15.4 Implement last-writer-wins resolution
+- [x] 15.5 Implement primary-wins resolution
+- [x] 15.6 Add custom resolution hook interface
+- [x] 15.7 Add conflict audit log
+- [x] 15.8 Add conflict metrics
+- [x] 15.9 Write active-active tests
 
 ## Documentation & Testing
 

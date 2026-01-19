@@ -40,22 +40,16 @@ python3 main.py
 
 Here's what this project does.
 
-## 1. Create accounts
+## 1. Insert GeoEvents
 
-This project starts by creating two accounts (`1` and `2`).
+This project inserts a small batch of GeoEvents around a base coordinate.
 
-## 2. Create a transfer
+## 2. Query by radius
 
-Then it transfers `10` of an amount from account `1` to
-account `2`.
+It then queries for events within a radius of the base coordinate to
+validate spatial filtering.
 
-## 3. Fetch and validate account balances
+## 3. Query by UUID
 
-Then it fetches both accounts, checks they both exist, and
-checks that **account `1`** has:
- * `debits_posted = 10`
- * and `credits_posted = 0`
-
-And that **account `2`** has:
- * `debits_posted= 0`
- * and `credits_posted = 10`
+Finally, it performs a UUID lookup to fetch the latest event for a single
+entity.

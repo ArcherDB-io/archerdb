@@ -68,8 +68,14 @@ pub struct delete_entities_result_t {
 #[derive(Debug, Copy, Clone)]
 pub struct query_uuid_filter_t {
     pub entity_id: u128,
-    pub limit: u32,
-    pub reserved: [u8; 108],
+    pub reserved: [u8; 16],
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct query_uuid_response_t {
+    pub status: u8,
+    pub reserved: [u8; 15],
 }
 
 #[repr(C)]

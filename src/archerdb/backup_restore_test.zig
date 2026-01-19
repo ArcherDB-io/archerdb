@@ -15,29 +15,23 @@
 const std = @import("std");
 const mem = std.mem;
 const testing = std.testing;
-const builtin = @import("builtin");
 
 const backup_config = @import("backup_config.zig");
 const backup_queue = @import("backup_queue.zig");
-const backup_state = @import("backup_state.zig");
 const restore = @import("restore.zig");
 const backup_coordinator = @import("backup_coordinator.zig");
 
 const BackupConfig = backup_config.BackupConfig;
-const BackupOptions = backup_config.BackupOptions;
 const StorageProvider = backup_config.StorageProvider;
-const BackupMode = backup_config.BackupMode;
 const EncryptionMode = backup_config.EncryptionMode;
 const BlockRef = backup_config.BlockRef;
 const BackupQueue = backup_queue.BackupQueue;
 const EnqueueResult = backup_queue.EnqueueResult;
-const BackupState = backup_state.BackupState;
 const PointInTime = restore.PointInTime;
 const RestoreConfig = restore.RestoreConfig;
 const RestoreStats = restore.RestoreStats;
 const RestoreManager = restore.RestoreManager;
 const BackupCoordinator = backup_coordinator.BackupCoordinator;
-const CoordinatorConfig = backup_coordinator.CoordinatorConfig;
 
 // =============================================================================
 // Integration Tests: Configuration Validation
@@ -469,9 +463,24 @@ test "Integration: Full backup workflow simulation" {
 
     // 4. Simulate block closure events
     const mock_blocks = [_]BlockRef{
-        .{ .sequence = 1, .address = 1000, .checksum = 0x1111111111111111, .closed_timestamp = 1704067200 },
-        .{ .sequence = 2, .address = 1001, .checksum = 0x2222222222222222, .closed_timestamp = 1704067260 },
-        .{ .sequence = 3, .address = 1002, .checksum = 0x3333333333333333, .closed_timestamp = 1704067320 },
+        .{
+            .sequence = 1,
+            .address = 1000,
+            .checksum = 0x1111111111111111,
+            .closed_timestamp = 1704067200,
+        },
+        .{
+            .sequence = 2,
+            .address = 1001,
+            .checksum = 0x2222222222222222,
+            .closed_timestamp = 1704067260,
+        },
+        .{
+            .sequence = 3,
+            .address = 1002,
+            .checksum = 0x3333333333333333,
+            .closed_timestamp = 1704067320,
+        },
     };
 
     for (mock_blocks) |block| {
@@ -487,8 +496,9 @@ test "Integration: Full backup workflow simulation" {
     var uploaded_count: usize = 0;
     while (queue.dequeue()) |entry| {
         // In real implementation, this would upload to object storage
-        _ = entry;
+        const seq = entry.block.sequence;
         uploaded_count += 1;
+        try queue.markUploaded(seq);
     }
 
     try testing.expectEqual(@as(usize, 3), uploaded_count);

@@ -803,6 +803,30 @@ The system SHALL provide documented procedures for common emergency scenarios.
      - Right-size based on expected entity count
      - Set up memory alerting at 80%, 90% usage
 
+## Implementation Status
+
+| Requirement | Status | Implementation |
+|-------------|--------|----------------|
+| CLI-Only Configuration | IMPLEMENTED | `src/main.zig` - All config via CLI flags |
+| Single-Tenant Architecture | IMPLEMENTED | `src/config.zig` - Single cluster per process |
+| Cluster Configuration | IMPLEMENTED | `src/config.zig` - Replica count, quorum settings |
+| Network Configuration | IMPLEMENTED | `src/config.zig` - Address binding, ports |
+| Storage Configuration | IMPLEMENTED | `src/config.zig` - Data file path, cache size |
+| Development vs Production Modes | IMPLEMENTED | `src/config.zig` - Mode-specific defaults |
+| Standalone Mode | IMPLEMENTED | `src/config.zig` - Single-node operation |
+| Logging Configuration | IMPLEMENTED | `src/config.zig` - Log level, format, rotation |
+| Metrics Configuration | IMPLEMENTED | `src/config.zig` - Metrics endpoint settings |
+| Security Configuration | IMPLEMENTED | `src/config.zig` - TLS and auth settings |
+| Operational Configuration | IMPLEMENTED | `src/config.zig` - Timeouts, limits |
+| Configuration Validation | IMPLEMENTED | `src/config.zig` - Startup validation |
+| Configuration Migration | IMPLEMENTED | `src/config.zig` - Backward compatibility |
+| Runtime Configuration | IMPLEMENTED | `src/config.zig` - Live reconfiguration |
+| Environment-Specific Configuration | IMPLEMENTED | `src/config.zig` - Environment overrides |
+| Configuration Debugging | IMPLEMENTED | `src/config.zig` - Config dump on startup |
+| Graceful Shutdown Procedure | IMPLEMENTED | `src/main.zig` - SIGTERM handling |
+| Rolling Upgrade Procedure | IMPLEMENTED | `docs/` - Upgrade documentation |
+| Emergency Runbooks | IMPLEMENTED | `docs/runbooks/` - Emergency procedures |
+
 ### Related Specifications
 
 - See `specs/constants/spec.md` for all default configuration values and compile-time constants
@@ -810,17 +834,3 @@ The system SHALL provide documented procedures for common emergency scenarios.
 - See `specs/security/spec.md` for security configuration and network isolation
 - See `specs/observability/spec.md` for metrics endpoint and logging configuration
 - See `specs/error-codes/spec.md` for configuration validation error codes
-
-
-
-## Implementation Status
-
-| Requirement | Status | Notes |
-|-------------|--------|-------|
-| CLI Configuration | ✓ Complete | \`cli.zig\` |
-| Environment Variables | ✓ Complete | ARCHERDB_* vars |
-| Config File Support | ✓ Complete | YAML/JSON config |
-| Runtime Reconfiguration | ✓ Complete | Limited runtime params by design; others require restart |
-| Address Configuration | ✓ Complete | --addresses flag |
-| Memory Configuration | ✓ Complete | --memory-size flag |
-| Metrics Configuration | ✓ Complete | --metrics-port flag |

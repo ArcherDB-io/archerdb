@@ -532,6 +532,18 @@ pub const Registry = struct {
         null,
     );
 
+    pub var index_entries_total: Gauge = Gauge.init(
+        "archerdb_index_entries_total",
+        "Total entity count in primary index",
+        null,
+    );
+
+    pub var index_memory_bytes: Gauge = Gauge.init(
+        "archerdb_index_memory_bytes",
+        "Estimated RAM index memory usage in bytes",
+        null,
+    );
+
     pub var index_capacity: Gauge = Gauge.init(
         "archerdb_index_capacity",
         "Maximum index capacity",
@@ -637,6 +649,57 @@ pub const Registry = struct {
     // Total disk bytes written by LSM (includes compaction)
     pub var lsm_disk_bytes_written: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
 
+    // TTL-aware compaction: Expired ratio per level (stored as integer scaled by 10000).
+    // Per openspec/changes/add-ttl-aware-compaction: exposes expired_ratio for monitoring.
+    // Value range: 0-10000 represents 0.0000 to 1.0000 ratio.
+    pub var lsm_ttl_expired_ratio_by_level: [7]std.atomic.Value(u32) = [_]std.atomic.Value(u32){
+        std.atomic.Value(u32).init(0), // Level 0
+        std.atomic.Value(u32).init(0), // Level 1
+        std.atomic.Value(u32).init(0), // Level 2
+        std.atomic.Value(u32).init(0), // Level 3
+        std.atomic.Value(u32).init(0), // Level 4
+        std.atomic.Value(u32).init(0), // Level 5
+        std.atomic.Value(u32).init(0), // Level 6
+    };
+
+    // Per-level TTL stats: Estimated total bytes per level.
+    // Per openspec/changes/add-per-level-ttl-stats: enables capacity planning alerts.
+    pub var lsm_bytes_by_level: [7]std.atomic.Value(u64) = [_]std.atomic.Value(u64){
+        std.atomic.Value(u64).init(0), // Level 0
+        std.atomic.Value(u64).init(0), // Level 1
+        std.atomic.Value(u64).init(0), // Level 2
+        std.atomic.Value(u64).init(0), // Level 3
+        std.atomic.Value(u64).init(0), // Level 4
+        std.atomic.Value(u64).init(0), // Level 5
+        std.atomic.Value(u64).init(0), // Level 6
+    };
+
+    // Per-level TTL stats: Estimated expired bytes per level.
+    // Per openspec/changes/add-per-level-ttl-stats: enables "expired_bytes > 100GB" alerts.
+    pub var lsm_ttl_expired_bytes_by_level: [7]std.atomic.Value(u64) = [_]std.atomic.Value(u64){
+        std.atomic.Value(u64).init(0), // Level 0
+        std.atomic.Value(u64).init(0), // Level 1
+        std.atomic.Value(u64).init(0), // Level 2
+        std.atomic.Value(u64).init(0), // Level 3
+        std.atomic.Value(u64).init(0), // Level 4
+        std.atomic.Value(u64).init(0), // Level 5
+        std.atomic.Value(u64).init(0), // Level 6
+    };
+
+    // TTL Extension metrics (per add-v2-distributed-features/specs/ttl-retention/spec.md)
+    // Total number of TTL extensions performed
+    pub var ttl_extensions_total: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+    // Extensions skipped due to cooldown period not elapsed
+    pub var ttl_extensions_skipped_cooldown: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+    // Extensions skipped due to max TTL already reached
+    pub var ttl_extensions_skipped_max_ttl: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+    // Extensions skipped due to max extension count reached
+    pub var ttl_extensions_skipped_max_count: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+    // Extensions skipped due to entity not configured for auto-extend
+    pub var ttl_ext_skipped_no_auto: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+    // Sum of extension amounts in seconds (for computing average)
+    pub var ttl_extension_amount_seconds_sum: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
     // Grid cache metrics (F5.2 - Observability)
     pub var grid_cache_hits_total: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
     pub var grid_cache_misses_total: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
@@ -739,16 +802,20 @@ pub const Registry = struct {
     pub var region_id: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
 
     /// Ship queue depth per follower region
-    pub var replication_ship_queue_depth: [max_followers]std.atomic.Value(u64) = [_]std.atomic.Value(u64){std.atomic.Value(u64).init(0)} ** max_followers;
+    pub var replication_ship_queue_depth: [max_followers]std.atomic.Value(u64) =
+        [_]std.atomic.Value(u64){std.atomic.Value(u64).init(0)} ** max_followers;
 
     /// Total bytes shipped per follower region
-    pub var replication_ship_bytes_total: [max_followers]std.atomic.Value(u64) = [_]std.atomic.Value(u64){std.atomic.Value(u64).init(0)} ** max_followers;
+    pub var replication_ship_bytes_total: [max_followers]std.atomic.Value(u64) =
+        [_]std.atomic.Value(u64){std.atomic.Value(u64).init(0)} ** max_followers;
 
     /// Ship failures per follower region
-    pub var replication_ship_failures_total: [max_followers]std.atomic.Value(u64) = [_]std.atomic.Value(u64){std.atomic.Value(u64).init(0)} ** max_followers;
+    pub var replication_ship_failures_total: [max_followers]std.atomic.Value(u64) =
+        [_]std.atomic.Value(u64){std.atomic.Value(u64).init(0)} ** max_followers;
 
     /// Last ship latency in nanoseconds per follower
-    pub var replication_ship_latency_ns: [max_followers]std.atomic.Value(u64) = [_]std.atomic.Value(u64){std.atomic.Value(u64).init(0)} ** max_followers;
+    pub var replication_ship_latency_ns: [max_followers]std.atomic.Value(u64) =
+        [_]std.atomic.Value(u64){std.atomic.Value(u64).init(0)} ** max_followers;
 
     /// Replication lag in operations (follower perspective)
     pub var replication_lag_ops: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
@@ -774,7 +841,29 @@ pub const Registry = struct {
     pub var shard_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1);
 
     /// Entities per shard (approximate)
-    pub var shard_entity_count: [max_shards]std.atomic.Value(u64) = [_]std.atomic.Value(u64){std.atomic.Value(u64).init(0)} ** max_shards;
+    pub var shard_entity_count: [max_shards]std.atomic.Value(u64) =
+        [_]std.atomic.Value(u64){std.atomic.Value(u64).init(0)} ** max_shards;
+
+    /// Size per shard in bytes (approximate)
+    pub var shard_size_bytes: [max_shards]std.atomic.Value(u64) =
+        [_]std.atomic.Value(u64){std.atomic.Value(u64).init(0)} ** max_shards;
+
+    /// Write rate per shard (ops/sec sampled)
+    pub var shard_write_rate: [max_shards]std.atomic.Value(u64) =
+        [_]std.atomic.Value(u64){std.atomic.Value(u64).init(0)} ** max_shards;
+
+    /// Read rate per shard (ops/sec sampled)
+    pub var shard_read_rate: [max_shards]std.atomic.Value(u64) =
+        [_]std.atomic.Value(u64){std.atomic.Value(u64).init(0)} ** max_shards;
+
+    /// Shard balance variance (standard deviation / mean, scaled by 10000)
+    pub var shard_balance_variance: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
+
+    /// Hottest shard ratio (hottest / average, scaled by 10000)
+    pub var shard_hottest_ratio: std.atomic.Value(u32) = std.atomic.Value(u32).init(10000);
+
+    /// Coldest shard ratio (coldest / average, scaled by 10000)
+    pub var shard_coldest_ratio: std.atomic.Value(u32) = std.atomic.Value(u32).init(10000);
 
     /// Resharding status (0=idle, 1=preparing, 2=migrating, 3=finalizing)
     pub var resharding_status: std.atomic.Value(u8) = std.atomic.Value(u8).init(0);
@@ -831,6 +920,44 @@ pub const Registry = struct {
     );
 
     // ========================================================================
+    // v2.1 Tiering Metrics (Hot-Warm-Cold)
+    // See openspec/changes/add-v2-distributed-features/specs/hybrid-memory/spec.md
+    // ========================================================================
+
+    /// Entity count per tier
+    pub var tier_entity_count_hot: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+    pub var tier_entity_count_warm: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+    pub var tier_entity_count_cold: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
+    /// Size per tier in bytes
+    pub var tier_size_bytes_hot: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+    pub var tier_size_bytes_warm: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+    pub var tier_size_bytes_cold: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
+    /// Access rate per tier (ops/sec)
+    pub var tier_access_rate_hot: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+    pub var tier_access_rate_warm: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+    pub var tier_access_rate_cold: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
+    /// Migration counts by direction
+    pub var tiering_migrations_hot_to_warm: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+    pub var tiering_migrations_warm_to_cold: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+    pub var tiering_migrations_cold_to_warm: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+    pub var tiering_migrations_warm_to_hot: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
+    /// Pending migrations queue depth
+    pub var tiering_queue_depth_demote: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+    pub var tiering_queue_depth_promote: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
+    /// Migration errors
+    pub var tiering_migration_errors_total: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
+    /// Cold tier fetch metrics
+    pub var cold_tier_fetches_total: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+    pub var cold_tier_fetch_bytes_total: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+    pub var cold_tier_latency_ns_sum: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
+    // ========================================================================
     // v2.0 Encryption Metrics
     // See openspec/changes/add-v2-distributed-features/specs/security/spec.md
     // ========================================================================
@@ -875,6 +1002,290 @@ pub const Registry = struct {
 
     /// Key rotation progress (0.0 to 1.0, stored as fixed-point * 1000)
     pub var encryption_rotation_progress: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
+
+    // ========================================================================
+    // AES-NI Hardware Acceleration Metrics
+    // See openspec/changes/add-aesni-encryption/tasks.md
+    // ========================================================================
+
+    /// AES-NI hardware support available (1=yes, 0=no)
+    pub var encryption_aesni_available: Gauge = Gauge.init(
+        "archerdb_encryption_aesni_available",
+        "AES-NI hardware support available (1=yes, 0=no)",
+        null,
+    );
+
+    /// Using software crypto fallback (1=yes, 0=no)
+    pub var encryption_using_software: Gauge = Gauge.init(
+        "archerdb_encryption_using_software",
+        "Using software crypto fallback (1=yes, 0=no)",
+        null,
+    );
+
+    /// Current encryption cipher version (1=AES-GCM, 2=Aegis-256)
+    pub var encryption_cipher_version: Gauge = Gauge.init(
+        "archerdb_encryption_cipher_version",
+        "Current encryption cipher version (1=AES-GCM, 2=Aegis-256)",
+        null,
+    );
+
+    /// Encryption throughput (bytes/sec, rolling average)
+    pub var encryption_throughput_encrypt: Gauge = Gauge.init(
+        "archerdb_encryption_throughput_bytes",
+        "Encryption throughput in bytes per second",
+        "operation=\"encrypt\"",
+    );
+
+    /// Decryption throughput (bytes/sec, rolling average)
+    pub var encryption_throughput_decrypt: Gauge = Gauge.init(
+        "archerdb_encryption_throughput_bytes",
+        "Decryption throughput in bytes per second",
+        "operation=\"decrypt\"",
+    );
+
+    // ========================================================================
+    // Coordinator Mode Metrics
+    // See openspec/changes/add-coordinator-mode/tasks.md
+    // ========================================================================
+
+    // Connection metrics (Task 5.1)
+    /// Active client connections to coordinator
+    pub var coordinator_connections_active: Gauge = Gauge.init(
+        "archerdb_coordinator_connections_active",
+        "Active client connections to coordinator",
+        null,
+    );
+
+    /// Total connections to coordinator
+    pub var coordinator_connections_total: Counter = Counter.init(
+        "archerdb_coordinator_connections_total",
+        "Total connections to coordinator",
+        null,
+    );
+
+    /// Rejected connections to coordinator
+    pub var coordinator_connections_rejected_total: Counter = Counter.init(
+        "archerdb_coordinator_connections_rejected_total",
+        "Rejected connections to coordinator",
+        null,
+    );
+
+    // Query metrics (Task 5.2)
+    /// Coordinator queries (single-shard)
+    pub var coordinator_queries_single: Counter = Counter.init(
+        "archerdb_coordinator_queries_total",
+        "Total coordinator queries",
+        "type=\"single\"",
+    );
+
+    /// Coordinator queries (fan-out)
+    pub var coordinator_queries_fanout: Counter = Counter.init(
+        "archerdb_coordinator_queries_total",
+        "Total coordinator queries",
+        "type=\"fanout\"",
+    );
+
+    /// Coordinator query latency histogram
+    pub var coordinator_query_latency: LatencyHistogram = latencyHistogram(
+        "archerdb_coordinator_query_duration_seconds",
+        "Coordinator query duration in seconds",
+        null,
+    );
+
+    /// Coordinator query errors (timeout)
+    pub var coordinator_query_errors_timeout: Counter = Counter.init(
+        "archerdb_coordinator_query_errors_total",
+        "Coordinator query errors",
+        "reason=\"timeout\"",
+    );
+
+    /// Coordinator query errors (shard unavailable)
+    pub var coordinator_query_errors_unavailable: Counter = Counter.init(
+        "archerdb_coordinator_query_errors_total",
+        "Coordinator query errors",
+        "reason=\"shard_unavailable\"",
+    );
+
+    // Shard metrics (Task 5.3)
+    /// Total shards known to coordinator
+    pub var coordinator_shards_total: Gauge = Gauge.init(
+        "archerdb_coordinator_shards_total",
+        "Total shards known to coordinator",
+        null,
+    );
+
+    /// Healthy shards count
+    pub var coordinator_shards_healthy: Gauge = Gauge.init(
+        "archerdb_coordinator_shards_healthy",
+        "Number of healthy shards",
+        null,
+    );
+
+    /// Total shard failures detected
+    pub var coordinator_shard_failures_total: Counter = Counter.init(
+        "archerdb_coordinator_shard_failures_total",
+        "Total shard failures detected",
+        null,
+    );
+
+    // Topology metrics (Task 5.4)
+    /// Current topology version
+    pub var coordinator_topology_version: Gauge = Gauge.init(
+        "archerdb_coordinator_topology_version",
+        "Current topology version",
+        null,
+    );
+
+    /// Total topology updates
+    pub var coordinator_topology_updates_total: Counter = Counter.init(
+        "archerdb_coordinator_topology_updates_total",
+        "Total topology updates received",
+        null,
+    );
+
+    /// Topology refresh errors
+    pub var coordinator_topology_refresh_errors_total: Counter = Counter.init(
+        "archerdb_coordinator_topology_refresh_errors_total",
+        "Topology refresh errors",
+        null,
+    );
+
+    // Fan-out metrics (Task 5.5)
+    /// Fan-out shards queried (last operation)
+    pub var coordinator_fanout_shards_queried: Gauge = Gauge.init(
+        "archerdb_coordinator_fanout_shards_queried",
+        "Number of shards queried in last fan-out operation",
+        null,
+    );
+
+    /// Partial result count
+    pub var coordinator_fanout_partial_total: Counter = Counter.init(
+        "archerdb_coordinator_fanout_partial_total",
+        "Fan-out queries returning partial results",
+        null,
+    );
+
+    // ========================================================================
+    // Index Resize Metrics
+    // See openspec/changes/add-online-index-rehash/tasks.md
+    // ========================================================================
+
+    /// Index resize status (0=idle, 1=in_progress, 2=completing, 3=aborting)
+    pub var index_resize_status: Gauge = Gauge.init(
+        "archerdb_index_resize_status",
+        "Index resize status (0=idle, 1=in_progress, 2=completing, 3=aborting)",
+        null,
+    );
+
+    /// Index resize progress (0.0 to 1.0, stored as fixed-point * 10000)
+    pub var index_resize_progress: Gauge = Gauge.init(
+        "archerdb_index_resize_progress",
+        "Index resize progress (0.0 to 1.0)",
+        null,
+    );
+
+    /// Entries migrated during resize
+    pub var index_resize_entries_migrated: Gauge = Gauge.init(
+        "archerdb_index_resize_entries_migrated",
+        "Total entries migrated during resize",
+        null,
+    );
+
+    /// Total entries to migrate
+    pub var index_resize_entries_total: Gauge = Gauge.init(
+        "archerdb_index_resize_entries_total",
+        "Total entries to migrate during resize",
+        null,
+    );
+
+    /// Source table size (buckets)
+    pub var index_resize_source_size: Gauge = Gauge.init(
+        "archerdb_index_resize_source_size",
+        "Source table size in buckets",
+        null,
+    );
+
+    /// Target table size (buckets)
+    pub var index_resize_target_size: Gauge = Gauge.init(
+        "archerdb_index_resize_target_size",
+        "Target table size in buckets",
+        null,
+    );
+
+    /// Resize operations total
+    pub var index_resize_operations_total: Counter = Counter.init(
+        "archerdb_index_resize_operations_total",
+        "Total index resize operations completed",
+        null,
+    );
+
+    /// Resize aborts total
+    pub var index_resize_aborts_total: Counter = Counter.init(
+        "archerdb_index_resize_aborts_total",
+        "Total index resize operations aborted",
+        null,
+    );
+
+    // ========================================================================
+    // Membership Metrics
+    // See openspec/changes/add-dynamic-membership/tasks.md
+    // ========================================================================
+
+    /// Current membership state (0=stable, 1=joint, 2=transitioning)
+    pub var membership_state: Gauge = Gauge.init(
+        "archerdb_membership_state",
+        "Current membership state (0=stable, 1=joint, 2=transitioning)",
+        null,
+    );
+
+    /// Number of voting members
+    pub var membership_voters_count: Gauge = Gauge.init(
+        "archerdb_membership_voters_count",
+        "Number of voting members in cluster",
+        null,
+    );
+
+    /// Number of learner members
+    pub var membership_learners_count: Gauge = Gauge.init(
+        "archerdb_membership_learners_count",
+        "Number of learner members in cluster",
+        null,
+    );
+
+    /// Total membership changes
+    pub var membership_changes_total: Counter = Counter.init(
+        "archerdb_membership_changes_total",
+        "Total membership configuration changes",
+        null,
+    );
+
+    /// Membership transitions in progress
+    pub var membership_transitions_in_progress: Gauge = Gauge.init(
+        "archerdb_membership_transitions_in_progress",
+        "Number of membership transitions currently in progress",
+        null,
+    );
+
+    /// Membership transition progress (0.0 to 1.0, stored as * 10000)
+    pub var membership_transition_progress: Gauge = Gauge.init(
+        "archerdb_membership_transition_progress",
+        "Progress of current membership transition (0.0 to 1.0)",
+        null,
+    );
+
+    /// Learner promotion total
+    pub var membership_promotions_total: Counter = Counter.init(
+        "archerdb_membership_promotions_total",
+        "Total learner to voter promotions",
+        null,
+    );
+
+    /// Node removal total
+    pub var membership_removals_total: Counter = Counter.init(
+        "archerdb_membership_removals_total",
+        "Total node removals from cluster",
+        null,
+    );
 
     /// Format all metrics as Prometheus text format.
     pub fn format(writer: anytype) !void {
@@ -982,6 +1393,8 @@ pub const Registry = struct {
         try memory_used_bytes.format(writer);
         try data_file_size_bytes.format(writer);
         try index_entries.format(writer);
+        try index_entries_total.format(writer);
+        try index_memory_bytes.format(writer);
         try index_capacity.format(writer);
         try writer.writeAll("\n");
 
@@ -1069,6 +1482,77 @@ pub const Registry = struct {
         } else {
             try writer.writeAll("archerdb_lsm_write_amplification_ratio 0\n");
         }
+        try writer.writeAll("\n");
+
+        // TTL expired ratio per level (per add-ttl-aware-compaction)
+        try writer.writeAll("# HELP archerdb_lsm_ttl_expired_ratio " ++
+            "Estimated expired data ratio per level (0.0-1.0)\n");
+        try writer.writeAll("# TYPE archerdb_lsm_ttl_expired_ratio gauge\n");
+        for (lsm_ttl_expired_ratio_by_level, 0..) |scaled_ratio_atomic, level| {
+            const scaled_ratio = scaled_ratio_atomic.load(.monotonic);
+            const ratio_f64: f64 = @as(f64, @floatFromInt(scaled_ratio)) / 10000.0;
+            try writer.print("archerdb_lsm_ttl_expired_ratio{{level=\"{d}\"}} {d:.4}\n", .{
+                level,
+                ratio_f64,
+            });
+        }
+        try writer.writeAll("\n");
+
+        // Per-level byte estimates (per add-per-level-ttl-stats)
+        try writer.writeAll("# HELP archerdb_lsm_bytes_by_level " ++
+            "Estimated total bytes per LSM level\n");
+        try writer.writeAll("# TYPE archerdb_lsm_bytes_by_level gauge\n");
+        for (lsm_bytes_by_level, 0..) |bytes_atomic, level| {
+            const bytes = bytes_atomic.load(.monotonic);
+            try writer.print("archerdb_lsm_bytes_by_level{{level=\"{d}\"}} {d}\n", .{
+                level,
+                bytes,
+            });
+        }
+        try writer.writeAll("\n");
+
+        // Per-level expired byte estimates (per add-per-level-ttl-stats)
+        try writer.writeAll("# HELP archerdb_lsm_ttl_expired_bytes_by_level " ++
+            "Estimated expired bytes per LSM level\n");
+        try writer.writeAll("# TYPE archerdb_lsm_ttl_expired_bytes_by_level gauge\n");
+        for (lsm_ttl_expired_bytes_by_level, 0..) |bytes_atomic, level| {
+            const bytes = bytes_atomic.load(.monotonic);
+            try writer.print("archerdb_lsm_ttl_expired_bytes_by_level{{level=\"{d}\"}} {d}\n", .{
+                level,
+                bytes,
+            });
+        }
+        try writer.writeAll("\n");
+
+        // TTL Extension metrics (per add-v2-distributed-features/specs/ttl-retention/spec.md)
+        try writer.writeAll(
+            "# HELP archerdb_ttl_extensions_total Total TTL extensions performed\n",
+        );
+        try writer.writeAll("# TYPE archerdb_ttl_extensions_total counter\n");
+        const extensions_total = ttl_extensions_total.load(.monotonic);
+        try writer.print("archerdb_ttl_extensions_total {d}\n", .{extensions_total});
+        try writer.writeAll("\n");
+
+        try writer.writeAll(
+            "# HELP archerdb_ttl_extensions_skipped_total TTL extensions skipped by reason\n",
+        );
+        try writer.writeAll("# TYPE archerdb_ttl_extensions_skipped_total counter\n");
+        const skipped_cooldown = ttl_extensions_skipped_cooldown.load(.monotonic);
+        const skipped_max_ttl = ttl_extensions_skipped_max_ttl.load(.monotonic);
+        const skipped_max_count = ttl_extensions_skipped_max_count.load(.monotonic);
+        const skipped_no_auto = ttl_ext_skipped_no_auto.load(.monotonic);
+        const skip_fmt = "archerdb_ttl_extensions_skipped_total{{reason=\"{s}\"}} {d}\n";
+        try writer.print(skip_fmt, .{ "cooldown", skipped_cooldown });
+        try writer.print(skip_fmt, .{ "max_ttl", skipped_max_ttl });
+        try writer.print(skip_fmt, .{ "max_count", skipped_max_count });
+        try writer.print(skip_fmt, .{ "no_auto_extend", skipped_no_auto });
+        try writer.writeAll("\n");
+
+        try writer.writeAll("# HELP archerdb_ttl_extension_amount_seconds_sum " ++
+            "Sum of TTL extension amounts in seconds\n");
+        try writer.writeAll("# TYPE archerdb_ttl_extension_amount_seconds_sum counter\n");
+        const extension_sum = ttl_extension_amount_seconds_sum.load(.monotonic);
+        try writer.print("archerdb_ttl_extension_amount_seconds_sum {d}\n", .{extension_sum});
         try writer.writeAll("\n");
 
         // Grid cache metrics
@@ -1323,7 +1807,10 @@ pub const Registry = struct {
             try writer.writeAll("# HELP archerdb_replication_lag_ops " ++
                 "Replication lag in operations\n");
             try writer.writeAll("# TYPE archerdb_replication_lag_ops gauge\n");
-            try writer.print("archerdb_replication_lag_ops {d}\n", .{replication_lag_ops.load(.monotonic)});
+            try writer.print(
+                "archerdb_replication_lag_ops {d}\n",
+                .{replication_lag_ops.load(.monotonic)},
+            );
             try writer.writeAll("\n");
 
             try writer.writeAll("# HELP archerdb_replication_lag_seconds " ++
@@ -1337,7 +1824,10 @@ pub const Registry = struct {
             try writer.writeAll("# HELP archerdb_replication_apply_rate " ++
                 "WAL entries applied per second\n");
             try writer.writeAll("# TYPE archerdb_replication_apply_rate gauge\n");
-            try writer.print("archerdb_replication_apply_rate {d}\n", .{replication_apply_rate.load(.monotonic)});
+            try writer.print(
+                "archerdb_replication_apply_rate {d}\n",
+                .{replication_apply_rate.load(.monotonic)},
+            );
             try writer.writeAll("\n");
         }
 
@@ -1347,8 +1837,71 @@ pub const Registry = struct {
 
         try writer.writeAll("# HELP archerdb_shard_count Number of active shards\n");
         try writer.writeAll("# TYPE archerdb_shard_count gauge\n");
-        try writer.print("archerdb_shard_count {d}\n", .{shard_count.load(.monotonic)});
+        const active_shards = shard_count.load(.monotonic);
+        try writer.print("archerdb_shard_count {d}\n", .{active_shards});
         try writer.writeAll("\n");
+
+        // Per-shard metrics (only output for active shards)
+        if (active_shards > 0) {
+            const shard_fmt = "archerdb_{s}{{shard=\"{d}\"}} {d}\n";
+
+            try writer.writeAll("# HELP archerdb_shard_entity_count Entities per shard\n");
+            try writer.writeAll("# TYPE archerdb_shard_entity_count gauge\n");
+            for (0..@min(active_shards, max_shards)) |shard| {
+                const count = shard_entity_count[shard].load(.monotonic);
+                try writer.print(shard_fmt, .{ "shard_entity_count", shard, count });
+            }
+            try writer.writeAll("\n");
+
+            try writer.writeAll("# HELP archerdb_shard_size_bytes Bytes per shard\n");
+            try writer.writeAll("# TYPE archerdb_shard_size_bytes gauge\n");
+            for (0..@min(active_shards, max_shards)) |shard| {
+                const size = shard_size_bytes[shard].load(.monotonic);
+                try writer.print(shard_fmt, .{ "shard_size_bytes", shard, size });
+            }
+            try writer.writeAll("\n");
+
+            try writer.writeAll("# HELP archerdb_shard_write_rate Write ops/sec per shard\n");
+            try writer.writeAll("# TYPE archerdb_shard_write_rate gauge\n");
+            for (0..@min(active_shards, max_shards)) |shard| {
+                const rate = shard_write_rate[shard].load(.monotonic);
+                try writer.print(shard_fmt, .{ "shard_write_rate", shard, rate });
+            }
+            try writer.writeAll("\n");
+
+            try writer.writeAll("# HELP archerdb_shard_read_rate Read ops/sec per shard\n");
+            try writer.writeAll("# TYPE archerdb_shard_read_rate gauge\n");
+            for (0..@min(active_shards, max_shards)) |shard| {
+                const rate = shard_read_rate[shard].load(.monotonic);
+                try writer.print(shard_fmt, .{ "shard_read_rate", shard, rate });
+            }
+            try writer.writeAll("\n");
+
+            // Shard balance metrics
+            try writer.writeAll("# HELP archerdb_shard_balance_variance " ++
+                "Shard load variance (std dev / mean)\n");
+            try writer.writeAll("# TYPE archerdb_shard_balance_variance gauge\n");
+            const variance_scaled = shard_balance_variance.load(.monotonic);
+            const variance: f64 = @as(f64, @floatFromInt(variance_scaled)) / 10000.0;
+            try writer.print("archerdb_shard_balance_variance {d:.4}\n", .{variance});
+            try writer.writeAll("\n");
+
+            try writer.writeAll("# HELP archerdb_shard_hottest_ratio " ++
+                "Hottest shard load / average\n");
+            try writer.writeAll("# TYPE archerdb_shard_hottest_ratio gauge\n");
+            const hottest_scaled = shard_hottest_ratio.load(.monotonic);
+            const hottest: f64 = @as(f64, @floatFromInt(hottest_scaled)) / 10000.0;
+            try writer.print("archerdb_shard_hottest_ratio {d:.4}\n", .{hottest});
+            try writer.writeAll("\n");
+
+            try writer.writeAll("# HELP archerdb_shard_coldest_ratio " ++
+                "Coldest shard load / average\n");
+            try writer.writeAll("# TYPE archerdb_shard_coldest_ratio gauge\n");
+            const coldest_scaled = shard_coldest_ratio.load(.monotonic);
+            const coldest: f64 = @as(f64, @floatFromInt(coldest_scaled)) / 10000.0;
+            try writer.print("archerdb_shard_coldest_ratio {d:.4}\n", .{coldest});
+            try writer.writeAll("\n");
+        }
 
         try writer.writeAll("# HELP archerdb_resharding_status " ++
             "Resharding status (0=idle, 1=preparing, 2=migrating, 3=finalizing)\n");
@@ -1369,25 +1922,37 @@ pub const Registry = struct {
             try writer.writeAll("# HELP archerdb_resharding_entities_exported " ++
                 "Entities exported during resharding\n");
             try writer.writeAll("# TYPE archerdb_resharding_entities_exported counter\n");
-            try writer.print("archerdb_resharding_entities_exported {d}\n", .{resharding_entities_exported.load(.monotonic)});
+            try writer.print(
+                "archerdb_resharding_entities_exported {d}\n",
+                .{resharding_entities_exported.load(.monotonic)},
+            );
             try writer.writeAll("\n");
 
             try writer.writeAll("# HELP archerdb_resharding_entities_imported " ++
                 "Entities imported during resharding\n");
             try writer.writeAll("# TYPE archerdb_resharding_entities_imported counter\n");
-            try writer.print("archerdb_resharding_entities_imported {d}\n", .{resharding_entities_imported.load(.monotonic)});
+            try writer.print(
+                "archerdb_resharding_entities_imported {d}\n",
+                .{resharding_entities_imported.load(.monotonic)},
+            );
             try writer.writeAll("\n");
 
             try writer.writeAll("# HELP archerdb_resharding_source_shards " ++
                 "Source shard count before resharding\n");
             try writer.writeAll("# TYPE archerdb_resharding_source_shards gauge\n");
-            try writer.print("archerdb_resharding_source_shards {d}\n", .{resharding_source_shards.load(.monotonic)});
+            try writer.print(
+                "archerdb_resharding_source_shards {d}\n",
+                .{resharding_source_shards.load(.monotonic)},
+            );
             try writer.writeAll("\n");
 
             try writer.writeAll("# HELP archerdb_resharding_target_shards " ++
                 "Target shard count for resharding\n");
             try writer.writeAll("# TYPE archerdb_resharding_target_shards gauge\n");
-            try writer.print("archerdb_resharding_target_shards {d}\n", .{resharding_target_shards.load(.monotonic)});
+            try writer.print(
+                "archerdb_resharding_target_shards {d}\n",
+                .{resharding_target_shards.load(.monotonic)},
+            );
             try writer.writeAll("\n");
         }
 
@@ -1414,7 +1979,10 @@ pub const Registry = struct {
             try writer.writeAll("# HELP archerdb_resharding_dual_write " ++
                 "Dual-write mode enabled (1=true, 0=false)\n");
             try writer.writeAll("# TYPE archerdb_resharding_dual_write gauge\n");
-            try writer.print("archerdb_resharding_dual_write {d}\n", .{resharding_dual_write_enabled.load(.monotonic)});
+            try writer.print(
+                "archerdb_resharding_dual_write {d}\n",
+                .{resharding_dual_write_enabled.load(.monotonic)},
+            );
             try writer.writeAll("\n");
 
             const migration_rate = resharding_migration_rate.load(.monotonic);
@@ -1430,7 +1998,10 @@ pub const Registry = struct {
             try writer.writeAll("# HELP archerdb_resharding_batches_processed " ++
                 "Number of migration batches processed\n");
             try writer.writeAll("# TYPE archerdb_resharding_batches_processed counter\n");
-            try writer.print("archerdb_resharding_batches_processed {d}\n", .{resharding_batches_processed.load(.monotonic)});
+            try writer.print(
+                "archerdb_resharding_batches_processed {d}\n",
+                .{resharding_batches_processed.load(.monotonic)},
+            );
             try writer.writeAll("\n");
 
             const migration_fail_count = resharding_migration_failures.load(.monotonic);
@@ -1438,7 +2009,10 @@ pub const Registry = struct {
                 try writer.writeAll("# HELP archerdb_resharding_migration_failures " ++
                     "Number of failed migration attempts\n");
                 try writer.writeAll("# TYPE archerdb_resharding_migration_failures counter\n");
-                try writer.print("archerdb_resharding_migration_failures {d}\n", .{migration_fail_count});
+                try writer.print(
+                    "archerdb_resharding_migration_failures {d}\n",
+                    .{migration_fail_count},
+                );
                 try writer.writeAll("\n");
             }
 
@@ -1456,6 +2030,83 @@ pub const Registry = struct {
         try writer.writeAll("\n");
 
         // ====================================================================
+        // v2.1 Tiering Metrics (Hot-Warm-Cold)
+        // ====================================================================
+
+        const tier_fmt = "archerdb_{s}{{tier=\"{s}\"}} {d}\n";
+
+        try writer.writeAll("# HELP archerdb_tier_entity_count Entities per tier\n");
+        try writer.writeAll("# TYPE archerdb_tier_entity_count gauge\n");
+        const ent_hot = tier_entity_count_hot.load(.monotonic);
+        const ent_warm = tier_entity_count_warm.load(.monotonic);
+        const ent_cold = tier_entity_count_cold.load(.monotonic);
+        try writer.print(tier_fmt, .{ "tier_entity_count", "hot", ent_hot });
+        try writer.print(tier_fmt, .{ "tier_entity_count", "warm", ent_warm });
+        try writer.print(tier_fmt, .{ "tier_entity_count", "cold", ent_cold });
+        try writer.writeAll("\n");
+
+        try writer.writeAll("# HELP archerdb_tier_size_bytes Bytes per tier\n");
+        try writer.writeAll("# TYPE archerdb_tier_size_bytes gauge\n");
+        const sz_hot = tier_size_bytes_hot.load(.monotonic);
+        const sz_warm = tier_size_bytes_warm.load(.monotonic);
+        const sz_cold = tier_size_bytes_cold.load(.monotonic);
+        try writer.print(tier_fmt, .{ "tier_size_bytes", "hot", sz_hot });
+        try writer.print(tier_fmt, .{ "tier_size_bytes", "warm", sz_warm });
+        try writer.print(tier_fmt, .{ "tier_size_bytes", "cold", sz_cold });
+        try writer.writeAll("\n");
+
+        try writer.writeAll("# HELP archerdb_tier_access_rate Access rate per tier\n");
+        try writer.writeAll("# TYPE archerdb_tier_access_rate gauge\n");
+        const ar_hot = tier_access_rate_hot.load(.monotonic);
+        const ar_warm = tier_access_rate_warm.load(.monotonic);
+        const ar_cold = tier_access_rate_cold.load(.monotonic);
+        try writer.print(tier_fmt, .{ "tier_access_rate", "hot", ar_hot });
+        try writer.print(tier_fmt, .{ "tier_access_rate", "warm", ar_warm });
+        try writer.print(tier_fmt, .{ "tier_access_rate", "cold", ar_cold });
+        try writer.writeAll("\n");
+
+        try writer.writeAll("# HELP archerdb_tiering_migrations_total Tier migrations\n");
+        try writer.writeAll("# TYPE archerdb_tiering_migrations_total counter\n");
+        const mig_fmt = "archerdb_tiering_migrations_total" ++
+            "{{direction=\"{s}\",from=\"{s}\",to=\"{s}\"}} {d}\n";
+        const mig_hw = tiering_migrations_hot_to_warm.load(.monotonic);
+        const mig_wc = tiering_migrations_warm_to_cold.load(.monotonic);
+        const mig_cw = tiering_migrations_cold_to_warm.load(.monotonic);
+        const mig_wh = tiering_migrations_warm_to_hot.load(.monotonic);
+        try writer.print(mig_fmt, .{ "demote", "hot", "warm", mig_hw });
+        try writer.print(mig_fmt, .{ "demote", "warm", "cold", mig_wc });
+        try writer.print(mig_fmt, .{ "promote", "cold", "warm", mig_cw });
+        try writer.print(mig_fmt, .{ "promote", "warm", "hot", mig_wh });
+        try writer.writeAll("\n");
+
+        try writer.writeAll("# HELP archerdb_tiering_queue_depth Pending migrations\n");
+        try writer.writeAll("# TYPE archerdb_tiering_queue_depth gauge\n");
+        const q_demote = tiering_queue_depth_demote.load(.monotonic);
+        const q_promote = tiering_queue_depth_promote.load(.monotonic);
+        const q_fmt = "archerdb_tiering_queue_depth{{direction=\"{s}\"}} {d}\n";
+        try writer.print(q_fmt, .{ "demote", q_demote });
+        try writer.print(q_fmt, .{ "promote", q_promote });
+        try writer.writeAll("\n");
+
+        try writer.writeAll("# HELP archerdb_tiering_migration_errors_total Errors\n");
+        try writer.writeAll("# TYPE archerdb_tiering_migration_errors_total counter\n");
+        const mig_err = tiering_migration_errors_total.load(.monotonic);
+        try writer.print("archerdb_tiering_migration_errors_total {d}\n", .{mig_err});
+        try writer.writeAll("\n");
+
+        try writer.writeAll("# HELP archerdb_cold_tier_fetches_total Cold tier fetches\n");
+        try writer.writeAll("# TYPE archerdb_cold_tier_fetches_total counter\n");
+        const cold_fetches = cold_tier_fetches_total.load(.monotonic);
+        try writer.print("archerdb_cold_tier_fetches_total {d}\n", .{cold_fetches});
+        try writer.writeAll("\n");
+
+        try writer.writeAll("# HELP archerdb_cold_tier_fetch_bytes_total Cold fetched\n");
+        try writer.writeAll("# TYPE archerdb_cold_tier_fetch_bytes_total counter\n");
+        const cold_bytes = cold_tier_fetch_bytes_total.load(.monotonic);
+        try writer.print("archerdb_cold_tier_fetch_bytes_total {d}\n", .{cold_bytes});
+        try writer.writeAll("\n");
+
+        // ====================================================================
         // v2.0 Encryption Metrics
         // ====================================================================
 
@@ -1469,7 +2120,10 @@ pub const Registry = struct {
         try writer.writeAll("# HELP archerdb_encryption_rotation_status " ++
             "Key rotation status (0=idle, 1=rotating)\n");
         try writer.writeAll("# TYPE archerdb_encryption_rotation_status gauge\n");
-        try writer.print("archerdb_encryption_rotation_status {d}\n", .{encryption_rotation_status.load(.monotonic)});
+        try writer.print(
+            "archerdb_encryption_rotation_status {d}\n",
+            .{encryption_rotation_status.load(.monotonic)},
+        );
         try writer.writeAll("\n");
 
         const rotation_prog = encryption_rotation_progress.load(.monotonic);
@@ -1481,6 +2135,71 @@ pub const Registry = struct {
             try writer.print("archerdb_encryption_rotation_progress {d:.3}\n", .{prog});
             try writer.writeAll("\n");
         }
+
+        // AES-NI Hardware Acceleration Metrics
+        try encryption_aesni_available.format(writer);
+        try encryption_using_software.format(writer);
+        try encryption_cipher_version.format(writer);
+        try encryption_throughput_encrypt.format(writer);
+        try encryption_throughput_decrypt.format(writer);
+        try writer.writeAll("\n");
+
+        // ====================================================================
+        // Coordinator Mode Metrics
+        // ====================================================================
+
+        // Connection metrics
+        try coordinator_connections_active.format(writer);
+        try coordinator_connections_total.format(writer);
+        try coordinator_connections_rejected_total.format(writer);
+        try writer.writeAll("\n");
+
+        // Query metrics
+        try coordinator_queries_single.format(writer);
+        try coordinator_queries_fanout.format(writer);
+        try coordinator_query_latency.format(writer);
+        try coordinator_query_errors_timeout.format(writer);
+        try coordinator_query_errors_unavailable.format(writer);
+        try writer.writeAll("\n");
+
+        // Shard metrics
+        try coordinator_shards_total.format(writer);
+        try coordinator_shards_healthy.format(writer);
+        try coordinator_shard_failures_total.format(writer);
+        try writer.writeAll("\n");
+
+        // Topology metrics
+        try coordinator_topology_version.format(writer);
+        try coordinator_topology_updates_total.format(writer);
+        try coordinator_topology_refresh_errors_total.format(writer);
+        try writer.writeAll("\n");
+
+        // Fan-out metrics
+        try coordinator_fanout_shards_queried.format(writer);
+        try coordinator_fanout_partial_total.format(writer);
+        try writer.writeAll("\n");
+
+        // Index resize metrics
+        try index_resize_status.format(writer);
+        try index_resize_progress.format(writer);
+        try index_resize_entries_migrated.format(writer);
+        try index_resize_entries_total.format(writer);
+        try index_resize_source_size.format(writer);
+        try index_resize_target_size.format(writer);
+        try index_resize_operations_total.format(writer);
+        try index_resize_aborts_total.format(writer);
+        try writer.writeAll("\n");
+
+        // Membership metrics
+        try membership_state.format(writer);
+        try membership_voters_count.format(writer);
+        try membership_learners_count.format(writer);
+        try membership_changes_total.format(writer);
+        try membership_transitions_in_progress.format(writer);
+        try membership_transition_progress.format(writer);
+        try membership_promotions_total.format(writer);
+        try membership_removals_total.format(writer);
+        try writer.writeAll("\n");
     }
 
     /// Update VSR metrics from replica state.
@@ -1568,12 +2287,15 @@ pub const Registry = struct {
         storage_size: u64,
         idx_entries: u64,
         idx_capacity: u64,
+        idx_memory_bytes: u64,
     ) void {
         memory_allocated_bytes.set(@intCast(mem_allocated));
         memory_used_bytes.set(@intCast(mem_used));
         data_file_size_bytes.set(@intCast(storage_size));
         index_entries.set(@intCast(idx_entries));
+        index_entries_total.set(@intCast(idx_entries));
         index_capacity.set(@intCast(idx_capacity));
+        index_memory_bytes.set(@intCast(idx_memory_bytes));
 
         // Calculate index load factor (scaled by 1000 for gauge precision)
         // e.g., 500 = 0.5 (50% full), 900 = 0.9 (90% full)
@@ -1624,6 +2346,30 @@ pub const Registry = struct {
     pub fn recordUserBytesWritten(bytes: u64) void {
         _ = lsm_user_bytes_written.fetchAdd(bytes, .monotonic);
         _ = lsm_disk_bytes_written.fetchAdd(bytes, .monotonic);
+    }
+
+    /// Update TTL expired ratio for a specific level.
+    /// Per openspec/changes/add-ttl-aware-compaction: Called after bar_complete to update metrics.
+    /// ratio: f64 value between 0.0 and 1.0
+    /// level: LSM level (0-6)
+    pub fn updateTtlExpiredRatio(level: u8, ratio: f64) void {
+        if (level < lsm_ttl_expired_ratio_by_level.len) {
+            // Scale ratio to integer (0.0-1.0 -> 0-10000)
+            const scaled_ratio: u32 = @intFromFloat(@min(1.0, @max(0.0, ratio)) * 10000.0);
+            lsm_ttl_expired_ratio_by_level[level].store(scaled_ratio, .monotonic);
+        }
+    }
+
+    /// Update level byte estimates.
+    /// Per openspec/changes/add-per-level-ttl-stats: Called after bar_complete to update metrics.
+    /// level: LSM level (0-6)
+    /// total_bytes: Estimated total bytes in level
+    /// expired_bytes: Estimated expired bytes in level
+    pub fn updateLevelBytes(level: u8, total_bytes: u64, expired_bytes: u64) void {
+        if (level < lsm_bytes_by_level.len) {
+            lsm_bytes_by_level[level].store(total_bytes, .monotonic);
+            lsm_ttl_expired_bytes_by_level[level].store(expired_bytes, .monotonic);
+        }
     }
 
     /// Update LSM level metrics (table counts and sizes per level).
@@ -2143,4 +2889,242 @@ test "Registry: free set threshold with zero total" {
 
     // Zero total should not trigger emergency compaction
     try std.testing.expect(!Registry.shouldTriggerEmergencyCompaction(0, 0));
+}
+
+// ============================================================================
+// TTL Expired Ratio Metric Tests
+// Per openspec/changes/add-ttl-aware-compaction: verify metric update and format.
+// ============================================================================
+
+test "Registry: TTL expired ratio update" {
+    // Test basic update functionality
+    Registry.updateTtlExpiredRatio(1, 0.5);
+    const scaled = Registry.lsm_ttl_expired_ratio_by_level[1].load(.monotonic);
+    try std.testing.expectEqual(@as(u32, 5000), scaled); // 0.5 * 10000 = 5000
+
+    // Test boundary values
+    Registry.updateTtlExpiredRatio(2, 0.0);
+    const lvl2 = Registry.lsm_ttl_expired_ratio_by_level[2].load(.monotonic);
+    try std.testing.expectEqual(@as(u32, 0), lvl2);
+
+    Registry.updateTtlExpiredRatio(3, 1.0);
+    const lvl3 = Registry.lsm_ttl_expired_ratio_by_level[3].load(.monotonic);
+    try std.testing.expectEqual(@as(u32, 10000), lvl3);
+}
+
+test "Registry: TTL expired ratio clamps to valid range" {
+    // Test that values are clamped to [0, 1]
+    Registry.updateTtlExpiredRatio(4, 1.5); // Above 1.0
+    const scaled_above = Registry.lsm_ttl_expired_ratio_by_level[4].load(.monotonic);
+    try std.testing.expectEqual(@as(u32, 10000), scaled_above); // Clamped to 1.0
+
+    Registry.updateTtlExpiredRatio(5, -0.5); // Below 0.0
+    const scaled_below = Registry.lsm_ttl_expired_ratio_by_level[5].load(.monotonic);
+    try std.testing.expectEqual(@as(u32, 0), scaled_below); // Clamped to 0.0
+}
+
+test "Registry: TTL expired ratio invalid level ignored" {
+    // Test that invalid level doesn't cause issues
+    // Level 7+ is out of bounds for our 7-element array
+    Registry.updateTtlExpiredRatio(10, 0.5); // Should be silently ignored
+    // No crash = test passes
+}
+
+test "Registry: TTL expired ratio precision" {
+    // Test that small ratios are preserved with reasonable precision
+    Registry.updateTtlExpiredRatio(0, 0.0001); // 0.01%
+    const scaled = Registry.lsm_ttl_expired_ratio_by_level[0].load(.monotonic);
+    try std.testing.expectEqual(@as(u32, 1), scaled); // 0.0001 * 10000 = 1
+
+    Registry.updateTtlExpiredRatio(6, 0.3333); // 33.33%
+    const scaled_third = Registry.lsm_ttl_expired_ratio_by_level[6].load(.monotonic);
+    try std.testing.expectEqual(@as(u32, 3333), scaled_third); // 0.3333 * 10000 = 3333
+}
+
+// ============================================================================
+// Per-Level Byte Stats Metric Tests
+// Per openspec/changes/add-per-level-ttl-stats: verify byte metric update and format.
+// ============================================================================
+
+test "Registry: Level bytes update" {
+    // Test basic update functionality
+    Registry.updateLevelBytes(1, 1024 * 1024, 512 * 1024); // 1MB total, 512KB expired
+    const total = Registry.lsm_bytes_by_level[1].load(.monotonic);
+    const expired = Registry.lsm_ttl_expired_bytes_by_level[1].load(.monotonic);
+    try std.testing.expectEqual(@as(u64, 1024 * 1024), total);
+    try std.testing.expectEqual(@as(u64, 512 * 1024), expired);
+}
+
+test "Registry: Level bytes zero values" {
+    // Test zero byte values
+    Registry.updateLevelBytes(2, 0, 0);
+    const total = Registry.lsm_bytes_by_level[2].load(.monotonic);
+    const expired = Registry.lsm_ttl_expired_bytes_by_level[2].load(.monotonic);
+    try std.testing.expectEqual(@as(u64, 0), total);
+    try std.testing.expectEqual(@as(u64, 0), expired);
+}
+
+test "Registry: Level bytes large values" {
+    // Test large byte values (100GB)
+    const gb_100: u64 = 100 * 1024 * 1024 * 1024;
+    const gb_50: u64 = 50 * 1024 * 1024 * 1024;
+    Registry.updateLevelBytes(3, gb_100, gb_50);
+    const total = Registry.lsm_bytes_by_level[3].load(.monotonic);
+    const expired = Registry.lsm_ttl_expired_bytes_by_level[3].load(.monotonic);
+    try std.testing.expectEqual(gb_100, total);
+    try std.testing.expectEqual(gb_50, expired);
+}
+
+test "Registry: Level bytes invalid level ignored" {
+    // Test that invalid level doesn't cause issues
+    Registry.updateLevelBytes(10, 1000, 500); // Level 10 is out of bounds
+    // No crash = test passes
+}
+
+test "Registry: Level bytes overwrite" {
+    // Test that values can be overwritten
+    Registry.updateLevelBytes(4, 1000, 500);
+    Registry.updateLevelBytes(4, 2000, 1000);
+    const total = Registry.lsm_bytes_by_level[4].load(.monotonic);
+    const expired = Registry.lsm_ttl_expired_bytes_by_level[4].load(.monotonic);
+    try std.testing.expectEqual(@as(u64, 2000), total);
+    try std.testing.expectEqual(@as(u64, 1000), expired);
+}
+
+// ============================================================================
+// Index Resize Metrics Tests
+// Per openspec/changes/add-online-index-rehash: verify resize progress metrics.
+// ============================================================================
+
+test "Registry: Index resize metrics format output" {
+    // Set test values
+    Registry.index_resize_status.set(1); // in_progress
+    Registry.index_resize_progress.set(5000); // 50%
+    Registry.index_resize_entries_migrated.set(1000);
+    Registry.index_resize_entries_total.set(2000);
+    Registry.index_resize_source_size.set(1024);
+    Registry.index_resize_target_size.set(2048);
+
+    // Use large buffer to accommodate all metrics
+    var buf: [65536]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buf);
+
+    try Registry.format(fbs.writer());
+
+    const output = fbs.getWritten();
+
+    // Verify index resize metrics are present
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_index_resize_status") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_index_resize_progress") != null);
+    const migrated = "archerdb_index_resize_entries_migrated";
+    try std.testing.expect(std.mem.indexOf(u8, output, migrated) != null);
+    const total = "archerdb_index_resize_entries_total";
+    try std.testing.expect(std.mem.indexOf(u8, output, total) != null);
+}
+
+test "Registry: Index resize counters" {
+    // Reset counters
+    Registry.index_resize_operations_total = Counter.init(
+        "archerdb_index_resize_operations_total",
+        "Total index resize operations completed",
+        null,
+    );
+    Registry.index_resize_aborts_total = Counter.init(
+        "archerdb_index_resize_aborts_total",
+        "Total index resize operations aborted",
+        null,
+    );
+
+    // Test counter increments
+    Registry.index_resize_operations_total.inc();
+    Registry.index_resize_operations_total.inc();
+    try std.testing.expectEqual(@as(u64, 2), Registry.index_resize_operations_total.get());
+
+    Registry.index_resize_aborts_total.inc();
+    try std.testing.expectEqual(@as(u64, 1), Registry.index_resize_aborts_total.get());
+}
+
+// ============================================================================
+// Membership Metrics Tests
+// Per openspec/changes/add-dynamic-membership: verify membership progress metrics.
+// ============================================================================
+
+test "Registry: Membership metrics format output" {
+    // Set test values
+    Registry.membership_state.set(1); // joint consensus
+    Registry.membership_voters_count.set(5);
+    Registry.membership_learners_count.set(2);
+    Registry.membership_transitions_in_progress.set(1);
+    Registry.membership_transition_progress.set(7500); // 75%
+
+    // Use large buffer to accommodate all metrics
+    var buf: [65536]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buf);
+
+    try Registry.format(fbs.writer());
+
+    const output = fbs.getWritten();
+
+    // Verify membership metrics are present
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_membership_state") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_membership_voters_count") != null);
+    const learners = "archerdb_membership_learners_count";
+    try std.testing.expect(std.mem.indexOf(u8, output, learners) != null);
+    const transitions = "archerdb_membership_transitions_in_progress";
+    try std.testing.expect(std.mem.indexOf(u8, output, transitions) != null);
+}
+
+test "Registry: Membership counters" {
+    // Reset counters
+    Registry.membership_changes_total = Counter.init(
+        "archerdb_membership_changes_total",
+        "Total membership configuration changes",
+        null,
+    );
+    Registry.membership_promotions_total = Counter.init(
+        "archerdb_membership_promotions_total",
+        "Total learner to voter promotions",
+        null,
+    );
+    Registry.membership_removals_total = Counter.init(
+        "archerdb_membership_removals_total",
+        "Total node removals from cluster",
+        null,
+    );
+
+    // Test counter increments
+    Registry.membership_changes_total.inc();
+    Registry.membership_changes_total.inc();
+    Registry.membership_changes_total.inc();
+    try std.testing.expectEqual(@as(u64, 3), Registry.membership_changes_total.get());
+
+    Registry.membership_promotions_total.inc();
+    try std.testing.expectEqual(@as(u64, 1), Registry.membership_promotions_total.get());
+
+    Registry.membership_removals_total.inc();
+    Registry.membership_removals_total.inc();
+    try std.testing.expectEqual(@as(u64, 2), Registry.membership_removals_total.get());
+}
+
+test "Registry: index health metrics update" {
+    Registry.updateResourceMetrics(1024, 512, 4096, 42, 100, 8192);
+    try std.testing.expectEqual(@as(i64, 42), Registry.index_entries.get());
+    try std.testing.expectEqual(@as(i64, 42), Registry.index_entries_total.get());
+    try std.testing.expectEqual(@as(i64, 8192), Registry.index_memory_bytes.get());
+    try std.testing.expectEqual(@as(i64, 100), Registry.index_capacity.get());
+}
+
+test "Registry: index health metrics format output" {
+    Registry.updateResourceMetrics(1, 1, 1, 7, 11, 2048);
+
+    var buf: [65536]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buf);
+    try Registry.format(fbs.writer());
+    const output = fbs.getWritten();
+
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_index_entries_total") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_index_memory_bytes") != null);
+    try std.testing.expect(
+        std.mem.indexOf(u8, output, "archerdb_index_lookup_latency_seconds") != null,
+    );
 }

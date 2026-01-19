@@ -26,6 +26,7 @@ const topology_mod = @import("topology.zig");
 pub const GeoEvent = geo_event.GeoEvent;
 pub const GeoEventFlags = geo_event.GeoEventFlags;
 pub const QueryUuidFilter = geo_state_machine.QueryUuidFilter;
+pub const QueryUuidResponse = geo_state_machine.QueryUuidResponse;
 pub const QueryUuidBatchFilter = geo_state_machine.QueryUuidBatchFilter;
 pub const QueryUuidBatchResult = geo_state_machine.QueryUuidBatchResult;
 pub const QueryRadiusFilter = geo_state_machine.QueryRadiusFilter;
@@ -178,7 +179,7 @@ pub const Operation = enum(u8) {
             .insert_events => InsertGeoEventsResult,
             .upsert_events => InsertGeoEventsResult,
             .delete_entities => DeleteEntitiesResult,
-            .query_uuid => GeoEvent,
+            .query_uuid => QueryUuidResponse,
             .query_uuid_batch => QueryUuidBatchResult,
             .query_radius => GeoEvent,
             .query_polygon => GeoEvent,
@@ -395,8 +396,18 @@ pub const Operation = enum(u8) {
             },
 
             // ArcherDB geospatial query operations (fixed-size filters)
-            inline .query_uuid,
-            .query_latest,
+            .query_uuid => count: {
+                comptime assert(!Operation.query_uuid.is_batchable());
+
+                const Filter = QueryUuidFilter;
+                comptime assert(@sizeOf(Filter) > 0);
+                assert(batch.len == @sizeOf(Filter));
+                maybe(!std.mem.isAligned(@intFromPtr(batch.ptr), @alignOf(Filter)));
+
+                break :count 1;
+            },
+
+            inline .query_latest,
             .query_radius,
             => |operation_comptime| count: {
                 comptime assert(!operation_comptime.is_batchable());

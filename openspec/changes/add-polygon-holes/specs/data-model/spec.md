@@ -1,3 +1,5 @@
+# Data Model - Polygon Holes
+
 ## ADDED Requirements
 
 ### Requirement: HoleDescriptor Structure
@@ -83,8 +85,5 @@ The `QueryPolygonFilter` structure SHALL be extended to support holes.
 
 | Requirement | Status | Notes |
 |-------------|--------|-------|
-| HoleDescriptor Structure | ✓ Complete | `geo_state_machine.zig:660` |
-| HoleDescriptor 8-byte Size | ✓ Complete | Comptime assertion |
-| QueryPolygonFilter hole_count | ✓ Complete | `geo_state_machine.zig:638` |
-| QueryPolygonFilter 128-byte Size | ✓ Complete | Comptime assertion |
-| Message Body Parsing | ✓ Complete | Variable-length parsing in query_polygon |
+| HoleDescriptor Structure | IMPLEMENTED | `src/geo_state_machine.zig` |
+| Extended QueryPolygonFilter | IMPLEMENTED | `src/geo_state_machine.zig` |

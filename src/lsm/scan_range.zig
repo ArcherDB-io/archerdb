@@ -19,7 +19,7 @@ pub fn ScanRangeType(
     comptime Storage: type,
     comptime EvaluatorContext: type,
     /// Decides whether to exclude a value or stop scanning.
-    /// Useful to implement filters over range scans for custom logic (e.g. expired transfers).
+    /// Useful to implement filters over range scans for custom logic (e.g. expired events).
     comptime value_next: fn (
         context: EvaluatorContext,
         value: *const Tree.Table.Value,

@@ -329,14 +329,14 @@ public struct DeleteEntitiesResult
 [StructLayout(LayoutKind.Sequential, Size = SIZE)]
 public struct QueryUuidFilter
 {
-    public const int SIZE = 128;
+    public const int SIZE = 32;
 
 
     [StructLayout(LayoutKind.Sequential, Size = ReservedData.SIZE)]
     private unsafe struct ReservedData
     {
-        public const int SIZE = 108;
-        private const int LENGTH = 108;
+        public const int SIZE = 16;
+        private const int LENGTH = 16;
 
         private fixed byte raw[LENGTH];
 
@@ -367,19 +367,12 @@ public struct QueryUuidFilter
 
     private UInt128 entityId;
 
-    private uint limit;
-
     private ReservedData reserved;
 
     /// <summary>
     /// https://docs.archerdb.io/reference/query-uuid-filter#entity_id
     /// </summary>
     public UInt128 EntityId { get => entityId; set => entityId = value; }
-
-    /// <summary>
-    /// https://docs.archerdb.io/reference/query-uuid-filter#limit
-    /// </summary>
-    public uint Limit { get => limit; set => limit = value; }
 
     /// <summary>
     /// https://docs.archerdb.io/reference/query-uuid-filter#reserved
@@ -653,6 +646,576 @@ public struct QueryLatestFilter
 
     /// <summary>
     /// https://docs.archerdb.io/reference/query-latest-filter#reserved
+    /// </summary>
+    internal byte[] Reserved { get => reserved.GetData(); set => reserved.SetData(value); }
+
+}
+
+public enum TtlOperationResult : byte
+{
+    /// <summary>
+    /// https://docs.archerdb.io/reference/ttl#resultsuccess
+    /// </summary>
+    Success = 0,
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/ttl#resultentity_not_found
+    /// </summary>
+    EntityNotFound = 1,
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/ttl#resultinvalid_ttl
+    /// </summary>
+    InvalidTtl = 2,
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/ttl#resultnot_permitted
+    /// </summary>
+    NotPermitted = 3,
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/ttl#resultentity_immutable
+    /// </summary>
+    EntityImmutable = 4,
+
+}
+
+[StructLayout(LayoutKind.Sequential, Size = SIZE)]
+public struct TtlSetRequest
+{
+    public const int SIZE = 64;
+
+
+    [StructLayout(LayoutKind.Sequential, Size = ReservedData.SIZE)]
+    private unsafe struct ReservedData
+    {
+        public const int SIZE = 40;
+        private const int LENGTH = 40;
+
+        private fixed byte raw[LENGTH];
+
+        public byte[] GetData()
+        {
+            fixed (void* ptr = raw)
+            {
+                return new ReadOnlySpan<byte>(ptr, LENGTH).ToArray();
+            }
+        }
+
+        public void SetData(byte[] value)
+        {
+            if (value == null) throw new ArgumentNullException(nameof(value));
+            if (value.Length != LENGTH)
+            {
+                throw new ArgumentException(
+                    "Expected a byte[" + LENGTH + "] array",
+                    nameof(value));
+            }
+
+            fixed (void* ptr = raw)
+            {
+                value.CopyTo(new Span<byte>(ptr, LENGTH));
+            }
+        }
+    }
+
+    private UInt128 entityId;
+
+    private uint ttlSeconds;
+
+    private uint flags;
+
+    private ReservedData reserved;
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/ttl#setentity_id
+    /// </summary>
+    public UInt128 EntityId { get => entityId; set => entityId = value; }
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/ttl#setttl_seconds
+    /// </summary>
+    public uint TtlSeconds { get => ttlSeconds; set => ttlSeconds = value; }
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/ttl#setflags
+    /// </summary>
+    public uint Flags { get => flags; set => flags = value; }
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/ttl#setreserved
+    /// </summary>
+    internal byte[] Reserved { get => reserved.GetData(); set => reserved.SetData(value); }
+
+}
+
+[StructLayout(LayoutKind.Sequential, Size = SIZE)]
+public struct TtlSetResponse
+{
+    public const int SIZE = 64;
+
+
+    [StructLayout(LayoutKind.Sequential, Size = PaddingData.SIZE)]
+    private unsafe struct PaddingData
+    {
+        public const int SIZE = 3;
+        private const int LENGTH = 3;
+
+        private fixed byte raw[LENGTH];
+
+        public byte[] GetData()
+        {
+            fixed (void* ptr = raw)
+            {
+                return new ReadOnlySpan<byte>(ptr, LENGTH).ToArray();
+            }
+        }
+
+        public void SetData(byte[] value)
+        {
+            if (value == null) throw new ArgumentNullException(nameof(value));
+            if (value.Length != LENGTH)
+            {
+                throw new ArgumentException(
+                    "Expected a byte[" + LENGTH + "] array",
+                    nameof(value));
+            }
+
+            fixed (void* ptr = raw)
+            {
+                value.CopyTo(new Span<byte>(ptr, LENGTH));
+            }
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential, Size = ReservedData.SIZE)]
+    private unsafe struct ReservedData
+    {
+        public const int SIZE = 32;
+        private const int LENGTH = 32;
+
+        private fixed byte raw[LENGTH];
+
+        public byte[] GetData()
+        {
+            fixed (void* ptr = raw)
+            {
+                return new ReadOnlySpan<byte>(ptr, LENGTH).ToArray();
+            }
+        }
+
+        public void SetData(byte[] value)
+        {
+            if (value == null) throw new ArgumentNullException(nameof(value));
+            if (value.Length != LENGTH)
+            {
+                throw new ArgumentException(
+                    "Expected a byte[" + LENGTH + "] array",
+                    nameof(value));
+            }
+
+            fixed (void* ptr = raw)
+            {
+                value.CopyTo(new Span<byte>(ptr, LENGTH));
+            }
+        }
+    }
+
+    private UInt128 entityId;
+
+    private uint previousTtlSeconds;
+
+    private uint newTtlSeconds;
+
+    private TtlOperationResult result;
+
+    private PaddingData padding;
+
+    private ReservedData reserved;
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/ttl#set-responseentity_id
+    /// </summary>
+    public UInt128 EntityId { get => entityId; set => entityId = value; }
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/ttl#set-responseprevious_ttl_seconds
+    /// </summary>
+    public uint PreviousTtlSeconds { get => previousTtlSeconds; set => previousTtlSeconds = value; }
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/ttl#set-responsenew_ttl_seconds
+    /// </summary>
+    public uint NewTtlSeconds { get => newTtlSeconds; set => newTtlSeconds = value; }
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/ttl#set-responseresult
+    /// </summary>
+    public TtlOperationResult Result { get => result; set => result = value; }
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/ttl#set-response_padding
+    /// </summary>
+    internal byte[] Padding { get => padding.GetData(); set => padding.SetData(value); }
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/ttl#set-responsereserved
+    /// </summary>
+    internal byte[] Reserved { get => reserved.GetData(); set => reserved.SetData(value); }
+
+}
+
+[StructLayout(LayoutKind.Sequential, Size = SIZE)]
+public struct TtlExtendRequest
+{
+    public const int SIZE = 64;
+
+
+    [StructLayout(LayoutKind.Sequential, Size = ReservedData.SIZE)]
+    private unsafe struct ReservedData
+    {
+        public const int SIZE = 40;
+        private const int LENGTH = 40;
+
+        private fixed byte raw[LENGTH];
+
+        public byte[] GetData()
+        {
+            fixed (void* ptr = raw)
+            {
+                return new ReadOnlySpan<byte>(ptr, LENGTH).ToArray();
+            }
+        }
+
+        public void SetData(byte[] value)
+        {
+            if (value == null) throw new ArgumentNullException(nameof(value));
+            if (value.Length != LENGTH)
+            {
+                throw new ArgumentException(
+                    "Expected a byte[" + LENGTH + "] array",
+                    nameof(value));
+            }
+
+            fixed (void* ptr = raw)
+            {
+                value.CopyTo(new Span<byte>(ptr, LENGTH));
+            }
+        }
+    }
+
+    private UInt128 entityId;
+
+    private uint extendBySeconds;
+
+    private uint flags;
+
+    private ReservedData reserved;
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/ttl#extendentity_id
+    /// </summary>
+    public UInt128 EntityId { get => entityId; set => entityId = value; }
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/ttl#extendextend_by_seconds
+    /// </summary>
+    public uint ExtendBySeconds { get => extendBySeconds; set => extendBySeconds = value; }
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/ttl#extendflags
+    /// </summary>
+    public uint Flags { get => flags; set => flags = value; }
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/ttl#extendreserved
+    /// </summary>
+    internal byte[] Reserved { get => reserved.GetData(); set => reserved.SetData(value); }
+
+}
+
+[StructLayout(LayoutKind.Sequential, Size = SIZE)]
+public struct TtlExtendResponse
+{
+    public const int SIZE = 64;
+
+
+    [StructLayout(LayoutKind.Sequential, Size = PaddingData.SIZE)]
+    private unsafe struct PaddingData
+    {
+        public const int SIZE = 3;
+        private const int LENGTH = 3;
+
+        private fixed byte raw[LENGTH];
+
+        public byte[] GetData()
+        {
+            fixed (void* ptr = raw)
+            {
+                return new ReadOnlySpan<byte>(ptr, LENGTH).ToArray();
+            }
+        }
+
+        public void SetData(byte[] value)
+        {
+            if (value == null) throw new ArgumentNullException(nameof(value));
+            if (value.Length != LENGTH)
+            {
+                throw new ArgumentException(
+                    "Expected a byte[" + LENGTH + "] array",
+                    nameof(value));
+            }
+
+            fixed (void* ptr = raw)
+            {
+                value.CopyTo(new Span<byte>(ptr, LENGTH));
+            }
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential, Size = ReservedData.SIZE)]
+    private unsafe struct ReservedData
+    {
+        public const int SIZE = 32;
+        private const int LENGTH = 32;
+
+        private fixed byte raw[LENGTH];
+
+        public byte[] GetData()
+        {
+            fixed (void* ptr = raw)
+            {
+                return new ReadOnlySpan<byte>(ptr, LENGTH).ToArray();
+            }
+        }
+
+        public void SetData(byte[] value)
+        {
+            if (value == null) throw new ArgumentNullException(nameof(value));
+            if (value.Length != LENGTH)
+            {
+                throw new ArgumentException(
+                    "Expected a byte[" + LENGTH + "] array",
+                    nameof(value));
+            }
+
+            fixed (void* ptr = raw)
+            {
+                value.CopyTo(new Span<byte>(ptr, LENGTH));
+            }
+        }
+    }
+
+    private UInt128 entityId;
+
+    private uint previousTtlSeconds;
+
+    private uint newTtlSeconds;
+
+    private TtlOperationResult result;
+
+    private PaddingData padding;
+
+    private ReservedData reserved;
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/ttl#extend-responseentity_id
+    /// </summary>
+    public UInt128 EntityId { get => entityId; set => entityId = value; }
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/ttl#extend-responseprevious_ttl_seconds
+    /// </summary>
+    public uint PreviousTtlSeconds { get => previousTtlSeconds; set => previousTtlSeconds = value; }
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/ttl#extend-responsenew_ttl_seconds
+    /// </summary>
+    public uint NewTtlSeconds { get => newTtlSeconds; set => newTtlSeconds = value; }
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/ttl#extend-responseresult
+    /// </summary>
+    public TtlOperationResult Result { get => result; set => result = value; }
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/ttl#extend-response_padding
+    /// </summary>
+    internal byte[] Padding { get => padding.GetData(); set => padding.SetData(value); }
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/ttl#extend-responsereserved
+    /// </summary>
+    internal byte[] Reserved { get => reserved.GetData(); set => reserved.SetData(value); }
+
+}
+
+[StructLayout(LayoutKind.Sequential, Size = SIZE)]
+public struct TtlClearRequest
+{
+    public const int SIZE = 64;
+
+
+    [StructLayout(LayoutKind.Sequential, Size = ReservedData.SIZE)]
+    private unsafe struct ReservedData
+    {
+        public const int SIZE = 44;
+        private const int LENGTH = 44;
+
+        private fixed byte raw[LENGTH];
+
+        public byte[] GetData()
+        {
+            fixed (void* ptr = raw)
+            {
+                return new ReadOnlySpan<byte>(ptr, LENGTH).ToArray();
+            }
+        }
+
+        public void SetData(byte[] value)
+        {
+            if (value == null) throw new ArgumentNullException(nameof(value));
+            if (value.Length != LENGTH)
+            {
+                throw new ArgumentException(
+                    "Expected a byte[" + LENGTH + "] array",
+                    nameof(value));
+            }
+
+            fixed (void* ptr = raw)
+            {
+                value.CopyTo(new Span<byte>(ptr, LENGTH));
+            }
+        }
+    }
+
+    private UInt128 entityId;
+
+    private uint flags;
+
+    private ReservedData reserved;
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/ttl#clearentity_id
+    /// </summary>
+    public UInt128 EntityId { get => entityId; set => entityId = value; }
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/ttl#clearflags
+    /// </summary>
+    public uint Flags { get => flags; set => flags = value; }
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/ttl#clearreserved
+    /// </summary>
+    internal byte[] Reserved { get => reserved.GetData(); set => reserved.SetData(value); }
+
+}
+
+[StructLayout(LayoutKind.Sequential, Size = SIZE)]
+public struct TtlClearResponse
+{
+    public const int SIZE = 64;
+
+
+    [StructLayout(LayoutKind.Sequential, Size = PaddingData.SIZE)]
+    private unsafe struct PaddingData
+    {
+        public const int SIZE = 3;
+        private const int LENGTH = 3;
+
+        private fixed byte raw[LENGTH];
+
+        public byte[] GetData()
+        {
+            fixed (void* ptr = raw)
+            {
+                return new ReadOnlySpan<byte>(ptr, LENGTH).ToArray();
+            }
+        }
+
+        public void SetData(byte[] value)
+        {
+            if (value == null) throw new ArgumentNullException(nameof(value));
+            if (value.Length != LENGTH)
+            {
+                throw new ArgumentException(
+                    "Expected a byte[" + LENGTH + "] array",
+                    nameof(value));
+            }
+
+            fixed (void* ptr = raw)
+            {
+                value.CopyTo(new Span<byte>(ptr, LENGTH));
+            }
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential, Size = ReservedData.SIZE)]
+    private unsafe struct ReservedData
+    {
+        public const int SIZE = 36;
+        private const int LENGTH = 36;
+
+        private fixed byte raw[LENGTH];
+
+        public byte[] GetData()
+        {
+            fixed (void* ptr = raw)
+            {
+                return new ReadOnlySpan<byte>(ptr, LENGTH).ToArray();
+            }
+        }
+
+        public void SetData(byte[] value)
+        {
+            if (value == null) throw new ArgumentNullException(nameof(value));
+            if (value.Length != LENGTH)
+            {
+                throw new ArgumentException(
+                    "Expected a byte[" + LENGTH + "] array",
+                    nameof(value));
+            }
+
+            fixed (void* ptr = raw)
+            {
+                value.CopyTo(new Span<byte>(ptr, LENGTH));
+            }
+        }
+    }
+
+    private UInt128 entityId;
+
+    private uint previousTtlSeconds;
+
+    private TtlOperationResult result;
+
+    private PaddingData padding;
+
+    private ReservedData reserved;
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/ttl#clear-responseentity_id
+    /// </summary>
+    public UInt128 EntityId { get => entityId; set => entityId = value; }
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/ttl#clear-responseprevious_ttl_seconds
+    /// </summary>
+    public uint PreviousTtlSeconds { get => previousTtlSeconds; set => previousTtlSeconds = value; }
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/ttl#clear-responseresult
+    /// </summary>
+    public TtlOperationResult Result { get => result; set => result = value; }
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/ttl#clear-response_padding
+    /// </summary>
+    internal byte[] Padding { get => padding.GetData(); set => padding.SetData(value); }
+
+    /// <summary>
+    /// https://docs.archerdb.io/reference/ttl#clear-responsereserved
     /// </summary>
     internal byte[] Reserved { get => reserved.GetData(); set => reserved.SetData(value); }
 

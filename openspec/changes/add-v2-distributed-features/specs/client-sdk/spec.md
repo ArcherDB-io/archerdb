@@ -207,10 +207,10 @@ Client SDKs SHALL expose additional metrics for v2 features.
 
 | Requirement | Status | Notes |
 |-------------|--------|-------|
-| Multi-Region Client Config | ✓ Complete | RegionConfig in all SDKs |
-| Shard-Aware Routing | ✓ Complete | ShardRouter, scatter-gather |
-| Connection Pool Management | ✓ Complete | Per-shard pools |
-| Encryption-Aware Client | ✓ Complete | TLS config, cert handling |
-| Tiering-Aware Client | ✓ Complete | Cold tier fetch handling |
-| TTL Extension Client | ✓ Complete | set_ttl, extend_ttl, clear_ttl in all SDKs |
-| v2 SDK Metrics | ✓ Complete | All metric types exposed |
+| Multi-Region Client Configuration | IMPLEMENTED | `src/replication.zig`, `src/geo_sharding.zig` |
+| Shard-Aware Client Routing | IMPLEMENTED | `src/geo_sharding.zig` |
+| Connection Pool Management | IMPLEMENTED | `src/replication.zig` |
+| Encryption-Aware Client | IMPLEMENTED | `src/encryption.zig` |
+| Tiering-Aware Client | IMPLEMENTED | `src/replication.zig` |
+| TTL Extension Client Support | IMPLEMENTED | All client SDKs |
+| v2 SDK Metrics | IMPLEMENTED | `src/replication.zig`, `src/geo_sharding.zig` |

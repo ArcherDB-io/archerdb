@@ -569,9 +569,8 @@ const ReflectionHelper = struct {
         assert(request_end_request_method_id != null);
         assert((timestamp > 0) == (packet_status == .ok));
 
-        env.call_nonvirtual_void_method(
+        env.call_void_method(
             this_obj,
-            request_class,
             request_end_request_method_id,
             &[_]jni.JValue{
                 jni.JValue.to_jvalue(@as(jni.JByte, @bitCast(packet_operation))),

@@ -25,9 +25,9 @@
 //! See specs/index-sharding/query-routing.md for full requirements.
 
 const std = @import("std");
-const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
+const stdx = @import("stdx");
 const sharding = @import("sharding.zig");
 const geo_event = @import("geo_event.zig");
 const GeoEvent = geo_event.GeoEvent;
@@ -80,7 +80,14 @@ pub const Address = struct {
             .host_len = @intCast(@min(host.len, 64)),
             .port = port,
         };
-        @memcpy(addr.host[0..addr.host_len], host[0..addr.host_len]);
+        // Use comptime-compatible copy when called at comptime
+        if (@inComptime()) {
+            for (0..addr.host_len) |i| {
+                addr.host[i] = host[i];
+            }
+        } else {
+            stdx.copy_disjoint(.exact, u8, addr.host[0..addr.host_len], host[0..addr.host_len]);
+        }
         return addr;
     }
 
@@ -195,7 +202,12 @@ pub const CoordinatorStats = struct {
     /// Shard failovers performed.
     failovers: u64 = 0,
 
-    pub fn recordQuery(self: *CoordinatorStats, latency_ns: u64, is_fan_out: bool, success: bool) void {
+    pub fn recordQuery(
+        self: *CoordinatorStats,
+        latency_ns: u64,
+        is_fan_out: bool,
+        success: bool,
+    ) void {
         self.queries_total += 1;
         if (is_fan_out) {
             self.queries_fan_out += 1;
@@ -228,8 +240,6 @@ pub const CoordinatorState = enum {
 
 /// The Coordinator manages query routing for complex multi-shard deployments.
 pub const Coordinator = struct {
-    const Self = @This();
-
     allocator: Allocator,
     config: CoordinatorConfig,
     state: CoordinatorState,
@@ -253,7 +263,7 @@ pub const Coordinator = struct {
     };
 
     /// Initialize coordinator.
-    pub fn init(allocator: Allocator, config: CoordinatorConfig) Self {
+    pub fn init(allocator: Allocator, config: CoordinatorConfig) Coordinator {
         return .{
             .allocator = allocator,
             .config = config,
@@ -267,7 +277,7 @@ pub const Coordinator = struct {
     }
 
     /// Deinitialize coordinator.
-    pub fn deinit(self: *Self) void {
+    pub fn deinit(self: *Coordinator) void {
         var iter = self.pending_queries.valueIterator();
         while (iter.next()) |pq| {
             pq.results.deinit();
@@ -276,7 +286,7 @@ pub const Coordinator = struct {
     }
 
     /// Start the coordinator.
-    pub fn start(self: *Self) !void {
+    pub fn start(self: *Coordinator) !void {
         if (self.state != .stopped) return error.InvalidState;
 
         self.state = .starting;
@@ -289,14 +299,14 @@ pub const Coordinator = struct {
     }
 
     /// Stop the coordinator.
-    pub fn stop(self: *Self) void {
+    pub fn stop(self: *Coordinator) void {
         self.state = .shutting_down;
         // Drain pending queries.
         self.state = .stopped;
     }
 
     /// Update topology from a shard response.
-    pub fn updateTopology(self: *Self, new_topology: Topology) void {
+    pub fn updateTopology(self: *Coordinator, new_topology: Topology) void {
         if (new_topology.version > self.topology.version) {
             self.topology = new_topology;
             self.stats.topology_updates += 1;
@@ -304,7 +314,7 @@ pub const Coordinator = struct {
     }
 
     /// Add a shard to the topology.
-    pub fn addShard(self: *Self, shard_id: u32, primary: Address) !void {
+    pub fn addShard(self: *Coordinator, shard_id: u32, primary: Address) !void {
         if (shard_id >= MAX_SHARDS) return error.ShardIdOutOfRange;
         if (shard_id >= self.topology.num_shards) {
             self.topology.num_shards = shard_id + 1;
@@ -323,7 +333,7 @@ pub const Coordinator = struct {
     }
 
     /// Route a single-entity query to the appropriate shard.
-    pub fn routeQuery(self: *Self, entity_id: u128) RouteResult {
+    pub fn routeQuery(self: *Coordinator, entity_id: u128) RouteResult {
         const shard_id = self.topology.getShardForEntity(entity_id);
 
         if (shard_id >= self.topology.num_shards) {
@@ -350,7 +360,11 @@ pub const Coordinator = struct {
     }
 
     /// Select a replica using round-robin for load balancing.
-    fn selectReplica(self: *Self, shard_id: u32, shard: *const ShardInfo) Address {
+    fn selectReplica(
+        self: *Coordinator,
+        shard_id: u32,
+        shard: *const ShardInfo,
+    ) Address {
         const rr_idx = &self.replica_round_robin[shard_id];
         rr_idx.* = (rr_idx.* + 1) % 4;
 
@@ -367,7 +381,7 @@ pub const Coordinator = struct {
     }
 
     /// Get shards for fan-out query.
-    pub fn getFanOutShards(self: *const Self) []const ShardInfo {
+    pub fn getFanOutShards(self: *const Coordinator) []const ShardInfo {
         return self.topology.getActiveShards();
     }
 
@@ -383,7 +397,7 @@ pub const Coordinator = struct {
     }
 
     /// Start a fan-out query.
-    pub fn startFanOutQuery(self: *Self, query_type: QueryType) !u64 {
+    pub fn startFanOutQuery(self: *Coordinator, query_type: QueryType) !u64 {
         const query_id = self.next_query_id;
         self.next_query_id += 1;
 
@@ -400,7 +414,11 @@ pub const Coordinator = struct {
     }
 
     /// Record results from a shard.
-    pub fn recordShardResult(self: *Self, query_id: u64, events: []const GeoEvent) !void {
+    pub fn recordShardResult(
+        self: *Coordinator,
+        query_id: u64,
+        events: []const GeoEvent,
+    ) !void {
         if (self.pending_queries.getPtr(query_id)) |pq| {
             try pq.results.appendSlice(events);
             pq.shards_completed += 1;
@@ -408,7 +426,7 @@ pub const Coordinator = struct {
     }
 
     /// Check if fan-out query is complete.
-    pub fn isFanOutComplete(self: *const Self, query_id: u64) bool {
+    pub fn isFanOutComplete(self: *const Coordinator, query_id: u64) bool {
         if (self.pending_queries.get(query_id)) |pq| {
             return pq.shards_completed >= pq.shards_pending;
         }
@@ -416,7 +434,7 @@ pub const Coordinator = struct {
     }
 
     /// Finalize and get fan-out query results.
-    pub fn finalizeFanOutQuery(self: *Self, query_id: u64) !FanOutResult {
+    pub fn finalizeFanOutQuery(self: *Coordinator, query_id: u64) !FanOutResult {
         const pq = self.pending_queries.get(query_id) orelse return error.QueryNotFound;
         const now: u64 = @intCast(std.time.nanoTimestamp());
         const latency = now - pq.start_time_ns;
@@ -434,17 +452,17 @@ pub const Coordinator = struct {
     }
 
     /// Get current statistics.
-    pub fn getStats(self: *const Self) CoordinatorStats {
+    pub fn getStats(self: *const Coordinator) CoordinatorStats {
         return self.stats;
     }
 
     /// Get current topology.
-    pub fn getTopology(self: *const Self) Topology {
+    pub fn getTopology(self: *const Coordinator) Topology {
         return self.topology;
     }
 
     /// Mark a shard as unhealthy.
-    pub fn markShardUnhealthy(self: *Self, shard_id: u32) void {
+    pub fn markShardUnhealthy(self: *Coordinator, shard_id: u32) void {
         if (shard_id < self.topology.num_shards) {
             self.topology.shards[shard_id].failure_count += 1;
             if (self.topology.shards[shard_id].failure_count >= self.config.max_retries) {
@@ -455,11 +473,12 @@ pub const Coordinator = struct {
     }
 
     /// Mark a shard as healthy.
-    pub fn markShardHealthy(self: *Self, shard_id: u32) void {
+    pub fn markShardHealthy(self: *Coordinator, shard_id: u32) void {
         if (shard_id < self.topology.num_shards) {
             self.topology.shards[shard_id].failure_count = 0;
             self.topology.shards[shard_id].status = .active;
-            self.topology.shards[shard_id].last_health_check_ns = @intCast(std.time.nanoTimestamp());
+            const ns: u64 = @intCast(std.time.nanoTimestamp());
+            self.topology.shards[shard_id].last_health_check_ns = ns;
         }
     }
 };

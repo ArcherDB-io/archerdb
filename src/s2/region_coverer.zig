@@ -519,8 +519,14 @@ test "radius query scenario: multiple radii" {
             }
 
             if (!found) {
-                std.debug.print("\nFailed for lat={}, lon={}, radius={}\n", .{ lat_nano, lon_nano, radius });
-                std.debug.print("Cell 0x{x:0>16} (level {}) not in any covering range\n", .{ cell_level_30, cell_id.level(cell_level_30) });
+                std.debug.print(
+                    "\nFailed for lat={}, lon={}, radius={}\n",
+                    .{ lat_nano, lon_nano, radius },
+                );
+                std.debug.print(
+                    "Cell 0x{x:0>16} (level {}) not in any covering range\n",
+                    .{ cell_level_30, cell_id.level(cell_level_30) },
+                );
             }
 
             try std.testing.expect(found);

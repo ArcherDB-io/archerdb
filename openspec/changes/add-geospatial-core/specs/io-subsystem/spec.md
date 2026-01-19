@@ -255,6 +255,21 @@ The system SHALL support absolute timeouts for I/O operations.
 - **AND** any in-progress kernel work is cancelled
 - **AND** resources are cleaned up appropriately
 
+## Implementation Status
+
+| Requirement | Status | Implementation |
+|-------------|--------|----------------|
+| io_uring Integration | IMPLEMENTED | `src/io.zig` - Linux io_uring with fallback |
+| Zero-Copy Messaging | IMPLEMENTED | `src/message.zig` - Zero-copy message handling |
+| Message Bus | IMPLEMENTED | `src/message_bus.zig` - Async message bus |
+| TCP Stream Deframing | IMPLEMENTED | `src/message_bus.zig` - Length-prefixed framing |
+| TCP Configuration | IMPLEMENTED | `src/message_bus.zig` - TCP_NODELAY, keepalive |
+| send_now() Optimization | IMPLEMENTED | `src/message_bus.zig` - Immediate send path |
+| Connection Lifecycle | IMPLEMENTED | `src/message_bus.zig` - Graceful open/close |
+| Platform Abstraction | IMPLEMENTED | `src/io.zig` - Cross-platform I/O layer |
+| Completion Callbacks | IMPLEMENTED | `src/io.zig` - Async completion handling |
+| I/O Timeouts | IMPLEMENTED | `src/io.zig` - Configurable timeouts |
+
 ### Related Specifications
 
 - See `specs/replication/spec.md` for message bus usage in VSR protocol (Prepare, PrepareOk, Commit)
@@ -263,20 +278,3 @@ The system SHALL support absolute timeouts for I/O operations.
 - See `specs/memory-management/spec.md` for MessagePool and zero-copy message passing
 - See `specs/error-codes/spec.md` for I/O error codes and timeout handling
 - See `specs/observability/spec.md` for I/O performance metrics (disk read/write latency)
-
-## Implementation Status
-
-| Requirement | Status | Notes |
-|-------------|--------|-------|
-| io_uring Integration | ✓ Complete | src/io/linux.zig with SQE batching |
-| Zero-Copy Messaging | ✓ Complete | Single-message fast path, buffer pool |
-| Message Bus | ✓ Complete | src/message_bus.zig with connection state machine |
-| TCP Socket Options | ✓ Complete | TCP_NODELAY, SO_KEEPALIVE, TCP_USER_TIMEOUT |
-| send_now() Optimization | ✓ Complete | Synchronous send attempt before async |
-| Connection Lifecycle | ✓ Complete | Graceful shutdown with SHUT_RDWR |
-| Buffer Management | ✓ Complete | Static buffer pools, rcvbuf/sndbuf configuration |
-| Completion Callbacks | ✓ Complete | Per-operation callbacks with error propagation |
-| I/O Timeouts | ✓ Complete | CLOCK_MONOTONIC absolute timeouts |
-| macOS Fallback | ✓ Complete | src/io/darwin.zig kqueue implementation |
-| Windows Support | ✓ Complete | src/io/windows.zig IOCP implementation |
-

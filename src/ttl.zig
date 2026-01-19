@@ -1161,7 +1161,6 @@ pub const LevelTtlStats = struct {
 
 /// TTL-aware compaction prioritizer.
 pub const CompactionPrioritizer = struct {
-    const Self = @This();
     const MAX_LEVELS: usize = 8;
 
     /// Statistics per level.
@@ -1177,7 +1176,7 @@ pub const CompactionPrioritizer = struct {
     low_water_mark: f64,
 
     /// Initialize the compaction prioritizer.
-    pub fn init() Self {
+    pub fn init() CompactionPrioritizer {
         var stats: [MAX_LEVELS]LevelTtlStats = undefined;
         for (&stats, 0..) |*s, i| {
             s.* = .{
@@ -1199,7 +1198,7 @@ pub const CompactionPrioritizer = struct {
 
     /// Update level statistics from sampling.
     pub fn updateLevelStats(
-        self: *Self,
+        self: *CompactionPrioritizer,
         level: u8,
         total_events: u64,
         sampled_expired: u64,
@@ -1227,7 +1226,7 @@ pub const CompactionPrioritizer = struct {
     }
 
     /// Update overall compaction debt ratio.
-    fn updateDebtRatio(self: *Self) void {
+    fn updateDebtRatio(self: *CompactionPrioritizer) void {
         var total_events: u64 = 0;
         var total_expired: u64 = 0;
 
@@ -1243,7 +1242,7 @@ pub const CompactionPrioritizer = struct {
     }
 
     /// Get levels that should be prioritized for compaction.
-    pub fn getPriorityLevels(self: *const Self) []const u8 {
+    pub fn getPriorityLevels(self: *const CompactionPrioritizer) []const u8 {
         var result: [MAX_LEVELS]u8 = undefined;
         var count: usize = 0;
 
@@ -1258,12 +1257,12 @@ pub const CompactionPrioritizer = struct {
     }
 
     /// Check if aggressive compaction is needed.
-    pub fn isAggressiveCompactionNeeded(self: *const Self) bool {
+    pub fn isAggressiveCompactionNeeded(self: *const CompactionPrioritizer) bool {
         return self.debt_ratio > self.high_water_mark;
     }
 
     /// Get the compaction debt ratio gauge.
-    pub fn getDebtRatio(self: *const Self) f64 {
+    pub fn getDebtRatio(self: *const CompactionPrioritizer) f64 {
         return self.debt_ratio;
     }
 };
@@ -1279,8 +1278,6 @@ pub const CompactionPrioritizer = struct {
 
 /// TTL expiration cliff detector and mitigator.
 pub const CliffMitigator = struct {
-    const Self = @This();
-
     /// Histogram bucket size for expiration time distribution (1 hour).
     const BUCKET_SIZE_NS: u64 = 3600 * ns_per_second;
 
@@ -1297,7 +1294,7 @@ pub const CliffMitigator = struct {
     last_analysis_ns: u64,
 
     /// Initialize cliff mitigator.
-    pub fn init() Self {
+    pub fn init() CliffMitigator {
         return .{
             .expiration_histogram = [_]u64{0} ** NUM_BUCKETS,
             .cliff_threshold = 3.0, // 3x average = cliff
@@ -1306,12 +1303,16 @@ pub const CliffMitigator = struct {
     }
 
     /// Reset histogram for new analysis.
-    pub fn reset(self: *Self) void {
+    pub fn reset(self: *CliffMitigator) void {
         self.expiration_histogram = [_]u64{0} ** NUM_BUCKETS;
     }
 
     /// Record an event's expiration time.
-    pub fn recordExpiration(self: *Self, expiration_time_ns: u64, current_time_ns: u64) void {
+    pub fn recordExpiration(
+        self: *CliffMitigator,
+        expiration_time_ns: u64,
+        current_time_ns: u64,
+    ) void {
         if (expiration_time_ns <= current_time_ns) return;
 
         const delta = expiration_time_ns - current_time_ns;
@@ -1321,7 +1322,7 @@ pub const CliffMitigator = struct {
 
     /// Analyze histogram for cliffs.
     /// Returns the most severe cliff (highest severity) if any bucket exceeds the threshold.
-    pub fn analyzeForCliffs(self: *Self, current_time_ns: u64) ?CliffInfo {
+    pub fn analyzeForCliffs(self: *CliffMitigator, current_time_ns: u64) ?CliffInfo {
         self.last_analysis_ns = current_time_ns;
 
         // Calculate average events per bucket
@@ -1366,13 +1367,19 @@ pub const CliffMitigator = struct {
     }
 
     /// Get recommended action for cliff mitigation.
-    pub fn getRecommendation(self: *const Self, cliff: CliffInfo) CliffMitigation {
+    pub fn getRecommendation(self: *const CliffMitigator, cliff: CliffInfo) CliffMitigation {
         _ = self;
 
         if (cliff.severity > 10.0) {
-            return .{ .action = .emergency_compact, .reason = "Severe cliff detected (>10x average)" };
+            return .{
+                .action = .emergency_compact,
+                .reason = "Severe cliff detected (>10x average)",
+            };
         } else if (cliff.severity > 5.0) {
-            return .{ .action = .pre_compact, .reason = "Significant cliff detected (>5x average)" };
+            return .{
+                .action = .pre_compact,
+                .reason = "Significant cliff detected (>5x average)",
+            };
         } else {
             return .{ .action = .monitor, .reason = "Moderate cliff detected, monitoring" };
         }
@@ -1664,7 +1671,10 @@ test "TtlSetRequest: field initialization" {
         .ttl_seconds = 86400,
         .flags = 0,
     };
-    try std.testing.expectEqual(@as(u128, 0x12345678_9ABCDEF0_12345678_9ABCDEF0), request.entity_id);
+    try std.testing.expectEqual(
+        @as(u128, 0x12345678_9ABCDEF0_12345678_9ABCDEF0),
+        request.entity_id,
+    );
     try std.testing.expectEqual(@as(u32, 86400), request.ttl_seconds);
 }
 
@@ -1691,7 +1701,10 @@ test "TtlClearRequest: entity_id field" {
     const request = TtlClearRequest{
         .entity_id = 0xFFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF,
     };
-    try std.testing.expectEqual(@as(u128, 0xFFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF), request.entity_id);
+    try std.testing.expectEqual(
+        @as(u128, 0xFFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF),
+        request.entity_id,
+    );
 }
 
 test "TtlClearResponse: reports previous TTL" {

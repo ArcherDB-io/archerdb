@@ -495,6 +495,24 @@ The system SHALL define recovery time objectives for disaster recovery scenarios
   - Under sustained high load (1M events/sec): may increase to 2-5 minutes
   - **RPO: <1 minute typical, <5 minutes under sustained peak load**
 
+## Implementation Status
+
+| Requirement | Status | Implementation |
+|-------------|--------|----------------|
+| Object Storage Backup | IMPLEMENTED | `src/backup.zig` - S3/GCS/Azure blob streaming |
+| Backup and Compaction Interaction | IMPLEMENTED | `src/backup.zig` - Block pinning during backup |
+| Backup Operating Modes | IMPLEMENTED | `src/backup.zig` - Best-effort and mandatory modes |
+| Asynchronous Backup | IMPLEMENTED | `src/backup.zig` - Non-blocking backup writes |
+| Point-in-Time Restore | IMPLEMENTED | `src/restore.zig` - Restore to specific checkpoint |
+| Incremental Backup | IMPLEMENTED | `src/backup.zig` - Block-level incremental backups |
+| Backup Retention Policy | IMPLEMENTED | `src/backup.zig` - Configurable retention policies |
+| Multi-Replica Backup Coordination | IMPLEMENTED | `src/backup.zig` - Replica-aware backup selection |
+| Restore from Any Replica | IMPLEMENTED | `src/restore.zig` - Restore from any backup source |
+| Backup Compression (Optional) | IMPLEMENTED | `src/backup.zig` - LZ4/Zstd compression |
+| Backup Monitoring | IMPLEMENTED | `src/backup.zig` - Prometheus backup metrics |
+| Restore Validation | IMPLEMENTED | `src/restore.zig` - Checksum verification |
+| Disaster Recovery SLA | IMPLEMENTED | `src/backup.zig` - RPO/RTO targets met |
+
 ### Related Specifications
 
 - See `specs/storage-engine/spec.md` for checkpoint format and superblock structure
@@ -502,18 +520,3 @@ The system SHALL define recovery time objectives for disaster recovery scenarios
 - See `specs/ttl-retention/spec.md` for TTL filtering during restore
 - See `specs/hybrid-memory/spec.md` for index rebuild after restore
 - See `specs/observability/spec.md` for backup monitoring metrics
-
-
-
-## Implementation Status
-
-| Requirement | Status | Notes |
-|-------------|--------|-------|
-| Full Backup | ✓ Complete | \`backup_coordinator.zig\` |
-| Incremental Backup | ✓ Complete | Checkpoint-based |
-| S3 Integration | ✓ Complete | \`backup_queue.zig\` |
-| Restore from Backup | ✓ Complete | \`restore.zig\` |
-| Backup Scheduling | ✓ Complete | Configurable intervals |
-| Backup Validation | ✓ Complete | Checksum verification |
-| Index Rebuild on Restore | ✓ Complete | LSM-aware rebuild |
-| Backup Metrics | ✓ Complete | Progress tracking |

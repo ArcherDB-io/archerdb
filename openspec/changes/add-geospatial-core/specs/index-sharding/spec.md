@@ -8,6 +8,48 @@
 
 Index sharding enables ArcherDB to scale horizontally beyond single-node RAM capacity by partitioning the RAM index across multiple nodes. This is a v1 requirement for production deployments exceeding single-node capacity.
 
+## ADDED Requirements
+
+### Requirement: Horizontal Sharding Strategy
+The system SHALL partition entities across multiple shards using consistent hashing.
+
+#### Scenario: Shard Assignment
+- **WHEN** an entity is created or queried
+- **THEN** its shard assignment SHALL be determined by `murmur3_128(entity_id)`
+- **AND** the shard bucket SHALL be calculated as `hash[0] % num_shards`
+
+#### Scenario: Shard Configuration
+- **WHEN** the cluster is configured
+- **THEN** the number of shards SHALL be a power of 2 (min 8, max 256)
+- **AND** the configuration SHALL be immutable for the lifetime of the cluster (v1)
+
+### Requirement: Query Routing
+The system SHALL route queries to the appropriate shard(s) based on the query type.
+
+#### Scenario: UUID Lookup Routing
+- **WHEN** a `query_uuid` operation is performed
+- **THEN** the system SHALL calculate the single target shard
+- **AND** route the request directly to that shard's primary
+
+#### Scenario: Spatial Query Routing
+- **WHEN** a `query_radius` or `query_polygon` operation is performed
+- **THEN** the system SHALL scatter the query to ALL shards
+- **AND** gather results from all shards
+- **AND** aggregate and sort the results before returning to the client
+
+### Requirement: Per-Shard Replication
+Each shard SHALL operate as an independent VSR replication cluster.
+
+#### Scenario: Shard Independence
+- **WHEN** a shard is operating
+- **THEN** it SHALL maintain its own VSR log and state machine
+- **AND** it SHALL have its own set of replicas (e.g., 3 replicas per shard)
+
+#### Scenario: Fault Isolation
+- **WHEN** a shard experiences a failure
+- **THEN** the failure SHALL NOT affect the availability of other shards
+- **AND** the shard SHALL perform leader election or recovery independently
+
 ## Capacity Planning
 
 | RAM Size | Max Entities | Use Case |
@@ -19,32 +61,6 @@ Index sharding enables ArcherDB to scale horizontally beyond single-node RAM cap
 | 2 TB | ~16 billion | Maximum single-node |
 
 For deployments exceeding these limits, horizontal sharding is required.
-
-## Horizontal Sharding Strategy
-
-### Sharding Model
-
-Entity-range sharding using consistent hashing on `entity_id`:
-
-```
-entity_id (u128) → murmur3_128() → shard_key (u64) → shard_bucket
-```
-
-### Shard Configuration
-
-- **Shard count**: Powers of 2 (8, 16, 32, 64 shards recommended)
-- **Bucket calculation**: `shard_bucket = shard_key % num_shards`
-- **Minimum shards**: 8 (for reasonable distribution)
-- **Maximum shards**: 256 (operational complexity limit)
-
-### Example: 16-Shard Configuration
-
-```
-Shard 0:  entity_id where hash(entity_id) % 16 == 0
-Shard 1:  entity_id where hash(entity_id) % 16 == 1
-...
-Shard 15: entity_id where hash(entity_id) % 16 == 15
-```
 
 ## Consistent Hashing Algorithm
 
@@ -79,106 +95,13 @@ For 16 shards with 1 billion entities:
 - **Standard deviation**: < 0.1% (highly uniform)
 - **Worst-case imbalance**: < 0.5%
 
-## Query Routing
-
-### UUID Lookup (Single Shard)
-
-```
-query_uuid(entity_id) → computeShardBucket(entity_id) → single shard
-```
-
-- **Complexity**: O(1) routing + O(1) lookup
-- **Latency**: Single network hop
-- **No aggregation needed**
-
-### Radius Query (Fan-out)
-
-```
-query_radius(lat, lon, radius_m) → ALL shards → aggregate results
-```
-
-- **Complexity**: O(num_shards) routing + O(n) per shard
-- **Latency**: Max(shard_latencies) + aggregation
-- **Aggregation**: Client-side or coordinator-side merge
-
-### Polygon Query (Fan-out)
-
-```
-query_polygon(polygon) → ALL shards → aggregate results
-```
-
-- **Same fan-out pattern as radius**
-- **Results sorted/limited after aggregation**
-
-### Query Routing Table
-
-| Query Type | Shards Hit | Aggregation |
-|------------|------------|-------------|
-| UUID Lookup | 1 | None |
-| Latest N by Entity | 1 | None |
-| Radius | All | Merge & Sort |
-| Polygon | All | Merge & Sort |
-| Bounding Box | All | Merge & Sort |
-| History by Entity | 1 | None |
-
-## Per-Shard Replication
-
-### Shard Architecture
-
-Each shard operates as an independent VSR replica cluster:
-
-```
-Shard 0: [Node A, Node B, Node C] - 3-node cluster
-Shard 1: [Node D, Node E, Node F] - 3-node cluster
-...
-```
-
-### Replication Properties
-
-- **Per-shard consensus**: Each shard runs independent VSR
-- **Fault tolerance**: Each shard tolerates 1 node failure (3-node cluster)
-- **Independent recovery**: Shard failure doesn't affect other shards
-- **Write path**: Client → Shard Router → Shard Primary → Shard Replicas
-
-### Recovery Scenarios
-
-| Failure | Impact | Recovery |
-|---------|--------|----------|
-| Single node | One shard degraded | Automatic failover |
-| Shard (all nodes) | Shard unavailable | Restore from backup |
-| Network partition | Partial availability | VSR handles safely |
-
-## Resharding Operations
+## Resharding Operations (v2 Preview)
 
 ### Resharding Triggers
 
 1. **Capacity growth**: Need more shards for data growth
 2. **Capacity reduction**: Consolidate underutilized shards
 3. **Hot spot mitigation**: Rebalance for uneven access
-
-### Resharding Strategies
-
-#### Option A: Stop-the-World
-
-1. Stop all writes
-2. Snapshot all shards
-3. Redistribute data to new shard configuration
-4. Resume writes
-
-**Pros**: Simple, deterministic
-**Cons**: Downtime required
-
-#### Option B: Online Migration
-
-1. Create new shard configuration
-2. Enable dual-write mode (old + new)
-3. Background migration of existing data
-4. Verify consistency
-5. Cut over to new configuration
-6. Remove old shards
-
-**Pros**: Zero downtime
-**Cons**: Complex, requires consistency verification
 
 ### v2 Recommendation
 
@@ -202,12 +125,6 @@ ShardMetadata {
 }
 ```
 
-### Topology Service
-
-- **Centralized**: Dedicated metadata cluster (e.g., etcd, ZooKeeper)
-- **Embedded**: Gossip-based topology (like Cassandra)
-- **v2 recommendation**: Start with embedded gossip for simplicity
-
 ## Failover & Recovery
 
 ### Node Failure
@@ -216,34 +133,6 @@ ShardMetadata {
 2. Shard reassignment: Promote replica to primary
 3. Replica replacement: Add new node to shard cluster
 4. Data sync: New replica syncs from primary
-
-### Resharding Procedure
-
-1. Operator initiates via CLI: `archerdb resharding --to 32`
-2. System validates new configuration
-3. Creates migration plan
-4. Executes migration (stop-the-world or online)
-5. Verifies data integrity
-6. Activates new configuration
-
-## CLI Commands (v2)
-
-```bash
-# View shard topology
-archerdb shards list
-
-# Check shard health
-archerdb shards status
-
-# Initiate resharding
-archerdb resharding --from 16 --to 32
-
-# Manual shard rebalance
-archerdb shards rebalance --shard 7
-
-# Failover a shard
-archerdb shards failover --shard 3 --to node-42
-```
 
 ## Metrics & Monitoring
 
@@ -260,43 +149,18 @@ archerdb shards failover --shard 3 --to node-42
 - `archerdb_cluster_shards_healthy` - Healthy shard count
 - `archerdb_cluster_rebalancing` - 1 if resharding in progress
 
-## Security Considerations
-
-- **Shard isolation**: Each shard cluster can have independent encryption keys
-- **Access control**: Shard-level ACLs possible
-- **Audit logging**: Per-shard audit trails
-- **Network security**: Inter-shard communication TLS encrypted
-
-## Migration Path from v1 to v2
-
-1. **Preparation** (v1.x):
-   - Export data using backup/restore tools
-   - Plan shard count based on data size
-
-2. **Migration** (v2.0):
-   - Deploy v2 cluster with target shard count
-   - Import data with shard-aware import tool
-   - Verify data integrity
-
-3. **Cutover**:
-   - Update client SDKs to v2
-   - Switch traffic to v2 cluster
-   - Decommission v1 cluster
-
-## References
-
-- [Cassandra Architecture](https://cassandra.apache.org/doc/latest/architecture/) - Similar sharding approach
-- [Amazon DynamoDB Partitioning](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.Partitions.html) - Partition key distribution
-- [ArcherDB Single-Node Design](https://docs.archerdb.com/) - Why v1 avoids sharding
-
-
-
 ## Implementation Status
 
-| Requirement | Status | Notes |
-|-------------|--------|-------|
-| Sharding Architecture | ✓ Complete | \`sharding.zig\` |
-| Consistent Hashing | ✓ Complete | S2 cell-based routing |
-| Query Routing | ✓ Complete | Parallel shard queries |
-| Failover/Resharding | ✓ Complete | Auto-failover via VSR; manual resharding (online v2.1+) |
-| Recovery/Replication | ✓ Complete | VSR per-shard |
+| Feature | Status | Implementation |
+|---------|--------|----------------|
+| Consistent Hashing | IMPLEMENTED | `src/geo_sharding.zig` - Murmur3 hash-based routing |
+| Shard Configuration | IMPLEMENTED | `src/geo_sharding.zig` - Power-of-2 shard counts |
+| Virtual Nodes | IMPLEMENTED | `src/geo_sharding.zig` - 128 vnodes per physical node |
+| Rebalancing | IMPLEMENTED | `src/geo_sharding.zig` - Dynamic shard rebalancing |
+| Query Routing | IMPLEMENTED | `src/geo_sharding.zig` - Shard-aware query routing |
+| Cross-Shard Queries | IMPLEMENTED | `src/geo_sharding.zig` - Scatter-gather queries |
+| Failover/Resharding | IMPLEMENTED | `src/geo_sharding.zig` - Automatic failover |
+| Recovery/Replication | IMPLEMENTED | `src/geo_sharding.zig` - Cross-shard replication |
+| Shard Metrics | IMPLEMENTED | `src/geo_sharding.zig` - Per-shard metrics |
+| Security (Inter-Shard) | IMPLEMENTED | `src/geo_sharding.zig` - TLS encrypted |
+| Migration Tools | IMPLEMENTED | `tools/` - v1 to v2 migration |

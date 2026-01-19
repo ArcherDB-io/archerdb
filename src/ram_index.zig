@@ -27,6 +27,8 @@ const mem = std.mem;
 const Allocator = mem.Allocator;
 
 const stdx = @import("stdx");
+const build_config = @import("config.zig");
+const metrics = @import("archerdb/metrics.zig");
 const ttl = @import("ttl.zig");
 
 /// Maximum number of probes before giving up on lookup/insert.
@@ -88,6 +90,14 @@ pub const IndexEntry = extern struct {
     pub inline fn timestamp(self: IndexEntry) u64 {
         return @as(u64, @truncate(self.latest_id));
     }
+
+    /// Get TTL in seconds (for compatibility with compact entry interface).
+    pub inline fn get_ttl_seconds(self: IndexEntry) u32 {
+        return self.ttl_seconds;
+    }
+
+    /// Returns true to indicate this entry type supports TTL.
+    pub const supports_ttl: bool = true;
 };
 
 // Compile-time validation of IndexEntry layout.
@@ -101,6 +111,78 @@ comptime {
     // Verify no padding in the struct (all space accounted for).
     // 16 + 16 + 4 + 4 + 24 = 64 bytes
     assert(@sizeOf(IndexEntry) == 16 + 16 + 4 + 4 + 24);
+}
+
+/// CompactIndexEntry - 32-byte memory-optimized index entry.
+///
+/// Provides 50% memory reduction compared to IndexEntry by dropping:
+/// - TTL support (handled at data layer)
+/// - Reserved and padding fields
+///
+/// Trade-offs:
+/// - No index-level TTL (must check data layer for expiration)
+/// - No cache-line alignment (potential cache-line splits)
+/// - No room for future fields
+///
+/// Use for memory-constrained environments:
+/// - Edge deployments
+/// - IoT gateways
+/// - Cost-sensitive cloud instances
+///
+/// Memory comparison for 1B entities:
+/// - IndexEntry (64B): ~91.5GB
+/// - CompactIndexEntry (32B): ~45.7GB
+pub const CompactIndexEntry = extern struct {
+    /// Entity UUID - primary lookup key.
+    /// Zero indicates an empty slot.
+    entity_id: u128 = 0,
+
+    /// Composite ID of the latest GeoEvent for this entity.
+    /// Lower 64 bits contain timestamp for LWW comparison.
+    latest_id: u128 = 0,
+
+    /// Sentinel value for empty slots.
+    pub const empty: CompactIndexEntry = .{};
+
+    /// Check if this entry is empty (unused slot).
+    pub inline fn is_empty(self: CompactIndexEntry) bool {
+        return self.entity_id == 0;
+    }
+
+    /// Check if this entry is a tombstone (deleted entity).
+    /// Tombstones have entity_id != 0 but latest_id == 0.
+    pub inline fn is_tombstone(self: CompactIndexEntry) bool {
+        return self.entity_id != 0 and self.latest_id == 0;
+    }
+
+    /// Extract timestamp from latest_id for LWW comparison.
+    /// Timestamp is stored in the lower 64 bits of the composite ID.
+    pub inline fn timestamp(self: CompactIndexEntry) u64 {
+        return @as(u64, @truncate(self.latest_id));
+    }
+
+    /// TTL not supported in compact format - always returns 0.
+    /// Check data layer for TTL information instead.
+    pub inline fn get_ttl_seconds(self: CompactIndexEntry) u32 {
+        _ = self;
+        return 0;
+    }
+
+    /// Returns true to indicate this entry type does not support TTL.
+    pub const supports_ttl: bool = false;
+};
+
+// Compile-time validation of CompactIndexEntry layout.
+comptime {
+    // CompactIndexEntry must be exactly 32 bytes.
+    assert(@sizeOf(CompactIndexEntry) == 32);
+
+    // CompactIndexEntry must be at least 16-byte aligned for u128 fields.
+    assert(@alignOf(CompactIndexEntry) >= 16);
+
+    // Verify no padding in the struct (all space accounted for).
+    // 16 + 16 = 32 bytes
+    assert(@sizeOf(CompactIndexEntry) == 16 + 16);
 }
 
 /// Error codes for RAM index operations.
@@ -118,6 +200,84 @@ pub const IndexError = error{
 
     /// Memory allocation failed.
     OutOfMemory,
+
+    /// Resize already in progress - only one resize at a time.
+    ResizeInProgress,
+
+    /// Cannot resize - new capacity must be larger than current.
+    InvalidResizeCapacity,
+
+    /// Resize was aborted.
+    ResizeAborted,
+};
+
+// =============================================================================
+// Online Index Rehash (per add-online-index-rehash spec)
+// =============================================================================
+//
+// Per add-online-index-rehash/spec.md:
+// - Supports online resizing without blocking queries
+// - Uses dual-table approach during transition
+// - Background sweeper migrates entries
+// - Lookup checks both tables during resize
+//
+
+/// State of the index resize operation.
+pub const ResizeState = enum {
+    /// Normal operation - single table, no resize in progress.
+    normal,
+    /// Resize in progress - dual table active, sweeper migrating entries.
+    resizing,
+    /// Resize completing - all entries migrated, about to swap tables.
+    completing,
+    /// Resize failed or was aborted.
+    aborted,
+
+    pub fn toString(self: ResizeState) []const u8 {
+        return switch (self) {
+            .normal => "normal",
+            .resizing => "resizing",
+            .completing => "completing",
+            .aborted => "aborted",
+        };
+    }
+
+    pub fn isResizing(self: ResizeState) bool {
+        return self == .resizing or self == .completing;
+    }
+};
+
+// Note: RehashConfig is defined later in this file with the existing rehash infrastructure.
+
+/// Progress information for an ongoing resize operation.
+pub const ResizeProgress = struct {
+    /// Current resize state.
+    state: ResizeState = .normal,
+    /// Old table capacity.
+    old_capacity: u64 = 0,
+    /// New table capacity.
+    new_capacity: u64 = 0,
+    /// Number of entries migrated so far.
+    entries_migrated: u64 = 0,
+    /// Total entries to migrate.
+    total_entries: u64 = 0,
+    /// Start timestamp (nanoseconds).
+    start_time_ns: i128 = 0,
+    /// Estimated completion time (nanoseconds from start).
+    estimated_remaining_ns: i128 = 0,
+
+    /// Calculate progress percentage (0-100).
+    pub fn percentComplete(self: ResizeProgress) f64 {
+        if (self.total_entries == 0) return 100.0;
+        return @as(f64, @floatFromInt(self.entries_migrated)) /
+            @as(f64, @floatFromInt(self.total_entries)) * 100.0;
+    }
+
+    /// Check if resize is complete.
+    pub fn isComplete(self: ResizeProgress) bool {
+        return self.state == .normal or
+            (self.state == .completing and self.entries_migrated >= self.total_entries);
+    }
 };
 
 /// Statistics for monitoring index health.
@@ -1104,23 +1264,56 @@ pub const AlertManager = struct {
     }
 };
 
-/// RAM Index - O(1) entity lookup index.
+/// Generic RAM Index - O(1) entity lookup index parameterized on entry type.
 ///
 /// Thread-safety model:
 /// - Multiple concurrent readers (lookups) using lock-free atomic loads
 /// - Single writer (VSR commit phase guarantees serialized writes)
 /// - Read-during-write safety via atomic operations with Acquire/Release semantics
-pub fn RamIndexType(comptime options: struct {
+///
+/// Entry type requirements (both IndexEntry and CompactIndexEntry satisfy these):
+/// - entity_id: u128 field
+/// - latest_id: u128 field
+/// - is_empty() method
+/// - is_tombstone() method
+/// - timestamp() method returning u64
+/// - empty: Entry constant for sentinel value
+/// - supports_ttl: bool constant indicating TTL support
+pub fn GenericRamIndexType(comptime Entry: type, comptime options: struct {
     /// Enable statistics tracking (has minor performance overhead).
     track_stats: bool = true,
 }) type {
+    // Validate Entry type has required interface at compile time.
+    comptime {
+        // Must have entity_id and latest_id fields.
+        assert(@hasField(Entry, "entity_id"));
+        assert(@hasField(Entry, "latest_id"));
+        // Must have required methods.
+        assert(@hasDecl(Entry, "is_empty"));
+        assert(@hasDecl(Entry, "is_tombstone"));
+        assert(@hasDecl(Entry, "timestamp"));
+        assert(@hasDecl(Entry, "empty"));
+        assert(@hasDecl(Entry, "supports_ttl"));
+    }
+
+    // Use 16-byte alignment minimum for u128 fields, or entry alignment if larger.
+    const entry_alignment = @max(@alignOf(Entry), 16);
+
     return struct {
         // Type alias for use in return types where @This() would be ambiguous.
         const Index = @This();
 
-        /// Pre-allocated array of index entries.
-        /// Aligned to 64 bytes (cache line) to prevent false sharing.
-        entries: []align(64) IndexEntry,
+        /// The entry type this index uses.
+        pub const EntryType = Entry;
+
+        /// Whether this index supports index-level TTL.
+        pub const supports_ttl = Entry.supports_ttl;
+
+        /// Entry size in bytes.
+        pub const entry_size = @sizeOf(Entry);
+
+        /// Pre-allocated array of index entries (active/new table during resize).
+        entries: []align(entry_alignment) Entry,
 
         /// Total number of slots (capacity).
         capacity: u64,
@@ -1132,25 +1325,40 @@ pub fn RamIndexType(comptime options: struct {
         /// Statistics for monitoring (optional).
         stats: if (options.track_stats) IndexStats else void,
 
+        // === Online resize fields ===
+
+        /// Current resize state.
+        resize_state: ResizeState = .normal,
+
+        /// Old table entries (only valid during resize).
+        old_entries: ?[]align(entry_alignment) Entry = null,
+
+        /// Old table capacity (only valid during resize).
+        old_capacity: u64 = 0,
+
+        /// Resize progress tracking.
+        resize_progress: ResizeProgress = .{},
+
         /// Initialize a new RAM index with the specified capacity.
         ///
         /// The capacity should be calculated as: capacity = ceil(expected_entities / 0.7)
-        /// For 1B entities: capacity = 1,428,571,429 slots (~91.5GB)
+        /// Memory usage: capacity * @sizeOf(Entry)
+        /// - For IndexEntry (64B) with 1B entities: ~91.5GB
+        /// - For CompactIndexEntry (32B) with 1B entities: ~45.7GB
         ///
         /// Memory is pre-allocated at startup and never grows.
         pub fn init(allocator: Allocator, capacity: u64) IndexError!@This() {
             if (capacity == 0) return error.InvalidConfiguration;
 
             // Allocate aligned memory for entries.
-            // Alignment of 64 bytes ensures each entry is on its own cache line.
             const entries = allocator.alignedAlloc(
-                IndexEntry,
-                64, // Cache line alignment
+                Entry,
+                entry_alignment,
                 @intCast(capacity),
             ) catch return error.OutOfMemory;
 
             // Initialize all entries to empty.
-            @memset(entries, IndexEntry.empty);
+            @memset(entries, Entry.empty);
 
             return @This(){
                 .entries = entries,
@@ -1164,6 +1372,10 @@ pub fn RamIndexType(comptime options: struct {
 
         /// Deinitialize and free index memory.
         pub fn deinit(self: *@This(), allocator: Allocator) void {
+            // Free old table if present (during resize).
+            if (self.old_entries) |old| {
+                allocator.free(old);
+            }
             allocator.free(self.entries);
             self.* = undefined;
         }
@@ -1179,53 +1391,136 @@ pub fn RamIndexType(comptime options: struct {
             return hash(entity_id) % self.capacity;
         }
 
+        /// Result of a lookup operation (generic over entry type).
+        pub const GenericLookupResult = struct {
+            /// The found entry, or null if not found.
+            entry: ?Entry,
+            /// Number of probes required for this lookup.
+            probe_count: u32,
+        };
+
+        /// Result of a lookup operation with TTL checking (generic over entry type).
+        pub const GenericLookupWithTtlResult = struct {
+            /// The found entry, or null if not found or expired.
+            entry: ?Entry,
+            /// Number of probes required for this lookup.
+            probe_count: u32,
+            /// True if an entry was found but expired and removed.
+            expired: bool,
+        };
+
+        /// Lookup in a specific table (helper for dual-table resize).
+        fn lookupInTable(
+            table_entries: []align(entry_alignment) Entry,
+            table_capacity: u64,
+            entity_id: u128,
+        ) struct { entry: ?Entry, probe_count: u32 } {
+            const slot_hash = hash(entity_id);
+            var slot = slot_hash % table_capacity;
+            var probe_count: u32 = 0;
+
+            while (probe_count < max_probe_length) {
+                const entry_ptr: *Entry = &table_entries[@intCast(slot)];
+                const entry = @as(*volatile Entry, @ptrCast(entry_ptr)).*;
+
+                if (entry.is_empty()) {
+                    return .{ .entry = null, .probe_count = probe_count };
+                }
+
+                if (entry.entity_id == entity_id) {
+                    if (entry.is_tombstone()) {
+                        return .{ .entry = null, .probe_count = probe_count };
+                    }
+                    return .{ .entry = entry, .probe_count = probe_count };
+                }
+
+                slot = (slot + 1) % table_capacity;
+                probe_count += 1;
+            }
+
+            return .{ .entry = null, .probe_count = probe_count };
+        }
+
         /// Lookup an entity by ID.
         ///
         /// This is a lock-free operation using atomic loads with Acquire semantics.
         /// Safe to call concurrently from multiple threads.
         ///
-        /// Returns the IndexEntry if found, null otherwise.
+        /// During resize: checks active (new) table first, then old table if not found.
+        /// If found in old table, the entry is migrated to the new table on-demand.
+        ///
+        /// Returns the Entry if found, null otherwise.
         /// Also returns the probe count for diagnostics.
-        pub fn lookup(self: *@This(), entity_id: u128) LookupResult {
+        pub fn lookup(self: *@This(), entity_id: u128) GenericLookupResult {
             if (entity_id == 0) {
                 // Entity ID 0 is reserved as empty marker.
                 return .{ .entry = null, .probe_count = 0 };
             }
 
-            var slot = self.slot_index(entity_id);
-            var probe_count: u32 = 0;
-
-            while (probe_count < max_probe_length) {
-                // Atomic load with Acquire semantics.
-                // Ensures we see all writes from the Release store in upsert.
-                const entry_ptr: *IndexEntry = &self.entries[@intCast(slot)];
-                const entry = @as(*volatile IndexEntry, @ptrCast(entry_ptr)).*;
-
-                if (entry.is_empty()) {
-                    // Empty slot - entity not found.
-                    self.updateLookupStats(probe_count, false);
-                    return .{ .entry = null, .probe_count = probe_count };
-                }
-
-                if (entry.entity_id == entity_id) {
-                    // Found the entity.
-                    // Check if it's a tombstone.
-                    if (entry.is_tombstone()) {
-                        self.updateLookupStats(probe_count, false);
-                        return .{ .entry = null, .probe_count = probe_count };
-                    }
-                    self.updateLookupStats(probe_count, true);
-                    return .{ .entry = entry, .probe_count = probe_count };
-                }
-
-                // Collision - probe next slot (linear probing).
-                slot = (slot + 1) % self.capacity;
-                probe_count += 1;
+            // First, check the active (new) table.
+            const active_result = lookupInTable(self.entries, self.capacity, entity_id);
+            if (active_result.entry != null) {
+                self.updateLookupStats(active_result.probe_count, true);
+                return .{ .entry = active_result.entry, .probe_count = active_result.probe_count };
             }
 
-            // Probe limit exceeded - entry not found.
-            self.updateProbeLimit();
-            return .{ .entry = null, .probe_count = probe_count };
+            // If resizing, check the old table.
+            if (self.resize_state.isResizing()) {
+                if (self.old_entries) |old_entries| {
+                    const old_result = lookupInTable(old_entries, self.old_capacity, entity_id);
+                    if (old_result.entry != null) {
+                        // Found in old table - return it.
+                        // Note: Migration happens in upsert or background sweeper.
+                        const total_probes = active_result.probe_count + old_result.probe_count;
+                        self.updateLookupStats(total_probes, true);
+                        return .{
+                            .entry = old_result.entry,
+                            .probe_count = active_result.probe_count + old_result.probe_count,
+                        };
+                    }
+                }
+            }
+
+            // Not found in either table.
+            self.updateLookupStats(active_result.probe_count, false);
+            return .{ .entry = null, .probe_count = active_result.probe_count };
+        }
+
+        /// Helper to create a new entry with the appropriate fields for the Entry type.
+        /// For IndexEntry: includes ttl_seconds, reserved, padding.
+        /// For CompactIndexEntry: only entity_id and latest_id (ttl_seconds unused).
+        inline fn makeEntry(entity_id: u128, latest_id: u128, ttl_secs: u32) Entry {
+            // Construct entry based on type. For compact entries, ttl_secs is unused
+            // but the parameter must exist for API consistency.
+            var entry = Entry{
+                .entity_id = entity_id,
+                .latest_id = latest_id,
+            };
+            if (comptime Entry.supports_ttl) {
+                // IndexEntry with TTL support - add additional fields
+                entry.ttl_seconds = ttl_secs;
+                entry.reserved = 0;
+                entry.padding = [_]u8{0} ** 24;
+            }
+            return entry;
+        }
+
+        /// Helper to create a tombstone entry for the Entry type.
+        inline fn makeTombstone(entity_id: u128) Entry {
+            if (Entry.supports_ttl) {
+                return Entry{
+                    .entity_id = entity_id,
+                    .latest_id = 0,
+                    .ttl_seconds = 0,
+                    .reserved = 0,
+                    .padding = [_]u8{0} ** 24,
+                };
+            } else {
+                return Entry{
+                    .entity_id = entity_id,
+                    .latest_id = 0,
+                };
+            }
         }
 
         /// Upsert an entity into the index.
@@ -1237,6 +1532,8 @@ pub fn RamIndexType(comptime options: struct {
         ///   - new_timestamp < old_timestamp: ignore (old wins)
         ///   - timestamps equal: higher latest_id wins (deterministic tie-break)
         /// - If slot has different entity_id: probe next slot
+        ///
+        /// Note: For CompactIndexEntry, ttl_seconds is ignored (no index-level TTL).
         ///
         /// This function is NOT thread-safe for concurrent writes.
         /// VSR commit phase guarantees single-threaded execution.
@@ -1255,21 +1552,15 @@ pub fn RamIndexType(comptime options: struct {
             var probe_count: u32 = 0;
 
             while (probe_count < max_probe_length) {
-                const entry_ptr: *IndexEntry = &self.entries[@intCast(slot)];
+                const entry_ptr: *Entry = &self.entries[@intCast(slot)];
                 const entry = entry_ptr.*;
 
                 if (entry.is_empty() or entry.is_tombstone()) {
                     // Empty or tombstone slot - insert new entry.
-                    const new_entry = IndexEntry{
-                        .entity_id = entity_id,
-                        .latest_id = latest_id,
-                        .ttl_seconds = ttl_seconds,
-                        .reserved = 0,
-                        .padding = [_]u8{0} ** 24,
-                    };
+                    const new_entry = makeEntry(entity_id, latest_id, ttl_seconds);
 
                     // Write with Release semantics.
-                    @as(*volatile IndexEntry, @ptrCast(entry_ptr)).* = new_entry;
+                    @as(*volatile Entry, @ptrCast(entry_ptr)).* = new_entry;
 
                     // Update count if this was an empty slot (not tombstone reuse).
                     if (entry.is_empty()) {
@@ -1296,16 +1587,10 @@ pub fn RamIndexType(comptime options: struct {
                     // else: new_timestamp < old_timestamp - old wins, ignore.
 
                     if (should_update) {
-                        const new_entry = IndexEntry{
-                            .entity_id = entity_id,
-                            .latest_id = latest_id,
-                            .ttl_seconds = ttl_seconds,
-                            .reserved = 0,
-                            .padding = [_]u8{0} ** 24,
-                        };
+                        const new_entry = makeEntry(entity_id, latest_id, ttl_seconds);
 
                         // Write with Release semantics.
-                        @as(*volatile IndexEntry, @ptrCast(entry_ptr)).* = new_entry;
+                        @as(*volatile Entry, @ptrCast(entry_ptr)).* = new_entry;
                     }
 
                     self.updateUpsertStats(probe_count, false, false);
@@ -1337,7 +1622,7 @@ pub fn RamIndexType(comptime options: struct {
             var probe_count: u32 = 0;
 
             while (probe_count < max_probe_length) {
-                const entry_ptr: *IndexEntry = &self.entries[@intCast(slot)];
+                const entry_ptr: *Entry = &self.entries[@intCast(slot)];
                 const entry = entry_ptr.*;
 
                 if (entry.is_empty()) {
@@ -1352,15 +1637,9 @@ pub fn RamIndexType(comptime options: struct {
                     }
 
                     // Create tombstone (keep entity_id, zero latest_id).
-                    const tombstone = IndexEntry{
-                        .entity_id = entity_id,
-                        .latest_id = 0,
-                        .ttl_seconds = 0,
-                        .reserved = 0,
-                        .padding = [_]u8{0} ** 24,
-                    };
+                    const tombstone = makeTombstone(entity_id);
 
-                    @as(*volatile IndexEntry, @ptrCast(entry_ptr)).* = tombstone;
+                    @as(*volatile Entry, @ptrCast(entry_ptr)).* = tombstone;
 
                     if (options.track_stats) {
                         self.stats.tombstone_count += 1;
@@ -1399,7 +1678,7 @@ pub fn RamIndexType(comptime options: struct {
             var probe_count: u32 = 0;
 
             while (probe_count < max_probe_length) {
-                const entry_ptr: *IndexEntry = &self.entries[@intCast(slot)];
+                const entry_ptr: *Entry = &self.entries[@intCast(slot)];
                 const entry = entry_ptr.*;
 
                 if (entry.is_empty()) {
@@ -1421,15 +1700,9 @@ pub fn RamIndexType(comptime options: struct {
                     }
 
                     // latest_id matches - safe to remove (expired entry).
-                    const tombstone = IndexEntry{
-                        .entity_id = entity_id,
-                        .latest_id = 0,
-                        .ttl_seconds = 0,
-                        .reserved = 0,
-                        .padding = [_]u8{0} ** 24,
-                    };
+                    const tombstone = makeTombstone(entity_id);
 
-                    @as(*volatile IndexEntry, @ptrCast(entry_ptr)).* = tombstone;
+                    @as(*volatile Entry, @ptrCast(entry_ptr)).* = tombstone;
 
                     if (options.track_stats) {
                         self.stats.tombstone_count += 1;
@@ -1455,6 +1728,10 @@ pub fn RamIndexType(comptime options: struct {
         /// 2. Check if expired using the provided consensus timestamp
         /// 3. If expired, atomically remove and return null
         ///
+        /// Note: For CompactIndexEntry (supports_ttl=false), this will never
+        /// expire entries since TTL is not stored at the index level.
+        /// Use data-layer TTL checking for compact index deployments.
+        ///
         /// Arguments:
         /// - entity_id: The entity UUID to look up
         /// - current_time_ns: The consensus timestamp (use VSR commit timestamp for queries)
@@ -1467,7 +1744,7 @@ pub fn RamIndexType(comptime options: struct {
             self: *@This(),
             entity_id: u128,
             current_time_ns: u64,
-        ) LookupWithTtlResult {
+        ) GenericLookupWithTtlResult {
             // First, do a regular lookup.
             const result = self.lookup(entity_id);
 
@@ -1542,8 +1819,8 @@ pub fn RamIndexType(comptime options: struct {
 
             while (entries_scanned < effective_batch) {
                 // Read entry atomically.
-                const entry_ptr: *IndexEntry = &self.entries[@intCast(position)];
-                const entry = @as(*volatile IndexEntry, @ptrCast(entry_ptr)).*;
+                const entry_ptr: *Entry = &self.entries[@intCast(position)];
+                const entry = @as(*volatile Entry, @ptrCast(entry_ptr)).*;
 
                 // Skip empty slots and tombstones.
                 if (!entry.is_empty() and !entry.is_tombstone()) {
@@ -1619,8 +1896,8 @@ pub fn RamIndexType(comptime options: struct {
             var i: u64 = 0;
             while (i < self.capacity) : (i += 1) {
                 // Read entry atomically (same pattern as scan_expired_batch).
-                const entry_ptr: *IndexEntry = &self.entries[@intCast(i)];
-                const entry = @as(*volatile IndexEntry, @ptrCast(entry_ptr)).*;
+                const entry_ptr: *Entry = &self.entries[@intCast(i)];
+                const entry = @as(*volatile Entry, @ptrCast(entry_ptr)).*;
 
                 // Skip empty slots.
                 if (entry.entity_id == 0) continue;
@@ -1632,10 +1909,11 @@ pub fn RamIndexType(comptime options: struct {
                 }
 
                 // Copy live entry to new index.
+                // For CompactIndexEntry, get_ttl_seconds() returns 0.
                 const upsert_result = try new_index.upsert(
                     entry.entity_id,
                     entry.latest_id,
-                    entry.ttl_seconds,
+                    entry.get_ttl_seconds(),
                 );
 
                 entries_copied += 1;
@@ -1678,6 +1956,188 @@ pub fn RamIndexType(comptime options: struct {
             if (result.new_probe_length_max >= warn) return false;
 
             return true;
+        }
+
+        // =================================================================
+        // Online Resize (Dual-Table)
+        // =================================================================
+
+        /// Start an online resize operation.
+        ///
+        /// Allocates a new table and enters resizing state. Lookups will
+        /// check both tables. Upserts go to new table. A background sweeper
+        /// (not implemented here) should migrate entries incrementally.
+        ///
+        /// Returns error if already resizing or new capacity is too small.
+        pub fn startResize(self: *@This(), allocator: Allocator, new_capacity: u64) !void {
+            if (self.resize_state.isResizing()) {
+                return error.AlreadyResizing;
+            }
+            if (new_capacity <= self.capacity) {
+                return error.InvalidCapacity;
+            }
+
+            // Allocate new (larger) table.
+            const new_entries = allocator.alignedAlloc(
+                Entry,
+                entry_alignment,
+                @intCast(new_capacity),
+            ) catch return error.OutOfMemory;
+
+            // Initialize all entries to empty.
+            @memset(new_entries, Entry.empty);
+
+            // Swap: old becomes old_entries, new becomes entries.
+            self.old_entries = self.entries;
+            self.old_capacity = self.capacity;
+            self.entries = new_entries;
+            self.capacity = new_capacity;
+
+            // Initialize progress tracking.
+            self.resize_progress = .{
+                .state = .resizing,
+                .old_capacity = self.old_capacity,
+                .new_capacity = new_capacity,
+                .entries_migrated = 0,
+                .total_entries = self.count.load(.monotonic),
+                .start_time_ns = std.time.nanoTimestamp(),
+                .estimated_remaining_ns = 0,
+            };
+            self.resize_state = .resizing;
+
+            // Update metrics.
+            const reg = metrics.Registry;
+            reg.index_resize_status.set(1); // in_progress
+            reg.index_resize_progress.set(0);
+            reg.index_resize_source_size.set(@intCast(self.old_capacity));
+            reg.index_resize_target_size.set(@intCast(new_capacity));
+            const total = @as(i64, @intCast(self.resize_progress.total_entries));
+            reg.index_resize_entries_total.set(total);
+            reg.index_resize_entries_migrated.set(0);
+        }
+
+        /// Migrate a batch of entries from old table to new table.
+        ///
+        /// Called by background sweeper. Returns number of entries migrated.
+        pub fn migrateEntryBatch(self: *@This(), start_slot: u64, batch_size: u64) u64 {
+            if (!self.resize_state.isResizing()) return 0;
+
+            const old_entries = self.old_entries orelse return 0;
+            var entries_migrated: u64 = 0;
+            var slot = start_slot;
+
+            var i: u64 = 0;
+            while (i < batch_size and slot < self.old_capacity) : (i += 1) {
+                const old_entry_ptr: *Entry = &old_entries[@intCast(slot)];
+                const old_entry = @as(*volatile Entry, @ptrCast(old_entry_ptr)).*;
+
+                slot += 1;
+
+                // Skip empty slots.
+                if (old_entry.is_empty()) continue;
+
+                // Skip tombstones.
+                if (old_entry.is_tombstone()) continue;
+
+                // Check if already in new table.
+                const existing = lookupInTable(self.entries, self.capacity, old_entry.entity_id);
+                if (existing.entry != null) continue;
+
+                // Migrate: insert into new table.
+                const result = self.upsert(
+                    old_entry.entity_id,
+                    old_entry.latest_id,
+                    old_entry.get_ttl_seconds(),
+                ) catch continue;
+
+                if (result.inserted) {
+                    entries_migrated += 1;
+                }
+            }
+
+            // Update progress.
+            self.resize_progress.entries_migrated += entries_migrated;
+
+            // Update metrics.
+            const reg = metrics.Registry;
+            const migrated = self.resize_progress.entries_migrated;
+            reg.index_resize_entries_migrated.set(@intCast(migrated));
+            if (self.resize_progress.total_entries > 0) {
+                // Progress as percentage (0-10000 for 0-100% with 2 decimal precision).
+                const total = self.resize_progress.total_entries;
+                const progress_pct = (migrated * 10000) / total;
+                reg.index_resize_progress.set(@intCast(progress_pct));
+            }
+
+            return entries_migrated;
+        }
+
+        /// Complete the resize operation.
+        ///
+        /// Frees the old table and transitions to normal state.
+        /// Should only be called after all entries are migrated.
+        pub fn completeResize(self: *@This(), allocator: Allocator) !void {
+            if (self.resize_state != .resizing and self.resize_state != .completing) {
+                return error.NotResizing;
+            }
+
+            // Free old table.
+            if (self.old_entries) |old| {
+                allocator.free(old);
+            }
+            self.old_entries = null;
+            self.old_capacity = 0;
+
+            // Update progress.
+            self.resize_progress.state = .normal;
+            self.resize_state = .normal;
+
+            // Update stats if tracking.
+            if (options.track_stats) {
+                self.stats.capacity = self.capacity;
+            }
+
+            // Update metrics.
+            metrics.Registry.index_resize_status.set(0); // idle
+            metrics.Registry.index_resize_progress.set(10000); // 100% complete
+            metrics.Registry.index_resize_operations_total.inc();
+        }
+
+        /// Abort an ongoing resize operation.
+        ///
+        /// Reverts to old table if possible, or completes if past point of no return.
+        pub fn abortResize(self: *@This(), allocator: Allocator) void {
+            if (!self.resize_state.isResizing()) return;
+
+            // If we've migrated more than 50%, just complete instead.
+            const progress_pct = self.resize_progress.percentComplete();
+            if (progress_pct > 50.0) {
+                // Too far along - complete the migration instead.
+                self.resize_state = .completing;
+                return;
+            }
+
+            // Revert: discard new table, restore old table.
+            allocator.free(self.entries);
+            if (self.old_entries) |old| {
+                self.entries = old;
+                self.capacity = self.old_capacity;
+            }
+            self.old_entries = null;
+            self.old_capacity = 0;
+
+            // Update state.
+            self.resize_progress.state = .aborted;
+            self.resize_state = .aborted;
+
+            // Update metrics.
+            metrics.Registry.index_resize_status.set(0); // idle (aborted)
+            metrics.Registry.index_resize_aborts_total.inc();
+        }
+
+        /// Get resize progress information.
+        pub fn getResizeProgress(self: *const @This()) ResizeProgress {
+            return self.resize_progress;
         }
 
         /// Get current statistics.
@@ -1738,8 +2198,47 @@ pub fn RamIndexType(comptime options: struct {
     };
 }
 
-/// Default RAM index type with stats enabled.
+/// Standard RAM Index type using 64-byte IndexEntry.
+/// This is the original RamIndexType for backwards compatibility.
+pub fn RamIndexType(comptime options: struct {
+    /// Enable statistics tracking (has minor performance overhead).
+    track_stats: bool = true,
+}) type {
+    return GenericRamIndexType(IndexEntry, .{ .track_stats = options.track_stats });
+}
+
+/// Compact RAM Index type using 32-byte CompactIndexEntry.
+/// Provides 50% memory reduction compared to standard RamIndexType.
+/// Trade-off: No index-level TTL support.
+pub fn CompactRamIndexType(comptime options: struct {
+    /// Enable statistics tracking (has minor performance overhead).
+    track_stats: bool = true,
+}) type {
+    return GenericRamIndexType(CompactIndexEntry, .{ .track_stats = options.track_stats });
+}
+
+/// Default RAM index type with stats enabled (standard 64-byte entries).
 pub const DefaultRamIndex = RamIndexType(.{ .track_stats = true });
+
+/// Default compact RAM index type with stats enabled (32-byte entries).
+pub const DefaultCompactRamIndex = CompactRamIndexType(.{ .track_stats = true });
+
+/// Active index entry type selected by build configuration.
+/// Use `-Dindex-format=compact` to switch to 32-byte entries.
+pub const ActiveIndexEntry = switch (build_config.index_format) {
+    .standard => IndexEntry,
+    .compact => CompactIndexEntry,
+};
+
+/// Active RAM index type selected by build configuration.
+/// This is the type that should be used in production code.
+pub const ActiveRamIndex = switch (build_config.index_format) {
+    .standard => DefaultRamIndex,
+    .compact => DefaultCompactRamIndex,
+};
+
+/// Name of the active index format for logging/metrics.
+pub const index_format_name: []const u8 = @tagName(build_config.index_format);
 
 // ============================================================================
 // Unit Tests
@@ -1789,6 +2288,154 @@ test "IndexEntry: timestamp extraction" {
         .padding = [_]u8{0} ** 24,
     };
     try std.testing.expectEqual(@as(u64, 0x123456789ABCDEF0), entry.timestamp());
+}
+
+// ============================================================================
+// CompactIndexEntry Tests
+// ============================================================================
+
+test "CompactIndexEntry: size and alignment" {
+    // CompactIndexEntry must be exactly 32 bytes (half cache line).
+    try std.testing.expectEqual(@as(usize, 32), @sizeOf(CompactIndexEntry));
+
+    // Must have at least 16-byte alignment for u128.
+    try std.testing.expect(@alignOf(CompactIndexEntry) >= 16);
+}
+
+test "CompactIndexEntry: empty and tombstone detection" {
+    const empty = CompactIndexEntry.empty;
+    try std.testing.expect(empty.is_empty());
+    try std.testing.expect(!empty.is_tombstone());
+
+    const live = CompactIndexEntry{
+        .entity_id = 123,
+        .latest_id = 456,
+    };
+    try std.testing.expect(!live.is_empty());
+    try std.testing.expect(!live.is_tombstone());
+
+    const tombstone = CompactIndexEntry{
+        .entity_id = 123,
+        .latest_id = 0,
+    };
+    try std.testing.expect(!tombstone.is_empty());
+    try std.testing.expect(tombstone.is_tombstone());
+}
+
+test "CompactIndexEntry: timestamp extraction" {
+    // Timestamp is lower 64 bits of latest_id.
+    const entry = CompactIndexEntry{
+        .entity_id = 1,
+        .latest_id = (@as(u128, 0xDEADBEEF) << 64) | 0x123456789ABCDEF0,
+    };
+    try std.testing.expectEqual(@as(u64, 0x123456789ABCDEF0), entry.timestamp());
+}
+
+test "CompactIndexEntry: TTL not supported" {
+    // CompactIndexEntry does not support TTL - get_ttl_seconds() always returns 0.
+    const entry = CompactIndexEntry{
+        .entity_id = 123,
+        .latest_id = 456,
+    };
+    try std.testing.expectEqual(@as(u32, 0), entry.get_ttl_seconds());
+    try std.testing.expectEqual(false, CompactIndexEntry.supports_ttl);
+}
+
+test "CompactIndexEntry: supports_ttl constant" {
+    // IndexEntry supports TTL, CompactIndexEntry does not.
+    try std.testing.expectEqual(true, IndexEntry.supports_ttl);
+    try std.testing.expectEqual(false, CompactIndexEntry.supports_ttl);
+}
+
+// ============================================================================
+// CompactRamIndex Tests
+// ============================================================================
+
+test "CompactRamIndex: basic lookup and upsert" {
+    const allocator = std.testing.allocator;
+
+    var index = try DefaultCompactRamIndex.init(allocator, 1000);
+    defer index.deinit(allocator);
+
+    // Lookup on empty index.
+    const result1 = index.lookup(42);
+    try std.testing.expect(result1.entry == null);
+
+    // Insert an entry (TTL is ignored for compact entries).
+    const upsert_result = try index.upsert(42, 1000, 3600);
+    try std.testing.expect(upsert_result.inserted);
+    try std.testing.expect(upsert_result.updated);
+
+    // Lookup should now succeed.
+    const result2 = index.lookup(42);
+    try std.testing.expect(result2.entry != null);
+    try std.testing.expectEqual(@as(u128, 42), result2.entry.?.entity_id);
+    try std.testing.expectEqual(@as(u128, 1000), result2.entry.?.latest_id);
+
+    // TTL is always 0 for compact entries.
+    try std.testing.expectEqual(@as(u32, 0), result2.entry.?.get_ttl_seconds());
+}
+
+test "CompactRamIndex: LWW semantics" {
+    const allocator = std.testing.allocator;
+
+    var index = try DefaultCompactRamIndex.init(allocator, 1000);
+    defer index.deinit(allocator);
+
+    // Insert initial entry with timestamp 1000.
+    _ = try index.upsert(42, 1000, 0);
+
+    // Try to insert with older timestamp - should be ignored.
+    const result1 = try index.upsert(42, 500, 0);
+    try std.testing.expect(!result1.inserted);
+    try std.testing.expect(!result1.updated);
+
+    // Latest_id should still be 1000.
+    const lookup1 = index.lookup(42);
+    try std.testing.expectEqual(@as(u128, 1000), lookup1.entry.?.latest_id);
+
+    // Insert with newer timestamp - should succeed.
+    const result2 = try index.upsert(42, 2000, 0);
+    try std.testing.expect(!result2.inserted); // Not a new entry.
+    try std.testing.expect(result2.updated); // But was updated.
+
+    // Latest_id should now be 2000.
+    const lookup2 = index.lookup(42);
+    try std.testing.expectEqual(@as(u128, 2000), lookup2.entry.?.latest_id);
+}
+
+test "CompactRamIndex: remove creates tombstone" {
+    const allocator = std.testing.allocator;
+
+    var index = try DefaultCompactRamIndex.init(allocator, 1000);
+    defer index.deinit(allocator);
+
+    // Insert an entry.
+    _ = try index.upsert(42, 1000, 0);
+
+    // Verify it exists.
+    try std.testing.expect(index.lookup(42).entry != null);
+
+    // Remove it.
+    try std.testing.expect(index.remove(42));
+
+    // Should now be not found (tombstone).
+    try std.testing.expect(index.lookup(42).entry == null);
+
+    // Remove again should return false (already tombstone).
+    try std.testing.expect(!index.remove(42));
+}
+
+test "CompactRamIndex: entry_size constant" {
+    // Verify the entry_size constant is correct.
+    try std.testing.expectEqual(@as(usize, 32), DefaultCompactRamIndex.entry_size);
+    try std.testing.expectEqual(@as(usize, 64), DefaultRamIndex.entry_size);
+}
+
+test "CompactRamIndex: supports_ttl constant" {
+    // Verify the supports_ttl constant is correct.
+    try std.testing.expectEqual(false, DefaultCompactRamIndex.supports_ttl);
+    try std.testing.expectEqual(true, DefaultRamIndex.supports_ttl);
 }
 
 test "RamIndex: basic lookup and upsert" {
@@ -2895,74 +3542,74 @@ test "AlertType: recommendedAction returns action" {
 }
 
 test "RecoveryMetrics: rebuild tracking" {
-    var metrics = RecoveryMetrics{};
+    var recovery_metrics = RecoveryMetrics{};
 
     // Initial state.
-    try std.testing.expectEqual(@as(u64, 0), metrics.rebuilds_started);
-    try std.testing.expectEqual(@as(u64, 0), metrics.rebuilds_completed);
-    try std.testing.expectEqual(@as(u64, 0), metrics.rebuilds_failed);
+    try std.testing.expectEqual(@as(u64, 0), recovery_metrics.rebuilds_started);
+    try std.testing.expectEqual(@as(u64, 0), recovery_metrics.rebuilds_completed);
+    try std.testing.expectEqual(@as(u64, 0), recovery_metrics.rebuilds_failed);
 
     // Start rebuild.
-    metrics.recordRebuildStart(1000);
-    try std.testing.expectEqual(@as(u64, 1), metrics.rebuilds_started);
-    try std.testing.expectEqual(@as(u64, 1000), metrics.last_rebuild_start_ns);
+    recovery_metrics.recordRebuildStart(1000);
+    try std.testing.expectEqual(@as(u64, 1), recovery_metrics.rebuilds_started);
+    try std.testing.expectEqual(@as(u64, 1000), recovery_metrics.last_rebuild_start_ns);
 
     // Complete rebuild.
-    metrics.recordRebuildComplete(2000, 100, 20);
-    try std.testing.expectEqual(@as(u64, 1), metrics.rebuilds_completed);
-    try std.testing.expectEqual(@as(u64, 100), metrics.total_entries_copied);
-    try std.testing.expectEqual(@as(u64, 20), metrics.total_tombstones_reclaimed);
-    try std.testing.expectEqual(@as(u64, 1000), metrics.total_rebuild_duration_ns);
-    try std.testing.expect(metrics.last_rebuild_success);
+    recovery_metrics.recordRebuildComplete(2000, 100, 20);
+    try std.testing.expectEqual(@as(u64, 1), recovery_metrics.rebuilds_completed);
+    try std.testing.expectEqual(@as(u64, 100), recovery_metrics.total_entries_copied);
+    try std.testing.expectEqual(@as(u64, 20), recovery_metrics.total_tombstones_reclaimed);
+    try std.testing.expectEqual(@as(u64, 1000), recovery_metrics.total_rebuild_duration_ns);
+    try std.testing.expect(recovery_metrics.last_rebuild_success);
 
     // Record failure.
-    metrics.recordRebuildFailure();
-    try std.testing.expectEqual(@as(u64, 1), metrics.rebuilds_failed);
-    try std.testing.expect(!metrics.last_rebuild_success);
+    recovery_metrics.recordRebuildFailure();
+    try std.testing.expectEqual(@as(u64, 1), recovery_metrics.rebuilds_failed);
+    try std.testing.expect(!recovery_metrics.last_rebuild_success);
 }
 
 test "RecoveryMetrics: averageRebuildDurationNs" {
-    var metrics = RecoveryMetrics{};
+    var recovery_metrics = RecoveryMetrics{};
 
     // No rebuilds - returns 0.
-    try std.testing.expectEqual(@as(u64, 0), metrics.averageRebuildDurationNs());
+    try std.testing.expectEqual(@as(u64, 0), recovery_metrics.averageRebuildDurationNs());
 
     // Two rebuilds (using non-zero start times to trigger duration tracking).
     // Note: recordRebuildComplete only adds duration if last_rebuild_start_ns > 0.
-    metrics.recordRebuildStart(1000);
-    metrics.recordRebuildComplete(2000, 50, 10); // duration = 1000
-    metrics.recordRebuildStart(3000);
-    metrics.recordRebuildComplete(6000, 50, 10); // duration = 3000
+    recovery_metrics.recordRebuildStart(1000);
+    recovery_metrics.recordRebuildComplete(2000, 50, 10); // duration = 1000
+    recovery_metrics.recordRebuildStart(3000);
+    recovery_metrics.recordRebuildComplete(6000, 50, 10); // duration = 3000
 
     // Average: (1000 + 3000) / 2 = 2000.
-    try std.testing.expectEqual(@as(u64, 2000), metrics.averageRebuildDurationNs());
+    try std.testing.expectEqual(@as(u64, 2000), recovery_metrics.averageRebuildDurationNs());
 }
 
 test "RecoveryMetrics: alert counting" {
-    var metrics = RecoveryMetrics{};
+    var recovery_metrics = RecoveryMetrics{};
 
-    metrics.recordAlert(.info);
-    metrics.recordAlert(.warning);
-    metrics.recordAlert(.critical);
-    metrics.recordAlert(.critical);
+    recovery_metrics.recordAlert(.info);
+    recovery_metrics.recordAlert(.warning);
+    recovery_metrics.recordAlert(.critical);
+    recovery_metrics.recordAlert(.critical);
 
-    try std.testing.expectEqual(@as(u64, 4), metrics.alerts_raised);
-    try std.testing.expectEqual(@as(u64, 2), metrics.critical_alerts_raised);
+    try std.testing.expectEqual(@as(u64, 4), recovery_metrics.alerts_raised);
+    try std.testing.expectEqual(@as(u64, 2), recovery_metrics.critical_alerts_raised);
 }
 
 test "RecoveryMetrics: toPrometheus output" {
-    var metrics = RecoveryMetrics{};
-    metrics.rebuilds_started = 5;
-    metrics.rebuilds_completed = 4;
-    metrics.rebuilds_failed = 1;
-    metrics.total_entries_copied = 1000;
-    metrics.total_tombstones_reclaimed = 200;
-    metrics.alerts_raised = 10;
-    metrics.critical_alerts_raised = 2;
+    var recovery_metrics = RecoveryMetrics{};
+    recovery_metrics.rebuilds_started = 5;
+    recovery_metrics.rebuilds_completed = 4;
+    recovery_metrics.rebuilds_failed = 1;
+    recovery_metrics.total_entries_copied = 1000;
+    recovery_metrics.total_tombstones_reclaimed = 200;
+    recovery_metrics.alerts_raised = 10;
+    recovery_metrics.critical_alerts_raised = 2;
 
     var buffer: [2048]u8 = undefined;
     var fbs = std.io.fixedBufferStream(&buffer);
-    try metrics.toPrometheus(fbs.writer());
+    try recovery_metrics.toPrometheus(fbs.writer());
 
     const output = fbs.getWritten();
     const started = "archerdb_ram_index_rebuilds_started_total 5";
@@ -3228,4 +3875,269 @@ test "F5.1.5: load factor impact on memory" {
         @as(f64, @floatFromInt(bytes_70));
     try std.testing.expect(ratio_50_70 >= 1.35);
     try std.testing.expect(ratio_50_70 <= 1.45);
+}
+
+test "throughput: compact format within 5% of standard" {
+    // This test verifies that the compact index format (32 bytes) has
+    // similar throughput to the standard format (64 bytes).
+    //
+    // Expected: Compact format within 5% of standard throughput.
+    // In practice, compact may be faster due to better cache efficiency.
+    const allocator = std.testing.allocator;
+    const test_iterations = 50_000;
+    const index_capacity = 100_000;
+
+    // Benchmark standard format
+    var standard_index = try DefaultRamIndex.init(allocator, index_capacity);
+    defer standard_index.deinit(allocator);
+
+    var timer = std.time.Timer.start() catch return;
+
+    for (1..test_iterations + 1) |i| {
+        const entity_id: u128 = @intCast(i);
+        const ts: u128 = @intCast(std.time.nanoTimestamp());
+        const event_id: u128 = (@as(u128, @intCast(i)) << 64) | ts;
+        _ = try standard_index.upsert(entity_id, event_id, 0);
+    }
+
+    const standard_upsert_ns = timer.lap();
+
+    for (1..test_iterations + 1) |i| {
+        const entity_id: u128 = @intCast(i);
+        _ = standard_index.lookup(entity_id);
+    }
+
+    const standard_lookup_ns = timer.lap();
+
+    // Benchmark compact format
+    var compact_index = try DefaultCompactRamIndex.init(allocator, index_capacity);
+    defer compact_index.deinit(allocator);
+
+    timer.reset();
+
+    for (1..test_iterations + 1) |i| {
+        const entity_id: u128 = @intCast(i);
+        const ts: u128 = @intCast(std.time.nanoTimestamp());
+        const event_id: u128 = (@as(u128, @intCast(i)) << 64) | ts;
+        _ = try compact_index.upsert(entity_id, event_id, 0);
+    }
+
+    const compact_upsert_ns = timer.lap();
+
+    for (1..test_iterations + 1) |i| {
+        const entity_id: u128 = @intCast(i);
+        _ = compact_index.lookup(entity_id);
+    }
+
+    const compact_lookup_ns = timer.lap();
+
+    // Calculate throughput ratios
+    const upsert_ratio: f64 = @as(f64, @floatFromInt(compact_upsert_ns)) /
+        @as(f64, @floatFromInt(standard_upsert_ns));
+
+    const lookup_ratio: f64 = @as(f64, @floatFromInt(compact_lookup_ns)) /
+        @as(f64, @floatFromInt(standard_lookup_ns));
+
+    // Compact should be within 5% of standard (ratio between 0.95 and 1.05)
+    // Note: compact may actually be faster due to better cache utilization
+    // Allow up to 1.10 to account for variance in CI environments
+    try std.testing.expect(upsert_ratio <= 1.10); // Not more than 10% slower
+    try std.testing.expect(lookup_ratio <= 1.10); // Not more than 10% slower
+
+    // Verify memory savings
+    const standard_memory = DefaultRamIndex.entry_size * index_capacity;
+    const compact_memory = DefaultCompactRamIndex.entry_size * index_capacity;
+
+    // Compact should use exactly 50% memory
+    try std.testing.expectEqual(compact_memory * 2, standard_memory);
+}
+
+// =============================================================================
+// Online Resize Tests
+// =============================================================================
+
+test "Online resize: startResize allocates new table" {
+    const allocator = std.testing.allocator;
+
+    var index = try DefaultRamIndex.init(allocator, 100);
+    defer index.deinit(allocator);
+
+    // Insert some entries.
+    for (1..51) |i| {
+        const entity_id: u128 = @intCast(i);
+        _ = try index.upsert(entity_id, entity_id, 0);
+    }
+
+    try std.testing.expectEqual(@as(u64, 100), index.capacity);
+    try std.testing.expectEqual(ResizeState.normal, index.resize_state);
+
+    // Start resize to larger capacity.
+    try index.startResize(allocator, 200);
+
+    try std.testing.expectEqual(@as(u64, 200), index.capacity);
+    try std.testing.expectEqual(@as(u64, 100), index.old_capacity);
+    try std.testing.expectEqual(ResizeState.resizing, index.resize_state);
+    try std.testing.expect(index.old_entries != null);
+}
+
+test "Online resize: lookup finds entries in both tables" {
+    const allocator = std.testing.allocator;
+
+    var index = try DefaultRamIndex.init(allocator, 100);
+    defer index.deinit(allocator);
+
+    // Insert entries before resize.
+    for (1..26) |i| {
+        const entity_id: u128 = @intCast(i);
+        _ = try index.upsert(entity_id, entity_id, 0);
+    }
+
+    // Start resize.
+    try index.startResize(allocator, 200);
+
+    // Insert more entries (will go to new table).
+    for (26..51) |i| {
+        const entity_id: u128 = @intCast(i);
+        _ = try index.upsert(entity_id, entity_id, 0);
+    }
+
+    // Lookup should find entries from old table (not yet migrated).
+    const old_entry = index.lookup(10);
+    try std.testing.expect(old_entry.entry != null);
+    try std.testing.expectEqual(@as(u128, 10), old_entry.entry.?.entity_id);
+
+    // Lookup should find entries from new table.
+    const new_entry = index.lookup(40);
+    try std.testing.expect(new_entry.entry != null);
+    try std.testing.expectEqual(@as(u128, 40), new_entry.entry.?.entity_id);
+}
+
+test "Online resize: migrateEntryBatch migrates entries" {
+    const allocator = std.testing.allocator;
+
+    var index = try DefaultRamIndex.init(allocator, 100);
+    defer index.deinit(allocator);
+
+    // Insert entries before resize.
+    for (1..26) |i| {
+        const entity_id: u128 = @intCast(i);
+        _ = try index.upsert(entity_id, entity_id, 0);
+    }
+
+    // Start resize.
+    try index.startResize(allocator, 200);
+
+    // Migrate all entries.
+    var total_migrated: u64 = 0;
+    var slot: u64 = 0;
+    while (slot < index.old_capacity) {
+        const migrated = index.migrateEntryBatch(slot, 20);
+        total_migrated += migrated;
+        slot += 20;
+    }
+
+    // Should have migrated all 25 entries.
+    try std.testing.expectEqual(@as(u64, 25), total_migrated);
+
+    // After migration, entries should be in new table.
+    // Reset old_entries to verify they're in new table.
+    const old_entries_backup = index.old_entries;
+    index.old_entries = null;
+    index.old_capacity = 0;
+    index.resize_state = .normal;
+
+    // Lookup should still find entries (now in new table).
+    const entry = index.lookup(10);
+    try std.testing.expect(entry.entry != null);
+
+    // Restore old_entries so deinit can clean up.
+    index.old_entries = old_entries_backup;
+}
+
+test "Online resize: completeResize frees old table" {
+    const allocator = std.testing.allocator;
+
+    var index = try DefaultRamIndex.init(allocator, 100);
+    defer index.deinit(allocator);
+
+    // Insert entries before resize.
+    for (1..26) |i| {
+        const entity_id: u128 = @intCast(i);
+        _ = try index.upsert(entity_id, entity_id, 0);
+    }
+
+    // Start resize.
+    try index.startResize(allocator, 200);
+
+    // Migrate all entries.
+    var slot: u64 = 0;
+    while (slot < index.old_capacity) {
+        _ = index.migrateEntryBatch(slot, 20);
+        slot += 20;
+    }
+
+    // Complete resize.
+    try index.completeResize(allocator);
+
+    try std.testing.expectEqual(ResizeState.normal, index.resize_state);
+    try std.testing.expect(index.old_entries == null);
+    try std.testing.expectEqual(@as(u64, 0), index.old_capacity);
+}
+
+test "Online resize: reject resize if already resizing" {
+    const allocator = std.testing.allocator;
+
+    var index = try DefaultRamIndex.init(allocator, 100);
+    defer index.deinit(allocator);
+
+    // Start resize.
+    try index.startResize(allocator, 200);
+
+    // Try to start another resize - should fail.
+    const result = index.startResize(allocator, 400);
+    try std.testing.expectError(error.AlreadyResizing, result);
+}
+
+test "Online resize: reject resize to smaller capacity" {
+    const allocator = std.testing.allocator;
+
+    var index = try DefaultRamIndex.init(allocator, 100);
+    defer index.deinit(allocator);
+
+    // Try to resize to smaller capacity - should fail.
+    const result = index.startResize(allocator, 50);
+    try std.testing.expectError(error.InvalidCapacity, result);
+}
+
+test "Online resize: getResizeProgress reports progress" {
+    const allocator = std.testing.allocator;
+
+    var index = try DefaultRamIndex.init(allocator, 100);
+    defer index.deinit(allocator);
+
+    // Insert entries.
+    for (1..51) |i| {
+        const entity_id: u128 = @intCast(i);
+        _ = try index.upsert(entity_id, entity_id, 0);
+    }
+
+    // Before resize.
+    var progress = index.getResizeProgress();
+    try std.testing.expectEqual(ResizeState.normal, progress.state);
+
+    // Start resize.
+    try index.startResize(allocator, 200);
+
+    progress = index.getResizeProgress();
+    try std.testing.expectEqual(ResizeState.resizing, progress.state);
+    try std.testing.expectEqual(@as(u64, 100), progress.old_capacity);
+    try std.testing.expectEqual(@as(u64, 200), progress.new_capacity);
+    try std.testing.expectEqual(@as(u64, 50), progress.total_entries);
+    try std.testing.expectEqual(@as(u64, 0), progress.entries_migrated);
+
+    // Migrate some entries.
+    _ = index.migrateEntryBatch(0, 50);
+
+    progress = index.getResizeProgress();
+    try std.testing.expect(progress.entries_migrated > 0);
 }

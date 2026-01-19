@@ -111,7 +111,7 @@ const StateFileBody = extern struct {
     /// Checksum of the body (crc32).
     checksum: u32,
     /// Reserved for future use.
-    reserved: [20]u8 = [_]u8{0} ** 20,
+    reserved: [28]u8 = [_]u8{0} ** 28,
 };
 
 /// Manages backup state persistence.
@@ -226,12 +226,13 @@ pub const BackupStateManager = struct {
             .failed_count = self.state.failed_count,
             .abandoned_count = self.state.abandoned_count,
             .checksum = 0,
-            .reserved = [_]u8{0} ** 20,
+            .reserved = [_]u8{0} ** 28,
         };
 
         // Calculate checksum over body (excluding checksum field itself)
         const body_bytes = mem.asBytes(&body);
-        body.checksum = std.hash.crc.Crc32.hash(body_bytes[0 .. body_bytes.len - 24]);
+        const checksum_len = @offsetOf(StateFileBody, "checksum");
+        body.checksum = std.hash.crc.Crc32.hash(body_bytes[0..checksum_len]);
 
         // Write to temp file then rename (atomic)
         const tmp_path = try std.fmt.allocPrint(
@@ -312,7 +313,8 @@ pub const BackupStateManager = struct {
 
         // Verify checksum
         const body_bytes = mem.asBytes(&body);
-        const computed_checksum = std.hash.crc.Crc32.hash(body_bytes[0 .. body_bytes.len - 24]);
+        const checksum_len = @offsetOf(StateFileBody, "checksum");
+        const computed_checksum = std.hash.crc.Crc32.hash(body_bytes[0..checksum_len]);
         if (body.checksum != computed_checksum) {
             logErr("State file checksum mismatch", .{});
             return StateError.Corrupted;

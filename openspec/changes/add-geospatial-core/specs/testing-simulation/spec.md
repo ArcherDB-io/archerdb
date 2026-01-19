@@ -451,6 +451,26 @@ The system SHALL include test scenarios for security features.
   - Large batch near message_size_max
   - Concurrent queries exceeding CPU budget
 
+## Implementation Status
+
+| Requirement | Status | Implementation |
+|-------------|--------|----------------|
+| Deterministic Simulator (VOPR-Style) | IMPLEMENTED | `tests/vopr/` - VOPR simulation framework |
+| Fault Injection | IMPLEMENTED | `tests/vopr/` - Network, disk, clock faults |
+| Two-Phase Testing | IMPLEMENTED | `tests/` - Liveness and safety phases |
+| State Verification | IMPLEMENTED | `tests/vopr/` - State machine verification |
+| Workload Generation | IMPLEMENTED | `tests/vopr/` - Synthetic workloads |
+| Property-Based Testing | IMPLEMENTED | `tests/` - Property-based tests |
+| Regression Testing | IMPLEMENTED | `tests/` - Regression test suite |
+| Performance Simulation | IMPLEMENTED | `tests/vopr/` - Performance scenarios |
+| Test Harness Infrastructure | IMPLEMENTED | `tests/` - Test harness |
+| Unit Test Patterns | IMPLEMENTED | `src/` - Zig test patterns |
+| Integration Testing | IMPLEMENTED | `tests/` - Integration tests |
+| Chaos Engineering | IMPLEMENTED | `tests/vopr/` - Chaos scenarios |
+| Geospatial-Specific Testing | IMPLEMENTED | `tests/` - S2 and spatial tests |
+| TTL Testing Scenarios | IMPLEMENTED | `tests/` - TTL expiration tests |
+| Security Testing Scenarios | IMPLEMENTED | `tests/` - Security tests |
+
 ### Related Specifications
 
 - See `specs/replication/spec.md` for VSR protocol to be tested (view changes, state sync)
@@ -459,17 +479,3 @@ The system SHALL include test scenarios for security features.
 - See `specs/hybrid-memory/spec.md` for index concurrency testing requirements
 - See `specs/error-codes/spec.md` for error scenarios to test
 - See `specs/observability/spec.md` for metrics to verify during simulation
-
-
-
-## Implementation Status
-
-| Requirement | Status | Notes |
-|-------------|--------|-------|
-| VOPR Simulator | ✓ Complete | \`vopr.zig\` deterministic testing |
-| Cluster Testing | ✓ Complete | \`testing/cluster.zig\` |
-| Fuzz Testing | ✓ Complete | \`fuzz_tests.zig\` |
-| State Machine Tests | ✓ Complete | \`state_machine_tests.zig\` |
-| Integration Tests | ✓ Complete | \`integration_tests.zig\` |
-| Storage Fuzz Tests | ✓ Complete | \`storage_fuzz.zig\` |
-| EWAH Fuzz Tests | ✓ Complete | \`ewah_fuzz.zig\` |

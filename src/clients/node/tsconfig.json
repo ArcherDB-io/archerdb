@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "target": "ES2020",
-    "lib": ["ES2020"],
+    "lib": ["ES2020", "DOM"],
     "module": "commonjs",
     "esModuleInterop": true,
     "declaration": true,
@@ -16,5 +16,5 @@
     "suppressImplicitAnyIndexErrors": true,
     "outDir": "./dist"
   },
-  "files": ["src/index.ts", "src/geo.ts", "src/geo_client.ts", "src/geo_test.ts", "src/wire_format_test.ts", "src/topology.ts", "src/topology_test.ts", "src/errors.ts", "src/errors_test.ts"]
+  "files": ["src/index.ts", "src/geo.ts", "src/geo_client.ts", "src/geo_test.ts", "src/wire_format_test.ts", "src/topology.ts", "src/topology_test.ts", "src/errors.ts", "src/errors_test.ts", "src/geo_routing.ts"]
 }

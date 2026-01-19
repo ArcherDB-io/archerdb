@@ -18,10 +18,12 @@ const LoggedProcess = @This();
 
 const Options = struct {
     stdout_behavior: std.process.Child.StdIo = .Ignore,
+    setpgid: bool = false,
 };
 
 child: std.process.Child,
 state: enum { running, paused, terminated },
+process_group: bool,
 
 pub fn spawn(
     allocator: std.mem.Allocator,
@@ -34,6 +36,7 @@ pub fn spawn(
     self.* = .{
         .state = .running,
         .child = std.process.Child.init(argv, allocator),
+        .process_group = false,
     };
 
     self.child.stdin_behavior = .Ignore;
@@ -42,6 +45,14 @@ pub fn spawn(
 
     try self.child.spawn();
     errdefer _ = self.child.kill() catch {};
+
+    if (options.setpgid and builtin.os.tag != .windows) {
+        if (std.posix.setpgid(self.child.id, self.child.id)) |_| {
+            self.process_group = true;
+        } else |err| {
+            log.warn("failed to set process group for {d}: {any}", .{ self.child.id, err });
+        }
+    }
 
     return self;
 }
@@ -98,6 +109,46 @@ pub fn terminate(
     const term = try self.child.wait();
     self.state = .terminated;
     return term;
+}
+
+pub fn terminate_graceful(
+    self: *LoggedProcess,
+    timeout: stdx.Duration,
+) !std.process.Child.Term {
+    self.expect_state_in(.{ .running, .paused });
+
+    if (builtin.os.tag == .windows) {
+        return self.terminate();
+    }
+
+    const pid_target: std.posix.pid_t =
+        if (self.process_group) -self.child.id else self.child.id;
+    _ = std.posix.kill(pid_target, std.posix.SIG.TERM) catch |err| {
+        log.err(
+            "failed to terminate process {d}: {any}\n",
+            .{ self.child.id, err },
+        );
+    };
+
+    const deadline = std.time.nanoTimestamp() + timeout.ns;
+    while (std.time.nanoTimestamp() < deadline) {
+        if (self.wait_nonblocking()) |term| return term;
+        std.time.sleep(10 * std.time.ns_per_ms);
+    }
+
+    if (self.process_group) {
+        _ = std.posix.kill(pid_target, std.posix.SIG.KILL) catch |err| {
+            log.err(
+                "failed to kill process group {d}: {any}\n",
+                .{ self.child.id, err },
+            );
+        };
+        const term = try self.child.wait();
+        self.state = .terminated;
+        return term;
+    }
+
+    return self.terminate();
 }
 
 pub fn wait(

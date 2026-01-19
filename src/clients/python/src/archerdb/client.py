@@ -1032,7 +1032,7 @@ class GeoClientSync:
         """Look up the latest event for an entity by UUID."""
         self._ensure_connected()
 
-        filter = QueryUuidFilter(entity_id=entity_id, limit=1)
+        filter = QueryUuidFilter(entity_id=entity_id)
         results = self._submit_query(GeoOperation.QUERY_UUID, filter)
         return results[0] if results else None
 
@@ -1282,7 +1282,7 @@ class GeoClientSync:
 
         def do_query() -> List[GeoEvent]:
             if operation == GeoOperation.QUERY_UUID:
-                return self._native.query_uuid(filter.entity_id, filter.limit)
+                return self._native.query_uuid(filter.entity_id)
             elif operation == GeoOperation.QUERY_RADIUS:
                 return self._native.query_radius(filter)
             elif operation == GeoOperation.QUERY_LATEST:
@@ -1781,7 +1781,7 @@ class GeoClientAsync:
         """Look up the latest event for an entity by UUID."""
         self._ensure_connected()
 
-        filter = QueryUuidFilter(entity_id=entity_id, limit=1)
+        filter = QueryUuidFilter(entity_id=entity_id)
         results = await self._submit_query(GeoOperation.QUERY_UUID, filter)
         return results[0] if results else None
 

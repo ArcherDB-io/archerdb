@@ -1,9 +1,0 @@
-[package]
-name = "archerdb-sample-two-phase-many"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-tokio.version = "=1.38.1"
-tokio.features = ["macros", "rt-multi-thread"]
-archerdb.path = "../.."

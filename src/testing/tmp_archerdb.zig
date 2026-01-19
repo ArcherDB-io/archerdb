@@ -22,6 +22,8 @@ archerdb_exe: []const u8,
 port: u16,
 /// For convenience, the same port pre-converted to string.
 port_str: []const u8,
+/// Metrics port if enabled.
+metrics_port: ?u16 = null,
 
 tmp_dir: std.testing.TmpDir,
 
@@ -38,6 +40,9 @@ pub fn init(
     options: struct {
         development: bool,
         prebuilt: ?[]const u8 = null,
+        metrics_port: ?u16 = null,
+        metrics_bind: ?[]const u8 = null,
+        metrics_auth_token: ?[]const u8 = null,
     },
 ) !TmpArcherDB {
     const shell = try Shell.create(gpa);
@@ -85,20 +90,40 @@ pub fn init(
     );
 
     var reader_maybe: ?*StreamReader = null;
+
+    var argv = std.ArrayList([]const u8).init(shell.gpa);
+    defer {
+        for (argv.items) |arg| {
+            shell.gpa.free(arg);
+        }
+        argv.deinit();
+    }
+
+    try argv.append(try shell.gpa.dupe(u8, archerdb_exe));
+    try argv.append(try shell.gpa.dupe(u8, "start"));
+    try argv.append(try std.fmt.allocPrint(shell.gpa, "--development={s}", .{
+        if (options.development) "true" else "false",
+    }));
     // Pass `--addresses=0` to let the OS pick a port for us.
-    var process = try shell.spawn(
-        .{
-            .stdin_behavior = .Pipe,
-            .stdout_behavior = .Pipe,
-            .stderr_behavior = .Pipe,
-        },
-        "{archerdb} start --development={development} --addresses=0 {data_file}",
-        .{
-            .archerdb = archerdb_exe,
-            .development = if (options.development) "true" else "false",
-            .data_file = data_file,
-        },
-    );
+    try argv.append(try shell.gpa.dupe(u8, "--addresses=0"));
+    if (options.metrics_port) |port| {
+        try argv.append(try std.fmt.allocPrint(shell.gpa, "--metrics-port={d}", .{port}));
+    }
+    if (options.metrics_bind) |bind| {
+        try argv.append(try std.fmt.allocPrint(shell.gpa, "--metrics-bind={s}", .{bind}));
+    }
+    if (options.metrics_auth_token) |token| {
+        try argv.append(try std.fmt.allocPrint(shell.gpa, "--metrics-auth-token={s}", .{token}));
+    }
+    try argv.append(try shell.gpa.dupe(u8, data_file));
+
+    var process = std.process.Child.init(argv.items, shell.gpa);
+    process.cwd = try shell.cwd.realpath(".", &shell.cwd_path_buffer);
+    process.env_map = &shell.env;
+    process.stdin_behavior = .Pipe;
+    process.stdout_behavior = .Pipe;
+    process.stderr_behavior = .Pipe;
+    try process.spawn();
 
     errdefer {
         if (reader_maybe) |reader| {
@@ -134,6 +159,7 @@ pub fn init(
         .archerdb_exe = archerdb_exe,
         .port = port,
         .port_str = port_str,
+        .metrics_port = options.metrics_port,
         .tmp_dir = tmp_dir,
         .stderr_reader = reader_maybe.?,
         .process = process,

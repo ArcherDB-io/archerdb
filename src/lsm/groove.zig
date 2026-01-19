@@ -852,7 +852,7 @@ pub fn GrooveType(
         /// This must be called by the state machine for every timestamp to be checked by `exists`.
         /// The first call to this function may trigger the sorting of the mutable table, which is
         /// likely a no-op since timestamps are strictly increasing and the table should already
-        /// be sorted, except for objects that are frequently updated (e.g., accounts).
+        /// be sorted, except for objects that are frequently updated (e.g., GeoEvents).
         /// We tolerate duplicate timestamps enqueued by the state machine.
         pub fn prefetch_enqueue_by_timestamp(
             groove: *Groove,

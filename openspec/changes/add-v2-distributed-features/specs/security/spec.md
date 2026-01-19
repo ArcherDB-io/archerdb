@@ -213,11 +213,9 @@ The system SHALL define error codes for encryption operations.
 
 | Requirement | Status | Notes |
 |-------------|--------|-------|
-| AES-256-GCM Encryption | ✓ Complete | `encryption.zig` |
-| FileKeyProvider | ✓ Complete | File-based key for dev/testing |
-| AwsKmsKeyProvider | ✓ Complete | AWS KMS integration |
-| VaultKeyProvider | ✓ Complete | HashiCorp Vault integration |
-| DEK Wrapping/Unwrapping | ✓ Complete | AEAD with nonce |
-| Key Rotation Support | ✓ Complete | Re-wrap DEKs mechanism |
-| Encryption Error Codes (410-414) | ✓ Complete | `error_codes.zig` |
-| Encryption Metrics | ✓ Complete | Operations counters |
+| Encryption at Rest | IMPLEMENTED | `src/encryption.zig` |
+| Key Management Integration | IMPLEMENTED | `src/encryption.zig` |
+| Key Rotation | IMPLEMENTED | `src/encryption.zig` |
+| Encryption Verification | IMPLEMENTED | `src/encryption.zig` |
+| Encryption Audit Logging | IMPLEMENTED | `src/encryption.zig` |
+| Encryption Error Codes | IMPLEMENTED | `src/encryption.zig` |

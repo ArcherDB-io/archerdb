@@ -8,13 +8,13 @@
  */
 const process = require('process')
 
-const { createGeoClient, createGeoEvent } = require('archerdb-node')
+const { createGeoClient } = require('archerdb-node')
 
 async function main() {
   const address = process.env.ARCHERDB_ADDRESS || '127.0.0.1:3001'
 
   const client = createGeoClient({
-    clusterId: 0n,
+    cluster_id: 0n,
     addresses: [address],
   })
 
@@ -24,8 +24,6 @@ async function main() {
     // Using Golden Gate Park as center
     const centerLat = 37.7694
     const centerLon = -122.4862
-
-    const nowNs = BigInt(Date.now()) * 1000000n
 
     const batch = client.createBatch()
     const eventsData = [
@@ -39,11 +37,10 @@ async function main() {
     for (let i = 0; i < eventsData.length; i++) {
       const data = eventsData[i]
       batch.addFromOptions({
-        entityId: BigInt(Math.floor(Math.random() * Number.MAX_SAFE_INTEGER)),
+        entity_id: BigInt(Math.floor(Math.random() * Number.MAX_SAFE_INTEGER)),
         latitude: data.lat,
         longitude: data.lon,
-        timestamp: nowNs + BigInt(i),
-        groupId: 1n,
+        group_id: 1n,
       })
     }
 
@@ -54,7 +51,7 @@ async function main() {
     let result = await client.queryRadius({
       latitude: centerLat,
       longitude: centerLon,
-      radiusM: 200,
+      radius_m: 200,
     })
     console.log(`Within 200m: ${result.events.length} events`)
 
@@ -62,7 +59,7 @@ async function main() {
     result = await client.queryRadius({
       latitude: centerLat,
       longitude: centerLon,
-      radiusM: 600,
+      radius_m: 600,
     })
     console.log(`Within 600m: ${result.events.length} events`)
 
@@ -70,7 +67,7 @@ async function main() {
     result = await client.queryRadius({
       latitude: centerLat,
       longitude: centerLon,
-      radiusM: 1500,
+      radius_m: 1500,
     })
     console.log(`Within 1.5km: ${result.events.length} events`)
 
@@ -78,7 +75,7 @@ async function main() {
     result = await client.queryRadius({
       latitude: centerLat,
       longitude: centerLon,
-      radiusM: 3000,
+      radius_m: 3000,
     })
     console.log(`Within 3km: ${result.events.length} events`)
 
@@ -86,7 +83,7 @@ async function main() {
     result = await client.queryRadius({
       latitude: centerLat,
       longitude: centerLon,
-      radiusM: 10000,
+      radius_m: 10000,
     })
     console.log(`Within 10km: ${result.events.length} events`)
 
@@ -95,20 +92,20 @@ async function main() {
     result = await client.queryRadius({
       latitude: centerLat,
       longitude: centerLon,
-      radiusM: 10000,
+      radius_m: 10000,
       limit: 2,
     })
-    console.log(`  Page 1: ${result.events.length} events, hasMore=${result.hasMore}`)
+    console.log(`  Page 1: ${result.events.length} events, hasMore=${result.has_more}`)
 
-    if (result.hasMore && result.cursor) {
+    if (result.has_more && result.cursor) {
       const result2 = await client.queryRadius({
         latitude: centerLat,
         longitude: centerLon,
-        radiusM: 10000,
+        radius_m: 10000,
         limit: 2,
-        timestampMax: result.cursor - 1n,
+        timestamp_max: result.cursor - 1n,
       })
-      console.log(`  Page 2: ${result2.events.length} events, hasMore=${result2.hasMore}`)
+      console.log(`  Page 2: ${result2.events.length} events, hasMore=${result2.has_more}`)
     }
 
     console.log('\nok')

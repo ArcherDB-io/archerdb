@@ -218,7 +218,8 @@ pub const LoadStatistics = struct {
     /// Calculate throughput.
     pub fn calculateThroughput(self: *LoadStatistics) void {
         if (self.processing_time_ns > 0) {
-            const total_processed = self.inserted_events + self.updated_events + self.deleted_events;
+            const total_processed = self.inserted_events +
+                self.updated_events + self.deleted_events;
             const seconds = @as(f64, @floatFromInt(self.processing_time_ns)) / 1_000_000_000.0;
             self.events_per_second = @as(f64, @floatFromInt(total_processed)) / seconds;
         }
@@ -226,7 +227,8 @@ pub const LoadStatistics = struct {
 
     /// Check if throughput meets target.
     pub fn meetsTargetThroughput(self: *const LoadStatistics) bool {
-        return self.events_per_second >= @as(f64, @floatFromInt(MIN_THROUGHPUT_EVENTS_PER_SEC));
+        return self.events_per_second >=
+            @as(f64, @floatFromInt(MIN_THROUGHPUT_EVENTS_PER_SEC));
     }
 };
 
@@ -257,8 +259,6 @@ pub const LoadResult = struct {
 
 /// Incremental loader for delta sync operations.
 pub const IncrementalLoader = struct {
-    const Self = @This();
-
     allocator: Allocator,
     options: IncrementalLoadOptions,
     checkpoint: LoadCheckpoint,
@@ -268,7 +268,7 @@ pub const IncrementalLoader = struct {
     entity_index: std.AutoHashMap(u128, usize),
 
     /// Initialize an incremental loader.
-    pub fn init(allocator: Allocator, options: IncrementalLoadOptions) Self {
+    pub fn init(allocator: Allocator, options: IncrementalLoadOptions) IncrementalLoader {
         return .{
             .allocator = allocator,
             .options = options,
@@ -282,7 +282,7 @@ pub const IncrementalLoader = struct {
     }
 
     /// Deinitialize and free resources.
-    pub fn deinit(self: *Self) void {
+    pub fn deinit(self: *IncrementalLoader) void {
         if (self.validator) |*v| {
             v.deinit();
         }
@@ -290,7 +290,7 @@ pub const IncrementalLoader = struct {
     }
 
     /// Reset the loader state.
-    pub fn reset(self: *Self) void {
+    pub fn reset(self: *IncrementalLoader) void {
         self.checkpoint = LoadCheckpoint.create(self.options.last_sync_timestamp_ns);
         self.entity_index.clearRetainingCapacity();
         if (self.validator) |*v| {
@@ -300,7 +300,7 @@ pub const IncrementalLoader = struct {
 
     /// Detect changes between source and target datasets.
     pub fn detectChanges(
-        self: *Self,
+        self: *IncrementalLoader,
         source_events: []const GeoEvent,
         target_events: []const GeoEvent,
     ) !ChangeSet {
@@ -345,7 +345,10 @@ pub const IncrementalLoader = struct {
                                 .entity_id = source_event.entity_id,
                                 .timestamp_ns = source_event.timestamp,
                                 .had_conflict = true,
-                                .previous_event = if (self.options.capture_previous_values) target_event.* else null,
+                                .previous_event = if (self.options.capture_previous_values)
+                                    target_event.*
+                                else
+                                    null,
                             });
                         }
                     } else {
@@ -355,7 +358,10 @@ pub const IncrementalLoader = struct {
                             .event = source_event.*,
                             .entity_id = source_event.entity_id,
                             .timestamp_ns = source_event.timestamp,
-                            .previous_event = if (self.options.capture_previous_values) target_event.* else null,
+                            .previous_event = if (self.options.capture_previous_values)
+                                target_event.*
+                            else
+                                null,
                         });
                     }
                 }
@@ -384,7 +390,7 @@ pub const IncrementalLoader = struct {
 
     /// Load delta changes from source events.
     pub fn loadDelta(
-        self: *Self,
+        self: *IncrementalLoader,
         source_events: []const GeoEvent,
         target_events: []const GeoEvent,
     ) !LoadResult {
@@ -451,7 +457,8 @@ pub const IncrementalLoader = struct {
             }
         }
 
-        stats.filtered_events = stats.source_events - (stats.inserted_events + stats.updated_events + stats.validation_failures);
+        stats.filtered_events = stats.source_events -
+            (stats.inserted_events + stats.updated_events + stats.validation_failures);
 
         const end_time = std.time.nanoTimestamp();
         stats.processing_time_ns = @intCast(end_time - start_time);
@@ -485,7 +492,10 @@ pub const IncrementalLoader = struct {
     }
 
     /// Filter events by timestamp (returns events after last sync).
-    pub fn filterByTimestamp(self: *const Self, events: []const GeoEvent) ![]const GeoEvent {
+    pub fn filterByTimestamp(
+        self: *const IncrementalLoader,
+        events: []const GeoEvent,
+    ) ![]const GeoEvent {
         var filtered = std.ArrayList(GeoEvent).init(self.allocator);
         errdefer filtered.deinit();
 
@@ -499,7 +509,11 @@ pub const IncrementalLoader = struct {
     }
 
     /// Check if two events represent a change.
-    fn hasChanged(self: *const Self, source: *const GeoEvent, target: *const GeoEvent) bool {
+    fn hasChanged(
+        self: *const IncrementalLoader,
+        source: *const GeoEvent,
+        target: *const GeoEvent,
+    ) bool {
         _ = self;
         // Compare key fields
         if (source.timestamp != target.timestamp) return true;
@@ -519,7 +533,11 @@ pub const IncrementalLoader = struct {
     }
 
     /// Check if there's a conflict between source and target.
-    fn isConflict(self: *const Self, source: *const GeoEvent, target: *const GeoEvent) bool {
+    fn isConflict(
+        self: *const IncrementalLoader,
+        source: *const GeoEvent,
+        target: *const GeoEvent,
+    ) bool {
         // Conflict if target was modified after our last sync
         if (target.timestamp > self.options.last_sync_timestamp_ns) {
             // Both have been modified since last sync
@@ -531,7 +549,11 @@ pub const IncrementalLoader = struct {
     }
 
     /// Resolve a conflict between source and target events.
-    fn resolveConflict(self: *Self, source: *const GeoEvent, target: *const GeoEvent) !ConflictRecord {
+    fn resolveConflict(
+        self: *IncrementalLoader,
+        source: *const GeoEvent,
+        target: *const GeoEvent,
+    ) !ConflictRecord {
         const resolution = self.options.conflict_resolution;
 
         var resolved: ?GeoEvent = null;
@@ -568,7 +590,12 @@ pub const IncrementalLoader = struct {
     }
 
     /// Merge two events with priority.
-    fn mergeEvents(self: *Self, source: *const GeoEvent, target: *const GeoEvent, source_priority: bool) !GeoEvent {
+    fn mergeEvents(
+        self: *IncrementalLoader,
+        source: *const GeoEvent,
+        target: *const GeoEvent,
+        source_priority: bool,
+    ) !GeoEvent {
         _ = self;
         // Start with priority event and fill in from other
         var merged = if (source_priority) source.* else target.*;
@@ -607,12 +634,12 @@ pub const IncrementalLoader = struct {
     }
 
     /// Get current checkpoint.
-    pub fn getCheckpoint(self: *const Self) LoadCheckpoint {
+    pub fn getCheckpoint(self: *const IncrementalLoader) LoadCheckpoint {
         return self.checkpoint;
     }
 
     /// Set checkpoint for resumption.
-    pub fn setCheckpoint(self: *Self, checkpoint: LoadCheckpoint) void {
+    pub fn setCheckpoint(self: *IncrementalLoader, checkpoint: LoadCheckpoint) void {
         self.checkpoint = checkpoint;
         self.options.last_sync_timestamp_ns = checkpoint.last_sync_timestamp_ns;
     }

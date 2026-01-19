@@ -178,7 +178,8 @@ pub const BackupQueue = struct {
         if (self.stats.halt_started_ns) |halt_start| {
             const now = std.time.nanoTimestamp();
             const elapsed_ns = now - halt_start;
-            const timeout_ns: i128 = @as(i128, self.options.mandatory_halt_timeout_secs) * std.time.ns_per_s;
+            const timeout_secs = self.options.mandatory_halt_timeout_secs;
+            const timeout_ns: i128 = @as(i128, timeout_secs) * std.time.ns_per_s;
 
             if (elapsed_ns > timeout_ns) {
                 // Trigger emergency bypass
@@ -193,7 +194,11 @@ pub const BackupQueue = struct {
     /// Trigger emergency bypass - switch to best-effort mode.
     /// Called when mandatory halt timeout is exceeded.
     fn triggerEmergencyBypass(self: *BackupQueue) void {
-        logErr("Backup mandatory mode HALT TIMEOUT exceeded - switching to best-effort to restore availability", .{});
+        logErr(
+            "Backup mandatory mode HALT TIMEOUT exceeded - " ++
+                "switching to best-effort to restore availability",
+            .{},
+        );
 
         self.options.mode = .best_effort;
         self.stats.emergency_bypass_total += 1;
@@ -217,7 +222,10 @@ pub const BackupQueue = struct {
             if (self.options.mode == .mandatory) {
                 // Mandatory mode: block writes
                 if (!self.stats.writes_halted) {
-                    logErr("Writes halted - backup mandatory mode, queue full (depth={})", .{current_depth});
+                    logErr(
+                        "Writes halted - backup mandatory mode, queue full (depth={})",
+                        .{current_depth},
+                    );
                     self.stats.writes_halted = true;
                     self.stats.halt_started_ns = std.time.nanoTimestamp();
                 }
@@ -436,7 +444,12 @@ test "BackupQueue: soft limit warning" {
 
     // First two blocks - under soft limit
     _ = queue.enqueue(.{ .sequence = 1, .address = 1, .checksum = 1, .closed_timestamp = 1 });
-    const result2 = queue.enqueue(.{ .sequence = 2, .address = 2, .checksum = 2, .closed_timestamp = 2 });
+    const result2 = queue.enqueue(.{
+        .sequence = 2,
+        .address = 2,
+        .checksum = 2,
+        .closed_timestamp = 2,
+    });
     try std.testing.expectEqual(EnqueueResult.queued_over_soft_limit, result2);
 }
 
@@ -454,7 +467,12 @@ test "BackupQueue: hard limit best-effort abandons oldest" {
     _ = queue.enqueue(.{ .sequence = 3, .address = 3, .checksum = 3, .closed_timestamp = 3 });
 
     // Enqueue one more - should abandon oldest
-    const result = queue.enqueue(.{ .sequence = 4, .address = 4, .checksum = 4, .closed_timestamp = 4 });
+    const result = queue.enqueue(.{
+        .sequence = 4,
+        .address = 4,
+        .checksum = 4,
+        .closed_timestamp = 4,
+    });
     try std.testing.expectEqual(EnqueueResult.queued_over_soft_limit, result);
 
     // Queue should still be at hard limit
@@ -482,7 +500,12 @@ test "BackupQueue: hard limit mandatory blocks writes" {
     _ = queue.enqueue(.{ .sequence = 3, .address = 3, .checksum = 3, .closed_timestamp = 3 });
 
     // Try to enqueue more - should block
-    const result = queue.enqueue(.{ .sequence = 4, .address = 4, .checksum = 4, .closed_timestamp = 4 });
+    const result = queue.enqueue(.{
+        .sequence = 4,
+        .address = 4,
+        .checksum = 4,
+        .closed_timestamp = 4,
+    });
     try std.testing.expectEqual(EnqueueResult.blocked, result);
 
     // Writes should be halted

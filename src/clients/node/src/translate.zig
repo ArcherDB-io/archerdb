@@ -300,6 +300,44 @@ pub fn u128_into_object(
     }
 }
 
+pub fn i128_into_object(
+    env: c.napi_env,
+    object: c.napi_value,
+    comptime key: [:0]const u8,
+    value: i128,
+    comptime error_message: [:0]const u8,
+) !void {
+    var sign_bit: c_int = 0;
+    var magnitude: u128 = undefined;
+    if (value < 0) {
+        sign_bit = 1;
+        const neg_plus_one: i128 = value + 1;
+        magnitude = @as(u128, @intCast(-neg_plus_one)) + 1;
+    } else {
+        magnitude = @as(u128, @intCast(value));
+    }
+
+    var bigint: c.napi_value = undefined;
+    if (c.napi_create_bigint_words(
+        env,
+        sign_bit,
+        2,
+        @as(*const [2]u64, @ptrCast(&magnitude)),
+        &bigint,
+    ) != c.napi_ok) {
+        return throw(env, error_message);
+    }
+
+    if (c.napi_set_named_property(
+        env,
+        object,
+        @ptrCast(key),
+        bigint,
+    ) != c.napi_ok) {
+        return throw(env, error_message);
+    }
+}
+
 pub fn u64_into_object(
     env: c.napi_env,
     object: c.napi_value,

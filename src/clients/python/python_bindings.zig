@@ -20,7 +20,7 @@ const mappings_vsr = .{
 };
 
 /// State machine specific mappings for ArcherDB geospatial operations.
-/// NOTE: Financial types have been removed. ArcherDB is a geospatial database only.
+/// NOTE: Legacy types have been removed. ArcherDB is a geospatial database only.
 const mappings_state_machine = .{
     // ArcherDB geospatial types
     .{ tb.GeoEvent, "GeoEvent" },
@@ -170,6 +170,14 @@ fn to_uppercase(comptime input: []const u8) [input.len]u8 {
     return output;
 }
 
+fn enum_zero_name(comptime Enum: type) []const u8 {
+    const enum_info = @typeInfo(Enum).@"enum";
+    inline for (enum_info.fields) |field| {
+        if (field.value == 0) return field.name;
+    }
+    return enum_info.fields[0].name;
+}
+
 fn emit_enum(
     buffer: *Buffer,
     comptime Type: type,
@@ -236,8 +244,13 @@ fn emit_struct_ctypes(
         // That has an explicit check built in, but the standard Python ctypes ones (eg,
         // ctypes.c_uint64) don't and will happily overflow otherwise.
         if (comptime !std.mem.eql(u8, field.name, "reserved") and field_type_info == .int) {
-            buffer.print("        validate_uint(bits={[int_bits]}, name=\"{[field_name]s}\", " ++
+            const validate_fn = if (field_type_info.int.signedness == .signed)
+                "validate_int"
+            else
+                "validate_uint";
+            buffer.print("        {[validate_fn]s}(bits={[int_bits]}, name=\"{[field_name]s}\", " ++
                 "number=obj.{[field_name]s})\n", .{
+                .validate_fn = validate_fn,
                 .field_name = field.name,
                 .int_bits = field_type_info.int.bits,
             });
@@ -335,8 +348,13 @@ fn emit_struct_dataclass(
                 buffer.print("{s}.NONE\n", .{python_type});
             } else {
                 if (field_type_info == .@"enum") {
-                    // Enums - the only ones exposed by the client call `.0` as `.OK`:
-                    buffer.print("{s}.OK\n", .{python_type});
+                    // Enums default to the zero-valued tag (usually OK/SUCCESS).
+                    const zero_name = comptime enum_zero_name(field.type);
+                    const zero_name_upper = comptime to_uppercase(zero_name);
+                    buffer.print("{s}.{s}\n", .{
+                        python_type,
+                        @as([]const u8, &zero_name_upper),
+                    });
                 } else {
                     // Simple integer types:
                     buffer.print("0\n", .{});
@@ -366,10 +384,12 @@ fn emit_method(
     else
         zig_to_python(operation.EventType());
 
-    const result_type =
-        comptime "list[" ++ zig_to_python(operation.ResultType()) ++ "]";
+    const result_type = comptime switch (operation) {
+        .query_uuid => "list[" ++ zig_to_python(tb.GeoEvent) ++ "]",
+        else => "list[" ++ zig_to_python(operation.ResultType()) ++ "]",
+    };
 
-    // For ergonomics, the client allows calling things like .query_accounts(filter) even
+    // For ergonomics, the client allows calling things like .query_uuid(filter) even
     // though the _submit function requires a list for everything. Wrap them here.
     const event_name_or_list = comptime if (!operation.is_batchable())
         "[" ++ event_name(operation) ++ "]"
@@ -398,7 +418,10 @@ fn emit_method(
             .prefix_call = if (options.is_async) "await " else "",
             .uppercase_name = to_uppercase(@tagName(operation)),
             .event_type_c = ctype_type_name(operation.EventType()),
-            .result_type_c = ctype_type_name(operation.ResultType()),
+            .result_type_c = switch (operation) {
+                .query_uuid => ctype_type_name(tb.GeoEvent),
+                else => ctype_type_name(operation.ResultType()),
+            },
         },
     );
 }
@@ -429,7 +452,7 @@ pub fn main() !void {
         \\else:
         \\    from typing_extensions import Self
         \\
-        \\from .lib import c_uint128, archclient, validate_uint
+        \\from .lib import c_uint128, archclient, validate_uint, validate_int
         \\
         \\# Use slots=True if the version of Python is new enough (3.10+) to support it.
         \\if sys.version_info >= (3, 10):
@@ -574,7 +597,7 @@ pub fn main() !void {
         , .{prefix_class});
 
         // ArcherDB geospatial operations
-        // NOTE: Financial operations have been removed. ArcherDB is geospatial only.
+        // NOTE: Legacy operations have been removed. ArcherDB is geospatial only.
         const operations: []const tb.Operation = &.{
             .insert_events,
             .upsert_events,

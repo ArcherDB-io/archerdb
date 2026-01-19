@@ -81,20 +81,16 @@ pub const RustDocs = Docs{
     .query_operations_documentation =
     \\ArcherDB supports several query operations:
     \\
-    \\* `query_uuid()` - Query events by entity UUID
-    \\* `query_latest()` - Query latest events for entities
+    \\* `get_latest_by_uuid()` - Query latest event by entity UUID
+    \\* `get_latest_by_uuid_batch()` - Batch query latest events by UUID
+    \\* `query_latest()` - Query latest events across all entities
     \\* `query_radius()` - Query events within a radius of a point
     \\* `query_polygon()` - Query events within a polygon
     \\
     \\```rust
     \\// Query events within 1km of a point
-    \\let filter = QueryRadiusFilter {
-    \\    center_lat_e7: 407_128_000,
-    \\    center_lon_e7: -740_060_000,
-    \\    radius_meters: 1000,
-    \\    ..Default::default()
-    \\};
-    \\let events = client.query_radius(&filter).await?;
+    \\let query = RadiusQuery::new(40.7128, -74.0060, 1000.0, 100)?;
+    \\let results = client.query_radius(&query).await?;
     \\```
     ,
 

@@ -1,3 +1,5 @@
+# Client SDK - Polygon Holes
+
 ## MODIFIED Requirements
 
 ### Requirement: Polygon Query API
@@ -152,9 +154,6 @@ The SDK SHALL provide utilities for winding order management.
 
 | Requirement | Status | Notes |
 |-------------|--------|-------|
-| Polygon Query with Holes API | ✓ Complete | Java, Python, Node.js, Go SDKs |
-| Holes Parameter (optional) | ✓ Complete | Backwards compatible |
-| Client-side Hole Validation | ✓ Complete | Vertex count, hole count limits |
-| PolygonBuilder API | ✓ Complete | Node.js, Java SDKs |
-| Winding Order Helpers | ✓ Complete | isClockwise, ensureClockwise utilities |
-| Wire Format Encoding | ✓ Complete | HoleDescriptor + vertex arrays |
+| Polygon Query API | IMPLEMENTED | `src/clients/node/src/geo.ts`, `src/clients/python/src/archerdb/types.py`, `src/clients/rust/src/lib.rs` |
+| Polygon Builder API | IMPLEMENTED | `src/geo_state_machine.zig` |
+| Winding Order Helpers | IMPLEMENTED | `src/geo_state_machine.zig` |

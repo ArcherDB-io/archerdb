@@ -6,6 +6,7 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const stdx = @import("stdx");
 
 /// Maximum description/justification length.
 pub const MAX_DESCRIPTION: usize = 1024;
@@ -148,7 +149,7 @@ pub const GeoRegion = struct {
             .active = true,
         };
         const len = @min(code.len, REGION_CODE_LEN);
-        @memcpy(r.code[0..len], code[0..len]);
+        stdx.copy_disjoint(.inexact, u8, r.code[0..len], code[0..len]);
         r.code_len = @intCast(len);
         return r;
     }
@@ -156,17 +157,17 @@ pub const GeoRegion = struct {
     /// Set name.
     pub fn setName(self: *GeoRegion, n: []const u8) void {
         const len = @min(n.len, 64);
-        @memcpy(self.name[0..len], n[0..len]);
+        stdx.copy_disjoint(.inexact, u8, self.name[0..len], n[0..len]);
         self.name_len = @intCast(len);
     }
 
     /// Get code.
-    pub fn getCode(self: GeoRegion) []const u8 {
+    pub fn getCode(self: *const GeoRegion) []const u8 {
         return self.code[0..self.code_len];
     }
 
     /// Get name.
-    pub fn getName(self: GeoRegion) []const u8 {
+    pub fn getName(self: *const GeoRegion) []const u8 {
         return self.name[0..self.name_len];
     }
 };
@@ -216,7 +217,11 @@ pub const TransferRecipient = struct {
     };
 
     /// Initialize recipient.
-    pub fn init(recipient_id: u128, country_code: [2]u8, recipient_type: RecipientType) TransferRecipient {
+    pub fn init(
+        recipient_id: u128,
+        country_code: [2]u8,
+        recipient_type: RecipientType,
+    ) TransferRecipient {
         return .{
             .recipient_id = recipient_id,
             .name = [_]u8{0} ** 128,
@@ -238,7 +243,7 @@ pub const TransferRecipient = struct {
     /// Set name.
     pub fn setName(self: *TransferRecipient, n: []const u8) void {
         const len = @min(n.len, 128);
-        @memcpy(self.name[0..len], n[0..len]);
+        stdx.copy_disjoint(.inexact, u8, self.name[0..len], n[0..len]);
         self.name_len = @intCast(len);
     }
 
@@ -261,7 +266,7 @@ pub const TransferRecipient = struct {
     /// Set SCC reference.
     pub fn setSCCReference(self: *TransferRecipient, reference: []const u8) void {
         const len = @min(reference.len, 32);
-        @memcpy(self.scc_reference[0..len], reference[0..len]);
+        stdx.copy_disjoint(.inexact, u8, self.scc_reference[0..len], reference[0..len]);
         self.scc_ref_len = @intCast(len);
         self.has_scc = true;
     }
@@ -345,7 +350,7 @@ pub const DataTransfer = struct {
     /// Set purpose.
     pub fn setPurpose(self: *DataTransfer, p: []const u8) void {
         const len = @min(p.len, MAX_DESCRIPTION);
-        @memcpy(self.purpose[0..len], p[0..len]);
+        stdx.copy_disjoint(.inexact, u8, self.purpose[0..len], p[0..len]);
         self.purpose_len = @intCast(len);
     }
 
@@ -357,7 +362,7 @@ pub const DataTransfer = struct {
     /// Set legal basis.
     pub fn setLegalBasis(self: *DataTransfer, basis: []const u8) void {
         const len = @min(basis.len, 64);
-        @memcpy(self.legal_basis[0..len], basis[0..len]);
+        stdx.copy_disjoint(.inexact, u8, self.legal_basis[0..len], basis[0..len]);
         self.legal_basis_len = @intCast(len);
     }
 
@@ -444,7 +449,7 @@ pub const ResidencyPolicy = struct {
     /// Set justification.
     pub fn setJustification(self: *ResidencyPolicy, j: []const u8) void {
         const len = @min(j.len, MAX_DESCRIPTION);
-        @memcpy(self.justification[0..len], j[0..len]);
+        stdx.copy_disjoint(.inexact, u8, self.justification[0..len], j[0..len]);
         self.justification_len = @intCast(len);
     }
 };
@@ -507,7 +512,11 @@ pub const TransferImpactAssessment = struct {
     };
 
     /// Initialize assessment.
-    pub fn init(assessment_id: u64, recipient_id: u128, country_code: [2]u8) TransferImpactAssessment {
+    pub fn init(
+        assessment_id: u64,
+        recipient_id: u128,
+        country_code: [2]u8,
+    ) TransferImpactAssessment {
         return .{
             .assessment_id = assessment_id,
             .recipient_id = recipient_id,
@@ -703,12 +712,20 @@ pub const DataTransferManager = struct {
 
         // Check for SCCs
         if (recipient.has_scc) {
-            return .{ .allowed = true, .restriction = .none, .mechanism = .standard_contractual_clauses };
+            return .{
+                .allowed = true,
+                .restriction = .none,
+                .mechanism = .standard_contractual_clauses,
+            };
         }
 
         // Check for BCRs
         if (recipient.has_bcr) {
-            return .{ .allowed = true, .restriction = .none, .mechanism = .binding_corporate_rules };
+            return .{
+                .allowed = true,
+                .restriction = .none,
+                .mechanism = .binding_corporate_rules,
+            };
         }
 
         // Check if any mechanism is approved
@@ -749,10 +766,20 @@ pub const DataTransferManager = struct {
         purpose: []const u8,
     ) !TransferResult {
         // Validate transfer
-        const validation = self.validateTransfer(source_region, destination_region, recipient_id, data_categories);
+        const validation = self.validateTransfer(
+            source_region,
+            destination_region,
+            recipient_id,
+            data_categories,
+        );
 
         const transfer_id = self.next_transfer_id;
-        var transfer = DataTransfer.init(transfer_id, source_region, destination_region, recipient_id);
+        var transfer = DataTransfer.init(
+            transfer_id,
+            source_region,
+            destination_region,
+            recipient_id,
+        );
         transfer.data_categories = data_categories;
         transfer.record_count = record_count;
         transfer.setPurpose(purpose);
@@ -817,7 +844,11 @@ pub const DataTransferManager = struct {
     }
 
     /// Check residency compliance for entity.
-    pub fn checkResidencyCompliance(self: *DataTransferManager, entity_id: u128, current_region: u32) bool {
+    pub fn checkResidencyCompliance(
+        self: *DataTransferManager,
+        entity_id: u128,
+        current_region: u32,
+    ) bool {
         for (self.residency_policies.items) |policy| {
             if (policy.entity_id == entity_id and policy.active) {
                 if (policy.residency_level == .strict or policy.residency_level == .legal_mandate) {
@@ -865,12 +896,19 @@ pub const DataTransferManager = struct {
     }
 
     /// Get impact assessment for recipient.
-    pub fn getImpactAssessment(self: *DataTransferManager, recipient_id: u128) ?TransferImpactAssessment {
+    pub fn getImpactAssessment(
+        self: *DataTransferManager,
+        recipient_id: u128,
+    ) ?TransferImpactAssessment {
         return self.impact_assessments.get(recipient_id);
     }
 
     /// Get transfers by recipient.
-    pub fn getTransfersByRecipient(self: *DataTransferManager, recipient_id: u128, buffer: []DataTransfer) usize {
+    pub fn getTransfersByRecipient(
+        self: *DataTransferManager,
+        recipient_id: u128,
+        buffer: []DataTransfer,
+    ) usize {
         var count: usize = 0;
         for (self.transfers.items) |transfer| {
             if (transfer.recipient_id == recipient_id and count < buffer.len) {
@@ -914,9 +952,21 @@ pub const DataTransferManager = struct {
             .blocked_transfers = self.stats.transfers_blocked,
             .intra_eu_transfers = intra_eu,
             .cross_border_transfers = cross_border,
-            .transfers_by_scc = by_mechanism[@intFromEnum(TransferMechanism.standard_contractual_clauses)],
-            .transfers_by_bcr = by_mechanism[@intFromEnum(TransferMechanism.binding_corporate_rules)],
-            .transfers_by_adequacy = by_mechanism[@intFromEnum(TransferMechanism.adequacy_decision)],
+            .transfers_by_scc = by_mechanism[
+                @intFromEnum(
+                    TransferMechanism.standard_contractual_clauses,
+                )
+            ],
+            .transfers_by_bcr = by_mechanism[
+                @intFromEnum(
+                    TransferMechanism.binding_corporate_rules,
+                )
+            ],
+            .transfers_by_adequacy = by_mechanism[
+                @intFromEnum(
+                    TransferMechanism.adequacy_decision,
+                )
+            ],
             .assessments_performed = self.stats.assessments_performed,
         };
     }
@@ -983,9 +1033,15 @@ test "TransferRecipient SCC reference" {
 test "DataTransfer lifecycle" {
     const testing = std.testing;
 
-    var transfer = DataTransfer.init(1, GeoRegion.WellKnown.eu, GeoRegion.WellKnown.us, 0x12345);
+    var transfer = DataTransfer.init(
+        1,
+        GeoRegion.WellKnown.eu,
+        GeoRegion.WellKnown.us,
+        0x12345,
+    );
     transfer.setPurpose("Analytics data processing");
-    transfer.data_categories = DataTransfer.DataCategory.location | DataTransfer.DataCategory.movement_history;
+    transfer.data_categories = DataTransfer.DataCategory.location |
+        DataTransfer.DataCategory.movement_history;
     transfer.record_count = 1000;
 
     try testing.expectEqual(DataTransfer.TransferStatus.pending, transfer.status);
@@ -1030,8 +1086,12 @@ test "TransferImpactAssessment measures" {
     assessment.addMeasure(TransferImpactAssessment.SupplementaryMeasure.encryption_at_rest);
     assessment.addMeasure(TransferImpactAssessment.SupplementaryMeasure.pseudonymization);
 
-    try testing.expect(assessment.hasMeasure(TransferImpactAssessment.SupplementaryMeasure.encryption_in_transit));
-    try testing.expect(assessment.hasMeasure(TransferImpactAssessment.SupplementaryMeasure.pseudonymization));
+    try testing.expect(assessment.hasMeasure(
+        TransferImpactAssessment.SupplementaryMeasure.encryption_in_transit,
+    ));
+    try testing.expect(assessment.hasMeasure(
+        TransferImpactAssessment.SupplementaryMeasure.pseudonymization,
+    ));
     try testing.expectEqual(@as(u8, 3), assessment.countMeasures());
 }
 
@@ -1182,8 +1242,22 @@ test "DataTransferManager compliance report" {
     try manager.registerRecipient(recipient);
 
     // Create some transfers
-    _ = try manager.createTransfer(GeoRegion.WellKnown.eu, GeoRegion.WellKnown.canada, 0x12345, DataTransfer.DataCategory.location, 100, "Test 1");
-    _ = try manager.createTransfer(GeoRegion.WellKnown.eu, GeoRegion.WellKnown.canada, 0x12345, DataTransfer.DataCategory.location, 200, "Test 2");
+    _ = try manager.createTransfer(
+        GeoRegion.WellKnown.eu,
+        GeoRegion.WellKnown.canada,
+        0x12345,
+        DataTransfer.DataCategory.location,
+        100,
+        "Test 1",
+    );
+    _ = try manager.createTransfer(
+        GeoRegion.WellKnown.eu,
+        GeoRegion.WellKnown.canada,
+        0x12345,
+        DataTransfer.DataCategory.location,
+        200,
+        "Test 2",
+    );
 
     const report = manager.generateComplianceReport();
     try testing.expectEqual(@as(u64, 2), report.total_transfers);

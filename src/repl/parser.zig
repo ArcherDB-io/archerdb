@@ -14,7 +14,6 @@
 const std = @import("std");
 const mem = std.mem;
 const fmt = std.fmt;
-const assert = std.debug.assert;
 
 /// Maximum length of a single command.
 pub const MAX_COMMAND_LENGTH: usize = 4096;
@@ -162,15 +161,6 @@ pub const InsertArgs = struct {
 pub const QueryUuidArgs = struct {
     /// Entity UUID to query.
     entity_id: u128,
-
-    /// Start timestamp filter (0 = no filter).
-    start_timestamp: u64 = 0,
-
-    /// End timestamp filter (0 = no filter).
-    end_timestamp: u64 = 0,
-
-    /// Maximum results to return.
-    limit: u32 = 100,
 };
 
 /// Query radius arguments.
@@ -272,8 +262,6 @@ pub const Error = error{
 
 /// REPL Parser.
 pub const Parser = struct {
-    const Self = @This();
-
     /// Allocator for dynamic allocations.
     allocator: std.mem.Allocator,
 
@@ -289,19 +277,23 @@ pub const Parser = struct {
     /// Entity IDs buffer (for delete_batch, query_latest).
     entity_ids_buffer: [64]u128,
 
+    /// Uppercase scratch buffer for case-insensitive parsing.
+    upper_buffer: [128]u8,
+
     /// Initialize parser with input string.
-    pub fn init(allocator: std.mem.Allocator, input: []const u8) Self {
+    pub fn init(allocator: std.mem.Allocator, input: []const u8) Parser {
         return .{
             .allocator = allocator,
             .input = input,
             .pos = 0,
             .vertices_buffer = undefined,
             .entity_ids_buffer = undefined,
+            .upper_buffer = undefined,
         };
     }
 
     /// Parse the input and return a result.
-    pub fn parse(self: *Self) Error!ParseResult {
+    pub fn parse(self: *Parser) Error!ParseResult {
         self.skipWhitespace();
 
         if (self.pos >= self.input.len) {
@@ -323,7 +315,10 @@ pub const Parser = struct {
             return try self.parseDelete();
         } else if (mem.eql(u8, cmd_upper, "STATUS")) {
             return .{ .status = {} };
-        } else if (mem.eql(u8, cmd_upper, "EXIT") or mem.eql(u8, cmd_upper, "QUIT") or mem.eql(u8, cmd_upper, "\\Q")) {
+        } else if (mem.eql(u8, cmd_upper, "EXIT") or
+            mem.eql(u8, cmd_upper, "QUIT") or
+            mem.eql(u8, cmd_upper, "\\Q"))
+        {
             return .{ .exit = {} };
         } else if (mem.eql(u8, cmd_upper, "SET")) {
             return try self.parseSet();
@@ -344,7 +339,7 @@ pub const Parser = struct {
 
     /// Parse INSERT command.
     /// Syntax: INSERT entity_id (lat, lon) [OPTIONS...]
-    fn parseInsert(self: *Self) Error!ParseResult {
+    fn parseInsert(self: *Parser) Error!ParseResult {
         self.skipWhitespace();
 
         // Parse entity ID
@@ -392,7 +387,7 @@ pub const Parser = struct {
 
     /// Parse QUERY command.
     /// Syntax: QUERY UUID|RADIUS|POLYGON|LATEST ...
-    fn parseQuery(self: *Self) Error!ParseResult {
+    fn parseQuery(self: *Parser) Error!ParseResult {
         self.skipWhitespace();
 
         const subtype = self.readWord() orelse return error.MissingArgument;
@@ -412,37 +407,24 @@ pub const Parser = struct {
     }
 
     /// Parse QUERY UUID command.
-    fn parseQueryUuid(self: *Self) Error!ParseResult {
+    fn parseQueryUuid(self: *Parser) Error!ParseResult {
         self.skipWhitespace();
 
         const entity_str = self.readWord() orelse return error.MissingArgument;
         const entity_id = self.parseEntityId(entity_str) catch return error.InvalidEntityId;
 
-        var args = QueryUuidArgs{
+        const args = QueryUuidArgs{
             .entity_id = entity_id,
         };
 
-        // Parse optional filters
-        while (self.readWord()) |opt_str| {
-            const opt_upper = self.toUpper(opt_str);
-
-            if (mem.eql(u8, opt_upper, "FROM") or mem.eql(u8, opt_upper, "START")) {
-                const val = self.readWord() orelse return error.MissingArgument;
-                args.start_timestamp = fmt.parseInt(u64, val, 10) catch return error.InvalidTimestamp;
-            } else if (mem.eql(u8, opt_upper, "TO") or mem.eql(u8, opt_upper, "END")) {
-                const val = self.readWord() orelse return error.MissingArgument;
-                args.end_timestamp = fmt.parseInt(u64, val, 10) catch return error.InvalidTimestamp;
-            } else if (mem.eql(u8, opt_upper, "LIMIT")) {
-                const val = self.readWord() orelse return error.MissingArgument;
-                args.limit = fmt.parseInt(u32, val, 10) catch return error.InvalidLimit;
-            }
-        }
+        // query_uuid only accepts an entity_id; consume any extra tokens.
+        while (self.readWord()) |_| {}
 
         return .{ .query_uuid = args };
     }
 
     /// Parse QUERY RADIUS command.
-    fn parseQueryRadius(self: *Self) Error!ParseResult {
+    fn parseQueryRadius(self: *Parser) Error!ParseResult {
         self.skipWhitespace();
 
         // Parse center coordinate
@@ -466,10 +448,12 @@ pub const Parser = struct {
 
             if (mem.eql(u8, opt_upper, "FROM") or mem.eql(u8, opt_upper, "START")) {
                 const val = self.readWord() orelse return error.MissingArgument;
-                args.start_timestamp = fmt.parseInt(u64, val, 10) catch return error.InvalidTimestamp;
+                args.start_timestamp = fmt.parseInt(u64, val, 10) catch
+                    return error.InvalidTimestamp;
             } else if (mem.eql(u8, opt_upper, "TO") or mem.eql(u8, opt_upper, "END")) {
                 const val = self.readWord() orelse return error.MissingArgument;
-                args.end_timestamp = fmt.parseInt(u64, val, 10) catch return error.InvalidTimestamp;
+                args.end_timestamp = fmt.parseInt(u64, val, 10) catch
+                    return error.InvalidTimestamp;
             } else if (mem.eql(u8, opt_upper, "LIMIT")) {
                 const val = self.readWord() orelse return error.MissingArgument;
                 args.limit = fmt.parseInt(u32, val, 10) catch return error.InvalidLimit;
@@ -480,7 +464,7 @@ pub const Parser = struct {
     }
 
     /// Parse QUERY POLYGON command.
-    fn parseQueryPolygon(self: *Self) Error!ParseResult {
+    fn parseQueryPolygon(self: *Parser) Error!ParseResult {
         self.skipWhitespace();
 
         var vertex_count: usize = 0;
@@ -520,10 +504,12 @@ pub const Parser = struct {
 
             if (mem.eql(u8, opt_upper, "FROM") or mem.eql(u8, opt_upper, "START")) {
                 const val = self.readWord() orelse return error.MissingArgument;
-                args.start_timestamp = fmt.parseInt(u64, val, 10) catch return error.InvalidTimestamp;
+                args.start_timestamp = fmt.parseInt(u64, val, 10) catch
+                    return error.InvalidTimestamp;
             } else if (mem.eql(u8, opt_upper, "TO") or mem.eql(u8, opt_upper, "END")) {
                 const val = self.readWord() orelse return error.MissingArgument;
-                args.end_timestamp = fmt.parseInt(u64, val, 10) catch return error.InvalidTimestamp;
+                args.end_timestamp = fmt.parseInt(u64, val, 10) catch
+                    return error.InvalidTimestamp;
             } else if (mem.eql(u8, opt_upper, "LIMIT")) {
                 const val = self.readWord() orelse return error.MissingArgument;
                 args.limit = fmt.parseInt(u32, val, 10) catch return error.InvalidLimit;
@@ -534,7 +520,7 @@ pub const Parser = struct {
     }
 
     /// Parse QUERY LATEST command.
-    fn parseQueryLatest(self: *Self) Error!ParseResult {
+    fn parseQueryLatest(self: *Parser) Error!ParseResult {
         self.skipWhitespace();
 
         var entity_count: usize = 0;
@@ -566,7 +552,7 @@ pub const Parser = struct {
     }
 
     /// Parse DELETE command.
-    fn parseDelete(self: *Self) Error!ParseResult {
+    fn parseDelete(self: *Parser) Error!ParseResult {
         self.skipWhitespace();
 
         const entity_str = self.readWord() orelse return error.MissingArgument;
@@ -576,7 +562,7 @@ pub const Parser = struct {
     }
 
     /// Parse SET command.
-    fn parseSet(self: *Self) Error!ParseResult {
+    fn parseSet(self: *Parser) Error!ParseResult {
         self.skipWhitespace();
 
         const name = self.readWord() orelse return error.MissingArgument;
@@ -598,7 +584,7 @@ pub const Parser = struct {
     }
 
     /// Parse SHOW command.
-    fn parseShow(self: *Self) Error!ParseResult {
+    fn parseShow(self: *Parser) Error!ParseResult {
         self.skipWhitespace();
 
         const target = self.readWord() orelse "ALL";
@@ -607,7 +593,7 @@ pub const Parser = struct {
     }
 
     /// Parse DESCRIBE command.
-    fn parseDescribe(self: *Self) Error!ParseResult {
+    fn parseDescribe(self: *Parser) Error!ParseResult {
         self.skipWhitespace();
 
         const target = self.readWord() orelse "EVENTS";
@@ -617,7 +603,7 @@ pub const Parser = struct {
 
     // Helper methods
 
-    fn skipWhitespace(self: *Self) void {
+    fn skipWhitespace(self: *Parser) void {
         while (self.pos < self.input.len) {
             const c = self.input[self.pos];
             if (c != ' ' and c != '\t' and c != '\n' and c != '\r') break;
@@ -625,7 +611,7 @@ pub const Parser = struct {
         }
     }
 
-    fn readWord(self: *Self) ?[]const u8 {
+    fn readWord(self: *Parser) ?[]const u8 {
         self.skipWhitespace();
 
         if (self.pos >= self.input.len) return null;
@@ -633,7 +619,11 @@ pub const Parser = struct {
         const start = self.pos;
         while (self.pos < self.input.len) {
             const c = self.input[self.pos];
-            if (c == ' ' or c == '\t' or c == '\n' or c == '\r' or c == '(' or c == ')' or c == ',' or c == ';') break;
+            if (c == ' ' or c == '\t' or c == '\n' or c == '\r' or
+                c == '(' or c == ')' or c == ',' or c == ';')
+            {
+                break;
+            }
             self.pos += 1;
         }
 
@@ -641,14 +631,14 @@ pub const Parser = struct {
         return self.input[start..self.pos];
     }
 
-    fn peekWord(self: *Self) ?[]const u8 {
+    fn peekWord(self: *Parser) ?[]const u8 {
         const saved_pos = self.pos;
         const word = self.readWord();
         self.pos = saved_pos;
         return word;
     }
 
-    fn readUntilChar(self: *Self, end_char: u8) ?[]const u8 {
+    fn readUntilChar(self: *Parser, end_char: u8) ?[]const u8 {
         self.skipWhitespace();
 
         if (self.pos >= self.input.len) return null;
@@ -676,7 +666,7 @@ pub const Parser = struct {
         return null;
     }
 
-    fn parseEntityId(self: *Self, str: []const u8) !u128 {
+    fn parseEntityId(self: *Parser, str: []const u8) !u128 {
         _ = self;
 
         // Try hex format first (0x prefix or all hex chars)
@@ -691,10 +681,16 @@ pub const Parser = struct {
         };
     }
 
-    fn toUpper(self: *Self, str: []const u8) []const u8 {
-        _ = self;
-        // For comparison, we just check case-insensitively
-        return str;
+    fn toUpper(self: *Parser, str: []const u8) []const u8 {
+        if (str.len > self.upper_buffer.len) {
+            return str;
+        }
+
+        for (str, 0..) |ch, i| {
+            self.upper_buffer[i] = std.ascii.toUpper(ch);
+        }
+
+        return self.upper_buffer[0..str.len];
     }
 };
 

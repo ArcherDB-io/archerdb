@@ -292,6 +292,22 @@ The system SHALL calculate all memory sizes at compile time for determinism and 
   - Journal slots support pipeline + checkpoint requirements
   - Node pool can hold max manifest entries
 
+## Implementation Status
+
+| Requirement | Status | Implementation |
+|-------------|--------|----------------|
+| Static Allocator | IMPLEMENTED | `src/static_allocator.zig` - Upfront allocation |
+| Message Pool | IMPLEMENTED | `src/message_pool.zig` - Pre-allocated message buffers |
+| Large Buffer Pool (Header + Body) | IMPLEMENTED | `src/message_pool.zig` - Header/body separation |
+| Intrusive Data Structures | IMPLEMENTED | `src/lsm/tree.zig` - No hidden allocations |
+| Ring Buffer | IMPLEMENTED | `src/ring_buffer.zig` - Fixed-size ring buffers |
+| Node Pool | IMPLEMENTED | `src/lsm/tree.zig` - LSM node pool |
+| Scratch Memory | IMPLEMENTED | `src/state_machine.zig` - Thread-local scratch |
+| Table Memory | IMPLEMENTED | `src/lsm/tree.zig` - LSM table memory |
+| Bounded Array | IMPLEMENTED | `src/bounded_array.zig` - Compile-time bounded arrays |
+| Counting Allocator | IMPLEMENTED | `src/counting_allocator.zig` - Memory tracking |
+| Compile-Time Memory Calculations | IMPLEMENTED | `src/constants.zig` - Comptime validation |
+
 ### Related Specifications
 
 - See `specs/hybrid-memory/spec.md` for index memory allocation and StaticAllocator usage
@@ -300,20 +316,3 @@ The system SHALL calculate all memory sizes at compile time for determinism and 
 - See `specs/io-subsystem/spec.md` for zero-copy message passing and buffer management
 - See `specs/constants/spec.md` for memory capacity constants (clients_max, pipeline_max)
 - See `specs/query-engine/spec.md` for query result buffer allocation
-
-
-
-## Implementation Status
-
-| Requirement | Status | Notes |
-|-------------|--------|-------|
-| Static Allocator States | ✓ Complete | init/static/deinit |
-| Message Pool | ✓ Complete | \`message_pool.zig\` |
-| Reference Counting | ✓ Complete | Message.ref()/release() |
-| Intrusive Data Structures | ✓ Complete | Queue, Stack, FreeList |
-| Ring Buffer | ✓ Complete | Compile-time and runtime |
-| Node Pool | ✓ Complete | Fixed-size allocations |
-| Scratch Memory | ✓ Complete | Temporary buffers |
-| Bounded Array | ✓ Complete | Fixed-capacity arrays |
-| Counting Allocator | ✓ Complete | \`counting_allocator.zig\` |
-| Comptime Constants | ✓ Complete | \`constants.zig\` |

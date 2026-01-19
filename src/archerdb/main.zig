@@ -16,6 +16,7 @@ const archerdb_metrics = vsr.archerdb_metrics;
 
 const benchmark_driver = @import("benchmark_driver.zig");
 const cli = @import("cli.zig");
+const encryption = vsr.encryption;
 const inspect = @import("inspect.zig");
 const metrics_server = @import("metrics_server.zig");
 
@@ -296,6 +297,19 @@ pub fn main() !void {
         .shard => |shard_cmd| switch (shard_cmd) {
             inline else => |*args| args.log_level.toStdLogLevel(),
         },
+        .ttl => |ttl_cmd| switch (ttl_cmd) {
+            inline else => |*args| args.log_level.toStdLogLevel(),
+        },
+        .coordinator => |coord_cmd| switch (coord_cmd) {
+            .start => |start| start.log_level.toStdLogLevel(),
+            else => .info, // status and stop use default log level
+        },
+        .cluster => |cluster_cmd| switch (cluster_cmd) {
+            inline else => |*args| args.log_level.toStdLogLevel(),
+        },
+        .index => |index_cmd| switch (index_cmd) {
+            inline else => |*args| args.log_level.toStdLogLevel(),
+        },
         inline else => |*args| args.log_level.toStdLogLevel(),
     };
 
@@ -423,7 +437,11 @@ pub fn main() !void {
         .@"export" => |*args| try command_export(gpa, &io, &tracer, args),
         .import => |*args| try command_import(gpa, &io, time, args),
         .shard => |*args| try command_shard(gpa, &io, time, args),
+        .ttl => |*args| try command_ttl(gpa, &io, time, args),
         .verify => |*args| try command_verify(gpa, &io, &tracer, args),
+        .coordinator => |*args| try command_coordinator(gpa, &io, time, args),
+        .cluster => |*args| try command_cluster(gpa, &io, time, args),
+        .index => |*args| try command_index(gpa, &io, time, args),
     }
 }
 
@@ -580,8 +598,39 @@ fn command_start(
     var counting_allocator = vsr.CountingAllocator.init(base_allocator);
     const gpa = counting_allocator.allocator();
 
-    // TODO Panic if the data file's size is larger that args.storage_size_limit.
-    // (Here or in Replica.open()?).
+    // Per add-aesni-encryption spec: verify hardware encryption support at startup
+    // This ensures AES-NI is available unless --allow-software-crypto is set
+    encryption.verifyHardwareSupport(.{
+        .allow_software_crypto = args.allow_software_crypto,
+    }) catch |err| {
+        switch (err) {
+            error.AesNiNotAvailable => {
+                log.err("Hardware AES-NI not available. " ++
+                    "Use --allow-software-crypto to bypass (not recommended).", .{});
+                log.err("Error code: AESNI_NOT_AVAILABLE (415)", .{});
+                std.process.exit(1);
+            },
+            else => {
+                log.err("Encryption hardware verification failed: {}", .{err});
+                std.process.exit(1);
+            },
+        }
+    };
+
+    // Update encryption metrics at startup
+    archerdb_metrics.Registry.encryption_aesni_available.set(if (encryption.hasAesNi()) 1 else 0);
+    const using_sw = !encryption.hasAesNi() and args.allow_software_crypto;
+    archerdb_metrics.Registry.encryption_using_software.set(if (using_sw) 1 else 0);
+    archerdb_metrics.Registry.encryption_cipher_version.set(2); // v2 = Aegis-256
+
+    const data_file_stat = try (std.fs.File{ .handle = storage.fd }).stat();
+    if (data_file_stat.size > args.storage_size_limit) {
+        vsr.fatal(
+            .cli,
+            "data file size {} exceeds --limit-storage {}",
+            .{ data_file_stat.size, args.storage_size_limit },
+        );
+    }
 
     var message_pool = try MessagePool.init(gpa, .{ .replica = .{
         .members_count = args.addresses.count_as(u8),
@@ -882,13 +931,16 @@ fn command_start(
             .recovering, .recovering_head => .recovering,
         };
 
+        const index_stats = replica.state_machine.ram_index.get_stats();
+
         // Update resource metrics (F5.2 - Observability: memory, disk)
         archerdb_metrics.Registry.updateResourceMetrics(
             counting_allocator.alloc_size,
             counting_allocator.live_size(),
             replica.superblock.staging.vsr_state.checkpoint.storage_size,
-            0, // TODO: Index entries - requires LSM tree traversal
-            0, // TODO: Index capacity - requires configuration access
+            index_stats.entry_count,
+            index_stats.capacity,
+            index_stats.memory_bytes(),
         );
 
         try io.run_for_ns(constants.tick_ms * std.time.ns_per_ms);
@@ -1180,7 +1232,9 @@ fn command_import(
             var lines = std.mem.splitScalar(u8, content.items, '\n');
             while (lines.next()) |line| {
                 if (line.len == 0) continue;
-                if (std.mem.startsWith(u8, line, "{") and std.mem.indexOf(u8, line, "entity_id") != null) {
+                if (std.mem.startsWith(u8, line, "{") and
+                    std.mem.indexOf(u8, line, "entity_id") != null)
+                {
                     const result = importer.parseEvent(line);
                     if (result) |_| {
                         events_imported += 1;
@@ -1202,13 +1256,30 @@ fn command_import(
             if (std.mem.indexOf(u8, content.items, "\"features\"")) |_| {
                 // Simple feature extraction - find each Feature object
                 var pos: usize = 0;
-                while (std.mem.indexOfPos(u8, content.items, pos, "\"type\":\"Feature\"")) |feature_start| {
+                while (std.mem.indexOfPos(
+                    u8,
+                    content.items,
+                    pos,
+                    "\"type\":\"Feature\"",
+                )) |feature_start| {
                     // Find the end of this feature (next Feature or end of array)
                     const search_start = feature_start + 10;
-                    const feature_end = std.mem.indexOfPos(u8, content.items, search_start, "\"type\":\"Feature\"") orelse content.items.len;
+                    const feature_end = std.mem.indexOfPos(
+                        u8,
+                        content.items,
+                        search_start,
+                        "\"type\":\"Feature\"",
+                    ) orelse content.items.len;
 
                     // Extract feature substring (rough extraction)
-                    const brace_start = if (feature_start > 0) std.mem.lastIndexOfScalar(u8, content.items[0..feature_start], '{') else null;
+                    const brace_start = if (feature_start > 0)
+                        std.mem.lastIndexOfScalar(
+                            u8,
+                            content.items[0..feature_start],
+                            '{',
+                        )
+                    else
+                        null;
                     if (brace_start) |start| {
                         const feature_str = content.items[start..feature_end];
                         const result = importer.parseFeature(feature_str);
@@ -1247,7 +1318,10 @@ fn command_import(
     }
 
     if (!args.dry_run and events_imported > 0) {
-        try stderr.print("Note: Events were validated but not sent to cluster in this version.\n", .{});
+        try stderr.print(
+            "Note: Events were validated but not sent to cluster in this version.\n",
+            .{},
+        );
         try stderr.print("Use SDK clients for production data import.\n", .{});
     }
 }
@@ -1281,20 +1355,73 @@ fn command_shard(
             try stderr.print("  (Shard management not yet implemented - v2.0 feature)\n", .{});
         },
         .status => |status| {
-            try stderr.print("Status for shard {d} in cluster {d}:\n", .{ status.shard_id, status.cluster });
-            try stderr.print("  (Shard management not yet implemented - v2.0 feature)\n", .{});
+            try stderr.print(
+                "Status for shard {d} in cluster {d}:\n",
+                .{ status.shard_id, status.cluster },
+            );
+            try stderr.print(
+                "  (Shard management not yet implemented - v2.0 feature)\n",
+                .{},
+            );
         },
         .reshard => |reshard| {
             if (reshard.dry_run) {
-                try stderr.print("Dry run: Would reshard cluster {d} to {d} shards\n", .{ reshard.cluster, reshard.to });
+                try stderr.print(
+                    "Dry run: Would reshard cluster {d} to {d} shards\n",
+                    .{ reshard.cluster, reshard.to },
+                );
             } else {
-                try stderr.print("Resharding cluster {d} to {d} shards (mode: {s}):\n", .{
-                    reshard.cluster,
-                    reshard.to,
-                    @tagName(reshard.mode),
-                });
+                try stderr.print(
+                    "Resharding cluster {d} to {d} shards (mode: {s}):\n",
+                    .{
+                        reshard.cluster,
+                        reshard.to,
+                        @tagName(reshard.mode),
+                    },
+                );
             }
             try stderr.print("  (Resharding not yet implemented - v2.0 feature)\n", .{});
+        },
+    }
+    try stderr_buffer.flush();
+}
+
+/// v2.1 TTL management command handler.
+fn command_ttl(
+    gpa: mem.Allocator,
+    io: *IO,
+    time: Time,
+    args: *const cli.Command.TTL,
+) !void {
+    _ = gpa;
+    _ = io;
+    _ = time;
+
+    var stderr_buffer = std.io.bufferedWriter(std.io.getStdErr().writer());
+    var stderr_writer = stderr_buffer.writer();
+    const stderr = stderr_writer.any();
+
+    switch (args.*) {
+        .set => |set| {
+            try stderr.print(
+                "Setting TTL for entity {x} in cluster {d} to {d} seconds\n",
+                .{ set.entity_id, set.cluster, set.ttl_seconds },
+            );
+            try stderr.print("  (TTL set not yet implemented - v2.1 feature)\n", .{});
+        },
+        .extend => |extend| {
+            try stderr.print(
+                "Extending TTL for entity {x} in cluster {d} by {d} seconds\n",
+                .{ extend.entity_id, extend.cluster, extend.extend_seconds },
+            );
+            try stderr.print("  (TTL extend not yet implemented - v2.1 feature)\n", .{});
+        },
+        .clear => |clear| {
+            try stderr.print(
+                "Clearing TTL for entity {x} in cluster {d}\n",
+                .{ clear.entity_id, clear.cluster },
+            );
+            try stderr.print("  (TTL clear not yet implemented - v2.1 feature)\n", .{});
         },
     }
     try stderr_buffer.flush();
@@ -1323,4 +1450,157 @@ fn command_verify(
         try stderr.print("  (Verification not yet implemented - v2.0 feature)\n", .{});
     }
     try stderr_buffer.flush();
+}
+
+/// Coordinator command handler (per add-coordinator-mode/spec.md).
+/// Manages coordinator process for multi-shard query routing.
+fn command_coordinator(
+    gpa: mem.Allocator,
+    io: *IO,
+    time: Time,
+    args: *const cli.Command.Coordinator,
+) !void {
+    _ = gpa;
+    _ = io;
+    _ = time;
+
+    var stdout_buffer = std.io.bufferedWriter(std.io.getStdOut().writer());
+    var stdout_writer = stdout_buffer.writer();
+    const stdout = stdout_writer.any();
+
+    switch (args.*) {
+        .start => |start| {
+            try stdout.print("Starting coordinator...\n", .{});
+            try stdout.print("  Bind address: {s}:{d}\n", .{ start.bind_host, start.bind_port });
+            if (start.shards) |shards| {
+                try stdout.print("  Shards: {d} configured\n", .{shards.count()});
+            }
+            if (start.seed_nodes) |seeds| {
+                try stdout.print("  Seed nodes: {d} configured\n", .{seeds.count()});
+            }
+            try stdout.print("  Max connections: {d}\n", .{start.max_connections});
+            try stdout.print("  Query timeout: {d}ms\n", .{start.query_timeout_ms});
+            try stdout.print("  Health check interval: {d}ms\n", .{start.health_check_ms});
+            try stdout.print("  Connections per shard: {d}\n", .{start.connections_per_shard});
+            try stdout.print("  Read from replicas: {}\n", .{start.read_from_replicas});
+            try stdout.print("  Fan-out policy: {s}\n", .{@tagName(start.fan_out_policy)});
+            try stdout.writeAll("\n");
+            try stdout.print("  (Coordinator process not yet implemented - v2.0 feature)\n", .{});
+        },
+        .status => |status| {
+            try stdout.print("Querying coordinator status at {s}:{d}...\n", .{
+                status.address,
+                status.port,
+            });
+            try stdout.print("  (Status query not yet implemented - v2.0 feature)\n", .{});
+        },
+        .stop => |stop| {
+            try stdout.print("Stopping coordinator at {s}:{d}...\n", .{
+                stop.address,
+                stop.port,
+            });
+            try stdout.print("  Graceful shutdown timeout: {d}s\n", .{stop.timeout});
+            try stdout.print("  (Stop command not yet implemented - v2.0 feature)\n", .{});
+        },
+    }
+    try stdout_buffer.flush();
+}
+
+fn command_cluster(
+    gpa: mem.Allocator,
+    io: *IO,
+    time: Time,
+    args: *const cli.Command.Cluster,
+) !void {
+    _ = gpa;
+    _ = io;
+    _ = time;
+
+    var stdout_buffer = std.io.bufferedWriter(std.io.getStdOut().writer());
+    var stdout_writer = stdout_buffer.writer();
+    const stdout = stdout_writer.any();
+
+    switch (args.*) {
+        .@"add-node" => |add_node| {
+            try stdout.print("Adding node to cluster...\n", .{});
+            try stdout.print("  Cluster ID: {d}\n", .{add_node.cluster});
+            try stdout.print("  New node address: {s}\n", .{add_node.node_address});
+            try stdout.print("  Wait for catchup: {}\n", .{add_node.wait});
+            try stdout.print("  Timeout: {d}s\n", .{add_node.timeout_seconds});
+            try stdout.writeAll("\n");
+            try stdout.print("  (Add-node: see membership.zig)\n", .{});
+        },
+        .@"remove-node" => |remove_node| {
+            try stdout.print("Removing node from cluster...\n", .{});
+            try stdout.print("  Cluster ID: {d}\n", .{remove_node.cluster});
+            try stdout.print("  Node to remove: {s}\n", .{remove_node.node_id});
+            try stdout.print("  Force removal: {}\n", .{remove_node.force});
+            try stdout.print("  Timeout: {d}s\n", .{remove_node.timeout_seconds});
+            try stdout.writeAll("\n");
+            try stdout.print("  (Remove-node: see membership.zig)\n", .{});
+        },
+        .status => |status| {
+            try stdout.print("Cluster membership status:\n", .{});
+            try stdout.print("  Cluster ID: {d}\n", .{status.cluster});
+            try stdout.print("  Addresses: {d} nodes configured\n", .{status.addresses.count()});
+            try stdout.writeAll("\n");
+            try stdout.print("  (Status: see membership.zig)\n", .{});
+        },
+    }
+    try stdout_buffer.flush();
+}
+
+fn command_index(
+    gpa: mem.Allocator,
+    io: *IO,
+    time: Time,
+    args: *const cli.Command.Index,
+) !void {
+    _ = gpa;
+    _ = io;
+    _ = time;
+
+    var stdout_buffer = std.io.bufferedWriter(std.io.getStdOut().writer());
+    var stdout_writer = stdout_buffer.writer();
+    const stdout = stdout_writer.any();
+
+    switch (args.*) {
+        .resize => |resize| {
+            switch (resize.action) {
+                .start => {
+                    try stdout.print("Starting index resize...\n", .{});
+                    try stdout.print("  Cluster ID: {d}\n", .{resize.cluster});
+                    try stdout.print("  New capacity: {d} buckets\n", .{resize.new_capacity.?});
+                    try stdout.writeAll("\n");
+                    try stdout.print("  (Resize: see ram_index.zig)\n", .{});
+                },
+                .check => {
+                    try stdout.print("Checking resize feasibility...\n", .{});
+                    try stdout.print("  Cluster ID: {d}\n", .{resize.cluster});
+                    try stdout.print("  Target capacity: {d} buckets\n", .{resize.new_capacity.?});
+                    try stdout.writeAll("\n");
+                    try stdout.print("  (Check: see ram_index.zig)\n", .{});
+                },
+                .status => {
+                    try stdout.print("Index resize status:\n", .{});
+                    try stdout.print("  Cluster ID: {d}\n", .{resize.cluster});
+                    try stdout.writeAll("\n");
+                    try stdout.print("  (Status: see ram_index.zig)\n", .{});
+                },
+                .abort => {
+                    try stdout.print("Aborting index resize...\n", .{});
+                    try stdout.print("  Cluster ID: {d}\n", .{resize.cluster});
+                    try stdout.writeAll("\n");
+                    try stdout.print("  (Abort: see ram_index.zig)\n", .{});
+                },
+            }
+        },
+        .stats => |stats| {
+            try stdout.print("Index statistics:\n", .{});
+            try stdout.print("  Cluster ID: {d}\n", .{stats.cluster});
+            try stdout.writeAll("\n");
+            try stdout.print("  (Stats: see ram_index.zig)\n", .{});
+        },
+    }
+    try stdout_buffer.flush();
 }

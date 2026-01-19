@@ -13,6 +13,7 @@ const type_mappings = .{
     .{ exports.insert_geo_events_result_t, "insert_geo_events_result_t" },
     .{ exports.delete_entities_result_t, "delete_entities_result_t" },
     .{ exports.query_uuid_filter_t, "query_uuid_filter_t" },
+    .{ exports.query_uuid_response_t, "query_uuid_response_t" },
     .{ exports.query_radius_filter_t, "query_radius_filter_t" },
     .{ exports.query_polygon_filter_t, "query_polygon_filter_t" },
     .{ exports.query_latest_filter_t, "query_latest_filter_t" },

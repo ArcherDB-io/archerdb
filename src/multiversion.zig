@@ -2021,8 +2021,9 @@ test parse_elf {
         const elf_header = try test_elf_build_header(&buffer);
         const string_table = try test_elf_build_string_table(&buffer, elf_header);
 
-        // The string table can't be 0, and the .arch_mvb and .arch_mvh sections need to be the second
-        // last and last sections in the file respectively. Pad the 0 index with a no-op section.
+        // The string table can't be 0, and the .arch_mvb and .arch_mvh sections
+        // need to be the second last and last sections in the file respectively.
+        // Pad the 0 index with a no-op section.
         _ = try test_elf_build_section(&buffer, string_table, elf_header, 0, ".arch_nop");
 
         const section_mvb = try test_elf_build_section(

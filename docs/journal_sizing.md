@@ -10,7 +10,7 @@ This document calculates requirements for ArcherDB's target throughput of 1M ops
 | `message_size_max` | 1 MiB | Maximum message/prepare size |
 | `vsr_checkpoint_ops` | 960 | Checkpoint interval |
 | Header size | 256 bytes | Per message header |
-| Transfer/Account size | 128 bytes | Per record |
+| GeoEvent size | 128 bytes | Per record |
 
 ### Journal Storage Layout
 ```
@@ -34,12 +34,12 @@ Retention = journal_slot_count / ops_per_second
 This means if a replica crashes, it has approximately **1ms of operations**
 in the journal before wrap.
 
-## Transfer Capacity per Message
+## GeoEvent Capacity per Message
 
 ```
-Max transfers/message = (message_size_max - header_size) / transfer_size
-                      = (1,048,576 - 256) / 128
-                      = 8,190 transfers
+Max events/message = (message_size_max - header_size) / geo_event_size
+                   = (1,048,576 - 256) / 128
+                   = 8,190 events
 ```
 
 ## Validation: Is 8192 Slots Sufficient?
@@ -50,8 +50,8 @@ Per the spec, we need to validate `journal_slot_count=8192` for 1M ops/sec:
 Retention at 8,192 slots:
   8,192 / 1,000,000 = 8.192 milliseconds
 
-With 8,190 transfers per message:
-  Throughput = 8,190 × (1,000,000 / 8,192) ≈ 1B transfers/sec
+With 8,190 events per message:
+  Throughput = 8,190 × (1,000,000 / 8,192) ≈ 1B events/sec
 ```
 
 **Assessment**: 8,192 slots provides adequate retention (~8ms) for ArcherDB's

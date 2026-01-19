@@ -47,6 +47,7 @@ export enum InsertGeoEventError {
   exists = 13,
   heading_out_of_range = 14,
   ttl_invalid = 15,
+  entity_id_must_not_be_int_max = 16,
 }
 
 export type InsertGeoEventsError = {
@@ -59,6 +60,7 @@ export enum DeleteEntityError {
   linked_event_failed = 1,
   entity_id_must_not_be_zero = 2,
   entity_not_found = 3,
+  entity_id_must_not_be_int_max = 4,
 }
 
 export type DeleteEntitiesError = {
@@ -68,7 +70,6 @@ export type DeleteEntitiesError = {
 
 export type QueryUuidFilter = {
   entity_id: bigint
-  limit: number
 }
 
 export type QueryRadiusFilter = {
@@ -83,7 +84,9 @@ export type QueryRadiusFilter = {
 
 export type QueryPolygonFilter = {
   vertex_count: number
+  hole_count: number
   limit: number
+  _reserved_align: number
   timestamp_min: bigint
   timestamp_max: bigint
   group_id: bigint
@@ -108,15 +111,6 @@ export type PolygonVertex = {
 
 export enum Operation {
   pulse = 128,
-  get_change_events = 137,
-  create_accounts = 138,
-  create_transfers = 139,
-  lookup_accounts = 140,
-  lookup_transfers = 141,
-  get_account_transfers = 142,
-  get_account_balances = 143,
-  query_accounts = 144,
-  query_transfers = 145,
   insert_events = 146,
   upsert_events = 147,
   delete_entities = 148,
@@ -124,8 +118,13 @@ export enum Operation {
   query_radius = 150,
   query_polygon = 151,
   query_latest = 154,
+  query_uuid_batch = 156,
   archerdb_ping = 152,
   archerdb_get_status = 153,
   cleanup_expired = 155,
+  get_topology = 157,
+  ttl_set = 158,
+  ttl_extend = 159,
+  ttl_clear = 160,
 }
 

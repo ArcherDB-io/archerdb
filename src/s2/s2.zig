@@ -273,22 +273,5 @@ test "S2 module: golden vector validation" {
     // Require at least 10,000 test cases
     try std.testing.expect(test_count >= 10000);
 
-    // Note: Our deterministic implementation differs from Go S2 at higher levels
-    // due to floating-point handling differences. This is acceptable for VSR
-    // consensus as long as all Zig replicas produce identical results.
-    //
-    // At level 0-1: 100% match (face selection correct)
-    // At level 5: ~85% match
-    // At higher levels: Divergence increases
-    //
-    // For strict validation, use determinism tests (same input -> same output
-    // across multiple runs/platforms).
-
-    // Require low-level (face and coarse cells) to match
-    const low_level_errors = level_errors[0] + level_errors[1];
-    const low_level_total = level_counts[0] + level_counts[1];
-    if (low_level_total > 0) {
-        const low_level_error_rate = low_level_errors * 100 / low_level_total;
-        try std.testing.expect(low_level_error_rate < 5); // Less than 5% at levels 0-1
-    }
+    try std.testing.expectEqual(@as(usize, 0), error_count);
 }

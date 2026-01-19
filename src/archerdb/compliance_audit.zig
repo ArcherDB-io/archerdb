@@ -26,6 +26,7 @@
 //! ```
 
 const std = @import("std");
+const stdx = @import("stdx");
 const mem = std.mem;
 const Allocator = mem.Allocator;
 const ArrayList = std.ArrayList;
@@ -78,9 +79,18 @@ pub const AuditEntryType = enum(u8) {
         return switch (self) {
             .data_processing, .data_access => .data_activity,
             .consent_change => .consent,
-            .rights_request, .rights_response, .data_erasure, .data_rectification, .data_portability => .subject_rights,
+            .rights_request,
+            .rights_response,
+            .data_erasure,
+            .data_rectification,
+            .data_portability,
+            => .subject_rights,
             .breach_detected, .breach_notification => .breach,
-            .admin_action, .config_change, .key_rotation, .backup_operation => .administration,
+            .admin_action,
+            .config_change,
+            .key_rotation,
+            .backup_operation,
+            => .administration,
             .authentication, .authorization_failure => .security,
         };
     }
@@ -260,7 +270,7 @@ pub const AuditEntry = struct {
     /// Set details string.
     pub fn setDetails(self: *AuditEntry, desc: []const u8) void {
         const len = @min(desc.len, 255);
-        @memcpy(self.details[0..len], desc[0..len]);
+        stdx.copy_disjoint(.inexact, u8, self.details[0..len], desc[0..len]);
         self.details_len = @intCast(len);
     }
 
@@ -272,7 +282,7 @@ pub const AuditEntry = struct {
     /// Set metadata string.
     pub fn setMetadata(self: *AuditEntry, meta: []const u8) void {
         const len = @min(meta.len, 255);
-        @memcpy(self.metadata[0..len], meta[0..len]);
+        stdx.copy_disjoint(.inexact, u8, self.metadata[0..len], meta[0..len]);
         self.metadata_len = @intCast(len);
     }
 
@@ -405,7 +415,7 @@ pub const BreachIncident = struct {
     /// Set description.
     pub fn setDescription(self: *BreachIncident, desc: []const u8) void {
         const len = @min(desc.len, 511);
-        @memcpy(self.description[0..len], desc[0..len]);
+        stdx.copy_disjoint(.inexact, u8, self.description[0..len], desc[0..len]);
         self.description_len = @intCast(len);
     }
 
@@ -533,8 +543,6 @@ pub const AuditStats = struct {
 
 /// Compliance Audit System - main API for audit trail management.
 pub const ComplianceAudit = struct {
-    const Self = @This();
-
     /// Memory allocator.
     allocator: Allocator,
     /// Configuration.
@@ -555,11 +563,11 @@ pub const ComplianceAudit = struct {
     stats: AuditStats,
 
     /// Initialize audit system.
-    pub fn init(allocator: Allocator, config: AuditConfig) !Self {
+    pub fn init(allocator: Allocator, config: AuditConfig) !ComplianceAudit {
         const entries = try allocator.alloc(AuditEntry, config.max_memory_entries);
         @memset(entries, std.mem.zeroes(AuditEntry));
 
-        return Self{
+        return ComplianceAudit{
             .allocator = allocator,
             .config = config,
             .entries = entries,
@@ -573,14 +581,14 @@ pub const ComplianceAudit = struct {
     }
 
     /// Clean up resources.
-    pub fn deinit(self: *Self) void {
+    pub fn deinit(self: *ComplianceAudit) void {
         self.allocator.free(self.entries);
         self.breaches.deinit();
     }
 
     /// Log a data processing activity.
     pub fn logDataProcessing(
-        self: *Self,
+        self: *ComplianceAudit,
         entity_id: u128,
         operation: ProcessingOperation,
         purpose: ProcessingPurpose,
@@ -603,7 +611,7 @@ pub const ComplianceAudit = struct {
 
     /// Log a consent change.
     pub fn logConsentChange(
-        self: *Self,
+        self: *ComplianceAudit,
         entity_id: u128,
         actor_id: u128,
         details: []const u8,
@@ -622,7 +630,7 @@ pub const ComplianceAudit = struct {
 
     /// Log a data subject rights request.
     pub fn logRightsRequest(
-        self: *Self,
+        self: *ComplianceAudit,
         entity_id: u128,
         request_type: []const u8,
     ) u64 {
@@ -640,7 +648,7 @@ pub const ComplianceAudit = struct {
 
     /// Log a rights request response.
     pub fn logRightsResponse(
-        self: *Self,
+        self: *ComplianceAudit,
         entity_id: u128,
         request_type: []const u8,
         records_affected: u64,
@@ -660,7 +668,7 @@ pub const ComplianceAudit = struct {
 
     /// Log a data erasure.
     pub fn logDataErasure(
-        self: *Self,
+        self: *ComplianceAudit,
         entity_id: u128,
         records_deleted: u64,
         reason: []const u8,
@@ -680,7 +688,7 @@ pub const ComplianceAudit = struct {
 
     /// Log a data access request.
     pub fn logDataAccess(
-        self: *Self,
+        self: *ComplianceAudit,
         entity_id: u128,
         records_accessed: u64,
     ) u64 {
@@ -699,7 +707,7 @@ pub const ComplianceAudit = struct {
 
     /// Report a data breach.
     pub fn reportBreach(
-        self: *Self,
+        self: *ComplianceAudit,
         breach_type: BreachIncident.BreachType,
         description: []const u8,
         entities_affected: u64,
@@ -734,7 +742,7 @@ pub const ComplianceAudit = struct {
 
     /// Update breach status.
     pub fn updateBreachStatus(
-        self: *Self,
+        self: *ComplianceAudit,
         breach_id: u64,
         status: BreachIncident.BreachStatus,
         response: []const u8,
@@ -763,7 +771,7 @@ pub const ComplianceAudit = struct {
 
         // Update response
         const len = @min(response.len, 511);
-        @memcpy(incident.response[0..len], response[0..len]);
+        stdx.copy_disjoint(.inexact, u8, incident.response[0..len], response[0..len]);
         incident.response_len = @intCast(len);
 
         self.breaches.put(breach_id, incident) catch return false;
@@ -780,7 +788,7 @@ pub const ComplianceAudit = struct {
 
     /// Log an administrative action.
     pub fn logAdminAction(
-        self: *Self,
+        self: *ComplianceAudit,
         actor_id: u128,
         action: []const u8,
     ) u64 {
@@ -798,7 +806,7 @@ pub const ComplianceAudit = struct {
 
     /// Log authentication event.
     pub fn logAuthentication(
-        self: *Self,
+        self: *ComplianceAudit,
         actor_id: u128,
         success: bool,
         method: []const u8,
@@ -817,7 +825,7 @@ pub const ComplianceAudit = struct {
 
     /// Log authorization failure.
     pub fn logAuthorizationFailure(
-        self: *Self,
+        self: *ComplianceAudit,
         actor_id: u128,
         resource: []const u8,
     ) u64 {
@@ -834,7 +842,7 @@ pub const ComplianceAudit = struct {
     }
 
     /// Verify chain integrity.
-    pub fn verifyChainIntegrity(self: *Self) struct { valid: bool, errors: u64 } {
+    pub fn verifyChainIntegrity(self: *ComplianceAudit) struct { valid: bool, errors: u64 } {
         var errors: u64 = 0;
         var prev_checksum: [32]u8 = [_]u8{0} ** 32;
 
@@ -863,7 +871,7 @@ pub const ComplianceAudit = struct {
 
     /// Generate compliance report.
     pub fn generateComplianceReport(
-        self: *Self,
+        self: *ComplianceAudit,
         period_start: u64,
         period_end: u64,
     ) ComplianceReport {
@@ -920,7 +928,7 @@ pub const ComplianceAudit = struct {
 
     /// Get entries for a specific entity.
     pub fn getEntityAuditHistory(
-        self: *Self,
+        self: *ComplianceAudit,
         entity_id: u128,
         buffer: []AuditEntry,
     ) usize {
@@ -938,13 +946,13 @@ pub const ComplianceAudit = struct {
     }
 
     /// Get statistics.
-    pub fn getStats(self: *Self) AuditStats {
+    pub fn getStats(self: *ComplianceAudit) AuditStats {
         return self.stats;
     }
 
     /// Export audit log as text.
     pub fn exportAsText(
-        self: *Self,
+        self: *ComplianceAudit,
         allocator: Allocator,
         start_time: u64,
         end_time: u64,
@@ -984,12 +992,12 @@ pub const ComplianceAudit = struct {
     }
 
     /// Get breach incident by ID.
-    pub fn getBreach(self: *Self, breach_id: u64) ?BreachIncident {
+    pub fn getBreach(self: *ComplianceAudit, breach_id: u64) ?BreachIncident {
         return self.breaches.get(breach_id);
     }
 
     /// Get all active breaches.
-    pub fn getActiveBreaches(self: *Self, buffer: []BreachIncident) usize {
+    pub fn getActiveBreaches(self: *ComplianceAudit, buffer: []BreachIncident) usize {
         var count: usize = 0;
         var iter = self.breaches.valueIterator();
         while (iter.next()) |incident| {
@@ -1004,7 +1012,7 @@ pub const ComplianceAudit = struct {
     }
 
     // Internal: Append entry to log with chain linking.
-    fn appendEntry(self: *Self, entry: *AuditEntry) u64 {
+    fn appendEntry(self: *ComplianceAudit, entry: *AuditEntry) u64 {
         // Link to previous entry
         entry.prev_checksum = self.last_checksum;
         entry.calculateChecksum();
@@ -1039,12 +1047,27 @@ fn getCurrentTimestamp() u64 {
 test "AuditEntryType properties" {
     const testing = std.testing;
 
-    try testing.expectEqual(AuditCategory.data_activity, AuditEntryType.data_processing.category());
-    try testing.expectEqual(AuditCategory.consent, AuditEntryType.consent_change.category());
-    try testing.expectEqual(AuditCategory.breach, AuditEntryType.breach_detected.category());
+    try testing.expectEqual(
+        AuditCategory.data_activity,
+        AuditEntryType.data_processing.category(),
+    );
+    try testing.expectEqual(
+        AuditCategory.consent,
+        AuditEntryType.consent_change.category(),
+    );
+    try testing.expectEqual(
+        AuditCategory.breach,
+        AuditEntryType.breach_detected.category(),
+    );
 
-    try testing.expectEqualStrings("Article 30 - Records of processing", AuditEntryType.data_processing.gdprArticle());
-    try testing.expectEqualStrings("Article 17 - Right to erasure", AuditEntryType.data_erasure.gdprArticle());
+    try testing.expectEqualStrings(
+        "Article 30 - Records of processing",
+        AuditEntryType.data_processing.gdprArticle(),
+    );
+    try testing.expectEqualStrings(
+        "Article 17 - Right to erasure",
+        AuditEntryType.data_erasure.gdprArticle(),
+    );
 }
 
 test "AuditEntry checksum calculation" {
@@ -1090,7 +1113,10 @@ test "ComplianceAudit log data processing" {
 
     try testing.expect(entry_id > 0);
     try testing.expectEqual(@as(u64, 1), audit.stats.total_entries);
-    try testing.expectEqual(@as(u64, 1), audit.stats.by_type[@intFromEnum(AuditEntryType.data_processing)]);
+    try testing.expectEqual(
+        @as(u64, 1),
+        audit.stats.by_type[@intFromEnum(AuditEntryType.data_processing)],
+    );
 }
 
 test "ComplianceAudit consent change logging" {
@@ -1100,10 +1126,17 @@ test "ComplianceAudit consent change logging" {
     var audit = try ComplianceAudit.init(allocator, .{});
     defer audit.deinit();
 
-    const entry_id = audit.logConsentChange(0xABCDE, 0xABCDE, "Consent granted for location tracking");
+    const entry_id = audit.logConsentChange(
+        0xABCDE,
+        0xABCDE,
+        "Consent granted for location tracking",
+    );
 
     try testing.expect(entry_id > 0);
-    try testing.expectEqual(@as(u64, 1), audit.stats.by_type[@intFromEnum(AuditEntryType.consent_change)]);
+    try testing.expectEqual(
+        @as(u64, 1),
+        audit.stats.by_type[@intFromEnum(AuditEntryType.consent_change)],
+    );
 }
 
 test "ComplianceAudit rights request logging" {
@@ -1150,7 +1183,11 @@ test "ComplianceAudit breach status update" {
 
     const breach_id = try audit.reportBreach(.data_exfiltration, "Test breach", 50);
 
-    const updated = audit.updateBreachStatus(breach_id, .reported, "Reported to supervisory authority");
+    const updated = audit.updateBreachStatus(
+        breach_id,
+        .reported,
+        "Reported to supervisory authority",
+    );
     try testing.expect(updated);
 
     const incident = audit.getBreach(breach_id);

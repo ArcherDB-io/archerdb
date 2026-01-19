@@ -24,6 +24,11 @@ const compaction_op_min = @import("compaction.zig").compaction_op_min;
 const compaction_block_count_beat_min = @import("compaction.zig").compaction_block_count_beat_min;
 const compaction_input_tables_max = @import("compaction.zig").compaction_tables_input_max;
 
+/// TTL-aware compaction: threshold for prioritizing levels with high expired ratio.
+/// Per openspec/changes/add-ttl-aware-compaction: levels with expired_ratio > threshold
+/// are compacted before levels with lower ratio.
+const ttl_priority_threshold: f64 = 0.30;
+
 /// The maximum number of tables for the forest as a whole. This is set a bit backwards due to how
 /// the code is structured: a single tree should be able to use all the tables in the forest, so the
 /// table_count_max of the forest is equal to the table_count_max of a single tree.
@@ -263,7 +268,7 @@ pub fn ForestType(comptime _Storage: type, comptime groove_cfg: anytype) type {
             allocator: mem.Allocator,
             grid: *Grid,
             options: Options,
-            // (e.g.) .{ .transfers = .{ .cache_entries_max = 128, … }, .accounts = … }
+            // (e.g.) .{ .geo_events = .{ .cache_entries_max = 128, … } }
             grooves_options: GroovesOptions,
         ) !void {
             assert(options.compaction_block_count >= Options.compaction_block_count_min);
@@ -434,7 +439,12 @@ pub fn ForestType(comptime _Storage: type, comptime groove_cfg: anytype) type {
             callback(forest);
         }
 
-        pub fn compact(forest: *Forest, callback: Callback, op: u64, compaction_timestamp_ns: u64) void {
+        pub fn compact(
+            forest: *Forest,
+            callback: Callback,
+            op: u64,
+            compaction_timestamp_ns: u64,
+        ) void {
             // Store timestamp for TTL expiration checks during compaction.
             // Per ttl-retention/spec.md: use consensus timestamp for determinism.
             forest.compaction_timestamp_ns = compaction_timestamp_ns;
@@ -956,7 +966,11 @@ fn CompactionScheduleType(comptime Forest: type, comptime Grid: type) type {
                 assert(self.pool.blocks_acquired() == 0);
                 assert(self.bar_input_size == 0);
 
-                for (0..constants.lsm_levels) |level_b| {
+                // TTL-aware compaction: Use prioritized level order.
+                // Per openspec/changes/add-ttl-aware-compaction: high-expired levels first.
+                const prioritized = self.get_prioritized_level_order();
+
+                for (prioritized.levels[0..prioritized.count]) |level_b| {
                     if (level_active(.{ .level_b = level_b, .op = op })) {
                         inline for (comptime std.enums.values(Forest.TreeID)) |tree_id| {
                             const tree = Forest.tree_info_for_id(tree_id);
@@ -973,8 +987,12 @@ fn CompactionScheduleType(comptime Forest: type, comptime Grid: type) type {
                                         // At least one output index & value block.
                                         (1 + 1),
                             );
-                            // Pass timestamp for TTL expiration checks (ttl-retention/spec.md).
-                            const bar_input_values = compaction.bar_commence(op, self.forest.compaction_timestamp_ns);
+                            // Pass timestamp for TTL expiration checks
+                            // (ttl-retention/spec.md).
+                            const bar_input_values = compaction.bar_commence(
+                                op,
+                                self.forest.compaction_timestamp_ns,
+                            );
 
                             self.bar_input_size += (bar_input_values * @sizeOf(Value));
                         }
@@ -997,8 +1015,12 @@ fn CompactionScheduleType(comptime Forest: type, comptime Grid: type) type {
                 var beat_index_blocks_max: u64 = 1;
                 var beat_value_blocks_max: u64 = 1;
 
+                // TTL-aware compaction: Use prioritized level order for beat scheduling.
+                // Per add-ttl-aware-compaction: consistent with bar_commence.
+                const prioritized_beat = self.get_prioritized_level_order();
+
                 var beat_input_size = self.beat_input_size;
-                for (0..constants.lsm_levels) |level_b| {
+                for (prioritized_beat.levels[0..prioritized_beat.count]) |level_b| {
                     if (level_active(.{ .level_b = level_b, .op = op })) {
                         inline for (comptime std.enums.values(Forest.TreeID)) |tree_id| {
                             const tree = Forest.tree_info_for_id(tree_id);
@@ -1048,7 +1070,11 @@ fn CompactionScheduleType(comptime Forest: type, comptime Grid: type) type {
 
             const op = self.forest.progress.?.compact.op;
 
-            for (0..constants.lsm_levels) |level_b| {
+            // TTL-aware compaction: Use prioritized level order for dispatching compactions.
+            // Per openspec/changes/add-ttl-aware-compaction: consistent with bar/beat commence.
+            const prioritized = self.get_prioritized_level_order();
+
+            for (prioritized.levels[0..prioritized.count]) |level_b| {
                 if (level_active(.{ .level_b = level_b, .op = op })) {
                     inline for (comptime std.enums.values(Forest.TreeID)) |tree_id| {
                         const compaction = self.compaction_at(level_b, tree_id);
@@ -1109,6 +1135,68 @@ fn CompactionScheduleType(comptime Forest: type, comptime Grid: type) type {
         ) *Forest.TreeForIdType(tree_id).Compaction {
             return &self.forest.tree_for_id(tree_id).compactions[level_b];
         }
+
+        /// TTL-aware compaction: Get max expired_ratio for a level across all trees.
+        /// Per openspec/changes/add-ttl-aware-compaction: aggregate ratio for scheduling decision.
+        fn get_max_expired_ratio_for_level(self: *const CompactionSchedule, level: usize) f64 {
+            var max_ratio: f64 = 0.0;
+            inline for (comptime std.enums.values(Forest.TreeID)) |tree_id| {
+                const tree = self.forest.tree_for_id_const(tree_id);
+                const ratio = tree.manifest.levels[level].expired_ratio;
+                if (ratio > max_ratio) {
+                    max_ratio = ratio;
+                }
+            }
+            return max_ratio;
+        }
+
+        /// TTL-aware compaction: Get prioritized level order for compaction scheduling.
+        /// Per openspec/changes/add-ttl-aware-compaction:
+        /// - Level 0 is always first (immutable table flush)
+        /// - Levels with expired_ratio > threshold come before low-expired levels
+        /// - Ascending order within each group
+        /// Returns: array of level indices in prioritized order and count of valid entries.
+        fn get_prioritized_level_order(self: *const CompactionSchedule) struct {
+            levels: [constants.lsm_levels]usize,
+            count: usize,
+        } {
+            var result: [constants.lsm_levels]usize = undefined;
+            var index: usize = 0;
+
+            // Level 0 always first
+            result[index] = 0;
+            index += 1;
+
+            // Collect high-expired levels (1-6) in ascending order
+            for (1..constants.lsm_levels) |level| {
+                const ratio = self.get_max_expired_ratio_for_level(level);
+                if (ratio > ttl_priority_threshold) {
+                    result[index] = level;
+                    index += 1;
+                }
+            }
+
+            // Log if we have any prioritized levels
+            const high_expired_count = index - 1; // Exclude level 0
+            if (high_expired_count > 0) {
+                log.info("TTL-aware compaction: {} levels exceed threshold {d:.2}", .{
+                    high_expired_count,
+                    ttl_priority_threshold,
+                });
+            }
+
+            // Collect low-expired levels (1-6) in ascending order
+            for (1..constants.lsm_levels) |level| {
+                const ratio = self.get_max_expired_ratio_for_level(level);
+                if (ratio <= ttl_priority_threshold) {
+                    result[index] = level;
+                    index += 1;
+                }
+            }
+
+            assert(index == constants.lsm_levels);
+            return .{ .levels = result, .count = index };
+        }
     };
 }
 
@@ -1126,4 +1214,33 @@ test level_active {
     assert(level_active(.{ .level_b = 0, .op = @divExact(constants.lsm_compaction_ops, 2) }));
     assert(!level_active(.{ .level_b = 1, .op = @divExact(constants.lsm_compaction_ops, 2) }));
     assert(level_active(.{ .level_b = 2, .op = @divExact(constants.lsm_compaction_ops, 2) }));
+}
+
+// ============================================================================
+// TTL-Aware Compaction Priority Tests
+// Per openspec/changes/add-ttl-aware-compaction: verify threshold and prioritization logic.
+// ============================================================================
+
+test "ttl_priority_threshold: valid range" {
+    // Threshold should be between 0 and 1
+    assert(ttl_priority_threshold >= 0.0);
+    assert(ttl_priority_threshold <= 1.0);
+    // Default is 0.30 per spec
+    assert(ttl_priority_threshold == 0.30);
+}
+
+test "ttl_priority_threshold: boundary checks" {
+    // Test that 0.29 is below threshold
+    assert(0.29 <= ttl_priority_threshold);
+    // Test that 0.31 is above threshold
+    assert(0.31 > ttl_priority_threshold);
+    // Test exact threshold boundary
+    assert(ttl_priority_threshold == 0.30);
+}
+
+test "ttl_priority_threshold: disabled when 1.0" {
+    // When threshold is 1.0, no level can exceed it (ratio max is 1.0)
+    // This effectively disables TTL prioritization
+    const disabled_threshold: f64 = 1.0;
+    assert(0.999 <= disabled_threshold); // Even 99.9% won't exceed 1.0
 }

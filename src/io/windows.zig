@@ -335,8 +335,14 @@ pub const IO = struct {
         const target = args.target;
 
         // Get the handle and overlapped pointer from the target operation
-        const handle_and_overlapped: ?struct { handle: os.windows.HANDLE, overlapped: *os.windows.OVERLAPPED } = switch (target.operation) {
-            .accept => |*op| .{ .handle = @ptrCast(op.listen_socket), .overlapped = &op.overlapped.raw },
+        const handle_and_overlapped: ?struct {
+            handle: os.windows.HANDLE,
+            overlapped: *os.windows.OVERLAPPED,
+        } = switch (target.operation) {
+            .accept => |*op| .{
+                .handle = @ptrCast(op.listen_socket),
+                .overlapped = &op.overlapped.raw,
+            },
             .connect => |*op| .{ .handle = @ptrCast(op.socket), .overlapped = &op.overlapped.raw },
             .read => |*op| .{ .handle = op.fd, .overlapped = &op.overlapped.raw },
             .write => |*op| .{ .handle = op.fd, .overlapped = &op.overlapped.raw },

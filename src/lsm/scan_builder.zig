@@ -5,7 +5,6 @@ const assert = std.debug.assert;
 
 const Allocator = std.mem.Allocator;
 
-const stdx = @import("stdx");
 const constants = @import("../constants.zig");
 const is_composite_key = @import("composite_key.zig").is_composite_key;
 
@@ -34,21 +33,21 @@ const Pending = error{Pending};
 /// any of the Groove's indexes.
 pub fn ScanBuilderType(
     // TODO: Instead of a single Groove per ScanType, introduce the concept of Orthogonal Grooves.
-    // For example, indexes from the Grooves `Transfers` and `PendingTransfers` can be
+    // For example, indexes from the Grooves `geo_events` and `geo_event_metadata` can be
     // used together in the same query, and the timestamp they produce can be used for
-    // lookups in either Grooves:
+    // lookups in either Groove:
     // ```
-    // SELECT Transfers WHERE Transfers.code=1 AND Transfers.pending_status=posted.
+    // SELECT geo_events WHERE geo_events.group_id=1 AND geo_event_metadata.source=42.
     // ```
     //
     // Although the relation between orthogonal grooves is always 1:1 by the timestamp,
     // when looking up an object in the Groove `A` by a timestamp found in the Groove `B`, it will
     // require additional information to correctly assert if `B` "must have" or "may have" a
     // corresponding match in `A`.
-    // E.g.: Every AccountBalance **must have** a corresponding Account, however the opposite
+    // E.g.: Every GeoEventMetadata **must have** a corresponding GeoEvent, however the opposite
     // isn't true.
     // ```
-    // SELECT AccountBalances WHERE Accounts.user_data_32=100
+    // SELECT GeoEventMetadata WHERE GeoEvents.entity_id=100
     // ```
     comptime Groove: type,
     comptime Storage: type,
@@ -219,10 +218,11 @@ pub fn ScanBuilderType(
             scan_a: *Scan,
             scan_b: *Scan,
         ) *Scan {
-            _ = scan_b;
-            _ = scan_a;
-            _ = self;
-            stdx.unimplemented("merge_difference not implemented");
+            const Impl = ScanImplType(.merge_difference);
+            return self.merge_add(
+                .merge_difference,
+                Impl.init(&.{ scan_a, scan_b }),
+            ) catch unreachable; //TODO: define error handling for the query API.
         }
 
         fn scan_add(

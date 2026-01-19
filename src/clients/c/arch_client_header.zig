@@ -14,6 +14,9 @@ const type_mappings = .{
     .{ exports.insert_geo_events_result_t, "insert_geo_events_result_t" },
     .{ exports.delete_entities_result_t, "delete_entities_result_t" },
     .{ exports.query_uuid_filter_t, "query_uuid_filter_t" },
+    .{ exports.query_uuid_response_t, "query_uuid_response_t" },
+    .{ exports.query_uuid_batch_filter_t, "query_uuid_batch_filter_t" },
+    .{ exports.query_uuid_batch_result_t, "query_uuid_batch_result_t" },
     .{ exports.query_radius_filter_t, "query_radius_filter_t" },
     .{ exports.query_polygon_filter_t, "query_polygon_filter_t" },
     .{ exports.query_latest_filter_t, "query_latest_filter_t" },
@@ -28,8 +31,7 @@ const type_mappings = .{
     .{ exports.ttl_extend_response_t, "ttl_extend_response_t" },
     .{ exports.ttl_clear_request_t, "ttl_clear_request_t" },
     .{ exports.ttl_clear_response_t, "ttl_clear_response_t" },
-    // NOTE: Legacy ArcherDB financial types (Account, Transfer, etc.) have been
-    // removed. ArcherDB is a geospatial database only.
+    // NOTE: Legacy TigerBeetle types were removed. ArcherDB is a geospatial database only.
     .{
         exports.arch_client_t, "arch_client_t",
         \\// Opaque struct serving as a handle for the client instance.

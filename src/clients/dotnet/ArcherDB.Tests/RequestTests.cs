@@ -12,8 +12,8 @@ public class RequestTests
     [ExpectedException(typeof(AssertionException))]
     public async Task UnexpectedOperation()
     {
-        var callback = new CallbackSimulator<Account, UInt128>(
-            TBOperation.LookupAccounts,
+        var callback = new CallbackSimulator<GeoEvent, QueryLatestFilter>(
+            TBOperation.QueryLatest,
             (byte)99,
             null,
             PacketStatus.Ok,
@@ -31,10 +31,10 @@ public class RequestTests
     [ExpectedException(typeof(AssertionException))]
     public async Task InvalidSizeOperation()
     {
-        var buffer = new byte[Account.SIZE + 1];
-        var callback = new CallbackSimulator<Account, UInt128>(
-            TBOperation.LookupAccounts,
-            (byte)TBOperation.LookupAccounts,
+        var buffer = new byte[GeoEvent.SIZE + 1];
+        var callback = new CallbackSimulator<GeoEvent, QueryLatestFilter>(
+            TBOperation.QueryLatest,
+            (byte)TBOperation.QueryLatest,
             buffer,
             PacketStatus.Ok,
             delay: 100,
@@ -53,10 +53,10 @@ public class RequestTests
     {
         foreach (var isAsync in new bool[] { true, false })
         {
-            var buffer = new byte[Account.SIZE];
-            var callback = new CallbackSimulator<Account, UInt128>(
-                TBOperation.LookupAccounts,
-                (byte)TBOperation.LookupAccounts,
+            var buffer = new byte[GeoEvent.SIZE];
+            var callback = new CallbackSimulator<GeoEvent, QueryLatestFilter>(
+                TBOperation.QueryLatest,
+                (byte)TBOperation.QueryLatest,
                 buffer,
                 PacketStatus.TooMuchData,
                 delay: 100,
@@ -83,23 +83,25 @@ public class RequestTests
     {
         foreach (var isAsync in new bool[] { true, false })
         {
-            var buffer = MemoryMarshal.Cast<Account, byte>(new Account[]
+            var buffer = MemoryMarshal.Cast<GeoEvent, byte>(new GeoEvent[]
             {
-                    new Account
+                    new GeoEvent
                     {
-                        Id = 1,
-                        UserData128 = 2,
-                        UserData64 = 3,
-                        UserData32 = 4,
-                        Code = 5,
-                        Ledger = 6,
-                        Flags = AccountFlags.Linked,
+                        Id = 0,
+                        EntityId = 1,
+                        CorrelationId = 2,
+                        UserData = 3,
+                        LatNano = 37_774_900_000L,
+                        LonNano = -122_419_400_000L,
+                        GroupId = 7,
+                        Timestamp = 0,
+                        Flags = GeoEventFlags.Linked,
                     }
             }).ToArray();
 
-            var callback = new CallbackSimulator<Account, UInt128>(
-                TBOperation.LookupAccounts,
-                (byte)TBOperation.LookupAccounts,
+            var callback = new CallbackSimulator<GeoEvent, QueryLatestFilter>(
+                TBOperation.QueryLatest,
+                (byte)TBOperation.QueryLatest,
                 buffer,
                 PacketStatus.Ok,
                 delay: 100,
@@ -109,15 +111,15 @@ public class RequestTests
             var task = callback.Run();
             Assert.IsFalse(task.IsCompleted);
 
-            var accounts = await task;
-            Assert.IsTrue(accounts.Length == 1);
-            Assert.IsTrue(accounts[0].Id == 1);
-            Assert.IsTrue(accounts[0].UserData128 == 2);
-            Assert.IsTrue(accounts[0].UserData64 == 3);
-            Assert.IsTrue(accounts[0].UserData32 == 4);
-            Assert.IsTrue(accounts[0].Code == 5);
-            Assert.IsTrue(accounts[0].Ledger == 6);
-            Assert.IsTrue(accounts[0].Flags == AccountFlags.Linked);
+            var events = await task;
+            Assert.IsTrue(events.Length == 1);
+            Assert.AreEqual((UInt128)1, events[0].EntityId);
+            Assert.AreEqual((UInt128)2, events[0].CorrelationId);
+            Assert.AreEqual((UInt128)3, events[0].UserData);
+            Assert.AreEqual(37_774_900_000L, events[0].LatNano);
+            Assert.AreEqual(-122_419_400_000L, events[0].LonNano);
+            Assert.AreEqual(7UL, events[0].GroupId);
+            Assert.AreEqual(GeoEventFlags.Linked, events[0].Flags);
         }
     }
 

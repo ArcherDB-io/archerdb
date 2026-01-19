@@ -1,14 +1,13 @@
-#![allow(unused)]
-// This code reads better if all protocol byte conversions are transmutes -
-// rustc would prefer us to use safe conversions for the u128s.
-
 use anyhow::Result as AnyResult;
 use anyhow::{bail, Context};
 use futures::executor::block_on;
 use std::mem;
 use std::str::FromStr;
-use tb::arch_client as tbc;
+
 use archerdb as tb;
+use tb::arch_client as tbc;
+
+const QUERY_UUID_STATUS_NOT_FOUND: u8 = 200;
 
 struct CliArgs {
     cluster_id: u128,
@@ -36,27 +35,48 @@ fn main() -> AnyResult<()> {
 
 fn execute(client: &mut tb::Client, op: Request) -> AnyResult<Reply> {
     match op {
-        Request::CreateAccounts(accounts) => {
-            let response = client.create_accounts(&accounts);
+        Request::InsertEvents(events) => {
+            let response = client.insert_events(&events);
             let response = block_on(response)?;
-            Ok(Reply::CreateAccounts(response))
+            Ok(Reply::InsertEvents(response))
         }
-        Request::CreateTransfers(transfers) => {
-            let response = client.create_transfers(&transfers);
+        Request::QueryUuid(filter) => {
+            let response = client.get_latest_by_uuid(filter.entity_id);
             let response = block_on(response)?;
-            Ok(Reply::CreateTransfers(response))
+            Ok(Reply::QueryUuid(build_query_uuid_reply(response)))
         }
-        Request::LookupAccounts(account_ids) => {
-            let response = client.lookup_accounts(&account_ids);
+        Request::QueryLatest(filter) => {
+            let query = tb::LatestQuery {
+                limit: filter.limit,
+                group_id: filter.group_id,
+                cursor_timestamp: filter.cursor_timestamp,
+            };
+            let response = client.query_latest(&query);
             let response = block_on(response)?;
-            Ok(Reply::LookupAccounts(response))
-        }
-        Request::LookupTransfers(transfer_ids) => {
-            let response = client.lookup_transfers(&transfer_ids);
-            let response = block_on(response)?;
-            Ok(Reply::LookupTransfers(response))
+            Ok(Reply::QueryLatest(response.events))
         }
     }
+}
+
+fn build_query_uuid_reply(event: Option<tb::GeoEvent>) -> QueryUuidReply {
+    let mut bytes = Vec::new();
+    let status = if event.is_some() { 0 } else { QUERY_UUID_STATUS_NOT_FOUND };
+    let header = tbc::query_uuid_response_t {
+        status,
+        reserved: [0u8; 15],
+    };
+    bytes.extend_from_slice(as_bytes(&header));
+
+    if let Some(event) = event {
+        let raw: tbc::geo_event_t = event.into();
+        bytes.extend_from_slice(as_bytes(&raw));
+    }
+
+    QueryUuidReply { bytes }
+}
+
+fn as_bytes<T>(value: &T) -> &[u8] {
+    unsafe { std::slice::from_raw_parts((value as *const T) as *const u8, mem::size_of::<T>()) }
 }
 
 impl CliArgs {
@@ -81,17 +101,19 @@ impl CliArgs {
 }
 
 enum Request {
-    CreateAccounts(Vec<tb::Account>),
-    CreateTransfers(Vec<tb::Transfer>),
-    LookupAccounts(Vec<u128>),
-    LookupTransfers(Vec<u128>),
+    InsertEvents(Vec<tb::GeoEvent>),
+    QueryUuid(tbc::query_uuid_filter_t),
+    QueryLatest(tbc::query_latest_filter_t),
 }
 
 enum Reply {
-    CreateAccounts(Vec<tb::CreateAccountsResult>),
-    CreateTransfers(Vec<tb::CreateTransfersResult>),
-    LookupAccounts(Vec<tb::Account>),
-    LookupTransfers(Vec<tb::Transfer>),
+    InsertEvents(Vec<tb::InsertError>),
+    QueryUuid(QueryUuidReply),
+    QueryLatest(Vec<tb::GeoEvent>),
+}
+
+struct QueryUuidReply {
+    bytes: Vec<u8>,
 }
 
 struct Input {
@@ -127,47 +149,35 @@ impl Input {
         };
 
         match op {
-            tbc::ARCH_OPERATION_ARCH_OPERATION_CREATE_ACCOUNTS => {
+            tbc::ARCH_OPERATION_ARCH_OPERATION_INSERT_EVENTS => {
                 let mut events = Vec::with_capacity(event_count as usize);
-                for i in 0..event_count {
-                    let mut bytes = [0; mem::size_of::<tb::Account>()];
+                for _ in 0..event_count {
+                    let mut bytes = [0; mem::size_of::<tbc::geo_event_t>()];
                     self.reader.read_exact(&mut bytes)?;
-                    let event: tb::Account = unsafe { mem::transmute(bytes) };
-                    events.push(event);
+                    let event: tbc::geo_event_t = unsafe { mem::transmute(bytes) };
+                    events.push(tb::GeoEvent::from(event));
                 }
-                Ok(Some(Request::CreateAccounts(events)))
+                Ok(Some(Request::InsertEvents(events)))
             }
-            tbc::ARCH_OPERATION_ARCH_OPERATION_CREATE_TRANSFERS => {
-                let mut events = Vec::with_capacity(event_count as usize);
-                for i in 0..event_count {
-                    let mut bytes = [0; mem::size_of::<tb::Account>()];
-                    self.reader.read_exact(&mut bytes)?;
-                    let event: tb::Transfer = unsafe { mem::transmute(bytes) };
-                    events.push(event);
+            tbc::ARCH_OPERATION_ARCH_OPERATION_QUERY_UUID => {
+                if event_count != 1 {
+                    bail!("query_uuid expects exactly one filter, got {event_count}");
                 }
-                Ok(Some(Request::CreateTransfers(events)))
+                let mut bytes = [0; mem::size_of::<tbc::query_uuid_filter_t>()];
+                self.reader.read_exact(&mut bytes)?;
+                let filter: tbc::query_uuid_filter_t = unsafe { mem::transmute(bytes) };
+                Ok(Some(Request::QueryUuid(filter)))
             }
-            tbc::ARCH_OPERATION_ARCH_OPERATION_LOOKUP_ACCOUNTS => {
-                let mut events = Vec::with_capacity(event_count as usize);
-                for i in 0..event_count {
-                    let mut bytes = [0; mem::size_of::<u128>()];
-                    self.reader.read_exact(&mut bytes)?;
-                    let event: u128 = unsafe { u128::from_ne_bytes(bytes) };
-                    events.push(event);
+            tbc::ARCH_OPERATION_ARCH_OPERATION_QUERY_LATEST => {
+                if event_count != 1 {
+                    bail!("query_latest expects exactly one filter, got {event_count}");
                 }
-                Ok(Some(Request::LookupAccounts(events)))
+                let mut bytes = [0; mem::size_of::<tbc::query_latest_filter_t>()];
+                self.reader.read_exact(&mut bytes)?;
+                let filter: tbc::query_latest_filter_t = unsafe { mem::transmute(bytes) };
+                Ok(Some(Request::QueryLatest(filter)))
             }
-            tbc::ARCH_OPERATION_ARCH_OPERATION_LOOKUP_TRANSFERS => {
-                let mut events = Vec::with_capacity(event_count as usize);
-                for i in 0..event_count {
-                    let mut bytes = [0; mem::size_of::<u128>()];
-                    self.reader.read_exact(&mut bytes)?;
-                    let event: u128 = unsafe { u128::from_ne_bytes(bytes) };
-                    events.push(event);
-                }
-                Ok(Some(Request::LookupTransfers(events)))
-            }
-            _ => todo!("{op}"),
+            _ => bail!("unsupported operation {op}"),
         }
     }
 }
@@ -187,52 +197,40 @@ impl From<std::io::Stdout> for Output {
 impl Output {
     fn send(&mut self, result: Reply) -> AnyResult<()> {
         match result {
-            Reply::CreateAccounts(results) => {
+            Reply::InsertEvents(results) => {
                 let results_length = u32::try_from(results.len())?;
                 self.writer.write_all(&results_length.to_le_bytes())?;
                 for result in results {
-                    let result = tbc::arch_create_accounts_result_t {
-                        index: u32::try_from(result.index)?,
-                        result: u32::from(result.result),
+                    let result = tbc::insert_geo_events_result_t {
+                        index: result.index,
+                        result: result.result as u32,
                     };
-                    let bytes: [u8; mem::size_of::<tbc::arch_create_accounts_result_t>()] =
+                    let bytes: [u8; mem::size_of::<tbc::insert_geo_events_result_t>()] =
                         unsafe { mem::transmute(result) };
                     self.writer.write_all(&bytes)?;
                 }
             }
-            Reply::CreateTransfers(results) => {
-                let results_length = u32::try_from(results.len())?;
-                self.writer.write_all(&results_length.to_le_bytes())?;
-                for result in results {
-                    let result = tbc::arch_create_transfers_result_t {
-                        index: u32::try_from(result.index)?,
-                        result: u32::from(result.result),
-                    };
-                    let bytes: [u8; mem::size_of::<tbc::arch_create_transfers_result_t>()] =
-                        unsafe { mem::transmute(result) };
-                    self.writer.write_all(&bytes)?;
+            Reply::QueryUuid(reply) => {
+                let chunk_size = mem::size_of::<tbc::query_uuid_response_t>();
+                if reply.bytes.len() % chunk_size != 0 {
+                    bail!("query_uuid response has invalid size");
                 }
+                let count = reply.bytes.len() / chunk_size;
+                let count = u32::try_from(count)?;
+                self.writer.write_all(&count.to_le_bytes())?;
+                self.writer.write_all(&reply.bytes)?;
             }
-            Reply::LookupAccounts(results) => {
+            Reply::QueryLatest(results) => {
                 let results_length = u32::try_from(results.len())?;
                 self.writer.write_all(&results_length.to_le_bytes())?;
                 for result in results {
-                    let bytes: [u8; mem::size_of::<tb::Account>()] =
-                        unsafe { mem::transmute(result) };
-                    self.writer.write_all(&bytes)?;
-                }
-            }
-            Reply::LookupTransfers(results) => {
-                let results_length = u32::try_from(results.len())?;
-                self.writer.write_all(&results_length.to_le_bytes())?;
-                for result in results {
-                    let bytes: [u8; mem::size_of::<tb::Transfer>()] =
-                        unsafe { mem::transmute(result) };
+                    let raw: tbc::geo_event_t = result.into();
+                    let bytes: [u8; mem::size_of::<tbc::geo_event_t>()] =
+                        unsafe { mem::transmute(raw) };
                     self.writer.write_all(&bytes)?;
                 }
             }
         }
-        self.writer.flush()?;
         Ok(())
     }
 }

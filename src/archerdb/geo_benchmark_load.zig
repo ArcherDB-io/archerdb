@@ -429,7 +429,6 @@ const GeoBenchmark = struct {
         const filter: *QueryUuidFilter = @ptrCast(@alignCast(&b.client_requests[client_index]));
         filter.* = .{
             .entity_id = entity_id,
-            .limit = 1, // We expect at most 1 result for UUID lookup
         };
 
         b.query_index += 1;

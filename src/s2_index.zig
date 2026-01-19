@@ -148,7 +148,10 @@ pub const S2 = struct {
             radius_meters,
         );
 
-        log.debug("coverCap: center_lat_nano={d}, center_lon_nano={d}, radius_m={d:.1}", .{ center_lat_nano, center_lon_nano, radius_meters });
+        log.debug(
+            "coverCap: center_lat_nano={d}, center_lon_nano={d}, radius_m={d:.1}",
+            .{ center_lat_nano, center_lon_nano, radius_meters },
+        );
 
         // Create RegionCoverer
         const max_cells: u8 = @intCast(s2_max_cells);
@@ -222,7 +225,10 @@ pub const S2 = struct {
             if (v.lon_nano > max_lon) max_lon = v.lon_nano;
         }
 
-        log.debug("coverPolygon: bbox lat=[{d}, {d}], lon=[{d}, {d}]", .{ min_lat, max_lat, min_lon, max_lon });
+        log.debug(
+            "coverPolygon: bbox lat=[{d}, {d}], lon=[{d}, {d}]",
+            .{ min_lat, max_lat, min_lon, max_lon },
+        );
 
         // Use bounding box covering instead of cap approximation
         return coverBoundingBox(scratch, min_lat, max_lat, min_lon, max_lon, min_level, max_level);
@@ -282,7 +288,10 @@ pub const S2 = struct {
             if (cell > max_cell) max_cell = cell;
         }
 
-        log.debug("coverBoundingBox: min_cell=0x{x:0>16}, max_cell=0x{x:0>16}, center=0x{x:0>16}", .{ min_cell, max_cell, center_cell });
+        log.debug(
+            "coverBoundingBox: min_cell=0x{x:0>16}, max_cell=0x{x:0>16}, center=0x{x:0>16}",
+            .{ min_cell, max_cell, center_cell },
+        );
 
         // Find common ancestor level - the level at which min_cell and max_cell
         // share a common parent. Go up until they have the same parent.
@@ -326,7 +335,10 @@ pub const S2 = struct {
             };
         }
 
-        log.debug("coverBoundingBox: range[0] = 0x{x:0>16} .. 0x{x:0>16}", .{ ranges[0].start, ranges[0].end });
+        log.debug(
+            "coverBoundingBox: range[0] = 0x{x:0>16} .. 0x{x:0>16}",
+            .{ ranges[0].start, ranges[0].end },
+        );
 
         return ranges;
     }
@@ -792,6 +804,93 @@ test "S2.distance: antipodal points" {
     try std.testing.expect(dist_km > 19800.0 and dist_km < 20200.0);
 }
 
+test "S2.distance: golden vectors per query-engine spec" {
+    // NYC to London: expected 5570.22 km
+    // NYC: 40.7128° N, 74.0060° W
+    // London: 51.5074° N, 0.1278° W
+    const nyc_lat: i64 = 40_712800000;
+    const nyc_lon: i64 = -74_006000000;
+    const london_lat: i64 = 51_507400000;
+    const london_lon: i64 = -127800000; // -0.1278°
+
+    const nyc_london_mm = S2.distance(nyc_lat, nyc_lon, london_lat, london_lon);
+    const nyc_london_km = @as(f64, @floatFromInt(nyc_london_mm)) / 1_000_000.0;
+    // Allow 0.5% error (expected: 5570.22 km)
+    try std.testing.expect(nyc_london_km > 5542.0 and nyc_london_km < 5598.0);
+
+    // SF to Tokyo: expected 8277.95 km
+    // SF: 37.7749° N, 122.4194° W
+    // Tokyo: 35.6762° N, 139.6503° E
+    const sf_lat: i64 = 37_774900000;
+    const sf_lon: i64 = -122_419400000;
+    const tokyo_lat: i64 = 35_676200000;
+    const tokyo_lon: i64 = 139_650300000;
+
+    const sf_tokyo_mm = S2.distance(sf_lat, sf_lon, tokyo_lat, tokyo_lon);
+    const sf_tokyo_km = @as(f64, @floatFromInt(sf_tokyo_mm)) / 1_000_000.0;
+    // Allow 0.5% error (expected: 8277.95 km)
+    try std.testing.expect(sf_tokyo_km > 8236.0 and sf_tokyo_km < 8319.0);
+}
+
+test "S2.distance: sub-kilometer precision" {
+    // Two points 1 km apart at equator
+    // 1 degree of latitude at equator = ~111.32 km
+    // So 1 km = ~0.008983 degrees = ~8983000 nanodegrees
+    const lat1: i64 = 0;
+    const lon1: i64 = 0;
+    const lat2: i64 = 8_983000; // ~1km north
+    const lon2: i64 = 0;
+
+    const dist_mm = S2.distance(lat1, lon1, lat2, lon2);
+    const dist_m = @as(f64, @floatFromInt(dist_mm)) / 1000.0;
+    // Should be approximately 1000m (allow 2% error)
+    try std.testing.expect(dist_m > 980.0 and dist_m < 1020.0);
+}
+
+test "S2.distance: 10m precision" {
+    // Two points 10 meters apart
+    // 10m = ~0.00008983 degrees = ~89830 nanodegrees
+    const lat1: i64 = 0;
+    const lon1: i64 = 0;
+    const lat2: i64 = 89830; // ~10m north
+    const lon2: i64 = 0;
+
+    const dist_mm = S2.distance(lat1, lon1, lat2, lon2);
+    const dist_m = @as(f64, @floatFromInt(dist_mm)) / 1000.0;
+    // Should be approximately 10m (allow 5% error)
+    try std.testing.expect(dist_m > 9.5 and dist_m < 10.5);
+}
+
+test "S2.distance: pole regions" {
+    // North pole query - within 100km
+    const north_pole_lat: i64 = 90_000_000_000;
+    const north_pole_lon: i64 = 0;
+    // Point 100km from north pole (at ~89.1° latitude)
+    const near_pole_lat: i64 = 89_100_000_000; // ~100km from pole
+    const near_pole_lon: i64 = 45_000_000_000; // 45°E
+
+    const dist_mm = S2.distance(north_pole_lat, north_pole_lon, near_pole_lat, near_pole_lon);
+    const dist_km = @as(f64, @floatFromInt(dist_mm)) / 1_000_000.0;
+    // ~100km expected (1 degree = ~111.32km at pole)
+    try std.testing.expect(dist_km > 95.0 and dist_km < 105.0);
+
+    // South pole query - within 50km
+    const south_pole_lat: i64 = -90_000_000_000;
+    const south_pole_lon: i64 = 0;
+    const near_south_lat: i64 = -89_550_000_000; // ~50km from pole
+    const near_south_lon: i64 = 180_000_000_000; // 180°E
+
+    const south_dist_mm = S2.distance(
+        south_pole_lat,
+        south_pole_lon,
+        near_south_lat,
+        near_south_lon,
+    );
+    const south_dist_km = @as(f64, @floatFromInt(south_dist_mm)) / 1_000_000.0;
+    // ~50km expected
+    try std.testing.expect(south_dist_km > 47.0 and south_dist_km < 53.0);
+}
+
 test "S2.pointInPolygon: triangle" {
     const triangle = [_]LatLon{
         .{ .lat_nano = 0, .lon_nano = 0 },
@@ -1127,15 +1226,27 @@ test "S2.BoundingBox.containsPoint" {
     };
 
     // Inside
-    try std.testing.expect(bbox.containsPoint(.{ .lat_nano = 5_000_000_000, .lon_nano = 5_000_000_000 }));
+    try std.testing.expect(bbox.containsPoint(.{
+        .lat_nano = 5_000_000_000,
+        .lon_nano = 5_000_000_000,
+    }));
 
     // On boundary (inclusive)
     try std.testing.expect(bbox.containsPoint(.{ .lat_nano = 0, .lon_nano = 0 }));
-    try std.testing.expect(bbox.containsPoint(.{ .lat_nano = 10_000_000_000, .lon_nano = 10_000_000_000 }));
+    try std.testing.expect(bbox.containsPoint(.{
+        .lat_nano = 10_000_000_000,
+        .lon_nano = 10_000_000_000,
+    }));
 
     // Outside
-    try std.testing.expect(!bbox.containsPoint(.{ .lat_nano = -1, .lon_nano = 5_000_000_000 }));
-    try std.testing.expect(!bbox.containsPoint(.{ .lat_nano = 20_000_000_000, .lon_nano = 5_000_000_000 }));
+    try std.testing.expect(!bbox.containsPoint(.{
+        .lat_nano = -1,
+        .lon_nano = 5_000_000_000,
+    }));
+    try std.testing.expect(!bbox.containsPoint(.{
+        .lat_nano = 20_000_000_000,
+        .lon_nano = 5_000_000_000,
+    }));
 }
 
 test "S2.signedArea and winding order" {
@@ -1203,7 +1314,10 @@ test "S2.coverPolygon: SF bounding box covers SF point" {
     for (covering, 0..) |range, i| {
         if (range.start == 0 and range.end == 0) continue;
         const contains_sf = if (range.contains(sf_cell_id)) " <- contains SF" else "";
-        std.debug.print("  Range {d}: 0x{x:0>16} .. 0x{x:0>16}{s}\n", .{ i, range.start, range.end, contains_sf });
+        std.debug.print(
+            "  Range {d}: 0x{x:0>16} .. 0x{x:0>16}{s}\n",
+            .{ i, range.start, range.end, contains_sf },
+        );
     }
     std.debug.print("  Result: found={}\n", .{found});
 

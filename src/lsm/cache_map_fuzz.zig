@@ -79,7 +79,7 @@ const Environment = struct {
                     try env.model.remove(key);
                 },
                 .get => |key| {
-                    // Get account from cache_map.
+                    // Get value from cache_map.
                     const cache_map_value = env.cache_map.get(key);
 
                     // Compare result to model.
@@ -165,7 +165,7 @@ const Environment = struct {
         // model, since cache_map.remove() removes from both the cache and stash.
         var stash_iterator = env.cache_map.stash.keyIterator();
         while (stash_iterator.next()) |stash_value| {
-            // Get account from model.
+            // Get value from model.
             const model_value = env.model.get(TestTable.key_from_value(stash_value));
 
             // Even if the stash has stale values, the key must still exist in the model.

@@ -29,8 +29,8 @@ abstract class Request<TResponse extends Batch> {
     /**
      * Operation codes for ArcherDB geospatial operations.
      *
-     * Legacy ArcherDB financial operations have been removed. See archerdb.geo package for
-     * geospatial client implementation.
+     * Legacy ArcherDB operations have been removed. See archerdb.geo package for geospatial client
+     * implementation.
      */
     enum Operations {
         PULSE(128),
@@ -45,7 +45,12 @@ abstract class Request<TResponse extends Batch> {
         ARCHERDB_PING(152),
         ARCHERDB_GET_STATUS(153),
         QUERY_LATEST(154),
-        CLEANUP_EXPIRED(155);
+        CLEANUP_EXPIRED(155),
+        QUERY_UUID_BATCH(156),
+        GET_TOPOLOGY(157),
+        TTL_SET(158),
+        TTL_EXTEND(159),
+        TTL_CLEAR(160);
 
         byte value;
 
@@ -115,7 +120,7 @@ abstract class Request<TResponse extends Batch> {
             } else {
                 // Geo operations are handled by archerdb.geo package
                 exception = new AssertionError(
-                        "Operation %d should be handled by archerdb.geo package", operation);
+                        "Operation %d should be handled by archerdb.geo package", operation.value);
             }
         } catch (Throwable any) {
             exception = any;
@@ -136,6 +141,10 @@ abstract class Request<TResponse extends Batch> {
     @SuppressWarnings("unused")
     void setReplyBuffer(byte[] buffer) {
         this.replyBuffer = buffer;
+    }
+
+    byte[] getReplyBuffer() {
+        return replyBuffer;
     }
 
     // Unused: Used by the JNI side.

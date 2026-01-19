@@ -27,6 +27,7 @@ const BuildOptions = struct {
     release_client_min: ?[]const u8,
     config_aof_recovery: bool,
     config_base: ?[]const u8, // "production" or "lite" as string
+    index_format: []const u8, // "standard" or "compact"
 };
 
 /// Build configuration presets.
@@ -36,6 +37,18 @@ pub const ConfigBase = enum {
     production,
     lite,
 };
+
+/// RAM index entry format.
+/// - `standard`: 64 bytes per entry, includes TTL fields at index level
+/// - `compact`: 32 bytes per entry, 50% memory reduction, no index-level TTL
+pub const IndexFormat = enum {
+    standard,
+    compact,
+};
+
+/// The configured index format (compile-time constant).
+pub const index_format: IndexFormat =
+    std.meta.stringToEnum(IndexFormat, build_options.index_format) orelse .standard;
 
 // Allow setting build-time config either via `build.zig` `Options`, or via a struct in the root
 // file.

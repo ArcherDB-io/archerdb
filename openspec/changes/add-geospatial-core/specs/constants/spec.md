@@ -543,6 +543,22 @@ The system SHALL allow runtime configuration to override select constants while 
   - `s2_cell_level` (breaks spatial indexing)
   - `journal_slot_count` (breaks disk format)
 
+## Implementation Status
+
+| Requirement | Status | Implementation |
+|-------------|--------|----------------|
+| Central Constants Definition | IMPLEMENTED | `src/constants.zig` - All constants in single location |
+| Core Size Constants | IMPLEMENTED | `src/constants.zig` - geo_event_size, message_header_size, sector_size |
+| Storage Constants | IMPLEMENTED | `src/constants.zig` - block_size, events_per_block, lsm_levels |
+| VSR and Replication Constants | IMPLEMENTED | `src/constants.zig` - journal_slot_count, checkpoint_interval, pipeline_max |
+| Spatial Indexing Constants | IMPLEMENTED | `src/constants.zig` - s2_cell_level, s2_max_cells, s2_cover_max_level |
+| Query Limits | IMPLEMENTED | `src/constants.zig` - query_result_max, polygon_vertices_max, radius_max_meters |
+| Capacity Limits | IMPLEMENTED | `src/constants.zig` - entities_max_per_node, index_capacity, data_file_size_max |
+| Timing Constants | IMPLEMENTED | `src/constants.zig` - ping_interval_ms, view_change_timeout_ms, client_timeout_default_ms |
+| Hardware Assumptions | IMPLEMENTED | `src/constants.zig` - CPU, RAM, disk, network requirements |
+| Compile-Time Validation | IMPLEMENTED | `src/constants.zig` - comptime assertions for all invariants |
+| Configuration Override | IMPLEMENTED | `src/config.zig` - Runtime configuration with validation |
+
 ### Related Specifications
 
 - See `specs/data-model/spec.md` for GeoEvent and BlockHeader size requirements (geo_event_size, block_header_size)
@@ -592,20 +608,3 @@ The following limits are **configuration-dependent** and computed dynamically:
 
 These limits are communicated to clients during registration, not hardcoded in SDKs.
 SDKs provide `*_DEFAULT` constants for safe operation with default server configuration.
-
-
-
-## Implementation Status
-
-| Requirement | Status | Notes |
-|-------------|--------|-------|
-| Constants File | ✓ Complete | \`constants.zig\` central config |
-| Replica Count Max | ✓ Complete | replicas_max = 6 |
-| Standbys Max | ✓ Complete | standbys_max = 6 |
-| Checkpoint Interval | ✓ Complete | vsr_checkpoint_ops |
-| Clients Max | ✓ Complete | Configurable |
-| Message Size Max | ✓ Complete | ~10MB |
-| Batch Size Limits | ✓ Complete | 10,000 events |
-| Port Configuration | ✓ Complete | Default 3000 |
-| Address Configuration | ✓ Complete | Default localhost |
-| Memory Size Default | ✓ Complete | Configurable |

@@ -1,3 +1,5 @@
+# Query Engine - Polygon Holes
+
 ## ADDED Requirements
 
 ### Requirement: Polygon Hole Support
@@ -130,10 +132,8 @@ The `checkPolygon` method SHALL:
 
 | Requirement | Status | Notes |
 |-------------|--------|-------|
-| Polygon Hole Support | ✓ Complete | `geo_state_machine.zig` query_polygon |
-| Multi-ring Point-in-Polygon | ✓ Complete | Outer + hole check algorithm |
-| Hole Count Limit (100) | ✓ Complete | `constants.polygon_holes_max` |
-| Hole Validation | ✓ Complete | Vertex count, containment checks |
-| S2 Covering (outer ring) | ✓ Complete | Conservative covering approach |
-| Post-filter with Holes | ✓ Complete | Early-exit on hole match |
-| Backwards Compatibility | ✓ Complete | hole_count=0 = simple polygon |
+| Polygon Hole Support | IMPLEMENTED | `src/geo_state_machine.zig` |
+| Polygon Hole Limits | IMPLEMENTED | `src/geo_state_machine.zig` |
+| Polygon Hole Validation | IMPLEMENTED | `src/geo_state_machine.zig` |
+| Polygon Hole S2 Covering | IMPLEMENTED | `src/geo_state_machine.zig` |
+| Polygon Query Post-Filter | IMPLEMENTED | `src/geo_state_machine.zig` |

@@ -301,10 +301,12 @@ pub const BulkExporter = struct {
     data_exporter: data_export.DataExporter,
     current_time_ns: u64,
 
-    const Self = @This();
-
     /// Initialize bulk exporter.
-    pub fn init(allocator: mem.Allocator, filter: ExportFilter, options: BulkExportOptions) Self {
+    pub fn init(
+        allocator: mem.Allocator,
+        filter: ExportFilter,
+        options: BulkExportOptions,
+    ) BulkExporter {
         const current_time = if (options.current_time_ns != 0)
             options.current_time_ns
         else
@@ -330,14 +332,14 @@ pub const BulkExporter = struct {
     }
 
     /// Clean up resources.
-    pub fn deinit(self: *Self) void {
+    pub fn deinit(self: *BulkExporter) void {
         self.data_exporter.deinit();
     }
 
     /// Filter a slice of events and return matching ones.
     /// Returns a slice pointing into the provided output buffer.
     pub fn filterEvents(
-        self: *Self,
+        self: *BulkExporter,
         events: []const GeoEvent,
         output: []GeoEvent,
     ) []GeoEvent {
@@ -368,30 +370,34 @@ pub const BulkExporter = struct {
     }
 
     /// Export filtered events to a writer.
-    pub fn exportFiltered(self: *Self, writer: anytype, events: []const GeoEvent) !void {
+    pub fn exportFiltered(
+        self: *BulkExporter,
+        writer: anytype,
+        events: []const GeoEvent,
+    ) !void {
         for (events) |*event| {
             try self.data_exporter.writeEvent(writer, event);
         }
     }
 
     /// Write export header.
-    pub fn writeHeader(self: *Self, writer: anytype) !void {
+    pub fn writeHeader(self: *BulkExporter, writer: anytype) !void {
         try self.data_exporter.writeHeader(writer);
     }
 
     /// Write export footer.
-    pub fn writeFooter(self: *Self, writer: anytype) !void {
+    pub fn writeFooter(self: *BulkExporter, writer: anytype) !void {
         try self.data_exporter.writeFooter(writer);
         self.progress.completed = true;
     }
 
     /// Get current progress.
-    pub fn getProgress(self: *const Self) ExportProgress {
+    pub fn getProgress(self: *const BulkExporter) ExportProgress {
         return self.progress;
     }
 
     /// Update bytes written (call after writing to track progress).
-    pub fn updateBytesWritten(self: *Self, bytes: u64) void {
+    pub fn updateBytesWritten(self: *BulkExporter, bytes: u64) void {
         self.progress.bytes_written += bytes;
     }
 };

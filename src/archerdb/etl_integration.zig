@@ -26,10 +26,9 @@
 //! ```
 
 const std = @import("std");
+const stdx = @import("stdx");
 const mem = std.mem;
 const Allocator = mem.Allocator;
-const GeoEvent = @import("../geo_event.zig").GeoEvent;
-const data_export = @import("data_export.zig");
 
 /// Current API version for schema discovery.
 pub const API_VERSION = "1.0.0";
@@ -137,7 +136,7 @@ pub const WebhookConfig = struct {
     /// Set URL.
     pub fn setUrl(self: *WebhookConfig, url: []const u8) void {
         const len = @min(url.len, 511);
-        @memcpy(self.url[0..len], url[0..len]);
+        stdx.copy_disjoint(.exact, u8, self.url[0..len], url[0..len]);
         self.url_len = @intCast(len);
     }
 
@@ -149,7 +148,7 @@ pub const WebhookConfig = struct {
     /// Set authentication header.
     pub fn setAuthHeader(self: *WebhookConfig, header: []const u8) void {
         const len = @min(header.len, 255);
-        @memcpy(self.auth_header[0..len], header[0..len]);
+        stdx.copy_disjoint(.exact, u8, self.auth_header[0..len], header[0..len]);
         self.auth_header_len = @intCast(len);
     }
 
@@ -179,7 +178,7 @@ pub const WebhookPayload = struct {
     /// Set correlation ID.
     pub fn setCorrelationId(self: *WebhookPayload, id: []const u8) void {
         const len = @min(id.len, 35);
-        @memcpy(self.correlation_id[0..len], id[0..len]);
+        stdx.copy_disjoint(.exact, u8, self.correlation_id[0..len], id[0..len]);
         self.correlation_id_len = @intCast(len);
     }
 };
@@ -212,14 +211,13 @@ pub const DeliveryResult = struct {
 
 /// Webhook registry for managing webhook subscriptions.
 pub const WebhookRegistry = struct {
-    const Self = @This();
     const MAX_WEBHOOKS = 100;
 
     allocator: Allocator,
     webhooks: std.ArrayList(WebhookConfig),
 
     /// Initialize webhook registry.
-    pub fn init(allocator: Allocator) Self {
+    pub fn init(allocator: Allocator) WebhookRegistry {
         return .{
             .allocator = allocator,
             .webhooks = std.ArrayList(WebhookConfig).init(allocator),
@@ -227,12 +225,12 @@ pub const WebhookRegistry = struct {
     }
 
     /// Deinitialize and free resources.
-    pub fn deinit(self: *Self) void {
+    pub fn deinit(self: *WebhookRegistry) void {
         self.webhooks.deinit();
     }
 
     /// Register a new webhook.
-    pub fn register(self: *Self, config: WebhookConfig) !usize {
+    pub fn register(self: *WebhookRegistry, config: WebhookConfig) !usize {
         if (self.webhooks.items.len >= MAX_WEBHOOKS) {
             return error.TooManyWebhooks;
         }
@@ -241,19 +239,22 @@ pub const WebhookRegistry = struct {
     }
 
     /// Unregister a webhook by index.
-    pub fn unregister(self: *Self, index: usize) void {
+    pub fn unregister(self: *WebhookRegistry, index: usize) void {
         if (index < self.webhooks.items.len) {
             _ = self.webhooks.orderedRemove(index);
         }
     }
 
     /// Get webhook count.
-    pub fn count(self: *const Self) usize {
+    pub fn count(self: *const WebhookRegistry) usize {
         return self.webhooks.items.len;
     }
 
     /// Get webhooks matching an event type.
-    pub fn getMatchingWebhooks(self: *const Self, event_type: WebhookEventType) []WebhookConfig {
+    pub fn getMatchingWebhooks(
+        self: *const WebhookRegistry,
+        event_type: WebhookEventType,
+    ) []WebhookConfig {
         // Returns all webhooks that match the event type (caller can filter further)
         var matching = std.ArrayList(WebhookConfig).init(self.allocator);
         for (self.webhooks.items) |webhook| {
@@ -266,7 +267,7 @@ pub const WebhookRegistry = struct {
 
     /// Create a notification payload for an event.
     pub fn createPayload(
-        self: *const Self,
+        self: *const WebhookRegistry,
         event_type: WebhookEventType,
         entity_id: ?u128,
         data: ?[]const u8,
@@ -354,7 +355,9 @@ pub const BulkLoadProgress = struct {
     /// Calculate completion percentage.
     pub fn percentComplete(self: *const BulkLoadProgress) f64 {
         if (self.total_records == 0) return 100.0;
-        return (@as(f64, @floatFromInt(self.processed_records)) / @as(f64, @floatFromInt(self.total_records))) * 100.0;
+        const processed = @as(f64, @floatFromInt(self.processed_records));
+        const total = @as(f64, @floatFromInt(self.total_records));
+        return (processed / total) * 100.0;
     }
 
     /// Calculate estimated time remaining.
@@ -381,14 +384,12 @@ pub const BulkLoadResult = struct {
 
 /// Bulk loader interface for high-throughput data loading.
 pub const BulkLoader = struct {
-    const Self = @This();
-
     allocator: Allocator,
     options: BulkLoadOptions,
     progress: BulkLoadProgress,
 
     /// Initialize bulk loader.
-    pub fn init(allocator: Allocator, options: BulkLoadOptions) Self {
+    pub fn init(allocator: Allocator, options: BulkLoadOptions) BulkLoader {
         return .{
             .allocator = allocator,
             .options = options,
@@ -408,14 +409,21 @@ pub const BulkLoader = struct {
     }
 
     /// Prepare for bulk loading.
-    pub fn prepare(self: *Self, total_records: usize) void {
+    pub fn prepare(self: *BulkLoader, total_records: usize) void {
         self.progress.total_records = total_records;
-        self.progress.total_batches = (total_records + self.options.batch_size - 1) / self.options.batch_size;
+        const divisor = self.options.batch_size;
+        self.progress.total_batches = (total_records + divisor - 1) / divisor;
         self.progress.start_time_ns = std.time.nanoTimestamp();
     }
 
     /// Update progress after processing a batch.
-    pub fn updateProgress(self: *Self, batch_size: usize, inserted: usize, updated: usize, skipped: usize) void {
+    pub fn updateProgress(
+        self: *BulkLoader,
+        batch_size: usize,
+        inserted: usize,
+        updated: usize,
+        skipped: usize,
+    ) void {
         self.progress.processed_records += batch_size;
         self.progress.inserted_records += inserted;
         self.progress.updated_records += updated;
@@ -424,19 +432,20 @@ pub const BulkLoader = struct {
 
         // Calculate throughput
         const elapsed_ns: i128 = std.time.nanoTimestamp() - self.progress.start_time_ns;
-        const elapsed_seconds = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000_000.0;
-        if (elapsed_seconds > 0.0) {
-            self.progress.throughput = @as(f64, @floatFromInt(self.progress.processed_records)) / elapsed_seconds;
+        const elapsed_secs = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000_000.0;
+        if (elapsed_secs > 0.0) {
+            const processed = self.progress.processed_records;
+            self.progress.throughput = @as(f64, @floatFromInt(processed)) / elapsed_secs;
         }
     }
 
     /// Get current progress.
-    pub fn getProgress(self: *const Self) BulkLoadProgress {
+    pub fn getProgress(self: *const BulkLoader) BulkLoadProgress {
         return self.progress;
     }
 
     /// Complete the bulk load and return result.
-    pub fn complete(self: *Self) BulkLoadResult {
+    pub fn complete(self: *BulkLoader) BulkLoadResult {
         const elapsed_ns: i128 = std.time.nanoTimestamp() - self.progress.start_time_ns;
         const elapsed_seconds = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000_000.0;
 
@@ -506,7 +515,7 @@ pub const FieldDescriptor = struct {
     /// Set field name.
     pub fn setName(self: *FieldDescriptor, name: []const u8) void {
         const len = @min(name.len, 63);
-        @memcpy(self.name[0..len], name[0..len]);
+        stdx.copy_disjoint(.exact, u8, self.name[0..len], name[0..len]);
         self.name_len = @intCast(len);
     }
 
@@ -518,7 +527,7 @@ pub const FieldDescriptor = struct {
     /// Set description.
     pub fn setDescription(self: *FieldDescriptor, desc: []const u8) void {
         const len = @min(desc.len, 255);
-        @memcpy(self.description[0..len], desc[0..len]);
+        stdx.copy_disjoint(.exact, u8, self.description[0..len], desc[0..len]);
         self.description_len = @intCast(len);
     }
 };
@@ -545,14 +554,14 @@ pub const SchemaDescriptor = struct {
     /// Set schema name.
     pub fn setName(self: *SchemaDescriptor, name: []const u8) void {
         const len = @min(name.len, 63);
-        @memcpy(self.name[0..len], name[0..len]);
+        stdx.copy_disjoint(.exact, u8, self.name[0..len], name[0..len]);
         self.name_len = @intCast(len);
     }
 
     /// Set version.
     pub fn setVersion(self: *SchemaDescriptor, version: []const u8) void {
         const len = @min(version.len, 15);
-        @memcpy(self.version[0..len], version[0..len]);
+        stdx.copy_disjoint(.exact, u8, self.version[0..len], version[0..len]);
         self.version_len = @intCast(len);
     }
 };
@@ -765,7 +774,7 @@ pub const ConnectorConfig = struct {
     /// Set connection string.
     pub fn setConnectionString(self: *ConnectorConfig, conn: []const u8) void {
         const len = @min(conn.len, 511);
-        @memcpy(self.connection_string[0..len], conn[0..len]);
+        stdx.copy_disjoint(.exact, u8, self.connection_string[0..len], conn[0..len]);
         self.connection_string_len = @intCast(len);
     }
 
@@ -809,14 +818,14 @@ pub const KafkaConfig = struct {
     /// Set topic.
     pub fn setTopic(self: *KafkaConfig, topic: []const u8) void {
         const len = @min(topic.len, 127);
-        @memcpy(self.topic[0..len], topic[0..len]);
+        stdx.copy_disjoint(.exact, u8, self.topic[0..len], topic[0..len]);
         self.topic_len = @intCast(len);
     }
 
     /// Set consumer group.
     pub fn setConsumerGroup(self: *KafkaConfig, group: []const u8) void {
         const len = @min(group.len, 63);
-        @memcpy(self.consumer_group[0..len], group[0..len]);
+        stdx.copy_disjoint(.exact, u8, self.consumer_group[0..len], group[0..len]);
         self.consumer_group_len = @intCast(len);
     }
 };
@@ -841,7 +850,7 @@ pub const ElasticsearchConfig = struct {
     /// Set index name.
     pub fn setIndexName(self: *ElasticsearchConfig, name: []const u8) void {
         const len = @min(name.len, 127);
-        @memcpy(self.index_name[0..len], name[0..len]);
+        stdx.copy_disjoint(.exact, u8, self.index_name[0..len], name[0..len]);
         self.index_name_len = @intCast(len);
     }
 };
@@ -964,8 +973,10 @@ test "kafka configuration" {
     config.setTopic("geoevent-topic");
     config.setConsumerGroup("archerdb-consumer");
 
-    try testing.expect(std.mem.eql(u8, config.topic[0..config.topic_len], "geoevent-topic"));
-    try testing.expect(std.mem.eql(u8, config.consumer_group[0..config.consumer_group_len], "archerdb-consumer"));
+    const topic = config.topic[0..config.topic_len];
+    const consumer = config.consumer_group[0..config.consumer_group_len];
+    try testing.expect(std.mem.eql(u8, topic, "geoevent-topic"));
+    try testing.expect(std.mem.eql(u8, consumer, "archerdb-consumer"));
 }
 
 test "elasticsearch configuration" {

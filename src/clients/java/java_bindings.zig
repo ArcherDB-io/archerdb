@@ -38,7 +38,7 @@ const TypeMapping = struct {
 /// otherwise they are considered IDs and exposed as an array of bytes.
 const big_integer = struct {
     const fields = .{
-        // No financial amount fields in ArcherDB
+        // No monetary amount fields in ArcherDB
     };
 
     fn contains(comptime field: []const u8) bool {
@@ -74,6 +74,9 @@ const type_mappings = .{
     .{ tb.InsertGeoEventsResult, TypeMapping{
         .name = "InsertGeoEventResultBatch",
         .readonly_fields = &.{ "index", "result" },
+    } },
+    .{ tb.DeleteEntityResult, TypeMapping{
+        .name = "DeleteEntityResult",
     } },
     .{ tb.DeleteEntitiesResult, TypeMapping{
         .name = "DeleteEntityResultBatch",
@@ -134,15 +137,21 @@ fn java_type(
         },
         .int => |info| {
             // For better API ergonomy,
-            // we expose 16-bit unsigned integers in Java as "int" instead of "short".
-            // Even though, the backing fields are always stored as "short".
-            assert(info.signedness == .unsigned);
-            return switch (info.bits) {
-                1 => "byte",
-                8 => "byte",
-                16, 32 => "int",
-                64 => "long",
-                else => @compileError("invalid int type"),
+            // we expose 16-bit integers in Java as "int" instead of "short".
+            return switch (info.signedness) {
+                .unsigned => switch (info.bits) {
+                    1 => "byte",
+                    8 => "byte",
+                    16, 32 => "int",
+                    64 => "long",
+                    else => @compileError("invalid int type"),
+                },
+                .signed => switch (info.bits) {
+                    8 => "byte",
+                    16, 32 => "int",
+                    64 => "long",
+                    else => @compileError("invalid int type"),
+                },
             };
         },
         else => @compileError("Unhandled type: " ++ @typeName(Type)),
@@ -352,14 +361,11 @@ fn emit_packed_enum(
 
 fn batch_type(comptime Type: type) []const u8 {
     switch (@typeInfo(Type)) {
-        .int => |info| {
-            assert(info.signedness == .unsigned);
-            switch (info.bits) {
-                16 => return "UInt16",
-                32 => return "UInt32",
-                64 => return "UInt64",
-                else => {},
-            }
+        .int => |info| switch (info.bits) {
+            16 => return "UInt16",
+            32 => return "UInt32",
+            64 => return "UInt64",
+            else => {},
         },
         .@"struct" => |info| switch (info.layout) {
             .@"packed" => return batch_type(std.meta.Int(.unsigned, @bitSizeOf(Type))),

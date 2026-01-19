@@ -26,6 +26,14 @@ zig-out/
 # Database files
 *.archerdb
 0_*.archerdb
+*.archerdb.benchmark
+*.archerdb.benchmark.json
+
+# macOS
+.DS_Store
+
+# Build hashes
+*.sha256
 
 # Compiled client libraries
 src/clients/c/lib/

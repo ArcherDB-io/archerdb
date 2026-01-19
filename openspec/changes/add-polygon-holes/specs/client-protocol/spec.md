@@ -1,3 +1,5 @@
+# Client Protocol - Polygon Holes
+
 ## MODIFIED Requirements
 
 ### Requirement: Polygon Query Wire Format
@@ -97,9 +99,5 @@ The protocol SHALL define constants for polygon hole limits.
 
 | Requirement | Status | Notes |
 |-------------|--------|-------|
-| QueryPolygonFilter 128-byte | ✓ Complete | `geo_state_machine.zig:634` |
-| HoleDescriptor 8-byte | ✓ Complete | `geo_state_machine.zig:660` |
-| Message Layout with Holes | ✓ Complete | Variable-length body parsing |
-| polygon_holes_max (100) | ✓ Complete | `constants.zig` |
-| polygon_hole_vertices_min (3) | ✓ Complete | `constants.zig` |
-| Validation Order | ✓ Complete | query_polygon validation logic |
+| Polygon Query Wire Format | IMPLEMENTED | `src/geo_state_machine.zig` |
+| Polygon Hole Constants | IMPLEMENTED | `src/geo_state_machine.zig` |

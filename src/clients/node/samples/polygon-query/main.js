@@ -8,25 +8,23 @@
  */
 const process = require('process')
 
-const { createGeoClient, createGeoEvent } = require('archerdb-node')
+const { createGeoClient } = require('archerdb-node')
 
 async function main() {
   const address = process.env.ARCHERDB_ADDRESS || '127.0.0.1:3001'
 
   const client = createGeoClient({
-    clusterId: 0n,
+    cluster_id: 0n,
     addresses: [address],
   })
 
   console.log(`Connected to ArcherDB at ${address}`)
 
   try {
-    const nowNs = BigInt(Date.now()) * 1000000n
-
-    // Insert events in the San Francisco Financial District area
+    // Insert events in the San Francisco downtown area
     const batch = client.createBatch()
     const locations = [
-      // Inside the polygon (Financial District)
+      // Inside the polygon (downtown)
       { name: 'Transamerica Pyramid', lat: 37.7952, lon: -122.4028 },
       { name: 'Salesforce Tower', lat: 37.7897, lon: -122.3972 },
       { name: 'Embarcadero Center', lat: 37.7946, lon: -122.3984 },
@@ -39,11 +37,10 @@ async function main() {
     for (let i = 0; i < locations.length; i++) {
       const loc = locations[i]
       batch.addFromOptions({
-        entityId: BigInt(Math.floor(Math.random() * Number.MAX_SAFE_INTEGER)),
+        entity_id: BigInt(Math.floor(Math.random() * Number.MAX_SAFE_INTEGER)),
         latitude: loc.lat,
         longitude: loc.lon,
-        timestamp: nowNs + BigInt(i),
-        groupId: 1n,
+        group_id: 1n,
       })
       console.log(`  Added ${loc.name}: (${loc.lat.toFixed(4)}, ${loc.lon.toFixed(4)})`)
     }
@@ -51,22 +48,22 @@ async function main() {
     await batch.commit()
     console.log(`\nInserted ${locations.length} events\n`)
 
-    // Define a polygon around the Financial District
-    const financialDistrictPolygon = [
+    // Define a polygon around downtown
+    const downtownPolygon = [
       { latitude: 37.798, longitude: -122.405 }, // Northwest corner
       { latitude: 37.798, longitude: -122.39 }, // Northeast corner
       { latitude: 37.786, longitude: -122.39 }, // Southeast corner
       { latitude: 37.786, longitude: -122.405 }, // Southwest corner
     ]
 
-    console.log('Querying Financial District polygon:')
-    console.log('  Vertices:', financialDistrictPolygon.map((v) => `(${v.latitude}, ${v.longitude})`).join(', '))
+    console.log('Querying downtown polygon:')
+    console.log('  Vertices:', downtownPolygon.map((v) => `(${v.latitude}, ${v.longitude})`).join(', '))
 
     const result = await client.queryPolygon({
-      vertices: financialDistrictPolygon,
+      vertices: downtownPolygon,
     })
 
-    console.log(`\nFound ${result.events.length} events inside Financial District:`)
+    console.log(`\nFound ${result.events.length} events inside downtown geofence:`)
     for (const event of result.events) {
       // Find the name
       let name = 'Unknown'
@@ -87,7 +84,7 @@ async function main() {
     const resultRadius = await client.queryRadius({
       latitude: centerLat,
       longitude: centerLon,
-      radiusM,
+      radius_m: radiusM,
     })
 
     console.log(`\nRadius query (1km from center): ${resultRadius.events.length} events`)

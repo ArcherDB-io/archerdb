@@ -23,6 +23,7 @@
 //! ```
 
 const std = @import("std");
+const stdx = @import("stdx");
 const mem = std.mem;
 const Allocator = mem.Allocator;
 const AutoHashMap = std.AutoHashMap;
@@ -63,7 +64,8 @@ pub const GDPRArticle = enum(u8) {
             .article_16_rectification => "Right to rectification",
             .article_17_erasure => "Right to erasure ('right to be forgotten')",
             .article_18_restriction => "Right to restriction of processing",
-            .article_19_notification => "Notification obligation regarding rectification or erasure",
+            .article_19_notification => "Notification obligation regarding " ++
+                "rectification or erasure",
             .article_20_portability => "Right to data portability",
             .article_21_object => "Right to object",
             .article_22_automated => "Automated individual decision-making, including profiling",
@@ -211,7 +213,7 @@ pub const RectificationUpdate = struct {
     /// Set the reason string.
     pub fn setReason(self: *RectificationUpdate, rsn: []const u8) void {
         const len = @min(rsn.len, 255);
-        @memcpy(self.reason[0..len], rsn[0..len]);
+        stdx.copy_disjoint(.exact, u8, self.reason[0..len], rsn[0..len]);
         self.reason_len = @intCast(len);
     }
 
@@ -307,7 +309,7 @@ pub const DataSubjectRequest = struct {
     /// Set the notes string.
     pub fn setNotes(self: *DataSubjectRequest, note: []const u8) void {
         const len = @min(note.len, 511);
-        @memcpy(self.notes[0..len], note[0..len]);
+        stdx.copy_disjoint(.exact, u8, self.notes[0..len], note[0..len]);
         self.notes_len = @intCast(len);
     }
 
@@ -319,7 +321,7 @@ pub const DataSubjectRequest = struct {
     /// Set the processing notes.
     pub fn setProcessingNotes(self: *DataSubjectRequest, note: []const u8) void {
         const len = @min(note.len, 511);
-        @memcpy(self.processing_notes[0..len], note[0..len]);
+        stdx.copy_disjoint(.exact, u8, self.processing_notes[0..len], note[0..len]);
         self.processing_notes_len = @intCast(len);
     }
 
@@ -331,7 +333,7 @@ pub const DataSubjectRequest = struct {
     /// Set error message.
     pub fn setError(self: *DataSubjectRequest, msg: []const u8) void {
         const len = @min(msg.len, 255);
-        @memcpy(self.error_message[0..len], msg[0..len]);
+        stdx.copy_disjoint(.exact, u8, self.error_message[0..len], msg[0..len]);
         self.error_len = @intCast(len);
     }
 
@@ -424,7 +426,7 @@ pub const AccessResult = struct {
             .error_len = 0,
         };
         const len = @min(msg.len, 255);
-        @memcpy(result.error_message[0..len], msg[0..len]);
+        stdx.copy_disjoint(.exact, u8, result.error_message[0..len], msg[0..len]);
         result.error_len = @intCast(len);
         return result;
     }
@@ -489,7 +491,7 @@ pub const ErasureResult = struct {
             .error_len = 0,
         };
         const len = @min(msg.len, 255);
-        @memcpy(result.error_message[0..len], msg[0..len]);
+        stdx.copy_disjoint(.exact, u8, result.error_message[0..len], msg[0..len]);
         result.error_len = @intCast(len);
         return result;
     }
@@ -518,7 +520,12 @@ pub const RectificationResult = struct {
     error_len: u8,
 
     /// Create success result.
-    pub fn ok(request_id: u64, entity_id: u128, events_updated: u64, fields_changed: u64) RectificationResult {
+    pub fn ok(
+        request_id: u64,
+        entity_id: u128,
+        events_updated: u64,
+        fields_changed: u64,
+    ) RectificationResult {
         return .{
             .success = true,
             .request_id = request_id,
@@ -542,7 +549,7 @@ pub const RectificationResult = struct {
             .error_len = 0,
         };
         const len = @min(msg.len, 255);
-        @memcpy(result.error_message[0..len], msg[0..len]);
+        stdx.copy_disjoint(.exact, u8, result.error_message[0..len], msg[0..len]);
         result.error_len = @intCast(len);
         return result;
     }
@@ -575,7 +582,12 @@ pub const PortabilityResult = struct {
     error_len: u8,
 
     /// Create success result.
-    pub fn ok(request_id: u64, entity_id: u128, format: ExportFormat, events_exported: u64) PortabilityResult {
+    pub fn ok(
+        request_id: u64,
+        entity_id: u128,
+        format: ExportFormat,
+        events_exported: u64,
+    ) PortabilityResult {
         return .{
             .success = true,
             .request_id = request_id,
@@ -603,7 +615,7 @@ pub const PortabilityResult = struct {
             .error_len = 0,
         };
         const len = @min(msg.len, 255);
-        @memcpy(result.error_message[0..len], msg[0..len]);
+        stdx.copy_disjoint(.exact, u8, result.error_message[0..len], msg[0..len]);
         result.error_len = @intCast(len);
         return result;
     }
@@ -663,8 +675,6 @@ pub const HandlerConfig = struct {
 
 /// Data Subject Rights Handler - main API for handling GDPR requests.
 pub const DataSubjectRightsHandler = struct {
-    const Self = @This();
-
     /// Memory allocator.
     allocator: Allocator,
     /// Configuration.
@@ -679,8 +689,8 @@ pub const DataSubjectRightsHandler = struct {
     stats: RequestStats,
 
     /// Initialize handler.
-    pub fn init(allocator: Allocator, config: HandlerConfig) !Self {
-        return Self{
+    pub fn init(allocator: Allocator, config: HandlerConfig) !DataSubjectRightsHandler {
+        return DataSubjectRightsHandler{
             .allocator = allocator,
             .config = config,
             .requests = AutoHashMap(u64, DataSubjectRequest).init(allocator),
@@ -691,7 +701,7 @@ pub const DataSubjectRightsHandler = struct {
     }
 
     /// Clean up resources.
-    pub fn deinit(self: *Self) void {
+    pub fn deinit(self: *DataSubjectRightsHandler) void {
         var iter = self.entity_requests.valueIterator();
         while (iter.next()) |list| {
             list.deinit();
@@ -702,7 +712,7 @@ pub const DataSubjectRightsHandler = struct {
 
     /// Submit a new access request (Article 15).
     pub fn submitAccessRequest(
-        self: *Self,
+        self: *DataSubjectRightsHandler,
         entity_id: u128,
         notes: []const u8,
     ) !DataSubjectRequest {
@@ -724,7 +734,7 @@ pub const DataSubjectRightsHandler = struct {
 
     /// Handle an access request (get all data for entity).
     pub fn handleAccessRequest(
-        self: *Self,
+        self: *DataSubjectRightsHandler,
         entity_id: u128,
     ) AccessResult {
         // Create and submit request
@@ -753,7 +763,7 @@ pub const DataSubjectRightsHandler = struct {
 
     /// Submit a new erasure request (Article 17).
     pub fn submitErasureRequest(
-        self: *Self,
+        self: *DataSubjectRightsHandler,
         entity_id: u128,
         notes: []const u8,
     ) !DataSubjectRequest {
@@ -775,7 +785,7 @@ pub const DataSubjectRightsHandler = struct {
 
     /// Handle an erasure request (delete all data for entity).
     pub fn handleErasureRequest(
-        self: *Self,
+        self: *DataSubjectRightsHandler,
         entity_id: u128,
         reason: []const u8,
     ) ErasureResult {
@@ -813,7 +823,7 @@ pub const DataSubjectRightsHandler = struct {
 
     /// Submit a new rectification request (Article 16).
     pub fn submitRectificationRequest(
-        self: *Self,
+        self: *DataSubjectRightsHandler,
         entity_id: u128,
         notes: []const u8,
     ) !DataSubjectRequest {
@@ -835,7 +845,7 @@ pub const DataSubjectRightsHandler = struct {
 
     /// Handle a rectification request (correct data for entity).
     pub fn handleRectificationRequest(
-        self: *Self,
+        self: *DataSubjectRightsHandler,
         entity_id: u128,
         updates: []const RectificationUpdate,
         reason: []const u8,
@@ -872,7 +882,7 @@ pub const DataSubjectRightsHandler = struct {
 
     /// Submit a new portability request (Article 20).
     pub fn submitPortabilityRequest(
-        self: *Self,
+        self: *DataSubjectRightsHandler,
         entity_id: u128,
         format: ExportFormat,
         notes: []const u8,
@@ -896,11 +906,12 @@ pub const DataSubjectRightsHandler = struct {
 
     /// Handle a portability request (export data for entity).
     pub fn handlePortabilityRequest(
-        self: *Self,
+        self: *DataSubjectRightsHandler,
         entity_id: u128,
         format: ExportFormat,
     ) PortabilityResult {
-        const request = self.submitPortabilityRequest(entity_id, format, "Data export request") catch |e| {
+        const reason = "Data export request";
+        const request = self.submitPortabilityRequest(entity_id, format, reason) catch |e| {
             return PortabilityResult.err(@errorName(e));
         };
 
@@ -924,12 +935,16 @@ pub const DataSubjectRightsHandler = struct {
     }
 
     /// Get a specific request by ID.
-    pub fn getRequest(self: *Self, request_id: u64) ?DataSubjectRequest {
+    pub fn getRequest(self: *DataSubjectRightsHandler, request_id: u64) ?DataSubjectRequest {
         return self.requests.get(request_id);
     }
 
     /// Get all requests for an entity.
-    pub fn getEntityRequests(self: *Self, entity_id: u128, buffer: []DataSubjectRequest) usize {
+    pub fn getEntityRequests(
+        self: *DataSubjectRightsHandler,
+        entity_id: u128,
+        buffer: []DataSubjectRequest,
+    ) usize {
         const request_ids = self.entity_requests.get(entity_id) orelse {
             return 0;
         };
@@ -948,7 +963,7 @@ pub const DataSubjectRightsHandler = struct {
 
     /// Update request status.
     pub fn updateRequestStatus(
-        self: *Self,
+        self: *DataSubjectRightsHandler,
         request_id: u64,
         status: RequestStatus,
         notes: []const u8,
@@ -977,7 +992,7 @@ pub const DataSubjectRightsHandler = struct {
 
     /// Verify identity for a request.
     pub fn verifyIdentity(
-        self: *Self,
+        self: *DataSubjectRightsHandler,
         request_id: u64,
         method: DataSubjectRequest.VerificationMethod,
     ) bool {
@@ -992,7 +1007,7 @@ pub const DataSubjectRightsHandler = struct {
     }
 
     /// Get statistics.
-    pub fn getStats(self: *Self) RequestStats {
+    pub fn getStats(self: *DataSubjectRightsHandler) RequestStats {
         // Update overdue count
         self.stats.overdue_requests = 0;
         var iter = self.requests.valueIterator();
@@ -1006,7 +1021,7 @@ pub const DataSubjectRightsHandler = struct {
     }
 
     /// Get overdue requests.
-    pub fn getOverdueRequests(self: *Self, buffer: []DataSubjectRequest) usize {
+    pub fn getOverdueRequests(self: *DataSubjectRightsHandler, buffer: []DataSubjectRequest) usize {
         var count: usize = 0;
         var iter = self.requests.valueIterator();
         while (iter.next()) |req| {
@@ -1020,7 +1035,7 @@ pub const DataSubjectRightsHandler = struct {
 
     /// Export request audit log.
     pub fn exportAuditLog(
-        self: *Self,
+        self: *DataSubjectRightsHandler,
         allocator: Allocator,
         start_time: u64,
         end_time: u64,
@@ -1058,7 +1073,7 @@ pub const DataSubjectRightsHandler = struct {
     }
 
     // Internal: Track entity to request mapping.
-    fn trackEntityRequest(self: *Self, entity_id: u128, request_id: u64) !void {
+    fn trackEntityRequest(self: *DataSubjectRightsHandler, entity_id: u128, request_id: u64) !void {
         const result = try self.entity_requests.getOrPut(entity_id);
         if (!result.found_existing) {
             result.value_ptr.* = ArrayList(u64).init(self.allocator);
@@ -1084,7 +1099,8 @@ test "GDPRArticle descriptions and deadlines" {
         GDPRArticle.article_15_access.description(),
     );
     try testing.expectEqual(@as(u32, 30), GDPRArticle.article_15_access.complianceDeadlineDays());
-    try testing.expectEqual(@as(u32, 0), GDPRArticle.article_19_notification.complianceDeadlineDays());
+    const art19_deadline = GDPRArticle.article_19_notification.complianceDeadlineDays();
+    try testing.expectEqual(@as(u32, 0), art19_deadline);
 }
 
 test "RequestStatus state checks" {
@@ -1102,10 +1118,14 @@ test "RequestStatus state checks" {
 test "RequestType to GDPR article mapping" {
     const testing = std.testing;
 
-    try testing.expectEqual(GDPRArticle.article_15_access, RequestType.access.gdprArticle());
-    try testing.expectEqual(GDPRArticle.article_16_rectification, RequestType.rectification.gdprArticle());
-    try testing.expectEqual(GDPRArticle.article_17_erasure, RequestType.erasure.gdprArticle());
-    try testing.expectEqual(GDPRArticle.article_20_portability, RequestType.portability.gdprArticle());
+    const a15 = RequestType.access.gdprArticle();
+    const a16 = RequestType.rectification.gdprArticle();
+    const a17 = RequestType.erasure.gdprArticle();
+    const a20 = RequestType.portability.gdprArticle();
+    try testing.expectEqual(GDPRArticle.article_15_access, a15);
+    try testing.expectEqual(GDPRArticle.article_16_rectification, a16);
+    try testing.expectEqual(GDPRArticle.article_17_erasure, a17);
+    try testing.expectEqual(GDPRArticle.article_20_portability, a20);
 }
 
 test "ExportFormat metadata" {
@@ -1292,7 +1312,8 @@ test "DataSubjectRightsHandler identity verification" {
 
     const request = handler.getRequest(result.request_id).?;
     try testing.expect(request.identity_verified);
-    try testing.expectEqual(DataSubjectRequest.VerificationMethod.two_factor, request.verification_method);
+    const expected_method = DataSubjectRequest.VerificationMethod.two_factor;
+    try testing.expectEqual(expected_method, request.verification_method);
 }
 
 test "DataSubjectRightsHandler update status" {

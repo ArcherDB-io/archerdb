@@ -14,6 +14,9 @@ export * from './topology'
 // Observability (per client-sdk/spec.md)
 export * from './observability'
 
+// Geo-routing support (add-geo-routing spec)
+export * from './geo_routing'
+
 // Internal bindings - only Operation enum is needed for geo operations
 import {
   Operation,
@@ -79,7 +82,7 @@ const binding: Binding = (() => {
 
 // Low-level types for native binding
 export type Context = object // arch_client
-export type ResultCallback = (error: Error | null, results: unknown[] | null) => void
+export type ResultCallback = (error: Error | null, results: unknown[] | Record<string, unknown> | null) => void
 
 export interface BindingInitArgs {
   cluster_id: bigint, // u128

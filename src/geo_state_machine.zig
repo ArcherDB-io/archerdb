@@ -107,6 +107,7 @@ const stdx = @import("stdx");
 const maybe = stdx.maybe;
 
 const constants = @import("constants.zig");
+const StateError = @import("error_codes.zig").StateError;
 const GeoEvent = @import("geo_event.zig").GeoEvent;
 const GeoEventFlags = @import("geo_event.zig").GeoEventFlags;
 const vsr = @import("vsr.zig");
@@ -131,7 +132,6 @@ const CleanupResponse = ttl.CleanupResponse;
 
 // Topology discovery for Smart Client (F5.1)
 const topology_mod = @import("topology.zig");
-const TopologyRequest = topology_mod.TopologyRequest;
 const TopologyResponse = topology_mod.TopologyResponse;
 
 // S2 spatial index integration (F3.3.2)
@@ -535,18 +535,32 @@ pub const QueryMetrics = struct {
 // Query Filters
 // ============================================================================
 
-/// Filter for UUID lookup queries.
+/// Filter for UUID lookup queries (QueryUuidRequest).
 /// Returns latest GeoEvent for the specified entity_id, or empty if not found.
 pub const QueryUuidFilter = extern struct {
     entity_id: u128,
-    /// Maximum results to return (typically 1 for UUID lookups)
-    limit: u32,
-    /// Reserved for future use
-    reserved: [108]u8 = @splat(0),
+    /// Reserved for future use (must be zero)
+    reserved: [16]u8 = @splat(0),
 
     comptime {
-        assert(@sizeOf(QueryUuidFilter) == 128);
+        assert(@sizeOf(QueryUuidFilter) == 32);
         assert(stdx.no_padding(QueryUuidFilter));
+    }
+};
+
+/// Response header for UUID lookup queries.
+/// Wire format:
+/// [status: u8][reserved: 15 bytes]
+/// Followed by GeoEvent (128 bytes) only when status == 0.
+pub const QueryUuidResponse = extern struct {
+    /// 0 = found, 200 = entity_not_found, 210 = entity_expired
+    status: u8,
+    /// Reserved for future use (must be zero)
+    reserved: [15]u8 = @splat(0),
+
+    comptime {
+        assert(@sizeOf(QueryUuidResponse) == 16);
+        assert(stdx.no_padding(QueryUuidResponse));
     }
 };
 
@@ -1631,11 +1645,14 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 }
 
                 // Use consensus timestamp if event timestamp is zero
-                const event_timestamp = if (event.timestamp == 0) timestamp else event.timestamp;
+                const event_timestamp =
+                    if (event.timestamp == 0) timestamp else event.timestamp;
 
-                // Per ttl-retention/spec.md: Apply global default TTL when client sets ttl_seconds = 0
+                // Per ttl-retention/spec.md: Apply global default TTL
+                // when client sets ttl_seconds = 0
                 // If default_ttl_seconds is 0, event never expires (infinite)
-                // If default_ttl_seconds > 0 and event.ttl_seconds == 0, apply default
+                // If default_ttl_seconds > 0 and event.ttl_seconds == 0,
+                // apply default
                 // If event.ttl_seconds > 0, use client-specified TTL (explicit override)
                 const effective_ttl_seconds = if (event.ttl_seconds == 0)
                     self.default_ttl_seconds
@@ -1676,6 +1693,14 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     if (effective_ttl_seconds > 0) {
                         self.entries_with_ttl += 1;
                     }
+
+                    // Insert into Forest (LSM storage)
+                    var stored_event = event;
+                    stored_event.id = composite_id;
+                    stored_event.timestamp = event_timestamp;
+                    stored_event.ttl_seconds = effective_ttl_seconds;
+                    self.forest.grooves.geo_events.insert(&stored_event);
+
                 } else if (upsert_result.updated) {
                     // LWW accepted the update
                     results[results_count] = InsertGeoEventsResult{
@@ -1685,6 +1710,14 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     inserted_count += 1;
                     // Note: TTL tracking for updates is complex (old TTL vs new TTL)
                     // For simplicity, we assume updates maintain TTL status
+
+                    // Insert into Forest (LSM storage)
+                    var stored_event = event;
+                    stored_event.id = composite_id;
+                    stored_event.timestamp = event_timestamp;
+                    stored_event.ttl_seconds = effective_ttl_seconds;
+                    self.forest.grooves.geo_events.insert(&stored_event);
+
                 } else {
                     // LWW rejected - older event
                     results[results_count] = InsertGeoEventsResult{
@@ -1696,11 +1729,15 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 results_count += 1;
             }
 
-            log.debug("insert_events: processed {d} events, {d} results", .{ events.len, results_count });
+            log.debug(
+                "insert_events: processed {d} events, {d} results",
+                .{ events.len, results_count },
+            );
 
             // Record insert metrics
             const end_time = std.time.nanoTimestamp();
-            const duration_ns: u64 = if (end_time > start_time) @intCast(end_time - start_time) else 0;
+            const duration_ns: u64 =
+                if (end_time > start_time) @intCast(end_time - start_time) else 0;
             self.insert_metrics.recordInsertBatch(inserted_count, rejected_count, duration_ns);
 
             // Record per-operation Prometheus metrics (F5.2.2)
@@ -1726,8 +1763,11 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 
                 // Update tombstone ratio gauge
                 if (stats.entry_count > 0) {
-                    const tombstone_ratio_pct = (stats.tombstone_count * 100) / stats.entry_count;
-                    archerdb_metrics.Registry.index_tombstone_ratio.set(@intCast(tombstone_ratio_pct * 100));
+                    const tombstone_ratio_pct =
+                        (stats.tombstone_count * 100) / stats.entry_count;
+                    archerdb_metrics.Registry.index_tombstone_ratio.set(
+                        @intCast(tombstone_ratio_pct * 100),
+                    );
                 }
             }
 
@@ -1782,10 +1822,11 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             output: []u8,
         ) usize {
             const start_time = std.time.nanoTimestamp();
+            const response_size = @sizeOf(QueryUuidResponse);
 
             // Validate input size
-            if (input.len < @sizeOf(QueryUuidFilter)) {
-                log.warn("query_uuid: input too small ({d} < {d})", .{
+            if (input.len != @sizeOf(QueryUuidFilter)) {
+                log.warn("query_uuid: input size invalid ({d} != {d})", .{
                     input.len,
                     @sizeOf(QueryUuidFilter),
                 });
@@ -1808,12 +1849,12 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             const lookup_result = self.ram_index.lookup(filter.entity_id);
 
             if (lookup_result.entry) |entry| {
-                // Found - build GeoEvent from index entry
-                if (output.len < @sizeOf(GeoEvent)) {
-                    log.warn("query_uuid: output buffer too small", .{});
+                if (output.len < response_size) {
+                    log.warn("query_uuid: output buffer too small for header", .{});
                     return 0;
                 }
 
+                // Found - build GeoEvent from index entry
                 // Extract S2 cell ID and timestamp from composite ID
                 const cell_id = @as(u64, @truncate(entry.latest_id >> 64));
                 const event_timestamp = @as(u64, @truncate(entry.latest_id));
@@ -1845,36 +1886,68 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                         archerdb_metrics.Registry.read_ops_query_uuid.inc();
                         archerdb_metrics.Registry.read_operations_total.inc();
                         archerdb_metrics.Registry.read_latency.observeNs(duration_ns);
-                        return 0; // Return empty - do NOT return expired entity
+                        const header = mem.bytesAsValue(
+                            QueryUuidResponse,
+                            output[0..response_size],
+                        );
+                        header.* = QueryUuidResponse{
+                            .status = @intCast(@intFromEnum(StateError.entity_expired)),
+                        };
+                        return response_size;
                     }
                 }
 
-                // Get approximate coordinates from cell center
-                const cell_center = S2.cellIdToLatLon(cell_id);
+                if (output.len < response_size + @sizeOf(GeoEvent)) {
+                    log.warn("query_uuid: output buffer too small", .{});
+                    return 0;
+                }
 
-                // Build result GeoEvent
-                const result_event = GeoEvent{
-                    .id = entry.latest_id,
-                    .entity_id = entry.entity_id,
-                    .correlation_id = 0, // Not stored in RAM index
-                    .user_data = 0, // Not stored in RAM index
-                    .lat_nano = cell_center.lat_nano,
-                    .lon_nano = cell_center.lon_nano,
-                    .group_id = 0, // Not stored in RAM index
-                    .timestamp = event_timestamp,
-                    .altitude_mm = 0,
-                    .velocity_mms = 0,
-                    .ttl_seconds = entry.ttl_seconds,
-                    .accuracy_mm = 0,
-                    .heading_cdeg = 0,
-                    .flags = GeoEventFlags.none,
-                    .reserved = [_]u8{0} ** 12,
-                };
+                var result_event: GeoEvent = undefined;
+
+                // Try to get full event from LSM tree (memtable or cache)
+                switch (self.forest.grooves.geo_events.get(entry.latest_id)) {
+                    .found_object => |event| {
+                        result_event = event;
+                    },
+                    else => {
+                        // Fallback to RAM index reconstruction (synthetic event)
+                        // This happens if the event is on disk and was not prefetched.
+                        // WARNING: This returns approximate coordinates (cell center) and zeroes other fields.
+
+                        // Get approximate coordinates from cell center
+                        const cell_center = S2.cellIdToLatLon(cell_id);
+
+                        result_event = GeoEvent{
+                            .id = entry.latest_id,
+                            .entity_id = entry.entity_id,
+                            .correlation_id = 0, // Not stored in RAM index
+                            .user_data = 0, // Not stored in RAM index
+                            .lat_nano = cell_center.lat_nano,
+                            .lon_nano = cell_center.lon_nano,
+                            .group_id = 0, // Not stored in RAM index
+                            .timestamp = event_timestamp,
+                            .altitude_mm = 0,
+                            .velocity_mms = 0,
+                            .ttl_seconds = entry.ttl_seconds,
+                            .accuracy_mm = 0,
+                            .heading_cdeg = 0,
+                            .flags = GeoEventFlags.none,
+                            .reserved = [_]u8{0} ** 12,
+                        };
+                    }
+                }
 
                 // Write to output
+                const header = mem.bytesAsValue(
+                    QueryUuidResponse,
+                    output[0..response_size],
+                );
+                header.* = QueryUuidResponse{
+                    .status = 0,
+                };
                 const result_ptr = mem.bytesAsValue(
                     GeoEvent,
-                    output[0..@sizeOf(GeoEvent)],
+                    output[response_size..][0..@sizeOf(GeoEvent)],
                 );
                 result_ptr.* = result_event;
 
@@ -1894,7 +1967,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 archerdb_metrics.Registry.query_result_size.observe(1.0);
 
                 log.debug("query_uuid: found entity {x}", .{filter.entity_id});
-                return @sizeOf(GeoEvent);
+                return response_size + @sizeOf(GeoEvent);
             } else {
                 // Not found - record metrics
                 const end_time = std.time.nanoTimestamp();
@@ -1911,7 +1984,18 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 archerdb_metrics.Registry.query_result_size.observe(0.0);
 
                 log.debug("query_uuid: entity {x} not found", .{filter.entity_id});
-                return 0;
+                if (output.len < response_size) {
+                    log.warn("query_uuid: output buffer too small for header", .{});
+                    return 0;
+                }
+                const header = mem.bytesAsValue(
+                    QueryUuidResponse,
+                    output[0..response_size],
+                );
+                header.* = QueryUuidResponse{
+                    .status = @intCast(@intFromEnum(StateError.entity_not_found)),
+                };
+                return response_size;
             }
         }
 
@@ -1990,7 +2074,10 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 
             // Get entity_ids slice
             const entity_ids_bytes = input[@sizeOf(QueryUuidBatchFilter)..][0..entity_ids_size];
-            const entity_ids = @as([*]const u128, @ptrCast(@alignCast(entity_ids_bytes.ptr)))[0..filter.count];
+            const entity_ids = @as(
+                [*]const u128,
+                @ptrCast(@alignCast(entity_ids_bytes.ptr)),
+            )[0..filter.count];
 
             // Calculate output layout:
             // - Header: 16 bytes
@@ -2000,7 +2087,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             const max_not_found_size = filter.count * @sizeOf(u16);
             const not_found_offset = @sizeOf(QueryUuidBatchResult);
             const events_offset_unaligned = not_found_offset + max_not_found_size;
-            const events_offset = (events_offset_unaligned + 15) & ~@as(usize, 15); // Align to 16 bytes
+            // Align to 16 bytes
+            const events_offset =
+                (events_offset_unaligned + 15) & ~@as(usize, 15);
             const max_events_size = filter.count * @sizeOf(GeoEvent);
             const max_output_size = events_offset + max_events_size;
 
@@ -2015,7 +2104,10 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             // Process lookups
             var found_count: u32 = 0;
             var not_found_count: u32 = 0;
-            const not_found_indices = @as([*]u16, @ptrCast(@alignCast(output[not_found_offset..].ptr)));
+            const not_found_indices = @as(
+                [*]u16,
+                @ptrCast(@alignCast(output[not_found_offset..].ptr)),
+            );
             const events_ptr = @as([*]GeoEvent, @ptrCast(@alignCast(output[events_offset..].ptr)));
 
             for (entity_ids, 0..) |entity_id, i| {
@@ -2291,12 +2383,18 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             const TtlSetResponse = ttl_mod.TtlSetResponse;
 
             if (input.len < @sizeOf(TtlSetRequest)) {
-                log.warn("ttl_set: input too small ({d} < {d})", .{ input.len, @sizeOf(TtlSetRequest) });
+                log.warn(
+                    "ttl_set: input too small ({d} < {d})",
+                    .{ input.len, @sizeOf(TtlSetRequest) },
+                );
                 return 0;
             }
 
             if (output.len < @sizeOf(TtlSetResponse)) {
-                log.warn("ttl_set: output buffer too small ({d} < {d})", .{ output.len, @sizeOf(TtlSetResponse) });
+                log.warn(
+                    "ttl_set: output buffer too small ({d} < {d})",
+                    .{ output.len, @sizeOf(TtlSetResponse) },
+                );
                 return 0;
             }
 
@@ -2331,8 +2429,12 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 if (response.result == .success) {
                     if (entry.ttl_seconds == 0 and request.ttl_seconds > 0) {
                         self.entries_with_ttl += 1;
-                    } else if (entry.ttl_seconds > 0 and request.ttl_seconds == 0) {
-                        if (self.entries_with_ttl > 0) self.entries_with_ttl -= 1;
+                    } else if (entry.ttl_seconds > 0 and
+                        request.ttl_seconds == 0)
+                    {
+                        if (self.entries_with_ttl > 0) {
+                            self.entries_with_ttl -= 1;
+                        }
                     }
                 }
 
@@ -2344,7 +2446,10 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             }
 
             // Write response
-            const response_ptr = mem.bytesAsValue(TtlSetResponse, output[0..@sizeOf(TtlSetResponse)]);
+            const response_ptr = mem.bytesAsValue(
+                TtlSetResponse,
+                output[0..@sizeOf(TtlSetResponse)],
+            );
             response_ptr.* = response;
 
             return @sizeOf(TtlSetResponse);
@@ -2369,12 +2474,18 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             const TtlExtendResponse = ttl_mod.TtlExtendResponse;
 
             if (input.len < @sizeOf(TtlExtendRequest)) {
-                log.warn("ttl_extend: input too small ({d} < {d})", .{ input.len, @sizeOf(TtlExtendRequest) });
+                log.warn(
+                    "ttl_extend: input too small ({d} < {d})",
+                    .{ input.len, @sizeOf(TtlExtendRequest) },
+                );
                 return 0;
             }
 
             if (output.len < @sizeOf(TtlExtendResponse)) {
-                log.warn("ttl_extend: output buffer too small ({d} < {d})", .{ output.len, @sizeOf(TtlExtendResponse) });
+                log.warn(
+                    "ttl_extend: output buffer too small ({d} < {d})",
+                    .{ output.len, @sizeOf(TtlExtendResponse) },
+                );
                 return 0;
             }
 
@@ -2394,7 +2505,8 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 response.previous_ttl_seconds = entry.ttl_seconds;
 
                 // Calculate new TTL (with overflow protection)
-                const new_ttl = @as(u64, entry.ttl_seconds) + @as(u64, request.extend_by_seconds);
+                const new_ttl = @as(u64, entry.ttl_seconds) +
+                    @as(u64, request.extend_by_seconds);
                 response.new_ttl_seconds = if (new_ttl > std.math.maxInt(u32))
                     std.math.maxInt(u32)
                 else
@@ -2413,7 +2525,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 };
 
                 // Update TTL tracking metrics (only if upsert succeeded)
-                if (response.result == .success and entry.ttl_seconds == 0 and response.new_ttl_seconds > 0) {
+                if (response.result == .success and entry.ttl_seconds == 0 and
+                    response.new_ttl_seconds > 0)
+                {
                     self.entries_with_ttl += 1;
                 }
 
@@ -2426,7 +2540,10 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             }
 
             // Write response
-            const response_ptr = mem.bytesAsValue(TtlExtendResponse, output[0..@sizeOf(TtlExtendResponse)]);
+            const response_ptr = mem.bytesAsValue(
+                TtlExtendResponse,
+                output[0..@sizeOf(TtlExtendResponse)],
+            );
             response_ptr.* = response;
 
             return @sizeOf(TtlExtendResponse);
@@ -2451,12 +2568,18 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             const TtlClearResponse = ttl_mod.TtlClearResponse;
 
             if (input.len < @sizeOf(TtlClearRequest)) {
-                log.warn("ttl_clear: input too small ({d} < {d})", .{ input.len, @sizeOf(TtlClearRequest) });
+                log.warn(
+                    "ttl_clear: input too small ({d} < {d})",
+                    .{ input.len, @sizeOf(TtlClearRequest) },
+                );
                 return 0;
             }
 
             if (output.len < @sizeOf(TtlClearResponse)) {
-                log.warn("ttl_clear: output buffer too small ({d} < {d})", .{ output.len, @sizeOf(TtlClearResponse) });
+                log.warn(
+                    "ttl_clear: output buffer too small ({d} < {d})",
+                    .{ output.len, @sizeOf(TtlClearResponse) },
+                );
                 return 0;
             }
 
@@ -2497,7 +2620,10 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             }
 
             // Write response
-            const response_ptr = mem.bytesAsValue(TtlClearResponse, output[0..@sizeOf(TtlClearResponse)]);
+            const response_ptr = mem.bytesAsValue(
+                TtlClearResponse,
+                output[0..@sizeOf(TtlClearResponse)],
+            );
             response_ptr.* = response;
 
             return @sizeOf(TtlClearResponse);
@@ -2729,7 +2855,10 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 header.* = QueryResponse.complete(@intCast(result_count));
             }
 
-            log.debug("query_radius: returning {d} results, has_more={}", .{ result_count, has_more });
+            log.debug(
+                "query_radius: returning {d} results, has_more={}",
+                .{ result_count, has_more },
+            );
 
             return @sizeOf(QueryResponse) + result_count * @sizeOf(GeoEvent);
         }
@@ -2786,12 +2915,16 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 return 0;
             }
 
-            // Per spec: Enforce maximum 10,000 vertices per polygon
-            if (filter.vertex_count > 10_000) {
-                log.warn("query_polygon: polygon_too_complex (vertex_count {d} > 10000)", .{
+            // Per spec: Enforce maximum vertices per polygon
+            if (filter.vertex_count > constants.polygon_vertices_max) {
+                log.warn("query_polygon: polygon_too_complex (vertex_count {d} > {d})", .{
                     filter.vertex_count,
+                    constants.polygon_vertices_max,
                 });
-                return 0;
+                if (output.len >= 4) {
+                    mem.writeInt(u32, output[0..4], 101, .little); // polygon_too_complex
+                }
+                return 4;
             }
 
             if (filter.limit == 0) {
@@ -2835,7 +2968,8 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                             desc.vertex_count,
                         });
                         if (output.len >= 4) {
-                            mem.writeInt(u32, output[0..4], 118, .little); // hole_vertex_count_invalid
+                            // hole_vertex_count_invalid
+                            mem.writeInt(u32, output[0..4], 118, .little);
                         }
                         return 4;
                     }
@@ -2843,8 +2977,21 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 }
             }
 
+            const total_vertices = filter.vertex_count + total_hole_vertices;
+            if (total_vertices > constants.polygon_vertices_max) {
+                log.warn(
+                    "query_polygon: polygon_too_complex (total_vertices {d} > {d})",
+                    .{ total_vertices, constants.polygon_vertices_max },
+                );
+                if (output.len >= 4) {
+                    mem.writeInt(u32, output[0..4], 101, .little); // polygon_too_complex
+                }
+                return 4;
+            }
+
             const hole_vertices_size = total_hole_vertices * @sizeOf(PolygonVertex);
-            const total_size = @sizeOf(QueryPolygonFilter) + outer_vertices_size + hole_descriptors_size + hole_vertices_size;
+            const total_size = @sizeOf(QueryPolygonFilter) + outer_vertices_size +
+                hole_descriptors_size + hole_vertices_size;
 
             if (input.len < total_size) {
                 log.warn("query_polygon: input too small ({d} < {d})", .{
@@ -2858,17 +3005,18 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             const vertices_bytes = input[@sizeOf(QueryPolygonFilter)..][0..outer_vertices_size];
             const vertices = mem.bytesAsSlice(PolygonVertex, vertices_bytes);
 
-            // Convert to s2_index.LatLon format for coverPolygon and pointInPolygon
+            // Convert to s2_index.LatLon format for
+            // coverPolygon and pointInPolygon
             // Stack allocation limits for vertices
             const max_vertices_stack: usize = 256;
             const max_holes_stack: usize = 32;
             const max_hole_vertices_stack: usize = 128;
 
             if (vertices.len > max_vertices_stack) {
-                log.warn("query_polygon: too many outer vertices for stack allocation ({d} > {d})", .{
-                    vertices.len,
-                    max_vertices_stack,
-                });
+                log.warn(
+                    "query_polygon: too many outer vertices for stack allocation ({d} > {d})",
+                    .{ vertices.len, max_vertices_stack },
+                );
                 return 0;
             }
 
@@ -2878,15 +3026,19 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     .lat_nano = v.lat_nano,
                     .lon_nano = v.lon_nano,
                 };
-                log.debug("query_polygon: vertex[{d}] = lat={d}, lon={d}", .{
-                    i, v.lat_nano, v.lon_nano,
-                });
+                log.debug(
+                    "query_polygon: vertex[{d}] = lat={d}, lon={d}",
+                    .{ i, v.lat_nano, v.lon_nano },
+                );
             }
             const polygon_slice = latlon_vertices[0..vertices.len];
 
             // Parse and convert holes to LatLon format
             var hole_slices: [max_holes_stack][]const s2_index.LatLon = undefined;
-            var hole_vertices_storage: [max_holes_stack * max_hole_vertices_stack]s2_index.LatLon = undefined;
+            var hole_vertices_storage: [
+                max_holes_stack *
+                    max_hole_vertices_stack
+            ]s2_index.LatLon = undefined;
             var hole_count: usize = 0;
             var hole_vertex_offset: usize = 0;
 
@@ -2908,8 +3060,13 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     const hole_bytes = input[hole_data_offset..][0..hole_size];
                     const hole_verts = mem.bytesAsSlice(PolygonVertex, hole_bytes);
 
-                    if (hole_vertex_offset + hole_verts.len > max_holes_stack * max_hole_vertices_stack) {
-                        log.warn("query_polygon: too many total hole vertices for stack allocation", .{});
+                    if (hole_vertex_offset + hole_verts.len >
+                        max_holes_stack * max_hole_vertices_stack)
+                    {
+                        log.warn(
+                            "query_polygon: too many total hole vertices for stack allocation",
+                            .{},
+                        );
                         return 0;
                     }
 
@@ -2928,6 +3085,12 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 }
             }
             const holes_slice = hole_slices[0..hole_count];
+
+            // Ensure outer ring uses CCW winding order (per spec)
+            if (S2.isClockwise(polygon_slice)) {
+                reverseLatLonSlice(polygon_slice);
+                log.info("query_polygon: winding order corrected from CW to CCW", .{});
+            }
 
             // Polygon validation (per spec: query-engine/spec.md)
             // Check for degenerate polygon (collinear vertices)
@@ -2956,6 +3119,47 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     mem.writeInt(u32, output[0..4], 111, .little); // polygon_too_large
                 }
                 return 4;
+            }
+
+            // Hole validation (per spec: add-polygon-holes/query-engine)
+            if (hole_count > 0) {
+                for (holes_slice, 0..) |hole, hole_index| {
+                    if (!S2.isClockwise(hole)) {
+                        reverseLatLonSlice(@constCast(hole));
+                        log.info(
+                            "query_polygon: hole winding order corrected from CCW to CW (hole {d})",
+                            .{hole_index},
+                        );
+                    }
+
+                    if (!S2.isHoleContained(polygon_slice, hole)) {
+                        log.warn(
+                            "query_polygon: hole_not_contained (hole {d} not inside outer ring)",
+                            .{hole_index},
+                        );
+                        if (output.len >= 4) {
+                            mem.writeInt(u32, output[0..4], 119, .little);
+                        }
+                        return 4;
+                    }
+                }
+
+                for (holes_slice, 0..) |hole_a, hole_a_index| {
+                    var hole_b_index = hole_a_index + 1;
+                    while (hole_b_index < holes_slice.len) : (hole_b_index += 1) {
+                        const hole_b = holes_slice[hole_b_index];
+                        if (S2.doHolesBoundingBoxesOverlap(hole_a, hole_b)) {
+                            log.warn(
+                                "query_polygon: holes_overlap (holes {d} and {d})",
+                                .{ hole_a_index, hole_b_index },
+                            );
+                            if (output.len >= 4) {
+                                mem.writeInt(u32, output[0..4], 120, .little);
+                            }
+                            return 4;
+                        }
+                    }
+                }
             }
 
             // Validate output can hold at least the response header
@@ -2995,11 +3199,11 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 }
             }
 
-            log.debug("query_polygon: covering generated with {d} ranges for {d}-vertex polygon with {d} holes", .{
-                num_ranges,
-                vertices.len,
-                hole_count,
-            });
+            log.debug(
+                "query_polygon: covering generated with {d} ranges for " ++
+                    "{d}-vertex polygon with {d} holes",
+                .{ num_ranges, vertices.len, hole_count },
+            );
 
             // Scan RAM index and collect matching entries
             // Results start after the QueryResponse header
@@ -3072,7 +3276,8 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 const cell_center = S2.cellIdToLatLon(cell_id);
 
                 // Post-filter: Point-in-polygon test using ray casting algorithm
-                // If holes are present, use pointInPolygonWithHoles which excludes points inside holes
+                // If holes are present, use pointInPolygonWithHoles which excludes
+                // points inside holes
                 const point = s2_index.LatLon{
                     .lat_nano = cell_center.lat_nano,
                     .lon_nano = cell_center.lon_nano,
@@ -3135,9 +3340,11 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 header.* = QueryResponse.complete(@intCast(result_count));
             }
 
-            log.debug("query_polygon: scan complete: entries_seen={d}, covering_passed={d}, result_count={d}, has_more={}", .{
-                entries_seen, covering_passed, result_count, has_more,
-            });
+            log.debug(
+                "query_polygon: scan complete: entries_seen={d}, covering_passed={d}, " ++
+                    "result_count={d}, has_more={}",
+                .{ entries_seen, covering_passed, result_count, has_more },
+            );
 
             return @sizeOf(QueryResponse) + result_count * @sizeOf(GeoEvent);
         }
@@ -3164,7 +3371,10 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 return 0;
             }
 
-            const filter = mem.bytesAsValue(QueryLatestFilter, input[0..@sizeOf(QueryLatestFilter)]).*;
+            const filter = mem.bytesAsValue(
+                QueryLatestFilter,
+                input[0..@sizeOf(QueryLatestFilter)],
+            ).*;
 
             // Validate filter
             if (filter.limit == 0) {
@@ -3312,9 +3522,23 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 header.* = QueryResponse.complete(@intCast(result_count));
             }
 
-            log.debug("query_latest: returning {d} results, has_more={}", .{ result_count, has_more });
+            log.debug(
+                "query_latest: returning {d} results, has_more={}",
+                .{ result_count, has_more },
+            );
 
             return @sizeOf(QueryResponse) + result_count * @sizeOf(GeoEvent);
+        }
+
+        fn reverseLatLonSlice(vertices: []s2_index.LatLon) void {
+            var i: usize = 0;
+            var j: usize = vertices.len;
+            while (i < j) : (i += 1) {
+                j -= 1;
+                const tmp = vertices[i];
+                vertices[i] = vertices[j];
+                vertices[j] = tmp;
+            }
         }
 
         /// Check if a cell ID falls within any of the covering ranges.
@@ -3507,7 +3731,8 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             // Trigger Forest compaction
             // NOTE: GeoStateMachine has Forest integration (line 798).
             // This performs LSM tree compaction across all levels.
-            // Pass commit_timestamp for deterministic TTL expiration checks (ttl-retention/spec.md).
+            // Pass commit_timestamp for deterministic TTL expiration checks
+            // (ttl-retention/spec.md).
             self.forest.compact(compact_finish, op, self.commit_timestamp);
         }
 
@@ -3646,7 +3871,8 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 
             // Handle variable-length operations specially
             if (operation == .query_uuid_batch) {
-                // query_uuid_batch body = QueryUuidBatchFilter (8 bytes) + entity_ids (N * 16 bytes)
+                // query_uuid_batch body = QueryUuidBatchFilter (8 bytes) +
+                // entity_ids (N * 16 bytes)
                 const header_size = @sizeOf(QueryUuidBatchFilter);
                 if (message_body_used.len < header_size) return false;
 
@@ -3666,39 +3892,79 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             }
 
             if (operation == .query_polygon) {
-                // query_polygon body = QueryPolygonFilter (128 bytes) + vertices (N * 16 bytes)
+                // query_polygon body = QueryPolygonFilter (128 bytes) +
+                // outer vertices (N * 16 bytes) +
+                // hole descriptors (H * 8 bytes) +
+                // hole vertices (M * 16 bytes)
                 const header_size = @sizeOf(QueryPolygonFilter);
                 if (message_body_used.len < header_size) return false;
 
-                const vertices_size = message_body_used.len - header_size;
-                if (vertices_size % @sizeOf(PolygonVertex) != 0) return false;
-
-                // Validate vertex_count matches actual vertices
                 const filter = mem.bytesAsValue(
                     QueryPolygonFilter,
                     message_body_used[0..header_size],
                 ).*;
-                const expected_vertices_size = filter.vertex_count * @sizeOf(PolygonVertex);
-                if (vertices_size != expected_vertices_size) return false;
 
                 // F1.1.3: Validate polygon constraints
-                // Minimum 3 vertices required for a valid polygon
                 if (filter.vertex_count < 3) return false;
-
-                // Maximum vertices per constants.polygon_vertices_max (10,000)
                 if (filter.vertex_count > constants.polygon_vertices_max) return false;
-
-                // Validate limit is non-zero
+                if (filter.hole_count > constants.polygon_holes_max) return false;
                 if (filter.limit == 0) return false;
 
-                // Validate each vertex coordinate is within bounds
-                const vertices = mem.bytesAsSlice(
+                const outer_vertices_size = filter.vertex_count * @sizeOf(PolygonVertex);
+                if (message_body_used.len < header_size + outer_vertices_size) return false;
+
+                var total_hole_vertices: u32 = 0;
+                var expected_size: usize = header_size + outer_vertices_size;
+
+                if (filter.hole_count > 0) {
+                    const descriptors_offset = header_size + outer_vertices_size;
+                    const hole_descriptors_size = filter.hole_count * @sizeOf(HoleDescriptor);
+                    if (message_body_used.len < descriptors_offset + hole_descriptors_size)
+                        return false;
+
+                    const descriptors_bytes =
+                        message_body_used[descriptors_offset..][0..hole_descriptors_size];
+                    const hole_descriptors = mem.bytesAsSlice(HoleDescriptor, descriptors_bytes);
+
+                    for (hole_descriptors) |desc| {
+                        if (desc.vertex_count < constants.polygon_hole_vertices_min) return false;
+                        total_hole_vertices += desc.vertex_count;
+                    }
+
+                    const total_vertices = filter.vertex_count + total_hole_vertices;
+                    if (total_vertices > constants.polygon_vertices_max) return false;
+
+                    const hole_vertices_size = total_hole_vertices * @sizeOf(PolygonVertex);
+                    expected_size = descriptors_offset + hole_descriptors_size + hole_vertices_size;
+                    if (message_body_used.len < expected_size) return false;
+                }
+
+                // Reject trailing bytes (must match expected wire format exactly).
+                if (message_body_used.len != expected_size) return false;
+
+                // Validate outer vertices coordinates
+                const outer_vertices = mem.bytesAsSlice(
                     PolygonVertex,
-                    message_body_used[header_size..],
+                    message_body_used[header_size..][0..outer_vertices_size],
                 );
-                for (vertices) |vertex| {
+                for (outer_vertices) |vertex| {
                     if (!isValidLatitudeNano(vertex.lat_nano)) return false;
                     if (!isValidLongitudeNano(vertex.lon_nano)) return false;
+                }
+
+                // Validate hole vertices coordinates
+                if (filter.hole_count > 0) {
+                    const hole_vertices_offset = header_size + outer_vertices_size +
+                        (filter.hole_count * @sizeOf(HoleDescriptor));
+                    const hole_vertices_size = total_hole_vertices * @sizeOf(PolygonVertex);
+                    const hole_vertices = mem.bytesAsSlice(
+                        PolygonVertex,
+                        message_body_used[hole_vertices_offset..][0..hole_vertices_size],
+                    );
+                    for (hole_vertices) |vertex| {
+                        if (!isValidLatitudeNano(vertex.lat_nano)) return false;
+                        if (!isValidLongitudeNano(vertex.lon_nano)) return false;
+                    }
                 }
 
                 return true;
@@ -3722,27 +3988,37 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 },
                 .delete_entities => {
                     // delete_entities takes array of entity_ids (u128)
-                    // Entity IDs of 0 are invalid (will fail at execution but not reject entire message)
+                    // Entity IDs of 0 are invalid (will fail at execution but not
+                    // reject entire message)
                     return true;
                 },
                 .query_uuid => {
                     // QueryUuidFilter validation - entity_id must be non-zero
-                    if (message_body_used.len < @sizeOf(QueryUuidFilter)) return false;
-                    const filter = mem.bytesAsValue(QueryUuidFilter, message_body_used[0..@sizeOf(QueryUuidFilter)]).*;
+                    if (message_body_used.len != @sizeOf(QueryUuidFilter)) return false;
+                    const filter = mem.bytesAsValue(
+                        QueryUuidFilter,
+                        message_body_used[0..@sizeOf(QueryUuidFilter)],
+                    ).*;
                     if (filter.entity_id == 0) return false;
-                    if (filter.limit == 0) return false;
+                    for (filter.reserved) |byte| {
+                        if (byte != 0) return false;
+                    }
                     return true;
                 },
                 .query_uuid_batch => {
                     // QueryUuidBatchFilter validation (F1.3.4)
                     if (message_body_used.len < @sizeOf(QueryUuidBatchFilter)) return false;
-                    const filter = mem.bytesAsValue(QueryUuidBatchFilter, message_body_used[0..@sizeOf(QueryUuidBatchFilter)]).*;
+                    const filter = mem.bytesAsValue(
+                        QueryUuidBatchFilter,
+                        message_body_used[0..@sizeOf(QueryUuidBatchFilter)],
+                    ).*;
 
                     // Validate count
                     if (filter.count > QueryUuidBatchFilter.max_count) return false;
 
                     // Validate body size matches count
-                    const expected_size = @sizeOf(QueryUuidBatchFilter) + filter.count * @sizeOf(u128);
+                    const expected_size = @sizeOf(QueryUuidBatchFilter) +
+                        filter.count * @sizeOf(u128);
                     if (message_body_used.len < expected_size) return false;
 
                     // Empty batch is valid (count=0)
@@ -3751,7 +4027,10 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .query_radius => {
                     // QueryRadiusFilter validation
                     if (message_body_used.len < @sizeOf(QueryRadiusFilter)) return false;
-                    const filter = mem.bytesAsValue(QueryRadiusFilter, message_body_used[0..@sizeOf(QueryRadiusFilter)]).*;
+                    const filter = mem.bytesAsValue(
+                        QueryRadiusFilter,
+                        message_body_used[0..@sizeOf(QueryRadiusFilter)],
+                    ).*;
 
                     // Validate coordinates
                     if (!isValidLatitudeNano(filter.center_lat_nano)) return false;
@@ -3831,7 +4110,11 @@ test "InsertGeoEventsResult size" {
 }
 
 test "QueryUuidFilter size" {
-    try std.testing.expectEqual(@as(usize, 128), @sizeOf(QueryUuidFilter));
+    try std.testing.expectEqual(@as(usize, 32), @sizeOf(QueryUuidFilter));
+}
+
+test "QueryUuidResponse size" {
+    try std.testing.expectEqual(@as(usize, 16), @sizeOf(QueryUuidResponse));
 }
 
 test "QueryRadiusFilter size" {
@@ -3868,7 +4151,8 @@ test "QueryPolygonFilter hole_count field" {
 
 test "Polygon with holes wire format calculation" {
     // Test wire format size calculation for polygon with holes
-    // Format: QueryPolygonFilter (128) + outer vertices (16 * N) + HoleDescriptors (8 * H) + hole vertices (16 * M)
+    // Format: QueryPolygonFilter (128) + outer vertices (16 * N) +
+    // HoleDescriptors (8 * H) + hole vertices (16 * M)
     const outer_vertices: u32 = 4; // Square
     const holes: u32 = 2;
     const hole1_vertices: u32 = 4;
@@ -3883,6 +4167,116 @@ test "Polygon with holes wire format calculation" {
 
     // 128 + (4 * 16) + (2 * 8) + (7 * 16) = 128 + 64 + 16 + 112 = 320
     try std.testing.expectEqual(@as(usize, 320), total);
+}
+
+test "input_valid: polygon with holes accepted" {
+    const TestStorage = @import("testing/storage.zig").Storage;
+    const GeoStateMachine = GeoStateMachineType(TestStorage);
+    var machine: GeoStateMachine = undefined;
+
+    const header_size = @sizeOf(QueryPolygonFilter);
+    const outer_vertices: u32 = 4;
+    const hole_vertices: u32 = 4;
+    const outer_size = outer_vertices * @sizeOf(PolygonVertex);
+    const desc_size = @sizeOf(HoleDescriptor);
+    const hole_size = hole_vertices * @sizeOf(PolygonVertex);
+    const total_size = header_size + outer_size + desc_size + hole_size;
+
+    var buffer: [total_size]u8 align(16) = undefined;
+    @memset(&buffer, 0);
+
+    const header = mem.bytesAsValue(QueryPolygonFilter, buffer[0..header_size]);
+    header.* = .{
+        .vertex_count = outer_vertices,
+        .hole_count = 1,
+        .limit = 10,
+        .timestamp_min = 0,
+        .timestamp_max = 0,
+        .group_id = 0,
+    };
+
+    const outer_slice = mem.bytesAsSlice(
+        PolygonVertex,
+        buffer[header_size..][0..outer_size],
+    );
+    outer_slice[0] = .{ .lat_nano = 0, .lon_nano = 0 };
+    outer_slice[1] = .{ .lat_nano = 0, .lon_nano = 10_000_000_000 };
+    outer_slice[2] = .{ .lat_nano = 10_000_000_000, .lon_nano = 10_000_000_000 };
+    outer_slice[3] = .{ .lat_nano = 10_000_000_000, .lon_nano = 0 };
+
+    const desc_offset = header_size + outer_size;
+    const desc_slice = mem.bytesAsSlice(
+        HoleDescriptor,
+        buffer[desc_offset..][0..desc_size],
+    );
+    desc_slice[0] = .{ .vertex_count = hole_vertices };
+
+    const hole_offset = desc_offset + desc_size;
+    const hole_slice = mem.bytesAsSlice(
+        PolygonVertex,
+        buffer[hole_offset..][0..hole_size],
+    );
+    hole_slice[0] = .{ .lat_nano = 2_000_000_000, .lon_nano = 2_000_000_000 };
+    hole_slice[1] = .{ .lat_nano = 2_000_000_000, .lon_nano = 4_000_000_000 };
+    hole_slice[2] = .{ .lat_nano = 4_000_000_000, .lon_nano = 4_000_000_000 };
+    hole_slice[3] = .{ .lat_nano = 4_000_000_000, .lon_nano = 2_000_000_000 };
+
+    const body: []align(16) const u8 = buffer[0..];
+    try std.testing.expect(machine.input_valid(.query_polygon, body));
+}
+
+test "input_valid: polygon with invalid hole vertex count rejected" {
+    const TestStorage = @import("testing/storage.zig").Storage;
+    const GeoStateMachine = GeoStateMachineType(TestStorage);
+    var machine: GeoStateMachine = undefined;
+
+    const header_size = @sizeOf(QueryPolygonFilter);
+    const outer_vertices: u32 = 4;
+    const hole_vertices: u32 = 2;
+    const outer_size = outer_vertices * @sizeOf(PolygonVertex);
+    const desc_size = @sizeOf(HoleDescriptor);
+    const hole_size = hole_vertices * @sizeOf(PolygonVertex);
+    const total_size = header_size + outer_size + desc_size + hole_size;
+
+    var buffer: [total_size]u8 align(16) = undefined;
+    @memset(&buffer, 0);
+
+    const header = mem.bytesAsValue(QueryPolygonFilter, buffer[0..header_size]);
+    header.* = .{
+        .vertex_count = outer_vertices,
+        .hole_count = 1,
+        .limit = 10,
+        .timestamp_min = 0,
+        .timestamp_max = 0,
+        .group_id = 0,
+    };
+
+    const outer_slice = mem.bytesAsSlice(
+        PolygonVertex,
+        buffer[header_size..][0..outer_size],
+    );
+    outer_slice[0] = .{ .lat_nano = 0, .lon_nano = 0 };
+    outer_slice[1] = .{ .lat_nano = 0, .lon_nano = 10_000_000_000 };
+    outer_slice[2] = .{ .lat_nano = 10_000_000_000, .lon_nano = 10_000_000_000 };
+    outer_slice[3] = .{ .lat_nano = 10_000_000_000, .lon_nano = 0 };
+
+    const desc_offset = header_size + outer_size;
+    const desc_slice = mem.bytesAsSlice(
+        HoleDescriptor,
+        buffer[desc_offset..][0..desc_size],
+    );
+    desc_slice[0] = .{ .vertex_count = hole_vertices };
+
+    const hole_offset = desc_offset + desc_size;
+    const hole_slice = mem.bytesAsSlice(
+        PolygonVertex,
+        buffer[hole_offset..][0..hole_size],
+    );
+    hole_slice[0] = .{ .lat_nano = 2_000_000_000, .lon_nano = 2_000_000_000 };
+    hole_slice[1] = .{ .lat_nano = 4_000_000_000, .lon_nano = 4_000_000_000 };
+
+    const body: []align(16) const u8 = buffer[0..];
+    try std.testing.expect(!machine.input_valid(.query_polygon, body));
 }
 
 test "batch_max_events calculation" {
@@ -4271,22 +4665,41 @@ test "InsertGeoEventResult: all result codes valid" {
     }
     // Verify specific values
     try std.testing.expectEqual(@as(u32, 0), @intFromEnum(InsertGeoEventResult.ok));
-    try std.testing.expectEqual(@as(u32, 7), @intFromEnum(InsertGeoEventResult.entity_id_must_not_be_zero));
-    try std.testing.expectEqual(@as(u32, 9), @intFromEnum(InsertGeoEventResult.lat_out_of_range));
-    try std.testing.expectEqual(@as(u32, 10), @intFromEnum(InsertGeoEventResult.lon_out_of_range));
-    try std.testing.expectEqual(@as(u32, 4), @intFromEnum(InsertGeoEventResult.reserved_field));
-    try std.testing.expectEqual(@as(u32, 14), @intFromEnum(InsertGeoEventResult.heading_out_of_range));
-    try std.testing.expectEqual(@as(u32, 16), @intFromEnum(InsertGeoEventResult.entity_id_must_not_be_int_max));
+    try std.testing.expectEqual(
+        @as(u32, 7),
+        @intFromEnum(InsertGeoEventResult.entity_id_must_not_be_zero),
+    );
+    try std.testing.expectEqual(
+        @as(u32, 9),
+        @intFromEnum(InsertGeoEventResult.lat_out_of_range),
+    );
+    try std.testing.expectEqual(
+        @as(u32, 10),
+        @intFromEnum(InsertGeoEventResult.lon_out_of_range),
+    );
+    try std.testing.expectEqual(
+        @as(u32, 4),
+        @intFromEnum(InsertGeoEventResult.reserved_field),
+    );
+    try std.testing.expectEqual(
+        @as(u32, 14),
+        @intFromEnum(InsertGeoEventResult.heading_out_of_range),
+    );
+    try std.testing.expectEqual(
+        @as(u32, 16),
+        @intFromEnum(InsertGeoEventResult.entity_id_must_not_be_int_max),
+    );
 }
 
 test "QueryUuidFilter: field layout" {
     const filter = QueryUuidFilter{
         .entity_id = 0x12345678_9abcdef0_12345678_9abcdef0,
-        .limit = 1,
     };
     try std.testing.expectEqual(@as(u128, 0x12345678_9abcdef0_12345678_9abcdef0), filter.entity_id);
-    try std.testing.expectEqual(@as(u32, 1), filter.limit);
-    try std.testing.expectEqual(@as(usize, 128), @sizeOf(QueryUuidFilter));
+    for (filter.reserved) |byte| {
+        try std.testing.expectEqual(@as(u8, 0), byte);
+    }
+    try std.testing.expectEqual(@as(usize, 32), @sizeOf(QueryUuidFilter));
 }
 
 test "coordinate validation: latitude boundaries" {
@@ -4295,12 +4708,18 @@ test "coordinate validation: latitude boundaries" {
     // Test valid latitude boundary values
     // The validation logic: lat >= -90° and lat <= 90°
     try std.testing.expect(0 >= -lat_max_nano and 0 <= lat_max_nano); // 0° valid
-    try std.testing.expect(lat_max_nano >= -lat_max_nano and lat_max_nano <= lat_max_nano); // 90° valid
-    try std.testing.expect(-lat_max_nano >= -lat_max_nano and -lat_max_nano <= lat_max_nano); // -90° valid
+    try std.testing.expect(
+        lat_max_nano >= -lat_max_nano and lat_max_nano <= lat_max_nano,
+    ); // 90° valid
+    try std.testing.expect(
+        -lat_max_nano >= -lat_max_nano and -lat_max_nano <= lat_max_nano,
+    ); // -90° valid
 
     // Test invalid latitude values
     const invalid_lat: i64 = 91_000_000_000;
-    try std.testing.expect(!(invalid_lat >= -lat_max_nano and invalid_lat <= lat_max_nano)); // 91° invalid
+    try std.testing.expect(
+        !(invalid_lat >= -lat_max_nano and invalid_lat <= lat_max_nano),
+    ); // 91° invalid
 }
 
 test "coordinate validation: longitude boundaries" {
@@ -4308,12 +4727,18 @@ test "coordinate validation: longitude boundaries" {
 
     // Test valid longitude boundary values
     try std.testing.expect(0 >= -lon_max_nano and 0 <= lon_max_nano); // 0° valid
-    try std.testing.expect(lon_max_nano >= -lon_max_nano and lon_max_nano <= lon_max_nano); // 180° valid
-    try std.testing.expect(-lon_max_nano >= -lon_max_nano and -lon_max_nano <= lon_max_nano); // -180° valid
+    try std.testing.expect(
+        lon_max_nano >= -lon_max_nano and lon_max_nano <= lon_max_nano,
+    ); // 180° valid
+    try std.testing.expect(
+        -lon_max_nano >= -lon_max_nano and -lon_max_nano <= lon_max_nano,
+    ); // -180° valid
 
     // Test invalid longitude values
     const invalid_lon: i64 = 181_000_000_000;
-    try std.testing.expect(!(invalid_lon >= -lon_max_nano and invalid_lon <= lon_max_nano)); // 181° invalid
+    try std.testing.expect(
+        !(invalid_lon >= -lon_max_nano and invalid_lon <= lon_max_nano),
+    ); // 181° invalid
 }
 
 test "GeoEvent validation: heading boundary (36000 centidegrees = 360°)" {

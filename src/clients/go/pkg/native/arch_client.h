@@ -61,6 +61,7 @@ typedef enum INSERT_GEO_EVENT_RESULT {
     INSERT_GEO_EVENT_EXISTS = 13,
     INSERT_GEO_EVENT_HEADING_OUT_OF_RANGE = 14,
     INSERT_GEO_EVENT_TTL_INVALID = 15,
+    INSERT_GEO_EVENT_ENTITY_ID_MUST_NOT_BE_INT_MAX = 16,
 } INSERT_GEO_EVENT_RESULT;
 
 typedef struct insert_geo_events_result_t {
@@ -75,9 +76,13 @@ typedef struct delete_entities_result_t {
 
 typedef struct query_uuid_filter_t {
     arch_uint128_t entity_id;
-    uint32_t limit;
-    uint8_t reserved[108];
+    uint8_t reserved[16];
 } query_uuid_filter_t;
+
+typedef struct query_uuid_response_t {
+    uint8_t status;
+    uint8_t reserved[15];
+} query_uuid_response_t;
 
 typedef struct query_radius_filter_t {
     int64_t center_lat_nano;
@@ -126,6 +131,60 @@ typedef struct hole_descriptor_t {
     uint32_t reserved;
 } hole_descriptor_t;
 
+typedef enum TTL_OPERATION_RESULT {
+    TTL_OPERATION_SUCCESS = 0,
+    TTL_OPERATION_ENTITY_NOT_FOUND = 1,
+    TTL_OPERATION_INVALID_TTL = 2,
+    TTL_OPERATION_NOT_PERMITTED = 3,
+    TTL_OPERATION_ENTITY_IMMUTABLE = 4,
+} TTL_OPERATION_RESULT;
+
+typedef struct ttl_set_request_t {
+    arch_uint128_t entity_id;
+    uint32_t ttl_seconds;
+    uint32_t flags;
+    uint8_t reserved[40];
+} ttl_set_request_t;
+
+typedef struct ttl_set_response_t {
+    arch_uint128_t entity_id;
+    uint32_t previous_ttl_seconds;
+    uint32_t new_ttl_seconds;
+    uint8_t result;
+    uint8_t _padding[3];
+    uint8_t reserved[32];
+} ttl_set_response_t;
+
+typedef struct ttl_extend_request_t {
+    arch_uint128_t entity_id;
+    uint32_t extend_by_seconds;
+    uint32_t flags;
+    uint8_t reserved[40];
+} ttl_extend_request_t;
+
+typedef struct ttl_extend_response_t {
+    arch_uint128_t entity_id;
+    uint32_t previous_ttl_seconds;
+    uint32_t new_ttl_seconds;
+    uint8_t result;
+    uint8_t _padding[3];
+    uint8_t reserved[32];
+} ttl_extend_response_t;
+
+typedef struct ttl_clear_request_t {
+    arch_uint128_t entity_id;
+    uint32_t flags;
+    uint8_t reserved[44];
+} ttl_clear_request_t;
+
+typedef struct ttl_clear_response_t {
+    arch_uint128_t entity_id;
+    uint32_t previous_ttl_seconds;
+    uint8_t result;
+    uint8_t _padding[3];
+    uint8_t reserved[36];
+} ttl_clear_response_t;
+
 // Opaque struct serving as a handle for the client instance.
 // This struct must be "pinned" (not copyable or movable), as its address must remain stable
 // throughout the lifetime of the client instance.
@@ -155,9 +214,14 @@ typedef enum ARCH_OPERATION {
     ARCH_OPERATION_QUERY_RADIUS = 150,
     ARCH_OPERATION_QUERY_POLYGON = 151,
     ARCH_OPERATION_QUERY_LATEST = 154,
+    ARCH_OPERATION_QUERY_UUID_BATCH = 156,
     ARCH_OPERATION_ARCHERDB_PING = 152,
     ARCH_OPERATION_ARCHERDB_GET_STATUS = 153,
     ARCH_OPERATION_CLEANUP_EXPIRED = 155,
+    ARCH_OPERATION_GET_TOPOLOGY = 157,
+    ARCH_OPERATION_TTL_SET = 158,
+    ARCH_OPERATION_TTL_EXTEND = 159,
+    ARCH_OPERATION_TTL_CLEAR = 160,
 } ARCH_OPERATION;
 
 typedef enum ARCH_PACKET_STATUS {

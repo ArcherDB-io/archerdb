@@ -35,7 +35,6 @@ const log = std.log.scoped(.restore);
 const backup_config = @import("backup_config.zig");
 const StorageProvider = backup_config.StorageProvider;
 const CompressionMode = backup_config.CompressionMode;
-const BlockRef = backup_config.BlockRef;
 
 // Test-safe logging wrapper
 fn logErr(comptime fmt: []const u8, args: anytype) void {
@@ -362,10 +361,23 @@ pub const RestoreManager = struct {
 
     /// List blocks from local filesystem.
     fn listLocalBlocks(self: *RestoreManager) RestoreError![]BlockMetadata {
-        const path = self.config.source_url;
+        var path = self.config.source_url;
+        if (mem.startsWith(u8, path, "file://")) {
+            path = path["file://".len..];
+        } else if (mem.startsWith(u8, path, "local://")) {
+            path = path["local://".len..];
+        }
+
+        if (path.len == 0) {
+            logErr("Local restore source path is empty", .{});
+            return RestoreError.InvalidSource;
+        }
 
         // Open the backup directory
-        var dir = fs.openDirAbsolute(path, .{ .iterate = true }) catch |err| {
+        var dir = (if (fs.path.isAbsolute(path))
+            fs.openDirAbsolute(path, .{ .iterate = true })
+        else
+            fs.cwd().openDir(path, .{ .iterate = true })) catch |err| {
             logErr("Failed to open local backup directory {s}: {}", .{ path, err });
             return RestoreError.InvalidSource;
         };
@@ -385,7 +397,8 @@ pub const RestoreManager = struct {
         }
 
         // Allocate array for block metadata
-        const blocks = self.allocator.alloc(BlockMetadata, count) catch return RestoreError.OutOfMemory;
+        const blocks = self.allocator.alloc(BlockMetadata, count) catch
+            return RestoreError.OutOfMemory;
         errdefer self.allocator.free(blocks);
 
         // Populate block metadata
@@ -401,7 +414,8 @@ pub const RestoreManager = struct {
                 const stat = dir.statFile(entry.name) catch continue;
 
                 // Duplicate the name for object_key
-                const key = self.allocator.dupe(u8, entry.name) catch return RestoreError.OutOfMemory;
+                const key = self.allocator.dupe(u8, entry.name) catch
+                    return RestoreError.OutOfMemory;
 
                 blocks[idx] = BlockMetadata{
                     .sequence = sequence,
@@ -591,10 +605,10 @@ pub const RestoreManager = struct {
             // Write to destination
             dest_file.writeAll(source_data) catch |err| {
                 logErr("Failed to write block {}: {}", .{ block.sequence, err });
-                return if (err == error.DiskQuota or err == error.NoSpaceLeft)
-                    RestoreError.DiskFull
-                else
-                    RestoreError.StorageError;
+                return switch (err) {
+                    error.DiskQuota, error.NoSpaceLeft => RestoreError.DiskFull,
+                    else => RestoreError.StorageError,
+                };
             };
 
             self.stats.blocks_written += 1;
@@ -810,9 +824,18 @@ test "RestoreManager: init and deinit" {
 
 test "RestoreManager: detectProvider" {
     try std.testing.expectEqual(StorageProvider.s3, RestoreManager.detectProvider("s3://bucket"));
-    try std.testing.expectEqual(StorageProvider.gcs, RestoreManager.detectProvider("gs://bucket"));
-    try std.testing.expectEqual(StorageProvider.azure, RestoreManager.detectProvider("azure://container"));
-    try std.testing.expectEqual(StorageProvider.local, RestoreManager.detectProvider("/local/path"));
+    try std.testing.expectEqual(
+        StorageProvider.gcs,
+        RestoreManager.detectProvider("gs://bucket"),
+    );
+    try std.testing.expectEqual(
+        StorageProvider.azure,
+        RestoreManager.detectProvider("azure://container"),
+    );
+    try std.testing.expectEqual(
+        StorageProvider.local,
+        RestoreManager.detectProvider("/local/path"),
+    );
 }
 
 test "RestoreStats: duration calculation" {

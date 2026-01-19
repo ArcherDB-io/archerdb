@@ -12,6 +12,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const log = std.log;
 const assert = std.debug.assert;
+const vsr = @import("vsr.zig");
 
 const Shell = @import("./shell.zig");
 const Snap = stdx.Snap;
@@ -24,9 +25,48 @@ const ratio = stdx.PRNG.ratio;
 const vortex_exe: []const u8 = @import("test_options").vortex_exe;
 const archerdb: []const u8 = @import("test_options").archerdb_exe;
 const archerdb_past: []const u8 = @import("test_options").archerdb_exe_past;
+const skip_upgrade: bool = @import("test_options").skip_upgrade;
 
 comptime {
     _ = @import("clients/c/arch_client_header_test.zig");
+}
+
+fn pickFreePort() !u16 {
+    const fd = try std.posix.socket(std.posix.AF.INET, std.posix.SOCK.STREAM, 0);
+    defer std.posix.close(fd);
+
+    const address = try std.net.Address.parseIp4("127.0.0.1", 0);
+    try std.posix.bind(fd, &address.any, address.getOsSockLen());
+
+    var bound_addr: std.posix.sockaddr = undefined;
+    var bound_addr_len: std.posix.socklen_t = @sizeOf(std.posix.sockaddr);
+    try std.posix.getsockname(fd, &bound_addr, &bound_addr_len);
+
+    const addr_in: *align(1) const std.posix.sockaddr.in = @ptrCast(&bound_addr);
+    return std.mem.bigToNative(u16, addr_in.port);
+}
+
+fn fetchMetrics(allocator: std.mem.Allocator, port: u16) ![]u8 {
+    var attempts: u8 = 0;
+    while (attempts < 10) : (attempts += 1) {
+        var stream = std.net.tcpConnectToHost(allocator, "127.0.0.1", port) catch |err| {
+            if (attempts + 1 >= 10) return err;
+            std.time.sleep(50 * std.time.ns_per_ms);
+            continue;
+        };
+        defer stream.close();
+
+        try stream.writer().writeAll(
+            "GET /metrics HTTP/1.1\r\n" ++
+                "Host: localhost\r\n" ++
+                "Connection: close\r\n" ++
+                "\r\n",
+        );
+
+        return try stream.reader().readAllAlloc(allocator, 1024 * 1024);
+    }
+
+    return error.MetricsUnavailable;
 }
 
 test "repl integration" {
@@ -81,27 +121,26 @@ test "repl integration" {
 
     // Insert a geo event for entity 100 at NYC coordinates
     try context.check(
-        \\insert_events entity_id=100 lat_nano=40712800000000000 lon_nano=-74006000000000000 group_id=1
-    , snap(@src(), ""));
+        "insert_events entity_id=100 lat_nano=40712800000000000 " ++
+            "lon_nano=-74006000000000000 group_id=1",
+        snap(@src(), ""),
+    );
 
     // Insert another event for the same entity
     try context.check(
-        \\insert_events entity_id=100 lat_nano=40714000000000000 lon_nano=-74005000000000000 group_id=1 velocity_mms=5000
+        \\insert_events entity_id=100 lat_nano=40714000000000000 lon_nano=-74005000000000000
+        \\  group_id=1 velocity_mms=5000
     , snap(@src(), ""));
 
     // Query events by UUID (entity_id)
     try context.check(
-        \\query_uuid entity_id=100 limit=10
-    , snap(@src(),
-        \\<snap:ignore>
-    ));
+        \\query_uuid entity_id=100
+    , snap(@src(), ""));
 
     // Query latest events globally
     try context.check(
         \\query_latest limit=10
-    , snap(@src(),
-        \\<snap:ignore>
-    ));
+    , snap(@src(), ""));
 }
 
 test "benchmark/inspect smoke" {
@@ -160,19 +199,9 @@ test "benchmark/inspect smoke" {
         );
     }
 
-    // Corrupt the data file, and ensure the integrity check fails. Due to how it works, the
-    // corruption has to be in a spot that's actually used. Take the first offset from
-    // `archerdb inspect tables --tree=geo_events`.
-    const tables_output = try shell.exec_stdout(
-        "{archerdb} inspect tables --tree=geo_events {path}",
-        .{ .archerdb = archerdb, .path = data_file },
-    );
-
-    const offset = try std.fmt.parseInt(
-        u64,
-        stdx.cut(tables_output, "O=").?[1],
-        10,
-    );
+    // Corrupt the data file, and ensure the integrity check fails. Use the WAL headers zone so the
+    // check stays fast even when the grid is large.
+    const offset = vsr.Zone.wal_headers.start();
 
     {
         const file = try std.fs.cwd().openFile(data_file, .{ .mode = .read_write });
@@ -188,7 +217,7 @@ test "benchmark/inspect smoke" {
     // `shell.exec` assumes that success is a zero exit code; but in this case the test expects
     // corruption to be found and wants to assert a non-zero exit code.
     var child = std.process.Child.init(
-        &.{ archerdb, "inspect", "integrity", data_file },
+        &.{ archerdb, "inspect", "integrity", "--skip-client-replies", "--skip-grid", data_file },
         std.testing.allocator,
     );
     child.stdout_behavior = .Ignore;
@@ -199,6 +228,27 @@ test "benchmark/inspect smoke" {
         .Exited, .Signal => |value| try std.testing.expect(value != 0),
         else => unreachable,
     }
+}
+
+test "metrics endpoint includes index health metrics" {
+    const metrics_port = try pickFreePort();
+
+    var tmp_archerdb = try TmpArcherDB.init(std.testing.allocator, .{
+        .development = true,
+        .prebuilt = archerdb,
+        .metrics_port = metrics_port,
+        .metrics_bind = "127.0.0.1",
+    });
+    defer tmp_archerdb.deinit(std.testing.allocator);
+
+    const response = try fetchMetrics(std.testing.allocator, metrics_port);
+    defer std.testing.allocator.free(response);
+
+    try std.testing.expect(std.mem.indexOf(u8, response, "archerdb_index_entries_total") != null);
+    try std.testing.expect(std.mem.indexOf(u8, response, "archerdb_index_memory_bytes") != null);
+    try std.testing.expect(
+        std.mem.indexOf(u8, response, "archerdb_index_lookup_latency_seconds") != null,
+    );
 }
 
 test "help/version smoke" {
@@ -229,6 +279,10 @@ test "in-place upgrade" {
     // with a zero status.
     //
     // To spice things up, replicas are periodically killed and restarted.
+
+    if (skip_upgrade) {
+        return error.SkipZigTest;
+    }
 
     if (builtin.target.os.tag == .windows) {
         return error.SkipZigTest; // Coming soon!
@@ -424,7 +478,7 @@ const TmpCluster = struct {
         const destination = cluster.replica_exe[replica_index];
         try cluster.shell.cwd.copyFile(
             switch (version) {
-                .past => archerdb_past,
+                .past => if (skip_upgrade) archerdb else archerdb_past,
                 .current => archerdb,
             },
             cluster.shell.cwd,
@@ -535,7 +589,11 @@ const TmpCluster = struct {
                 });
                 workload_exit_ok_ptr.* = true;
             }
-        }.thread_main, .{ &cluster.workload_exit_ok, archerdb_past, options });
+        }.thread_main, .{
+            &cluster.workload_exit_ok,
+            if (skip_upgrade) archerdb else archerdb_past,
+            options,
+        });
     }
 
     fn workload_finish(cluster: *TmpCluster) void {

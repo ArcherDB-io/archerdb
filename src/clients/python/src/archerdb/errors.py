@@ -24,6 +24,51 @@ class ArcherDBError(Exception):
 
 
 # ============================================================================
+# State Error Codes (200-243) - Core Errors
+# ============================================================================
+
+class StateError(IntEnum):
+    """Core state error codes used by query responses."""
+
+    ENTITY_NOT_FOUND = 200
+    """Query UUID not found in index."""
+
+    ENTITY_EXPIRED = 210
+    """Entity has expired due to TTL."""
+
+
+STATE_ERROR_MESSAGES = {
+    StateError.ENTITY_NOT_FOUND: "Entity not found",
+    StateError.ENTITY_EXPIRED: "Entity has expired due to TTL",
+}
+
+
+def is_state_error(code: int) -> bool:
+    """Returns True if the given code is a core state error (200-243)."""
+    return 200 <= code <= 243
+
+
+def state_error_message(code: int) -> Optional[str]:
+    """Returns the message for a state error code."""
+    try:
+        return STATE_ERROR_MESSAGES[StateError(code)]
+    except ValueError:
+        return None
+
+
+class StateException(ArcherDBError):
+    """Exception for core state errors."""
+
+    def __init__(self, error: StateError):
+        super().__init__(
+            code=error.value,
+            message=STATE_ERROR_MESSAGES[error],
+            retryable=False,
+        )
+        self.error = error
+
+
+# ============================================================================
 # Multi-Region Error Codes (213-218)
 # ============================================================================
 

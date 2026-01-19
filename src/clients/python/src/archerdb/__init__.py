@@ -195,6 +195,27 @@ from .errors import (
     error_message,
 )
 
+# Geo-routing support (add-geo-routing spec)
+from .geo_routing import (
+    # Configuration
+    GeoRoutingConfig,
+    # Data types
+    RegionHealth,
+    RegionLocation,
+    RegionInfo,
+    DiscoveryResponse,
+    RegionLatencyStats,
+    # Metrics
+    GeoRoutingMetrics,
+    # Components
+    DiscoveryError,
+    RegionDiscoveryClient,
+    LatencyProber,
+    RegionSelector,
+    # Main router
+    GeoRouter,
+)
+
 # Public API
 __all__ = [
     # Version
@@ -342,4 +363,17 @@ __all__ = [
     # v2 Utilities
     "is_retryable",
     "error_message",
+    # Geo-routing support
+    "GeoRoutingConfig",
+    "RegionHealth",
+    "RegionLocation",
+    "RegionInfo",
+    "DiscoveryResponse",
+    "RegionLatencyStats",
+    "GeoRoutingMetrics",
+    "DiscoveryError",
+    "RegionDiscoveryClient",
+    "LatencyProber",
+    "RegionSelector",
+    "GeoRouter",
 ]

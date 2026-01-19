@@ -279,7 +279,7 @@ pub fn StateCheckerType(comptime Client: type, comptime Replica: type) type {
                     assert(request.header.operation == header_b.?.operation);
                     assert(request.header.size == header_b.?.size);
                     // `checksum_body` will not match; the leader's StateMachine updated the
-                    // timestamps in the prepare body's accounts/transfers.
+                    // timestamps in the prepare body's GeoEvents.
                 } else {
                     // Either:
                     // - The cluster is running with one or more raw MessageBus "clients", so there

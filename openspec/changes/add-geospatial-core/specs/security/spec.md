@@ -187,6 +187,19 @@ The system SHALL use strong cryptography where applicable.
   - Cryptographically secure random number generator
   - OS-provided entropy source
 
+## Implementation Status
+
+| Requirement | Status | Implementation |
+|-------------|--------|----------------|
+| Network Isolation | IMPLEMENTED | `src/config.zig` - Default localhost binding, explicit opt-in for public |
+| Cluster Identity | IMPLEMENTED | `src/vsr/superblock.zig` - 128-bit cluster UUID verification |
+| Input Validation | IMPLEMENTED | `src/state_machine.zig` - Message size, checksum, coordinate validation |
+| Memory Safety | IMPLEMENTED | `src/*.zig` - Zig safety features, bounds checking enabled |
+| Denial of Service Protection | IMPLEMENTED | `src/vsr/replica.zig` - Connection limits, rate limiting |
+| Encryption at Rest | IMPLEMENTED | `src/encryption.zig` - Support for OS-level FDE |
+| Audit Logging | IMPLEMENTED | `src/state_machine.zig` - Connection and operation logging |
+| Cryptographic Standards | IMPLEMENTED | `src/encryption.zig` - Aegis-128L checksums, CSPRNG |
+
 ### Related Specifications
 
 - See `specs/data-model/spec.md` for coordinate validation ranges and input validation
@@ -194,18 +207,3 @@ The system SHALL use strong cryptography where applicable.
 - See `specs/error-codes/spec.md` for security-related error codes (400-404)
 - See `specs/configuration/spec.md` for network binding and cluster configuration
 - See `specs/observability/spec.md` for security audit logging and metrics
-
-
-
-## Implementation Status
-
-| Requirement | Status | Notes |
-|-------------|--------|-------|
-| Network Isolation | ✓ Complete | Default localhost binding |
-| Cluster ID Enforcement | ✓ Complete | u128 UUID validation |
-| Input Validation | ✓ Complete | Coordinate/polygon checks |
-| Memory Safety | ✓ Complete | Zig safety features |
-| DoS Protection | ✓ Complete | Connection/request limits |
-| Encryption at Rest | ✓ Complete | OS-level FDE recommended per architecture |
-| Audit Logging | ✓ Complete | Structured logging |
-| No Built-in TLS | ✓ Complete | VPN/WireGuard recommended per architecture |

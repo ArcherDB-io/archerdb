@@ -1,3 +1,4 @@
+// section:imports
 /**
  * ArcherDB Entity Tracking Walkthrough
  *
@@ -10,13 +11,13 @@
  */
 const process = require('process')
 
-const { createGeoClient, createGeoEvent } = require('archerdb-node')
+const { createGeoClient } = require('archerdb-node')
 
 async function main() {
   const address = process.env.ARCHERDB_ADDRESS || '127.0.0.1:3001'
 
   const client = createGeoClient({
-    clusterId: 0n,
+    cluster_id: 0n,
     addresses: [address],
   })
 
@@ -36,19 +37,16 @@ async function main() {
       { name: "Fisherman's Wharf", lat: 37.808, lon: -122.4177 },
     ]
 
-    const baseTime = BigInt(Date.now()) * 1000000n
-
     // Insert initial position
     console.log('\n2. INSERTING INITIAL POSITION')
     let batch = client.createBatch()
     batch.addFromOptions({
-      entityId,
+      entity_id: entityId,
       latitude: route[0].lat,
       longitude: route[0].lon,
-      timestamp: baseTime,
-      velocityMms: 5000, // 5 m/s
-      headingCdeg: 31500, // ~315 degrees (northwest)
-      groupId: 1n,
+      velocity_mps: 5, // 5 m/s
+      heading: 315, // ~315 degrees (northwest)
+      group_id: 1n,
     })
     await batch.commit()
     console.log(`   Inserted at ${route[0].name}: (${route[0].lat.toFixed(4)}, ${route[0].lon.toFixed(4)})`)
@@ -68,13 +66,12 @@ async function main() {
       const stop = route[i]
       batch = client.createUpsertBatch()
       batch.addFromOptions({
-        entityId,
+        entity_id: entityId,
         latitude: stop.lat,
         longitude: stop.lon,
-        timestamp: baseTime + BigInt(i) * 60000000000n, // 1 minute apart
-        velocityMms: 5000,
-        headingCdeg: 31500,
-        groupId: 1n,
+        velocity_mps: 5,
+        heading: 315,
+        group_id: 1n,
       })
       await batch.commit()
       console.log(`   Updated to ${stop.name}: (${stop.lat.toFixed(4)}, ${stop.lon.toFixed(4)})`)
@@ -95,7 +92,7 @@ async function main() {
     const result = await client.queryRadius({
       latitude: 37.802,
       longitude: -122.4057,
-      radiusM: 2000,
+      radius_m: 2000,
     })
     console.log(`   Found ${result.events.length} historical positions in 2km area`)
 
@@ -130,3 +127,4 @@ main()
     console.error(e)
     process.exit(1)
   })
+// endsection:imports

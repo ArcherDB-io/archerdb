@@ -71,6 +71,7 @@ pub const DotnetDocs = Docs{
     \\ArcherDB supports several query operations:
     \\
     \\* `QueryUuid()` - Query events by entity UUID
+    \\* `QueryByUuidBatch()` - Query events by batch entity UUIDs
     \\* `QueryLatest()` - Query latest events for entities
     \\* `QueryRadius()` - Query events within a radius of a point
     \\* `QueryPolygon()` - Query events within a polygon

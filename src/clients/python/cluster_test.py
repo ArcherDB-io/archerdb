@@ -226,22 +226,19 @@ def test_cluster_connectivity():
     print("  Test: QUERY_UUID (retrieve inserted event)")
     print("  " + "-" * 40)
 
-    # QueryUuidFilter: entity_id (u128, 16 bytes) + limit (u32, 4 bytes) + reserved (108 bytes) = 128 bytes
+    # QueryUuidFilter: entity_id (u128, 16 bytes) + reserved (16 bytes) = 32 bytes
     class CQueryUuidFilter(ctypes.Structure):
         _fields_ = [
             ("entity_id", ctypes.c_uint8 * 16),  # u128 entity to lookup
-            ("limit", ctypes.c_uint32),          # max results (usually 1)
-            ("reserved", ctypes.c_uint8 * 108),  # padding to 128 bytes
+            ("reserved", ctypes.c_uint8 * 16),   # padding to 32 bytes
         ]
 
-    assert ctypes.sizeof(CQueryUuidFilter) == 128, f"CQueryUuidFilter size mismatch: {ctypes.sizeof(CQueryUuidFilter)}"
+    assert ctypes.sizeof(CQueryUuidFilter) == 32, f"CQueryUuidFilter size mismatch: {ctypes.sizeof(CQueryUuidFilter)}"
 
     query_filter = CQueryUuidFilter()
     query_filter_bytes = entity_id.to_bytes(16, 'little')
     for i in range(16):
         query_filter.entity_id[i] = query_filter_bytes[i]
-    query_filter.limit = 1
-
     query_packet = bindings.CPacket()
     query_packet.user_data = 2
     query_packet.user_tag = 0
@@ -278,19 +275,23 @@ def test_cluster_connectivity():
     print(f"  Response size:   {callback_result[1]} bytes")
 
     if callback_result[0] == bindings.PacketStatus.OK:
-        if callback_result[1] == 128:  # Size of one GeoEvent
-            print("  PASS: QUERY_UUID found the event!")
-            # Parse the returned GeoEvent
-            if callback_result[2]:
-                result_event = CGeoEvent.from_buffer_copy(callback_result[2])
+        if callback_result[1] >= 16 and callback_result[2]:
+            status = callback_result[2][0]
+            if status == 0 and callback_result[1] >= 16 + 128:
+                print("  PASS: QUERY_UUID found the event!")
+                result_event = CGeoEvent.from_buffer_copy(callback_result[2][16:16 + 128])
                 result_entity_id = int.from_bytes(bytes(result_event.entity_id), 'little')
                 result_id = int.from_bytes(bytes(result_event.id), 'little')
                 print(f"    Returned entity_id: 0x{result_entity_id:032x}")
                 print(f"    Returned composite_id: 0x{result_id:032x}")
                 print(f"    Returned lat_nano: {result_event.lat_nano}")
                 print(f"    Returned lon_nano: {result_event.lon_nano}")
-        elif callback_result[1] == 0:
-            print("  INFO: QUERY_UUID returned no results (entity not found in RAM index)")
+            elif status == 200:
+                print("  INFO: QUERY_UUID returned no results (entity not found in RAM index)")
+            elif status == 210:
+                print("  INFO: QUERY_UUID entity expired (TTL)")
+            else:
+                print(f"  INFO: QUERY_UUID returned status {status}")
         else:
             print(f"  INFO: Unexpected response size {callback_result[1]} bytes")
     else:

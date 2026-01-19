@@ -8,14 +8,14 @@
  */
 const process = require('process')
 
-const { createGeoClient, createGeoEvent } = require('archerdb-node')
+const { createGeoClient } = require('archerdb-node')
 
 async function main() {
   const address = process.env.ARCHERDB_ADDRESS || '127.0.0.1:3001'
 
   // Connect to ArcherDB cluster
   const client = createGeoClient({
-    clusterId: 0n,
+    cluster_id: 0n,
     addresses: [address],
   })
 
@@ -36,12 +36,11 @@ async function main() {
       entityIds.push(entityId)
 
       batch.addFromOptions({
-        entityId,
+        entity_id: entityId,
         latitude: baseLat + i * 0.001, // ~111 meters apart
         longitude: baseLon + i * 0.001,
-        timestamp: BigInt(Date.now()) * 1000000n + BigInt(i), // nanoseconds
-        groupId: 1n,
-        accuracyMm: 10000, // 10m accuracy
+        group_id: 1n,
+        accuracy_m: 10, // 10m accuracy
       })
     }
 
@@ -56,7 +55,7 @@ async function main() {
     const result = await client.queryRadius({
       latitude: baseLat,
       longitude: baseLon,
-      radiusM: 1000,
+      radius_m: 1000,
       limit: 100,
     })
 

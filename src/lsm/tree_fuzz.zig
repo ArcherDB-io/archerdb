@@ -586,7 +586,7 @@ fn EnvironmentType(comptime table_usage: TableUsage) type {
                         }
                     },
                     .get => |key| {
-                        // Get account from lsm.
+                        // Get value from the LSM tree.
                         const tree_value = env.get(key);
 
                         // Compare result to model.

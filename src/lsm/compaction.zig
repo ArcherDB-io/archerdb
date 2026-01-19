@@ -79,6 +79,11 @@ pub const compaction_block_count_beat_min: u32 =
 
 const half_bar_beat_count = @divExact(constants.lsm_compaction_ops, 2);
 
+/// EMA weight for TTL expired ratio updates.
+/// Per openspec/changes/add-ttl-aware-compaction: alpha=0.2 balances responsiveness with stability.
+/// new_ratio = alpha * sample_ratio + (1 - alpha) * old_ratio
+const ttl_expired_ratio_ema_alpha: f64 = 0.2;
+
 /// Resources shared by all compactions.
 ///
 /// ResourcePool is a singleton owned by the Forest, but it doesn't depend on Forest type.
@@ -346,7 +351,7 @@ pub fn CompactionType(
         /// Counters track physical IO and are not fully deterministic. In particular, `in` and
         /// `dropped` values can vary between the replicas.
         ///
-        /// Counters obey accounting equation of compaction:
+        /// Counters obey a conservation equation for compaction:
         ///     out = in - dropped
         counters: struct {
             in: u64 = 0,
@@ -356,6 +361,23 @@ pub fn CompactionType(
             fn consistent(counters: @This()) bool {
                 return counters.out == counters.in - counters.dropped;
             }
+        } = .{},
+
+        /// TTL statistics for per-level expired ratio tracking.
+        /// Per openspec/changes/add-ttl-aware-compaction/spec.md:
+        /// Track total and expired values to calculate expired ratio for compaction prioritization.
+        /// Per openspec/changes/add-per-level-ttl-stats/spec.md:
+        /// Also track bytes for absolute capacity planning metrics.
+        ttl_stats: struct {
+            /// Total values processed during this bar's compaction.
+            values_total: u64 = 0,
+            /// Values skipped due to TTL expiration during this bar.
+            values_expired: u64 = 0,
+            /// Total bytes processed during this bar (values_total × value_size).
+            /// Per add-per-level-ttl-stats: enables absolute byte metrics.
+            bytes_total: u64 = 0,
+            /// Bytes for expired values (values_expired × value_size).
+            bytes_expired: u64 = 0,
         } = .{},
 
         /// Quotas track logical progress of compaction, determine pacing and must be deterministic.
@@ -824,6 +846,63 @@ pub fn CompactionType(
             const manifest = &compaction.tree.manifest;
             const level_b = compaction.level_b;
             const snapshot_max = snapshot_max_for_table_input(compaction.op_min);
+
+            // TTL-aware compaction: Update level expired ratio using EMA.
+            // Per add-ttl-aware-compaction: track ratio for scheduling.
+            // Per add-per-level-ttl-stats: track bytes for capacity.
+            // Skip level 0 (immutable tables flush directly from memory - no TTL sampling needed).
+            if (level_b > 0 and compaction.ttl_stats.values_total > 0) {
+                const expired_f = @as(f64, @floatFromInt(compaction.ttl_stats.values_expired));
+                const total_f = @as(f64, @floatFromInt(compaction.ttl_stats.values_total));
+                const sample_ratio: f64 = expired_f / total_f;
+                const manifest_level = &manifest.levels[level_b];
+                const old_ratio = manifest_level.expired_ratio;
+                const new_ratio = ttl_expired_ratio_ema_alpha * sample_ratio +
+                    (1.0 - ttl_expired_ratio_ema_alpha) * old_ratio;
+                manifest_level.expired_ratio = new_ratio;
+                manifest_level.expired_ratio_sampled_at_op = compaction.op_min;
+
+                // Per-level TTL stats: Update byte estimates using same EMA.
+                // Scale by table_count_visible to estimate total level bytes.
+                const scale: f64 = @floatFromInt(@max(1, manifest_level.table_count_visible));
+                const total_bytes = compaction.ttl_stats.bytes_total;
+                const expired_bytes = compaction.ttl_stats.bytes_expired;
+                const sample_total: f64 = @as(f64, @floatFromInt(total_bytes)) * scale;
+                const sample_expired: f64 = @as(f64, @floatFromInt(expired_bytes)) * scale;
+                const old_total: f64 = @floatFromInt(manifest_level.estimated_total_bytes);
+                const old_expired: f64 = @floatFromInt(manifest_level.estimated_expired_bytes);
+                manifest_level.estimated_total_bytes = @intFromFloat(
+                    ttl_expired_ratio_ema_alpha * sample_total +
+                        (1.0 - ttl_expired_ratio_ema_alpha) * old_total,
+                );
+                manifest_level.estimated_expired_bytes = @intFromFloat(
+                    ttl_expired_ratio_ema_alpha * sample_expired +
+                        (1.0 - ttl_expired_ratio_ema_alpha) * old_expired,
+                );
+
+                // Update Prometheus metrics for observability.
+                // Per add-ttl-aware-compaction: expose ratio via /metrics.
+                // Per add-per-level-ttl-stats: expose bytes via /metrics.
+                archerdb_metrics.Registry.updateTtlExpiredRatio(@intCast(level_b), new_ratio);
+                archerdb_metrics.Registry.updateLevelBytes(
+                    @intCast(level_b),
+                    manifest_level.estimated_total_bytes,
+                    manifest_level.estimated_expired_bytes,
+                );
+
+                log.debug("{s}:{}: ttl_stats: total={} expired={} sample={d:.3} " ++
+                    "old={d:.3} new={d:.3} total_bytes={} expired_bytes={}", .{
+                    compaction.tree.config.name,
+                    level_b,
+                    compaction.ttl_stats.values_total,
+                    compaction.ttl_stats.values_expired,
+                    sample_ratio,
+                    old_ratio,
+                    new_ratio,
+                    manifest_level.estimated_total_bytes,
+                    manifest_level.estimated_expired_bytes,
+                });
+            }
 
             var manifest_removed_value_count: u64 = 0;
             var manifest_added_value_count: u64 = 0;
@@ -1594,6 +1673,7 @@ pub fn CompactionType(
                     .consumed_b = copy_result.consumed,
                     .dropped = copy_result.dropped,
                     .produced = copy_result.produced,
+                    .ttl_expired = copy_result.ttl_expired,
                 };
             } else if (values_source_b == null) blk: {
                 // Only source A available - copy with tombstone and TTL filtering.
@@ -1609,6 +1689,7 @@ pub fn CompactionType(
                     .consumed_b = 0,
                     .dropped = copy_result.dropped,
                     .produced = copy_result.produced,
+                    .ttl_expired = copy_result.ttl_expired,
                 };
             } else values_merge(
                 values_target,
@@ -1637,6 +1718,14 @@ pub fn CompactionType(
             compaction.quotas.beat_done += consumed_ab;
 
             compaction.counters.dropped += merge_result.dropped;
+
+            // Track TTL statistics for per-level expired ratio.
+            // Per add-ttl-aware-compaction: accumulate values_total/expired.
+            // Per add-per-level-ttl-stats: track bytes for capacity.
+            compaction.ttl_stats.values_total += consumed_ab;
+            compaction.ttl_stats.values_expired += merge_result.ttl_expired;
+            compaction.ttl_stats.bytes_total += consumed_ab * @sizeOf(Value);
+            compaction.ttl_stats.bytes_expired += merge_result.ttl_expired * @sizeOf(Value);
 
             assert(compaction.quotas.bar_done <= compaction.quotas.bar);
 
@@ -1897,27 +1986,13 @@ pub fn CompactionType(
         //
         // TODO: Add micro benchmarks.
 
-        fn values_copy(values_target: []Value, values_source: []const Value) u32 {
-            assert(values_source.len > 0);
-            assert(values_source.len <= Table.data.value_count_max);
-            assert(values_target.len > 0);
-            assert(values_target.len <= Table.data.value_count_max);
-
-            const len: u32 = @intCast(@min(values_source.len, values_target.len));
-            stdx.copy_disjoint(
-                .exact,
-                Value,
-                values_target[0..len],
-                values_source[0..len],
-            );
-
-            return len;
-        }
-
         const CopyFilterResult = struct {
             consumed: u32,
             dropped: u32,
             produced: u32,
+            /// TTL-expired values dropped (subset of dropped).
+            /// Per openspec/changes/add-ttl-aware-compaction: track for expired ratio calculation.
+            ttl_expired: u32 = 0,
         };
         /// Copy values from values_source to values_target, optionally dropping tombstones
         /// and always dropping TTL-expired values (for types that support TTL).
@@ -1936,6 +2011,7 @@ pub fn CompactionType(
 
             var index_source: usize = 0;
             var index_target: usize = 0;
+            var ttl_expired_count: u32 = 0;
             // Merge as many values as possible.
             while (index_source < values_source.len and
                 index_target < values_target.len)
@@ -1951,6 +2027,7 @@ pub fn CompactionType(
                 // Per ttl-retention/spec.md: skip expired values during compaction.
                 if (comptime @hasDecl(Value, "should_copy_forward")) {
                     if (!value_in.should_copy_forward(compaction_timestamp_ns, is_final_level)) {
+                        ttl_expired_count += 1;
                         continue;
                     }
                 }
@@ -1961,6 +2038,7 @@ pub fn CompactionType(
                 .consumed = @intCast(index_source),
                 .dropped = @intCast(index_source - index_target),
                 .produced = @intCast(index_target),
+                .ttl_expired = ttl_expired_count,
             };
             assert(copy_result.consumed > 0);
             assert(copy_result.consumed <= values_source.len);
@@ -1975,6 +2053,9 @@ pub fn CompactionType(
             consumed_b: u32,
             dropped: u32,
             produced: u32,
+            /// TTL-expired values dropped (subset of dropped).
+            /// Per openspec/changes/add-ttl-aware-compaction: track for expired ratio calculation.
+            ttl_expired: u32 = 0,
         };
 
         /// Merge values from table_a and table_b, with table_a taking precedence. Tombstones may
@@ -1999,6 +2080,7 @@ pub fn CompactionType(
             var index_source_a: usize = 0;
             var index_source_b: usize = 0;
             var index_target: usize = 0;
+            var ttl_expired_count: u32 = 0;
 
             while (index_source_a < values_source_a.len and
                 index_source_b < values_source_b.len and
@@ -2015,7 +2097,11 @@ pub fn CompactionType(
                         }
                         // TTL filtering for level A value.
                         if (comptime @hasDecl(Value, "should_copy_forward")) {
-                            if (!value_a.should_copy_forward(compaction_timestamp_ns, is_final_level)) {
+                            if (!value_a.should_copy_forward(
+                                compaction_timestamp_ns,
+                                is_final_level,
+                            )) {
+                                ttl_expired_count += 1;
                                 continue;
                             }
                         }
@@ -2026,7 +2112,11 @@ pub fn CompactionType(
                         index_source_b += 1;
                         // TTL filtering for level B value.
                         if (comptime @hasDecl(Value, "should_copy_forward")) {
-                            if (!value_b.should_copy_forward(compaction_timestamp_ns, is_final_level)) {
+                            if (!value_b.should_copy_forward(
+                                compaction_timestamp_ns,
+                                is_final_level,
+                            )) {
+                                ttl_expired_count += 1;
                                 continue;
                             }
                         }
@@ -2044,7 +2134,11 @@ pub fn CompactionType(
                             if (drop_tombstones and tombstone(value_a)) continue;
                             // TTL filtering for merged value (A takes precedence).
                             if (comptime @hasDecl(Value, "should_copy_forward")) {
-                                if (!value_a.should_copy_forward(compaction_timestamp_ns, is_final_level)) {
+                                if (!value_a.should_copy_forward(
+                                    compaction_timestamp_ns,
+                                    is_final_level,
+                                )) {
+                                    ttl_expired_count += 1;
                                     continue;
                                 }
                             }
@@ -2060,6 +2154,7 @@ pub fn CompactionType(
                 .consumed_b = @intCast(index_source_b),
                 .dropped = @intCast(index_source_a + index_source_b - index_target),
                 .produced = @intCast(index_target),
+                .ttl_expired = ttl_expired_count,
             };
             assert(merge_result.consumed_a > 0 or merge_result.consumed_b > 0);
             assert(merge_result.consumed_a <= values_source_a.len);
@@ -2151,4 +2246,83 @@ pub fn snapshot_min_for_table_output(op_min: u64) u64 {
 pub fn compaction_op_min(op: u64) u64 {
     assert(op >= half_bar_beat_count);
     return op - op % half_bar_beat_count;
+}
+
+// ============================================================================
+// TTL-Aware Compaction Unit Tests
+// Per openspec/changes/add-ttl-aware-compaction: verify EMA calculation and stats tracking.
+// ============================================================================
+
+test "ttl_expired_ratio_ema: alpha constant is valid" {
+    // EMA alpha should be between 0 and 1
+    assert(ttl_expired_ratio_ema_alpha > 0.0);
+    assert(ttl_expired_ratio_ema_alpha < 1.0);
+    // Default is 0.2 per spec
+    assert(ttl_expired_ratio_ema_alpha == 0.2);
+}
+
+test "ttl_expired_ratio_ema: convergence to 100% expired" {
+    // Test that EMA converges to the sample ratio over time
+    var ratio: f64 = 0.0;
+    const sample: f64 = 1.0; // 100% expired
+
+    // After many iterations, ratio should converge to sample
+    var i: usize = 0;
+    while (i < 50) : (i += 1) {
+        ratio = ttl_expired_ratio_ema_alpha * sample + (1.0 - ttl_expired_ratio_ema_alpha) * ratio;
+    }
+
+    // Should be very close to 1.0 after 50 iterations
+    assert(ratio > 0.999);
+}
+
+test "ttl_expired_ratio_ema: convergence to 0% expired" {
+    // Test that EMA converges to 0 when all samples are 0
+    var ratio: f64 = 1.0; // Start at 100%
+    const sample: f64 = 0.0; // 0% expired
+
+    var i: usize = 0;
+    while (i < 50) : (i += 1) {
+        ratio = ttl_expired_ratio_ema_alpha * sample + (1.0 - ttl_expired_ratio_ema_alpha) * ratio;
+    }
+
+    // Should be very close to 0.0 after 50 iterations
+    assert(ratio < 0.001);
+}
+
+test "ttl_expired_ratio_ema: convergence to 30% expired" {
+    // Test convergence to a middle value
+    var ratio: f64 = 0.0;
+    const sample: f64 = 0.3; // 30% expired
+
+    var i: usize = 0;
+    while (i < 50) : (i += 1) {
+        ratio = ttl_expired_ratio_ema_alpha * sample + (1.0 - ttl_expired_ratio_ema_alpha) * ratio;
+    }
+
+    // Should be very close to 0.3 after 50 iterations
+    assert(ratio > 0.299 and ratio < 0.301);
+}
+
+test "ttl_expired_ratio_ema: single sample from zero" {
+    // Test single sample update
+    var ratio: f64 = 0.0;
+    const sample: f64 = 0.5; // 50% expired
+
+    ratio = ttl_expired_ratio_ema_alpha * sample + (1.0 - ttl_expired_ratio_ema_alpha) * ratio;
+
+    // After one sample, ratio should be alpha * sample
+    const expected: f64 = 0.2 * 0.5; // 0.1
+    assert(ratio == expected);
+}
+
+test "ttl_expired_ratio_ema: preserves value when sample equals current" {
+    // Test that ratio stays stable when sample equals current ratio
+    var ratio: f64 = 0.4;
+    const sample: f64 = 0.4;
+
+    ratio = ttl_expired_ratio_ema_alpha * sample + (1.0 - ttl_expired_ratio_ema_alpha) * ratio;
+
+    // Should remain at 0.4 (use approximate equality for floating point)
+    assert(math.approxEqAbs(f64, ratio, 0.4, 1e-10));
 }

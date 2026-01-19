@@ -52,17 +52,11 @@ coroutines
 Correnteza
 CPUs
 CRCs
-create_account
-create_accounts
-create_transfer
-create_transfers
-credit_account_id
 Datadog
 datastack
 Dconfig
 Dcpu
 deallocation
-debit_account_id
 deduped
 deinit
 deinitialization
@@ -323,7 +317,6 @@ syscall
 syscalls
 systemd
 systest
-tb_client
 tbid
 tbtest
 tdaly

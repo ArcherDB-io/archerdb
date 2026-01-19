@@ -14,7 +14,6 @@
 //! See specs/hybrid-memory/spec.md for full requirements.
 
 const std = @import("std");
-const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
 /// Storage tier classification.
@@ -141,8 +140,6 @@ pub const TierStats = struct {
 
 /// Tiering Manager - manages entity tier assignments and transitions.
 pub const TieringManager = struct {
-    const Self = @This();
-
     allocator: Allocator,
     config: TieringConfig,
     stats: TierStats,
@@ -167,19 +164,27 @@ pub const TieringManager = struct {
     }
 
     /// Initialize tiering manager with configuration.
-    pub fn init(allocator: Allocator, config: TieringConfig) Self {
+    pub fn init(allocator: Allocator, config: TieringConfig) TieringManager {
         return .{
             .allocator = allocator,
             .config = config,
             .stats = .{},
             .metadata = std.AutoHashMap(u128, EntityTierMetadata).init(allocator),
-            .hot_demotion_candidates = std.PriorityQueue(DemotionCandidate, void, demotionCompare).init(allocator, {}),
-            .warm_demotion_candidates = std.PriorityQueue(DemotionCandidate, void, demotionCompare).init(allocator, {}),
+            .hot_demotion_candidates = std.PriorityQueue(
+                DemotionCandidate,
+                void,
+                demotionCompare,
+            ).init(allocator, {}),
+            .warm_demotion_candidates = std.PriorityQueue(
+                DemotionCandidate,
+                void,
+                demotionCompare,
+            ).init(allocator, {}),
         };
     }
 
     /// Deinitialize and free resources.
-    pub fn deinit(self: *Self) void {
+    pub fn deinit(self: *TieringManager) void {
         self.metadata.deinit();
         self.hot_demotion_candidates.deinit();
         self.warm_demotion_candidates.deinit();
@@ -187,7 +192,7 @@ pub const TieringManager = struct {
 
     /// Record an entity insert.
     /// New entities start in hot tier.
-    pub fn recordInsert(self: *Self, entity_id: u128, current_time_ns: u64) !void {
+    pub fn recordInsert(self: *TieringManager, entity_id: u128, current_time_ns: u64) !void {
         const meta = EntityTierMetadata{
             .tier = .hot,
             .last_access_ns = current_time_ns,
@@ -208,7 +213,11 @@ pub const TieringManager = struct {
 
     /// Record an entity access.
     /// Updates access patterns and may trigger promotion.
-    pub fn recordAccess(self: *Self, entity_id: u128, current_time_ns: u64) !?TierTransition {
+    pub fn recordAccess(
+        self: *TieringManager,
+        entity_id: u128,
+        current_time_ns: u64,
+    ) !?TierTransition {
         if (self.metadata.getPtr(entity_id)) |meta| {
             // Update access metadata.
             meta.last_access_ns = current_time_ns;
@@ -248,7 +257,11 @@ pub const TieringManager = struct {
     }
 
     /// Check if entity should be promoted based on access patterns.
-    fn checkPromotion(self: *Self, entity_id: u128, meta: *EntityTierMetadata) !?TierTransition {
+    fn checkPromotion(
+        self: *TieringManager,
+        entity_id: u128,
+        meta: *EntityTierMetadata,
+    ) !?TierTransition {
         switch (meta.tier) {
             .cold => {
                 if (meta.access_count >= self.config.cold_to_warm_access_threshold) {
@@ -268,7 +281,12 @@ pub const TieringManager = struct {
     }
 
     /// Promote entity to a higher tier.
-    fn promote(self: *Self, entity_id: u128, from_tier: Tier, to_tier: Tier) !TierTransition {
+    fn promote(
+        self: *TieringManager,
+        entity_id: u128,
+        from_tier: Tier,
+        to_tier: Tier,
+    ) !TierTransition {
         if (self.metadata.getPtr(entity_id)) |meta| {
             meta.tier = to_tier;
             meta.promotion_count += 1;
@@ -310,7 +328,7 @@ pub const TieringManager = struct {
 
     /// Run periodic tier maintenance.
     /// Checks for entities that should be demoted due to inactivity.
-    pub fn tick(self: *Self, current_time_ns: u64) ![]TierTransition {
+    pub fn tick(self: *TieringManager, current_time_ns: u64) ![]TierTransition {
         if (!self.config.auto_tiering_enabled) return &[_]TierTransition{};
 
         var transitions = std.ArrayList(TierTransition).init(self.allocator);
@@ -344,7 +362,7 @@ pub const TieringManager = struct {
 
     /// Check and process demotions for a specific tier.
     fn checkDemotions(
-        self: *Self,
+        self: *TieringManager,
         queue: *std.PriorityQueue(DemotionCandidate, void, demotionCompare),
         from_tier: Tier,
         to_tier: Tier,
@@ -365,7 +383,11 @@ pub const TieringManager = struct {
                 if (meta.tier == from_tier) {
                     // Check if entity was accessed since being queued.
                     if (meta.last_access_ns <= candidate.last_access_ns) {
-                        const transition = try self.demote(candidate.entity_id, from_tier, to_tier);
+                        const transition = try self.demote(
+                            candidate.entity_id,
+                            from_tier,
+                            to_tier,
+                        );
                         try transitions.append(transition);
                     } else {
                         // Re-queue with updated access time.
@@ -380,7 +402,12 @@ pub const TieringManager = struct {
     }
 
     /// Demote entity to a lower tier.
-    fn demote(self: *Self, entity_id: u128, from_tier: Tier, to_tier: Tier) !TierTransition {
+    fn demote(
+        self: *TieringManager,
+        entity_id: u128,
+        from_tier: Tier,
+        to_tier: Tier,
+    ) !TierTransition {
         if (self.metadata.getPtr(entity_id)) |meta| {
             meta.tier = to_tier;
             meta.demotion_count += 1;
@@ -427,7 +454,11 @@ pub const TieringManager = struct {
     }
 
     /// Enforce maximum tier limits by demoting excess entities.
-    fn enforceMaxLimits(self: *Self, current_time_ns: u64, transitions: *std.ArrayList(TierTransition)) !void {
+    fn enforceMaxLimits(
+        self: *TieringManager,
+        current_time_ns: u64,
+        transitions: *std.ArrayList(TierTransition),
+    ) !void {
         _ = current_time_ns;
 
         // Check hot tier limit.
@@ -464,7 +495,7 @@ pub const TieringManager = struct {
     }
 
     /// Get the current tier for an entity.
-    pub fn getTier(self: *const Self, entity_id: u128) Tier {
+    pub fn getTier(self: *const TieringManager, entity_id: u128) Tier {
         if (self.metadata.get(entity_id)) |meta| {
             return meta.tier;
         }
@@ -472,17 +503,17 @@ pub const TieringManager = struct {
     }
 
     /// Get metadata for an entity (if tracked).
-    pub fn getMetadata(self: *const Self, entity_id: u128) ?EntityTierMetadata {
+    pub fn getMetadata(self: *const TieringManager, entity_id: u128) ?EntityTierMetadata {
         return self.metadata.get(entity_id);
     }
 
     /// Get current statistics.
-    pub fn getStats(self: *const Self) TierStats {
+    pub fn getStats(self: *const TieringManager) TierStats {
         return self.stats;
     }
 
     /// Check if entity is in RAM index (hot or warm tier).
-    pub fn isInRamIndex(self: *const Self, entity_id: u128) bool {
+    pub fn isInRamIndex(self: *const TieringManager, entity_id: u128) bool {
         if (self.metadata.get(entity_id)) |meta| {
             return meta.tier == .hot or meta.tier == .warm;
         }
@@ -490,7 +521,7 @@ pub const TieringManager = struct {
     }
 
     /// Record entity deletion.
-    pub fn recordDelete(self: *Self, entity_id: u128) void {
+    pub fn recordDelete(self: *TieringManager, entity_id: u128) void {
         if (self.metadata.get(entity_id)) |meta| {
             switch (meta.tier) {
                 .hot => self.stats.hot_count -|= 1,
@@ -519,8 +550,6 @@ pub const TransitionType = enum {
 /// Cold Tier Query Handler.
 /// Provides methods for querying entities not in RAM index.
 pub const ColdTierQueryHandler = struct {
-    const Self = @This();
-
     allocator: Allocator,
 
     /// Statistics for cold tier queries.
@@ -528,7 +557,7 @@ pub const ColdTierQueryHandler = struct {
     total_scan_time_ns: u64 = 0,
     avg_scan_time_ns: u64 = 0,
 
-    pub fn init(allocator: Allocator) Self {
+    pub fn init(allocator: Allocator) ColdTierQueryHandler {
         return .{
             .allocator = allocator,
         };
@@ -537,7 +566,7 @@ pub const ColdTierQueryHandler = struct {
     /// Query cold tier entities by entity_id.
     /// Returns true if found, false if not found.
     /// Note: This requires full scan or secondary index lookup.
-    pub fn queryById(self: *Self, entity_id: u128, _: u64) !?ColdTierResult {
+    pub fn queryById(self: *ColdTierQueryHandler, entity_id: u128, _: u64) !?ColdTierResult {
         _ = entity_id;
         self.queries_executed += 1;
 
@@ -551,7 +580,7 @@ pub const ColdTierQueryHandler = struct {
     }
 
     /// Query cold tier entities by time range.
-    pub fn queryByTimeRange(self: *Self, _: u64, _: u64) ![]ColdTierResult {
+    pub fn queryByTimeRange(self: *ColdTierQueryHandler, _: u64, _: u64) ![]ColdTierResult {
         self.queries_executed += 1;
 
         // In a real implementation, this would scan LSM for events

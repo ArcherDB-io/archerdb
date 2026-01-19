@@ -29,7 +29,8 @@
 //! ```
 
 const std = @import("std");
-const assert = std.debug.assert;
+
+const stdx = @import("stdx");
 
 /// Maximum number of shards supported.
 pub const max_shards: u32 = 256;
@@ -116,7 +117,7 @@ pub const ShardInfo = struct {
     pub fn setPrimary(self: *ShardInfo, addr: []const u8) void {
         self.primary = empty_address;
         const len = @min(addr.len, max_address_len);
-        @memcpy(self.primary[0..len], addr[0..len]);
+        stdx.copy_disjoint(.inexact, u8, self.primary[0..len], addr[0..len]);
     }
 
     /// Get primary address as string slice.
@@ -130,7 +131,7 @@ pub const ShardInfo = struct {
         const idx = self.replica_count;
         self.replicas[idx] = empty_address;
         const len = @min(addr.len, max_address_len);
-        @memcpy(self.replicas[idx][0..len], addr[0..len]);
+        stdx.copy_disjoint(.inexact, u8, self.replicas[idx][0..len], addr[0..len]);
         self.replica_count += 1;
         return true;
     }
@@ -242,12 +243,12 @@ pub const TopologyChangeNotification = struct {
     /// Serialize notification to bytes for wire format.
     pub fn toBytes(self: *const TopologyChangeNotification) [48]u8 {
         var bytes: [48]u8 = undefined;
-        @memcpy(bytes[0..8], std.mem.asBytes(&self.new_version));
-        @memcpy(bytes[8..16], std.mem.asBytes(&self.old_version));
+        stdx.copy_disjoint(.inexact, u8, bytes[0..8], std.mem.asBytes(&self.new_version));
+        stdx.copy_disjoint(.inexact, u8, bytes[8..16], std.mem.asBytes(&self.old_version));
         bytes[16] = @intFromEnum(self.change_type);
-        @memcpy(bytes[17..21], std.mem.asBytes(&self.affected_shard));
+        stdx.copy_disjoint(.inexact, u8, bytes[17..21], std.mem.asBytes(&self.affected_shard));
         bytes[21..24].* = [_]u8{ 0, 0, 0 }; // padding
-        @memcpy(bytes[24..40], std.mem.asBytes(&self.timestamp_ns));
+        stdx.copy_disjoint(.inexact, u8, bytes[24..40], std.mem.asBytes(&self.timestamp_ns));
         bytes[40..48].* = [_]u8{0} ** 8; // reserved
         return bytes;
     }
@@ -296,8 +297,6 @@ pub const PendingNotification = struct {
 
 /// Topology manager maintains the current cluster topology.
 pub const TopologyManager = struct {
-    const Self = @This();
-
     /// Current topology.
     topology: TopologyResponse,
 
@@ -329,14 +328,16 @@ pub const TopologyManager = struct {
     notifications_failed: u64,
 
     /// Initialize the topology manager.
-    pub fn init(cluster_id: u128, num_shards: u32) Self {
-        var manager = Self{
+    pub fn init(cluster_id: u128, num_shards: u32) TopologyManager {
+        var manager = TopologyManager{
             .topology = TopologyResponse.init(),
             .mutex = .{},
             .subscribers = [_]TopologySubscriber{TopologySubscriber.empty} ** max_subscribers,
             .subscriber_count = 0,
             .next_subscriber_id = 1,
-            .pending_notifications = [_]PendingNotification{PendingNotification.empty} ** max_pending_notifications,
+            .pending_notifications = [_]PendingNotification{
+                PendingNotification.empty,
+            } ** max_pending_notifications,
             .pending_head = 0,
             .pending_tail = 0,
             .notifications_sent = 0,
@@ -356,21 +357,21 @@ pub const TopologyManager = struct {
     }
 
     /// Get current topology (thread-safe copy).
-    pub fn getTopology(self: *Self) TopologyResponse {
+    pub fn getTopology(self: *TopologyManager) TopologyResponse {
         self.mutex.lock();
         defer self.mutex.unlock();
         return self.topology;
     }
 
     /// Get current topology version.
-    pub fn getVersion(self: *Self) u64 {
+    pub fn getVersion(self: *TopologyManager) u64 {
         self.mutex.lock();
         defer self.mutex.unlock();
         return self.topology.version;
     }
 
     /// Update shard primary address.
-    pub fn updateShardPrimary(self: *Self, shard_id: u32, address: []const u8) !void {
+    pub fn updateShardPrimary(self: *TopologyManager, shard_id: u32, address: []const u8) !void {
         self.mutex.lock();
         defer self.mutex.unlock();
 
@@ -384,7 +385,7 @@ pub const TopologyManager = struct {
     }
 
     /// Update shard status.
-    pub fn updateShardStatus(self: *Self, shard_id: u32, status: ShardStatus) !void {
+    pub fn updateShardStatus(self: *TopologyManager, shard_id: u32, status: ShardStatus) !void {
         self.mutex.lock();
         defer self.mutex.unlock();
 
@@ -398,7 +399,12 @@ pub const TopologyManager = struct {
     }
 
     /// Update shard metrics (entity count, size).
-    pub fn updateShardMetrics(self: *Self, shard_id: u32, entity_count: u64, size_bytes: u64) !void {
+    pub fn updateShardMetrics(
+        self: *TopologyManager,
+        shard_id: u32,
+        entity_count: u64,
+        size_bytes: u64,
+    ) !void {
         self.mutex.lock();
         defer self.mutex.unlock();
 
@@ -412,7 +418,7 @@ pub const TopologyManager = struct {
     }
 
     /// Set resharding status.
-    pub fn setReshardingStatus(self: *Self, status: u8) void {
+    pub fn setReshardingStatus(self: *TopologyManager, status: u8) void {
         self.mutex.lock();
         defer self.mutex.unlock();
 
@@ -424,7 +430,7 @@ pub const TopologyManager = struct {
     }
 
     /// Update number of shards (after resharding completes).
-    pub fn updateShardCount(self: *Self, new_count: u32) void {
+    pub fn updateShardCount(self: *TopologyManager, new_count: u32) void {
         self.mutex.lock();
         defer self.mutex.unlock();
 
@@ -434,7 +440,7 @@ pub const TopologyManager = struct {
     }
 
     /// Add a replica to a shard.
-    pub fn addShardReplica(self: *Self, shard_id: u32, address: []const u8) !void {
+    pub fn addShardReplica(self: *TopologyManager, shard_id: u32, address: []const u8) !void {
         self.mutex.lock();
         defer self.mutex.unlock();
 
@@ -458,7 +464,7 @@ pub const TopologyManager = struct {
     /// Returns a subscriber ID that can be used to unsubscribe.
     /// Returns null if max subscribers reached.
     pub fn subscribe(
-        self: *Self,
+        self: *TopologyManager,
         callback: TopologyChangeCallback,
         context: ?*anyopaque,
     ) ?u64 {
@@ -488,7 +494,7 @@ pub const TopologyManager = struct {
 
     /// Unsubscribe from topology change notifications.
     /// Returns true if subscriber was found and removed.
-    pub fn unsubscribe(self: *Self, subscriber_id: u64) bool {
+    pub fn unsubscribe(self: *TopologyManager, subscriber_id: u64) bool {
         self.mutex.lock();
         defer self.mutex.unlock();
 
@@ -503,7 +509,7 @@ pub const TopologyManager = struct {
     }
 
     /// Get current subscriber count.
-    pub fn getSubscriberCount(self: *Self) u32 {
+    pub fn getSubscriberCount(self: *TopologyManager) u32 {
         self.mutex.lock();
         defer self.mutex.unlock();
         return self.subscriber_count;
@@ -517,7 +523,7 @@ pub const TopologyManager = struct {
     /// This is called internally when topology changes.
     /// Notification delivery is best-effort (per spec).
     pub fn notifySubscribers(
-        self: *Self,
+        self: *TopologyManager,
         change_type: TopologyChangeNotification.ChangeType,
         affected_shard: u32,
     ) void {
@@ -548,7 +554,7 @@ pub const TopologyManager = struct {
     /// Queue a notification for later delivery (for async scenarios).
     /// Returns false if queue is full.
     pub fn queueNotification(
-        self: *Self,
+        self: *TopologyManager,
         change_type: TopologyChangeNotification.ChangeType,
         affected_shard: u32,
     ) bool {
@@ -580,7 +586,7 @@ pub const TopologyManager = struct {
 
     /// Process pending notifications from the queue.
     /// Returns number of notifications delivered.
-    pub fn processPendingNotifications(self: *Self) u32 {
+    pub fn processPendingNotifications(self: *TopologyManager) u32 {
         self.mutex.lock();
         defer self.mutex.unlock();
 
@@ -606,7 +612,7 @@ pub const TopologyManager = struct {
     }
 
     /// Get pending notification count.
-    pub fn getPendingCount(self: *Self) usize {
+    pub fn getPendingCount(self: *TopologyManager) usize {
         self.mutex.lock();
         defer self.mutex.unlock();
 
@@ -618,7 +624,7 @@ pub const TopologyManager = struct {
     }
 
     /// Get notification metrics.
-    pub fn getNotificationMetrics(self: *Self) struct { sent: u64, failed: u64 } {
+    pub fn getNotificationMetrics(self: *TopologyManager) struct { sent: u64, failed: u64 } {
         self.mutex.lock();
         defer self.mutex.unlock();
         return .{ .sent = self.notifications_sent, .failed = self.notifications_failed };
@@ -864,7 +870,10 @@ test "TopologyManager notification delivery" {
     // Both should have received notification
     try std.testing.expectEqual(@as(u32, 1), ctx1.count);
     try std.testing.expectEqual(@as(u32, 1), ctx2.count);
-    try std.testing.expectEqual(TopologyChangeNotification.ChangeType.leader_change, ctx1.last_change_type.?);
+    try std.testing.expectEqual(
+        TopologyChangeNotification.ChangeType.leader_change,
+        ctx1.last_change_type.?,
+    );
 
     // Verify metrics
     const metrics = manager.getNotificationMetrics();

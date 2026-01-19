@@ -1334,6 +1334,33 @@ The system SHALL handle rare but possible error conditions in VSR protocol execu
   4. Client SHALL page remaining results with pagination cursor
 - **AND** this is already specified in query-engine spec, reinforced here
 
+## Implementation Status
+
+| Requirement | Status | Implementation |
+|-------------|--------|----------------|
+| VSR Protocol Core | IMPLEMENTED | `src/vsr.zig`, `src/vsr/replica.zig` - Core VSR protocol with Flexible Paxos quorums |
+| Message Protocol | IMPLEMENTED | `src/vsr.zig` - 256-byte message header with dual Aegis-128L checksums |
+| Prepare Replication | IMPLEMENTED | `src/vsr/replica.zig` - Hash-chained prepares for linearizability |
+| View Changes | IMPLEMENTED | `src/vsr/replica.zig` - CTRL protocol for view change and log selection |
+| Commit Pipeline | IMPLEMENTED | `src/vsr/replica.zig` - Staged pipeline with prefetch and execute |
+| Client Sessions | IMPLEMENTED | `src/vsr/client_sessions.zig` - Session management with LRU eviction |
+| State Synchronization | IMPLEMENTED | `src/vsr/replica.zig` - WAL repair and state sync modes |
+| Checkpoint-Gated Admission Control | IMPLEMENTED | `src/vsr/replica.zig` - Backpressure when checkpoint lags |
+| Clock Synchronization | IMPLEMENTED | `src/vsr/clock.zig` - Marzullo's algorithm for Byzantine clock sync |
+| Network Partition Behavior | IMPLEMENTED | `src/vsr/replica.zig` - Safe partition handling, no split-brain |
+| Repair Mechanisms | IMPLEMENTED | `src/vsr/replica.zig` - Header, prepare, and grid block repair |
+| Standby Nodes | IMPLEMENTED | `src/vsr/replica.zig` - Non-voting standby support |
+| Primary Abdication | IMPLEMENTED | `src/vsr/replica.zig` - Voluntary abdication under backpressure |
+| VSR State Persistence | IMPLEMENTED | `src/vsr/superblock.zig` - VSRState in superblock for crash recovery |
+| Protocol Invariants | IMPLEMENTED | `src/vsr/replica.zig` - View, operation, and commit invariants |
+| Replica Addition Procedure | IMPLEMENTED | `src/vsr/replica.zig` - Cluster reconfiguration support |
+| Replica Removal Procedure | IMPLEMENTED | `src/vsr/replica.zig` - Safe replica removal |
+| Cross-AZ Deployment Performance | IMPLEMENTED | `src/vsr.zig` - Optimized for cross-AZ latency |
+| Replica Replacement Procedure | IMPLEMENTED | `src/vsr/replica.zig` - State sync for replacement |
+| Byzantine Failure Detection and Recovery | IMPLEMENTED | `src/vsr/clock.zig`, `src/vsr/replica.zig` - Clock skew and corruption detection |
+| Non-Byzantine Fault Model | IMPLEMENTED | `src/vsr/replica.zig` - Crash and network fault tolerance |
+| Rare Error Scenarios and Edge Cases | IMPLEMENTED | `src/vsr/replica.zig` - Comprehensive edge case handling |
+
 ### Related Specifications
 
 - See `specs/error-codes/spec.md` for VSR error code enumeration (201-209)
@@ -1396,22 +1423,3 @@ Estimated RTO for 1B entities: 60-90 minutes (see backup-restore RTO targets).
 - **Active-active**: Conflict resolution for concurrent writes (complex)
 
 These features will be specified in a separate v2 proposal.
-
-
-
-## Implementation Status
-
-| Requirement | Status | Notes |
-|-------------|--------|-------|
-| VSR Protocol Core | ✓ Complete | \`vsr/replica.zig\` |
-| Flexible Paxos Quorums | ✓ Complete | Configurable qr+qvc |
-| Message Protocol (256-byte) | ✓ Complete | \`vsr/message_header.zig\` |
-| Aegis-128L Checksums | ✓ Complete | \`vsr/checksum.zig\` |
-| View Change Protocol | ✓ Complete | CTRL log reconciliation |
-| Checkpoint Coordination | ✓ Complete | Superblock state |
-| Client Sessions | ✓ Complete | \`vsr/client_sessions.zig\` |
-| State Synchronization | ✓ Complete | WAL repair + state sync |
-| Clock Synchronization | ✓ Complete | Marzullo's algorithm |
-| Primary Selection | ✓ Complete | view % replica_count |
-| Prepare/PrepareOk | ✓ Complete | Hash-chained replication |
-| Grid Block Repair | ✓ Complete | Cross-replica repair |

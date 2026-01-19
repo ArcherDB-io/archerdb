@@ -27,7 +27,6 @@ const vsr_vopr_options = @import("vsr_vopr_options");
 
 const state_machine = vsr_vopr_options.state_machine;
 const StateMachineType = switch (state_machine) {
-    .accounting => @import("state_machine.zig").StateMachineType,
     .testing => @import("testing/state_machine.zig").StateMachineType,
     .geo => @import("geo_state_machine.zig").GeoStateMachineType,
 };
@@ -402,17 +401,6 @@ fn options_swarm(prng: *stdx.PRNG) Simulator.Options {
                 .batch_size_limit = batch_size_limit,
                 .lsm_forest_node_count = 4096,
             },
-            .accounting => .{
-                .batch_size_limit = batch_size_limit,
-                .lsm_forest_compaction_block_count = prng.int_inclusive(u32, 256) +
-                    StateMachine.Forest.Options.compaction_block_count_min,
-                .lsm_forest_node_count = 4096,
-                .cache_entries_accounts = if (prng.boolean()) 256 else 0,
-                .cache_entries_transfers = if (prng.boolean()) 256 else 0,
-                .cache_entries_transfers_pending = if (prng.boolean()) 256 else 0,
-                .cache_entries_geo_events = if (prng.boolean()) 256 else 0, // F1.3.1
-                .log_trace = true,
-            },
             .geo => .{
                 .batch_size_limit = batch_size_limit,
                 .enable_index_checkpoint = true,
@@ -537,17 +525,6 @@ fn options_performance(prng: *stdx.PRNG) Simulator.Options {
             .testing => .{
                 .batch_size_limit = constants.message_body_size_max,
                 .lsm_forest_node_count = 4096,
-            },
-            .accounting => .{
-                .batch_size_limit = constants.message_body_size_max,
-                .lsm_forest_compaction_block_count = 128 +
-                    StateMachine.Forest.Options.compaction_block_count_min,
-                .lsm_forest_node_count = 4096,
-                .cache_entries_accounts = 256,
-                .cache_entries_transfers = 0,
-                .cache_entries_transfers_pending = 0,
-                .cache_entries_geo_events = 0, // F1.3.1
-                .log_trace = true,
             },
             .geo => .{
                 .batch_size_limit = constants.message_body_size_max,

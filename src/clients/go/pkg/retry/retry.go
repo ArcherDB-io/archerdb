@@ -192,7 +192,7 @@ type Operation func() error
 //
 //	config := retry.DefaultConfig()
 //	err := retry.Do(func() error {
-//	    _, err := client.CreateAccounts(accounts)
+//	    _, err := client.InsertEvents(events)
 //	    return err
 //	}, config)
 func Do(operation Operation, config Config) error {

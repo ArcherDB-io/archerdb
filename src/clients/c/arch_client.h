@@ -76,9 +76,13 @@ typedef struct delete_entities_result_t {
 
 typedef struct query_uuid_filter_t {
     arch_uint128_t entity_id;
-    uint32_t limit;
-    uint8_t reserved[108];
+    uint8_t reserved[16];
 } query_uuid_filter_t;
+
+typedef struct query_uuid_response_t {
+    uint8_t status;
+    uint8_t reserved[15];
+} query_uuid_response_t;
 
 typedef struct query_radius_filter_t {
     int64_t center_lat_nano;

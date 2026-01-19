@@ -398,15 +398,3 @@ groups:
         labels:
           severity: warning
 ```
-
-
-## Implementation Status
-
-| Requirement | Status | Notes |
-|-------------|--------|-------|
-| Automatic Failover | ✓ Complete | VSR handles via view change |
-| Manual Failover | ✓ Complete | CLI `cluster transfer-leadership` |
-| Node Replacement | ✓ Complete | CLI `cluster add-node/remove-node` |
-| Stop-the-World Resharding | ✓ Complete | CLI `resharding` commands |
-| Online Resharding | ✓ Complete | `sharding.zig` ReshardingManager |
-| Monitoring Alerts | ✓ Complete | Prometheus alert rules defined |

@@ -40,7 +40,7 @@ import (
 // used by geo_client.go.
 //
 // NOTE: ArcherDB is a geospatial database only.
-// Financial operations are not supported.
+// Legacy non-geospatial operations are not supported.
 ///////////////////////////////////////////////////////////////
 
 // request is the shared request struct used by GeoClient for
@@ -67,6 +67,8 @@ func getEventSize(op C.ARCH_OPERATION) uintptr {
 		return 1 // Variable-size filter
 	case C.ARCH_OPERATION_QUERY_POLYGON:
 		return 1 // Variable-size filter
+	case C.ARCH_OPERATION_QUERY_UUID_BATCH:
+		return 1 // Variable-size filter
 	case C.ARCH_OPERATION_ARCHERDB_PING, C.ARCH_OPERATION_ARCHERDB_GET_STATUS:
 		return 1 // Single byte placeholder
 	default:
@@ -84,7 +86,8 @@ func getResultSize(op C.ARCH_OPERATION) uintptr {
 	case C.ARCH_OPERATION_DELETE_ENTITIES:
 		return unsafe.Sizeof(types.DeleteEntitiesError{})
 	case C.ARCH_OPERATION_QUERY_UUID, C.ARCH_OPERATION_QUERY_LATEST,
-		C.ARCH_OPERATION_QUERY_RADIUS, C.ARCH_OPERATION_QUERY_POLYGON:
+		C.ARCH_OPERATION_QUERY_RADIUS, C.ARCH_OPERATION_QUERY_POLYGON,
+		C.ARCH_OPERATION_QUERY_UUID_BATCH:
 		return 1 // Variable-size response (QueryResponse header + GeoEvents)
 	case C.ARCH_OPERATION_ARCHERDB_PING:
 		return 1
@@ -123,6 +126,7 @@ func onGoPacketCompletion(
 			op != C.ARCH_OPERATION_UPSERT_EVENTS &&
 			op != C.ARCH_OPERATION_DELETE_ENTITIES &&
 			op != C.ARCH_OPERATION_QUERY_UUID &&
+			op != C.ARCH_OPERATION_QUERY_UUID_BATCH &&
 			op != C.ARCH_OPERATION_QUERY_LATEST &&
 			op != C.ARCH_OPERATION_QUERY_RADIUS &&
 			op != C.ARCH_OPERATION_QUERY_POLYGON &&

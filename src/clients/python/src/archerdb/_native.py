@@ -31,82 +31,23 @@ from .types import (
     QueryLatestFilter,
     degrees_to_nano,
 )
+from .errors import ArcherDBError, StateError, StateException
 
 
 # ============================================================================
 # Wire Format Structures (matching Zig extern structs)
 # ============================================================================
 
-class CGeoEvent(ctypes.Structure):
-    """128-byte GeoEvent matching Zig extern struct."""
-    _fields_ = [
-        ("id", ctypes.c_uint8 * 16),
-        ("entity_id", ctypes.c_uint8 * 16),
-        ("correlation_id", ctypes.c_uint8 * 16),
-        ("user_data", ctypes.c_uint8 * 16),
-        ("lat_nano", ctypes.c_int64),
-        ("lon_nano", ctypes.c_int64),
-        ("group_id", ctypes.c_uint64),
-        ("timestamp", ctypes.c_uint64),
-        ("altitude_mm", ctypes.c_int32),
-        ("velocity_mms", ctypes.c_uint32),
-        ("ttl_seconds", ctypes.c_uint32),
-        ("accuracy_mm", ctypes.c_uint32),
-        ("heading_cdeg", ctypes.c_uint16),
-        ("flags", ctypes.c_uint16),
-        ("reserved", ctypes.c_uint8 * 12),
-    ]
+# We use the auto-generated structures from bindings.py to ensure consistency
+CGeoEvent = bindings.CGeoEvent
+CInsertGeoEventsResult = bindings.CInsertGeoEventsResult
+CDeleteEntitiesResult = bindings.CDeleteEntitiesResult
+CQueryUuidFilter = bindings.CQueryUuidFilter
+CQueryRadiusFilter = bindings.CQueryRadiusFilter
+CQueryLatestFilter = bindings.CQueryLatestFilter
 
-
-class CInsertResult(ctypes.Structure):
-    """8-byte insert result."""
-    _fields_ = [
-        ("index", ctypes.c_uint32),
-        ("result", ctypes.c_uint32),
-    ]
-
-
-class CDeleteResult(ctypes.Structure):
-    """8-byte delete result."""
-    _fields_ = [
-        ("index", ctypes.c_uint32),
-        ("result", ctypes.c_uint32),
-    ]
-
-
-class CQueryUuidFilter(ctypes.Structure):
-    """128-byte QueryUuidFilter."""
-    _fields_ = [
-        ("entity_id", ctypes.c_uint8 * 16),
-        ("limit", ctypes.c_uint32),
-        ("reserved", ctypes.c_uint8 * 108),
-    ]
-
-
-class CQueryRadiusFilter(ctypes.Structure):
-    """128-byte QueryRadiusFilter - must match geo_state_machine.zig exactly."""
-    _fields_ = [
-        ("center_lat_nano", ctypes.c_int64),   # i64, 8 bytes
-        ("center_lon_nano", ctypes.c_int64),   # i64, 8 bytes
-        ("radius_mm", ctypes.c_uint32),        # u32, 4 bytes
-        ("limit", ctypes.c_uint32),            # u32, 4 bytes
-        ("timestamp_min", ctypes.c_uint64),    # u64, 8 bytes
-        ("timestamp_max", ctypes.c_uint64),    # u64, 8 bytes
-        ("group_id", ctypes.c_uint64),         # u64, 8 bytes
-        ("reserved", ctypes.c_uint8 * 80),     # [80]u8
-    ]
-
-
-class CQueryLatestFilter(ctypes.Structure):
-    """128-byte QueryLatestFilter - must match geo_state_machine.zig exactly."""
-    _fields_ = [
-        ("limit", ctypes.c_uint32),              # u32, 4 bytes
-        ("_reserved_align", ctypes.c_uint32),    # u32, 4 bytes (alignment padding)
-        ("group_id", ctypes.c_uint64),           # u64, 8 bytes
-        ("cursor_timestamp", ctypes.c_uint64),   # u64, 8 bytes
-        ("reserved", ctypes.c_uint8 * 104),      # [104]u8
-    ]
-
+# Batch query structures are not in bindings.py (likely not exposed in C header directly)
+# So we define them here matching client-protocol/spec.md
 
 class CQueryUuidBatchFilter(ctypes.Structure):
     """8-byte QueryUuidBatchFilter header (F1.3.4).
@@ -136,31 +77,9 @@ class CQueryUuidBatchResult(ctypes.Structure):
         ("reserved", ctypes.c_uint8 * 8),      # [8]u8
     ]
 
-
-# Verify sizes
-assert ctypes.sizeof(CGeoEvent) == 128, f"CGeoEvent size mismatch: {ctypes.sizeof(CGeoEvent)}"
-assert ctypes.sizeof(CQueryUuidFilter) == 128
-assert ctypes.sizeof(CQueryRadiusFilter) == 128
-assert ctypes.sizeof(CQueryLatestFilter) == 128
-assert ctypes.sizeof(CQueryUuidBatchFilter) == 8
-assert ctypes.sizeof(CQueryUuidBatchResult) == 16
-
-
 # ============================================================================
 # Helpers
 # ============================================================================
-
-def _set_u128(field: ctypes.Array, value: int) -> None:
-    """Set a u128 ctypes field from Python int."""
-    value_bytes = value.to_bytes(16, 'little')
-    for i in range(16):
-        field[i] = value_bytes[i]
-
-
-def _get_u128(field: ctypes.Array) -> int:
-    """Get Python int from u128 ctypes field."""
-    return int.from_bytes(bytes(field), 'little')
-
 
 def _compute_pseudo_s2_cell(lat_nano: int, lon_nano: int) -> int:
     """Compute pseudo-S2 cell ID from coordinates."""
@@ -184,7 +103,7 @@ def geo_event_to_wire(event: GeoEvent) -> CGeoEvent:
     ctypes.memset(ctypes.addressof(c_event.reserved), 0, 12)
 
     # Set entity_id
-    _set_u128(c_event.entity_id, event.entity_id)
+    c_event.entity_id = c_uint128.from_param(event.entity_id)
 
     # Set coordinates
     c_event.lat_nano = event.lat_nano
@@ -195,13 +114,13 @@ def geo_event_to_wire(event: GeoEvent) -> CGeoEvent:
         s2_cell = _compute_pseudo_s2_cell(event.lat_nano, event.lon_nano)
         timestamp_ns = int(time.time_ns())
         composite_id = _pack_composite_id(s2_cell, timestamp_ns)
-        _set_u128(c_event.id, composite_id)
+        c_event.id = c_uint128.from_param(composite_id)
     else:
-        _set_u128(c_event.id, event.id)
+        c_event.id = c_uint128.from_param(event.id)
 
     # Set other u128 fields
-    _set_u128(c_event.correlation_id, event.correlation_id)
-    _set_u128(c_event.user_data, event.user_data)
+    c_event.correlation_id = c_uint128.from_param(event.correlation_id)
+    c_event.user_data = c_uint128.from_param(event.user_data)
 
     # Set other fields
     c_event.group_id = event.group_id
@@ -218,29 +137,13 @@ def geo_event_to_wire(event: GeoEvent) -> CGeoEvent:
 
 def wire_to_geo_event(c_event: CGeoEvent) -> GeoEvent:
     """Convert wire format (CGeoEvent) to GeoEvent."""
-    return GeoEvent(
-        id=_get_u128(c_event.id),
-        entity_id=_get_u128(c_event.entity_id),
-        correlation_id=_get_u128(c_event.correlation_id),
-        user_data=_get_u128(c_event.user_data),
-        lat_nano=c_event.lat_nano,
-        lon_nano=c_event.lon_nano,
-        group_id=c_event.group_id,
-        timestamp=c_event.timestamp,
-        altitude_mm=c_event.altitude_mm,
-        velocity_mms=c_event.velocity_mms,
-        ttl_seconds=c_event.ttl_seconds,
-        accuracy_mm=c_event.accuracy_mm,
-        heading_cdeg=c_event.heading_cdeg,
-        flags=c_event.flags,
-    )
+    return c_event.to_python()
 
 
 def query_uuid_filter_to_wire(filter: QueryUuidFilter) -> CQueryUuidFilter:
     """Convert QueryUuidFilter to wire format."""
     c_filter = CQueryUuidFilter()
-    _set_u128(c_filter.entity_id, filter.entity_id)
-    c_filter.limit = filter.limit
+    c_filter.entity_id = c_uint128.from_param(filter.entity_id)
     return c_filter
 
 
@@ -593,9 +496,9 @@ class NativeClient:
 
         return errors
 
-    def query_uuid(self, entity_id: int, limit: int = 1) -> List[GeoEvent]:
+    def query_uuid(self, entity_id: int) -> List[GeoEvent]:
         """Query by UUID."""
-        filter = QueryUuidFilter(entity_id=entity_id, limit=limit)
+        filter = QueryUuidFilter(entity_id=entity_id)
         c_filter = query_uuid_filter_to_wire(filter)
         c_filter_array = (CQueryUuidFilter * 1)(c_filter)
 
@@ -604,14 +507,22 @@ class NativeClient:
         if result.status < 0 or result.status != bindings.PacketStatus.OK.value:
             return []
 
-        events = []
-        if result.data_size >= 128 and result.data:
-            num_events = result.data_size // 128
-            for i in range(num_events):
-                c_event = CGeoEvent.from_buffer_copy(result.data[i*128:(i+1)*128])
-                events.append(wire_to_geo_event(c_event))
+        if result.data_size < 16 or not result.data:
+            return []
 
-        return events
+        status = result.data[0]
+        if status == 0:
+            if result.data_size < 16 + 128:
+                return []
+            c_event = CGeoEvent.from_buffer_copy(result.data[16:16 + 128])
+            return [wire_to_geo_event(c_event)]
+        if status == StateError.ENTITY_NOT_FOUND:
+            return []
+        if status == StateError.ENTITY_EXPIRED:
+            raise StateException(StateError.ENTITY_EXPIRED)
+
+        message = f"Query UUID failed with status {status}"
+        raise ArcherDBError(code=status, message=message, retryable=False)
 
     def query_uuid_batch(self, entity_ids: List[int]) -> "QueryUuidBatchResult":
         """

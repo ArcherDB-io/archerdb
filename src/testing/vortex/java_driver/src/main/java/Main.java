@@ -1,5 +1,10 @@
+import com.archerdb.geo.GeoClient;
+import com.archerdb.geo.GeoEvent;
+import com.archerdb.geo.InsertGeoEventsError;
+import com.archerdb.geo.QueryLatestFilter;
+import com.archerdb.geo.QueryResult;
+import com.archerdb.geo.UInt128;
 import java.io.IOException;
-import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.channels.Channels;
@@ -7,25 +12,11 @@ import java.nio.channels.ReadableByteChannel;
 import java.nio.channels.WritableByteChannel;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
-import java.util.Random;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
-
-import com.archerdb.AccountBatch;
-import com.archerdb.AccountFlags;
-import com.archerdb.Client;
-import com.archerdb.CreateAccountResult;
-import com.archerdb.CreateAccountResultBatch;
-import com.archerdb.CreateTransferResult;
-import com.archerdb.CreateTransferResultBatch;
-import com.archerdb.IdBatch;
-import com.archerdb.TransferBatch;
-import com.archerdb.TransferFlags;
-import com.archerdb.UInt128;
 
 /**
- * A Vortex driver using the Java language client for ArcherDB.
+ * A Vortex driver using the Java geospatial client for ArcherDB.
  */
 public final class Main {
   public static void main(String[] args) throws Exception {
@@ -34,16 +25,15 @@ public final class Main {
           "java driver requires two positional command-line arguments");
     }
 
-    byte[] clusterID = UInt128.asBytes(Long.parseLong(args[0]));
+    long clusterId = Long.parseLong(args[0]);
 
-    var replicaAddressesArg = args[1];
-    String[] replicaAddresses = replicaAddressesArg.split(",");
+    String[] replicaAddresses = args[1].split(",");
     if (replicaAddresses.length == 0) {
       throw new IllegalArgumentException(
           "REPLICAS must list at least one address (comma-separated)");
     }
 
-    try (var client = new Client(clusterID, replicaAddresses)) {
+    try (GeoClient client = GeoClient.create(clusterId, replicaAddresses)) {
       var reader = new Driver.Reader(Channels.newChannel(System.in));
       var writer = new Driver.Writer(Channels.newChannel(System.out));
       var driver = new Driver(client, reader, writer);
@@ -55,574 +45,182 @@ public final class Main {
 }
 
 class Driver {
-  private final Client client;
+  private final GeoClient client;
   private final Reader reader;
   private final Writer writer;
 
-  public Driver(Client client, Reader reader, Writer writer) {
+  public Driver(GeoClient client, Reader reader, Writer writer) {
     this.client = client;
     this.reader = reader;
     this.writer = writer;
   }
 
-  public Client client() { return client; }
-  public Reader reader() { return reader; }
-  public Writer writer() { return writer; }
   static ByteOrder BYTE_ORDER = ByteOrder.nativeOrder();
   static {
-    // We require little-endian architectures everywhere for efficient network
-    // deserialization:
     if (BYTE_ORDER != ByteOrder.LITTLE_ENDIAN) {
       throw new RuntimeException("Native byte order LITTLE_ENDIAN expected");
     }
   }
 
-  /**
-   * Reads the next operation from stdin, runs it, collects the results, and
-   * writes them back to
-   * stdout.
-   *
-   * @throws ExecutionException
-   * @throws InterruptedException
-   */
-  void next() throws IOException, InterruptedException, ExecutionException {
+  void next() throws IOException {
     reader.read(1 + 4); // operation + count
     var operation = Operation.fromValue(reader.u8());
     var count = reader.u32();
 
-    // Maybe process asynchronously for testing multi-batch requests.
-    // While async calls can potentially split the batch into multiple requests,
-    // the goal is to stress concurrent `submit` calls with multi-batched operations.
-    // In the end, all async requests are re-joined and replied to as a single batch.
-    final var random = new Random();
-    final boolean isAsync = random.nextBoolean();
-
     switch (operation) {
-      case CREATE_ACCOUNTS:
-        if (isAsync)
-          createAccountsAsync(reader, writer, count);
-        else
-          createAccounts(reader, writer, count);
+      case INSERT_EVENTS:
+        insertEvents(count);
         break;
-      case CREATE_TRANSFERS:
-        if (isAsync)
-          createTransfersAsync(reader, writer, count);
-        else
-          createTransfers(reader, writer, count);
+      case QUERY_UUID:
+        queryUuid(count);
         break;
-      case LOOKUP_ACCOUNTS:
-        if (isAsync)
-          lookupAccountsAsync(reader, writer, count);
-        else
-          lookupAccounts(reader, writer, count);
+      case QUERY_LATEST:
+        queryLatest(count);
         break;
-      case LOOKUP_TRANSFERS:
-        if (isAsync)
-          lookupTransfersAsync(reader, writer, count);
-        else
-          lookupTransfers(reader, writer, count);
-        break;
-      case GET_ACCOUNT_BALANCES:
-      case GET_ACCOUNT_TRANSFERS:
-      case QUERY_ACCOUNTS:
-      case QUERY_TRANSFERS:
-        // The Vortex workload currently does not request these operations, so this driver doesn't
-        // support them (yet).
+      default:
         throw new RuntimeException("unsupported operation: " + operation.name());
     }
   }
 
-  void createAccounts(Reader reader, Writer writer, int count) throws IOException {
-    reader.read(Driver.Operation.CREATE_ACCOUNTS.eventSize() * count);
-    var batch = new AccountBatch(count);
-    for (int index = 0; index < count; index++) {
-      batch.add();
-      batch.setId(reader.u128());
-      reader.u128(); // `debits_pending`
-      reader.u128(); // `debits_posted`
-      reader.u128(); // `credits_pending`
-      reader.u128(); // `credits_posted`
-      batch.setUserData128(reader.u128());
-      batch.setUserData64(reader.u64());
-      batch.setUserData32(reader.u32());
-      reader.u32(); // `reserved`
-      batch.setLedger(reader.u32());
-      batch.setCode(reader.u16());
-      batch.setFlags(reader.u16());
-      reader.u64(); // `timestamp`
+  void insertEvents(int count) throws IOException {
+    reader.read(Operation.INSERT_EVENTS.eventSize() * count);
+    List<GeoEvent> events = new ArrayList<>(count);
+
+    for (int i = 0; i < count; i++) {
+      events.add(readGeoEvent());
     }
-    var results = client.createAccounts(batch);
-    writer.allocate(4 + Driver.Operation.CREATE_ACCOUNTS.resultSize() * results.getLength());
-    writer.u32(results.getLength());
-    while (results.next()) {
-      writer.u32(results.getIndex());
-      writer.u32(results.getResult().value);
+
+    List<InsertGeoEventsError> errors = client.insertEvents(events);
+
+    writer.allocate(4 + errors.size() * Operation.INSERT_EVENTS.resultSize());
+    writer.u32(errors.size());
+    for (InsertGeoEventsError error : errors) {
+      writer.u32(error.getIndex());
+      writer.u32(error.getResult().getCode());
     }
     writer.flush();
   }
 
-  void createAccountsAsync(Reader reader, Writer writer, int count)
-      throws IOException, InterruptedException, ExecutionException {
-    reader.read(Driver.Operation.CREATE_ACCOUNTS.eventSize() * count);
-
-    class Request {
-      private final CompletableFuture<CreateAccountResultBatch> future;
-      private final int eventCount;
-
-      public Request(CompletableFuture<CreateAccountResultBatch> future, int eventCount) {
-        this.future = future;
-        this.eventCount = eventCount;
-      }
-
-      public CompletableFuture<CreateAccountResultBatch> future() { return future; }
-      public int eventCount() { return eventCount; }
-    }
-    final var requests = new ArrayList<Request>(count);
-    var batch = new AccountBatch(count);
-    for (int index = 0; index < count; index++) {
-      batch.add();
-      batch.setId(reader.u128());
-      reader.u128(); // `debits_pending`
-      reader.u128(); // `debits_posted`
-      reader.u128(); // `credits_pending`
-      reader.u128(); // `credits_posted`
-      batch.setUserData128(reader.u128());
-      batch.setUserData64(reader.u64());
-      batch.setUserData32(reader.u32());
-      reader.u32(); // `reserved`
-      batch.setLedger(reader.u32());
-      batch.setCode(reader.u16());
-      batch.setFlags(reader.u16());
-      reader.u64(); // `timestamp`
-
-      if (!AccountFlags.hasLinked(batch.getFlags())) {
-        requests.add(new Request(client.createAccountsAsync(batch), batch.getLength()));
-        batch = new AccountBatch(count - index);
-      }
+  void queryUuid(int count) throws IOException {
+    if (count != 1) {
+      throw new RuntimeException("query_uuid expects exactly one filter");
     }
 
-    // Sending any eventual non-closed linked chain.
-    if (batch.getLength() > 0) {
-      requests.add(new Request(client.createAccountsAsync(batch), batch.getLength()));
+    reader.read(Operation.QUERY_UUID.eventSize() * count);
+    UInt128 entityId = UInt128.fromBytes(reader.u128());
+    reader.skip(16); // reserved
+
+    GeoEvent event = client.getLatestByUuid(entityId);
+
+    int headerSize = Operation.QUERY_UUID.resultSize();
+    int eventSize = Operation.INSERT_EVENTS.eventSize();
+    int payloadSize = headerSize + (event == null ? 0 : eventSize);
+
+    writer.allocate(4 + payloadSize);
+    writer.u32(payloadSize / headerSize);
+
+    byte[] header = new byte[headerSize];
+    header[0] = (byte) (event == null ? 200 : 0);
+    writer.bytes(header);
+
+    if (event != null) {
+      writeGeoEvent(event);
     }
 
-    class Result {
-      private final int index;
-      private final CreateAccountResult result;
+    writer.flush();
+  }
 
-      public Result(int index, CreateAccountResult result) {
-        this.index = index;
-        this.result = result;
-      }
-
-      public int index() { return index; }
-      public CreateAccountResult result() { return result; }
-    }
-    var results = new ArrayList<Result>(count);
-
-    // Wait for all tasks.
-    int index = 0;
-    for (final var request : requests) {
-      final var result = request.future.get();
-      while (result.next()) {
-        results.add(new Result(result.getIndex() + index, result.getResult()));
-      }
-      index += request.eventCount;
+  void queryLatest(int count) throws IOException {
+    if (count != 1) {
+      throw new RuntimeException("query_latest expects exactly one filter");
     }
 
-    writer.allocate(4 + Driver.Operation.CREATE_ACCOUNTS.resultSize() * results.size());
-    writer.u32(results.size());
-    for (final var result : results) {
-      writer.u32(result.index);
-      writer.u32(result.result.value);
+    reader.read(Operation.QUERY_LATEST.eventSize() * count);
+    int limit = reader.u32();
+    reader.u32(); // alignment padding
+    long groupId = reader.u64();
+    long cursorTimestamp = reader.u64();
+    reader.skip(104); // reserved
+
+    QueryLatestFilter filter = new QueryLatestFilter(limit, groupId, cursorTimestamp);
+    QueryResult result = client.queryLatest(filter);
+
+    List<GeoEvent> events = result.getEvents();
+
+    writer.allocate(4 + events.size() * Operation.QUERY_LATEST.resultSize());
+    writer.u32(events.size());
+    for (GeoEvent event : events) {
+      writeGeoEvent(event);
     }
     writer.flush();
   }
 
-  void createTransfers(Reader reader, Writer writer, int count) throws IOException {
-    reader.read(Driver.Operation.CREATE_TRANSFERS.eventSize() * count);
-    var batch = new TransferBatch(count);
-    for (int index = 0; index < count; index++) {
-      batch.add();
-      batch.setId(reader.u128());
-      batch.setDebitAccountId(reader.u128());
-      batch.setCreditAccountId(reader.u128());
-      batch.setAmount(reader.u64(), reader.u64());
-      batch.setPendingId(reader.u128());
-      batch.setUserData128(reader.u128());
-      batch.setUserData64(reader.u64());
-      batch.setUserData32(reader.u32());
-      batch.setTimeout(reader.u32());
-      batch.setLedger(reader.u32());
-      batch.setCode(reader.u16());
-      batch.setFlags(reader.u16());
-      batch.setTimestamp(reader.u64());
-    }
-    var results = client.createTransfers(batch);
-    writer.allocate(4 + Driver.Operation.CREATE_ACCOUNTS.resultSize() * results.getLength());
-    writer.u32(results.getLength());
-    while (results.next()) {
-      writer.u32(results.getIndex());
-      writer.u32(results.getResult().value);
-    }
-    writer.flush();
+  GeoEvent readGeoEvent() throws IOException {
+    UInt128 id = UInt128.fromBytes(reader.u128());
+    UInt128 entityId = UInt128.fromBytes(reader.u128());
+    UInt128 correlationId = UInt128.fromBytes(reader.u128());
+    UInt128 userData = UInt128.fromBytes(reader.u128());
+    long latNano = reader.i64();
+    long lonNano = reader.i64();
+    long groupId = reader.u64();
+    long timestamp = reader.u64();
+    int altitudeMm = reader.i32();
+    int velocityMms = reader.u32();
+    int ttlSeconds = reader.u32();
+    int accuracyMm = reader.u32();
+    short headingCdeg = (short) reader.u16();
+    short flags = (short) reader.u16();
+    reader.skip(12); // reserved
+
+    return new GeoEvent.Builder()
+        .setId(id)
+        .setEntityId(entityId)
+        .setCorrelationId(correlationId)
+        .setUserData(userData)
+        .setLatNano(latNano)
+        .setLonNano(lonNano)
+        .setGroupId(groupId)
+        .setTimestamp(timestamp)
+        .setAltitudeMm(altitudeMm)
+        .setVelocityMms(velocityMms)
+        .setTtlSeconds(ttlSeconds)
+        .setAccuracyMm(accuracyMm)
+        .setHeadingCdeg(headingCdeg)
+        .setFlags(flags)
+        .build();
   }
 
-  void createTransfersAsync(Reader reader, Writer writer, int count)
-      throws IOException, InterruptedException, ExecutionException {
-    reader.read(Driver.Operation.CREATE_TRANSFERS.eventSize() * count);
-
-    class Request {
-      private final CompletableFuture<CreateTransferResultBatch> future;
-      private final int eventCount;
-
-      public Request(CompletableFuture<CreateTransferResultBatch> future, int eventCount) {
-        this.future = future;
-        this.eventCount = eventCount;
-      }
-
-      public CompletableFuture<CreateTransferResultBatch> future() { return future; }
-      public int eventCount() { return eventCount; }
-    }
-    final var requests = new ArrayList<Request>(count);
-    var batch = new TransferBatch(count);
-    for (int index = 0; index < count; index++) {
-      batch.add();
-      batch.setId(reader.u128());
-      batch.setDebitAccountId(reader.u128());
-      batch.setCreditAccountId(reader.u128());
-      batch.setAmount(reader.u64(), reader.u64());
-      batch.setPendingId(reader.u128());
-      batch.setUserData128(reader.u128());
-      batch.setUserData64(reader.u64());
-      batch.setUserData32(reader.u32());
-      batch.setTimeout(reader.u32());
-      batch.setLedger(reader.u32());
-      batch.setCode(reader.u16());
-      batch.setFlags(reader.u16());
-      batch.setTimestamp(reader.u64());
-
-      if (!TransferFlags.hasLinked(batch.getFlags())) {
-        requests.add(new Request(client.createTransfersAsync(batch), batch.getLength()));
-        batch = new TransferBatch(count - index);
-      }
-    }
-
-    // Sending any eventual non-closed linked chain.
-    if (batch.getLength() > 0) {
-      requests.add(new Request(client.createTransfersAsync(batch), batch.getLength()));
-    }
-
-    class Result {
-      private final int index;
-      private final CreateTransferResult result;
-
-      public Result(int index, CreateTransferResult result) {
-        this.index = index;
-        this.result = result;
-      }
-
-      public int index() { return index; }
-      public CreateTransferResult result() { return result; }
-    }
-    var results = new ArrayList<Result>(count);
-
-    // Wait for all tasks.
-    int index = 0;
-    for (final var request : requests) {
-      final var result = request.future.get();
-      while (result.next()) {
-        results.add(new Result(result.getIndex() + index, result.getResult()));
-      }
-      index += request.eventCount;
-    }
-
-    writer.allocate(4 + Driver.Operation.CREATE_ACCOUNTS.resultSize() * results.size());
-    writer.u32(results.size());
-    for (final var result : results) {
-      writer.u32(result.index);
-      writer.u32(result.result.value);
-    }
-    writer.flush();
+  void writeGeoEvent(GeoEvent event) {
+    writer.u128(event.getId().toBytes());
+    writer.u128(event.getEntityId().toBytes());
+    writer.u128(event.getCorrelationId().toBytes());
+    writer.u128(event.getUserData().toBytes());
+    writer.i64(event.getLatNano());
+    writer.i64(event.getLonNano());
+    writer.u64(event.getGroupId());
+    writer.u64(event.getTimestamp());
+    writer.i32(event.getAltitudeMm());
+    writer.u32(event.getVelocityMms());
+    writer.u32(event.getTtlSeconds());
+    writer.u32(event.getAccuracyMm());
+    writer.u16(event.getHeadingCdeg());
+    writer.u16(event.getFlags());
+    writer.zeros(12);
   }
 
-  void lookupAccounts(Reader reader, Writer writer, int count) throws IOException {
-    reader.read(Driver.Operation.LOOKUP_ACCOUNTS.eventSize() * count);
-    var batch = new IdBatch(count);
-    for (int index = 0; index < count; index++) {
-      batch.add();
-      batch.setId(reader.u128());
-    }
-    var results = client.lookupAccounts(batch);
-    writer.allocate(4 + Driver.Operation.LOOKUP_ACCOUNTS.resultSize() * results.getLength());
-    writer.u32(results.getLength());
-    while (results.next()) {
-      writer.u128(results.getId());
-      writer.u128(UInt128.asBytes(results.getDebitsPending()));
-      writer.u128(UInt128.asBytes(results.getDebitsPosted()));
-      writer.u128(UInt128.asBytes(results.getCreditsPending()));
-      writer.u128(UInt128.asBytes(results.getCreditsPosted()));
-      writer.u128(results.getUserData128());
-      writer.u64(results.getUserData64());
-      writer.u32(results.getUserData32());
-      writer.u32(0); // `reserved`
-      writer.u32(results.getLedger());
-      writer.u16(results.getCode());
-      writer.u16(results.getFlags());
-      writer.u64(results.getTimestamp());
-    }
-    writer.flush();
-  }
-
-  void lookupAccountsAsync(Reader reader, Writer writer, int count)
-      throws IOException, InterruptedException, ExecutionException {
-    reader.read(Driver.Operation.LOOKUP_ACCOUNTS.eventSize() * count);
-
-    final var requests = new ArrayList<CompletableFuture<AccountBatch>>(count);
-    for (int index = 0; index < count; index++) {
-      var batch = new IdBatch(1);
-      batch.add();
-      batch.setId(reader.u128());
-
-      requests.add(client.lookupAccountsAsync(batch));
-    }
-
-    class Result {
-      private final byte[] id;
-      private final BigInteger debitsPending;
-      private final BigInteger debitsPosted;
-      private final BigInteger creditsPending;
-      private final BigInteger creditsPosted;
-      private final byte[] userData128;
-      private final long userData64;
-      private final int userData32;
-      private final int ledger;
-      private final int code;
-      private final int flags;
-      private final long timestamp;
-
-      public Result(byte[] id, BigInteger debitsPending, BigInteger debitsPosted,
-                   BigInteger creditsPending, BigInteger creditsPosted,
-                   byte[] userData128, long userData64, int userData32,
-                   int ledger, int code, int flags, long timestamp) {
-        this.id = id;
-        this.debitsPending = debitsPending;
-        this.debitsPosted = debitsPosted;
-        this.creditsPending = creditsPending;
-        this.creditsPosted = creditsPosted;
-        this.userData128 = userData128;
-        this.userData64 = userData64;
-        this.userData32 = userData32;
-        this.ledger = ledger;
-        this.code = code;
-        this.flags = flags;
-        this.timestamp = timestamp;
-      }
-
-      public byte[] id() { return id; }
-      public BigInteger debitsPending() { return debitsPending; }
-      public BigInteger debitsPosted() { return debitsPosted; }
-      public BigInteger creditsPending() { return creditsPending; }
-      public BigInteger creditsPosted() { return creditsPosted; }
-      public byte[] userData128() { return userData128; }
-      public long userData64() { return userData64; }
-      public int userData32() { return userData32; }
-      public int ledger() { return ledger; }
-      public int code() { return code; }
-      public int flags() { return flags; }
-      public long timestamp() { return timestamp; }
-    }
-    var results = new ArrayList<Result>(count);
-
-    // Wait for all tasks.
-    for (final var request : requests) {
-      final var result = request.get();
-
-      if (result.next()) {
-        results.add(new Result(
-            result.getId(),
-            result.getDebitsPending(),
-            result.getDebitsPosted(),
-            result.getCreditsPending(),
-            result.getCreditsPosted(),
-            result.getUserData128(),
-            result.getUserData64(),
-            result.getUserData32(),
-            result.getLedger(),
-            result.getCode(),
-            result.getFlags(),
-            result.getTimestamp()));
-      }
-    }
-
-    writer.allocate(4 + Driver.Operation.LOOKUP_ACCOUNTS.resultSize() * results.size());
-    writer.u32(results.size());
-    for (final var result : results) {
-      writer.u128(result.id);
-      writer.u128(UInt128.asBytes(result.debitsPending));
-      writer.u128(UInt128.asBytes(result.debitsPosted));
-      writer.u128(UInt128.asBytes(result.creditsPending));
-      writer.u128(UInt128.asBytes(result.creditsPosted));
-      writer.u128(result.userData128);
-      writer.u64(result.userData64);
-      writer.u32(result.userData32);
-      writer.u32(0); // `reserved`
-      writer.u32(result.ledger);
-      writer.u16(result.code);
-      writer.u16(result.flags);
-      writer.u64(result.timestamp);
-    }
-    writer.flush();
-  }
-
-  void lookupTransfers(Reader reader, Writer writer, int count) throws IOException {
-    reader.read(Driver.Operation.LOOKUP_TRANSFERS.eventSize() * count);
-    var batch = new IdBatch(count);
-    for (int index = 0; index < count; index++) {
-      batch.add();
-      batch.setId(reader.u128());
-    }
-    var results = client.lookupTransfers(batch);
-    writer.allocate(4 + Driver.Operation.LOOKUP_TRANSFERS.resultSize() * results.getLength());
-    writer.u32(results.getLength());
-    while (results.next()) {
-      writer.u128(results.getId());
-      writer.u128(results.getDebitAccountId());
-      writer.u128(results.getCreditAccountId());
-      writer.u128(UInt128.asBytes(results.getAmount()));
-      writer.u128(results.getPendingId());
-      writer.u128(results.getUserData128());
-      writer.u64(results.getUserData64());
-      writer.u32(results.getUserData32());
-      writer.u32(results.getTimeout());
-      writer.u32(results.getLedger());
-      writer.u16(results.getCode());
-      writer.u16(results.getFlags());
-      writer.u64(results.getTimestamp());
-    }
-    writer.flush();
-  }
-
-  void lookupTransfersAsync(Reader reader, Writer writer, int count)
-      throws IOException, InterruptedException, ExecutionException {
-    reader.read(Driver.Operation.LOOKUP_TRANSFERS.eventSize() * count);
-
-    final var requests = new ArrayList<CompletableFuture<TransferBatch>>(count);
-    for (int index = 0; index < count; index++) {
-      var batch = new IdBatch(count);
-      batch.add();
-      batch.setId(reader.u128());
-
-      requests.add(client.lookupTransfersAsync(batch));
-    }
-
-    class Result {
-      private final byte[] id;
-      private final byte[] debitAccountId;
-      private final byte[] creditAccountId;
-      private final BigInteger amount;
-      private final byte[] pendingId;
-      private final byte[] userData128;
-      private final long userData64;
-      private final int userData32;
-      private final int timeout;
-      private final int ledger;
-      private final int code;
-      private final int flags;
-      private final long timestamp;
-
-      public Result(byte[] id, byte[] debitAccountId, byte[] creditAccountId,
-                   BigInteger amount, byte[] pendingId,
-                   byte[] userData128, long userData64, int userData32,
-                   int timeout, int ledger, int code, int flags, long timestamp) {
-        this.id = id;
-        this.debitAccountId = debitAccountId;
-        this.creditAccountId = creditAccountId;
-        this.amount = amount;
-        this.pendingId = pendingId;
-        this.userData128 = userData128;
-        this.userData64 = userData64;
-        this.userData32 = userData32;
-        this.timeout = timeout;
-        this.ledger = ledger;
-        this.code = code;
-        this.flags = flags;
-        this.timestamp = timestamp;
-      }
-
-      public byte[] id() { return id; }
-      public byte[] debitAccountId() { return debitAccountId; }
-      public byte[] creditAccountId() { return creditAccountId; }
-      public BigInteger amount() { return amount; }
-      public byte[] pendingId() { return pendingId; }
-      public byte[] userData128() { return userData128; }
-      public long userData64() { return userData64; }
-      public int userData32() { return userData32; }
-      public int timeout() { return timeout; }
-      public int ledger() { return ledger; }
-      public int code() { return code; }
-      public int flags() { return flags; }
-      public long timestamp() { return timestamp; }
-    }
-    var results = new ArrayList<Result>(count);
-
-    // Wait for all tasks.
-    for (final var request : requests) {
-      final var result = request.get();
-
-      if (result.next()) {
-        results.add(new Result(
-            result.getId(),
-            result.getDebitAccountId(),
-            result.getCreditAccountId(),
-            result.getAmount(),
-            result.getPendingId(),
-            result.getUserData128(),
-            result.getUserData64(),
-            result.getUserData32(),
-            result.getTimeout(),
-            result.getLedger(),
-            result.getCode(),
-            result.getFlags(),
-            result.getTimestamp()));
-      }
-    }
-
-    writer.allocate(4 + Driver.Operation.LOOKUP_TRANSFERS.resultSize() * results.size());
-    writer.u32(results.size());
-    for (final var result : results) {
-      writer.u128(result.id);
-      writer.u128(result.debitAccountId);
-      writer.u128(result.creditAccountId);
-      writer.u128(UInt128.asBytes(result.amount));
-      writer.u128(result.pendingId);
-      writer.u128(result.userData128);
-      writer.u64(result.userData64);
-      writer.u32(result.userData32);
-      writer.u32(result.timeout);
-      writer.u32(result.ledger);
-      writer.u16(result.code);
-      writer.u16(result.flags);
-      writer.u64(result.timestamp);
-    }
-    writer.flush();
-  }
-
-  // Based off `Operation` in `src/state_machine.zig`.
   enum Operation {
-    CREATE_ACCOUNTS(138),
-    CREATE_TRANSFERS(139),
-    LOOKUP_ACCOUNTS(140),
-    LOOKUP_TRANSFERS(141),
-    GET_ACCOUNT_TRANSFERS(142),
-    GET_ACCOUNT_BALANCES(143),
-    QUERY_ACCOUNTS(144),
-    QUERY_TRANSFERS(145);
+    INSERT_EVENTS(146, 128, 8),
+    QUERY_UUID(149, 32, 16),
+    QUERY_LATEST(154, 128, 128);
 
     int value;
+    int eventSize;
+    int resultSize;
 
-    Operation(int value) {
+    Operation(int value, int eventSize, int resultSize) {
       this.value = value;
+      this.eventSize = eventSize;
+      this.resultSize = resultSize;
     }
 
     static Map<Integer, Operation> BY_VALUE = new HashMap<>();
@@ -641,50 +239,14 @@ class Driver {
     }
 
     int eventSize() {
-      switch (this) {
-        case CREATE_ACCOUNTS:
-          return 128;
-        case CREATE_TRANSFERS:
-          return 128;
-        case LOOKUP_ACCOUNTS:
-          return 16;
-        case LOOKUP_TRANSFERS:
-          return 16;
-        case GET_ACCOUNT_BALANCES:
-        case GET_ACCOUNT_TRANSFERS:
-        case QUERY_ACCOUNTS:
-        case QUERY_TRANSFERS:
-        default:
-          throw new RuntimeException("unsupported operation: " + name());
-      }
+      return eventSize;
     }
 
     int resultSize() {
-      switch (this) {
-        case CREATE_ACCOUNTS:
-          return 8;
-        case CREATE_TRANSFERS:
-          return 8;
-        case LOOKUP_ACCOUNTS:
-          return 128;
-        case LOOKUP_TRANSFERS:
-          return 128;
-        case GET_ACCOUNT_BALANCES:
-        case GET_ACCOUNT_TRANSFERS:
-        case QUERY_ACCOUNTS:
-        case QUERY_TRANSFERS:
-        default:
-          throw new RuntimeException("unsupported operation: " + name());
-      }
+      return resultSize;
     }
   }
 
-  /**
-   * Reads sized chunks into a buffer, and uses that to convert from
-   * the Vortex driver binary protocol data to natively typed values.
-   *
-   * The entire `read` buffer must be consumed before calling `read` again.
-   */
   static class Reader {
     ReadableByteChannel input;
     ByteBuffer buffer = null;
@@ -706,36 +268,41 @@ class Driver {
       this.buffer.rewind();
     }
 
-    int u8() throws IOException {
+    void skip(int bytes) {
+      buffer.position(buffer.position() + bytes);
+    }
+
+    int u8() {
       return Byte.toUnsignedInt(buffer.get());
     }
 
-    int u16() throws IOException {
+    int u16() {
       return Short.toUnsignedInt(buffer.getShort());
     }
 
-    int u32() throws IOException {
+    int u32() {
       return (int) Integer.toUnsignedLong(buffer.getInt());
     }
 
-    long u64() throws IOException {
+    long u64() {
       return buffer.getLong();
     }
 
-    byte[] u128() throws IOException {
+    long i64() {
+      return buffer.getLong();
+    }
+
+    int i32() {
+      return buffer.getInt();
+    }
+
+    byte[] u128() {
       var result = new byte[16];
       buffer.get(result, 0, 16);
       return result;
     }
   }
 
-  /**
-   * Allocates a buffer of a certain size, and writes natively typed values as
-   * Vortex driver binary protocol data.
-   *
-   * The entire allocated buffer must be filled before writing or allocating a
-   * new buffer.
-   */
   static class Writer {
     WritableByteChannel output;
     ByteBuffer buffer = null;
@@ -744,47 +311,56 @@ class Driver {
       this.output = output;
     }
 
-    void allocate(int size) {
+    void allocate(int count) {
       if (this.buffer != null && this.buffer.hasRemaining()) {
-        throw new RuntimeException(String.format("existing buffer has %d bytes remaining",
+        throw new RuntimeException(String.format("existing write buffer has %d bytes remaining",
             this.buffer.remaining()));
       }
-      this.buffer = ByteBuffer.allocateDirect(size).order(BYTE_ORDER).position(0);
+      this.buffer = ByteBuffer.allocateDirect(count).order(BYTE_ORDER);
     }
 
-    /**
-     * Writes the buffer to the output channel. The buffer must be filled.
-     */
-    void flush() throws IOException {
-      if (this.buffer != null && this.buffer.hasRemaining()) {
-        throw new RuntimeException(String.format("buffer has %d bytes remaining, refusing to write",
-            this.buffer.remaining()));
-      }
-      buffer.rewind();
-      while (buffer.hasRemaining()) {
-        output.write(buffer);
-      }
-    }
-
-    void u8(int value) throws IOException {
+    void u8(int value) {
       buffer.put((byte) value);
     }
 
-    void u16(int value) throws IOException {
+    void u16(int value) {
       buffer.putShort((short) value);
     }
 
-    void u32(int value) throws IOException {
+    void u32(int value) {
       buffer.putInt(value);
     }
 
-    void u64(long value) throws IOException {
+    void u64(long value) {
       buffer.putLong(value);
     }
 
-    void u128(byte[] value) throws IOException {
-      buffer.put(value);
+    void i64(long value) {
+      buffer.putLong(value);
     }
 
+    void i32(int value) {
+      buffer.putInt(value);
+    }
+
+    void u128(byte[] bytes) {
+      buffer.put(bytes);
+    }
+
+    void bytes(byte[] bytes) {
+      buffer.put(bytes);
+    }
+
+    void zeros(int count) {
+      for (int i = 0; i < count; i++) {
+        buffer.put((byte) 0);
+      }
+    }
+
+    void flush() throws IOException {
+      buffer.rewind();
+      output.write(buffer);
+      buffer = null;
+    }
   }
 }

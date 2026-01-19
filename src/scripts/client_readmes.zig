@@ -184,7 +184,6 @@ fn readme_root(ctx: *Context) !void {
             \\replica. The address is read from the `ARCHERDB_ADDRESS`
             \\environment variable and defaults to port `3000`.
         );
-        ctx.code_section("client");
         ctx.paragraph(ctx.docs.client_object_documentation);
 
         ctx.paragraph(
@@ -196,284 +195,24 @@ fn readme_root(ctx: *Context) !void {
     }
 
     {
-        ctx.header(2, "Creating Accounts");
-        ctx.paragraph(
-            \\See details for account fields in the [Accounts
-            \\reference](https://docs.archerdb.com/reference/account).
-        );
-        ctx.code_section("create-accounts");
-
-        ctx.paragraph(
-            \\See details for the recommended ID scheme in
-            \\[time-based identifiers](https://docs.archerdb.com/coding/data-modeling#archerdb-time-based-identifiers-recommended).
-        );
-
-        ctx.paragraph(ctx.docs.create_accounts_documentation);
-
-        ctx.header(3, "Account Flags");
-        ctx.paragraph(
-            \\The account flags value is a bitfield. See details for
-            \\these flags in the [Accounts
-            \\reference](https://docs.archerdb.com/reference/account#flags).
-        );
-        ctx.paragraph(ctx.docs.account_flags_documentation);
-
-        ctx.paragraph(
-            \\For example, to link two accounts where the first account
-            \\additionally has the `debits_must_not_exceed_credits` constraint:
-        );
-        ctx.code_section("account-flags");
-
-        ctx.header(3, "Response and Errors");
-        ctx.paragraph(
-            \\The response is an empty array if all accounts were
-            \\created successfully. If the response is non-empty, each
-            \\object in the response array contains error information
-            \\for an account that failed. The error object contains an
-            \\error code and the index of the account in the request
-            \\batch.
-            \\
-            \\See all error conditions in the [create_accounts
-            \\reference](https://docs.archerdb.com/reference/requests/create_accounts).
-        );
-
-        ctx.code_section("create-accounts-errors");
-
-        ctx.paragraph(ctx.docs.create_accounts_errors_documentation);
+        ctx.header(2, "Insert Events");
+        ctx.paragraph(ctx.docs.insert_events_documentation);
+        ctx.paragraph(ctx.docs.insert_events_errors_documentation);
     }
 
     {
-        ctx.header(2, "Account Lookup");
-        ctx.paragraph(
-            \\Account lookup is batched, like account creation. Pass
-            \\in all IDs to fetch. The account for each matched ID is returned.
-            \\
-            \\If no account matches an ID, no object is returned for
-            \\that account. So the order of accounts in the response is
-            \\not necessarily the same as the order of IDs in the
-            \\request. You can refer to the ID field in the response to
-            \\distinguish accounts.
-        );
-        ctx.code_section("lookup-accounts");
+        ctx.header(2, "GeoEvent Flags");
+        ctx.paragraph(ctx.docs.geo_event_flags_documentation);
     }
 
     {
-        ctx.header(2, "Create Transfers");
-        ctx.paragraph(
-            \\This creates a journal entry between two accounts.
-            \\
-            \\See details for transfer fields in the [Transfers
-            \\reference](https://docs.archerdb.com/reference/transfer).
-        );
-        ctx.code_section("create-transfers");
-
-        ctx.paragraph(
-            \\See details for the recommended ID scheme in
-            \\[time-based identifiers](https://docs.archerdb.com/coding/data-modeling#archerdb-time-based-identifiers-recommended).
-        );
-
-        ctx.header(3, "Response and Errors");
-        ctx.paragraph(
-            \\The response is an empty array if all transfers were created
-            \\successfully. If the response is non-empty, each object in the
-            \\response array contains error information for a transfer that
-            \\failed. The error object contains an error code and the index of the
-            \\transfer in the request batch.
-            \\
-            \\See all error conditions in the [create_transfers
-            \\reference](https://docs.archerdb.com/reference/requests/create_transfers).
-        );
-        ctx.code_section("create-transfers-errors");
-
-        ctx.paragraph(ctx.docs.create_transfers_errors_documentation);
+        ctx.header(2, "Query Operations");
+        ctx.paragraph(ctx.docs.query_operations_documentation);
     }
 
     {
-        ctx.header(2, "Batching");
-        ctx.paragraph(
-            \\ArcherDB performance is maximized when you batch
-            \\API requests.
-            \\A client instance shared across multiple threads/tasks can automatically
-            \\batch concurrent requests, but the application must still send as many events
-            \\as possible in a single call.
-            \\For example, if you insert 1 million transfers sequentially, one at a time,
-            \\the insert rate will be a *fraction* of the potential, because the client will
-            \\wait for a reply between each one.
-        );
-        ctx.code_section("no-batch");
-        ctx.paragraph(
-            \\Instead, **always batch as much as you can**.
-            \\The maximum batch size is set in the ArcherDB server. The default is 8189.
-        );
-        ctx.code_section("batch");
-
-        ctx.header(3, "Queues and Workers");
-        ctx.paragraph(
-            \\If you are making requests to ArcherDB from workers
-            \\pulling jobs from a queue, you can batch requests to
-            \\ArcherDB by having the worker act on multiple jobs from
-            \\the queue at once rather than one at a time. i.e. pulling
-            \\multiple jobs from the queue rather than just one.
-        );
-    }
-
-    {
-        ctx.header(2, "Transfer Flags");
-        ctx.paragraph(
-            \\The transfer `flags` value is a bitfield. See details for these flags in
-            \\the [Transfers
-            \\reference](https://docs.archerdb.com/reference/transfer#flags).
-        );
-        ctx.paragraph(ctx.docs.transfer_flags_documentation);
-        ctx.paragraph("For example, to link `transfer0` and `transfer1`:");
-        ctx.code_section("transfer-flags-link");
-
-        ctx.header(3, "Two-Phase Transfers");
-        ctx.paragraph(
-            \\Two-phase transfers are supported natively by toggling the appropriate
-            \\flag. ArcherDB will then adjust the `credits_pending` and
-            \\`debits_pending` fields of the appropriate accounts. A corresponding
-            \\post pending transfer then needs to be sent to post or void the
-            \\transfer.
-        );
-        ctx.header(4, "Post a Pending Transfer");
-        ctx.paragraph(
-            \\With `flags` set to `post_pending_transfer`,
-            \\ArcherDB will post the transfer. ArcherDB will atomically roll
-            \\back the changes to `debits_pending` and `credits_pending` of the
-            \\appropriate accounts and apply them to the `debits_posted` and
-            \\`credits_posted` balances.
-        );
-        ctx.code_section("transfer-flags-post");
-
-        ctx.header(4, "Void a Pending Transfer");
-        ctx.paragraph(
-            \\In contrast, with `flags` set to `void_pending_transfer`,
-            \\ArcherDB will void the transfer. ArcherDB will roll
-            \\back the changes to `debits_pending` and `credits_pending` of the
-            \\appropriate accounts and **not** apply them to the `debits_posted` and
-            \\`credits_posted` balances.
-        );
-        ctx.code_section("transfer-flags-void");
-    }
-
-    {
-        ctx.header(2, "Transfer Lookup");
-        ctx.paragraph(
-            \\NOTE: While transfer lookup exists, it is not a flexible query API. We
-            \\are developing query APIs and there will be new methods for querying
-            \\transfers in the future.
-            \\
-            \\Transfer lookup is batched, like transfer creation. Pass in all `id`s to
-            \\fetch, and matched transfers are returned.
-            \\
-            \\If no transfer matches an `id`, no object is returned for that
-            \\transfer. So the order of transfers in the response is not necessarily
-            \\the same as the order of `id`s in the request. You can refer to the
-            \\`id` field in the response to distinguish transfers.
-        );
-        ctx.code_section("lookup-transfers");
-    }
-
-    {
-        ctx.header(2, "Get Account Transfers");
-        ctx.paragraph(
-            \\NOTE: This is a preview API that is subject to breaking changes once we have
-            \\a stable querying API.
-            \\
-            \\Fetches the transfers involving a given account, allowing basic filter and pagination
-            \\capabilities.
-            \\
-            \\The transfers in the response are sorted by `timestamp` in chronological or
-            \\reverse-chronological order.
-        );
-        ctx.code_section("get-account-transfers");
-    }
-
-    {
-        ctx.header(2, "Get Account Balances");
-        ctx.paragraph(
-            \\NOTE: This is a preview API that is subject to breaking changes once we have
-            \\a stable querying API.
-            \\
-            \\Fetches the point-in-time balances of a given account, allowing basic filter and
-            \\pagination capabilities.
-            \\
-            \\Only accounts created with the flag
-            \\[`history`](https://docs.archerdb.com/reference/account#flagshistory) set retain
-            \\[historical balances](https://docs.archerdb.com/reference/requests/get_account_balances).
-            \\
-            \\The balances in the response are sorted by `timestamp` in chronological or
-            \\reverse-chronological order.
-        );
-        ctx.code_section("get-account-balances");
-    }
-
-    {
-        ctx.header(2, "Query Accounts");
-        ctx.paragraph(
-            \\NOTE: This is a preview API that is subject to breaking changes once we have
-            \\a stable querying API.
-            \\
-            \\Query accounts by the intersection of some fields and by timestamp range.
-            \\
-            \\The accounts in the response are sorted by `timestamp` in chronological or
-            \\reverse-chronological order.
-        );
-        ctx.code_section("query-accounts");
-    }
-
-    {
-        ctx.header(2, "Query Transfers");
-        ctx.paragraph(
-            \\NOTE: This is a preview API that is subject to breaking changes once we have
-            \\a stable querying API.
-            \\
-            \\Query transfers by the intersection of some fields and by timestamp range.
-            \\
-            \\The transfers in the response are sorted by `timestamp` in chronological or
-            \\reverse-chronological order.
-        );
-        ctx.code_section("query-transfers");
-    }
-
-    {
-        ctx.header(2, "Linked Events");
-        ctx.paragraph(
-            \\When the `linked` flag is specified for an account when creating accounts or
-            \\a transfer when creating transfers, it links that event with the next event in the
-            \\batch, to create a chain of events, of arbitrary length, which all
-            \\succeed or fail together. The tail of a chain is denoted by the first
-            \\event without this flag. The last event in a batch may therefore never
-            \\have the `linked` flag set as this would leave a chain
-            \\open-ended. Multiple chains or individual events may coexist within a
-            \\batch to succeed or fail independently.
-            \\
-            \\Events within a chain are executed within order, or are rolled back on
-            \\error, so that the effect of each event in the chain is visible to the
-            \\next, and so that the chain is either visible or invisible as a unit
-            \\to subsequent events after the chain. The event that was the first to
-            \\break the chain will have a unique error result. Other events in the
-            \\chain will have their error result set to `linked_event_failed`.
-        );
-        ctx.code_section("linked-events");
-    }
-
-    {
-        ctx.header(2, "Imported Events");
-        ctx.paragraph(
-            \\When the `imported` flag is specified for an account when creating accounts or
-            \\a transfer when creating transfers, it allows importing historical events with
-            \\a user-defined timestamp.
-            \\
-            \\The entire batch of events must be set with the flag `imported`.
-            \\
-            \\It's recommended to submit the whole batch as a `linked` chain of events, ensuring that
-            \\if any event fails, none of them are committed, preserving the last timestamp unchanged.
-            \\This approach gives the application a chance to correct failed imported events, re-submitting
-            \\the batch again with the same user-defined timestamps.
-        );
-        ctx.code_section("imported-events");
+        ctx.header(2, "Delete Entities");
+        ctx.paragraph(ctx.docs.delete_entities_documentation);
     }
 
     ctx.ensure_final_newline();

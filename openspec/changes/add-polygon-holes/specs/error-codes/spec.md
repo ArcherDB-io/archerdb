@@ -1,3 +1,5 @@
+# Error Codes - Polygon Holes
+
 ## ADDED Requirements
 
 ### Requirement: Polygon Hole Error Codes
@@ -80,9 +82,5 @@ The validation error code table SHALL include polygon hole errors.
 
 | Requirement | Status | Notes |
 |-------------|--------|-------|
-| too_many_holes (117) | ✓ Complete | `error_codes.zig:111` |
-| hole_vertex_count_invalid (118) | ✓ Complete | `error_codes.zig:113` |
-| hole_not_contained (119) | ✓ Complete | `error_codes.zig:115` |
-| holes_overlap (120) | ✓ Complete | `error_codes.zig:117` |
-| Error descriptions | ✓ Complete | `.description()` methods |
-| Non-retryable classification | ✓ Complete | `.isRetriable()` returns false |
+| Polygon Hole Error Codes | IMPLEMENTED | `src/geo_state_machine.zig` |
+| Validation Error Code Table | IMPLEMENTED | `src/geo_state_machine.zig` |

@@ -5,6 +5,7 @@
 // Provides breach detection, assessment, and notification delivery.
 
 const std = @import("std");
+const stdx = @import("stdx");
 const Allocator = std.mem.Allocator;
 const compliance_audit = @import("compliance_audit.zig");
 const BreachIncident = compliance_audit.BreachIncident;
@@ -171,7 +172,11 @@ pub const NotificationRecipient = struct {
     created_at: u64,
 
     /// Initialize recipient.
-    pub fn init(recipient_id: u128, recipient_type: RecipientType, channel: DeliveryChannel) NotificationRecipient {
+    pub fn init(
+        recipient_id: u128,
+        recipient_type: RecipientType,
+        channel: DeliveryChannel,
+    ) NotificationRecipient {
         return .{
             .recipient_id = recipient_id,
             .recipient_type = recipient_type,
@@ -187,12 +192,15 @@ pub const NotificationRecipient = struct {
     /// Set contact info.
     pub fn setContactInfo(self: *NotificationRecipient, info: []const u8) void {
         const len = @min(info.len, MAX_CONTACT_INFO);
-        @memcpy(self.contact_info[0..len], info[0..len]);
+        stdx.copy_left(.inexact, u8, self.contact_info[0..len], info[0..len]);
+        if (len < self.contact_info.len) {
+            @memset(self.contact_info[len..], 0);
+        }
         self.contact_info_len = @intCast(len);
     }
 
     /// Get contact info.
-    pub fn getContactInfo(self: NotificationRecipient) []const u8 {
+    pub fn getContactInfo(self: *const NotificationRecipient) []const u8 {
         return self.contact_info[0..self.contact_info_len];
     }
 };
@@ -229,7 +237,12 @@ pub const BreachNotification = struct {
     last_error: u32,
 
     /// Initialize notification.
-    pub fn init(notification_id: u64, breach_id: u64, recipient_id: u128, recipient_type: RecipientType) BreachNotification {
+    pub fn init(
+        notification_id: u64,
+        breach_id: u64,
+        recipient_id: u128,
+        recipient_type: RecipientType,
+    ) BreachNotification {
         return .{
             .notification_id = notification_id,
             .breach_id = breach_id,
@@ -251,7 +264,7 @@ pub const BreachNotification = struct {
     /// Set notification content.
     pub fn setContent(self: *BreachNotification, content_data: []const u8) void {
         const len = @min(content_data.len, MAX_NOTIFICATION_CONTENT);
-        @memcpy(self.content[0..len], content_data[0..len]);
+        stdx.copy_disjoint(.inexact, u8, self.content[0..len], content_data[0..len]);
         self.content_len = @intCast(len);
     }
 
@@ -289,14 +302,16 @@ pub const BreachNotification = struct {
     pub fn isAuthorityOverdue(self: BreachNotification, breach_detected_at: u64) bool {
         if (self.recipient_type != .supervisory_authority) return false;
         const now: u64 = @intCast(std.time.nanoTimestamp());
-        return (now - breach_detected_at) > AUTHORITY_NOTIFICATION_DEADLINE_NS and self.status != .delivered and self.status != .acknowledged;
+        return (now - breach_detected_at) > AUTHORITY_NOTIFICATION_DEADLINE_NS and
+            self.status != .delivered and self.status != .acknowledged;
     }
 
     /// Check if notification is overdue for users.
     pub fn isUserOverdue(self: BreachNotification, breach_detected_at: u64) bool {
         if (self.recipient_type != .data_subject) return false;
         const now: u64 = @intCast(std.time.nanoTimestamp());
-        return (now - breach_detected_at) > USER_NOTIFICATION_DEADLINE_NS and self.status != .delivered and self.status != .acknowledged;
+        return (now - breach_detected_at) > USER_NOTIFICATION_DEADLINE_NS and
+            self.status != .delivered and self.status != .acknowledged;
     }
 };
 
@@ -395,7 +410,11 @@ pub const NotificationTemplate = struct {
     };
 
     /// Initialize template.
-    pub fn init(template_id: u32, template_type: TemplateType, language: [2]u8) NotificationTemplate {
+    pub fn init(
+        template_id: u32,
+        template_type: TemplateType,
+        language: [2]u8,
+    ) NotificationTemplate {
         return .{
             .template_id = template_id,
             .template_type = template_type,
@@ -408,7 +427,7 @@ pub const NotificationTemplate = struct {
     /// Set template content.
     pub fn setContent(self: *NotificationTemplate, content_data: []const u8) void {
         const len = @min(content_data.len, MAX_NOTIFICATION_CONTENT);
-        @memcpy(self.content[0..len], content_data[0..len]);
+        stdx.copy_disjoint(.inexact, u8, self.content[0..len], content_data[0..len]);
         self.content_len = @intCast(len);
     }
 
@@ -473,7 +492,10 @@ pub const BreachNotificationSystem = struct {
     }
 
     /// Register a notification recipient.
-    pub fn registerRecipient(self: *BreachNotificationSystem, recipient: NotificationRecipient) !void {
+    pub fn registerRecipient(
+        self: *BreachNotificationSystem,
+        recipient: NotificationRecipient,
+    ) !void {
         try self.recipients.put(recipient.recipient_id, recipient);
     }
 
@@ -483,7 +505,10 @@ pub const BreachNotificationSystem = struct {
     }
 
     /// Get recipient by ID.
-    pub fn getRecipient(self: *BreachNotificationSystem, recipient_id: u128) ?NotificationRecipient {
+    pub fn getRecipient(
+        self: *BreachNotificationSystem,
+        recipient_id: u128,
+    ) ?NotificationRecipient {
         return self.recipients.get(recipient_id);
     }
 
@@ -503,7 +528,10 @@ pub const BreachNotificationSystem = struct {
     }
 
     /// Record access pattern for monitoring.
-    pub fn recordAccessPattern(self: *BreachNotificationSystem, pattern: AccessPattern) !?DetectionType {
+    pub fn recordAccessPattern(
+        self: *BreachNotificationSystem,
+        pattern: AccessPattern,
+    ) !?DetectionType {
         try self.access_patterns.put(pattern.entity_id, pattern);
 
         // Check for anomalies
@@ -584,9 +612,9 @@ pub const BreachNotificationSystem = struct {
         const authority_required = final_score >= 20 or affected_count > 0;
 
         // Article 34: Individual notification when high risk to rights/freedoms
-        const individual_required = final_score >= 50 or
-            (data_categories & AssessmentResult.DataCategory.biometric != 0) or
-            (data_categories & AssessmentResult.DataCategory.credentials != 0);
+        const biometric = (data_categories & AssessmentResult.DataCategory.biometric) != 0;
+        const credentials = (data_categories & AssessmentResult.DataCategory.credentials) != 0;
+        const individual_required = final_score >= 50 or biometric or credentials;
 
         // Derive severity from risk score
         const derived_severity: AuditSeverity = if (final_score >= 75)
@@ -618,7 +646,12 @@ pub const BreachNotificationSystem = struct {
         content: []const u8,
     ) !u64 {
         const notification_id = self.next_notification_id;
-        var notification = BreachNotification.init(notification_id, breach_id, recipient_id, recipient_type);
+        var notification = BreachNotification.init(
+            notification_id,
+            breach_id,
+            recipient_id,
+            recipient_type,
+        );
         notification.setContent(content);
 
         // Set channel from recipient if registered
@@ -672,7 +705,10 @@ pub const BreachNotificationSystem = struct {
     }
 
     /// Mark notification as acknowledged.
-    pub fn markNotificationAcknowledged(self: *BreachNotificationSystem, notification_id: u64) bool {
+    pub fn markNotificationAcknowledged(
+        self: *BreachNotificationSystem,
+        notification_id: u64,
+    ) bool {
         for (self.notifications.items) |*notification| {
             if (notification.notification_id == notification_id) {
                 notification.markAcknowledged();
@@ -684,7 +720,11 @@ pub const BreachNotificationSystem = struct {
     }
 
     /// Mark notification as failed.
-    pub fn markNotificationFailed(self: *BreachNotificationSystem, notification_id: u64, error_code: u32) bool {
+    pub fn markNotificationFailed(
+        self: *BreachNotificationSystem,
+        notification_id: u64,
+        error_code: u32,
+    ) bool {
         for (self.notifications.items) |*notification| {
             if (notification.notification_id == notification_id) {
                 notification.markFailed(error_code);
@@ -696,10 +736,15 @@ pub const BreachNotificationSystem = struct {
     }
 
     /// Get pending notifications.
-    pub fn getPendingNotifications(self: *BreachNotificationSystem, buffer: []BreachNotification) usize {
+    pub fn getPendingNotifications(
+        self: *BreachNotificationSystem,
+        buffer: []BreachNotification,
+    ) usize {
         var count: usize = 0;
         for (self.notifications.items) |notification| {
-            if (notification.status == .pending or notification.status == .retry_scheduled) {
+            if (notification.status == .pending or
+                notification.status == .retry_scheduled)
+            {
                 if (count < buffer.len) {
                     buffer[count] = notification;
                     count += 1;
@@ -710,7 +755,11 @@ pub const BreachNotificationSystem = struct {
     }
 
     /// Get notifications by breach ID.
-    pub fn getBreachNotifications(self: *BreachNotificationSystem, breach_id: u64, buffer: []BreachNotification) usize {
+    pub fn getBreachNotifications(
+        self: *BreachNotificationSystem,
+        breach_id: u64,
+        buffer: []BreachNotification,
+    ) usize {
         var count: usize = 0;
         for (self.notifications.items) |notification| {
             if (notification.breach_id == breach_id) {
@@ -724,7 +773,10 @@ pub const BreachNotificationSystem = struct {
     }
 
     /// Check for overdue notifications.
-    pub fn checkOverdueNotifications(self: *BreachNotificationSystem, breach_detected_at: u64) OverdueReport {
+    pub fn checkOverdueNotifications(
+        self: *BreachNotificationSystem,
+        breach_detected_at: u64,
+    ) OverdueReport {
         var report = OverdueReport{};
 
         for (self.notifications.items) |notification| {
@@ -760,9 +812,9 @@ pub const BreachNotificationSystem = struct {
         var template_content: ?[]const u8 = null;
         var iter = self.templates.iterator();
         while (iter.next()) |entry| {
-            if (entry.value_ptr.template_type == template_type and
-                std.mem.eql(u8, &entry.value_ptr.language, &language))
-            {
+            const type_match = entry.value_ptr.template_type == template_type;
+            const lang_match = std.mem.eql(u8, &entry.value_ptr.language, &language);
+            if (type_match and lang_match) {
                 template_content = entry.value_ptr.getContent();
                 break;
             }
@@ -776,19 +828,24 @@ pub const BreachNotificationSystem = struct {
         // For now, return template as-is (in production, would substitute variables)
         const content = template_content.?;
         const len = @min(content.len, buffer.len);
-        @memcpy(buffer[0..len], content[0..len]);
+        stdx.copy_disjoint(.inexact, u8, buffer[0..len], content[0..len]);
         return len;
     }
 
     /// Generate default notification content.
-    fn generateDefaultContent(breach: BreachIncident, assessment: AssessmentResult, buffer: []u8) usize {
+    fn generateDefaultContent(
+        breach: BreachIncident,
+        assessment: AssessmentResult,
+        buffer: []u8,
+    ) usize {
         _ = breach;
         _ = assessment;
-        const default_msg = "SECURITY NOTICE: A data breach affecting your information has been detected. " ++
+        const default_msg =
+            "SECURITY NOTICE: A data breach affecting your information has been detected. " ++
             "We are taking immediate steps to address this incident. " ++
             "For more information, please contact our Data Protection Officer.";
         const len = @min(default_msg.len, buffer.len);
-        @memcpy(buffer[0..len], default_msg[0..len]);
+        stdx.copy_disjoint(.inexact, u8, buffer[0..len], default_msg[0..len]);
         return len;
     }
 
@@ -834,7 +891,8 @@ pub const BreachNotificationSystem = struct {
                 @as(u8, @intCast((individual_on_time * 100) / individual_count))
             else
                 100,
-            .pending_notifications = self.stats.notifications_sent - self.stats.notifications_delivered,
+            .pending_notifications = self.stats.notifications_sent -
+                self.stats.notifications_delivered,
             .failed_notifications = self.stats.notifications_failed,
         };
     }
@@ -864,6 +922,7 @@ test "NotificationRecipient initialization" {
     try testing.expect(recipient.active);
 
     recipient.setContactInfo("dpa@example.gov");
+    try testing.expectEqual(@as(u16, 15), recipient.contact_info_len);
     try testing.expectEqualStrings("dpa@example.gov", recipient.getContactInfo());
 }
 
@@ -1125,7 +1184,12 @@ test "BreachNotificationSystem compliance report" {
     defer system.deinit();
 
     // Create authority notification
-    const auth_id = try system.createNotification(100, 0x1, .supervisory_authority, "Authority notice");
+    const auth_id = try system.createNotification(
+        100,
+        0x1,
+        .supervisory_authority,
+        "Authority notice",
+    );
     _ = try system.createNotification(100, 0x2, .data_subject, "User notice 1");
     _ = try system.createNotification(100, 0x3, .data_subject, "User notice 2");
 
@@ -1155,5 +1219,8 @@ test "NotificationTemplate management" {
 
     const retrieved = system.getTemplate(template_id);
     try testing.expect(retrieved != null);
-    try testing.expectEqualStrings("Dear Authority, we report a data breach...", retrieved.?.getContent());
+    try testing.expectEqualStrings(
+        "Dear Authority, we report a data breach...",
+        retrieved.?.getContent(),
+    );
 }

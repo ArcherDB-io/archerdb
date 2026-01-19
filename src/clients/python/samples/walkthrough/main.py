@@ -9,6 +9,7 @@ This sample demonstrates:
 4. Deleting entities
 5. Historical position queries
 """
+# section:imports
 import os
 import time
 import random
@@ -119,3 +120,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+# endsection:imports

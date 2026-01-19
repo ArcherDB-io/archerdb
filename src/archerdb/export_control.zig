@@ -5,6 +5,7 @@
 // Implements EAR/ITAR compliance verification per US export control regulations.
 
 const std = @import("std");
+const stdx = @import("stdx");
 const Allocator = std.mem.Allocator;
 
 /// Maximum description/note length.
@@ -197,7 +198,7 @@ pub const ExportCheckResult = struct {
     /// Set notes.
     pub fn setNotes(self: *ExportCheckResult, n: []const u8) void {
         const len = @min(n.len, MAX_DESCRIPTION);
-        @memcpy(self.notes[0..len], n[0..len]);
+        stdx.copy_disjoint(.inexact, u8, self.notes[0..len], n[0..len]);
         self.notes_len = @intCast(len);
     }
 };
@@ -255,7 +256,7 @@ pub const CountryStatus = struct {
     /// Set name.
     pub fn setName(self: *CountryStatus, n: []const u8) void {
         const len = @min(n.len, 64);
-        @memcpy(self.name[0..len], n[0..len]);
+        stdx.copy_disjoint(.inexact, u8, self.name[0..len], n[0..len]);
         self.name_len = @intCast(len);
     }
 
@@ -314,7 +315,7 @@ pub const EntityScreening = struct {
     /// Set name.
     pub fn setName(self: *EntityScreening, n: []const u8) void {
         const len = @min(n.len, MAX_ENTITY_NAME);
-        @memcpy(self.name[0..len], n[0..len]);
+        stdx.copy_disjoint(.inexact, u8, self.name[0..len], n[0..len]);
         self.name_len = @intCast(len);
     }
 
@@ -410,7 +411,7 @@ pub const CryptoClassification = struct {
     /// Set name.
     pub fn setName(self: *CryptoClassification, n: []const u8) void {
         const len = @min(n.len, 64);
-        @memcpy(self.name[0..len], n[0..len]);
+        stdx.copy_disjoint(.inexact, u8, self.name[0..len], n[0..len]);
         self.name_len = @intCast(len);
     }
 
@@ -717,7 +718,11 @@ pub const ExportControlManager = struct {
     }
 
     /// Check encryption-specific export controls.
-    fn checkEncryptionExport(self: *ExportControlManager, country: CountryStatus, strength: EncryptionStrength) ExportCheckResult {
+    fn checkEncryptionExport(
+        self: *ExportControlManager,
+        country: CountryStatus,
+        strength: EncryptionStrength,
+    ) ExportCheckResult {
         _ = self;
 
         switch (country.encryption_license) {
@@ -735,9 +740,13 @@ pub const ExportControlManager = struct {
                     var result = ExportCheckResult.denied_result(.encryption_restricted);
                     result.license_requirement = .required;
                     result.eccn_category = .telecommunications;
-                    result.required_documentation |= ExportCheckResult.Documentation.license_application;
-                    result.required_documentation |= ExportCheckResult.Documentation.classification_request;
-                    result.setNotes("Strong encryption requires license for this destination");
+                    result.required_documentation |=
+                        ExportCheckResult.Documentation.license_application;
+                    result.required_documentation |=
+                        ExportCheckResult.Documentation.classification_request;
+                    result.setNotes(
+                        "Strong encryption requires license for this destination",
+                    );
                     return result;
                 }
                 // Standard encryption may be eligible for exception
@@ -760,7 +769,11 @@ pub const ExportControlManager = struct {
     }
 
     /// Check geospatial-specific export controls.
-    fn checkGeospatialExport(self: *ExportControlManager, country: CountryStatus, sensitivity: GeospatialSensitivity) ExportCheckResult {
+    fn checkGeospatialExport(
+        self: *ExportControlManager,
+        country: CountryStatus,
+        sensitivity: GeospatialSensitivity,
+    ) ExportCheckResult {
         _ = self;
 
         switch (country.geospatial_license) {
@@ -772,7 +785,8 @@ pub const ExportControlManager = struct {
                 // Restricted data may need documentation
                 if (sensitivity == .restricted) {
                     var result = ExportCheckResult.permitted_result();
-                    result.required_documentation |= ExportCheckResult.Documentation.end_use_statement;
+                    result.required_documentation |=
+                        ExportCheckResult.Documentation.end_use_statement;
                     return result;
                 }
                 // Controlled/classified not permitted
@@ -787,7 +801,8 @@ pub const ExportControlManager = struct {
                 var result = ExportCheckResult.denied_result(.dual_use_restricted);
                 result.license_requirement = .required;
                 result.eccn_category = .navigation;
-                result.required_documentation |= ExportCheckResult.Documentation.license_application;
+                result.required_documentation |=
+                    ExportCheckResult.Documentation.license_application;
                 result.setNotes("Geospatial data export requires license");
                 return result;
             },
@@ -840,7 +855,10 @@ pub const ExportControlManager = struct {
     }
 
     /// Get entity screening result.
-    pub fn getEntityScreening(self: *ExportControlManager, entity_id: u128) ?EntityScreening {
+    pub fn getEntityScreening(
+        self: *ExportControlManager,
+        entity_id: u128,
+    ) ?EntityScreening {
         return self.entity_screenings.get(entity_id);
     }
 
@@ -920,7 +938,9 @@ pub const ExportControlManager = struct {
             .exports_permitted = self.stats.exports_permitted,
             .exports_denied = self.stats.exports_denied,
             .approval_rate = if (self.stats.exports_checked > 0)
-                @as(u8, @intCast((self.stats.exports_permitted * 100) / self.stats.exports_checked))
+                @as(u8, @intCast(
+                    (self.stats.exports_permitted * 100) / self.stats.exports_checked,
+                ))
             else
                 100,
             .entities_screened = self.stats.entities_screened,
@@ -1003,7 +1023,10 @@ test "CryptoClassification mass market eligibility" {
     class.checkMassMarketEligibility();
 
     try testing.expect(class.mass_market_eligible);
-    try testing.expectEqual(CryptoClassification.LicenseException.mass_market, class.license_exception);
+    try testing.expectEqual(
+        CryptoClassification.LicenseException.mass_market,
+        class.license_exception,
+    );
 }
 
 test "GeospatialClassification sensitivity assessment" {
@@ -1023,7 +1046,10 @@ test "GeospatialClassification infrastructure sensitivity" {
     var class = GeospatialClassification.init(1, .infrastructure_map);
     class.assessSensitivity();
 
-    try testing.expect(@intFromEnum(class.sensitivity) >= @intFromEnum(GeospatialSensitivity.restricted));
+    try testing.expect(
+        @intFromEnum(class.sensitivity) >=
+            @intFromEnum(GeospatialSensitivity.restricted),
+    );
 }
 
 test "ExportControlManager initialization" {
@@ -1103,7 +1129,10 @@ test "ExportControlManager encryption to Group D country" {
     );
 
     try testing.expect(!result.permitted);
-    try testing.expectEqual(ExportCheckResult.RestrictionReason.encryption_restricted, result.restriction_reason);
+    try testing.expectEqual(
+        ExportCheckResult.RestrictionReason.encryption_restricted,
+        result.restriction_reason,
+    );
     try testing.expectEqual(LicenseRequirement.required, result.license_requirement);
 }
 
@@ -1149,7 +1178,10 @@ test "ExportControlManager geo classification" {
     try testing.expectEqual(@as(u32, 1), class_id);
 
     try testing.expectEqual(@as(usize, 1), manager.geo_classifications.items.len);
-    try testing.expectEqual(GeospatialSensitivity.restricted, manager.geo_classifications.items[0].sensitivity);
+    try testing.expectEqual(
+        GeospatialSensitivity.restricted,
+        manager.geo_classifications.items[0].sensitivity,
+    );
 }
 
 test "ExportControlManager compliance summary" {

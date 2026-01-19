@@ -5,9 +5,10 @@ const builtin = @import("builtin");
 const assert = std.debug.assert;
 const Query = std.Target.Query;
 
-const VoprStateMachine = enum { testing, accounting, geo };
+const VoprStateMachine = enum { testing, geo };
 const VoprLog = enum { short, full };
 const ConfigBase = enum { production, lite };
+const IndexFormat = enum { standard, compact };
 
 // ArcherDB binary requires certain CPU features and supports a closed set of CPUs. Here, we
 // specify exactly which features the binary needs.
@@ -132,6 +133,11 @@ pub fn build(b: *std.Build) !void {
             "Minimum client release triple.",
         ),
         .emit_llvm_ir = b.option(bool, "emit-llvm-ir", "Emit LLVM IR (.ll file)") orelse false,
+        .integration_past = b.option(
+            []const u8,
+            "integration-past",
+            "Path to a previous ArcherDB binary for integration tests",
+        ),
         // The "archerdb version" command includes the build-time commit hash.
         .git_commit = b.option(
             []const u8,
@@ -142,7 +148,7 @@ pub fn build(b: *std.Build) !void {
             VoprStateMachine,
             "vopr-state-machine",
             "State machine.",
-        ) orelse .accounting,
+        ) orelse .geo,
         .vopr_log = b.option(
             VoprLog,
             "vopr-log",
@@ -158,6 +164,11 @@ pub fn build(b: *std.Build) !void {
             "print-exe",
             "Build tasks print the path of the executable",
         ) orelse false,
+        .index_format = b.option(
+            IndexFormat,
+            "index-format",
+            "RAM index format: 'standard' (64B, TTL) or 'compact' (32B, no TTL).",
+        ) orelse .standard,
     };
 
     const target = try resolve_target(b, build_options.target);
@@ -172,6 +183,7 @@ pub fn build(b: *std.Build) !void {
         .config_release_client_min = build_options.config_release_client_min,
         .config_aof_recovery = build_options.config_aof_recovery,
         .config_base = build_options.config_base,
+        .index_format = build_options.index_format,
     });
 
     const arch_client_header = blk: {
@@ -237,6 +249,7 @@ pub fn build(b: *std.Build) !void {
         .arch_client_header = arch_client_header,
         .target = target,
         .mode = mode,
+        .integration_past = build_options.integration_past,
     });
 
     // zig build test:jni
@@ -366,6 +379,7 @@ fn build_vsr_module(b: *std.Build, options: struct {
     config_release_client_min: ?[]const u8,
     config_aof_recovery: bool,
     config_base: ?ConfigBase = null,
+    index_format: IndexFormat = .standard,
 }) struct { *std.Build.Step.Options, *std.Build.Module } {
     // Ideally, we would return _just_ the module here, and keep options an implementation detail.
     // However, currently Zig makes it awkward to provide multiple entry points for a module:
@@ -389,6 +403,9 @@ fn build_vsr_module(b: *std.Build, options: struct {
     else
         null;
     vsr_options.addOption(?[]const u8, "config_base", config_base_str);
+
+    // Pass index_format as string for compile-time selection
+    vsr_options.addOption([]const u8, "index_format", @tagName(options.index_format));
 
     const vsr_module = b.createModule(.{
         .root_source_file = b.path("src/vsr.zig"),
@@ -471,7 +488,7 @@ fn build_ci(
     }
     if (default or mode == .fuzz) {
         build_ci_step(b, step_ci, .{ "fuzz", "--", "smoke" });
-        inline for (.{ "testing", "accounting" }) |state_machine| {
+        inline for (.{ "testing", "geo" }) |state_machine| {
             build_ci_step(b, step_ci, .{
                 "vopr",
                 "-Dvopr-state-machine=" ++ state_machine,
@@ -483,10 +500,7 @@ fn build_ci(
     }
     if (default or mode == .amqp) {
         // Smoke test the AMQP integration.
-        build_ci_script(b, step_ci, options.scripts, &.{
-            "amqp",
-            "--transfer-count=100",
-        });
+        build_ci_script(b, step_ci, options.scripts, &.{"amqp"});
     }
 
     if (all or mode == .aof) {
@@ -862,6 +876,7 @@ fn build_test(
         arch_client_header: *Generated,
         target: std.Build.ResolvedTarget,
         mode: std.builtin.OptimizeMode,
+        integration_past: ?[]const u8,
     },
 ) !void {
     const test_options = b.addOptions();
@@ -921,6 +936,7 @@ fn build_test(
         .stdx_module = options.stdx_module,
         .target = options.target,
         .mode = options.mode,
+        .integration_past = options.integration_past,
     });
 
     const run_fmt = b.addFmt(.{ .paths = &.{"."}, .check = true });
@@ -929,11 +945,7 @@ fn build_test(
     steps.@"test".dependOn(&run_stdx_unit_tests.step);
     steps.@"test".dependOn(&run_unit_tests.step);
     if (b.args == null) {
-        // NOTE: Integration tests disabled due to external dependency 404 errors.
-        // The archerdb/dependencies repository doesn't exist yet.
-        // Unit tests (909 tests) + VOPR provide comprehensive coverage.
-        // Re-enable when dependency infrastructure is set up.
-        // steps.@"test".dependOn(steps.test_integration);
+        steps.@"test".dependOn(steps.test_integration);
         steps.@"test".dependOn(steps.test_fmt);
     }
 }
@@ -950,6 +962,7 @@ fn build_test_integration(
         stdx_module: *std.Build.Module,
         target: std.Build.ResolvedTarget,
         mode: std.builtin.OptimizeMode,
+        integration_past: ?[]const u8,
     },
 ) void {
     // For integration tests, we build an independent copy of ArcherDB with "real" config and
@@ -962,16 +975,30 @@ fn build_test_integration(
         .config_release_client_min = "0.16.4",
         .config_aof_recovery = false,
     });
-    const archerdb_previous = download_release(b, "latest", options.target, options.mode);
-    const archerdb = build_archerdb_executable_multiversion(b, .{
-        .stdx_module = options.stdx_module,
-        .vsr_module = vsr_module,
-        .vsr_options = vsr_options,
-        .llvm_objcopy = options.llvm_objcopy,
-        .archerdb_previous = archerdb_previous,
-        .target = options.target,
-        .mode = options.mode,
-    });
+    const archerdb_previous: ?std.Build.LazyPath = if (options.integration_past) |path|
+        .{ .cwd_relative = path }
+    else
+        null;
+    const skip_upgrade = archerdb_previous == null;
+    const archerdb = if (archerdb_previous) |previous| blk: {
+        break :blk build_archerdb_executable_multiversion(b, .{
+            .stdx_module = options.stdx_module,
+            .vsr_module = vsr_module,
+            .vsr_options = vsr_options,
+            .llvm_objcopy = options.llvm_objcopy,
+            .archerdb_previous = previous,
+            .target = options.target,
+            .mode = options.mode,
+        });
+    } else blk: {
+        break :blk build_archerdb_executable(b, .{
+            .vsr_module = vsr_module,
+            .vsr_options = vsr_options,
+            .target = options.target,
+            .mode = options.mode,
+        }).getEmittedBin();
+    };
+    const archerdb_past = if (archerdb_previous) |previous| previous else archerdb;
 
     const vortex = build_vortex_executable(b, .{
         .arch_client_header = options.arch_client_header,
@@ -985,7 +1012,8 @@ fn build_test_integration(
 
     const integration_tests_options = b.addOptions();
     integration_tests_options.addOptionPath("archerdb_exe", archerdb);
-    integration_tests_options.addOptionPath("archerdb_exe_past", archerdb_previous);
+    integration_tests_options.addOptionPath("archerdb_exe_past", archerdb_past);
+    integration_tests_options.addOption(bool, "skip_upgrade", skip_upgrade);
     integration_tests_options.addOptionPath("vortex_exe", vortex_artifact.emitted_bin.?);
     const integration_tests = b.addTest(.{
         .name = "test-integration",

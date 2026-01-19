@@ -14,7 +14,6 @@
 
 const std = @import("std");
 const testing = std.testing;
-const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
 const stdx = @import("stdx");
@@ -22,7 +21,6 @@ const PRNG = stdx.PRNG;
 
 const geo_event = @import("geo_event.zig");
 const GeoEvent = geo_event.GeoEvent;
-const fuzz = @import("testing/fuzz.zig");
 
 /// Maximum latitude in nanodegrees (+90 degrees).
 const MAX_LAT_NANO: i64 = 90_000_000_000;
@@ -60,8 +58,6 @@ pub const FuzzConfig = struct {
 
 /// Fuzz test state for tracking operations.
 pub const FuzzState = struct {
-    const Self = @This();
-
     allocator: Allocator,
     prng: *PRNG,
     config: FuzzConfig,
@@ -73,7 +69,7 @@ pub const FuzzState = struct {
     /// Invariant violations detected.
     violations: std.ArrayList(Violation),
 
-    pub fn init(allocator: Allocator, prng: *PRNG, config: FuzzConfig) Self {
+    pub fn init(allocator: Allocator, prng: *PRNG, config: FuzzConfig) FuzzState {
         return .{
             .allocator = allocator,
             .prng = prng,
@@ -84,13 +80,13 @@ pub const FuzzState = struct {
         };
     }
 
-    pub fn deinit(self: *Self) void {
+    pub fn deinit(self: *FuzzState) void {
         self.entities.deinit();
         self.violations.deinit();
     }
 
     /// Generate a random GeoEvent.
-    pub fn generateRandomEvent(self: *Self) GeoEvent {
+    pub fn generateRandomEvent(self: *FuzzState) GeoEvent {
         const entity_id = self.generateEntityId();
         const timestamp = self.generateTimestamp();
 
@@ -130,7 +126,7 @@ pub const FuzzState = struct {
     }
 
     /// Generate entity ID with collision probability.
-    fn generateEntityId(self: *Self) u128 {
+    fn generateEntityId(self: *FuzzState) u128 {
         // 70% chance to reuse existing entity (for updates).
         if (self.entities.count() > 0 and self.prng.range_inclusive(u32, 0, 100) < 70) {
             var iter = self.entities.keyIterator();
@@ -145,13 +141,13 @@ pub const FuzzState = struct {
     }
 
     /// Generate monotonically increasing timestamp.
-    fn generateTimestamp(self: *Self) u64 {
+    fn generateTimestamp(self: *FuzzState) u64 {
         const base: u64 = 1704067200_000_000_000; // 2024-01-01
         return base + self.prng.int(u64) % (365 * 24 * 3600 * 1_000_000_000);
     }
 
     /// Execute a random operation.
-    pub fn executeRandomOperation(self: *Self) !void {
+    pub fn executeRandomOperation(self: *FuzzState) !void {
         const op = self.selectOperation();
         switch (op) {
             .insert => try self.executeInsert(),
@@ -164,7 +160,7 @@ pub const FuzzState = struct {
     }
 
     /// Select operation based on weights.
-    fn selectOperation(self: *Self) FuzzOperation {
+    fn selectOperation(self: *FuzzState) FuzzOperation {
         const cfg = self.config;
         const total = cfg.insert_weight + cfg.upsert_weight + cfg.delete_weight +
             cfg.query_uuid_weight + cfg.query_radius_weight + cfg.query_latest_weight;
@@ -186,7 +182,7 @@ pub const FuzzState = struct {
     }
 
     /// Execute insert operation.
-    fn executeInsert(self: *Self) !void {
+    fn executeInsert(self: *FuzzState) !void {
         const event = self.generateRandomEvent();
         self.stats.inserts += 1;
 
@@ -209,7 +205,7 @@ pub const FuzzState = struct {
     }
 
     /// Execute upsert operation.
-    fn executeUpsert(self: *Self) !void {
+    fn executeUpsert(self: *FuzzState) !void {
         const event = self.generateRandomEvent();
         self.stats.upserts += 1;
 
@@ -230,7 +226,7 @@ pub const FuzzState = struct {
     }
 
     /// Execute delete operation.
-    fn executeDelete(self: *Self) !void {
+    fn executeDelete(self: *FuzzState) !void {
         self.stats.deletes += 1;
 
         if (self.entities.count() == 0) return;
@@ -250,7 +246,7 @@ pub const FuzzState = struct {
     }
 
     /// Execute UUID query operation.
-    fn executeQueryUuid(self: *Self) !void {
+    fn executeQueryUuid(self: *FuzzState) !void {
         self.stats.queries_uuid += 1;
 
         if (self.entities.count() == 0) return;
@@ -278,7 +274,7 @@ pub const FuzzState = struct {
     }
 
     /// Execute radius query operation.
-    fn executeQueryRadius(self: *Self) !void {
+    fn executeQueryRadius(self: *FuzzState) !void {
         self.stats.queries_radius += 1;
 
         // Generate random center and radius (using unsigned range and convert).
@@ -304,7 +300,7 @@ pub const FuzzState = struct {
     }
 
     /// Execute latest query operation.
-    fn executeQueryLatest(self: *Self) !void {
+    fn executeQueryLatest(self: *FuzzState) !void {
         self.stats.queries_latest += 1;
 
         // Find entity with latest timestamp.
@@ -322,7 +318,7 @@ pub const FuzzState = struct {
     }
 
     /// Verify spatial bounds.
-    fn verifyBounds(self: *Self, event: GeoEvent) !void {
+    fn verifyBounds(self: *FuzzState, event: GeoEvent) !void {
         if (event.lat_nano < -MAX_LAT_NANO or event.lat_nano > MAX_LAT_NANO) {
             try self.violations.append(.{
                 .type = .invalid_latitude,
@@ -340,12 +336,12 @@ pub const FuzzState = struct {
     }
 
     /// Get test statistics.
-    pub fn getStats(self: *const Self) FuzzStats {
+    pub fn getStats(self: *const FuzzState) FuzzStats {
         return self.stats;
     }
 
     /// Check if any violations occurred.
-    pub fn hasViolations(self: *const Self) bool {
+    pub fn hasViolations(self: *const FuzzState) bool {
         return self.violations.items.len > 0;
     }
 };
@@ -529,7 +525,10 @@ test "state_machine_fuzz: deterministic replay" {
     }
 
     // Results should be identical.
-    try testing.expectEqual(state1.getStats().totalOperations(), state2.getStats().totalOperations());
+    try testing.expectEqual(
+        state1.getStats().totalOperations(),
+        state2.getStats().totalOperations(),
+    );
     try testing.expectEqual(state1.entities.count(), state2.entities.count());
 }
 

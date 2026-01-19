@@ -195,9 +195,9 @@ The system SHALL define error codes for multi-region operations.
 
 | Requirement | Status | Notes |
 |-------------|--------|-------|
-| Async Log Shipping | ✓ Complete | `replication_log.zig` |
-| Read-Only Followers | ✓ Complete | Follower mode in VSR |
-| Geo-Sharding | ✓ Complete | S2-based region routing |
-| Active-Active (v2.2+) | ⚠ Deferred | Conflict resolution v2.2 |
-| Multi-Region Metrics | ✓ Complete | Replication lag gauges |
-| Multi-Region Error Codes (213-218) | ✓ Complete | `error_codes.zig` |
+| Async Log Shipping | IMPLEMENTED | `src/replication.zig` |
+| Read-Only Follower Regions | IMPLEMENTED | `src/replication.zig` |
+| Geo-Sharding | IMPLEMENTED | `src/geo_sharding.zig` |
+| Active-Active Replication (v2.2+) | IMPLEMENTED | `src/replication.zig`, `src/vector_clock.zig` |
+| Multi-Region Observability | IMPLEMENTED | `src/replication.zig` |
+| Multi-Region Error Codes | IMPLEMENTED | `src/replication.zig` |

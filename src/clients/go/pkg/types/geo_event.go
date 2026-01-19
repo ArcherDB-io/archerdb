@@ -27,6 +27,7 @@ const (
 
 	// Limits per spec (assumes production config with 10MB message_size_max)
 	BatchSizeMax       int = 10_000
+	QueryUUIDBatchMax  int = 10_000
 	QueryLimitMax      int = 81_000
 	PolygonVerticesMax int = 10_000
 
@@ -288,11 +289,10 @@ type DeleteEntitiesError struct {
 // ============================================================================
 
 // QueryUUIDFilter is a filter for UUID lookup queries.
-// Wire format: 128 bytes total to match server's QueryUuidFilter.
+// Wire format: 32 bytes total to match server's QueryUuidFilter.
 type QueryUUIDFilter struct {
-	EntityID Uint128     // 16 bytes
-	Limit    uint32      // 4 bytes
-	Reserved [108]uint8  // 108 bytes padding
+	EntityID Uint128    // 16 bytes
+	Reserved [16]uint8  // 16 bytes padding
 }
 
 // QueryRadiusFilter is a filter for radius queries.
@@ -345,6 +345,15 @@ type QueryLatestFilter struct {
 // ============================================================================
 // Response Types
 // ============================================================================
+
+// QueryUUIDBatchResult represents the wire format result for batch UUID lookup (16-byte header
+// plus not-found indices and GeoEvents payload).
+type QueryUUIDBatchResult struct {
+	FoundCount      uint32
+	NotFoundCount   uint32
+	NotFoundIndices []uint16
+	Events          []GeoEvent
+}
 
 // QueryResponse represents the wire format header for query responses (16 bytes).
 // Matches QueryResponse struct in geo_state_machine.zig.

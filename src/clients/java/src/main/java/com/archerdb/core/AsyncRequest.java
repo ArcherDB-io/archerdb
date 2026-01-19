@@ -6,8 +6,8 @@ import java.util.concurrent.CompletableFuture;
  * Generic async request infrastructure.
  *
  * This class provides the core async request mechanism used by the ArcherDB client for asynchronous
- * operations. Financial-specific factory methods have been removed in favor of the archerdb.geo
- * package implementations.
+ * operations. Legacy factory methods have been removed in favor of the archerdb.geo package
+ * implementations.
  */
 final class AsyncRequest<TResponse extends Batch> extends Request<TResponse> {
 

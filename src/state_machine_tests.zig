@@ -15,7 +15,7 @@ const std = @import("std");
 const testing = std.testing;
 
 test "state_machine_tests: stub - geospatial tests are in geo_state_machine.zig" {
-    // ArcherDB uses GeoStateMachine, not the ArcherDB financial StateMachine.
+    // ArcherDB uses GeoStateMachine, not the legacy state machine.
     // Geospatial operation tests are in src/geo_state_machine.zig and related files.
     try testing.expect(true);
 }

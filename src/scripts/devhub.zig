@@ -78,7 +78,6 @@ fn devhub_coverage(shell: *Shell) !void {
     inline for (.{
         "{kcov} ./zig-out/bin/test-unit",
         "{kcov} ./zig-out/bin/fuzz --events-max=500000 lsm_tree 92",
-        "{kcov} ./zig-out/bin/fuzz --events-max=500000 lsm_forest 92",
         "{kcov} ./zig-out/bin/vopr 92",
     }) |command| {
         try shell.exec(command, .{ .kcov = kcov });
@@ -302,7 +301,7 @@ fn devhub_metrics(shell: *Shell, cli_args: CLIArgs) !void {
 
         try shell.exec(
             "./archerdb repl --addresses={port} --cluster=0 --command={command}",
-            .{ .port = port, .command = "create_accounts id=1 ledger=1 code=1" },
+            .{ .port = port, .command = "INSERT 1 (0, 0)" },
         );
 
         const repl_single_command_ms = timer.read() / std.time.ns_per_ms;

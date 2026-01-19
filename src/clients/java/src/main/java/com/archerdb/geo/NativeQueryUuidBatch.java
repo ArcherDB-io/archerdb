@@ -6,16 +6,15 @@ import com.archerdb.core.UInt128;
 /**
  * Native batch class for query by UUID requests.
  *
- * Wire format (128 bytes per filter): offset 0: entity_id (UInt128, 16 bytes) offset 16: limit
- * (u32, 4 bytes) offset 20: reserved (108 bytes)
+ * Wire format (32 bytes per filter): offset 0: entity_id (UInt128, 16 bytes) offset 16: reserved
+ * (16 bytes)
  */
 public final class NativeQueryUuidBatch extends Batch {
 
     interface Struct {
-        int SIZE = 128;
+        int SIZE = 32;
         int EntityId = 0;
-        int Limit = 16;
-        int Reserved = 20;
+        int Reserved = 16;
     }
 
     public NativeQueryUuidBatch(final int capacity) {
@@ -36,13 +35,5 @@ public final class NativeQueryUuidBatch extends Batch {
 
     public void setEntityId(final long leastSignificant, final long mostSignificant) {
         putUInt128(at(Struct.EntityId), leastSignificant, mostSignificant);
-    }
-
-    public int getLimit() {
-        return getUInt32(at(Struct.Limit));
-    }
-
-    public void setLimit(final int limit) {
-        putUInt32(at(Struct.Limit), limit);
     }
 }

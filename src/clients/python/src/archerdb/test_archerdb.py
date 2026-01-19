@@ -335,9 +335,8 @@ class TestQueryFilters(unittest.TestCase):
 
     def test_uuid_filter(self):
         """QueryUuidFilter has correct structure."""
-        filt = QueryUuidFilter(entity_id=12345, limit=10)
+        filt = QueryUuidFilter(entity_id=12345)
         self.assertEqual(filt.entity_id, 12345)
-        self.assertEqual(filt.limit, 10)
 
     def test_radius_filter_defaults(self):
         """QueryRadiusFilter has correct defaults."""
@@ -2169,6 +2168,315 @@ class TestRetryMetricsIntegration(unittest.TestCase):
         metrics = get_metrics()
         self.assertEqual(metrics.retries_total.get(), 0.0)
         self.assertEqual(metrics.retry_exhausted_total.get(), 0.0)
+
+
+# =============================================================================
+# Polygon Self-Intersection Validation Tests (add-polygon-validation)
+# =============================================================================
+
+
+class TestPolygonValidation(unittest.TestCase):
+    """Test polygon self-intersection detection (add-polygon-validation spec)."""
+
+    def test_valid_triangle(self):
+        """Triangle cannot self-intersect (too few edges)."""
+        from .types import validate_polygon_no_self_intersection
+
+        triangle = [(0.0, 0.0), (1.0, 0.0), (0.5, 1.0)]
+        intersections = validate_polygon_no_self_intersection(triangle, raise_on_error=False)
+        self.assertEqual(len(intersections), 0)
+
+    def test_valid_square(self):
+        """Simple square has no self-intersections."""
+        from .types import validate_polygon_no_self_intersection
+
+        square = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]
+        intersections = validate_polygon_no_self_intersection(square, raise_on_error=False)
+        self.assertEqual(len(intersections), 0)
+
+    def test_valid_convex_pentagon(self):
+        """Convex pentagon has no self-intersections."""
+        from .types import validate_polygon_no_self_intersection
+        import math
+
+        # Regular pentagon
+        pentagon = [
+            (math.cos(2 * math.pi * i / 5), math.sin(2 * math.pi * i / 5))
+            for i in range(5)
+        ]
+        intersections = validate_polygon_no_self_intersection(pentagon, raise_on_error=False)
+        self.assertEqual(len(intersections), 0)
+
+    def test_bowtie_polygon_intersects(self):
+        """Bow-tie (figure-8) polygon has a self-intersection."""
+        from .types import validate_polygon_no_self_intersection, PolygonValidationError
+
+        # Classic bow-tie: edges 0-1 and 2-3 cross at the center
+        bowtie = [(0.0, 0.0), (1.0, 1.0), (1.0, 0.0), (0.0, 1.0)]
+        intersections = validate_polygon_no_self_intersection(bowtie, raise_on_error=False)
+        self.assertGreater(len(intersections), 0)
+
+    def test_bowtie_raises_exception(self):
+        """Bow-tie polygon raises PolygonValidationError when raise_on_error=True."""
+        from .types import validate_polygon_no_self_intersection, PolygonValidationError
+
+        bowtie = [(0.0, 0.0), (1.0, 1.0), (1.0, 0.0), (0.0, 1.0)]
+
+        with self.assertRaises(PolygonValidationError) as ctx:
+            validate_polygon_no_self_intersection(bowtie, raise_on_error=True)
+
+        # Check exception attributes
+        self.assertGreaterEqual(ctx.exception.segment1_index, 0)
+        self.assertGreaterEqual(ctx.exception.segment2_index, 0)
+        self.assertIsNotNone(ctx.exception.intersection_point)
+
+    def test_complex_self_intersecting_polygon(self):
+        """Complex polygon with multiple self-intersections."""
+        from .types import validate_polygon_no_self_intersection
+
+        # Figure that crosses itself multiple times
+        complex_polygon = [
+            (0.0, 0.0), (4.0, 0.0), (4.0, 4.0),
+            (1.0, 1.0), (3.0, 1.0), (3.0, 3.0),
+            (0.0, 3.0),
+        ]
+        intersections = validate_polygon_no_self_intersection(complex_polygon, raise_on_error=False)
+        # Should find at least one intersection
+        self.assertGreater(len(intersections), 0)
+
+    def test_valid_concave_polygon(self):
+        """Concave (non-convex) polygon without self-intersections."""
+        from .types import validate_polygon_no_self_intersection
+
+        # L-shaped polygon (concave but valid)
+        l_shape = [
+            (0.0, 0.0), (2.0, 0.0), (2.0, 1.0),
+            (1.0, 1.0), (1.0, 2.0), (0.0, 2.0),
+        ]
+        intersections = validate_polygon_no_self_intersection(l_shape, raise_on_error=False)
+        self.assertEqual(len(intersections), 0)
+
+    def test_star_polygon_intersects(self):
+        """5-pointed star (drawn without lifting pen) self-intersects."""
+        from .types import validate_polygon_no_self_intersection
+        import math
+
+        # 5-pointed star vertices (connecting every 2nd vertex)
+        star = []
+        for i in range(5):
+            angle = math.pi / 2 + i * 4 * math.pi / 5
+            star.append((math.cos(angle), math.sin(angle)))
+
+        intersections = validate_polygon_no_self_intersection(star, raise_on_error=False)
+        # 5-pointed star has 5 self-intersections
+        self.assertGreater(len(intersections), 0)
+
+    def test_segments_intersect_basic(self):
+        """Test segment intersection detection directly."""
+        from .types import _segments_intersect
+
+        # Clearly crossing segments
+        self.assertTrue(_segments_intersect(
+            (0.0, 0.0), (1.0, 1.0),  # Diagonal
+            (0.0, 1.0), (1.0, 0.0),  # Opposite diagonal
+        ))
+
+        # Parallel segments (no intersection)
+        self.assertFalse(_segments_intersect(
+            (0.0, 0.0), (1.0, 0.0),  # Horizontal
+            (0.0, 1.0), (1.0, 1.0),  # Parallel horizontal
+        ))
+
+        # T-junction (endpoint touches)
+        self.assertTrue(_segments_intersect(
+            (0.0, 0.5), (1.0, 0.5),  # Horizontal
+            (0.5, 0.0), (0.5, 0.5),  # Vertical ending at intersection
+        ))
+
+    def test_validation_error_attributes(self):
+        """PolygonValidationError has correct attributes."""
+        from .types import PolygonValidationError
+
+        error = PolygonValidationError(
+            "Test error",
+            segment1_index=1,
+            segment2_index=3,
+            intersection_point=(0.5, 0.5),
+        )
+
+        self.assertEqual(error.segment1_index, 1)
+        self.assertEqual(error.segment2_index, 3)
+        self.assertEqual(error.intersection_point, (0.5, 0.5))
+        self.assertIn("Test error", str(error))
+
+    def test_empty_or_small_polygon(self):
+        """Empty or small polygons return no intersections."""
+        from .types import validate_polygon_no_self_intersection
+
+        # Empty
+        self.assertEqual(validate_polygon_no_self_intersection([], raise_on_error=False), [])
+
+        # Single point
+        self.assertEqual(validate_polygon_no_self_intersection([(0, 0)], raise_on_error=False), [])
+
+        # Two points (line)
+        self.assertEqual(validate_polygon_no_self_intersection([(0, 0), (1, 1)], raise_on_error=False), [])
+
+        # Three points (triangle - minimum valid polygon)
+        self.assertEqual(validate_polygon_no_self_intersection(
+            [(0, 0), (1, 0), (0, 1)], raise_on_error=False
+        ), [])
+
+
+class TestSubMeterPrecision(unittest.TestCase):
+    """
+    Sub-Meter Precision Tests
+
+    Per openspec/changes/add-submeter-precision/specs/data-model/spec.md
+
+    ArcherDB uses nanodegrees (10^-9 degrees) stored as int64 for coordinates.
+    This provides approximately 0.1mm precision at the equator, which exceeds
+    modern GPS technologies including RTK GPS (1-2cm accuracy).
+    """
+
+    def test_exact_nanodegree_preservation(self):
+        """Exact nanodegree values are preserved through conversion."""
+        # Per spec: "exact nanodegree values SHALL be preserved"
+        # Test with high-precision coordinates (9 decimal places)
+        original_lat = 37.774929123  # San Francisco
+        original_lon = -122.419415678
+
+        # Convert to nanodegrees
+        lat_nano = degrees_to_nano(original_lat)
+        lon_nano = degrees_to_nano(original_lon)
+
+        # Expected exact values
+        self.assertEqual(lat_nano, 37_774_929_123)
+        self.assertEqual(lon_nano, -122_419_415_678)
+
+        # Convert back - should be exact within float64 precision
+        lat_back = nano_to_degrees(lat_nano)
+        lon_back = nano_to_degrees(lon_nano)
+
+        self.assertAlmostEqual(lat_back, original_lat, places=9)
+        self.assertAlmostEqual(lon_back, original_lon, places=9)
+
+    def test_rtk_gps_precision_preserved(self):
+        """RTK GPS precision (1-2cm) is preserved."""
+        # RTK GPS provides 1-2 cm accuracy
+        # 2 cm ≈ 180 nanodegrees at the equator
+        # Per spec: nanodegrees exceed RTK precision by ~100x
+
+        rtk_precision_nano = 180  # ~2cm in nanodegrees
+
+        # Create two coordinates that differ by less than RTK precision
+        base_lat = 37.774929000
+        precise_lat = base_lat + (rtk_precision_nano / 2) / NANODEGREES_PER_DEGREE
+
+        base_nano = degrees_to_nano(base_lat)
+        precise_nano = degrees_to_nano(precise_lat)
+
+        # Values should be different (we can distinguish sub-RTK precision)
+        self.assertNotEqual(base_nano, precise_nano)
+
+        # The difference should be preserved
+        diff = precise_nano - base_nano
+        self.assertEqual(diff, rtk_precision_nano // 2)
+
+    def test_uwb_indoor_positioning_precision(self):
+        """UWB indoor positioning precision (10-30cm) is preserved."""
+        # UWB provides 10-30 cm accuracy
+        # 30 cm ≈ 2,700 nanodegrees at the equator
+
+        uwb_precision_cm = 30
+        uwb_precision_mm = uwb_precision_cm * 10
+        # 1 nanodegree ≈ 0.111 mm at equator
+        uwb_precision_nano = int(uwb_precision_mm / 0.111)
+
+        # Create coordinates that differ by 1/10th UWB precision
+        base_lat = 37.774929000
+        uwb_lat = base_lat + (uwb_precision_nano / 10) / NANODEGREES_PER_DEGREE
+
+        base_nano = degrees_to_nano(base_lat)
+        uwb_nano = degrees_to_nano(uwb_lat)
+
+        # Values should be different
+        self.assertNotEqual(base_nano, uwb_nano)
+
+    def test_float64_maintains_9_decimal_precision(self):
+        """Float64 maintains 9 decimal places for GPS coordinates."""
+        # Float64 has 15-17 significant digits
+        # GPS coordinates typically have max 8-9 significant digits
+
+        test_coords = [
+            (37.774929123, -122.419415678),  # San Francisco
+            (35.689487654, 139.691706789),  # Tokyo
+            (-33.868820123, 151.209295456),  # Sydney
+            (51.507350987, -0.127758321),  # London
+        ]
+
+        for lat, lon in test_coords:
+            lat_nano = degrees_to_nano(lat)
+            lon_nano = degrees_to_nano(lon)
+            lat_back = nano_to_degrees(lat_nano)
+            lon_back = nano_to_degrees(lon_nano)
+
+            # Should maintain 9 decimal places precision
+            self.assertAlmostEqual(lat_back, lat, places=9)
+            self.assertAlmostEqual(lon_back, lon, places=9)
+
+    def test_boundary_coordinates_precision(self):
+        """Boundary coordinates maintain precision."""
+        # Test poles and antimeridian
+        test_coords = [
+            (90.0, 0.0),  # North pole
+            (-90.0, 0.0),  # South pole
+            (0.0, 180.0),  # Antimeridian east
+            (0.0, -180.0),  # Antimeridian west
+            (89.999999999, 179.999999999),  # Near boundaries
+            (-89.999999999, -179.999999999),  # Near boundaries
+        ]
+
+        for lat, lon in test_coords:
+            lat_nano = degrees_to_nano(lat)
+            lon_nano = degrees_to_nano(lon)
+            lat_back = nano_to_degrees(lat_nano)
+            lon_back = nano_to_degrees(lon_nano)
+
+            self.assertAlmostEqual(lat_back, lat, places=9)
+            self.assertAlmostEqual(lon_back, lon, places=9)
+
+    def test_precision_constants(self):
+        """Precision constants are correct."""
+        self.assertEqual(NANODEGREES_PER_DEGREE, 1_000_000_000)
+        self.assertEqual(MM_PER_METER, 1000)
+
+    def test_various_latitudes_precision(self):
+        """Precision is maintained at various latitudes."""
+        # Per spec: At all latitudes, nanodegrees provide sub-millimeter precision
+        latitudes = [0, 30, 45, 60, 80, 89]  # Various latitudes
+
+        for lat_deg in latitudes:
+            lat = float(lat_deg) + 0.123456789
+            lat_nano = degrees_to_nano(lat)
+            lat_back = nano_to_degrees(lat_nano)
+            self.assertAlmostEqual(lat_back, lat, places=9)
+
+    def test_high_precision_decimal_conversion(self):
+        """High-precision decimal conversion is accurate."""
+        from decimal import Decimal
+
+        # Per spec: "Use decimal for maximum precision"
+        lat_str = "37.774929123"
+        lat_decimal = Decimal(lat_str)
+        lat_nano = int(lat_decimal * Decimal("1000000000"))
+
+        # Should be exact
+        self.assertEqual(lat_nano, 37_774_929_123)
+
+        # Round-trip
+        lat_back = float(Decimal(lat_nano) / Decimal("1000000000"))
+        self.assertAlmostEqual(lat_back, float(lat_str), places=9)
 
 
 if __name__ == "__main__":

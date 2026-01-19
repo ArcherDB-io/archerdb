@@ -1949,6 +1949,34 @@ The system SHALL define and meet performance targets for cluster cold starts (fu
   - Do NOT disable checkpointing to save this memory
   ```
 
+## Implementation Status
+
+| Requirement | Status | Implementation |
+|-------------|--------|----------------|
+| TTL Expiration Check | IMPLEMENTED | `src/geo_state_machine.zig:822` - ttl_seconds validation |
+| Three-Phase Execution | IMPLEMENTED | `src/geo_state_machine.zig` - prepare/prefetch/commit |
+| Multi-Batch Processing | IMPLEMENTED | `src/geo_state_machine.zig` - MultiBatchDecoder |
+| S2 Spatial Indexing | IMPLEMENTED | `src/s2_index.zig` - Cell computation |
+| S2 Level Selection | IMPLEMENTED | `src/s2_index.zig` - Dynamic level |
+| S2 Level Tuning | IMPLEMENTED | `src/s2_index.zig` - Tuning logic |
+| S2 Validation | IMPLEMENTED | `src/s2_index.zig` test section |
+| UUID Lookup Query | IMPLEMENTED | `src/geo_state_machine.zig:1821-1906` |
+| Latest Events Query | IMPLEMENTED | `src/geo_state_machine.zig:3249-3392` |
+| Radius Query | IMPLEMENTED | `src/geo_state_machine.zig:2018-2114` |
+| Polygon Query | IMPLEMENTED | `src/geo_state_machine.zig:2622-2788` |
+| Range Scan Optimization | IMPLEMENTED | LSM tree range scans |
+| Post-Filter Precision | IMPLEMENTED | Exact distance filtering |
+| Input Validation | IMPLEMENTED | `src/geo_state_machine.zig:1165-1194` |
+| Deterministic Timestamps | IMPLEMENTED | VSR timestamp coordination |
+| Performance SLAs | IMPLEMENTED | Design targets met |
+| Query Result Limits | IMPLEMENTED | Limit enforcement |
+| Batch Size Limits | IMPLEMENTED | `src/constants.zig` |
+| Entity Deletion (GDPR) | IMPLEMENTED | delete_entities operation |
+| Query CPU Budget | IMPLEMENTED | Iteration limits |
+| Concurrent Operations | IMPLEMENTED | Thread-safe design |
+| Error Handling | IMPLEMENTED | Error codes and propagation |
+| Cold-Start Performance | IMPLEMENTED | Checkpoint/recovery |
+
 ### Related Specifications
 
 - See `specs/error-codes/spec.md` for complete error code enumeration and metadata
@@ -1958,24 +1986,3 @@ The system SHALL define and meet performance targets for cluster cold starts (fu
 - See `specs/storage-engine/spec.md` for storage layer error handling
 - See `specs/observability/spec.md` for error metrics and logging requirements
 - See `specs/hybrid-memory/spec.md` for index recovery and checkpoint details
-
-
-
-## Implementation Status
-
-| Requirement | Status | Notes |
-|-------------|--------|-------|
-| UUID Lookup (O(1)) | ✓ Complete | RAM index hash table |
-| Radius Query | ✓ Complete | S2 covering + post-filter |
-| Polygon Query | ✓ Complete | S2 covering + point-in-polygon |
-| Query Latest | ✓ Complete | LSM tree scan with cursor |
-| Coordinate Validation | ✓ Complete | nanodegree range checks |
-| Polygon Validation | ✓ Complete | Empty, simple, degenerate, complex |
-| Self-Intersection Detection | ✓ Complete | Edge intersection algorithm |
-| Winding Order Correction | ✓ Complete | Auto-correct CW to CCW |
-| Pagination Support | ✓ Complete | Cursor-based, 81K limit |
-| Time Range Filtering | ✓ Complete | timestamp filter in query |
-| S2 Cell Coverage | ✓ Complete | \`s2_index.zig\` coverCap/Polygon |
-| Distance Post-Filter | ✓ Complete | Haversine calculation |
-| Point-in-Polygon Post-Filter | ✓ Complete | Ray-casting algorithm |
-| Performance Targets | ✓ Complete | UUID <500μs, radius <50ms |

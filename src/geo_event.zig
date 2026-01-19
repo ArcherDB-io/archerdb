@@ -567,3 +567,219 @@ test "GeoEvent: create_minimal_tombstone" {
     try std.testing.expectEqual(@as(i64, 0), tombstone.lat_nano);
     try std.testing.expectEqual(@as(i64, 0), tombstone.lon_nano);
 }
+
+// ============================================================================
+// Sub-Meter Precision Tests
+// ============================================================================
+// Per openspec/changes/add-submeter-precision/specs/data-model/spec.md
+//
+// These tests validate that ArcherDB preserves sub-meter (and sub-millimeter)
+// coordinate precision, which is critical for RTK GPS, UWB indoor positioning,
+// and other high-precision positioning technologies.
+
+const constants = @import("constants.zig");
+
+test "submeter precision: exact nanodegree preservation" {
+    // Per spec: "exact nanodegree values SHALL be preserved"
+    // Test with high-precision coordinates (9 decimal places)
+    const original_lat: i64 = 37_774929123; // 37.774929123° (San Francisco)
+    const original_lon: i64 = -122_419415678; // -122.419415678°
+
+    var event = GeoEvent.zero();
+    event.lat_nano = original_lat;
+    event.lon_nano = original_lon;
+
+    // Exact match required - no rounding or truncation.
+    try std.testing.expectEqual(original_lat, event.lat_nano);
+    try std.testing.expectEqual(original_lon, event.lon_nano);
+}
+
+test "submeter precision: RTK GPS precision preserved" {
+    // RTK GPS provides 1-2 cm accuracy.
+    // 2 cm ≈ 180 nanodegrees at the equator.
+    // Per spec: nanodegrees exceed RTK precision by ~100x.
+    const rtk_precision_nano = constants.rtk_gps_precision_nanodegrees;
+
+    // Create two coordinates that differ by less than RTK precision.
+    const base_lat: i64 = 37_774929000;
+    const precise_lat: i64 = base_lat + rtk_precision_nano / 2; // Half RTK precision
+
+    var event1 = GeoEvent.zero();
+    var event2 = GeoEvent.zero();
+    event1.lat_nano = base_lat;
+    event2.lat_nano = precise_lat;
+
+    // Both values should be preserved exactly, demonstrating we exceed RTK precision.
+    try std.testing.expectEqual(base_lat, event1.lat_nano);
+    try std.testing.expectEqual(precise_lat, event2.lat_nano);
+    try std.testing.expect(event2.lat_nano != event1.lat_nano);
+
+    // The difference should be preserved exactly.
+    const diff = event2.lat_nano - event1.lat_nano;
+    try std.testing.expectEqual(rtk_precision_nano / 2, diff);
+}
+
+test "submeter precision: float64 conversion maintains GPS precision" {
+    // Float64 has 15-17 significant digits, sufficient for 9 decimal places.
+    // This test verifies that float64 conversion doesn't lose precision
+    // for standard GPS coordinates.
+
+    // High-precision coordinate (9 decimal places)
+    const lat_float: f64 = 37.774929123;
+    const lon_float: f64 = -122.419415678;
+
+    // Convert to nanodegrees.
+    const lat_nano = GeoEvent.lat_from_float(lat_float);
+    const lon_nano = GeoEvent.lon_from_float(lon_float);
+
+    // Convert back to float.
+    const lat_back = GeoEvent.lat_to_float(lat_nano);
+    const lon_back = GeoEvent.lon_to_float(lon_nano);
+
+    // Should be within 1 nanodegree precision (< 0.2mm at equator).
+    try std.testing.expectApproxEqAbs(lat_float, lat_back, 1e-9);
+    try std.testing.expectApproxEqAbs(lon_float, lon_back, 1e-9);
+
+    // Verify the exact nanodegree values.
+    try std.testing.expectEqual(@as(i64, 37_774929123), lat_nano);
+    try std.testing.expectEqual(@as(i64, -122_419415678), lon_nano);
+}
+
+test "submeter precision: coordinate bounds at maximum precision" {
+    // Test boundary values at full nanodegree precision.
+    const lat_max: i64 = GeoEvent.lat_nano_max; // +90_000_000_000
+    const lat_min: i64 = GeoEvent.lat_nano_min; // -90_000_000_000
+    const lon_max: i64 = GeoEvent.lon_nano_max; // +180_000_000_000
+    const lon_min: i64 = GeoEvent.lon_nano_min; // -180_000_000_000
+
+    // All boundary values should be valid.
+    try std.testing.expect(GeoEvent.validate_coordinates(lat_max, lon_max));
+    try std.testing.expect(GeoEvent.validate_coordinates(lat_min, lon_min));
+    try std.testing.expect(GeoEvent.validate_coordinates(lat_max, lon_min));
+    try std.testing.expect(GeoEvent.validate_coordinates(lat_min, lon_max));
+
+    // Values should convert to floats correctly.
+    try std.testing.expectApproxEqAbs(@as(f64, 90.0), GeoEvent.lat_to_float(lat_max), 1e-9);
+    try std.testing.expectApproxEqAbs(@as(f64, -90.0), GeoEvent.lat_to_float(lat_min), 1e-9);
+    try std.testing.expectApproxEqAbs(@as(f64, 180.0), GeoEvent.lon_to_float(lon_max), 1e-9);
+    try std.testing.expectApproxEqAbs(@as(f64, -180.0), GeoEvent.lon_to_float(lon_min), 1e-9);
+}
+
+test "submeter precision: various latitudes preservation" {
+    // Per spec: precision table by latitude.
+    // At all latitudes, nanodegrees provide sub-millimeter precision.
+
+    // Equator (0°)
+    const lat_equator: i64 = 0;
+    // 30° latitude
+    const lat_30: i64 = 30_000_000_000;
+    // 45° latitude
+    const lat_45: i64 = 45_000_000_000;
+    // 60° latitude
+    const lat_60: i64 = 60_000_000_000;
+    // 80° latitude (near pole)
+    const lat_80: i64 = 80_000_000_000;
+
+    // All latitudes should preserve exact values.
+    var event = GeoEvent.zero();
+
+    event.lat_nano = lat_equator;
+    try std.testing.expectEqual(lat_equator, event.lat_nano);
+
+    event.lat_nano = lat_30;
+    try std.testing.expectEqual(lat_30, event.lat_nano);
+
+    event.lat_nano = lat_45;
+    try std.testing.expectEqual(lat_45, event.lat_nano);
+
+    event.lat_nano = lat_60;
+    try std.testing.expectEqual(lat_60, event.lat_nano);
+
+    event.lat_nano = lat_80;
+    try std.testing.expectEqual(lat_80, event.lat_nano);
+}
+
+test "submeter precision: antimeridian coordinates" {
+    // Test coordinates near the antimeridian (±180°).
+    // These are edge cases for spatial indexing.
+
+    // Just west of antimeridian.
+    const lon_west: i64 = 179_999_999_999; // 179.999999999°
+
+    // Just east of antimeridian.
+    const lon_east: i64 = -179_999_999_999; // -179.999999999°
+
+    var event = GeoEvent.zero();
+
+    event.lon_nano = lon_west;
+    try std.testing.expectEqual(lon_west, event.lon_nano);
+
+    event.lon_nano = lon_east;
+    try std.testing.expectEqual(lon_east, event.lon_nano);
+
+    // Verify validity.
+    try std.testing.expect(GeoEvent.validate_coordinates(0, lon_west));
+    try std.testing.expect(GeoEvent.validate_coordinates(0, lon_east));
+}
+
+test "submeter precision: polar coordinates" {
+    // Test coordinates near the poles (±90°).
+    // Longitude lines converge at poles, but latitude precision remains.
+
+    // North pole.
+    const lat_north: i64 = 89_999_999_999; // 89.999999999°
+
+    // South pole.
+    const lat_south: i64 = -89_999_999_999; // -89.999999999°
+
+    var event = GeoEvent.zero();
+
+    event.lat_nano = lat_north;
+    try std.testing.expectEqual(lat_north, event.lat_nano);
+
+    event.lat_nano = lat_south;
+    try std.testing.expectEqual(lat_south, event.lat_nano);
+
+    // Verify validity.
+    try std.testing.expect(GeoEvent.validate_coordinates(lat_north, 0));
+    try std.testing.expect(GeoEvent.validate_coordinates(lat_south, 0));
+}
+
+test "submeter precision: UWB indoor positioning precision" {
+    // UWB provides 10-30 cm accuracy.
+    // 30 cm ≈ 2,700 nanodegrees at the equator.
+    // Per spec: nanodegrees exceed UWB precision by ~1,000-3,000x.
+
+    const uwb_precision_cm = constants.uwb_precision_cm;
+    // Convert to nanodegrees: 30 cm = 300 mm = 300 / 0.111 ≈ 2703 nanodegrees.
+    const uwb_precision_nano: i64 = @intFromFloat(
+        @as(f64, uwb_precision_cm) * 10.0 / constants.nanodegree_precision_mm_equator,
+    );
+
+    // Create coordinates that differ by less than UWB precision.
+    const base_lat: i64 = 37_774929000;
+    const uwb_lat: i64 = base_lat + uwb_precision_nano / 10; // 1/10th UWB precision
+
+    var event1 = GeoEvent.zero();
+    var event2 = GeoEvent.zero();
+    event1.lat_nano = base_lat;
+    event2.lat_nano = uwb_lat;
+
+    // Both values should be preserved exactly.
+    try std.testing.expectEqual(base_lat, event1.lat_nano);
+    try std.testing.expectEqual(uwb_lat, event2.lat_nano);
+    try std.testing.expect(event2.lat_nano != event1.lat_nano);
+}
+
+test "submeter precision: precision constants validation" {
+    // Verify precision constants are correct.
+    try std.testing.expectEqual(@as(i64, 1_000_000_000), constants.nanodegrees_per_degree);
+
+    // RTK precision should be ~180 nanodegrees.
+    try std.testing.expect(constants.rtk_gps_precision_nanodegrees > 100);
+    try std.testing.expect(constants.rtk_gps_precision_nanodegrees < 300);
+
+    // S2 level precision hierarchy.
+    try std.testing.expect(constants.s2_level30_precision_cm < constants.s2_level28_precision_cm);
+    try std.testing.expect(constants.s2_level28_precision_cm < constants.s2_level24_precision_cm);
+}

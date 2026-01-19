@@ -98,6 +98,7 @@ const (
 	GeoEventExists                         InsertGeoEventResultRaw = 13
 	GeoEventHeadingOutOfRange              InsertGeoEventResultRaw = 14
 	GeoEventTtlInvalid                     InsertGeoEventResultRaw = 15
+	GeoEventEntityIDMustNotBeIntMax        InsertGeoEventResultRaw = 16
 )
 
 func (i InsertGeoEventResultRaw) String() string {
@@ -134,6 +135,8 @@ func (i InsertGeoEventResultRaw) String() string {
 		return "GeoEventHeadingOutOfRange"
 	case GeoEventTtlInvalid:
 		return "GeoEventTtlInvalid"
+	case GeoEventEntityIDMustNotBeIntMax:
+		return "GeoEventEntityIDMustNotBeIntMax"
 	}
 	return "InsertGeoEventResultRaw(" + strconv.FormatInt(int64(i+1), 10) + ")"
 }
@@ -141,10 +144,11 @@ func (i InsertGeoEventResultRaw) String() string {
 type DeleteEntityResultRaw uint32
 
 const (
-	EntityOK                    DeleteEntityResultRaw = 0
-	EntityLinkedEventFailed     DeleteEntityResultRaw = 1
-	EntityEntityIDMustNotBeZero DeleteEntityResultRaw = 2
-	EntityEntityNotFound        DeleteEntityResultRaw = 3
+	EntityOK                      DeleteEntityResultRaw = 0
+	EntityLinkedEventFailed       DeleteEntityResultRaw = 1
+	EntityEntityIDMustNotBeZero   DeleteEntityResultRaw = 2
+	EntityEntityNotFound          DeleteEntityResultRaw = 3
+	EntityEntityIDMustNotBeIntMax DeleteEntityResultRaw = 4
 )
 
 func (i DeleteEntityResultRaw) String() string {
@@ -157,6 +161,8 @@ func (i DeleteEntityResultRaw) String() string {
 		return "EntityEntityIDMustNotBeZero"
 	case EntityEntityNotFound:
 		return "EntityEntityNotFound"
+	case EntityEntityIDMustNotBeIntMax:
+		return "EntityEntityIDMustNotBeIntMax"
 	}
 	return "DeleteEntityResultRaw(" + strconv.FormatInt(int64(i+1), 10) + ")"
 }
@@ -173,8 +179,7 @@ type DeleteEntitiesResultRaw struct {
 
 type QueryUuidFilterRaw struct {
 	EntityID Uint128
-	Limit    uint32
-	Reserved [108]uint8
+	Reserved [16]uint8
 }
 
 type QueryResponseRaw struct {

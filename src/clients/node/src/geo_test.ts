@@ -78,6 +78,13 @@ import {
   _testExports,
 } from './geo_client'
 
+// Polygon validation imports (from geo.ts)
+import {
+  PolygonValidationError,
+  segmentsIntersect,
+  validatePolygonNoSelfIntersection,
+} from './geo'
+
 // Observability imports (from separate module)
 import {
   LogLevel,
@@ -1932,6 +1939,138 @@ function test_CircuitBreaker_defaultConfigMatchesSpec() {
 }
 
 // ============================================================================
+// Polygon Self-Intersection Validation Tests (add-polygon-validation spec)
+// ============================================================================
+
+function test_validTriangle() {
+  const triangle: [number, number][] = [[0, 0], [1, 0], [0.5, 1]]
+  const result = validatePolygonNoSelfIntersection(triangle, false)
+  assert.strictEqual(result.length, 0)
+  console.log('✓ validTriangle')
+}
+
+function test_validSquare() {
+  const square: [number, number][] = [[0, 0], [1, 0], [1, 1], [0, 1]]
+  const result = validatePolygonNoSelfIntersection(square, false)
+  assert.strictEqual(result.length, 0)
+  console.log('✓ validSquare')
+}
+
+function test_validConvexPentagon() {
+  const pentagon: [number, number][] = []
+  for (let i = 0; i < 5; i++) {
+    const angle = (2 * Math.PI * i) / 5
+    pentagon.push([Math.cos(angle), Math.sin(angle)])
+  }
+  const result = validatePolygonNoSelfIntersection(pentagon, false)
+  assert.strictEqual(result.length, 0)
+  console.log('✓ validConvexPentagon')
+}
+
+function test_bowtiePolygonIntersects() {
+  const bowtie: [number, number][] = [[0, 0], [1, 1], [1, 0], [0, 1]]
+  const result = validatePolygonNoSelfIntersection(bowtie, false)
+  assert(result.length > 0, 'Bow-tie should have intersections')
+  console.log('✓ bowtiePolygonIntersects')
+}
+
+function test_bowtieRaisesException() {
+  const bowtie: [number, number][] = [[0, 0], [1, 1], [1, 0], [0, 1]]
+  try {
+    validatePolygonNoSelfIntersection(bowtie, true)
+    assert.fail('Should have thrown PolygonValidationError')
+  } catch (err) {
+    assert(err instanceof PolygonValidationError, 'Should be PolygonValidationError')
+    const e = err as PolygonValidationError
+    assert(e.segment1_index >= 0 && e.segment1_index < 4)
+    assert(e.segment2_index >= 0 && e.segment2_index < 4)
+    assert(e.message.includes('self-intersects'))
+  }
+  console.log('✓ bowtieRaisesException')
+}
+
+function test_validConcavePolygon() {
+  // L-shaped polygon (concave but valid)
+  const lShape: [number, number][] = [
+    [0, 0], [2, 0], [2, 1],
+    [1, 1], [1, 2], [0, 2],
+  ]
+  const result = validatePolygonNoSelfIntersection(lShape, false)
+  assert.strictEqual(result.length, 0)
+  console.log('✓ validConcavePolygon')
+}
+
+function test_starPolygonIntersects() {
+  // 5-pointed star (drawn without lifting pen) self-intersects
+  const star: [number, number][] = []
+  for (let i = 0; i < 5; i++) {
+    const angle = Math.PI / 2 + (i * 4 * Math.PI) / 5
+    star.push([Math.cos(angle), Math.sin(angle)])
+  }
+  const result = validatePolygonNoSelfIntersection(star, false)
+  assert(result.length > 0, '5-pointed star should have intersections')
+  console.log('✓ starPolygonIntersects')
+}
+
+function test_segmentsIntersectBasic() {
+  // Clearly crossing segments
+  assert(segmentsIntersect(
+    [0, 0], [1, 1],  // Diagonal
+    [0, 1], [1, 0],  // Opposite diagonal
+  ))
+
+  // Parallel segments (no intersection)
+  assert(!segmentsIntersect(
+    [0, 0], [1, 0],  // Horizontal
+    [0, 1], [1, 1],  // Parallel horizontal
+  ))
+
+  // T-junction (endpoint touches)
+  assert(segmentsIntersect(
+    [0, 0.5], [1, 0.5],  // Horizontal
+    [0.5, 0], [0.5, 0.5],  // Vertical ending at intersection
+  ))
+
+  console.log('✓ segmentsIntersectBasic')
+}
+
+function test_polygonValidationErrorAttributes() {
+  const err = new PolygonValidationError(
+    'Test error',
+    1,
+    3,
+    [0.5, 0.5],
+  )
+
+  assert.strictEqual(err.segment1_index, 1)
+  assert.strictEqual(err.segment2_index, 3)
+  assert.deepStrictEqual(err.intersection_point, [0.5, 0.5])
+  assert(err.message.includes('Test error'))
+  assert.strictEqual(err.name, 'PolygonValidationError')
+  console.log('✓ polygonValidationErrorAttributes')
+}
+
+function test_emptyOrSmallPolygon() {
+  // Empty
+  const empty: [number, number][] = []
+  assert.strictEqual(validatePolygonNoSelfIntersection(empty, false).length, 0)
+
+  // Single point
+  const single: [number, number][] = [[0, 0]]
+  assert.strictEqual(validatePolygonNoSelfIntersection(single, false).length, 0)
+
+  // Two points (line)
+  const line: [number, number][] = [[0, 0], [1, 1]]
+  assert.strictEqual(validatePolygonNoSelfIntersection(line, false).length, 0)
+
+  // Three points (triangle - minimum valid polygon)
+  const triangle: [number, number][] = [[0, 0], [1, 0], [0, 1]]
+  assert.strictEqual(validatePolygonNoSelfIntersection(triangle, false).length, 0)
+
+  console.log('✓ emptyOrSmallPolygon')
+}
+
+// ============================================================================
 // Run All Tests
 // ============================================================================
 
@@ -2089,6 +2228,22 @@ async function runTests() {
   // Request timer tests
   test_RequestTimer_success()
   test_RequestTimer_error()
+
+  // =========================================
+  // Polygon Validation Tests (per add-polygon-validation spec)
+  // =========================================
+  console.log('\n--- Polygon Validation Tests ---\n')
+
+  test_validTriangle()
+  test_validSquare()
+  test_validConvexPentagon()
+  test_bowtiePolygonIntersects()
+  test_bowtieRaisesException()
+  test_validConcavePolygon()
+  test_starPolygonIntersects()
+  test_segmentsIntersectBasic()
+  test_polygonValidationErrorAttributes()
+  test_emptyOrSmallPolygon()
 
   console.log('\n=== All tests passed! ===\n')
 }

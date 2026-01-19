@@ -29,19 +29,29 @@ test "valid arch_client.h" {
     @setEvalBranchQuota(20_000);
 
     comptime for (.{
-        .{ exports.arch_account_t, "arch_account_t" },
-        .{ exports.arch_transfer_t, "arch_transfer_t" },
-        .{ exports.arch_account_flags, "ARCH_ACCOUNT_FLAGS" },
-        .{ exports.arch_transfer_flags, "ARCH_TRANSFER_FLAGS" },
-        .{ exports.arch_create_account_result, "ARCH_CREATE_ACCOUNT_RESULT" },
-        .{ exports.arch_create_transfer_result, "ARCH_CREATE_TRANSFER_RESULT" },
-        .{ exports.arch_create_accounts_result_t, "arch_create_accounts_result_t" },
-        .{ exports.arch_create_transfers_result_t, "arch_create_transfers_result_t" },
-        .{ exports.arch_account_filter_t, "arch_account_filter_t" },
-        .{ exports.arch_account_filter_flags, "ARCH_ACCOUNT_FILTER_FLAGS" },
-        .{ exports.arch_account_balance_t, "arch_account_balance_t" },
+        .{ exports.geo_event_flags, "GEO_EVENT_FLAGS" },
+        .{ exports.geo_event_t, "geo_event_t" },
+        .{ exports.insert_geo_event_result, "INSERT_GEO_EVENT_RESULT" },
+        .{ exports.insert_geo_events_result_t, "insert_geo_events_result_t" },
+        .{ exports.delete_entities_result_t, "delete_entities_result_t" },
+        .{ exports.query_uuid_filter_t, "query_uuid_filter_t" },
+        .{ exports.query_uuid_response_t, "query_uuid_response_t" },
+        .{ exports.query_radius_filter_t, "query_radius_filter_t" },
+        .{ exports.query_polygon_filter_t, "query_polygon_filter_t" },
+        .{ exports.query_latest_filter_t, "query_latest_filter_t" },
+        .{ exports.query_response_t, "query_response_t" },
+        .{ exports.polygon_vertex_t, "polygon_vertex_t" },
+        .{ exports.hole_descriptor_t, "hole_descriptor_t" },
+        .{ exports.ttl_operation_result, "TTL_OPERATION_RESULT" },
+        .{ exports.ttl_set_request_t, "ttl_set_request_t" },
+        .{ exports.ttl_set_response_t, "ttl_set_response_t" },
+        .{ exports.ttl_extend_request_t, "ttl_extend_request_t" },
+        .{ exports.ttl_extend_response_t, "ttl_extend_response_t" },
+        .{ exports.ttl_clear_request_t, "ttl_clear_request_t" },
+        .{ exports.ttl_clear_response_t, "ttl_clear_response_t" },
 
         .{ u128, "arch_uint128_t" },
+        .{ i128, "arch_int128_t" },
         .{ exports.arch_client_t, "arch_client_t" },
         .{ exports.arch_packet_t, "arch_packet_t" },
         .{ exports.arch_init_status, "ARCH_INIT_STATUS" },
@@ -50,6 +60,7 @@ test "valid arch_client.h" {
         .{ exports.arch_operation, "ARCH_OPERATION" },
         .{ exports.arch_register_log_callback_status, "ARCH_REGISTER_LOG_CALLBACK_STATUS" },
         .{ exports.arch_log_level, "ARCH_LOG_LEVEL" },
+        .{ exports.arch_init_parameters, "arch_init_parameters_t" },
     }) |c_export| {
         const ty: type = c_export[0];
         const c_type_name = @as([]const u8, c_export[1]);

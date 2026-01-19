@@ -38,7 +38,6 @@ const Fuzzers = .{
     .ewah = @import("./ewah_fuzz.zig"),
     .lsm_scan = @import("./lsm/scan_fuzz.zig"),
     .lsm_cache_map = @import("./lsm/cache_map_fuzz.zig"),
-    .lsm_forest = @import("./lsm/forest_fuzz.zig"),
     .lsm_manifest_log = @import("./lsm/manifest_log_fuzz.zig"),
     .lsm_manifest_level = @import("./lsm/manifest_level_fuzz.zig"),
     .lsm_segmented_array = @import("./lsm/segmented_array_fuzz.zig"),
@@ -124,7 +123,6 @@ fn main_smoke(gpa: std.mem.Allocator) !void {
             .canary => continue,
 
             .lsm_cache_map => 20_000,
-            .lsm_forest => 10_000,
             .lsm_manifest_log => 2_000,
             .lsm_scan => 100,
             .lsm_tree => 400,

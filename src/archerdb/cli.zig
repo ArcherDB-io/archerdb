@@ -22,17 +22,17 @@ const vsr = @import("vsr");
 const stdx = vsr.stdx;
 const constants = vsr.constants;
 const archerdb = vsr.archerdb;
+const sharding = vsr.sharding;
 const data_file_size_min = vsr.superblock.data_file_size_min;
 const StateMachine = @import("./main.zig").StateMachine;
 const Grid = @import("./main.zig").Grid;
 const Ratio = stdx.PRNG.Ratio;
 const ByteSize = stdx.ByteSize;
 const Operation = archerdb.Operation;
-const Duration = stdx.Duration;
 const backup_config = vsr.backup_config;
 
 comptime {
-    // Make sure we are running the Accounting StateMachine.
+    // Make sure we are running the GeoStateMachine.
     assert(StateMachine.Operation == archerdb.Operation);
 }
 
@@ -71,6 +71,8 @@ const CLIArgs = union(enum) {
         replica_count: u8,
         development: bool = false,
         log_level: LogLevel = .info,
+        // Per add-jump-consistent-hash/spec.md: sharding strategy for this cluster
+        @"sharding-strategy": ?[]const u8 = null,
 
         @"--": void,
         path: []const u8,
@@ -123,6 +125,16 @@ const CLIArgs = union(enum) {
         // When clients set event.ttl_seconds = 0, this default is applied
         default_ttl_days: ?u32 = null,
 
+        // Per add-v2-distributed-features/specs/ttl-retention/spec.md: TTL Extension on Read
+        // When enabled, accessing an entity extends its TTL automatically
+        ttl_extension_enabled: bool = false,
+        // Amount to extend TTL by on access (seconds, default 86400 = 1 day)
+        ttl_extension_amount: ?u32 = null,
+        // Maximum total TTL after extensions (seconds, default 2592000 = 30 days)
+        ttl_extension_max: ?u32 = null,
+        // Minimum time between extensions for same entity (seconds, default 3600 = 1 hour)
+        ttl_extension_cooldown: ?u32 = null,
+
         // v2.0 Multi-Region Replication options
         // Per openspec/changes/add-v2-distributed-features/specs/replication/spec.md
         region_role: ?[]const u8 = null, // "primary" or "follower"
@@ -136,6 +148,7 @@ const CLIArgs = union(enum) {
         encryption_key_provider: ?[]const u8 = null, // "aws-kms", "vault", "file"
         encryption_key_id: ?[]const u8 = null, // KMS ARN, Vault path, or key name
         encryption_key_file: ?[]const u8 = null, // Path to key file (file provider)
+        allow_software_crypto: bool = false, // Allow software crypto when AES-NI unavailable
 
         // Everything from here until positional arguments is considered experimental, and requires
         // `--experimental` to be set. Experimental flags disable automatic upgrades with
@@ -154,6 +167,12 @@ const CLIArgs = union(enum) {
         timeout_prepare_ms: ?u64 = null,
         timeout_grid_repair_message_ms: ?u64 = null,
         commit_stall_probability: ?Ratio = null,
+
+        // TTL-aware compaction prioritization threshold (0-100 percent)
+        // Per add-ttl-aware-compaction spec: levels with expired_ratio > threshold are prioritized
+        // Default: 30 (30% expired data triggers prioritization)
+        // Set to 100 to disable TTL prioritization
+        ttl_priority_threshold: ?u8 = null,
 
         // Highly experimental options that will be removed in a future release:
         replicate_star: bool = false,
@@ -359,7 +378,7 @@ const CLIArgs = union(enum) {
             \\
             \\  tables --tree=<name|id> [--level=<integer>] [--superblock-copy=<copy>]
             \\        List the tables matching the given tree/level.
-            \\        Example tree names: "transfers" (object table), "transfers.amount" (index table).
+            \\        Example tree names: "geo_events" (object table), "geo_events.timestamp" (index table).
             \\
             \\  integrity
             \\        Scans the data file and checks all internal checksums to verify internal
@@ -613,6 +632,91 @@ const CLIArgs = union(enum) {
         ;
     };
 
+    // v2.1 TTL management command (per add-v2-distributed-features/specs/ttl-retention/spec.md)
+    const TTL = union(enum) {
+        /// Set absolute TTL for an entity
+        set: struct {
+            /// ArcherDB cluster addresses
+            addresses: []const u8,
+            /// Cluster ID
+            cluster: u128,
+            /// Entity ID (UUID)
+            entity: []const u8,
+            /// TTL in seconds
+            ttl: u64,
+            @"log-level": LogLevel = .info,
+        },
+        /// Extend TTL for an entity
+        extend: struct {
+            /// ArcherDB cluster addresses
+            addresses: []const u8,
+            /// Cluster ID
+            cluster: u128,
+            /// Entity ID (UUID)
+            entity: []const u8,
+            /// Extension amount in seconds
+            by: u64,
+            @"log-level": LogLevel = .info,
+        },
+        /// Clear TTL for an entity (make it non-expiring)
+        clear: struct {
+            /// ArcherDB cluster addresses
+            addresses: []const u8,
+            /// Cluster ID
+            cluster: u128,
+            /// Entity ID (UUID)
+            entity: []const u8,
+            @"log-level": LogLevel = .info,
+        },
+
+        pub const help =
+            \\Usage:
+            \\
+            \\  archerdb ttl [-h | --help]
+            \\
+            \\  archerdb ttl set --addresses=<addresses> --cluster=<id> --entity=<uuid> --ttl=<seconds>
+            \\
+            \\  archerdb ttl extend --addresses=<addresses> --cluster=<id> --entity=<uuid> --by=<seconds>
+            \\
+            \\  archerdb ttl clear --addresses=<addresses> --cluster=<id> --entity=<uuid>
+            \\
+            \\Commands:
+            \\
+            \\  set        Set absolute TTL for an entity.
+            \\
+            \\  extend     Extend TTL for an entity by a specified amount.
+            \\
+            \\  clear      Clear TTL for an entity (make it non-expiring).
+            \\
+            \\Options:
+            \\
+            \\  --addresses=<addresses>
+            \\        ArcherDB cluster addresses (required).
+            \\
+            \\  --cluster=<integer>
+            \\        Cluster ID (required).
+            \\
+            \\  --entity=<uuid>
+            \\        Entity ID in UUID format (required).
+            \\
+            \\  --ttl=<seconds>
+            \\        Absolute TTL in seconds (for 'set' command).
+            \\
+            \\  --by=<seconds>
+            \\        Extension amount in seconds (for 'extend' command).
+            \\
+            \\Examples:
+            \\
+            \\  archerdb ttl set --addresses=3000 --cluster=0 \
+            \\    --entity=550e8400-e29b-41d4-a716-446655440000 --ttl=86400
+            \\  archerdb ttl extend --addresses=3000 --cluster=0 \
+            \\    --entity=550e8400-e29b-41d4-a716-446655440000 --by=3600
+            \\  archerdb ttl clear --addresses=3000 --cluster=0 \
+            \\    --entity=550e8400-e29b-41d4-a716-446655440000
+            \\
+        ;
+    };
+
     // v2.0 Encryption verification command
     const Verify = struct {
         /// Verify encryption status
@@ -642,6 +746,302 @@ const CLIArgs = union(enum) {
         ;
     };
 
+    // v2.0 Coordinator mode (per add-coordinator-mode/spec.md)
+    // v2.0 Cluster management commands (per add-dynamic-membership/spec.md)
+    // Provides dynamic membership management: add/remove nodes from running cluster
+    const Cluster = union(enum) {
+        /// Add a new node to the cluster
+        @"add-node": struct {
+            /// ArcherDB cluster addresses
+            addresses: []const u8,
+            /// Cluster ID
+            cluster: u128,
+            /// Address of the new node to add (host:port)
+            node: []const u8,
+            /// Don't wait for node to catch up (return immediately)
+            @"no-wait": bool = false,
+            /// Timeout in seconds for catchup (default 300)
+            timeout: u32 = 300,
+            /// Output format
+            format: ?[]const u8 = null,
+            @"log-level": LogLevel = .info,
+        },
+        /// Remove a node from the cluster
+        @"remove-node": struct {
+            /// ArcherDB cluster addresses
+            addresses: []const u8,
+            /// Cluster ID
+            cluster: u128,
+            /// Node index or address to remove
+            node: []const u8,
+            /// Force removal even if node is unhealthy
+            force: bool = false,
+            /// Timeout in seconds for graceful drain (default 60)
+            timeout: u32 = 60,
+            /// Output format
+            format: ?[]const u8 = null,
+            @"log-level": LogLevel = .info,
+        },
+        /// Show cluster membership status
+        status: struct {
+            /// ArcherDB cluster addresses
+            addresses: []const u8,
+            /// Cluster ID
+            cluster: u128,
+            /// Output format (text, json)
+            format: ?[]const u8 = null,
+            @"log-level": LogLevel = .info,
+        },
+
+        pub const help =
+            \\Usage:
+            \\
+            \\  archerdb cluster [-h | --help]
+            \\
+            \\  archerdb cluster add-node --addresses=<addresses> --cluster=<id> --node=<host:port>
+            \\                            [--no-wait] [--timeout=<seconds>] [--format=<text|json>]
+            \\
+            \\  archerdb cluster remove-node --addresses=<addresses> --cluster=<id> --node=<id|addr>
+            \\                               [--force] [--timeout=<seconds>] [--format=<text|json>]
+            \\
+            \\  archerdb cluster status --addresses=<addresses> --cluster=<id>
+            \\                          [--format=<text|json>]
+            \\
+            \\Commands:
+            \\
+            \\  add-node     Add a new node to the cluster as a learner, then promote.
+            \\               Uses joint consensus for safe membership changes.
+            \\
+            \\  remove-node  Remove a node from the cluster gracefully.
+            \\               Drains in-flight operations before removal.
+            \\
+            \\  status       Show cluster membership status, node roles, and health.
+            \\
+            \\Options:
+            \\
+            \\  --addresses=<addresses>
+            \\        ArcherDB cluster addresses (required).
+            \\
+            \\  --cluster=<integer>
+            \\        Cluster ID (required).
+            \\
+            \\  --node=<host:port|id>
+            \\        Node address for add-node, or node ID/address for remove-node.
+            \\
+            \\  --no-wait
+            \\        Return immediately without waiting for node to catch up (add-node only).
+            \\
+            \\  --timeout=<seconds>
+            \\        Timeout for catchup or drain operation. Defaults to 300 for add, 60 for remove.
+            \\
+            \\  --force
+            \\        Force removal even if node is unhealthy (remove-node only).
+            \\
+            \\  --format=<text|json>
+            \\        Output format. Defaults to 'text'.
+            \\
+            \\Examples:
+            \\
+            \\  archerdb cluster status --addresses=3000,3001,3002 --cluster=0
+            \\  archerdb cluster add-node --addresses=3000,3001,3002 --cluster=0 --node=192.168.1.4:3003
+            \\  archerdb cluster remove-node --addresses=3000,3001,3002 --cluster=0 --node=2 --force
+            \\
+        ;
+    };
+
+    // v2.0 Index management commands (per add-online-index-rehash/spec.md)
+    // Provides online index resize operations without blocking queries
+    const Index = union(enum) {
+        /// Resize an index to a new capacity
+        resize: struct {
+            /// ArcherDB cluster addresses
+            addresses: []const u8,
+            /// Cluster ID
+            cluster: u128,
+            /// New capacity (number of buckets)
+            @"new-capacity": ?u64 = null,
+            /// Output format
+            format: ?[]const u8 = null,
+            @"log-level": LogLevel = .info,
+
+            @"--": void,
+            /// Action: check, status, abort (or none for start)
+            action: ?[]const u8 = null,
+        },
+        /// Show index statistics
+        stats: struct {
+            /// ArcherDB cluster addresses
+            addresses: []const u8,
+            /// Cluster ID
+            cluster: u128,
+            /// Output format (text, json)
+            format: ?[]const u8 = null,
+            @"log-level": LogLevel = .info,
+        },
+
+        pub const help =
+            \\Usage:
+            \\
+            \\  archerdb index [-h | --help]
+            \\
+            \\  archerdb index resize --addresses=<addresses> --cluster=<id>
+            \\                        [--new-capacity=<buckets>] [--format=<text|json>] [check|status|abort]
+            \\
+            \\  archerdb index stats --addresses=<addresses> --cluster=<id>
+            \\                       [--format=<text|json>]
+            \\
+            \\Commands:
+            \\
+            \\  resize     Manage online index resize operations.
+            \\             Resizing happens in the background without blocking queries.
+            \\             Actions: check (dry run), status (show progress), abort (cancel resize).
+            \\
+            \\  stats      Show index statistics (capacity, usage, health).
+            \\
+            \\Options:
+            \\
+            \\  --addresses=<addresses>
+            \\        ArcherDB cluster addresses (required).
+            \\
+            \\  --cluster=<integer>
+            \\        Cluster ID (required).
+            \\
+            \\  --new-capacity=<buckets>
+            \\        New index capacity in number of buckets.
+            \\        Must be greater than current capacity.
+            \\
+            \\  --format=<text|json>
+            \\        Output format. Defaults to 'text'.
+            \\
+            \\Actions (for resize):
+            \\
+            \\  check      Check if resize to --new-capacity is safe.
+            \\  status     Show progress of an ongoing resize operation.
+            \\  abort      Abort an ongoing resize operation.
+            \\
+            \\Examples:
+            \\
+            \\  archerdb index stats --addresses=3000 --cluster=0
+            \\  archerdb index resize --addresses=3000 --cluster=0 status
+            \\  archerdb index resize --addresses=3000 --cluster=0 --new-capacity=2000000 check
+            \\  archerdb index resize --addresses=3000 --cluster=0 --new-capacity=2000000
+            \\  archerdb index resize --addresses=3000 --cluster=0 abort
+            \\
+        ;
+    };
+
+    // Provides centralized query routing for complex multi-shard deployments
+    const Coordinator = union(enum) {
+        /// Start coordinator process
+        start: struct {
+            /// Bind address for client connections (host:port)
+            bind: []const u8 = "0.0.0.0:5000",
+            /// Explicit shard list (comma-separated addresses)
+            /// Mutually exclusive with --seed-nodes
+            shards: ?[]const u8 = null,
+            /// Seed nodes for topology discovery (comma-separated addresses)
+            /// Mutually exclusive with --shards
+            @"seed-nodes": ?[]const u8 = null,
+            /// Maximum concurrent client connections
+            @"max-connections": u32 = 10000,
+            /// Query timeout in milliseconds
+            @"query-timeout-ms": u32 = 30_000,
+            /// Health check interval in milliseconds
+            @"health-check-ms": u32 = 5_000,
+            /// Connections per shard
+            @"connections-per-shard": u32 = 10,
+            /// Disable read-from-replica load balancing (enabled by default)
+            @"no-read-from-replicas": bool = false,
+            /// Fan-out policy: all, majority, or first
+            @"fan-out-policy": ?[]const u8 = null,
+            /// Log level
+            @"log-level": LogLevel = .info,
+            /// Metrics port (optional)
+            @"metrics-port": ?u16 = null,
+        },
+        /// Show coordinator status
+        status: struct {
+            /// Coordinator address to query
+            address: []const u8 = "127.0.0.1:5000",
+            /// Output format
+            format: ?[]const u8 = null,
+        },
+        /// Stop coordinator gracefully
+        stop: struct {
+            /// Coordinator address
+            address: []const u8 = "127.0.0.1:5000",
+            /// Timeout for graceful shutdown in seconds
+            timeout: u32 = 30,
+        },
+
+        pub const help =
+            \\Usage:
+            \\
+            \\  archerdb coordinator [-h | --help]
+            \\
+            \\  archerdb coordinator start [--bind=<host:port>] [--shards=<addresses>]
+            \\                             [--seed-nodes=<addresses>] [--max-connections=<n>]
+            \\                             [--query-timeout-ms=<ms>] [--health-check-ms=<ms>]
+            \\                             [--no-read-from-replicas] [--fan-out-policy=<policy>]
+            \\
+            \\  archerdb coordinator status [--address=<host:port>] [--format=<text|json>]
+            \\
+            \\  archerdb coordinator stop [--address=<host:port>] [--timeout=<seconds>]
+            \\
+            \\Commands:
+            \\
+            \\  start      Start coordinator process for multi-shard query routing.
+            \\             Requires either --shards (explicit list) or --seed-nodes (discovery).
+            \\
+            \\  status     Show coordinator status including topology and health.
+            \\
+            \\  stop       Stop coordinator gracefully, draining connections.
+            \\
+            \\Options:
+            \\
+            \\  --bind=<host:port>
+            \\        Address to bind for client connections. Defaults to 0.0.0.0:5000.
+            \\
+            \\  --shards=<addresses>
+            \\        Comma-separated list of shard addresses (e.g., 10.0.0.1:3000,10.0.0.2:3000).
+            \\        Mutually exclusive with --seed-nodes.
+            \\
+            \\  --seed-nodes=<addresses>
+            \\        Comma-separated list of seed nodes for topology discovery.
+            \\        Mutually exclusive with --shards.
+            \\
+            \\  --max-connections=<n>
+            \\        Maximum concurrent client connections. Defaults to 10000.
+            \\
+            \\  --query-timeout-ms=<ms>
+            \\        Query timeout in milliseconds. Defaults to 30000.
+            \\
+            \\  --health-check-ms=<ms>
+            \\        Health check interval in milliseconds. Defaults to 5000.
+            \\
+            \\  --connections-per-shard=<n>
+            \\        Number of connections to maintain per shard. Defaults to 10.
+            \\
+            \\  --no-read-from-replicas
+            \\        Disable read load balancing across replicas (enabled by default).
+            \\
+            \\  --fan-out-policy=<policy>
+            \\        Policy for fan-out queries: 'all' (wait for all), 'majority',
+            \\        or 'first' (return first response). Defaults to 'all'.
+            \\
+            \\  --format=<text|json>
+            \\        Output format for status command. Defaults to 'text'.
+            \\
+            \\Examples:
+            \\
+            \\  archerdb coordinator start --shards=10.0.0.1:3000,10.0.0.2:3000
+            \\  archerdb coordinator start --seed-nodes=10.0.0.1:3000 --bind=0.0.0.0:8080
+            \\  archerdb coordinator status --format=json
+            \\  archerdb coordinator stop --timeout=60
+            \\
+        ;
+    };
+
     format: Format,
     recover: Recover,
     start: Start,
@@ -655,16 +1055,20 @@ const CLIArgs = union(enum) {
     @"export": Export,
     import: Import,
     shard: Shard,
+    ttl: TTL,
     verify: Verify,
+    coordinator: Coordinator,
+    cluster: Cluster,
+    index: Index,
 
-    // TODO Document --cache-accounts, --cache-transfers, --cache-transfers-posted, --limit-storage,
-    // --limit-pipeline-requests
+    // TODO Document --cache-geo-events, --cache-grid, --limit-storage, --limit-pipeline-requests
     pub const help = fmt.comptimePrint(
         \\Usage:
         \\
         \\  archerdb [-h | --help]
         \\
-        \\  archerdb format [--cluster=<integer>] --replica=<index> --replica-count=<integer> <path>
+        \\  archerdb format [--cluster=<integer>] --replica=<index> --replica-count=<integer>
+        \\                 [--sharding-strategy=<strategy>] <path>
         \\
         \\  archerdb start --addresses=<addresses> [--cache-grid=<size><KiB|MiB|GiB>]
         \\                [--log-level=<level>] [--log-format=<format>] <path>
@@ -703,6 +1107,12 @@ const CLIArgs = union(enum) {
         \\
         \\  verify     Verify data file integrity (encryption, checksums).
         \\
+        \\  coordinator  Start/stop/status of coordinator for multi-shard query routing.
+        \\
+        \\  cluster    Manage cluster membership (add-node, remove-node, status).
+        \\
+        \\  index      Manage index operations (resize).
+        \\
         \\Options:
         \\
         \\  -h, --help
@@ -719,6 +1129,13 @@ const CLIArgs = union(enum) {
         \\
         \\  --replica-count=<integer>
         \\        Set the number of replicas participating in replication.
+        \\
+        \\  --sharding-strategy=<modulo|virtual_ring|jump_hash>
+        \\        Set the sharding strategy for this cluster.
+        \\        - modulo: Simple hash % shards. Requires power-of-2 shard counts.
+        \\        - virtual_ring: Consistent hashing with virtual nodes.
+        \\        - jump_hash: Jump Consistent Hash (recommended, default).
+        \\        Defaults to "jump_hash" for optimal data movement on resharding.
         \\
         \\  --addresses=<addresses>
         \\        The addresses of all replicas in the cluster.
@@ -789,6 +1206,30 @@ const CLIArgs = union(enum) {
         \\
         \\        For safety, production replicas should always enforce Direct IO -- this flag should only be
         \\        used for testing and development. It should not be used for production or benchmarks.
+        \\
+        \\  --ttl-priority-threshold=<0-100>
+        \\        (Experimental) Set the TTL-aware compaction priority threshold as a percentage.
+        \\        LSM levels with an expired data ratio exceeding this threshold are prioritized
+        \\        for compaction, helping reclaim storage from expired data more quickly.
+        \\        Set to 100 to disable TTL-aware prioritization.
+        \\        Defaults to 30 (30% expired data triggers prioritization).
+        \\
+        \\  --ttl-extension-enabled=<true|false>
+        \\        Enable automatic TTL extension when entities are accessed (read).
+        \\        When enabled, accessing an entity extends its remaining TTL.
+        \\        Defaults to false.
+        \\
+        \\  --ttl-extension-amount=<seconds>
+        \\        Amount to extend an entity's TTL on access (in seconds).
+        \\        Defaults to 86400 (1 day).
+        \\
+        \\  --ttl-extension-max=<seconds>
+        \\        Maximum total TTL an entity can reach through extensions (in seconds).
+        \\        Prevents unbounded TTL growth. Defaults to 2592000 (30 days).
+        \\
+        \\  --ttl-extension-cooldown=<seconds>
+        \\        Minimum time between TTL extensions for the same entity (in seconds).
+        \\        Prevents excessive extensions from frequent reads. Defaults to 3600 (1 hour).
         \\
         \\Examples:
         \\
@@ -870,6 +1311,8 @@ pub const Command = union(enum) {
         development: bool,
         path: []const u8,
         log_level: LogLevel,
+        // Per add-jump-consistent-hash/spec.md: sharding strategy for this cluster
+        sharding_strategy: sharding.ShardingStrategy,
     };
 
     pub const Recover = struct {
@@ -932,6 +1375,16 @@ pub const Command = union(enum) {
         // Per ttl-retention/spec.md: Global default TTL in days
         // 0 = infinite (no expiration), > 0 = events expire after that many days
         default_ttl_days: u32,
+        // Per add-ttl-aware-compaction spec: TTL priority threshold (0.0-1.0)
+        // Levels with expired_ratio > threshold are prioritized for compaction
+        ttl_priority_threshold: f64,
+        // Per add-v2-distributed-features/specs/ttl-retention/spec.md: TTL Extension on Read
+        ttl_extension_enabled: bool,
+        ttl_extension_amount: u32, // seconds, default 86400 (1 day)
+        ttl_extension_max: u32, // seconds, default 2592000 (30 days)
+        ttl_extension_cooldown: u32, // seconds, default 3600 (1 hour)
+        // Per add-aesni-encryption spec: allow software fallback when AES-NI unavailable
+        allow_software_crypto: bool,
     };
 
     pub const Version = struct {
@@ -1134,6 +1587,121 @@ pub const Command = union(enum) {
         log_level: LogLevel,
     };
 
+    /// v2.1 TTL management command.
+    pub const TTL = union(enum) {
+        set: struct {
+            addresses: Addresses,
+            cluster: u128,
+            entity_id: u128,
+            ttl_seconds: u64,
+            log_level: LogLevel,
+        },
+        extend: struct {
+            addresses: Addresses,
+            cluster: u128,
+            entity_id: u128,
+            extend_seconds: u64,
+            log_level: LogLevel,
+        },
+        clear: struct {
+            addresses: Addresses,
+            cluster: u128,
+            entity_id: u128,
+            log_level: LogLevel,
+        },
+    };
+
+    /// Fan-out policy for multi-shard queries.
+    pub const FanOutPolicy = enum {
+        /// Wait for all shards to respond.
+        all,
+        /// Wait for majority of shards.
+        majority,
+        /// Return first response received.
+        first,
+    };
+
+    /// v2.0 Coordinator command (per add-coordinator-mode/spec.md).
+    pub const Coordinator = union(enum) {
+        start: struct {
+            bind_host: []const u8,
+            bind_port: u16,
+            shards: ?Addresses,
+            seed_nodes: ?Addresses,
+            max_connections: u32,
+            query_timeout_ms: u32,
+            health_check_ms: u32,
+            connections_per_shard: u32,
+            read_from_replicas: bool,
+            fan_out_policy: FanOutPolicy,
+            log_level: LogLevel,
+            metrics_port: ?u16,
+        },
+        status: struct {
+            address: []const u8,
+            port: u16,
+            format: OutputFormat,
+        },
+        stop: struct {
+            address: []const u8,
+            port: u16,
+            timeout: u32,
+        },
+    };
+
+    /// v2.0 Cluster management command (per add-dynamic-membership/spec.md).
+    pub const Cluster = union(enum) {
+        @"add-node": struct {
+            addresses: Addresses,
+            cluster: u128,
+            node_address: []const u8,
+            wait: bool,
+            timeout_seconds: u32,
+            format: OutputFormat,
+            log_level: LogLevel,
+        },
+        @"remove-node": struct {
+            addresses: Addresses,
+            cluster: u128,
+            node_id: []const u8,
+            force: bool,
+            timeout_seconds: u32,
+            format: OutputFormat,
+            log_level: LogLevel,
+        },
+        status: struct {
+            addresses: Addresses,
+            cluster: u128,
+            format: OutputFormat,
+            log_level: LogLevel,
+        },
+    };
+
+    /// v2.0 Index management command (per add-online-index-rehash/spec.md).
+    pub const IndexResizeAction = enum {
+        start, // Start resize with new-capacity
+        check, // Dry run
+        status, // Show progress
+        abort, // Abort resize
+    };
+
+    pub const Index = union(enum) {
+        resize: struct {
+            addresses: Addresses,
+            cluster: u128,
+            new_capacity: ?u64,
+            action: IndexResizeAction,
+            format: OutputFormat,
+            log_level: LogLevel,
+        },
+        stats: struct {
+            addresses: Addresses,
+            cluster: u128,
+            format: OutputFormat,
+            log_level: LogLevel,
+        },
+    };
+
     format: Format,
     recover: Recover,
     start: Start,
@@ -1147,7 +1715,11 @@ pub const Command = union(enum) {
     @"export": Export,
     import: Import,
     shard: Shard,
+    ttl: TTL,
     verify: Verify,
+    coordinator: Coordinator,
+    cluster: Cluster,
+    index: Index,
 };
 
 /// Parse the command line arguments passed to the `archerdb` binary.
@@ -1169,7 +1741,11 @@ pub fn parse_args(args_iterator: *std.process.ArgIterator) Command {
         .@"export" => |exp| .{ .@"export" = parse_args_export(exp) },
         .import => |imp| .{ .import = parse_args_import(imp) },
         .shard => |shard| .{ .shard = parse_args_shard(shard) },
+        .ttl => |ttl| .{ .ttl = parse_args_ttl(ttl) },
         .verify => |verify| .{ .verify = parse_args_verify(verify) },
+        .coordinator => |coordinator| .{ .coordinator = parse_args_coordinator(coordinator) },
+        .cluster => |cluster| .{ .cluster = parse_args_cluster(cluster) },
+        .index => |index| .{ .index = parse_args_index(index) },
     };
 }
 
@@ -1231,6 +1807,16 @@ fn parse_args_format(format: CLIArgs.Format) Command.Format {
         std.log.warn("omit --cluster=0 to randomly generate a suitable id\n", .{});
     }
 
+    // Parse sharding strategy (per add-jump-consistent-hash/spec.md)
+    const sharding_strategy = if (format.@"sharding-strategy") |strategy_str|
+        sharding.ShardingStrategy.fromString(strategy_str) orelse {
+            vsr.fatal(.cli, "--sharding-strategy: invalid '{}' (modulo/virtual_ring/jump_hash)", .{
+                std.zig.fmtEscapes(strategy_str),
+            });
+        }
+    else
+        sharding.ShardingStrategy.default();
+
     return .{
         .cluster = cluster, // just an ID, any value is allowed
         .replica = replica,
@@ -1238,6 +1824,7 @@ fn parse_args_format(format: CLIArgs.Format) Command.Format {
         .development = format.development,
         .path = format.path,
         .log_level = format.log_level,
+        .sharding_strategy = sharding_strategy,
     };
 }
 
@@ -1583,6 +2170,21 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
         .backup_primary_only = start.backup_primary_only,
         // Per ttl-retention/spec.md: Global default TTL (0 = infinite, >0 = days)
         .default_ttl_days = start.default_ttl_days orelse 0,
+        // Per add-ttl-aware-compaction spec: TTL priority threshold (default 30%)
+        .ttl_priority_threshold = blk: {
+            const pct = start.ttl_priority_threshold orelse 30;
+            if (pct > 100) {
+                vsr.fatal(.cli, "--ttl-priority-threshold: {d} out of range 0-100", .{pct});
+            }
+            break :blk @as(f64, @floatFromInt(pct)) / 100.0;
+        },
+        // Per add-v2-distributed-features/specs/ttl-retention/spec.md: TTL Extension on Read
+        .ttl_extension_enabled = start.ttl_extension_enabled,
+        .ttl_extension_amount = start.ttl_extension_amount orelse 86400, // default 1 day
+        .ttl_extension_max = start.ttl_extension_max orelse 2592000, // default 30 days
+        .ttl_extension_cooldown = start.ttl_extension_cooldown orelse 3600, // default 1 hour
+        // Per add-aesni-encryption spec: allow software fallback
+        .allow_software_crypto = start.allow_software_crypto,
     };
 }
 
@@ -1834,7 +2436,11 @@ fn parse_export_format(format_str: []const u8) Command.ExportFormat {
     if (std.mem.eql(u8, format_str, "geojson")) return .geojson;
     if (std.mem.eql(u8, format_str, "ndjson")) return .ndjson;
     if (std.mem.eql(u8, format_str, "csv")) return .csv;
-    vsr.fatal(.cli, "--format: invalid format '{s}', expected json, geojson, ndjson, or csv", .{format_str});
+    vsr.fatal(
+        .cli,
+        "--format: invalid format '{s}', expected json, geojson, ndjson, or csv",
+        .{format_str},
+    );
 }
 
 fn parse_args_import(imp: CLIArgs.Import) Command.Import {
@@ -1868,7 +2474,11 @@ fn parse_import_format(format_str: []const u8) Command.ImportFormat {
     if (std.mem.eql(u8, format_str, "json")) return .json;
     if (std.mem.eql(u8, format_str, "geojson")) return .geojson;
     if (std.mem.eql(u8, format_str, "csv")) return .csv;
-    vsr.fatal(.cli, "--format: invalid format '{s}', expected json, geojson, or csv", .{format_str});
+    vsr.fatal(
+        .cli,
+        "--format: invalid format '{s}', expected json, geojson, or csv",
+        .{format_str},
+    );
 }
 
 fn detect_import_format(path: []const u8) Command.ImportFormat {
@@ -1902,11 +2512,19 @@ fn parse_args_shard(shard: CLIArgs.Shard) Command.Shard {
         .reshard => |reshard| blk: {
             // Validate that target shard count is a power of 2
             if (reshard.to == 0 or (reshard.to & (reshard.to - 1)) != 0) {
-                vsr.fatal(.cli, "--to: shard count must be a power of 2, got {d}", .{reshard.to});
+                vsr.fatal(
+                    .cli,
+                    "--to: shard count must be a power of 2, got {d}",
+                    .{reshard.to},
+                );
             }
             break :blk .{
                 .reshard = .{
-                    .addresses = parse_addresses(reshard.addresses, "--addresses", Command.Addresses),
+                    .addresses = parse_addresses(
+                        reshard.addresses,
+                        "--addresses",
+                        Command.Addresses,
+                    ),
                     .cluster = reshard.cluster,
                     .to = reshard.to,
                     .mode = parse_reshard_mode(reshard.mode),
@@ -1915,6 +2533,58 @@ fn parse_args_shard(shard: CLIArgs.Shard) Command.Shard {
                 },
             };
         },
+    };
+}
+
+fn parse_args_ttl(ttl: CLIArgs.TTL) Command.TTL {
+    return switch (ttl) {
+        .set => |set| .{
+            .set = .{
+                .addresses = parse_addresses(set.addresses, "--addresses", Command.Addresses),
+                .cluster = set.cluster,
+                .entity_id = parse_uuid(set.entity, "--entity"),
+                .ttl_seconds = set.ttl,
+                .log_level = set.@"log-level",
+            },
+        },
+        .extend => |extend| .{
+            .extend = .{
+                .addresses = parse_addresses(extend.addresses, "--addresses", Command.Addresses),
+                .cluster = extend.cluster,
+                .entity_id = parse_uuid(extend.entity, "--entity"),
+                .extend_seconds = extend.by,
+                .log_level = extend.@"log-level",
+            },
+        },
+        .clear => |clear| .{
+            .clear = .{
+                .addresses = parse_addresses(clear.addresses, "--addresses", Command.Addresses),
+                .cluster = clear.cluster,
+                .entity_id = parse_uuid(clear.entity, "--entity"),
+                .log_level = clear.@"log-level",
+            },
+        },
+    };
+}
+
+fn parse_uuid(uuid_str: []const u8, flag_name: []const u8) u128 {
+    // Parse UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+    // Remove dashes and parse as hex
+    var hex_bytes: [32]u8 = undefined;
+    var hex_idx: usize = 0;
+    for (uuid_str) |c| {
+        if (c == '-') continue;
+        if (hex_idx >= 32) {
+            vsr.fatal(.cli, "{s}: invalid UUID format, too long", .{flag_name});
+        }
+        hex_bytes[hex_idx] = c;
+        hex_idx += 1;
+    }
+    if (hex_idx != 32) {
+        vsr.fatal(.cli, "{s}: invalid UUID (expected 32 hex digits)", .{flag_name});
+    }
+    return std.fmt.parseInt(u128, &hex_bytes, 16) catch {
+        vsr.fatal(.cli, "{s}: invalid UUID hex value", .{flag_name});
     };
 }
 
@@ -1937,6 +2607,202 @@ fn parse_args_verify(verify: CLIArgs.Verify) Command.Verify {
         .encryption = verify.encryption,
         .path = verify.path,
         .log_level = verify.@"log-level",
+    };
+}
+
+fn parse_args_coordinator(coordinator: CLIArgs.Coordinator) Command.Coordinator {
+    return switch (coordinator) {
+        .start => |start| blk: {
+            // Validate mutual exclusivity of --shards and --seed-nodes
+            if (start.shards != null and start.@"seed-nodes" != null) {
+                vsr.fatal(.cli, "--shards and --seed-nodes are mutually exclusive", .{});
+            }
+            if (start.shards == null and start.@"seed-nodes" == null) {
+                vsr.fatal(.cli, "either --shards or --seed-nodes is required", .{});
+            }
+
+            // Parse bind address (host:port format)
+            var bind_host: []const u8 = "0.0.0.0";
+            var bind_port: u16 = 5000;
+            if (std.mem.indexOfScalar(u8, start.bind, ':')) |colon_pos| {
+                bind_host = start.bind[0..colon_pos];
+                const port_str = start.bind[colon_pos + 1 ..];
+                bind_port = std.fmt.parseInt(u16, port_str, 10) catch {
+                    vsr.fatal(.cli, "--bind: invalid port '{s}'", .{port_str});
+                };
+            } else {
+                // If no colon, assume it's just a host and use default port
+                bind_host = start.bind;
+            }
+
+            break :blk .{
+                .start = .{
+                    .bind_host = bind_host,
+                    .bind_port = bind_port,
+                    .shards = if (start.shards) |shards|
+                        parse_addresses(shards, "--shards", Command.Addresses)
+                    else
+                        null,
+                    .seed_nodes = if (start.@"seed-nodes") |seeds|
+                        parse_addresses(seeds, "--seed-nodes", Command.Addresses)
+                    else
+                        null,
+                    .max_connections = start.@"max-connections",
+                    .query_timeout_ms = start.@"query-timeout-ms",
+                    .health_check_ms = start.@"health-check-ms",
+                    .connections_per_shard = start.@"connections-per-shard",
+                    .read_from_replicas = !start.@"no-read-from-replicas",
+                    .fan_out_policy = parse_fan_out_policy(start.@"fan-out-policy"),
+                    .log_level = start.@"log-level",
+                    .metrics_port = start.@"metrics-port",
+                },
+            };
+        },
+        .status => |status| blk: {
+            // Parse address (host:port format)
+            var host: []const u8 = "127.0.0.1";
+            var port: u16 = 5000;
+            if (std.mem.indexOfScalar(u8, status.address, ':')) |colon_pos| {
+                host = status.address[0..colon_pos];
+                const port_str = status.address[colon_pos + 1 ..];
+                port = std.fmt.parseInt(u16, port_str, 10) catch {
+                    vsr.fatal(.cli, "--address: invalid port '{s}'", .{port_str});
+                };
+            } else {
+                host = status.address;
+            }
+
+            break :blk .{
+                .status = .{
+                    .address = host,
+                    .port = port,
+                    .format = parse_output_format(status.format),
+                },
+            };
+        },
+        .stop => |stop| blk: {
+            // Parse address (host:port format)
+            var host: []const u8 = "127.0.0.1";
+            var port: u16 = 5000;
+            if (std.mem.indexOfScalar(u8, stop.address, ':')) |colon_pos| {
+                host = stop.address[0..colon_pos];
+                const port_str = stop.address[colon_pos + 1 ..];
+                port = std.fmt.parseInt(u16, port_str, 10) catch {
+                    vsr.fatal(.cli, "--address: invalid port '{s}'", .{port_str});
+                };
+            } else {
+                host = stop.address;
+            }
+
+            break :blk .{
+                .stop = .{
+                    .address = host,
+                    .port = port,
+                    .timeout = stop.timeout,
+                },
+            };
+        },
+    };
+}
+
+fn parse_fan_out_policy(policy: ?[]const u8) Command.FanOutPolicy {
+    const value = policy orelse return .all; // Default to 'all'
+    if (std.mem.eql(u8, value, "all")) return .all;
+    if (std.mem.eql(u8, value, "majority")) return .majority;
+    if (std.mem.eql(u8, value, "first")) return .first;
+    vsr.fatal(.cli, "--fan-out-policy: invalid '{s}' (all/majority/first)", .{value});
+}
+
+fn parse_args_cluster(cluster: CLIArgs.Cluster) Command.Cluster {
+    return switch (cluster) {
+        .@"add-node" => |add_node| .{
+            .@"add-node" = .{
+                .addresses = parse_addresses(add_node.addresses, "--addresses", Command.Addresses),
+                .cluster = add_node.cluster,
+                .node_address = add_node.node,
+                .wait = !add_node.@"no-wait",
+                .timeout_seconds = add_node.timeout,
+                .format = parse_output_format(add_node.format),
+                .log_level = add_node.@"log-level",
+            },
+        },
+        .@"remove-node" => |remove_node| .{
+            .@"remove-node" = .{
+                .addresses = parse_addresses(
+                    remove_node.addresses,
+                    "--addresses",
+                    Command.Addresses,
+                ),
+                .cluster = remove_node.cluster,
+                .node_id = remove_node.node,
+                .force = remove_node.force,
+                .timeout_seconds = remove_node.timeout,
+                .format = parse_output_format(remove_node.format),
+                .log_level = remove_node.@"log-level",
+            },
+        },
+        .status => |status| .{
+            .status = .{
+                .addresses = parse_addresses(status.addresses, "--addresses", Command.Addresses),
+                .cluster = status.cluster,
+                .format = parse_output_format(status.format),
+                .log_level = status.@"log-level",
+            },
+        },
+    };
+}
+
+fn parse_args_index(index: CLIArgs.Index) Command.Index {
+    return switch (index) {
+        .resize => |resize| blk: {
+            // Parse action from positional argument
+            const action: Command.IndexResizeAction = if (resize.action) |action_str| act: {
+                if (std.mem.eql(u8, action_str, "check")) {
+                    if (resize.@"new-capacity" == null) {
+                        vsr.fatal(.cli, "index resize check: --new-capacity is required", .{});
+                    }
+                    break :act .check;
+                } else if (std.mem.eql(u8, action_str, "status")) {
+                    break :act .status;
+                } else if (std.mem.eql(u8, action_str, "abort")) {
+                    break :act .abort;
+                } else {
+                    const msg = "index resize: invalid action '{s}' (check/status/abort)";
+                    vsr.fatal(.cli, msg, .{action_str});
+                }
+            } else act: {
+                // No action specified - default to start
+                if (resize.@"new-capacity" == null) {
+                    const cap_msg = "index resize: --new-capacity required or " ++
+                        "specify action (check/status/abort)";
+                    vsr.fatal(.cli, cap_msg, .{});
+                }
+                break :act .start;
+            };
+
+            break :blk .{
+                .resize = .{
+                    .addresses = parse_addresses(
+                        resize.addresses,
+                        "--addresses",
+                        Command.Addresses,
+                    ),
+                    .cluster = resize.cluster,
+                    .new_capacity = resize.@"new-capacity",
+                    .action = action,
+                    .format = parse_output_format(resize.format),
+                    .log_level = resize.@"log-level",
+                },
+            };
+        },
+        .stats => |stats| .{
+            .stats = .{
+                .addresses = parse_addresses(stats.addresses, "--addresses", Command.Addresses),
+                .cluster = stats.cluster,
+                .format = parse_output_format(stats.format),
+                .log_level = stats.@"log-level",
+            },
+        },
     };
 }
 
@@ -2053,16 +2919,34 @@ test "parse_export_format: valid formats" {
 }
 
 test "parse_import_format: valid formats" {
-    try std.testing.expectEqual(Command.ImportFormat.json, parse_import_format("json"));
-    try std.testing.expectEqual(Command.ImportFormat.geojson, parse_import_format("geojson"));
+    try std.testing.expectEqual(
+        Command.ImportFormat.json,
+        parse_import_format("json"),
+    );
+    try std.testing.expectEqual(
+        Command.ImportFormat.geojson,
+        parse_import_format("geojson"),
+    );
     try std.testing.expectEqual(Command.ImportFormat.csv, parse_import_format("csv"));
 }
 
 test "detect_import_format: file extension detection" {
-    try std.testing.expectEqual(Command.ImportFormat.json, detect_import_format("data.json"));
-    try std.testing.expectEqual(Command.ImportFormat.geojson, detect_import_format("locations.geojson"));
-    try std.testing.expectEqual(Command.ImportFormat.csv, detect_import_format("events.csv"));
-    try std.testing.expectEqual(Command.ImportFormat.json, detect_import_format("stream.ndjson"));
+    try std.testing.expectEqual(
+        Command.ImportFormat.json,
+        detect_import_format("data.json"),
+    );
+    try std.testing.expectEqual(
+        Command.ImportFormat.geojson,
+        detect_import_format("locations.geojson"),
+    );
+    try std.testing.expectEqual(
+        Command.ImportFormat.csv,
+        detect_import_format("events.csv"),
+    );
+    try std.testing.expectEqual(
+        Command.ImportFormat.json,
+        detect_import_format("stream.ndjson"),
+    );
     // Unknown extension defaults to JSON
     try std.testing.expectEqual(Command.ImportFormat.json, detect_import_format("data.txt"));
     try std.testing.expectEqual(Command.ImportFormat.json, detect_import_format("noextension"));

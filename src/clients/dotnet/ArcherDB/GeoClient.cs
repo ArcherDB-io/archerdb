@@ -4,6 +4,8 @@
 // GeoClient provides high-level geospatial operations for ArcherDB.
 
 using System;
+using System.Buffers.Binary;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 
 namespace ArcherDB;
@@ -16,6 +18,10 @@ public sealed class GeoClient : IDisposable
 {
     private readonly UInt128 clusterID;
     private readonly NativeClient nativeClient;
+    private const int QueryUuidHeaderSize = 16;
+    private const int QueryUuidBatchRequestHeaderSize = 8;
+    private const int QueryUuidBatchResponseHeaderSize = 16;
+    private const int QueryUuidBatchMax = 10_000;
 
     /// <summary>
     /// Creates a new GeoClient connected to the specified ArcherDB cluster.
@@ -144,7 +150,8 @@ public sealed class GeoClient : IDisposable
     /// <returns>Array of matching geo events.</returns>
     public GeoEvent[] QueryByUuid(QueryUuidFilter filter)
     {
-        return nativeClient.CallRequest<GeoEvent, QueryUuidFilter>(TBOperation.QueryUuid, new[] { filter });
+        var response = nativeClient.CallRequest<byte, QueryUuidFilter>(TBOperation.QueryUuid, new[] { filter });
+        return ParseQueryUuidResponse(response);
     }
 
     /// <summary>
@@ -152,9 +159,137 @@ public sealed class GeoClient : IDisposable
     /// </summary>
     /// <param name="filter">The UUID query filter.</param>
     /// <returns>Array of matching geo events.</returns>
-    public Task<GeoEvent[]> QueryByUuidAsync(QueryUuidFilter filter)
+    public async Task<GeoEvent[]> QueryByUuidAsync(QueryUuidFilter filter)
     {
-        return nativeClient.CallRequestAsync<GeoEvent, QueryUuidFilter>(TBOperation.QueryUuid, new[] { filter });
+        var response = await nativeClient.CallRequestAsync<byte, QueryUuidFilter>(TBOperation.QueryUuid, new[] { filter })
+            .ConfigureAwait(continueOnCapturedContext: false);
+        return ParseQueryUuidResponse(response);
+    }
+
+    private static GeoEvent[] ParseQueryUuidResponse(byte[] response)
+    {
+        if (response.Length < QueryUuidHeaderSize)
+        {
+            return Array.Empty<GeoEvent>();
+        }
+
+        var status = response[0];
+        switch (status)
+        {
+            case 0:
+                if (response.Length < QueryUuidHeaderSize + GeoEvent.SIZE)
+                {
+                    throw new InvalidOperationException("Query UUID response was incomplete.");
+                }
+                var geoEvent = MemoryMarshal.Read<GeoEvent>(
+                    response.AsSpan(QueryUuidHeaderSize, GeoEvent.SIZE)
+                );
+                return new[] { geoEvent };
+            case (byte)StateError.EntityNotFound:
+                return Array.Empty<GeoEvent>();
+            case (byte)StateError.EntityExpired:
+                throw new StateException(StateError.EntityExpired);
+            default:
+                throw new InvalidOperationException($"Query UUID failed with status {status}.");
+        }
+    }
+
+    /// <summary>
+    /// Queries geo events by a batch of entity UUIDs.
+    /// </summary>
+    /// <param name="entityIds">The entity UUIDs to look up.</param>
+    /// <returns>Batch lookup result containing events and missing indices.</returns>
+    public QueryUuidBatchResult QueryByUuidBatch(ReadOnlySpan<UInt128> entityIds)
+    {
+        var request = EncodeQueryUuidBatchRequest(entityIds);
+        var response = nativeClient.CallRequest<byte, byte>(TBOperation.QueryUuidBatch, request);
+        return ParseQueryUuidBatchResponse(response);
+    }
+
+    /// <summary>
+    /// Queries geo events by a batch of entity UUIDs asynchronously.
+    /// </summary>
+    /// <param name="entityIds">The entity UUIDs to look up.</param>
+    /// <returns>Batch lookup result containing events and missing indices.</returns>
+    public async Task<QueryUuidBatchResult> QueryByUuidBatchAsync(ReadOnlyMemory<UInt128> entityIds)
+    {
+        var request = EncodeQueryUuidBatchRequest(entityIds.Span);
+        var response = await nativeClient.CallRequestAsync<byte, byte>(TBOperation.QueryUuidBatch, request)
+            .ConfigureAwait(continueOnCapturedContext: false);
+        return ParseQueryUuidBatchResponse(response);
+    }
+
+    internal static byte[] EncodeQueryUuidBatchRequest(ReadOnlySpan<UInt128> entityIds)
+    {
+        if (entityIds.Length > QueryUuidBatchMax)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(entityIds),
+                $"Batch UUID query supports at most {QueryUuidBatchMax} IDs."
+            );
+        }
+
+        var count = entityIds.Length;
+        var bodySize = checked(QueryUuidBatchRequestHeaderSize + count * UInt128Extensions.SIZE);
+        var buffer = new byte[bodySize];
+
+        BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(0, 4), (uint)count);
+        BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(4, 4), 0);
+
+        var idsSpan = buffer.AsSpan(QueryUuidBatchRequestHeaderSize);
+        for (int index = 0; index < count; index += 1)
+        {
+            var offset = index * UInt128Extensions.SIZE;
+            MemoryMarshal.Write(idsSpan.Slice(offset, UInt128Extensions.SIZE), in entityIds[index]);
+        }
+
+        return buffer;
+    }
+
+    internal static QueryUuidBatchResult ParseQueryUuidBatchResponse(ReadOnlySpan<byte> response)
+    {
+        if (response.Length < QueryUuidBatchResponseHeaderSize)
+        {
+            throw new InvalidOperationException("Query UUID batch response too small.");
+        }
+
+        var foundCount = BinaryPrimitives.ReadUInt32LittleEndian(response.Slice(0, 4));
+        var notFoundCount = BinaryPrimitives.ReadUInt32LittleEndian(response.Slice(4, 4));
+
+        var notFoundCountInt = checked((int)notFoundCount);
+        var foundCountInt = checked((int)foundCount);
+
+        var indicesSize = checked(notFoundCountInt * sizeof(ushort));
+        var indicesEnd = checked(QueryUuidBatchResponseHeaderSize + indicesSize);
+        var eventsOffset = AlignForward(indicesEnd, 16);
+        var eventsSize = checked(foundCountInt * GeoEvent.SIZE);
+
+        if (response.Length < eventsOffset + eventsSize)
+        {
+            throw new InvalidOperationException("Query UUID batch response truncated.");
+        }
+
+        var notFoundIndices = new ushort[notFoundCountInt];
+        for (int index = 0; index < notFoundCountInt; index += 1)
+        {
+            var start = QueryUuidBatchResponseHeaderSize + index * sizeof(ushort);
+            notFoundIndices[index] = BinaryPrimitives.ReadUInt16LittleEndian(response.Slice(start, sizeof(ushort)));
+        }
+
+        var events = new GeoEvent[foundCountInt];
+        for (int index = 0; index < foundCountInt; index += 1)
+        {
+            var start = eventsOffset + index * GeoEvent.SIZE;
+            events[index] = MemoryMarshal.Read<GeoEvent>(response.Slice(start, GeoEvent.SIZE));
+        }
+
+        return new QueryUuidBatchResult(foundCount, notFoundCount, notFoundIndices, events);
+    }
+
+    private static int AlignForward(int value, int alignment)
+    {
+        var mask = alignment - 1;
+        return checked((value + mask) & ~mask);
     }
 
     /// <summary>
@@ -446,5 +581,43 @@ public sealed class GeoClient : IDisposable
     {
         _ = disposing;
         nativeClient.Dispose();
+    }
+}
+
+/// <summary>
+/// Result of a batch UUID query.
+/// </summary>
+public sealed class QueryUuidBatchResult
+{
+    /// <summary>
+    /// Number of entities found.
+    /// </summary>
+    public uint FoundCount { get; }
+
+    /// <summary>
+    /// Number of entities not found.
+    /// </summary>
+    public uint NotFoundCount { get; }
+
+    /// <summary>
+    /// Indices in the original request that were not found.
+    /// </summary>
+    public ushort[] NotFoundIndices { get; }
+
+    /// <summary>
+    /// Events for found entities, ordered to match the request order (excluding missing IDs).
+    /// </summary>
+    public GeoEvent[] Events { get; }
+
+    internal QueryUuidBatchResult(
+        uint foundCount,
+        uint notFoundCount,
+        ushort[] notFoundIndices,
+        GeoEvent[] events)
+    {
+        FoundCount = foundCount;
+        NotFoundCount = notFoundCount;
+        NotFoundIndices = notFoundIndices ?? Array.Empty<ushort>();
+        Events = events ?? Array.Empty<GeoEvent>();
     }
 }

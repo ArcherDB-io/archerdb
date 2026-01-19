@@ -17,7 +17,6 @@ const assert = std.debug.assert;
 const log = std.log.scoped(.cdc);
 
 const vsr = @import("../vsr.zig");
-const constants = vsr.constants;
 const IO = vsr.io.IO;
 
 pub const amqp = @import("amqp.zig");
@@ -204,8 +203,6 @@ pub const Options = struct {
 
 /// CDC Runner - manages AMQP connection and event publishing.
 pub const Runner = struct {
-    const Self = @This();
-
     /// Memory allocator.
     allocator: std.mem.Allocator,
 
@@ -253,7 +250,7 @@ pub const Runner = struct {
 
     /// Initialize the CDC runner.
     pub fn init(
-        self: *Self,
+        self: *Runner,
         allocator: std.mem.Allocator,
         io: *IO,
         options: Options,
@@ -286,7 +283,7 @@ pub const Runner = struct {
     }
 
     /// Deinitialize the CDC runner.
-    pub fn deinit(self: *Self) void {
+    pub fn deinit(self: *Runner) void {
         if (self.client) |*client| {
             client.deinit(self.allocator);
             self.client = null;
@@ -305,7 +302,7 @@ pub const Runner = struct {
     }
 
     /// Start the CDC runner (connect to AMQP broker).
-    pub fn start(self: *Self) !void {
+    pub fn start(self: *Runner) !void {
         if (self.state != .disconnected and self.state != .uninitialized) {
             return error.InvalidState;
         }
@@ -342,7 +339,7 @@ pub const Runner = struct {
     }
 
     /// Stop the CDC runner.
-    pub fn stop(self: *Self) void {
+    pub fn stop(self: *Runner) void {
         if (self.state == .stopped or self.state == .stopping) {
             return;
         }
@@ -363,7 +360,7 @@ pub const Runner = struct {
     /// Capture a GeoEvent for CDC streaming.
     /// Called by the state machine after successful event insertion.
     pub fn captureEvent(
-        self: *Self,
+        self: *Runner,
         event: *const GeoEvent,
         commit_timestamp: u64,
         change_type: ChangeType,
@@ -397,7 +394,7 @@ pub const Runner = struct {
 
     /// Capture a batch of GeoEvents.
     pub fn captureEventBatch(
-        self: *Self,
+        self: *Runner,
         events: []const GeoEvent,
         commit_timestamp: u64,
         change_type: ChangeType,
@@ -408,7 +405,7 @@ pub const Runner = struct {
     }
 
     /// Flush the current batch to AMQP.
-    pub fn flushBatch(self: *Self) !void {
+    pub fn flushBatch(self: *Runner) !void {
         if (self.event_count == 0) {
             return;
         }
@@ -458,7 +455,7 @@ pub const Runner = struct {
     }
 
     /// Tick the CDC runner (called periodically).
-    pub fn tick(self: *Self) void {
+    pub fn tick(self: *Runner) void {
         switch (self.state) {
             .disconnected => {
                 // Attempt reconnection with exponential backoff
@@ -485,7 +482,7 @@ pub const Runner = struct {
     }
 
     /// Get consumer offset for a consumer ID.
-    pub fn getConsumerOffset(self: *Self, consumer_id: [32]u8) ?u64 {
+    pub fn getConsumerOffset(self: *Runner, consumer_id: [32]u8) ?u64 {
         if (self.consumer_offsets.get(consumer_id)) |offset| {
             return offset.last_ack_sequence;
         }
@@ -494,7 +491,7 @@ pub const Runner = struct {
 
     /// Acknowledge events up to sequence number.
     pub fn acknowledgeOffset(
-        self: *Self,
+        self: *Runner,
         consumer_id: [32]u8,
         sequence: u64,
     ) !void {
@@ -513,12 +510,12 @@ pub const Runner = struct {
     }
 
     /// Get CDC statistics.
-    pub fn getStats(self: *const Self) @TypeOf(self.stats) {
+    pub fn getStats(self: *const Runner) @TypeOf(self.stats) {
         return self.stats;
     }
 
     /// Check if CDC is healthy.
-    pub fn isHealthy(self: *const Self) bool {
+    pub fn isHealthy(self: *const Runner) bool {
         return self.state == .connected or self.state == .publishing;
     }
 };

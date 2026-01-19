@@ -1,66 +1,48 @@
-use archerdb as tb;
+use archerdb::{GeoEvent, GeoEventOptions, RadiusQuery};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     futures::executor::block_on(main_async())
 }
 
 async fn main_async() -> Result<(), Box<dyn std::error::Error>> {
-    let port = std::env::var("ARCHERDB_ADDRESS").unwrap_or_else(|_| "3000".to_string());
-    let client = tb::Client::new(0, &port)?;
+    let address = std::env::var("ARCHERDB_ADDRESS")
+        .ok()
+        .unwrap_or_else(|| "127.0.0.1:3001".to_string());
+    let client = archerdb::Client::new(0, &address)?;
 
-    // Create two accounts
-    let account_errors = client
-        .create_accounts(&[
-            tb::Account {
-                id: 1,
-                ledger: 1,
-                code: 1,
-                ..Default::default()
-            },
-            tb::Account {
-                id: 2,
-                ledger: 1,
-                code: 1,
-                ..Default::default()
-            },
-        ])
-        .await?;
+    let base_lat = 37.7749;
+    let base_lon = -122.4194;
 
-    for error in &account_errors {
-        eprintln!("Error creating account {}: {:?}", error.index, error.result);
-    }
-    assert!(account_errors.is_empty());
-
-    let transfer_errors = client
-        .create_transfers(&[tb::Transfer {
-            id: 1,
-            debit_account_id: 1,
-            credit_account_id: 2,
-            amount: 10,
-            ledger: 1,
-            code: 1,
+    let mut events: Vec<GeoEvent> = Vec::new();
+    for i in 0..5 {
+        let event = GeoEvent::from_options(GeoEventOptions {
+            entity_id: archerdb::id(),
+            latitude: base_lat + (i as f64) * 0.001,
+            longitude: base_lon + (i as f64) * 0.001,
+            group_id: 1,
             ..Default::default()
-        }])
-        .await?;
-
-    for error in &transfer_errors {
-        eprintln!("Error creating transfer: {:?}", error.result);
+        })?;
+        events.push(event);
     }
-    assert!(transfer_errors.is_empty());
 
-    // Check the sums for both accounts
-    let accounts = client.lookup_accounts(&[1, 2]).await?;
-    assert_eq!(accounts.len(), 2);
+    let errors = client.insert_events(&events).await?;
+    for error in errors {
+        eprintln!("Event {} failed: {:?}", error.index, error.result);
+    }
 
-    for account in accounts {
-        if account.id == 1 {
-            assert_eq!(account.debits_posted, 10);
-            assert_eq!(account.credits_posted, 0);
-        } else if account.id == 2 {
-            assert_eq!(account.debits_posted, 0);
-            assert_eq!(account.credits_posted, 10);
-        } else {
-            panic!("Unexpected account");
+    let query = RadiusQuery::new(base_lat, base_lon, 1000.0, 100)?;
+    let results = client.query_radius(&query).await?;
+    println!("Found {} events within 1km", results.events.len());
+
+    if let Some(first) = events.first() {
+        let found = client.get_latest_by_uuid(first.entity_id).await?;
+        if let Some(event) = found {
+            println!(
+                "Latest for {}: ({:.4}, {:.4})",
+                event.entity_id,
+                event.latitude(),
+                event.longitude()
+            );
         }
     }
 

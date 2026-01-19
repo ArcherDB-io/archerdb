@@ -37,7 +37,6 @@
 const std = @import("std");
 const mem = std.mem;
 const GeoEvent = @import("../geo_event.zig").GeoEvent;
-const GeoEventFlags = @import("../geo_event.zig").GeoEventFlags;
 
 /// Field delimiter options.
 pub const Delimiter = enum {
@@ -128,10 +127,8 @@ pub const CsvExporter = struct {
     options: CsvExportOptions,
     row_count: usize,
 
-    const Self = @This();
-
     /// Initialize CSV exporter.
-    pub fn init(allocator: mem.Allocator, options: CsvExportOptions) Self {
+    pub fn init(allocator: mem.Allocator, options: CsvExportOptions) CsvExporter {
         return .{
             .allocator = allocator,
             .options = options,
@@ -140,12 +137,12 @@ pub const CsvExporter = struct {
     }
 
     /// Clean up resources.
-    pub fn deinit(self: *Self) void {
+    pub fn deinit(self: *CsvExporter) void {
         _ = self;
     }
 
     /// Write CSV header row.
-    pub fn writeHeader(self: *Self, writer: anytype) !void {
+    pub fn writeHeader(self: *CsvExporter, writer: anytype) !void {
         if (!self.options.include_header) return;
 
         const d = self.options.delimiter.char();
@@ -201,7 +198,7 @@ pub const CsvExporter = struct {
     }
 
     /// Write a single event as CSV row.
-    pub fn writeRow(self: *Self, writer: anytype, event: *const GeoEvent) !void {
+    pub fn writeRow(self: *CsvExporter, writer: anytype, event: *const GeoEvent) !void {
         const d = self.options.delimiter.char();
 
         // Convert coordinates
@@ -295,7 +292,7 @@ pub const CsvExporter = struct {
     }
 
     /// Export a slice of events.
-    pub fn exportAll(self: *Self, writer: anytype, events: []const GeoEvent) !void {
+    pub fn exportAll(self: *CsvExporter, writer: anytype, events: []const GeoEvent) !void {
         try self.writeHeader(writer);
         for (events) |*event| {
             try self.writeRow(writer, event);
@@ -303,7 +300,7 @@ pub const CsvExporter = struct {
     }
 
     /// Export to a string.
-    pub fn exportToString(self: *Self, events: []const GeoEvent) ![]u8 {
+    pub fn exportToString(self: *CsvExporter, events: []const GeoEvent) ![]u8 {
         var list = std.ArrayList(u8).init(self.allocator);
         errdefer list.deinit();
 
@@ -320,8 +317,6 @@ pub const CsvImporter = struct {
     line_buffer: []u8,
     row_count: usize,
     error_count: usize,
-
-    const Self = @This();
 
     /// Column index mapping.
     pub const ColumnMap = struct {
@@ -357,7 +352,7 @@ pub const CsvImporter = struct {
     };
 
     /// Initialize CSV importer.
-    pub fn init(allocator: mem.Allocator, options: CsvImportOptions) !Self {
+    pub fn init(allocator: mem.Allocator, options: CsvImportOptions) !CsvImporter {
         return .{
             .allocator = allocator,
             .options = options,
@@ -369,12 +364,12 @@ pub const CsvImporter = struct {
     }
 
     /// Clean up resources.
-    pub fn deinit(self: *Self) void {
+    pub fn deinit(self: *CsvImporter) void {
         self.allocator.free(self.line_buffer);
     }
 
     /// Parse header row and build column map.
-    pub fn parseHeader(self: *Self, header_line: []const u8) !void {
+    pub fn parseHeader(self: *CsvImporter, header_line: []const u8) !void {
         var map = ColumnMap{};
         const d = self.options.delimiter.char();
 
@@ -435,7 +430,7 @@ pub const CsvImporter = struct {
     }
 
     /// Parse a data row into a GeoEvent.
-    pub fn parseRow(self: *Self, row_line: []const u8) ImportError!GeoEvent {
+    pub fn parseRow(self: *CsvImporter, row_line: []const u8) ImportError!GeoEvent {
         const map = self.column_map orelse {
             // Use default column order if no header was parsed
             return self.parseRowDefaultOrder(row_line);
@@ -456,13 +451,16 @@ pub const CsvImporter = struct {
             } else if (map.correlation_id != null and col_index == map.correlation_id.?) {
                 event.correlation_id = parseHex128(trimmed) catch 0;
             } else if (map.latitude != null and col_index == map.latitude.?) {
-                const lat = std.fmt.parseFloat(f64, trimmed) catch return ImportError.InvalidCoordinate;
+                const lat = std.fmt.parseFloat(f64, trimmed) catch
+                    return ImportError.InvalidCoordinate;
                 event.lat_nano = GeoEvent.lat_from_float(lat);
             } else if (map.longitude != null and col_index == map.longitude.?) {
-                const lon = std.fmt.parseFloat(f64, trimmed) catch return ImportError.InvalidCoordinate;
+                const lon = std.fmt.parseFloat(f64, trimmed) catch
+                    return ImportError.InvalidCoordinate;
                 event.lon_nano = GeoEvent.lon_from_float(lon);
             } else if (map.timestamp != null and col_index == map.timestamp.?) {
-                event.timestamp = std.fmt.parseInt(u64, trimmed, 10) catch return ImportError.InvalidTimestamp;
+                event.timestamp = std.fmt.parseInt(u64, trimmed, 10) catch
+                    return ImportError.InvalidTimestamp;
             } else if (map.group_id != null and col_index == map.group_id.?) {
                 event.group_id = std.fmt.parseInt(u64, trimmed, 10) catch 0;
             } else if (map.ttl_seconds != null and col_index == map.ttl_seconds.?) {
@@ -506,7 +504,7 @@ pub const CsvImporter = struct {
     }
 
     /// Parse row with default column order (no header).
-    fn parseRowDefaultOrder(self: *Self, row_line: []const u8) ImportError!GeoEvent {
+    fn parseRowDefaultOrder(self: *CsvImporter, row_line: []const u8) ImportError!GeoEvent {
         var event = GeoEvent.zero();
         const d = self.options.delimiter.char();
 
@@ -520,14 +518,19 @@ pub const CsvImporter = struct {
                 1 => event.entity_id = parseHex128(trimmed) catch 0,
                 2 => event.correlation_id = parseHex128(trimmed) catch 0,
                 3 => {
-                    const lat = std.fmt.parseFloat(f64, trimmed) catch return ImportError.InvalidCoordinate;
+                    const lat = std.fmt.parseFloat(f64, trimmed) catch
+                        return ImportError.InvalidCoordinate;
                     event.lat_nano = GeoEvent.lat_from_float(lat);
                 },
                 4 => {
-                    const lon = std.fmt.parseFloat(f64, trimmed) catch return ImportError.InvalidCoordinate;
+                    const lon = std.fmt.parseFloat(f64, trimmed) catch
+                        return ImportError.InvalidCoordinate;
                     event.lon_nano = GeoEvent.lon_from_float(lon);
                 },
-                5 => event.timestamp = std.fmt.parseInt(u64, trimmed, 10) catch return ImportError.InvalidTimestamp,
+                5 => {
+                    event.timestamp = std.fmt.parseInt(u64, trimmed, 10) catch
+                        return ImportError.InvalidTimestamp;
+                },
                 6 => event.group_id = std.fmt.parseInt(u64, trimmed, 10) catch 0,
                 7 => event.ttl_seconds = std.fmt.parseInt(u32, trimmed, 10) catch 0,
                 else => {},

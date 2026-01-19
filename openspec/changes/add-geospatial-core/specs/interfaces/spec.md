@@ -539,6 +539,20 @@ The system SHALL define how configuration is accessed.
   - TLS: if tls_required, all cert paths must be valid
   - File paths: data_file_path must exist (or parent dir writable)
 
+## Implementation Status
+
+| Requirement | Status | Implementation |
+|-------------|--------|----------------|
+| State Machine Interface | IMPLEMENTED | `src/state_machine.zig` - input_valid, prepare, prefetch, commit functions |
+| Primary Index Interface | IMPLEMENTED | `src/ram_index.zig` - lookup, upsert, delete, stats functions |
+| Storage Interface | IMPLEMENTED | `src/lsm/tree.zig` - get_event_by_id, scan_events_by_id_range_async, put_events |
+| S2 Geometry Interface | IMPLEMENTED | `src/s2.zig` - lat_lon_to_cell_id, cover_polygon, cover_cap, point_in_polygon |
+| Message Bus Interface | IMPLEMENTED | `src/message_bus.zig` - send, on_message, on_connection_event |
+| Error Propagation | IMPLEMENTED | `src/error_codes.zig` - Layer-specific error types and conversion |
+| Buffer Pool Interface | IMPLEMENTED | `src/message_pool.zig` - acquire, release, ref, stats |
+| Timestamp Interface | IMPLEMENTED | `src/vsr/clock.zig` - now_monotonic, now_synchronized |
+| Configuration Interface | IMPLEMENTED | `src/config.zig` - Config struct with validation |
+
 ### Related Specifications
 
 - See `specs/data-model/spec.md` for core data structure interfaces
@@ -546,13 +560,3 @@ The system SHALL define how configuration is accessed.
 - See `specs/query-engine/spec.md` for state machine interface requirements
 - See `specs/replication/spec.md` for VSR protocol interfaces
 - See `specs/implementation-guide/spec.md` for interface implementation patterns
-
-
-## Implementation Status
-
-| Requirement | Status | Notes |
-|-------------|--------|-------|
-| GeoClient Interface | ✓ Complete | All SDK languages |
-| Batch Interface | ✓ Complete | GeoEventBatch |
-| Query Interface | ✓ Complete | Radius/polygon/UUID |
-| Error Types | ✓ Complete | Typed exceptions |

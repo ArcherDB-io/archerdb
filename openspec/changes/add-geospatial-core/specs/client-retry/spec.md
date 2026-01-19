@@ -293,27 +293,25 @@ The system SHALL ensure all official SDKs implement identical retry behavior.
 - **AND** other SDKs SHALL match its behavior exactly
 - **AND** any deviation must be documented and justified
 
+## Implementation Status
+
+| Requirement | Status | Implementation |
+|-------------|--------|----------------|
+| Automatic Retry in Client SDKs | IMPLEMENTED | `src/clients/*/` - Automatic retry on retriable errors |
+| Exponential Backoff Strategy | IMPLEMENTED | `src/clients/*/` - Configurable exponential backoff |
+| Primary Discovery | IMPLEMENTED | `src/clients/*/` - Automatic primary redirect |
+| Connection Pool Retry | IMPLEMENTED | `src/clients/*/` - Pool-level retry coordination |
+| Idempotency Preservation | IMPLEMENTED | `src/clients/*/` - Request numbering for idempotency |
+| Timeout Handling | IMPLEMENTED | `src/clients/*/` - Configurable operation timeouts |
+| Retry Configuration | IMPLEMENTED | `src/clients/*/` - Client-configurable retry params |
+| Retry Metrics and Logging | IMPLEMENTED | `src/clients/*/` - Retry telemetry |
+| Circuit Breaker (Optional) | IMPLEMENTED | `src/clients/*/` - Optional circuit breaker pattern |
+| Graceful Degradation | IMPLEMENTED | `src/clients/*/` - Degraded mode on failures |
+| SDK Parity | IMPLEMENTED | `src/clients/*/` - Consistent behavior across SDKs |
+
 ### Related Specifications
 
 - See `specs/error-codes/spec.md` for retriable vs non-retriable error classification
 - See `specs/client-protocol/spec.md` for client request/response protocol
 - See `specs/replication/spec.md` for primary discovery and view changes
 - See `specs/query-engine/spec.md` for partial_result flag handling
-
-## Implementation Status
-
-| Requirement | Status | Notes |
-|-------------|--------|-------|
-| Automatic Retry in Client SDKs | ✓ Complete | Implemented in Java, Python, Node.js, Go SDKs |
-| Exponential Backoff Strategy | ✓ Complete | 100ms, 200ms, 400ms, 800ms, 1600ms with jitter |
-| Primary Discovery | ✓ Complete | Caches primary, invalidates on not_primary |
-| Connection Pool Retry | ✓ Complete | Integrates retry with connection pooling |
-| Idempotency Preservation | ✓ Complete | Uses client_id + request for deduplication |
-| Timeout Handling | ✓ Complete | Per-attempt and total timeout enforcement |
-| Retry Configuration | ✓ Complete | Configurable max_retries, backoff, timeout |
-| Per-operation retry override | ✓ Complete | OperationOptions in Java, Python, Node.js, Go SDKs |
-| Retry Metrics and Logging | ✓ Complete | Metrics recorded during retry operations in all SDKs |
-| Circuit Breaker | ✓ Complete | 3-state (Closed/Open/Half-Open), per-replica scope in all SDKs |
-| Graceful Degradation | ✓ Complete | Returns error context with retry count |
-| SDK Parity | ✓ Complete | Java, Python, Node.js, Go implement identical behavior |
-

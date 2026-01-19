@@ -71,6 +71,9 @@ pub const insert_geo_event_result = vsr.archerdb.InsertGeoEventResult;
 pub const insert_geo_events_result_t = vsr.archerdb.InsertGeoEventsResult;
 pub const delete_entities_result_t = vsr.archerdb.DeleteEntitiesResult;
 pub const query_uuid_filter_t = vsr.archerdb.QueryUuidFilter;
+pub const query_uuid_response_t = vsr.archerdb.QueryUuidResponse;
+pub const query_uuid_batch_filter_t = vsr.archerdb.QueryUuidBatchFilter;
+pub const query_uuid_batch_result_t = vsr.archerdb.QueryUuidBatchResult;
 pub const query_radius_filter_t = vsr.archerdb.QueryRadiusFilter;
 pub const query_polygon_filter_t = vsr.archerdb.QueryPolygonFilter;
 pub const query_latest_filter_t = vsr.archerdb.QueryLatestFilter;
@@ -159,8 +162,14 @@ pub fn init_echo(
     return .success;
 }
 
-pub fn submit(arch_client: ?*arch_client_t, packet: *arch_packet_t) callconv(.c) arch_client_status {
-    const client: *tb.ClientInterface = if (arch_client) |ptr| ptr.cast() else return .invalid;
+pub fn submit(
+    arch_client: ?*arch_client_t,
+    packet: *arch_packet_t,
+) callconv(.c) arch_client_status {
+    const client: *tb.ClientInterface = if (arch_client) |ptr|
+        ptr.cast()
+    else
+        return .invalid;
     client.submit(packet) catch |err| switch (err) {
         error.ClientInvalid => return .invalid,
     };

@@ -19,6 +19,7 @@ const posix = std.posix;
 const log = std.log.scoped(.metrics_server);
 
 const vsr = @import("vsr");
+const stdx = vsr.stdx;
 const metrics = vsr.archerdb_metrics;
 
 /// State of the replica for health checks.
@@ -75,7 +76,7 @@ const MetricsCache = struct {
     /// Update cache with new data
     fn update(self: *MetricsCache, data: []const u8) void {
         const copy_len = @min(data.len, self.data.len);
-        @memcpy(self.data[0..copy_len], data[0..copy_len]);
+        stdx.copy_disjoint(.exact, u8, self.data[0..copy_len], data[0..copy_len]);
         self.len = copy_len;
         self.timestamp_ns = std.time.nanoTimestamp();
     }
@@ -108,6 +109,160 @@ pub fn setAuthToken(token: []const u8) void {
 pub fn clearAuthToken() void {
     bearer_token = null;
     log.info("metrics server authentication disabled", .{});
+}
+
+// =============================================================================
+// Geo-Routing Configuration (v2.0)
+// =============================================================================
+
+/// Maximum number of regions supported.
+pub const MAX_REGIONS = 16;
+
+/// Region health status.
+pub const RegionHealth = enum {
+    /// Region is healthy and accepting requests.
+    healthy,
+    /// Region is degraded but operational.
+    degraded,
+    /// Region is unhealthy and should not receive traffic.
+    unhealthy,
+    /// Region health is unknown (no recent health check).
+    unknown,
+
+    pub fn toString(self: RegionHealth) []const u8 {
+        return switch (self) {
+            .healthy => "healthy",
+            .degraded => "degraded",
+            .unhealthy => "unhealthy",
+            .unknown => "unknown",
+        };
+    }
+};
+
+/// Information about a single region.
+pub const RegionInfo = struct {
+    /// Region identifier (e.g., "us-east-1", "eu-west-1").
+    name: [32]u8 = [_]u8{0} ** 32,
+    name_len: u8 = 0,
+    /// Region display name (e.g., "US East (N. Virginia)").
+    display_name: [64]u8 = [_]u8{0} ** 64,
+    display_name_len: u8 = 0,
+    /// Endpoint address for this region.
+    endpoint: [128]u8 = [_]u8{0} ** 128,
+    endpoint_len: u8 = 0,
+    /// Port number for the endpoint.
+    port: u16 = 0,
+    /// Geographic latitude (degrees).
+    latitude: f64 = 0.0,
+    /// Geographic longitude (degrees).
+    longitude: f64 = 0.0,
+    /// Current health status.
+    health: RegionHealth = .unknown,
+    /// Last health check timestamp (nanoseconds since epoch).
+    last_health_check_ns: i128 = 0,
+    /// Average latency to this region (milliseconds), 0 if unknown.
+    avg_latency_ms: u32 = 0,
+
+    pub fn getName(self: *const RegionInfo) []const u8 {
+        return self.name[0..self.name_len];
+    }
+
+    pub fn getDisplayName(self: *const RegionInfo) []const u8 {
+        return self.display_name[0..self.display_name_len];
+    }
+
+    pub fn getEndpoint(self: *const RegionInfo) []const u8 {
+        return self.endpoint[0..self.endpoint_len];
+    }
+
+    pub fn setName(self: *RegionInfo, name: []const u8) void {
+        self.name_len = @intCast(@min(name.len, 32));
+        for (0..self.name_len) |i| {
+            self.name[i] = name[i];
+        }
+    }
+
+    pub fn setDisplayName(self: *RegionInfo, display_name: []const u8) void {
+        self.display_name_len = @intCast(@min(display_name.len, 64));
+        for (0..self.display_name_len) |i| {
+            self.display_name[i] = display_name[i];
+        }
+    }
+
+    pub fn setEndpoint(self: *RegionInfo, endpoint: []const u8) void {
+        self.endpoint_len = @intCast(@min(endpoint.len, 128));
+        for (0..self.endpoint_len) |i| {
+            self.endpoint[i] = endpoint[i];
+        }
+    }
+};
+
+/// Global geo-routing configuration.
+pub const GeoRoutingConfig = struct {
+    /// Whether geo-routing is enabled.
+    enabled: bool = false,
+    /// This region's identifier.
+    local_region: [32]u8 = [_]u8{0} ** 32,
+    local_region_len: u8 = 0,
+    /// Number of configured regions.
+    region_count: u8 = 0,
+    /// Configured regions.
+    regions: [MAX_REGIONS]RegionInfo = [_]RegionInfo{.{}} ** MAX_REGIONS,
+    /// Health check interval (milliseconds).
+    health_check_interval_ms: u32 = 30_000,
+    /// Last update timestamp.
+    last_update_ns: i128 = 0,
+
+    pub fn getLocalRegion(self: *const GeoRoutingConfig) []const u8 {
+        return self.local_region[0..self.local_region_len];
+    }
+
+    pub fn setLocalRegion(self: *GeoRoutingConfig, region: []const u8) void {
+        self.local_region_len = @intCast(@min(region.len, 32));
+        for (0..self.local_region_len) |i| {
+            self.local_region[i] = region[i];
+        }
+    }
+
+    /// Add a region to the configuration.
+    pub fn addRegion(self: *GeoRoutingConfig, region: RegionInfo) !void {
+        if (self.region_count >= MAX_REGIONS) {
+            return error.TooManyRegions;
+        }
+        self.regions[self.region_count] = region;
+        self.region_count += 1;
+        self.last_update_ns = std.time.nanoTimestamp();
+    }
+
+    /// Get all configured regions.
+    pub fn getRegions(self: *const GeoRoutingConfig) []const RegionInfo {
+        return self.regions[0..self.region_count];
+    }
+
+    /// Update health status for a region by name.
+    pub fn updateRegionHealth(
+        self: *GeoRoutingConfig,
+        name: []const u8,
+        health: RegionHealth,
+    ) void {
+        for (0..self.region_count) |i| {
+            if (std.mem.eql(u8, self.regions[i].getName(), name)) {
+                self.regions[i].health = health;
+                self.regions[i].last_health_check_ns = std.time.nanoTimestamp();
+                return;
+            }
+        }
+    }
+};
+
+/// Global geo-routing configuration (mutable at runtime).
+pub var geo_routing_config: GeoRoutingConfig = .{};
+
+/// Enable geo-routing with the local region name.
+pub fn enableGeoRouting(local_region: []const u8) void {
+    geo_routing_config.enabled = true;
+    geo_routing_config.setLocalRegion(local_region);
+    log.info("geo-routing enabled for region: {s}", .{local_region});
 }
 
 /// Metrics server instance.
@@ -225,6 +380,8 @@ pub const MetricsServer = struct {
             try handleHealthShards(client_fd);
         } else if (std.mem.eql(u8, path, "/health/encryption")) {
             try handleHealthEncryption(client_fd);
+        } else if (std.mem.eql(u8, path, "/regions")) {
+            try handleRegions(client_fd);
         } else if (std.mem.eql(u8, path, "/metrics")) {
             // Check bearer token authentication if configured
             if (bearer_token) |expected_token| {
@@ -341,7 +498,9 @@ pub const MetricsServer = struct {
 
         var body_buf: [512]u8 = undefined;
         const fmt =
-            \\{{"status":"{s}","role":"{s}","region_id":{d},"ship_queue_depth":{d},"lag_ops":{d},"lag_seconds":{d:.3}}}
+            \\{{"status":"{s}","role":"{s}","region_id":{d},
+        ++
+            \\"ship_queue_depth":{d},"lag_ops":{d},"lag_seconds":{d:.3}}}
         ;
         const body = std.fmt.bufPrint(&body_buf, fmt, .{
             status,
@@ -420,6 +579,55 @@ pub const MetricsServer = struct {
         try sendResponse(client_fd, .ok, "application/json", body);
     }
 
+    /// v2.0 Geo-routing endpoint: Returns all known regions with health status.
+    /// Per openspec/changes/add-geo-routing/specs spec.
+    fn handleRegions(client_fd: posix.socket_t) !void {
+        const config = &geo_routing_config;
+
+        if (!config.enabled) {
+            const body =
+                \\{"enabled":false,"regions":[]}
+            ;
+            try sendResponse(client_fd, .ok, "application/json", body);
+            return;
+        }
+
+        // Build JSON response with all regions
+        var body_buf: [8192]u8 = undefined;
+        var fbs = std.io.fixedBufferStream(&body_buf);
+        const writer = fbs.writer();
+
+        try writer.print("{{\"enabled\":true,\"local_region\":\"{s}\",\"regions\":[", .{
+            config.getLocalRegion(),
+        });
+
+        const regions = config.getRegions();
+        for (regions, 0..) |region, i| {
+            if (i > 0) try writer.writeAll(",");
+            try writer.print(
+                \\{{"name":"{s}","display_name":"{s}","endpoint":"{s}",
+            ++
+                \\"port":{d},"latitude":{d:.6},"longitude":{d:.6},
+            ++
+                \\"health":"{s}","avg_latency_ms":{d}}}
+            , .{
+                region.getName(),
+                region.getDisplayName(),
+                region.getEndpoint(),
+                region.port,
+                region.latitude,
+                region.longitude,
+                region.health.toString(),
+                region.avg_latency_ms,
+            });
+        }
+
+        try writer.writeAll("]}");
+
+        const body = fbs.getWritten();
+        try sendResponse(client_fd, .ok, "application/json", body);
+    }
+
     fn handleMetrics(client_fd: posix.socket_t) !void {
         // Update health status gauge based on replica state
         const state = replica_state;
@@ -473,19 +681,21 @@ pub const MetricsServer = struct {
         content_type: []const u8,
         body: []const u8,
     ) !void {
-        var response_buf: [8192]u8 = undefined;
+        var header_buf: [512]u8 = undefined;
         const http_fmt = "HTTP/1.1 {s}\r\n" ++
             "Content-Type: {s}\r\n" ++
             "Content-Length: {d}\r\n" ++
-            "Connection: close\r\n\r\n{s}";
-        const response = std.fmt.bufPrint(&response_buf, http_fmt, .{
+            "Connection: close\r\n\r\n";
+        const header = std.fmt.bufPrint(&header_buf, http_fmt, .{
             status.code(),
             content_type,
             body.len,
-            body,
         }) catch return error.ResponseTooLarge;
 
-        _ = try posix.write(client_fd, response);
+        _ = try posix.write(client_fd, header);
+        if (body.len > 0) {
+            _ = try posix.write(client_fd, body);
+        }
     }
 };
 
@@ -514,6 +724,28 @@ test "MetricsServer: parsePath" {
             try std.testing.expect(result == null);
         }
     }
+}
+
+test "MetricsServer: sendResponse handles large body" {
+    var body: [9000]u8 = [_]u8{'a'} ** 9000;
+    const fds = try posix.pipe();
+    defer posix.close(fds[0]);
+    defer posix.close(fds[1]);
+
+    try MetricsServer.sendResponse(fds[1], .ok, "text/plain", &body);
+
+    var buffer: [16384]u8 = undefined;
+    var total: usize = 0;
+    while (true) {
+        const read_len = try posix.read(fds[0], buffer[total..]);
+        if (read_len == 0) break;
+        total += read_len;
+        if (total == buffer.len) break;
+    }
+
+    const response = buffer[0..total];
+    try std.testing.expect(std.mem.indexOf(u8, response, "Content-Length: 9000") != null);
+    try std.testing.expect(std.mem.endsWith(u8, response, &body));
 }
 
 test "ReplicaState: isReady" {
@@ -570,7 +802,8 @@ test "MetricsServer: parseAuthHeader" {
     const cases = [_]TestCase{
         // Valid Authorization header
         .{
-            .input = "GET /metrics HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer secret123\r\n\r\n",
+            .input = "GET /metrics HTTP/1.1\r\nHost: localhost\r\n" ++
+                "Authorization: Bearer secret123\r\n\r\n",
             .expected = "secret123",
         },
         // Lowercase header name

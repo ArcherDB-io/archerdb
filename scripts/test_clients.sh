@@ -156,31 +156,33 @@ const path = require('path');
 
 const bindingPath = path.join(process.cwd(), 'src/clients/node/dist/bin/x86_64-linux-gnu/client.node');
 const binding = require(bindingPath);
+const { Operation, GeoEventFlags } = require(path.join(process.cwd(), 'src/clients/node/dist/bindings.js'));
 
 let callbackReceived = false;
 
 const client = binding.init_echo({
-    cluster_id: BigInt(0),
+    cluster_id: 0n,
     replica_addresses: Buffer.from("3000"),
 });
 
-const accounts = [{
-    id: BigInt(12345),
-    debits_pending: BigInt(0),
-    debits_posted: BigInt(0),
-    credits_pending: BigInt(0),
-    credits_posted: BigInt(0),
-    user_data_128: BigInt(0),
-    user_data_64: BigInt(0),
-    user_data_32: 0,
-    reserved: 0,
-    ledger: 1,
-    code: 1,
-    flags: 0,
-    timestamp: BigInt(0)
+const events = [{
+    id: 1n,
+    entity_id: 12345n,
+    correlation_id: 0n,
+    user_data: 0n,
+    lat_nano: 37774900000n,
+    lon_nano: -122419400000n,
+    group_id: 1n,
+    timestamp: 0n,
+    altitude_mm: 0,
+    velocity_mms: 0,
+    ttl_seconds: 86400,
+    accuracy_mm: 5000,
+    heading_cdeg: 0,
+    flags: GeoEventFlags.none,
 }];
 
-binding.submit(client, 138, accounts, (error, results) => {
+binding.submit(client, Operation.insert_events, events, (error, results) => {
     if (error) {
         console.log('FAIL: ' + error);
         process.exit(1);
@@ -205,6 +207,125 @@ JSEOF
         return 0
     else
         FAIL_COUNT=$((FAIL_COUNT + 1))
+        return 1
+    fi
+}
+
+# Java Echo Test
+test_java_echo() {
+    echo ""
+    echo "=== Java Client Echo Test ==="
+
+    if ! java -version &>/dev/null; then
+        echo "SKIP: Java not available"
+        return 1
+    fi
+
+    if ! mvn -version &>/dev/null; then
+        echo "SKIP: Maven not available"
+        return 1
+    fi
+
+    if ! javac -version &>/dev/null; then
+        echo "SKIP: javac not available"
+        return 1
+    fi
+
+    cd src/clients/java
+
+    if ! mvn -q -DskipTests compile; then
+        echo "FAIL: Java client compile failed"
+        cd "$ARCHERDB_DIR"
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+        return 1
+    fi
+
+    tmp_dir="$(mktemp -d)"
+    mkdir -p "$tmp_dir/com/archerdb/geo"
+    cat > "$tmp_dir/com/archerdb/geo/EchoClientTest.java" << 'JAVAE'
+package com.archerdb.geo;
+
+import com.archerdb.core.GeoNativeBridge;
+import com.archerdb.core.UInt128;
+import java.nio.ByteBuffer;
+
+public final class EchoClientTest {
+    private static void fail(String message) {
+        System.out.println("FAIL: " + message);
+        System.exit(1);
+    }
+
+    public static void main(String[] args) {
+        byte[] clusterId = new byte[16];
+        long latNano = 37_774_900_000L;
+        long lonNano = -122_419_400_000L;
+
+        try (GeoNativeBridge bridge = GeoNativeBridge.createEcho(clusterId, "3000")) {
+            NativeGeoEventBatch batch = new NativeGeoEventBatch(1);
+            batch.add();
+            batch.setId(1L, 0L);
+            batch.setEntityId(12345L, 0L);
+            batch.setCorrelationId(0L, 0L);
+            batch.setUserData(0L, 0L);
+            batch.setLatNano(latNano);
+            batch.setLonNano(lonNano);
+            batch.setGroupId(1L);
+            batch.setTimestamp(0L);
+            batch.setAltitudeMm(0);
+            batch.setVelocityMms(0);
+            batch.setTtlSeconds(86400);
+            batch.setAccuracyMm(5000);
+            batch.setHeadingCdeg(0);
+            batch.setFlags(0);
+
+            ByteBuffer reply = bridge.submitRequest((byte) 146, batch, 5000);
+            if (reply == null || reply.remaining() != 128) {
+                fail("Unexpected reply size");
+            }
+
+            NativeGeoEventBatch echoed = new NativeGeoEventBatch(reply);
+            if (!echoed.next()) {
+                fail("No echoed event received");
+            }
+
+            if (echoed.getId(UInt128.LeastSignificant) != 1L ||
+                    echoed.getId(UInt128.MostSignificant) != 0L) {
+                fail("Echoed id mismatch");
+            }
+            if (echoed.getEntityId(UInt128.LeastSignificant) != 12345L ||
+                    echoed.getEntityId(UInt128.MostSignificant) != 0L) {
+                fail("Echoed entity_id mismatch");
+            }
+            if (echoed.getLatNano() != latNano || echoed.getLonNano() != lonNano) {
+                fail("Echoed coordinates mismatch");
+            }
+
+            System.out.println("PASS: Java client echo test");
+        } catch (Throwable err) {
+            err.printStackTrace();
+            fail("Java echo test failed: " + err.getMessage());
+        }
+    }
+}
+JAVAE
+
+    if ! javac -cp "target/classes" -d "$tmp_dir" "$tmp_dir/com/archerdb/geo/EchoClientTest.java"; then
+        echo "FAIL: Java client echo test compile failed"
+        rm -rf "$tmp_dir"
+        cd "$ARCHERDB_DIR"
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+        return 1
+    fi
+
+    if java --enable-native-access=ALL-UNNAMED -cp "$tmp_dir:target/classes:src/main/resources" com.archerdb.geo.EchoClientTest; then
+        rm -rf "$tmp_dir"
+        PASS_COUNT=$((PASS_COUNT + 1))
+        cd "$ARCHERDB_DIR"
+        return 0
+    else
+        rm -rf "$tmp_dir"
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+        cd "$ARCHERDB_DIR"
         return 1
     fi
 }
@@ -236,6 +357,7 @@ test_go_echo() {
 # Run all tests
 test_python_echo
 test_nodejs_echo
+test_java_echo
 test_go_echo
 
 echo ""

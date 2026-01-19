@@ -209,11 +209,16 @@ export type QueryUuidFilter = {
    * Entity UUID to look up.
    */
   entity_id: bigint
+}
 
-  /**
-   * Maximum results to return (typically 1 for UUID lookups).
-   */
-  limit: number
+/**
+ * Result of batch UUID lookup (F1.3.4).
+ */
+export type QueryUuidBatchResult = {
+  found_count: number
+  not_found_count: number
+  not_found_indices: number[]
+  events: GeoEvent[]
 }
 
 /**
@@ -372,7 +377,7 @@ export type QueryResult = {
 }
 
 /**
- * Wire format header for query responses (8 bytes).
+ * Wire format header for query responses (16 bytes).
  * Matches QueryResponse struct in geo_state_machine.zig.
  *
  * The server sends this header followed by an array of GeoEvent records.
@@ -387,7 +392,7 @@ export type QueryResponse = {
 }
 
 /**
- * Flag bit positions in the QueryResponse flags byte.
+ * Flag bit positions in the QueryResponse flags byte (legacy).
  */
 export const QUERY_RESPONSE_FLAG_HAS_MORE = 0x01
 export const QUERY_RESPONSE_FLAG_PARTIAL_RESULT = 0x02
@@ -395,7 +400,7 @@ export const QUERY_RESPONSE_FLAG_PARTIAL_RESULT = 0x02
 /**
  * Size of QueryResponse header in bytes.
  */
-export const QUERY_RESPONSE_HEADER_SIZE = 8
+export const QUERY_RESPONSE_HEADER_SIZE = 16
 
 /**
  * Parse QueryResponse header from raw bytes.
@@ -411,12 +416,11 @@ export function parseQueryResponse(data: Uint8Array): QueryResponse {
 
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength)
   const count = view.getUint32(0, true) // little-endian
-  const flags = view.getUint8(4)
 
   return {
     count,
-    has_more: (flags & QUERY_RESPONSE_FLAG_HAS_MORE) !== 0,
-    partial_result: (flags & QUERY_RESPONSE_FLAG_PARTIAL_RESULT) !== 0,
+    has_more: view.getUint8(4) !== 0,
+    partial_result: view.getUint8(5) !== 0,
   }
 }
 
@@ -1277,4 +1281,872 @@ export function createPolygonQuery(options: PolygonQueryOptions): QueryPolygonFi
     timestamp_max: options.timestamp_max ?? 0n,
     group_id: options.group_id ?? 0n,
   }
+}
+
+// ============================================================================
+// Sharding Strategy (per add-jump-consistent-hash spec)
+// Algorithm for distributing entities across shards
+// ============================================================================
+
+/**
+ * Strategy for distributing entities across shards.
+ *
+ * Different strategies offer different trade-offs:
+ * - modulo: Simple, requires power-of-2 shard counts, moves most data on resize
+ * - virtual_ring: Consistent hashing with O(log N) lookup and memory cost
+ * - jump_hash: Google's algorithm - O(1) memory, O(log N) compute, optimal movement
+ */
+export enum ShardingStrategy {
+  /** Simple hash % shards. Requires power-of-2 shard counts. */
+  modulo = 0,
+  /** Consistent hashing with virtual nodes. */
+  virtual_ring = 1,
+  /** Google's Jump Consistent Hash (default, recommended). */
+  jump_hash = 2,
+}
+
+/**
+ * Check if a sharding strategy requires power-of-2 shard counts.
+ */
+export function shardingStrategyRequiresPowerOfTwo(
+  strategy: ShardingStrategy
+): boolean {
+  return strategy === ShardingStrategy.modulo
+}
+
+/**
+ * Parse sharding strategy from string.
+ */
+export function parseShardingStrategy(s: string): ShardingStrategy | null {
+  switch (s.toLowerCase()) {
+    case 'modulo':
+      return ShardingStrategy.modulo
+    case 'virtual_ring':
+      return ShardingStrategy.virtual_ring
+    case 'jump_hash':
+      return ShardingStrategy.jump_hash
+    default:
+      return null
+  }
+}
+
+/**
+ * Convert sharding strategy to string.
+ */
+export function shardingStrategyToString(strategy: ShardingStrategy): string {
+  switch (strategy) {
+    case ShardingStrategy.modulo:
+      return 'modulo'
+    case ShardingStrategy.virtual_ring:
+      return 'virtual_ring'
+    case ShardingStrategy.jump_hash:
+      return 'jump_hash'
+  }
+}
+
+// ============================================================================
+// Geo-Sharding Types (v2.2)
+// Geographic partitioning for data locality
+// ============================================================================
+
+/**
+ * Policy for assigning entities to geographic regions.
+ */
+export enum GeoShardPolicy {
+  /** No geo-sharding - all entities in single region */
+  none = 0,
+  /** Route based on entity's lat/lon coordinates to nearest region */
+  by_entity_location = 1,
+  /** Route based on entity_id prefix mapping to regions */
+  by_entity_id_prefix = 2,
+  /** Application explicitly specifies target region per entity */
+  explicit = 3,
+}
+
+/**
+ * A geographic region in the geo-sharding topology.
+ */
+export type GeoRegion = {
+  /** Unique identifier for this region (max 16 characters) */
+  region_id: string
+  /** Human-readable name for the region */
+  name: string
+  /** Endpoint address for this region */
+  endpoint: string
+  /** Center latitude in nanodegrees for by_entity_location routing */
+  center_lat_nano: bigint
+  /** Center longitude in nanodegrees for by_entity_location routing */
+  center_lon_nano: bigint
+  /** Priority for routing (lower = higher priority for ties) */
+  priority: number
+  /** Whether this region is currently active */
+  is_active: boolean
+}
+
+/**
+ * Configuration for geo-sharding behavior.
+ */
+export type GeoShardConfig = {
+  /** The geo-sharding policy to use */
+  policy: GeoShardPolicy
+  /** Available regions for routing */
+  regions: GeoRegion[]
+  /** Default region ID when routing cannot determine target */
+  default_region_id: string
+  /** Whether to allow cross-region query aggregation */
+  allow_cross_region_queries: boolean
+}
+
+/**
+ * Metadata tracking which region owns an entity.
+ */
+export type EntityRegionMetadata = {
+  /** The entity ID */
+  entity_id: bigint
+  /** The region ID that owns this entity */
+  region_id: string
+  /** Timestamp when entity was assigned to this region (nanoseconds) */
+  assigned_timestamp: bigint
+  /** Whether this assignment was explicit or computed */
+  is_explicit: boolean
+}
+
+/**
+ * Result of a cross-region query aggregation.
+ */
+export type CrossRegionQueryResult = {
+  /** Aggregated events from all regions */
+  events: GeoEvent[]
+  /** Per-region result counts */
+  region_results: Map<string, number>
+  /** Regions that failed during the query */
+  region_errors: Map<string, string>
+  /** Whether more results are available */
+  has_more: boolean
+  /** Total latency in milliseconds */
+  total_latency_ms: number
+}
+
+/**
+ * Creates a GeoRegion with center coordinates in degrees.
+ */
+export function createGeoRegion(
+  region_id: string,
+  name: string,
+  endpoint: string,
+  center_latitude: number,
+  center_longitude: number,
+  priority: number = 0,
+): GeoRegion {
+  return {
+    region_id,
+    name,
+    endpoint,
+    center_lat_nano: degreesToNano(center_latitude),
+    center_lon_nano: degreesToNano(center_longitude),
+    priority,
+    is_active: true,
+  }
+}
+
+// ============================================================================
+// Conflict Resolution Types (v2.2)
+// Active-Active Replication Support
+// ============================================================================
+
+/**
+ * Policy for resolving write conflicts in active-active replication.
+ */
+export enum ConflictResolutionPolicy {
+  /** Highest timestamp wins (default) */
+  last_writer_wins = 0,
+  /** Primary region write takes precedence */
+  primary_wins = 1,
+  /** Application-provided resolution function */
+  custom_hook = 2,
+}
+
+/**
+ * Vector clock for tracking causality in distributed systems.
+ */
+export type VectorClock = {
+  /** Clock entries keyed by region ID */
+  entries: Map<string, bigint>
+}
+
+/**
+ * Creates an empty vector clock.
+ */
+export function createVectorClock(): VectorClock {
+  return { entries: new Map() }
+}
+
+/**
+ * Increments the timestamp for a region in the vector clock.
+ */
+export function incrementVectorClock(clock: VectorClock, region_id: string): bigint {
+  const current = clock.entries.get(region_id) ?? 0n
+  const newValue = current + 1n
+  clock.entries.set(region_id, newValue)
+  return newValue
+}
+
+/**
+ * Merges another vector clock into this one (takes max of each entry).
+ */
+export function mergeVectorClocks(clock: VectorClock, other: VectorClock): void {
+  for (const [region_id, timestamp] of other.entries) {
+    const current = clock.entries.get(region_id) ?? 0n
+    if (timestamp > current) {
+      clock.entries.set(region_id, timestamp)
+    }
+  }
+}
+
+/**
+ * Compares two vector clocks.
+ * Returns: -1 if a < b, 0 if concurrent, 1 if a > b
+ */
+export function compareVectorClocks(a: VectorClock, b: VectorClock): number {
+  let aGreater = false
+  let bGreater = false
+
+  // Check all entries in a
+  for (const [region_id, ts] of a.entries) {
+    const bTs = b.entries.get(region_id) ?? 0n
+    if (ts > bTs) aGreater = true
+    if (ts < bTs) bGreater = true
+  }
+
+  // Check entries only in b
+  for (const [region_id, ts] of b.entries) {
+    if (!a.entries.has(region_id) && ts > 0n) {
+      bGreater = true
+    }
+  }
+
+  if (aGreater && !bGreater) return 1
+  if (bGreater && !aGreater) return -1
+  return 0 // Concurrent
+}
+
+/**
+ * Returns true if the clocks are concurrent (neither happened before the other).
+ */
+export function areConcurrent(a: VectorClock, b: VectorClock): boolean {
+  return compareVectorClocks(a, b) === 0
+}
+
+/**
+ * Information about a detected conflict.
+ */
+export type ConflictInfo = {
+  /** The entity ID with the conflict */
+  entity_id: bigint
+  /** Vector clock of the local write */
+  local_clock: VectorClock
+  /** Vector clock of the remote write */
+  remote_clock: VectorClock
+  /** Region ID where local write originated */
+  local_region: string
+  /** Region ID where remote write originated */
+  remote_region: string
+  /** Timestamp of the local write (nanoseconds) */
+  local_timestamp: bigint
+  /** Timestamp of the remote write (nanoseconds) */
+  remote_timestamp: bigint
+}
+
+/**
+ * Result of conflict resolution.
+ */
+export type ConflictResolution = {
+  /** The winning region ID */
+  winning_region: string
+  /** The policy used for resolution */
+  policy: ConflictResolutionPolicy
+  /** The merged vector clock after resolution */
+  merged_clock: VectorClock
+  /** Whether the local write won */
+  local_wins: boolean
+}
+
+/**
+ * Statistics about conflict resolution.
+ */
+export type ConflictStats = {
+  /** Total conflicts detected */
+  total_conflicts: bigint
+  /** Conflicts resolved by last-writer-wins */
+  last_writer_wins_count: bigint
+  /** Conflicts resolved by primary-wins */
+  primary_wins_count: bigint
+  /** Conflicts resolved by custom hook */
+  custom_hook_count: bigint
+  /** Timestamp of last conflict (nanoseconds) */
+  last_conflict_timestamp: bigint
+}
+
+/**
+ * Entry in the conflict audit log.
+ */
+export type ConflictAuditEntry = {
+  /** Unique ID for this audit entry */
+  audit_id: bigint
+  /** The entity ID with the conflict */
+  entity_id: bigint
+  /** Timestamp when conflict was detected (nanoseconds) */
+  detected_timestamp: bigint
+  /** The winning region ID */
+  winning_region: string
+  /** The losing region ID */
+  losing_region: string
+  /** The resolution policy used */
+  policy: ConflictResolutionPolicy
+  /** Serialized winning write data (for auditing) */
+  winning_data?: Uint8Array
+  /** Serialized losing write data (for auditing) */
+  losing_data?: Uint8Array
+}
+
+// ============================================================================
+// GeoJSON/WKT Protocol Support (per add-geojson-wkt-protocol spec)
+// ============================================================================
+
+/**
+ * Error class for GeoJSON/WKT parsing failures.
+ */
+export class GeoFormatError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'GeoFormatError'
+  }
+}
+
+/**
+ * Output format for geographic data.
+ */
+export enum GeoFormat {
+  /** Native nanodegree format */
+  native = 0,
+  /** GeoJSON format */
+  geojson = 1,
+  /** Well-Known Text format */
+  wkt = 2,
+}
+
+/**
+ * GeoJSON Point type.
+ */
+export type GeoJSONPoint = {
+  type: 'Point'
+  coordinates: [number, number] | [number, number, number]
+}
+
+/**
+ * GeoJSON Polygon type.
+ */
+export type GeoJSONPolygon = {
+  type: 'Polygon'
+  coordinates: number[][][]
+}
+
+/**
+ * Parses a GeoJSON Point to nanodegree coordinates.
+ *
+ * @param geojson - GeoJSON Point object or JSON string
+ * @returns Tuple of [lat_nano, lon_nano]
+ * @throws GeoFormatError if parsing fails
+ *
+ * @example
+ * ```typescript
+ * const [lat, lon] = parseGeoJSONPoint({
+ *   type: 'Point',
+ *   coordinates: [-122.4194, 37.7749]
+ * })
+ * ```
+ */
+export function parseGeoJSONPoint(
+  geojson: GeoJSONPoint | string
+): [bigint, bigint] {
+  let obj: GeoJSONPoint
+
+  if (typeof geojson === 'string') {
+    try {
+      obj = JSON.parse(geojson)
+    } catch (e) {
+      throw new GeoFormatError(`Invalid JSON: ${e}`)
+    }
+  } else {
+    obj = geojson
+  }
+
+  if (!obj || typeof obj !== 'object') {
+    throw new GeoFormatError('GeoJSON must be an object')
+  }
+
+  if (obj.type !== 'Point') {
+    throw new GeoFormatError(`Expected type 'Point', got '${obj.type}'`)
+  }
+
+  if (!Array.isArray(obj.coordinates) || obj.coordinates.length < 2) {
+    throw new GeoFormatError('Point must have coordinates [lon, lat]')
+  }
+
+  const [lon, lat] = obj.coordinates
+  if (typeof lon !== 'number' || typeof lat !== 'number') {
+    throw new GeoFormatError('Coordinates must be numbers')
+  }
+
+  validateCoordinates(lat, lon)
+
+  return [degreesToNano(lat), degreesToNano(lon)]
+}
+
+/**
+ * Parses a GeoJSON Polygon to nanodegree coordinates.
+ *
+ * @param geojson - GeoJSON Polygon object or JSON string
+ * @returns Tuple of [exterior, holes] where each is an array of [lat_nano, lon_nano]
+ * @throws GeoFormatError if parsing fails
+ */
+export function parseGeoJSONPolygon(
+  geojson: GeoJSONPolygon | string
+): [Array<[bigint, bigint]>, Array<Array<[bigint, bigint]>>] {
+  let obj: GeoJSONPolygon
+
+  if (typeof geojson === 'string') {
+    try {
+      obj = JSON.parse(geojson)
+    } catch (e) {
+      throw new GeoFormatError(`Invalid JSON: ${e}`)
+    }
+  } else {
+    obj = geojson
+  }
+
+  if (!obj || typeof obj !== 'object') {
+    throw new GeoFormatError('GeoJSON must be an object')
+  }
+
+  if (obj.type !== 'Polygon') {
+    throw new GeoFormatError(`Expected type 'Polygon', got '${obj.type}'`)
+  }
+
+  if (!Array.isArray(obj.coordinates) || obj.coordinates.length < 1) {
+    throw new GeoFormatError('Polygon must have at least one ring')
+  }
+
+  function parseRing(ring: number[][]): Array<[bigint, bigint]> {
+    if (!Array.isArray(ring) || ring.length < 3) {
+      throw new GeoFormatError(`Ring must have at least 3 vertices, got ${ring?.length ?? 0}`)
+    }
+
+    return ring.map((point, i) => {
+      if (!Array.isArray(point) || point.length < 2) {
+        throw new GeoFormatError(`Point ${i} must have [lon, lat]`)
+      }
+      const [lon, lat] = point
+      if (typeof lon !== 'number' || typeof lat !== 'number') {
+        throw new GeoFormatError(`Point ${i} coordinates must be numbers`)
+      }
+      validateCoordinates(lat, lon)
+      return [degreesToNano(lat), degreesToNano(lon)] as [bigint, bigint]
+    })
+  }
+
+  const exterior = parseRing(obj.coordinates[0])
+  const holes = obj.coordinates.slice(1).map(parseRing)
+
+  return [exterior, holes]
+}
+
+/**
+ * Parses a WKT POINT to nanodegree coordinates.
+ *
+ * @param wkt - WKT string like "POINT(lon lat)"
+ * @returns Tuple of [lat_nano, lon_nano]
+ * @throws GeoFormatError if parsing fails
+ *
+ * @example
+ * ```typescript
+ * const [lat, lon] = parseWKTPoint('POINT(-122.4194 37.7749)')
+ * ```
+ */
+export function parseWKTPoint(wkt: string): [bigint, bigint] {
+  const trimmed = wkt.trim()
+  if (!trimmed.toUpperCase().startsWith('POINT')) {
+    throw new GeoFormatError('Invalid WKT POINT: must start with POINT')
+  }
+
+  const openParen = trimmed.indexOf('(')
+  const closeParen = trimmed.lastIndexOf(')')
+  if (openParen === -1 || closeParen === -1 || openParen >= closeParen) {
+    throw new GeoFormatError('Invalid WKT POINT: missing parentheses')
+  }
+
+  const content = trimmed.slice(openParen + 1, closeParen).trim()
+  const parts = content.split(/\s+/)
+  if (parts.length < 2) {
+    throw new GeoFormatError('POINT must have lon lat coordinates')
+  }
+
+  const lon = parseFloat(parts[0])
+  const lat = parseFloat(parts[1])
+  if (isNaN(lon) || isNaN(lat)) {
+    throw new GeoFormatError('Invalid WKT POINT coordinates')
+  }
+
+  validateCoordinates(lat, lon)
+
+  return [degreesToNano(lat), degreesToNano(lon)]
+}
+
+/**
+ * Parses a WKT POLYGON to nanodegree coordinates.
+ *
+ * @param wkt - WKT string like "POLYGON((lon lat, lon lat, ...))"
+ * @returns Tuple of [exterior, holes]
+ * @throws GeoFormatError if parsing fails
+ */
+export function parseWKTPolygon(
+  wkt: string
+): [Array<[bigint, bigint]>, Array<Array<[bigint, bigint]>>] {
+  const trimmed = wkt.trim()
+  if (!trimmed.toUpperCase().startsWith('POLYGON')) {
+    throw new GeoFormatError('Invalid WKT POLYGON: must start with POLYGON')
+  }
+
+  const outerStart = trimmed.indexOf('(')
+  const outerEnd = trimmed.lastIndexOf(')')
+  if (outerStart === -1 || outerEnd === -1 || outerStart >= outerEnd) {
+    throw new GeoFormatError('Invalid WKT POLYGON: missing parentheses')
+  }
+
+  const content = trimmed.slice(outerStart + 1, outerEnd)
+
+  // Find matching parentheses for each ring
+  const rings: string[] = []
+  let depth = 0
+  let ringStart = 0
+  for (let i = 0; i < content.length; i++) {
+    if (content[i] === '(') {
+      if (depth === 0) ringStart = i
+      depth++
+    } else if (content[i] === ')') {
+      depth--
+      if (depth === 0) {
+        rings.push(content.slice(ringStart, i + 1))
+      }
+    }
+  }
+
+  if (rings.length === 0) {
+    throw new GeoFormatError('POLYGON must have at least one ring')
+  }
+
+  function parseRing(ring: string): Array<[bigint, bigint]> {
+    const ringTrimmed = ring.trim()
+    if (!ringTrimmed.startsWith('(') || !ringTrimmed.endsWith(')')) {
+      throw new GeoFormatError('Ring must be enclosed in parentheses')
+    }
+
+    const ringContent = ringTrimmed.slice(1, -1)
+    const points = ringContent.split(',')
+
+    if (points.length < 3) {
+      throw new GeoFormatError(`Ring must have at least 3 vertices, got ${points.length}`)
+    }
+
+    return points.map((point, i) => {
+      const parts = point.trim().split(/\s+/)
+      if (parts.length < 2) {
+        throw new GeoFormatError(`Invalid point at index ${i}`)
+      }
+      const lon = parseFloat(parts[0])
+      const lat = parseFloat(parts[1])
+      if (isNaN(lon) || isNaN(lat)) {
+        throw new GeoFormatError(`Invalid coordinates at point ${i}`)
+      }
+      validateCoordinates(lat, lon)
+      return [degreesToNano(lat), degreesToNano(lon)] as [bigint, bigint]
+    })
+  }
+
+  const exterior = parseRing(rings[0])
+  const holes = rings.slice(1).map(parseRing)
+
+  return [exterior, holes]
+}
+
+/**
+ * Converts nanodegree coordinates to a GeoJSON Point.
+ *
+ * @param lat_nano - Latitude in nanodegrees
+ * @param lon_nano - Longitude in nanodegrees
+ * @returns GeoJSON Point object
+ */
+export function toGeoJSONPoint(lat_nano: bigint, lon_nano: bigint): GeoJSONPoint {
+  return {
+    type: 'Point',
+    coordinates: [nanoToDegrees(lon_nano), nanoToDegrees(lat_nano)],
+  }
+}
+
+/**
+ * Converts nanodegree coordinates to a GeoJSON Polygon.
+ *
+ * @param exterior - Exterior ring as array of [lat_nano, lon_nano]
+ * @param holes - Optional holes as arrays of [lat_nano, lon_nano]
+ * @returns GeoJSON Polygon object
+ */
+export function toGeoJSONPolygon(
+  exterior: Array<[bigint, bigint]>,
+  holes?: Array<Array<[bigint, bigint]>>
+): GeoJSONPolygon {
+  function ringToCoords(ring: Array<[bigint, bigint]>): number[][] {
+    return ring.map(([lat, lon]) => [nanoToDegrees(lon), nanoToDegrees(lat)])
+  }
+
+  const coordinates = [ringToCoords(exterior)]
+  if (holes) {
+    for (const hole of holes) {
+      coordinates.push(ringToCoords(hole))
+    }
+  }
+
+  return {
+    type: 'Polygon',
+    coordinates,
+  }
+}
+
+/**
+ * Converts nanodegree coordinates to a WKT POINT.
+ *
+ * @param lat_nano - Latitude in nanodegrees
+ * @param lon_nano - Longitude in nanodegrees
+ * @returns WKT POINT string
+ */
+export function toWKTPoint(lat_nano: bigint, lon_nano: bigint): string {
+  return `POINT(${nanoToDegrees(lon_nano)} ${nanoToDegrees(lat_nano)})`
+}
+
+/**
+ * Converts nanodegree coordinates to a WKT POLYGON.
+ *
+ * @param exterior - Exterior ring as array of [lat_nano, lon_nano]
+ * @param holes - Optional holes as arrays of [lat_nano, lon_nano]
+ * @returns WKT POLYGON string
+ */
+export function toWKTPolygon(
+  exterior: Array<[bigint, bigint]>,
+  holes?: Array<Array<[bigint, bigint]>>
+): string {
+  function ringToWKT(ring: Array<[bigint, bigint]>): string {
+    const points = ring.map(([lat, lon]) =>
+      `${nanoToDegrees(lon)} ${nanoToDegrees(lat)}`
+    )
+    return `(${points.join(', ')})`
+  }
+
+  const rings = [ringToWKT(exterior)]
+  if (holes) {
+    for (const hole of holes) {
+      rings.push(ringToWKT(hole))
+    }
+  }
+
+  return `POLYGON(${rings.join(', ')})`
+}
+
+/**
+ * Validates that latitude and longitude are within bounds.
+ *
+ * @internal
+ */
+function validateCoordinates(lat: number, lon: number): void {
+  if (lat < -LAT_MAX || lat > LAT_MAX) {
+    throw new GeoFormatError(`Latitude ${lat} out of bounds [-90, 90]`)
+  }
+  if (lon < -LON_MAX || lon > LON_MAX) {
+    throw new GeoFormatError(`Longitude ${lon} out of bounds [-180, 180]`)
+  }
+}
+
+// ============================================================================
+// Polygon Validation (per add-polygon-validation spec)
+// Self-intersection detection for polygon queries
+// ============================================================================
+
+/**
+ * Error indicating a polygon self-intersection.
+ */
+export class PolygonValidationError extends Error {
+  /** Index of the first intersecting segment (0-based) */
+  readonly segment1_index: number
+  /** Index of the second intersecting segment (0-based) */
+  readonly segment2_index: number
+  /** Approximate intersection point [lat, lon] in degrees */
+  readonly intersection_point: [number, number]
+
+  constructor(
+    message: string,
+    segment1_index: number = -1,
+    segment2_index: number = -1,
+    intersection_point: [number, number] = [0, 0],
+  ) {
+    super(message)
+    this.name = 'PolygonValidationError'
+    this.segment1_index = segment1_index
+    this.segment2_index = segment2_index
+    this.intersection_point = intersection_point
+  }
+}
+
+/**
+ * Information about a detected self-intersection.
+ */
+export type IntersectionInfo = {
+  /** Index of the first intersecting segment */
+  segment1_index: number
+  /** Index of the second intersecting segment */
+  segment2_index: number
+  /** Approximate intersection point [lat, lon] in degrees */
+  intersection_point: [number, number]
+}
+
+/**
+ * Checks if two line segments intersect.
+ *
+ * Uses the cross product method with proper handling of collinear cases.
+ *
+ * @param p1 - First segment start point [lat, lon]
+ * @param p2 - First segment end point [lat, lon]
+ * @param p3 - Second segment start point [lat, lon]
+ * @param p4 - Second segment end point [lat, lon]
+ * @returns true if the segments intersect, false otherwise
+ */
+export function segmentsIntersect(
+  p1: [number, number],
+  p2: [number, number],
+  p3: [number, number],
+  p4: [number, number],
+): boolean {
+  function crossProduct(
+    o: [number, number],
+    a: [number, number],
+    b: [number, number],
+  ): number {
+    return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+  }
+
+  function onSegment(
+    p: [number, number],
+    q: [number, number],
+    r: [number, number],
+  ): boolean {
+    return (
+      q[0] >= Math.min(p[0], r[0]) && q[0] <= Math.max(p[0], r[0]) &&
+      q[1] >= Math.min(p[1], r[1]) && q[1] <= Math.max(p[1], r[1])
+    )
+  }
+
+  const d1 = crossProduct(p3, p4, p1)
+  const d2 = crossProduct(p3, p4, p2)
+  const d3 = crossProduct(p1, p2, p3)
+  const d4 = crossProduct(p1, p2, p4)
+
+  // General case: segments cross
+  if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
+      ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) {
+    return true
+  }
+
+  // Collinear cases
+  const eps = 1e-10
+  if (Math.abs(d1) < eps && onSegment(p3, p1, p4)) return true
+  if (Math.abs(d2) < eps && onSegment(p3, p2, p4)) return true
+  if (Math.abs(d3) < eps && onSegment(p1, p3, p2)) return true
+  if (Math.abs(d4) < eps && onSegment(p1, p4, p2)) return true
+
+  return false
+}
+
+/**
+ * Validates that a polygon has no self-intersections.
+ *
+ * Uses an O(n²) algorithm suitable for polygons with reasonable vertex counts.
+ * For very large polygons, consider using a sweep line algorithm.
+ *
+ * @param vertices - Array of [lat, lon] tuples in degrees
+ * @param raiseOnError - If true, throws PolygonValidationError on first intersection
+ * @returns Array of intersections found (empty if valid)
+ * @throws PolygonValidationError if raiseOnError is true and polygon self-intersects
+ *
+ * @example
+ * ```typescript
+ * // Valid square
+ * const square: [number, number][] = [[0, 0], [1, 0], [1, 1], [0, 1]]
+ * const result = validatePolygonNoSelfIntersection(square)
+ * // result is empty array
+ *
+ * // Self-intersecting bow-tie
+ * const bowtie: [number, number][] = [[0, 0], [1, 1], [1, 0], [0, 1]]
+ * // Throws PolygonValidationError with raiseOnError=true (default)
+ * validatePolygonNoSelfIntersection(bowtie)
+ * ```
+ */
+export function validatePolygonNoSelfIntersection(
+  vertices: Array<[number, number]>,
+  raiseOnError: boolean = true,
+): IntersectionInfo[] {
+  // A triangle cannot self-intersect (3 vertices = 3 edges, need at least 4 for crossing)
+  if (vertices.length < 4) {
+    return []
+  }
+
+  const intersections: IntersectionInfo[] = []
+  const n = vertices.length
+
+  // Check all pairs of non-adjacent edges
+  for (let i = 0; i < n; i++) {
+    const p1 = vertices[i]
+    const p2 = vertices[(i + 1) % n]
+
+    // Start from i+2 to skip adjacent edges (they share a vertex)
+    for (let j = i + 2; j < n; j++) {
+      // Skip if edges share a vertex (adjacent edges)
+      if (j === (i + n - 1) % n) {
+        continue
+      }
+
+      const p3 = vertices[j]
+      const p4 = vertices[(j + 1) % n]
+
+      if (segmentsIntersect(p1, p2, p3, p4)) {
+        // Calculate approximate intersection point for error message
+        const ix = (p1[0] + p2[0] + p3[0] + p4[0]) / 4
+        const iy = (p1[1] + p2[1] + p3[1] + p4[1]) / 4
+        const intersection: [number, number] = [ix, iy]
+
+        if (raiseOnError) {
+          throw new PolygonValidationError(
+            `Polygon self-intersects: edge ${i}-${(i + 1) % n} crosses edge ${j}-${(j + 1) % n} near (${ix.toFixed(6)}, ${iy.toFixed(6)})`,
+            i,
+            j,
+            intersection,
+          )
+        }
+
+        intersections.push({
+          segment1_index: i,
+          segment2_index: j,
+          intersection_point: intersection,
+        })
+      }
+    }
+  }
+
+  return intersections
 }

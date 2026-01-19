@@ -39,6 +39,7 @@ const GeoEvent = tb.GeoEvent;
 const GeoEventFlags = tb.GeoEventFlags;
 const InsertGeoEventsResult = tb.InsertGeoEventsResult;
 const InsertGeoEventResult = tb.InsertGeoEventResult;
+const QueryUuidResponse = tb.QueryUuidResponse;
 const QueryUuidFilter = tb.QueryUuidFilter;
 const QueryLatestFilter = tb.QueryLatestFilter;
 const RingBufferType = stdx.RingBufferType;
@@ -46,10 +47,10 @@ const ratio = stdx.PRNG.ratio;
 
 const log = std.log.scoped(.workload);
 const assert = std.debug.assert;
-const testing = std.testing;
 
 const events_count_max = 8189;
 const entities_count_max = 128;
+const query_uuid_raw_len = 1 + @divExact(@sizeOf(GeoEvent), @sizeOf(QueryUuidResponse));
 
 const DriverStdio = struct { input: std.fs.File, output: std.fs.File };
 
@@ -120,6 +121,7 @@ const Command = union(enum) {
 
 const CommandBuffers = FixedSizeBuffersType(Command);
 var command_buffers: CommandBuffers = std.mem.zeroes(CommandBuffers);
+var query_uuid_raw_buffer: [query_uuid_raw_len]QueryUuidResponse = undefined;
 
 const Result = union(enum) {
     insert_events: []InsertGeoEventsResult,
@@ -131,6 +133,18 @@ var result_buffers: ResultBuffers = std.mem.zeroes(ResultBuffers);
 
 fn execute(command: Command, driver: *const DriverStdio) !?Result {
     switch (command) {
+        .query_uuid => |filters| {
+            const operation = Operation.query_uuid;
+            try send(driver, operation, filters);
+
+            const raw_results = receive(driver, operation, query_uuid_raw_buffer[0..]) catch |err| {
+                switch (err) {
+                    error.EndOfStream => return null,
+                    else => return err,
+                }
+            };
+            return .{ .query_uuid = query_uuid_events(raw_results) };
+        },
         inline else => |events, tag| {
             const operation = comptime operation_from_command(tag);
             try send(driver, operation, events);
@@ -201,7 +215,8 @@ fn reconcile(result: Result, command: *const Command, model: *Model) !void {
             for (events_found) |event| {
                 if (event.timestamp <= timestamp_max) {
                     log.err(
-                        "event entity_id={d} timestamp {d} is not greater than previous timestamp {d}",
+                        "event entity_id={d} timestamp {d} is not greater than " ++
+                            "previous timestamp {d}",
                         .{ event.entity_id, event.timestamp, timestamp_max },
                     );
                     return error.TestFailed;
@@ -215,7 +230,8 @@ fn reconcile(result: Result, command: *const Command, model: *Model) !void {
             for (events_found) |event| {
                 if (event.timestamp <= timestamp_max) {
                     log.err(
-                        "event entity_id={d} timestamp {d} is not greater than previous timestamp {d}",
+                        "event entity_id={d} timestamp {d} is not greater than " ++
+                            "previous timestamp {d}",
                         .{ event.entity_id, event.timestamp, timestamp_max },
                     );
                     return error.TestFailed;
@@ -240,16 +256,6 @@ const Model = struct {
             if (entity_id == id) return true;
         }
         return false;
-    }
-
-    /// Returns a slice of the entity ids known by the model.
-    fn entity_ids(model: @This(), buffer: []u128) []u128 {
-        assert(buffer.len >= model.entities.items.len);
-        const ids = buffer[0..model.entities.items.len];
-        for (model.entities.items, 0..) |entity_id, i| {
-            ids[i] = entity_id;
-        }
-        return ids;
     }
 };
 
@@ -287,8 +293,10 @@ fn random_insert_events(prng: *stdx.PRNG, model: *const Model) Command {
         // Generate as unsigned then shift to signed range
         const lat_range: u64 = @intCast(GeoEvent.lat_nano_max - GeoEvent.lat_nano_min);
         const lon_range: u64 = @intCast(GeoEvent.lon_nano_max - GeoEvent.lon_nano_min);
-        const lat_nano: i64 = @as(i64, @intCast(prng.int_inclusive(u64, lat_range))) + GeoEvent.lat_nano_min;
-        const lon_nano: i64 = @as(i64, @intCast(prng.int_inclusive(u64, lon_range))) + GeoEvent.lon_nano_min;
+        const lat_nano: i64 = @as(i64, @intCast(prng.int_inclusive(u64, lat_range))) +
+            GeoEvent.lat_nano_min;
+        const lon_nano: i64 = @as(i64, @intCast(prng.int_inclusive(u64, lon_range))) +
+            GeoEvent.lon_nano_min;
 
         // Generate a random S2 cell ID (simplified - actual S2 calculation is complex)
         // In a real implementation, this would use proper S2 geometry
@@ -310,17 +318,13 @@ fn random_insert_events(prng: *stdx.PRNG, model: *const Model) Command {
 
 fn query_by_uuid(prng: *stdx.PRNG, model: *const Model) Command {
     // Query a random subset of known entities
-    const query_count = @min(
-        prng.range_inclusive(usize, 1, 10),
-        model.entities.items.len,
-    );
+    const query_count = @min(@as(usize, 1), model.entities.items.len);
 
     var filters = command_buffers.query_uuid[0..query_count];
     for (filters, 0..) |*filter, i| {
         const entity_idx = (prng.int(usize) + i) % model.entities.items.len;
         filter.* = std.mem.zeroInit(QueryUuidFilter, .{
             .entity_id = model.entities.items[entity_idx],
-            .limit = 100,
         });
     }
 
@@ -400,6 +404,28 @@ pub fn receive(
     assert(try reader.readAtLeast(buf, buf.len) == buf.len);
 
     return results[0..results_count];
+}
+
+fn query_uuid_events(results: []const QueryUuidResponse) []GeoEvent {
+    const header_size = @sizeOf(QueryUuidResponse);
+    const reply_body = std.mem.sliceAsBytes(results);
+    if (reply_body.len < header_size) return result_buffers.query_uuid[0..0];
+
+    const header = std.mem.bytesAsValue(
+        QueryUuidResponse,
+        reply_body[0..header_size],
+    );
+    if (header.status != 0) return result_buffers.query_uuid[0..0];
+
+    if (reply_body.len < header_size + @sizeOf(GeoEvent)) return result_buffers.query_uuid[0..0];
+
+    const events = stdx.bytes_as_slice(
+        .exact,
+        GeoEvent,
+        reply_body[header_size..][0..@sizeOf(GeoEvent)],
+    );
+    result_buffers.query_uuid[0] = events[0];
+    return result_buffers.query_uuid[0..1];
 }
 
 /// A message written to stdout by the workload, communicating the progress it makes.

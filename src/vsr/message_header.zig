@@ -745,7 +745,7 @@ pub const Header = extern struct {
         /// The commit number of the latest committed prepare. Committed ops are immutable.
         commit: u64,
         /// The primary's state machine `prepare_timestamp`.
-        /// For `create_accounts` and `create_transfers` this is the batch's highest timestamp.
+        /// For `insert_events` and `upsert_events` this is the batch's highest timestamp.
         timestamp: u64,
         request: u32,
         /// The state machine operation to apply.

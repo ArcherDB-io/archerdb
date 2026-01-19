@@ -39,7 +39,6 @@
 //! ```
 
 const std = @import("std");
-const mem = std.mem;
 const log = std.log.scoped(.backup_coordinator);
 const builtin = @import("builtin");
 
@@ -96,7 +95,8 @@ pub const BackupCoordinator = struct {
 
     /// Initialize backup coordinator.
     pub fn init(config: CoordinatorConfig) BackupCoordinator {
-        const is_primary = primaryIndex(config.initial_view, config.replica_count) == config.replica_id;
+        const primary_idx = primaryIndex(config.initial_view, config.replica_count);
+        const is_primary = primary_idx == config.replica_id;
         const backup_active = !config.primary_only or is_primary;
 
         if (config.primary_only) {
@@ -106,11 +106,11 @@ pub const BackupCoordinator = struct {
                     config.replica_id,
                 });
             } else {
-                logInfo("Backup coordinator initialized as backup (view={}, replica={}, primary={})", .{
-                    config.initial_view,
-                    config.replica_id,
-                    primaryIndex(config.initial_view, config.replica_count),
-                });
+                const primary = primaryIndex(config.initial_view, config.replica_count);
+                logInfo(
+                    "Backup coordinator initialized as backup (view={}, replica={}, primary={})",
+                    .{ config.initial_view, config.replica_id, primary },
+                );
             }
         } else {
             logInfo("Backup coordinator initialized (all replicas mode, replica={})", .{
@@ -389,7 +389,8 @@ test "BackupCoordinator: primaryIndex calculation" {
     // Edge cases
     try std.testing.expectEqual(@as(u8, 0), BackupCoordinator.primaryIndex(0, 1));
     try std.testing.expectEqual(@as(u8, 0), BackupCoordinator.primaryIndex(100, 1));
-    try std.testing.expectEqual(@as(u8, 0), BackupCoordinator.primaryIndex(0, 0)); // Degenerate case
+    // Degenerate case
+    try std.testing.expectEqual(@as(u8, 0), BackupCoordinator.primaryIndex(0, 0));
 }
 
 test "BackupCoordinator: stats reset" {

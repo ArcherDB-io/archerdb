@@ -149,20 +149,13 @@ comptime {
 /// The default maximum amount of memory to use.
 pub const memory_size_max_default = config.process.memory_size_max_default;
 
-/// At a high level, priority for object caching is (in descending order):
+/// At a high level, priority for GeoEvent caching is (in descending order):
 ///
-/// 1. Accounts.
-///   - 2 lookups per created transfer
-///   - high temporal locality
-///   - positive expected result
-/// 2. Posted transfers.
-///   - high temporal locality
-///   - positive expected result
-/// 3. Transfers. Generally don't cache these because of:
-///   - low temporal locality
-///   - negative expected result
+/// 1. Latest GeoEvents for hot entities (frequent UUID lookups).
+/// 2. Recent GeoEvents for radius/polygon queries (high temporal locality).
+/// 3. Historical GeoEvents (low temporal locality, lower cache hit rate).
 ///
-/// The default size of the GeoEvent in-memory cache (ArcherDB F1.3.1):
+/// The default size of the GeoEvent in-memory cache (ArcherDB F1.3.1).
 /// This impacts the amount of memory allocated at initialization by the server.
 pub const cache_geo_events_size_default = config.process.cache_geo_events_size_default;
 
@@ -175,7 +168,7 @@ comptime {
 }
 
 /// The maximum number of batch entries in the journal file:
-/// A batch entry may contain many transfers, so this is not a limit on the number of transfers.
+/// A batch entry may contain many GeoEvents, so this is not a limit on the number of events.
 /// We need this limit to allocate space for copies of batch headers at the start of the journal.
 /// These header copies enable us to disentangle corruption from crashes and recover accordingly.
 pub const journal_slot_count = config.cluster.journal_slot_count;
@@ -218,7 +211,7 @@ comptime {
 /// This is also the limit of all inflight data across multiple pipelined requests per connection.
 /// We may have one request of up to 2 MiB inflight or 2 pipelined requests of up to 1 MiB inflight.
 /// This impacts sequential disk write throughput, the larger the buffer the better.
-/// 2 MiB is 16,384 transfers, and a reasonable choice for sequential disk write throughput.
+/// 2 MiB is 16,384 GeoEvents, and a reasonable choice for sequential disk write throughput.
 /// However, this impacts bufferbloat and head-of-line blocking latency for pipelined requests.
 /// For a 1 Gbps NIC = 125 MiB/s throughput: 2 MiB / 125 * 1000ms = 16ms for the next request.
 /// This impacts the amount of memory allocated at initialization by the server.
@@ -631,9 +624,9 @@ comptime {
 
 /// Number of prepares accumulated in the in-memory table before flushing to disk.
 ///
-/// This is a batch of batches. Each prepare can contain at most 8_190 transfers. With
+/// This is a batch of batches. Each prepare can contain at most 8_190 GeoEvents. With
 /// lsm_compaction_ops=32, 32 prepares are processed to fill the in-memory table with 262_080
-/// transfers. During processing of the next 32 prepares, this in-memory table is flushed to disk.
+/// GeoEvents. During processing of the next 32 prepares, this in-memory table is flushed to disk.
 /// Simultaneously, compaction is run to free up enough space to flush the in-memory table from the
 /// next batch of lsm_compaction_ops prepares.
 ///
@@ -949,6 +942,63 @@ pub const encryption_key_retry_max_ms: u64 = 60_000;
 /// KEK cache TTL in seconds (for cloud providers)
 pub const encryption_kek_cache_ttl_seconds: u32 = 3_600;
 
+// ============================================================================
+// Sub-Meter Precision Constants
+// ============================================================================
+// See: openspec/changes/add-submeter-precision/specs/data-model/spec.md
+//
+// ArcherDB uses nanodegrees (10^-9 degrees) stored as i64 for coordinates.
+// This provides approximately 0.1mm precision at the equator, which exceeds
+// modern GPS technologies including RTK GPS (1-2cm accuracy).
+
+/// Nanodegrees per degree (10^9).
+/// Used for converting between float degrees and integer nanodegrees.
+pub const nanodegrees_per_degree: i64 = 1_000_000_000;
+
+/// Physical precision of 1 nanodegree at the equator (in millimeters).
+/// Calculation: Earth circumference at equator ≈ 40,075 km
+/// 360° = 40,075,000,000 mm → 1° = 111,319,444 mm → 1 nanodegree = 0.111 mm
+pub const nanodegree_precision_mm_equator: f64 = 0.111;
+
+/// Physical precision of 1 nanodegree at 45° latitude (in millimeters).
+/// At higher latitudes, longitude lines converge, reducing east-west precision.
+/// Calculation: 0.111 mm × cos(45°) ≈ 0.079 mm
+pub const nanodegree_precision_mm_lat45: f64 = 0.079;
+
+/// Physical precision of 1 nanodegree at 60° latitude (in millimeters).
+/// Calculation: 0.111 mm × cos(60°) ≈ 0.056 mm
+pub const nanodegree_precision_mm_lat60: f64 = 0.056;
+
+/// RTK GPS precision in centimeters (typical: 1-2 cm).
+/// Nanodegrees exceed this by ~100x at the equator.
+pub const rtk_gps_precision_cm: u32 = 2;
+
+/// RTK GPS precision expressed in nanodegrees (approximate).
+/// 2 cm ≈ 20 mm → 20 / 0.111 ≈ 180 nanodegrees at equator.
+pub const rtk_gps_precision_nanodegrees: i64 = 180;
+
+/// Consumer GPS precision in meters (typical: 3-5 m).
+pub const consumer_gps_precision_m: u32 = 5;
+
+/// UWB indoor positioning precision in centimeters (typical: 10-30 cm).
+pub const uwb_precision_cm: u32 = 30;
+
+/// Float64 significant digits (15-17).
+/// Float64 can represent nanodegrees without loss for standard GPS coordinates.
+pub const float64_significant_digits: u8 = 15;
+
+/// S2 cell precision at level 30 (highest precision) in centimeters.
+/// Level 30 cells are approximately 1 cm × 1 cm.
+pub const s2_level30_precision_cm: u32 = 1;
+
+/// S2 cell precision at level 28 (RTK-suitable) in centimeters.
+/// Level 28 cells are approximately 4 cm × 4 cm.
+pub const s2_level28_precision_cm: u32 = 4;
+
+/// S2 cell precision at level 24 (sub-meter) in centimeters.
+/// Level 24 cells are approximately 60 cm × 60 cm.
+pub const s2_level24_precision_cm: u32 = 60;
+
 comptime {
     // Verify S2 cell level is in valid range (1-30)
     assert(s2_cell_level >= 1 and s2_cell_level <= 30);
@@ -971,4 +1021,11 @@ comptime {
 
     // Verify index capacity calculation
     assert(index_capacity >= entities_max_per_node);
+
+    // Verify sub-meter precision constants
+    assert(nanodegrees_per_degree == 1_000_000_000);
+    assert(rtk_gps_precision_nanodegrees > 0);
+    assert(rtk_gps_precision_nanodegrees < 1000); // Should be ~180 nanodegrees
+    assert(s2_level30_precision_cm <= s2_level28_precision_cm);
+    assert(s2_level28_precision_cm <= s2_level24_precision_cm);
 }

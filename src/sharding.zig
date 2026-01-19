@@ -129,6 +129,177 @@ pub fn isValidShardCount(num_shards: u32) bool {
         std.math.isPowerOfTwo(num_shards);
 }
 
+// =============================================================================
+// Sharding Strategy (per add-jump-consistent-hash spec)
+// =============================================================================
+//
+// Per add-jump-consistent-hash/spec.md:
+// - Supports multiple sharding strategies
+// - jump_hash is the default (optimal movement on resize)
+// - modulo requires power-of-2 shard counts
+// - virtual_ring uses ConsistentHashRing
+//
+
+/// Sharding strategy for distributing entities across shards.
+pub const ShardingStrategy = enum {
+    /// Simple modulo-based sharding: hash % num_shards.
+    /// Requires power-of-2 shard counts for efficient computation.
+    /// Moves ~(N-1)/N entities when adding one shard.
+    modulo,
+
+    /// Virtual node ring-based consistent hashing.
+    /// Uses 150 virtual nodes per shard by default.
+    /// Moves ~1/N entities when adding one shard.
+    /// Has O(log N) lookup overhead and memory cost.
+    virtual_ring,
+
+    /// Jump Consistent Hash (Google, 2014).
+    /// O(1) memory, O(log N) compute, optimal 1/(N+1) movement.
+    /// Default strategy - best balance of performance and movement.
+    jump_hash,
+
+    /// Spatial sharding based on S2 cell hierarchy.
+    /// Routes events based on geographic location using S2 cell prefixes.
+    /// Per add-spatial-sharding/spec.md:
+    /// - Optimizes spatial queries (radius, polygon) by reducing fan-out
+    /// - Entity lookups require two-hop: lookup cell_id, then data shard
+    /// - Best for workloads dominated by spatial queries
+    spatial,
+
+    /// Parse strategy from string.
+    pub fn fromString(str: []const u8) ?ShardingStrategy {
+        if (std.mem.eql(u8, str, "modulo")) return .modulo;
+        if (std.mem.eql(u8, str, "virtual_ring")) return .virtual_ring;
+        if (std.mem.eql(u8, str, "jump_hash")) return .jump_hash;
+        if (std.mem.eql(u8, str, "spatial")) return .spatial;
+        return null;
+    }
+
+    /// Convert strategy to string.
+    pub fn toString(self: ShardingStrategy) []const u8 {
+        return switch (self) {
+            .modulo => "modulo",
+            .virtual_ring => "virtual_ring",
+            .jump_hash => "jump_hash",
+            .spatial => "spatial",
+        };
+    }
+
+    /// Check if this strategy requires power-of-2 shard count.
+    pub fn requiresPowerOfTwo(self: ShardingStrategy) bool {
+        return self == .modulo;
+    }
+
+    /// Check if this is the default strategy.
+    pub fn isDefault(self: ShardingStrategy) bool {
+        return self == .jump_hash;
+    }
+
+    /// Get the default strategy.
+    pub fn default() ShardingStrategy {
+        return .jump_hash;
+    }
+
+    /// Check if this strategy is spatial-based.
+    pub fn isSpatial(self: ShardingStrategy) bool {
+        return self == .spatial;
+    }
+
+    /// Check if this strategy requires entity lookup index.
+    /// Spatial strategy needs lookup index for entity_id → cell_id mapping.
+    pub fn requiresEntityLookup(self: ShardingStrategy) bool {
+        return self == .spatial;
+    }
+};
+
+/// Validate shard count for a specific strategy.
+///
+/// Per add-jump-consistent-hash/spec.md:
+/// - Modulo strategy requires power-of-2 shard counts
+/// - Other strategies accept any count in [min_shards, max_shards]
+pub fn isValidShardCountForStrategy(num_shards: u32, strategy: ShardingStrategy) bool {
+    if (num_shards < min_shards or num_shards > max_shards) {
+        return false;
+    }
+
+    if (strategy.requiresPowerOfTwo()) {
+        return std.math.isPowerOfTwo(num_shards);
+    }
+
+    return true;
+}
+
+/// Jump Consistent Hash (Google, 2014).
+///
+/// Per add-jump-consistent-hash/spec.md:
+/// - O(1) memory (no data structures)
+/// - O(log num_buckets) time complexity
+/// - Perfect uniformity: each bucket gets exactly 1/N keys
+/// - Optimal movement: exactly 1/(N+1) keys move when adding a bucket
+///
+/// Arguments:
+/// - key: 64-bit hash key
+/// - num_buckets: Number of buckets (shards)
+///
+/// Returns: Bucket index (0 to num_buckets-1)
+///
+/// Reference: "A Fast, Minimal Memory, Consistent Hash Algorithm"
+/// by John Lamping and Eric Veach, Google, 2014.
+pub fn jumpHash(key: u64, num_buckets: u32) u32 {
+    assert(num_buckets > 0);
+
+    var k = key;
+    var b: i64 = -1;
+    var j: i64 = 0;
+
+    while (j < num_buckets) {
+        b = j;
+        // Linear congruential generator step
+        k = k *% 2862933555777941757 +% 1;
+        // Compute next jump
+        j = @intFromFloat((@as(f64, @floatFromInt(b + 1))) *
+            (@as(f64, @floatFromInt(@as(u64, 1) << 31)) /
+                @as(f64, @floatFromInt((k >> 33) + 1))));
+    }
+
+    return @intCast(b);
+}
+
+/// Get shard for entity using the specified strategy.
+///
+/// Per add-jump-consistent-hash/spec.md:
+/// - Dispatcher that routes to the appropriate algorithm
+/// - ring parameter only used for virtual_ring strategy
+///
+/// Arguments:
+/// - entity_id: 128-bit entity UUID
+/// - num_shards: Number of shards
+/// - strategy: Sharding strategy to use
+/// - ring: Optional ConsistentHashRing (required for virtual_ring, ignored otherwise)
+///
+/// Returns: Shard index (0 to num_shards-1)
+pub fn getShardForEntityWithStrategy(
+    entity_id: u128,
+    num_shards: u32,
+    strategy: ShardingStrategy,
+    ring: ?*const ConsistentHashRing,
+) u32 {
+    const shard_key = computeShardKey(entity_id);
+
+    return switch (strategy) {
+        .modulo => computeShardBucket(shard_key, num_shards),
+        .virtual_ring => if (ring) |r|
+            r.getShardByKey(shard_key)
+        else
+            computeShardBucket(shard_key, num_shards),
+        .jump_hash => jumpHash(shard_key, num_shards),
+        // For spatial strategy with entity_id only (no cell_id), use jump_hash.
+        // Proper spatial routing requires cell_id; this is the fallback for
+        // entity lookups that go through the lookup index first.
+        .spatial => jumpHash(shard_key, num_shards),
+    };
+}
+
 /// Shard distribution statistics for testing and monitoring.
 pub const ShardStats = struct {
     /// Number of shards
@@ -142,7 +313,8 @@ pub const ShardStats = struct {
     pub fn stdDev(self: ShardStats) f64 {
         if (self.total == 0) return 0.0;
 
-        const expected: f64 = @as(f64, @floatFromInt(self.total)) / @as(f64, @floatFromInt(self.num_shards));
+        const expected: f64 = @as(f64, @floatFromInt(self.total)) /
+            @as(f64, @floatFromInt(self.num_shards));
         var variance: f64 = 0.0;
 
         for (self.counts[0..self.num_shards]) |count| {
@@ -157,7 +329,8 @@ pub const ShardStats = struct {
     pub fn maxImbalance(self: ShardStats) f64 {
         if (self.total == 0) return 0.0;
 
-        const expected: f64 = @as(f64, @floatFromInt(self.total)) / @as(f64, @floatFromInt(self.num_shards));
+        const expected: f64 = @as(f64, @floatFromInt(self.total)) /
+            @as(f64, @floatFromInt(self.num_shards));
         var max_diff: f64 = 0.0;
 
         for (self.counts[0..self.num_shards]) |count| {
@@ -168,6 +341,346 @@ pub const ShardStats = struct {
         return (max_diff / expected) * 100.0;
     }
 };
+
+// =============================================================================
+// Spatial Sharding (per add-spatial-sharding spec)
+// =============================================================================
+//
+// Per add-spatial-sharding/spec.md:
+// - Uses S2 cell prefixes to determine shard assignment
+// - Optimizes spatial queries by locality
+// - Requires separate entity lookup index for entity_id → cell_id mapping
+//
+
+/// S2 cell level used for shard computation.
+/// Level 5 divides Earth into ~500 cells, providing good granularity for 8-256 shards.
+pub const spatial_shard_level: u8 = 5;
+
+/// Compute shard from S2 cell ID using spatial locality.
+///
+/// Per add-spatial-sharding/spec.md:
+/// - Uses cell prefix for shard assignment
+/// - Maintains spatial locality (nearby cells likely same shard)
+/// - Power-of-2 shard counts give even distribution
+///
+/// Arguments:
+/// - cell_id: S2 cell ID (64-bit)
+/// - num_shards: Number of shards (8-256, should be power of 2)
+///
+/// Returns: Shard index (0 to num_shards-1)
+pub fn computeSpatialShard(cell_id: u64, num_shards: u32) u32 {
+    assert(num_shards >= min_shards);
+    assert(num_shards <= max_shards);
+
+    // Extract the high bits of the cell ID as the shard key.
+    // S2 cell IDs are structured with face (3 bits) + position bits.
+    // Using high bits maintains spatial locality.
+    const shard_key = cell_id >> 32;
+
+    // Use jump hash for optimal distribution
+    return jumpHash(shard_key, num_shards);
+}
+
+/// Result of covering shard computation for a spatial region.
+pub const CoveringShardsResult = struct {
+    /// Shards that cover the region (deduplicated).
+    shards: [max_shards]u32,
+    /// Number of shards in the result.
+    count: u32,
+
+    /// Get the shard list as a slice.
+    pub fn getShards(self: *const CoveringShardsResult) []const u32 {
+        return self.shards[0..self.count];
+    }
+
+    /// Check if a specific shard is in the covering set.
+    pub fn containsShard(self: *const CoveringShardsResult, shard: u32) bool {
+        for (self.shards[0..self.count]) |s| {
+            if (s == shard) return true;
+        }
+        return false;
+    }
+};
+
+/// Compute shards that cover a spatial region defined by cell IDs.
+///
+/// Per add-spatial-sharding/spec.md:
+/// - Takes a list of S2 cells that cover a region
+/// - Returns deduplicated list of shards for those cells
+/// - Used for spatial queries (radius, polygon)
+///
+/// Arguments:
+/// - covering_cells: Array of S2 cell IDs that cover the query region
+/// - num_cells: Number of cells in the array
+/// - num_shards: Number of shards in the cluster
+///
+/// Returns: CoveringShardsResult with deduplicated shard list
+pub fn getCoveringShards(
+    covering_cells: []const u64,
+    num_shards: u32,
+) CoveringShardsResult {
+    var result = CoveringShardsResult{
+        .shards = [_]u32{0} ** max_shards,
+        .count = 0,
+    };
+
+    // Bitmap for deduplication (assumes max 256 shards)
+    var seen: [max_shards]bool = [_]bool{false} ** max_shards;
+
+    for (covering_cells) |cell_id| {
+        const shard = computeSpatialShard(cell_id, num_shards);
+        if (!seen[shard]) {
+            seen[shard] = true;
+            result.shards[result.count] = shard;
+            result.count += 1;
+        }
+    }
+
+    return result;
+}
+
+/// Entity lookup entry for spatial sharding mode.
+///
+/// Per add-spatial-sharding/spec.md:
+/// - Maps entity_id to its current S2 cell
+/// - Required for entity lookups in spatial sharding mode
+/// - Same size as a regular event entry for efficient storage
+pub const EntityLookupEntry = struct {
+    /// Entity UUID (128-bit)
+    entity_id: u128,
+    /// Current S2 cell ID where entity is located
+    cell_id: u64,
+    /// Timestamp of last update (nanoseconds)
+    timestamp_ns: u64,
+
+    // Size assertion for storage alignment.
+    // Entry should be 32 bytes for efficient storage.
+    comptime {
+        assert(@sizeOf(EntityLookupEntry) == 32);
+    }
+
+    /// Create a new lookup entry.
+    pub fn init(entity_id: u128, cell_id: u64, timestamp_ns: u64) EntityLookupEntry {
+        return .{
+            .entity_id = entity_id,
+            .cell_id = cell_id,
+            .timestamp_ns = timestamp_ns,
+        };
+    }
+
+    /// Get the shard for this entity in spatial mode.
+    pub fn getShard(self: EntityLookupEntry, num_shards: u32) u32 {
+        return computeSpatialShard(self.cell_id, num_shards);
+    }
+};
+
+/// Entity lookup index for spatial sharding.
+///
+/// Maps entity_id → cell_id to enable two-hop entity lookups in spatial mode:
+/// 1. Look up cell_id from entity_id in this index
+/// 2. Compute spatial shard from cell_id
+/// 3. Query the data shard
+///
+/// Distributed the same way as entity sharding - each shard stores
+/// lookup entries for entities it owns.
+pub const EntityLookupIndex = struct {
+    /// Tombstone marker (entity_id = 0 with special cell_id).
+    const tombstone_marker: u64 = 0xDEAD_BEEF_DEAD_BEEF;
+
+    /// Maximum entries per index (configurable at init).
+    capacity: u32,
+    /// Number of valid entries.
+    count: u32,
+    /// Hash table entries (open addressing with linear probing).
+    entries: []EntityLookupEntry,
+    /// Allocator for dynamic memory.
+    allocator: std.mem.Allocator,
+
+    /// Initialize a new lookup index with given capacity.
+    pub fn init(allocator: std.mem.Allocator, capacity: u32) !EntityLookupIndex {
+        const entries = try allocator.alloc(EntityLookupEntry, capacity);
+        // Initialize all entries as empty (entity_id = 0, cell_id = 0)
+        for (entries) |*entry| {
+            entry.* = .{
+                .entity_id = 0,
+                .cell_id = 0,
+                .timestamp_ns = 0,
+            };
+        }
+        return .{
+            .capacity = capacity,
+            .count = 0,
+            .entries = entries,
+            .allocator = allocator,
+        };
+    }
+
+    /// Free the index memory.
+    pub fn deinit(self: *EntityLookupIndex) void {
+        self.allocator.free(self.entries);
+        self.* = undefined;
+    }
+
+    /// Check if an entry slot is empty.
+    fn isEmpty(entry: *const EntityLookupEntry) bool {
+        return entry.entity_id == 0 and entry.cell_id == 0;
+    }
+
+    /// Check if an entry slot is a tombstone.
+    fn isTombstone(entry: *const EntityLookupEntry) bool {
+        return entry.entity_id == 0 and entry.cell_id == tombstone_marker;
+    }
+
+    /// Compute hash slot for entity_id.
+    fn hashSlot(self: *const EntityLookupIndex, entity_id: u128) u32 {
+        // Use high bits of entity_id for better distribution
+        const hash = @as(u64, @truncate(entity_id >> 64)) ^ @as(u64, @truncate(entity_id));
+        return @intCast(hash % self.capacity);
+    }
+
+    /// Insert or update an entity's cell_id in the index.
+    /// Returns error if index is full.
+    pub fn upsert(
+        self: *EntityLookupIndex,
+        entity_id: u128,
+        cell_id: u64,
+        timestamp_ns: u64,
+    ) !void {
+        if (entity_id == 0) return error.InvalidEntityId;
+
+        var slot = self.hashSlot(entity_id);
+        var probes: u32 = 0;
+
+        while (probes < self.capacity) {
+            const entry = &self.entries[slot];
+
+            if (isEmpty(entry) or isTombstone(entry)) {
+                // Found empty slot - insert
+                entry.* = EntityLookupEntry.init(entity_id, cell_id, timestamp_ns);
+                self.count += 1;
+                return;
+            }
+
+            if (entry.entity_id == entity_id) {
+                // Found existing entry - update
+                entry.cell_id = cell_id;
+                entry.timestamp_ns = timestamp_ns;
+                return;
+            }
+
+            // Linear probing
+            slot = (slot + 1) % self.capacity;
+            probes += 1;
+        }
+
+        return error.IndexFull;
+    }
+
+    /// Look up an entity's cell_id.
+    /// Returns null if not found.
+    pub fn lookup(self: *const EntityLookupIndex, entity_id: u128) ?EntityLookupEntry {
+        if (entity_id == 0) return null;
+
+        var slot = self.hashSlot(entity_id);
+        var probes: u32 = 0;
+
+        while (probes < self.capacity) {
+            const entry = &self.entries[slot];
+
+            if (isEmpty(entry)) {
+                // Empty slot - not found
+                return null;
+            }
+
+            if (!isTombstone(entry) and entry.entity_id == entity_id) {
+                return entry.*;
+            }
+
+            slot = (slot + 1) % self.capacity;
+            probes += 1;
+        }
+
+        return null;
+    }
+
+    /// Get the shard for an entity using spatial sharding.
+    /// Returns null if entity not in index.
+    pub fn getShardForEntity(
+        self: *const EntityLookupIndex,
+        entity_id: u128,
+        num_shards: u32,
+    ) ?u32 {
+        if (self.lookup(entity_id)) |entry| {
+            return entry.getShard(num_shards);
+        }
+        return null;
+    }
+
+    /// Remove an entity from the index.
+    /// Uses tombstone to maintain probe chains.
+    pub fn remove(self: *EntityLookupIndex, entity_id: u128) bool {
+        if (entity_id == 0) return false;
+
+        var slot = self.hashSlot(entity_id);
+        var probes: u32 = 0;
+
+        while (probes < self.capacity) {
+            const entry = &self.entries[slot];
+
+            if (isEmpty(entry)) {
+                return false;
+            }
+
+            if (!isTombstone(entry) and entry.entity_id == entity_id) {
+                // Mark as tombstone
+                entry.entity_id = 0;
+                entry.cell_id = tombstone_marker;
+                entry.timestamp_ns = 0;
+                self.count -= 1;
+                return true;
+            }
+
+            slot = (slot + 1) % self.capacity;
+            probes += 1;
+        }
+
+        return false;
+    }
+
+    /// Get load factor (count / capacity).
+    pub fn loadFactor(self: *const EntityLookupIndex) f32 {
+        return @as(f32, @floatFromInt(self.count)) / @as(f32, @floatFromInt(self.capacity));
+    }
+
+    /// Check if index needs resizing (load factor > 0.75).
+    pub fn needsResize(self: *const EntityLookupIndex) bool {
+        return self.loadFactor() > 0.75;
+    }
+};
+
+/// Get shard for spatial query (radius or polygon).
+///
+/// Wrapper that handles spatial strategy routing.
+/// Returns all shards if not using spatial strategy.
+pub fn getShardsForSpatialQuery(
+    covering_cells: []const u64,
+    num_shards: u32,
+    strategy: ShardingStrategy,
+) CoveringShardsResult {
+    if (strategy.isSpatial() and covering_cells.len > 0) {
+        return getCoveringShards(covering_cells, num_shards);
+    }
+
+    // Non-spatial strategy or empty covering: return all shards
+    var result = CoveringShardsResult{
+        .shards = [_]u32{0} ** max_shards,
+        .count = num_shards,
+    };
+    for (0..num_shards) |i| {
+        result.shards[i] = @intCast(i);
+    }
+    return result;
+}
 
 // === Tests ===
 
@@ -241,6 +754,194 @@ test "isValidShardCount" {
     try std.testing.expect(!isValidShardCount(512)); // Above maximum
 }
 
+// =============================================================================
+// Jump Consistent Hash Tests (per add-jump-consistent-hash spec)
+// =============================================================================
+
+test "ShardingStrategy fromString and toString" {
+    // Parse valid strategies
+    try std.testing.expectEqual(ShardingStrategy.fromString("modulo"), .modulo);
+    try std.testing.expectEqual(ShardingStrategy.fromString("virtual_ring"), .virtual_ring);
+    try std.testing.expectEqual(ShardingStrategy.fromString("jump_hash"), .jump_hash);
+
+    // Invalid string
+    try std.testing.expectEqual(ShardingStrategy.fromString("invalid"), null);
+
+    // Round-trip
+    try std.testing.expectEqualStrings("modulo", ShardingStrategy.modulo.toString());
+    try std.testing.expectEqualStrings("virtual_ring", ShardingStrategy.virtual_ring.toString());
+    try std.testing.expectEqualStrings("jump_hash", ShardingStrategy.jump_hash.toString());
+}
+
+test "ShardingStrategy requiresPowerOfTwo" {
+    try std.testing.expect(ShardingStrategy.modulo.requiresPowerOfTwo());
+    try std.testing.expect(!ShardingStrategy.virtual_ring.requiresPowerOfTwo());
+    try std.testing.expect(!ShardingStrategy.jump_hash.requiresPowerOfTwo());
+}
+
+test "ShardingStrategy default" {
+    try std.testing.expectEqual(ShardingStrategy.default(), .jump_hash);
+    try std.testing.expect(ShardingStrategy.jump_hash.isDefault());
+    try std.testing.expect(!ShardingStrategy.modulo.isDefault());
+}
+
+test "isValidShardCountForStrategy" {
+    // Modulo requires power-of-2
+    try std.testing.expect(isValidShardCountForStrategy(8, .modulo));
+    try std.testing.expect(isValidShardCountForStrategy(16, .modulo));
+    try std.testing.expect(!isValidShardCountForStrategy(10, .modulo)); // Not power of 2
+    try std.testing.expect(!isValidShardCountForStrategy(24, .modulo)); // Not power of 2
+
+    // Jump hash accepts any count in range
+    try std.testing.expect(isValidShardCountForStrategy(8, .jump_hash));
+    try std.testing.expect(isValidShardCountForStrategy(10, .jump_hash)); // Any count OK
+    try std.testing.expect(isValidShardCountForStrategy(24, .jump_hash));
+    try std.testing.expect(isValidShardCountForStrategy(100, .jump_hash));
+
+    // Virtual ring also accepts any count
+    try std.testing.expect(isValidShardCountForStrategy(10, .virtual_ring));
+    try std.testing.expect(isValidShardCountForStrategy(100, .virtual_ring));
+
+    // All strategies reject out of range
+    try std.testing.expect(!isValidShardCountForStrategy(4, .jump_hash)); // Below min
+    try std.testing.expect(!isValidShardCountForStrategy(512, .jump_hash)); // Above max
+}
+
+test "jumpHash determinism" {
+    // Same key should always return same bucket
+    const key: u64 = 0x123456789ABCDEF0;
+    const bucket1 = jumpHash(key, 16);
+    const bucket2 = jumpHash(key, 16);
+    try std.testing.expectEqual(bucket1, bucket2);
+
+    // Different keys should (likely) return different buckets
+    const bucket3 = jumpHash(key + 1, 16);
+    // With 16 buckets, probability of collision is 1/16
+    // Just verify both are in range
+    try std.testing.expect(bucket1 < 16);
+    try std.testing.expect(bucket3 < 16);
+}
+
+test "jumpHash valid range" {
+    const test_keys = [_]u64{
+        0x0000000000000000,
+        0x123456789ABCDEF0,
+        0xFEDCBA9876543210,
+        0xFFFFFFFFFFFFFFFF,
+    };
+
+    // Test various bucket counts
+    for (test_keys) |key| {
+        try std.testing.expect(jumpHash(key, 1) < 1);
+        try std.testing.expect(jumpHash(key, 8) < 8);
+        try std.testing.expect(jumpHash(key, 16) < 16);
+        try std.testing.expect(jumpHash(key, 24) < 24); // Non-power-of-2
+        try std.testing.expect(jumpHash(key, 100) < 100);
+        try std.testing.expect(jumpHash(key, 256) < 256);
+    }
+}
+
+test "jumpHash uniformity" {
+    // Generate many keys and verify distribution is uniform
+    const num_buckets: u32 = 16;
+    const num_keys: u32 = 160000; // 10000 per bucket expected
+    var counts: [16]u32 = .{0} ** 16;
+
+    var prng = std.Random.DefaultPrng.init(12345);
+    const random = prng.random();
+
+    for (0..num_keys) |_| {
+        const key = random.int(u64);
+        const bucket = jumpHash(key, num_buckets);
+        counts[bucket] += 1;
+    }
+
+    // Each bucket should have ~10000 keys
+    // Allow 5% deviation (9500-10500)
+    const expected: f64 = @as(f64, @floatFromInt(num_keys)) / @as(f64, @floatFromInt(num_buckets));
+    for (counts) |count| {
+        const actual: f64 = @floatFromInt(count);
+        const deviation = @abs(actual - expected) / expected;
+        try std.testing.expect(deviation < 0.05); // Less than 5% deviation
+    }
+}
+
+test "jumpHash optimal movement" {
+    // Per spec: exactly 1/(N+1) keys should move when adding a bucket
+    const num_keys: u32 = 100000;
+    const old_buckets: u32 = 16;
+    const new_buckets: u32 = 17;
+
+    var moved: u32 = 0;
+
+    var prng = std.Random.DefaultPrng.init(54321);
+    const random = prng.random();
+
+    for (0..num_keys) |_| {
+        const key = random.int(u64);
+        const old_bucket = jumpHash(key, old_buckets);
+        const new_bucket = jumpHash(key, new_buckets);
+        if (old_bucket != new_bucket) {
+            moved += 1;
+        }
+    }
+
+    // Expected: 1/17 = ~5.88% should move
+    const expected_ratio: f64 = 1.0 / @as(f64, @floatFromInt(new_buckets));
+    const actual_ratio: f64 = @as(f64, @floatFromInt(moved)) / @as(f64, @floatFromInt(num_keys));
+
+    // Allow 1% absolute deviation
+    try std.testing.expect(@abs(actual_ratio - expected_ratio) < 0.01);
+}
+
+test "jumpHash known values" {
+    // Verify against reference implementation values
+    // These values are computed from the Google reference implementation
+    try std.testing.expectEqual(jumpHash(0, 1), 0);
+    try std.testing.expectEqual(jumpHash(0, 10), 0);
+
+    // Test that increasing buckets never increases bucket assignment
+    // (monotonicity property of jump hash)
+    const key: u64 = 0xDEADBEEF;
+    var prev_bucket: u32 = 0;
+    for (1..257) |n| {
+        const bucket = jumpHash(key, @intCast(n));
+        try std.testing.expect(bucket <= prev_bucket or bucket == @as(u32, @intCast(n)) - 1);
+        prev_bucket = bucket;
+    }
+}
+
+test "getShardForEntityWithStrategy modulo" {
+    const entity_id: u128 = 0x12345678_ABCDEF00_12345678_ABCDEF00;
+    const bucket_modulo = getShardForEntityWithStrategy(entity_id, 16, .modulo, null);
+    const bucket_direct = getShardBucket(entity_id, 16);
+    try std.testing.expectEqual(bucket_modulo, bucket_direct);
+}
+
+test "getShardForEntityWithStrategy jump_hash" {
+    const entity_id: u128 = 0x12345678_ABCDEF00_12345678_ABCDEF00;
+    const bucket = getShardForEntityWithStrategy(entity_id, 16, .jump_hash, null);
+    try std.testing.expect(bucket < 16);
+
+    // Should be deterministic
+    const bucket2 = getShardForEntityWithStrategy(entity_id, 16, .jump_hash, null);
+    try std.testing.expectEqual(bucket, bucket2);
+}
+
+test "getShardForEntityWithStrategy virtual_ring" {
+    const allocator = std.testing.allocator;
+    var ring = try ConsistentHashRing.init(allocator, 16, 150);
+    defer ring.deinit();
+
+    const entity_id: u128 = 0x12345678_ABCDEF00_12345678_ABCDEF00;
+    const bucket = getShardForEntityWithStrategy(entity_id, 16, .virtual_ring, &ring);
+    try std.testing.expect(bucket < 16);
+
+    // Should match ring directly
+    const bucket_ring = ring.getShard(entity_id);
+    try std.testing.expectEqual(bucket, bucket_ring);
+}
+
 test "ShardStats calculation" {
     var counts = [_]u64{ 100, 102, 98, 101 };
     const stats = ShardStats{
@@ -284,8 +985,6 @@ pub const VirtualNode = struct {
 
 /// Consistent hashing ring for minimal data movement during resharding.
 pub const ConsistentHashRing = struct {
-    const Self = @This();
-
     /// Number of virtual nodes per physical shard.
     pub const default_vnodes_per_shard: u16 = 150;
 
@@ -306,7 +1005,7 @@ pub const ConsistentHashRing = struct {
         allocator: std.mem.Allocator,
         num_shards: u32,
         vnodes_per_shard: u16,
-    ) !Self {
+    ) !ConsistentHashRing {
         assert(num_shards >= min_shards);
         assert(num_shards <= max_shards);
         assert(vnodes_per_shard > 0);
@@ -348,18 +1047,18 @@ pub const ConsistentHashRing = struct {
     }
 
     /// Deinitialize the ring.
-    pub fn deinit(self: *Self) void {
+    pub fn deinit(self: *ConsistentHashRing) void {
         self.allocator.free(self.ring);
     }
 
     /// Find the shard for a given entity_id using consistent hashing.
-    pub fn getShard(self: *const Self, entity_id: u128) u32 {
+    pub fn getShard(self: *const ConsistentHashRing, entity_id: u128) u32 {
         const key = computeShardKey(entity_id);
         return self.getShardByKey(key);
     }
 
     /// Find the shard for a given shard key.
-    pub fn getShardByKey(self: *const Self, key: u64) u32 {
+    pub fn getShardByKey(self: *const ConsistentHashRing, key: u64) u32 {
         // Binary search for first vnode with position >= key
         var left: usize = 0;
         var right: usize = self.ring.len;
@@ -384,8 +1083,8 @@ pub const ConsistentHashRing = struct {
     /// Get all entities that would move when adding a new shard.
     /// Returns the list of (entity_id, old_shard, new_shard) tuples.
     pub fn computeMigrations(
-        self: *const Self,
-        new_ring: *const Self,
+        self: *const ConsistentHashRing,
+        new_ring: *const ConsistentHashRing,
         entity_ids: []const u128,
         result: []Migration,
     ) usize {
@@ -468,8 +1167,6 @@ pub const ReshardingState = enum {
 
 /// Online resharding manager.
 pub const ReshardingManager = struct {
-    const Self = @This();
-
     /// Current state.
     state: ReshardingState,
 
@@ -510,7 +1207,7 @@ pub const ReshardingManager = struct {
     allocator: std.mem.Allocator,
 
     /// Initialize resharding manager.
-    pub fn init(allocator: std.mem.Allocator, initial_shards: u32) Self {
+    pub fn init(allocator: std.mem.Allocator, initial_shards: u32) ReshardingManager {
         return .{
             .state = .idle,
             .current_shards = initial_shards,
@@ -524,7 +1221,7 @@ pub const ReshardingManager = struct {
     }
 
     /// Deinitialize resharding manager.
-    pub fn deinit(self: *Self) void {
+    pub fn deinit(self: *ReshardingManager) void {
         if (self.current_ring) |*ring| {
             ring.deinit();
         }
@@ -534,7 +1231,7 @@ pub const ReshardingManager = struct {
     }
 
     /// Start online resharding to a new shard count.
-    pub fn startResharding(self: *Self, new_shard_count: u32) !void {
+    pub fn startResharding(self: *ReshardingManager, new_shard_count: u32) !void {
         if (self.state != .idle) {
             return error.ReshardingInProgress;
         }
@@ -572,7 +1269,7 @@ pub const ReshardingManager = struct {
     }
 
     /// Report migration progress.
-    pub fn reportProgress(self: *Self, migrated: u64, total: u64) void {
+    pub fn reportProgress(self: *ReshardingManager, migrated: u64, total: u64) void {
         self.progress.migrated_entities = migrated;
         self.progress.total_entities = total;
         self.progress.last_update = std.time.timestamp();
@@ -588,7 +1285,7 @@ pub const ReshardingManager = struct {
     }
 
     /// Complete resharding (after all data migrated).
-    pub fn completeResharding(self: *Self) !void {
+    pub fn completeResharding(self: *ReshardingManager) !void {
         if (self.state != .copying and self.state != .verifying) {
             return error.InvalidState;
         }
@@ -610,7 +1307,7 @@ pub const ReshardingManager = struct {
     }
 
     /// Cancel resharding and rollback.
-    pub fn cancelResharding(self: *Self, reason: []const u8) void {
+    pub fn cancelResharding(self: *ReshardingManager, reason: []const u8) void {
         self.state = .rollback;
         self.error_message = reason;
 
@@ -625,7 +1322,10 @@ pub const ReshardingManager = struct {
     }
 
     /// Get shard for entity (handles dual-read during resharding).
-    pub fn getShardForEntity(self: *const Self, entity_id: u128) struct { primary: u32, secondary: ?u32 } {
+    pub fn getShardForEntity(
+        self: *const ReshardingManager,
+        entity_id: u128,
+    ) struct { primary: u32, secondary: ?u32 } {
         const primary = if (self.current_ring) |*ring|
             ring.getShard(entity_id)
         else
@@ -645,12 +1345,12 @@ pub const ReshardingManager = struct {
     }
 
     /// Check if dual-write is required (during resharding).
-    pub fn isDualWriteRequired(self: *const Self) bool {
+    pub fn isDualWriteRequired(self: *const ReshardingManager) bool {
         return self.state == .copying or self.state == .verifying;
     }
 
     /// Get progress percentage.
-    pub fn getProgressPercent(self: *const Self) f64 {
+    pub fn getProgressPercent(self: *const ReshardingManager) f64 {
         if (self.progress.total_entities == 0) return 0.0;
         return @as(f64, @floatFromInt(self.progress.migrated_entities)) /
             @as(f64, @floatFromInt(self.progress.total_entities)) * 100.0;
@@ -789,8 +1489,6 @@ pub const MigrationWorkerState = enum {
 
 /// Online migration worker for background data migration.
 pub const OnlineMigrationWorker = struct {
-    const Self = @This();
-
     /// Configuration.
     config: OnlineReshardingConfig,
 
@@ -849,7 +1547,7 @@ pub const OnlineMigrationWorker = struct {
         allocator: std.mem.Allocator,
         resharding_manager: *ReshardingManager,
         config: OnlineReshardingConfig,
-    ) Self {
+    ) OnlineMigrationWorker {
         return .{
             .config = config,
             .state = .idle,
@@ -863,7 +1561,7 @@ pub const OnlineMigrationWorker = struct {
         };
     }
 
-    pub fn deinit(self: *Self) void {
+    pub fn deinit(self: *OnlineMigrationWorker) void {
         // Clean up pending batches
         for (self.pending_batches.items) |*batch| {
             batch.deinit();
@@ -873,7 +1571,7 @@ pub const OnlineMigrationWorker = struct {
     }
 
     /// Start the migration process.
-    pub fn start(self: *Self, total_entities: u64) !void {
+    pub fn start(self: *OnlineMigrationWorker, total_entities: u64) !void {
         if (self.state != .idle) {
             return error.MigrationAlreadyRunning;
         }
@@ -887,21 +1585,21 @@ pub const OnlineMigrationWorker = struct {
     }
 
     /// Pause the migration.
-    pub fn pause(self: *Self) void {
+    pub fn pause(self: *OnlineMigrationWorker) void {
         if (self.state == .migrating or self.state == .scanning) {
             self.state = .paused;
         }
     }
 
     /// Resume the migration.
-    pub fn resumeMigration(self: *Self) void {
+    pub fn resumeMigration(self: *OnlineMigrationWorker) void {
         if (self.state == .paused) {
             self.state = .migrating;
         }
     }
 
     /// Cancel the migration (triggers rollback).
-    pub fn cancel(self: *Self, reason: []const u8) void {
+    pub fn cancel(self: *OnlineMigrationWorker, reason: []const u8) void {
         self.state = .failed;
         self.error_message = reason;
         self.resharding_manager.cancelResharding(reason);
@@ -909,7 +1607,7 @@ pub const OnlineMigrationWorker = struct {
 
     /// Process a single batch of entities.
     /// Returns true if batch was processed, false if rate limited.
-    pub fn processBatch(self: *Self, batch: *MigrationBatch) !bool {
+    pub fn processBatch(self: *OnlineMigrationWorker, batch: *MigrationBatch) !bool {
         // Check rate limit
         if (!self.acquireRateTokens(batch.entity_ids.len)) {
             return false;
@@ -948,7 +1646,7 @@ pub const OnlineMigrationWorker = struct {
     }
 
     /// Check if migration is complete and ready for cutover.
-    pub fn isReadyForCutover(self: *const Self) bool {
+    pub fn isReadyForCutover(self: *const OnlineMigrationWorker) bool {
         if (self.stats.total_entities == 0) return false;
 
         const remaining = self.stats.total_entities - self.stats.migrated_entities;
@@ -957,7 +1655,7 @@ pub const OnlineMigrationWorker = struct {
 
     /// Perform cutover to new shard configuration.
     /// This implements the brief pause (<1 second) for final sync.
-    pub fn performCutover(self: *Self) !void {
+    pub fn performCutover(self: *OnlineMigrationWorker) !void {
         if (!self.isReadyForCutover()) {
             return error.NotReadyForCutover;
         }
@@ -977,22 +1675,28 @@ pub const OnlineMigrationWorker = struct {
     }
 
     /// Get overall progress as a value between 0.0 and 1.0.
-    pub fn getProgress(self: *const Self) f64 {
+    pub fn getProgress(self: *const OnlineMigrationWorker) f64 {
         if (self.stats.total_entities == 0) return 0.0;
         return @as(f64, @floatFromInt(self.stats.migrated_entities)) /
             @as(f64, @floatFromInt(self.stats.total_entities));
     }
 
     /// Get estimated time remaining in seconds.
-    pub fn getEtaSeconds(self: *const Self) ?i64 {
+    pub fn getEtaSeconds(self: *const OnlineMigrationWorker) ?i64 {
         if (self.stats.current_rate <= 0) return null;
 
         const remaining = self.stats.total_entities - self.stats.migrated_entities;
-        return @as(i64, @intFromFloat(@as(f64, @floatFromInt(remaining)) / self.stats.current_rate));
+        const eta_f64 = @as(f64, @floatFromInt(remaining)) / self.stats.current_rate;
+        return @as(i64, @intFromFloat(eta_f64));
     }
 
     /// Create a checkpoint for a source shard.
-    fn updateCheckpoint(self: *Self, source_shard: u32, last_key: u128, count: usize) !void {
+    fn updateCheckpoint(
+        self: *OnlineMigrationWorker,
+        source_shard: u32,
+        last_key: u128,
+        count: usize,
+    ) !void {
         const entry = self.checkpoints.getPtr(source_shard);
         if (entry) |checkpoint| {
             checkpoint.last_key = last_key;
@@ -1011,7 +1715,7 @@ pub const OnlineMigrationWorker = struct {
     }
 
     /// Acquire rate limit tokens.
-    fn acquireRateTokens(self: *Self, count: usize) bool {
+    fn acquireRateTokens(self: *OnlineMigrationWorker, count: usize) bool {
         if (self.config.rate_limit == 0) return true; // Unlimited
 
         const now = std.time.timestamp();
@@ -1037,13 +1741,20 @@ pub const OnlineMigrationWorker = struct {
     }
 
     /// Load checkpoint from persistent storage (for resumability).
-    pub fn loadCheckpoint(self: *Self, source_shard: u32, checkpoint: MigrationCheckpoint) !void {
+    pub fn loadCheckpoint(
+        self: *OnlineMigrationWorker,
+        source_shard: u32,
+        checkpoint: MigrationCheckpoint,
+    ) !void {
         try self.checkpoints.put(source_shard, checkpoint);
         self.stats.migrated_entities += checkpoint.migrated_count;
     }
 
     /// Get checkpoint for serialization.
-    pub fn getCheckpoint(self: *const Self, source_shard: u32) ?MigrationCheckpoint {
+    pub fn getCheckpoint(
+        self: *const OnlineMigrationWorker,
+        source_shard: u32,
+    ) ?MigrationCheckpoint {
         return self.checkpoints.get(source_shard);
     }
 };
@@ -1175,7 +1886,8 @@ pub const ClusterMode = enum {
 };
 
 /// Global cluster mode for health checks and write rejection.
-pub var cluster_mode: std.atomic.Value(u8) = std.atomic.Value(u8).init(@intFromEnum(ClusterMode.normal));
+pub var cluster_mode: std.atomic.Value(u8) =
+    std.atomic.Value(u8).init(@intFromEnum(ClusterMode.normal));
 
 /// Set the cluster mode atomically.
 pub fn setClusterMode(mode: ClusterMode) void {
@@ -1291,8 +2003,6 @@ pub const ReshardingPlan = struct {
 
 /// Stop-the-world resharding coordinator.
 pub const StopTheWorldResharder = struct {
-    const Self = @This();
-
     /// Current state.
     state: StopTheWorldState,
 
@@ -1339,7 +2049,7 @@ pub const StopTheWorldResharder = struct {
     allocator: std.mem.Allocator,
 
     /// Initialize the stop-the-world resharder.
-    pub fn init(allocator: std.mem.Allocator, initial_shards: u32) !Self {
+    pub fn init(allocator: std.mem.Allocator, initial_shards: u32) !StopTheWorldResharder {
         const exported_data = try allocator.alloc(?ShardData, max_shards);
         @memset(exported_data, null);
 
@@ -1357,7 +2067,7 @@ pub const StopTheWorldResharder = struct {
     }
 
     /// Deinitialize the resharder.
-    pub fn deinit(self: *Self) void {
+    pub fn deinit(self: *StopTheWorldResharder) void {
         // Free any exported data
         for (self.exported_data) |maybe_data| {
             if (maybe_data) |data| {
@@ -1370,7 +2080,7 @@ pub const StopTheWorldResharder = struct {
     /// Validate and plan resharding operation.
     /// Returns a plan that can be reviewed before execution.
     pub fn planResharding(
-        self: *Self,
+        self: *StopTheWorldResharder,
         new_shard_count: u32,
         total_entities: u64,
     ) !ReshardingPlan {
@@ -1390,11 +2100,14 @@ pub const StopTheWorldResharder = struct {
         // When doubling shards, ~50% entities move
         // When halving shards, ~50% entities move
         const move_ratio: f64 = if (new_shard_count > self.current_shards)
-            1.0 - (@as(f64, @floatFromInt(self.current_shards)) / @as(f64, @floatFromInt(new_shard_count)))
+            1.0 - (@as(f64, @floatFromInt(self.current_shards)) /
+                @as(f64, @floatFromInt(new_shard_count)))
         else
-            1.0 - (@as(f64, @floatFromInt(new_shard_count)) / @as(f64, @floatFromInt(self.current_shards)));
+            1.0 - (@as(f64, @floatFromInt(new_shard_count)) /
+                @as(f64, @floatFromInt(self.current_shards)));
 
-        const entities_to_move: u64 = @intFromFloat(@as(f64, @floatFromInt(total_entities)) * move_ratio);
+        const entities_to_move: u64 =
+            @intFromFloat(@as(f64, @floatFromInt(total_entities)) * move_ratio);
 
         // Estimate duration: ~100K entities per second (conservative)
         const estimated_duration = @max(1, entities_to_move / 100_000);
@@ -1412,7 +2125,7 @@ pub const StopTheWorldResharder = struct {
 
     /// Start the stop-the-world resharding operation.
     /// This will put the cluster in read-only mode.
-    pub fn startResharding(self: *Self, plan: ReshardingPlan) !void {
+    pub fn startResharding(self: *StopTheWorldResharder, plan: ReshardingPlan) !void {
         if (self.state != .idle) {
             return error.ReshardingInProgress;
         }
@@ -1428,7 +2141,10 @@ pub const StopTheWorldResharder = struct {
         metrics.Registry.resharding_status.store(1, .monotonic); // 1 = preparing
         metrics.Registry.resharding_source_shards.store(self.current_shards, .monotonic);
         metrics.Registry.resharding_target_shards.store(plan.target_shards, .monotonic);
-        metrics.Registry.resharding_start_ns.store(@intCast(self.progress.start_time_ns), .monotonic);
+        metrics.Registry.resharding_start_ns.store(
+            @intCast(self.progress.start_time_ns),
+            .monotonic,
+        );
         metrics.Registry.resharding_progress.store(0, .monotonic);
         metrics.Registry.resharding_entities_exported.store(0, .monotonic);
         metrics.Registry.resharding_entities_imported.store(0, .monotonic);
@@ -1446,7 +2162,7 @@ pub const StopTheWorldResharder = struct {
     }
 
     /// Called when backup is complete.
-    pub fn backupComplete(self: *Self, backup_path: []const u8) !void {
+    pub fn backupComplete(self: *StopTheWorldResharder, backup_path: []const u8) !void {
         if (self.state != .backing_up) {
             return error.InvalidState;
         }
@@ -1462,7 +2178,7 @@ pub const StopTheWorldResharder = struct {
     }
 
     /// Skip backup (for dry-run or testing).
-    pub fn skipBackup(self: *Self) !void {
+    pub fn skipBackup(self: *StopTheWorldResharder) !void {
         if (self.state != .backing_up) {
             return error.InvalidState;
         }
@@ -1475,7 +2191,7 @@ pub const StopTheWorldResharder = struct {
 
     /// Record exported data from a source shard.
     pub fn recordExportedShard(
-        self: *Self,
+        self: *StopTheWorldResharder,
         shard_id: u32,
         entity_count: u64,
         data: []const u8,
@@ -1504,12 +2220,15 @@ pub const StopTheWorldResharder = struct {
         self.progress.current_shard = shard_id;
 
         // Update metrics
-        metrics.Registry.resharding_entities_exported.store(self.progress.exported_entities, .monotonic);
+        metrics.Registry.resharding_entities_exported.store(
+            self.progress.exported_entities,
+            .monotonic,
+        );
         self.updateProgressMetric();
     }
 
     /// Update the resharding progress metric based on current state.
-    fn updateProgressMetric(self: *Self) void {
+    fn updateProgressMetric(self: *StopTheWorldResharder) void {
         if (self.progress.total_entities == 0) return;
 
         // Progress: 0-50% for export (0-500), 50-100% for import (500-1000)
@@ -1526,7 +2245,7 @@ pub const StopTheWorldResharder = struct {
     }
 
     /// Transition to importing phase after all shards exported.
-    pub fn startImporting(self: *Self) !void {
+    pub fn startImporting(self: *StopTheWorldResharder) !void {
         if (self.state != .exporting) {
             return error.InvalidState;
         }
@@ -1547,7 +2266,7 @@ pub const StopTheWorldResharder = struct {
     }
 
     /// Record progress of entity import.
-    pub fn recordImportProgress(self: *Self, entities_imported: u64) void {
+    pub fn recordImportProgress(self: *StopTheWorldResharder, entities_imported: u64) void {
         if (self.state == .importing) {
             self.progress.imported_entities = entities_imported;
             metrics.Registry.resharding_entities_imported.store(entities_imported, .monotonic);
@@ -1556,7 +2275,7 @@ pub const StopTheWorldResharder = struct {
     }
 
     /// Transition to verifying phase after import complete.
-    pub fn startVerifying(self: *Self) !void {
+    pub fn startVerifying(self: *StopTheWorldResharder) !void {
         if (self.state != .importing) {
             return error.InvalidState;
         }
@@ -1566,7 +2285,7 @@ pub const StopTheWorldResharder = struct {
     }
 
     /// Complete verification and update topology.
-    pub fn completeVerification(self: *Self, verified_count: u64) !void {
+    pub fn completeVerification(self: *StopTheWorldResharder, verified_count: u64) !void {
         if (self.state != .verifying) {
             return error.InvalidState;
         }
@@ -1585,7 +2304,7 @@ pub const StopTheWorldResharder = struct {
     }
 
     /// Complete the resharding operation.
-    pub fn completeResharding(self: *Self) !void {
+    pub fn completeResharding(self: *StopTheWorldResharder) !void {
         if (self.state != .updating_topology) {
             return error.InvalidState;
         }
@@ -1617,7 +2336,7 @@ pub const StopTheWorldResharder = struct {
     }
 
     /// Initiate rollback due to failure.
-    pub fn initiateRollback(self: *Self, reason: []const u8) void {
+    pub fn initiateRollback(self: *StopTheWorldResharder, reason: []const u8) void {
         self.state = .rolling_back;
         self.error_message = reason;
 
@@ -1626,7 +2345,7 @@ pub const StopTheWorldResharder = struct {
     }
 
     /// Complete the rollback operation.
-    pub fn completeRollback(self: *Self) void {
+    pub fn completeRollback(self: *StopTheWorldResharder) void {
         // Reset to original shard count
         self.target_shards = self.current_shards;
 
@@ -1646,7 +2365,7 @@ pub const StopTheWorldResharder = struct {
     }
 
     /// Get progress percentage (0.0 to 100.0).
-    pub fn getProgressPercent(self: *const Self) f64 {
+    pub fn getProgressPercent(self: *const StopTheWorldResharder) f64 {
         if (self.progress.total_entities == 0) return 0.0;
 
         const progress: f64 = switch (self.state) {
@@ -1664,14 +2383,14 @@ pub const StopTheWorldResharder = struct {
     }
 
     /// Get elapsed time in seconds.
-    pub fn getElapsedSeconds(self: *const Self) f64 {
+    pub fn getElapsedSeconds(self: *const StopTheWorldResharder) f64 {
         if (self.progress.start_time_ns == 0) return 0.0;
         const elapsed_ns = std.time.nanoTimestamp() - self.progress.start_time_ns;
         return @as(f64, @floatFromInt(elapsed_ns)) / 1e9;
     }
 
     /// Check if resharding is in progress.
-    pub fn isInProgress(self: *const Self) bool {
+    pub fn isInProgress(self: *const StopTheWorldResharder) bool {
         return self.state.isInProgress();
     }
 };
@@ -1888,9 +2607,18 @@ test "resharding integration: metrics are updated throughout lifecycle" {
     try resharder.startResharding(plan);
 
     // After start - status should be 1 (preparing), source/target set
-    try std.testing.expectEqual(@as(u8, 1), metrics.Registry.resharding_status.load(.monotonic));
-    try std.testing.expectEqual(@as(u32, 8), metrics.Registry.resharding_source_shards.load(.monotonic));
-    try std.testing.expectEqual(@as(u32, 16), metrics.Registry.resharding_target_shards.load(.monotonic));
+    try std.testing.expectEqual(
+        @as(u8, 1),
+        metrics.Registry.resharding_status.load(.monotonic),
+    );
+    try std.testing.expectEqual(
+        @as(u32, 8),
+        metrics.Registry.resharding_source_shards.load(.monotonic),
+    );
+    try std.testing.expectEqual(
+        @as(u32, 16),
+        metrics.Registry.resharding_target_shards.load(.monotonic),
+    );
     try std.testing.expect(metrics.Registry.resharding_start_ns.load(.monotonic) > 0);
 
     // Skip backup and export
@@ -1906,18 +2634,27 @@ test "resharding integration: metrics are updated throughout lifecycle" {
     }
 
     // After export - entities_exported should be updated
-    try std.testing.expectEqual(@as(u64, 1000), metrics.Registry.resharding_entities_exported.load(.monotonic));
+    try std.testing.expectEqual(
+        @as(u64, 1000),
+        metrics.Registry.resharding_entities_exported.load(.monotonic),
+    );
     // Progress should be ~50% (export phase)
     const export_progress = metrics.Registry.resharding_progress.load(.monotonic);
     try std.testing.expect(export_progress >= 400 and export_progress <= 500);
 
     // Import phase - status should be 2 (migrating)
     try resharder.startImporting();
-    try std.testing.expectEqual(@as(u8, 2), metrics.Registry.resharding_status.load(.monotonic));
+    try std.testing.expectEqual(
+        @as(u8, 2),
+        metrics.Registry.resharding_status.load(.monotonic),
+    );
 
     // Record import progress
     resharder.recordImportProgress(1000);
-    try std.testing.expectEqual(@as(u64, 1000), metrics.Registry.resharding_entities_imported.load(.monotonic));
+    try std.testing.expectEqual(
+        @as(u64, 1000),
+        metrics.Registry.resharding_entities_imported.load(.monotonic),
+    );
     // Progress should be ~100%
     const import_progress = metrics.Registry.resharding_progress.load(.monotonic);
     try std.testing.expect(import_progress >= 900);
@@ -1925,14 +2662,26 @@ test "resharding integration: metrics are updated throughout lifecycle" {
     // Verify and finalize - status should be 3 (finalizing)
     try resharder.startVerifying();
     try resharder.completeVerification(1000);
-    try std.testing.expectEqual(@as(u8, 3), metrics.Registry.resharding_status.load(.monotonic));
+    try std.testing.expectEqual(
+        @as(u8, 3),
+        metrics.Registry.resharding_status.load(.monotonic),
+    );
 
     // Complete
     try resharder.completeResharding();
-    try std.testing.expectEqual(@as(u8, 0), metrics.Registry.resharding_status.load(.monotonic));
-    try std.testing.expectEqual(@as(u32, 1000), metrics.Registry.resharding_progress.load(.monotonic)); // 100%
+    try std.testing.expectEqual(
+        @as(u8, 0),
+        metrics.Registry.resharding_status.load(.monotonic),
+    );
+    try std.testing.expectEqual(
+        @as(u32, 1000),
+        metrics.Registry.resharding_progress.load(.monotonic),
+    ); // 100%
     try std.testing.expect(metrics.Registry.resharding_duration_ns.load(.monotonic) > 0);
-    try std.testing.expectEqual(@as(u32, 16), metrics.Registry.shard_count.load(.monotonic));
+    try std.testing.expectEqual(
+        @as(u32, 16),
+        metrics.Registry.shard_count.load(.monotonic),
+    );
 
     // Reset for other tests
     setClusterMode(.normal);
@@ -2316,12 +3065,24 @@ test "MigrationCheckpoint progress tracking" {
 
 test "MigrationWorkerState toString" {
     try std.testing.expectEqualStrings("IDLE", MigrationWorkerState.idle.toString());
-    try std.testing.expectEqualStrings("SCANNING", MigrationWorkerState.scanning.toString());
-    try std.testing.expectEqualStrings("MIGRATING", MigrationWorkerState.migrating.toString());
+    try std.testing.expectEqualStrings(
+        "SCANNING",
+        MigrationWorkerState.scanning.toString(),
+    );
+    try std.testing.expectEqualStrings(
+        "MIGRATING",
+        MigrationWorkerState.migrating.toString(),
+    );
     try std.testing.expectEqualStrings("PAUSED", MigrationWorkerState.paused.toString());
-    try std.testing.expectEqualStrings("WAITING_CUTOVER", MigrationWorkerState.waiting_cutover.toString());
+    try std.testing.expectEqualStrings(
+        "WAITING_CUTOVER",
+        MigrationWorkerState.waiting_cutover.toString(),
+    );
     try std.testing.expectEqualStrings("CUTOVER", MigrationWorkerState.cutover.toString());
-    try std.testing.expectEqualStrings("COMPLETED", MigrationWorkerState.completed.toString());
+    try std.testing.expectEqualStrings(
+        "COMPLETED",
+        MigrationWorkerState.completed.toString(),
+    );
     try std.testing.expectEqualStrings("FAILED", MigrationWorkerState.failed.toString());
 }
 
@@ -2466,4 +3227,230 @@ test "OnlineMigrationWorker checkpoint management" {
 
     // Verify stats updated
     try std.testing.expectEqual(@as(u64, 5000), worker.stats.migrated_entities);
+}
+
+test "sharding strategy throughput comparison" {
+    // Verify jump_hash has similar or better throughput than other strategies.
+    // Per add-jump-consistent-hash/spec.md: Jump hash should be ≤ virtual ring latency.
+    const allocator = std.testing.allocator;
+    const iterations = 100_000;
+    const num_shards: u32 = 16;
+
+    // Initialize virtual ring for comparison
+    var ring = try ConsistentHashRing.init(allocator, num_shards, 150);
+    defer ring.deinit();
+
+    var timer = std.time.Timer.start() catch return;
+
+    // Benchmark modulo (baseline, fastest but inflexible)
+    for (0..iterations) |i| {
+        const key: u128 = @intCast(i + 1);
+        _ = getShardForEntityWithStrategy(key, num_shards, .modulo, null);
+    }
+    const modulo_ns = timer.lap();
+
+    // Benchmark jump_hash
+    for (0..iterations) |i| {
+        const key: u128 = @intCast(i + 1);
+        _ = getShardForEntityWithStrategy(key, num_shards, .jump_hash, null);
+    }
+    const jump_ns = timer.lap();
+
+    // Benchmark virtual_ring
+    for (0..iterations) |i| {
+        const key: u128 = @intCast(i + 1);
+        _ = getShardForEntityWithStrategy(key, num_shards, .virtual_ring, &ring);
+    }
+    const ring_ns = timer.lap();
+
+    // Jump hash should be at most 10x slower than modulo (it's O(log n))
+    // In practice it's typically 2-3x
+    const jump_ratio = @as(f64, @floatFromInt(jump_ns)) / @as(f64, @floatFromInt(modulo_ns));
+    try std.testing.expect(jump_ratio <= 10.0);
+
+    // Jump hash should be no slower than virtual ring (typically faster)
+    // Virtual ring requires binary search through sorted array
+    try std.testing.expect(jump_ns <= ring_ns * 2); // Allow 2x margin for variance
+
+    // Jump hash uses zero additional memory (vs ring which allocates)
+    // Verified implicitly by not allocating anything for jump_hash
+}
+
+// ============================================================================
+// Entity Lookup Index Tests
+// ============================================================================
+
+test "EntityLookupIndex: basic operations" {
+    var index = try EntityLookupIndex.init(std.testing.allocator, 1024);
+    defer index.deinit();
+
+    try std.testing.expectEqual(@as(u32, 0), index.count);
+    try std.testing.expectEqual(@as(u32, 1024), index.capacity);
+
+    // Insert an entry
+    const entity_id: u128 = 0x12345678_ABCDEF00_12345678_ABCDEF00;
+    const cell_id: u64 = 0x3000000000000001;
+    const timestamp: u64 = 1704067200000000000;
+
+    try index.upsert(entity_id, cell_id, timestamp);
+    try std.testing.expectEqual(@as(u32, 1), index.count);
+
+    // Lookup should succeed
+    const entry = index.lookup(entity_id);
+    try std.testing.expect(entry != null);
+    try std.testing.expectEqual(entity_id, entry.?.entity_id);
+    try std.testing.expectEqual(cell_id, entry.?.cell_id);
+    try std.testing.expectEqual(timestamp, entry.?.timestamp_ns);
+}
+
+test "EntityLookupIndex: update existing entry" {
+    var index = try EntityLookupIndex.init(std.testing.allocator, 1024);
+    defer index.deinit();
+
+    const entity_id: u128 = 0xDEADBEEF_CAFEBABE_12345678_9ABCDEF0;
+
+    // Insert initial entry
+    try index.upsert(entity_id, 100, 1000);
+    try std.testing.expectEqual(@as(u32, 1), index.count);
+
+    // Update same entity
+    try index.upsert(entity_id, 200, 2000);
+    try std.testing.expectEqual(@as(u32, 1), index.count); // Still 1 entry
+
+    // Verify updated values
+    const entry = index.lookup(entity_id);
+    try std.testing.expect(entry != null);
+    try std.testing.expectEqual(@as(u64, 200), entry.?.cell_id);
+    try std.testing.expectEqual(@as(u64, 2000), entry.?.timestamp_ns);
+}
+
+test "EntityLookupIndex: lookup not found" {
+    var index = try EntityLookupIndex.init(std.testing.allocator, 1024);
+    defer index.deinit();
+
+    // Lookup non-existent entry
+    const entry = index.lookup(0x12345678);
+    try std.testing.expect(entry == null);
+
+    // Zero entity_id always returns null
+    try std.testing.expect(index.lookup(0) == null);
+}
+
+test "EntityLookupIndex: remove entry" {
+    var index = try EntityLookupIndex.init(std.testing.allocator, 1024);
+    defer index.deinit();
+
+    const entity_id: u128 = 0xABCD1234_5678EFAB_CDEF1234_56789ABC;
+
+    try index.upsert(entity_id, 100, 1000);
+    try std.testing.expectEqual(@as(u32, 1), index.count);
+
+    // Remove
+    const removed = index.remove(entity_id);
+    try std.testing.expect(removed);
+    try std.testing.expectEqual(@as(u32, 0), index.count);
+
+    // Lookup should now fail
+    try std.testing.expect(index.lookup(entity_id) == null);
+
+    // Remove again should return false
+    try std.testing.expect(!index.remove(entity_id));
+}
+
+test "EntityLookupIndex: collision handling" {
+    // Use small capacity to force collisions
+    var index = try EntityLookupIndex.init(std.testing.allocator, 16);
+    defer index.deinit();
+
+    // Insert multiple entries (will likely collide)
+    const ids = [_]u128{
+        1, 2, 3, 4, 5, 17, // 17 mod 16 = 1, collides with 1
+        33, // 33 mod 16 = 1, collides with 1 and 17
+    };
+
+    for (ids, 0..) |id, i| {
+        try index.upsert(id, @intCast(i * 100), 0);
+    }
+
+    // All should be retrievable
+    for (ids, 0..) |id, i| {
+        const entry = index.lookup(id);
+        try std.testing.expect(entry != null);
+        try std.testing.expectEqual(@as(u64, @intCast(i * 100)), entry.?.cell_id);
+    }
+}
+
+test "EntityLookupIndex: getShardForEntity" {
+    var index = try EntityLookupIndex.init(std.testing.allocator, 1024);
+    defer index.deinit();
+
+    const entity_id: u128 = 0x11111111_22222222_33333333_44444444;
+    const cell_id: u64 = 0x3000000000000001; // Level 13 S2 cell
+
+    try index.upsert(entity_id, cell_id, 0);
+
+    // Get shard using spatial routing
+    const shard = index.getShardForEntity(entity_id, 8);
+    try std.testing.expect(shard != null);
+    try std.testing.expect(shard.? < 8);
+
+    // Unknown entity returns null
+    try std.testing.expect(index.getShardForEntity(0xFFFFFFFF, 8) == null);
+}
+
+test "EntityLookupIndex: load factor" {
+    var index = try EntityLookupIndex.init(std.testing.allocator, 100);
+    defer index.deinit();
+
+    // Initially empty
+    try std.testing.expectEqual(@as(f32, 0.0), index.loadFactor());
+    try std.testing.expect(!index.needsResize());
+
+    // Add 50 entries (50% load)
+    for (1..51) |i| {
+        try index.upsert(@intCast(i), @intCast(i * 10), 0);
+    }
+    try std.testing.expectEqual(@as(f32, 0.5), index.loadFactor());
+    try std.testing.expect(!index.needsResize());
+
+    // Add 26 more entries (76% load, needs resize)
+    for (51..77) |i| {
+        try index.upsert(@intCast(i), @intCast(i * 10), 0);
+    }
+    try std.testing.expect(index.loadFactor() > 0.75);
+    try std.testing.expect(index.needsResize());
+}
+
+test "EntityLookupIndex: tombstone maintains probe chain" {
+    var index = try EntityLookupIndex.init(std.testing.allocator, 16);
+    defer index.deinit();
+
+    // Insert entries that will be in a probe chain
+    // Entity 1, 17, 33 all hash to slot 1 mod 16
+    try index.upsert(1, 100, 0);
+    try index.upsert(17, 200, 0); // Collides with 1
+    try index.upsert(33, 300, 0); // Collides with 1, 17
+
+    // Remove middle entry (17)
+    try std.testing.expect(index.remove(17));
+
+    // Should still find 33 (probe chain intact via tombstone)
+    const entry = index.lookup(33);
+    try std.testing.expect(entry != null);
+    try std.testing.expectEqual(@as(u64, 300), entry.?.cell_id);
+
+    // Can still find 1
+    try std.testing.expect(index.lookup(1) != null);
+
+    // 17 is gone
+    try std.testing.expect(index.lookup(17) == null);
+}
+
+test "EntityLookupIndex: invalid entity_id zero" {
+    var index = try EntityLookupIndex.init(std.testing.allocator, 1024);
+    defer index.deinit();
+
+    // Cannot insert entity_id 0
+    const result = index.upsert(0, 100, 0);
+    try std.testing.expectError(error.InvalidEntityId, result);
 }

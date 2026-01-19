@@ -27,7 +27,6 @@
 const std = @import("std");
 const mem = std.mem;
 const GeoEvent = @import("../geo_event.zig").GeoEvent;
-const GeoEventFlags = @import("../geo_event.zig").GeoEventFlags;
 
 /// Current schema version for JSON export format.
 /// Increment when making breaking changes to the export format.
@@ -103,10 +102,8 @@ pub const DataExporter = struct {
     event_count: usize,
     started: bool,
 
-    const Self = @This();
-
     /// Initialize a new data exporter.
-    pub fn init(allocator: mem.Allocator, options: ExportOptions) Self {
+    pub fn init(allocator: mem.Allocator, options: ExportOptions) DataExporter {
         return .{
             .allocator = allocator,
             .options = options,
@@ -116,13 +113,13 @@ pub const DataExporter = struct {
     }
 
     /// Clean up resources.
-    pub fn deinit(self: *Self) void {
+    pub fn deinit(self: *DataExporter) void {
         _ = self;
         // No allocations to free currently
     }
 
     /// Write export header (for formats that need it).
-    pub fn writeHeader(self: *Self, writer: anytype) !void {
+    pub fn writeHeader(self: *DataExporter, writer: anytype) !void {
         self.started = true;
         self.event_count = 0;
 
@@ -171,7 +168,7 @@ pub const DataExporter = struct {
     }
 
     /// Write a single GeoEvent.
-    pub fn writeEvent(self: *Self, writer: anytype, event: *const GeoEvent) !void {
+    pub fn writeEvent(self: *DataExporter, writer: anytype, event: *const GeoEvent) !void {
         if (!self.started and self.options.format != .ndjson) {
             return error.HeaderNotWritten;
         }
@@ -205,7 +202,7 @@ pub const DataExporter = struct {
     }
 
     /// Write export footer.
-    pub fn writeFooter(self: *Self, writer: anytype) !void {
+    pub fn writeFooter(self: *DataExporter, writer: anytype) !void {
         switch (self.options.format) {
             .json => {
                 if (self.options.pretty) {
@@ -236,21 +233,33 @@ pub const DataExporter = struct {
     }
 
     /// Write a single event in JSON format.
-    fn writeJsonEvent(self: *Self, writer: anytype, event: *const GeoEvent) !void {
+    fn writeJsonEvent(self: *DataExporter, writer: anytype, event: *const GeoEvent) !void {
         const indent = if (self.options.pretty) "    " else "";
         const newline = if (self.options.pretty) "\n" else "";
         const sep = if (self.options.pretty) ": " else ":";
 
         try writer.print("{s}{{", .{indent});
-        try writer.print("{s}{s}\"id\"{s}\"{x:0>32}\",", .{ newline, indent, sep, event.id });
-        try writer.print("{s}{s}\"entity_id\"{s}\"{x:0>32}\",", .{ newline, indent, sep, event.entity_id });
+        try writer.print(
+            "{s}{s}\"id\"{s}\"{x:0>32}\",",
+            .{ newline, indent, sep, event.id },
+        );
+        try writer.print(
+            "{s}{s}\"entity_id\"{s}\"{x:0>32}\",",
+            .{ newline, indent, sep, event.entity_id },
+        );
 
         if (event.correlation_id != 0 or self.options.include_nulls) {
-            try writer.print("{s}{s}\"correlation_id\"{s}\"{x:0>32}\",", .{ newline, indent, sep, event.correlation_id });
+            try writer.print(
+                "{s}{s}\"correlation_id\"{s}\"{x:0>32}\",",
+                .{ newline, indent, sep, event.correlation_id },
+            );
         }
 
         if (event.user_data != 0 or self.options.include_nulls) {
-            try writer.print("{s}{s}\"user_data\"{s}\"{x:0>32}\",", .{ newline, indent, sep, event.user_data });
+            try writer.print(
+                "{s}{s}\"user_data\"{s}\"{x:0>32}\",",
+                .{ newline, indent, sep, event.user_data },
+            );
         }
 
         // Coordinates
@@ -260,7 +269,10 @@ pub const DataExporter = struct {
         try writer.print("{s}{s}\"longitude\"{s}{d:.9},", .{ newline, indent, sep, lon });
 
         // Timestamp
-        try writer.print("{s}{s}\"timestamp_ns\"{s}{d},", .{ newline, indent, sep, event.timestamp });
+        try writer.print(
+            "{s}{s}\"timestamp_ns\"{s}{d},",
+            .{ newline, indent, sep, event.timestamp },
+        );
         // Also include ISO 8601 timestamp for human readability
         const timestamp_ms = event.timestamp / 1_000_000;
         try writer.print("{s}{s}\"timestamp_ms\"{s}{d},", .{ newline, indent, sep, timestamp_ms });
@@ -280,7 +292,10 @@ pub const DataExporter = struct {
 
         if (event.heading_cdeg != 0 or self.options.include_nulls) {
             const heading_deg = @as(f64, @floatFromInt(event.heading_cdeg)) / 100.0;
-            try writer.print("{s}{s}\"heading_deg\"{s}{d:.2},", .{ newline, indent, sep, heading_deg });
+            try writer.print(
+                "{s}{s}\"heading_deg\"{s}{d:.2},",
+                .{ newline, indent, sep, heading_deg },
+            );
         }
 
         if (event.accuracy_mm != 0 or self.options.include_nulls) {
@@ -289,7 +304,10 @@ pub const DataExporter = struct {
         }
 
         if (event.ttl_seconds != 0 or self.options.include_nulls) {
-            try writer.print("{s}{s}\"ttl_seconds\"{s}{d},", .{ newline, indent, sep, event.ttl_seconds });
+            try writer.print(
+                "{s}{s}\"ttl_seconds\"{s}{d},",
+                .{ newline, indent, sep, event.ttl_seconds },
+            );
         }
 
         // Flags
@@ -306,7 +324,7 @@ pub const DataExporter = struct {
     }
 
     /// Write a single event as a GeoJSON Feature.
-    fn writeGeoJsonFeature(self: *Self, writer: anytype, event: *const GeoEvent) !void {
+    fn writeGeoJsonFeature(self: *DataExporter, writer: anytype, event: *const GeoEvent) !void {
         const indent = if (self.options.pretty) "    " else "";
         const indent2 = if (self.options.pretty) "      " else "";
         const newline = if (self.options.pretty) "\n" else "";
@@ -386,7 +404,7 @@ pub const DataExporter = struct {
     }
 
     /// Export a slice of events to a writer.
-    pub fn exportAll(self: *Self, writer: anytype, events: []const GeoEvent) !void {
+    pub fn exportAll(self: *DataExporter, writer: anytype, events: []const GeoEvent) !void {
         try self.writeHeader(writer);
         for (events) |*event| {
             try self.writeEvent(writer, event);
@@ -395,7 +413,7 @@ pub const DataExporter = struct {
     }
 
     /// Export to a string (allocates memory).
-    pub fn exportToString(self: *Self, events: []const GeoEvent) ![]u8 {
+    pub fn exportToString(self: *DataExporter, events: []const GeoEvent) ![]u8 {
         var list = std.ArrayList(u8).init(self.allocator);
         errdefer list.deinit();
 
@@ -543,7 +561,8 @@ pub const JsonImporter = struct {
         }
 
         if (findJsonNumber(json_str, "ttl_seconds")) |ttl_str| {
-            event.ttl_seconds = std.fmt.parseInt(u32, ttl_str, 10) catch self.options.default_ttl_seconds;
+            event.ttl_seconds = std.fmt.parseInt(u32, ttl_str, 10) catch
+                self.options.default_ttl_seconds;
         } else {
             event.ttl_seconds = self.options.default_ttl_seconds;
         }
@@ -648,8 +667,10 @@ pub const GeoJsonImporter = struct {
 
         // Parse properties
         if (mem.indexOf(u8, feature_str, "\"properties\":")) |props_start| {
-            const props_brace = mem.indexOfPos(u8, feature_str, props_start, "{") orelse props_start;
-            const props_end = findMatchingBrace(feature_str, props_brace) orelse feature_str.len - 1;
+            const props_brace = mem.indexOfPos(u8, feature_str, props_start, "{") orelse
+                props_start;
+            const props_end = findMatchingBrace(feature_str, props_brace) orelse
+                feature_str.len - 1;
             const props = feature_str[props_brace .. props_end + 1];
 
             // entity_id (required in properties)
@@ -688,7 +709,8 @@ pub const GeoJsonImporter = struct {
                 event.accuracy_mm = @intFromFloat(acc * 1000.0);
             }
             if (findJsonNumber(props, "ttl_seconds")) |ttl_str| {
-                event.ttl_seconds = std.fmt.parseInt(u32, ttl_str, 10) catch self.options.default_ttl_seconds;
+                event.ttl_seconds = std.fmt.parseInt(u32, ttl_str, 10) catch
+                    self.options.default_ttl_seconds;
             } else {
                 event.ttl_seconds = self.options.default_ttl_seconds;
             }
@@ -831,7 +853,9 @@ test "DataExporter: JSON format basic export" {
     defer allocator.free(output);
 
     // Verify JSON structure
-    try std.testing.expect(std.mem.indexOf(u8, output, "\"$schema\":\"archerdb-export-v1\"") != null);
+    try std.testing.expect(
+        std.mem.indexOf(u8, output, "\"$schema\":\"archerdb-export-v1\"") != null,
+    );
     try std.testing.expect(std.mem.indexOf(u8, output, "\"events\":[") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "\"count\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "\"latitude\":") != null);
@@ -1005,7 +1029,8 @@ test "JsonImporter: parse single event" {
     const allocator = std.testing.allocator;
 
     const json =
-        \\{"entity_id":"12345678abcdef0012345678abcdef00","latitude":37.7749,"longitude":-122.4194,"timestamp":1704067200000000000}
+        \\{"entity_id":"12345678abcdef0012345678abcdef00","latitude":37.7749,
+        \\"longitude":-122.4194,"timestamp":1704067200000000000}
     ;
 
     var importer = JsonImporter.init(allocator, .{});
@@ -1021,7 +1046,9 @@ test "JsonImporter: parse event with optional fields" {
     const allocator = std.testing.allocator;
 
     const json =
-        \\{"entity_id":"1","latitude":40.7128,"longitude":-74.006,"timestamp":1704067200000000000,"altitude_m":10.5,"velocity_ms":5.0,"heading_deg":90.0,"accuracy_m":15.0,"ttl_seconds":3600,"group_id":42}
+        \\{"entity_id":"1","latitude":40.7128,"longitude":-74.006,
+        \\"timestamp":1704067200000000000,"altitude_m":10.5,"velocity_ms":5.0,
+        \\"heading_deg":90.0,"accuracy_m":15.0,"ttl_seconds":3600,"group_id":42}
     ;
 
     var importer = JsonImporter.init(allocator, .{});
@@ -1138,7 +1165,9 @@ test "GeoJsonImporter: parse single Feature" {
     const allocator = std.testing.allocator;
 
     const geojson =
-        \\{"type":"Feature","geometry":{"type":"Point","coordinates":[-74.006,40.7128]},"properties":{"entity_id":"1","timestamp":1704067200000000000}}
+        \\{"type":"Feature","geometry":{"type":"Point",
+        \\"coordinates":[-74.006,40.7128]},"properties":{"entity_id":"1",
+        \\"timestamp":1704067200000000000}}
     ;
 
     var importer = GeoJsonImporter.init(allocator, .{});
@@ -1155,7 +1184,9 @@ test "GeoJsonImporter: parse Feature with altitude" {
     const allocator = std.testing.allocator;
 
     const geojson =
-        \\{"type":"Feature","geometry":{"type":"Point","coordinates":[-122.4194,37.7749,100.5]},"properties":{"entity_id":"2","group_id":42}}
+        \\{"type":"Feature","geometry":{"type":"Point",
+        \\"coordinates":[-122.4194,37.7749,100.5]},"properties":
+        \\{"entity_id":"2","group_id":42}}
     ;
 
     var importer = GeoJsonImporter.init(allocator, .{});

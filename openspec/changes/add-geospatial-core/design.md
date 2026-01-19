@@ -274,7 +274,7 @@ const IndexEntry = struct {
 - Automatic failover via view changes
 - Client sessions ensure exactly-once semantics
 - Flexible Paxos allows tuning latency vs. availability
-- Battle-tested in ArcherDB's financial accounting system
+- Battle-tested in high-throughput consensus workloads
 
 **Key Properties**:
 - `quorum_replication + quorum_view_change > replica_count` (intersection)

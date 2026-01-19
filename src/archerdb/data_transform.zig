@@ -26,6 +26,7 @@
 //! ```
 
 const std = @import("std");
+const stdx = @import("stdx");
 const mem = std.mem;
 const Allocator = mem.Allocator;
 const math = std.math;
@@ -249,7 +250,7 @@ pub const Transform = struct {
     /// Set description.
     pub fn setDescription(self: *Transform, desc: []const u8) void {
         const len = @min(desc.len, 127);
-        @memcpy(self.description[0..len], desc[0..len]);
+        stdx.copy_disjoint(.inexact, u8, self.description[0..len], desc[0..len]);
         self.description_len = @intCast(len);
     }
 };
@@ -313,13 +314,13 @@ pub const PipelineStats = struct {
     /// Calculate success rate.
     pub fn successRate(self: *const PipelineStats) f64 {
         if (self.events_processed == 0) return 100.0;
-        return (@as(f64, @floatFromInt(self.events_succeeded)) / @as(f64, @floatFromInt(self.events_processed))) * 100.0;
+        return (@as(f64, @floatFromInt(self.events_succeeded)) /
+            @as(f64, @floatFromInt(self.events_processed))) * 100.0;
     }
 };
 
 /// Data transformation pipeline.
 pub const TransformPipeline = struct {
-    const Self = @This();
     const MAX_TRANSFORMS = 100;
 
     allocator: Allocator,
@@ -328,12 +329,12 @@ pub const TransformPipeline = struct {
     stats: PipelineStats,
 
     /// Initialize a transform pipeline.
-    pub fn init(allocator: Allocator) Self {
-        return Self.initWithConfig(allocator, .{});
+    pub fn init(allocator: Allocator) TransformPipeline {
+        return TransformPipeline.initWithConfig(allocator, .{});
     }
 
     /// Initialize with custom config.
-    pub fn initWithConfig(allocator: Allocator, config: PipelineConfig) Self {
+    pub fn initWithConfig(allocator: Allocator, config: PipelineConfig) TransformPipeline {
         return .{
             .allocator = allocator,
             .transforms = std.ArrayList(Transform).init(allocator),
@@ -343,12 +344,12 @@ pub const TransformPipeline = struct {
     }
 
     /// Deinitialize and free resources.
-    pub fn deinit(self: *Self) void {
+    pub fn deinit(self: *TransformPipeline) void {
         self.transforms.deinit();
     }
 
     /// Add a transformation to the pipeline.
-    pub fn addTransform(self: *Self, transform: Transform) !void {
+    pub fn addTransform(self: *TransformPipeline, transform: Transform) !void {
         if (self.transforms.items.len >= MAX_TRANSFORMS) {
             return error.TooManyTransforms;
         }
@@ -356,18 +357,18 @@ pub const TransformPipeline = struct {
     }
 
     /// Clear all transforms.
-    pub fn clear(self: *Self) void {
+    pub fn clear(self: *TransformPipeline) void {
         self.transforms.clearRetainingCapacity();
         self.stats.reset();
     }
 
     /// Get transform count.
-    pub fn transformCount(self: *const Self) usize {
+    pub fn transformCount(self: *const TransformPipeline) usize {
         return self.transforms.items.len;
     }
 
     /// Transform a single event.
-    pub fn transformEvent(self: *Self, event: *GeoEvent) !bool {
+    pub fn transformEvent(self: *TransformPipeline, event: *GeoEvent) !bool {
         const start_time = std.time.nanoTimestamp();
         defer {
             const elapsed: u64 = @intCast(std.time.nanoTimestamp() - start_time);
@@ -406,7 +407,7 @@ pub const TransformPipeline = struct {
     }
 
     /// Transform a batch of events.
-    pub fn transformBatch(self: *Self, events: []GeoEvent) !TransformBatchResult {
+    pub fn transformBatch(self: *TransformPipeline, events: []GeoEvent) !TransformBatchResult {
         var succeeded: usize = 0;
         var failed: usize = 0;
         var filtered: usize = 0;
@@ -432,7 +433,11 @@ pub const TransformPipeline = struct {
     }
 
     /// Apply a single transform to an event.
-    fn applyTransform(self: *Self, event: *GeoEvent, transform: *const Transform) bool {
+    fn applyTransform(
+        self: *TransformPipeline,
+        event: *GeoEvent,
+        transform: *const Transform,
+    ) bool {
         _ = self;
         switch (transform.transform_type) {
             .unit_conversion => return applyUnitConversion(event, transform),
@@ -447,12 +452,12 @@ pub const TransformPipeline = struct {
     }
 
     /// Get pipeline statistics.
-    pub fn getStats(self: *const Self) PipelineStats {
+    pub fn getStats(self: *const TransformPipeline) PipelineStats {
         return self.stats;
     }
 
     /// Reset statistics.
-    pub fn resetStats(self: *Self) void {
+    pub fn resetStats(self: *TransformPipeline) void {
         self.stats.reset();
     }
 };
@@ -479,38 +484,54 @@ fn applyUnitConversion(event: *GeoEvent, transform: *const Transform) bool {
         .none => return true,
         .meters_to_feet => {
             if (transform.field == .altitude or transform.field == .all) {
-                event.altitude_mm = @intFromFloat(@as(f64, @floatFromInt(event.altitude_mm)) * METERS_TO_FEET);
+                event.altitude_mm = @intFromFloat(
+                    @as(f64, @floatFromInt(event.altitude_mm)) * METERS_TO_FEET,
+                );
             }
             if (transform.field == .accuracy or transform.field == .all) {
-                event.accuracy_mm = @intFromFloat(@as(f64, @floatFromInt(event.accuracy_mm)) * METERS_TO_FEET);
+                event.accuracy_mm = @intFromFloat(
+                    @as(f64, @floatFromInt(event.accuracy_mm)) * METERS_TO_FEET,
+                );
             }
         },
         .feet_to_meters => {
             if (transform.field == .altitude or transform.field == .all) {
-                event.altitude_mm = @intFromFloat(@as(f64, @floatFromInt(event.altitude_mm)) * FEET_TO_METERS);
+                event.altitude_mm = @intFromFloat(
+                    @as(f64, @floatFromInt(event.altitude_mm)) * FEET_TO_METERS,
+                );
             }
             if (transform.field == .accuracy or transform.field == .all) {
-                event.accuracy_mm = @intFromFloat(@as(f64, @floatFromInt(event.accuracy_mm)) * FEET_TO_METERS);
+                event.accuracy_mm = @intFromFloat(
+                    @as(f64, @floatFromInt(event.accuracy_mm)) * FEET_TO_METERS,
+                );
             }
         },
         .mps_to_kmh => {
             if (transform.field == .velocity or transform.field == .all) {
-                event.velocity_mms = @intFromFloat(@as(f64, @floatFromInt(event.velocity_mms)) * MPS_TO_KMH);
+                event.velocity_mms = @intFromFloat(
+                    @as(f64, @floatFromInt(event.velocity_mms)) * MPS_TO_KMH,
+                );
             }
         },
         .kmh_to_mps => {
             if (transform.field == .velocity or transform.field == .all) {
-                event.velocity_mms = @intFromFloat(@as(f64, @floatFromInt(event.velocity_mms)) * KMH_TO_MPS);
+                event.velocity_mms = @intFromFloat(
+                    @as(f64, @floatFromInt(event.velocity_mms)) * KMH_TO_MPS,
+                );
             }
         },
         .mps_to_mph => {
             if (transform.field == .velocity or transform.field == .all) {
-                event.velocity_mms = @intFromFloat(@as(f64, @floatFromInt(event.velocity_mms)) * MPS_TO_MPH);
+                event.velocity_mms = @intFromFloat(
+                    @as(f64, @floatFromInt(event.velocity_mms)) * MPS_TO_MPH,
+                );
             }
         },
         .mph_to_mps => {
             if (transform.field == .velocity or transform.field == .all) {
-                event.velocity_mms = @intFromFloat(@as(f64, @floatFromInt(event.velocity_mms)) * MPH_TO_MPS);
+                event.velocity_mms = @intFromFloat(
+                    @as(f64, @floatFromInt(event.velocity_mms)) * MPH_TO_MPS,
+                );
             }
         },
         else => {},

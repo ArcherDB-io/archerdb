@@ -14,6 +14,204 @@ const ZigZagMergeIteratorType = @import("zig_zag_merge.zig").ZigZagMergeIterator
 const ScanType = @import("scan_builder.zig").ScanType;
 const Pending = error{Pending};
 
+/// Difference (minus) iterator over two sorted streams.
+pub fn DifferenceMergeIteratorType(
+    comptime Context: type,
+    comptime Key: type,
+    comptime Value: type,
+    comptime key_from_value: fn (*const Value) callconv(.@"inline") Key,
+    comptime stream_peek: fn (
+        context: *Context,
+        stream_index: u32,
+    ) Pending!?Key,
+    comptime stream_pop: fn (context: *Context, stream_index: u32) Value,
+    comptime stream_probe: fn (context: *Context, stream_index: u32, probe_key: Key) void,
+) type {
+    return struct {
+        const DifferenceMergeIterator = @This();
+
+        context: *Context,
+        direction: Direction,
+        key_popped: ?Key = null,
+
+        pub fn init(context: *Context, direction: Direction) DifferenceMergeIterator {
+            return .{
+                .context = context,
+                .direction = direction,
+            };
+        }
+
+        pub fn reset(self: *DifferenceMergeIterator) void {
+            self.* = .{
+                .context = self.context,
+                .direction = self.direction,
+                .key_popped = self.key_popped,
+            };
+        }
+
+        pub fn pop(self: *DifferenceMergeIterator) Pending!?Value {
+            while (true) {
+                const key_a = try stream_peek(self.context, 0) orelse return null;
+
+                if (self.key_popped) |key_prev| {
+                    if (key_a == key_prev) {
+                        _ = stream_pop(self.context, 0);
+                        continue;
+                    }
+                    switch (std.math.order(key_prev, key_a)) {
+                        .lt => assert(self.direction == .ascending),
+                        .gt => assert(self.direction == .descending),
+                        .eq => unreachable,
+                    }
+                }
+
+                const key_b_opt = try stream_peek(self.context, 1);
+                if (key_b_opt == null) {
+                    return self.pop_value(key_a);
+                }
+
+                const key_b = key_b_opt.?;
+                if (key_a == key_b) {
+                    _ = stream_pop(self.context, 0);
+                    _ = stream_pop(self.context, 1);
+                    self.key_popped = key_a;
+                    continue;
+                }
+
+                const a_before_b = switch (self.direction) {
+                    .ascending => key_a < key_b,
+                    .descending => key_a > key_b,
+                };
+                if (a_before_b) {
+                    return self.pop_value(key_a);
+                }
+
+                // Advance B to catch up with A.
+                stream_probe(self.context, 1, key_a);
+                _ = try stream_peek(self.context, 1) orelse return self.pop_value(key_a);
+            }
+        }
+
+        fn pop_value(self: *DifferenceMergeIterator, expected_key: Key) Value {
+            const value = stream_pop(self.context, 0);
+            assert(key_from_value(&value) == expected_key);
+            self.key_popped = expected_key;
+            return value;
+        }
+    };
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+test "difference merge iterator: basic" {
+    const Value = u64;
+    const Context = struct {
+        const Context = @This();
+        stream_a: []const Value,
+        stream_b: []const Value,
+        index_a: usize = 0,
+        index_b: usize = 0,
+        direction: Direction,
+
+        fn peek(self: *Context, stream_index: u32) Pending!?Value {
+            const stream = if (stream_index == 0) self.stream_a else self.stream_b;
+            const index = if (stream_index == 0) self.index_a else self.index_b;
+            if (index >= stream.len) return null;
+            return stream[index];
+        }
+
+        fn pop(self: *Context, stream_index: u32) Value {
+            const stream = if (stream_index == 0) self.stream_a else self.stream_b;
+            const index = if (stream_index == 0) &self.index_a else &self.index_b;
+            const value = stream[index.*];
+            index.* += 1;
+            return value;
+        }
+
+        fn probe(self: *Context, stream_index: u32, probe_key: Value) void {
+            const stream = if (stream_index == 0) self.stream_a else self.stream_b;
+            const index = if (stream_index == 0) &self.index_a else &self.index_b;
+            while (index.* < stream.len) : (index.* += 1) {
+                const key = stream[index.*];
+                const matches = switch (self.direction) {
+                    .ascending => key >= probe_key,
+                    .descending => key <= probe_key,
+                };
+                if (matches) break;
+            }
+        }
+    };
+
+    const key_from_value_local = struct {
+        inline fn key(value: *const Value) Value {
+            return value.*;
+        }
+    }.key;
+
+    const DifferenceMergeIterator = DifferenceMergeIteratorType(
+        Context,
+        Value,
+        Value,
+        key_from_value_local,
+        Context.peek,
+        Context.pop,
+        Context.probe,
+    );
+
+    const cases = [_]struct {
+        stream_a: []const Value,
+        stream_b: []const Value,
+        direction: Direction,
+        expected: []const Value,
+    }{
+        .{
+            .stream_a = &.{ 1, 2, 3, 4, 5 },
+            .stream_b = &.{ 2, 4 },
+            .direction = .ascending,
+            .expected = &.{ 1, 3, 5 },
+        },
+        .{
+            .stream_a = &.{ 1, 2, 3 },
+            .stream_b = &.{},
+            .direction = .ascending,
+            .expected = &.{ 1, 2, 3 },
+        },
+        .{
+            .stream_a = &.{ 5, 4, 3, 2, 1 },
+            .stream_b = &.{ 4, 2 },
+            .direction = .descending,
+            .expected = &.{ 5, 3, 1 },
+        },
+        .{
+            .stream_a = &.{ 1, 1, 2, 2, 3 },
+            .stream_b = &.{2},
+            .direction = .ascending,
+            .expected = &.{ 1, 3 },
+        },
+    };
+
+    for (cases) |case| {
+        var context = Context{
+            .stream_a = case.stream_a,
+            .stream_b = case.stream_b,
+            .direction = case.direction,
+        };
+        var iterator = DifferenceMergeIterator.init(&context, case.direction);
+
+        var got = std.ArrayList(Value).init(std.testing.allocator);
+        defer got.deinit();
+
+        while (true) {
+            const next = try iterator.pop() orelse break;
+            try got.append(next);
+        }
+
+        try std.testing.expectEqualSlices(Value, case.expected, got.items);
+    }
+}
+
 /// Union ∪ operation over an array of non-specialized `Scan` instances.
 /// At a high level, this is an ordered iterator over the set-union of the timestamps of
 /// each of the component Scans.
@@ -28,7 +226,7 @@ pub fn ScanMergeIntersectionType(comptime Groove: type, comptime Storage: type) 
 
 /// Difference (minus) operation over two non-specialized `Scan` instances.
 pub fn ScanMergeDifferenceType(comptime Groove: type, comptime Storage: type) type {
-    return ScanMergeType(Groove, Storage, .merge_intersection);
+    return ScanMergeType(Groove, Storage, .merge_difference);
 }
 
 fn ScanMergeType(
@@ -114,6 +312,16 @@ fn ScanMergeType(
             merge_stream_probe,
         );
 
+        const DifferenceMergeIterator = DifferenceMergeIteratorType(
+            ScanMerge,
+            u64,
+            u64,
+            key_from_value,
+            merge_stream_peek,
+            merge_stream_pop,
+            merge_stream_probe,
+        );
+
         direction: Direction,
         snapshot: u64,
         scan_context: Scan.Context = .{ .callback = &scan_read_callback },
@@ -149,12 +357,13 @@ fn ScanMergeType(
         merge_iterator: ?switch (merge) {
             .merge_union => KWayMergeIterator,
             .merge_intersection => ZigZagMergeIterator,
-            .merge_difference => stdx.unimplemented("merge_difference"),
+            .merge_difference => DifferenceMergeIterator,
         },
 
         pub fn init(scans: []const *Scan) ScanMerge {
             assert(scans.len > 0);
             assert(scans.len <= constants.lsm_scans_max);
+            if (merge == .merge_difference) assert(scans.len == 2);
 
             const direction_first = scans[0].direction();
             const snapshot_first = scans[0].snapshot();
@@ -319,7 +528,10 @@ fn ScanMergeType(
                             @intCast(self.streams.count()),
                             self.direction,
                         ),
-                        .merge_difference => unreachable,
+                        .merge_difference => DifferenceMergeIterator.init(
+                            self,
+                            self.direction,
+                        ),
                     };
                 }
                 callback(context_outer, self);

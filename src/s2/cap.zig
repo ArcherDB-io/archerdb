@@ -60,7 +60,12 @@ pub const Cap = struct {
     /// Create a cap from center point (lat/lon in nanodegrees) and radius in meters.
     pub fn fromLatLonNanoRadius(lat_nano: i64, lon_nano: i64, radius_meters: f64) Cap {
         const lat_rad = @as(f64, @floatFromInt(lat_nano)) * (smath.pi / 180_000_000_000.0);
-        const lon_rad = @as(f64, @floatFromInt(lon_nano)) * (smath.pi / 180_000_000_000.0);
+        const lon_nano_adjusted = if (lon_nano == 180_000_000_000)
+            179_999_999_999
+        else
+            lon_nano;
+        const lon_rad =
+            @as(f64, @floatFromInt(lon_nano_adjusted)) * (smath.pi / 180_000_000_000.0);
         return fromLatLonRadius(lat_rad, lon_rad, radius_meters);
     }
 
@@ -273,10 +278,12 @@ fn faceUvToXyz(f: u8, uv: [2]f64) [3]f64 {
 /// Extract IJ coordinates from cell ID (reimplemented to avoid circular dep)
 fn getIj(id: u64) [2]u32 {
     const lvl = cell_id.level(id);
+    const f = cell_id.face(id);
     const pos_shift: u6 = @intCast((cell_id.max_level - lvl) * 2 + 1);
     const pos = (id >> pos_shift) & ((@as(u64, 1) << @intCast(lvl * 2)) - 1);
 
-    return posToIj(pos, lvl);
+    const initial_orientation: u8 = @intCast(f & 1);
+    return posToIj(pos, lvl, initial_orientation);
 }
 
 /// Hilbert lookup tables (same as cell_id.zig)
@@ -288,16 +295,16 @@ const hilbert_lookup = [4][4]u8{
 };
 
 const hilbert_orientation = [4][4]u8{
-    .{ 0, 0, 3, 3 },
-    .{ 1, 1, 2, 2 },
-    .{ 2, 2, 1, 1 },
-    .{ 3, 3, 0, 0 },
+    .{ 1, 0, 3, 0 }, // orientation 0
+    .{ 0, 2, 1, 1 }, // orientation 1 (swapMask)
+    .{ 2, 1, 2, 3 }, // orientation 2 (invertMask)
+    .{ 3, 3, 0, 2 }, // orientation 3 (swap|invert)
 };
 
-fn posToIj(pos: u64, lvl: u8) [2]u32 {
+fn posToIj(pos: u64, lvl: u8, initial_orientation: u8) [2]u32 {
     var i: u32 = 0;
     var j: u32 = 0;
-    var orientation: u8 = 0;
+    var orientation: u8 = initial_orientation;
 
     var l: u8 = 0;
     while (l < lvl) : (l += 1) {

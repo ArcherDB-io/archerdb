@@ -88,6 +88,12 @@ func (e InvalidEntityIDError) Error() string   { return e.Msg }
 func (e InvalidEntityIDError) Code() int       { return 3004 }
 func (e InvalidEntityIDError) Retryable() bool { return false }
 
+// EntityExpiredError indicates entity has expired due to TTL.
+type EntityExpiredError struct{ Msg string }
+func (e EntityExpiredError) Error() string   { return e.Msg }
+func (e EntityExpiredError) Code() int       { return 210 }
+func (e EntityExpiredError) Retryable() bool { return false }
+
 // OperationTimeoutError indicates operation timed out.
 type OperationTimeoutError struct{ Msg string }
 func (e OperationTimeoutError) Error() string   { return e.Msg }
@@ -169,6 +175,9 @@ type GeoClient interface {
 
 	// GetLatestByUUID looks up the latest event for an entity by UUID.
 	GetLatestByUUID(entityID types.Uint128) (*types.GeoEvent, error)
+
+	// QueryUUIDBatch looks up latest events for multiple entities.
+	QueryUUIDBatch(entityIDs []types.Uint128) (types.QueryUUIDBatchResult, error)
 
 	// QueryRadius queries events within a radius.
 	QueryRadius(filter types.QueryRadiusFilter) (types.QueryResult, error)
@@ -713,7 +722,6 @@ func (c *geoClient) DeleteEntities(entityIDs []types.Uint128) (types.DeleteResul
 }
 
 // GetLatestByUUID looks up the latest event for an entity by UUID.
-// Note: query_uuid returns raw GeoEvent directly (no QueryResponse header).
 func (c *geoClient) GetLatestByUUID(entityID types.Uint128) (*types.GeoEvent, error) {
 	if c.closed {
 		return nil, ClientClosedError{Msg: "client has been closed"}
@@ -722,7 +730,6 @@ func (c *geoClient) GetLatestByUUID(entityID types.Uint128) (*types.GeoEvent, er
 	// Create query filter for UUID lookup
 	filter := types.QueryUUIDFilter{
 		EntityID: entityID,
-		Limit:    1,
 	}
 
 	reply, err := c.doGeoRequest(
@@ -735,22 +742,76 @@ func (c *geoClient) GetLatestByUUID(entityID types.Uint128) (*types.GeoEvent, er
 		return nil, err
 	}
 
-	// query_uuid returns raw GeoEvent (no header): 0 bytes if not found, 128 bytes if found
-	if reply == nil || len(reply) == 0 {
-		return nil, nil // Not found
+	if reply == nil || len(reply) < 16 {
+		return nil, nil
+	}
+
+	status := reply[0]
+	if status == 200 {
+		return nil, nil
+	}
+	if status == 210 {
+		return nil, EntityExpiredError{Msg: "entity expired due to TTL"}
+	}
+	if status != 0 {
+		return nil, InvalidEntityIDError{Msg: fmt.Sprintf("query_uuid status %d", status)}
 	}
 
 	eventSize := int(unsafe.Sizeof(types.GeoEvent{}))
-	if len(reply) < eventSize {
+	if len(reply) < 16+eventSize {
 		return nil, nil // Response too short
 	}
 
-	// Parse raw GeoEvent directly (no QueryResponse header)
-	event := (*types.GeoEvent)(unsafe.Pointer(&reply[0]))
+	// Parse GeoEvent from response body (after header)
+	event := (*types.GeoEvent)(unsafe.Pointer(&reply[16]))
 
 	// Make a copy to avoid holding reference to reply buffer
 	eventCopy := *event
 	return &eventCopy, nil
+}
+
+// QueryUUIDBatch looks up latest events for multiple entities.
+func (c *geoClient) QueryUUIDBatch(entityIDs []types.Uint128) (types.QueryUUIDBatchResult, error) {
+	if c.closed {
+		return types.QueryUUIDBatchResult{}, ClientClosedError{Msg: "client has been closed"}
+	}
+
+	if len(entityIDs) > types.QueryUUIDBatchMax {
+		return types.QueryUUIDBatchResult{}, BatchTooLargeError{
+			Msg: fmt.Sprintf("batch exceeds %d UUIDs", types.QueryUUIDBatchMax),
+		}
+	}
+
+	if len(entityIDs) == 0 {
+		return types.QueryUUIDBatchResult{
+			FoundCount:      0,
+			NotFoundCount:   0,
+			NotFoundIndices: nil,
+			Events:          nil,
+		}, nil
+	}
+
+	headerSize := 8
+	totalSize := headerSize + len(entityIDs)*16
+	data := make([]byte, totalSize)
+	binary.LittleEndian.PutUint32(data[0:4], uint32(len(entityIDs)))
+
+	offset := headerSize
+	for _, id := range entityIDs {
+		idBytes := id.Bytes()
+		copy(data[offset:offset+16], idBytes[:])
+		offset += 16
+	}
+
+	reply, err := c.doGeoRequestBytes(
+		types.GeoOperationQueryUUIDBatch,
+		data,
+	)
+	if err != nil {
+		return types.QueryUUIDBatchResult{}, err
+	}
+
+	return parseQueryUUIDBatchResponse(reply)
 }
 
 // QueryRadius queries events within a radius.
@@ -1188,19 +1249,55 @@ func (c *geoClient) ClearTTL(entityID types.Uint128) (*types.TtlClearResponse, e
 }
 
 // parseQueryResponse parses a query response into QueryResult.
-// The production state_machine.zig returns raw GeoEvent array without QueryResponse header.
+// Handles QueryResponse headers when present, with a fallback for legacy raw GeoEvent arrays.
 func (c *geoClient) parseQueryResponse(reply []uint8, limit int) (types.QueryResult, error) {
 	if reply == nil || len(reply) == 0 {
 		return types.QueryResult{Events: nil, HasMore: false, Cursor: 0}, nil
 	}
 
-	// Response format: raw GeoEvent array (no header in production state machine)
 	eventSize := int(unsafe.Sizeof(types.GeoEvent{}))
+	headerSize := int(unsafe.Sizeof(types.QueryResponse{}))
+
+	if len(reply) >= headerSize && (len(reply)-headerSize)%eventSize == 0 {
+		if len(reply) == headerSize {
+			hasMore := reply[4] != 0
+			return types.QueryResult{Events: nil, HasMore: hasMore, Cursor: 0}, nil
+		}
+
+		count := int(binary.LittleEndian.Uint32(reply[0:4]))
+		hasMore := reply[4] != 0
+		data := reply[headerSize:]
+
+		if len(data)%eventSize != 0 {
+			return types.QueryResult{}, fmt.Errorf("query response payload size %d not aligned to GeoEvent size %d", len(data), eventSize)
+		}
+
+		available := len(data) / eventSize
+		if count != available {
+			return types.QueryResult{}, fmt.Errorf("query response count %d does not match payload events %d", count, available)
+		}
+
+		if count == 0 {
+			return types.QueryResult{Events: nil, HasMore: hasMore, Cursor: 0}, nil
+		}
+
+		events := unsafe.Slice((*types.GeoEvent)(unsafe.Pointer(&data[0])), count)
+		eventsCopy := make([]types.GeoEvent, count)
+		copy(eventsCopy, events)
+
+		cursor := eventsCopy[count-1].Timestamp
+		return types.QueryResult{
+			Events:  eventsCopy,
+			HasMore: hasMore,
+			Cursor:  cursor,
+		}, nil
+	}
+
 	if len(reply) < eventSize {
-		// Response too short for even one event
 		return types.QueryResult{Events: nil, HasMore: false, Cursor: 0}, nil
 	}
 
+	// Legacy response format: raw GeoEvent array (no header).
 	eventCount := len(reply) / eventSize
 	if len(reply)%eventSize != 0 {
 		return types.QueryResult{}, fmt.Errorf("response size %d not aligned to GeoEvent size %d", len(reply), eventSize)
@@ -1226,6 +1323,58 @@ func (c *geoClient) parseQueryResponse(reply []uint8, limit int) (types.QueryRes
 		Events:  eventsCopy,
 		HasMore: hasMore,
 		Cursor:  cursor,
+	}, nil
+}
+
+func parseQueryUUIDBatchResponse(reply []uint8) (types.QueryUUIDBatchResult, error) {
+	if reply == nil || len(reply) == 0 {
+		return types.QueryUUIDBatchResult{
+			FoundCount:      0,
+			NotFoundCount:   0,
+			NotFoundIndices: nil,
+			Events:          nil,
+		}, nil
+	}
+
+	const headerSize = 16
+	if len(reply) < headerSize {
+		return types.QueryUUIDBatchResult{}, fmt.Errorf("query_uuid_batch response too small: %d", len(reply))
+	}
+
+	foundCount := binary.LittleEndian.Uint32(reply[0:4])
+	notFoundCount := binary.LittleEndian.Uint32(reply[4:8])
+
+	indicesSize := int(notFoundCount) * 2
+	indicesEnd := headerSize + indicesSize
+	eventsOffset := indicesEnd
+	if rem := eventsOffset % 16; rem != 0 {
+		eventsOffset += 16 - rem
+	}
+
+	eventSize := int(unsafe.Sizeof(types.GeoEvent{}))
+	eventsSize := int(foundCount) * eventSize
+
+	if len(reply) < eventsOffset+eventsSize {
+		return types.QueryUUIDBatchResult{}, fmt.Errorf("query_uuid_batch response truncated: %d", len(reply))
+	}
+
+	notFoundIndices := make([]uint16, int(notFoundCount))
+	for i := 0; i < int(notFoundCount); i++ {
+		start := headerSize + i*2
+		notFoundIndices[i] = binary.LittleEndian.Uint16(reply[start : start+2])
+	}
+
+	events := make([]types.GeoEvent, int(foundCount))
+	if foundCount > 0 {
+		rawEvents := unsafe.Slice((*types.GeoEvent)(unsafe.Pointer(&reply[eventsOffset])), int(foundCount))
+		copy(events, rawEvents)
+	}
+
+	return types.QueryUUIDBatchResult{
+		FoundCount:      foundCount,
+		NotFoundCount:   notFoundCount,
+		NotFoundIndices: notFoundIndices,
+		Events:          events,
 	}, nil
 }
 

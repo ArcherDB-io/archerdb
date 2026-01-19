@@ -5,7 +5,7 @@ use std::time::SystemTime;
 /// Generate a ArcherDB time-based identifier.
 ///
 /// This generates `u128` identifiers suitable for the `id` fields
-/// of ArcherDB `Account`s and `Transaction`s.
+/// of ArcherDB GeoEvents and entity IDs.
 ///
 /// [ArcherDB time-based identifiers][tbid] include a timestamp
 /// component and a random component, are lexicographically sortable,

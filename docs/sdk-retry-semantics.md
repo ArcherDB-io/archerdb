@@ -212,16 +212,16 @@ except OperationTimeout:
 ```go
 import "github.com/archerdb/archerdb-go/pkg/types"
 
-accounts := generateLargeAccountList()
+events := generateLargeEventList()
 
 // Original batch failed - split and retry
-chunks := types.SplitAccountBatch(accounts, 500)
+chunks := types.SplitGeoEventBatch(events, 500)
 
 for _, chunk := range chunks {
-    _, err := client.CreateAccounts(chunk)
+    _, err := client.InsertEvents(chunk)
     if errors.Is(err, errors.ErrTimeout) {
         // Retry with smaller chunks
-        smallerChunks := types.SplitAccountBatch(chunk, 100)
+        smallerChunks := types.SplitGeoEventBatch(chunk, 100)
         // ... continue recursively
     }
 }
@@ -295,8 +295,10 @@ except RetryExhausted as e:
 ```go
 import "github.com/archerdb/archerdb-go/pkg/retry"
 
+events := generateLargeEventList()
+
 err := retry.Do(func() error {
-    _, err := client.CreateAccounts(accounts)
+    _, err := client.InsertEvents(events)
     return err
 }, config)
 

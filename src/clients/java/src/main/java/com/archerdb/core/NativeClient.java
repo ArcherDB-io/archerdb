@@ -46,14 +46,16 @@ final class NativeClient implements AutoCloseable {
 
     public static NativeClient init(final byte[] clusterID, final String addresses) {
         assertArgs(clusterID, addresses);
-        final var arch_client = ByteBuffer.allocateDirect(TBClient.SIZE + TBClient.ALIGNMENT);
+        final var arch_client =
+                ByteBuffer.allocateDirect(ArchClientHandle.SIZE + ArchClientHandle.ALIGNMENT);
         clientInit(arch_client, clusterID, addresses);
         return new NativeClient(arch_client);
     }
 
     public static NativeClient initEcho(final byte[] clusterID, final String addresses) {
         assertArgs(clusterID, addresses);
-        final var arch_client = ByteBuffer.allocateDirect(TBClient.SIZE + TBClient.ALIGNMENT);
+        final var arch_client =
+                ByteBuffer.allocateDirect(ArchClientHandle.SIZE + ArchClientHandle.ALIGNMENT);
         clientInitEcho(arch_client, clusterID, addresses);
         return new NativeClient(arch_client);
     }

@@ -140,9 +140,12 @@ public final class GeoNativeBridge implements AutoCloseable {
         void endRequest(byte receivedOperation, byte status, long timestamp) {
             try {
                 if (status == PacketStatus.Ok.value) {
-                    // Success - response data is in replyBuffer (accessed via reflection for now)
-                    // In a full implementation, this would parse the response buffer
-                    future.complete(null);
+                    byte[] reply = getReplyBuffer();
+                    if (reply == null || reply.length == 0) {
+                        future.complete(Request.REPLY_EMPTY.duplicate());
+                    } else {
+                        future.complete(ByteBuffer.wrap(reply));
+                    }
                 } else if (status == PacketStatus.ClientShutdown.value) {
                     future.completeExceptionally(new IllegalStateException("Client is closed"));
                 } else {

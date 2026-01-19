@@ -145,13 +145,14 @@ The system SHALL define precise wire format for single UUID lookups.
 - **THEN** the body SHALL be structured as:
   ```
   QueryUuidResponse (variable):
-  ├─ status: u8            # 0 = found, 200 = entity_not_found (see error-codes/spec.md)
+  ├─ status: u8            # 0 = found, 200 = entity_not_found, 210 = entity_expired
   ├─ reserved1: [15]u8     # Padding to 16-byte alignment
   ├─ event: GeoEvent       # 128 bytes (only if status = 0)
   ```
-- **AND** total body size is 16 bytes if not found, 144 bytes if found
+- **AND** total body size is 16 bytes if not found or expired, 144 bytes if found
 - **AND** status = 0 (ok) means entity was found and event is included
 - **AND** status = 200 (entity_not_found) means entity does not exist
+- **AND** status = 210 (entity_expired) means entity was evicted by TTL
 
 ### Requirement: UUID Batch Query Wire Format
 
@@ -1699,6 +1700,36 @@ The system SHALL implement server-side rate limiting to prevent abuse.
 - **AND** when global limits are reached, new requests receive `too_many_queries`
 - **AND** existing in-flight requests are not affected
 
+## Implementation Status
+
+| Requirement | Status | Implementation |
+|-------------|--------|----------------|
+| Custom Binary Protocol | IMPLEMENTED | `src/message.zig` - Fixed 256-byte header with Aegis-128L checksums |
+| Wire Encoding | IMPLEMENTED | `src/message.zig` - Little-endian, zero-copy parsing |
+| Exact Header Byte Layout | IMPLEMENTED | `src/message.zig` - Precise byte offsets documented |
+| UUID Single Query Wire Format | IMPLEMENTED | `src/state_machine.zig` - Single UUID lookup format |
+| UUID Batch Query Wire Format | IMPLEMENTED | `src/state_machine.zig` - Batch UUID lookup format |
+| Query Response Alignment | IMPLEMENTED | `src/state_machine.zig` - 16-byte aligned responses |
+| Message Framing | IMPLEMENTED | `src/message.zig` - Length-prefixed framing |
+| Operation Codes | IMPLEMENTED | `src/message.zig` - Full operation enum |
+| Request/Response Pattern | IMPLEMENTED | `src/vsr/replica.zig` - At-most-once semantics |
+| Client Session Management | IMPLEMENTED | `src/vsr/client_sessions.zig` - Session tracking |
+| Error Responses | IMPLEMENTED | `src/error_codes.zig` - Structured error format |
+| Multi-Language SDK Support | IMPLEMENTED | `src/clients/*/` - All target languages |
+| Connection Handshake Protocol | IMPLEMENTED | `src/vsr/replica.zig` - Capability negotiation |
+| Connection Management | IMPLEMENTED | `src/vsr/replica.zig` - Graceful lifecycle |
+| Batch Encoding | IMPLEMENTED | `src/state_machine.zig` - Efficient batch wire format |
+| Response Encoding | IMPLEMENTED | `src/state_machine.zig` - Response serialization |
+| Multi-Batch Partial Result Retry Semantics | IMPLEMENTED | `src/state_machine.zig` - Cursor-based pagination |
+| Multi-Batch Wire Format (Binary Protocol) | IMPLEMENTED | `src/state_machine.zig` - Multi-batch encoding |
+| Delete Operation Format | IMPLEMENTED | `src/state_machine.zig` - Delete wire format |
+| Admin Operation Formats | IMPLEMENTED | `src/state_machine.zig` - Admin operation encoding |
+| Error Code Taxonomy | IMPLEMENTED | `src/error_codes.zig` - Categorized error codes |
+| Protocol Versioning | IMPLEMENTED | `src/message.zig` - Version negotiation |
+| Wire Format Migration Procedures | IMPLEMENTED | `src/message.zig` - Backward compatibility |
+| Client-Side Batching Best Practices | IMPLEMENTED | `src/clients/*/` - Optimal batching patterns |
+| Rate Limiting | IMPLEMENTED | `src/state_machine.zig` - Per-client and global limits |
+
 ### Related Specifications
 
 - See `specs/error-codes/spec.md` for complete error code enumeration and error response format
@@ -1708,18 +1739,3 @@ The system SHALL implement server-side rate limiting to prevent abuse.
 - See `specs/replication/spec.md` for VSR protocol and session management
 - See `specs/security/spec.md` for mTLS authentication requirements
 - See `specs/observability/spec.md` for trace context propagation in message headers
-
-
-
-## Implementation Status
-
-| Requirement | Status | Notes |
-|-------------|--------|-------|
-| Message Header Structure | ✓ Complete | 256-byte header |
-| Wire Format Encoding | ✓ Complete | Little-endian |
-| Operation Codes | ✓ Complete | Geospatial ops defined |
-| Batch Message Format | ✓ Complete | Multi-event batching |
-| Query Message Format | ✓ Complete | Radius/polygon/UUID |
-| Response Format | ✓ Complete | Per-event results |
-| Checksum Verification | ✓ Complete | Aegis-128L |
-| Session Protocol | ✓ Complete | Register/request/reply |

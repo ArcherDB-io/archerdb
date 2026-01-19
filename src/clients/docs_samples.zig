@@ -6,154 +6,73 @@ pub const samples = [_]Sample{
     .{
         .proper_name = "Basic",
         .directory = "basic",
-        .short_description = "Create two accounts and transfer an amount between them.",
+        .short_description = "Insert GeoEvents and query by radius and UUID.",
         .long_description =
-        \\## 1. Create accounts
+        \\## 1. Insert GeoEvents
         \\
-        \\This project starts by creating two accounts (`1` and `2`).
+        \\This project inserts a small batch of GeoEvents around a base coordinate.
         \\
-        \\## 2. Create a transfer
+        \\## 2. Query by radius
         \\
-        \\Then it transfers `10` of an amount from account `1` to
-        \\account `2`.
+        \\It then queries for events within a radius of the base coordinate to
+        \\validate spatial filtering.
         \\
-        \\## 3. Fetch and validate account balances
+        \\## 3. Query by UUID
         \\
-        \\Then it fetches both accounts, checks they both exist, and
-        \\checks that **account `1`** has:
-        \\ * `debits_posted = 10`
-        \\ * and `credits_posted = 0`
-        \\
-        \\And that **account `2`** has:
-        \\ * `debits_posted= 0`
-        \\ * and `credits_posted = 10`
+        \\Finally, it performs a UUID lookup to fetch the latest event for a single
+        \\entity.
         ,
     },
     .{
-        .proper_name = "Two-Phase Transfer",
-        .directory = "two-phase",
-        .short_description =
-        \\Create two accounts and start a pending transfer between
-        \\them, then post the transfer.
-        ,
+        .proper_name = "Radius Query",
+        .directory = "radius-query",
+        .short_description = "Run radius queries with pagination over GeoEvents.",
         .long_description =
-        \\## 1. Create accounts
+        \\## 1. Insert GeoEvents
         \\
-        \\This project starts by creating two accounts (`1` and `2`).
+        \\This project inserts a batch of GeoEvents distributed around a center point.
         \\
-        \\## 2. Create pending transfer
+        \\## 2. Query by radius
         \\
-        \\Then it begins a
-        \\pending transfer of `500` of an amount from account `1` to
-        \\account `2`.
-        \\
-        \\## 3. Fetch and validate pending account balances
-        \\
-        \\Then it fetches both accounts and validates that **account `1`** has:
-        \\ * `debits_posted = 0`
-        \\ * `credits_posted = 0`
-        \\ * `debits_pending = 500`
-        \\ * and `credits_pending = 0`
-        \\
-        \\And that **account `2`** has:
-        \\ * `debits_posted = 0`
-        \\ * `credits_posted = 0`
-        \\ * `debits_pending = 0`
-        \\ * and `credits_pending = 500`
-        \\
-        \\(This is because a pending
-        \\transfer only affects **pending** credits and debits on accounts,
-        \\not **posted** credits and debits.)
-        \\
-        \\## 4. Post pending transfer
-        \\
-        \\Then it creates a second transfer that marks the first
-        \\transfer as posted.
-        \\
-        \\## 5. Fetch and validate transfers
-        \\
-        \\Then it fetches both transfers, validates
-        \\that the two transfers exist, validates that the first
-        \\transfer had (and still has) a `pending` flag, and validates
-        \\that the second transfer had (and still has) a
-        \\`post_pending_transfer` flag.
-        \\
-        \\## 6. Fetch and validate final account balances
-        \\
-        \\Finally, it fetches both accounts, validates that both exist,
-        \\and checks that credits and debits for both accounts are now
-        \\*posted*, not pending.
-        \\
-        \\Specifically, that **account `1`** has:
-        \\ * `debits_posted = 500`
-        \\ * `credits_posted = 0`
-        \\ * `debits_pending = 0`
-        \\ * and `credits_pending = 0`
-        \\
-        \\And that **account `2`** has:
-        \\ * `debits_posted = 0`
-        \\ * `credits_posted = 500`
-        \\ * `debits_pending = 0`
-        \\ * and `credits_pending = 0`
+        \\It queries within a radius and demonstrates paging using the cursor returned
+        \\by the query response.
         ,
     },
     .{
-        .proper_name = "Many Two-Phase Transfers",
-        .directory = "two-phase-many",
-        .short_description =
-        \\Create two accounts and start a number of pending transfers
-        \\between them, posting and voiding alternating transfers.
-        ,
+        .proper_name = "Polygon Query",
+        .directory = "polygon-query",
+        .short_description = "Run polygon (geofence) queries over GeoEvents.",
         .long_description =
-        \\## 1. Create accounts
+        \\## 1. Insert GeoEvents
         \\
-        \\This project starts by creating two accounts (`1` and `2`).
+        \\This project inserts GeoEvents in and around a polygonal geofence.
         \\
-        \\## 2. Create pending transfers
+        \\## 2. Query by polygon
         \\
-        \\Then it begins 5 pending transfers of amounts `100` to
-        \\`500`, incrementing by `100` for each transfer.
+        \\It queries the polygon and validates that only events inside the
+        \\geofence are returned.
+        ,
+    },
+    .{
+        .proper_name = "Walkthrough",
+        .directory = "walkthrough",
+        .short_description = "Track a moving entity with upserts, queries, and deletes.",
+        .long_description =
+        \\## 1. Insert initial position
         \\
-        \\## 3. Fetch and validate pending account balances
+        \\This project inserts an initial GeoEvent for a tracked entity.
         \\
-        \\Then it fetches both accounts and validates that **account `1`** has:
-        \\ * `debits_posted = 0`
-        \\ * `credits_posted = 0`
-        \\ * `debits_pending = 1500`
-        \\ * and `credits_pending = 0`
+        \\## 2. Update positions
         \\
-        \\And that **account `2`** has:
-        \\ * `debits_posted = 0`
-        \\ * `credits_posted = 0`
-        \\ * `debits_pending = 0`
-        \\ * and `credits_pending = 1500`
+        \\It then upserts multiple GeoEvents to represent a movement path.
         \\
-        \\(This is because a pending transfer only affects **pending**
-        \\credits and debits on accounts, not **posted** credits and
-        \\debits.)
+        \\## 3. Validate latest position
         \\
-        \\## 4. Post and void alternating transfers
+        \\It queries the latest position by UUID and validates the final stop.
         \\
-        \\Then it alternatively posts and voids each transfer,
-        \\checking account balances after each transfer.
+        \\## 4. Delete entity
         \\
-        \\## 6. Fetch and validate final account balances
-        \\
-        \\Finally, it fetches both accounts, validates that both exist,
-        \\and checks that credits and debits for both accounts are now
-        \\solely *posted*, not pending.
-        \\
-        \\Specifically, that **account `1`** has:
-        \\ * `debits_posted = 900`
-        \\ * `credits_posted = 0`
-        \\ * `debits_pending = 0`
-        \\ * and `credits_pending = 0`
-        \\
-        \\And that **account `2`** has:
-        \\ * `debits_posted = 0`
-        \\ * `credits_posted = 900`
-        \\ * `debits_pending = 0`
-        \\ * and `credits_pending = 0`
+        \\Finally, it deletes the entity and verifies the delete took effect.
         ,
     },
 };

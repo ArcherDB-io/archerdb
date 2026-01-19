@@ -15,7 +15,7 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import Self
 
-from .lib import c_uint128, archclient, validate_uint
+from .lib import c_uint128, archclient, validate_uint, validate_int
 
 # Use slots=True if the version of Python is new enough (3.10+) to support it.
 if sys.version_info >= (3, 10):
@@ -160,7 +160,6 @@ class DeleteEntitiesResult:
 @dataclass
 class QueryUuidFilter:
     entity_id: int = 0
-    limit: int = 0
 
 
 @dataclass
@@ -298,11 +297,11 @@ class CGeoEvent(ctypes.Structure):
         validate_uint(bits=128, name="entity_id", number=obj.entity_id)
         validate_uint(bits=128, name="correlation_id", number=obj.correlation_id)
         validate_uint(bits=128, name="user_data", number=obj.user_data)
-        validate_uint(bits=64, name="lat_nano", number=obj.lat_nano)
-        validate_uint(bits=64, name="lon_nano", number=obj.lon_nano)
+        validate_int(bits=64, name="lat_nano", number=obj.lat_nano)
+        validate_int(bits=64, name="lon_nano", number=obj.lon_nano)
         validate_uint(bits=64, name="group_id", number=obj.group_id)
         validate_uint(bits=64, name="timestamp", number=obj.timestamp)
-        validate_uint(bits=32, name="altitude_mm", number=obj.altitude_mm)
+        validate_int(bits=32, name="altitude_mm", number=obj.altitude_mm)
         validate_uint(bits=32, name="velocity_mms", number=obj.velocity_mms)
         validate_uint(bits=32, name="ttl_seconds", number=obj.ttl_seconds)
         validate_uint(bits=32, name="accuracy_mm", number=obj.accuracy_mm)
@@ -410,31 +409,27 @@ class CQueryUuidFilter(ctypes.Structure):
     @classmethod
     def from_param(cls, obj: Any) -> Self:
         validate_uint(bits=128, name="entity_id", number=obj.entity_id)
-        validate_uint(bits=32, name="limit", number=obj.limit)
         return cls(
             entity_id=c_uint128.from_param(obj.entity_id),
-            limit=obj.limit,
         )
 
 
     def to_python(self) -> QueryUuidFilter:
         return QueryUuidFilter(
             entity_id=self.entity_id.to_python(),
-            limit=self.limit,
         )
 
 CQueryUuidFilter._fields_ = [ # noqa: SLF001
     ("entity_id", c_uint128),
-    ("limit", ctypes.c_uint32),
-    ("reserved", ctypes.c_uint8 * 108),
+    ("reserved", ctypes.c_uint8 * 16),
 ]
 
 
 class CQueryRadiusFilter(ctypes.Structure):
     @classmethod
     def from_param(cls, obj: Any) -> Self:
-        validate_uint(bits=64, name="center_lat_nano", number=obj.center_lat_nano)
-        validate_uint(bits=64, name="center_lon_nano", number=obj.center_lon_nano)
+        validate_int(bits=64, name="center_lat_nano", number=obj.center_lat_nano)
+        validate_int(bits=64, name="center_lon_nano", number=obj.center_lon_nano)
         validate_uint(bits=32, name="radius_mm", number=obj.radius_mm)
         validate_uint(bits=32, name="limit", number=obj.limit)
         validate_uint(bits=64, name="timestamp_min", number=obj.timestamp_min)
@@ -581,8 +576,8 @@ CQueryResponse._fields_ = [ # noqa: SLF001
 class CPolygonVertex(ctypes.Structure):
     @classmethod
     def from_param(cls, obj: Any) -> Self:
-        validate_uint(bits=64, name="lat_nano", number=obj.lat_nano)
-        validate_uint(bits=64, name="lon_nano", number=obj.lon_nano)
+        validate_int(bits=64, name="lat_nano", number=obj.lat_nano)
+        validate_int(bits=64, name="lon_nano", number=obj.lon_nano)
         return cls(
             lat_nano=obj.lat_nano,
             lon_nano=obj.lon_nano,
@@ -888,30 +883,6 @@ class AsyncStateMachineMixin:
             CGeoEvent,
         )
 
-    # TTL Operations (v2.1 Manual TTL Support)
-    async def ttl_set(self, request: TtlSetRequest) -> list[TtlSetResponse]:
-        return await self._submit(  # type: ignore[no-any-return]
-            Operation.TTL_SET,
-            [request],
-            CTtlSetRequest,
-            CTtlSetResponse,
-        )
-
-    async def ttl_extend(self, request: TtlExtendRequest) -> list[TtlExtendResponse]:
-        return await self._submit(  # type: ignore[no-any-return]
-            Operation.TTL_EXTEND,
-            [request],
-            CTtlExtendRequest,
-            CTtlExtendResponse,
-        )
-
-    async def ttl_clear(self, request: TtlClearRequest) -> list[TtlClearResponse]:
-        return await self._submit(  # type: ignore[no-any-return]
-            Operation.TTL_CLEAR,
-            [request],
-            CTtlClearRequest,
-            CTtlClearResponse,
-        )
 
 
 class StateMachineMixin:
@@ -972,29 +943,5 @@ class StateMachineMixin:
             CGeoEvent,
         )
 
-    # TTL Operations (v2.1 Manual TTL Support)
-    def ttl_set(self, request: TtlSetRequest) -> list[TtlSetResponse]:
-        return self._submit(  # type: ignore[no-any-return]
-            Operation.TTL_SET,
-            [request],
-            CTtlSetRequest,
-            CTtlSetResponse,
-        )
-
-    def ttl_extend(self, request: TtlExtendRequest) -> list[TtlExtendResponse]:
-        return self._submit(  # type: ignore[no-any-return]
-            Operation.TTL_EXTEND,
-            [request],
-            CTtlExtendRequest,
-            CTtlExtendResponse,
-        )
-
-    def ttl_clear(self, request: TtlClearRequest) -> list[TtlClearResponse]:
-        return self._submit(  # type: ignore[no-any-return]
-            Operation.TTL_CLEAR,
-            [request],
-            CTtlClearRequest,
-            CTtlClearResponse,
-        )
 
 

@@ -99,7 +99,7 @@ ArcherDB is licensed under the Apache License 2.0. See [LICENSE](LICENSE) for de
 
 ## Acknowledgments
 
-ArcherDB is a derivative work of [ArcherDB](https://archerdb.com/), an open-source distributed financial database. We are grateful to the ArcherDB team for their excellent work on:
+ArcherDB is a derivative work of [TigerBeetle](https://tigerbeetle.com/), an open-source distributed database. We are grateful to the TigerBeetle team for their excellent work on:
 
 - Deterministic simulation testing (VOPR)
 - Viewstamped Replication consensus

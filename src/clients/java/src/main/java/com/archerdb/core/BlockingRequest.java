@@ -6,8 +6,8 @@ import static com.archerdb.core.AssertionError.assertTrue;
  * Generic blocking request infrastructure.
  *
  * This class provides the core blocking request mechanism used by the ArcherDB client for
- * synchronous operations. Financial-specific factory methods have been removed in favor of the
- * archerdb.geo package implementations.
+ * synchronous operations. Legacy factory methods have been removed in favor of the archerdb.geo
+ * package implementations.
  */
 final class BlockingRequest<TResponse extends Batch> extends Request<TResponse> {
 

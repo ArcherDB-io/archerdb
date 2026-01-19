@@ -58,7 +58,7 @@ pub const Options = struct {
     adversarial_probability: stdx.PRNG.Ratio = .{ .numerator = 20, .denominator = 100 },
 
     /// Generate randomized options for VOPR testing.
-    /// Similar to accounting workload's Options.generate.
+    /// Similar to the base workload's Options.generate.
     pub fn generate(prng: *stdx.PRNG, options: struct {
         batch_size_limit: u32,
         multi_batch_per_request_limit: u32,
@@ -642,8 +642,7 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
                 filter.entity_id = self.prng.int(u128);
             }
 
-            filter.limit = self.prng.int_inclusive(u32, 100);
-            filter.reserved = [_]u8{0} ** 108;
+            filter.reserved = [_]u8{0} ** 16;
 
             self.stats.uuid_queries += 1;
             self.stats.queries_sent += 1;

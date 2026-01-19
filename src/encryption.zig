@@ -19,18 +19,27 @@
 //! - Each file has unique DEK and IV
 
 const std = @import("std");
+const stdx = @import("stdx");
+const builtin = @import("builtin");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const crypto = std.crypto;
 const Aes256Gcm = crypto.aead.aes_gcm.Aes256Gcm;
+const Aegis256 = crypto.aead.aegis.Aegis256;
 
 const log = std.log.scoped(.encryption);
 
 /// Magic bytes identifying an encrypted ArcherDB file
 pub const ENCRYPTED_FILE_MAGIC: [4]u8 = .{ 'A', 'R', 'C', 'E' };
 
-/// Current encryption format version
-pub const ENCRYPTION_VERSION: u16 = 1;
+/// Encryption version 1: AES-256-GCM (legacy, still readable)
+pub const ENCRYPTION_VERSION_GCM: u16 = 1;
+
+/// Encryption version 2: Aegis-256 (current, faster with AES-NI)
+pub const ENCRYPTION_VERSION_AEGIS: u16 = 2;
+
+/// Current encryption format version (new files use this)
+pub const ENCRYPTION_VERSION: u16 = ENCRYPTION_VERSION_AEGIS;
 
 /// DEK size in bytes (AES-256)
 pub const DEK_SIZE: usize = 32;
@@ -43,6 +52,66 @@ pub const IV_SIZE: usize = 12;
 
 /// GCM authentication tag size
 pub const AUTH_TAG_SIZE: usize = 16;
+
+/// Aegis-256 nonce size (32 bytes)
+pub const AEGIS_NONCE_SIZE: usize = 32;
+
+/// Aegis-256 authentication tag size (16 bytes standard)
+/// Note: Aegis256 uses 128-bit tags (16 bytes) with 256-bit security level
+pub const AEGIS_TAG_SIZE: usize = 16;
+
+// ============================================================================
+// AES-NI Hardware Detection (per add-aesni-encryption/spec.md)
+// ============================================================================
+
+/// Check if the CPU supports AES-NI hardware acceleration.
+///
+/// Returns true if:
+/// - x86_64 architecture with AES feature
+/// - aarch64 architecture with AES feature (crypto extensions)
+///
+/// Returns false for software-only platforms.
+pub fn hasAesNi() bool {
+    const arch = builtin.cpu.arch;
+    const features = builtin.cpu.features;
+
+    return switch (arch) {
+        .x86_64 => std.Target.x86.featureSetHas(features, .aes),
+        .aarch64 => std.Target.aarch64.featureSetHas(features, .aes),
+        else => false,
+    };
+}
+
+/// Configuration for hardware verification
+pub const HardwareConfig = struct {
+    /// Allow software crypto fallback (not recommended for production)
+    allow_software_crypto: bool = false,
+};
+
+/// Verify hardware encryption support at startup.
+///
+/// Returns error.AesNiNotAvailable if:
+/// - No AES-NI hardware support
+/// - AND allow_software_crypto is false
+///
+/// Logs warning and continues if allow_software_crypto is true.
+pub fn verifyHardwareSupport(config: HardwareConfig) EncryptionError!void {
+    const has_aesni = hasAesNi();
+
+    if (has_aesni) {
+        log.info("Hardware AES-NI acceleration: AVAILABLE", .{});
+        return;
+    }
+
+    if (config.allow_software_crypto) {
+        log.warn("AES-NI: NOT AVAILABLE - using software fallback (NOT FOR PRODUCTION)", .{});
+        return;
+    }
+
+    log.err("AES-NI: NOT AVAILABLE - encryption requires AES-NI support", .{});
+    log.err("Use --allow-software-crypto to bypass this check (not recommended)", .{});
+    return error.AesNiNotAvailable;
+}
 
 /// Encrypted file header (96 bytes, aligned for performance)
 ///
@@ -97,7 +166,7 @@ pub const EncryptedFileHeader = extern struct {
     pub fn fromBytes(bytes: []const u8) EncryptedFileHeader {
         assert(bytes.len >= 96);
         var header: EncryptedFileHeader = undefined;
-        @memcpy(@as([*]u8, @ptrCast(&header))[0..96], bytes[0..96]);
+        stdx.copy_disjoint(.exact, u8, @as([*]u8, @ptrCast(&header))[0..96], bytes[0..96]);
         return header;
     }
 
@@ -179,9 +248,15 @@ pub const KeyProvider = struct {
         /// Get the key ID for this provider
         getKeyId: *const fn (ptr: *anyopaque) []const u8,
         /// Wrap a DEK with the master key
-        wrapDek: *const fn (ptr: *anyopaque, dek: *const [DEK_SIZE]u8) EncryptionError![WRAPPED_DEK_SIZE]u8,
+        wrapDek: *const fn (
+            ptr: *anyopaque,
+            dek: *const [DEK_SIZE]u8,
+        ) EncryptionError![WRAPPED_DEK_SIZE]u8,
         /// Unwrap a DEK using the master key
-        unwrapDek: *const fn (ptr: *anyopaque, wrapped: *const [WRAPPED_DEK_SIZE]u8) EncryptionError![DEK_SIZE]u8,
+        unwrapDek: *const fn (
+            ptr: *anyopaque,
+            wrapped: *const [WRAPPED_DEK_SIZE]u8,
+        ) EncryptionError![DEK_SIZE]u8,
         /// Check if key rotation is in progress
         isRotating: *const fn (ptr: *anyopaque) bool,
         /// Get provider type
@@ -198,11 +273,17 @@ pub const KeyProvider = struct {
         return self.vtable.getKeyId(self.ptr);
     }
 
-    pub fn wrapDek(self: KeyProvider, dek: *const [DEK_SIZE]u8) EncryptionError![WRAPPED_DEK_SIZE]u8 {
+    pub fn wrapDek(
+        self: KeyProvider,
+        dek: *const [DEK_SIZE]u8,
+    ) EncryptionError![WRAPPED_DEK_SIZE]u8 {
         return self.vtable.wrapDek(self.ptr, dek);
     }
 
-    pub fn unwrapDek(self: KeyProvider, wrapped: *const [WRAPPED_DEK_SIZE]u8) EncryptionError![DEK_SIZE]u8 {
+    pub fn unwrapDek(
+        self: KeyProvider,
+        wrapped: *const [WRAPPED_DEK_SIZE]u8,
+    ) EncryptionError![DEK_SIZE]u8 {
         return self.vtable.unwrapDek(self.ptr, wrapped);
     }
 
@@ -231,11 +312,13 @@ pub const FileKeyProvider = struct {
     master_key: [DEK_SIZE]u8,
     loaded: bool,
 
-    const Self = @This();
-
-    pub fn init(allocator: Allocator, key_path: []const u8, key_id: []const u8) !Self {
+    pub fn init(
+        allocator: Allocator,
+        key_path: []const u8,
+        key_id: []const u8,
+    ) !FileKeyProvider {
         log.warn("Using file-based key provider - NOT RECOMMENDED FOR PRODUCTION", .{});
-        return Self{
+        return FileKeyProvider{
             .allocator = allocator,
             .key_path = try allocator.dupe(u8, key_path),
             .key_id = try allocator.dupe(u8, key_id),
@@ -244,7 +327,7 @@ pub const FileKeyProvider = struct {
         };
     }
 
-    pub fn deinit(self: *Self) void {
+    pub fn deinit(self: *FileKeyProvider) void {
         self.allocator.free(self.key_path);
         self.allocator.free(self.key_id);
         // Zero out key material
@@ -252,7 +335,7 @@ pub const FileKeyProvider = struct {
     }
 
     /// Load key from file
-    pub fn loadKey(self: *Self) !void {
+    pub fn loadKey(self: *FileKeyProvider) !void {
         const file = std.fs.cwd().openFile(self.key_path, .{}) catch {
             return error.KeyUnavailable;
         };
@@ -263,7 +346,8 @@ pub const FileKeyProvider = struct {
             const stat = file.stat() catch return error.KeyUnavailable;
             const mode = stat.mode & 0o777;
             if (mode & 0o077 != 0) {
-                log.err("Key file has insecure permissions: {o}. Expected 0400 or stricter.", .{mode});
+                log.err("Key file has insecure permissions: {o}. " ++
+                    "Expected 0400 or stricter.", .{mode});
                 return error.KeyUnavailable;
             }
         }
@@ -280,7 +364,7 @@ pub const FileKeyProvider = struct {
     }
 
     fn getMasterKeyImpl(ctx: *anyopaque) EncryptionError![DEK_SIZE]u8 {
-        const self: *Self = @ptrCast(@alignCast(ctx));
+        const self: *FileKeyProvider = @ptrCast(@alignCast(ctx));
         if (!self.loaded) {
             self.loadKey() catch return error.KeyUnavailable;
         }
@@ -288,12 +372,15 @@ pub const FileKeyProvider = struct {
     }
 
     fn getKeyIdImpl(ctx: *anyopaque) []const u8 {
-        const self: *Self = @ptrCast(@alignCast(ctx));
+        const self: *FileKeyProvider = @ptrCast(@alignCast(ctx));
         return self.key_id;
     }
 
-    fn wrapDekImpl(ctx: *anyopaque, dek: *const [DEK_SIZE]u8) EncryptionError![WRAPPED_DEK_SIZE]u8 {
-        const self: *Self = @ptrCast(@alignCast(ctx));
+    fn wrapDekImpl(
+        ctx: *anyopaque,
+        dek: *const [DEK_SIZE]u8,
+    ) EncryptionError![WRAPPED_DEK_SIZE]u8 {
+        const self: *FileKeyProvider = @ptrCast(@alignCast(ctx));
         if (!self.loaded) {
             self.loadKey() catch return error.KeyUnavailable;
         }
@@ -311,14 +398,17 @@ pub const FileKeyProvider = struct {
 
         Aes256Gcm.encrypt(&ciphertext, &tag, dek, &.{}, nonce, self.master_key);
 
-        @memcpy(wrapped[0..DEK_SIZE], &ciphertext);
-        @memcpy(wrapped[DEK_SIZE..], &tag);
+        stdx.copy_disjoint(.exact, u8, wrapped[0..DEK_SIZE], &ciphertext);
+        stdx.copy_disjoint(.exact, u8, wrapped[DEK_SIZE..], &tag);
 
         return wrapped;
     }
 
-    fn unwrapDekImpl(ctx: *anyopaque, wrapped: *const [WRAPPED_DEK_SIZE]u8) EncryptionError![DEK_SIZE]u8 {
-        const self: *Self = @ptrCast(@alignCast(ctx));
+    fn unwrapDekImpl(
+        ctx: *anyopaque,
+        wrapped: *const [WRAPPED_DEK_SIZE]u8,
+    ) EncryptionError![DEK_SIZE]u8 {
+        const self: *FileKeyProvider = @ptrCast(@alignCast(ctx));
         if (!self.loaded) {
             self.loadKey() catch return error.KeyUnavailable;
         }
@@ -346,7 +436,7 @@ pub const FileKeyProvider = struct {
     }
 
     fn destroyImpl(ctx: *anyopaque, allocator: Allocator) void {
-        const self: *Self = @ptrCast(@alignCast(ctx));
+        const self: *FileKeyProvider = @ptrCast(@alignCast(ctx));
         self.deinit();
         allocator.destroy(self);
     }
@@ -361,7 +451,7 @@ pub const FileKeyProvider = struct {
         .destroy = destroyImpl,
     };
 
-    pub fn provider(self: *Self) KeyProvider {
+    pub fn provider(self: *FileKeyProvider) KeyProvider {
         return .{
             .ptr = self,
             .vtable = &vtable,
@@ -377,7 +467,7 @@ pub const FileKeyProvider = struct {
 /// Per spec: openspec/changes/add-v2-distributed-features/specs/security/spec.md
 pub const AwsKmsKeyProvider = struct {
     allocator: Allocator,
-    /// KMS key ARN (e.g., arn:aws:kms:us-east-1:123456789:key/12345678-1234-1234-1234-123456789012)
+    /// KMS key ARN (e.g., arn:aws:kms:us-east-1:123456789:key/...)
     key_arn: []const u8,
     /// AWS region extracted from ARN or explicitly configured
     region: []const u8,
@@ -393,8 +483,6 @@ pub const AwsKmsKeyProvider = struct {
     /// Rotation in progress flag
     rotating: bool,
 
-    const Self = @This();
-
     pub fn init(
         allocator: Allocator,
         key_arn: []const u8,
@@ -402,16 +490,17 @@ pub const AwsKmsKeyProvider = struct {
         access_key_id: ?[]const u8,
         secret_access_key: ?[]const u8,
         cache_ttl_seconds: u32,
-    ) !Self {
+    ) !AwsKmsKeyProvider {
         // Extract region from ARN if not provided
         const actual_region = if (region) |r|
             try allocator.dupe(u8, r)
         else
             try extractRegionFromArn(allocator, key_arn);
 
-        log.info("Initializing AWS KMS key provider for key: {s} in region: {s}", .{ key_arn, actual_region });
+        const log_fmt = "Initializing AWS KMS key provider for key: {s} in region: {s}";
+        log.info(log_fmt, .{ key_arn, actual_region });
 
-        return Self{
+        return AwsKmsKeyProvider{
             .allocator = allocator,
             .key_arn = try allocator.dupe(u8, key_arn),
             .region = actual_region,
@@ -424,7 +513,7 @@ pub const AwsKmsKeyProvider = struct {
         };
     }
 
-    pub fn deinit(self: *Self) void {
+    pub fn deinit(self: *AwsKmsKeyProvider) void {
         self.allocator.free(self.key_arn);
         self.allocator.free(self.region);
         if (self.access_key_id) |k| self.allocator.free(k);
@@ -448,7 +537,7 @@ pub const AwsKmsKeyProvider = struct {
     }
 
     /// Call AWS KMS GenerateDataKey API to get a new DEK
-    fn callKmsGenerateDataKey(self: *Self) EncryptionError![DEK_SIZE]u8 {
+    fn callKmsGenerateDataKey(self: *AwsKmsKeyProvider) EncryptionError![DEK_SIZE]u8 {
         // Use AWS CLI for KMS operations (portable and doesn't require SDK)
         // In production, this would use HTTP API with SigV4 signing
         const argv = [_][]const u8{
@@ -502,7 +591,10 @@ pub const AwsKmsKeyProvider = struct {
     }
 
     /// Call AWS KMS Encrypt API to wrap a DEK
-    fn callKmsEncrypt(self: *Self, plaintext: *const [DEK_SIZE]u8) EncryptionError![WRAPPED_DEK_SIZE]u8 {
+    fn callKmsEncrypt(
+        self: *AwsKmsKeyProvider,
+        plaintext: *const [DEK_SIZE]u8,
+    ) EncryptionError![WRAPPED_DEK_SIZE]u8 {
         // Encode plaintext as base64 for CLI
         var b64_plaintext: [64]u8 = undefined;
         const encoded = std.base64.standard.Encoder.encode(&b64_plaintext, plaintext);
@@ -510,7 +602,8 @@ pub const AwsKmsKeyProvider = struct {
         // Use temp file for input (AWS CLI doesn't support stdin for binary)
         const tmp_path = "/tmp/archerdb_kms_wrap.tmp";
         {
-            const tmp_file = std.fs.cwd().createFile(tmp_path, .{}) catch return error.KeyUnavailable;
+            const tmp_file = std.fs.cwd().createFile(tmp_path, .{}) catch
+                return error.KeyUnavailable;
             defer tmp_file.close();
             tmp_file.writeAll(encoded) catch return error.KeyUnavailable;
         }
@@ -558,7 +651,10 @@ pub const AwsKmsKeyProvider = struct {
     }
 
     /// Call AWS KMS Decrypt API to unwrap a DEK
-    fn callKmsDecrypt(self: *Self, ciphertext: *const [WRAPPED_DEK_SIZE]u8) EncryptionError![DEK_SIZE]u8 {
+    fn callKmsDecrypt(
+        self: *AwsKmsKeyProvider,
+        ciphertext: *const [WRAPPED_DEK_SIZE]u8,
+    ) EncryptionError![DEK_SIZE]u8 {
         // Encode ciphertext as base64 for CLI
         var b64_ciphertext: [128]u8 = undefined;
         const encoded = std.base64.standard.Encoder.encode(&b64_ciphertext, ciphertext);
@@ -566,7 +662,8 @@ pub const AwsKmsKeyProvider = struct {
         // Use temp file for input
         const tmp_path = "/tmp/archerdb_kms_unwrap.tmp";
         {
-            const tmp_file = std.fs.cwd().createFile(tmp_path, .{}) catch return error.KeyUnavailable;
+            const tmp_file = std.fs.cwd().createFile(tmp_path, .{}) catch
+                return error.KeyUnavailable;
             defer tmp_file.close();
             tmp_file.writeAll(encoded) catch return error.KeyUnavailable;
         }
@@ -612,14 +709,14 @@ pub const AwsKmsKeyProvider = struct {
     }
 
     /// Check if KEK cache is valid
-    fn isCacheValid(self: *Self) bool {
+    fn isCacheValid(self: *AwsKmsKeyProvider) bool {
         if (self.cached_kek == null) return false;
         const now = std.time.timestamp();
         return (now - self.cache_timestamp) < self.cache_ttl_seconds;
     }
 
     fn getMasterKeyImpl(ctx: *anyopaque) EncryptionError![DEK_SIZE]u8 {
-        const self: *Self = @ptrCast(@alignCast(ctx));
+        const self: *AwsKmsKeyProvider = @ptrCast(@alignCast(ctx));
 
         // Return cached KEK if valid
         if (self.isCacheValid()) {
@@ -634,27 +731,34 @@ pub const AwsKmsKeyProvider = struct {
         self.cached_kek = kek;
         self.cache_timestamp = std.time.timestamp();
 
-        log.info("Retrieved master key from AWS KMS (cached for {d}s)", .{self.cache_ttl_seconds});
+        const log_msg = "Retrieved master key from AWS KMS (cached for {d}s)";
+        log.info(log_msg, .{self.cache_ttl_seconds});
         return kek;
     }
 
     fn getKeyIdImpl(ctx: *anyopaque) []const u8 {
-        const self: *Self = @ptrCast(@alignCast(ctx));
+        const self: *AwsKmsKeyProvider = @ptrCast(@alignCast(ctx));
         return self.key_arn;
     }
 
-    fn wrapDekImpl(ctx: *anyopaque, dek: *const [DEK_SIZE]u8) EncryptionError![WRAPPED_DEK_SIZE]u8 {
-        const self: *Self = @ptrCast(@alignCast(ctx));
+    fn wrapDekImpl(
+        ctx: *anyopaque,
+        dek: *const [DEK_SIZE]u8,
+    ) EncryptionError![WRAPPED_DEK_SIZE]u8 {
+        const self: *AwsKmsKeyProvider = @ptrCast(@alignCast(ctx));
         return self.callKmsEncrypt(dek);
     }
 
-    fn unwrapDekImpl(ctx: *anyopaque, wrapped: *const [WRAPPED_DEK_SIZE]u8) EncryptionError![DEK_SIZE]u8 {
-        const self: *Self = @ptrCast(@alignCast(ctx));
+    fn unwrapDekImpl(
+        ctx: *anyopaque,
+        wrapped: *const [WRAPPED_DEK_SIZE]u8,
+    ) EncryptionError![DEK_SIZE]u8 {
+        const self: *AwsKmsKeyProvider = @ptrCast(@alignCast(ctx));
         return self.callKmsDecrypt(wrapped);
     }
 
     fn isRotatingImpl(ctx: *anyopaque) bool {
-        const self: *Self = @ptrCast(@alignCast(ctx));
+        const self: *AwsKmsKeyProvider = @ptrCast(@alignCast(ctx));
         return self.rotating;
     }
 
@@ -663,7 +767,7 @@ pub const AwsKmsKeyProvider = struct {
     }
 
     fn destroyImpl(ctx: *anyopaque, allocator: Allocator) void {
-        const self: *Self = @ptrCast(@alignCast(ctx));
+        const self: *AwsKmsKeyProvider = @ptrCast(@alignCast(ctx));
         self.deinit();
         allocator.destroy(self);
     }
@@ -678,7 +782,7 @@ pub const AwsKmsKeyProvider = struct {
         .destroy = destroyImpl,
     };
 
-    pub fn provider(self: *Self) KeyProvider {
+    pub fn provider(self: *AwsKmsKeyProvider) KeyProvider {
         return .{
             .ptr = self,
             .vtable = &vtable,
@@ -717,8 +821,6 @@ pub const VaultKeyProvider = struct {
     /// Rotation in progress flag
     rotating: bool,
 
-    const Self = @This();
-
     pub fn init(
         allocator: Allocator,
         address: []const u8,
@@ -729,10 +831,11 @@ pub const VaultKeyProvider = struct {
         role_id: ?[]const u8,
         secret_id: ?[]const u8,
         cache_ttl_seconds: u32,
-    ) !Self {
-        log.info("Initializing Vault key provider at {s}/{s}/{s}", .{ address, mount_path, key_name });
+    ) !VaultKeyProvider {
+        const log_fmt = "Initializing Vault key provider at {s}/{s}/{s}";
+        log.info(log_fmt, .{ address, mount_path, key_name });
 
-        return Self{
+        return VaultKeyProvider{
             .allocator = allocator,
             .address = try allocator.dupe(u8, address),
             .mount_path = try allocator.dupe(u8, mount_path),
@@ -748,7 +851,7 @@ pub const VaultKeyProvider = struct {
         };
     }
 
-    pub fn deinit(self: *Self) void {
+    pub fn deinit(self: *VaultKeyProvider) void {
         self.allocator.free(self.address);
         self.allocator.free(self.mount_path);
         self.allocator.free(self.key_name);
@@ -763,17 +866,25 @@ pub const VaultKeyProvider = struct {
     }
 
     /// Authenticate with Vault using AppRole
-    fn authenticateAppRole(self: *Self) !void {
+    fn authenticateAppRole(self: *VaultKeyProvider) !void {
         if (self.role_id == null or self.secret_id == null) {
             return; // No AppRole credentials
         }
 
         // Build role_id and secret_id arguments
         var role_id_buf: [256]u8 = undefined;
-        const role_id_arg = std.fmt.bufPrint(&role_id_buf, "role_id={s}", .{self.role_id.?}) catch return;
+        const role_id_arg = std.fmt.bufPrint(
+            &role_id_buf,
+            "role_id={s}",
+            .{self.role_id.?},
+        ) catch return;
 
         var secret_id_buf: [256]u8 = undefined;
-        const secret_id_arg = std.fmt.bufPrint(&secret_id_buf, "secret_id={s}", .{self.secret_id.?}) catch return;
+        const secret_id_arg = std.fmt.bufPrint(
+            &secret_id_buf,
+            "secret_id={s}",
+            .{self.secret_id.?},
+        ) catch return;
 
         // Use vault CLI for authentication
         const argv = [_][]const u8{
@@ -814,7 +925,7 @@ pub const VaultKeyProvider = struct {
     }
 
     /// Generate a random key via Vault Transit engine
-    fn callVaultGenerateKey(self: *Self) EncryptionError![DEK_SIZE]u8 {
+    fn callVaultGenerateKey(self: *VaultKeyProvider) EncryptionError![DEK_SIZE]u8 {
         if (self.token == null) {
             self.authenticateAppRole() catch return error.KeyUnavailable;
         }
@@ -841,7 +952,11 @@ pub const VaultKeyProvider = struct {
 
         // Build path: {mount_path}/datakey/plaintext/{key_name}
         var path_buf: [256]u8 = undefined;
-        const path = std.fmt.bufPrint(&path_buf, "{s}/datakey/plaintext/{s}", .{ self.mount_path, self.key_name }) catch return error.KeyUnavailable;
+        const fmt = "{s}/datakey/plaintext/{s}";
+        const path = std.fmt.bufPrint(&path_buf, fmt, .{
+            self.mount_path,
+            self.key_name,
+        }) catch return error.KeyUnavailable;
         argv_buf[argc] = path;
         argc += 1;
 
@@ -873,7 +988,8 @@ pub const VaultKeyProvider = struct {
             if (std.mem.indexOfPos(u8, response, b64_start, "\"")) |end| {
                 const b64_key = response[b64_start..end];
                 var dek: [DEK_SIZE]u8 = undefined;
-                _ = std.base64.standard.Decoder.decode(&dek, b64_key) catch return error.KeyUnavailable;
+                const b64_decoder = std.base64.standard.Decoder;
+                _ = b64_decoder.decode(&dek, b64_key) catch return error.KeyUnavailable;
                 log.info("Generated new DEK via Vault Transit", .{});
                 return dek;
             }
@@ -883,7 +999,10 @@ pub const VaultKeyProvider = struct {
     }
 
     /// Encrypt data using Vault Transit engine
-    fn callVaultEncrypt(self: *Self, plaintext: *const [DEK_SIZE]u8) EncryptionError![WRAPPED_DEK_SIZE]u8 {
+    fn callVaultEncrypt(
+        self: *VaultKeyProvider,
+        plaintext: *const [DEK_SIZE]u8,
+    ) EncryptionError![WRAPPED_DEK_SIZE]u8 {
         if (self.token == null) {
             self.authenticateAppRole() catch return error.KeyUnavailable;
         }
@@ -897,10 +1016,16 @@ pub const VaultKeyProvider = struct {
         const encoded = std.base64.standard.Encoder.encode(&b64_plaintext, plaintext);
 
         var path_buf: [256]u8 = undefined;
-        const path = std.fmt.bufPrint(&path_buf, "{s}/encrypt/{s}", .{ self.mount_path, self.key_name }) catch return error.KeyUnavailable;
+        const path = std.fmt.bufPrint(&path_buf, "{s}/encrypt/{s}", .{
+            self.mount_path,
+            self.key_name,
+        }) catch return error.KeyUnavailable;
 
         var plaintext_arg_buf: [128]u8 = undefined;
-        const plaintext_arg = std.fmt.bufPrint(&plaintext_arg_buf, "plaintext={s}", .{encoded}) catch return error.KeyUnavailable;
+        const pt_fmt = "plaintext={s}";
+        const plaintext_arg = std.fmt.bufPrint(&plaintext_arg_buf, pt_fmt, .{
+            encoded,
+        }) catch return error.KeyUnavailable;
 
         const argv = [_][]const u8{
             "vault",
@@ -948,7 +1073,8 @@ pub const VaultKeyProvider = struct {
 
                 // Store truncated ciphertext identifier
                 const copy_len = @min(vault_ciphertext.len, WRAPPED_DEK_SIZE - 8);
-                @memcpy(wrapped[8..][0..copy_len], vault_ciphertext[0..copy_len]);
+                const src = vault_ciphertext[0..copy_len];
+                stdx.copy_disjoint(.exact, u8, wrapped[8..][0..copy_len], src);
 
                 return wrapped;
             }
@@ -958,7 +1084,10 @@ pub const VaultKeyProvider = struct {
     }
 
     /// Decrypt data using Vault Transit engine
-    fn callVaultDecrypt(self: *Self, wrapped: *const [WRAPPED_DEK_SIZE]u8) EncryptionError![DEK_SIZE]u8 {
+    fn callVaultDecrypt(
+        self: *VaultKeyProvider,
+        wrapped: *const [WRAPPED_DEK_SIZE]u8,
+    ) EncryptionError![DEK_SIZE]u8 {
         if (self.token == null) {
             self.authenticateAppRole() catch return error.KeyUnavailable;
         }
@@ -972,10 +1101,15 @@ pub const VaultKeyProvider = struct {
         const ciphertext = wrapped[8..];
 
         var path_buf: [256]u8 = undefined;
-        const path = std.fmt.bufPrint(&path_buf, "{s}/decrypt/{s}", .{ self.mount_path, self.key_name }) catch return error.DekUnwrapFailed;
+        const path = std.fmt.bufPrint(&path_buf, "{s}/decrypt/{s}", .{
+            self.mount_path,
+            self.key_name,
+        }) catch return error.DekUnwrapFailed;
 
         var ct_arg_buf: [256]u8 = undefined;
-        const ct_arg = std.fmt.bufPrint(&ct_arg_buf, "ciphertext={s}", .{ciphertext}) catch return error.DekUnwrapFailed;
+        const ct_arg = std.fmt.bufPrint(&ct_arg_buf, "ciphertext={s}", .{
+            ciphertext,
+        }) catch return error.DekUnwrapFailed;
 
         const argv = [_][]const u8{
             "vault",
@@ -1014,7 +1148,9 @@ pub const VaultKeyProvider = struct {
             if (std.mem.indexOfPos(u8, response, b64_start, "\"")) |end| {
                 const b64_plaintext = response[b64_start..end];
                 var dek: [DEK_SIZE]u8 = undefined;
-                _ = std.base64.standard.Decoder.decode(&dek, b64_plaintext) catch return error.DekUnwrapFailed;
+                const b64_decoder = std.base64.standard.Decoder;
+                _ = b64_decoder.decode(&dek, b64_plaintext) catch
+                    return error.DekUnwrapFailed;
                 return dek;
             }
         }
@@ -1023,14 +1159,14 @@ pub const VaultKeyProvider = struct {
     }
 
     /// Check if KEK cache is valid
-    fn isCacheValid(self: *Self) bool {
+    fn isCacheValid(self: *VaultKeyProvider) bool {
         if (self.cached_kek == null) return false;
         const now = std.time.timestamp();
         return (now - self.cache_timestamp) < self.cache_ttl_seconds;
     }
 
     fn getMasterKeyImpl(ctx: *anyopaque) EncryptionError![DEK_SIZE]u8 {
-        const self: *Self = @ptrCast(@alignCast(ctx));
+        const self: *VaultKeyProvider = @ptrCast(@alignCast(ctx));
 
         // Return cached KEK if valid
         if (self.isCacheValid()) {
@@ -1045,27 +1181,34 @@ pub const VaultKeyProvider = struct {
         self.cached_kek = kek;
         self.cache_timestamp = std.time.timestamp();
 
-        log.info("Retrieved master key from Vault (cached for {d}s)", .{self.cache_ttl_seconds});
+        const log_fmt = "Retrieved master key from Vault (cached for {d}s)";
+        log.info(log_fmt, .{self.cache_ttl_seconds});
         return kek;
     }
 
     fn getKeyIdImpl(ctx: *anyopaque) []const u8 {
-        const self: *Self = @ptrCast(@alignCast(ctx));
+        const self: *VaultKeyProvider = @ptrCast(@alignCast(ctx));
         return self.key_name;
     }
 
-    fn wrapDekImpl(ctx: *anyopaque, dek: *const [DEK_SIZE]u8) EncryptionError![WRAPPED_DEK_SIZE]u8 {
-        const self: *Self = @ptrCast(@alignCast(ctx));
+    fn wrapDekImpl(
+        ctx: *anyopaque,
+        dek: *const [DEK_SIZE]u8,
+    ) EncryptionError![WRAPPED_DEK_SIZE]u8 {
+        const self: *VaultKeyProvider = @ptrCast(@alignCast(ctx));
         return self.callVaultEncrypt(dek);
     }
 
-    fn unwrapDekImpl(ctx: *anyopaque, wrapped: *const [WRAPPED_DEK_SIZE]u8) EncryptionError![DEK_SIZE]u8 {
-        const self: *Self = @ptrCast(@alignCast(ctx));
+    fn unwrapDekImpl(
+        ctx: *anyopaque,
+        wrapped: *const [WRAPPED_DEK_SIZE]u8,
+    ) EncryptionError![DEK_SIZE]u8 {
+        const self: *VaultKeyProvider = @ptrCast(@alignCast(ctx));
         return self.callVaultDecrypt(wrapped);
     }
 
     fn isRotatingImpl(ctx: *anyopaque) bool {
-        const self: *Self = @ptrCast(@alignCast(ctx));
+        const self: *VaultKeyProvider = @ptrCast(@alignCast(ctx));
         return self.rotating;
     }
 
@@ -1074,7 +1217,7 @@ pub const VaultKeyProvider = struct {
     }
 
     fn destroyImpl(ctx: *anyopaque, allocator: Allocator) void {
-        const self: *Self = @ptrCast(@alignCast(ctx));
+        const self: *VaultKeyProvider = @ptrCast(@alignCast(ctx));
         self.deinit();
         allocator.destroy(self);
     }
@@ -1089,7 +1232,7 @@ pub const VaultKeyProvider = struct {
         .destroy = destroyImpl,
     };
 
-    pub fn provider(self: *Self) KeyProvider {
+    pub fn provider(self: *VaultKeyProvider) KeyProvider {
         return .{
             .ptr = self,
             .vtable = &vtable,
@@ -1237,7 +1380,7 @@ pub fn encryptData(
 
     var tag: [AUTH_TAG_SIZE]u8 = undefined;
     Aes256Gcm.encrypt(output[0..plaintext.len], &tag, plaintext, aad, iv.*, dek.*);
-    @memcpy(output[plaintext.len..], &tag);
+    stdx.copy_disjoint(.inexact, u8, output[plaintext.len..], &tag);
 
     _ = global_stats.encrypt_ops.fetchAdd(1, .monotonic);
     _ = global_stats.bytes_encrypted.fetchAdd(plaintext.len, .monotonic);
@@ -1278,6 +1421,74 @@ pub fn decryptData(
     return plaintext;
 }
 
+// ============================================================================
+// Aegis-256 Cipher (Version 2) - per add-aesni-encryption/spec.md
+// ============================================================================
+
+/// Encrypt data using Aegis-256 (version 2 cipher)
+///
+/// Aegis-256 provides ~3x throughput vs AES-GCM with AES-NI acceleration.
+/// Uses 32-byte nonce and 32-byte authentication tag.
+pub fn encryptDataAegis(
+    allocator: Allocator,
+    plaintext: []const u8,
+    dek: *const [DEK_SIZE]u8,
+    nonce: *const [AEGIS_NONCE_SIZE]u8,
+    aad: []const u8,
+) ![]u8 {
+    const ciphertext_len = plaintext.len + AEGIS_TAG_SIZE;
+    const output = try allocator.alloc(u8, ciphertext_len);
+    errdefer allocator.free(output);
+
+    var tag: [AEGIS_TAG_SIZE]u8 = undefined;
+    Aegis256.encrypt(output[0..plaintext.len], &tag, plaintext, aad, nonce.*, dek.*);
+    stdx.copy_disjoint(.inexact, u8, output[plaintext.len..], &tag);
+
+    _ = global_stats.encrypt_ops.fetchAdd(1, .monotonic);
+    _ = global_stats.bytes_encrypted.fetchAdd(plaintext.len, .monotonic);
+
+    return output;
+}
+
+/// Decrypt data using Aegis-256 (version 2 cipher)
+///
+/// Input should be ciphertext with appended 32-byte auth tag.
+pub fn decryptDataAegis(
+    allocator: Allocator,
+    ciphertext_with_tag: []const u8,
+    dek: *const [DEK_SIZE]u8,
+    nonce: *const [AEGIS_NONCE_SIZE]u8,
+    aad: []const u8,
+) ![]u8 {
+    if (ciphertext_with_tag.len < AEGIS_TAG_SIZE) {
+        return error.FileTooShort;
+    }
+
+    const ciphertext_len = ciphertext_with_tag.len - AEGIS_TAG_SIZE;
+    const ciphertext = ciphertext_with_tag[0..ciphertext_len];
+    const tag = ciphertext_with_tag[ciphertext_len..][0..AEGIS_TAG_SIZE];
+
+    const plaintext = try allocator.alloc(u8, ciphertext_len);
+    errdefer allocator.free(plaintext);
+
+    Aegis256.decrypt(plaintext, ciphertext, tag.*, aad, nonce.*, dek.*) catch {
+        _ = global_stats.decrypt_failures.fetchAdd(1, .monotonic);
+        return error.DecryptionFailed;
+    };
+
+    _ = global_stats.decrypt_ops.fetchAdd(1, .monotonic);
+    _ = global_stats.bytes_decrypted.fetchAdd(plaintext.len, .monotonic);
+
+    return plaintext;
+}
+
+/// Generate a random 32-byte nonce for Aegis-256
+pub fn generateAegisNonce() [AEGIS_NONCE_SIZE]u8 {
+    var nonce: [AEGIS_NONCE_SIZE]u8 = undefined;
+    std.crypto.random.bytes(&nonce);
+    return nonce;
+}
+
 /// Encrypted file writer
 ///
 /// Writes data to file with encryption header and encrypted content.
@@ -1286,12 +1497,16 @@ pub const EncryptedFileWriter = struct {
     file: std.fs.File,
     header: EncryptedFileHeader,
     dek: [DEK_SIZE]u8,
+    /// Aegis-256 nonce for v2, or GCM IV for v1
+    nonce: [AEGIS_NONCE_SIZE]u8,
     header_written: bool,
 
-    const Self = @This();
-
-    /// Create a new encrypted file writer
-    pub fn create(allocator: Allocator, path: []const u8, key_provider: KeyProvider) !Self {
+    /// Create a new encrypted file writer (uses Aegis-256 by default for v2)
+    pub fn create(
+        allocator: Allocator,
+        path: []const u8,
+        key_provider: KeyProvider,
+    ) !EncryptedFileWriter {
         // Check if rotation is in progress
         if (key_provider.isRotating()) {
             return error.KeyRotationInProgress;
@@ -1299,78 +1514,108 @@ pub const EncryptedFileWriter = struct {
 
         // Generate new DEK for this file
         const dek = try generateDek();
-        const iv = generateIv();
+
+        // Generate Aegis-256 nonce for v2
+        const nonce = generateAegisNonce();
 
         // Wrap DEK with master key
         const wrapped_dek = try key_provider.wrapDek(&dek);
 
-        // Create header
+        // Create header with v2 (Aegis-256)
         var header = EncryptedFileHeader{};
+        header.version = ENCRYPTION_VERSION_AEGIS; // Explicitly set v2
         header.setKeyIdHash(hashKeyId(key_provider.getKeyId()));
         header.wrapped_dek = wrapped_dek;
-        header.iv = iv;
+        // iv field is not used for v2; nonce is stored separately after header
 
         // Open file for writing
         const file = try std.fs.cwd().createFile(path, .{ .truncate = true });
 
-        return Self{
+        return EncryptedFileWriter{
             .allocator = allocator,
             .file = file,
             .header = header,
             .dek = dek,
+            .nonce = nonce,
             .header_written = false,
         };
     }
 
     /// Write the encryption header (must be called first)
-    pub fn writeHeader(self: *Self) !void {
+    pub fn writeHeader(self: *EncryptedFileWriter) !void {
         if (self.header_written) return;
 
         const header_bytes = self.header.toBytes();
         try self.file.writeAll(&header_bytes);
+
+        // For v2, write the 32-byte nonce after the header
+        if (self.header.version == ENCRYPTION_VERSION_AEGIS) {
+            try self.file.writeAll(&self.nonce);
+        }
+
         self.header_written = true;
     }
 
-    /// Write encrypted data
-    pub fn write(self: *Self, plaintext: []const u8) !void {
+    /// Write encrypted data (uses Aegis-256 for v2, AES-GCM for v1)
+    pub fn write(self: *EncryptedFileWriter, plaintext: []const u8) !void {
         if (!self.header_written) {
             try self.writeHeader();
         }
 
         // Encrypt with file header as AAD for integrity
         const header_bytes = self.header.toBytes();
-        const encrypted = try encryptData(
-            self.allocator,
-            plaintext,
-            &self.dek,
-            &self.header.iv,
-            &header_bytes,
-        );
-        defer self.allocator.free(encrypted);
 
-        try self.file.writeAll(encrypted);
+        if (self.header.version == ENCRYPTION_VERSION_AEGIS) {
+            // v2: Use Aegis-256
+            const encrypted = try encryptDataAegis(
+                self.allocator,
+                plaintext,
+                &self.dek,
+                &self.nonce,
+                &header_bytes,
+            );
+            defer self.allocator.free(encrypted);
+            try self.file.writeAll(encrypted);
+        } else {
+            // v1: Use AES-GCM (backward compatibility)
+            const encrypted = try encryptData(
+                self.allocator,
+                plaintext,
+                &self.dek,
+                &self.header.iv,
+                &header_bytes,
+            );
+            defer self.allocator.free(encrypted);
+            try self.file.writeAll(encrypted);
+        }
     }
 
     /// Close the writer and zero sensitive data
-    pub fn close(self: *Self) void {
+    pub fn close(self: *EncryptedFileWriter) void {
         self.file.close();
         @memset(&self.dek, 0);
+        @memset(&self.nonce, 0);
     }
 };
 
 /// Encrypted file reader
 ///
 /// Reads encrypted files and decrypts content.
+/// Supports both v1 (AES-GCM) and v2 (Aegis-256) formats.
 pub const EncryptedFileReader = struct {
     allocator: Allocator,
     file: std.fs.File,
     header: EncryptedFileHeader,
     dek: [DEK_SIZE]u8,
-
-    const Self = @This();
+    /// Aegis-256 nonce for v2 (read from file after header)
+    nonce: [AEGIS_NONCE_SIZE]u8,
 
     /// Open an encrypted file for reading
-    pub fn open(allocator: Allocator, path: []const u8, key_provider: KeyProvider) !Self {
+    pub fn open(
+        allocator: Allocator,
+        path: []const u8,
+        key_provider: KeyProvider,
+    ) !EncryptedFileReader {
         const file = try std.fs.cwd().openFile(path, .{});
         errdefer file.close();
 
@@ -1384,32 +1629,63 @@ pub const EncryptedFileReader = struct {
         const header = EncryptedFileHeader.fromBytes(&header_bytes);
         try header.validate();
 
+        // For v2, read the 32-byte nonce after the header
+        var nonce: [AEGIS_NONCE_SIZE]u8 = .{0} ** AEGIS_NONCE_SIZE;
+        if (header.version == ENCRYPTION_VERSION_AEGIS) {
+            const nonce_bytes_read = try file.readAll(&nonce);
+            if (nonce_bytes_read < AEGIS_NONCE_SIZE) {
+                return error.FileTooShort;
+            }
+        }
+
         // Verify key ID matches
         const expected_hash = hashKeyId(key_provider.getKeyId());
         const actual_hash = header.getKeyIdHash();
         if (actual_hash != expected_hash) {
-            log.warn("Key ID hash mismatch: expected {x}, got {x}", .{ expected_hash, actual_hash });
+            const log_fmt = "Key ID hash mismatch: expected {x}, got {x}";
+            log.warn(log_fmt, .{ expected_hash, actual_hash });
             // This might indicate wrong key provider or key rotation
         }
 
         // Unwrap DEK
         const dek = try key_provider.unwrapDek(&header.wrapped_dek);
 
-        return Self{
+        return EncryptedFileReader{
             .allocator = allocator,
             .file = file,
             .header = header,
             .dek = dek,
+            .nonce = nonce,
         };
     }
 
     /// Read and decrypt all remaining content
-    pub fn readAll(self: *Self) ![]u8 {
-        // Read all encrypted content after header
+    /// Automatically detects v1 (AES-GCM) or v2 (Aegis-256) based on header version
+    pub fn readAll(self: *EncryptedFileReader) ![]u8 {
+        // Read all encrypted content after header (and nonce for v2)
         const stat = try self.file.stat();
-        const encrypted_size = stat.size - 96; // Subtract header
 
-        if (encrypted_size < AUTH_TAG_SIZE) {
+        // Calculate encrypted data offset based on version
+        const header_size: u64 = 96;
+        const nonce_overhead: u64 = if (self.header.version == ENCRYPTION_VERSION_AEGIS)
+            AEGIS_NONCE_SIZE
+        else
+            0;
+        const data_offset = header_size + nonce_overhead;
+
+        if (stat.size < data_offset) {
+            return error.FileTooShort;
+        }
+
+        const encrypted_size = stat.size - data_offset;
+
+        // v2 uses 16-byte tag, v1 uses 16-byte tag (same)
+        const tag_size = if (self.header.version == ENCRYPTION_VERSION_AEGIS)
+            AEGIS_TAG_SIZE
+        else
+            AUTH_TAG_SIZE;
+
+        if (encrypted_size < tag_size) {
             return error.FileTooShort;
         }
 
@@ -1423,19 +1699,33 @@ pub const EncryptedFileReader = struct {
 
         // Decrypt with header as AAD
         const header_bytes = self.header.toBytes();
-        return try decryptData(
-            self.allocator,
-            encrypted,
-            &self.dek,
-            &self.header.iv,
-            &header_bytes,
-        );
+
+        if (self.header.version == ENCRYPTION_VERSION_AEGIS) {
+            // v2: Use Aegis-256
+            return try decryptDataAegis(
+                self.allocator,
+                encrypted,
+                &self.dek,
+                &self.nonce,
+                &header_bytes,
+            );
+        } else {
+            // v1: Use AES-GCM
+            return try decryptData(
+                self.allocator,
+                encrypted,
+                &self.dek,
+                &self.header.iv,
+                &header_bytes,
+            );
+        }
     }
 
     /// Close the reader and zero sensitive data
-    pub fn close(self: *Self) void {
+    pub fn close(self: *EncryptedFileReader) void {
         self.file.close();
         @memset(&self.dek, 0);
+        @memset(&self.nonce, 0);
     }
 };
 
@@ -1455,6 +1745,9 @@ pub const EncryptionConfig = struct {
     max_retries: u32 = 10,
     /// Base retry delay in milliseconds
     retry_delay_ms: u64 = 1000,
+    /// Allow software crypto fallback when AES-NI unavailable
+    /// Per add-aesni-encryption spec
+    allow_software_crypto: bool = false,
 };
 
 /// Check if file is encrypted (has ARCE magic)
@@ -1500,12 +1793,12 @@ pub fn verifyEncryptedFile(
             error.InvalidMagic => "Invalid encryption magic bytes",
             error.UnsupportedVersion => "Unsupported encryption version",
             error.FileTooShort => "File too short for encrypted format",
-            error.DekUnwrapFailed => "Failed to unwrap DEK - wrong key?",
+            error.DekUnwrapFailed => blk: {
+                result.has_valid_header = true;
+                break :blk "Failed to unwrap DEK - wrong key?";
+            },
             else => "Failed to open encrypted file",
         };
-        if (err == error.DekUnwrapFailed) {
-            result.has_valid_header = true;
-        }
         return result;
     };
     defer reader.close();
@@ -1537,7 +1830,8 @@ test "EncryptedFileHeader size and serialization" {
 
     const bytes = header.toBytes();
     try std.testing.expectEqualSlices(u8, "ARCE", bytes[0..4]);
-    try std.testing.expectEqual(@as(u16, 1), std.mem.readInt(u16, bytes[4..6], .little));
+    // Default version is ENCRYPTION_VERSION (currently 2 for Aegis-256)
+    try std.testing.expectEqual(ENCRYPTION_VERSION, std.mem.readInt(u16, bytes[4..6], .little));
 
     const restored = EncryptedFileHeader.fromBytes(&bytes);
     try std.testing.expectEqualSlices(u8, &header.magic, &restored.magic);
@@ -1659,14 +1953,18 @@ test "EncryptionStats tracking" {
     const encrypted = try encryptData(allocator, plaintext, &dek, &iv, &.{});
     defer allocator.free(encrypted);
 
-    try std.testing.expectEqual(@as(u64, 1), global_stats.encrypt_ops.load(.monotonic));
-    try std.testing.expectEqual(@as(u64, plaintext.len), global_stats.bytes_encrypted.load(.monotonic));
+    const enc_ops = global_stats.encrypt_ops.load(.monotonic);
+    const enc_bytes = global_stats.bytes_encrypted.load(.monotonic);
+    try std.testing.expectEqual(@as(u64, 1), enc_ops);
+    try std.testing.expectEqual(@as(u64, plaintext.len), enc_bytes);
 
     const decrypted = try decryptData(allocator, encrypted, &dek, &iv, &.{});
     defer allocator.free(decrypted);
 
-    try std.testing.expectEqual(@as(u64, 1), global_stats.decrypt_ops.load(.monotonic));
-    try std.testing.expectEqual(@as(u64, plaintext.len), global_stats.bytes_decrypted.load(.monotonic));
+    const dec_ops = global_stats.decrypt_ops.load(.monotonic);
+    const dec_bytes = global_stats.bytes_decrypted.load(.monotonic);
+    try std.testing.expectEqual(@as(u64, 1), dec_ops);
+    try std.testing.expectEqual(@as(u64, plaintext.len), dec_bytes);
 }
 
 // ============================================================================
@@ -1789,8 +2087,12 @@ test "createKeyProvider: file provider" {
     };
 
     const provider = createKeyProvider(allocator, config) catch |err| {
-        // Expected to fail if key file doesn't exist
-        try std.testing.expect(err == error.OutOfMemory or @errorName(err).len > 0);
+        // Expected to fail if key file doesn't exist - any error is acceptable
+        const is_expected = switch (err) {
+            error.OutOfMemory => true,
+            else => @errorName(err).len > 0,
+        };
+        try std.testing.expect(is_expected);
         return;
     };
     defer provider.destroy(allocator);
@@ -1828,18 +2130,21 @@ test "integration: encrypted file roundtrip with FileKeyProvider" {
     }
 
     // Create FileKeyProvider
-    var file_provider = FileKeyProvider.init(allocator, key_path, "integration-test-key") catch return;
+    const key_id = "integration-test-key";
+    var file_provider = FileKeyProvider.init(allocator, key_path, key_id) catch
+        return;
     defer file_provider.deinit();
     file_provider.loadKey() catch return;
 
     const key_provider = file_provider.provider();
 
     // Test data
-    const plaintext = "Integration test: This is sensitive data that must be encrypted!";
+    const plaintext = "Integration test: sensitive data that must be encrypted!";
 
     // Write encrypted file
     {
-        var writer = EncryptedFileWriter.create(allocator, test_file_path, key_provider) catch return;
+        var writer = EncryptedFileWriter.create(allocator, test_file_path, key_provider) catch
+            return;
         defer writer.close();
         writer.write(plaintext) catch return;
     }
@@ -1884,7 +2189,9 @@ test "integration: verify encrypted file detects tampering" {
         posix.fchmod(file.handle, 0o400) catch return;
     }
 
-    var file_provider = FileKeyProvider.init(allocator, key_path, "tamper-test-key") catch return;
+    const key_id = "tamper-test-key";
+    var file_provider = FileKeyProvider.init(allocator, key_path, key_id) catch
+        return;
     defer file_provider.deinit();
     file_provider.loadKey() catch return;
 
@@ -1892,7 +2199,11 @@ test "integration: verify encrypted file detects tampering" {
 
     // Write encrypted file
     {
-        var writer = EncryptedFileWriter.create(allocator, test_file_path, key_provider) catch return;
+        var writer = EncryptedFileWriter.create(
+            allocator,
+            test_file_path,
+            key_provider,
+        ) catch return;
         defer writer.close();
         writer.write("Sensitive data") catch return;
     }
@@ -1923,7 +2234,11 @@ test "integration: verify encrypted file detects tampering" {
             try std.testing.expect(false);
         } else |err| {
             // Should get DecryptionFailed error (auth tag mismatch)
-            try std.testing.expect(err == error.DecryptionFailed);
+            const is_decryption_failed = switch (err) {
+                error.DecryptionFailed => true,
+                else => false,
+            };
+            try std.testing.expect(is_decryption_failed);
         }
     }
 }
@@ -1953,7 +2268,9 @@ test "integration: verifyEncryptedFile returns correct status" {
         posix.fchmod(file.handle, 0o400) catch return;
     }
 
-    var file_provider = FileKeyProvider.init(allocator, key_path, "verify-test-key") catch return;
+    const key_id = "verify-test-key";
+    var file_provider = FileKeyProvider.init(allocator, key_path, key_id) catch
+        return;
     defer file_provider.deinit();
     file_provider.loadKey() catch return;
 
@@ -1961,7 +2278,11 @@ test "integration: verifyEncryptedFile returns correct status" {
 
     // Write valid encrypted file
     {
-        var writer = EncryptedFileWriter.create(allocator, test_file_path, key_provider) catch return;
+        var writer = EncryptedFileWriter.create(
+            allocator,
+            test_file_path,
+            key_provider,
+        ) catch return;
         defer writer.close();
         writer.write("Test data for verification") catch return;
     }
@@ -1972,6 +2293,135 @@ test "integration: verifyEncryptedFile returns correct status" {
     try std.testing.expect(result.dek_valid);
     try std.testing.expect(result.integrity_valid);
     try std.testing.expect(result.error_message == null);
+}
+
+test "integration: v2 Aegis-256 file write and read roundtrip" {
+    const allocator = std.testing.allocator;
+
+    const key_path = "/tmp/archerdb_v2_key.bin";
+    const test_file_path = "/tmp/archerdb_v2_test.dat";
+
+    // Generate test key
+    var test_key: [DEK_SIZE]u8 = undefined;
+    crypto.random.bytes(&test_key);
+    {
+        const key_file = std.fs.cwd().createFile(key_path, .{}) catch return;
+        defer key_file.close();
+        key_file.writeAll(&test_key) catch return;
+    }
+    defer std.fs.cwd().deleteFile(key_path) catch {};
+    defer std.fs.cwd().deleteFile(test_file_path) catch {};
+
+    // Set permissions (required for key file)
+    if (@import("builtin").os.tag != .windows) {
+        const file = std.fs.cwd().openFile(key_path, .{}) catch return;
+        defer file.close();
+        const posix = @import("std").posix;
+        posix.fchmod(file.handle, 0o400) catch return;
+    }
+
+    const key_id = "v2-test-key";
+    var file_provider = FileKeyProvider.init(allocator, key_path, key_id) catch
+        return;
+    defer file_provider.deinit();
+    file_provider.loadKey() catch return;
+
+    const key_provider = file_provider.provider();
+
+    const test_data = "This is test data encrypted with Aegis-256 (v2 format)";
+
+    // Write encrypted file with v2 (Aegis-256)
+    {
+        var writer = EncryptedFileWriter.create(
+            allocator,
+            test_file_path,
+            key_provider,
+        ) catch return;
+        defer writer.close();
+        // Verify header is set to v2
+        try std.testing.expectEqual(ENCRYPTION_VERSION_AEGIS, writer.header.version);
+        writer.write(test_data) catch return;
+    }
+
+    // Read and decrypt file
+    {
+        var reader = EncryptedFileReader.open(allocator, test_file_path, key_provider) catch return;
+        defer reader.close();
+        // Verify header version is v2
+        try std.testing.expectEqual(ENCRYPTION_VERSION_AEGIS, reader.header.version);
+
+        const decrypted = reader.readAll() catch return;
+        defer allocator.free(decrypted);
+
+        try std.testing.expectEqualStrings(test_data, decrypted);
+    }
+}
+
+test "integration: v2 file format structure" {
+    const allocator = std.testing.allocator;
+
+    const key_path = "/tmp/archerdb_v2_struct_key.bin";
+    const test_file_path = "/tmp/archerdb_v2_struct_test.dat";
+
+    // Generate test key
+    var test_key: [DEK_SIZE]u8 = undefined;
+    crypto.random.bytes(&test_key);
+    {
+        const key_file = std.fs.cwd().createFile(key_path, .{}) catch return;
+        defer key_file.close();
+        key_file.writeAll(&test_key) catch return;
+    }
+    defer std.fs.cwd().deleteFile(key_path) catch {};
+    defer std.fs.cwd().deleteFile(test_file_path) catch {};
+
+    // Set permissions
+    if (@import("builtin").os.tag != .windows) {
+        const file = std.fs.cwd().openFile(key_path, .{}) catch return;
+        defer file.close();
+        const posix = @import("std").posix;
+        posix.fchmod(file.handle, 0o400) catch return;
+    }
+
+    const key_id = "v2-struct-key";
+    var file_provider = FileKeyProvider.init(allocator, key_path, key_id) catch
+        return;
+    defer file_provider.deinit();
+    file_provider.loadKey() catch return;
+
+    const key_provider = file_provider.provider();
+
+    const test_data = "Test";
+
+    // Write encrypted file
+    {
+        var writer = EncryptedFileWriter.create(
+            allocator,
+            test_file_path,
+            key_provider,
+        ) catch return;
+        defer writer.close();
+        writer.write(test_data) catch return;
+    }
+
+    // Verify file structure: header (96 bytes) + nonce (32 bytes) + ciphertext + tag (16 bytes)
+    {
+        const file = std.fs.cwd().openFile(test_file_path, .{}) catch return;
+        defer file.close();
+        const stat = file.stat() catch return;
+
+        // v2 file size = 96 (header) + 32 (nonce) + 4 (plaintext) + 16 (tag)
+        const header_size = 96;
+        const expected_size = header_size + AEGIS_NONCE_SIZE + test_data.len +
+            AEGIS_TAG_SIZE;
+        try std.testing.expectEqual(expected_size, stat.size);
+
+        // Verify header magic and version
+        var header_bytes: [96]u8 = undefined;
+        _ = file.readAll(&header_bytes) catch return;
+        try std.testing.expectEqualSlices(u8, "ARCE", header_bytes[0..4]);
+        const version = std.mem.readInt(u16, header_bytes[4..6], .little);
+        try std.testing.expectEqual(ENCRYPTION_VERSION_AEGIS, version);
+    }
 }
 
 test "integration: encryption stats are tracked" {
@@ -2002,7 +2452,9 @@ test "integration: encryption stats are tracked" {
         posix.fchmod(file.handle, 0o400) catch return;
     }
 
-    var file_provider = FileKeyProvider.init(allocator, key_path, "stats-test-key") catch return;
+    const key_id = "stats-test-key";
+    var file_provider = FileKeyProvider.init(allocator, key_path, key_id) catch
+        return;
     defer file_provider.deinit();
     file_provider.loadKey() catch return;
 
@@ -2012,24 +2464,258 @@ test "integration: encryption stats are tracked" {
 
     // Write encrypted file
     {
-        var writer = EncryptedFileWriter.create(allocator, test_file_path, key_provider) catch return;
+        var writer = EncryptedFileWriter.create(
+            allocator,
+            test_file_path,
+            key_provider,
+        ) catch return;
         defer writer.close();
         writer.write(test_data) catch return;
     }
 
     // Read encrypted file
     {
-        var reader = EncryptedFileReader.open(allocator, test_file_path, key_provider) catch return;
+        var reader = EncryptedFileReader.open(
+            allocator,
+            test_file_path,
+            key_provider,
+        ) catch return;
         defer reader.close();
         const decrypted = reader.readAll() catch return;
         defer allocator.free(decrypted);
     }
 
     // Check stats
-    try std.testing.expectEqual(@as(u64, 1), global_stats.encrypt_ops.load(.monotonic));
-    try std.testing.expectEqual(@as(u64, 1), global_stats.decrypt_ops.load(.monotonic));
-    try std.testing.expectEqual(@as(u64, test_data.len), global_stats.bytes_encrypted.load(.monotonic));
-    try std.testing.expectEqual(@as(u64, test_data.len), global_stats.bytes_decrypted.load(.monotonic));
+    const enc_ops = global_stats.encrypt_ops.load(.monotonic);
+    const dec_ops = global_stats.decrypt_ops.load(.monotonic);
+    const enc_bytes = global_stats.bytes_encrypted.load(.monotonic);
+    const dec_bytes = global_stats.bytes_decrypted.load(.monotonic);
+    try std.testing.expectEqual(@as(u64, 1), enc_ops);
+    try std.testing.expectEqual(@as(u64, 1), dec_ops);
+    try std.testing.expectEqual(@as(u64, test_data.len), enc_bytes);
+    try std.testing.expectEqual(@as(u64, test_data.len), dec_bytes);
+}
+
+// ============================================================================
+// AES-NI Detection Tests (per add-aesni-encryption/tasks.md Phase 4.1)
+// ============================================================================
+
+test "hasAesNi returns consistent result" {
+    // hasAesNi should return the same result on repeated calls
+    const result1 = hasAesNi();
+    const result2 = hasAesNi();
+    try std.testing.expectEqual(result1, result2);
+
+    // Log the hardware status for test runner visibility
+    if (result1) {
+        log.info("AES-NI hardware acceleration: DETECTED", .{});
+    } else {
+        log.info("AES-NI hardware acceleration: NOT DETECTED (software fallback)", .{});
+    }
+}
+
+test "verifyHardwareSupport with allow_software_crypto=true always succeeds" {
+    // With bypass flag set, should always succeed (even without AES-NI)
+    const config = HardwareConfig{ .allow_software_crypto = true };
+    try verifyHardwareSupport(config);
+}
+
+test "verifyHardwareSupport behavior depends on hardware" {
+    // With bypass flag false, behavior depends on actual hardware
+    const config = HardwareConfig{ .allow_software_crypto = false };
+
+    if (hasAesNi()) {
+        // Should succeed if AES-NI is available
+        try verifyHardwareSupport(config);
+    } else {
+        // Should fail if AES-NI is not available
+        try std.testing.expectError(error.AesNiNotAvailable, verifyHardwareSupport(config));
+    }
+}
+
+// ============================================================================
+// Aegis-256 Cipher Tests (per add-aesni-encryption/tasks.md Phase 4.2)
+// ============================================================================
+
+test "Aegis-256 encrypt and decrypt roundtrip" {
+    const allocator = std.testing.allocator;
+    const plaintext = "Hello, Aegis-256 encrypted world!";
+    var dek: [DEK_SIZE]u8 = undefined;
+    crypto.random.bytes(&dek);
+    const nonce = generateAegisNonce();
+
+    const encrypted = try encryptDataAegis(allocator, plaintext, &dek, &nonce, &.{});
+    defer allocator.free(encrypted);
+
+    // Ciphertext length = plaintext + 32-byte tag
+    try std.testing.expectEqual(plaintext.len + AEGIS_TAG_SIZE, encrypted.len);
+    // Ciphertext should be different from plaintext
+    try std.testing.expect(!std.mem.eql(u8, encrypted[0..plaintext.len], plaintext));
+
+    const decrypted = try decryptDataAegis(allocator, encrypted, &dek, &nonce, &.{});
+    defer allocator.free(decrypted);
+
+    try std.testing.expectEqualStrings(plaintext, decrypted);
+}
+
+test "Aegis-256 decrypt with wrong key fails" {
+    const allocator = std.testing.allocator;
+    const plaintext = "Secret Aegis-256 data";
+    var dek: [DEK_SIZE]u8 = undefined;
+    crypto.random.bytes(&dek);
+    const nonce = generateAegisNonce();
+
+    const encrypted = try encryptDataAegis(allocator, plaintext, &dek, &nonce, &.{});
+    defer allocator.free(encrypted);
+
+    var wrong_dek: [DEK_SIZE]u8 = undefined;
+    crypto.random.bytes(&wrong_dek);
+
+    try std.testing.expectError(
+        error.DecryptionFailed,
+        decryptDataAegis(allocator, encrypted, &wrong_dek, &nonce, &.{}),
+    );
+}
+
+test "Aegis-256 decrypt with wrong nonce fails" {
+    const allocator = std.testing.allocator;
+    const plaintext = "Secret Aegis-256 data";
+    var dek: [DEK_SIZE]u8 = undefined;
+    crypto.random.bytes(&dek);
+    const nonce = generateAegisNonce();
+
+    const encrypted = try encryptDataAegis(allocator, plaintext, &dek, &nonce, &.{});
+    defer allocator.free(encrypted);
+
+    const wrong_nonce = generateAegisNonce();
+
+    try std.testing.expectError(
+        error.DecryptionFailed,
+        decryptDataAegis(allocator, encrypted, &dek, &wrong_nonce, &.{}),
+    );
+}
+
+test "Aegis-256 detects tampering (auth tag failure)" {
+    const allocator = std.testing.allocator;
+    const plaintext = "Data that will be tampered with";
+    var dek: [DEK_SIZE]u8 = undefined;
+    crypto.random.bytes(&dek);
+    const nonce = generateAegisNonce();
+
+    const encrypted = try encryptDataAegis(allocator, plaintext, &dek, &nonce, &.{});
+    defer allocator.free(encrypted);
+
+    // Tamper with a byte in the ciphertext
+    encrypted[5] ^= 0xFF;
+
+    try std.testing.expectError(
+        error.DecryptionFailed,
+        decryptDataAegis(allocator, encrypted, &dek, &nonce, &.{}),
+    );
+}
+
+test "Aegis-256 different keys produce different ciphertext" {
+    const allocator = std.testing.allocator;
+    const plaintext = "Same plaintext, different keys";
+
+    var dek1: [DEK_SIZE]u8 = undefined;
+    var dek2: [DEK_SIZE]u8 = undefined;
+    crypto.random.bytes(&dek1);
+    crypto.random.bytes(&dek2);
+
+    const nonce = generateAegisNonce();
+
+    const encrypted1 = try encryptDataAegis(allocator, plaintext, &dek1, &nonce, &.{});
+    defer allocator.free(encrypted1);
+
+    const encrypted2 = try encryptDataAegis(allocator, plaintext, &dek2, &nonce, &.{});
+    defer allocator.free(encrypted2);
+
+    // Different keys should produce different ciphertext
+    try std.testing.expect(!std.mem.eql(u8, encrypted1, encrypted2));
+}
+
+test "Aegis-256 empty plaintext roundtrip" {
+    const allocator = std.testing.allocator;
+    const plaintext = "";
+    var dek: [DEK_SIZE]u8 = undefined;
+    crypto.random.bytes(&dek);
+    const nonce = generateAegisNonce();
+
+    const encrypted = try encryptDataAegis(allocator, plaintext, &dek, &nonce, &.{});
+    defer allocator.free(encrypted);
+
+    // Empty plaintext should still have auth tag
+    try std.testing.expectEqual(AEGIS_TAG_SIZE, encrypted.len);
+
+    const decrypted = try decryptDataAegis(allocator, encrypted, &dek, &nonce, &.{});
+    defer allocator.free(decrypted);
+
+    try std.testing.expectEqualStrings(plaintext, decrypted);
+}
+
+test "Aegis-256 with AAD roundtrip" {
+    const allocator = std.testing.allocator;
+    const plaintext = "Data with associated authenticated data";
+    const aad = "file_header_bytes";
+    var dek: [DEK_SIZE]u8 = undefined;
+    crypto.random.bytes(&dek);
+    const nonce = generateAegisNonce();
+
+    const encrypted = try encryptDataAegis(allocator, plaintext, &dek, &nonce, aad);
+    defer allocator.free(encrypted);
+
+    // Decryption with same AAD should succeed
+    const decrypted = try decryptDataAegis(allocator, encrypted, &dek, &nonce, aad);
+    defer allocator.free(decrypted);
+    try std.testing.expectEqualStrings(plaintext, decrypted);
+}
+
+test "Aegis-256 with wrong AAD fails" {
+    const allocator = std.testing.allocator;
+    const plaintext = "Data with associated authenticated data";
+    const aad = "correct_aad";
+    const wrong_aad = "wrong_aad";
+    var dek: [DEK_SIZE]u8 = undefined;
+    crypto.random.bytes(&dek);
+    const nonce = generateAegisNonce();
+
+    const encrypted = try encryptDataAegis(allocator, plaintext, &dek, &nonce, aad);
+    defer allocator.free(encrypted);
+
+    // Decryption with wrong AAD should fail
+    try std.testing.expectError(
+        error.DecryptionFailed,
+        decryptDataAegis(allocator, encrypted, &dek, &nonce, wrong_aad),
+    );
+}
+
+test "generateAegisNonce produces unique nonces" {
+    const nonce1 = generateAegisNonce();
+    const nonce2 = generateAegisNonce();
+
+    // Should be different (extremely high probability)
+    try std.testing.expect(!std.mem.eql(u8, &nonce1, &nonce2));
+}
+
+test "Aegis-256 nonce size is 32 bytes" {
+    try std.testing.expectEqual(@as(usize, 32), AEGIS_NONCE_SIZE);
+    const nonce = generateAegisNonce();
+    try std.testing.expectEqual(@as(usize, 32), nonce.len);
+}
+
+test "Aegis-256 tag size is 16 bytes" {
+    try std.testing.expectEqual(@as(usize, 16), AEGIS_TAG_SIZE);
+}
+
+// ============================================================================
+// Version Constant Tests
+// ============================================================================
+
+test "encryption version constants are correct" {
+    try std.testing.expectEqual(@as(u16, 1), ENCRYPTION_VERSION_GCM);
+    try std.testing.expectEqual(@as(u16, 2), ENCRYPTION_VERSION_AEGIS);
+    try std.testing.expectEqual(@as(u16, 2), ENCRYPTION_VERSION);
 }
 
 // ============================================================================

@@ -30,6 +30,7 @@
 //! ```
 
 const std = @import("std");
+const stdx = @import("stdx");
 const mem = std.mem;
 const Allocator = mem.Allocator;
 const AutoHashMap = std.AutoHashMap;
@@ -231,7 +232,7 @@ pub const ConsentRecord = struct {
     /// Set the source string.
     pub fn setSource(self: *ConsentRecord, src: []const u8) void {
         const len = @min(src.len, MAX_SOURCE_LEN - 1);
-        @memcpy(self.source[0..len], src[0..len]);
+        stdx.copy_disjoint(.exact, u8, self.source[0..len], src[0..len]);
         self.source_len = @intCast(len);
     }
 
@@ -243,7 +244,7 @@ pub const ConsentRecord = struct {
     /// Set the notes string.
     pub fn setNotes(self: *ConsentRecord, note: []const u8) void {
         const len = @min(note.len, MAX_CONSENT_NOTES_LEN - 1);
-        @memcpy(self.notes[0..len], note[0..len]);
+        stdx.copy_disjoint(.exact, u8, self.notes[0..len], note[0..len]);
         self.notes_len = @intCast(len);
     }
 
@@ -322,7 +323,7 @@ pub const ConsentAuditEntry = struct {
     /// Set the reason string.
     pub fn setReason(self: *ConsentAuditEntry, rsn: []const u8) void {
         const len = @min(rsn.len, 255);
-        @memcpy(self.reason[0..len], rsn[0..len]);
+        stdx.copy_disjoint(.exact, u8, self.reason[0..len], rsn[0..len]);
         self.reason_len = @intCast(len);
     }
 
@@ -436,7 +437,7 @@ pub const ConsentOperationResult = struct {
             .previous_status = null,
         };
         const len = @min(msg.len, 255);
-        @memcpy(result.error_message[0..len], msg[0..len]);
+        stdx.copy_disjoint(.exact, u8, result.error_message[0..len], msg[0..len]);
         result.error_len = @intCast(len);
         return result;
     }
@@ -483,8 +484,6 @@ pub const ConsentStats = struct {
 
 /// GDPR Consent Manager - main API for consent management.
 pub const ConsentManager = struct {
-    const Self = @This();
-
     /// Memory allocator.
     allocator: Allocator,
     /// Configuration.
@@ -501,11 +500,11 @@ pub const ConsentManager = struct {
     next_audit_id: u64,
 
     /// Initialize consent manager.
-    pub fn init(allocator: Allocator, config: ConsentManagerConfig) !Self {
+    pub fn init(allocator: Allocator, config: ConsentManagerConfig) !ConsentManager {
         const audit_log = try allocator.alloc(ConsentAuditEntry, config.max_audit_entries);
         @memset(audit_log, std.mem.zeroes(ConsentAuditEntry));
 
-        return Self{
+        return ConsentManager{
             .allocator = allocator,
             .config = config,
             .entity_consents = AutoHashMap(u128, EntityConsents).init(allocator),
@@ -517,14 +516,14 @@ pub const ConsentManager = struct {
     }
 
     /// Clean up resources.
-    pub fn deinit(self: *Self) void {
+    pub fn deinit(self: *ConsentManager) void {
         self.allocator.free(self.audit_log);
         self.entity_consents.deinit();
     }
 
     /// Record a consent grant or update.
     pub fn recordConsent(
-        self: *Self,
+        self: *ConsentManager,
         entity_id: u128,
         purpose: ConsentPurpose,
         status: ConsentStatus,
@@ -534,7 +533,8 @@ pub const ConsentManager = struct {
         if (purpose == .child_tracking and status == .granted) {
             if (self.config.require_double_opt_in) {
                 // Child tracking requires verified parental consent
-                return ConsentOperationResult.err("Child tracking requires verified parental consent");
+                const msg = "Child tracking requires parental consent";
+                return ConsentOperationResult.err(msg);
             }
         }
 
@@ -553,7 +553,8 @@ pub const ConsentManager = struct {
 
         // Set expiration if configured
         if (self.config.default_expiration_seconds > 0 and status == .granted) {
-            record.expires_at = getCurrentTimestamp() + (self.config.default_expiration_seconds * 1_000_000_000);
+            const expiry_ns = self.config.default_expiration_seconds * 1_000_000_000;
+            record.expires_at = getCurrentTimestamp() + expiry_ns;
         }
 
         // Handle double opt-in
@@ -590,7 +591,7 @@ pub const ConsentManager = struct {
 
     /// Verify consent (complete double opt-in).
     pub fn verifyConsent(
-        self: *Self,
+        self: *ConsentManager,
         entity_id: u128,
         purpose: ConsentPurpose,
         verification_code: []const u8,
@@ -644,7 +645,7 @@ pub const ConsentManager = struct {
 
     /// Withdraw consent for a specific purpose.
     pub fn withdrawConsent(
-        self: *Self,
+        self: *ConsentManager,
         entity_id: u128,
         purpose: ConsentPurpose,
         reason: []const u8,
@@ -685,7 +686,7 @@ pub const ConsentManager = struct {
 
     /// Withdraw all consents for an entity (complete opt-out).
     pub fn withdrawAllConsents(
-        self: *Self,
+        self: *ConsentManager,
         entity_id: u128,
         reason: []const u8,
     ) ConsentOperationResult {
@@ -733,24 +734,28 @@ pub const ConsentManager = struct {
     }
 
     /// Check if entity has valid consent for a purpose.
-    pub fn hasValidConsent(self: *Self, entity_id: u128, purpose: ConsentPurpose) bool {
+    pub fn hasValidConsent(self: *ConsentManager, entity_id: u128, purpose: ConsentPurpose) bool {
         const entity = self.entity_consents.get(entity_id) orelse return false;
         return entity.hasValidConsent(purpose);
     }
 
     /// Check consent and return detailed status.
-    pub fn checkConsent(self: *Self, entity_id: u128, purpose: ConsentPurpose) ?*const ConsentRecord {
+    pub fn checkConsent(
+        self: *ConsentManager,
+        entity_id: u128,
+        purpose: ConsentPurpose,
+    ) ?*const ConsentRecord {
         const entity = self.entity_consents.get(entity_id) orelse return null;
         return entity.getConsent(purpose);
     }
 
     /// Get all consents for an entity.
-    pub fn getEntityConsents(self: *Self, entity_id: u128) ?EntityConsents {
+    pub fn getEntityConsents(self: *ConsentManager, entity_id: u128) ?EntityConsents {
         return self.entity_consents.get(entity_id);
     }
 
     /// Expire stale consents (called periodically).
-    pub fn expireStaleConsents(self: *Self) usize {
+    pub fn expireStaleConsents(self: *ConsentManager) usize {
         var expired_count: usize = 0;
         const now = getCurrentTimestamp();
 
@@ -762,7 +767,8 @@ pub const ConsentManager = struct {
             for (&entity.consents, 0..) |*maybe_record, idx| {
                 if (maybe_record.*) |*record| {
                     // Check expiration
-                    if (record.expires_at > 0 and now >= record.expires_at and record.status == .granted) {
+                    const expired = record.expires_at > 0 and now >= record.expires_at;
+                    if (expired and record.status == .granted) {
                         const previous_status = record.status;
                         record.status = .expired;
                         record.modified_at = now;
@@ -813,7 +819,7 @@ pub const ConsentManager = struct {
     }
 
     /// Get consent statistics.
-    pub fn getStats(self: *Self) ConsentStats {
+    pub fn getStats(self: *ConsentManager) ConsentStats {
         var stats = ConsentStats.init();
         const now = getCurrentTimestamp();
         const day_ago = now -| (24 * 60 * 60 * 1_000_000_000);
@@ -855,7 +861,7 @@ pub const ConsentManager = struct {
 
     /// Get audit entries for an entity.
     pub fn getAuditHistory(
-        self: *Self,
+        self: *ConsentManager,
         entity_id: u128,
         buffer: []ConsentAuditEntry,
     ) usize {
@@ -874,7 +880,7 @@ pub const ConsentManager = struct {
 
     /// Export all consents for an entity (for data portability).
     pub fn exportEntityData(
-        self: *Self,
+        self: *ConsentManager,
         entity_id: u128,
         allocator: Allocator,
     ) ![]u8 {
@@ -931,7 +937,7 @@ pub const ConsentManager = struct {
 
     // Internal: Add audit entry.
     fn addAuditEntry(
-        self: *Self,
+        self: *ConsentManager,
         entity_id: u128,
         purpose: ConsentPurpose,
         event_type: ConsentEventType,

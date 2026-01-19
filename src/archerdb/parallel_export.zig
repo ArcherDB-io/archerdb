@@ -165,7 +165,8 @@ pub const ExportProgress = struct {
     pub fn percentComplete(self: *const ExportProgress) f64 {
         if (self.total_events == 0) return 100.0;
         const processed = self.processed_events.load(.monotonic);
-        return (@as(f64, @floatFromInt(processed)) / @as(f64, @floatFromInt(self.total_events))) * 100.0;
+        return (@as(f64, @floatFromInt(processed)) /
+            @as(f64, @floatFromInt(self.total_events))) * 100.0;
     }
 
     /// Get elapsed time in seconds.
@@ -194,7 +195,10 @@ pub const ExportProgress = struct {
 
     /// Update progress with chunk result.
     pub fn updateFromChunk(self: *ExportProgress, result: *const ChunkResult) void {
-        _ = self.processed_events.fetchAdd(result.exported_events + result.validation_failures, .monotonic);
+        _ = self.processed_events.fetchAdd(
+            result.exported_events + result.validation_failures,
+            .monotonic,
+        );
         _ = self.exported_events.fetchAdd(result.exported_events, .monotonic);
         _ = self.validation_failures.fetchAdd(result.validation_failures, .monotonic);
         _ = self.chunks_completed.fetchAdd(1, .monotonic);
@@ -220,7 +224,10 @@ pub const ExportProgress = struct {
 };
 
 /// Progress callback function type.
-pub const ProgressCallback = *const fn (progress: *const ExportProgress, user_data: ?*anyopaque) void;
+pub const ProgressCallback = *const fn (
+    progress: *const ExportProgress,
+    user_data: ?*anyopaque,
+) void;
 
 /// Worker thread context.
 const WorkerContext = struct {
@@ -317,14 +324,12 @@ const ResultCollector = struct {
 
 /// Parallel exporter for large datasets.
 pub const ParallelExporter = struct {
-    const Self = @This();
-
     allocator: Allocator,
     options: ParallelExportOptions,
     actual_worker_count: usize,
 
     /// Initialize a parallel exporter.
-    pub fn init(allocator: Allocator, options: ParallelExportOptions) Self {
+    pub fn init(allocator: Allocator, options: ParallelExportOptions) ParallelExporter {
         // Determine actual worker count
         const worker_count = if (options.worker_count == 0)
             @max(1, Thread.getCpuCount() catch 1)
@@ -341,7 +346,7 @@ pub const ParallelExporter = struct {
     /// Export events using parallel workers.
     /// Returns export progress with statistics.
     pub fn exportParallel(
-        self: *Self,
+        self: *ParallelExporter,
         events: []const GeoEvent,
         filter: bulk_export.ExportFilter,
         callback: ?ProgressCallback,
@@ -424,7 +429,7 @@ pub const ParallelExporter = struct {
 
     /// Single-threaded export for small datasets.
     fn exportSingleThreaded(
-        self: *Self,
+        self: *ParallelExporter,
         events: []const GeoEvent,
         filter: bulk_export.ExportFilter,
     ) !ExportSummary {
@@ -471,7 +476,8 @@ pub const ParallelExporter = struct {
             .worker_count = 1,
             .total_time_ns = elapsed_ns,
             .events_per_second = if (elapsed_ns > 0)
-                @as(f64, @floatFromInt(exported_count)) / (@as(f64, @floatFromInt(elapsed_ns)) / 1_000_000_000.0)
+                @as(f64, @floatFromInt(exported_count)) /
+                    (@as(f64, @floatFromInt(elapsed_ns)) / 1_000_000_000.0)
             else
                 0.0,
             .success = true,
@@ -544,7 +550,11 @@ pub const ParallelExporter = struct {
     }
 
     /// Aggregate results from all chunks.
-    fn aggregateResults(self: *Self, results: *ResultCollector, progress: *ExportProgress) ExportSummary {
+    fn aggregateResults(
+        self: *ParallelExporter,
+        results: *ResultCollector,
+        progress: *ExportProgress,
+    ) ExportSummary {
         _ = self;
         var summary = ExportSummary{
             .total_events = progress.total_events,
@@ -623,7 +633,8 @@ pub const ExportSummary = struct {
     /// Get export success rate as percentage.
     pub fn successRate(self: *const ExportSummary) f64 {
         if (self.total_events == 0) return 100.0;
-        return (@as(f64, @floatFromInt(self.exported_events)) / @as(f64, @floatFromInt(self.total_events))) * 100.0;
+        return (@as(f64, @floatFromInt(self.exported_events)) /
+            @as(f64, @floatFromInt(self.total_events))) * 100.0;
     }
 
     /// Get processing time in seconds.

@@ -359,6 +359,20 @@ The system SHALL define explicit test scenarios for every error code to ensure c
   - **Code 503 (corruption_detected)**: Checksum mismatch on read triggers
   - **Code 504 (invariant_violation)**: System invariant check fails
 
+## Implementation Status
+
+| Requirement | Status | Implementation |
+|-------------|--------|----------------|
+| Centralized Error Code Enumeration | IMPLEMENTED | `src/error_codes.zig` - Central enum with non-overlapping ranges |
+| Error Code Metadata | IMPLEMENTED | `src/error_codes.zig` - Retry semantics and context fields |
+| Complete Error Code Table | IMPLEMENTED | `src/error_codes.zig` - Full enumeration with metadata |
+| Error Code Implementation | IMPLEMENTED | `src/error_codes.zig` - Zig enum with is_retriable() and message() |
+| Error Response Format | IMPLEMENTED | `src/error_codes.zig` - Standardized error response structure |
+| Error Propagation Semantics | IMPLEMENTED | `src/state_machine.zig` - Layer-appropriate error mapping |
+| Client SDK Error Handling | IMPLEMENTED | `src/clients/*/` - Typed errors with retry logic |
+| Metrics for Error Tracking | IMPLEMENTED | `src/state_machine.zig` - Error counter metrics |
+| Comprehensive Error Code Test Scenarios | IMPLEMENTED | `src/error_codes.zig` - Test coverage for all codes |
+
 ### Related Specifications
 
 - See `specs/client-protocol/spec.md` for error response wire format
@@ -367,19 +381,3 @@ The system SHALL define explicit test scenarios for every error code to ensure c
 - See `specs/query-engine/spec.md` for state machine error handling
 - See `specs/observability/spec.md` for error metrics and logging
 - See `specs/storage-engine/spec.md` for storage error conditions
-
-
-
-## Implementation Status
-
-| Requirement | Status | Notes |
-|-------------|--------|-------|
-| Protocol Errors (1-10) | ✓ Complete | \`ProtocolError\` enum |
-| Validation Errors (100-120) | ✓ Complete | \`ValidationError\` enum |
-| State Errors (200-212) | ✓ Complete | \`StateError\` enum |
-| Resource Errors (300-310) | ✓ Complete | \`ResourceError\` enum |
-| Security Errors (400-404) | ✓ Complete | \`SecurityError\` enum |
-| Internal Errors (500-504) | ✓ Complete | \`InternalError\` enum |
-| Error Descriptions | ✓ Complete | \`.description()\` methods |
-| Retryable Classification | ✓ Complete | \`.isRetriable()\` methods |
-| Wire Format Encoding | ✓ Complete | \`u32\` code in response |

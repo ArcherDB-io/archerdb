@@ -19,20 +19,17 @@ const std = @import("std");
 const vsr = @import("vsr.zig");
 const IO = vsr.io.IO;
 const Time = vsr.time.Time;
-const tb = vsr.archerdb;
 
 pub fn ReplType(comptime MessageBus: type) type {
     _ = MessageBus;
 
     return struct {
-        const Self = @This();
-
         pub fn init(
             gpa: std.mem.Allocator,
             io: *IO,
             time: Time,
             options: anytype,
-        ) !Self {
+        ) !@This() {
             _ = gpa;
             _ = io;
             _ = time;
@@ -40,12 +37,12 @@ pub fn ReplType(comptime MessageBus: type) type {
             return .{};
         }
 
-        pub fn deinit(self: *Self, gpa: std.mem.Allocator) void {
+        pub fn deinit(self: *@This(), gpa: std.mem.Allocator) void {
             _ = self;
             _ = gpa;
         }
 
-        pub fn run(self: *Self, statements: []const u8) !void {
+        pub fn run(self: *@This(), statements: []const u8) !void {
             _ = self;
             _ = statements;
 

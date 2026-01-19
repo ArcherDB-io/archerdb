@@ -49,8 +49,8 @@ const hilbert_lookup = [4][4]u8{
 const hilbert_orientation = [4][4]u8{
     .{ 1, 0, 3, 0 }, // orientation 0
     .{ 0, 2, 1, 1 }, // orientation 1 (swapMask)
-    .{ 2, 0, 2, 3 }, // orientation 2 (invertMask)
-    .{ 3, 3, 1, 2 }, // orientation 3 (swap|invert)
+    .{ 2, 1, 2, 3 }, // orientation 2 (invertMask)
+    .{ 3, 3, 0, 2 }, // orientation 3 (swap|invert)
 };
 
 /// Create a cell ID from latitude and longitude in nanodegrees.
@@ -68,9 +68,12 @@ const hilbert_orientation = [4][4]u8{
 pub fn fromLatLonNano(lat_nano: i64, lon_nano: i64, lvl: u8) u64 {
     assert(lvl <= max_level);
 
+    const lon_nano_adjusted = normalize_lon_nano(lon_nano);
+
     // Convert nanodegrees to radians
     const lat_rad = @as(f64, @floatFromInt(lat_nano)) * (smath.pi / 180_000_000_000.0);
-    const lon_rad = @as(f64, @floatFromInt(lon_nano)) * (smath.pi / 180_000_000_000.0);
+    const lon_rad =
+        @as(f64, @floatFromInt(lon_nano_adjusted)) * (smath.pi / 180_000_000_000.0);
 
     return fromLatLonRadians(lat_rad, lon_rad, lvl);
 }
@@ -79,13 +82,32 @@ pub fn fromLatLonNano(lat_nano: i64, lon_nano: i64, lvl: u8) u64 {
 pub fn fromLatLonRadians(lat_rad: f64, lon_rad: f64, lvl: u8) u64 {
     assert(lvl <= max_level);
 
+    const lon_rad_adjusted = normalize_lon_rad(lon_rad);
+
     // Convert to 3D point on unit sphere using deterministic trig
     const cos_lat = smath.cos(lat_rad);
-    const x = cos_lat * smath.cos(lon_rad);
-    const y = cos_lat * smath.sin(lon_rad);
+    const x = cos_lat * smath.cos(lon_rad_adjusted);
+    const y = cos_lat * smath.sin(lon_rad_adjusted);
     const z = smath.sin(lat_rad);
 
     return fromPoint(x, y, z, lvl);
+}
+
+fn normalize_lon_nano(lon_nano: i64) i64 {
+    // Align behavior with Go S2 at +180 degrees by nudging just below the antimeridian.
+    if (lon_nano == 180_000_000_000) return 179_999_999_999;
+    return lon_nano;
+}
+
+fn normalize_lon_rad(lon_rad: f64) f64 {
+    if (lon_rad == smath.pi) return prev_float(lon_rad);
+    return lon_rad;
+}
+
+fn prev_float(value: f64) f64 {
+    const bits: u64 = @bitCast(value);
+    if (bits == 0) return value;
+    return @as(f64, @bitCast(bits - 1));
 }
 
 /// Create a cell ID from a 3D point on the unit sphere.
@@ -566,7 +588,7 @@ test "cross-platform determinism" {
     // - macOS ARM64: Not yet validated (validation needed before production on this platform)
     // - Linux ARM64: Not yet validated (validation needed before production on this platform)
     // - Windows x86_64: Not yet validated (validation needed before production on this platform)
-    const expected_hash: u64 = 0xcfcb49bcd16dea5d;
+    const expected_hash: u64 = 0xcfdb4dbdd12dfa59;
 
     if (hash != expected_hash) {
         std.debug.print("\nCROSS-PLATFORM DETERMINISM FAILURE!\n", .{});

@@ -16,9 +16,10 @@
 //! which apply them in commit order to maintain eventual consistency.
 
 const std = @import("std");
-const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
+const stdx = @import("stdx");
+const constants = @import("constants.zig");
 const log = std.log.scoped(.replication);
 
 // Local constants for replication (mirrors values in repl_constants.zig)
@@ -89,6 +90,7 @@ pub const ShipEntry = extern struct {
     _padding: [16]u8 = .{0} ** 16,
 
     pub const size = 64;
+    pub const version_current: u16 = 1;
 
     /// Calculate checksum over header (excluding checksum field) and body
     pub fn calculateChecksum(self: *ShipEntry, body: []const u8) u128 {
@@ -300,11 +302,178 @@ pub const ShipQueue = struct {
         self.stats.shipped_total += 1;
     }
 
-    /// Spill oldest entries to disk
+    /// Spill oldest entries to disk when memory queue is full
     fn spillToDisk(self: *ShipQueue) !void {
-        // TODO: Implement disk spillover with memory-mapped files
-        _ = self;
-        log.warn("Disk spillover not yet implemented", .{});
+        const path = self.spillover_path orelse return error.NoSpilloverPath;
+
+        // Open spillover file in append mode
+        const file = std.fs.cwd().createFile(path, .{
+            .truncate = false,
+        }) catch |err| {
+            log.err("Failed to open spillover file {s}: {}", .{ path, err });
+            return error.SpilloverFailed;
+        };
+        defer file.close();
+
+        // Seek to end for appending
+        file.seekFromEnd(0) catch |err| {
+            log.err("Failed to seek spillover file: {}", .{err});
+            return error.SpilloverFailed;
+        };
+
+        // Spill half of memory queue to disk (batch spillover)
+        const entries_to_spill = self.memory_queue.items.len / 2;
+        if (entries_to_spill == 0) return;
+
+        var spilled: u64 = 0;
+        var spilled_bytes: u64 = 0;
+
+        for (0..entries_to_spill) |_| {
+            if (self.memory_queue.items.len == 0) break;
+
+            const entry = self.memory_queue.orderedRemove(0);
+
+            // Write entry header (fixed size)
+            const header_bytes = std.mem.asBytes(&entry.header);
+            file.writeAll(header_bytes) catch |err| {
+                log.err("Failed to write spillover header: {}", .{err});
+                // Re-queue the entry
+                self.memory_queue.insert(0, entry) catch {};
+                break;
+            };
+
+            // Write body
+            file.writeAll(entry.body) catch |err| {
+                log.err("Failed to write spillover body: {}", .{err});
+                self.memory_queue.insert(0, entry) catch {};
+                break;
+            };
+
+            // Update stats
+            spilled += 1;
+            spilled_bytes += entry.body.len;
+            self.stats.memory_entries -|= 1;
+            self.stats.memory_bytes -|= entry.body.len;
+            self.stats.disk_entries += 1;
+            self.stats.disk_bytes += entry.body.len;
+
+            // Free the body since it's on disk now
+            self.allocator.free(entry.body);
+        }
+
+        if (spilled > 0) {
+            log.info("Spilled {} entries ({} bytes) to disk", .{ spilled, spilled_bytes });
+
+            // Invoke spillover callback if configured
+            if (self.spillover_callback) |callback| {
+                callback(self);
+            }
+        }
+    }
+
+    /// Recover entries from disk spillover file back to memory
+    pub fn recoverFromDisk(self: *ShipQueue) !u64 {
+        const path = self.spillover_path orelse return 0;
+
+        const file = std.fs.cwd().openFile(path, .{}) catch |err| switch (err) {
+            error.FileNotFound => return 0,
+            else => {
+                log.err("Failed to open spillover file for recovery: {}", .{err});
+                return error.RecoveryFailed;
+            },
+        };
+        defer file.close();
+
+        var recovered: u64 = 0;
+        var fully_recovered = true;
+
+        while (true) {
+            if (self.memory_queue.items.len >= self.memory_max) {
+                log.warn("Spillover recovery paused (memory queue full)", .{});
+                fully_recovered = false;
+                break;
+            }
+
+            // Read header
+            var header: ShipEntry = undefined;
+            const header_bytes = std.mem.asBytes(&header);
+            const header_read = file.read(header_bytes) catch break;
+            if (header_read < @sizeOf(ShipEntry)) break;
+
+            if (!header.validMagic()) {
+                log.warn("Spillover entry has invalid magic, stopping recovery", .{});
+                fully_recovered = false;
+                break;
+            }
+
+            if (header.version != ShipEntry.version_current) {
+                log.warn(
+                    "Spillover entry has unsupported version {}, stopping recovery",
+                    .{header.version},
+                );
+                fully_recovered = false;
+                break;
+            }
+
+            if (header.body_size > constants.message_body_size_max) {
+                log.warn(
+                    "Spillover entry body_size {} exceeds max {}, stopping recovery",
+                    .{ header.body_size, constants.message_body_size_max },
+                );
+                fully_recovered = false;
+                break;
+            }
+
+            // Allocate and read body
+            const body = self.allocator.alloc(u8, header.body_size) catch break;
+            errdefer self.allocator.free(body);
+
+            const body_read = file.read(body) catch {
+                self.allocator.free(body);
+                fully_recovered = false;
+                break;
+            };
+            if (body_read < header.body_size) {
+                self.allocator.free(body);
+                fully_recovered = false;
+                break;
+            }
+
+            // Verify checksum
+            if (!header.validChecksum(body)) {
+                log.warn("Spillover entry failed checksum, skipping op={}", .{header.op});
+                self.allocator.free(body);
+                continue;
+            }
+
+            // Add to memory queue
+            self.memory_queue.append(.{
+                .header = header,
+                .body = body,
+                .queued_at_ns = @intCast(std.time.nanoTimestamp()),
+                .retry_count = 0,
+            }) catch {
+                self.allocator.free(body);
+                break;
+            };
+
+            recovered += 1;
+            self.stats.memory_entries += 1;
+            self.stats.memory_bytes += body.len;
+            self.stats.disk_entries -|= 1;
+            self.stats.disk_bytes -|= body.len;
+        }
+
+        if (recovered > 0) {
+            log.info("Recovered {} entries from disk spillover", .{recovered});
+
+            if (fully_recovered) {
+                // Truncate spillover file after successful recovery
+                std.fs.cwd().deleteFile(path) catch {};
+            }
+        }
+
+        return recovered;
     }
 
     /// Get current queue depth
@@ -324,7 +493,11 @@ pub const Transport = struct {
     vtable: *const VTable,
 
     pub const VTable = struct {
-        ship: *const fn (ptr: *anyopaque, entry: *const ShipEntry, body: []const u8) TransportError!void,
+        ship: *const fn (
+            ptr: *anyopaque,
+            entry: *const ShipEntry,
+            body: []const u8,
+        ) TransportError!void,
         connect: *const fn (ptr: *anyopaque) TransportError!void,
         disconnect: *const fn (ptr: *anyopaque) void,
         isConnected: *const fn (ptr: *anyopaque) bool,
@@ -383,8 +556,6 @@ pub const DirectTcpTransport = struct {
     bytes_received: u64,
     ops_shipped: u64,
 
-    const Self = @This();
-
     /// Magic bytes for protocol handshake
     const PROTOCOL_MAGIC: [4]u8 = .{ 'A', 'R', 'S', 'H' }; // ArcherDB Ship
     const PROTOCOL_VERSION: u16 = 1;
@@ -392,8 +563,8 @@ pub const DirectTcpTransport = struct {
     pub fn init(allocator: Allocator, endpoint: []const u8, port: u16, config: struct {
         connect_timeout_ms: u32 = 5000,
         ship_timeout_ms: u32 = 30000,
-    }) !Self {
-        return Self{
+    }) !DirectTcpTransport {
+        return DirectTcpTransport{
             .allocator = allocator,
             .endpoint = try allocator.dupe(u8, endpoint),
             .port = port,
@@ -408,7 +579,7 @@ pub const DirectTcpTransport = struct {
         };
     }
 
-    pub fn deinit(self: *Self) void {
+    pub fn deinit(self: *DirectTcpTransport) void {
         if (self.stream) |*s| {
             s.close();
             self.stream = null;
@@ -418,7 +589,7 @@ pub const DirectTcpTransport = struct {
     }
 
     fn connectImpl(ctx: *anyopaque) Transport.TransportError!void {
-        const self: *Self = @ptrCast(@alignCast(ctx));
+        const self: *DirectTcpTransport = @ptrCast(@alignCast(ctx));
 
         if (self.connected) return;
 
@@ -449,7 +620,7 @@ pub const DirectTcpTransport = struct {
 
         // Send handshake
         var handshake: [8]u8 = undefined;
-        @memcpy(handshake[0..4], &PROTOCOL_MAGIC);
+        stdx.copy_disjoint(.inexact, u8, handshake[0..4], &PROTOCOL_MAGIC);
         std.mem.writeInt(u16, handshake[4..6], PROTOCOL_VERSION, .little);
         std.mem.writeInt(u16, handshake[6..8], 0, .little); // reserved
 
@@ -464,7 +635,7 @@ pub const DirectTcpTransport = struct {
     }
 
     fn disconnectImpl(ctx: *anyopaque) void {
-        const self: *Self = @ptrCast(@alignCast(ctx));
+        const self: *DirectTcpTransport = @ptrCast(@alignCast(ctx));
         if (self.stream) |*s| {
             s.close();
             self.stream = null;
@@ -473,12 +644,16 @@ pub const DirectTcpTransport = struct {
     }
 
     fn isConnectedImpl(ctx: *anyopaque) bool {
-        const self: *Self = @ptrCast(@alignCast(ctx));
+        const self: *DirectTcpTransport = @ptrCast(@alignCast(ctx));
         return self.connected and self.stream != null;
     }
 
-    fn shipImpl(ctx: *anyopaque, entry: *const ShipEntry, body: []const u8) Transport.TransportError!void {
-        const self: *Self = @ptrCast(@alignCast(ctx));
+    fn shipImpl(
+        ctx: *anyopaque,
+        entry: *const ShipEntry,
+        body: []const u8,
+    ) Transport.TransportError!void {
+        const self: *DirectTcpTransport = @ptrCast(@alignCast(ctx));
 
         if (!self.connected or self.stream == null) {
             return error.ConnectionClosed;
@@ -527,7 +702,7 @@ pub const DirectTcpTransport = struct {
     }
 
     fn getLatencyNsImpl(ctx: *anyopaque) u64 {
-        const self: *Self = @ptrCast(@alignCast(ctx));
+        const self: *DirectTcpTransport = @ptrCast(@alignCast(ctx));
         return self.last_latency_ns;
     }
 
@@ -539,7 +714,7 @@ pub const DirectTcpTransport = struct {
         .getLatencyNs = getLatencyNsImpl,
     };
 
-    pub fn transport(self: *Self) Transport {
+    pub fn transport(self: *DirectTcpTransport) Transport {
         return .{
             .ptr = self,
             .vtable = &vtable,
@@ -569,14 +744,12 @@ pub const S3RelayTransport = struct {
     objects_written: u64,
     bytes_uploaded: u64,
 
-    const Self = @This();
-
     pub fn init(allocator: Allocator, config: struct {
         bucket: []const u8,
         prefix: []const u8 = "replication",
         region: []const u8 = "us-east-1",
-    }) !Self {
-        return Self{
+    }) !S3RelayTransport {
+        return S3RelayTransport{
             .allocator = allocator,
             .bucket = try allocator.dupe(u8, config.bucket),
             .prefix = try allocator.dupe(u8, config.prefix),
@@ -588,14 +761,14 @@ pub const S3RelayTransport = struct {
         };
     }
 
-    pub fn deinit(self: *Self) void {
+    pub fn deinit(self: *S3RelayTransport) void {
         self.allocator.free(self.bucket);
         self.allocator.free(self.prefix);
         self.allocator.free(self.region);
     }
 
     fn connectImpl(ctx: *anyopaque) Transport.TransportError!void {
-        const self: *Self = @ptrCast(@alignCast(ctx));
+        const self: *S3RelayTransport = @ptrCast(@alignCast(ctx));
         // S3 is stateless - "connect" just validates configuration
         // In a real implementation, this would verify S3 credentials and bucket access
         if (self.bucket.len == 0) {
@@ -606,17 +779,21 @@ pub const S3RelayTransport = struct {
     }
 
     fn disconnectImpl(ctx: *anyopaque) void {
-        const self: *Self = @ptrCast(@alignCast(ctx));
+        const self: *S3RelayTransport = @ptrCast(@alignCast(ctx));
         self.connected = false;
     }
 
     fn isConnectedImpl(ctx: *anyopaque) bool {
-        const self: *Self = @ptrCast(@alignCast(ctx));
+        const self: *S3RelayTransport = @ptrCast(@alignCast(ctx));
         return self.connected;
     }
 
-    fn shipImpl(ctx: *anyopaque, entry: *const ShipEntry, body: []const u8) Transport.TransportError!void {
-        const self: *Self = @ptrCast(@alignCast(ctx));
+    fn shipImpl(
+        ctx: *anyopaque,
+        entry: *const ShipEntry,
+        body: []const u8,
+    ) Transport.TransportError!void {
+        const self: *S3RelayTransport = @ptrCast(@alignCast(ctx));
 
         if (!self.connected) {
             return error.ConnectionClosed;
@@ -626,7 +803,11 @@ pub const S3RelayTransport = struct {
 
         // Build S3 object key: {prefix}/ship/{op}.wal
         var key_buf: [256]u8 = undefined;
-        const key = std.fmt.bufPrint(&key_buf, "{s}/ship/{d:0>20}.wal", .{ self.prefix, entry.op }) catch {
+        const key = std.fmt.bufPrint(
+            &key_buf,
+            "{s}/ship/{d:0>20}.wal",
+            .{ self.prefix, entry.op },
+        ) catch {
             return error.OutOfMemory;
         };
 
@@ -638,9 +819,9 @@ pub const S3RelayTransport = struct {
         defer self.allocator.free(content);
 
         const header_bytes: *const [64]u8 = @ptrCast(entry);
-        @memcpy(content[0..64], header_bytes);
+        stdx.copy_disjoint(.inexact, u8, content[0..64], header_bytes);
         if (body.len > 0) {
-            @memcpy(content[64..], body);
+            stdx.copy_disjoint(.inexact, u8, content[64..], body);
         }
 
         // In a real implementation, this would use AWS SDK to upload to S3
@@ -660,7 +841,7 @@ pub const S3RelayTransport = struct {
     }
 
     fn getLatencyNsImpl(ctx: *anyopaque) u64 {
-        const self: *Self = @ptrCast(@alignCast(ctx));
+        const self: *S3RelayTransport = @ptrCast(@alignCast(ctx));
         return self.last_latency_ns;
     }
 
@@ -672,7 +853,7 @@ pub const S3RelayTransport = struct {
         .getLatencyNs = getLatencyNsImpl,
     };
 
-    pub fn transport(self: *Self) Transport {
+    pub fn transport(self: *S3RelayTransport) Transport {
         return .{
             .ptr = self,
             .vtable = &vtable,
@@ -689,7 +870,9 @@ pub const FollowerConfig = struct {
     /// Transport type
     transport_type: TransportType,
     /// Endpoint address for Direct TCP
-    endpoint: ?[]const u8 = null,
+    endpoint: []const u8 = "",
+    /// Port for Direct TCP transport
+    port: u16 = 5000,
     /// S3 bucket for S3 Relay transport
     s3_bucket: ?[]const u8 = null,
     /// S3 prefix for S3 Relay transport
@@ -810,7 +993,12 @@ pub const ShipCoordinator = struct {
     }
 
     /// Queue a committed operation for shipping
-    pub fn queueCommit(self: *ShipCoordinator, op: u64, commit_timestamp_ns: u64, body: []const u8) !void {
+    pub fn queueCommit(
+        self: *ShipCoordinator,
+        op: u64,
+        commit_timestamp_ns: u64,
+        body: []const u8,
+    ) !void {
         try self.queue.enqueue(op, commit_timestamp_ns, self.primary_region_id, body);
     }
 
@@ -828,10 +1016,28 @@ pub const ShipCoordinator = struct {
                 }
             }
 
-            // Ensure connected
+            // Ensure connected - create transport based on config
             if (follower.transport == null) {
-                // TODO: Create transport based on config
-                continue;
+                follower.transport = self.createTransport(follower.config) catch |err| {
+                    log.warn("Failed to create transport for region {}: {}", .{
+                        follower.config.region_id,
+                        err,
+                    });
+                    follower.consecutive_failures += 1;
+                    follower.last_retry_ns = now;
+                    continue;
+                };
+
+                // Connect the transport
+                follower.transport.?.connect() catch |err| {
+                    log.warn("Failed to connect to region {}: {}", .{
+                        follower.config.region_id,
+                        err,
+                    });
+                    follower.consecutive_failures += 1;
+                    follower.last_retry_ns = now;
+                    continue;
+                };
             }
 
             // Ship entries
@@ -858,7 +1064,8 @@ pub const ShipCoordinator = struct {
                 follower.lag.shipped_op = entry.header.op;
                 follower.lag.last_ship_ns = now;
                 follower.consecutive_failures = 0;
-                follower.retry_backoff_ns = repl_constants.ship_retry_backoff_initial_ms * std.time.ns_per_ms;
+                follower.retry_backoff_ns =
+                    repl_constants.ship_retry_backoff_initial_ms * std.time.ns_per_ms;
             }
         }
     }
@@ -876,6 +1083,29 @@ pub const ShipCoordinator = struct {
     /// Get queue statistics
     pub fn getQueueStats(self: *ShipCoordinator) ShipQueueStats {
         return self.queue.getStats();
+    }
+
+    /// Create transport based on follower config
+    fn createTransport(self: *ShipCoordinator, config: FollowerConfig) !Transport {
+        switch (config.transport_type) {
+            .direct_tcp => {
+                const tcp = try self.allocator.create(DirectTcpTransport);
+                tcp.* = try DirectTcpTransport.init(self.allocator, config.endpoint, config.port, .{
+                    .connect_timeout_ms = config.connect_timeout_ms,
+                    .ship_timeout_ms = config.ship_timeout_ms,
+                });
+                return tcp.transport();
+            },
+            .s3_relay => {
+                const s3 = try self.allocator.create(S3RelayTransport);
+                s3.* = try S3RelayTransport.init(self.allocator, .{
+                    .bucket = config.s3_bucket orelse return error.MissingS3Config,
+                    .prefix = config.s3_prefix orelse "replication/",
+                    .region = config.name, // Use region name string (e.g., "eu-west-1")
+                });
+                return s3.transport();
+            },
+        }
     }
 };
 
@@ -1167,6 +1397,127 @@ test "ShipQueue overflow without spillover" {
     // Verify oldest was dropped
     const entry = queue.peek().?;
     try std.testing.expectEqual(@as(u64, 2), entry.header.op);
+}
+
+test "ShipQueue recoverFromDisk loads valid entries" {
+    const allocator = std.testing.allocator;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(tmp_path);
+    const spill_path = try std.fs.path.join(allocator, &.{ tmp_path, "spillover.bin" });
+    defer allocator.free(spill_path);
+
+    // Write a valid spillover entry.
+    const body = "hello";
+    var entry = ShipEntry{
+        .op = 7,
+        .commit_timestamp_ns = 1234,
+        .body_size = body.len,
+        .primary_region_id = 1,
+    };
+    entry.setChecksum(body);
+
+    var spill_file = try std.fs.cwd().createFile(spill_path, .{ .truncate = true });
+    defer spill_file.close();
+    try spill_file.writeAll(std.mem.asBytes(&entry));
+    try spill_file.writeAll(body);
+
+    var queue = try ShipQueue.init(allocator, .{
+        .memory_max = 1,
+        .spillover_path = spill_path,
+    });
+    defer queue.deinit();
+
+    const recovered = try queue.recoverFromDisk();
+    try std.testing.expectEqual(@as(u64, 1), recovered);
+    try std.testing.expectEqual(@as(u64, 1), queue.depth());
+
+    const dequeued = queue.dequeue().?;
+    defer queue.markShipped(dequeued);
+    try std.testing.expectEqual(@as(u64, 7), dequeued.header.op);
+    try std.testing.expectEqualStrings(body, dequeued.body);
+}
+
+test "ShipQueue recoverFromDisk rejects invalid headers" {
+    const allocator = std.testing.allocator;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(tmp_path);
+    const spill_path = try std.fs.path.join(allocator, &.{ tmp_path, "spillover.bin" });
+    defer allocator.free(spill_path);
+
+    var entry = ShipEntry{
+        .op = 1,
+        .commit_timestamp_ns = 1,
+        .body_size = 0,
+        .primary_region_id = 1,
+    };
+    entry.magic = .{ 'B', 'A', 'D', '!' };
+
+    var spill_file = try std.fs.cwd().createFile(spill_path, .{ .truncate = true });
+    defer spill_file.close();
+    try spill_file.writeAll(std.mem.asBytes(&entry));
+
+    var queue = try ShipQueue.init(allocator, .{
+        .memory_max = 1,
+        .spillover_path = spill_path,
+    });
+    defer queue.deinit();
+
+    const recovered = try queue.recoverFromDisk();
+    try std.testing.expectEqual(@as(u64, 0), recovered);
+    try std.testing.expectEqual(@as(u64, 0), queue.depth());
+}
+
+test "ShipQueue recoverFromDisk respects memory limit" {
+    const allocator = std.testing.allocator;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(tmp_path);
+    const spill_path = try std.fs.path.join(allocator, &.{ tmp_path, "spillover.bin" });
+    defer allocator.free(spill_path);
+
+    const body = "hello";
+    var entry = ShipEntry{
+        .op = 1,
+        .commit_timestamp_ns = 1234,
+        .body_size = body.len,
+        .primary_region_id = 1,
+    };
+    entry.setChecksum(body);
+
+    var spill_file = try std.fs.cwd().createFile(spill_path, .{ .truncate = true });
+    defer spill_file.close();
+    try spill_file.writeAll(std.mem.asBytes(&entry));
+    try spill_file.writeAll(body);
+
+    entry.op = 2;
+    entry.setChecksum(body);
+    try spill_file.writeAll(std.mem.asBytes(&entry));
+    try spill_file.writeAll(body);
+
+    var queue = try ShipQueue.init(allocator, .{
+        .memory_max = 1,
+        .spillover_path = spill_path,
+    });
+    defer queue.deinit();
+
+    const recovered = try queue.recoverFromDisk();
+    try std.testing.expectEqual(@as(u64, 1), recovered);
+    try std.testing.expectEqual(@as(u64, 1), queue.depth());
+
+    _ = std.fs.cwd().statFile(spill_path) catch |err| {
+        return err;
+    };
 }
 
 test "RegionRole parsing" {

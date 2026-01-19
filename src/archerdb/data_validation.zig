@@ -31,10 +31,10 @@
 //! ```
 
 const std = @import("std");
+const stdx = @import("stdx");
 const mem = std.mem;
 const Allocator = mem.Allocator;
 const GeoEvent = @import("../geo_event.zig").GeoEvent;
-const GeoEventFlags = @import("../geo_event.zig").GeoEventFlags;
 
 /// Maximum number of validation errors to collect per event.
 pub const MAX_ERRORS_PER_EVENT: usize = 16;
@@ -106,14 +106,14 @@ pub const ValidationError = struct {
     /// Set the message string.
     pub fn setMessage(self: *ValidationError, msg: []const u8) void {
         const len = @min(msg.len, 255);
-        @memcpy(self.message[0..len], msg[0..len]);
+        stdx.copy_disjoint(.inexact, u8, self.message[0..len], msg[0..len]);
         self.message_len = @intCast(len);
     }
 
     /// Set the field name.
     pub fn setFieldName(self: *ValidationError, name: []const u8) void {
         const len = @min(name.len, 63);
-        @memcpy(self.field_name[0..len], name[0..len]);
+        stdx.copy_disjoint(.inexact, u8, self.field_name[0..len], name[0..len]);
         self.field_name_len = @intCast(len);
     }
 
@@ -294,22 +294,26 @@ pub const DataProfile = struct {
     pub fn completenessPercent(self: *const DataProfile) f64 {
         if (self.total_events == 0) return 0.0;
         // Count optional fields that have values
-        const optional_fields: f64 = 8.0; // correlation_id, altitude, velocity, heading, accuracy, ttl, group_id, user_data
-        const filled_sum: f64 = @as(f64, @floatFromInt(self.has_correlation_id +
-            self.has_altitude +
-            self.has_velocity +
-            self.has_heading +
-            self.has_accuracy +
-            self.has_ttl +
-            self.has_group_id +
-            self.has_user_data));
-        return (filled_sum / (optional_fields * @as(f64, @floatFromInt(self.total_events)))) * 100.0;
+        const optional_fields: f64 = 8.0;
+        const filled_sum: f64 = @as(f64, @floatFromInt(
+            self.has_correlation_id +
+                self.has_altitude +
+                self.has_velocity +
+                self.has_heading +
+                self.has_accuracy +
+                self.has_ttl +
+                self.has_group_id +
+                self.has_user_data,
+        ));
+        const total: f64 = optional_fields * @as(f64, @floatFromInt(self.total_events));
+        return (filled_sum / total) * 100.0;
     }
 
     /// Calculate validation success rate.
     pub fn validationSuccessRate(self: *const DataProfile) f64 {
         if (self.total_events == 0) return 100.0;
-        return (@as(f64, @floatFromInt(self.valid_events)) / @as(f64, @floatFromInt(self.total_events))) * 100.0;
+        return (@as(f64, @floatFromInt(self.valid_events)) /
+            @as(f64, @floatFromInt(self.total_events))) * 100.0;
     }
 
     /// Get the spatial bounding box as float degrees.
@@ -345,8 +349,6 @@ pub const DataProfile = struct {
 
 /// Data validator for GeoEvents.
 pub const DataValidator = struct {
-    const Self = @This();
-
     allocator: Allocator,
     options: ValidationOptions,
     profile: DataProfile,
@@ -358,7 +360,7 @@ pub const DataValidator = struct {
     seen_entities: ?std.AutoHashMap(u128, usize),
 
     /// Initialize a new data validator.
-    pub fn init(allocator: Allocator, options: ValidationOptions) Self {
+    pub fn init(allocator: Allocator, options: ValidationOptions) DataValidator {
         return .{
             .allocator = allocator,
             .options = options,
@@ -375,7 +377,7 @@ pub const DataValidator = struct {
     }
 
     /// Deinitialize and free resources.
-    pub fn deinit(self: *Self) void {
+    pub fn deinit(self: *DataValidator) void {
         if (self.last_timestamp_by_entity) |*map| {
             map.deinit();
         }
@@ -385,7 +387,7 @@ pub const DataValidator = struct {
     }
 
     /// Reset the validator state (keeps options).
-    pub fn reset(self: *Self) void {
+    pub fn reset(self: *DataValidator) void {
         self.profile = .{};
         if (self.last_timestamp_by_entity) |*map| {
             map.clearRetainingCapacity();
@@ -396,12 +398,16 @@ pub const DataValidator = struct {
     }
 
     /// Validate a single GeoEvent.
-    pub fn validateEvent(self: *Self, event: *const GeoEvent) ValidationResult {
+    pub fn validateEvent(self: *DataValidator, event: *const GeoEvent) ValidationResult {
         return self.validateEventAt(event, null);
     }
 
     /// Validate a single GeoEvent with index for error reporting.
-    pub fn validateEventAt(self: *Self, event: *const GeoEvent, index: ?usize) ValidationResult {
+    pub fn validateEventAt(
+        self: *DataValidator,
+        event: *const GeoEvent,
+        index: ?usize,
+    ) ValidationResult {
         var result = ValidationResult.init();
 
         // Update profile statistics
@@ -463,13 +469,17 @@ pub const DataValidator = struct {
     }
 
     /// Validate a batch of events.
-    pub fn validateBatch(self: *Self, events: []const GeoEvent) struct {
+    pub fn validateBatch(self: *DataValidator, events: []const GeoEvent) struct {
         valid_count: usize,
         invalid_count: usize,
         results: []ValidationResult,
     } {
         var results = self.allocator.alloc(ValidationResult, events.len) catch {
-            return .{ .valid_count = 0, .invalid_count = events.len, .results = &[_]ValidationResult{} };
+            return .{
+                .valid_count = 0,
+                .invalid_count = events.len,
+                .results = &[_]ValidationResult{},
+            };
         };
 
         var valid_count: usize = 0;
@@ -492,18 +502,18 @@ pub const DataValidator = struct {
     }
 
     /// Free batch validation results.
-    pub fn freeBatchResults(self: *Self, results: []ValidationResult) void {
+    pub fn freeBatchResults(self: *DataValidator, results: []ValidationResult) void {
         self.allocator.free(results);
     }
 
     /// Get the current data profile.
-    pub fn getProfile(self: *const Self) DataProfile {
+    pub fn getProfile(self: *const DataValidator) DataProfile {
         return self.profile;
     }
 
     // === Private validation methods ===
 
-    fn updateProfileStats(self: *Self, event: *const GeoEvent) void {
+    fn updateProfileStats(self: *DataValidator, event: *const GeoEvent) void {
         // Coordinate bounds
         if (event.lat_nano < self.profile.min_lat_nano) {
             self.profile.min_lat_nano = event.lat_nano;
@@ -554,13 +564,24 @@ pub const DataValidator = struct {
         if (event.flags.deleted) self.profile.deleted_count += 1;
     }
 
-    fn validateCoordinates(self: *Self, event: *const GeoEvent, result: *ValidationResult, index: ?usize) void {
+    fn validateCoordinates(
+        self: *DataValidator,
+        event: *const GeoEvent,
+        result: *ValidationResult,
+        index: ?usize,
+    ) void {
         // Latitude check
-        if (event.lat_nano < GeoEvent.lat_nano_min or event.lat_nano > GeoEvent.lat_nano_max) {
+        if (event.lat_nano < GeoEvent.lat_nano_min or
+            event.lat_nano > GeoEvent.lat_nano_max)
+        {
+            const expected = if (event.lat_nano < GeoEvent.lat_nano_min)
+                GeoEvent.lat_nano_min
+            else
+                GeoEvent.lat_nano_max;
             var err = ValidationError{
                 .category = .coordinate_range,
                 .severity = .err,
-                .expected_value = if (event.lat_nano < GeoEvent.lat_nano_min) GeoEvent.lat_nano_min else GeoEvent.lat_nano_max,
+                .expected_value = expected,
                 .actual_value = event.lat_nano,
                 .event_index = index,
             };
@@ -571,11 +592,17 @@ pub const DataValidator = struct {
         }
 
         // Longitude check
-        if (event.lon_nano < GeoEvent.lon_nano_min or event.lon_nano > GeoEvent.lon_nano_max) {
+        if (event.lon_nano < GeoEvent.lon_nano_min or
+            event.lon_nano > GeoEvent.lon_nano_max)
+        {
+            const expected = if (event.lon_nano < GeoEvent.lon_nano_min)
+                GeoEvent.lon_nano_min
+            else
+                GeoEvent.lon_nano_max;
             var err = ValidationError{
                 .category = .coordinate_range,
                 .severity = .err,
-                .expected_value = if (event.lon_nano < GeoEvent.lon_nano_min) GeoEvent.lon_nano_min else GeoEvent.lon_nano_max,
+                .expected_value = expected,
                 .actual_value = event.lon_nano,
                 .event_index = index,
             };
@@ -586,7 +613,12 @@ pub const DataValidator = struct {
         }
     }
 
-    fn validateTimestamp(self: *Self, event: *const GeoEvent, result: *ValidationResult, index: ?usize) void {
+    fn validateTimestamp(
+        self: *DataValidator,
+        event: *const GeoEvent,
+        result: *ValidationResult,
+        index: ?usize,
+    ) void {
         // Zero timestamp check
         if (event.timestamp == 0) {
             var err = ValidationError{
@@ -648,7 +680,12 @@ pub const DataValidator = struct {
         }
     }
 
-    fn validateTimestampOrdering(self: *Self, event: *const GeoEvent, result: *ValidationResult, index: ?usize) void {
+    fn validateTimestampOrdering(
+        self: *DataValidator,
+        event: *const GeoEvent,
+        result: *ValidationResult,
+        index: ?usize,
+    ) void {
         if (self.last_timestamp_by_entity) |*map| {
             if (event.entity_id != 0) {
                 if (map.get(event.entity_id)) |last_ts| {
@@ -661,7 +698,9 @@ pub const DataValidator = struct {
                             .event_index = index,
                         };
                         err.setFieldName("timestamp");
-                        err.setMessage("Timestamp out of chronological order for entity");
+                        err.setMessage(
+                            "Timestamp out of chronological order for entity",
+                        );
                         result.addError(err);
                         self.profile.timestamp_errors += 1;
                     }
@@ -671,7 +710,12 @@ pub const DataValidator = struct {
         }
     }
 
-    fn validateEntityId(self: *Self, event: *const GeoEvent, result: *ValidationResult, index: ?usize) void {
+    fn validateEntityId(
+        self: *DataValidator,
+        event: *const GeoEvent,
+        result: *ValidationResult,
+        index: ?usize,
+    ) void {
         // Zero entity ID check
         if (event.entity_id == 0) {
             var err = ValidationError{
@@ -687,7 +731,12 @@ pub const DataValidator = struct {
         }
     }
 
-    fn validateEntityUniqueness(self: *Self, event: *const GeoEvent, result: *ValidationResult, index: ?usize) void {
+    fn validateEntityUniqueness(
+        self: *DataValidator,
+        event: *const GeoEvent,
+        result: *ValidationResult,
+        index: ?usize,
+    ) void {
         if (self.seen_entities) |*map| {
             if (event.entity_id != 0) {
                 const gop = map.getOrPut(event.entity_id) catch {
@@ -699,7 +748,8 @@ pub const DataValidator = struct {
                     // But we track it for profiling
                     self.profile.duplicate_entity_count += 1;
 
-                    // Only report if we're checking for true duplicates (same entity, same timestamp)
+                    // Only report if we're checking for true duplicates
+                    // (same entity, same timestamp)
                     if (self.last_timestamp_by_entity) |ts_map| {
                         if (ts_map.get(event.entity_id)) |last_ts| {
                             if (last_ts == event.timestamp) {
@@ -710,7 +760,9 @@ pub const DataValidator = struct {
                                     .event_index = index,
                                 };
                                 err.setFieldName("entity_id");
-                                err.setMessage("Duplicate event: same entity and timestamp");
+                                err.setMessage(
+                                    "Duplicate event: same entity and timestamp",
+                                );
                                 result.addError(err);
                             }
                         }
@@ -723,7 +775,12 @@ pub const DataValidator = struct {
         }
     }
 
-    fn validateRequiredFields(self: *Self, event: *const GeoEvent, result: *ValidationResult, index: ?usize) void {
+    fn validateRequiredFields(
+        self: *DataValidator,
+        event: *const GeoEvent,
+        result: *ValidationResult,
+        index: ?usize,
+    ) void {
         // id is required
         if (event.id == 0) {
             var err = ValidationError{
@@ -738,7 +795,12 @@ pub const DataValidator = struct {
         }
     }
 
-    fn validateHeading(self: *Self, event: *const GeoEvent, result: *ValidationResult, index: ?usize) void {
+    fn validateHeading(
+        self: *DataValidator,
+        event: *const GeoEvent,
+        result: *ValidationResult,
+        index: ?usize,
+    ) void {
         if (event.heading_cdeg > GeoEvent.heading_max) {
             var err = ValidationError{
                 .category = .heading_range,
@@ -754,7 +816,12 @@ pub const DataValidator = struct {
         }
     }
 
-    fn validateTtl(self: *Self, event: *const GeoEvent, result: *ValidationResult, index: ?usize) void {
+    fn validateTtl(
+        self: *DataValidator,
+        event: *const GeoEvent,
+        result: *ValidationResult,
+        index: ?usize,
+    ) void {
         if (event.ttl_seconds > self.options.max_ttl_seconds) {
             var err = ValidationError{
                 .category = .ttl_exceeded,
@@ -770,7 +837,12 @@ pub const DataValidator = struct {
         }
     }
 
-    fn validateReserved(self: *Self, event: *const GeoEvent, result: *ValidationResult, index: ?usize) void {
+    fn validateReserved(
+        self: *DataValidator,
+        event: *const GeoEvent,
+        result: *ValidationResult,
+        index: ?usize,
+    ) void {
         // Check reserved bytes are zero
         var has_nonzero: bool = false;
         for (event.reserved) |byte| {
@@ -793,7 +865,12 @@ pub const DataValidator = struct {
         }
     }
 
-    fn validateFlags(self: *Self, event: *const GeoEvent, result: *ValidationResult, index: ?usize) void {
+    fn validateFlags(
+        self: *DataValidator,
+        event: *const GeoEvent,
+        result: *ValidationResult,
+        index: ?usize,
+    ) void {
         // Check padding bits are zero
         if (event.flags.padding != 0) {
             var err = ValidationError{

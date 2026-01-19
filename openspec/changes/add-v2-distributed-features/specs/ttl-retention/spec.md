@@ -174,8 +174,8 @@ The system SHALL define error codes for TTL extension operations.
 
 | Requirement | Status | Notes |
 |-------------|--------|-------|
-| TTL Extension on Read | ✓ Complete | `ttl.zig` ExtensionConfig, check_extension |
-| TTL Extension Policies | ✓ Complete | no_auto_extend flag, max_extension_count |
-| TTL Extension Metrics | ✓ Complete | ExtensionMetrics struct in `ttl.zig` |
-| Manual TTL Operations | ✓ Complete | State machine handlers, request/response types |
-| TTL Extension Error Codes (240-243) | ✓ Complete | `error_codes.zig` |
+| TTL Extension on Read | IMPLEMENTED | All client SDKs |
+| TTL Extension Policies | IMPLEMENTED | `src/replication.zig` |
+| TTL Extension Observability | IMPLEMENTED | `src/replication.zig` |
+| Manual TTL Operations | IMPLEMENTED | All client SDKs |
+| TTL Extension Error Codes | IMPLEMENTED | `src/replication.zig` |

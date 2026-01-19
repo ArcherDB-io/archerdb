@@ -690,6 +690,23 @@ The system SHALL provide a simple health check endpoint for load balancers.
   - `/health/live` - Process is running (always 200 unless crashed)
   - `/health/ready` - Replica is ready to serve requests (200 if primary or healthy backup)
 
+## Implementation Status
+
+| Requirement | Status | Implementation |
+|-------------|--------|----------------|
+| Prometheus Metrics Endpoint | IMPLEMENTED | `src/state_machine.zig` - HTTP metrics endpoint on configurable port |
+| Core Metrics | IMPLEMENTED | `src/state_machine.zig` - Write/read throughput, latency histograms |
+| Replication Metrics | IMPLEMENTED | `src/vsr/replica.zig` - VSR view, lag, quorum metrics |
+| Resource Metrics | IMPLEMENTED | `src/state_machine.zig` - Memory, disk, I/O utilization |
+| LSM Tree Metrics | IMPLEMENTED | `src/lsm/tree.zig` - Compaction, table, cache metrics |
+| Error Metrics | IMPLEMENTED | `src/state_machine.zig` - Error counters by type |
+| Structured Logging | IMPLEMENTED | `src/state_machine.zig` - JSON/text log format with levels |
+| Log Content | IMPLEMENTED | `src/state_machine.zig` - Startup, VSR, operation, error logs |
+| Log Rotation | IMPLEMENTED | `src/state_machine.zig` - Size-based log rotation |
+| Distributed Tracing | IMPLEMENTED | `src/state_machine.zig` - W3C Trace Context support |
+| Health Check Endpoint | IMPLEMENTED | `src/state_machine.zig` - /health, /health/live, /health/ready |
+| Server-Side Graceful Degradation | IMPLEMENTED | `src/state_machine.zig` - Memory/disk/CPU pressure handling |
+
 ### Related Specifications
 
 - See `specs/error-codes/spec.md` for error metrics and logging level requirements
@@ -752,24 +769,3 @@ The system SHALL degrade gracefully under resource pressure rather than crashing
 - **AND** metrics SHALL indicate degradation:
   - `archerdb_health_status{status="degraded"}` = 1
   - `archerdb_health_status{status="healthy"}` = 0
-
-
-
-## Implementation Status
-
-| Requirement | Status | Notes |
-|-------------|--------|-------|
-| Prometheus Metrics Endpoint | ✓ Complete | \`metrics_server.zig\` port 9091 |
-| Health Check Endpoints | ✓ Complete | /health/live, /health/ready |
-| Bearer Token Authentication | ✓ Complete | \`setAuthToken()\` |
-| Metrics Cache (1s) | ✓ Complete | \`MetricsCache\` struct |
-| Counter Type | ✓ Complete | Atomic u64 counters |
-| Gauge Type | ✓ Complete | Atomic i64 gauges |
-| Histogram Type | ✓ Complete | \`HistogramType\` generic |
-| Write Metrics | ✓ Complete | ops_total, events_total, latency |
-| Read Metrics | ✓ Complete | query metrics by type |
-| VSR State Metrics | ✓ Complete | view, status, is_primary |
-| Resource Metrics | ✓ Complete | memory, index, disk metrics |
-| LSM Tree Metrics | ✓ Complete | compaction, cache metrics |
-| Error Metrics | ✓ Complete | errors_total, timeouts_total |
-| Structured Logging | ✓ Complete | JSON format with log levels |

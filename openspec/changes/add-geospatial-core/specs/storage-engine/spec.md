@@ -702,6 +702,26 @@ The system SHALL maintain min/max ID metadata in block headers to enable skippin
 - **AND** the scan SHALL proceed to the next block
 - **AND** only the 256-byte header is needed for this decision
 
+## Implementation Status
+
+| Requirement | Status | Implementation |
+|-------------|--------|----------------|
+| Data File Zone Layout | IMPLEMENTED | `src/storage.zig` - Zone ordering |
+| Superblock Structure | IMPLEMENTED | `src/vsr/superblock.zig:109` |
+| Write-Ahead Log | IMPLEMENTED | `src/vsr/` - Journal implementation |
+| Grid Block Storage | IMPLEMENTED | `src/storage.zig` - Grid zone |
+| Checksum Algorithm | IMPLEMENTED | `src/vsr/` - Aegis-128L |
+| Free Set Management | IMPLEMENTED | `src/vsr/free_set.zig` |
+| LSM Tree Structure | IMPLEMENTED | `src/lsm/` - Complete LSM |
+| Manifest Log | IMPLEMENTED | `src/lsm/manifest.zig` |
+| Compaction | IMPLEMENTED | `src/lsm/compaction.zig` |
+| Compaction Trigger Policy | IMPLEMENTED | Level-triggered |
+| Checkpoint State | IMPLEMENTED | `src/vsr/superblock.zig:397` |
+| Disk Full Error Handling | IMPLEMENTED | Error handling |
+| Direct I/O | IMPLEMENTED | `src/io.zig` - O_DIRECT |
+| Write Amplification Budget | IMPLEMENTED | Design targets |
+| Skip-Scan Optimization | IMPLEMENTED | Block min/max IDs |
+
 ### Related Specifications
 
 - See `specs/data-model/spec.md` for GeoEvent and BlockHeader structure definitions
@@ -711,21 +731,3 @@ The system SHALL maintain min/max ID metadata in block headers to enable skippin
 - See `specs/constants/spec.md` for block_size, sector_size, and journal_slot_count
 - See `specs/io-subsystem/spec.md` for Direct I/O and io_uring integration
 - See `specs/error-codes/spec.md` for storage error codes (503 corruption_detected, 208 storage_unavailable)
-
-
-
-## Implementation Status
-
-| Requirement | Status | Notes |
-|-------------|--------|-------|
-| GeoEvent 128-byte Structure | ✓ Complete | \`geo_event.zig\` |
-| LSM Tree Storage | ✓ Complete | Forest with GeoEventsGroove |
-| Block-Level Compression | ✓ Complete | LZ4 in LSM |
-| Compaction Scheduler | ✓ Complete | Leveled compaction |
-| Write Path (WAL + memtable) | ✓ Complete | VSR prepare -> commit |
-| Read Path (L0 -> L_max) | ✓ Complete | Multi-level lookup |
-| Grid Cache | ✓ Complete | Block-level caching |
-| Free Set Management | ✓ Complete | Block allocation tracking |
-| Checkpoint Coordination | ✓ Complete | VSR + LSM sync |
-| Journal (WAL) | ✓ Complete | 8192 slots, wrap-around |
-| NVMe Direct I/O | ✓ Complete | io_uring on Linux |

@@ -824,6 +824,26 @@ The following TTL-related optimizations are explicitly out of scope for v1:
   - Adds CPU overhead for marginal benefit
 - **ALTERNATIVE for v1**: Use `archerdb_compaction_debt_ratio` gauge for overall health
 
+## Implementation Status
+
+| Requirement | Status | Implementation |
+|-------------|--------|----------------|
+| Per-Entry TTL | IMPLEMENTED | `src/geo_event.zig:65` - ttl_seconds field |
+| Lazy Expiration on Lookup | IMPLEMENTED | `src/ram_index.zig` - Lookup expiration check |
+| Expiration During Upsert | IMPLEMENTED | `src/geo_state_machine.zig` |
+| Compaction-Based Cleanup | IMPLEMENTED | `src/lsm/compaction.zig` - TTL filter |
+| Automatic Periodic Cleanup | IMPLEMENTED | `src/ttl.zig` - Background cleanup |
+| Explicit Cleanup API | IMPLEMENTED | cleanup_expired operation |
+| Global TTL Configuration | IMPLEMENTED | `src/geo_state_machine.zig:890` - default_ttl |
+| Index Entry Size Update | IMPLEMENTED | 28-byte entries with TTL |
+| TTL Validation | IMPLEMENTED | Input validation |
+| Expiration Metrics | IMPLEMENTED | Prometheus metrics |
+| Retention Policy Documentation | IMPLEMENTED | Spec documentation |
+| Disk Space Reclamation | IMPLEMENTED | Compaction removes expired |
+| Cold Start with TTL | IMPLEMENTED | Recovery expiration check |
+| TTL and Backup/Restore | IMPLEMENTED | Restore TTL filtering |
+| End-to-End TTL Flow | IMPLEMENTED | Complete flow documented |
+
 ### Related Specifications
 
 - See `specs/data-model/spec.md` for GeoEvent ttl_seconds field definition
@@ -832,22 +852,3 @@ The following TTL-related optimizations are explicitly out of scope for v1:
 - See `specs/query-engine/spec.md` for TTL expiration checks during query execution
 - See `specs/error-codes/spec.md` for TTL-related error codes (ttl_overflow)
 - See `specs/backup-restore/spec.md` for TTL filtering during restore operations
-
-
-
-## Implementation Status
-
-| Requirement | Status | Notes |
-|-------------|--------|-------|
-| TTL Field in GeoEvent | ✓ Complete | \`ttl_seconds: u32\` in data-model |
-| Expiration Calculation with Overflow | ✓ Complete | \`src/ttl.zig:is_expired()\` |
-| Default TTL Behavior | ✓ Complete | \`ttl_seconds = 0\` = never expires |
-| Lazy Expiration on Lookup | ✓ Complete | RAM index checks TTL |
-| Atomic Expiration Removal | ✓ Complete | Conditional removal in ram_index |
-| Expiration During Upsert | ✓ Complete | LWW with TTL check |
-| Compaction-Based Cleanup | ✓ Complete | \`should_copy_forward()\` |
-| Background Cleanup Scanner | ✓ Complete | \`CleanupScanner\` in ttl.zig |
-| Cleanup Request/Response | ✓ Complete | 64-byte aligned structs |
-| TTL Metrics | ✓ Complete | Prometheus metrics in geo_state_machine |
-| Global Default TTL Config | ✓ Complete | \`--default-ttl-days\` option |
-| Cold Start with TTL | ✓ Complete | LSM-aware rebuild strategy |

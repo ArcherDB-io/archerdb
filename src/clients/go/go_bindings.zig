@@ -217,7 +217,7 @@ fn emit_packed_struct(
         });
     }
 
-    // Conversion from struct to packed (e.g. AccountFlags.ToUint16())
+    // Conversion from struct to packed (e.g. GeoEventFlags.ToUint16())
     try buffer.writer().print("}}\n\n" ++
         "func (f {s}) To{s}() {s} {{\n" ++
         "\tvar ret {s} = 0\n\n", .{

@@ -1,6 +1,8 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
+using System.Buffers.Binary;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 
 namespace ArcherDB.Tests;
@@ -121,6 +123,84 @@ public class WireFormatTests
 
         Assert.AreEqual((uint)codes.GetProperty("OK").GetInt32(), (uint)DeleteEntityResult.Ok, "OK");
         Assert.AreEqual((uint)codes.GetProperty("ENTITY_NOT_FOUND").GetInt32(), (uint)DeleteEntityResult.EntityNotFound, "ENTITY_NOT_FOUND");
+    }
+
+    // ========================================================================
+    // Query UUID Batch Tests
+    // ========================================================================
+
+    [TestMethod]
+    public void WireFormat_QueryUuidBatchRequest_EncodesCorrectly()
+    {
+        var ids = new UInt128[]
+        {
+            new UInt128(0x1122334455667788, 0x99AABBCCDDEEFF00),
+            new UInt128(0x0102030405060708, 0x1112131415161718),
+        };
+
+        var buffer = GeoClient.EncodeQueryUuidBatchRequest(ids);
+
+        Assert.AreEqual(8 + ids.Length * UInt128Extensions.SIZE, buffer.Length, "request size");
+        Assert.AreEqual((uint)ids.Length, BinaryPrimitives.ReadUInt32LittleEndian(buffer.AsSpan(0, 4)), "count");
+        Assert.AreEqual(0u, BinaryPrimitives.ReadUInt32LittleEndian(buffer.AsSpan(4, 4)), "reserved");
+
+        for (int index = 0; index < ids.Length; index += 1)
+        {
+            var start = 8 + index * UInt128Extensions.SIZE;
+            var expected = ids[index].ToArray();
+            CollectionAssert.AreEqual(expected, buffer.AsSpan(start, UInt128Extensions.SIZE).ToArray());
+        }
+    }
+
+    [TestMethod]
+    public void WireFormat_QueryUuidBatchResponse_Parses()
+    {
+        var events = new GeoEvent[]
+        {
+            new GeoEvent
+            {
+                EntityId = 101,
+                LatNano = 1,
+                LonNano = 2,
+                GroupId = 10,
+            },
+            new GeoEvent
+            {
+                EntityId = 202,
+                LatNano = 3,
+                LonNano = 4,
+                GroupId = 20,
+            },
+        };
+
+        const ushort missingIndex = 1;
+        const int notFoundCount = 1;
+        const int foundCount = 2;
+        const int headerSize = 16;
+        var indicesSize = notFoundCount * sizeof(ushort);
+        var indicesEnd = headerSize + indicesSize;
+        var eventsOffset = (indicesEnd + 15) & ~15;
+        var totalSize = eventsOffset + foundCount * GeoEvent.SIZE;
+
+        var buffer = new byte[totalSize];
+        BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(0, 4), foundCount);
+        BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(4, 4), notFoundCount);
+        BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(headerSize, sizeof(ushort)), missingIndex);
+
+        for (int index = 0; index < events.Length; index += 1)
+        {
+            var start = eventsOffset + index * GeoEvent.SIZE;
+            MemoryMarshal.Write(buffer.AsSpan(start, GeoEvent.SIZE), in events[index]);
+        }
+
+        var parsed = GeoClient.ParseQueryUuidBatchResponse(buffer);
+
+        Assert.AreEqual((uint)foundCount, parsed.FoundCount, "found count");
+        Assert.AreEqual((uint)notFoundCount, parsed.NotFoundCount, "not found count");
+        Assert.AreEqual(missingIndex, parsed.NotFoundIndices[0], "not found index");
+        Assert.AreEqual(foundCount, parsed.Events.Length, "events length");
+        Assert.AreEqual(events[0].EntityId, parsed.Events[0].EntityId, "event 0 entity id");
+        Assert.AreEqual(events[1].EntityId, parsed.Events[1].EntityId, "event 1 entity id");
     }
 
     // ========================================================================

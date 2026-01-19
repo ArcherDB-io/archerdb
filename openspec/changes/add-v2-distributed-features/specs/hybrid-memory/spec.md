@@ -221,9 +221,9 @@ The system SHALL define error codes for tiering operations.
 
 | Requirement | Status | Notes |
 |-------------|--------|-------|
-| Hot-Warm-Cold Tiering | ✓ Complete | `tiering.zig` |
-| Automatic Tier Migration | ✓ Complete | Background migration |
-| Migration Rate Limiting | ✓ Complete | Configurable throttle |
-| Cold Tier Storage | ✓ Complete | S3-compatible backend |
-| Tiering Metrics | ✓ Complete | Per-tier counters |
-| Tiering Error Codes (230-233) | ✓ Complete | `error_codes.zig` |
+| Hot-Warm-Cold Data Tiering | IMPLEMENTED | `src/replication.zig` |
+| Automatic Tier Migration | IMPLEMENTED | `src/replication.zig` |
+| Migration Rate Limiting | IMPLEMENTED | `src/replication.zig` |
+| Cold Tier Storage | IMPLEMENTED | `src/replication.zig` |
+| Tiering Observability | IMPLEMENTED | `src/replication.zig` |
+| Tiering Error Codes | IMPLEMENTED | `src/replication.zig` |

@@ -25,7 +25,10 @@ comptime {
     _ = @import("archerdb/incremental_load.zig");
     _ = @import("archerdb/metrics.zig");
     _ = @import("archerdb/parallel_export.zig");
+    _ = @import("archerdb/replica_tls.zig");
     _ = @import("archerdb/restore.zig");
+    _ = @import("archerdb/signal_handler.zig");
+    _ = @import("archerdb/tls_config.zig");
     _ = @import("cdc/amqp.zig");
     _ = @import("cdc/amqp/protocol.zig");
     _ = @import("cdc/runner.zig");
@@ -40,6 +43,7 @@ comptime {
     _ = @import("ewah.zig");
     _ = @import("ewah_benchmark.zig");
     _ = @import("geo_event.zig");
+    _ = @import("geo_sharding.zig");
     _ = @import("geo_state_machine.zig");
     _ = @import("index/checkpoint.zig");
     _ = @import("io/test.zig");
@@ -48,6 +52,7 @@ comptime {
     _ = @import("lsm/binary_search.zig");
     _ = @import("lsm/binary_search_benchmark.zig");
     _ = @import("lsm/cache_map.zig");
+    _ = @import("lsm/compaction.zig");
     _ = @import("lsm/composite_key.zig");
     _ = @import("lsm/forest.zig");
     _ = @import("lsm/forest_table_iterator.zig");
@@ -55,6 +60,7 @@ comptime {
     _ = @import("lsm/k_way_merge_benchmark.zig");
     _ = @import("lsm/manifest_level.zig");
     _ = @import("lsm/node_pool.zig");
+    _ = @import("lsm/scan_merge.zig");
     _ = @import("lsm/scratch_memory.zig");
     _ = @import("lsm/segmented_array.zig");
     _ = @import("lsm/segmented_array_benchmark.zig");
@@ -104,6 +110,7 @@ comptime {
     _ = @import("trace.zig");
     _ = @import("trace/event.zig");
     _ = @import("ttl.zig");
+    _ = @import("vector_clock.zig");
     _ = @import("vsr.zig");
     _ = @import("vsr/checksum.zig");
     _ = @import("vsr/clock.zig");
@@ -111,6 +118,7 @@ comptime {
     _ = @import("vsr/grid_scrubber.zig");
     _ = @import("vsr/journal.zig");
     _ = @import("vsr/marzullo.zig");
+    _ = @import("vsr/membership.zig");
     _ = @import("vsr/message_header.zig");
     _ = @import("vsr/multi_batch.zig");
     _ = @import("vsr/replica_format.zig");

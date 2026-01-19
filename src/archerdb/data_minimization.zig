@@ -222,7 +222,13 @@ pub const MinimizationPolicy = struct {
             },
             .analytics => .{
                 .precision = .neighborhood,
-                .strip_fields = fieldMask(&.{ .user_data, .correlation_id, .velocity, .heading, .accuracy }),
+                .strip_fields = fieldMask(&.{
+                    .user_data,
+                    .correlation_id,
+                    .velocity,
+                    .heading,
+                    .accuracy,
+                }),
                 .enforce_ttl = true,
                 .aggregate_nearby = true,
                 .aggregation_distance_m = 500,
@@ -234,14 +240,28 @@ pub const MinimizationPolicy = struct {
             },
             .marketing => .{
                 .precision = .city,
-                .strip_fields = fieldMask(&.{ .user_data, .correlation_id, .velocity, .heading, .altitude, .accuracy }),
+                .strip_fields = fieldMask(&.{
+                    .user_data,
+                    .correlation_id,
+                    .velocity,
+                    .heading,
+                    .altitude,
+                    .accuracy,
+                }),
                 .enforce_ttl = true,
                 .add_noise = true,
                 .noise_radius_m = 1000,
             },
             .research => .{
                 .precision = .region,
-                .strip_fields = fieldMask(&.{ .user_data, .correlation_id, .velocity, .heading, .altitude, .accuracy }),
+                .strip_fields = fieldMask(&.{
+                    .user_data,
+                    .correlation_id,
+                    .velocity,
+                    .heading,
+                    .altitude,
+                    .accuracy,
+                }),
                 .enforce_ttl = true,
                 .add_noise = true,
                 .noise_radius_m = 5000,
@@ -399,7 +419,11 @@ pub const EntityMinimizationSettings = struct {
     }
 
     /// Set purpose allowed/disallowed.
-    pub fn setPurposeAllowed(self: *EntityMinimizationSettings, purpose: CollectionPurpose, allowed: bool) void {
+    pub fn setPurposeAllowed(
+        self: *EntityMinimizationSettings,
+        purpose: CollectionPurpose,
+        allowed: bool,
+    ) void {
         const shift: u4 = @intCast(@intFromEnum(purpose));
         if (allowed) {
             self.allowed_purposes |= @as(u16, 1) << shift;
@@ -409,7 +433,10 @@ pub const EntityMinimizationSettings = struct {
     }
 
     /// Get effective precision for purpose.
-    pub fn getEffectivePrecision(self: EntityMinimizationSettings, purpose: CollectionPurpose) PrecisionLevel {
+    pub fn getEffectivePrecision(
+        self: EntityMinimizationSettings,
+        purpose: CollectionPurpose,
+    ) PrecisionLevel {
         const override = self.precision_overrides[@intFromEnum(purpose)];
         const minimum = purpose.minimumPrecision();
 
@@ -479,8 +506,6 @@ pub const MinimizerConfig = struct {
 
 /// Data Minimizer - main API for privacy-preserving data handling.
 pub const DataMinimizer = struct {
-    const Self = @This();
-
     /// Memory allocator.
     allocator: Allocator,
     /// Configuration.
@@ -493,8 +518,8 @@ pub const DataMinimizer = struct {
     prng: std.Random.DefaultPrng,
 
     /// Initialize minimizer.
-    pub fn init(allocator: Allocator, config: MinimizerConfig) Self {
-        return Self{
+    pub fn init(allocator: Allocator, config: MinimizerConfig) DataMinimizer {
+        return DataMinimizer{
             .allocator = allocator,
             .config = config,
             .entity_settings = AutoHashMap(u128, EntityMinimizationSettings).init(allocator),
@@ -504,28 +529,41 @@ pub const DataMinimizer = struct {
     }
 
     /// Clean up resources.
-    pub fn deinit(self: *Self) void {
+    pub fn deinit(self: *DataMinimizer) void {
         self.entity_settings.deinit();
     }
 
     /// Reduce coordinate precision.
-    pub fn reducePrecision(self: *Self, lat_nano: i64, lon_nano: i64, precision: PrecisionLevel) struct { lat: i64, lon: i64 } {
+    pub fn reducePrecision(
+        self: *DataMinimizer,
+        lat_nano: i64,
+        lon_nano: i64,
+        precision: PrecisionLevel,
+    ) struct { lat: i64, lon: i64 } {
         const factor = precision.precisionFactor();
 
-        // Round to nearest precision unit
-        const lat_reduced = @divFloor(lat_nano + @divFloor(factor, 2), factor) * factor;
-        const lon_reduced = @divFloor(lon_nano + @divFloor(factor, 2), factor) * factor;
+        // Round to nearest precision unit (symmetric for negative values).
+        const half = @divFloor(factor, 2);
+        const lat_abs = if (lat_nano < 0) -lat_nano else lat_nano;
+        const lon_abs = if (lon_nano < 0) -lon_nano else lon_nano;
+        const lat_reduced = @divFloor(lat_abs + half, factor) * factor;
+        const lon_reduced = @divFloor(lon_abs + half, factor) * factor;
 
         self.stats.by_precision[@intFromEnum(precision)] += 1;
 
         return .{
-            .lat = lat_reduced,
-            .lon = lon_reduced,
+            .lat = if (lat_nano < 0) -lat_reduced else lat_reduced,
+            .lon = if (lon_nano < 0) -lon_reduced else lon_reduced,
         };
     }
 
     /// Add differential privacy noise to coordinates.
-    pub fn addNoise(self: *Self, lat_nano: i64, lon_nano: i64, radius_m: u32) struct { lat: i64, lon: i64 } {
+    pub fn addNoise(
+        self: *DataMinimizer,
+        lat_nano: i64,
+        lon_nano: i64,
+        radius_m: u32,
+    ) struct { lat: i64, lon: i64 } {
         // Convert radius from meters to nanodegrees (approximately)
         const radius_nano: i64 = @intCast(@as(u64, radius_m) * 9); // ~9 nanodegrees per meter
 
@@ -544,7 +582,7 @@ pub const DataMinimizer = struct {
 
     /// Minimize a single event.
     pub fn minimizeEvent(
-        self: *Self,
+        self: *DataMinimizer,
         event: MinimizedEvent,
         purpose: CollectionPurpose,
     ) MinimizedEvent {
@@ -573,11 +611,16 @@ pub const DataMinimizer = struct {
 
             // Enhanced child protection
             if (settings.is_child and self.config.enhanced_child_protection) {
-                if (@intFromEnum(self.config.child_minimum_precision) > @intFromEnum(policy.precision)) {
+                if (@intFromEnum(self.config.child_minimum_precision) >
+                    @intFromEnum(policy.precision))
+                {
                     policy.precision = self.config.child_minimum_precision;
                 }
                 // Strip more fields for children
-                policy.strip_fields |= MinimizationPolicy.fieldMask(&.{ .user_data, .correlation_id });
+                policy.strip_fields |= MinimizationPolicy.fieldMask(&.{
+                    .user_data,
+                    .correlation_id,
+                });
             }
         }
 
@@ -617,7 +660,10 @@ pub const DataMinimizer = struct {
         if (policy.enforce_ttl and self.config.enforce_ttl) {
             const max_ttl = purpose.maxTtl();
             const precision_ttl = policy.precision.recommendedTtl();
-            const effective_ttl = if (max_ttl > 0 and max_ttl < precision_ttl) max_ttl else precision_ttl;
+            const effective_ttl = if (max_ttl > 0 and max_ttl < precision_ttl)
+                max_ttl
+            else
+                precision_ttl;
 
             if (result.ttl_seconds == 0 or result.ttl_seconds > effective_ttl) {
                 result.ttl_seconds = effective_ttl;
@@ -638,7 +684,7 @@ pub const DataMinimizer = struct {
 
     /// Minimize a batch of events.
     pub fn minimizeBatch(
-        self: *Self,
+        self: *DataMinimizer,
         events: []const MinimizedEvent,
         purpose: CollectionPurpose,
         output: []MinimizedEvent,
@@ -659,7 +705,7 @@ pub const DataMinimizer = struct {
     }
 
     /// Set entity-specific minimization settings.
-    pub fn setEntitySettings(self: *Self, settings: EntityMinimizationSettings) !void {
+    pub fn setEntitySettings(self: *DataMinimizer, settings: EntityMinimizationSettings) !void {
         try self.entity_settings.put(settings.entity_id, settings);
         self.stats.entities_with_settings = self.entity_settings.count();
 
@@ -669,12 +715,12 @@ pub const DataMinimizer = struct {
     }
 
     /// Get entity settings.
-    pub fn getEntitySettings(self: *Self, entity_id: u128) ?EntityMinimizationSettings {
+    pub fn getEntitySettings(self: *DataMinimizer, entity_id: u128) ?EntityMinimizationSettings {
         return self.entity_settings.get(entity_id);
     }
 
     /// Remove entity settings.
-    pub fn removeEntitySettings(self: *Self, entity_id: u128) bool {
+    pub fn removeEntitySettings(self: *DataMinimizer, entity_id: u128) bool {
         if (self.entity_settings.fetchRemove(entity_id)) |kv| {
             self.stats.entities_with_settings -|= 1;
             if (kv.value.is_child) {
@@ -686,7 +732,7 @@ pub const DataMinimizer = struct {
     }
 
     /// Mark entity as child (enhanced protection).
-    pub fn markAsChild(self: *Self, entity_id: u128, is_child: bool) !void {
+    pub fn markAsChild(self: *DataMinimizer, entity_id: u128, is_child: bool) !void {
         const result = try self.entity_settings.getOrPut(entity_id);
         if (!result.found_existing) {
             result.value_ptr.* = EntityMinimizationSettings.init(entity_id);
@@ -704,12 +750,12 @@ pub const DataMinimizer = struct {
     }
 
     /// Get statistics.
-    pub fn getStats(self: *Self) MinimizationStats {
+    pub fn getStats(self: *DataMinimizer) MinimizationStats {
         return self.stats;
     }
 
     /// Reset statistics.
-    pub fn resetStats(self: *Self) void {
+    pub fn resetStats(self: *DataMinimizer) void {
         self.stats = MinimizationStats.init();
         self.stats.entities_with_settings = self.entity_settings.count();
     }
@@ -747,11 +793,6 @@ fn anonymize(self: *MinimizedEvent) void {
     self.group_id = 0;
 }
 
-/// Get current timestamp in nanoseconds.
-fn getCurrentTimestamp() u64 {
-    return @intCast(std.time.nanoTimestamp());
-}
-
 // ============================================================================
 // Unit Tests
 // ============================================================================
@@ -771,10 +812,22 @@ test "PrecisionLevel properties" {
 test "CollectionPurpose minimum precision" {
     const testing = std.testing;
 
-    try testing.expectEqual(PrecisionLevel.meter, CollectionPurpose.navigation.minimumPrecision());
-    try testing.expectEqual(PrecisionLevel.street, CollectionPurpose.fleet_tracking.minimumPrecision());
-    try testing.expectEqual(PrecisionLevel.neighborhood, CollectionPurpose.analytics.minimumPrecision());
-    try testing.expectEqual(PrecisionLevel.city, CollectionPurpose.marketing.minimumPrecision());
+    try testing.expectEqual(
+        PrecisionLevel.meter,
+        CollectionPurpose.navigation.minimumPrecision(),
+    );
+    try testing.expectEqual(
+        PrecisionLevel.street,
+        CollectionPurpose.fleet_tracking.minimumPrecision(),
+    );
+    try testing.expectEqual(
+        PrecisionLevel.neighborhood,
+        CollectionPurpose.analytics.minimumPrecision(),
+    );
+    try testing.expectEqual(
+        PrecisionLevel.city,
+        CollectionPurpose.marketing.minimumPrecision(),
+    );
 }
 
 test "CollectionPurpose consent requirements" {
@@ -813,8 +866,8 @@ test "DataMinimizer reduce precision" {
     const reduced = minimizer.reducePrecision(lat, lon, .street);
 
     // Should be rounded to nearest 90 nanodegrees
-    try testing.expectEqual(@as(i64, 40123456790), reduced.lat); // Rounded
-    try testing.expectEqual(@as(i64, -74987654320), reduced.lon); // Rounded
+    try testing.expectEqual(@as(i64, 40123456830), reduced.lat); // Rounded
+    try testing.expectEqual(@as(i64, -74987654310), reduced.lon); // Rounded
 }
 
 test "DataMinimizer minimize event" {
@@ -945,7 +998,12 @@ test "DataMinimizer statistics" {
     var minimizer = DataMinimizer.init(allocator, .{});
     defer minimizer.deinit();
 
-    const event = MinimizedEvent.init(0x1, 40000000000, -74000000000, @intCast(std.time.nanoTimestamp()));
+    const event = MinimizedEvent.init(
+        0x1,
+        40000000000,
+        -74000000000,
+        @intCast(std.time.nanoTimestamp()),
+    );
 
     _ = minimizer.minimizeEvent(event, .navigation);
     _ = minimizer.minimizeEvent(event, .marketing);
@@ -953,9 +1011,18 @@ test "DataMinimizer statistics" {
 
     const stats = minimizer.getStats();
     try testing.expectEqual(@as(u64, 3), stats.total_events);
-    try testing.expectEqual(@as(u64, 1), stats.by_purpose[@intFromEnum(CollectionPurpose.navigation)]);
-    try testing.expectEqual(@as(u64, 1), stats.by_purpose[@intFromEnum(CollectionPurpose.marketing)]);
-    try testing.expectEqual(@as(u64, 1), stats.by_purpose[@intFromEnum(CollectionPurpose.analytics)]);
+    try testing.expectEqual(
+        @as(u64, 1),
+        stats.by_purpose[@intFromEnum(CollectionPurpose.navigation)],
+    );
+    try testing.expectEqual(
+        @as(u64, 1),
+        stats.by_purpose[@intFromEnum(CollectionPurpose.marketing)],
+    );
+    try testing.expectEqual(
+        @as(u64, 1),
+        stats.by_purpose[@intFromEnum(CollectionPurpose.analytics)],
+    );
 }
 
 test "Privacy score calculation" {

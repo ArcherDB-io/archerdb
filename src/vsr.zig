@@ -17,7 +17,8 @@ pub const stack = @import("stack.zig");
 pub const message_buffer = @import("message_buffer.zig");
 pub const message_bus = @import("message_bus.zig");
 pub const message_pool = @import("message_pool.zig");
-// ArcherDB uses the geospatial state machine (financial state_machine.zig removed)
+pub const sharding = @import("sharding.zig");
+// ArcherDB uses the geospatial state machine (legacy state_machine.zig removed)
 pub const state_machine = @import("geo_state_machine.zig");
 pub const storage = @import("storage.zig");
 pub const arch_client = @import("clients/c/arch_client.zig");
@@ -68,6 +69,7 @@ pub const testing = .{
 };
 pub const ewah = @import("ewah.zig").ewah;
 pub const checkpoint_trailer = @import("vsr/checkpoint_trailer.zig");
+pub const encryption = @import("encryption.zig");
 
 pub const multi_batch = @import("vsr/multi_batch.zig");
 
@@ -97,6 +99,7 @@ pub const FreeSet = @import("vsr/free_set.zig").FreeSet;
 pub const CheckpointTrailerType = @import("vsr/checkpoint_trailer.zig").CheckpointTrailerType;
 pub const GridScrubberType = @import("vsr/grid_scrubber.zig").GridScrubberType;
 pub const Routing = @import("vsr/routing.zig");
+pub const membership = @import("vsr/membership.zig");
 pub const CountingAllocator = @import("counting_allocator.zig");
 
 /// The version of our Viewstamped Replication protocol in use, including customizations.

@@ -228,9 +228,9 @@ The system SHALL define error codes for sharding operations.
 
 | Requirement | Status | Notes |
 |-------------|--------|-------|
-| Stop-the-World Resharding | ✓ Complete | `sharding.zig` drain/migrate/restart |
-| Online Resharding (v2.1) | ✓ Complete | Background migration |
-| Shard Management CLI | ✓ Complete | `archerdb shard` commands |
-| Topology Discovery | ✓ Complete | `topology.zig`, get_topology op |
-| Shard Health Monitoring | ✓ Complete | Per-shard metrics |
-| Sharding Error Codes (220-224) | ✓ Complete | `error_codes.zig` |
+| Stop-the-World Resharding (v2.0) | IMPLEMENTED | `src/geo_sharding.zig` |
+| Online Resharding (v2.1+) | IMPLEMENTED | `src/geo_sharding.zig` |
+| Shard Management CLI | IMPLEMENTED | `src/geo_sharding.zig` |
+| Smart Client Topology Discovery | IMPLEMENTED | `src/geo_sharding.zig` |
+| Shard Health Monitoring | IMPLEMENTED | `src/geo_sharding.zig` |
+| Sharding Error Codes | IMPLEMENTED | `src/geo_sharding.zig` |

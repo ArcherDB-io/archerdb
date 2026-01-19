@@ -22,8 +22,7 @@ const TypeMapping = struct {
 };
 
 // ArcherDB geospatial type mappings
-// NOTE: Legacy ArcherDB financial types (Account, Transfer, etc.) have been removed.
-// ArcherDB is a geospatial database only.
+// NOTE: Legacy TigerBeetle types were removed. ArcherDB is a geospatial database only.
 const type_mappings = .{
     // GeoEvent and related types
     .{ tb.GeoEvent, TypeMapping{

@@ -46,7 +46,7 @@ final class GeoClientImpl implements GeoClient {
 
     // Wire format sizes (from client-sdk/spec.md)
     static final int GEO_EVENT_SIZE = 128;
-    static final int QUERY_UUID_FILTER_SIZE = 128;
+    static final int QUERY_UUID_FILTER_SIZE = 32;
     static final int QUERY_RADIUS_FILTER_SIZE = 128;
     static final int QUERY_LATEST_FILTER_SIZE = 128;
     static final int STATUS_RESPONSE_SIZE = 64;
@@ -63,8 +63,9 @@ final class GeoClientImpl implements GeoClient {
     // Default timeouts (per client-sdk/spec.md)
     private static final int DEFAULT_REQUEST_TIMEOUT_MS = 30000;
 
-    // Flag to enable native client integration (set false for skeleton mode)
-    private static final boolean NATIVE_ENABLED = false;
+    // Flag to enable native client integration (disable in tests via system property).
+    private static final boolean NATIVE_ENABLED =
+            Boolean.parseBoolean(System.getProperty("archerdb.native.enabled", "true"));
 
     private final UInt128 clusterId;
     private final String[] addresses;
@@ -245,13 +246,10 @@ final class GeoClientImpl implements GeoClient {
         NativeQueryUuidBatch batch = new NativeQueryUuidBatch(1);
         batch.add();
         batch.setEntityId(entityId.getLo(), entityId.getHi());
-        batch.setLimit(1);
 
         ByteBuffer response = nativeBridge.submitRequest(OP_QUERY_UUID, batch, requestTimeoutMs);
 
-        // Parse response
-        List<GeoEvent> events = parseQueryResponse(response);
-        return events.isEmpty() ? null : events.get(0);
+        return parseUuidResponse(response, entityId);
     }
 
     @Override
@@ -356,38 +354,10 @@ final class GeoClientImpl implements GeoClient {
             return results;
         }
 
-        // Build batch query with all entity IDs
-        NativeQueryUuidBatch batch = new NativeQueryUuidBatch(entityIds.size());
-        for (UInt128 entityId : entityIds) {
-            batch.add();
-            batch.setEntityId(entityId.getLo(), entityId.getHi());
-            batch.setLimit(1); // One result per entity
-        }
-
-        ByteBuffer response = nativeBridge.submitRequest(OP_QUERY_UUID, batch, requestTimeoutMs);
-
-        // Parse response - each entity gets one result (or null if not found)
-        List<GeoEvent> events = parseQueryResponse(response);
-
-        // Map events back to entity IDs
-        // Response order matches request order per client-protocol/spec.md
-        int eventIdx = 0;
-        for (int i = 0; i < entityIds.size(); i++) {
-            UInt128 entityId = entityIds.get(i);
-            if (eventIdx < events.size()) {
-                GeoEvent event = events.get(eventIdx);
-                if (event.getEntityId().equals(entityId)) {
-                    results.put(entityId, event);
-                    eventIdx++;
-                } else {
-                    results.put(entityId, null);
-                }
-            } else {
-                results.put(entityId, null);
-            }
-        }
-
-        return results;
+        NativeQueryUuidBatchRequest batch = new NativeQueryUuidBatchRequest(entityIds);
+        ByteBuffer response =
+                nativeBridge.submitRequest(OP_QUERY_UUID_BATCH, batch, requestTimeoutMs);
+        return parseUuidBatchResponse(response, entityIds);
     }
 
     @Override
@@ -666,6 +636,118 @@ final class GeoClientImpl implements GeoClient {
         }
 
         return events;
+    }
+
+    /**
+     * Parses a single UUID lookup response containing a raw GeoEvent.
+     */
+    private GeoEvent parseUuidResponse(ByteBuffer response, UInt128 entityId) {
+        if (response == null || response.remaining() < 16) {
+            return null;
+        }
+
+        response.order(ByteOrder.LITTLE_ENDIAN);
+        int status = response.get() & 0xFF;
+        response.position(response.position() + 15); // reserved
+
+        if (status == 0) {
+            if (response.remaining() < GEO_EVENT_SIZE) {
+                return null;
+            }
+            ByteBuffer eventData = response.slice().order(ByteOrder.LITTLE_ENDIAN);
+            eventData.limit(GEO_EVENT_SIZE);
+
+            NativeGeoEventBatch batch = new NativeGeoEventBatch(eventData);
+            if (!batch.next()) {
+                return null;
+            }
+            return batch.toGeoEvent();
+        }
+
+        if (status == OperationException.ENTITY_NOT_FOUND) {
+            return null;
+        }
+
+        if (status == OperationException.ENTITY_EXPIRED) {
+            throw OperationException.entityExpired(entityId);
+        }
+
+        throw new OperationException(status, "Query UUID failed with status " + status, false);
+    }
+
+    /**
+     * Parses a batch UUID lookup response per client-protocol/spec.md.
+     */
+    private Map<UInt128, GeoEvent> parseUuidBatchResponse(ByteBuffer response,
+            List<UInt128> entityIds) {
+        Map<UInt128, GeoEvent> results = new HashMap<>();
+        for (UInt128 entityId : entityIds) {
+            results.put(entityId, null);
+        }
+
+        if (response == null || response.remaining() < 16) {
+            return results;
+        }
+
+        response.order(ByteOrder.LITTLE_ENDIAN);
+
+        int foundCount = response.getInt();
+        int notFoundCount = response.getInt();
+        response.position(response.position() + 8); // reserved
+
+        if (notFoundCount < 0 || foundCount < 0) {
+            return results;
+        }
+
+        int notFoundBytes = notFoundCount * 2;
+        if (response.remaining() < notFoundBytes) {
+            return results;
+        }
+
+        boolean[] notFound = new boolean[entityIds.size()];
+        for (int i = 0; i < notFoundCount; i++) {
+            int index = Short.toUnsignedInt(response.getShort());
+            if (index < notFound.length) {
+                notFound[index] = true;
+            }
+        }
+
+        int offset = 16 + notFoundBytes;
+        int padding = (16 - (offset % 16)) % 16;
+        if (padding > 0) {
+            if (response.remaining() < padding) {
+                return results;
+            }
+            response.position(response.position() + padding);
+        }
+
+        int eventsBytes = foundCount * GEO_EVENT_SIZE;
+        if (response.remaining() < eventsBytes) {
+            return results;
+        }
+
+        ByteBuffer eventsBuffer = response.slice().order(ByteOrder.LITTLE_ENDIAN);
+        eventsBuffer.limit(eventsBytes);
+
+        List<GeoEvent> events = new ArrayList<>(foundCount);
+        NativeGeoEventBatch batch = new NativeGeoEventBatch(eventsBuffer);
+        while (batch.next()) {
+            events.add(batch.toGeoEvent());
+        }
+
+        int eventIdx = 0;
+        for (int i = 0; i < entityIds.size(); i++) {
+            if (notFound[i]) {
+                continue;
+            }
+            if (eventIdx >= events.size()) {
+                break;
+            }
+            results.put(entityIds.get(i), events.get(eventIdx));
+            eventIdx += 1;
+        }
+
+        return results;
     }
 
     /**

@@ -20,6 +20,7 @@
 //!   - 500-504:  Internal errors
 
 const std = @import("std");
+const stdx = @import("stdx");
 
 /// Protocol error codes (1-10)
 /// These errors indicate protocol-level issues with message format.
@@ -146,7 +147,8 @@ pub const ValidationError = enum(u32) {
 
 /// State error codes (200-243)
 /// These errors indicate system state issues.
-/// Ranges: 200-212 (v1), 213-218 (multi-region), 220-224 (sharding), 230-233 (tiering), 240-243 (TTL)
+/// Ranges: 200-212 (v1), 213-218 (multi-region), 220-224 (sharding),
+/// 230-233 (tiering), 240-243 (TTL)
 pub const StateError = enum(u32) {
     // === v1 Core State Errors (200-212) ===
     /// Query UUID that doesn't exist in index
@@ -353,9 +355,9 @@ pub const ResourceError = enum(u32) {
     }
 };
 
-/// Security error codes (400-414)
+/// Security error codes (400-415)
 /// These errors indicate security/authorization issues.
-/// Ranges: 400-404 (v1 auth), 410-414 (v2.0 encryption)
+/// Ranges: 400-404 (v1 auth), 410-415 (v2.0+ encryption)
 pub const SecurityError = enum(u32) {
     // === v1 Authentication Errors (400-404) ===
     /// Authentication failed
@@ -377,6 +379,12 @@ pub const SecurityError = enum(u32) {
     /// File encrypted with unsupported version
     unsupported_encryption_version = 414,
 
+    // === v2.1+ Encryption Errors (415+) ===
+    /// AES-NI hardware acceleration not available
+    /// Per add-aesni-encryption spec: returned when CPU lacks AES-NI
+    /// and --allow-software-crypto is not set
+    aesni_not_available = 415,
+
     pub fn description(self: SecurityError) []const u8 {
         return switch (self) {
             // Authentication
@@ -389,6 +397,7 @@ pub const SecurityError = enum(u32) {
             .encryption_not_enabled => "Encryption required but not configured",
             .key_rotation_in_progress => "Key rotation in progress, retry later",
             .unsupported_encryption_version => "File encrypted with unsupported version",
+            .aesni_not_available => "AES-NI not available (use --allow-software-crypto)",
         };
     }
 
@@ -406,6 +415,7 @@ pub const SecurityError = enum(u32) {
             .decryption_failed,
             .encryption_not_enabled,
             .unsupported_encryption_version,
+            .aesni_not_available,
             => false,
         };
     }
@@ -547,10 +557,11 @@ test "updated error codes 114-116" {
 
 test "polygon hole error codes 117-120" {
     // Polygon hole validation error codes per add-polygon-holes spec
-    try std.testing.expectEqual(@as(u32, 117), @intFromEnum(ValidationError.too_many_holes));
-    try std.testing.expectEqual(@as(u32, 118), @intFromEnum(ValidationError.hole_vertex_count_invalid));
-    try std.testing.expectEqual(@as(u32, 119), @intFromEnum(ValidationError.hole_not_contained));
-    try std.testing.expectEqual(@as(u32, 120), @intFromEnum(ValidationError.holes_overlap));
+    const ve = ValidationError;
+    try std.testing.expectEqual(@as(u32, 117), @intFromEnum(ve.too_many_holes));
+    try std.testing.expectEqual(@as(u32, 118), @intFromEnum(ve.hole_vertex_count_invalid));
+    try std.testing.expectEqual(@as(u32, 119), @intFromEnum(ve.hole_not_contained));
+    try std.testing.expectEqual(@as(u32, 120), @intFromEnum(ve.holes_overlap));
 }
 
 test "spec synchronization - all error codes from spec exist" {
@@ -679,19 +690,23 @@ test "v2.1 tiering error codes 230-233" {
 
 test "v2.1 TTL extension error codes 240-243" {
     // TTL extension error codes per add-v2-distributed-features spec
-    try std.testing.expectEqual(@as(u32, 240), @intFromEnum(StateError.ttl_extension_disabled));
-    try std.testing.expectEqual(@as(u32, 241), @intFromEnum(StateError.ttl_extension_max_reached));
-    try std.testing.expectEqual(@as(u32, 242), @intFromEnum(StateError.ttl_extension_count_exceeded));
-    try std.testing.expectEqual(@as(u32, 243), @intFromEnum(StateError.ttl_cooldown_active));
+    const se = StateError;
+    try std.testing.expectEqual(@as(u32, 240), @intFromEnum(se.ttl_extension_disabled));
+    try std.testing.expectEqual(@as(u32, 241), @intFromEnum(se.ttl_extension_max_reached));
+    try std.testing.expectEqual(@as(u32, 242), @intFromEnum(se.ttl_extension_count_exceeded));
+    try std.testing.expectEqual(@as(u32, 243), @intFromEnum(se.ttl_cooldown_active));
 }
 
-test "v2.0 encryption error codes 410-414" {
+test "v2.0+ encryption error codes 410-415" {
     // Encryption error codes per add-v2-distributed-features spec
-    try std.testing.expectEqual(@as(u32, 410), @intFromEnum(SecurityError.encryption_key_unavailable));
-    try std.testing.expectEqual(@as(u32, 411), @intFromEnum(SecurityError.decryption_failed));
-    try std.testing.expectEqual(@as(u32, 412), @intFromEnum(SecurityError.encryption_not_enabled));
-    try std.testing.expectEqual(@as(u32, 413), @intFromEnum(SecurityError.key_rotation_in_progress));
-    try std.testing.expectEqual(@as(u32, 414), @intFromEnum(SecurityError.unsupported_encryption_version));
+    const sec = SecurityError;
+    try std.testing.expectEqual(@as(u32, 410), @intFromEnum(sec.encryption_key_unavailable));
+    try std.testing.expectEqual(@as(u32, 411), @intFromEnum(sec.decryption_failed));
+    try std.testing.expectEqual(@as(u32, 412), @intFromEnum(sec.encryption_not_enabled));
+    try std.testing.expectEqual(@as(u32, 413), @intFromEnum(sec.key_rotation_in_progress));
+    try std.testing.expectEqual(@as(u32, 414), @intFromEnum(sec.unsupported_encryption_version));
+    // v2.1+ AES-NI error code per add-aesni-encryption spec
+    try std.testing.expectEqual(@as(u32, 415), @intFromEnum(sec.aesni_not_available));
 }
 
 test "v2.0 isRetriable semantics for distributed errors" {
@@ -721,7 +736,263 @@ test "v2.0 isRetriable semantics for distributed errors" {
     const key_unavail: ErrorCode = .{ .security = .encryption_key_unavailable };
     const key_rotation: ErrorCode = .{ .security = .key_rotation_in_progress };
     const decrypt_fail: ErrorCode = .{ .security = .decryption_failed };
+    const aesni_unavail: ErrorCode = .{ .security = .aesni_not_available };
     try std.testing.expect(key_unavail.isRetriable());
     try std.testing.expect(key_rotation.isRetriable());
     try std.testing.expect(!decrypt_fail.isRetriable()); // Data corruption
+    try std.testing.expect(!aesni_unavail.isRetriable()); // Hardware issue
+}
+
+// === Error Context Encoding ===
+// Per spec lines 175-186: Error context encoding format:
+// - Field count (u16)
+// - For each field:
+//   - Field name length (u8)
+//   - Field name (UTF-8 string, max 255 bytes)
+//   - Field value length (u16)
+//   - Field value (UTF-8 string, max 65535 bytes)
+
+/// Represents a single context field (name-value pair).
+pub const ContextField = struct {
+    name: []const u8,
+    value: []const u8,
+};
+
+/// Encodes error context fields into the wire format per spec.
+/// Returns the number of bytes written, or error if buffer is too small.
+pub fn encodeContext(fields: []const ContextField, buffer: []u8) !usize {
+    if (fields.len > std.math.maxInt(u16)) return error.TooManyFields;
+    if (buffer.len < 2) return error.BufferTooSmall;
+
+    // Write field count (u16)
+    std.mem.writeInt(u16, buffer[0..2], @intCast(fields.len), .little);
+    var offset: usize = 2;
+
+    for (fields) |field| {
+        // Validate field name length (max 255 bytes)
+        if (field.name.len > 255) return error.NameTooLong;
+        // Validate field value length (max 65535 bytes)
+        if (field.value.len > std.math.maxInt(u16)) return error.ValueTooLong;
+
+        // Calculate required space: 1 (name_len) + name + 2 (value_len) + value
+        const required = 1 + field.name.len + 2 + field.value.len;
+        if (offset + required > buffer.len) return error.BufferTooSmall;
+
+        // Write name length (u8)
+        buffer[offset] = @intCast(field.name.len);
+        offset += 1;
+
+        // Write name
+        stdx.copy_disjoint(.exact, u8, buffer[offset..][0..field.name.len], field.name);
+        offset += field.name.len;
+
+        // Write value length (u16)
+        std.mem.writeInt(u16, buffer[offset..][0..2], @intCast(field.value.len), .little);
+        offset += 2;
+
+        // Write value
+        stdx.copy_disjoint(.exact, u8, buffer[offset..][0..field.value.len], field.value);
+        offset += field.value.len;
+    }
+
+    return offset;
+}
+
+/// Decodes error context from wire format.
+/// Returns slice of ContextField structs and remaining buffer.
+pub fn decodeContext(
+    buffer: []const u8,
+    out_fields: []ContextField,
+) !struct { fields: []ContextField, bytes_consumed: usize } {
+    if (buffer.len < 2) return error.BufferTooSmall;
+
+    // Read field count (u16)
+    const field_count = std.mem.readInt(u16, buffer[0..2], .little);
+    if (field_count > out_fields.len) return error.TooManyFields;
+
+    var offset: usize = 2;
+    var i: usize = 0;
+
+    while (i < field_count) : (i += 1) {
+        // Read name length (u8)
+        if (offset >= buffer.len) return error.BufferTooSmall;
+        const name_len: usize = buffer[offset];
+        offset += 1;
+
+        // Read name
+        if (offset + name_len > buffer.len) return error.BufferTooSmall;
+        const name = buffer[offset..][0..name_len];
+        offset += name_len;
+
+        // Read value length (u16)
+        if (offset + 2 > buffer.len) return error.BufferTooSmall;
+        const value_len = std.mem.readInt(u16, buffer[offset..][0..2], .little);
+        offset += 2;
+
+        // Read value
+        if (offset + value_len > buffer.len) return error.BufferTooSmall;
+        const value = buffer[offset..][0..value_len];
+        offset += value_len;
+
+        out_fields[i] = .{ .name = name, .value = value };
+    }
+
+    return .{ .fields = out_fields[0..field_count], .bytes_consumed = offset };
+}
+
+// === Error Context Encoding Tests ===
+
+test "error context encoding: empty context" {
+    var buffer: [256]u8 = undefined;
+
+    // Encode empty context
+    const empty: []const ContextField = &.{};
+    const written = try encodeContext(empty, &buffer);
+    try std.testing.expectEqual(@as(usize, 2), written);
+
+    // Field count should be 0
+    const field_count = std.mem.readInt(u16, buffer[0..2], .little);
+    try std.testing.expectEqual(@as(u16, 0), field_count);
+
+    // Decode empty context
+    var out_fields: [10]ContextField = undefined;
+    const result = try decodeContext(buffer[0..written], &out_fields);
+    try std.testing.expectEqual(@as(usize, 0), result.fields.len);
+    try std.testing.expectEqual(@as(usize, 2), result.bytes_consumed);
+}
+
+test "error context encoding: single field" {
+    var buffer: [256]u8 = undefined;
+
+    const fields = [_]ContextField{
+        .{ .name = "entity_id", .value = "12345678-1234-1234-1234-123456789abc" },
+    };
+
+    const written = try encodeContext(&fields, &buffer);
+
+    // Decode and verify
+    var out_fields: [10]ContextField = undefined;
+    const result = try decodeContext(buffer[0..written], &out_fields);
+
+    try std.testing.expectEqual(@as(usize, 1), result.fields.len);
+    try std.testing.expectEqualStrings("entity_id", result.fields[0].name);
+    const expected_uuid = "12345678-1234-1234-1234-123456789abc";
+    try std.testing.expectEqualStrings(expected_uuid, result.fields[0].value);
+}
+
+test "error context encoding: multiple fields" {
+    var buffer: [1024]u8 = undefined;
+
+    const fields = [_]ContextField{
+        .{ .name = "offset", .value = "128" },
+        .{ .name = "expected", .value = "0xABCD1234" },
+        .{ .name = "actual", .value = "0x00000000" },
+    };
+
+    const written = try encodeContext(&fields, &buffer);
+
+    // Decode and verify
+    var out_fields: [10]ContextField = undefined;
+    const result = try decodeContext(buffer[0..written], &out_fields);
+
+    try std.testing.expectEqual(@as(usize, 3), result.fields.len);
+    try std.testing.expectEqualStrings("offset", result.fields[0].name);
+    try std.testing.expectEqualStrings("128", result.fields[0].value);
+    try std.testing.expectEqualStrings("expected", result.fields[1].name);
+    try std.testing.expectEqualStrings("0xABCD1234", result.fields[1].value);
+    try std.testing.expectEqualStrings("actual", result.fields[2].name);
+    try std.testing.expectEqualStrings("0x00000000", result.fields[2].value);
+}
+
+test "error context encoding: max name length (255 bytes)" {
+    var buffer: [512]u8 = undefined;
+
+    // Create 255-byte name
+    var name_buf: [255]u8 = undefined;
+    @memset(&name_buf, 'x');
+
+    const fields = [_]ContextField{
+        .{ .name = &name_buf, .value = "test" },
+    };
+
+    const written = try encodeContext(&fields, &buffer);
+
+    // Decode and verify
+    var out_fields: [10]ContextField = undefined;
+    const result = try decodeContext(buffer[0..written], &out_fields);
+
+    try std.testing.expectEqual(@as(usize, 1), result.fields.len);
+    try std.testing.expectEqual(@as(usize, 255), result.fields[0].name.len);
+    try std.testing.expectEqualStrings("test", result.fields[0].value);
+}
+
+test "error context encoding: name too long error" {
+    var buffer: [512]u8 = undefined;
+
+    // Create 256-byte name (exceeds max)
+    var name_buf: [256]u8 = undefined;
+    @memset(&name_buf, 'x');
+
+    const fields = [_]ContextField{
+        .{ .name = &name_buf, .value = "test" },
+    };
+
+    const result = encodeContext(&fields, &buffer);
+    try std.testing.expectError(error.NameTooLong, result);
+}
+
+test "error context encoding: buffer too small" {
+    var buffer: [5]u8 = undefined; // Too small for any field
+
+    const fields = [_]ContextField{
+        .{ .name = "test", .value = "value" },
+    };
+
+    const result = encodeContext(&fields, &buffer);
+    try std.testing.expectError(error.BufferTooSmall, result);
+}
+
+test "error context encoding: roundtrip with spec example fields" {
+    // Test with actual error code context fields from spec
+    var buffer: [1024]u8 = undefined;
+
+    // invalid_coordinates context fields per spec
+    const fields = [_]ContextField{
+        .{ .name = "lat_nano", .value = "95000000000" },
+        .{ .name = "lon_nano", .value = "0" },
+        .{ .name = "valid_lat_range", .value = "-90000000000..90000000000" },
+        .{ .name = "valid_lon_range", .value = "-180000000000..180000000000" },
+    };
+
+    const written = try encodeContext(&fields, &buffer);
+
+    var out_fields: [10]ContextField = undefined;
+    const result = try decodeContext(buffer[0..written], &out_fields);
+
+    try std.testing.expectEqual(@as(usize, 4), result.fields.len);
+    try std.testing.expectEqualStrings("lat_nano", result.fields[0].name);
+    try std.testing.expectEqualStrings("95000000000", result.fields[0].value);
+    try std.testing.expectEqualStrings("valid_lon_range", result.fields[3].name);
+    try std.testing.expectEqualStrings("-180000000000..180000000000", result.fields[3].value);
+}
+
+test "error context encoding: checksum error context fields" {
+    // checksum_mismatch_header context fields per spec
+    var buffer: [512]u8 = undefined;
+
+    const fields = [_]ContextField{
+        .{ .name = "address", .value = "0x123456789ABCDEF0" },
+        .{ .name = "expected_checksum", .value = "0xDEADBEEFCAFEBABE" },
+        .{ .name = "actual_checksum", .value = "0x0000000000000000" },
+    };
+
+    const written = try encodeContext(&fields, &buffer);
+
+    var out_fields: [10]ContextField = undefined;
+    const result = try decodeContext(buffer[0..written], &out_fields);
+
+    try std.testing.expectEqual(@as(usize, 3), result.fields.len);
+    try std.testing.expectEqualStrings("address", result.fields[0].name);
+    try std.testing.expectEqualStrings("expected_checksum", result.fields[1].name);
+    try std.testing.expectEqualStrings("actual_checksum", result.fields[2].name);
 }

@@ -55,16 +55,15 @@ class CGeoEvent(ctypes.Structure):
 
 
 class CQueryUuidFilter(ctypes.Structure):
-    """128-byte QueryUuidFilter."""
+    """32-byte QueryUuidFilter."""
     _fields_ = [
         ("entity_id", ctypes.c_uint8 * 16),
-        ("limit", ctypes.c_uint32),
-        ("reserved", ctypes.c_uint8 * 108),
+        ("reserved", ctypes.c_uint8 * 16),
     ]
 
 
 assert ctypes.sizeof(CGeoEvent) == 128
-assert ctypes.sizeof(CQueryUuidFilter) == 128
+assert ctypes.sizeof(CQueryUuidFilter) == 32
 
 
 # ============================================================================
@@ -267,7 +266,6 @@ class BenchmarkClient:
         """Query by UUID. Returns event or None."""
         query = CQueryUuidFilter()
         set_u128_field(query.entity_id, entity_id)
-        query.limit = 1
 
         query_array = (CQueryUuidFilter * 1)(query)
         status, data_size, data = self._submit_and_wait(
@@ -278,8 +276,10 @@ class BenchmarkClient:
         if status is None or status != bindings.PacketStatus.OK.value:
             return None
 
-        if data_size == 128 and data:  # One GeoEvent
-            return CGeoEvent.from_buffer_copy(data)
+        if data_size >= 16 and data:
+            result_status = data[0]
+            if result_status == 0 and data_size >= 16 + 128:
+                return CGeoEvent.from_buffer_copy(data[16:16 + 128])
 
         return None
 

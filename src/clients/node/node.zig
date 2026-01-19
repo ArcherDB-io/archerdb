@@ -9,23 +9,24 @@ const tb = vsr.archerdb;
 const arch_client = vsr.arch_client;
 
 const Operation = tb.Operation;
-const Account = tb.Account;
-const Transfer = tb.Transfer;
-const AccountFilter = tb.AccountFilter;
-const AccountBalance = tb.AccountBalance;
-const QueryFilter = tb.QueryFilter;
 
 // GeoEvent types for ArcherDB geospatial operations
 const GeoEvent = tb.GeoEvent;
 const QueryUuidFilter = tb.QueryUuidFilter;
+const QueryUuidBatchFilter = tb.QueryUuidBatchFilter;
+const QueryUuidResponse = tb.QueryUuidResponse;
 const QueryRadiusFilter = tb.QueryRadiusFilter;
 const QueryPolygonFilter = tb.QueryPolygonFilter;
 const QueryLatestFilter = tb.QueryLatestFilter;
 const QueryResponse = tb.QueryResponse;
-const InsertGeoEventsResult = tb.InsertGeoEventsResult;
-const DeleteEntitiesResult = tb.DeleteEntitiesResult;
-const ChangeEventsFilter = tb.ChangeEventsFilter;
+const QueryUuidBatchResult = tb.QueryUuidBatchResult;
+const PolygonVertex = tb.PolygonVertex;
+const HoleDescriptor = tb.HoleDescriptor;
 const CleanupRequest = tb.CleanupRequest;
+const TopologyRequest = tb.TopologyRequest;
+const TtlSetRequest = tb.TtlSetRequest;
+const TtlExtendRequest = tb.TtlExtendRequest;
+const TtlClearRequest = tb.TtlClearRequest;
 
 const vsr = @import("vsr");
 const constants = vsr.constants;
@@ -142,7 +143,13 @@ fn create(
     comptime echo_mode: bool,
 ) !c.napi_value {
     var tsfn_name: c.napi_value = undefined;
-    if (c.napi_create_string_utf8(env, "arch_client", c.NAPI_AUTO_LENGTH, &tsfn_name) != c.napi_ok) {
+    const name_result = c.napi_create_string_utf8(
+        env,
+        "arch_client",
+        c.NAPI_AUTO_LENGTH,
+        &tsfn_name,
+    );
+    if (name_result != c.napi_ok) {
         return translate.throw(
             env,
             "Failed to create resource name for thread-safe function.",
@@ -246,6 +253,36 @@ fn request(
 
     const array_length: u32 = try translate.array_length(env, array);
     const packet, const packet_data = switch (operation) {
+        .query_uuid_batch => blk: {
+            if (array_length != 1) {
+                return translate.throw(env, "query_uuid_batch requires a single filter.");
+            }
+
+            const filter = try translate.array_element(env, array, 0);
+            const buffer = try encode_query_uuid_batch_request(env, filter);
+
+            const packet = global_allocator.create(arch_client.Packet) catch {
+                global_allocator.free(buffer);
+                return translate.throw(env, "Failed to allocated a new packet.");
+            };
+
+            break :blk .{ packet, buffer };
+        },
+        .query_polygon => blk: {
+            if (array_length != 1) {
+                return translate.throw(env, "query_polygon requires a single filter.");
+            }
+
+            const filter = try translate.array_element(env, array, 0);
+            const buffer = try encode_query_polygon_request(env, filter);
+
+            const packet = global_allocator.create(arch_client.Packet) catch {
+                global_allocator.free(buffer);
+                return translate.throw(env, "Failed to allocated a new packet.");
+            };
+
+            break :blk .{ packet, buffer };
+        },
         inline else => |operation_comptime| blk: {
             const Event = operation_comptime.EventType();
 
@@ -269,7 +306,7 @@ fn request(
             try decode_array(Event, env, array, buffer);
             break :blk .{ packet, std.mem.sliceAsBytes(buffer) };
         },
-        .pulse, .get_change_events => unreachable,
+        .pulse => unreachable,
     };
 
     packet.* = .{
@@ -284,6 +321,226 @@ fn request(
     client.submit(packet) catch |err| switch (err) {
         error.ClientInvalid => return translate.throw(env, "Client was closed."),
     };
+}
+
+fn encode_query_polygon_request(env: c.napi_env, filter: c.napi_value) ![]u8 {
+    const header_size = @sizeOf(QueryPolygonFilter);
+    const vertex_size = @sizeOf(PolygonVertex);
+    const desc_size = @sizeOf(HoleDescriptor);
+
+    var vertices_value: c.napi_value = undefined;
+    if (c.napi_get_named_property(
+        env,
+        filter,
+        @ptrCast(add_trailing_null("vertices")),
+        &vertices_value,
+    ) != c.napi_ok) {
+        return translate.throw(env, "vertices must be defined");
+    }
+
+    var is_vertices_array: bool = undefined;
+    if (c.napi_is_array(env, vertices_value, &is_vertices_array) != c.napi_ok or
+        !is_vertices_array)
+    {
+        return translate.throw(env, "vertices must be an Array.");
+    }
+
+    const vertex_count = try translate.array_length(env, vertices_value);
+    if (vertex_count < 3) {
+        return translate.throw(env, "Polygon must have at least 3 vertices.");
+    }
+    if (vertex_count > constants.polygon_vertices_max) {
+        return translate.throw(env, "Polygon exceeds maximum vertex count.");
+    }
+
+    var hole_count: u32 = 0;
+    var total_hole_vertices: u32 = 0;
+    var has_holes: bool = false;
+    var holes_value: c.napi_value = undefined;
+
+    if (c.napi_has_named_property(
+        env,
+        filter,
+        @ptrCast(add_trailing_null("holes")),
+        &has_holes,
+    ) != c.napi_ok) {
+        return translate.throw(env, "Failed to inspect holes property.");
+    }
+
+    if (has_holes) {
+        if (c.napi_get_named_property(
+            env,
+            filter,
+            @ptrCast(add_trailing_null("holes")),
+            &holes_value,
+        ) != c.napi_ok) {
+            return translate.throw(env, "holes must be defined");
+        }
+
+        var holes_type: c.napi_valuetype = undefined;
+        if (c.napi_typeof(env, holes_value, &holes_type) != c.napi_ok) {
+            return translate.throw(env, "Failed to inspect holes type.");
+        }
+
+        if (holes_type != c.napi_undefined and holes_type != c.napi_null) {
+            var is_holes_array: bool = undefined;
+            if (c.napi_is_array(env, holes_value, &is_holes_array) != c.napi_ok or
+                !is_holes_array)
+            {
+                return translate.throw(env, "holes must be an Array.");
+            }
+
+            hole_count = try translate.array_length(env, holes_value);
+            if (hole_count > constants.polygon_holes_max) {
+                return translate.throw(env, "Polygon exceeds maximum hole count.");
+            }
+
+            var hole_index: u32 = 0;
+            while (hole_index < hole_count) : (hole_index += 1) {
+                const hole = try translate.array_element(env, holes_value, hole_index);
+
+                var hole_vertices_value: c.napi_value = undefined;
+                if (c.napi_get_named_property(
+                    env,
+                    hole,
+                    @ptrCast(add_trailing_null("vertices")),
+                    &hole_vertices_value,
+                ) != c.napi_ok) {
+                    return translate.throw(env, "holes[].vertices must be defined");
+                }
+
+                var is_hole_vertices_array: bool = undefined;
+                if (c.napi_is_array(
+                    env,
+                    hole_vertices_value,
+                    &is_hole_vertices_array,
+                ) != c.napi_ok or !is_hole_vertices_array) {
+                    return translate.throw(env, "holes[].vertices must be an Array.");
+                }
+
+                const hole_vertices_count = try translate.array_length(env, hole_vertices_value);
+                if (hole_vertices_count < constants.polygon_hole_vertices_min) {
+                    return translate.throw(env, "Hole must have at least 3 vertices.");
+                }
+
+                total_hole_vertices += hole_vertices_count;
+            }
+        }
+    }
+
+    const total_vertices = vertex_count + total_hole_vertices;
+    if (total_vertices > constants.polygon_vertices_max) {
+        return translate.throw(env, "Polygon exceeds maximum total vertex count.");
+    }
+
+    const outer_vertices_size: usize = vertex_count * vertex_size;
+    const hole_descriptors_size: usize = hole_count * desc_size;
+    const hole_vertices_size: usize = total_hole_vertices * vertex_size;
+    const total_size: usize = header_size + outer_vertices_size +
+        hole_descriptors_size + hole_vertices_size;
+
+    if (total_size > constants.message_body_size_max) {
+        return translate.throw(env, "Too much data provided on this batch.");
+    }
+
+    const buffer = try global_allocator.alignedAlloc(
+        u8,
+        @alignOf(QueryPolygonFilter),
+        total_size,
+    );
+    errdefer global_allocator.free(buffer);
+    @memset(buffer, 0);
+
+    const header = std.mem.bytesAsValue(QueryPolygonFilter, buffer[0..header_size]);
+    header.* = .{
+        .vertex_count = vertex_count,
+        .hole_count = hole_count,
+        .limit = try translate.u32_from_object(env, filter, add_trailing_null("limit")),
+        .timestamp_min = try translate.u64_from_object(
+            env,
+            filter,
+            add_trailing_null("timestamp_min"),
+        ),
+        .timestamp_max = try translate.u64_from_object(
+            env,
+            filter,
+            add_trailing_null("timestamp_max"),
+        ),
+        .group_id = try translate.u64_from_object(env, filter, add_trailing_null("group_id")),
+    };
+
+    var offset: usize = header_size;
+    const outer_vertices = std.mem.bytesAsSlice(
+        PolygonVertex,
+        buffer[offset..][0..outer_vertices_size],
+    );
+    var vertex_index: u32 = 0;
+    while (vertex_index < vertex_count) : (vertex_index += 1) {
+        const vertex = try translate.array_element(env, vertices_value, vertex_index);
+        outer_vertices[vertex_index] = .{
+            .lat_nano = try translate.i64_from_object(env, vertex, add_trailing_null("lat_nano")),
+            .lon_nano = try translate.i64_from_object(env, vertex, add_trailing_null("lon_nano")),
+        };
+    }
+
+    offset += outer_vertices_size;
+    if (hole_count > 0) {
+        const descriptors = std.mem.bytesAsSlice(
+            HoleDescriptor,
+            buffer[offset..][0..hole_descriptors_size],
+        );
+        offset += hole_descriptors_size;
+
+        var hole_index: u32 = 0;
+        while (hole_index < hole_count) : (hole_index += 1) {
+            const hole = try translate.array_element(env, holes_value, hole_index);
+            var hole_vertices_value: c.napi_value = undefined;
+            if (c.napi_get_named_property(
+                env,
+                hole,
+                @ptrCast(add_trailing_null("vertices")),
+                &hole_vertices_value,
+            ) != c.napi_ok) {
+                return translate.throw(env, "holes[].vertices must be defined");
+            }
+
+            const hole_vertices_count = try translate.array_length(env, hole_vertices_value);
+            descriptors[hole_index] = .{
+                .vertex_count = hole_vertices_count,
+            };
+
+            const hole_vertices_bytes: usize = hole_vertices_count * vertex_size;
+            const hole_vertices = std.mem.bytesAsSlice(
+                PolygonVertex,
+                buffer[offset..][0..hole_vertices_bytes],
+            );
+
+            var hole_vertex_index: u32 = 0;
+            while (hole_vertex_index < hole_vertices_count) : (hole_vertex_index += 1) {
+                const hole_vertex = try translate.array_element(
+                    env,
+                    hole_vertices_value,
+                    hole_vertex_index,
+                );
+                hole_vertices[hole_vertex_index] = .{
+                    .lat_nano = try translate.i64_from_object(
+                        env,
+                        hole_vertex,
+                        add_trailing_null("lat_nano"),
+                    ),
+                    .lon_nano = try translate.i64_from_object(
+                        env,
+                        hole_vertex,
+                        add_trailing_null("lon_nano"),
+                    ),
+                };
+            }
+
+            offset += hole_vertices_bytes;
+        }
+    }
+
+    return buffer;
 }
 
 fn on_completion(
@@ -308,13 +565,13 @@ fn on_completion(
                         @alignCast(@constCast(packet.slice()));
                     // Trying to reallocate the request buffer instead of allocating a new one.
                     // This is optimal for create_* operations.
-                    const reply_buffer: []align(@alignOf(Result)) u8 = @alignCast(global_allocator.realloc(
-                        @as([]u8, @alignCast(request_buffer)),
-                        result_len,
-                    ) catch {
-                        // We can't throw Js exceptions from the native callback.
-                        @panic("Failed to allocated the request buffer.");
-                    });
+                    const req_buf = @as([]u8, @alignCast(request_buffer));
+                    const reply_buffer: []align(@alignOf(Result)) u8 = @alignCast(
+                        global_allocator.realloc(req_buf, result_len) catch {
+                            // We can't throw Js exceptions from the native callback.
+                            @panic("Failed to allocated the request buffer.");
+                        },
+                    );
 
                     const source = stdx.bytes_as_slice(
                         .exact,
@@ -339,7 +596,7 @@ fn on_completion(
                     packet.data = reply_buffer.ptr;
                     packet.data_size = @intCast(reply_buffer.len);
                 },
-                .pulse, .get_change_events => unreachable,
+                .pulse => unreachable,
             }
         },
         .client_evicted,
@@ -383,6 +640,87 @@ fn on_completion_js(
     // Decode the packet's Buffer results into an array then free the packet/Buffer.
     const operation: Operation = @enumFromInt(packet_extern.operation);
     const array_or_error = switch (operation) {
+        .query_uuid => blk: {
+            const packet = packet_extern.cast();
+            defer global_allocator.destroy(packet);
+
+            const buffer: []const u8 = packet.slice();
+            defer global_allocator.free(buffer);
+
+            switch (packet.status) {
+                .ok => break :blk encode_query_uuid_response(env, buffer),
+                .client_shutdown => {
+                    break :blk translate.throw(env, "Client was shutdown.");
+                },
+                .client_evicted => {
+                    break :blk translate.throw(env, "Client was evicted.");
+                },
+                .client_release_too_low => {
+                    break :blk translate.throw(env, "Client was evicted: release too old.");
+                },
+                .client_release_too_high => {
+                    break :blk translate.throw(env, "Client was evicted: release too new.");
+                },
+                .too_much_data => {
+                    break :blk translate.throw(env, "Too much data provided on this batch.");
+                },
+                else => unreachable, // all other packet status' handled in previous callback.
+            }
+        },
+        .query_uuid_batch => blk: {
+            const packet = packet_extern.cast();
+            defer global_allocator.destroy(packet);
+
+            const buffer: []const u8 = packet.slice();
+            defer global_allocator.free(buffer);
+
+            switch (packet.status) {
+                .ok => break :blk encode_query_uuid_batch_response(env, buffer),
+                .client_shutdown => {
+                    break :blk translate.throw(env, "Client was shutdown.");
+                },
+                .client_evicted => {
+                    break :blk translate.throw(env, "Client was evicted.");
+                },
+                .client_release_too_low => {
+                    break :blk translate.throw(env, "Client was evicted: release too old.");
+                },
+                .client_release_too_high => {
+                    break :blk translate.throw(env, "Client was evicted: release too new.");
+                },
+                .too_much_data => {
+                    break :blk translate.throw(env, "Too much data provided on this batch.");
+                },
+                else => unreachable, // all other packet status' handled in previous callback.
+            }
+        },
+        .query_radius, .query_polygon, .query_latest => blk: {
+            const packet = packet_extern.cast();
+            defer global_allocator.destroy(packet);
+
+            const buffer: []const u8 = packet.slice();
+            defer global_allocator.free(buffer);
+
+            switch (packet.status) {
+                .ok => break :blk encode_query_response(env, buffer),
+                .client_shutdown => {
+                    break :blk translate.throw(env, "Client was shutdown.");
+                },
+                .client_evicted => {
+                    break :blk translate.throw(env, "Client was evicted.");
+                },
+                .client_release_too_low => {
+                    break :blk translate.throw(env, "Client was evicted: release too old.");
+                },
+                .client_release_too_high => {
+                    break :blk translate.throw(env, "Client was evicted: release too new.");
+                },
+                .too_much_data => {
+                    break :blk translate.throw(env, "Too much data provided on this batch.");
+                },
+                else => unreachable, // all other packet status' handled in previous callback.
+            }
+        },
         inline else => |operation_comptime| blk: {
             const Result = operation_comptime.ResultType();
 
@@ -419,7 +757,7 @@ fn on_completion_js(
                 else => unreachable, // all other packet status' handled in previous callback.
             }
         },
-        .pulse, .get_change_events => unreachable,
+        .pulse => unreachable,
     };
 
     // Parse Result array out of packet data, freeing it in the process.
@@ -451,24 +789,294 @@ fn on_completion_js(
 
 // (De)Serialization
 
+fn encode_query_uuid_response(env: c.napi_env, buffer: []const u8) !c.napi_value {
+    const header_size = @sizeOf(QueryUuidResponse);
+    if (buffer.len < header_size) {
+        const empty: [0]GeoEvent = .{};
+        return encode_array(GeoEvent, env, &empty);
+    }
+
+    const header = std.mem.bytesAsValue(
+        QueryUuidResponse,
+        buffer[0..header_size],
+    );
+
+    switch (header.status) {
+        0 => {
+            if (buffer.len < header_size + @sizeOf(GeoEvent)) {
+                const empty: [0]GeoEvent = .{};
+                return encode_array(GeoEvent, env, &empty);
+            }
+            const events = stdx.bytes_as_slice(
+                .exact,
+                GeoEvent,
+                buffer[header_size..][0..@sizeOf(GeoEvent)],
+            );
+            return encode_array(GeoEvent, env, events);
+        },
+        200 => {
+            const empty: [0]GeoEvent = .{};
+            return encode_array(GeoEvent, env, &empty);
+        },
+        210 => return translate.throw(env, "Entity expired due to TTL."),
+        else => return translate.throw(env, "Query UUID failed."),
+    }
+}
+
+fn encode_query_uuid_batch_request(env: c.napi_env, filter: c.napi_value) ![]u8 {
+    const header_size = @sizeOf(QueryUuidBatchFilter);
+    const id_size = @sizeOf(u128);
+
+    var ids_value: c.napi_value = undefined;
+    if (c.napi_get_named_property(
+        env,
+        filter,
+        @ptrCast(add_trailing_null("entity_ids")),
+        &ids_value,
+    ) != c.napi_ok) {
+        return translate.throw(env, "entity_ids must be defined");
+    }
+
+    var is_ids_array: bool = undefined;
+    if (c.napi_is_array(env, ids_value, &is_ids_array) != c.napi_ok or !is_ids_array) {
+        return translate.throw(env, "entity_ids must be an Array.");
+    }
+
+    const count = try translate.array_length(env, ids_value);
+    if (count > QueryUuidBatchFilter.max_count) {
+        return translate.throw(env, "entity_ids exceeds maximum count.");
+    }
+
+    const ids_size: usize = count * id_size;
+    const total_size: usize = header_size + ids_size;
+    if (total_size > constants.message_body_size_max) {
+        return translate.throw(env, "Too much data provided on this batch.");
+    }
+
+    const buffer = try global_allocator.alignedAlloc(
+        u8,
+        @alignOf(QueryUuidBatchFilter),
+        total_size,
+    );
+    errdefer global_allocator.free(buffer);
+    @memset(buffer, 0);
+
+    const header = std.mem.bytesAsValue(QueryUuidBatchFilter, buffer[0..header_size]);
+    header.* = .{
+        .count = count,
+    };
+
+    const ids = std.mem.bytesAsSlice(u128, buffer[header_size..][0..ids_size]);
+    var index: u32 = 0;
+    while (index < count) : (index += 1) {
+        const value = try translate.array_element(env, ids_value, index);
+        ids[index] = try translate.u128_from_value(env, value, add_trailing_null("entity_ids"));
+    }
+
+    return buffer;
+}
+
+fn encode_query_uuid_batch_response(env: c.napi_env, buffer: []const u8) !c.napi_value {
+    const header_size = @sizeOf(QueryUuidBatchResult);
+    const empty: [0]GeoEvent = .{};
+
+    if (buffer.len < header_size) {
+        return translate.throw(env, "query_uuid_batch response too small.");
+    }
+
+    const header = std.mem.bytesAsValue(
+        QueryUuidBatchResult,
+        buffer[0..header_size],
+    ).*;
+
+    const not_found_count = header.not_found_count;
+    const found_count = header.found_count;
+    const indices_size: usize = @as(usize, not_found_count) * @sizeOf(u16);
+    const indices_end = header_size + indices_size;
+    const events_offset = std.mem.alignForward(usize, indices_end, 16);
+    const events_size: usize = @as(usize, found_count) * @sizeOf(GeoEvent);
+
+    if (buffer.len < events_offset + events_size) {
+        return translate.throw(env, "query_uuid_batch response truncated.");
+    }
+
+    const indices = try translate.create_array(
+        env,
+        not_found_count,
+        "Failed to allocate not_found_indices array.",
+    );
+    var idx: u32 = 0;
+    while (idx < not_found_count) : (idx += 1) {
+        const start = header_size + @as(usize, idx) * @sizeOf(u16);
+        const value = std.mem.readInt(u16, buffer[start..][0..@sizeOf(u16)], .little);
+
+        var js_value: c.napi_value = undefined;
+        if (c.napi_create_uint32(env, value, &js_value) != c.napi_ok) {
+            return translate.throw(env, "Failed to create not_found index value.");
+        }
+        try translate.set_array_element(
+            env,
+            indices,
+            idx,
+            js_value,
+            "Failed to set not_found index element.",
+        );
+    }
+
+    const events = if (found_count == 0)
+        &empty
+    else
+        stdx.bytes_as_slice(
+            .exact,
+            GeoEvent,
+            buffer[events_offset..][0..events_size],
+        );
+    const events_array = try encode_array(GeoEvent, env, events);
+
+    const result = try translate.create_object(
+        env,
+        "Failed to create query_uuid_batch result.",
+    );
+    try translate.u32_into_object(
+        env,
+        result,
+        add_trailing_null("found_count"),
+        header.found_count,
+        "Failed to set query_uuid_batch found_count.",
+    );
+    try translate.u32_into_object(
+        env,
+        result,
+        add_trailing_null("not_found_count"),
+        header.not_found_count,
+        "Failed to set query_uuid_batch not_found_count.",
+    );
+
+    if (c.napi_set_named_property(
+        env,
+        result,
+        @ptrCast(add_trailing_null("not_found_indices")),
+        indices,
+    ) != c.napi_ok) {
+        return translate.throw(env, "Failed to set not_found_indices.");
+    }
+
+    if (c.napi_set_named_property(
+        env,
+        result,
+        @ptrCast(add_trailing_null("events")),
+        events_array,
+    ) != c.napi_ok) {
+        return translate.throw(env, "Failed to set events.");
+    }
+
+    return result;
+}
+
+fn encode_query_response(env: c.napi_env, buffer: []const u8) !c.napi_value {
+    const header_size = @sizeOf(QueryResponse);
+    const event_size = @sizeOf(GeoEvent);
+    const empty: [0]GeoEvent = .{};
+
+    if (buffer.len == 0) {
+        return encode_array(GeoEvent, env, &empty);
+    }
+
+    const has_header = buffer.len >= header_size and
+        (buffer.len - header_size) % event_size == 0;
+
+    if (!has_header) {
+        if (buffer.len % event_size != 0) {
+            return translate.throw(env, "Query response size not aligned to GeoEvent.");
+        }
+        const events = stdx.bytes_as_slice(
+            .exact,
+            GeoEvent,
+            buffer,
+        );
+        return encode_array(GeoEvent, env, events);
+    }
+
+    const header = std.mem.bytesAsValue(
+        QueryResponse,
+        buffer[0..header_size],
+    ).*;
+    const payload = buffer[header_size..];
+    const expected: usize = @intCast(header.count);
+    const available = payload.len / event_size;
+
+    if (expected != available) {
+        return translate.throw(env, "Query response count does not match payload size.");
+    }
+
+    const events = if (expected == 0)
+        &empty
+    else
+        stdx.bytes_as_slice(
+            .exact,
+            GeoEvent,
+            payload[0 .. expected * event_size],
+        );
+
+    const array = try encode_array(GeoEvent, env, events);
+    try set_query_response_metadata(
+        env,
+        array,
+        header.has_more != 0,
+        header.partial_result != 0,
+    );
+    return array;
+}
+
+fn set_query_response_metadata(
+    env: c.napi_env,
+    array: c.napi_value,
+    has_more: bool,
+    partial_result: bool,
+) !void {
+    var value: c.napi_value = undefined;
+    if (c.napi_get_boolean(env, has_more, &value) != c.napi_ok) {
+        return translate.throw(env, "Failed to create has_more value.");
+    }
+    if (c.napi_set_named_property(
+        env,
+        array,
+        @ptrCast(add_trailing_null("has_more")),
+        value,
+    ) != c.napi_ok) {
+        return translate.throw(env, "Failed to set has_more on query response.");
+    }
+
+    if (c.napi_get_boolean(env, partial_result, &value) != c.napi_ok) {
+        return translate.throw(env, "Failed to create partial_result value.");
+    }
+    if (c.napi_set_named_property(
+        env,
+        array,
+        @ptrCast(add_trailing_null("partial_result")),
+        value,
+    ) != c.napi_ok) {
+        return translate.throw(env, "Failed to set partial_result on query response.");
+    }
+}
+
 fn decode_array(comptime Event: type, env: c.napi_env, array: c.napi_value, events: []Event) !void {
     for (events, 0..) |*event, i| {
         const object = try translate.array_element(env, array, @intCast(i));
         switch (Event) {
-            Account,
-            Transfer,
-            AccountFilter,
-            AccountBalance,
-            QueryFilter,
             // GeoEvent types
             GeoEvent,
             QueryUuidFilter,
+            QueryUuidBatchFilter,
             QueryRadiusFilter,
             QueryPolygonFilter,
             QueryLatestFilter,
             // Other types
-            ChangeEventsFilter,
             CleanupRequest,
+            TopologyRequest,
+            TtlSetRequest,
+            TtlExtendRequest,
+            TtlClearRequest,
             => {
                 inline for (std.meta.fields(Event)) |field| {
                     const value: field.type = switch (@typeInfo(field.type)) {

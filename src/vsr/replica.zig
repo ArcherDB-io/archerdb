@@ -5340,7 +5340,7 @@ pub fn ReplicaType(
             // to how Redis's Append Only File works. It's also technically possible for a request
             // to be recorded by the AOF, with the client not having received a response
             // (eg, a panic right after writing to the AOF before sending the response) but we
-            // consider this harmless due to our requirement for unique Account / Transfer IDs.
+            // consider this harmless due to our requirement for unique GeoEvent IDs.
             //
             // It should be impossible for a client to receive a response without the request
             // being logged by at least one replica.

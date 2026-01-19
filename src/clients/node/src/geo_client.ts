@@ -15,6 +15,7 @@ import {
   QueryRadiusFilter,
   QueryPolygonFilter,
   QueryLatestFilter,
+  QueryUuidBatchResult,
   QueryResult,
   DeleteResult,
   CleanupResult,
@@ -989,7 +990,6 @@ export class GeoClient {
 
     const filter: QueryUuidFilter = {
       entity_id: entityId,
-      limit: 1,
     }
 
     const results = await this._submitQuery<GeoEvent>(
@@ -1006,23 +1006,82 @@ export class GeoClient {
    * @param entityIds - Array of entity UUIDs (max 10,000)
    * @returns Map of entity_id to GeoEvent
    */
-  async getLatestByUuidBatch(entityIds: bigint[]): Promise<Map<bigint, GeoEvent>> {
+  async getLatestByUuidBatch(
+    entityIds: bigint[],
+    operationOptions?: OperationOptions
+  ): Promise<Map<bigint, GeoEvent>> {
     if (entityIds.length > BATCH_SIZE_MAX) {
       throw new BatchTooLarge(`Batch exceeds ${BATCH_SIZE_MAX} UUIDs`)
     }
 
-    const result = new Map<bigint, GeoEvent>()
+    if (entityIds.length === 0) {
+      return new Map()
+    }
 
-    // NOTE: In full implementation, this would be a single batch query.
-    // For skeleton, we iterate (production would batch these).
-    for (const id of entityIds) {
-      const event = await this.getLatestByUuid(id)
+    const batchResult = await this.queryUuidBatch(entityIds, operationOptions)
+    const notFound = new Set(batchResult.not_found_indices)
+    const result = new Map<bigint, GeoEvent>()
+    let eventIndex = 0
+
+    for (let i = 0; i < entityIds.length; i++) {
+      if (notFound.has(i)) {
+        continue
+      }
+      const event = batchResult.events[eventIndex++]
       if (event) {
-        result.set(id, event)
+        result.set(entityIds[i], event)
       }
     }
 
     return result
+  }
+
+  /**
+   * Batch lookup of latest events for multiple entities (F1.3.4).
+   *
+   * @param entityIds - Array of entity UUIDs (max 10,000)
+   * @returns Batch lookup result with not-found indices
+   */
+  async queryUuidBatch(
+    entityIds: bigint[],
+    operationOptions?: OperationOptions
+  ): Promise<QueryUuidBatchResult> {
+    this.ensureConnected()
+
+    if (entityIds.length > BATCH_SIZE_MAX) {
+      throw new BatchTooLarge(`Batch exceeds ${BATCH_SIZE_MAX} UUIDs`)
+    }
+
+    if (entityIds.length === 0) {
+      return {
+        found_count: 0,
+        not_found_count: 0,
+        not_found_indices: [],
+        events: [],
+      }
+    }
+
+    const retryConfig = mergeOptions(this.retryConfig, operationOptions)
+
+    return withRetry(async () => {
+      return new Promise<QueryUuidBatchResult>((resolve, reject) => {
+        const op = GeoOperation.query_uuid_batch as unknown as Operation
+        binding.submit(this.context!, op, [{ entity_ids: entityIds }], (error, result) => {
+          if (error) {
+            reject(error)
+          } else if (result) {
+            resolve(result as unknown as QueryUuidBatchResult)
+          } else {
+            resolve({
+              found_count: 0,
+              not_found_count: 0,
+              not_found_indices: [],
+              events: [],
+            })
+          }
+        })
+      })
+    }, retryConfig)
   }
 
   /**
@@ -1049,9 +1108,10 @@ export class GeoClient {
       operationOptions
     )
 
+    const headerHasMore = (events as unknown as { has_more?: boolean }).has_more
     return {
       events,
-      has_more: events.length === filter.limit,
+      has_more: headerHasMore ?? (events.length === filter.limit),
       cursor: events.length > 0 ? events[events.length - 1].timestamp : undefined,
     }
   }
@@ -1081,9 +1141,10 @@ export class GeoClient {
       operationOptions
     )
 
+    const headerHasMore = (events as unknown as { has_more?: boolean }).has_more
     return {
       events,
-      has_more: events.length === filter.limit,
+      has_more: headerHasMore ?? (events.length === filter.limit),
       cursor: events.length > 0 ? events[events.length - 1].timestamp : undefined,
     }
   }
@@ -1118,9 +1179,10 @@ export class GeoClient {
       operationOptions
     )
 
+    const headerHasMore = (events as unknown as { has_more?: boolean }).has_more
     return {
       events,
-      has_more: events.length === filter.limit,
+      has_more: headerHasMore ?? (events.length === filter.limit),
       cursor: events.length > 0 ? events[events.length - 1].timestamp : undefined,
     }
   }

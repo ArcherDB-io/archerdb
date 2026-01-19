@@ -16,8 +16,8 @@
 //! Finally, to maintain indices, the LSM tree could benefit from a compact synthetic primary key.
 //!
 //! Time solves _all_ of these problems at once: each object in ArcherDB gets tagged with a u64
-//! nanosecond-precision creation timestamp. These timestamps are unique across all objects (an
-//! Account and a Transfer can never have the same timestamp), consistent with linearization order
+//! nanosecond-precision creation timestamp. These timestamps are unique across all objects (two
+//! GeoEvents can never have the same timestamp), consistent with linearization order
 //! of the events (earlier events get smaller timestamps), and closely match the real wall-clock
 //! time. Timestamps are used as internal synthetic primary keys instead of user-supplied random
 //! u128 ids because they are smaller and also expose temporal locality.

@@ -5,6 +5,7 @@
 // Provides risk assessment, necessity evaluation, and compliance documentation.
 
 const std = @import("std");
+const stdx = @import("stdx");
 const Allocator = std.mem.Allocator;
 
 /// DPIA review period in nanoseconds (1 year).
@@ -224,7 +225,12 @@ pub const RiskFactor = struct {
     };
 
     /// Initialize risk factor.
-    pub fn init(factor_id: u32, category: RiskCategory, severity: RiskSeverity, likelihood: RiskLikelihood) RiskFactor {
+    pub fn init(
+        factor_id: u32,
+        category: RiskCategory,
+        severity: RiskSeverity,
+        likelihood: RiskLikelihood,
+    ) RiskFactor {
         return .{
             .factor_id = factor_id,
             .category = category,
@@ -242,7 +248,7 @@ pub const RiskFactor = struct {
     /// Set description.
     pub fn setDescription(self: *RiskFactor, desc: []const u8) void {
         const len = @min(desc.len, MAX_DESCRIPTION);
-        @memcpy(self.description[0..len], desc[0..len]);
+        stdx.copy_disjoint(.inexact, u8, self.description[0..len], desc[0..len]);
         self.description_len = @intCast(len);
     }
 
@@ -360,7 +366,7 @@ pub const MitigationMeasure = struct {
     /// Set description.
     pub fn setDescription(self: *MitigationMeasure, desc: []const u8) void {
         const len = @min(desc.len, MAX_MITIGATION);
-        @memcpy(self.description[0..len], desc[0..len]);
+        stdx.copy_disjoint(.inexact, u8, self.description[0..len], desc[0..len]);
         self.description_len = @intCast(len);
     }
 
@@ -481,7 +487,7 @@ pub const DPIA = struct {
     /// Set description.
     pub fn setDescription(self: *DPIA, desc: []const u8) void {
         const len = @min(desc.len, MAX_DESCRIPTION);
-        @memcpy(self.description[0..len], desc[0..len]);
+        stdx.copy_disjoint(.inexact, u8, self.description[0..len], desc[0..len]);
         self.description_len = @intCast(len);
     }
 
@@ -656,8 +662,14 @@ pub const DPIAManager = struct {
         }
 
         try self.assessments.put(assessment_id, dpia);
-        try self.risk_factors.put(assessment_id, std.ArrayList(RiskFactor).init(self.allocator));
-        try self.mitigations.put(assessment_id, std.ArrayList(MitigationMeasure).init(self.allocator));
+        try self.risk_factors.put(
+            assessment_id,
+            std.ArrayList(RiskFactor).init(self.allocator),
+        );
+        try self.mitigations.put(
+            assessment_id,
+            std.ArrayList(MitigationMeasure).init(self.allocator),
+        );
 
         self.next_assessment_id += 1;
         self.stats.total_assessments += 1;
@@ -679,7 +691,8 @@ pub const DPIAManager = struct {
         likelihood: RiskLikelihood,
         description: []const u8,
     ) !u32 {
-        const factors = self.risk_factors.getPtr(assessment_id) orelse return error.AssessmentNotFound;
+        const factors = self.risk_factors.getPtr(assessment_id) orelse
+            return error.AssessmentNotFound;
 
         const factor_id = self.next_factor_id;
         var factor = RiskFactor.init(factor_id, category, severity, likelihood);
@@ -723,7 +736,8 @@ pub const DPIAManager = struct {
         factor_id: u32,
         mitigation_id: u32,
     ) !bool {
-        const factors = self.risk_factors.getPtr(assessment_id) orelse return error.AssessmentNotFound;
+        const factors = self.risk_factors.getPtr(assessment_id) orelse
+            return error.AssessmentNotFound;
 
         for (factors.items) |*factor| {
             if (factor.factor_id == factor_id) {
@@ -941,7 +955,10 @@ test "RiskFactor initialization and scoring" {
     factor.setDescription("User location can be tracked continuously");
 
     try testing.expectEqual(@as(u8, 9), factor.riskScore()); // 3 * 3
-    try testing.expectEqualStrings("User location can be tracked continuously", factor.getDescription());
+    try testing.expectEqualStrings(
+        "User location can be tracked continuously",
+        factor.getDescription(),
+    );
 }
 
 test "RiskFactor mitigation linking" {
@@ -1165,10 +1182,26 @@ test "DPIAManager summary generation" {
 
     const dpia_id = try manager.createDPIA(0x12345, .location_advertising);
 
-    _ = try manager.addRiskFactor(dpia_id, .privacy, .high, .likely, "User tracking");
-    _ = try manager.addRiskFactor(dpia_id, .autonomy, .medium, .possible, "Behavioral manipulation");
+    _ = try manager.addRiskFactor(
+        dpia_id,
+        .privacy,
+        .high,
+        .likely,
+        "User tracking",
+    );
+    _ = try manager.addRiskFactor(
+        dpia_id,
+        .autonomy,
+        .medium,
+        .possible,
+        "Behavioral manipulation",
+    );
 
-    const mit_id = try manager.addMitigation(dpia_id, .consent_mechanism, "Explicit opt-in");
+    const mit_id = try manager.addMitigation(
+        dpia_id,
+        .consent_mechanism,
+        "Explicit opt-in",
+    );
     _ = try manager.implementMitigation(dpia_id, mit_id);
 
     const summary = manager.generateSummary(dpia_id);
