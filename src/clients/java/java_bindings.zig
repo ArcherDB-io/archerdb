@@ -859,23 +859,4 @@ pub fn main() !void {
         });
     }
 
-    {
-        var buffer = std.ArrayList(u8).init(allocator);
-        try buffer.writer().print(
-            \\package io.archerdb;
-            \\
-            \\interface TBClient {{
-            \\    int SIZE = {};
-            \\    int ALIGNMENT = {};
-            \\}}
-            \\
-        , .{
-            @sizeOf(exports.arch_client_t),
-            @alignOf(exports.arch_client_t),
-        });
-        try target_dir.writeFile(.{
-            .sub_path = "TBClient.java",
-            .data = buffer.items,
-        });
-    }
 }
