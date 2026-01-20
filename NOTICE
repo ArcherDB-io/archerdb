@@ -1,0 +1,10 @@
+ArcherDB
+Copyright 2024-2025 ArcherDB Contributors
+
+This product includes software developed from the TigerBeetle project
+(https://github.com/tigerbeetle/tigerbeetle), which is licensed under the
+Apache License 2.0.
+
+This product includes Google S2 Geometry Library code
+(https://github.com/google/s2geometry), which is licensed under the
+Apache License 2.0.

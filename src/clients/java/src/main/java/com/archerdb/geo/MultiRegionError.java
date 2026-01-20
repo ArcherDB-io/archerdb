@@ -33,15 +33,15 @@ public enum MultiRegionError {
     REPLICATION_TIMEOUT(216, "Cross-region replication timeout"),
 
     /**
-     * Region configuration mismatch. The client's region configuration does not match the cluster
-     * topology.
+     * Write conflict detected. In active-active replication, two regions attempted to write to the
+     * same entity simultaneously.
      */
-    REGION_CONFIG_MISMATCH(217, "Region configuration does not match cluster topology"),
+    CONFLICT_DETECTED(217, "Write conflict detected in active-active replication"),
 
     /**
-     * Unknown region specified in request. The requested region is not part of the cluster.
+     * Geo-shard mismatch. The entity's geo-shard does not match the target region.
      */
-    UNKNOWN_REGION(218, "Unknown region specified in request");
+    GEO_SHARD_MISMATCH(218, "Entity geo-shard does not match target region");
 
     private final int code;
     private final String message;

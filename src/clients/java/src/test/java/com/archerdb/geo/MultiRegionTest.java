@@ -267,8 +267,8 @@ class MultiRegionTest {
         assertEquals(214, MultiRegionError.STALE_FOLLOWER.getCode());
         assertEquals(215, MultiRegionError.PRIMARY_UNREACHABLE.getCode());
         assertEquals(216, MultiRegionError.REPLICATION_TIMEOUT.getCode());
-        assertEquals(217, MultiRegionError.REGION_CONFIG_MISMATCH.getCode());
-        assertEquals(218, MultiRegionError.UNKNOWN_REGION.getCode());
+        assertEquals(217, MultiRegionError.CONFLICT_DETECTED.getCode());
+        assertEquals(218, MultiRegionError.GEO_SHARD_MISMATCH.getCode());
     }
 
     @Test

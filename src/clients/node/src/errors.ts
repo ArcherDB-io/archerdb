@@ -27,11 +27,11 @@ export enum MultiRegionError {
   /** Cross-region replication timeout. */
   REPLICATION_TIMEOUT = 216,
 
-  /** Region configuration does not match cluster topology. */
-  REGION_CONFIG_MISMATCH = 217,
+  /** Write conflict detected in active-active replication. */
+  CONFLICT_DETECTED = 217,
 
-  /** Unknown region specified in request. */
-  UNKNOWN_REGION = 218,
+  /** Entity geo-shard does not match target region. */
+  GEO_SHARD_MISMATCH = 218,
 }
 
 /** Error messages for multi-region errors. */
@@ -40,8 +40,8 @@ export const MULTI_REGION_ERROR_MESSAGES: Record<MultiRegionError, string> = {
   [MultiRegionError.STALE_FOLLOWER]: 'Follower data exceeds maximum staleness threshold',
   [MultiRegionError.PRIMARY_UNREACHABLE]: 'Cannot connect to primary region',
   [MultiRegionError.REPLICATION_TIMEOUT]: 'Cross-region replication timeout',
-  [MultiRegionError.REGION_CONFIG_MISMATCH]: 'Region configuration does not match cluster topology',
-  [MultiRegionError.UNKNOWN_REGION]: 'Unknown region specified in request',
+  [MultiRegionError.CONFLICT_DETECTED]: 'Write conflict detected in active-active replication',
+  [MultiRegionError.GEO_SHARD_MISMATCH]: 'Entity geo-shard does not match target region',
 }
 
 /** Retryable status for multi-region errors. */
@@ -50,8 +50,8 @@ export const MULTI_REGION_ERROR_RETRYABLE: Record<MultiRegionError, boolean> = {
   [MultiRegionError.STALE_FOLLOWER]: true,
   [MultiRegionError.PRIMARY_UNREACHABLE]: true,
   [MultiRegionError.REPLICATION_TIMEOUT]: true,
-  [MultiRegionError.REGION_CONFIG_MISMATCH]: false,
-  [MultiRegionError.UNKNOWN_REGION]: false,
+  [MultiRegionError.CONFLICT_DETECTED]: false,
+  [MultiRegionError.GEO_SHARD_MISMATCH]: false,
 }
 
 /**

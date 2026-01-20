@@ -263,7 +263,7 @@ test "arch_client echo" {
 fn clamp_limit(buffer: []u8, offset: usize) void {
     if (offset + @sizeOf(u32) > buffer.len) return;
     const limit_bytes = std.mem.toBytes(@as(u32, 1000));
-    std.mem.copyForwards(u8, buffer[offset .. offset + limit_bytes.len], &limit_bytes);
+    stdx.copy_left(.exact, u8, buffer[offset..][0..limit_bytes.len], &limit_bytes);
 }
 
 // Asserts the validation rules associated with the `init*` functions.
@@ -555,7 +555,10 @@ test "arch_client insert_events integration" {
     };
     if (!run_integration) return;
 
-    const address_opt = std.process.getEnvVarOwned(testing.allocator, "ARCHERDB_ADDRESS") catch null;
+    const address_opt = std.process.getEnvVarOwned(
+        testing.allocator,
+        "ARCHERDB_ADDRESS",
+    ) catch null;
     defer if (address_opt) |addr| testing.allocator.free(addr);
     const address = address_opt orelse "127.0.0.1:3001";
 

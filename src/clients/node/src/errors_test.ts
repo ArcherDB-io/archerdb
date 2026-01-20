@@ -62,8 +62,8 @@ test('MultiRegionError code values', () => {
   assert.strictEqual(MultiRegionError.STALE_FOLLOWER, 214)
   assert.strictEqual(MultiRegionError.PRIMARY_UNREACHABLE, 215)
   assert.strictEqual(MultiRegionError.REPLICATION_TIMEOUT, 216)
-  assert.strictEqual(MultiRegionError.REGION_CONFIG_MISMATCH, 217)
-  assert.strictEqual(MultiRegionError.UNKNOWN_REGION, 218)
+  assert.strictEqual(MultiRegionError.CONFLICT_DETECTED, 217)
+  assert.strictEqual(MultiRegionError.GEO_SHARD_MISMATCH, 218)
 })
 
 test('MultiRegionError retry semantics', () => {
@@ -71,8 +71,8 @@ test('MultiRegionError retry semantics', () => {
   assert.strictEqual(MULTI_REGION_ERROR_RETRYABLE[MultiRegionError.STALE_FOLLOWER], true)
   assert.strictEqual(MULTI_REGION_ERROR_RETRYABLE[MultiRegionError.PRIMARY_UNREACHABLE], true)
   assert.strictEqual(MULTI_REGION_ERROR_RETRYABLE[MultiRegionError.REPLICATION_TIMEOUT], true)
-  assert.strictEqual(MULTI_REGION_ERROR_RETRYABLE[MultiRegionError.REGION_CONFIG_MISMATCH], false)
-  assert.strictEqual(MULTI_REGION_ERROR_RETRYABLE[MultiRegionError.UNKNOWN_REGION], false)
+  assert.strictEqual(MULTI_REGION_ERROR_RETRYABLE[MultiRegionError.CONFLICT_DETECTED], false)
+  assert.strictEqual(MULTI_REGION_ERROR_RETRYABLE[MultiRegionError.GEO_SHARD_MISMATCH], false)
 })
 
 test('isMultiRegionError', () => {

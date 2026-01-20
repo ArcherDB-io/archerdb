@@ -540,7 +540,8 @@ test "reserved error code 105" {
     // Per error-codes/spec.md: Code 105 is reserved for future use
     // Empty batches are valid no-ops per query-engine/spec.md
     try std.testing.expectEqual(@as(u32, 105), @intFromEnum(ValidationError.reserved_105));
-    try std.testing.expectEqualStrings("Reserved error code", ValidationError.reserved_105.description());
+    const desc = ValidationError.reserved_105.description();
+    try std.testing.expectEqualStrings("Reserved error code", desc);
 }
 
 test "polygon-specific error codes" {
