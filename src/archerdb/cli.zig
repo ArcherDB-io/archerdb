@@ -137,7 +137,7 @@ const CLIArgs = union(enum) {
         // Hybrid-memory/spec.md: Enable memory-mapped RAM index fallback.
         memory_mapped_index_enabled: bool = false,
 
-        // Per add-v2-distributed-features/specs/ttl-retention/spec.md: TTL Extension on Read
+        // TTL Extension on Read
         // When enabled, accessing an entity extends its TTL automatically
         ttl_extension_enabled: bool = false,
         // Amount to extend TTL by on access (seconds, default 86400 = 1 day)
@@ -147,13 +147,13 @@ const CLIArgs = union(enum) {
         // Minimum time between extensions for same entity (seconds, default 3600 = 1 hour)
         ttl_extension_cooldown: ?u32 = null,
 
-        // v2.0 Multi-Region Replication options
+        // Multi-Region Replication options
         region_role: ?[]const u8 = null, // "primary" or "follower"
         region_id: ?u32 = null, // Unique region identifier
         primary_region: ?[]const u8 = null, // Primary endpoint (follower only)
         follower_regions: ?[]const u8 = null, // Comma-separated follower endpoints (primary only)
 
-        // v2.0 Encryption at Rest options
+        // Encryption at Rest options
         encryption_enabled: bool = false,
         encryption_key_provider: ?[]const u8 = null, // "aws-kms", "vault", "file"
         encryption_key_id: ?[]const u8 = null, // KMS ARN, Vault path, or key name
@@ -546,7 +546,7 @@ const CLIArgs = union(enum) {
         ;
     };
 
-    // v2.0 Shard management commands
+    // Shard management commands
     const Shard = union(enum) {
         /// List all shards in the cluster
         list: struct {
@@ -624,7 +624,7 @@ const CLIArgs = union(enum) {
             \\
             \\  --mode=<offline|online>
             \\        Resharding mode. 'offline' is stop-the-world (default).
-            \\        'online' allows reads during migration (v2.1+).
+            \\        'online' allows reads during migration.
             \\
             \\  --format=<text|json>
             \\        Output format. Defaults to 'text'.
@@ -641,7 +641,7 @@ const CLIArgs = union(enum) {
         ;
     };
 
-    // v2.1 TTL management command (per add-v2-distributed-features/specs/ttl-retention/spec.md)
+    // TTL management command
     const TTL = union(enum) {
         /// Set absolute TTL for an entity
         set: struct {
@@ -726,7 +726,7 @@ const CLIArgs = union(enum) {
         ;
     };
 
-    // v2.0 Encryption verification command
+    // Encryption verification command
     const Verify = struct {
         /// Verify encryption status
         encryption: bool = false,
@@ -755,8 +755,8 @@ const CLIArgs = union(enum) {
         ;
     };
 
-    // v2.0 Coordinator mode (per add-coordinator-mode/spec.md)
-    // v2.0 Cluster management commands (per add-dynamic-membership/spec.md)
+    // Coordinator mode
+    // Cluster management commands
     // Provides dynamic membership management: add/remove nodes from running cluster
     const Cluster = union(enum) {
         /// Add a new node to the cluster
@@ -858,7 +858,7 @@ const CLIArgs = union(enum) {
         ;
     };
 
-    // v2.0 Index management commands (per add-online-index-rehash/spec.md)
+    // Index management commands
     // Provides online index resize operations without blocking queries
     const Index = union(enum) {
         /// Resize an index to a new capacity
@@ -1406,7 +1406,7 @@ pub const Command = union(enum) {
         // Per add-ttl-aware-compaction spec: TTL priority threshold (0.0-1.0)
         // Levels with expired_ratio > threshold are prioritized for compaction
         ttl_priority_threshold: f64,
-        // Per add-v2-distributed-features/specs/ttl-retention/spec.md: TTL Extension on Read
+        // TTL Extension on Read
         ttl_extension_enabled: bool,
         ttl_extension_amount: u32, // seconds, default 86400 (1 day)
         ttl_extension_max: u32, // seconds, default 2592000 (30 days)
@@ -1583,7 +1583,7 @@ pub const Command = union(enum) {
         online,
     };
 
-    /// v2.0 Shard management command.
+    /// Shard management command.
     pub const Shard = union(enum) {
         list: struct {
             addresses: Addresses,
@@ -1608,14 +1608,14 @@ pub const Command = union(enum) {
         },
     };
 
-    /// v2.0 Verification command.
+    /// Verification command.
     pub const Verify = struct {
         encryption: bool,
         path: []const u8,
         log_level: LogLevel,
     };
 
-    /// v2.1 TTL management command.
+    /// TTL management command.
     pub const TTL = union(enum) {
         set: struct {
             addresses: Addresses,
@@ -1649,7 +1649,7 @@ pub const Command = union(enum) {
         first,
     };
 
-    /// v2.0 Coordinator command (per add-coordinator-mode/spec.md).
+    /// Coordinator command.
     pub const Coordinator = union(enum) {
         start: struct {
             bind_host: []const u8,
@@ -1677,7 +1677,7 @@ pub const Command = union(enum) {
         },
     };
 
-    /// v2.0 Cluster management command (per add-dynamic-membership/spec.md).
+    /// Cluster management command.
     pub const Cluster = union(enum) {
         @"add-node": struct {
             addresses: Addresses,
@@ -1705,7 +1705,7 @@ pub const Command = union(enum) {
         },
     };
 
-    /// v2.0 Index management command (per add-online-index-rehash/spec.md).
+    /// Index management command.
     pub const IndexResizeAction = enum {
         start, // Start resize with new-capacity
         check, // Dry run
@@ -2220,7 +2220,7 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
             }
             break :blk @as(f64, @floatFromInt(pct)) / 100.0;
         },
-        // Per add-v2-distributed-features/specs/ttl-retention/spec.md: TTL Extension on Read
+        // TTL Extension on Read
         .ttl_extension_enabled = start.ttl_extension_enabled,
         .ttl_extension_amount = start.ttl_extension_amount orelse 86400, // default 1 day
         .ttl_extension_max = start.ttl_extension_max orelse 2592000, // default 30 days
@@ -3116,7 +3116,7 @@ test "parse_args_info: basic parsing" {
 }
 
 // ============================================================================
-// Unit Tests (v2.0 Shard CLI)
+// Unit Tests (Shard CLI)
 // ============================================================================
 
 test "parse_output_format: valid formats" {

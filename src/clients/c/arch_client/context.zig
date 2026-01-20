@@ -171,7 +171,7 @@ pub fn ContextType(
             .archerdb_get_status,
             // ArcherDB topology discovery (Smart Client)
             .get_topology,
-            // Manual TTL operations (v2.1)
+            // Manual TTL operations
             .ttl_set,
             .ttl_extend,
             .ttl_clear,

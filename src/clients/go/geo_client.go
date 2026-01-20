@@ -206,13 +206,13 @@ type GeoClient interface {
 	// GetShardRouter returns a shard router for shard-aware operations (F5.1.4).
 	GetShardRouter() *types.ShardRouter
 
-	// SetTTL sets an absolute TTL for an entity (v2.1 Manual TTL Support).
+	// SetTTL sets an absolute TTL for an entity (Manual TTL Support).
 	SetTTL(entityID types.Uint128, ttlSeconds uint32) (*types.TtlSetResponse, error)
 
-	// ExtendTTL extends an entity's TTL by a relative amount (v2.1 Manual TTL Support).
+	// ExtendTTL extends an entity's TTL by a relative amount (Manual TTL Support).
 	ExtendTTL(entityID types.Uint128, extendBySeconds uint32) (*types.TtlExtendResponse, error)
 
-	// ClearTTL removes an entity's TTL, making it never expire (v2.1 Manual TTL Support).
+	// ClearTTL removes an entity's TTL, making it never expire (Manual TTL Support).
 	ClearTTL(entityID types.Uint128) (*types.TtlClearResponse, error)
 
 	// Close closes the client and releases resources.
@@ -1194,7 +1194,7 @@ func (c *geoClient) GetShardRouter() *types.ShardRouter {
 }
 
 // ============================================================================
-// TTL Operations (v2.1 Manual TTL Support)
+// TTL Operations (Manual TTL Support)
 // ============================================================================
 
 // SetTTL sets an absolute TTL for an entity.

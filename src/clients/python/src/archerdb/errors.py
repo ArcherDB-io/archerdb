@@ -1,7 +1,7 @@
 """
 ArcherDB Error Codes and Exceptions
 
-Provides v2 error code enums and exceptions for:
+Provides distributed feature error code enums and exceptions for:
 - Multi-region errors (213-218)
 - Sharding errors (220-224)
 - Encryption errors (410-414)
@@ -87,11 +87,11 @@ class MultiRegionError(IntEnum):
     REPLICATION_TIMEOUT = 216
     """Cross-region replication timeout."""
 
-    REGION_CONFIG_MISMATCH = 217
-    """Region configuration does not match cluster topology."""
+    CONFLICT_DETECTED = 217
+    """Write conflict detected in active-active replication."""
 
-    UNKNOWN_REGION = 218
-    """Unknown region specified in request."""
+    GEO_SHARD_MISMATCH = 218
+    """Entity geo-shard does not match target region."""
 
 
 MULTI_REGION_ERROR_MESSAGES = {
@@ -99,8 +99,8 @@ MULTI_REGION_ERROR_MESSAGES = {
     MultiRegionError.STALE_FOLLOWER: "Follower data exceeds maximum staleness threshold",
     MultiRegionError.PRIMARY_UNREACHABLE: "Cannot connect to primary region",
     MultiRegionError.REPLICATION_TIMEOUT: "Cross-region replication timeout",
-    MultiRegionError.REGION_CONFIG_MISMATCH: "Region configuration does not match cluster topology",
-    MultiRegionError.UNKNOWN_REGION: "Unknown region specified in request",
+    MultiRegionError.CONFLICT_DETECTED: "Write conflict detected in active-active replication",
+    MultiRegionError.GEO_SHARD_MISMATCH: "Entity geo-shard does not match target region",
 }
 
 MULTI_REGION_ERROR_RETRYABLE = {
@@ -108,8 +108,8 @@ MULTI_REGION_ERROR_RETRYABLE = {
     MultiRegionError.STALE_FOLLOWER: True,
     MultiRegionError.PRIMARY_UNREACHABLE: True,
     MultiRegionError.REPLICATION_TIMEOUT: True,
-    MultiRegionError.REGION_CONFIG_MISMATCH: False,
-    MultiRegionError.UNKNOWN_REGION: False,
+    MultiRegionError.CONFLICT_DETECTED: False,
+    MultiRegionError.GEO_SHARD_MISMATCH: False,
 }
 
 
@@ -298,7 +298,7 @@ def is_retryable(code: int) -> bool:
 
 
 def error_message(code: int) -> Optional[str]:
-    """Returns the message for any v2 error code."""
+    """Returns the message for any distributed error code."""
     if is_multi_region_error(code):
         return multi_region_error_message(code)
     elif is_sharding_error(code):

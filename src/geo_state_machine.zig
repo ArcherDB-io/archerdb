@@ -1305,7 +1305,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .archerdb_get_status,
                 // Topology discovery
                 .get_topology,
-                // Manual TTL operations (v2.1)
+                // Manual TTL operations
                 .ttl_set,
                 .ttl_extend,
                 .ttl_clear,
@@ -1365,7 +1365,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .archerdb_get_status,
                 .get_topology,
                 .pulse,
-                // Manual TTL operations (v2.1)
+                // Manual TTL operations
                 .ttl_set,
                 .ttl_extend,
                 .ttl_clear,
@@ -1450,7 +1450,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 // ArcherDB topology discovery (Smart Client)
                 .get_topology => self.execute_get_topology(output),
 
-                // Manual TTL operations (v2.1)
+                // Manual TTL operations
                 .ttl_set => self.execute_ttl_set(message_body_used, output),
                 .ttl_extend => self.execute_ttl_extend(message_body_used, output),
                 .ttl_clear => self.execute_ttl_clear(message_body_used, output),
@@ -2588,8 +2588,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         }
 
         // ====================================================================
-        // Manual TTL Operations (v2.1)
-        // Per add-v2-distributed-features/specs/ttl-retention/spec.md
+        // Manual TTL Operations
         // ====================================================================
 
         /// Execute TTL set operation - set absolute TTL for an entity.

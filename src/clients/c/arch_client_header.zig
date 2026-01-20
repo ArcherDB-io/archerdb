@@ -23,7 +23,7 @@ const type_mappings = .{
     .{ exports.query_response_t, "query_response_t" },
     .{ exports.polygon_vertex_t, "polygon_vertex_t" },
     .{ exports.hole_descriptor_t, "hole_descriptor_t" },
-    // TTL Operations (v2.1 Manual TTL Support)
+    // TTL Operations
     .{ exports.ttl_operation_result, "TTL_OPERATION_RESULT" },
     .{ exports.ttl_set_request_t, "ttl_set_request_t" },
     .{ exports.ttl_set_response_t, "ttl_set_response_t" },

@@ -44,10 +44,10 @@ pub const Config = struct {
 pub const default_config = Config{};
 
 // ============================================================================
-// TTL Extension on Read (v2.1)
+// TTL Extension on Read
 // ============================================================================
 
-/// TTL Extension configuration per add-v2-distributed-features/specs/ttl-retention/spec.md
+/// TTL Extension configuration.
 pub const ExtensionConfig = struct {
     /// Whether TTL extension on read is enabled.
     enabled: bool = false,
@@ -311,8 +311,7 @@ pub const CleanupResponse = extern struct {
 };
 
 // ============================================================================
-// Manual TTL Operations (v2.1)
-// Per add-v2-distributed-features/specs/ttl-retention/spec.md
+// Manual TTL Operations
 // ============================================================================
 
 /// TTL operation result codes.
@@ -1117,7 +1116,7 @@ test "TtlPrometheusMetrics: format_scanner_state" {
 }
 
 // =============================================================================
-// TTL-Aware Compaction Prioritization (v2.1+ Feature)
+// TTL-Aware Compaction Prioritization
 // =============================================================================
 //
 // Per ttl-retention/spec.md Non-Goals:
@@ -1265,7 +1264,7 @@ pub const CompactionPrioritizer = struct {
 };
 
 // =============================================================================
-// TTL Cliff Mitigation (v2.1+ Feature)
+// TTL Cliff Mitigation
 // =============================================================================
 //
 // Per ttl-retention/spec.md Non-Goals:
@@ -1502,7 +1501,7 @@ test "CliffMitigation recommendations" {
 }
 
 // ============================================================================
-// TTL Extension Tests (v2.1)
+// TTL Extension Tests
 // ============================================================================
 
 test "TTL Extension: disabled by default" {
@@ -1627,7 +1626,7 @@ test "TTL Extension metrics recording" {
 }
 
 // ============================================================================
-// Manual TTL Operations Tests (v2.1)
+// Manual TTL Operations Tests
 // ============================================================================
 
 test "TtlSetRequest: size is 64 bytes" {

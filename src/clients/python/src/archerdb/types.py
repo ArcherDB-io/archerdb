@@ -79,7 +79,7 @@ class GeoOperation(IntEnum):
     CLEANUP_EXPIRED = 155  # vsr_operations_reserved (128) + 27
     QUERY_UUID_BATCH = 156 # vsr_operations_reserved (128) + 28
     GET_TOPOLOGY = 157     # vsr_operations_reserved (128) + 29
-    # Manual TTL Operations (v2.1)
+    # Manual TTL Operations
     TTL_SET = 158          # vsr_operations_reserved (128) + 30
     TTL_EXTEND = 159       # vsr_operations_reserved (128) + 31
     TTL_CLEAR = 160        # vsr_operations_reserved (128) + 32
@@ -87,7 +87,7 @@ class GeoOperation(IntEnum):
 
 class TtlOperationResult(IntEnum):
     """
-    Result codes for TTL operations (v2.1).
+    Result codes for TTL operations.
     Maps to TtlOperationResult in ttl.zig
     """
     SUCCESS = 0
@@ -118,6 +118,7 @@ class InsertGeoEventResult(IntEnum):
     EXISTS = 13
     HEADING_OUT_OF_RANGE = 14
     TTL_INVALID = 15
+    ENTITY_ID_MUST_NOT_BE_INT_MAX = 16
 
 
 class DeleteEntityResult(IntEnum):
@@ -129,6 +130,7 @@ class DeleteEntityResult(IntEnum):
     LINKED_EVENT_FAILED = 1
     ENTITY_ID_MUST_NOT_BE_ZERO = 2
     ENTITY_NOT_FOUND = 3
+    ENTITY_ID_MUST_NOT_BE_INT_MAX = 4
 
 
 # ============================================================================
@@ -384,7 +386,7 @@ class CleanupResult:
 
 
 # ============================================================================
-# TTL Operations (v2.1 Manual TTL Support)
+# TTL Operations (Manual TTL Support)
 # ============================================================================
 
 @dataclass

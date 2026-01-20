@@ -14,8 +14,8 @@ func TestMultiRegionErrorCodes(t *testing.T) {
 		{StaleFollower, true},
 		{PrimaryUnreachable, true},
 		{ReplicationTimeout, true},
-		{RegionConfigMismatch, false},
-		{UnknownRegion, false},
+		{ConflictDetected, false},
+		{GeoShardMismatch, false},
 	}
 
 	for _, tc := range tests {

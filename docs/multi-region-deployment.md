@@ -38,7 +38,7 @@ Multi-region deployment provides:
 
 ## Prerequisites
 
-- ArcherDB binary (v2.0+) on all nodes
+- ArcherDB binary on all nodes
 - Network connectivity between regions (TCP port 3000)
 - S3 bucket for cross-region WAL shipping (optional, for high-latency links)
 

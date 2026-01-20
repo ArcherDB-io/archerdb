@@ -1,4 +1,4 @@
-// Package errors provides v2.0 error codes for ArcherDB distributed features.
+// Package errors provides error codes for ArcherDB distributed features.
 //
 // Error code ranges:
 //   - Multi-region errors: 213-218
@@ -8,10 +8,10 @@ package errors
 
 import "fmt"
 
-// ErrorCode represents a v2 error code.
+// ErrorCode represents an ArcherDB error code.
 type ErrorCode int
 
-// Multi-region error codes (213-218) per v2 replication/spec.md.
+// Multi-region error codes (213-218).
 const (
 	// FollowerReadOnly indicates write operation rejected: follower regions are read-only.
 	FollowerReadOnly ErrorCode = 213
@@ -25,14 +25,14 @@ const (
 	// ReplicationTimeout indicates cross-region replication timeout.
 	ReplicationTimeout ErrorCode = 216
 
-	// RegionConfigMismatch indicates region configuration does not match cluster topology.
-	RegionConfigMismatch ErrorCode = 217
+	// ConflictDetected indicates write conflict detected in active-active replication.
+	ConflictDetected ErrorCode = 217
 
-	// UnknownRegion indicates unknown region specified in request.
-	UnknownRegion ErrorCode = 218
+	// GeoShardMismatch indicates entity geo-shard does not match target region.
+	GeoShardMismatch ErrorCode = 218
 )
 
-// Sharding error codes (220-224) per v2 index-sharding/spec.md.
+// Sharding error codes (220-224).
 const (
 	// NotShardLeader indicates this node is not the leader for target shard.
 	NotShardLeader ErrorCode = 220
@@ -50,7 +50,7 @@ const (
 	ShardMigrationFailed ErrorCode = 224
 )
 
-// Encryption error codes (410-414) per v2 security/spec.md.
+// Encryption error codes (410-414).
 const (
 	// EncryptionKeyUnavailable indicates cannot retrieve encryption key from provider.
 	EncryptionKeyUnavailable ErrorCode = 410
@@ -75,8 +75,8 @@ var errorMessages = map[ErrorCode]string{
 	StaleFollower:        "Follower data exceeds maximum staleness threshold",
 	PrimaryUnreachable:   "Cannot connect to primary region",
 	ReplicationTimeout:   "Cross-region replication timeout",
-	RegionConfigMismatch: "Region configuration does not match cluster topology",
-	UnknownRegion:        "Unknown region specified in request",
+	ConflictDetected: "Write conflict detected in active-active replication",
+	GeoShardMismatch: "Entity geo-shard does not match target region",
 
 	// Sharding errors
 	NotShardLeader:       "This node is not the leader for target shard",
@@ -100,8 +100,8 @@ var retryable = map[ErrorCode]bool{
 	StaleFollower:        true,
 	PrimaryUnreachable:   true,
 	ReplicationTimeout:   true,
-	RegionConfigMismatch: false,
-	UnknownRegion:        false,
+	ConflictDetected: false,
+	GeoShardMismatch: false,
 
 	// Sharding errors
 	NotShardLeader:       true,
@@ -118,7 +118,7 @@ var retryable = map[ErrorCode]bool{
 	UnsupportedEncryptionVersion: false,
 }
 
-// ArcherDBError represents an ArcherDB v2 error with code, message, and retry semantics.
+// ArcherDBError represents an ArcherDB error with code, message, and retry semantics.
 type ArcherDBError struct {
 	Code      ErrorCode
 	Message   string

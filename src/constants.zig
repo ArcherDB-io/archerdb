@@ -885,7 +885,7 @@ pub const ttl_check_interval_ms: u64 = 60_000; // 1 minute
 /// Limits CPU impact of TTL cleanup during high-throughput periods.
 pub const ttl_batch_size: u32 = 10_000;
 
-// === v2.0 Replication Constants ===
+// === Replication Constants ===
 
 /// Default interval for async log shipping to followers (milliseconds).
 /// Lower values reduce replication lag but increase CPU/network overhead.
@@ -913,7 +913,7 @@ pub const ship_timeout_ms: u32 = 30_000;
 /// Maximum follower regions per primary.
 pub const followers_max: u32 = 16;
 
-// === v2.0 Encryption Constants ===
+// === Encryption Constants ===
 
 /// DEK (Data Encryption Key) size in bytes (AES-256 = 32 bytes)
 pub const encryption_dek_size: u32 = 32;

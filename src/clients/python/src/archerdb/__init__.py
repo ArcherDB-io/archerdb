@@ -166,7 +166,7 @@ from .observability import (
     RequestTimer,
 )
 
-# v2 Error codes (multi-region, sharding, encryption)
+# Distributed error codes (multi-region, sharding, encryption)
 from .errors import (
     # Multi-region errors (213-218)
     MultiRegionError,
@@ -338,19 +338,19 @@ __all__ = [
     "HealthTracker",
     # Observability - Timing
     "RequestTimer",
-    # v2 Error codes - Multi-region (213-218)
+    # Distributed error codes - Multi-region (213-218)
     "MultiRegionError",
     "MULTI_REGION_ERROR_MESSAGES",
     "MULTI_REGION_ERROR_RETRYABLE",
     "is_multi_region_error",
     "multi_region_error_message",
-    # v2 Error codes - Sharding (220-224)
+    # Distributed error codes - Sharding (220-224)
     "ShardingError",
     "SHARDING_ERROR_MESSAGES",
     "SHARDING_ERROR_RETRYABLE",
     "is_sharding_error",
     "sharding_error_message",
-    # v2 Error codes - Encryption (410-414)
+    # Distributed error codes - Encryption (410-414)
     "EncryptionError",
     "ENCRYPTION_ERROR_MESSAGES",
     "ENCRYPTION_ERROR_RETRYABLE",

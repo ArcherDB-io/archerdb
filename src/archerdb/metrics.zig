@@ -716,7 +716,7 @@ pub const Registry = struct {
         std.atomic.Value(u64).init(0), // Level 6
     };
 
-    // TTL Extension metrics (per add-v2-distributed-features/specs/ttl-retention/spec.md)
+    // TTL Extension metrics
     // Total number of TTL extensions performed
     pub var ttl_extensions_total: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
     // Extensions skipped due to cooldown period not elapsed
@@ -818,7 +818,7 @@ pub const Registry = struct {
     pub var vsr_replica_index: std.atomic.Value(u8) = std.atomic.Value(u8).init(0);
 
     // ========================================================================
-    // v2.0 Multi-Region Replication Metrics
+    // Multi-Region Replication Metrics
     // ========================================================================
 
     /// Maximum number of follower regions per primary
@@ -859,7 +859,7 @@ pub const Registry = struct {
     pub var region_available: std.atomic.Value(u8) = std.atomic.Value(u8).init(1);
 
     // ========================================================================
-    // v2.0 Sharding Metrics
+    // Sharding Metrics
     // ========================================================================
 
     /// Configured sharding strategy (0=modulo, 1=virtual_ring, 2=jump_hash, 3=spatial)
@@ -966,7 +966,7 @@ pub const Registry = struct {
     pub var resharding_duration_ns: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
 
     // ========================================================================
-    // v2.1 Online Resharding Metrics
+    // Online Resharding Metrics
     // ========================================================================
 
     /// Online resharding mode (0=none, 1=offline, 2=online)
@@ -995,7 +995,7 @@ pub const Registry = struct {
     );
 
     // ========================================================================
-    // v2.1 Tiering Metrics (Hot-Warm-Cold)
+    // Tiering Metrics (Hot-Warm-Cold)
     // ========================================================================
 
     /// Entity count per tier
@@ -1032,7 +1032,7 @@ pub const Registry = struct {
     pub var cold_tier_latency_ns_sum: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
 
     // ========================================================================
-    // v2.0 Encryption Metrics
+    // Encryption Metrics
     // ========================================================================
 
     /// Total encryption operations
@@ -1593,7 +1593,7 @@ pub const Registry = struct {
         }
         try writer.writeAll("\n");
 
-        // TTL Extension metrics (per add-v2-distributed-features/specs/ttl-retention/spec.md)
+        // TTL Extension metrics
         try writer.writeAll(
             "# HELP archerdb_ttl_extensions_total Total TTL extensions performed\n",
         );
@@ -1806,7 +1806,7 @@ pub const Registry = struct {
         try writer.writeAll("\n");
 
         // ====================================================================
-        // v2.0 Multi-Region Metrics
+        // Multi-Region Metrics
         // ====================================================================
 
         // Region info
@@ -1901,7 +1901,7 @@ pub const Registry = struct {
         }
 
         // ====================================================================
-        // v2.0 Sharding Metrics
+        // Sharding Metrics
         // ====================================================================
 
         try sharding_strategy.format(writer);
@@ -2050,7 +2050,7 @@ pub const Registry = struct {
             try writer.writeAll("\n");
         }
 
-        // v2.1 Online resharding metrics
+        // Online resharding metrics
         const reshard_mode = resharding_mode.load(.monotonic);
         if (reshard_mode > 0) {
             try writer.writeAll("# HELP archerdb_resharding_mode " ++
@@ -2113,7 +2113,7 @@ pub const Registry = struct {
         try writer.writeAll("\n");
 
         // ====================================================================
-        // v2.1 Tiering Metrics (Hot-Warm-Cold)
+        // Tiering Metrics (Hot-Warm-Cold)
         // ====================================================================
 
         const tier_fmt = "archerdb_{s}{{tier=\"{s}\"}} {d}\n";
@@ -2190,7 +2190,7 @@ pub const Registry = struct {
         try writer.writeAll("\n");
 
         // ====================================================================
-        // v2.0 Encryption Metrics
+        // Encryption Metrics
         // ====================================================================
 
         try encryption_ops_total.format(writer);

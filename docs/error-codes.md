@@ -1,6 +1,6 @@
 # ArcherDB Error Codes Reference
 
-This document provides a complete reference for all ArcherDB error codes, including v2 distributed features.
+This document provides a complete reference for all ArcherDB error codes.
 
 ## Error Code Ranges
 
@@ -22,7 +22,7 @@ Errors are classified into three categories:
 - **Client Error**: Invalid request that will always fail (fix the request, don't retry)
 - **Fatal**: Server-side bugs (contact support)
 
-## v2 Error Codes
+## Distributed Error Codes
 
 ### Multi-Region Errors (213-218)
 

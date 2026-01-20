@@ -7,14 +7,14 @@
 //! Error Code Ranges:
 //!   - 1-10:     Protocol errors
 //!   - 100-120:  Validation errors (117-120: polygon hole errors)
-//!   - 200-212:  State errors (v1)
-//!   - 213-218:  Multi-region errors (v2.0)
-//!   - 220-224:  Sharding errors (v2.0)
-//!   - 230-233:  Tiering errors (v2.1)
-//!   - 240-243:  TTL extension errors (v2.1)
+//!   - 200-212:  Core state errors
+//!   - 213-218:  Multi-region errors
+//!   - 220-224:  Sharding errors
+//!   - 230-233:  Tiering errors
+//!   - 240-243:  TTL extension errors
 //!   - 300-310:  Resource errors
-//!   - 400-404:  Security errors (v1)
-//!   - 410-414:  Encryption errors (v2.0)
+//!   - 400-404:  Security errors
+//!   - 410-414:  Encryption errors
 //!   - 500-504:  Internal errors
 
 const std = @import("std");
@@ -145,10 +145,10 @@ pub const ValidationError = enum(u32) {
 
 /// State error codes (200-243)
 /// These errors indicate system state issues.
-/// Ranges: 200-212 (v1), 213-218 (multi-region), 220-224 (sharding),
+/// Ranges: 200-212 (core), 213-218 (multi-region), 220-224 (sharding),
 /// 230-233 (tiering), 240-243 (TTL)
 pub const StateError = enum(u32) {
-    // === v1 Core State Errors (200-212) ===
+    // === Core State Errors (200-212) ===
     /// Query UUID that doesn't exist in index
     entity_not_found = 200,
     /// Cluster is unavailable (quorum lost)
@@ -176,7 +176,7 @@ pub const StateError = enum(u32) {
     /// Writes halted pending backup (mandatory mode)
     backup_required = 212,
 
-    // === v2.0 Multi-Region Errors (213-218) ===
+    // === Multi-Region Errors (213-218) ===
     /// Write sent to follower region (follower is read-only)
     follower_read_only = 213,
     /// Follower has not caught up to requested min_commit_op
@@ -190,7 +190,7 @@ pub const StateError = enum(u32) {
     /// Entity geo-shard does not match target region
     geo_shard_mismatch = 218,
 
-    // === v2.0 Sharding Errors (220-224) ===
+    // === Sharding Errors (220-224) ===
     /// This node is not the leader for target shard
     not_shard_leader = 220,
     /// Target shard has no available replicas
@@ -202,7 +202,7 @@ pub const StateError = enum(u32) {
     /// Data migration to new shard failed
     shard_migration_failed = 224,
 
-    // === v2.1 Tiering Errors (230-233) ===
+    // === Tiering Errors (230-233) ===
     /// Cannot access cold tier storage (S3)
     cold_tier_unavailable = 230,
     /// Cold tier fetch exceeded timeout
@@ -212,7 +212,7 @@ pub const StateError = enum(u32) {
     /// Target tier storage is full
     tier_storage_full = 233,
 
-    // === v2.1 TTL Extension Errors (240-243) ===
+    // === TTL Extension Errors (240-243) ===
     /// TTL extension is not enabled
     ttl_extension_disabled = 240,
     /// Entity has reached maximum TTL
@@ -224,7 +224,7 @@ pub const StateError = enum(u32) {
 
     pub fn description(self: StateError) []const u8 {
         return switch (self) {
-            // v1 Core
+            // Core
             .entity_not_found => "Entity not found in index",
             .cluster_unavailable => "Cluster is unavailable - quorum lost",
             .view_change_in_progress => "View change is in progress",
@@ -267,7 +267,7 @@ pub const StateError = enum(u32) {
     /// Returns true if this state error can be retried
     pub fn isRetriable(self: StateError) bool {
         return switch (self) {
-            // v1 retriable
+            // Core retriable
             .cluster_unavailable,
             .view_change_in_progress,
             .not_primary,
@@ -355,9 +355,9 @@ pub const ResourceError = enum(u32) {
 
 /// Security error codes (400-415)
 /// These errors indicate security/authorization issues.
-/// Ranges: 400-404 (v1 auth), 410-415 (v2.0+ encryption)
+/// Ranges: 400-404 (auth), 410-415 (encryption)
 pub const SecurityError = enum(u32) {
-    // === v1 Authentication Errors (400-404) ===
+    // === Authentication Errors (400-404) ===
     /// Authentication failed
     authentication_failed = 400,
     /// Missing authorization
@@ -365,7 +365,7 @@ pub const SecurityError = enum(u32) {
     /// Wrong cluster key
     cluster_key_mismatch = 404,
 
-    // === v2.0 Encryption Errors (410-414) ===
+    // === Encryption Errors (410-414) ===
     /// Cannot retrieve encryption key from provider (KMS/Vault)
     encryption_key_unavailable = 410,
     /// Failed to decrypt data (auth tag mismatch)
@@ -377,7 +377,7 @@ pub const SecurityError = enum(u32) {
     /// File encrypted with unsupported version
     unsupported_encryption_version = 414,
 
-    // === v2.1+ Encryption Errors (415+) ===
+    // === Extended Encryption Errors (415+) ===
     /// AES-NI hardware acceleration not available
     /// Per add-aesni-encryption spec: returned when CPU lacks AES-NI
     /// and --allow-software-crypto is not set
@@ -536,6 +536,13 @@ test "resource error codes in expected range" {
     try std.testing.expect(max <= 399);
 }
 
+test "reserved error code 105" {
+    // Per error-codes/spec.md: Code 105 is reserved for future use
+    // Empty batches are valid no-ops per query-engine/spec.md
+    try std.testing.expectEqual(@as(u32, 105), @intFromEnum(ValidationError.reserved_105));
+    try std.testing.expectEqualStrings("Reserved error code", ValidationError.reserved_105.description());
+}
+
 test "polygon-specific error codes" {
     // F1.2.4: Verify polygon-specific codes 109-113 exist
     const self_int = @intFromEnum(ValidationError.polygon_self_intersecting);
@@ -656,10 +663,10 @@ test "isRetriable semantics per spec" {
     try std.testing.expect(!internal.isRetriable());
 }
 
-// === v2.0 Error Code Tests ===
+// === Distributed Error Code Tests ===
 
-test "v2.0 multi-region error codes 213-218" {
-    // Multi-region error codes per add-v2-distributed-features spec
+test "multi-region error codes 213-218" {
+    // Multi-region error codes
     try std.testing.expectEqual(@as(u32, 213), @intFromEnum(StateError.follower_read_only));
     try std.testing.expectEqual(@as(u32, 214), @intFromEnum(StateError.stale_follower));
     try std.testing.expectEqual(@as(u32, 215), @intFromEnum(StateError.region_unavailable));
@@ -668,8 +675,8 @@ test "v2.0 multi-region error codes 213-218" {
     try std.testing.expectEqual(@as(u32, 218), @intFromEnum(StateError.geo_shard_mismatch));
 }
 
-test "v2.0 sharding error codes 220-224" {
-    // Sharding error codes per add-v2-distributed-features spec
+test "sharding error codes 220-224" {
+    // Sharding error codes
     try std.testing.expectEqual(@as(u32, 220), @intFromEnum(StateError.not_shard_leader));
     try std.testing.expectEqual(@as(u32, 221), @intFromEnum(StateError.shard_unavailable));
     try std.testing.expectEqual(@as(u32, 222), @intFromEnum(StateError.resharding_in_progress));
@@ -677,16 +684,16 @@ test "v2.0 sharding error codes 220-224" {
     try std.testing.expectEqual(@as(u32, 224), @intFromEnum(StateError.shard_migration_failed));
 }
 
-test "v2.1 tiering error codes 230-233" {
-    // Tiering error codes per add-v2-distributed-features spec
+test "tiering error codes 230-233" {
+    // Tiering error codes
     try std.testing.expectEqual(@as(u32, 230), @intFromEnum(StateError.cold_tier_unavailable));
     try std.testing.expectEqual(@as(u32, 231), @intFromEnum(StateError.cold_tier_fetch_timeout));
     try std.testing.expectEqual(@as(u32, 232), @intFromEnum(StateError.migration_failed));
     try std.testing.expectEqual(@as(u32, 233), @intFromEnum(StateError.tier_storage_full));
 }
 
-test "v2.1 TTL extension error codes 240-243" {
-    // TTL extension error codes per add-v2-distributed-features spec
+test "TTL extension error codes 240-243" {
+    // TTL extension error codes
     const se = StateError;
     try std.testing.expectEqual(@as(u32, 240), @intFromEnum(se.ttl_extension_disabled));
     try std.testing.expectEqual(@as(u32, 241), @intFromEnum(se.ttl_extension_max_reached));
@@ -694,19 +701,19 @@ test "v2.1 TTL extension error codes 240-243" {
     try std.testing.expectEqual(@as(u32, 243), @intFromEnum(se.ttl_cooldown_active));
 }
 
-test "v2.0+ encryption error codes 410-415" {
-    // Encryption error codes per add-v2-distributed-features spec
+test "encryption error codes 410-415" {
+    // Encryption error codes
     const sec = SecurityError;
     try std.testing.expectEqual(@as(u32, 410), @intFromEnum(sec.encryption_key_unavailable));
     try std.testing.expectEqual(@as(u32, 411), @intFromEnum(sec.decryption_failed));
     try std.testing.expectEqual(@as(u32, 412), @intFromEnum(sec.encryption_not_enabled));
     try std.testing.expectEqual(@as(u32, 413), @intFromEnum(sec.key_rotation_in_progress));
     try std.testing.expectEqual(@as(u32, 414), @intFromEnum(sec.unsupported_encryption_version));
-    // v2.1+ AES-NI error code per add-aesni-encryption spec
+    // AES-NI error code
     try std.testing.expectEqual(@as(u32, 415), @intFromEnum(sec.aesni_not_available));
 }
 
-test "v2.0 isRetriable semantics for distributed errors" {
+test "isRetriable semantics for distributed errors" {
     // Multi-region: some are retriable
     const stale_follower: ErrorCode = .{ .state = .stale_follower };
     const region_unavail: ErrorCode = .{ .state = .region_unavailable };

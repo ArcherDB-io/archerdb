@@ -438,7 +438,7 @@ test "vortex smoke" {
 }
 
 // ============================================================================
-// v2.0 Multi-Region Replication Integration Tests
+// Multi-Region Replication Integration Tests
 // ============================================================================
 
 // NOTE: Multi-region replication tests require:
@@ -446,7 +446,7 @@ test "vortex smoke" {
 // - WAL shipping infrastructure
 // - Follower read-only enforcement (error 213)
 //
-// These tests verify the Phase 1 v2.0 multi-region features:
+// These tests verify multi-region features:
 // - Primary region accepts writes
 // - Follower region rejects writes with FOLLOWER_READ_ONLY (213)
 // - Follower region can serve reads

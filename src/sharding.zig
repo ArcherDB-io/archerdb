@@ -988,7 +988,7 @@ test "ShardStats calculation" {
 }
 
 // =============================================================================
-// Consistent Hashing Ring (v2.1+ Feature)
+// Consistent Hashing Ring
 // =============================================================================
 //
 // Per index-sharding/consistent-hashing.md:
@@ -1142,7 +1142,7 @@ pub const Migration = struct {
 };
 
 // =============================================================================
-// Online Resharding State Machine (v2.1+ Feature)
+// Online Resharding State Machine
 // =============================================================================
 //
 // Per index-sharding/failover-resharding.md:
@@ -1384,7 +1384,7 @@ pub const ReshardingManager = struct {
 };
 
 // =============================================================================
-// Online Resharding Implementation (v2.1)
+// Online Resharding Implementation
 // =============================================================================
 //
 // - Dual-write mode during migration
@@ -1871,7 +1871,7 @@ test "ReshardingState toString" {
 }
 
 // =============================================================================
-// Stop-the-World Resharding (v2.0 Feature)
+// Stop-the-World Resharding
 // =============================================================================
 //
 // - Cluster enters read-only mode during resharding
@@ -3057,7 +3057,7 @@ test "resharding integration: elapsed time tracking" {
 }
 
 // =============================================================================
-// Online Resharding Tests (v2.1)
+// Online Resharding Tests
 // =============================================================================
 
 test "OnlineReshardingConfig defaults" {

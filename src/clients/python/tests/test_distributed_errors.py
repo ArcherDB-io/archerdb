@@ -1,4 +1,4 @@
-"""Tests for v2.0 error codes (multi-region 213-218, sharding 220-224, encryption 410-414)."""
+"""Tests for distributed error codes (multi-region 213-218, sharding 220-224, encryption 410-414)."""
 
 import pytest
 from archerdb.errors import (
@@ -43,8 +43,8 @@ class TestMultiRegionError:
         assert MultiRegionError.STALE_FOLLOWER == 214
         assert MultiRegionError.PRIMARY_UNREACHABLE == 215
         assert MultiRegionError.REPLICATION_TIMEOUT == 216
-        assert MultiRegionError.REGION_CONFIG_MISMATCH == 217
-        assert MultiRegionError.UNKNOWN_REGION == 218
+        assert MultiRegionError.CONFLICT_DETECTED == 217
+        assert MultiRegionError.GEO_SHARD_MISMATCH == 218
 
     def test_retry_semantics(self):
         """Verify multi-region error retry semantics."""
@@ -52,8 +52,8 @@ class TestMultiRegionError:
         assert MULTI_REGION_ERROR_RETRYABLE[MultiRegionError.STALE_FOLLOWER] is True
         assert MULTI_REGION_ERROR_RETRYABLE[MultiRegionError.PRIMARY_UNREACHABLE] is True
         assert MULTI_REGION_ERROR_RETRYABLE[MultiRegionError.REPLICATION_TIMEOUT] is True
-        assert MULTI_REGION_ERROR_RETRYABLE[MultiRegionError.REGION_CONFIG_MISMATCH] is False
-        assert MULTI_REGION_ERROR_RETRYABLE[MultiRegionError.UNKNOWN_REGION] is False
+        assert MULTI_REGION_ERROR_RETRYABLE[MultiRegionError.CONFLICT_DETECTED] is False
+        assert MULTI_REGION_ERROR_RETRYABLE[MultiRegionError.GEO_SHARD_MISMATCH] is False
 
     def test_is_multi_region_error(self):
         """Verify is_multi_region_error helper."""

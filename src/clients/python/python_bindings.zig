@@ -35,7 +35,7 @@ const mappings_state_machine = .{
     .{ tb.QueryLatestFilter, "QueryLatestFilter" },
     .{ tb.QueryResponse, "QueryResponse" },
     .{ tb.PolygonVertex, "PolygonVertex" },
-    // TTL Operations (v2.1 Manual TTL Support)
+    // TTL Operations
     .{ tb.TtlOperationResult, "TtlOperationResult" },
     .{ tb.TtlSetRequest, "TtlSetRequest" },
     .{ tb.TtlSetResponse, "TtlSetResponse" },

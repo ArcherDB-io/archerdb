@@ -5,9 +5,9 @@
 //! Provides:
 //! - `/health/live` - Kubernetes liveness probe (always 200 if process is running)
 //! - `/health/ready` - Kubernetes readiness probe (200 if replica is ready to serve)
-//! - `/health/region` - v2.0 Multi-region replication status (role, lag metrics)
-//! - `/health/shards` - v2.0 Shard distribution and resharding status
-//! - `/health/encryption` - v2.0 Encryption at rest status and metrics
+//! - `/health/region` - Multi-region replication status (role, lag metrics)
+//! - `/health/shards` - Shard distribution and resharding status
+//! - `/health/encryption` - Encryption at rest status and metrics
 //! - `/metrics` - Prometheus-format metrics endpoint
 //!
 //! The server runs in a dedicated thread to avoid blocking the main event loop.
@@ -113,7 +113,7 @@ pub fn clearAuthToken() void {
 }
 
 // =============================================================================
-// Geo-Routing Configuration (v2.0)
+// Geo-Routing Configuration
 // =============================================================================
 
 /// Maximum number of regions supported.
@@ -473,7 +473,7 @@ pub const MetricsServer = struct {
         }
     }
 
-    /// v2.0 Health endpoint: Multi-region replication status.
+    /// Health endpoint: Multi-region replication status.
     fn handleHealthRegion(client_fd: posix.socket_t) !void {
         // Get region metrics from the registry (raw atomics use .load())
         const role = metrics.Registry.region_role.load(.monotonic);
@@ -515,7 +515,7 @@ pub const MetricsServer = struct {
         try sendResponse(client_fd, http_status, "application/json", body);
     }
 
-    /// v2.0 Health endpoint: Shard distribution and status.
+    /// Health endpoint: Shard distribution and status.
     fn handleHealthShards(client_fd: posix.socket_t) !void {
         // Get sharding metrics from the registry (raw atomics use .load())
         const shard_count_val = metrics.Registry.shard_count.load(.monotonic);
@@ -543,7 +543,7 @@ pub const MetricsServer = struct {
         try sendResponse(client_fd, .ok, "application/json", body);
     }
 
-    /// v2.0 Health endpoint: Encryption at rest status.
+    /// Health endpoint: Encryption at rest status.
     fn handleHealthEncryption(client_fd: posix.socket_t) !void {
         // Get encryption metrics from the registry (Counters use .get())
         const encrypt_ops = metrics.Registry.encryption_ops_total.get();
@@ -577,7 +577,7 @@ pub const MetricsServer = struct {
         try sendResponse(client_fd, .ok, "application/json", body);
     }
 
-    /// v2.0 Geo-routing endpoint: Returns all known regions with health status.
+    /// Geo-routing endpoint: Returns all known regions with health status.
     fn handleRegions(client_fd: posix.socket_t) !void {
         const config = &geo_routing_config;
 

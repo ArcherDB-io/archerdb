@@ -81,7 +81,7 @@ pub const query_response_t = vsr.archerdb.QueryResponse;
 pub const polygon_vertex_t = vsr.archerdb.PolygonVertex;
 pub const hole_descriptor_t = vsr.archerdb.HoleDescriptor;
 
-// TTL Operations (v2.1 Manual TTL Support)
+// TTL Operations
 pub const ttl_operation_result = vsr.archerdb.TtlOperationResult;
 pub const ttl_set_request_t = vsr.archerdb.TtlSetRequest;
 pub const ttl_set_response_t = vsr.archerdb.TtlSetResponse;

@@ -1463,11 +1463,11 @@ class GeoClientSync:
 
         return _with_retry_sync(do_cleanup, self._retry_config)
 
-    # ========== TTL Operations (v2.1 Manual TTL Support) ==========
+    # ========== TTL Operations (Manual TTL Support) ==========
 
     def set_ttl(self, entity_id: int, ttl_seconds: int) -> "TtlSetResponse":
         """
-        Set absolute TTL for an entity (v2.1).
+        Set absolute TTL for an entity .
 
         Per client-sdk/spec.md TTL Extension Client Support:
         CLI: `archerdb ttl set <entity_id> --ttl=<seconds>`
@@ -1505,7 +1505,7 @@ class GeoClientSync:
 
     def extend_ttl(self, entity_id: int, extend_by_seconds: int) -> "TtlExtendResponse":
         """
-        Extend TTL by a specified amount (v2.1).
+        Extend TTL by a specified amount .
 
         Per client-sdk/spec.md TTL Extension Client Support:
         CLI: `archerdb ttl extend <entity_id> --by=<seconds>`
@@ -1537,7 +1537,7 @@ class GeoClientSync:
 
     def clear_ttl(self, entity_id: int) -> "TtlClearResponse":
         """
-        Clear TTL so entity never expires (v2.1).
+        Clear TTL so entity never expires .
 
         Per client-sdk/spec.md TTL Extension Client Support:
         CLI: `archerdb ttl clear <entity_id>`
@@ -2175,11 +2175,11 @@ class GeoClientAsync:
 
         return await _with_retry_async(do_cleanup, self._retry_config)
 
-    # ========== TTL Operations (v2.1 Manual TTL Support) ==========
+    # ========== TTL Operations (Manual TTL Support) ==========
 
     async def set_ttl(self, entity_id: int, ttl_seconds: int) -> "TtlSetResponse":
         """
-        Set absolute TTL for an entity (v2.1, async).
+        Set absolute TTL for an entity (async).
 
         Args:
             entity_id: UUID of the entity to modify
@@ -2205,7 +2205,7 @@ class GeoClientAsync:
 
     async def extend_ttl(self, entity_id: int, extend_by_seconds: int) -> "TtlExtendResponse":
         """
-        Extend TTL by a specified amount (v2.1, async).
+        Extend TTL by a specified amount (async).
 
         Args:
             entity_id: UUID of the entity to modify
@@ -2231,7 +2231,7 @@ class GeoClientAsync:
 
     async def clear_ttl(self, entity_id: int) -> "TtlClearResponse":
         """
-        Clear TTL so entity never expires (v2.1, async).
+        Clear TTL so entity never expires (async).
 
         Args:
             entity_id: UUID of the entity to modify

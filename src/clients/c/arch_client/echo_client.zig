@@ -219,7 +219,7 @@ pub const EchoOperation = enum(u8) {
     // ArcherDB topology discovery (Smart Client)
     get_topology = @intFromEnum(Operation.get_topology),
 
-    // Manual TTL operations (v2.1)
+    // Manual TTL operations
     ttl_set = @intFromEnum(Operation.ttl_set),
     ttl_extend = @intFromEnum(Operation.ttl_extend),
     ttl_clear = @intFromEnum(Operation.ttl_clear),

@@ -44,7 +44,7 @@ pub const QueryLatestFilter = geo_state_machine.QueryLatestFilter;
 pub const CleanupRequest = ttl.CleanupRequest;
 pub const CleanupResponse = ttl.CleanupResponse;
 
-// Manual TTL operation types (v2.1)
+// Manual TTL operation types
 pub const TtlOperationResult = ttl.TtlOperationResult;
 pub const TtlSetRequest = ttl.TtlSetRequest;
 pub const TtlSetResponse = ttl.TtlSetResponse;
@@ -135,7 +135,7 @@ pub const Operation = enum(u8) {
     // ArcherDB topology discovery operation (Smart Client)
     get_topology = constants.vsr_operations_reserved + 29,
 
-    // ArcherDB Manual TTL Operations (v2.1)
+    // ArcherDB Manual TTL Operations
     ttl_set = constants.vsr_operations_reserved + 30,
     ttl_extend = constants.vsr_operations_reserved + 31,
     ttl_clear = constants.vsr_operations_reserved + 32,
@@ -164,7 +164,7 @@ pub const Operation = enum(u8) {
             // ArcherDB topology discovery (Smart Client)
             .get_topology => TopologyRequest,
 
-            // ArcherDB Manual TTL Operations (v2.1)
+            // ArcherDB Manual TTL Operations
             .ttl_set => TtlSetRequest,
             .ttl_extend => TtlExtendRequest,
             .ttl_clear => TtlClearRequest,
@@ -195,7 +195,7 @@ pub const Operation = enum(u8) {
             // ArcherDB topology discovery (Smart Client)
             .get_topology => TopologyResponse,
 
-            // ArcherDB Manual TTL Operations (v2.1)
+            // ArcherDB Manual TTL Operations
             .ttl_set => TtlSetResponse,
             .ttl_extend => TtlExtendResponse,
             .ttl_clear => TtlClearResponse,
@@ -243,7 +243,7 @@ pub const Operation = enum(u8) {
             // ArcherDB topology discovery (Smart Client)
             .get_topology => false,
 
-            // ArcherDB Manual TTL Operations (v2.1)
+            // ArcherDB Manual TTL Operations
             .ttl_set => false,
             .ttl_extend => false,
             .ttl_clear => false,
@@ -276,7 +276,7 @@ pub const Operation = enum(u8) {
             // ArcherDB topology discovery (Smart Client)
             .get_topology => false,
 
-            // ArcherDB Manual TTL Operations (v2.1)
+            // ArcherDB Manual TTL Operations
             .ttl_set => false,
             .ttl_extend => false,
             .ttl_clear => false,
@@ -480,7 +480,7 @@ pub const Operation = enum(u8) {
             // ArcherDB topology discovery (Smart Client) - returns exactly 1 TopologyResponse
             .get_topology => 1,
 
-            // Manual TTL operations (v2.1) - each returns exactly 1 response
+            // Manual TTL operations - each returns exactly 1 response
             .ttl_set, .ttl_extend, .ttl_clear => 1,
         };
     }

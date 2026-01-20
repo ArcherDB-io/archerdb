@@ -1416,7 +1416,7 @@ fn import_client_eviction_callback(
     log.err("import client evicted: {s}", .{@tagName(eviction.header.reason)});
 }
 
-/// v2.0 Shard management command handler.
+/// Shard management command handler.
 fn command_shard(
     gpa: mem.Allocator,
     io: *IO,
@@ -1434,7 +1434,7 @@ fn command_shard(
     switch (args.*) {
         .list => |list| {
             try stderr.print("Shard list for cluster {d}:\n", .{list.cluster});
-            try stderr.print("  (Shard management not yet implemented - v2.0 feature)\n", .{});
+            try stderr.print("  (Shard management not yet implemented)\n", .{});
         },
         .status => |status| {
             try stderr.print(
@@ -1442,7 +1442,7 @@ fn command_shard(
                 .{ status.shard_id, status.cluster },
             );
             try stderr.print(
-                "  (Shard management not yet implemented - v2.0 feature)\n",
+                "  (Shard management not yet implemented)\n",
                 .{},
             );
         },
@@ -1462,13 +1462,13 @@ fn command_shard(
                     },
                 );
             }
-            try stderr.print("  (Resharding not yet implemented - v2.0 feature)\n", .{});
+            try stderr.print("  (Resharding not yet implemented)\n", .{});
         },
     }
     try stderr_buffer.flush();
 }
 
-/// v2.1 TTL management command handler.
+/// TTL management command handler.
 fn command_ttl(
     gpa: mem.Allocator,
     io: *IO,
@@ -1489,27 +1489,27 @@ fn command_ttl(
                 "Setting TTL for entity {x} in cluster {d} to {d} seconds\n",
                 .{ set.entity_id, set.cluster, set.ttl_seconds },
             );
-            try stderr.print("  (TTL set not yet implemented - v2.1 feature)\n", .{});
+            try stderr.print("  (TTL set not yet implemented)\n", .{});
         },
         .extend => |extend| {
             try stderr.print(
                 "Extending TTL for entity {x} in cluster {d} by {d} seconds\n",
                 .{ extend.entity_id, extend.cluster, extend.extend_seconds },
             );
-            try stderr.print("  (TTL extend not yet implemented - v2.1 feature)\n", .{});
+            try stderr.print("  (TTL extend not yet implemented)\n", .{});
         },
         .clear => |clear| {
             try stderr.print(
                 "Clearing TTL for entity {x} in cluster {d}\n",
                 .{ clear.entity_id, clear.cluster },
             );
-            try stderr.print("  (TTL clear not yet implemented - v2.1 feature)\n", .{});
+            try stderr.print("  (TTL clear not yet implemented)\n", .{});
         },
     }
     try stderr_buffer.flush();
 }
 
-/// v2.0 Verification command handler.
+/// Verification command handler.
 fn command_verify(
     gpa: mem.Allocator,
     io: *IO,
@@ -1527,9 +1527,9 @@ fn command_verify(
     try stderr.print("Verifying data file: {s}\n", .{args.path});
     if (args.encryption) {
         try stderr.print("  Checking encryption status...\n", .{});
-        try stderr.print("  (Encryption verification not yet implemented - v2.0 feature)\n", .{});
+        try stderr.print("  (Encryption verification not yet implemented)\n", .{});
     } else {
-        try stderr.print("  (Verification not yet implemented - v2.0 feature)\n", .{});
+        try stderr.print("  (Verification not yet implemented)\n", .{});
     }
     try stderr_buffer.flush();
 }
@@ -1567,14 +1567,14 @@ fn command_coordinator(
             try stdout.print("  Read from replicas: {}\n", .{start.read_from_replicas});
             try stdout.print("  Fan-out policy: {s}\n", .{@tagName(start.fan_out_policy)});
             try stdout.writeAll("\n");
-            try stdout.print("  (Coordinator process not yet implemented - v2.0 feature)\n", .{});
+            try stdout.print("  (Coordinator process not yet implemented)\n", .{});
         },
         .status => |status| {
             try stdout.print("Querying coordinator status at {s}:{d}...\n", .{
                 status.address,
                 status.port,
             });
-            try stdout.print("  (Status query not yet implemented - v2.0 feature)\n", .{});
+            try stdout.print("  (Status query not yet implemented)\n", .{});
         },
         .stop => |stop| {
             try stdout.print("Stopping coordinator at {s}:{d}...\n", .{
@@ -1582,7 +1582,7 @@ fn command_coordinator(
                 stop.port,
             });
             try stdout.print("  Graceful shutdown timeout: {d}s\n", .{stop.timeout});
-            try stdout.print("  (Stop command not yet implemented - v2.0 feature)\n", .{});
+            try stdout.print("  (Stop command not yet implemented)\n", .{});
         },
     }
     try stdout_buffer.flush();

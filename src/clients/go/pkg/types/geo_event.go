@@ -134,7 +134,7 @@ const (
 )
 
 // ============================================================================
-// TTL Request/Response Types (v2.1 Manual TTL Support)
+// TTL Request/Response Types
 // ============================================================================
 
 // TtlSetRequest is the request type for setting an absolute TTL.
