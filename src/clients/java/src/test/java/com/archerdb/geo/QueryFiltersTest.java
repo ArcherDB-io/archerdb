@@ -60,8 +60,49 @@ class QueryFiltersTest {
         assertEquals(100, filter.getLimit());
     }
 
-    // Note: Input validation tests removed - validation not yet implemented in builder
-    // TODO: Add validation to QueryRadiusFilter.Builder for invalid coordinates/radius
+    @Test
+    void testQueryRadiusFilterInvalidLatitude() {
+        assertThrows(IllegalArgumentException.class, () -> {
+            new QueryRadiusFilter.Builder().setCenterLatitude(91.0) // Invalid: > 90
+                    .setCenterLongitude(0).setRadiusMeters(100).build();
+        });
+    }
+
+    @Test
+    void testQueryRadiusFilterInvalidLongitude() {
+        assertThrows(IllegalArgumentException.class, () -> {
+            new QueryRadiusFilter.Builder().setCenterLatitude(0).setCenterLongitude(181.0) // Invalid:
+                                                                                           // > 180
+                    .setRadiusMeters(100).build();
+        });
+    }
+
+    @Test
+    void testQueryRadiusFilterInvalidRadius() {
+        assertThrows(IllegalArgumentException.class, () -> {
+            new QueryRadiusFilter.Builder().setCenterLatitude(0).setCenterLongitude(0)
+                    .setRadiusMeters(-100) // Invalid: negative
+                    .build();
+        });
+    }
+
+    @Test
+    void testQueryRadiusFilterZeroRadius() {
+        assertThrows(IllegalArgumentException.class, () -> {
+            new QueryRadiusFilter.Builder().setCenterLatitude(0).setCenterLongitude(0)
+                    .setRadiusMeters(0) // Invalid: zero
+                    .build();
+        });
+    }
+
+    @Test
+    void testQueryRadiusFilterLimitExceedsMax() {
+        assertThrows(IllegalArgumentException.class, () -> {
+            new QueryRadiusFilter.Builder().setCenterLatitude(0).setCenterLongitude(0)
+                    .setRadiusMeters(100).setLimit(100_000) // Invalid: exceeds 81,000 max
+                    .build();
+        });
+    }
 
     // ========================================================================
     // QueryPolygonFilter Tests
@@ -88,8 +129,25 @@ class QueryFiltersTest {
         assertEquals(0L, filter.getTimestampMax());
     }
 
-    // Note: Input validation tests removed - validation not yet implemented in builder
-    // TODO: Add validation to QueryPolygonFilter.Builder for min vertices and invalid coordinates
+    @Test
+    void testQueryPolygonFilterTooFewVertices() {
+        assertThrows(IllegalArgumentException.class, () -> {
+            new QueryPolygonFilter.Builder().addVertex(0, 0).addVertex(10, 0)
+                    // Only 2 vertices - need at least 3
+                    .build();
+        });
+    }
+
+    @Test
+    void testQueryPolygonFilterUnfinishedHole() {
+        assertThrows(IllegalStateException.class, () -> {
+            new QueryPolygonFilter.Builder().addVertex(0, 0).addVertex(0, 10).addVertex(10, 10)
+                    .addVertex(10, 0).startHole().addHoleVertex(2, 2).addHoleVertex(2, 8)
+                    .addHoleVertex(8, 8)
+                    // Missing finishHole()
+                    .build();
+        });
+    }
 
     // ========================================================================
     // QueryLatestFilter Tests
