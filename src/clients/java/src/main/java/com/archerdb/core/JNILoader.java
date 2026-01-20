@@ -80,6 +80,7 @@ final class JNILoader {
                     }
                 }
             } catch (IOException exception) {
+                return Abi.gnu;
             }
 
             return Abi.gnu;

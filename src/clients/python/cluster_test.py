@@ -106,7 +106,7 @@ def create_test_geo_event(entity_id: int) -> CGeoEvent:
     return event
 
 
-def test_cluster_connectivity():
+def run_cluster_connectivity() -> bool:
     """Test basic cluster connectivity using INSERT_EVENTS operation."""
     print("=" * 60)
     print("  ArcherDB Cluster Connectivity Test")
@@ -315,6 +315,10 @@ def test_cluster_connectivity():
     return True
 
 
+def test_cluster_connectivity():
+    assert run_cluster_connectivity()
+
+
 if __name__ == "__main__":
-    success = test_cluster_connectivity()
+    success = run_cluster_connectivity()
     sys.exit(0 if success else 1)

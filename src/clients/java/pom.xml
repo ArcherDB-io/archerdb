@@ -35,6 +35,7 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <maven.compiler.source>11</maven.compiler.source>
     <maven.compiler.target>11</maven.compiler.target>
+    <archerdb.native.access></archerdb.native.access>
     <!-- JaCoCo thresholds - Lowered after removing legacy code (archerdb.geo has its own coverage) -->
     <jacoco.unit-tests.limit.instruction-ratio>15%</jacoco.unit-tests.limit.instruction-ratio>
     <jacoco.unit-tests.limit.branch-ratio>20%</jacoco.unit-tests.limit.branch-ratio>
@@ -79,6 +80,18 @@
   </dependencies>
 
   <profiles>
+    <profile>
+      <id>enable-native-access</id>
+      <activation>
+        <property>
+          <name>archerdb.native.enabled</name>
+          <value>true</value>
+        </property>
+      </activation>
+      <properties>
+        <archerdb.native.access>--enable-native-access=com.archerdb</archerdb.native.access>
+      </properties>
+    </profile>
     <profile>
       <id>Windows</id>
       <activation>
@@ -130,6 +143,7 @@
           <version>3.2.3</version>
           <configuration>
             <workingDirectory>${project.basedir}</workingDirectory>
+            <argLine>${argLine} ${archerdb.native.access}</argLine>
             <!-- Skip tests that require native JNI bindings (run via CI with built binaries) -->
             <excludes>
               <exclude>**/EchoTest.java</exclude>

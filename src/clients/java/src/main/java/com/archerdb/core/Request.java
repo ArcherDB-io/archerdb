@@ -63,9 +63,11 @@ abstract class Request<TResponse extends Batch> {
 
     // Used only by the JNI side
     @Native
+    @SuppressWarnings("PMD.UnusedPrivateField")
     private final ByteBuffer sendBuffer;
 
     @Native
+    @SuppressWarnings("PMD.UnusedPrivateField")
     private final long sendBufferLen;
 
     @Native
@@ -73,7 +75,6 @@ abstract class Request<TResponse extends Batch> {
 
     private final NativeClient nativeClient;
     private final Operations operation;
-    private final int requestLen;
 
     protected Request(final NativeClient nativeClient, final Operations operation,
             final Batch batch) {
@@ -82,7 +83,6 @@ abstract class Request<TResponse extends Batch> {
 
         this.nativeClient = nativeClient;
         this.operation = operation;
-        this.requestLen = batch.getLength();
         this.sendBuffer = batch.getBuffer();
         this.sendBufferLen = batch.getBufferLen();
         this.replyBuffer = null;
