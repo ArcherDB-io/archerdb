@@ -9,7 +9,7 @@ import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.InetSocketAddress;
 import java.net.Socket;
-import java.net.URL;
+import java.net.URI;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicReference;
@@ -265,7 +265,7 @@ public class GeoRouter {
 
         // Fetch from server
         String url = discoveryUrl + "/regions";
-        HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+        HttpURLConnection conn = (HttpURLConnection) URI.create(url).toURL().openConnection();
         conn.setConnectTimeout(config.getProbeTimeoutMs());
         conn.setReadTimeout(config.getProbeTimeoutMs());
         conn.setRequestMethod("GET");
