@@ -952,8 +952,8 @@ fn build_test_integration(
         integration_past: ?[]const u8,
     },
 ) void {
-    // For integration tests, we build an independent copy of ArcherDB with "real" config and
-    // multiversioning.
+    // For integration tests, build an independent copy of ArcherDB with the lite config so
+    // the test binary and server share the same message size limits.
     const vsr_options, const vsr_module = build_vsr_module(b, .{
         .stdx_module = options.stdx_module,
         .git_commit = "a2c4e2db00000000000000000000000000a2c4e2".*, // ArcherDB-hash!
@@ -961,6 +961,7 @@ fn build_test_integration(
         .config_release = "65535.0.0",
         .config_release_client_min = "0.16.4",
         .config_aof_recovery = false,
+        .config_base = .lite,
     });
     const archerdb_previous: ?std.Build.LazyPath = if (options.integration_past) |path|
         .{ .cwd_relative = path }

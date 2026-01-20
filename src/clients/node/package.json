@@ -26,7 +26,7 @@
   "scripts": {
     "prepare": "tsc",
     "build": "tsc",
-    "test": "tsc && node dist/geo_test.js",
+    "test": "tsc && node dist/test.js",
     "test:types": "tsc --noEmit"
   },
   "author": "ArcherDB Team",

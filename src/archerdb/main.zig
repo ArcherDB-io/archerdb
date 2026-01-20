@@ -737,7 +737,7 @@ fn command_start(
     const grid_cache_size_warn = 1 * GiB;
     if (grid_cache_size < grid_cache_size_warn) {
         log.warn("Grid cache size of {}MiB is small. See --cache-grid", .{
-            @divExact(grid_cache_size, MiB),
+            @divFloor(grid_cache_size, MiB),
         });
     }
 

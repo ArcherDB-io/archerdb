@@ -1308,7 +1308,12 @@ const start_defaults_production = StartDefaults{
 
 const start_defaults_development = StartDefaults{
     .limit_pipeline_requests = 0,
-    .limit_request = .{ .value = 32 * KiB },
+    .limit_request = .{
+        .value = @min(
+            @as(u64, 32 * KiB),
+            @as(u64, constants.message_size_max),
+        ),
+    },
     .cache_geo_events = .{ .value = 0 },
     .cache_grid = .{ .value = constants.block_size * Grid.Cache.value_count_max_multiple },
     .memory_lsm_compaction = .{ .value = lsm_compaction_block_memory_min },

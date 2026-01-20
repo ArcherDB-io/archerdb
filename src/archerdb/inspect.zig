@@ -706,7 +706,7 @@ const Inspector = struct {
             try inspector.read_client_sessions(entries_block, superblock_copy) orelse return;
 
         var label_buffer: [64]u8 = undefined;
-        for (&entries.headers, &entries.sessions, 0..) |*session_header, session, slot| {
+        for (entries.headers, entries.sessions, 0..) |*session_header, session, slot| {
             try inspector.read_buffer(
                 reply_sector,
                 .client_replies,
@@ -1234,16 +1234,16 @@ const Inspector = struct {
         }
     }
 
-    const ClientSessions = extern struct {
-        headers: [constants.clients_max]vsr.Header.Reply,
-        sessions: [constants.clients_max]u64,
+    const ClientSessionsView = struct {
+        headers: []const vsr.Header.Reply,
+        sessions: []const u64,
     };
 
     fn read_client_sessions(
         inspector: *Inspector,
         block: BlockPtr,
         superblock_copy: ?u8,
-    ) !?*ClientSessions {
+    ) !?ClientSessionsView {
         const superblock = try inspector.read_superblock(superblock_copy);
 
         if (superblock.vsr_state.checkpoint.client_sessions_size == 0) {
@@ -1251,7 +1251,8 @@ const Inspector = struct {
             assert(superblock.vsr_state.checkpoint.client_sessions_last_block_checksum == 0);
             return null;
         }
-        assert(superblock.vsr_state.checkpoint.client_sessions_size == @sizeOf(ClientSessions));
+        assert(superblock.vsr_state.checkpoint.client_sessions_size ==
+            vsr.ClientSessions.encode_size);
 
         try inspector.read_block(
             block,
@@ -1260,14 +1261,32 @@ const Inspector = struct {
         );
 
         const block_header = schema.header_from_block(block);
-        assert(block_header.size == @sizeOf(vsr.Header) + @sizeOf(ClientSessions));
+        assert(block_header.size == @sizeOf(vsr.Header) + vsr.ClientSessions.encode_size);
         assert(vsr.checksum(block[@sizeOf(vsr.Header)..block_header.size]) ==
             superblock.vsr_state.checkpoint.client_sessions_checksum);
 
-        return std.mem.bytesAsValue(
-            ClientSessions,
-            block[@sizeOf(vsr.Header)..][0..@sizeOf(ClientSessions)],
+        const sessions_size: usize = @intCast(
+            superblock.vsr_state.checkpoint.client_sessions_size,
         );
+        const session_bytes = block[@sizeOf(vsr.Header)..][0..sessions_size];
+
+        var size: usize = 0;
+        size = std.mem.alignForward(usize, size, @alignOf(vsr.Header));
+        const headers: []const vsr.Header.Reply = @alignCast(std.mem.bytesAsSlice(
+            vsr.Header.Reply,
+            session_bytes[size..][0 .. constants.clients_max * @sizeOf(vsr.Header.Reply)],
+        ));
+        size += std.mem.sliceAsBytes(headers).len;
+
+        size = std.mem.alignForward(usize, size, @alignOf(u64));
+        const sessions: []const u64 = @alignCast(std.mem.bytesAsSlice(
+            u64,
+            session_bytes[size..][0 .. constants.clients_max * @sizeOf(u64)],
+        ));
+        size += std.mem.sliceAsBytes(sessions).len;
+
+        assert(size == sessions_size);
+        return .{ .headers = headers, .sessions = sessions };
     }
 };
 

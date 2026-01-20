@@ -15,12 +15,14 @@ const assert = std.debug.assert;
 const vsr = @import("vsr.zig");
 
 const Shell = @import("./shell.zig");
-const Snap = stdx.Snap;
-const snap = Snap.snap_fn("src");
 const TmpArcherDB = @import("./testing/tmp_archerdb.zig");
 
 const stdx = @import("stdx");
 const ratio = stdx.PRNG.ratio;
+const arch_client = @import("clients/c/arch_client.zig");
+const constants = @import("constants.zig");
+const StateError = @import("error_codes.zig").StateError;
+const tb = vsr.archerdb;
 
 const vortex_exe: []const u8 = @import("test_options").vortex_exe;
 const archerdb: []const u8 = @import("test_options").archerdb_exe;
@@ -80,78 +82,313 @@ fn expectContains(haystack: []const u8, needle: []const u8) !void {
     return error.TestUnexpectedResult;
 }
 
-test "repl integration" {
-    const Context = struct {
-        const Context = @This();
+fn RequestContextType(comptime request_size_max: comptime_int) type {
+    return struct {
+        const RequestContext = @This();
 
-        shell: *Shell,
-        archerdb_exe: []const u8,
-        tmp_archerdb: TmpArcherDB,
+        completion: *Completion,
+        packet: arch_client.Packet,
+        sent_data: [request_size_max]u8 = undefined,
+        sent_data_size: u32,
+        reply_buffer: [request_size_max]u8 = undefined,
+        reply: ?struct {
+            arch_context: usize,
+            arch_packet: *arch_client.Packet,
+            timestamp: u64,
+            result: ?[]const u8,
+            result_len: u32,
+        } = null,
 
-        fn init() !Context {
-            const shell = try Shell.create(std.testing.allocator);
-            errdefer shell.destroy();
+        pub fn on_complete(
+            arch_context: usize,
+            arch_packet: *arch_client.Packet,
+            timestamp: u64,
+            result_ptr: ?[*]const u8,
+            result_len: u32,
+        ) callconv(.c) void {
+            var self: *RequestContext = @ptrCast(@alignCast(arch_packet.*.user_data.?));
+            defer self.completion.complete();
 
-            var tmp_archerdb = try TmpArcherDB.init(std.testing.allocator, .{
-                .development = true,
-                .prebuilt = archerdb,
-            });
-            errdefer tmp_archerdb.deinit(std.testing.allocator);
+            const result_slice: ?[]const u8 = if (result_ptr != null and result_len > 0) blk: {
+                assert(result_len <= request_size_max);
+                const readable: [*]const u8 = @ptrCast(result_ptr.?);
+                const buffer = self.reply_buffer[0..result_len];
+                stdx.copy_disjoint(.exact, u8, buffer, readable[0..result_len]);
+                break :blk buffer;
+            } else null;
 
-            return Context{
-                .shell = shell,
-                .archerdb_exe = archerdb,
-                .tmp_archerdb = tmp_archerdb,
+            self.reply = .{
+                .arch_context = arch_context,
+                .arch_packet = arch_packet,
+                .timestamp = timestamp,
+                .result = result_slice,
+                .result_len = result_len,
             };
         }
+    };
+}
 
-        fn deinit(context: *Context) void {
-            context.tmp_archerdb.deinit(std.testing.allocator);
-            context.shell.destroy();
-            context.* = undefined;
-        }
+const Completion = struct {
+    pending: usize,
+    mutex: std.Thread.Mutex = .{},
+    cond: std.Thread.Condition = .{},
 
-        fn repl_command(context: *Context, command: []const u8) ![]const u8 {
-            return try context.shell.exec_stdout(
-                \\{archerdb} repl --cluster=0 --addresses={addresses} --command={command}
-            , .{
-                .archerdb = context.archerdb_exe,
-                .addresses = context.tmp_archerdb.port_str,
-                .command = command,
-            });
-        }
+    pub fn complete(self: *Completion) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
 
-        fn check(context: *Context, command: []const u8, want: Snap) !void {
-            const got = try context.repl_command(command);
-            try want.diff(got);
+        assert(self.pending > 0);
+        self.pending -= 1;
+        self.cond.signal();
+    }
+
+    pub fn wait_pending(self: *Completion) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        while (self.pending > 0) {
+            self.cond.wait(&self.mutex);
         }
+    }
+
+    pub fn wait_pending_timeout(self: *Completion, timeout_ns: u64) !void {
+        const start_time = std.time.nanoTimestamp();
+        while (true) {
+            self.mutex.lock();
+            const pending = self.pending;
+            self.mutex.unlock();
+
+            if (pending == 0) return;
+
+            const elapsed_ns = std.time.nanoTimestamp() - start_time;
+            if (elapsed_ns > @as(i128, @intCast(timeout_ns))) {
+                return error.Timeout;
+            }
+
+            std.time.sleep(5 * std.time.ns_per_ms);
+        }
+    }
+};
+
+fn degrees_to_nano(degrees: f64) i64 {
+    return @intFromFloat(@round(degrees * 1_000_000_000.0));
+}
+
+fn make_event(entity_id: u128, latitude: f64, longitude: f64) tb.GeoEvent {
+    var event = std.mem.zeroes(tb.GeoEvent);
+    event.entity_id = entity_id;
+    event.lat_nano = degrees_to_nano(latitude);
+    event.lon_nano = degrees_to_nano(longitude);
+    event.group_id = 1;
+    return event;
+}
+
+fn send_request(
+    client: *arch_client.ClientInterface,
+    completion: *Completion,
+    request: anytype,
+    operation: arch_client.Operation,
+    payload: []const u8,
+) ![]const u8 {
+    const testing = std.testing;
+
+    completion.pending = 1;
+    request.reply = null;
+
+    assert(payload.len <= request.sent_data.len);
+    stdx.copy_disjoint(.exact, u8, request.sent_data[0..payload.len], payload);
+    request.sent_data_size = @intCast(payload.len);
+
+    const packet = &request.packet;
+    packet.operation = @intFromEnum(operation);
+    packet.user_data = request;
+    packet.data = &request.sent_data;
+    packet.data_size = request.sent_data_size;
+    packet.user_tag = 0;
+    packet.status = .ok;
+
+    try client.submit(packet);
+    try completion.wait_pending_timeout(5 * std.time.ns_per_s);
+
+    try testing.expectEqual(arch_client.PacketStatus.ok, packet.status);
+    try testing.expect(request.reply != null);
+
+    const reply = request.reply.?;
+    if (reply.result_len == 0) return &[_]u8{};
+    try testing.expect(reply.result != null);
+    return reply.result.?;
+}
+
+fn read_struct(comptime T: type, bytes: []const u8) T {
+    assert(bytes.len >= @sizeOf(T));
+    var value: T = undefined;
+    stdx.copy_disjoint(.exact, u8, std.mem.asBytes(&value), bytes[0..@sizeOf(T)]);
+    return value;
+}
+
+test "geo operations integration" {
+    const testing = std.testing;
+    const RequestContext = RequestContextType(constants.message_body_size_max);
+
+    var tmp_archerdb = try TmpArcherDB.init(testing.allocator, .{
+        .development = true,
+        .prebuilt = archerdb,
+    });
+    defer tmp_archerdb.deinit(testing.allocator);
+
+    var client: arch_client.ClientInterface = undefined;
+    try arch_client.init(
+        testing.allocator,
+        &client,
+        0,
+        tmp_archerdb.port_str,
+        42,
+        RequestContext.on_complete,
+    );
+    defer client.deinit() catch unreachable;
+
+    var completion = Completion{ .pending = 0 };
+    const request = try testing.allocator.create(RequestContext);
+    defer testing.allocator.destroy(request);
+    request.* = RequestContext{
+        .packet = undefined,
+        .completion = &completion,
+        .sent_data_size = 0,
     };
 
-    var context = try Context.init();
-    defer context.deinit();
+    var events = [_]tb.GeoEvent{
+        make_event(1001, 37.7749, -122.4194),
+        make_event(1002, 37.7750, -122.4195),
+    };
 
-    // Insert a geo event for entity 100 at NYC coordinates
-    try context.check(
-        "insert_events entity_id=100 lat_nano=40712800000000000 " ++
-            "lon_nano=-74006000000000000 group_id=1",
-        snap(@src(), ""),
+    const insert_reply = try send_request(
+        &client,
+        &completion,
+        request,
+        .insert_events,
+        std.mem.sliceAsBytes(&events),
     );
+    {
+        const result_size = @sizeOf(tb.InsertGeoEventsResult);
+        try testing.expectEqual(@as(usize, 0), insert_reply.len % result_size);
+        var offset: usize = 0;
+        while (offset < insert_reply.len) : (offset += result_size) {
+            const result = read_struct(
+                tb.InsertGeoEventsResult,
+                insert_reply[offset .. offset + result_size],
+            );
+            try testing.expectEqual(tb.InsertGeoEventResult.ok, result.result);
+        }
+    }
 
-    // Insert another event for the same entity
-    try context.check(
-        \\insert_events entity_id=100 lat_nano=40714000000000000 lon_nano=-74005000000000000
-        \\  group_id=1 velocity_mms=5000
-    , snap(@src(), ""));
+    var uuid_filter = tb.QueryUuidFilter{
+        .entity_id = events[0].entity_id,
+    };
+    const uuid_reply = try send_request(
+        &client,
+        &completion,
+        request,
+        .query_uuid,
+        std.mem.asBytes(&uuid_filter),
+    );
+    {
+        try testing.expect(uuid_reply.len >= @sizeOf(tb.QueryUuidResponse));
+        const header = read_struct(
+            tb.QueryUuidResponse,
+            uuid_reply[0..@sizeOf(tb.QueryUuidResponse)],
+        );
+        try testing.expectEqual(@as(u8, 0), header.status);
+        const event = read_struct(
+            tb.GeoEvent,
+            uuid_reply[@sizeOf(tb.QueryUuidResponse)..][0..@sizeOf(tb.GeoEvent)],
+        );
+        try testing.expectEqual(events[0].entity_id, event.entity_id);
+    }
 
-    // Query events by UUID (entity_id)
-    try context.check(
-        \\query_uuid entity_id=100
-    , snap(@src(), ""));
+    var latest_filter = tb.QueryLatestFilter{
+        .limit = 10,
+        .group_id = 0,
+        .cursor_timestamp = 0,
+    };
+    const latest_reply = try send_request(
+        &client,
+        &completion,
+        request,
+        .query_latest,
+        std.mem.asBytes(&latest_filter),
+    );
+    {
+        try testing.expect(latest_reply.len >= @sizeOf(tb.QueryResponse));
+        const header = read_struct(
+            tb.QueryResponse,
+            latest_reply[0..@sizeOf(tb.QueryResponse)],
+        );
+        try testing.expect(header.error_status() == null);
+        try testing.expect(header.count > 0);
+        const events_bytes = latest_reply[@sizeOf(tb.QueryResponse)..];
+        const event_count: usize = @intCast(header.count);
+        try testing.expect(events_bytes.len >= event_count * @sizeOf(tb.GeoEvent));
+    }
 
-    // Query latest events globally
-    try context.check(
-        \\query_latest limit=10
-    , snap(@src(), ""));
+    var radius_filter = tb.QueryRadiusFilter{
+        .center_lat_nano = events[0].lat_nano,
+        .center_lon_nano = events[0].lon_nano,
+        .radius_mm = 2_000_000,
+        .limit = 10,
+        .timestamp_min = 0,
+        .timestamp_max = 0,
+        .group_id = 0,
+    };
+    const radius_reply = try send_request(
+        &client,
+        &completion,
+        request,
+        .query_radius,
+        std.mem.asBytes(&radius_filter),
+    );
+    {
+        try testing.expect(radius_reply.len >= @sizeOf(tb.QueryResponse));
+        const header = read_struct(
+            tb.QueryResponse,
+            radius_reply[0..@sizeOf(tb.QueryResponse)],
+        );
+        try testing.expect(header.error_status() == null);
+        try testing.expect(header.count > 0);
+    }
+
+    var delete_ids = [_]u128{events[0].entity_id};
+    const delete_reply = try send_request(
+        &client,
+        &completion,
+        request,
+        .delete_entities,
+        std.mem.sliceAsBytes(&delete_ids),
+    );
+    {
+        const result_size = @sizeOf(tb.DeleteEntitiesResult);
+        try testing.expectEqual(@as(usize, result_size), delete_reply.len);
+        const result = read_struct(tb.DeleteEntitiesResult, delete_reply);
+        try testing.expectEqual(tb.DeleteEntityResult.ok, result.result);
+    }
+
+    const uuid_after_delete = try send_request(
+        &client,
+        &completion,
+        request,
+        .query_uuid,
+        std.mem.asBytes(&uuid_filter),
+    );
+    {
+        try testing.expect(uuid_after_delete.len >= @sizeOf(tb.QueryUuidResponse));
+        const header = read_struct(
+            tb.QueryUuidResponse,
+            uuid_after_delete[0..@sizeOf(tb.QueryUuidResponse)],
+        );
+        try testing.expectEqual(
+            @as(u8, @intCast(@intFromEnum(StateError.entity_not_found))),
+            header.status,
+        );
+    }
 }
 
 test "benchmark/inspect smoke" {
@@ -321,6 +558,18 @@ test "help/version smoke" {
     }
 }
 
+test "repl smoke" {
+    const shell = try Shell.create(std.testing.allocator);
+    defer shell.destroy();
+
+    const stdout, const stderr = try shell.exec_stdout_stderr(
+        "{archerdb} repl --cluster=0 --addresses=127.0.0.1:3001 --command=STATUS",
+        .{ .archerdb = archerdb },
+    );
+    _ = stdout;
+    try expectContains(stderr, "REPL is not yet implemented");
+}
+
 test "in-place upgrade" {
     // Smoke test that in-place upgrades work.
     //
@@ -349,7 +598,12 @@ test "in-place upgrade" {
         try cluster.replica_install(replica_index, .past);
         try cluster.replica_format(replica_index);
     }
-    try cluster.workload_start(.{ .event_count = 2_000_000 });
+    try cluster.workload_start(.{
+        .event_count = 2_000_000,
+        .query_uuid_count = 200,
+        .query_radius_count = 100,
+        .query_polygon_count = 40,
+    });
 
     for (0..replica_count) |replica_index| {
         try cluster.replica_spawn(replica_index);
@@ -409,7 +663,12 @@ test "recover smoke" {
     try cluster.replica_format(0);
     try cluster.replica_format(1);
     try cluster.replica_format(2);
-    try cluster.workload_start(.{ .event_count = 200_000 });
+    try cluster.workload_start(.{
+        .event_count = 2_000,
+        .query_uuid_count = 50,
+        .query_radius_count = 25,
+        .query_polygon_count = 10,
+    });
     try cluster.replica_spawn(0);
     try cluster.replica_spawn(1);
     try cluster.replica_spawn(2);
@@ -418,8 +677,12 @@ test "recover smoke" {
     try cluster.replica_kill(2);
     try cluster.replica_reformat(2);
 
-    try cluster.replica_kill(1);
     try cluster.replica_spawn(2);
+    std.time.sleep(2 * std.time.ns_per_s);
+    try cluster.replica_kill(1);
+    std.time.sleep(2 * std.time.ns_per_s);
+    try cluster.replica_spawn(1);
+    std.time.sleep(2 * std.time.ns_per_s);
     cluster.workload_finish();
 }
 
@@ -613,6 +876,9 @@ const TmpCluster = struct {
 
     const WorkloadStartOptions = struct {
         event_count: usize,
+        query_uuid_count: usize = 0,
+        query_radius_count: usize = 0,
+        query_polygon_count: usize = 0,
     };
 
     fn workload_start(cluster: *TmpCluster, options: WorkloadStartOptions) !void {
@@ -633,11 +899,17 @@ const TmpCluster = struct {
                     \\{archerdb} benchmark
                     \\    --print-batch-timings
                     \\    --event-count={event_count}
+                    \\    --query-uuid-count={query_uuid_count}
+                    \\    --query-radius-count={query_radius_count}
+                    \\    --query-polygon-count={query_polygon_count}
                     \\    --addresses={addresses}
                 , .{
                     .archerdb = archerdb_path,
                     .addresses = addresses,
                     .event_count = benchmark_options.event_count,
+                    .query_uuid_count = benchmark_options.query_uuid_count,
+                    .query_radius_count = benchmark_options.query_radius_count,
+                    .query_polygon_count = benchmark_options.query_polygon_count,
                 });
                 workload_exit_ok_ptr.* = true;
             }

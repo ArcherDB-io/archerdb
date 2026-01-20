@@ -755,3 +755,75 @@ test "Command.toString" {
     try std.testing.expectEqualStrings("QUERY UUID", Command.query_uuid.toString());
     try std.testing.expectEqualStrings("STATUS", Command.status.toString());
 }
+
+test "parse INSERT command" {
+    var parser = Parser.init(
+        std.testing.allocator,
+        "INSERT 123 (37.7749, -122.4194) SPEED 120 HEADING 9000 TTL 60",
+    );
+    const result = try parser.parse();
+    switch (result) {
+        .insert => |args| {
+            try std.testing.expectEqual(@as(u128, 123), args.entity_id);
+            try std.testing.expectEqual(@as(i64, 37_774_900_000), args.coord.lat_nano);
+            try std.testing.expectEqual(@as(i64, -122_419_400_000), args.coord.lon_nano);
+            try std.testing.expectEqual(@as(u16, 120), args.speed_cmps);
+            try std.testing.expectEqual(@as(u16, 9000), args.heading_cdeg);
+            try std.testing.expectEqual(@as(u32, 60), args.ttl_seconds);
+        },
+        else => try std.testing.expect(false),
+    }
+}
+
+test "parse QUERY RADIUS command" {
+    var parser = Parser.init(
+        std.testing.allocator,
+        "QUERY RADIUS (37.7749, -122.4194) 1500 LIMIT 5 FROM 10 TO 20",
+    );
+    const result = try parser.parse();
+    switch (result) {
+        .query_radius => |args| {
+            try std.testing.expectEqual(@as(i64, 37_774_900_000), args.center.lat_nano);
+            try std.testing.expectEqual(@as(i64, -122_419_400_000), args.center.lon_nano);
+            try std.testing.expectEqual(@as(u32, 1500), args.radius_m);
+            try std.testing.expectEqual(@as(u32, 5), args.limit);
+            try std.testing.expectEqual(@as(u64, 10), args.start_timestamp);
+            try std.testing.expectEqual(@as(u64, 20), args.end_timestamp);
+        },
+        else => try std.testing.expect(false),
+    }
+}
+
+test "parse QUERY POLYGON command" {
+    var parser = Parser.init(
+        std.testing.allocator,
+        "QUERY POLYGON (0, 0) (0, 1) (1, 1) LIMIT 7",
+    );
+    const result = try parser.parse();
+    switch (result) {
+        .query_polygon => |args| {
+            try std.testing.expectEqual(@as(usize, 3), args.vertices.len);
+            try std.testing.expectEqual(@as(i64, 0), args.vertices[0].lat_nano);
+            try std.testing.expectEqual(@as(i64, 0), args.vertices[0].lon_nano);
+            try std.testing.expectEqual(@as(u32, 7), args.limit);
+        },
+        else => try std.testing.expect(false),
+    }
+}
+
+test "parse QUERY LATEST command" {
+    var parser = Parser.init(
+        std.testing.allocator,
+        "QUERY LATEST 10 20 LIMIT 3",
+    );
+    const result = try parser.parse();
+    switch (result) {
+        .query_latest => |args| {
+            try std.testing.expectEqual(@as(usize, 2), args.entity_ids.len);
+            try std.testing.expectEqual(@as(u128, 10), args.entity_ids[0]);
+            try std.testing.expectEqual(@as(u128, 20), args.entity_ids[1]);
+            try std.testing.expectEqual(@as(u32, 3), args.limit);
+        },
+        else => try std.testing.expect(false),
+    }
+}

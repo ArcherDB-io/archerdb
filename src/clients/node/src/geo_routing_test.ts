@@ -12,7 +12,6 @@
 // Copyright 2025 ArcherDB Authors. All rights reserved.
 // Use of this source code is governed by the Apache 2.0 license.
 
-import { describe, it, beforeEach } from 'node:test'
 import * as assert from 'node:assert'
 
 import {
@@ -34,6 +33,33 @@ import {
   RegionSelector,
   GeoRouter,
 } from './geo_routing'
+
+type TestFn = () => void | Promise<void>
+
+const tests: Array<{ name: string; fn: TestFn }> = []
+const suiteStack: string[] = []
+
+function describe(name: string, fn: () => void) {
+  suiteStack.push(name)
+  try {
+    fn()
+  } finally {
+    suiteStack.pop()
+  }
+}
+
+function it(name: string, fn: TestFn) {
+  const fullName = suiteStack.length > 0 ? `${suiteStack.join(' / ')}: ${name}` : name
+  tests.push({ name: fullName, fn })
+}
+
+async function runTests() {
+  for (const test of tests) {
+    await test.fn()
+    console.log(`✓ ${test.name}`)
+  }
+  console.log('\n=== Geo Routing Tests Passed ===\n')
+}
 
 // ============================================================================
 // Test Helpers
@@ -678,4 +704,9 @@ describe('GeoRoutingConfig', () => {
     assert.strictEqual(config.unhealthyThreshold, 3)
     assert.strictEqual(config.backgroundProbing, true)
   })
+})
+
+runTests().catch((err) => {
+  console.error(err)
+  process.exitCode = 1
 })
