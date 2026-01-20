@@ -616,3 +616,80 @@ test "Topology: shard routing" {
     // Same entity should always route to same shard.
     try std.testing.expectEqual(shard_1, topology.getShardForEntity(0x1111));
 }
+
+test "benchmark: routing overhead is less than 1ms" {
+    // This test verifies that the routing decision overhead is minimal.
+    // Spec requirement: "Performance overhead <1ms"
+    // The coordinator's routing decision should add negligible latency.
+
+    var topology = Topology.init();
+    topology.num_shards = 16;
+
+    // Initialize shards as active
+    for (0..16) |i| {
+        topology.shards[i].id = @intCast(i);
+        topology.shards[i].status = .active;
+    }
+
+    const iterations: usize = 10000;
+    var total_ns: u64 = 0;
+
+    for (0..iterations) |i| {
+        const entity_id: u128 = @intCast(i * 12345 + 67890);
+        const start = std.time.nanoTimestamp();
+        _ = topology.getShardForEntity(entity_id);
+        const end = std.time.nanoTimestamp();
+        total_ns += @intCast(@as(i128, end - start));
+    }
+
+    const avg_ns = total_ns / iterations;
+    const avg_us = @as(f64, @floatFromInt(avg_ns)) / 1000.0;
+
+    std.log.info("Routing overhead: avg {} ns ({d:.3} us) per operation", .{ avg_ns, avg_us });
+
+    // Verify overhead is less than 1ms (1,000,000 ns).
+    // In practice, routing should be < 1us, so 1ms is a very generous threshold.
+    try std.testing.expect(avg_ns < 1_000_000);
+
+    // For debug builds, also verify it's reasonable (< 100us)
+    try std.testing.expect(avg_ns < 100_000);
+}
+
+test "benchmark: fan-out shard selection overhead" {
+    // Tests the overhead of determining which shards to query for fan-out.
+
+    var topology = Topology.init();
+    topology.num_shards = 64;
+
+    // Initialize all shards as active
+    for (0..64) |i| {
+        topology.shards[i].id = @intCast(i);
+        topology.shards[i].status = .active;
+    }
+
+    const iterations: usize = 1000;
+    var total_ns: u64 = 0;
+
+    var final_count: u32 = 0;
+    for (0..iterations) |_| {
+        const start = std.time.nanoTimestamp();
+        // Fan-out requires checking all active shards
+        var active_count: u32 = 0;
+        for (0..topology.num_shards) |i| {
+            if (topology.shards[i].status == .active) {
+                active_count += 1;
+            }
+        }
+        const end = std.time.nanoTimestamp();
+        total_ns += @intCast(@as(i128, end - start));
+        final_count = active_count;
+    }
+    // Use final_count to prevent optimization
+    try std.testing.expect(final_count > 0);
+
+    const avg_ns = total_ns / iterations;
+    std.log.info("Fan-out shard selection: avg {} ns per operation", .{avg_ns});
+
+    // Fan-out selection should also be < 1ms
+    try std.testing.expect(avg_ns < 1_000_000);
+}

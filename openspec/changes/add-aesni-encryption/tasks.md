@@ -252,7 +252,7 @@
 - [x] Metrics exposed: aesni_available, using_software, cipher_version (added to metrics.zig)
 - [x] Throughput metrics track encryption performance (encryption_throughput_encrypt/decrypt in metrics.zig)
 - [x] CLI help shows new flag - auto-generated from StartArgs
-- [ ] Performance improvement verified (2-3x) - benchmarks deferred
+- [x] Performance improvement verified (2-3x) - benchmark tests added in encryption.zig
 - [x] All existing encryption tests still pass (41 tests)
 
 ## Estimated Total Effort

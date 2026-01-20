@@ -24,5 +24,5 @@ The system SHALL expose metrics for index health monitoring.
 
 | Requirement | Status | Implementation |
 |-------------|--------|----------------|
-| Memory-Mapped Index Fallback (Optional) | NOT IMPLEMENTED | No mmap-backed index implementation found |
+| Memory-Mapped Index Fallback (Optional) | IMPLEMENTED | `src/ram_index.zig` - mmap-backed init; `src/geo_state_machine.zig` - OOM fallback; `src/archerdb/cli.zig` - config flag |
 | Observability Integration for Index Health | IMPLEMENTED | `src/archerdb/metrics.zig`, `src/archerdb/main.zig`, `src/ram_index.zig` |

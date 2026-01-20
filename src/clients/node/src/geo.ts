@@ -1989,18 +1989,27 @@ export class PolygonValidationError extends Error {
   readonly segment2_index: number
   /** Approximate intersection point [lat, lon] in degrees */
   readonly intersection_point: [number, number]
+  /** Repair suggestions for fixing the self-intersection */
+  readonly repair_suggestions: string[]
 
   constructor(
     message: string,
     segment1_index: number = -1,
     segment2_index: number = -1,
     intersection_point: [number, number] = [0, 0],
+    repair_suggestions: string[] = [],
   ) {
     super(message)
     this.name = 'PolygonValidationError'
     this.segment1_index = segment1_index
     this.segment2_index = segment2_index
     this.intersection_point = intersection_point
+    this.repair_suggestions = repair_suggestions
+  }
+
+  /** Get repair suggestions for fixing the self-intersection */
+  getRepairSuggestions(): string[] {
+    return this.repair_suggestions
   }
 }
 
@@ -2131,11 +2140,31 @@ export function validatePolygonNoSelfIntersection(
         const intersection: [number, number] = [ix, iy]
 
         if (raiseOnError) {
+          // Generate repair suggestions
+          const suggestions: string[] = []
+          const v1_idx = (i + 1) % n
+          const v2_idx = (j + 1) % n
+
+          suggestions.push(
+            `Try removing vertex ${v1_idx} at (${vertices[v1_idx][0].toFixed(6)}, ${vertices[v1_idx][1].toFixed(6)})`
+          )
+          suggestions.push(
+            `Try removing vertex ${v2_idx} at (${vertices[v2_idx][0].toFixed(6)}, ${vertices[v2_idx][1].toFixed(6)})`
+          )
+
+          // Detect bow-tie pattern
+          if (Math.abs(j - i) === 2) {
+            suggestions.push(`Bow-tie pattern detected: try swapping vertices ${i + 1} and ${j}`)
+          }
+
+          suggestions.push('Ensure vertices are ordered consistently (clockwise or counter-clockwise)')
+
           throw new PolygonValidationError(
             `Polygon self-intersects: edge ${i}-${(i + 1) % n} crosses edge ${j}-${(j + 1) % n} near (${ix.toFixed(6)}, ${iy.toFixed(6)})`,
             i,
             j,
             intersection,
+            suggestions,
           )
         }
 

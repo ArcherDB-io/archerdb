@@ -23,10 +23,17 @@ type PolygonValidationError struct {
 	IntersectionPoint [2]float64
 	// Message is the human-readable error message
 	Message string
+	// RepairSuggestions contains suggestions for fixing the self-intersection
+	RepairSuggestions []string
 }
 
 func (e *PolygonValidationError) Error() string {
 	return e.Message
+}
+
+// GetRepairSuggestions returns suggestions for fixing the self-intersection.
+func (e *PolygonValidationError) GetRepairSuggestions() []string {
+	return e.RepairSuggestions
 }
 
 // IntersectionInfo contains information about a detected self-intersection.
@@ -118,12 +125,32 @@ func ValidatePolygonNoSelfIntersection(vertices [][2]float64, raiseOnError bool)
 				intersection := [2]float64{ix, iy}
 
 				if raiseOnError {
+					// Generate repair suggestions
+					suggestions := make([]string, 0, 4)
+					v1Idx := (i + 1) % n
+					v2Idx := (j + 1) % n
+
+					suggestions = append(suggestions,
+						fmt.Sprintf("Try removing vertex %d at (%.6f, %.6f)", v1Idx, vertices[v1Idx][0], vertices[v1Idx][1]))
+					suggestions = append(suggestions,
+						fmt.Sprintf("Try removing vertex %d at (%.6f, %.6f)", v2Idx, vertices[v2Idx][0], vertices[v2Idx][1]))
+
+					// Detect bow-tie pattern
+					if j-i == 2 {
+						suggestions = append(suggestions,
+							fmt.Sprintf("Bow-tie pattern detected: try swapping vertices %d and %d", i+1, j))
+					}
+
+					suggestions = append(suggestions,
+						"Ensure vertices are ordered consistently (clockwise or counter-clockwise)")
+
 					return nil, &PolygonValidationError{
 						Segment1Index:     i,
 						Segment2Index:     j,
 						IntersectionPoint: intersection,
 						Message: fmt.Sprintf("polygon self-intersects: edge %d-%d crosses edge %d-%d near (%.6f, %.6f)",
 							i, (i+1)%n, j, (j+1)%n, ix, iy),
+						RepairSuggestions: suggestions,
 					}
 				}
 

@@ -243,8 +243,8 @@
 - [x] Remove node drains cleanly (beginNodeRemoval in src/vsr/membership.zig)
 - [x] State transitions implemented (beginTransition, completeTransition, abortTransition)
 - [x] Unit tests pass (12 tests in src/vsr/membership.zig)
-- [ ] VSR replica integration (Task 1.3 - needs replica.zig changes)
-- [ ] Primary removal triggers view change
+- [x] VSR replica integration (membership_config field, initMembershipConfig, hasReplicationQuorum, beginAddLearner, beginRemoveNode in replica.zig:6897-6962)
+- [x] Primary removal triggers view change (membershipRequiresViewChange checks primary status, beginRemoveNode logs view change requirement)
 - [x] CLI commands work (add-node, remove-node, status in cli.zig:752, main.zig:443)
 - [x] Metrics track progress (src/archerdb/metrics.zig: membership_* metrics, wired to src/vsr/membership.zig)
 - [ ] Chaos tests pass

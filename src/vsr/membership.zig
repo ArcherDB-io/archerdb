@@ -189,10 +189,10 @@ pub const MembershipConfig = struct {
         return votes >= old_quorum;
     }
 
-    /// Check if a specific node can vote.
+    /// Check if a specific node can vote (must have voting role AND be healthy).
     pub fn canNodeVote(self: *const MembershipConfig, node_id: u8) bool {
         if (node_id >= self.node_count) return false;
-        return self.nodes[node_id].role.canVote();
+        return self.nodes[node_id].role.canVote() and self.nodes[node_id].status == .healthy;
     }
 
     /// Get nodes that can vote in the current configuration.
@@ -424,6 +424,39 @@ pub const MembershipConfig = struct {
         metrics.Registry.membership_voters_count.set(voters);
         metrics.Registry.membership_learners_count.set(learners);
     }
+
+    /// Check if removing a node would require a view change.
+    /// Returns true if the node being removed is the current primary.
+    pub fn requiresViewChangeForRemoval(self: *const MembershipConfig, node_id: u8) bool {
+        if (node_id >= self.node_count) return false;
+        return self.nodes[node_id].role == .primary;
+    }
+
+    /// Get the node ID of the current primary, if any.
+    pub fn getPrimaryId(self: *const MembershipConfig) ?u8 {
+        for (0..self.node_count) |i| {
+            if (self.nodes[i].role == .primary) {
+                return @intCast(i);
+            }
+        }
+        return null;
+    }
+
+    /// Get the number of healthy voters in the current configuration.
+    pub fn getHealthyVoterCount(self: *const MembershipConfig) u8 {
+        var count: u8 = 0;
+        for (0..self.node_count) |i| {
+            if (self.nodes[i].role.canVote() and self.nodes[i].status == .healthy) {
+                count += 1;
+            }
+        }
+        return count;
+    }
+
+    /// Check if the cluster has quorum with current healthy voters.
+    pub fn hasHealthyQuorum(self: *const MembershipConfig) bool {
+        return self.hasQuorum(self.getHealthyVoterCount());
+    }
 };
 
 // =============================================================================
@@ -577,4 +610,83 @@ test "MembershipConfig: node removal" {
 
     try config.completeTransition();
     try std.testing.expectEqual(@as(u8, 2), config.node_count);
+}
+
+test "MembershipConfig: requiresViewChangeForRemoval" {
+    var config = MembershipConfig.init(3);
+    for (0..3) |i| {
+        config.nodes[i] = NodeInfo.init(@intCast(i), "localhost", 3000 + @as(u16, @intCast(i)));
+        config.nodes[i].role = .follower;
+    }
+
+    // Set node 0 as primary
+    config.nodes[0].role = .primary;
+
+    // Removing primary should require view change
+    try std.testing.expect(config.requiresViewChangeForRemoval(0));
+
+    // Removing follower should not require view change
+    try std.testing.expect(!config.requiresViewChangeForRemoval(1));
+    try std.testing.expect(!config.requiresViewChangeForRemoval(2));
+
+    // Invalid node ID should return false
+    try std.testing.expect(!config.requiresViewChangeForRemoval(5));
+}
+
+test "MembershipConfig: getPrimaryId" {
+    var config = MembershipConfig.init(3);
+    for (0..3) |i| {
+        config.nodes[i] = NodeInfo.init(@intCast(i), "localhost", 3000 + @as(u16, @intCast(i)));
+        config.nodes[i].role = .follower;
+    }
+
+    // No primary initially
+    try std.testing.expect(config.getPrimaryId() == null);
+
+    // Set node 1 as primary
+    config.nodes[1].role = .primary;
+    try std.testing.expectEqual(@as(?u8, 1), config.getPrimaryId());
+}
+
+test "MembershipConfig: canNodeVote" {
+    var config = MembershipConfig.init(3);
+    for (0..3) |i| {
+        config.nodes[i] = NodeInfo.init(@intCast(i), "localhost", 3000 + @as(u16, @intCast(i)));
+        config.nodes[i].role = .follower;
+        config.nodes[i].status = .healthy;
+    }
+
+    // Healthy follower can vote
+    try std.testing.expect(config.canNodeVote(0));
+
+    // Unhealthy follower cannot vote
+    config.nodes[1].status = .unhealthy;
+    try std.testing.expect(!config.canNodeVote(1));
+
+    // Learner cannot vote even if healthy
+    const learner_id = try config.addLearner("192.168.1.10", 3003);
+    try std.testing.expect(!config.canNodeVote(learner_id));
+}
+
+test "MembershipConfig: getHealthyVoterCount and hasHealthyQuorum" {
+    var config = MembershipConfig.init(3);
+    for (0..3) |i| {
+        config.nodes[i] = NodeInfo.init(@intCast(i), "localhost", 3000 + @as(u16, @intCast(i)));
+        config.nodes[i].role = .follower;
+        config.nodes[i].status = .healthy;
+    }
+
+    // All 3 healthy voters
+    try std.testing.expectEqual(@as(u8, 3), config.getHealthyVoterCount());
+    try std.testing.expect(config.hasHealthyQuorum()); // 3 >= 2 (majority of 3)
+
+    // Mark one unhealthy
+    config.nodes[0].status = .unhealthy;
+    try std.testing.expectEqual(@as(u8, 2), config.getHealthyVoterCount());
+    try std.testing.expect(config.hasHealthyQuorum()); // 2 >= 2
+
+    // Mark another unhealthy - now no quorum
+    config.nodes[1].status = .unhealthy;
+    try std.testing.expectEqual(@as(u8, 1), config.getHealthyVoterCount());
+    try std.testing.expect(!config.hasHealthyQuorum()); // 1 < 2
 }

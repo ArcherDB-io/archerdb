@@ -999,6 +999,8 @@ test "tidy unix permissions" {
         "src/scripts/cfo_supervisor.sh",
         "scripts/add-license-headers.sh",
         "scripts/dev-cluster.sh",
+        "scripts/test_clients.sh",
+        "tools/bisect_unit_tests.py",
     };
 
     const allocator = std.testing.allocator;

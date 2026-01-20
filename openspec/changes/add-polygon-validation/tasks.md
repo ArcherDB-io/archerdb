@@ -154,7 +154,7 @@ Note: Some work can be parallelized across SDKs.
 - [x] raiseOnError=true rejects invalid polygons with PolygonValidationError
 - [x] raiseOnError=false returns list of intersections (for inspection)
 - [x] Error messages include segment indices and intersection point
-- [ ] Repair suggestions when applicable (deferred - not critical)
+- [x] Repair suggestions when applicable (all SDKs implement GetRepairSuggestions)
 - [x] All SDKs implement consistently (Python, Rust, Node, Java, Go, .NET)
 - [ ] Documentation explains usage (deferred)
 
@@ -164,4 +164,4 @@ Note: Some work can be parallelized across SDKs.
 - [x] Node: `validatePolygonNoSelfIntersection()`, `PolygonValidationError`, 10 unit tests
 - [x] Java: `PolygonValidation.validatePolygonNoSelfIntersection()`, `PolygonValidationException`, 10 unit tests
 - [x] Go: `ValidatePolygonNoSelfIntersection()`, `PolygonValidationError`, 11 unit tests
-- [x] .NET: `PolygonValidation.ValidatePolygonNoSelfIntersection()`, `PolygonValidationException`, 12 unit tests
+- [x] .NET: `PolygonValidation.ValidatePolygonNoSelfIntersection()`, `PolygonValidationException`, 17 unit tests (including repair suggestions)

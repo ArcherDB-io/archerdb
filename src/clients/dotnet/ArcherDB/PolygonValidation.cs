@@ -32,19 +32,32 @@ public class PolygonValidationException : Exception
     public (double Lat, double Lon) IntersectionPoint { get; }
 
     /// <summary>
+    /// Suggestions for fixing the self-intersection.
+    /// </summary>
+    public IReadOnlyList<string> RepairSuggestions { get; }
+
+    /// <summary>
     /// Creates a new PolygonValidationException.
     /// </summary>
     public PolygonValidationException(
         string message,
         int segment1Index = -1,
         int segment2Index = -1,
-        (double Lat, double Lon) intersectionPoint = default)
+        (double Lat, double Lon) intersectionPoint = default,
+        IReadOnlyList<string>? repairSuggestions = null)
         : base(message)
     {
         Segment1Index = segment1Index;
         Segment2Index = segment2Index;
         IntersectionPoint = intersectionPoint;
+        RepairSuggestions = repairSuggestions ?? Array.Empty<string>();
     }
+
+    /// <summary>
+    /// Returns suggestions for fixing the self-intersection.
+    /// </summary>
+    /// <returns>List of repair suggestions</returns>
+    public IReadOnlyList<string> GetRepairSuggestions() => RepairSuggestions;
 }
 
 /// <summary>
@@ -177,9 +190,25 @@ public static class PolygonValidation
 
                     if (raiseOnError)
                     {
+                        // Generate repair suggestions
+                        var suggestions = new List<string>();
+                        var v1Idx = (i + 1) % n;
+                        var v2Idx = (j + 1) % n;
+
+                        suggestions.Add($"Try removing vertex {v1Idx} at ({vertices[v1Idx].Lat:F6}, {vertices[v1Idx].Lon:F6})");
+                        suggestions.Add($"Try removing vertex {v2Idx} at ({vertices[v2Idx].Lat:F6}, {vertices[v2Idx].Lon:F6})");
+
+                        // Detect bow-tie pattern
+                        if (j - i == 2)
+                        {
+                            suggestions.Add($"Bow-tie pattern detected: try swapping vertices {i + 1} and {j}");
+                        }
+
+                        suggestions.Add("Ensure vertices are ordered consistently (clockwise or counter-clockwise)");
+
                         throw new PolygonValidationException(
                             $"Polygon self-intersects: edge {i}-{(i + 1) % n} crosses edge {j}-{(j + 1) % n} near ({ix:F6}, {iy:F6})",
-                            i, j, intersection);
+                            i, j, intersection, suggestions);
                     }
 
                     intersections.Add(new IntersectionInfo(i, j, intersection));

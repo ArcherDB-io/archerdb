@@ -200,4 +200,72 @@ public class PolygonValidationTests
         var result = PolygonValidation.ValidatePolygonNoSelfIntersection(triangle, raiseOnError: false);
         Assert.Empty(result);
     }
+
+    [Fact]
+    public void RepairSuggestions_IncludedInException()
+    {
+        // Bow-tie polygon should include repair suggestions
+        var bowtie = new List<(double, double)>
+        {
+            (0.0, 0.0),
+            (1.0, 1.0),
+            (1.0, 0.0),
+            (0.0, 1.0),
+        };
+
+        var ex = Assert.Throws<PolygonValidationException>(() =>
+            PolygonValidation.ValidatePolygonNoSelfIntersection(bowtie, raiseOnError: true));
+
+        Assert.NotEmpty(ex.RepairSuggestions);
+        Assert.True(ex.RepairSuggestions.Count >= 3, "Should have at least 3 suggestions");
+        Assert.Contains(ex.RepairSuggestions, s => s.Contains("Try removing vertex"));
+        Assert.Contains(ex.RepairSuggestions, s => s.Contains("vertices are ordered"));
+    }
+
+    [Fact]
+    public void RepairSuggestions_GetRepairSuggestionsMethod()
+    {
+        // Test GetRepairSuggestions() method
+        var bowtie = new List<(double, double)>
+        {
+            (0.0, 0.0),
+            (1.0, 1.0),
+            (1.0, 0.0),
+            (0.0, 1.0),
+        };
+
+        var ex = Assert.Throws<PolygonValidationException>(() =>
+            PolygonValidation.ValidatePolygonNoSelfIntersection(bowtie, raiseOnError: true));
+
+        var suggestions = ex.GetRepairSuggestions();
+        Assert.NotEmpty(suggestions);
+        Assert.Equal(ex.RepairSuggestions, suggestions);
+    }
+
+    [Fact]
+    public void RepairSuggestions_BowtiePatternDetected()
+    {
+        // Bow-tie polygon should have bow-tie specific suggestion
+        var bowtie = new List<(double, double)>
+        {
+            (0.0, 0.0),
+            (1.0, 1.0),
+            (1.0, 0.0),
+            (0.0, 1.0),
+        };
+
+        var ex = Assert.Throws<PolygonValidationException>(() =>
+            PolygonValidation.ValidatePolygonNoSelfIntersection(bowtie, raiseOnError: true));
+
+        Assert.Contains(ex.RepairSuggestions, s => s.Contains("Bow-tie pattern detected"));
+    }
+
+    [Fact]
+    public void RepairSuggestions_DefaultsToEmpty()
+    {
+        // Exception without suggestions should have empty list
+        var ex = new PolygonValidationException("Test error");
+        Assert.Empty(ex.RepairSuggestions);
+        Assert.Empty(ex.GetRepairSuggestions());
+    }
 }

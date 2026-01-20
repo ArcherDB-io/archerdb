@@ -125,6 +125,9 @@ const CLIArgs = union(enum) {
         // When clients set event.ttl_seconds = 0, this default is applied
         default_ttl_days: ?u32 = null,
 
+        // Hybrid-memory/spec.md: Enable memory-mapped RAM index fallback.
+        memory_mapped_index_enabled: bool = false,
+
         // Per add-v2-distributed-features/specs/ttl-retention/spec.md: TTL Extension on Read
         // When enabled, accessing an entity extends its TTL automatically
         ttl_extension_enabled: bool = false,
@@ -1207,6 +1210,10 @@ const CLIArgs = union(enum) {
         \\        For safety, production replicas should always enforce Direct IO -- this flag should only be
         \\        used for testing and development. It should not be used for production or benchmarks.
         \\
+        \\  --memory-mapped-index-enabled=<true|false>
+        \\        Enable memory-mapped RAM index fallback when RAM is insufficient.
+        \\        Defaults to false.
+        \\
         \\  --ttl-priority-threshold=<0-100>
         \\        (Experimental) Set the TTL-aware compaction priority threshold as a percentage.
         \\        LSM levels with an expired data ratio exceeding this threshold are prioritized
@@ -1375,6 +1382,8 @@ pub const Command = union(enum) {
         // Per ttl-retention/spec.md: Global default TTL in days
         // 0 = infinite (no expiration), > 0 = events expire after that many days
         default_ttl_days: u32,
+        // Hybrid-memory/spec.md: memory-mapped index fallback flag
+        memory_mapped_index_enabled: bool,
         // Per add-ttl-aware-compaction spec: TTL priority threshold (0.0-1.0)
         // Levels with expired_ratio > threshold are prioritized for compaction
         ttl_priority_threshold: f64,
@@ -2170,6 +2179,7 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
         .backup_primary_only = start.backup_primary_only,
         // Per ttl-retention/spec.md: Global default TTL (0 = infinite, >0 = days)
         .default_ttl_days = start.default_ttl_days orelse 0,
+        .memory_mapped_index_enabled = start.memory_mapped_index_enabled,
         // Per add-ttl-aware-compaction spec: TTL priority threshold (default 30%)
         .ttl_priority_threshold = blk: {
             const pct = start.ttl_priority_threshold orelse 30;

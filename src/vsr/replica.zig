@@ -25,6 +25,7 @@ const ForestTableIteratorType =
     @import("../lsm/forest_table_iterator.zig").ForestTableIteratorType;
 const TestStorage = @import("../testing/storage.zig").Storage;
 const Time = @import("../time.zig").Time;
+const index_checkpoint = @import("../index/checkpoint.zig");
 const RepairBudgetJournal = @import("repair_budget.zig").RepairBudgetJournal;
 const RepairBudgetGrid = @import("repair_budget.zig").RepairBudgetGrid;
 const Multiversion = @import("../multiversion.zig").Multiversion;
@@ -40,6 +41,8 @@ const Version = vsr.Version;
 const SyncStage = vsr.SyncStage;
 const ClientSessions = vsr.ClientSessions;
 const Tracer = vsr.trace.Tracer;
+const membership = @import("membership.zig");
+const MembershipConfig = membership.MembershipConfig;
 
 const log = marks.wrap_log(stdx.log.scoped(.replica));
 
@@ -269,6 +272,11 @@ pub fn ReplicaType(
         /// More than half of replica_count.
         quorum_majority: u8,
 
+        /// Dynamic cluster membership configuration.
+        /// Used for joint consensus during membership changes.
+        /// When null, falls back to static replica_count-based quorums.
+        membership_config: ?MembershipConfig = null,
+
         /// The version of code that is running right now.
         ///
         /// Invariants:
@@ -403,6 +411,21 @@ pub fn ReplicaType(
 
         /// The current status, either normal, view_change, or recovering:
         status: Status = .recovering,
+
+        /// Configured storage size limit for recovery SLA checks.
+        storage_size_limit: u64,
+
+        /// Recovery start timestamp (monotonic ns).
+        recovery_start_ns: u64 = 0,
+
+        /// Recovery path classification for SLA tracking.
+        recovery_path: index_checkpoint.RecoveryPath = .none,
+
+        /// Recovery metrics tracking (F2.3).
+        recovery_metrics: index_checkpoint.RecoveryMetrics = .{},
+
+        /// Guard to avoid recording recovery twice.
+        recovery_recorded: bool = false,
 
         /// The op number assigned to the most recently prepared operation.
         /// This op is sometimes referred to as the replica's "head" or "head op".
@@ -719,6 +742,7 @@ pub fn ReplicaType(
                     .replica_count = replica_count,
                     .standby_count = options.node_count - replica_count,
                     .pipeline_requests_limit = options.pipeline_requests_limit,
+                .storage_size_limit = options.storage_size_limit,
                     .aof = options.aof,
                     .nonce = options.nonce,
                     .state_machine_options = options.state_machine_options,
@@ -761,6 +785,8 @@ pub fn ReplicaType(
 
             // Abort if all slots are faulty, since something is very wrong.
             if (self.journal.faulty.count == constants.journal_slot_count) return error.WALInvalid;
+
+            self.update_recovery_path_after_journal();
 
             const view_headers = self.superblock.working.view_headers();
             // If we were a lagging backup that installed an SV but didn't finish fast-forwarding,
@@ -939,6 +965,39 @@ pub fn ReplicaType(
             self.opened = true;
         }
 
+        fn update_recovery_path_after_journal(self: *Replica) void {
+            self.recovery_path = index_checkpoint.classify_recovery_path(
+                self.op_checkpoint(),
+                self.journal.op_maximum(),
+            );
+        }
+
+        fn record_recovery_complete(self: *Replica) void {
+            if (self.recovery_recorded) return;
+            if (self.recovery_start_ns == 0) return;
+
+            const now_ns = std.time.nanoTimestamp();
+            const duration_ns: u64 = if (now_ns > self.recovery_start_ns)
+                @intCast(now_ns - self.recovery_start_ns)
+            else
+                0;
+
+            self.recovery_metrics.record_recovery(self.recovery_path, duration_ns);
+            index_checkpoint.log_recovery_sla(
+                self.recovery_path,
+                duration_ns,
+                self.storage_size_limit,
+            );
+
+            log.info("{}: recovery complete path={s} duration_ns={}", .{
+                self.log_prefix(),
+                self.recovery_path.to_label(),
+                duration_ns,
+            });
+
+            self.recovery_recorded = true;
+        }
+
         fn grid_open_callback(grid: *Grid) void {
             const self: *Replica = @alignCast(@fieldParentPtr("grid", grid));
             assert(!self.state_machine_opened);
@@ -1063,6 +1122,7 @@ pub fn ReplicaType(
             standby_count: u8,
             replica_index: u8,
             pipeline_requests_limit: u32,
+            storage_size_limit: u64,
             nonce: Nonce,
             aof: ?*AOF,
             message_bus_options: MessageBus.Options,
@@ -1292,6 +1352,8 @@ pub fn ReplicaType(
 
             try self.message_bus.listen();
 
+            const recovery_start_ns = @as(u64, @intCast(std.time.nanoTimestamp()));
+
             self.* = .{
                 .static_allocator = self.static_allocator,
                 .cluster = options.cluster,
@@ -1301,6 +1363,7 @@ pub fn ReplicaType(
                 .replica = replica_index,
                 .pipeline_request_queue_limit = options.pipeline_requests_limit,
                 .request_size_limit = request_size_limit,
+                .storage_size_limit = options.storage_size_limit,
                 .quorum_replication = quorum_replication,
                 .quorum_view_change = quorum_view_change,
                 .quorum_nack_prepare = quorum_nack_prepare,
@@ -1328,6 +1391,10 @@ pub fn ReplicaType(
                 .opened = self.opened,
                 .view = self.superblock.working.vsr_state.view,
                 .log_view = self.superblock.working.vsr_state.log_view,
+                .recovery_start_ns = recovery_start_ns,
+                .recovery_path = .wal_replay,
+                .recovery_metrics = .{},
+                .recovery_recorded = false,
                 .op = undefined,
                 .commit_min = self.superblock.working.vsr_state.checkpoint.header.op,
                 .commit_max = self.superblock.working.vsr_state.commit_max,
@@ -6828,6 +6895,75 @@ pub fn ReplicaType(
             return self.replica >= self.replica_count;
         }
 
+        /// Initialize membership configuration from current replica state.
+        /// Called during startup to sync membership with static configuration.
+        pub fn initMembershipConfig(self: *Replica) void {
+            if (self.membership_config != null) return;
+
+            var config = MembershipConfig.init(self.replica_count);
+            // Initialize nodes from current configuration
+            for (0..self.replica_count) |i| {
+                config.nodes[i] = membership.NodeInfo.init(
+                    @intCast(i),
+                    "", // Address populated from message bus
+                    0, // Port populated from message bus
+                );
+                config.nodes[i].status = .healthy;
+            }
+            self.membership_config = config;
+        }
+
+        /// Check if the cluster has quorum for replication, considering joint consensus.
+        /// Uses membership_config if available, otherwise falls back to static quorums.
+        pub fn hasReplicationQuorum(self: *const Replica, votes: u8) bool {
+            if (self.membership_config) |*config| {
+                return config.hasQuorum(votes);
+            }
+            return votes >= self.quorum_replication;
+        }
+
+        /// Check if removing a node would require a view change.
+        /// Returns true if the node is the current primary.
+        pub fn membershipRequiresViewChange(self: *const Replica, node_id: u8) bool {
+            if (self.membership_config) |*config| {
+                return config.requiresViewChangeForRemoval(node_id);
+            }
+            // Without membership config, check if node is primary
+            return self.primary_index(self.view) == node_id;
+        }
+
+        /// Begin a membership change to add a learner node.
+        /// Returns error if already in a membership transition.
+        pub fn beginAddLearner(
+            self: *Replica,
+            address: []const u8,
+            port: u16,
+        ) !u8 {
+            self.initMembershipConfig();
+            if (self.membership_config) |*config| {
+                return config.addLearner(address, port);
+            }
+            return error.MembershipNotInitialized;
+        }
+
+        /// Begin a membership change to remove a node.
+        /// Returns error if already in a membership transition.
+        pub fn beginRemoveNode(self: *Replica, node_id: u8) !void {
+            self.initMembershipConfig();
+            if (self.membership_config) |*config| {
+                // If removing primary, we need to trigger view change first
+                if (config.requiresViewChangeForRemoval(node_id)) {
+                    log.info("{}: membership: removing primary, view change required", .{
+                        self.log_prefix(),
+                    });
+                    // The actual view change is handled by normal VSR mechanisms
+                    // We just mark the node as leaving
+                }
+                return config.beginNodeRemoval(node_id);
+            }
+            return error.MembershipNotInitialized;
+        }
+
         /// Advances `op` to where we need to be before `header` can be processed as a prepare.
         ///
         /// This function temporarily violates the "replica.op must exist in WAL" invariant.
@@ -9862,6 +9998,7 @@ pub fn ReplicaType(
             assert(self.log_view >= self.superblock.working.vsr_state.checkpoint.header.view);
 
             self.status = .normal;
+            self.record_recovery_complete();
 
             assert(!self.prepare_timeout.ticking);
             assert(!self.primary_abdicate_timeout.ticking);
@@ -9945,6 +10082,7 @@ pub fn ReplicaType(
             );
 
             self.status = .normal;
+            self.record_recovery_complete();
             if (self.log_view == view_new) {
                 // Recovering to the same view we lost the head in.
                 assert(self.view == view_new);

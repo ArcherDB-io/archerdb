@@ -614,6 +614,40 @@ pub const RecoverySLA = struct {
     pub const small_data_threshold_bytes: u64 = 128 * 1024 * 1024 * 1024;
 };
 
+pub fn classify_recovery_path(op_checkpoint: u64, op_max: u64) RecoveryPath {
+    if (op_checkpoint == 0 and op_max == 0) return .clean_start;
+    return .wal_replay;
+}
+
+pub fn recovery_sla_threshold_ns(path: RecoveryPath, data_size_bytes: u64) ?u64 {
+    return switch (path) {
+        .wal_replay => RecoverySLA.wal_replay_ns,
+        .lsm_scan => RecoverySLA.lsm_scan_ns,
+        .full_rebuild => if (data_size_bytes != 0 and
+            data_size_bytes <= RecoverySLA.small_data_threshold_bytes)
+            RecoverySLA.rebuild_small_ns
+        else
+            RecoverySLA.rebuild_large_ns,
+        .clean_start, .none => null,
+    };
+}
+
+pub fn recovery_sla_exceeded(path: RecoveryPath, duration_ns: u64, data_size_bytes: u64) bool {
+    const threshold = recovery_sla_threshold_ns(path, data_size_bytes) orelse return false;
+    return duration_ns > threshold;
+}
+
+pub fn log_recovery_sla(path: RecoveryPath, duration_ns: u64, data_size_bytes: u64) void {
+    if (recovery_sla_exceeded(path, duration_ns, data_size_bytes)) {
+        const threshold = recovery_sla_threshold_ns(path, data_size_bytes).?;
+        log.warn("Recovery SLA exceeded: path={s} duration_ns={} threshold_ns={}", .{
+            path.to_label(),
+            duration_ns,
+            threshold,
+        });
+    }
+}
+
 /// Alert thresholds for recovery window health monitoring.
 pub const RecoveryAlertThresholds = struct {
     /// Warning: checkpoint age > 2 minutes
@@ -1568,6 +1602,8 @@ pub fn full_rebuild(
         duration_s,
     });
 
+    log_recovery_sla(.full_rebuild, duration_ns, 0);
+
     return RebuildResult{
         .entries_inserted = progress.records_inserted,
         .entries_skipped = progress.records_skipped,
@@ -2210,6 +2246,21 @@ test "RecoveryPath: to_label conversion" {
     try std.testing.expectEqualStrings("none", RecoveryPath.none.to_label());
 }
 
+test "RecoveryPath: classify recovery path" {
+    try std.testing.expectEqual(
+        RecoveryPath.clean_start,
+        classify_recovery_path(0, 0),
+    );
+    try std.testing.expectEqual(
+        RecoveryPath.wal_replay,
+        classify_recovery_path(1, 0),
+    );
+    try std.testing.expectEqual(
+        RecoveryPath.wal_replay,
+        classify_recovery_path(0, 42),
+    );
+}
+
 test "RecoverySLA: thresholds are sensible" {
     // WAL replay should be fastest
     try std.testing.expect(RecoverySLA.wal_replay_ns < RecoverySLA.lsm_scan_ns);
@@ -2217,6 +2268,16 @@ test "RecoverySLA: thresholds are sensible" {
     try std.testing.expect(RecoverySLA.lsm_scan_ns < RecoverySLA.rebuild_small_ns);
     // Small rebuild should be faster than large
     try std.testing.expect(RecoverySLA.rebuild_small_ns < RecoverySLA.rebuild_large_ns);
+}
+
+test "RecoverySLA: exceeded detection" {
+    try std.testing.expect(!recovery_sla_exceeded(.wal_replay, RecoverySLA.wal_replay_ns, 0));
+    try std.testing.expect(recovery_sla_exceeded(.wal_replay, RecoverySLA.wal_replay_ns + 1, 0));
+    try std.testing.expect(!recovery_sla_exceeded(.full_rebuild, RecoverySLA.rebuild_large_ns, 0));
+    try std.testing.expect(
+        recovery_sla_exceeded(.full_rebuild, RecoverySLA.rebuild_large_ns + 1, 0),
+    );
+    try std.testing.expect(!recovery_sla_exceeded(.clean_start, 1, 0));
 }
 
 test "RecoveryAlertThresholds: ordering" {

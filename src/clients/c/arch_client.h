@@ -84,6 +84,17 @@ typedef struct query_uuid_response_t {
     uint8_t reserved[15];
 } query_uuid_response_t;
 
+typedef struct query_uuid_batch_filter_t {
+    uint32_t count;
+    uint32_t reserved;
+} query_uuid_batch_filter_t;
+
+typedef struct query_uuid_batch_result_t {
+    uint32_t found_count;
+    uint32_t not_found_count;
+    uint8_t reserved[8];
+} query_uuid_batch_result_t;
+
 typedef struct query_radius_filter_t {
     int64_t center_lat_nano;
     int64_t center_lon_nano;

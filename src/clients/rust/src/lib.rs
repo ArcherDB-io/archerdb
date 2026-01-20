@@ -2740,6 +2740,15 @@ pub struct PolygonValidationError {
     pub intersection_point: (f64, f64),
     /// Human-readable error message.
     pub message: String,
+    /// Repair suggestions for fixing the self-intersection.
+    pub repair_suggestions: Vec<String>,
+}
+
+impl PolygonValidationError {
+    /// Get repair suggestions for fixing the self-intersection.
+    pub fn get_repair_suggestions(&self) -> &[String] {
+        &self.repair_suggestions
+    }
 }
 
 impl std::fmt::Display for PolygonValidationError {
@@ -2868,6 +2877,33 @@ pub fn validate_polygon_no_self_intersection(
                 let intersection = (ix, iy);
 
                 if raise_on_error {
+                    // Generate repair suggestions
+                    let mut suggestions = Vec::new();
+                    let v1_idx = (i + 1) % n;
+                    let v2_idx = (j + 1) % n;
+
+                    suggestions.push(format!(
+                        "Try removing vertex {} at ({:.6}, {:.6})",
+                        v1_idx, vertices[v1_idx].0, vertices[v1_idx].1
+                    ));
+                    suggestions.push(format!(
+                        "Try removing vertex {} at ({:.6}, {:.6})",
+                        v2_idx, vertices[v2_idx].0, vertices[v2_idx].1
+                    ));
+
+                    // Detect bow-tie pattern
+                    if j.abs_diff(i) == 2 {
+                        suggestions.push(format!(
+                            "Bow-tie pattern detected: try swapping vertices {} and {}",
+                            i + 1, j
+                        ));
+                    }
+
+                    suggestions.push(
+                        "Ensure vertices are ordered consistently (clockwise or counter-clockwise)"
+                            .to_string()
+                    );
+
                     return Err(PolygonValidationError {
                         segment1_index: i,
                         segment2_index: j,
@@ -2876,6 +2912,7 @@ pub fn validate_polygon_no_self_intersection(
                             "Polygon self-intersects: edge {}-{} crosses edge {}-{} near ({:.6}, {:.6})",
                             i, (i + 1) % n, j, (j + 1) % n, ix, iy
                         ),
+                        repair_suggestions: suggestions,
                     });
                 }
 
@@ -3502,12 +3539,31 @@ mod tests {
             segment2_index: 3,
             intersection_point: (0.5, 0.5),
             message: "Test error".to_string(),
+            repair_suggestions: vec!["Try removing vertex 2".to_string()],
         };
 
         assert_eq!(err.segment1_index, 1);
         assert_eq!(err.segment2_index, 3);
         assert_eq!(err.intersection_point, (0.5, 0.5));
         assert!(err.to_string().contains("Test error"));
+        assert_eq!(err.get_repair_suggestions().len(), 1);
+        assert!(err.get_repair_suggestions()[0].contains("removing vertex"));
+    }
+
+    #[test]
+    fn test_repair_suggestions_included() {
+        // Bow-tie polygon (self-intersecting)
+        let bowtie = vec![(0.0, 0.0), (1.0, 1.0), (1.0, 0.0), (0.0, 1.0)];
+        let result = validate_polygon_no_self_intersection(&bowtie, true);
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(!err.repair_suggestions.is_empty());
+
+        // Check suggestions contain useful info
+        let suggestions_text = err.repair_suggestions.join(" ");
+        assert!(suggestions_text.to_lowercase().contains("removing vertex"));
+        assert!(suggestions_text.to_lowercase().contains("vertices"));
     }
 
     #[test]

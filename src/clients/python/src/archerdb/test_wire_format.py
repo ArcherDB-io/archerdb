@@ -47,8 +47,15 @@ def load_test_cases() -> dict:
     test_data_path = Path(__file__).parent.parent.parent.parent.parent / "test-data" / "wire-format-test-cases.json"
 
     if not test_data_path.exists():
-        # Try alternate path
-        test_data_path = Path("/home/g/Sync/Projects/archerdb/src/clients/test-data/wire-format-test-cases.json")
+        # Try alternate paths for different development environments
+        alternate_paths = [
+            Path("/home/g/archerdb/src/clients/test-data/wire-format-test-cases.json"),
+            Path("/home/g/Sync/Projects/archerdb/src/clients/test-data/wire-format-test-cases.json"),
+        ]
+        for alt_path in alternate_paths:
+            if alt_path.exists():
+                test_data_path = alt_path
+                break
 
     with open(test_data_path) as f:
         return json.load(f)

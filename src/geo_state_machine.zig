@@ -531,6 +531,46 @@ pub const QueryMetrics = struct {
     }
 };
 
+const index_recovery_ranges_max: usize = 32;
+const IndexRecoveryRange = s2_index.CellRange;
+const IndexRecoveryRanges = stdx.BoundedArrayType(IndexRecoveryRange, index_recovery_ranges_max);
+
+const IndexRecoveryState = struct {
+    active: bool = false,
+    ranges: IndexRecoveryRanges = .{},
+
+    fn clear(self: *IndexRecoveryState) void {
+        self.active = false;
+        self.ranges.clear();
+    }
+
+    fn blocks_all(self: *const IndexRecoveryState) bool {
+        return self.active and self.ranges.empty();
+    }
+
+    fn blocks_cell(self: *const IndexRecoveryState, cell_id: u64) bool {
+        if (!self.active) return false;
+        if (self.ranges.empty()) return true;
+        for (self.ranges.const_slice()) |range| {
+            if (cell_id >= range.start and cell_id < range.end) return true;
+        }
+        return false;
+    }
+
+    fn blocks_range(self: *const IndexRecoveryState, range: IndexRecoveryRange) bool {
+        if (!self.active) return false;
+        if (self.ranges.empty()) return true;
+        for (self.ranges.const_slice()) |recovering| {
+            if (ranges_overlap(recovering, range)) return true;
+        }
+        return false;
+    }
+};
+
+fn ranges_overlap(a: IndexRecoveryRange, b: IndexRecoveryRange) bool {
+    return a.start < b.end and b.start < a.end;
+}
+
 // ============================================================================
 // Query Filters
 // ============================================================================
@@ -605,6 +645,25 @@ pub const QueryUuidBatchResult = extern struct {
     comptime {
         assert(@sizeOf(QueryUuidBatchResult) == 16);
         assert(stdx.no_padding(QueryUuidBatchResult));
+    }
+
+    /// Create an error result header with a status code stored in reserved bytes.
+    pub fn with_error(status: StateError) QueryUuidBatchResult {
+        var result = QueryUuidBatchResult{
+            .found_count = 0,
+            .not_found_count = 0,
+        };
+        const code: u16 = @intCast(@intFromEnum(status));
+        result.reserved[0] = @intCast(code & 0xff);
+        result.reserved[1] = @intCast((code >> 8) & 0xff);
+        return result;
+    }
+
+    /// Decode error status from reserved bytes (null if unset).
+    pub fn error_status(self: QueryUuidBatchResult) ?StateError {
+        const code = @as(u16, self.reserved[0]) | (@as(u16, self.reserved[1]) << 8);
+        if (code == 0) return null;
+        return @as(StateError, @enumFromInt(code));
     }
 };
 
@@ -771,6 +830,22 @@ pub const QueryResponse = extern struct {
             .partial_result = 1,
         };
     }
+
+    /// Create an error response with a status code stored in reserved bytes.
+    pub fn with_error(status: StateError) QueryResponse {
+        var response = QueryResponse.complete(0);
+        const code: u16 = @intCast(@intFromEnum(status));
+        response.reserved[0] = @intCast(code & 0xff);
+        response.reserved[1] = @intCast((code >> 8) & 0xff);
+        return response;
+    }
+
+    /// Decode error status from reserved bytes (null if unset).
+    pub fn error_status(self: QueryResponse) ?StateError {
+        const code = @as(u16, self.reserved[0]) | (@as(u16, self.reserved[1]) << 8);
+        if (code == 0) return null;
+        return @as(StateError, @enumFromInt(code));
+    }
 };
 
 // ============================================================================
@@ -875,6 +950,10 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             /// 0 = infinite (no expiration), > 0 = events expire after that many days.
             /// Applied when clients set event.ttl_seconds = 0.
             default_ttl_days: u32 = 0,
+            /// Hybrid-memory/spec.md: Optional memory-mapped index fallback.
+            memory_mapped_index_enabled: bool = false,
+            /// Path for memory-mapped index backing file (required when enabled).
+            memory_mapped_index_path: ?[]const u8 = null,
         };
 
         /// Prefetch timestamp - set during prefetch phase.
@@ -925,6 +1004,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         /// Allocated during init for VOPR testing support.
         ram_index: *DefaultRamIndex,
 
+        /// Index recovery tracking for query gating.
+        index_recovery: IndexRecoveryState = .{},
+
         /// TTL cleanup scanner state (F2.4.8).
         cleanup_scanner: ttl.CleanupScanner = ttl.CleanupScanner.init(),
 
@@ -953,6 +1035,31 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         // Initialization
         // ====================================================================
 
+        fn init_ram_index(
+            allocator: std.mem.Allocator,
+            capacity: u32,
+            options: Options,
+        ) !*DefaultRamIndex {
+            const ram_index = try allocator.create(DefaultRamIndex);
+            errdefer allocator.destroy(ram_index);
+
+            ram_index.* = DefaultRamIndex.init(allocator, capacity) catch |err| switch (err) {
+                error.OutOfMemory => blk: {
+                    if (!options.memory_mapped_index_enabled) return err;
+                    const mmap_path = options.memory_mapped_index_path orelse
+                        return error.InvalidConfiguration;
+                    log.warn("RAM index OOM; falling back to memory-mapped index at {s}", .{
+                        mmap_path,
+                    });
+                    break :blk try DefaultRamIndex.init_mmap(mmap_path, capacity);
+                },
+                else => return err,
+            };
+            errdefer ram_index.deinit(allocator);
+
+            return ram_index;
+        }
+
         /// Initialize the GeoStateMachine with Grid reference for VSR coordination.
         ///
         /// The Grid reference provides access to:
@@ -972,11 +1079,11 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 
             // Allocate RAM index for entity lookups (F2.1)
             const ram_index_capacity: u32 = 10_000; // Initial capacity for testing
-            const ram_index = try allocator.create(DefaultRamIndex);
-            errdefer allocator.destroy(ram_index);
-
-            ram_index.* = try DefaultRamIndex.init(allocator, ram_index_capacity);
-            errdefer ram_index.deinit(allocator);
+            const ram_index = try init_ram_index(allocator, ram_index_capacity, options);
+            errdefer {
+                ram_index.deinit(allocator);
+                allocator.destroy(ram_index);
+            }
 
             // Per ttl-retention/spec.md: Convert days to seconds for default TTL
             const seconds_per_day: u32 = 86400;
@@ -998,6 +1105,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .index_checkpoint_enabled = options.enable_index_checkpoint,
                 .last_index_checkpoint_op = 0,
                 .ram_index = ram_index,
+                .index_recovery = .{},
             };
 
             // Initialize Forest for LSM tree storage (F1.2, F4.2)
@@ -1080,6 +1188,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .forest = self.forest,
                 .grid = self.grid,
                 .ram_index = self.ram_index,
+                .index_recovery = .{},
                 .index_checkpoint_enabled = self.index_checkpoint_enabled,
                 .last_index_checkpoint_op = 0,
             };
@@ -1802,6 +1911,97 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             return result;
         }
 
+        fn index_recovery_blocks_covering(
+            self: *const GeoStateMachine,
+            covering: []const s2_index.CellRange,
+        ) bool {
+            if (!self.index_recovery.active) return false;
+            if (self.index_recovery.blocks_all()) return true;
+            for (covering) |range| {
+                if (range.start == 0 and range.end == 0) continue;
+                if (self.index_recovery.blocks_range(range)) return true;
+            }
+            return false;
+        }
+
+        fn index_recovery_blocks_entry(
+            self: *const GeoStateMachine,
+            entry: ?IndexEntry,
+        ) bool {
+            if (!self.index_recovery.active) return false;
+            if (self.index_recovery.blocks_all()) return true;
+            if (entry) |value| {
+                const cell_id = @as(u64, @truncate(value.latest_id >> 64));
+                return self.index_recovery.blocks_cell(cell_id);
+            }
+            return false;
+        }
+
+        fn write_query_uuid_error(
+            self: *GeoStateMachine,
+            output: []u8,
+            start_time: i128,
+            status: StateError,
+        ) usize {
+            const response_size = @sizeOf(QueryUuidResponse);
+            if (output.len < response_size) {
+                log.warn("query_uuid: output buffer too small for header", .{});
+                return 0;
+            }
+
+            const end_time = std.time.nanoTimestamp();
+            const duration_ns: u64 = if (end_time > start_time)
+                @intCast(end_time - start_time)
+            else
+                0;
+
+            self.query_metrics.recordUuidQuery(false, duration_ns);
+            archerdb_metrics.Registry.read_ops_query_uuid.inc();
+            archerdb_metrics.Registry.read_operations_total.inc();
+            archerdb_metrics.Registry.read_latency.observeNs(duration_ns);
+            archerdb_metrics.Registry.query_result_size.observe(0.0);
+
+            const header = mem.bytesAsValue(
+                QueryUuidResponse,
+                output[0..response_size],
+            );
+            header.* = QueryUuidResponse{
+                .status = @intCast(@intFromEnum(status)),
+            };
+            return response_size;
+        }
+
+        fn write_query_uuid_batch_error(
+            self: *GeoStateMachine,
+            output: []u8,
+            start_time: i128,
+            status: StateError,
+        ) usize {
+            if (output.len < @sizeOf(QueryUuidBatchResult)) {
+                log.warn("query_uuid_batch: output buffer too small for header", .{});
+                return 0;
+            }
+
+            const end_time = std.time.nanoTimestamp();
+            const duration_ns: u64 = if (end_time > start_time)
+                @intCast(end_time - start_time)
+            else
+                0;
+
+            self.query_metrics.recordUuidQuery(false, duration_ns);
+            archerdb_metrics.Registry.read_ops_query_uuid.inc();
+            archerdb_metrics.Registry.read_operations_total.inc();
+            archerdb_metrics.Registry.read_latency.observeNs(duration_ns);
+            archerdb_metrics.Registry.query_result_size.observe(0.0);
+
+            const result_header = mem.bytesAsValue(
+                QueryUuidBatchResult,
+                output[0..@sizeOf(QueryUuidBatchResult)],
+            );
+            result_header.* = QueryUuidBatchResult.with_error(status);
+            return @sizeOf(QueryUuidBatchResult);
+        }
+
         // ====================================================================
         // F1.3: Query UUID Implementation
         // ====================================================================
@@ -1847,6 +2047,14 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 
             // O(1) lookup in RAM index
             const lookup_result = self.ram_index.lookup(filter.entity_id);
+
+            if (self.index_recovery_blocks_entry(lookup_result.entry)) {
+                return self.write_query_uuid_error(
+                    output,
+                    start_time,
+                    StateError.index_rebuilding,
+                );
+            }
 
             if (lookup_result.entry) |entry| {
                 if (output.len < response_size) {
@@ -1912,7 +2120,8 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     else => {
                         // Fallback to RAM index reconstruction (synthetic event)
                         // This happens if the event is on disk and was not prefetched.
-                        // WARNING: This returns approximate coordinates (cell center) and zeroes other fields.
+                        // WARNING: This returns approximate coordinates (cell center) and
+                        // zeroes other fields.
 
                         // Get approximate coordinates from cell center
                         const cell_center = S2.cellIdToLatLon(cell_id);
@@ -2078,6 +2287,27 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 [*]const u128,
                 @ptrCast(@alignCast(entity_ids_bytes.ptr)),
             )[0..filter.count];
+
+            if (self.index_recovery.active) {
+                if (self.index_recovery.blocks_all()) {
+                    return self.write_query_uuid_batch_error(
+                        output,
+                        start_time,
+                        StateError.index_rebuilding,
+                    );
+                }
+                for (entity_ids) |entity_id| {
+                    if (entity_id == 0) continue;
+                    const lookup_result = self.ram_index.lookup(entity_id);
+                    if (self.index_recovery_blocks_entry(lookup_result.entry)) {
+                        return self.write_query_uuid_batch_error(
+                            output,
+                            start_time,
+                            StateError.index_rebuilding,
+                        );
+                    }
+                }
+            }
 
             // Calculate output layout:
             // - Header: 16 bytes
@@ -2728,6 +2958,26 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 
             log.debug("query_radius: covering generated with {d} ranges", .{num_ranges});
 
+            if (self.index_recovery_blocks_covering(covering[0..])) {
+                const end_time = std.time.nanoTimestamp();
+                const duration_ns: u64 = if (end_time > start_time)
+                    @intCast(end_time - start_time)
+                else
+                    0;
+                self.query_metrics.recordRadiusQuery(0, duration_ns);
+                archerdb_metrics.Registry.read_ops_query_radius.inc();
+                archerdb_metrics.Registry.read_operations_total.inc();
+                archerdb_metrics.Registry.read_latency.observeNs(duration_ns);
+                archerdb_metrics.Registry.query_result_size.observe(0.0);
+
+                const header = mem.bytesAsValue(
+                    QueryResponse,
+                    output[0..@sizeOf(QueryResponse)],
+                );
+                header.* = QueryResponse.with_error(StateError.index_rebuilding);
+                return @sizeOf(QueryResponse);
+            }
+
             // Scan RAM index and collect matching entries
             // Results start after the QueryResponse header
             const results_offset = @sizeOf(QueryResponse);
@@ -3205,6 +3455,26 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .{ num_ranges, vertices.len, hole_count },
             );
 
+            if (self.index_recovery_blocks_covering(covering[0..])) {
+                const end_time = std.time.nanoTimestamp();
+                const duration_ns: u64 = if (end_time > start_time)
+                    @intCast(end_time - start_time)
+                else
+                    0;
+                self.query_metrics.recordPolygonQuery(0, duration_ns);
+                archerdb_metrics.Registry.read_ops_query_polygon.inc();
+                archerdb_metrics.Registry.read_operations_total.inc();
+                archerdb_metrics.Registry.read_latency.observeNs(duration_ns);
+                archerdb_metrics.Registry.query_result_size.observe(0.0);
+
+                const header = mem.bytesAsValue(
+                    QueryResponse,
+                    output[0..@sizeOf(QueryResponse)],
+                );
+                header.* = QueryResponse.with_error(StateError.index_rebuilding);
+                return @sizeOf(QueryResponse);
+            }
+
             // Scan RAM index and collect matching entries
             // Results start after the QueryResponse header
             const results_offset = @sizeOf(QueryResponse);
@@ -3380,6 +3650,32 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             if (filter.limit == 0) {
                 log.warn("query_latest: limit must be > 0", .{});
                 return 0;
+            }
+
+            if (self.index_recovery.active) {
+                if (output.len < @sizeOf(QueryResponse)) {
+                    log.warn("query_latest: output buffer too small for header", .{});
+                    return 0;
+                }
+
+                const end_time = std.time.nanoTimestamp();
+                const duration_ns: u64 = if (end_time > start_time)
+                    @intCast(end_time - start_time)
+                else
+                    0;
+                self.query_metrics.query_latest_count += 1;
+                self.query_metrics.total_query_duration_ns += duration_ns;
+                archerdb_metrics.Registry.read_ops_query_latest.inc();
+                archerdb_metrics.Registry.read_operations_total.inc();
+                archerdb_metrics.Registry.read_latency.observeNs(duration_ns);
+                archerdb_metrics.Registry.query_result_size.observe(0.0);
+
+                const header = mem.bytesAsValue(
+                    QueryResponse,
+                    output[0..@sizeOf(QueryResponse)],
+                );
+                header.* = QueryResponse.with_error(StateError.index_rebuilding);
+                return @sizeOf(QueryResponse);
             }
 
             // Calculate output capacity (reserve space for QueryResponse header)
@@ -4287,6 +4583,102 @@ test "batch_max_events calculation" {
     try std.testing.expect(max_events >= 8);
 }
 
+test "GeoStateMachine RAM index falls back to mmap on OOM" {
+    const TestStorage = @import("testing/storage.zig").Storage;
+    const GeoStateMachine = GeoStateMachineType(TestStorage);
+    const Alignment = std.mem.Alignment;
+
+    const LimitedAllocator = struct {
+        parent: std.mem.Allocator,
+        max_allocation: usize,
+
+        fn init(parent: std.mem.Allocator, max_allocation: usize) @This() {
+            return .{
+                .parent = parent,
+                .max_allocation = max_allocation,
+            };
+        }
+
+        fn allocator(self: *@This()) std.mem.Allocator {
+            return .{
+                .ptr = self,
+                .vtable = &.{
+                    .alloc = alloc,
+                    .resize = resize,
+                    .remap = remap,
+                    .free = free,
+                },
+            };
+        }
+
+        fn alloc(ctx: *anyopaque, len: usize, ptr_align: Alignment, ret_addr: usize) ?[*]u8 {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            if (len > self.max_allocation) return null;
+            return self.parent.rawAlloc(len, ptr_align, ret_addr);
+        }
+
+        fn resize(
+            ctx: *anyopaque,
+            buf: []u8,
+            buf_align: Alignment,
+            new_len: usize,
+            ret_addr: usize,
+        ) bool {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            if (new_len > self.max_allocation) return false;
+            return self.parent.rawResize(buf, buf_align, new_len, ret_addr);
+        }
+
+        fn remap(
+            ctx: *anyopaque,
+            buf: []u8,
+            buf_align: Alignment,
+            new_len: usize,
+            ret_addr: usize,
+        ) ?[*]u8 {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            if (new_len > self.max_allocation) return null;
+            return self.parent.rawRemap(buf, buf_align, new_len, ret_addr);
+        }
+
+        fn free(
+            ctx: *anyopaque,
+            buf: []u8,
+            buf_align: Alignment,
+            ret_addr: usize,
+        ) void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            return self.parent.rawFree(buf, buf_align, ret_addr);
+        }
+    };
+
+    const allocator = std.testing.allocator;
+    var limited = LimitedAllocator.init(allocator, 1024);
+    const limited_allocator = limited.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir_path = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(dir_path);
+    const mmap_path = try std.fs.path.join(allocator, &.{ dir_path, "ram_index.mmap" });
+    defer allocator.free(mmap_path);
+
+    const options = GeoStateMachine.Options{
+        .batch_size_limit = 1024,
+        .enable_index_checkpoint = true,
+        .memory_mapped_index_enabled = true,
+        .memory_mapped_index_path = mmap_path,
+    };
+
+    const ram_index = try GeoStateMachine.init_ram_index(limited_allocator, 64, options);
+    defer {
+        ram_index.deinit(limited_allocator);
+        limited_allocator.destroy(ram_index);
+    }
+
+    try std.testing.expect(ram_index.mmap_region != null);
+}
+
 test "GeoStateMachine has checkpoint coordination fields (F2.2.3)" {
     // This compile-time test verifies the GeoStateMachine has the required
     // fields for VSR checkpoint coordination (F2.2.3).
@@ -4586,6 +4978,35 @@ test "QueryResponse: struct layout and constructors" {
     try std.testing.expectEqual(@as(u32, 8000), truncated_resp.count);
     try std.testing.expectEqual(@as(u8, 1), truncated_resp.has_more);
     try std.testing.expectEqual(@as(u8, 1), truncated_resp.partial_result);
+}
+
+test "QueryResponse: error status encoding" {
+    const response = QueryResponse.with_error(StateError.index_rebuilding);
+    try std.testing.expectEqual(@as(u32, 0), response.count);
+    try std.testing.expectEqual(StateError.index_rebuilding, response.error_status().?);
+}
+
+test "QueryUuidBatchResult: error status encoding" {
+    const result = QueryUuidBatchResult.with_error(StateError.index_rebuilding);
+    try std.testing.expectEqual(@as(u32, 0), result.found_count);
+    try std.testing.expectEqual(@as(u32, 0), result.not_found_count);
+    try std.testing.expectEqual(StateError.index_rebuilding, result.error_status().?);
+}
+
+test "IndexRecoveryState: range blocking" {
+    var state = IndexRecoveryState{};
+    try std.testing.expect(!state.blocks_cell(100));
+
+    state.active = true;
+    try std.testing.expect(state.blocks_cell(100));
+
+    state.ranges.clear();
+    state.ranges.push(.{ .start = 50, .end = 150 });
+    try std.testing.expect(state.blocks_cell(100));
+    try std.testing.expect(!state.blocks_cell(200));
+
+    try std.testing.expect(state.blocks_range(.{ .start = 140, .end = 160 }));
+    try std.testing.expect(!state.blocks_range(.{ .start = 160, .end = 180 }));
 }
 
 test "polygon query: vertex count validation" {

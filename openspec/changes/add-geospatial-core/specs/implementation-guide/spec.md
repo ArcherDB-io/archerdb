@@ -49,3 +49,14 @@ The system SHALL implement multi-batch retry semantics.
 - **WHEN** a multi-batch operation fails partially
 - **THEN** the client SDK SHALL retry only the failed batches
 - **AND** the retry logic SHALL respect exponential backoff configuration
+
+## Implementation Status
+
+| Requirement | Status | Notes |
+| --- | --- | --- |
+| Journal Sizing Validation and Retention Guarantees | IMPLEMENTED | `src/archerdb/main.zig` startup warning for <2x retention |
+| Recovery SLA Validation and Benchmarking (F2.3 Gate) | PARTIAL | `src/vsr/replica.zig` logs recovery duration + SLA check; classification limited |
+| Query Behavior During Index Recovery | PARTIAL | `src/geo_state_machine.zig` gates queries when recovery ranges active |
+| F4 VOPR Simulator and Cluster Testing (Weeks 27-32) | NOT IMPLEMENTED | Simulation/cluster runs not wired in repo |
+| F5 Performance Validation Benchmarks (Weeks 33-38) | NOT IMPLEMENTED | Benchmarks not wired/documented |
+| F5 Multi-Batch Retry Semantics (Weeks 37-38) | NOT IMPLEMENTED | Client SDK retry behavior not implemented |

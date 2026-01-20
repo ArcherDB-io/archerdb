@@ -45,13 +45,30 @@ public final class PolygonValidation {
         public final int segment2Index;
         /** Approximate intersection point [lat, lon] in degrees */
         public final double[] intersectionPoint;
+        /** Repair suggestions for fixing the self-intersection */
+        public final List<String> repairSuggestions;
 
         public PolygonValidationException(String message, int segment1Index, int segment2Index,
                 double[] intersectionPoint) {
+            this(message, segment1Index, segment2Index, intersectionPoint, new ArrayList<>());
+        }
+
+        public PolygonValidationException(String message, int segment1Index, int segment2Index,
+                double[] intersectionPoint, List<String> repairSuggestions) {
             super(message);
             this.segment1Index = segment1Index;
             this.segment2Index = segment2Index;
             this.intersectionPoint = intersectionPoint;
+            this.repairSuggestions = repairSuggestions;
+        }
+
+        /**
+         * Returns repair suggestions for fixing the self-intersection.
+         *
+         * @return List of repair suggestions
+         */
+        public List<String> getRepairSuggestions() {
+            return repairSuggestions;
         }
     }
 
@@ -147,9 +164,30 @@ public final class PolygonValidation {
                     double[] intersection = new double[] {ix, iy};
 
                     if (raiseOnError) {
+                        // Generate repair suggestions
+                        List<String> suggestions = new ArrayList<>();
+                        int v1Idx = (i + 1) % n;
+                        int v2Idx = (j + 1) % n;
+
+                        suggestions.add(String.format("Try removing vertex %d at (%.6f, %.6f)",
+                                v1Idx, vertices.get(v1Idx)[0], vertices.get(v1Idx)[1]));
+                        suggestions.add(String.format("Try removing vertex %d at (%.6f, %.6f)",
+                                v2Idx, vertices.get(v2Idx)[0], vertices.get(v2Idx)[1]));
+
+                        // Detect bow-tie pattern
+                        if (j - i == 2) {
+                            suggestions.add(String.format(
+                                    "Bow-tie pattern detected: try swapping vertices %d and %d",
+                                    i + 1, j));
+                        }
+
+                        suggestions.add(
+                                "Ensure vertices are ordered consistently (clockwise or counter-clockwise)");
+
                         throw new PolygonValidationException(String.format(
                                 "Polygon self-intersects: edge %d-%d crosses edge %d-%d near (%.6f, %.6f)",
-                                i, (i + 1) % n, j, (j + 1) % n, ix, iy), i, j, intersection);
+                                i, (i + 1) % n, j, (j + 1) % n, ix, iy), i, j, intersection,
+                                suggestions);
                     }
 
                     intersections.add(new IntersectionInfo(i, j, intersection));

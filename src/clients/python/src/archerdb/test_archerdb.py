@@ -2309,6 +2309,48 @@ class TestPolygonValidation(unittest.TestCase):
         self.assertEqual(error.intersection_point, (0.5, 0.5))
         self.assertIn("Test error", str(error))
 
+    def test_repair_suggestions_included(self):
+        """PolygonValidationError includes repair suggestions for self-intersecting polygon."""
+        from .types import validate_polygon_no_self_intersection, PolygonValidationError
+
+        # Bow-tie polygon (self-intersecting)
+        bowtie = [(0, 0), (1, 1), (1, 0), (0, 1)]
+
+        with self.assertRaises(PolygonValidationError) as ctx:
+            validate_polygon_no_self_intersection(bowtie, raise_on_error=True, include_repair_suggestions=True)
+
+        error = ctx.exception
+        self.assertIsInstance(error.repair_suggestions, list)
+        self.assertGreater(len(error.repair_suggestions), 0)
+        # Should have suggestions about removing vertices and ordering
+        suggestions_text = " ".join(error.repair_suggestions)
+        self.assertIn("removing vertex", suggestions_text.lower())
+        self.assertIn("vertices", suggestions_text.lower())
+
+    def test_repair_suggestions_can_be_disabled(self):
+        """Repair suggestions can be disabled."""
+        from .types import validate_polygon_no_self_intersection, PolygonValidationError
+
+        bowtie = [(0, 0), (1, 1), (1, 0), (0, 1)]
+
+        with self.assertRaises(PolygonValidationError) as ctx:
+            validate_polygon_no_self_intersection(bowtie, raise_on_error=True, include_repair_suggestions=False)
+
+        error = ctx.exception
+        self.assertEqual(error.repair_suggestions, [])
+
+    def test_get_repair_suggestions_method(self):
+        """get_repair_suggestions() returns the suggestions list."""
+        from .types import PolygonValidationError
+
+        suggestions = ["Try removing vertex 1", "Check vertex ordering"]
+        error = PolygonValidationError(
+            "Test error",
+            repair_suggestions=suggestions,
+        )
+
+        self.assertEqual(error.get_repair_suggestions(), suggestions)
+
     def test_empty_or_small_polygon(self):
         """Empty or small polygons return no intersections."""
         from .types import validate_polygon_no_self_intersection

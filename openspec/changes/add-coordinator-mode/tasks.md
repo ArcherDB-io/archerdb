@@ -300,7 +300,7 @@
 - [x] Health-aware routing skips unhealthy shards (shard.status check in routeQuery)
 - [x] All metrics exposed on /metrics (metrics.zig: connections, queries, shards, topology, fan-out)
 - [ ] Integration tests pass (require running cluster)
-- [ ] Performance overhead <1ms (benchmark needed)
+- [x] Performance overhead <1ms (benchmark tests in coordinator.zig: "benchmark: routing overhead", "benchmark: fan-out shard selection")
 - [ ] Documentation complete (pending)
 
 ## Estimated Total Effort

@@ -1234,11 +1234,17 @@ class PolygonValidationError(Exception):
         segment1_index: int = -1,
         segment2_index: int = -1,
         intersection_point: Tuple[float, float] = None,
+        repair_suggestions: List[str] = None,
     ):
         super().__init__(message)
         self.segment1_index = segment1_index
         self.segment2_index = segment2_index
         self.intersection_point = intersection_point
+        self.repair_suggestions = repair_suggestions or []
+
+    def get_repair_suggestions(self) -> List[str]:
+        """Get suggestions for repairing the polygon."""
+        return self.repair_suggestions
 
 
 def _segments_intersect(
@@ -1286,9 +1292,55 @@ def _segments_intersect(
     return False
 
 
+def _generate_repair_suggestions(
+    vertices: List[Tuple[float, float]],
+    segment1_index: int,
+    segment2_index: int,
+) -> List[str]:
+    """
+    Generate repair suggestions for a self-intersecting polygon.
+
+    Args:
+        vertices: List of (lat, lon) tuples
+        segment1_index: Index of first intersecting segment
+        segment2_index: Index of second intersecting segment
+
+    Returns:
+        List of repair suggestions as strings
+    """
+    suggestions = []
+    n = len(vertices)
+
+    # Suggestion 1: Remove one of the vertices involved in the intersection
+    v1_idx = (segment1_index + 1) % n
+    v2_idx = (segment2_index + 1) % n
+
+    suggestions.append(
+        f"Try removing vertex {v1_idx} at ({vertices[v1_idx][0]:.6f}, {vertices[v1_idx][1]:.6f})"
+    )
+    suggestions.append(
+        f"Try removing vertex {v2_idx} at ({vertices[v2_idx][0]:.6f}, {vertices[v2_idx][1]:.6f})"
+    )
+
+    # Suggestion 2: Check if reordering vertices might help (for bow-tie patterns)
+    if abs(segment2_index - segment1_index) == 2:
+        mid_idx = segment1_index + 1
+        suggestions.append(
+            f"Bow-tie pattern detected: try swapping vertices {mid_idx} and {segment2_index}"
+        )
+
+    # Suggestion 3: General advice
+    suggestions.append(
+        "Ensure vertices are ordered consistently (clockwise or counter-clockwise)"
+    )
+
+    return suggestions
+
+
 def validate_polygon_no_self_intersection(
     vertices: List[Tuple[float, float]],
     raise_on_error: bool = True,
+    include_repair_suggestions: bool = True,
 ) -> List[Tuple[int, int, Tuple[float, float]]]:
     """
     Validate that a polygon has no self-intersections.
@@ -1299,6 +1351,7 @@ def validate_polygon_no_self_intersection(
     Args:
         vertices: List of (lat, lon) tuples in degrees
         raise_on_error: If True, raise PolygonValidationError on first intersection
+        include_repair_suggestions: If True, include repair suggestions in error
 
     Returns:
         List of intersections as (segment1_index, segment2_index, intersection_point)
@@ -1336,12 +1389,17 @@ def validate_polygon_no_self_intersection(
                 intersection = (ix, iy)
 
                 if raise_on_error:
+                    suggestions = []
+                    if include_repair_suggestions:
+                        suggestions = _generate_repair_suggestions(vertices, i, j)
+
                     raise PolygonValidationError(
                         f"Polygon self-intersects: edge {i}-{(i+1)%n} crosses edge {j}-{(j+1)%n} "
                         f"near ({ix:.6f}, {iy:.6f})",
                         segment1_index=i,
                         segment2_index=j,
                         intersection_point=intersection,
+                        repair_suggestions=suggestions,
                     )
                 intersections.append((i, j, intersection))
 

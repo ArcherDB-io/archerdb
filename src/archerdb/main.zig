@@ -149,6 +149,28 @@ pub var rotating_log: ?RotatingLog = null;
 /// Global metrics server instance (null if not enabled).
 var metrics_srv: ?*metrics_server.MetricsServer = null;
 
+fn should_warn_journal_sizing(journal_slots: u64, retention_ops: u64) bool {
+    if (retention_ops == 0) return false;
+    return journal_slots < retention_ops * 2;
+}
+
+fn log_journal_sizing_warning() void {
+    const journal_slots: u64 = constants.journal_slot_count;
+    const retention_ops: u64 = constants.vsr_checkpoint_ops;
+    if (should_warn_journal_sizing(journal_slots, retention_ops)) {
+        log.warn(
+            "Journal sizing below 2x retention target: journal_slots={} retention_ops={}",
+            .{ journal_slots, retention_ops },
+        );
+    }
+}
+
+test "journal sizing warning threshold" {
+    try std.testing.expect(!should_warn_journal_sizing(0, 0));
+    try std.testing.expect(!should_warn_journal_sizing(200, 100));
+    try std.testing.expect(should_warn_journal_sizing(150, 100));
+}
+
 pub fn log_runtime(
     comptime message_level: std.log.Level,
     comptime scope: @Type(.enum_literal),
@@ -722,8 +744,15 @@ fn command_start(
     log.info("release_client_min={}", .{config.process.release_client_min});
     log.info("releases_bundled={any}", .{multiversion.releases_bundled().slice()});
     log.info("git_commit={?s}", .{config.process.git_commit});
+    log_journal_sizing_warning();
 
     const clients_limit = constants.pipeline_prepare_queue_max + args.pipeline_requests_limit;
+
+    var mmap_index_path: ?[]u8 = null;
+    defer if (mmap_index_path) |path| gpa.free(path);
+    if (args.memory_mapped_index_enabled) {
+        mmap_index_path = try fmt.allocPrint(gpa, "{s}.ram_index.mmap", .{args.path});
+    }
 
     var replica: Replica = undefined;
     replica.open(
@@ -750,6 +779,8 @@ fn command_start(
                 .cache_entries_geo_events = args.cache_geo_events,
                 // Per ttl-retention/spec.md: Global default TTL configuration
                 .default_ttl_days = args.default_ttl_days,
+                .memory_mapped_index_enabled = args.memory_mapped_index_enabled,
+                .memory_mapped_index_path = mmap_index_path,
             },
             .message_bus_options = .{
                 .configuration = args.addresses.const_slice(),
