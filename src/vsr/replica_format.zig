@@ -343,6 +343,7 @@ test "format" {
         .release = vsr.Release.minimum,
         .replica = replica,
         .replica_count = replica_count,
+        .sharding_strategy = vsr.sharding.ShardingStrategy.virtual_ring,
         .view = null,
     });
 
@@ -357,6 +358,10 @@ test "format" {
         try std.testing.expectEqual(
             superblock_header.vsr_state.checkpoint.storage_size,
             storage.size,
+        );
+        try std.testing.expectEqual(
+            superblock_header.sharding_strategy,
+            vsr.sharding.ShardingStrategy.virtual_ring.toStorage(),
         );
         try std.testing.expectEqual(superblock_header.vsr_state.checkpoint.header.op, 0);
         try std.testing.expectEqual(superblock_header.vsr_state.commit_max, 0);
@@ -413,6 +418,6 @@ test "format" {
     // counts are lower.
     try std.testing.expectEqual(
         vsr.checksum(storage.memory),
-        234838825150141811691318382366967529672,
+        119847278042789605067666986427266180060,
     );
 }

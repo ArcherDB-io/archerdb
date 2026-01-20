@@ -6,7 +6,6 @@
 //! backups by tracking which blocks have been uploaded. On restart, it loads
 //! the state and resumes from where it left off.
 //!
-//! See: openspec/changes/add-geospatial-core/specs/backup-restore/spec.md
 //!
 //! Usage:
 //! ```zig

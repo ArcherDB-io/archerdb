@@ -9,7 +9,6 @@
 //! - best-effort (default): Prioritizes availability over backup completeness
 //! - mandatory: Prioritizes durability, halts writes if backup queue fills up
 //!
-//! See: openspec/changes/add-geospatial-core/specs/backup-restore/spec.md
 //!
 //! Usage:
 //! ```zig

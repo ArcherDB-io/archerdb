@@ -73,6 +73,7 @@ import {
 
   // Batch helpers
   splitBatch,
+  submitMultiBatch,
 
   // Internal exports for testing retry logic
   _testExports,
@@ -886,6 +887,65 @@ function test_splitBatch_defaultChunkSize() {
   console.log('✓ splitBatch_defaultChunkSize')
 }
 
+// =====================================================================
+// Multi-Batch Submit Tests
+// =====================================================================
+
+async function test_submitMultiBatch_retriesFailedBatchOnly() {
+  const { withRetry } = _testExports
+  const attempts: Record<number, number> = {}
+  const retryConfig = {
+    enabled: true,
+    max_retries: 1,
+    base_backoff_ms: 0,
+    max_backoff_ms: 0,
+    total_timeout_ms: 1000,
+    jitter: false,
+  }
+
+  const submit = async (_op: GeoOperation, batch: number[]) => {
+    return withRetry(async () => {
+      const key = batch[0]
+      attempts[key] = (attempts[key] ?? 0) + 1
+      if (key === 3 && attempts[key] === 1) {
+        throw new OperationTimeout('timeout')
+      }
+      return []
+    }, retryConfig)
+  }
+
+  const errors = await submitMultiBatch(
+    GeoOperation.insert_events,
+    [1, 2, 3, 4],
+    submit,
+    2
+  )
+
+  assert.strictEqual(errors.length, 0)
+  assert.strictEqual(attempts[1], 1)
+  assert.strictEqual(attempts[3], 2)
+
+  console.log('✓ submitMultiBatch_retriesFailedBatchOnly')
+}
+
+function test_submitMultiBatch_offsetsIndices() {
+  const submit = async (_op: GeoOperation, _batch: number[]) => {
+    return [{ index: 0, result: InsertGeoEventError.invalid_coordinates }]
+  }
+
+  return submitMultiBatch(
+    GeoOperation.insert_events,
+    [1, 2, 3],
+    submit,
+    2
+  ).then(errors => {
+    assert.strictEqual(errors.length, 2)
+    assert.strictEqual(errors[0].index, 0)
+    assert.strictEqual(errors[1].index, 2)
+    console.log('✓ submitMultiBatch_offsetsIndices')
+  })
+}
+
 // ============================================================================
 // Partial Failure Scenario Tests (F5.3.9)
 // ============================================================================
@@ -1250,6 +1310,42 @@ async function test_partialBatchRetryPattern() {
   assert.strictEqual(submitCount, 6)
 
   console.log('✓ partialBatchRetryPattern')
+}
+
+async function test_insertEvents_multiBatch_integration() {
+  if (process.env.ARCHERDB_INTEGRATION !== '1') {
+    console.log('SKIP: insertEvents_multiBatch_integration (set ARCHERDB_INTEGRATION=1)')
+    return
+  }
+
+  const address = process.env.ARCHERDB_ADDRESS ?? '127.0.0.1:3001'
+  const client = createGeoClient({
+    cluster_id: 0n,
+    addresses: [address],
+  })
+
+  try {
+    const events = [
+      prepareGeoEvent(createGeoEvent({ entity_id: 1n, latitude: 37.7749, longitude: -122.4194 })),
+      prepareGeoEvent(createGeoEvent({ entity_id: 2n, latitude: 37.7750, longitude: -122.4195 })),
+      prepareGeoEvent(createGeoEvent({ entity_id: 3n, latitude: 37.7751, longitude: -122.4196 })),
+    ]
+
+    const submit = (op: GeoOperation, batch: GeoEvent[]) => (
+      (client as any)._submitBatch(op, batch)
+    )
+    const errors = await submitMultiBatch(
+      GeoOperation.insert_events,
+      events,
+      submit,
+      2
+    )
+
+    assert.strictEqual(errors.length, 0)
+    console.log('✓ insertEvents_multiBatch_integration')
+  } finally {
+    client.destroy()
+  }
 }
 
 // --- RetryExhausted Error Tests ---
@@ -2140,6 +2236,8 @@ async function runTests() {
   test_splitBatch_zeroChunkSize_throws()
   test_splitBatch_negativeChunkSize_throws()
   test_splitBatch_defaultChunkSize()
+  await test_submitMultiBatch_retriesFailedBatchOnly()
+  await test_submitMultiBatch_offsetsIndices()
 
   // =========================================
   // Partial Failure Scenario Tests (F5.3.9)
@@ -2166,6 +2264,7 @@ async function runTests() {
 
   // Partial batch retry pattern test (async)
   await test_partialBatchRetryPattern()
+  await test_insertEvents_multiBatch_integration()
 
   // RetryExhausted error tests
   test_RetryExhausted_properties()

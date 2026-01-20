@@ -614,4 +614,3 @@ func TestMaxReplicasPerShardConstant(t *testing.T) {
 // To run integration tests:
 //   ARCHERDB_SHARDED_CLUSTER=127.0.0.1:3000 go test -tags=integration -v
 //
-// See: openspec/changes/add-v2-distributed-features/specs/index-sharding/spec.md

@@ -185,6 +185,22 @@ pub const ShardingStrategy = enum {
         };
     }
 
+    /// Convert strategy to a stable storage code.
+    pub fn toStorage(self: ShardingStrategy) u8 {
+        return @intCast(@intFromEnum(self));
+    }
+
+    /// Parse strategy from a storage code.
+    pub fn fromStorage(value: u8) ?ShardingStrategy {
+        return switch (value) {
+            0 => .modulo,
+            1 => .virtual_ring,
+            2 => .jump_hash,
+            3 => .spatial,
+            else => null,
+        };
+    }
+
     /// Check if this strategy requires power-of-2 shard count.
     pub fn requiresPowerOfTwo(self: ShardingStrategy) bool {
         return self == .modulo;
@@ -771,6 +787,16 @@ test "ShardingStrategy fromString and toString" {
     try std.testing.expectEqualStrings("modulo", ShardingStrategy.modulo.toString());
     try std.testing.expectEqualStrings("virtual_ring", ShardingStrategy.virtual_ring.toString());
     try std.testing.expectEqualStrings("jump_hash", ShardingStrategy.jump_hash.toString());
+}
+
+test "ShardingStrategy storage roundtrip" {
+    const strategies = [_]ShardingStrategy{ .modulo, .virtual_ring, .jump_hash, .spatial };
+    inline for (strategies) |strategy| {
+        const stored = strategy.toStorage();
+        try std.testing.expectEqual(strategy, ShardingStrategy.fromStorage(stored).?);
+    }
+
+    try std.testing.expectEqual(@as(?ShardingStrategy, null), ShardingStrategy.fromStorage(255));
 }
 
 test "ShardingStrategy requiresPowerOfTwo" {
@@ -1361,7 +1387,6 @@ pub const ReshardingManager = struct {
 // Online Resharding Implementation (v2.1)
 // =============================================================================
 //
-// Per spec: openspec/changes/add-v2-distributed-features/specs/index-sharding/spec.md
 // - Dual-write mode during migration
 // - Background batch migration with rate limiting
 // - Resumable after failures
@@ -1849,7 +1874,6 @@ test "ReshardingState toString" {
 // Stop-the-World Resharding (v2.0 Feature)
 // =============================================================================
 //
-// Per openspec/changes/add-v2-distributed-features/specs/index-sharding/spec.md:
 // - Cluster enters read-only mode during resharding
 // - Pre-resharding backup is created automatically
 // - Data is exported from source shards and imported to target shards

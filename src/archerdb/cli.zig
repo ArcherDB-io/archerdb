@@ -85,6 +85,15 @@ const CLIArgs = union(enum) {
         replica_count: u8,
         development: bool = false,
         log_level: LogLevel = .info,
+        // Per add-jump-consistent-hash/spec.md: sharding strategy for this cluster
+        @"sharding-strategy": ?[]const u8 = null,
+
+        @"--": void,
+        path: []const u8,
+    };
+
+    const Info = struct {
+        log_level: LogLevel = .info,
 
         @"--": void,
         path: []const u8,
@@ -139,14 +148,12 @@ const CLIArgs = union(enum) {
         ttl_extension_cooldown: ?u32 = null,
 
         // v2.0 Multi-Region Replication options
-        // Per openspec/changes/add-v2-distributed-features/specs/replication/spec.md
         region_role: ?[]const u8 = null, // "primary" or "follower"
         region_id: ?u32 = null, // Unique region identifier
         primary_region: ?[]const u8 = null, // Primary endpoint (follower only)
         follower_regions: ?[]const u8 = null, // Comma-separated follower endpoints (primary only)
 
         // v2.0 Encryption at Rest options
-        // Per openspec/changes/add-v2-distributed-features/specs/security/spec.md
         encryption_enabled: bool = false,
         encryption_key_provider: ?[]const u8 = null, // "aws-kms", "vault", "file"
         encryption_key_id: ?[]const u8 = null, // KMS ARN, Vault path, or key name
@@ -540,7 +547,6 @@ const CLIArgs = union(enum) {
     };
 
     // v2.0 Shard management commands
-    // Per openspec/changes/add-v2-distributed-features/specs/index-sharding/spec.md
     const Shard = union(enum) {
         /// List all shards in the cluster
         list: struct {
@@ -1047,6 +1053,7 @@ const CLIArgs = union(enum) {
 
     format: Format,
     recover: Recover,
+    info: Info,
     start: Start,
     version: Version,
     status: Status,
@@ -1077,7 +1084,10 @@ const CLIArgs = union(enum) {
         \\                [--log-level=<level>] [--log-format=<format>] <path>
         \\
         \\  archerdb recover --cluster=<integer> --addresses=<addresses>
-        \\                   --replica=<index> --replica-count=<integer> <path>
+        \\                   --replica=<index> --replica-count=<integer>
+        \\                   [--sharding-strategy=<strategy>] <path>
+        \\
+        \\  archerdb info <path>
         \\
         \\  archerdb version [--verbose]
         \\
@@ -1095,6 +1105,8 @@ const CLIArgs = union(enum) {
         \\             Used when a replica's data file is completely lost.
         \\             Replicas with recovered data files must sync with the cluster before
         \\             they can participate in consensus.
+        \\
+        \\  info       Show cluster metadata for the data file at <path>.
         \\
         \\  version    Print the ArcherDB build version and the compile-time config values.
         \\
@@ -1328,6 +1340,13 @@ pub const Command = union(enum) {
         replica: u8,
         replica_count: u8,
         development: bool,
+        path: []const u8,
+        log_level: LogLevel,
+        // Per add-jump-consistent-hash/spec.md: sharding strategy for this cluster
+        sharding_strategy: sharding.ShardingStrategy,
+    };
+
+    pub const Info = struct {
         path: []const u8,
         log_level: LogLevel,
     };
@@ -1713,6 +1732,7 @@ pub const Command = union(enum) {
 
     format: Format,
     recover: Recover,
+    info: Info,
     start: Start,
     version: Version,
     status: Status,
@@ -1739,6 +1759,7 @@ pub fn parse_args(args_iterator: *std.process.ArgIterator) Command {
     return switch (cli_args) {
         .format => |format| .{ .format = parse_args_format(format) },
         .recover => |recover| .{ .recover = parse_args_recover(recover) },
+        .info => |info| .{ .info = parse_args_info(info) },
         .start => |start| .{ .start = parse_args_start(start) },
         .version => |version| .{ .version = parse_args_version(version) },
         .status => |status| .{ .status = parse_args_status(status) },
@@ -1858,6 +1879,16 @@ fn parse_args_recover(recover: CLIArgs.Recover) Command.Recover {
         vsr.fatal(.cli, "--replica-count: 1- or 2- replica clusters don't support 'recover'", .{});
     }
 
+    // Parse sharding strategy (per add-jump-consistent-hash/spec.md)
+    const sharding_strategy = if (recover.@"sharding-strategy") |strategy_str|
+        sharding.ShardingStrategy.fromString(strategy_str) orelse {
+            vsr.fatal(.cli, "--sharding-strategy: invalid '{}' (modulo/virtual_ring/jump_hash)", .{
+                std.zig.fmtEscapes(strategy_str),
+            });
+        }
+    else
+        sharding.ShardingStrategy.default();
+
     const replica = recover.replica;
     assert(replica < constants.members_max);
     assert(replica < recover.replica_count);
@@ -1870,6 +1901,7 @@ fn parse_args_recover(recover: CLIArgs.Recover) Command.Recover {
         .development = recover.development,
         .path = recover.path,
         .log_level = recover.log_level,
+        .sharding_strategy = sharding_strategy,
     };
 }
 
@@ -2208,6 +2240,13 @@ fn parse_args_status(status: CLIArgs.Status) Command.Status {
     return .{
         .address = status.address,
         .port = status.port,
+    };
+}
+
+fn parse_args_info(info: CLIArgs.Info) Command.Info {
+    return .{
+        .path = info.path,
+        .log_level = info.log_level,
     };
 }
 
@@ -3007,6 +3046,73 @@ test "parse_args_export: no_metadata flag inversion" {
     const cmd = parse_args_export(cli_export);
 
     try std.testing.expect(!cmd.include_metadata); // no_metadata=true -> include_metadata=false
+}
+
+test "parse_args_format: sharding strategy parsing" {
+    const cli_format = CLIArgs.Format{
+        .cluster = null,
+        .replica = 0,
+        .standby = null,
+        .replica_count = 3,
+        .development = false,
+        .log_level = .info,
+        .@"sharding-strategy" = "virtual_ring",
+        .@"--" = {},
+        .path = "/data/0_0.archerdb",
+    };
+
+    const cmd = parse_args_format(cli_format);
+
+    try std.testing.expectEqual(sharding.ShardingStrategy.virtual_ring, cmd.sharding_strategy);
+}
+
+test "parse_args_format: sharding strategy default" {
+    const cli_format = CLIArgs.Format{
+        .cluster = null,
+        .replica = 1,
+        .standby = null,
+        .replica_count = 3,
+        .development = false,
+        .log_level = .info,
+        .@"sharding-strategy" = null,
+        .@"--" = {},
+        .path = "/data/1_0.archerdb",
+    };
+
+    const cmd = parse_args_format(cli_format);
+
+    try std.testing.expectEqual(sharding.ShardingStrategy.default(), cmd.sharding_strategy);
+}
+
+test "parse_args_recover: sharding strategy parsing" {
+    const cli_recover = CLIArgs.Recover{
+        .cluster = 1,
+        .addresses = "127.0.0.1:3000",
+        .replica = 0,
+        .replica_count = 3,
+        .development = false,
+        .log_level = .info,
+        .@"sharding-strategy" = "jump_hash",
+        .@"--" = {},
+        .path = "/data/0_0.archerdb",
+    };
+
+    const cmd = parse_args_recover(cli_recover);
+
+    try std.testing.expectEqual(sharding.ShardingStrategy.jump_hash, cmd.sharding_strategy);
+}
+
+test "parse_args_info: basic parsing" {
+    const cli_info = CLIArgs.Info{
+        .log_level = .debug,
+        .@"--" = {},
+        .path = "/data/0_0.archerdb",
+    };
+
+    const cmd = parse_args_info(cli_info);
+
+    try std.testing.expectEqualStrings("/data/0_0.archerdb", cmd.path);
+    try std.testing.expectEqual(LogLevel.debug, cmd.log_level);
 }
 
 // ============================================================================

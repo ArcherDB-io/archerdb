@@ -10,7 +10,6 @@
 //! - Multi-replica coordination
 //! - End-to-end data integrity
 //!
-//! See: openspec/changes/add-geospatial-core/specs/backup-restore/spec.md
 
 const std = @import("std");
 const mem = std.mem;

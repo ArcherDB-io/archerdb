@@ -366,6 +366,7 @@ pub fn ClusterType(comptime StateMachineType: anytype) type {
                         .release = options.cluster.releases[0].release,
                         .replica = @intCast(replica_index),
                         .replica_count = options.cluster.replica_count,
+                        .sharding_strategy = vsr.sharding.ShardingStrategy.default(),
                         .view = null,
                     },
                 );
@@ -884,6 +885,7 @@ pub fn ClusterType(comptime StateMachineType: anytype) type {
                     .release = cluster.options.releases[0].release,
                     .replica = @intCast(replica_index),
                     .replica_count = cluster.options.replica_count,
+                    .sharding_strategy = vsr.sharding.ShardingStrategy.default(),
                     .view = null,
                 },
             );

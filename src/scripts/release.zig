@@ -31,7 +31,7 @@ const MiB = stdx.MiB;
 
 const multiversion_binary_size_max = multiversion.multiversion_binary_size_max;
 
-const Language = enum { dotnet, go, java, node, python, rust, zig, docker };
+const Language = enum { go, java, node, python, zig, docker };
 const LanguageSet = std.enums.EnumSet(Language);
 pub const CLIArgs = struct {
     sha: []const u8,
@@ -197,13 +197,6 @@ fn build(shell: *Shell, languages: LanguageSet, info: VersionInfo, devhub: bool)
         }
     }
 
-    if (languages.contains(.dotnet)) {
-        var dist_dir_dotnet = try dist_dir.makeOpenPath("dotnet", .{});
-        defer dist_dir_dotnet.close();
-
-        try build_dotnet(shell, info, dist_dir_dotnet);
-    }
-
     if (languages.contains(.go)) {
         var dist_dir_go = try dist_dir.makeOpenPath("go", .{});
         defer dist_dir_go.close();
@@ -232,9 +225,6 @@ fn build(shell: *Shell, languages: LanguageSet, info: VersionInfo, devhub: bool)
         try build_python(shell, info, dist_dir_python);
     }
 
-    if (languages.contains(.rust)) {
-        // Currently disabled.
-    }
 }
 
 fn build_archerdb(shell: *Shell, info: VersionInfo, dist_dir: std.fs.Dir) !void {
@@ -326,38 +316,6 @@ fn build_archerdb_target(
             .executable_mtime = commit_date_time,
             .max_size = multiversion.multiversion_binary_size_max,
         },
-    );
-}
-
-fn build_dotnet(shell: *Shell, info: VersionInfo, dist_dir: std.fs.Dir) !void {
-    var section = try shell.open_section("build dotnet");
-    defer section.close();
-
-    try shell.pushd("./src/clients/dotnet");
-    defer shell.popd();
-
-    const dotnet_version = shell.exec_stdout("dotnet --version", .{}) catch {
-        return error.NoDotnet;
-    };
-    log.info("dotnet version {s}", .{dotnet_version});
-
-    try shell.exec_zig(
-        \\build clients:dotnet -Drelease -Dconfig-release={release_triple}
-        \\ -Dconfig-release-client-min={release_triple_client_min}
-    , .{
-        .release_triple = info.release_triple,
-        .release_triple_client_min = info.release_triple_client_min,
-    });
-    try shell.exec(
-        \\dotnet pack ArcherDB --configuration Release
-        \\/p:AssemblyVersion={tag} /p:Version={tag}
-    , .{ .tag = info.tag });
-
-    try Shell.copy_path(
-        shell.cwd,
-        try shell.fmt("ArcherDB/bin/Release/archerdb.{s}.nupkg", .{info.tag}),
-        dist_dir,
-        try shell.fmt("archerdb.{s}.nupkg", .{info.tag}),
     );
 }
 
@@ -644,7 +602,6 @@ fn publish(
             \\with replicas from their own release *or newer*, subject to the newer release's
             \\`Oldest supported client version`.
             \\
-            \\* .NET: `dotnet add package archerdb --version {[tag]s}`
             \\* Go: `go mod edit -require github.com/archerdb/archerdb-go@v{[tag]s}`
             \\* Java: Update the version of `com.archerdb.archerdb-java` in `pom.xml`
             \\  to `{[tag]s}`.
@@ -691,7 +648,6 @@ fn publish(
     }
 
     if (languages.contains(.docker)) try publish_docker(shell, info);
-    if (languages.contains(.dotnet)) try publish_dotnet(shell, info);
     if (languages.contains(.go)) try publish_go(shell, info);
     if (languages.contains(.java)) try publish_java(shell, info);
     if (languages.contains(.node)) try publish_node(shell, info);
@@ -706,26 +662,6 @@ fn publish(
         // Build our docs last so that if it fails everything else is still released.
         try publish_docs(shell, info);
     }
-}
-
-fn publish_dotnet(shell: *Shell, info: VersionInfo) !void {
-    var section = try shell.open_section("publish dotnet");
-    defer section.close();
-
-    assert(try shell.dir_exists("zig-out/dist/dotnet"));
-
-    const nuget_key = try shell.env_get("NUGET_KEY");
-    try shell.exec(
-        \\dotnet nuget push
-        \\    --api-key {nuget_key}
-        \\    --source https://api.nuget.org/v3/index.json
-        \\    {package}
-    , .{
-        .nuget_key = nuget_key,
-        .package = try shell.fmt("zig-out/dist/dotnet/archerdb.{s}.nupkg", .{
-            info.tag,
-        }),
-    });
 }
 
 fn publish_go(shell: *Shell, info: VersionInfo) !void {

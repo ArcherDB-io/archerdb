@@ -1809,7 +1809,6 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     stored_event.timestamp = event_timestamp;
                     stored_event.ttl_seconds = effective_ttl_seconds;
                     self.forest.grooves.geo_events.insert(&stored_event);
-
                 } else if (upsert_result.updated) {
                     // LWW accepted the update
                     results[results_count] = InsertGeoEventsResult{
@@ -1826,7 +1825,6 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     stored_event.timestamp = event_timestamp;
                     stored_event.ttl_seconds = effective_ttl_seconds;
                     self.forest.grooves.geo_events.insert(&stored_event);
-
                 } else {
                     // LWW rejected - older event
                     results[results_count] = InsertGeoEventsResult{
@@ -2143,7 +2141,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                             .flags = GeoEventFlags.none,
                             .reserved = [_]u8{0} ** 12,
                         };
-                    }
+                    },
                 }
 
                 // Write to output

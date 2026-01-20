@@ -9,7 +9,6 @@
 //! - Compression during export process
 //! - Scales with available CPU cores
 //!
-//! See: openspec/changes/add-geospatial-core/specs/data-portability/spec.md
 //!
 //! Usage:
 //! ```zig

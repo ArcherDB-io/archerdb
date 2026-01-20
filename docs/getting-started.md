@@ -440,6 +440,11 @@ QueryPolygonFilter filter = new QueryPolygonFilter.Builder()
 - Holes must be fully contained within the outer boundary
 - Holes must not overlap with each other
 
+**Polygon Validation:**
+- SDKs expose client-side helpers (e.g., `validatePolygonNoSelfIntersection`, `validate_polygon_no_self_intersection`) to catch invalid shapes early.
+- Invalid polygons return validation errors with details (self-intersection, degenerate geometry, or invalid hole layout).
+- Use the error details to fix winding, containment, or overlap issues before retrying the query.
+
 ### Getting Latest Position
 
 Retrieve the most recent location for specific entities:

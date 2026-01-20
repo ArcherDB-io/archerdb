@@ -17,16 +17,13 @@ const client_readmes = @import("./client_readmes.zig");
 
 pub const Language = std.meta.FieldEnum(@TypeOf(LanguageCI));
 const LanguageCI = .{
-    .dotnet = @import("../clients/dotnet/ci.zig"),
     .go = @import("../clients/go/ci.zig"),
-    .rust = @import("../clients/rust/ci.zig"),
     .java = @import("../clients/java/ci.zig"),
     .node = @import("../clients/node/ci.zig"),
     .python = @import("../clients/python/ci.zig"),
 };
 
 const LanguageCIVortex = .{
-    .rust = @import("../testing/vortex/rust_driver/ci.zig"),
     .java = @import("../testing/vortex/java_driver/ci.zig"),
 };
 
@@ -181,8 +178,7 @@ fn validate_release(shell: *Shell, gpa: std.mem.Allocator, language_requested: ?
 
     // Check all the client releases to ensure the latest published release is what it should be.
     inline for (comptime std.enums.values(Language)) |language| {
-        if ((language == language_requested or language_requested == null) and
-            language != .rust) // Rust isn't published yet.
+        if (language == language_requested or language_requested == null)
         {
             const ci = @field(LanguageCI, @tagName(language));
             const release_published_latest = try ci.release_published_latest(shell);

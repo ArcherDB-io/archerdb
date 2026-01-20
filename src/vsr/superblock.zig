@@ -38,6 +38,7 @@ const meta = std.meta;
 const constants = @import("../constants.zig");
 const stdx = @import("stdx");
 const vsr = @import("../vsr.zig");
+const sharding = vsr.sharding;
 const log = std.log.scoped(.superblock);
 
 pub const Quorums = @import("superblock_quorums.zig").QuorumsType(.{
@@ -89,7 +90,11 @@ pub const SuperBlockHeader = extern struct {
     /// The number of headers in view_headers_all.
     view_headers_count: u32,
 
-    reserved: [1940]u8 = @splat(0),
+    /// Sharding strategy for entity distribution (u8 enum code).
+    sharding_strategy: u8 = 0,
+    sharding_strategy_reserved: [7]u8 = @splat(0),
+
+    reserved: [1932]u8 = @splat(0),
 
     /// SV/DVC header suffix. Headers are ordered from high-to-low op.
     /// Unoccupied headers (after view_headers_count) are zeroed.
@@ -427,6 +432,8 @@ pub const SuperBlockHeader = extern struct {
         assert(superblock.release_format.value > 0);
         assert(superblock.flags == 0);
 
+        assert(sharding.ShardingStrategy.fromStorage(superblock.sharding_strategy) != null);
+        assert(stdx.zeroed(&superblock.sharding_strategy_reserved));
         assert(stdx.zeroed(&superblock.reserved));
         assert(stdx.zeroed(&superblock.vsr_state.reserved));
         assert(stdx.zeroed(&superblock.vsr_state.checkpoint.reserved));
@@ -455,6 +462,8 @@ pub const SuperBlockHeader = extern struct {
     pub fn equal(a: *const SuperBlockHeader, b: *const SuperBlockHeader) bool {
         assert(a.release_format.value == b.release_format.value);
 
+        assert(stdx.zeroed(&a.sharding_strategy_reserved));
+        assert(stdx.zeroed(&b.sharding_strategy_reserved));
         assert(stdx.zeroed(&a.reserved));
         assert(stdx.zeroed(&b.reserved));
 
@@ -473,6 +482,7 @@ pub const SuperBlockHeader = extern struct {
         if (a.cluster != b.cluster) return false;
         if (a.sequence != b.sequence) return false;
         if (a.parent != b.parent) return false;
+        if (a.sharding_strategy != b.sharding_strategy) return false;
         if (!stdx.equal_bytes(VSRState, &a.vsr_state, &b.vsr_state)) return false;
         if (a.view_headers_count != b.view_headers_count) return false;
         if (!stdx.equal_bytes(
@@ -755,6 +765,7 @@ pub fn SuperBlockType(comptime Storage: type) type {
             release: vsr.Release,
             replica: u8,
             replica_count: u8,
+            sharding_strategy: sharding.ShardingStrategy,
             /// Set to null during initial cluster formatting.
             /// Set to the target view when constructing a new data file for a reformatted replica.
             view: ?u32,
@@ -792,6 +803,7 @@ pub fn SuperBlockType(comptime Storage: type) type {
                 .release_format = options.release,
                 .cluster = options.cluster,
                 .parent = 0,
+                .sharding_strategy = options.sharding_strategy.toStorage(),
                 .vsr_state = .{
                     .checkpoint = .{
                         .header = mem.zeroes(vsr.Header.Prepare),

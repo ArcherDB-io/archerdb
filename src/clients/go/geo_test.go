@@ -23,7 +23,10 @@ func isServerAvailable(address string) bool {
 func TestGeoClientWiring(t *testing.T) {
 	// Integration tests require ARCHERDB_INTEGRATION env var to be set
 	// This prevents accidentally running against non-ArcherDB services on the same port
-	serverAddr := "127.0.0.1:3001"
+	serverAddr := os.Getenv("ARCHERDB_ADDRESS")
+	if serverAddr == "" {
+		serverAddr = "127.0.0.1:3001"
+	}
 	if os.Getenv("ARCHERDB_INTEGRATION") == "" {
 		t.Skip("Skipping integration test: set ARCHERDB_INTEGRATION=1 to run against server at " + serverAddr)
 	}
@@ -62,6 +65,44 @@ func TestGeoClientWiring(t *testing.T) {
 		}
 
 		fmt.Printf("Inserted event with entity_id=%s\n", event.EntityID.String())
+	})
+
+	// Test 1b: Multi-batch insert (small batch size override for test)
+	t.Run("InsertEventsMultiBatch", func(t *testing.T) {
+		concrete, ok := client.(*geoClient)
+		if !ok {
+			t.Fatalf("Expected geoClient implementation, got %T", client)
+		}
+
+		events := make([]types.GeoEvent, 0, 3)
+		for i := 0; i < 3; i++ {
+			event, err := types.NewGeoEvent(types.GeoEventOptions{
+				EntityID:  types.ID(),
+				Latitude:  37.7749 + float64(i)*0.0001,
+				Longitude: -122.4194 - float64(i)*0.0001,
+				TTLSeconds: 86400,
+			})
+			if err != nil {
+				t.Fatalf("Failed to create event: %v", err)
+			}
+			events = append(events, event)
+		}
+
+		for i := range events {
+			types.PrepareGeoEvent(&events[i])
+		}
+
+		errors, err := submitInsertBatches(events, 2, func(chunk []types.GeoEvent) ([]types.InsertGeoEventsError, error) {
+			return concrete.withRetry(func() ([]types.InsertGeoEventsError, error) {
+				return concrete.submitInsertEventsOnce(chunk, types.GeoOperationInsertEvents)
+			})
+		})
+		if err != nil {
+			t.Fatalf("submitInsertBatches failed: %v", err)
+		}
+		if len(errors) > 0 {
+			t.Fatalf("Expected no errors, got %d: %+v", len(errors), errors)
+		}
 	})
 
 	// Test 2: Query by UUID

@@ -932,6 +932,65 @@ async def _with_retry_async(operation: Callable[[], Any], config: RetryConfig) -
     raise RetryExhausted(max_attempts, last_error)
 
 
+def _offset_batch_errors(errors: List[Any], offset: int) -> List[Any]:
+    if offset == 0:
+        return errors
+
+    adjusted: List[Any] = []
+    for error in errors:
+        if isinstance(error, InsertGeoEventsError):
+            adjusted.append(
+                InsertGeoEventsError(index=error.index + offset, result=error.result)
+            )
+        elif isinstance(error, DeleteEntitiesError):
+            adjusted.append(
+                DeleteEntitiesError(index=error.index + offset, result=error.result)
+            )
+        else:
+            adjusted.append(error)
+    return adjusted
+
+
+def _submit_multi_batch_sync(
+    operation: GeoOperation,
+    batch: List[Any],
+    submit_fn: Callable[[GeoOperation, List[Any]], List[Any]],
+    batch_size: int = BATCH_SIZE_MAX,
+) -> List[Any]:
+    if not batch:
+        return []
+    if batch_size <= 0:
+        raise ValueError("batch_size must be greater than 0")
+
+    all_errors: List[Any] = []
+    for offset in range(0, len(batch), batch_size):
+        chunk = batch[offset:offset + batch_size]
+        chunk_errors = submit_fn(operation, chunk)
+        if chunk_errors:
+            all_errors.extend(_offset_batch_errors(chunk_errors, offset))
+    return all_errors
+
+
+async def _submit_multi_batch_async(
+    operation: GeoOperation,
+    batch: List[Any],
+    submit_fn: Callable[[GeoOperation, List[Any]], Any],
+    batch_size: int = BATCH_SIZE_MAX,
+) -> List[Any]:
+    if not batch:
+        return []
+    if batch_size <= 0:
+        raise ValueError("batch_size must be greater than 0")
+
+    all_errors: List[Any] = []
+    for offset in range(0, len(batch), batch_size):
+        chunk = batch[offset:offset + batch_size]
+        chunk_errors = await submit_fn(operation, chunk)
+        if chunk_errors:
+            all_errors.extend(_offset_batch_errors(chunk_errors, offset))
+    return all_errors
+
+
 # ============================================================================
 # Synchronous Client
 # ============================================================================
@@ -1012,6 +1071,24 @@ class GeoClientSync:
     def create_delete_batch(self) -> DeleteEntityBatch:
         """Create a new batch for deleting entities."""
         return DeleteEntityBatch(self)
+
+    def insert_events(
+        self,
+        events: List[GeoEvent],
+        options: Optional[OperationOptions] = None,
+    ) -> List[InsertGeoEventsError]:
+        """Insert multiple events with automatic per-batch retry."""
+        submit_fn = lambda op, batch: self._submit_batch(op, batch, options)
+        return _submit_multi_batch_sync(GeoOperation.INSERT_EVENTS, events, submit_fn)
+
+    def upsert_events(
+        self,
+        events: List[GeoEvent],
+        options: Optional[OperationOptions] = None,
+    ) -> List[InsertGeoEventsError]:
+        """Upsert multiple events with automatic per-batch retry."""
+        submit_fn = lambda op, batch: self._submit_batch(op, batch, options)
+        return _submit_multi_batch_sync(GeoOperation.UPSERT_EVENTS, events, submit_fn)
 
     def insert_event(self, event: GeoEvent) -> List[InsertGeoEventsError]:
         """Insert a single event (convenience method)."""
@@ -1236,9 +1313,20 @@ class GeoClientSync:
         if self._closed:
             raise ClientClosedError("Client has been closed")
 
-    def _submit_batch(self, operation: GeoOperation, batch: List[Any]) -> List[Any]:
+    def _submit_batch(
+        self,
+        operation: GeoOperation,
+        batch: List[Any],
+        options: Optional["OperationOptions"] = None,
+    ) -> List[Any]:
         """Submit a batch operation to the cluster with automatic retry."""
         self._ensure_connected()
+
+        retry_config = (
+            options.merge_with(self._retry_config)
+            if options is not None
+            else self._retry_config
+        )
 
         def do_submit() -> List[Any]:
             if operation == GeoOperation.INSERT_EVENTS:
@@ -1262,7 +1350,7 @@ class GeoClientSync:
             else:
                 raise ValueError(f"Unknown batch operation: {operation}")
 
-        return _with_retry_sync(do_submit, self._retry_config)
+        return _with_retry_sync(do_submit, retry_config)
 
     def _submit_query(
         self,
@@ -1762,6 +1850,32 @@ class GeoClientAsync:
         """Create a new batch for deleting entities."""
         return DeleteEntityBatchAsync(self)
 
+    async def insert_events(
+        self,
+        events: List[GeoEvent],
+        options: Optional[OperationOptions] = None,
+    ) -> List[InsertGeoEventsError]:
+        """Insert multiple events with automatic per-batch retry."""
+        submit_fn = lambda op, batch: self._submit_batch(op, batch, options)
+        return await _submit_multi_batch_async(
+            GeoOperation.INSERT_EVENTS,
+            events,
+            submit_fn,
+        )
+
+    async def upsert_events(
+        self,
+        events: List[GeoEvent],
+        options: Optional[OperationOptions] = None,
+    ) -> List[InsertGeoEventsError]:
+        """Upsert multiple events with automatic per-batch retry."""
+        submit_fn = lambda op, batch: self._submit_batch(op, batch, options)
+        return await _submit_multi_batch_async(
+            GeoOperation.UPSERT_EVENTS,
+            events,
+            submit_fn,
+        )
+
     async def insert_event(self, event: GeoEvent) -> List[InsertGeoEventsError]:
         """Insert a single event."""
         batch = self.create_batch()
@@ -1943,9 +2057,20 @@ class GeoClientAsync:
         if self._closed:
             raise ClientClosedError("Client has been closed")
 
-    async def _submit_batch(self, operation: GeoOperation, batch: List[Any]) -> List[Any]:
+    async def _submit_batch(
+        self,
+        operation: GeoOperation,
+        batch: List[Any],
+        options: Optional["OperationOptions"] = None,
+    ) -> List[Any]:
         """Submit a batch operation to the cluster with automatic retry."""
         self._ensure_connected()
+
+        retry_config = (
+            options.merge_with(self._retry_config)
+            if options is not None
+            else self._retry_config
+        )
 
         async def do_submit() -> List[Any]:
             # NOTE: Skeleton implementation.
@@ -1953,7 +2078,7 @@ class GeoClientAsync:
             # using the same request_number for all retries to ensure idempotency.
             return []
 
-        return await _with_retry_async(do_submit, self._retry_config)
+        return await _with_retry_async(do_submit, retry_config)
 
     async def _submit_query(self, operation: GeoOperation, filter: Any) -> List[GeoEvent]:
         """Submit a query operation to the cluster with automatic retry."""

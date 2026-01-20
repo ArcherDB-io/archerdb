@@ -276,6 +276,39 @@ pub fn latencyHistogram(name: []const u8, help: []const u8, labels: ?[]const u8)
     });
 }
 
+/// Shard lookup latency histogram buckets: 10μs, 100μs, 1ms, 10ms, 100ms, 1s.
+pub const ShardLookupHistogram = HistogramType(6);
+
+pub fn shardLookupHistogram(
+    name: []const u8,
+    help: []const u8,
+    labels: ?[]const u8,
+) ShardLookupHistogram {
+    return ShardLookupHistogram.init(name, help, labels, .{
+        0.00001, // 10μs
+        0.0001, // 100μs
+        0.001, // 1ms
+        0.01, // 10ms
+        0.1, // 100ms
+        1.0, // 1s
+    });
+}
+
+/// Histogram for number of shards queried (fan-out).
+pub const QueryShardsHistogram = HistogramType(3);
+
+pub fn queryShardsHistogram(
+    name: []const u8,
+    help: []const u8,
+    labels: ?[]const u8,
+) QueryShardsHistogram {
+    return QueryShardsHistogram.init(name, help, labels, .{
+        1.0,
+        4.0,
+        16.0,
+    });
+}
+
 /// Global metrics registry.
 /// All metrics are statically defined for zero allocation at runtime.
 pub const Registry = struct {
@@ -650,7 +683,6 @@ pub const Registry = struct {
     pub var lsm_disk_bytes_written: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
 
     // TTL-aware compaction: Expired ratio per level (stored as integer scaled by 10000).
-    // Per openspec/changes/add-ttl-aware-compaction: exposes expired_ratio for monitoring.
     // Value range: 0-10000 represents 0.0000 to 1.0000 ratio.
     pub var lsm_ttl_expired_ratio_by_level: [7]std.atomic.Value(u32) = [_]std.atomic.Value(u32){
         std.atomic.Value(u32).init(0), // Level 0
@@ -663,7 +695,6 @@ pub const Registry = struct {
     };
 
     // Per-level TTL stats: Estimated total bytes per level.
-    // Per openspec/changes/add-per-level-ttl-stats: enables capacity planning alerts.
     pub var lsm_bytes_by_level: [7]std.atomic.Value(u64) = [_]std.atomic.Value(u64){
         std.atomic.Value(u64).init(0), // Level 0
         std.atomic.Value(u64).init(0), // Level 1
@@ -675,7 +706,6 @@ pub const Registry = struct {
     };
 
     // Per-level TTL stats: Estimated expired bytes per level.
-    // Per openspec/changes/add-per-level-ttl-stats: enables "expired_bytes > 100GB" alerts.
     pub var lsm_ttl_expired_bytes_by_level: [7]std.atomic.Value(u64) = [_]std.atomic.Value(u64){
         std.atomic.Value(u64).init(0), // Level 0
         std.atomic.Value(u64).init(0), // Level 1
@@ -789,7 +819,6 @@ pub const Registry = struct {
 
     // ========================================================================
     // v2.0 Multi-Region Replication Metrics
-    // See openspec/changes/add-v2-distributed-features/specs/replication/spec.md
     // ========================================================================
 
     /// Maximum number of follower regions per primary
@@ -831,8 +860,55 @@ pub const Registry = struct {
 
     // ========================================================================
     // v2.0 Sharding Metrics
-    // See openspec/changes/add-v2-distributed-features/specs/index-sharding/spec.md
     // ========================================================================
+
+    /// Configured sharding strategy (0=modulo, 1=virtual_ring, 2=jump_hash, 3=spatial)
+    pub var sharding_strategy: Gauge = Gauge.init(
+        "archerdb_sharding_strategy",
+        "Configured sharding strategy (0=modulo, 1=virtual_ring, 2=jump_hash, 3=spatial)",
+        null,
+    );
+
+    /// Configured shard strategy (0=entity, 1=spatial)
+    pub var shard_strategy: Gauge = Gauge.init(
+        "archerdb_shard_strategy",
+        "Configured sharding strategy (0=entity, 1=spatial)",
+        null,
+    );
+
+    /// Shard lookup latency histogram by strategy
+    pub var shard_lookup_latency_modulo: ShardLookupHistogram = shardLookupHistogram(
+        "archerdb_shard_lookup_duration_seconds",
+        "Shard lookup latency histogram",
+        "strategy=\"modulo\"",
+    );
+    pub var shard_lookup_latency_virtual_ring: ShardLookupHistogram = shardLookupHistogram(
+        "archerdb_shard_lookup_duration_seconds",
+        "Shard lookup latency histogram",
+        "strategy=\"virtual_ring\"",
+    );
+    pub var shard_lookup_latency_jump_hash: ShardLookupHistogram = shardLookupHistogram(
+        "archerdb_shard_lookup_duration_seconds",
+        "Shard lookup latency histogram",
+        "strategy=\"jump_hash\"",
+    );
+    pub var shard_lookup_latency_spatial: ShardLookupHistogram = shardLookupHistogram(
+        "archerdb_shard_lookup_duration_seconds",
+        "Shard lookup latency histogram",
+        "strategy=\"spatial\"",
+    );
+
+    /// Shards queried per query (spatial fan-out)
+    pub var query_shards_queried_radius: QueryShardsHistogram = queryShardsHistogram(
+        "archerdb_query_shards_queried",
+        "Shards queried per query",
+        "type=\"radius\"",
+    );
+    pub var query_shards_queried_polygon: QueryShardsHistogram = queryShardsHistogram(
+        "archerdb_query_shards_queried",
+        "Shards queried per query",
+        "type=\"polygon\"",
+    );
 
     /// Maximum number of shards
     pub const max_shards: usize = 256;
@@ -891,7 +967,6 @@ pub const Registry = struct {
 
     // ========================================================================
     // v2.1 Online Resharding Metrics
-    // See openspec/changes/add-v2-distributed-features/specs/index-sharding/spec.md
     // ========================================================================
 
     /// Online resharding mode (0=none, 1=offline, 2=online)
@@ -921,7 +996,6 @@ pub const Registry = struct {
 
     // ========================================================================
     // v2.1 Tiering Metrics (Hot-Warm-Cold)
-    // See openspec/changes/add-v2-distributed-features/specs/hybrid-memory/spec.md
     // ========================================================================
 
     /// Entity count per tier
@@ -959,7 +1033,6 @@ pub const Registry = struct {
 
     // ========================================================================
     // v2.0 Encryption Metrics
-    // See openspec/changes/add-v2-distributed-features/specs/security/spec.md
     // ========================================================================
 
     /// Total encryption operations
@@ -1005,7 +1078,6 @@ pub const Registry = struct {
 
     // ========================================================================
     // AES-NI Hardware Acceleration Metrics
-    // See openspec/changes/add-aesni-encryption/tasks.md
     // ========================================================================
 
     /// AES-NI hardware support available (1=yes, 0=no)
@@ -1045,7 +1117,6 @@ pub const Registry = struct {
 
     // ========================================================================
     // Coordinator Mode Metrics
-    // See openspec/changes/add-coordinator-mode/tasks.md
     // ========================================================================
 
     // Connection metrics (Task 5.1)
@@ -1167,7 +1238,6 @@ pub const Registry = struct {
 
     // ========================================================================
     // Index Resize Metrics
-    // See openspec/changes/add-online-index-rehash/tasks.md
     // ========================================================================
 
     /// Index resize status (0=idle, 1=in_progress, 2=completing, 3=aborting)
@@ -1228,7 +1298,6 @@ pub const Registry = struct {
 
     // ========================================================================
     // Membership Metrics
-    // See openspec/changes/add-dynamic-membership/tasks.md
     // ========================================================================
 
     /// Current membership state (0=stable, 1=joint, 2=transitioning)
@@ -1835,6 +1904,20 @@ pub const Registry = struct {
         // v2.0 Sharding Metrics
         // ====================================================================
 
+        try sharding_strategy.format(writer);
+        try shard_strategy.format(writer);
+        try writer.writeAll("\n");
+
+        try shard_lookup_latency_modulo.format(writer);
+        try shard_lookup_latency_virtual_ring.format(writer);
+        try shard_lookup_latency_jump_hash.format(writer);
+        try shard_lookup_latency_spatial.format(writer);
+        try writer.writeAll("\n");
+
+        try query_shards_queried_radius.format(writer);
+        try query_shards_queried_polygon.format(writer);
+        try writer.writeAll("\n");
+
         try writer.writeAll("# HELP archerdb_shard_count Number of active shards\n");
         try writer.writeAll("# TYPE archerdb_shard_count gauge\n");
         const active_shards = shard_count.load(.monotonic);
@@ -2349,7 +2432,6 @@ pub const Registry = struct {
     }
 
     /// Update TTL expired ratio for a specific level.
-    /// Per openspec/changes/add-ttl-aware-compaction: Called after bar_complete to update metrics.
     /// ratio: f64 value between 0.0 and 1.0
     /// level: LSM level (0-6)
     pub fn updateTtlExpiredRatio(level: u8, ratio: f64) void {
@@ -2361,7 +2443,6 @@ pub const Registry = struct {
     }
 
     /// Update level byte estimates.
-    /// Per openspec/changes/add-per-level-ttl-stats: Called after bar_complete to update metrics.
     /// level: LSM level (0-6)
     /// total_bytes: Estimated total bytes in level
     /// expired_bytes: Estimated expired bytes in level
@@ -2681,6 +2762,27 @@ test "Registry: replication lag metrics format" {
     try std.testing.expect(has_replica1);
 }
 
+test "Registry: sharding metrics format output" {
+    Registry.sharding_strategy.set(2);
+    Registry.shard_strategy.set(0);
+    Registry.shard_lookup_latency_jump_hash.observe(0.00005);
+    Registry.query_shards_queried_radius.observe(@as(f64, 4));
+
+    var buf: [65536]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buf);
+
+    try Registry.format(fbs.writer());
+
+    const output = fbs.getWritten();
+
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_sharding_strategy") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_shard_strategy") != null);
+    try std.testing.expect(
+        std.mem.indexOf(u8, output, "archerdb_shard_lookup_duration_seconds") != null,
+    );
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_query_shards_queried") != null);
+}
+
 // =============================================================================
 // F5.5.6: Backup Metrics Tests
 // =============================================================================
@@ -2893,7 +2995,6 @@ test "Registry: free set threshold with zero total" {
 
 // ============================================================================
 // TTL Expired Ratio Metric Tests
-// Per openspec/changes/add-ttl-aware-compaction: verify metric update and format.
 // ============================================================================
 
 test "Registry: TTL expired ratio update" {
@@ -2943,7 +3044,6 @@ test "Registry: TTL expired ratio precision" {
 
 // ============================================================================
 // Per-Level Byte Stats Metric Tests
-// Per openspec/changes/add-per-level-ttl-stats: verify byte metric update and format.
 // ============================================================================
 
 test "Registry: Level bytes update" {
@@ -2993,7 +3093,6 @@ test "Registry: Level bytes overwrite" {
 
 // ============================================================================
 // Index Resize Metrics Tests
-// Per openspec/changes/add-online-index-rehash: verify resize progress metrics.
 // ============================================================================
 
 test "Registry: Index resize metrics format output" {
@@ -3046,7 +3145,6 @@ test "Registry: Index resize counters" {
 
 // ============================================================================
 // Membership Metrics Tests
-// Per openspec/changes/add-dynamic-membership: verify membership progress metrics.
 // ============================================================================
 
 test "Registry: Membership metrics format output" {

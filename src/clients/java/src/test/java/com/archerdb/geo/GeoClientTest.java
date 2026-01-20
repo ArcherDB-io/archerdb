@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -130,6 +131,65 @@ class GeoClientTest {
     void testInsertEmptyList() {
         List<InsertGeoEventsError> errors = client.insertEvents(List.of());
         assertTrue(errors.isEmpty());
+    }
+
+    @Test
+    void testSubmitInsertEventsBatchedOffsetsIndices() {
+        GeoEvent event1 = new GeoEvent.Builder().setEntityId(UInt128.random()).setLatitude(37.7749)
+                .setLongitude(-122.4194).build();
+        GeoEvent event2 = new GeoEvent.Builder().setEntityId(UInt128.random()).setLatitude(37.7750)
+                .setLongitude(-122.4195).build();
+        GeoEvent event3 = new GeoEvent.Builder().setEntityId(UInt128.random()).setLatitude(37.7751)
+                .setLongitude(-122.4196).build();
+
+        RetryPolicy policy = RetryPolicy.builder().setMaxRetries(0).setBaseBackoffMs(0)
+                .setMaxBackoffMs(0).setJitterEnabled(false).build();
+
+        List<InsertGeoEventsError> errors = GeoClientImpl
+                .submitInsertEventsBatched(List.of(event1, event2, event3), 2, policy, batch -> {
+                    if (batch.size() == 2) {
+                        return List.of(new InsertGeoEventsError(1,
+                                InsertGeoEventResult.INVALID_COORDINATES));
+                    }
+                    return List.of(new InsertGeoEventsError(0, InsertGeoEventResult.EXISTS));
+                });
+
+        assertEquals(2, errors.size());
+        assertEquals(1, errors.get(0).getIndex());
+        assertEquals(2, errors.get(1).getIndex());
+    }
+
+    @Test
+    void testSubmitInsertEventsBatchedRetriesFailedBatchOnly() {
+        GeoEvent event1 = new GeoEvent.Builder().setEntityId(UInt128.random()).setLatitude(37.7749)
+                .setLongitude(-122.4194).build();
+        GeoEvent event2 = new GeoEvent.Builder().setEntityId(UInt128.random()).setLatitude(37.7750)
+                .setLongitude(-122.4195).build();
+        GeoEvent event3 = new GeoEvent.Builder().setEntityId(UInt128.random()).setLatitude(37.7751)
+                .setLongitude(-122.4196).build();
+
+        RetryPolicy policy = RetryPolicy.builder().setMaxRetries(1).setBaseBackoffMs(0)
+                .setMaxBackoffMs(0).setJitterEnabled(false).build();
+
+        AtomicInteger firstBatchCalls = new AtomicInteger();
+        AtomicInteger secondBatchCalls = new AtomicInteger();
+
+        List<InsertGeoEventsError> errors = GeoClientImpl
+                .submitInsertEventsBatched(List.of(event1, event2, event3), 2, policy, batch -> {
+                    if (batch.size() == 2) {
+                        if (firstBatchCalls.getAndIncrement() == 0) {
+                            throw new OperationException(OperationException.TIMEOUT, "temporary",
+                                    true);
+                        }
+                        return List.of();
+                    }
+                    secondBatchCalls.incrementAndGet();
+                    return List.of();
+                });
+
+        assertTrue(errors.isEmpty());
+        assertEquals(2, firstBatchCalls.get());
+        assertEquals(1, secondBatchCalls.get());
     }
 
     // ========================================================================

@@ -11,7 +11,6 @@
 //!
 //! Target: >100MB/sec throughput for sequential scans on NVMe storage.
 //!
-//! See: openspec/changes/add-geospatial-core/specs/data-portability/spec.md
 //!
 //! Usage:
 //! ```zig

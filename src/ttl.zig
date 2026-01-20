@@ -2,9 +2,6 @@
 // Copyright (c) 2024-2025 ArcherDB Contributors
 //! TTL (Time-to-Live) expiration and cleanup module.
 //!
-//! This module implements the TTL functionality as specified in:
-//! `openspec/changes/add-geospatial-core/specs/ttl-retention/spec.md`
-//!
 //! Key features:
 //! - Expiration calculation with overflow protection
 //! - Lazy expiration during index lookup

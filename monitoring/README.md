@@ -83,8 +83,6 @@ scrape_configs:
 
 ## Alert Rules
 
-See [METRICS_REFERENCE.md](../openspec/changes/add-geospatial-core/METRICS_REFERENCE.md) for complete alert rule configurations.
-
 ### Example Alertmanager Integration
 
 ```yaml

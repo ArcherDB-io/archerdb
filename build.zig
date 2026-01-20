@@ -72,8 +72,6 @@ pub fn build(b: *std.Build) !void {
         .check = b.step("check", "Check if ArcherDB compiles"),
         .clients_c = b.step("clients:c", "Build C client library"),
         .clients_c_sample = b.step("clients:c:sample", "Build C client sample"),
-        .clients_dotnet = b.step("clients:dotnet", "Build dotnet client shared library"),
-        .clients_rust = b.step("clients:rust", "Build Rust client shared library"),
         .clients_go = b.step("clients:go", "Build Go client shared library"),
         .clients_java = b.step("clients:java", "Build Java client shared library"),
         .clients_node = b.step("clients:node", "Build Node client shared library"),
@@ -309,12 +307,6 @@ pub fn build(b: *std.Build) !void {
     });
 
     // zig build clients:$lang
-    build_rust_client(b, build_steps.clients_rust, .{
-        .vsr_module = vsr_module,
-        .vsr_options = vsr_options,
-        .arch_client_header = arch_client_header.path,
-        .mode = mode,
-    });
     build_go_client(b, build_steps.clients_go, .{
         .vsr_module = vsr_module,
         .vsr_options = vsr_options,
@@ -322,11 +314,6 @@ pub fn build(b: *std.Build) !void {
         .mode = mode,
     });
     build_java_client(b, build_steps.clients_java, .{
-        .vsr_module = vsr_module,
-        .vsr_options = vsr_options,
-        .mode = mode,
-    });
-    build_dotnet_client(b, build_steps.clients_dotnet, .{
         .vsr_module = vsr_module,
         .vsr_options = vsr_options,
         .mode = mode,
@@ -1331,75 +1318,6 @@ fn strip_glibc_version(triple: []const u8) []const u8 {
     return triple;
 }
 
-fn build_rust_client(
-    b: *std.Build,
-    step_clients_rust: *std.Build.Step,
-    options: struct {
-        vsr_module: *std.Build.Module,
-        vsr_options: *std.Build.Step.Options,
-        arch_client_header: std.Build.LazyPath,
-        mode: std.builtin.OptimizeMode,
-    },
-) void {
-    // The Rust test suite runs archerdb directly. This ensures it is available.
-    step_clients_rust.dependOn(b.getInstallStep());
-
-    // Copy the generated header file to the Rust client assets directory:
-    const arch_client_header_copy = Generated.file_copy(b, .{
-        .from = options.arch_client_header,
-        .path = "./src/clients/rust/assets/arch_client.h",
-    });
-    step_clients_rust.dependOn(&arch_client_header_copy.step);
-
-    inline for (platforms) |platform| {
-        const query = Query.parse(.{
-            .arch_os_abi = platform[0],
-            .cpu_features = platform[2],
-        }) catch unreachable;
-        const resolved_target = b.resolveTargetQuery(query);
-
-        const root_module = b.createModule(.{
-            .root_source_file = b.path("src/archerdb/libarch_client.zig"),
-            .target = resolved_target,
-            .optimize = options.mode,
-        });
-        root_module.addImport("vsr", options.vsr_module);
-        root_module.addOptions("vsr_options", options.vsr_options);
-        if (options.mode == .ReleaseSafe) strip_root_module(root_module);
-
-        const static_lib = b.addLibrary(.{
-            .name = "arch_client",
-            .linkage = .static,
-            .root_module = root_module,
-        });
-        static_lib.bundle_compiler_rt = true;
-        static_lib.pie = true;
-        static_lib.linkLibC();
-
-        step_clients_rust.dependOn(&b.addInstallFile(static_lib.getEmittedBin(), b.pathJoin(&.{
-            "../src/clients/rust/assets/lib/",
-            platform[0],
-            static_lib.out_filename,
-        })).step);
-    }
-
-    const rust_bindings_generator = b.addExecutable(.{
-        .name = "rust_bindings",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/clients/rust/rust_bindings.zig"),
-            .target = b.graph.host,
-        }),
-    });
-    rust_bindings_generator.root_module.addImport("vsr", options.vsr_module);
-    rust_bindings_generator.root_module.addOptions("vsr_options", options.vsr_options);
-    const bindings = Generated.file(b, .{
-        .generator = rust_bindings_generator,
-        .path = "./src/clients/rust/src/arch_client.rs",
-    });
-
-    step_clients_rust.dependOn(&bindings.step);
-}
-
 fn build_go_client(
     b: *std.Build,
     step_clients_go: *std.Build.Step,
@@ -1542,66 +1460,6 @@ fn build_java_client(
         step_clients_java.dependOn(&b.addInstallFile(lib.getEmittedBin(), b.pathJoin(&.{
             "../src/clients/java/src/main/resources/lib/",
             strip_glibc_version(platform[0]),
-            lib.out_filename,
-        })).step);
-    }
-}
-
-fn build_dotnet_client(
-    b: *std.Build,
-    step_clients_dotnet: *std.Build.Step,
-    options: struct {
-        vsr_module: *std.Build.Module,
-        vsr_options: *std.Build.Step.Options,
-        mode: std.builtin.OptimizeMode,
-    },
-) void {
-    const dotnet_bindings_generator = b.addExecutable(.{
-        .name = "dotnet_bindings",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/clients/dotnet/dotnet_bindings.zig"),
-            .target = b.graph.host,
-        }),
-    });
-    dotnet_bindings_generator.root_module.addImport("vsr", options.vsr_module);
-    dotnet_bindings_generator.root_module.addOptions("vsr_options", options.vsr_options);
-    const bindings = Generated.file(b, .{
-        .generator = dotnet_bindings_generator,
-        .path = "./src/clients/dotnet/ArcherDB/Bindings.cs",
-    });
-
-    inline for (platforms) |platform| {
-        const query = Query.parse(.{
-            .arch_os_abi = platform[0],
-            .cpu_features = platform[2],
-        }) catch unreachable;
-        const resolved_target = b.resolveTargetQuery(query);
-
-        const root_module = b.createModule(.{
-            .root_source_file = b.path("src/archerdb/libarch_client.zig"),
-            .target = resolved_target,
-            .optimize = options.mode,
-        });
-        root_module.addImport("vsr", options.vsr_module);
-        root_module.addOptions("vsr_options", options.vsr_options);
-        if (options.mode == .ReleaseSafe) strip_root_module(root_module);
-
-        const lib = b.addLibrary(.{
-            .name = "arch_client",
-            .linkage = .dynamic,
-            .root_module = root_module,
-        });
-        lib.linkLibC();
-        if (resolved_target.result.os.tag == .windows) {
-            lib.linkSystemLibrary("ws2_32");
-            lib.linkSystemLibrary("advapi32");
-        }
-        lib.step.dependOn(&bindings.step);
-
-        step_clients_dotnet.dependOn(&b.addInstallFile(lib.getEmittedBin(), b.pathJoin(&.{
-            "../src/clients/dotnet/ArcherDB/runtimes/",
-            platform[1],
-            "native",
             lib.out_filename,
         })).step);
     }

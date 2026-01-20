@@ -11,7 +11,6 @@
 //! - Business rule compliance
 //! - Data profiling and quality metrics
 //!
-//! See: openspec/changes/add-geospatial-core/specs/data-portability/spec.md
 //!
 //! Usage:
 //! ```zig

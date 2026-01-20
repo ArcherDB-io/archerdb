@@ -11,7 +11,6 @@
 //! - Location data as latitude/longitude columns
 //! - Timestamp formatting options (Unix epoch, ISO 8601)
 //!
-//! See: openspec/changes/add-geospatial-core/specs/data-portability/spec.md
 //!
 //! Usage - Export:
 //! ```zig

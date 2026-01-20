@@ -7,7 +7,6 @@
 //! - GeoJSON: RFC 7946 compliant geospatial format
 //! - CSV: Tabular format for spreadsheet analysis (see data_export_csv.zig)
 //!
-//! See: openspec/changes/add-geospatial-core/specs/data-portability/spec.md
 //!
 //! Usage:
 //! ```zig

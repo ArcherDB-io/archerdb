@@ -22,6 +22,8 @@ pub const vsr_options = .{
     .release = @import("vsr_options").release,
     .release_client_min = @import("vsr_options").release_client_min,
     .config_aof_recovery = @import("vsr_options").config_aof_recovery,
+    .config_base = @import("vsr_options").config_base,
+    .index_format = @import("vsr_options").index_format,
 };
 const vsr_vopr_options = @import("vsr_vopr_options");
 
@@ -74,7 +76,7 @@ pub const std_options: std.Options = .{
     // };
 };
 
-pub const archerdb_config = @import("config.zig").configs.test_min;
+pub const archerdb_config = @import("config.zig").configs.lite;
 
 const cluster_id = 0;
 

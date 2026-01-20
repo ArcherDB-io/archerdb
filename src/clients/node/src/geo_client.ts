@@ -945,6 +945,50 @@ export class GeoClient {
    * @param event - GeoEvent to insert
    * @returns Insert result (empty array on success)
    */
+  async insertEvents(
+    events: GeoEvent[],
+    operationOptions?: OperationOptions
+  ): Promise<InsertGeoEventsError[]> {
+    if (events.length === 0) {
+      return []
+    }
+
+    for (const event of events) {
+      prepareGeoEvent(event)
+    }
+
+    return this._submitMultiBatch<InsertGeoEventsError>(
+      GeoOperation.insert_events,
+      events,
+      operationOptions
+    )
+  }
+
+  /**
+   * Upserts multiple events.
+   *
+   * @param events - GeoEvents to upsert
+   * @returns Upsert results (empty array on success)
+   */
+  async upsertEvents(
+    events: GeoEvent[],
+    operationOptions?: OperationOptions
+  ): Promise<InsertGeoEventsError[]> {
+    if (events.length === 0) {
+      return []
+    }
+
+    for (const event of events) {
+      prepareGeoEvent(event)
+    }
+
+    return this._submitMultiBatch<InsertGeoEventsError>(
+      GeoOperation.upsert_events,
+      events,
+      operationOptions
+    )
+  }
+
   async insertEvent(event: GeoEvent): Promise<InsertGeoEventsError[]> {
     const batch = this.createBatch()
     batch.add(event)
@@ -1375,27 +1419,77 @@ export class GeoClient {
    * Submits a batch operation to the cluster with automatic retry.
    * @internal
    */
-  async _submitBatch<R>(operation: GeoOperation, batch: unknown[]): Promise<R[]> {
+  private filterBatchResults<R>(operation: GeoOperation, results: R[]): R[] {
+    if (
+      operation === GeoOperation.insert_events ||
+      operation === GeoOperation.upsert_events ||
+      operation === GeoOperation.delete_entities
+    ) {
+      return results.filter(result => {
+        const raw = result as { result?: number }
+        return raw.result !== 0
+      })
+    }
+    return results
+  }
+
+  /**
+   * Submits a batch operation to the cluster with automatic retry.
+   * @internal
+   */
+  private async _submitBatchOnce<R>(operation: GeoOperation, batch: unknown[]): Promise<R[]> {
     this.ensureConnected()
+
+    return new Promise<R[]>((resolve, reject) => {
+      // Convert GeoOperation to Operation enum (they share the same values)
+      const op = operation as unknown as Operation
+
+      binding.submit(this.context!, op, batch, (error, results) => {
+        if (error) {
+          reject(error)
+        } else if (results) {
+          resolve(this.filterBatchResults(operation, results as unknown as R[]))
+        } else {
+          // Empty results array means success with no errors
+          resolve([] as R[])
+        }
+      })
+    })
+  }
+
+  /**
+   * Submits a batch operation to the cluster with automatic retry.
+   * @internal
+   */
+  async _submitBatch<R>(
+    operation: GeoOperation,
+    batch: unknown[],
+    options?: OperationOptions
+  ): Promise<R[]> {
+    this.ensureConnected()
+
+    const retryConfig = mergeOptions(this.retryConfig, options)
 
     // Wrap the actual submission in retry logic
     return withRetry(async () => {
-      return new Promise<R[]>((resolve, reject) => {
-        // Convert GeoOperation to Operation enum (they share the same values)
-        const op = operation as unknown as Operation
+      return this._submitBatchOnce<R>(operation, batch)
+    }, retryConfig)
+  }
 
-        binding.submit(this.context!, op, batch, (error, results) => {
-          if (error) {
-            reject(error)
-          } else if (results) {
-            resolve(results as unknown as R[])
-          } else {
-            // Empty results array means success with no errors
-            resolve([] as R[])
-          }
-        })
-      })
-    }, this.retryConfig)
+  /**
+   * Submits a multi-batch operation, retrying failed batches only.
+   * @internal
+   */
+  private async _submitMultiBatch<R extends { index: number }>(
+    operation: GeoOperation,
+    batch: unknown[],
+    options?: OperationOptions,
+    batchSize: number = BATCH_SIZE_MAX
+  ): Promise<R[]> {
+    const submit = (op: GeoOperation, chunk: unknown[]) => (
+      this._submitBatch<R>(op, chunk, options)
+    )
+    return submitMultiBatch(operation, batch, submit, batchSize)
   }
 
   /**
@@ -1667,6 +1761,45 @@ export function splitBatch<T>(items: T[], chunkSize: number = 1000): T[][] {
     chunks.push(items.slice(i, i + chunkSize))
   }
   return chunks
+}
+
+function offsetBatchErrors<T extends { index: number }>(errors: T[], offset: number): T[] {
+  if (offset === 0) {
+    return errors
+  }
+  return errors.map(error => ({
+    ...error,
+    index: error.index + offset,
+  }))
+}
+
+/**
+ * Submits a multi-batch operation, retrying failed batches only.
+ *
+ * @internal
+ */
+export async function submitMultiBatch<T, R extends { index: number }>(
+  operation: GeoOperation,
+  items: T[],
+  submit: (operation: GeoOperation, batch: T[]) => Promise<R[]>,
+  batchSize: number = BATCH_SIZE_MAX
+): Promise<R[]> {
+  if (items.length === 0) {
+    return []
+  }
+  if (batchSize <= 0) {
+    throw new Error('batchSize must be greater than 0')
+  }
+
+  const allErrors: R[] = []
+  for (let offset = 0; offset < items.length; offset += batchSize) {
+    const chunk = items.slice(offset, offset + batchSize)
+    const chunkErrors = await submit(operation, chunk)
+    if (chunkErrors && chunkErrors.length > 0) {
+      allErrors.push(...offsetBatchErrors(chunkErrors, offset))
+    }
+  }
+  return allErrors
 }
 
 // ============================================================================

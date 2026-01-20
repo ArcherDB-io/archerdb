@@ -58,6 +58,7 @@ final class GeoClientImpl implements GeoClient {
     static final int TTL_RESPONSE_SIZE = 64;
 
     // Batch limits (from client-protocol/spec.md)
+    static final int MAX_BATCH_EVENTS = 10000;
     static final int MAX_BATCH_UUIDS = 10000;
 
     // Default timeouts (per client-sdk/spec.md)
@@ -70,6 +71,7 @@ final class GeoClientImpl implements GeoClient {
     private final UInt128 clusterId;
     private final String[] addresses;
     private final int requestTimeoutMs;
+    private final RetryPolicy retryPolicy;
     private GeoNativeBridge nativeBridge;
     private volatile boolean closed = false;
 
@@ -99,6 +101,7 @@ final class GeoClientImpl implements GeoClient {
         this.clusterId = clusterId;
         this.addresses = addresses.clone();
         this.requestTimeoutMs = requestTimeoutMs;
+        this.retryPolicy = RetryPolicy.DEFAULT;
 
         if (NATIVE_ENABLED) {
             // Initialize native bridge
@@ -134,25 +137,31 @@ final class GeoClientImpl implements GeoClient {
     @Override
     public List<InsertGeoEventsError> insertEvents(List<GeoEvent> events) {
         ensureOpen();
-        return submitInsertEvents(events, false);
+        return submitInsertEvents(events, false, null);
+    }
+
+    @Override
+    public List<InsertGeoEventsError> insertEvents(List<GeoEvent> events,
+            OperationOptions options) {
+        ensureOpen();
+        return submitInsertEvents(events, false, options);
     }
 
     @Override
     public List<InsertGeoEventsError> upsertEvents(List<GeoEvent> events) {
         ensureOpen();
-        return submitInsertEvents(events, true);
+        return submitInsertEvents(events, true, null);
     }
 
-    /**
-     * Submits insert or upsert events to the cluster.
-     */
-    private List<InsertGeoEventsError> submitInsertEvents(List<GeoEvent> events, boolean upsert) {
-        if (events.isEmpty()) {
-            return new ArrayList<>();
-        }
+    @Override
+    public List<InsertGeoEventsError> upsertEvents(List<GeoEvent> events,
+            OperationOptions options) {
+        ensureOpen();
+        return submitInsertEvents(events, true, options);
+    }
 
-        if (!NATIVE_ENABLED) {
-            // Skeleton mode - return success for all events
+    List<InsertGeoEventsError> submitInsertEventsOnce(List<GeoEvent> events, boolean upsert) {
+        if (events.isEmpty()) {
             return new ArrayList<>();
         }
 
@@ -184,6 +193,48 @@ final class GeoClientImpl implements GeoClient {
         }
 
         return errors;
+    }
+
+    static List<InsertGeoEventsError> submitInsertEventsBatched(List<GeoEvent> events,
+            int batchSize, RetryPolicy retryPolicy,
+            java.util.function.Function<List<GeoEvent>, List<InsertGeoEventsError>> submit) {
+        if (events.isEmpty()) {
+            return new ArrayList<>();
+        }
+        if (batchSize <= 0) {
+            throw new IllegalArgumentException("batchSize must be positive");
+        }
+
+        List<InsertGeoEventsError> errors = new ArrayList<>();
+        for (int offset = 0; offset < events.size(); offset += batchSize) {
+            int end = Math.min(offset + batchSize, events.size());
+            List<GeoEvent> chunk = events.subList(offset, end);
+            List<InsertGeoEventsError> chunkErrors = retryPolicy.execute(() -> submit.apply(chunk));
+            for (InsertGeoEventsError error : chunkErrors) {
+                errors.add(new InsertGeoEventsError(error.getIndex() + offset, error.getResult()));
+            }
+        }
+        return errors;
+    }
+
+    /**
+     * Submits insert or upsert events to the cluster.
+     */
+    private List<InsertGeoEventsError> submitInsertEvents(List<GeoEvent> events, boolean upsert,
+            OperationOptions options) {
+        if (events.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        if (!NATIVE_ENABLED) {
+            // Skeleton mode - return success for all events
+            return new ArrayList<>();
+        }
+
+        RetryPolicy policy = options != null ? options.toRetryPolicy(retryPolicy) : retryPolicy;
+
+        return submitInsertEventsBatched(events, MAX_BATCH_EVENTS, policy,
+                chunk -> submitInsertEventsOnce(chunk, upsert));
     }
 
     @Override

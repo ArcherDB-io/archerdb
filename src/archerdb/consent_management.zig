@@ -10,7 +10,6 @@
 //! - Complete audit trail of all consent changes
 //! - Consent validity checking and enforcement
 //!
-//! See: openspec/changes/add-geospatial-core/specs/compliance/spec.md
 //!
 //! Usage:
 //! ```zig

@@ -1,8 +1,0 @@
-[package]
-name = "archerdb-sample-polygon-query"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-futures = "0.3.31"
-archerdb.path = "../.."

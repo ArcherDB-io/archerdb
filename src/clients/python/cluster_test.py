@@ -129,7 +129,8 @@ def test_cluster_connectivity():
     cluster_id = c_uint128.from_param(0)  # Cluster ID 0 for development
 
     # Connect to single-node cluster
-    addresses = b"127.0.0.1:3001"
+    address = os.getenv("ARCHERDB_ADDRESS", "127.0.0.1:3001")
+    addresses = address.encode()
 
     print(f"  Cluster ID: 0")
     print(f"  Addresses:  {addresses.decode()}")

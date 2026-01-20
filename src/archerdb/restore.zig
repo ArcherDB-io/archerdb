@@ -5,7 +5,6 @@
 //! This module provides restore functionality for recovering data from
 //! object storage backups to a specific point in time.
 //!
-//! See: openspec/changes/add-geospatial-core/specs/backup-restore/spec.md
 //!
 //! Usage:
 //! ```zig

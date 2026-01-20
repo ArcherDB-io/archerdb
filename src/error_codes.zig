@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2024-2025 ArcherDB Contributors
-//! ArcherDB Error Codes (F1.2.4)
+//! ArcherDB Error Codes
 //!
 //! Defines system-wide error codes for ArcherDB operations.
-//! These codes follow the ranges defined in:
-//! openspec/changes/add-geospatial-core/specs/error-codes/spec.md
 //!
 //! Error Code Ranges:
 //!   - 1-10:     Protocol errors
@@ -566,7 +564,6 @@ test "polygon hole error codes 117-120" {
 
 test "spec synchronization - all error codes from spec exist" {
     // F1.2.5: Verify implementation matches spec in:
-    // openspec/changes/add-geospatial-core/specs/error-codes/spec.md
     // This test verifies key error codes from each category exist at expected values.
 
     // Validation errors (100-120)

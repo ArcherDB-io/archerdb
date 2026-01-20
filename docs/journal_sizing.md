@@ -106,4 +106,4 @@ For 10M ops/sec (future):
 
 ## References
 
-- ArcherDB Spec: `openspec/changes/add-geospatial-core/specs/state-machine/spec.md`
+- Source: `src/vsr.zig`

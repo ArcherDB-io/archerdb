@@ -3,8 +3,7 @@
 
 //! Encryption at Rest Module
 //!
-//! This module implements AES-256-GCM encryption for all persistent data
-//! as specified in openspec/changes/add-v2-distributed-features/specs/security/spec.md
+//! This module implements AES-256-GCM encryption for all persistent data.
 //!
 //! Key components:
 //! - EncryptedFileHeader: 96-byte header format for encrypted files
@@ -464,7 +463,6 @@ pub const FileKeyProvider = struct {
 /// Uses AWS Key Management Service for secure key storage.
 /// Supports IAM role authentication or access key credentials.
 ///
-/// Per spec: openspec/changes/add-v2-distributed-features/specs/security/spec.md
 pub const AwsKmsKeyProvider = struct {
     allocator: Allocator,
     /// KMS key ARN (e.g., arn:aws:kms:us-east-1:123456789:key/...)
@@ -795,7 +793,6 @@ pub const AwsKmsKeyProvider = struct {
 /// Uses Vault Transit secrets engine for key management.
 /// Supports AppRole and Kubernetes authentication.
 ///
-/// Per spec: openspec/changes/add-v2-distributed-features/specs/security/spec.md
 pub const VaultKeyProvider = struct {
     allocator: Allocator,
     /// Vault server address (e.g., https://vault.example.com:8200)
@@ -2914,4 +2911,3 @@ test "benchmark: Aegis-256 vs AES-GCM comparison" {
 // To run server integration tests:
 //   zig build test:integration -- --test-filter "encryption"
 //
-// See: openspec/changes/add-v2-distributed-features/specs/security/spec.md

@@ -261,9 +261,13 @@ pub fn TableMemoryType(comptime Table: type) type {
                         // still spend some extra CPU work to sort the entries in memory. Ideally,
                         // we annihilate tombstones immediately, before sorting, but that's tricky
                         // to do with scopes.
-                        assert(Table.tombstone(&pending) != Table.tombstone(&value));
-                        // Effect: consume both and produce nothing for this key.
-                        self.pending = null; // drop both
+                        if (Table.tombstone(&pending) != Table.tombstone(&value)) {
+                            // Effect: consume both and produce nothing for this key.
+                            self.pending = null; // drop both
+                        } else {
+                            // Effect: keep the newest value for duplicate inserts/deletes.
+                            self.pending = value; // last wins
+                        }
                     } else {
                         // The last value in a run of duplicates needs to be the one that ends up in
                         // target.

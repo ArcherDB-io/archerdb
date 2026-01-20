@@ -73,8 +73,6 @@ The following security features are planned or in development:
 - **Authentication**: Client certificate validation
 - **Encryption at rest**: Data file encryption (planned)
 
-See [`openspec/specs/security/spec.md`](openspec/specs/security/spec.md) for detailed security specifications.
-
 ### Deployment Security
 
 When deploying ArcherDB:

@@ -13,6 +13,7 @@ const stdx = vsr.stdx;
 const constants = vsr.constants;
 const config = constants.config;
 const archerdb_metrics = vsr.archerdb_metrics;
+const sharding = vsr.sharding;
 
 const benchmark_driver = @import("benchmark_driver.zig");
 const cli = @import("cli.zig");
@@ -447,6 +448,7 @@ pub fn main() !void {
         .repl => |*args| try command_repl(gpa, &io, time, args),
         .benchmark => |*args| try benchmark_driver.command_benchmark(gpa, &io, time, args),
         .inspect => |*args| try inspect.command_inspect(gpa, &io, &tracer, args),
+        .info => |*args| try command_info(gpa, &io, &tracer, args),
         .multiversion => |*args| {
             var stdout_buffer = std.io.bufferedWriter(std.io.getStdOut().writer());
             var stdout_writer = stdout_buffer.writer();
@@ -589,6 +591,45 @@ fn command_status(address: []const u8, port: u16) !void {
     try stdout_buffer.flush();
 }
 
+fn command_info(
+    gpa: mem.Allocator,
+    io: *IO,
+    tracer: *Tracer,
+    args: *const cli.Command.Info,
+) !void {
+    const superblock = try inspect.read_superblock_header(gpa, io, tracer, args.path);
+    const strategy = sharding.ShardingStrategy.fromStorage(superblock.sharding_strategy) orelse
+        sharding.ShardingStrategy.default();
+
+    var replica_count: u8 = 0;
+    for (superblock.vsr_state.members) |member| {
+        if (member == 0) break;
+        replica_count += 1;
+    }
+
+    var stdout_buffer = std.io.bufferedWriter(std.io.getStdOut().writer());
+    var stdout_writer = stdout_buffer.writer();
+    const stdout = stdout_writer.any();
+
+    try stdout.writeAll("Cluster Configuration:\n");
+    try stdout.print("  Cluster ID: {}\n", .{superblock.cluster});
+    try stdout.print("  Replicas: {d}\n", .{replica_count});
+    try stdout.print("  Shards: {d}\n", .{@as(u32, constants.shard_count)});
+    try stdout.print("  Sharding Strategy: {s}\n", .{strategy.toString()});
+    if (strategy == .virtual_ring) {
+        try stdout.print("  Virtual Nodes: {d}\n", .{
+            sharding.ConsistentHashRing.default_vnodes_per_shard,
+        });
+    } else {
+        try stdout.print(
+            "  Virtual Nodes: N/A (not applicable for {s})\n",
+            .{strategy.toString()},
+        );
+    }
+
+    try stdout_buffer.flush();
+}
+
 fn command_format(
     gpa: mem.Allocator,
     storage: *Storage,
@@ -599,6 +640,7 @@ fn command_format(
         .replica = args.replica,
         .replica_count = args.replica_count,
         .release = config.process.release,
+        .sharding_strategy = args.sharding_strategy,
         .view = null,
     });
 
@@ -797,6 +839,14 @@ fn command_start(
         error.NoAddress => vsr.fatal(.cli, "all --addresses must be provided", .{}),
         else => |e| return e,
     };
+
+    const strategy = sharding.ShardingStrategy.fromStorage(
+        replica.superblock.working.sharding_strategy,
+    ) orelse sharding.ShardingStrategy.default();
+    archerdb_metrics.Registry.sharding_strategy.set(@as(i64, @intFromEnum(strategy)));
+    archerdb_metrics.Registry.shard_strategy.set(if (strategy.isSpatial()) 1 else 0);
+    archerdb_metrics.Registry.shard_count.store(@as(u32, constants.shard_count), .monotonic);
+    log.info("sharding_strategy={s}", .{strategy.toString()});
 
     // Mark grid cache as MADV_DONTDUMP, after transitioning to static in replica.open, to reduce
     // core dump size.
@@ -1012,6 +1062,7 @@ fn command_reformat(
         .replica = args.replica,
         .replica_count = args.replica_count,
         .release = config.process.release,
+        .sharding_strategy = args.sharding_strategy,
         .view = null,
     });
     defer reformatter.deinit(gpa);

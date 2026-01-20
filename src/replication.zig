@@ -3,8 +3,7 @@
 
 //! Async Log Shipping Module for Multi-Region Replication
 //!
-//! This module implements asynchronous replication from primary to follower regions
-//! as specified in openspec/changes/add-v2-distributed-features/specs/replication/spec.md
+//! This module implements asynchronous replication from primary to follower regions.
 //!
 //! Key components:
 //! - ShipQueue: Memory + disk spillover queue for WAL entries pending shipping

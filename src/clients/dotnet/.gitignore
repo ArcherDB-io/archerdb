@@ -1,8 +1,0 @@
-.vs/
-bin/
-obj/
-cobertura/
-TestResults/
-ArcherDB/runtimes/
-ArcherDB.Tests/coverage.*.json
-*archerdb.benchmark

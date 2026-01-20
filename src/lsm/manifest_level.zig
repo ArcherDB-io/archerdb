@@ -174,21 +174,17 @@ pub fn ManifestLevelType(
 
         /// TTL-aware compaction: Estimated ratio of expired values in this level (0.0-1.0).
         /// Updated via EMA during compaction.
-        /// Per openspec/changes/add-ttl-aware-compaction: enables prioritizing high-expired levels.
         expired_ratio: f64 = 0.0,
 
         /// TTL-aware compaction: Op at which expired_ratio was last sampled.
-        /// Per openspec/changes/add-ttl-aware-compaction: tracks recency of estimate.
         expired_ratio_sampled_at_op: u64 = 0,
 
         /// Per-level TTL stats: Estimated total bytes in this level.
         /// Updated via EMA during compaction.
-        /// Per openspec/changes/add-per-level-ttl-stats: enables absolute capacity planning.
         estimated_total_bytes: u64 = 0,
 
         /// Per-level TTL stats: Estimated expired bytes in this level.
         /// Updated via EMA during compaction.
-        /// Per openspec/changes/add-per-level-ttl-stats: enables "expired_bytes > 100GB" alerts.
         estimated_expired_bytes: u64 = 0,
 
         pub fn init(level: *ManifestLevel, allocator: mem.Allocator) !void {

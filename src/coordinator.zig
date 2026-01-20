@@ -29,6 +29,7 @@ const Allocator = std.mem.Allocator;
 
 const stdx = @import("stdx");
 const sharding = @import("sharding.zig");
+const metrics = @import("archerdb/metrics.zig");
 const geo_event = @import("geo_event.zig");
 const GeoEvent = geo_event.GeoEvent;
 
@@ -102,6 +103,8 @@ pub const Topology = struct {
     version: u64,
     /// Number of active shards.
     num_shards: u32,
+    /// Sharding strategy in use.
+    strategy: sharding.ShardingStrategy,
     /// Shard information.
     shards: [MAX_SHARDS]ShardInfo,
     /// Last update timestamp.
@@ -111,6 +114,7 @@ pub const Topology = struct {
         return .{
             .version = 0,
             .num_shards = 0,
+            .strategy = sharding.ShardingStrategy.default(),
             .shards = [_]ShardInfo{.{
                 .id = 0,
                 .primary = Address.init("", 0),
@@ -126,9 +130,25 @@ pub const Topology = struct {
 
     /// Get the shard responsible for an entity.
     pub fn getShardForEntity(self: *const Topology, entity_id: u128) u32 {
-        // Use consistent hashing via MurmurHash3-style hash.
-        const hash = sharding.computeShardKey(entity_id);
-        return @intCast(hash % @as(u64, self.num_shards));
+        const start_ns: i128 = std.time.nanoTimestamp();
+        const shard_id = sharding.getShardForEntityWithStrategy(
+            entity_id,
+            self.num_shards,
+            self.strategy,
+            null,
+        );
+        const elapsed_ns: i128 = std.time.nanoTimestamp() - start_ns;
+        const elapsed_u64: u64 = @intCast(@max(elapsed_ns, 0));
+
+        switch (self.strategy) {
+            .modulo => metrics.Registry.shard_lookup_latency_modulo.observeNs(elapsed_u64),
+            .virtual_ring => metrics.Registry.shard_lookup_latency_virtual_ring
+                .observeNs(elapsed_u64),
+            .jump_hash => metrics.Registry.shard_lookup_latency_jump_hash.observeNs(elapsed_u64),
+            .spatial => metrics.Registry.shard_lookup_latency_spatial.observeNs(elapsed_u64),
+        }
+
+        return shard_id;
     }
 
     /// Get all active shards.
@@ -402,10 +422,27 @@ pub const Coordinator = struct {
         self.next_query_id += 1;
 
         const now: u64 = @intCast(std.time.nanoTimestamp());
+        const shards_queried = self.topology.num_shards;
+
+        switch (query_type) {
+            .radius => metrics.Registry.query_shards_queried_radius.observe(
+                @as(f64, @floatFromInt(shards_queried)),
+            ),
+            .polygon => metrics.Registry.query_shards_queried_polygon.observe(
+                @as(f64, @floatFromInt(shards_queried)),
+            ),
+            else => {},
+        }
+        if (Coordinator.requiresFanOut(query_type)) {
+            metrics.Registry.coordinator_fanout_shards_queried.set(
+                @as(i64, @intCast(shards_queried)),
+            );
+        }
+
         try self.pending_queries.put(query_id, .{
             .query_type = query_type,
             .start_time_ns = now,
-            .shards_pending = self.topology.num_shards,
+            .shards_pending = shards_queried,
             .shards_completed = 0,
             .results = std.ArrayList(GeoEvent).init(self.allocator),
         });

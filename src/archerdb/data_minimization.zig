@@ -9,7 +9,6 @@
 //! - Avoid collecting unnecessary metadata
 //! - Purpose limitation enforcement
 //!
-//! See: openspec/changes/add-geospatial-core/specs/compliance/spec.md
 //!
 //! Usage:
 //! ```zig

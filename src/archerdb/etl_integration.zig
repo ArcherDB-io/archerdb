@@ -9,7 +9,6 @@
 //! - Connector interfaces for Spark/Kafka/Elasticsearch
 //! - Query result streaming
 //!
-//! See: openspec/changes/add-geospatial-core/specs/data-portability/spec.md
 //!
 //! Usage:
 //! ```zig

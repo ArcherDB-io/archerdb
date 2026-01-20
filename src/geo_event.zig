@@ -571,7 +571,6 @@ test "GeoEvent: create_minimal_tombstone" {
 // ============================================================================
 // Sub-Meter Precision Tests
 // ============================================================================
-// Per openspec/changes/add-submeter-precision/specs/data-model/spec.md
 //
 // These tests validate that ArcherDB preserves sub-meter (and sub-millimeter)
 // coordinate precision, which is critical for RTK GPS, UWB indoor positioning,

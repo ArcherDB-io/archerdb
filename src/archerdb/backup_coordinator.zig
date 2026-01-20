@@ -5,7 +5,6 @@
 //! This module coordinates backup operations across multiple replicas to avoid
 //! redundant uploads and reduce storage costs.
 //!
-//! See: openspec/changes/add-geospatial-core/specs/backup-restore/spec.md
 //!
 //! ## Coordination Strategies
 //!

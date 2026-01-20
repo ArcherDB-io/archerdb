@@ -80,7 +80,6 @@ pub const compaction_block_count_beat_min: u32 =
 const half_bar_beat_count = @divExact(constants.lsm_compaction_ops, 2);
 
 /// EMA weight for TTL expired ratio updates.
-/// Per openspec/changes/add-ttl-aware-compaction: alpha=0.2 balances responsiveness with stability.
 /// new_ratio = alpha * sample_ratio + (1 - alpha) * old_ratio
 const ttl_expired_ratio_ema_alpha: f64 = 0.2;
 
@@ -364,9 +363,7 @@ pub fn CompactionType(
         } = .{},
 
         /// TTL statistics for per-level expired ratio tracking.
-        /// Per openspec/changes/add-ttl-aware-compaction/spec.md:
         /// Track total and expired values to calculate expired ratio for compaction prioritization.
-        /// Per openspec/changes/add-per-level-ttl-stats/spec.md:
         /// Also track bytes for absolute capacity planning metrics.
         ttl_stats: struct {
             /// Total values processed during this bar's compaction.
@@ -1991,7 +1988,6 @@ pub fn CompactionType(
             dropped: u32,
             produced: u32,
             /// TTL-expired values dropped (subset of dropped).
-            /// Per openspec/changes/add-ttl-aware-compaction: track for expired ratio calculation.
             ttl_expired: u32 = 0,
         };
         /// Copy values from values_source to values_target, optionally dropping tombstones
@@ -2054,7 +2050,6 @@ pub fn CompactionType(
             dropped: u32,
             produced: u32,
             /// TTL-expired values dropped (subset of dropped).
-            /// Per openspec/changes/add-ttl-aware-compaction: track for expired ratio calculation.
             ttl_expired: u32 = 0,
         };
 
@@ -2250,7 +2245,6 @@ pub fn compaction_op_min(op: u64) u64 {
 
 // ============================================================================
 // TTL-Aware Compaction Unit Tests
-// Per openspec/changes/add-ttl-aware-compaction: verify EMA calculation and stats tracking.
 // ============================================================================
 
 test "ttl_expired_ratio_ema: alpha constant is valid" {

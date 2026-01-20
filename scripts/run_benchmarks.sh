@@ -25,6 +25,8 @@ CLUSTER_ADDR=${CLUSTER_ADDR:-"127.0.0.1:3001"}
 CLUSTER_ID=${CLUSTER_ID:-0}
 OUTPUT_DIR="benchmark-results"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+SUMMARY_FILE=""
+BASELINE_FILE=""
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -53,7 +55,12 @@ while [[ $# -gt 0 ]]; do
             echo "  --batch-size B   Events per batch (default: 1000)"
             echo "  --cluster ADDR   Cluster address (default: 127.0.0.1:3001)"
             echo "  --cluster-id ID  Cluster ID (default: 0)"
+            echo "  --baseline PATH  Baseline CSV to compare against (optional)"
             exit 0
+            ;;
+        --baseline)
+            BASELINE_FILE="$2"
+            shift 2
             ;;
         *)
             echo "Unknown option: $1"
@@ -69,6 +76,7 @@ CLIENTS_DIR="$PROJECT_ROOT/src/clients"
 
 # Create output directory
 mkdir -p "$OUTPUT_DIR"
+SUMMARY_FILE="$OUTPUT_DIR/summary_${TIMESTAMP}.csv"
 
 echo "============================================================"
 echo "  ArcherDB Multi-Language Benchmark Suite"
@@ -243,7 +251,52 @@ print_summary() {
 
     echo ""
     echo "Results saved to: $OUTPUT_DIR/"
+    echo "Summary CSV: $SUMMARY_FILE"
     echo "============================================================"
+}
+
+write_summary_file() {
+    {
+        echo "language,throughput"
+        for lang in "${!RESULTS[@]}"; do
+            echo "${lang},${RESULTS[$lang]}"
+        done
+    } > "$SUMMARY_FILE"
+}
+
+compare_baseline() {
+    local baseline_path="$BASELINE_FILE"
+    if [[ -z "$baseline_path" && -f "$OUTPUT_DIR/baseline.csv" ]]; then
+        baseline_path="$OUTPUT_DIR/baseline.csv"
+    fi
+
+    if [[ -z "$baseline_path" || ! -f "$baseline_path" ]]; then
+        echo "No baseline file found. To compare, save a summary as $OUTPUT_DIR/baseline.csv."
+        return
+    fi
+
+    declare -A BASELINE
+    while IFS=, read -r lang value; do
+        if [[ "$lang" == "language" ]]; then
+            continue
+        fi
+        BASELINE["$lang"]="$value"
+    done < "$baseline_path"
+
+    echo ""
+    echo "Baseline comparison: $baseline_path"
+    for lang in "${!RESULTS[@]}"; do
+        local current="${RESULTS[$lang]}"
+        local base="${BASELINE[$lang]}"
+        if [[ "$current" =~ ^[0-9]+$ && "$base" =~ ^[0-9]+$ && "$base" -gt 0 ]]; then
+            local delta
+            delta=$(awk -v cur="$current" -v base="$base" \
+                'BEGIN { printf "%.1f", (cur - base) / base * 100 }')
+            echo "  $lang: $current (baseline $base, delta ${delta}%)"
+        else
+            echo "  $lang: $current (baseline ${base:-N/A})"
+        fi
+    done
 }
 
 # Main execution
@@ -271,7 +324,9 @@ main() {
     # run_java_benchmark    # Requires native bindings
 
     # Print summary
+    write_summary_file
     print_summary
+    compare_baseline
 }
 
 main "$@"

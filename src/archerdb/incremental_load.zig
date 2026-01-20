@@ -11,7 +11,6 @@
 //!
 //! Target: >50K events/sec for near-real-time synchronization.
 //!
-//! See: openspec/changes/add-geospatial-core/specs/data-portability/spec.md
 //!
 //! Usage:
 //! ```zig

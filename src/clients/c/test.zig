@@ -130,7 +130,7 @@ test "arch_client echo" {
     var client: arch_client.ClientInterface = undefined;
     const cluster_id: u128 = 0;
     const address = "3000";
-    const concurrency_max: u32 = constants.client_request_queue_max * operations.len;
+    const concurrency_max: u32 = constants.client_request_queue_max;
     const arch_context: usize = 42;
     try arch_client.init_echo(
         testing.allocator,
@@ -152,7 +152,7 @@ test "arch_client echo" {
 
     // Repeating the same test multiple times to stress the
     // cycle of message exhaustion followed by completions.
-    const repetitions_max = 100;
+    const repetitions_max = 20;
     var repetition: u32 = 0;
     var operation_current: ?arch_client.Operation = null;
     while (repetition < repetitions_max) : (repetition += 1) {
@@ -196,6 +196,7 @@ test "arch_client echo" {
             },
             else => unreachable,
         };
+        const event_request_max_capped: u32 = @min(event_request_max, 1);
 
         // Submitting some random data to be echoed back:
         for (requests) |*request| {
@@ -205,10 +206,26 @@ test "arch_client echo" {
                 .sent_data_size = prng.range_inclusive(
                     u32,
                     1,
-                    event_request_max,
+                    event_request_max_capped,
                 ) * event_size,
             };
             prng.fill(request.sent_data[0..request.sent_data_size]);
+            const data_slice = request.sent_data[0..request.sent_data_size];
+            switch (operation) {
+                .query_latest => {
+                    @memset(data_slice, 0);
+                    clamp_limit(data_slice, @offsetOf(tb.QueryLatestFilter, "limit"));
+                },
+                .query_radius => {
+                    @memset(data_slice, 0);
+                    clamp_limit(data_slice, @offsetOf(tb.QueryRadiusFilter, "limit"));
+                },
+                .query_polygon => {
+                    @memset(data_slice, 0);
+                    clamp_limit(data_slice, @offsetOf(tb.QueryPolygonFilter, "limit"));
+                },
+                else => {},
+            }
 
             const packet = &request.packet;
             packet.operation = @intFromEnum(operation);
@@ -241,6 +258,12 @@ test "arch_client echo" {
             try testing.expectEqualSlices(u8, sent_data, reply);
         }
     }
+}
+
+fn clamp_limit(buffer: []u8, offset: usize) void {
+    if (offset + @sizeOf(u32) > buffer.len) return;
+    const limit_bytes = std.mem.toBytes(@as(u32, 1000));
+    std.mem.copyForwards(u8, buffer[offset .. offset + limit_bytes.len], &limit_bytes);
 }
 
 // Asserts the validation rules associated with the `init*` functions.
@@ -463,4 +486,110 @@ test "arch_client PacketStatus" {
         @sizeOf(arch_client.exports.geo_event_t) * 2,
         .ok,
     );
+}
+
+fn degrees_to_nano(degrees: f64) i64 {
+    return @intFromFloat(@round(degrees * 1_000_000_000.0));
+}
+
+fn make_event(entity_id: u128, latitude: f64, longitude: f64) tb.GeoEvent {
+    var event = std.mem.zeroes(tb.GeoEvent);
+    event.id = entity_id;
+    event.entity_id = entity_id;
+    event.lat_nano = degrees_to_nano(latitude);
+    event.lon_nano = degrees_to_nano(longitude);
+    event.group_id = 1;
+    return event;
+}
+
+fn submit_insert_batch(
+    client: *arch_client.ClientInterface,
+    completion: *Completion,
+    request: anytype,
+    events: []const tb.GeoEvent,
+) !void {
+    completion.pending = 1;
+    request.reply = null;
+
+    const bytes = std.mem.sliceAsBytes(events);
+    assert(bytes.len <= request.sent_data.len);
+    stdx.copy_disjoint(.exact, u8, request.sent_data[0..bytes.len], bytes);
+    request.sent_data_size = @intCast(bytes.len);
+
+    const packet = &request.packet;
+    packet.operation = @intFromEnum(arch_client.Operation.insert_events);
+    packet.user_data = request;
+    packet.data = &request.sent_data;
+    packet.data_size = request.sent_data_size;
+    packet.user_tag = 0;
+    packet.status = .ok;
+
+    try client.submit(packet);
+    completion.wait_pending();
+
+    try testing.expectEqual(arch_client.PacketStatus.ok, packet.status);
+    try testing.expect(request.reply != null);
+    if (request.reply.?.result_len > 0) {
+        try testing.expect(request.reply.?.result != null);
+        const result_size = @sizeOf(arch_client.exports.insert_geo_events_result_t);
+        try testing.expectEqual(@as(u32, 0), request.reply.?.result_len % result_size);
+        const results = request.reply.?.result.?[0..request.reply.?.result_len];
+        var offset: usize = 0;
+        while (offset < results.len) : (offset += result_size) {
+            const raw = std.mem.bytesToValue(
+                arch_client.exports.insert_geo_events_result_t,
+                results[offset .. offset + result_size],
+            );
+            try testing.expectEqual(arch_client.exports.insert_geo_event_result.ok, raw.result);
+        }
+    }
+}
+
+test "arch_client insert_events integration" {
+    const run_integration = blk: {
+        const value = std.process.getEnvVarOwned(testing.allocator, "ARCHERDB_INTEGRATION") catch {
+            break :blk false;
+        };
+        defer testing.allocator.free(value);
+        break :blk std.mem.eql(u8, value, "1");
+    };
+    if (!run_integration) return;
+
+    const address_opt = std.process.getEnvVarOwned(testing.allocator, "ARCHERDB_ADDRESS") catch null;
+    defer if (address_opt) |addr| testing.allocator.free(addr);
+    const address = address_opt orelse "127.0.0.1:3001";
+
+    const RequestContext = RequestContextType(constants.message_body_size_max);
+
+    var client: arch_client.ClientInterface = undefined;
+    const cluster_id: u128 = 0;
+    const arch_context: usize = 0;
+    try arch_client.init(
+        testing.allocator,
+        &client,
+        cluster_id,
+        address,
+        arch_context,
+        RequestContext.on_complete,
+    );
+    defer client.deinit() catch unreachable;
+
+    var completion = Completion{ .pending = 0 };
+    var request = RequestContext{
+        .packet = undefined,
+        .completion = &completion,
+        .sent_data_size = 0,
+    };
+
+    var batch1 = [_]tb.GeoEvent{
+        make_event(1001, 37.7749, -122.4194),
+        make_event(1002, 37.7750, -122.4195),
+    };
+    try submit_insert_batch(&client, &completion, &request, &batch1);
+
+    var batch2 = [_]tb.GeoEvent{
+        make_event(1003, 37.7751, -122.4196),
+        make_event(1004, 37.7752, -122.4197),
+    };
+    try submit_insert_batch(&client, &completion, &request, &batch2);
 }

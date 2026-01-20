@@ -91,6 +91,7 @@ from .client import (
     _is_retryable_error,
     _calculate_retry_delay,
     _with_retry_sync,
+    _submit_multi_batch_sync,
 )
 
 
@@ -2145,6 +2146,64 @@ class TestRetryMetricsIntegration(unittest.TestCase):
         self.assertEqual(metrics.retries_total.get(), 0.0)
         self.assertEqual(metrics.retry_exhausted_total.get(), 0.0)
 
+
+class TestMultiBatchRetry(unittest.TestCase):
+    """Test multi-batch retry semantics."""
+
+    def setUp(self):
+        from .observability import reset_metrics
+        reset_metrics()
+
+    def test_multi_batch_retries_failed_batch_only(self):
+        attempts = {}
+        retry_config = RetryConfig(
+            max_retries=1,
+            base_backoff_ms=0,
+            total_timeout_ms=1000,
+            jitter=False,
+        )
+
+        def submit_fn(operation, batch):
+            def attempt():
+                key = batch[0]
+                attempts[key] = attempts.get(key, 0) + 1
+                if key == 3 and attempts[key] == 1:
+                    raise OperationTimeout("timeout")
+                return []
+
+            return _with_retry_sync(attempt, retry_config)
+
+        errors = _submit_multi_batch_sync(
+            GeoOperation.INSERT_EVENTS,
+            [1, 2, 3, 4],
+            submit_fn,
+            batch_size=2,
+        )
+
+        self.assertEqual(errors, [])
+        self.assertEqual(attempts.get(1), 1)
+        self.assertEqual(attempts.get(3), 2)
+
+    def test_multi_batch_offsets_indices(self):
+        def submit_fn(operation, batch):
+            return [
+                InsertGeoEventsError(
+                    index=0,
+                    result=InsertGeoEventResult.INVALID_COORDINATES,
+                )
+            ]
+
+        errors = _submit_multi_batch_sync(
+            GeoOperation.INSERT_EVENTS,
+            [1, 2, 3],
+            submit_fn,
+            batch_size=2,
+        )
+
+        self.assertEqual(len(errors), 2)
+        self.assertEqual(errors[0].index, 0)
+        self.assertEqual(errors[1].index, 2)
+
     def test_retry_disabled_no_metrics(self):
         """No retry metrics when retry is disabled."""
         from .client import _with_retry_sync, RetryConfig
@@ -2374,7 +2433,6 @@ class TestSubMeterPrecision(unittest.TestCase):
     """
     Sub-Meter Precision Tests
 
-    Per openspec/changes/add-submeter-precision/specs/data-model/spec.md
 
     ArcherDB uses nanodegrees (10^-9 degrees) stored as int64 for coordinates.
     This provides approximately 0.1mm precision at the equator, which exceeds

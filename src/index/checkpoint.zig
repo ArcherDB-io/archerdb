@@ -616,7 +616,11 @@ pub const RecoverySLA = struct {
 
 pub fn classify_recovery_path(op_checkpoint: u64, op_max: u64) RecoveryPath {
     if (op_checkpoint == 0 and op_max == 0) return .clean_start;
-    return .wal_replay;
+    const gap = op_max -| op_checkpoint;
+    const config = RecoveryConfig{};
+    if (gap <= config.journal_slot_count) return .wal_replay;
+    if (gap <= config.compaction_retention_ops) return .lsm_scan;
+    return .full_rebuild;
 }
 
 pub fn recovery_sla_threshold_ns(path: RecoveryPath, data_size_bytes: u64) ?u64 {
@@ -2247,6 +2251,7 @@ test "RecoveryPath: to_label conversion" {
 }
 
 test "RecoveryPath: classify recovery path" {
+    const config = RecoveryConfig{};
     try std.testing.expectEqual(
         RecoveryPath.clean_start,
         classify_recovery_path(0, 0),
@@ -2258,6 +2263,14 @@ test "RecoveryPath: classify recovery path" {
     try std.testing.expectEqual(
         RecoveryPath.wal_replay,
         classify_recovery_path(0, 42),
+    );
+    try std.testing.expectEqual(
+        RecoveryPath.lsm_scan,
+        classify_recovery_path(0, config.journal_slot_count + 1),
+    );
+    try std.testing.expectEqual(
+        RecoveryPath.full_rebuild,
+        classify_recovery_path(0, config.compaction_retention_ops + 1),
     );
 }
 

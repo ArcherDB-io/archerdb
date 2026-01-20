@@ -5,7 +5,6 @@
 //! This module provides configuration types for the backup system that uploads
 //! closed LSM blocks to object storage (S3, GCS, Azure Blob) for disaster recovery.
 //!
-//! See: openspec/changes/add-geospatial-core/specs/backup-restore/spec.md
 //!
 //! Usage:
 //! ```zig

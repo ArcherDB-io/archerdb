@@ -69,6 +69,17 @@ fn fetchMetrics(allocator: std.mem.Allocator, port: u16) ![]u8 {
     return error.MetricsUnavailable;
 }
 
+fn expectContains(haystack: []const u8, needle: []const u8) !void {
+    if (std.mem.indexOf(u8, haystack, needle) != null) return;
+
+    const preview_len = @min(haystack.len, 2048);
+    std.debug.print(
+        "missing metrics substring '{s}' (response_len={d}) preview:\n{s}\n",
+        .{ needle, haystack.len, haystack[0..preview_len] },
+    );
+    return error.TestUnexpectedResult;
+}
+
 test "repl integration" {
     const Context = struct {
         const Context = @This();
@@ -244,11 +255,52 @@ test "metrics endpoint includes index health metrics" {
     const response = try fetchMetrics(std.testing.allocator, metrics_port);
     defer std.testing.allocator.free(response);
 
-    try std.testing.expect(std.mem.indexOf(u8, response, "archerdb_index_entries_total") != null);
-    try std.testing.expect(std.mem.indexOf(u8, response, "archerdb_index_memory_bytes") != null);
-    try std.testing.expect(
-        std.mem.indexOf(u8, response, "archerdb_index_lookup_latency_seconds") != null,
+    try expectContains(response, "archerdb_index_entries_total");
+    try expectContains(response, "archerdb_index_memory_bytes");
+    try expectContains(response, "archerdb_index_lookup_latency_seconds");
+}
+
+test "info command includes sharding strategy" {
+    const shell = try Shell.create(std.testing.allocator);
+    defer shell.destroy();
+
+    const tmp_dir = try shell.create_tmp_dir();
+    defer shell.cwd.deleteTree(tmp_dir) catch {};
+
+    const data_file = try shell.fmt("{s}/info-test.archerdb", .{tmp_dir});
+
+    try shell.exec(
+        "{archerdb} format --cluster=1 --replica=0 --replica-count=1 " ++
+            "--sharding-strategy=jump_hash {data_file}",
+        .{ .archerdb = archerdb, .data_file = data_file },
     );
+
+    const output = try shell.exec_stdout("{archerdb} info {data_file}", .{
+        .archerdb = archerdb,
+        .data_file = data_file,
+    });
+
+    try std.testing.expect(std.mem.indexOf(u8, output, "Sharding Strategy: jump_hash") != null);
+}
+
+test "metrics endpoint includes sharding strategy and query shard histograms" {
+    const metrics_port = try pickFreePort();
+
+    var tmp_archerdb = try TmpArcherDB.init(std.testing.allocator, .{
+        .development = true,
+        .prebuilt = archerdb,
+        .metrics_port = metrics_port,
+        .metrics_bind = "127.0.0.1",
+    });
+    defer tmp_archerdb.deinit(std.testing.allocator);
+
+    const response = try fetchMetrics(std.testing.allocator, metrics_port);
+    defer std.testing.allocator.free(response);
+
+    try expectContains(response, "archerdb_sharding_strategy");
+    try expectContains(response, "archerdb_shard_strategy");
+    try expectContains(response, "archerdb_shard_lookup_duration_seconds");
+    try expectContains(response, "archerdb_query_shards_queried");
 }
 
 test "help/version smoke" {

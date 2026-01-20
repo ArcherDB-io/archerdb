@@ -945,7 +945,6 @@ pub const encryption_kek_cache_ttl_seconds: u32 = 3_600;
 // ============================================================================
 // Sub-Meter Precision Constants
 // ============================================================================
-// See: openspec/changes/add-submeter-precision/specs/data-model/spec.md
 //
 // ArcherDB uses nanodegrees (10^-9 degrees) stored as i64 for coordinates.
 // This provides approximately 0.1mm precision at the equator, which exceeds

@@ -325,6 +325,4 @@ if errors.As(err, &exhausted) {
 
 ## Related Documentation
 
-- [Client SDK Specification](../openspec/changes/add-geospatial-core/specs/client-sdk/spec.md)
-- [Client Retry Specification](../openspec/changes/add-geospatial-core/specs/client-retry/spec.md)
-- [Error Codes Reference](../openspec/changes/add-geospatial-core/specs/error-codes/spec.md)
+- Source: `src/error_codes.zig`

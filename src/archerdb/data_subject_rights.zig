@@ -8,7 +8,6 @@
 //! - Right to Erasure (Article 17) - delete all location data ("right to be forgotten")
 //! - Right to Data Portability (Article 20) - export data in machine-readable format
 //!
-//! See: openspec/changes/add-geospatial-core/specs/compliance/spec.md
 //!
 //! Usage:
 //! ```zig

@@ -41,7 +41,6 @@ test "tidy" {
     for (paths) |file_path| {
         // Skip binary library files (too large for buffer)
         if (std.mem.startsWith(u8, file_path, "src/clients/c/lib/")) continue;
-        if (std.mem.startsWith(u8, file_path, "src/clients/rust/vendor/")) continue;
         const bytes_read = std.fs.cwd().readFile(file_path, file_buffer) catch |err| switch (err) {
             error.FileNotFound => continue,
             else => return err,
@@ -1018,7 +1017,6 @@ test "tidy unix permissions" {
 
         // Skip client library directories (binary files may have executable bit)
         if (std.mem.startsWith(u8, path, "src/clients/c/lib/")) continue;
-        if (std.mem.startsWith(u8, path, "src/clients/rust/vendor/")) continue;
 
         if (std.mem.eql(u8, mode, "100644")) {
             // Expected for most files.
@@ -1039,12 +1037,11 @@ test "tidy unix permissions" {
 // Sanity check for "unexpected" files in the repository.
 test "tidy extensions" {
     const allowed_extensions = std.StaticStringMap(void).initComptime(.{
-        .{".c"},    .{".cs"},      .{".csproj"}, .{".css"},   .{".go"},
-        .{".h"},    .{".hcl"},     .{".html"},   .{".java"},  .{".js"},
-        .{".json"}, .{".md"},      .{".mod"},    .{".props"}, .{".py"},
-        .{".rs"},   .{".service"}, .{".sh"},     .{".sln"},   .{".sum"},
-        .{".svg"},  .{".toml"},    .{".ts"},     .{".tsv"},   .{".txt"},
-        .{".xml"},  .{".yml"},     .{".zig"},    .{".zon"},
+        .{".c"},      .{".css"},     .{".go"},   .{".h"},    .{".hcl"},
+        .{".html"},   .{".java"},    .{".js"},   .{".json"}, .{".md"},
+        .{".mod"},    .{".py"},      .{".service"}, .{".sh"},   .{".sum"},
+        .{".svg"},    .{".toml"},    .{".ts"},   .{".tsv"},  .{".txt"},
+        .{".xml"},    .{".yml"},     .{".zig"},  .{".zon"},
     });
 
     const exceptions = std.StaticStringMap(void).initComptime(.{
@@ -1101,7 +1098,6 @@ test "tidy extensions" {
     for (paths) |path| {
         if (path.len == 0) continue;
         // Skip vendored/generated client library directories
-        if (std.mem.startsWith(u8, path, "src/clients/rust/vendor/")) continue;
         if (std.mem.startsWith(u8, path, "src/clients/c/lib/")) continue;
         if (std.mem.startsWith(u8, path, "src/clients/python/src/tigerbeetle/")) continue;
         // Skip deployment configuration files

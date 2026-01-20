@@ -58,6 +58,19 @@ pub fn command_inspect(
     }
 }
 
+pub fn read_superblock_header(
+    allocator: std.mem.Allocator,
+    io: *IO,
+    tracer: *Tracer,
+    path: []const u8,
+) !SuperBlockHeader {
+    const inspector = try Inspector.create(allocator, io, tracer, path);
+    defer inspector.destroy();
+
+    const superblock = try inspector.read_superblock(null);
+    return superblock.*;
+}
+
 fn run_inspect(
     allocator: std.mem.Allocator,
     io: *IO,
@@ -1090,7 +1103,10 @@ const Inspector = struct {
         try inspector.work();
     }
 
-    fn read_superblock(inspector: *const Inspector, superblock_copy: ?u8) !*const SuperBlockHeader {
+    pub fn read_superblock(
+        inspector: *const Inspector,
+        superblock_copy: ?u8,
+    ) !*const SuperBlockHeader {
         if (superblock_copy) |copy| {
             return inspector.superblock_headers[copy];
         } else {

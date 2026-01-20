@@ -10,7 +10,6 @@
 //! - Data enrichment and augmentation
 //! - Filtering and data cleansing
 //!
-//! See: openspec/changes/add-geospatial-core/specs/data-portability/spec.md
 //!
 //! Usage:
 //! ```zig

@@ -67,6 +67,49 @@ systemctl status archerdb
 ./archerdb client ping --addresses=node1:3000,node2:3000,node3:3000
 ```
 
+### Dynamic Membership (Add/Remove Nodes)
+
+Use the cluster management commands to safely change membership without downtime:
+
+```bash
+# Show membership status
+./archerdb cluster status --addresses=node1:3000,node2:3000,node3:3000 --cluster=12345
+
+# Add a new node as a learner and wait for catch-up (default)
+./archerdb cluster add-node \
+  --addresses=node1:3000,node2:3000,node3:3000 \
+  --cluster=12345 \
+  --node=node4:3000
+
+# Remove a node (drains in-flight ops); use --force only if unhealthy
+./archerdb cluster remove-node \
+  --addresses=node1:3000,node2:3000,node3:3000 \
+  --cluster=12345 \
+  --node=2 --force
+```
+
+Notes:
+- `add-node` uses joint consensus and promotes the learner automatically.
+- Use `--no-wait` to return immediately; `--timeout` controls catch-up or drain timeouts.
+
+### Coordinator Mode (Multi-Shard Routing)
+
+Run the coordinator when clients need a single endpoint for multi-shard queries:
+
+```bash
+# Start with explicit shard list
+./archerdb coordinator start \
+  --bind=0.0.0.0:5000 \
+  --shards=10.0.0.1:3000,10.0.0.2:3000
+
+# Or start with topology discovery
+./archerdb coordinator start --seed-nodes=10.0.0.1:3000 --bind=0.0.0.0:5000
+
+# Check status / stop
+./archerdb coordinator status --address=127.0.0.1:5000 --format=json
+./archerdb coordinator stop --address=127.0.0.1:5000 --timeout=60
+```
+
 ## Monitoring
 
 ### Key Metrics
@@ -196,6 +239,23 @@ ArcherDB benefits from:
 - **Faster SSD**: NVMe recommended for production
 - **More CPU cores**: Better concurrent request handling
 
+### Sharding Strategy Selection
+
+Choose a sharding strategy at cluster initialization:
+
+```bash
+./archerdb format --cluster=12345 --replica=0 --replica-count=3 \
+  --sharding-strategy=jump_hash /data/archerdb.db
+```
+
+Trade-offs:
+- **jump_hash (default)**: Uniform distribution, minimal movement on reshard, no extra memory.
+- **virtual_ring**: Supports weighted shards and uneven capacity, but adds lookup overhead and memory.
+- **modulo**: Legacy, power-of-2 only, ~50% movement on reshard.
+- **spatial**: Optimizes radius/polygon fan-out but adds two-hop entity lookups; best when spatial queries dominate.
+
+Use `./archerdb info /data/archerdb.db` to verify the configured strategy.
+
 ### Horizontal Scaling (Read Replicas)
 
 For read-heavy workloads, add read replicas:
@@ -249,6 +309,27 @@ ssh node1 "systemctl start archerdb"
 # Compact data file (reduces disk usage)
 ./archerdb compact /data/archerdb.db
 ```
+
+### Performance Validation
+
+Run periodic performance validation and keep a baseline for regressions:
+
+```bash
+# Start a local single-node cluster
+./scripts/dev-cluster.sh start --nodes=1 --clean
+
+# Built-in benchmark driver (smoke-scale settings)
+./archerdb benchmark --cluster=0 --addresses=127.0.0.1:3001 --events=10000 --batch-size=500
+
+# Multi-language benchmark suite (writes summary CSV)
+./scripts/run_benchmarks.sh --events 10000 --batch-size 500 --cluster 127.0.0.1:3001
+
+# Save a baseline for future comparison
+cp benchmark-results/summary_*.csv benchmark-results/baseline.csv
+```
+
+The benchmark summary is stored under `benchmark-results/` and can be compared to a baseline
+by re-running the script with `--baseline benchmark-results/baseline.csv`.
 
 ### Certificate Rotation (mTLS)
 

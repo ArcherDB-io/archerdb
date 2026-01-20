@@ -283,4 +283,3 @@ For ArcherDB's GeoEvent state machine, we'll need:
 
 - TigerBeetle VSR Documentation: https://github.com/tigerbeetle/tigerbeetle
 - Viewstamped Replication Revisited: https://pmg.csail.mit.edu/papers/vr-revisited.pdf
-- ArcherDB Spec: `openspec/changes/add-geospatial-core/`

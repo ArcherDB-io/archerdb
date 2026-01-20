@@ -178,7 +178,6 @@ ArcherDB uses VOPR (Viewstamped Operation Replayer) for deterministic simulation
 
 - `README.md` - Project overview
 - `docs/` - User documentation
-- `openspec/` - Specifications and design documents
 - Code comments - Implementation details
 
 ### Documentation Standards

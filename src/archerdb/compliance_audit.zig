@@ -11,7 +11,6 @@
 //! - 7-year retention per GDPR Article 5.1.e
 //! - Regulatory reporting formats
 //!
-//! See: openspec/changes/add-geospatial-core/specs/compliance/spec.md
 //!
 //! Usage:
 //! ```zig

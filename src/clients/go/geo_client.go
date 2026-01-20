@@ -607,6 +607,81 @@ func (c *geoClient) CreateDeleteBatch() *DeleteEntityBatch {
 	}
 }
 
+func (c *geoClient) submitInsertEventsOnce(
+	events []types.GeoEvent,
+	operation types.GeoOperation,
+) ([]types.InsertGeoEventsError, error) {
+	reply, err := c.doGeoRequest(
+		operation,
+		len(events),
+		unsafe.Sizeof(types.GeoEvent{}),
+		unsafe.Pointer(&events[0]),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	if reply == nil {
+		return make([]types.InsertGeoEventsError, 0), nil
+	}
+
+	resultsCount := len(reply) / int(unsafe.Sizeof(types.InsertGeoEventsError{}))
+	results := unsafe.Slice((*types.InsertGeoEventsError)(unsafe.Pointer(&reply[0])), resultsCount)
+	errors := make([]types.InsertGeoEventsError, 0, len(results))
+	for _, result := range results {
+		if result.Result != types.InsertResultOK {
+			errors = append(errors, result)
+		}
+	}
+	return errors, nil
+}
+
+func submitInsertBatches(
+	events []types.GeoEvent,
+	batchSize int,
+	submit func([]types.GeoEvent) ([]types.InsertGeoEventsError, error),
+) ([]types.InsertGeoEventsError, error) {
+	if len(events) == 0 {
+		return nil, nil
+	}
+	if batchSize <= 0 {
+		return nil, fmt.Errorf("batchSize must be positive")
+	}
+
+	allErrors := make([]types.InsertGeoEventsError, 0)
+	for offset := 0; offset < len(events); offset += batchSize {
+		end := offset + batchSize
+		if end > len(events) {
+			end = len(events)
+		}
+		chunk := events[offset:end]
+
+		chunkErrors, err := submit(chunk)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, errEntry := range chunkErrors {
+			errEntry.Index += uint32(offset)
+			allErrors = append(allErrors, errEntry)
+		}
+	}
+
+	return allErrors, nil
+}
+
+func (c *geoClient) submitInsertEventsBatches(
+	events []types.GeoEvent,
+	operation types.GeoOperation,
+	batchSize int,
+) ([]types.InsertGeoEventsError, error) {
+	return submitInsertBatches(events, batchSize, func(chunk []types.GeoEvent) ([]types.InsertGeoEventsError, error) {
+		return c.withRetry(func() ([]types.InsertGeoEventsError, error) {
+			return c.submitInsertEventsOnce(chunk, operation)
+		})
+	})
+}
+
 // InsertEvents inserts geo events.
 func (c *geoClient) InsertEvents(events []types.GeoEvent) ([]types.InsertGeoEventsError, error) {
 	if c.closed {
@@ -622,26 +697,7 @@ func (c *geoClient) InsertEvents(events []types.GeoEvent) ([]types.InsertGeoEven
 		types.PrepareGeoEvent(&events[i])
 	}
 
-	return c.withRetry(func() ([]types.InsertGeoEventsError, error) {
-		reply, err := c.doGeoRequest(
-			types.GeoOperationInsertEvents,
-			len(events),
-			unsafe.Sizeof(types.GeoEvent{}),
-			unsafe.Pointer(&events[0]),
-		)
-		if err != nil {
-			return nil, err
-		}
-
-		if reply == nil {
-			return make([]types.InsertGeoEventsError, 0), nil
-		}
-
-		// Parse results
-		resultsCount := len(reply) / int(unsafe.Sizeof(types.InsertGeoEventsError{}))
-		results := unsafe.Slice((*types.InsertGeoEventsError)(unsafe.Pointer(&reply[0])), resultsCount)
-		return results, nil
-	})
+	return c.submitInsertEventsBatches(events, types.GeoOperationInsertEvents, types.BatchSizeMax)
 }
 
 // UpsertEvents upserts geo events.
@@ -659,25 +715,7 @@ func (c *geoClient) UpsertEvents(events []types.GeoEvent) ([]types.InsertGeoEven
 		types.PrepareGeoEvent(&events[i])
 	}
 
-	return c.withRetry(func() ([]types.InsertGeoEventsError, error) {
-		reply, err := c.doGeoRequest(
-			types.GeoOperationUpsertEvents,
-			len(events),
-			unsafe.Sizeof(types.GeoEvent{}),
-			unsafe.Pointer(&events[0]),
-		)
-		if err != nil {
-			return nil, err
-		}
-
-		if reply == nil {
-			return make([]types.InsertGeoEventsError, 0), nil
-		}
-
-		resultsCount := len(reply) / int(unsafe.Sizeof(types.InsertGeoEventsError{}))
-		results := unsafe.Slice((*types.InsertGeoEventsError)(unsafe.Pointer(&reply[0])), resultsCount)
-		return results, nil
-	})
+	return c.submitInsertEventsBatches(events, types.GeoOperationUpsertEvents, types.BatchSizeMax)
 }
 
 // DeleteEntities deletes entities by their IDs.

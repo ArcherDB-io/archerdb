@@ -742,7 +742,7 @@ pub fn ReplicaType(
                     .replica_count = replica_count,
                     .standby_count = options.node_count - replica_count,
                     .pipeline_requests_limit = options.pipeline_requests_limit,
-                .storage_size_limit = options.storage_size_limit,
+                    .storage_size_limit = options.storage_size_limit,
                     .aof = options.aof,
                     .nonce = options.nonce,
                     .state_machine_options = options.state_machine_options,
@@ -983,10 +983,12 @@ pub fn ReplicaType(
                 0;
 
             self.recovery_metrics.record_recovery(self.recovery_path, duration_ns);
+            const data_size = self.superblock.working.vsr_state.checkpoint.storage_size;
+            const data_size_sla = if (data_size > 0) data_size else self.storage_size_limit;
             index_checkpoint.log_recovery_sla(
                 self.recovery_path,
                 duration_ns,
-                self.storage_size_limit,
+                data_size_sla,
             );
 
             log.info("{}: recovery complete path={s} duration_ns={}", .{

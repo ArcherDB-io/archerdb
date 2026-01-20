@@ -266,4 +266,3 @@ wg.Wait()
 ## Links
 
 * [ArcherDB Documentation](https://github.com/ArcherDB-io/archerdb)
-* [Client SDK Specification](/openspec/changes/add-geospatial-core/specs/client-sdk/spec.md)

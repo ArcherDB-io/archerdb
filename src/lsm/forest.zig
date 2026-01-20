@@ -25,7 +25,6 @@ const compaction_block_count_beat_min = @import("compaction.zig").compaction_blo
 const compaction_input_tables_max = @import("compaction.zig").compaction_tables_input_max;
 
 /// TTL-aware compaction: threshold for prioritizing levels with high expired ratio.
-/// Per openspec/changes/add-ttl-aware-compaction: levels with expired_ratio > threshold
 /// are compacted before levels with lower ratio.
 const ttl_priority_threshold: f64 = 0.30;
 
@@ -967,7 +966,6 @@ fn CompactionScheduleType(comptime Forest: type, comptime Grid: type) type {
                 assert(self.bar_input_size == 0);
 
                 // TTL-aware compaction: Use prioritized level order.
-                // Per openspec/changes/add-ttl-aware-compaction: high-expired levels first.
                 const prioritized = self.get_prioritized_level_order();
 
                 for (prioritized.levels[0..prioritized.count]) |level_b| {
@@ -1071,7 +1069,6 @@ fn CompactionScheduleType(comptime Forest: type, comptime Grid: type) type {
             const op = self.forest.progress.?.compact.op;
 
             // TTL-aware compaction: Use prioritized level order for dispatching compactions.
-            // Per openspec/changes/add-ttl-aware-compaction: consistent with bar/beat commence.
             const prioritized = self.get_prioritized_level_order();
 
             for (prioritized.levels[0..prioritized.count]) |level_b| {
@@ -1137,7 +1134,6 @@ fn CompactionScheduleType(comptime Forest: type, comptime Grid: type) type {
         }
 
         /// TTL-aware compaction: Get max expired_ratio for a level across all trees.
-        /// Per openspec/changes/add-ttl-aware-compaction: aggregate ratio for scheduling decision.
         fn get_max_expired_ratio_for_level(self: *const CompactionSchedule, level: usize) f64 {
             var max_ratio: f64 = 0.0;
             inline for (comptime std.enums.values(Forest.TreeID)) |tree_id| {
@@ -1151,7 +1147,6 @@ fn CompactionScheduleType(comptime Forest: type, comptime Grid: type) type {
         }
 
         /// TTL-aware compaction: Get prioritized level order for compaction scheduling.
-        /// Per openspec/changes/add-ttl-aware-compaction:
         /// - Level 0 is always first (immutable table flush)
         /// - Levels with expired_ratio > threshold come before low-expired levels
         /// - Ascending order within each group
@@ -1218,7 +1213,6 @@ test level_active {
 
 // ============================================================================
 // TTL-Aware Compaction Priority Tests
-// Per openspec/changes/add-ttl-aware-compaction: verify threshold and prioritization logic.
 // ============================================================================
 
 test "ttl_priority_threshold: valid range" {

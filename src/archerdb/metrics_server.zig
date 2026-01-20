@@ -56,9 +56,10 @@ pub var replica_state: ReplicaState = .starting;
 
 /// Cached metrics response for avoiding recomputation on frequent scrapes.
 /// Per observability/spec.md: "Cache metrics for up to 1 second"
+const metrics_buffer_size = 256 * 1024;
 const MetricsCache = struct {
     /// Cached response body
-    data: [65536]u8 = undefined,
+    data: [metrics_buffer_size]u8 = undefined,
     /// Length of cached data
     len: usize = 0,
     /// Timestamp when cache was last updated (nanoseconds)
@@ -473,7 +474,6 @@ pub const MetricsServer = struct {
     }
 
     /// v2.0 Health endpoint: Multi-region replication status.
-    /// Per openspec/changes/add-v2-distributed-features/specs/replication/spec.md
     fn handleHealthRegion(client_fd: posix.socket_t) !void {
         // Get region metrics from the registry (raw atomics use .load())
         const role = metrics.Registry.region_role.load(.monotonic);
@@ -516,7 +516,6 @@ pub const MetricsServer = struct {
     }
 
     /// v2.0 Health endpoint: Shard distribution and status.
-    /// Per openspec/changes/add-v2-distributed-features/specs/index-sharding/spec.md
     fn handleHealthShards(client_fd: posix.socket_t) !void {
         // Get sharding metrics from the registry (raw atomics use .load())
         const shard_count_val = metrics.Registry.shard_count.load(.monotonic);
@@ -545,7 +544,6 @@ pub const MetricsServer = struct {
     }
 
     /// v2.0 Health endpoint: Encryption at rest status.
-    /// Per openspec/changes/add-v2-distributed-features/specs/security/spec.md
     fn handleHealthEncryption(client_fd: posix.socket_t) !void {
         // Get encryption metrics from the registry (Counters use .get())
         const encrypt_ops = metrics.Registry.encryption_ops_total.get();
@@ -580,7 +578,6 @@ pub const MetricsServer = struct {
     }
 
     /// v2.0 Geo-routing endpoint: Returns all known regions with health status.
-    /// Per openspec/changes/add-geo-routing/specs spec.
     fn handleRegions(client_fd: posix.socket_t) !void {
         const config = &geo_routing_config;
 
@@ -640,7 +637,7 @@ pub const MetricsServer = struct {
         }
 
         // Format all metrics to buffer
-        var buf: [65536]u8 = undefined;
+        var buf: [metrics_buffer_size]u8 = undefined;
         var fbs = std.io.fixedBufferStream(&buf);
         metrics.Registry.format(fbs.writer()) catch |err| {
             log.warn("error formatting metrics: {}", .{err});
