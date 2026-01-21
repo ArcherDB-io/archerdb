@@ -304,6 +304,7 @@ type QueryRadiusFilter struct {
 	TimestampMin  uint64
 	TimestampMax  uint64
 	GroupID       Uint128
+	Reserved      [72]uint8 // Wire format padding to 128 bytes
 }
 
 // PolygonVertex represents a polygon vertex (lat/lon pair).

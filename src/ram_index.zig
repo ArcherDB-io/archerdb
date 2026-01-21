@@ -90,7 +90,9 @@ pub const target_load_factor: f32 = 0.70;
 /// - latest_id: Composite ID [S2 Cell ID (upper 64) | Timestamp (lower 64)]
 /// - ttl_seconds: Time-to-live (0 = never expires)
 /// - reserved: Padding for alignment
-/// - padding: Reserved for future flags/tags/generations
+/// - lat_nano: Latest latitude in nanodegrees
+/// - lon_nano: Latest longitude in nanodegrees
+/// - group_id: Latest group identifier
 pub const IndexEntry = extern struct {
     /// Entity UUID - primary lookup key.
     /// Zero indicates an empty slot.
@@ -103,11 +105,17 @@ pub const IndexEntry = extern struct {
     /// Time-to-live in seconds (0 = never expires).
     ttl_seconds: u32 = 0,
 
-    /// Reserved padding for alignment.
+    /// Reserved flags (bit 0 = metadata present).
     reserved: u32 = 0,
 
-    /// Reserved for future extensions (flags, tags, dirty bits, generation).
-    padding: [24]u8 = [_]u8{0} ** 24,
+    /// Latest latitude in nanodegrees.
+    lat_nano: i64 = 0,
+
+    /// Latest longitude in nanodegrees.
+    lon_nano: i64 = 0,
+
+    /// Latest group identifier.
+    group_id: u64 = 0,
 
     /// Sentinel value for empty slots.
     pub const empty: IndexEntry = .{};
@@ -136,6 +144,12 @@ pub const IndexEntry = extern struct {
 
     /// Returns true to indicate this entry type supports TTL.
     pub const supports_ttl: bool = true;
+
+    /// Returns true to indicate this entry type stores metadata.
+    pub const supports_metadata: bool = true;
+
+    /// Metadata present flag (reserved bit 0).
+    pub const metadata_flag: u32 = 1;
 };
 
 // Compile-time validation of IndexEntry layout.
@@ -147,15 +161,15 @@ comptime {
     assert(@alignOf(IndexEntry) >= 16);
 
     // Verify no padding in the struct (all space accounted for).
-    // 16 + 16 + 4 + 4 + 24 = 64 bytes
-    assert(@sizeOf(IndexEntry) == 16 + 16 + 4 + 4 + 24);
+    // 16 + 16 + 4 + 4 + 8 + 8 + 8 = 64 bytes
+    assert(@sizeOf(IndexEntry) == 16 + 16 + 4 + 4 + 8 + 8 + 8);
 }
 
 /// CompactIndexEntry - 32-byte memory-optimized index entry.
 ///
 /// Provides 50% memory reduction compared to IndexEntry by dropping:
 /// - TTL support (handled at data layer)
-/// - Reserved and padding fields
+/// - Metadata fields (lat/lon/group_id)
 ///
 /// Trade-offs:
 /// - No index-level TTL (must check data layer for expiration)
@@ -208,6 +222,12 @@ pub const CompactIndexEntry = extern struct {
 
     /// Returns true to indicate this entry type does not support TTL.
     pub const supports_ttl: bool = false;
+
+    /// Returns true to indicate this entry type stores metadata.
+    pub const supports_metadata: bool = false;
+
+    /// Metadata present flag (unused for compact entries).
+    pub const metadata_flag: u32 = 0;
 };
 
 // Compile-time validation of CompactIndexEntry layout.
@@ -1323,6 +1343,7 @@ pub const AlertManager = struct {
 /// - timestamp() method returning u64
 /// - empty: Entry constant for sentinel value
 /// - supports_ttl: bool constant indicating TTL support
+/// - supports_metadata: bool constant indicating metadata support
 pub fn GenericRamIndexType(comptime Entry: type, comptime options: struct {
     /// Enable statistics tracking (has minor performance overhead).
     track_stats: bool = true,
@@ -1338,6 +1359,8 @@ pub fn GenericRamIndexType(comptime Entry: type, comptime options: struct {
         assert(@hasDecl(Entry, "timestamp"));
         assert(@hasDecl(Entry, "empty"));
         assert(@hasDecl(Entry, "supports_ttl"));
+        assert(@hasDecl(Entry, "supports_metadata"));
+        assert(@hasDecl(Entry, "metadata_flag"));
     }
 
     // Use 16-byte alignment minimum for u128 fields, or entry alignment if larger.
@@ -1352,6 +1375,9 @@ pub fn GenericRamIndexType(comptime Entry: type, comptime options: struct {
 
         /// Whether this index supports index-level TTL.
         pub const supports_ttl = Entry.supports_ttl;
+
+        /// Whether this index stores per-entry metadata.
+        pub const supports_metadata = Entry.supports_metadata;
 
         /// Entry size in bytes.
         pub const entry_size = @sizeOf(Entry);
@@ -1517,6 +1543,51 @@ pub fn GenericRamIndexType(comptime Entry: type, comptime options: struct {
             return .{ .entry = null, .probe_count = probe_count };
         }
 
+        fn updateMetadataInTable(
+            table_entries: []align(entry_alignment) Entry,
+            table_capacity: u64,
+            entity_id: u128,
+            latest_id: u128,
+            lat_nano: i64,
+            lon_nano: i64,
+            group_id: u64,
+        ) bool {
+            const slot_hash = hash(entity_id);
+            var slot = slot_hash % table_capacity;
+            var probe_count: u32 = 0;
+
+            while (probe_count < max_probe_length) {
+                const entry_ptr: *Entry = &table_entries[@intCast(slot)];
+                const entry = @as(*volatile Entry, @ptrCast(entry_ptr)).*;
+
+                if (entry.is_empty()) {
+                    return false;
+                }
+
+                if (entry.entity_id == entity_id) {
+                    if (entry.is_tombstone()) {
+                        return false;
+                    }
+                    if (entry.latest_id != latest_id) {
+                        return false;
+                    }
+
+                    var updated = entry;
+                    updated.lat_nano = lat_nano;
+                    updated.lon_nano = lon_nano;
+                    updated.group_id = group_id;
+                    updated.reserved |= Entry.metadata_flag;
+                    @as(*volatile Entry, @ptrCast(entry_ptr)).* = updated;
+                    return true;
+                }
+
+                slot = (slot + 1) % table_capacity;
+                probe_count += 1;
+            }
+
+            return false;
+        }
+
         /// Lookup an entity by ID.
         ///
         /// This is a lock-free operation using atomic loads with Acquire semantics.
@@ -1562,8 +1633,53 @@ pub fn GenericRamIndexType(comptime Entry: type, comptime options: struct {
             return .{ .entry = null, .probe_count = active_result.probe_count };
         }
 
+        /// Update stored metadata for an existing entry.
+        /// Returns false if the entry is missing or no metadata is supported.
+        pub fn update_metadata(
+            self: *@This(),
+            entity_id: u128,
+            latest_id: u128,
+            lat_nano: i64,
+            lon_nano: i64,
+            group_id: u64,
+        ) bool {
+            if (comptime Entry.supports_metadata) {
+                if (entity_id == 0) return false;
+
+                if (updateMetadataInTable(
+                    self.entries,
+                    self.capacity,
+                    entity_id,
+                    latest_id,
+                    lat_nano,
+                    lon_nano,
+                    group_id,
+                )) {
+                    return true;
+                }
+
+                if (self.resize_state.isResizing()) {
+                    if (self.old_entries) |old_entries| {
+                        return updateMetadataInTable(
+                            old_entries,
+                            self.old_capacity,
+                            entity_id,
+                            latest_id,
+                            lat_nano,
+                            lon_nano,
+                            group_id,
+                        );
+                    }
+                }
+
+                return false;
+            } else {
+                return false;
+            }
+        }
+
         /// Helper to create a new entry with the appropriate fields for the Entry type.
-        /// For IndexEntry: includes ttl_seconds, reserved, padding.
+        /// For IndexEntry: includes ttl_seconds and metadata fields.
         /// For CompactIndexEntry: only entity_id and latest_id (ttl_seconds unused).
         inline fn makeEntry(entity_id: u128, latest_id: u128, ttl_secs: u32) Entry {
             // Construct entry based on type. For compact entries, ttl_secs is unused
@@ -1576,7 +1692,11 @@ pub fn GenericRamIndexType(comptime Entry: type, comptime options: struct {
                 // IndexEntry with TTL support - add additional fields
                 entry.ttl_seconds = ttl_secs;
                 entry.reserved = 0;
-                entry.padding = [_]u8{0} ** 24;
+            }
+            if (comptime Entry.supports_metadata) {
+                entry.lat_nano = 0;
+                entry.lon_nano = 0;
+                entry.group_id = 0;
             }
             return entry;
         }
@@ -1589,7 +1709,9 @@ pub fn GenericRamIndexType(comptime Entry: type, comptime options: struct {
                     .latest_id = 0,
                     .ttl_seconds = 0,
                     .reserved = 0,
-                    .padding = [_]u8{0} ** 24,
+                    .lat_nano = 0,
+                    .lon_nano = 0,
+                    .group_id = 0,
                 };
             } else {
                 return Entry{
@@ -2341,7 +2463,9 @@ test "IndexEntry: empty and tombstone detection" {
         .latest_id = 456,
         .ttl_seconds = 0,
         .reserved = 0,
-        .padding = [_]u8{0} ** 24,
+        .lat_nano = 0,
+        .lon_nano = 0,
+        .group_id = 0,
     };
     try std.testing.expect(!live.is_empty());
     try std.testing.expect(!live.is_tombstone());
@@ -2351,7 +2475,9 @@ test "IndexEntry: empty and tombstone detection" {
         .latest_id = 0,
         .ttl_seconds = 0,
         .reserved = 0,
-        .padding = [_]u8{0} ** 24,
+        .lat_nano = 0,
+        .lon_nano = 0,
+        .group_id = 0,
     };
     try std.testing.expect(!tombstone.is_empty());
     try std.testing.expect(tombstone.is_tombstone());
@@ -2364,7 +2490,9 @@ test "IndexEntry: timestamp extraction" {
         .latest_id = (@as(u128, 0xDEADBEEF) << 64) | 0x123456789ABCDEF0,
         .ttl_seconds = 0,
         .reserved = 0,
-        .padding = [_]u8{0} ** 24,
+        .lat_nano = 0,
+        .lon_nano = 0,
+        .group_id = 0,
     };
     try std.testing.expectEqual(@as(u64, 0x123456789ABCDEF0), entry.timestamp());
 }
@@ -2424,6 +2552,11 @@ test "CompactIndexEntry: supports_ttl constant" {
     // IndexEntry supports TTL, CompactIndexEntry does not.
     try std.testing.expectEqual(true, IndexEntry.supports_ttl);
     try std.testing.expectEqual(false, CompactIndexEntry.supports_ttl);
+}
+
+test "IndexEntry: supports_metadata constant" {
+    try std.testing.expectEqual(true, IndexEntry.supports_metadata);
+    try std.testing.expectEqual(false, CompactIndexEntry.supports_metadata);
 }
 
 test "RamIndex: init_mmap creates file-backed entries" {

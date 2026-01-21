@@ -556,6 +556,25 @@ fn on_completion(
         .ok => {
             const operation: Operation = @enumFromInt(packet_extern.operation);
             switch (operation) {
+                .query_uuid,
+                .query_uuid_batch,
+                .query_radius,
+                .query_polygon,
+                .query_latest,
+                => {
+                    // Query operations return a header + payload buffer, not a flat Result[].
+                    const packet = packet_extern.cast();
+                    const req_buf = @constCast(packet.slice());
+                    const reply_buffer = global_allocator.realloc(req_buf, result_len) catch {
+                        // We can't throw Js exceptions from the native callback.
+                        @panic("Failed to allocated the request buffer.");
+                    };
+                    if (result_len > 0) {
+                        stdx.copy_disjoint(.exact, u8, reply_buffer, result_ptr.?[0..result_len]);
+                    }
+                    packet.data = reply_buffer.ptr;
+                    packet.data_size = @intCast(reply_buffer.len);
+                },
                 inline else => |operation_comptime| {
                     const Event = operation_comptime.EventType();
                     const Result = operation_comptime.ResultType();

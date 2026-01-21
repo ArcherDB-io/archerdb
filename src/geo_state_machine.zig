@@ -1574,6 +1574,8 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     continue;
                 }
 
+                const lookup_result = self.ram_index.lookup(entity_id);
+
                 // Remove from RAM index (F2.5.2).
                 const removed = self.ram_index.remove(entity_id);
 
@@ -1593,10 +1595,14 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     // Create tombstone with current commit timestamp.
                     // The tombstone marks the entity as deleted and will be kept
                     // during compaction until the final LSM level.
-                    // Note: group_id is 0 for minimal tombstones since RAM index doesn't store it.
+                    const tombstone_group_id = if (lookup_result.entry) |entry|
+                        entryMetadata(entry).group_id
+                    else
+                        0;
+
                     const tombstone = GeoEvent.create_minimal_tombstone(
                         entity_id,
-                        0, // group_id not stored in RAM index
+                        tombstone_group_id,
                         self.commit_timestamp,
                     );
 
@@ -1803,6 +1809,16 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                         self.entries_with_ttl += 1;
                     }
 
+                    if (DefaultRamIndex.supports_metadata) {
+                        _ = self.ram_index.update_metadata(
+                            event.entity_id,
+                            composite_id,
+                            event.lat_nano,
+                            event.lon_nano,
+                            event.group_id,
+                        );
+                    }
+
                     // Insert into Forest (LSM storage)
                     var stored_event = event;
                     stored_event.id = composite_id;
@@ -1818,6 +1834,16 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     inserted_count += 1;
                     // Note: TTL tracking for updates is complex (old TTL vs new TTL)
                     // For simplicity, we assume updates maintain TTL status
+
+                    if (DefaultRamIndex.supports_metadata) {
+                        _ = self.ram_index.update_metadata(
+                            event.entity_id,
+                            composite_id,
+                            event.lat_nano,
+                            event.lon_nano,
+                            event.group_id,
+                        );
+                    }
 
                     // Insert into Forest (LSM storage)
                     var stored_event = event;
@@ -2061,8 +2087,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 }
 
                 // Found - build GeoEvent from index entry
-                // Extract S2 cell ID and timestamp from composite ID
-                const cell_id = @as(u64, @truncate(entry.latest_id >> 64));
+                // Extract timestamp from composite ID
                 const event_timestamp = @as(u64, @truncate(entry.latest_id));
 
                 // Check TTL expiration (per query-engine/spec.md)
@@ -2116,22 +2141,17 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                         result_event = event;
                     },
                     else => {
-                        // Fallback to RAM index reconstruction (synthetic event)
+                        // Fallback to RAM index reconstruction (metadata only).
                         // This happens if the event is on disk and was not prefetched.
-                        // WARNING: This returns approximate coordinates (cell center) and
-                        // zeroes other fields.
-
-                        // Get approximate coordinates from cell center
-                        const cell_center = S2.cellIdToLatLon(cell_id);
-
+                        const metadata = entryMetadata(entry);
                         result_event = GeoEvent{
                             .id = entry.latest_id,
                             .entity_id = entry.entity_id,
                             .correlation_id = 0, // Not stored in RAM index
                             .user_data = 0, // Not stored in RAM index
-                            .lat_nano = cell_center.lat_nano,
-                            .lon_nano = cell_center.lon_nano,
-                            .group_id = 0, // Not stored in RAM index
+                            .lat_nano = metadata.lat_nano,
+                            .lon_nano = metadata.lon_nano,
+                            .group_id = metadata.group_id,
                             .timestamp = event_timestamp,
                             .altitude_mm = 0,
                             .velocity_mms = 0,
@@ -2350,8 +2370,6 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 const lookup_result = self.ram_index.lookup(entity_id);
 
                 if (lookup_result.entry) |entry| {
-                    // Found - build GeoEvent from index entry
-                    const cell_id = @as(u64, @truncate(entry.latest_id >> 64));
                     const event_timestamp = @as(u64, @truncate(entry.latest_id));
 
                     // Check TTL expiration (per query-engine/spec.md)
@@ -2368,25 +2386,33 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                         }
                     }
 
-                    const cell_center = S2.cellIdToLatLon(cell_id);
-
-                    events_ptr[found_count] = GeoEvent{
-                        .id = entry.latest_id,
-                        .entity_id = entry.entity_id,
-                        .correlation_id = 0,
-                        .user_data = 0,
-                        .lat_nano = cell_center.lat_nano,
-                        .lon_nano = cell_center.lon_nano,
-                        .group_id = 0,
-                        .timestamp = event_timestamp,
-                        .altitude_mm = 0,
-                        .velocity_mms = 0,
-                        .ttl_seconds = entry.ttl_seconds,
-                        .accuracy_mm = 0,
-                        .heading_cdeg = 0,
-                        .flags = GeoEventFlags.none,
-                        .reserved = [_]u8{0} ** 12,
-                    };
+                    var result_event: GeoEvent = undefined;
+                    switch (self.forest.grooves.geo_events.get(entry.latest_id)) {
+                        .found_object => |event| {
+                            result_event = event;
+                        },
+                        else => {
+                            const metadata = entryMetadata(entry);
+                            result_event = GeoEvent{
+                                .id = entry.latest_id,
+                                .entity_id = entry.entity_id,
+                                .correlation_id = 0,
+                                .user_data = 0,
+                                .lat_nano = metadata.lat_nano,
+                                .lon_nano = metadata.lon_nano,
+                                .group_id = metadata.group_id,
+                                .timestamp = event_timestamp,
+                                .altitude_mm = 0,
+                                .velocity_mms = 0,
+                                .ttl_seconds = entry.ttl_seconds,
+                                .accuracy_mm = 0,
+                                .heading_cdeg = 0,
+                                .flags = GeoEventFlags.none,
+                                .reserved = [_]u8{0} ** 12,
+                            };
+                        },
+                    }
+                    events_ptr[found_count] = result_event;
                     found_count += 1;
                 } else {
                     // Not found
@@ -3026,6 +3052,13 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     }
                 }
 
+                const metadata = entryMetadata(entry);
+
+                // Apply group_id filter if specified
+                if (filter.group_id != 0 and metadata.group_id != filter.group_id) {
+                    continue;
+                }
+
                 // Coarse filter: Check if cell is in any covering range
                 if (!cellInCovering(cell_id, &covering)) {
                     continue;
@@ -3039,16 +3072,15 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     continue;
                 }
 
-                // Get approximate lat/lon from cell center
-                // Note: At level 30, cells are ~7.5mm, so this is sufficiently accurate
-                const cell_center = S2.cellIdToLatLon(cell_id);
+                const lat_nano = metadata.lat_nano;
+                const lon_nano = metadata.lon_nano;
 
                 // Post-filter: Precise distance check using Haversine formula
                 if (!S2.isWithinDistance(
                     filter.center_lat_nano,
                     filter.center_lon_nano,
-                    cell_center.lat_nano,
-                    cell_center.lon_nano,
+                    lat_nano,
+                    lon_nano,
                     radius_mm_u64,
                 )) {
                     continue;
@@ -3062,10 +3094,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     .entity_id = entry.entity_id,
                     .correlation_id = 0, // Not stored in RAM index
                     .user_data = 0, // Not stored in RAM index
-                    .lat_nano = cell_center.lat_nano,
-                    .lon_nano = cell_center.lon_nano,
-                    // NOTE: group_id not stored in RAM index (standalone mode limitation)
-                    .group_id = 0,
+                    .lat_nano = lat_nano,
+                    .lon_nano = lon_nano,
+                    .group_id = metadata.group_id,
                     .timestamp = timestamp,
                     .altitude_mm = 0,
                     .velocity_mms = 0,
@@ -3523,6 +3554,13 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     }
                 }
 
+                const metadata = entryMetadata(entry);
+
+                // Apply group_id filter if specified
+                if (filter.group_id != 0 and metadata.group_id != filter.group_id) {
+                    continue;
+                }
+
                 // Coarse filter: Check if cell is in any covering range
                 // This is an optimization - cells outside the covering can be skipped
                 // without the more expensive point-in-polygon test
@@ -3539,23 +3577,20 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     continue;
                 }
 
-                // Get approximate lat/lon from cell center
-                const cell_center = S2.cellIdToLatLon(cell_id);
-
                 // Post-filter: Point-in-polygon test using ray casting algorithm
                 // If holes are present, use pointInPolygonWithHoles which excludes
                 // points inside holes
                 const point = s2_index.LatLon{
-                    .lat_nano = cell_center.lat_nano,
-                    .lon_nano = cell_center.lon_nano,
+                    .lat_nano = metadata.lat_nano,
+                    .lon_nano = metadata.lon_nano,
                 };
                 const in_polygon = if (hole_count > 0)
                     S2.pointInPolygonWithHoles(point, polygon_slice, holes_slice)
                 else
                     S2.pointInPolygon(point, polygon_slice);
 
-                log.debug("query_polygon: cell_center lat={d}, lon={d}, in_polygon={}", .{
-                    cell_center.lat_nano, cell_center.lon_nano, in_polygon,
+                log.debug("query_polygon: point lat={d}, lon={d}, in_polygon={}", .{
+                    metadata.lat_nano, metadata.lon_nano, in_polygon,
                 });
 
                 if (!in_polygon) {
@@ -3568,9 +3603,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     .entity_id = entry.entity_id,
                     .correlation_id = 0, // Not stored in RAM index
                     .user_data = 0, // Not stored in RAM index
-                    .lat_nano = cell_center.lat_nano,
-                    .lon_nano = cell_center.lon_nano,
-                    .group_id = 0, // Not stored in RAM index
+                    .lat_nano = metadata.lat_nano,
+                    .lon_nano = metadata.lon_nano,
+                    .group_id = metadata.group_id,
                     .timestamp = timestamp,
                     .altitude_mm = 0,
                     .velocity_mms = 0,
@@ -3694,19 +3729,31 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 output[results_offset..results_end],
             );
 
-            // Temporary buffer for sorting
-            var candidates: [1024]struct {
+            const Candidate = struct {
                 entity_id: u128,
                 latest_id: u128,
                 ttl_seconds: u32,
-            } = undefined;
+                lat_nano: i64,
+                lon_nano: i64,
+                group_id: u64,
+            };
+
+            comptime {
+                assert(@sizeOf(Candidate) <= @sizeOf(GeoEvent));
+            }
+
+            const candidates_bytes: []align(@alignOf(Candidate)) u8 = @alignCast(
+                output[results_offset .. results_offset + effective_limit * @sizeOf(Candidate)],
+            );
+            const candidates = mem.bytesAsSlice(Candidate, candidates_bytes);
             var candidate_count: usize = 0;
+            var matching_count: usize = 0;
 
             // Scan RAM index to collect all non-deleted entries
             // Per query-engine/spec.md: Use cursor_timestamp for pagination
             // cursor_timestamp > 0 means "only return events OLDER than this timestamp"
             var position: u64 = 0;
-            while (position < self.ram_index.capacity and candidate_count < candidates.len) {
+            while (position < self.ram_index.capacity) {
                 const entry_ptr: *IndexEntry = &self.ram_index.entries[@intCast(position)];
                 const entry = @as(*volatile IndexEntry, @ptrCast(entry_ptr)).*;
                 position += 1;
@@ -3734,26 +3781,49 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     }
                 }
 
+                const metadata = entryMetadata(entry);
+
                 // Apply group_id filter if specified
-                // NOTE: group_id not stored in RAM index for standalone mode,
-                // so we can't filter by it. This is acceptable for VOPR testing.
-                if (filter.group_id != 0) {
-                    // Skip - can't verify group_id match
+                if (filter.group_id != 0 and metadata.group_id != filter.group_id) {
                     continue;
                 }
 
-                // Store candidate
-                candidates[candidate_count] = .{
+                matching_count += 1;
+                const candidate = Candidate{
                     .entity_id = entry.entity_id,
                     .latest_id = entry.latest_id,
                     .ttl_seconds = entry.ttl_seconds,
+                    .lat_nano = metadata.lat_nano,
+                    .lon_nano = metadata.lon_nano,
+                    .group_id = metadata.group_id,
                 };
-                candidate_count += 1;
+
+                if (candidate_count < candidates.len) {
+                    candidates[candidate_count] = candidate;
+                    candidate_count += 1;
+                } else {
+                    var oldest_idx: usize = 0;
+                    var oldest_ts = @as(u64, @truncate(candidates[0].latest_id));
+                    var idx: usize = 1;
+                    while (idx < candidate_count) : (idx += 1) {
+                        const ts = @as(u64, @truncate(candidates[idx].latest_id));
+                        if (ts < oldest_ts) {
+                            oldest_ts = ts;
+                            oldest_idx = idx;
+                        }
+                    }
+
+                    const candidate_ts = @as(u64, @truncate(candidate.latest_id));
+                    if (candidate_ts <= oldest_ts) {
+                        continue;
+                    }
+                    candidates[oldest_idx] = candidate;
+                }
             }
 
             // Sort by timestamp (descending) - timestamp is lower 64 bits of latest_id
-            std.mem.sort(@TypeOf(candidates[0]), candidates[0..candidate_count], {}, struct {
-                fn lessThan(_: void, a: @TypeOf(candidates[0]), b: @TypeOf(candidates[0])) bool {
+            std.mem.sort(Candidate, candidates[0..candidate_count], {}, struct {
+                fn lessThan(_: void, a: Candidate, b: Candidate) bool {
                     const ts_a = @as(u64, @truncate(a.latest_id));
                     const ts_b = @as(u64, @truncate(b.latest_id));
                     return ts_a > ts_b; // Descending order (newest first)
@@ -3762,28 +3832,28 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 
             // Take top N results up to limit
             // Try to get full GeoEvent from Forest cache; fall back to RAM index approximation
-            const result_count = @min(candidate_count, effective_limit);
-            for (candidates[0..result_count], 0..) |candidate, i| {
+            const result_count = candidate_count;
+            var idx: usize = result_count;
+            while (idx > 0) : (idx -= 1) {
+                const candidate = candidates[idx - 1];
                 // Try Forest cache lookup first (F2.5.3 Forest LSM Integration)
                 const groove_result = self.forest.grooves.geo_events.get(candidate.latest_id);
                 if (groove_result == .found_object) {
                     // Full GeoEvent available from Forest cache
-                    results_slice[i] = groove_result.found_object;
+                    results_slice[idx - 1] = groove_result.found_object;
                 } else {
                     // Fall back to RAM index approximation
                     // (Forest not yet prefetched or data evicted from cache)
-                    const cell_id = @as(u64, @truncate(candidate.latest_id >> 64));
                     const timestamp = @as(u64, @truncate(candidate.latest_id));
-                    const cell_center = S2.cellIdToLatLon(cell_id);
 
-                    results_slice[i] = GeoEvent{
+                    results_slice[idx - 1] = GeoEvent{
                         .id = candidate.latest_id,
                         .entity_id = candidate.entity_id,
                         .correlation_id = 0,
                         .user_data = 0,
-                        .lat_nano = cell_center.lat_nano,
-                        .lon_nano = cell_center.lon_nano,
-                        .group_id = 0,
+                        .lat_nano = candidate.lat_nano,
+                        .lon_nano = candidate.lon_nano,
+                        .group_id = candidate.group_id,
                         .timestamp = timestamp,
                         .altitude_mm = 0,
                         .velocity_mms = 0,
@@ -3808,7 +3878,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 
             // Write QueryResponse header
             const header = mem.bytesAsValue(QueryResponse, output[0..@sizeOf(QueryResponse)]);
-            const has_more = result_count < candidate_count;
+            const has_more = matching_count > candidate_count;
             if (has_more) {
                 header.* = QueryResponse.with_more(@intCast(result_count));
             } else {
@@ -3832,6 +3902,24 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 vertices[i] = vertices[j];
                 vertices[j] = tmp;
             }
+        }
+
+        fn entryMetadata(entry: IndexEntry) struct { lat_nano: i64, lon_nano: i64, group_id: u64 } {
+            if ((entry.reserved & IndexEntry.metadata_flag) != 0) {
+                return .{
+                    .lat_nano = entry.lat_nano,
+                    .lon_nano = entry.lon_nano,
+                    .group_id = entry.group_id,
+                };
+            }
+
+            const cell_id = @as(u64, @truncate(entry.latest_id >> 64));
+            const cell_center = S2.cellIdToLatLon(cell_id);
+            return .{
+                .lat_nano = cell_center.lat_nano,
+                .lon_nano = cell_center.lon_nano,
+                .group_id = 0,
+            };
         }
 
         /// Check if a cell ID falls within any of the covering ranges.

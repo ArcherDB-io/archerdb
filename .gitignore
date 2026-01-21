@@ -37,3 +37,10 @@ zig-out/
 
 # Compiled client libraries
 src/clients/c/lib/
+
+# Test artifacts
+pytest.out
+pytest.err
+python.out
+python.err
+server.log

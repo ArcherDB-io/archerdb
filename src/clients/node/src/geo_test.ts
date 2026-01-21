@@ -1348,6 +1348,70 @@ async function test_insertEvents_multiBatch_integration() {
   }
 }
 
+async function test_insert_query_delete_integration() {
+  if (process.env.ARCHERDB_INTEGRATION !== '1') {
+    console.log('SKIP: insert_query_delete_integration (set ARCHERDB_INTEGRATION=1)')
+    return
+  }
+
+  const address = process.env.ARCHERDB_ADDRESS ?? '127.0.0.1:3001'
+  const client = createGeoClient({
+    cluster_id: 0n,
+    addresses: [address],
+  })
+
+  try {
+    const entityId = id()
+    const lat = 37.7749
+    const lon = -122.4194
+
+    // 1. Insert
+    const event = createGeoEvent({
+      entity_id: entityId,
+      latitude: lat,
+      longitude: lon,
+      ttl_seconds: 60,
+    })
+
+    const insertErrors = await client.insertEvents([event])
+    assert.strictEqual(insertErrors.length, 0, 'Insert should succeed')
+
+    // 2. Query UUID
+    let found: GeoEvent | null = null
+    for (let i = 0; i < 10; i++) {
+        found = await client.getLatestByUuid(entityId)
+        if (found) {
+            break
+        }
+        await new Promise(resolve => setTimeout(resolve, 100))
+    }
+    
+    assert(found, 'Entity should be found')
+    assert.strictEqual(found!.entity_id, entityId)
+
+    // 3. Query Radius
+    const radiusResult = await client.queryRadius({
+        latitude: lat,
+        longitude: lon,
+        radius_m: 2000,
+        limit: 5
+    })
+    assert(radiusResult.events.length > 0, 'Radius query should find events')
+
+    // 4. Delete
+    const deleteResult = await client.deleteEntities([entityId])
+    assert.strictEqual(deleteResult.deleted_count, 1)
+
+    // 5. Verify Delete
+    const resultAfter = await client.getLatestByUuid(entityId)
+    assert.strictEqual(resultAfter, null, 'Entity should be deleted')
+
+    console.log('✓ insert_query_delete_integration')
+  } finally {
+    client.destroy()
+  }
+}
+
 // --- RetryExhausted Error Tests ---
 
 function test_RetryExhausted_properties() {
@@ -2265,6 +2329,7 @@ async function runTests() {
   // Partial batch retry pattern test (async)
   await test_partialBatchRetryPattern()
   await test_insertEvents_multiBatch_integration()
+  await test_insert_query_delete_integration()
 
   // RetryExhausted error tests
   test_RetryExhausted_properties()
