@@ -25,7 +25,6 @@ pub const parse_flag_value_fuzz = @import("flags.zig").parse_flag_value_fuzz;
 pub const memory_lock_allocated = @import("mlock.zig").memory_lock_allocated;
 pub const timeit = @import("debug.zig").timeit;
 pub const unshare = @import("unshare.zig");
-pub const windows = @import("windows.zig");
 pub const radix_sort = @import("radix.zig").sort;
 
 pub const Instant = @import("time_units.zig").Instant;
