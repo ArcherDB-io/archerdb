@@ -440,20 +440,20 @@ Everything below must be complete before release. No versions, no deferrals.
 | SHARD-04 | Phase 5 | Pending |
 | SHARD-05 | Phase 5 | Pending |
 | SHARD-06 | Phase 5 | Pending |
-| MBUS-01 | Phase 1 | Pending |
-| MBUS-02 | Phase 1 | Pending |
-| MBUS-03 | Phase 1 | Pending |
-| MBUS-04 | Phase 1 | Pending |
-| MBUS-05 | Phase 1 | Pending |
-| MBUS-06 | Phase 1 | Pending |
-| PLAT-01 | Phase 1 | Pending |
-| PLAT-02 | Phase 1 | Pending |
-| PLAT-03 | Phase 1 | Pending |
-| PLAT-04 | Phase 1 | Pending |
-| PLAT-05 | Phase 1 | Pending |
-| PLAT-06 | Phase 1 | Pending |
-| PLAT-07 | Phase 1 | Pending |
-| PLAT-08 | Phase 1 | Pending |
+| MBUS-01 | Phase 1 | Complete |
+| MBUS-02 | Phase 1 | Complete |
+| MBUS-03 | Phase 1 | Complete |
+| MBUS-04 | Phase 1 | Complete |
+| MBUS-05 | Phase 1 | Complete |
+| MBUS-06 | Phase 1 | Complete |
+| PLAT-01 | Phase 1 | Complete |
+| PLAT-02 | Phase 1 | Complete |
+| PLAT-03 | Phase 1 | Complete |
+| PLAT-04 | Phase 1 | Complete |
+| PLAT-05 | Phase 1 | Complete |
+| PLAT-06 | Phase 1 | Complete |
+| PLAT-07 | Phase 1 | Complete |
+| PLAT-08 | Phase 1 | Complete |
 | ENC-01 | Phase 2 | Pending |
 | ENC-02 | Phase 2 | Pending |
 | ENC-03 | Phase 2 | Pending |
@@ -605,4 +605,4 @@ Everything below must be complete before release. No versions, no deferrals.
 
 ---
 *Requirements defined: 2026-01-22*
-*Last updated: 2026-01-22 - Traceability complete*
+*Last updated: 2026-01-22 - Phase 1 complete (14 requirements)*

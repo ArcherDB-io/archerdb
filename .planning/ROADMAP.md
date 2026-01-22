@@ -12,7 +12,7 @@ This roadmap completes ArcherDB from working prototype to world-class reference 
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Platform Foundation** - Remove Windows, fix Darwin/macOS, stabilize message bus
+- [x] **Phase 1: Platform Foundation** - Remove Windows, fix Darwin/macOS, stabilize message bus
 - [ ] **Phase 2: VSR & Storage** - Fix VSR issues, verify durability, verify encryption
 - [ ] **Phase 3: Core Geospatial** - Verify S2 indexing, queries, entity operations, RAM index
 - [ ] **Phase 4: Replication** - Implement S3 backend, disk spillover, replication metrics
@@ -38,9 +38,9 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 3 plans
 
 Plans:
-- [ ] 01-01-PLAN.md - Windows removal (io, build, source files)
-- [ ] 01-02-PLAN.md - Darwin/macOS fixes (F_FULLFSYNC, x86_64 assertion)
-- [ ] 01-03-PLAN.md - Message bus error handling
+- [x] 01-01-PLAN.md - Windows removal (io, build, source files)
+- [x] 01-02-PLAN.md - Darwin/macOS fixes (F_FULLFSYNC, x86_64 assertion)
+- [x] 01-03-PLAN.md - Message bus error handling
 
 ### Phase 2: VSR & Storage
 **Goal**: Consensus and storage layers are verified correct - VSR fixes applied, durability guarantees solid, encryption verified
@@ -208,7 +208,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Platform Foundation | 0/3 | Planned | - |
+| 1. Platform Foundation | 3/3 | Complete | 2026-01-22 |
 | 2. VSR & Storage | 0/4 | Not started | - |
 | 3. Core Geospatial | 0/5 | Not started | - |
 | 4. Replication | 0/3 | Not started | - |
@@ -222,4 +222,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 ---
 *Roadmap created: 2026-01-22*
 *Phase 1 planned: 2026-01-22*
+*Phase 1 complete: 2026-01-22*
 *Total requirements: 234 | All mapped*
