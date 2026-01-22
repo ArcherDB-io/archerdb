@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-01-22)
 ## Current Position
 
 Phase: 5 of 10 (Sharding & Cleanup)
-Plan: 1 of 3 in current phase
-Status: Plan 05-01 complete
-Last activity: 2026-01-22 - Plan 05-01 complete (golden vectors, distribution, cross-shard tests)
+Plan: 2 of 3 in current phase
+Status: Plan 05-02 complete
+Last activity: 2026-01-22 - Plan 05-02 complete (deprecated flag removal, TODO cleanup)
 
 Progress: [####------] 40% (4/10 phases complete)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 16
+- Total plans completed: 17
 - Average duration: 12 min
-- Total execution time: 188 min
+- Total execution time: 213 min
 
 **By Phase:**
 
@@ -31,11 +31,11 @@ Progress: [####------] 40% (4/10 phases complete)
 | 02 | 4 | 54 min | 14 min |
 | 03 | 5 | 43 min | 9 min |
 | 04 | 3 | 47 min | 16 min |
-| 05 | 1 | 18 min | 18 min |
+| 05 | 2 | 43 min | 22 min |
 
 **Recent Trend:**
-- Last 5 plans: 05-01 (18m), 04-03 (15m), 04-02 (17m), 04-01 (15m), 03-05 (8m)
-- Trend: Cross-SDK verification requires time for multi-language implementation
+- Last 5 plans: 05-02 (25m), 05-01 (18m), 04-03 (15m), 04-02 (17m), 04-01 (15m)
+- Trend: TODO cleanup requires careful analysis of each marker
 
 *Updated after each plan completion*
 
@@ -51,6 +51,13 @@ Recent decisions affecting current work:
 - Full observability: Enterprise-ready monitoring with metrics, tracing, health endpoints
 - SDK parity: All five languages must have same features and quality
 - No graceful degradation: Demand resources, expose problems through metrics/traces
+
+From 05-02:
+- Use Enhancement: prefix for future features not blocking correctness
+- Use Note: prefix for explanatory documentation of current behavior
+- Use TestEnhancement: prefix for VOPR/fuzz improvements
+- Use DocTODO: prefix for documentation items deferred to Phase 9
+- Renamed sync_view to sync_view_reserved (deprecated field in superblock)
 
 From 05-01:
 - 10M keys required for 5% tolerance with 256 shards (statistical stability)
@@ -153,9 +160,11 @@ From CONCERNS.md - key issues to address:
 - ~~Darwin fsync safety concern (Phase 1)~~ RESOLVED in 01-02
 - ~~macOS x86_64 test assertion (Phase 1)~~ RESOLVED in 01-02
 - ~~Message bus error handling TODOs (Phase 1)~~ RESOLVED in 01-03
+- ~~Deprecated --aof flag (Phase 5)~~ RESOLVED in 05-02 (removed, only --aof-file remains)
+- ~~Production TODOs in VSR/storage/LSM (Phase 5)~~ RESOLVED in 05-02 (converted to Enhancement:/Note:/DocTODO:)
 
 ## Session Continuity
 
 Last session: 2026-01-22
-Stopped at: Plan 05-01 complete
+Stopped at: Plan 05-02 complete
 Resume file: None
