@@ -300,8 +300,11 @@ pub fn JournalType(comptime Replica: type, comptime Storage: type) type {
         status: Status = .init,
 
         pub fn init(allocator: Allocator, storage: *Storage, replica: u8) !Journal {
-            // TODO Fix this assertion:
-            // assert(write_ahead_log_zone_size <= storage.size);
+            // Note: Storage size validation is handled at the superblock level.
+            // data_file_size_min (in superblock.zig) includes journal_size which equals
+            // write_ahead_log_zone_size, ensuring the WAL fits within the storage file.
+            // The production Storage type doesn't expose a .size field, so we cannot
+            // assert here directly.
 
             const headers = try allocator.alignedAlloc(
                 Header.Prepare,
