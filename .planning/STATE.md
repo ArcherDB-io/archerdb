@@ -10,29 +10,29 @@ See: .planning/PROJECT.md (updated 2026-01-22)
 ## Current Position
 
 Phase: 2 of 10 (VSR & Storage)
-Plan: 1 of 4 in current phase
+Plan: 2 of 4 in current phase
 Status: In progress
-Last activity: 2026-01-22 - Completed 02-01-PLAN.md (VSR Protocol Fixes)
+Last activity: 2026-01-22 - Completed 02-02-PLAN.md (Durability Verification)
 
-Progress: [██--------] 14% (4/29 plans complete)
+Progress: [██--------] 17% (5/29 plans complete)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 4
-- Average duration: 8 min
-- Total execution time: 33 min
+- Total plans completed: 5
+- Average duration: 11 min
+- Total execution time: 64 min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 01 | 3 | 26 min | 9 min |
-| 02 | 1 | 7 min | 7 min |
+| 02 | 2 | 38 min | 19 min |
 
 **Recent Trend:**
-- Last 5 plans: 02-01 (7m), 01-03 (6m), 01-02 (5m), 01-01 (15m)
-- Trend: Improving (faster execution as codebase familiarity increases)
+- Last 5 plans: 02-02 (31m), 02-01 (7m), 01-03 (6m), 01-02 (5m), 01-01 (15m)
+- Trend: Stable (02-02 longer due to comprehensive VOPR verification runs)
 
 *Updated after each plan completion*
 
@@ -71,6 +71,11 @@ From 02-01:
 - Journal size assertion handled at superblock level via data_file_size_min
 - Deprecated message IDs (12, 21, 22, 23) reserved forever for wire compatibility
 
+From 02-02:
+- Use VOPR for crash recovery verification instead of standalone tests
+- dm-flakey for Linux-only power-loss testing, SIGKILL for cross-platform
+- Decision history with circular buffer of 1000 entries for debugging
+
 ### Pending Todos
 
 None.
@@ -88,5 +93,5 @@ From CONCERNS.md - key issues to address:
 ## Session Continuity
 
 Last session: 2026-01-22
-Stopped at: Completed 02-01-PLAN.md (VSR Protocol Fixes)
+Stopped at: Completed 02-02-PLAN.md (Durability Verification)
 Resume file: None
