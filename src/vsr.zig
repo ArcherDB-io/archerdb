@@ -288,11 +288,17 @@ pub const Command = enum(u8) {
 
     start_view = 24,
 
-    // If a command is removed from the protocol, its ordinal is added here and can't be re-used.
-    deprecated_12 = 12, // start_view without checkpoint
-    deprecated_21 = 21, // request_sync_checkpoint
-    deprecated_22 = 22, // sync_checkpoint
-    deprecated_23 = 23, // start_view with an older version of CheckpointState
+    // RESERVED: These message IDs were used in prior protocol versions and must never be reused
+    // for wire compatibility. Messages with these IDs are rejected at the validation layer.
+    //
+    // deprecated_12: Was start_view without checkpoint support (replaced by start_view=24)
+    // deprecated_21: Was request_sync_checkpoint (removed from protocol)
+    // deprecated_22: Was sync_checkpoint (removed from protocol)
+    // deprecated_23: Was start_view with an older version of CheckpointState (replaced by start_view=24)
+    deprecated_12 = 12,
+    deprecated_21 = 21,
+    deprecated_22 = 22,
+    deprecated_23 = 23,
 
     comptime {
         for (std.enums.values(Command)) |command| {
