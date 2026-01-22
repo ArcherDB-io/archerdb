@@ -52,13 +52,13 @@ Plans:
   3. Recovery from checkpoint and WAL replay verified correct
   4. LSM compaction tuning parameters optimized (constants.zig)
   5. Both AES-256-GCM and Aegis-256 encryption verified, key rotation documented
-**Plans**: TBD
+**Plans**: 4 plans
 
 Plans:
-- [ ] 02-01: VSR protocol fixes
-- [ ] 02-02: Durability verification
-- [ ] 02-03: LSM optimization
-- [ ] 02-04: Encryption verification
+- [ ] 02-01-PLAN.md - VSR protocol fixes (deprecated messages, snapshot verification, journal assertion)
+- [ ] 02-02-PLAN.md - Durability verification (VOPR extension, WAL/checkpoint recovery, power-loss tests)
+- [ ] 02-03-PLAN.md - LSM optimization (tuning, benchmarks, documentation)
+- [ ] 02-04-PLAN.md - Encryption verification (NIST vectors, key rotation, threat model)
 
 ### Phase 3: Core Geospatial
 **Goal**: All geospatial operations verified correct - S2 indexing, radius/polygon queries, entity operations, RAM index all working perfectly
@@ -209,7 +209,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Platform Foundation | 3/3 | Complete | 2026-01-22 |
-| 2. VSR & Storage | 0/4 | Not started | - |
+| 2. VSR & Storage | 0/4 | Planned | - |
 | 3. Core Geospatial | 0/5 | Not started | - |
 | 4. Replication | 0/3 | Not started | - |
 | 5. Sharding & Cleanup | 0/3 | Not started | - |
@@ -223,4 +223,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 *Roadmap created: 2026-01-22*
 *Phase 1 planned: 2026-01-22*
 *Phase 1 complete: 2026-01-22*
+*Phase 2 planned: 2026-01-22*
 *Total requirements: 234 | All mapped*
