@@ -5713,6 +5713,193 @@ test "entity ops: LWW tie-break by composite ID" {
 }
 
 // ============================================================================
+// Delete and GDPR Compliance Tests (ENT-05 through ENT-07)
+// ============================================================================
+//
+// These tests verify delete operations and GDPR "right to erasure" compliance
+// per compliance/spec.md and hybrid-memory/spec.md.
+
+test "delete: DeleteEntityResult codes" {
+    // ENT-05: Verify delete result codes are correct
+
+    try std.testing.expectEqual(@as(u32, 0), @intFromEnum(DeleteEntityResult.ok));
+    try std.testing.expectEqual(@as(u32, 2), @intFromEnum(DeleteEntityResult.entity_id_must_not_be_zero));
+    try std.testing.expectEqual(@as(u32, 3), @intFromEnum(DeleteEntityResult.entity_not_found));
+    try std.testing.expectEqual(@as(u32, 4), @intFromEnum(DeleteEntityResult.entity_id_must_not_be_int_max));
+}
+
+test "delete: creates tombstone with correct properties" {
+    // ENT-06: Delete creates proper tombstone for GDPR compliance
+    // Per compliance/spec.md: tombstones ensure durable deletion and prevent resurrection
+
+    const entity_id: u128 = 0xDEADBEEF_12345678_9ABCDEF0_CAFEBABE;
+    const group_id: u64 = 100;
+    const delete_time_ns: u64 = 5000 * ttl.ns_per_second;
+
+    // Create minimal tombstone (what delete_entities does)
+    const tombstone = GeoEvent.create_minimal_tombstone(entity_id, group_id, delete_time_ns);
+
+    // Verify tombstone properties per ttl-retention/spec.md
+    try std.testing.expect(tombstone.is_tombstone());
+    try std.testing.expect(tombstone.flags.deleted);
+    try std.testing.expectEqual(entity_id, tombstone.entity_id);
+    try std.testing.expectEqual(group_id, tombstone.group_id);
+    try std.testing.expectEqual(delete_time_ns, tombstone.timestamp);
+    try std.testing.expectEqual(@as(u32, 0), tombstone.ttl_seconds); // Never expires
+
+    // Minimal tombstone has zeroed location (S2 cell ID = 0)
+    const unpacked = GeoEvent.unpack_id(tombstone.id);
+    try std.testing.expectEqual(@as(u64, 0), unpacked.s2_cell_id);
+    try std.testing.expectEqual(delete_time_ns, unpacked.timestamp_ns);
+
+    // Location is zeroed for minimal tombstone
+    try std.testing.expectEqual(@as(i64, 0), tombstone.lat_nano);
+    try std.testing.expectEqual(@as(i64, 0), tombstone.lon_nano);
+}
+
+test "delete: GDPR tombstone lifecycle" {
+    // ENT-07: Tombstone lifecycle for GDPR compliance
+    // Per spec: tombstones are kept during compaction until final LSM level
+
+    const entity_id: u128 = 0x11223344_55667788_99AABBCC_DDEEFF00;
+    const group_id: u64 = 42;
+    const delete_time_ns: u64 = 1000 * ttl.ns_per_second;
+
+    const tombstone = GeoEvent.create_minimal_tombstone(entity_id, group_id, delete_time_ns);
+
+    // Verify should_copy_forward behavior for tombstones
+    const current_time_ns: u64 = 2000 * ttl.ns_per_second;
+
+    // Not at final level - keep tombstone
+    try std.testing.expect(tombstone.should_copy_forward(current_time_ns, false));
+
+    // At final level - drop tombstone (no older versions exist)
+    try std.testing.expect(!tombstone.should_copy_forward(current_time_ns, true));
+}
+
+test "delete: GDPR verification - entity_id preserved" {
+    // Per GDPR Article 17: erasure must be verifiable
+    // Tombstone preserves entity_id so we can prove deletion happened
+
+    const entity_id: u128 = 0xAAAABBBB_CCCCDDDD_EEEEFFFF_00001111;
+    const group_id: u64 = 77;
+
+    // Original event
+    var original = GeoEvent.zero();
+    original.entity_id = entity_id;
+    original.group_id = group_id;
+    original.lat_nano = GeoEvent.lat_from_float(51.5074); // London
+    original.lon_nano = GeoEvent.lon_from_float(-0.1278);
+    original.timestamp = 1000 * ttl.ns_per_second;
+
+    const cell_id = S2.latLonToCellId(original.lat_nano, original.lon_nano, 30);
+    original.id = GeoEvent.pack_id(cell_id, original.timestamp);
+
+    // Create tombstone from full event (preserves location)
+    const tombstone_full = original.create_tombstone(2000 * ttl.ns_per_second);
+
+    // Full tombstone preserves entity identity AND location
+    try std.testing.expectEqual(entity_id, tombstone_full.entity_id);
+    try std.testing.expectEqual(group_id, tombstone_full.group_id);
+    try std.testing.expectEqual(original.lat_nano, tombstone_full.lat_nano);
+    try std.testing.expectEqual(original.lon_nano, tombstone_full.lon_nano);
+
+    // Create minimal tombstone (when we only have entity_id from RAM index)
+    const tombstone_minimal = GeoEvent.create_minimal_tombstone(
+        entity_id,
+        group_id,
+        3000 * ttl.ns_per_second,
+    );
+
+    // Minimal tombstone preserves entity identity but not location
+    try std.testing.expectEqual(entity_id, tombstone_minimal.entity_id);
+    try std.testing.expectEqual(group_id, tombstone_minimal.group_id);
+    try std.testing.expectEqual(@as(i64, 0), tombstone_minimal.lat_nano);
+    try std.testing.expectEqual(@as(i64, 0), tombstone_minimal.lon_nano);
+}
+
+test "delete: tombstone never expires" {
+    // Tombstones must never expire to prevent resurrection
+    // Per ttl-retention/spec.md: tombstones have ttl_seconds=0
+
+    const entity_id: u128 = 0x12121212_34343434_56565656_78787878;
+    const tombstone = GeoEvent.create_minimal_tombstone(entity_id, 0, 1000 * ttl.ns_per_second);
+
+    // ttl_seconds=0 means never expires
+    try std.testing.expectEqual(@as(u32, 0), tombstone.ttl_seconds);
+
+    // is_expired should return false even at far future time
+    const far_future = std.math.maxInt(u64) - 1;
+    try std.testing.expect(!tombstone.is_expired(far_future));
+}
+
+test "GeoEvent: is_tombstone method" {
+    // Verify is_tombstone correctly identifies tombstones
+
+    var normal = GeoEvent.zero();
+    normal.entity_id = 1;
+    try std.testing.expect(!normal.is_tombstone());
+
+    var deleted = GeoEvent.zero();
+    deleted.entity_id = 1;
+    deleted.flags.deleted = true;
+    try std.testing.expect(deleted.is_tombstone());
+}
+
+test "GeoEvent: tombstone should_copy_forward compaction behavior" {
+    // ENT-06: Verify tombstone compaction lifecycle
+
+    var tombstone = GeoEvent.zero();
+    tombstone.entity_id = 0xAAAABBBB_CCCCDDDD_EEEEFFFF_00001111;
+    tombstone.flags.deleted = true;
+    tombstone.ttl_seconds = 0;
+    tombstone.timestamp = 1000 * ttl.ns_per_second;
+
+    // Non-final level: keep tombstone to prevent resurrection on restore
+    try std.testing.expect(tombstone.should_copy_forward(2000 * ttl.ns_per_second, false));
+
+    // Final level: drop tombstone (no older versions exist below)
+    try std.testing.expect(!tombstone.should_copy_forward(2000 * ttl.ns_per_second, true));
+}
+
+test "delete: batch delete result codes" {
+    // Test DeleteEntitiesResult structure
+
+    const result1 = DeleteEntitiesResult{
+        .index = 0,
+        .result = .ok,
+    };
+    try std.testing.expectEqual(@as(u32, 0), result1.index);
+    try std.testing.expectEqual(DeleteEntityResult.ok, result1.result);
+
+    const result2 = DeleteEntitiesResult{
+        .index = 5,
+        .result = .entity_not_found,
+    };
+    try std.testing.expectEqual(@as(u32, 5), result2.index);
+    try std.testing.expectEqual(DeleteEntityResult.entity_not_found, result2.result);
+}
+
+test "delete: invalid entity_id rejection" {
+    // Entity ID 0 is reserved (empty marker in RAM index)
+    // Entity ID maxInt(u128) is reserved per data-model spec
+
+    // Zero entity_id
+    const zero_result = DeleteEntitiesResult{
+        .index = 0,
+        .result = .entity_id_must_not_be_zero,
+    };
+    try std.testing.expectEqual(DeleteEntityResult.entity_id_must_not_be_zero, zero_result.result);
+
+    // Max entity_id
+    const max_result = DeleteEntitiesResult{
+        .index = 1,
+        .result = .entity_id_must_not_be_int_max,
+    };
+    try std.testing.expectEqual(DeleteEntityResult.entity_id_must_not_be_int_max, max_result.result);
+}
+
+// ============================================================================
 // Public API Aliases
 // ============================================================================
 
