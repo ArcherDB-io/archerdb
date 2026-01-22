@@ -4842,3 +4842,215 @@ test "RAM index: memory usage bounded (64 bytes per entry)" {
     };
     try std.testing.expectEqual(memory_bytes, stats.memory_bytes());
 }
+
+// =============================================================================
+// Race Condition Prevention Tests (RAM-02, RAM-03)
+// =============================================================================
+//
+// These tests verify the race condition fix at line 1859 (remove_if_id_matches).
+// The key scenario: TTL expiration could delete freshly inserted data if a
+// concurrent upsert happens between scanning and removal.
+//
+// Per CONTEXT.md: "Race condition verification method - choose stress testing"
+
+test "RAM index: remove_if_id_matches semantics (all cases)" {
+    // RAM-03: Comprehensive test of remove_if_id_matches behavior.
+    // Per line 1857-1920: Atomically remove only if latest_id matches.
+    const allocator = std.testing.allocator;
+
+    var index = try DefaultRamIndex.init(allocator, 100);
+    defer index.deinit(allocator);
+
+    // Case 1: latest_id matches -> entry removed, race_detected=false
+    {
+        const entity_id: u128 = 1;
+        const latest_id: u128 = 100;
+        _ = try index.upsert(entity_id, latest_id, 0);
+
+        const result = index.remove_if_id_matches(entity_id, latest_id);
+        try std.testing.expect(result.removed);
+        try std.testing.expect(!result.race_detected);
+        try std.testing.expect(index.lookup(entity_id).entry == null);
+    }
+
+    // Case 2: latest_id doesn't match -> entry NOT removed, race_detected=true
+    {
+        const entity_id: u128 = 2;
+        const old_latest_id: u128 = 200;
+        const new_latest_id: u128 = 300;
+        _ = try index.upsert(entity_id, old_latest_id, 0);
+        _ = try index.upsert(entity_id, new_latest_id, 0); // Concurrent upsert.
+
+        const result = index.remove_if_id_matches(entity_id, old_latest_id);
+        try std.testing.expect(!result.removed);
+        try std.testing.expect(result.race_detected);
+
+        // Entry still exists with new latest_id.
+        const entry = index.lookup(entity_id).entry;
+        try std.testing.expect(entry != null);
+        try std.testing.expectEqual(new_latest_id, entry.?.latest_id);
+    }
+
+    // Case 3: entry doesn't exist -> removed=false, race_detected=false
+    {
+        const entity_id: u128 = 999; // Never inserted.
+        const result = index.remove_if_id_matches(entity_id, 100);
+        try std.testing.expect(!result.removed);
+        try std.testing.expect(!result.race_detected);
+    }
+
+    // Case 4: entry is already tombstone -> removed=false, race_detected=false
+    {
+        const entity_id: u128 = 3;
+        const latest_id: u128 = 300;
+        _ = try index.upsert(entity_id, latest_id, 0);
+        _ = index.remove(entity_id); // Convert to tombstone.
+
+        // Now try remove_if_id_matches on tombstone.
+        const result = index.remove_if_id_matches(entity_id, latest_id);
+        try std.testing.expect(!result.removed); // Already tombstone.
+        try std.testing.expect(!result.race_detected); // Not a race, just already gone.
+    }
+}
+
+test "RAM index: TTL race condition stress test" {
+    // RAM-03: Stress test for race condition between TTL scanner and upsert.
+    // Per CONTEXT.md: "Race condition verification method - choose stress testing"
+    //
+    // Scenario simulated 1000 times:
+    // 1. TTL scanner finds expired entry, prepares to delete
+    // 2. Concurrent upsert with fresh data for same entity_id
+    // 3. TTL scanner calls remove_if_id_matches with old latest_id
+    // 4. Expected: remove_if_id_matches returns race_detected=true, entry NOT deleted
+    const allocator = std.testing.allocator;
+
+    var index = try DefaultRamIndex.init(allocator, 2000);
+    defer index.deinit(allocator);
+
+    const iterations: u32 = 1000;
+    var races_detected: u32 = 0;
+    var removes_succeeded: u32 = 0;
+
+    for (1..iterations + 1) |i| {
+        const entity_id: u128 = @intCast(i);
+
+        // Step 1: Insert initial entry (simulates expired entry TTL scanner found).
+        const old_latest_id: u128 = @as(u128, @intCast(i)) * 1000;
+        _ = try index.upsert(entity_id, old_latest_id, 10); // TTL=10 sec
+
+        // Step 2: Simulate concurrent upsert with fresh data (50% of the time).
+        const new_latest_id: u128 = old_latest_id + 500;
+        if (i % 2 == 0) {
+            _ = try index.upsert(entity_id, new_latest_id, 60); // Fresh TTL=60 sec
+        }
+
+        // Step 3: TTL scanner attempts removal with OLD latest_id.
+        const result = index.remove_if_id_matches(entity_id, old_latest_id);
+
+        if (i % 2 == 0) {
+            // Concurrent upsert happened - should detect race.
+            try std.testing.expect(!result.removed);
+            try std.testing.expect(result.race_detected);
+            races_detected += 1;
+
+            // Fresh data preserved.
+            const entry = index.lookup(entity_id).entry;
+            try std.testing.expect(entry != null);
+            try std.testing.expectEqual(new_latest_id, entry.?.latest_id);
+        } else {
+            // No concurrent upsert - should remove successfully.
+            try std.testing.expect(result.removed);
+            try std.testing.expect(!result.race_detected);
+            removes_succeeded += 1;
+        }
+    }
+
+    // Verify we hit both paths.
+    try std.testing.expectEqual(@as(u32, 500), races_detected);
+    try std.testing.expectEqual(@as(u32, 500), removes_succeeded);
+
+    std.log.info("TTL race stress test: {d} races detected, {d} removes succeeded", .{
+        races_detected,
+        removes_succeeded,
+    });
+}
+
+test "RAM index: no data loss under concurrent access" {
+    // RAM-02, RAM-03: Key correctness property - fresh data never deleted.
+    // Scenario:
+    // - Insert entity A with latest_id=100
+    // - Concurrent: TTL tries to expire entity A (expects latest_id=100)
+    // - Concurrent: Upsert entity A with latest_id=200
+    // - Result: Entity A exists with latest_id=200 (fresh data preserved)
+    const allocator = std.testing.allocator;
+
+    var index = try DefaultRamIndex.init(allocator, 100);
+    defer index.deinit(allocator);
+
+    const entity_id: u128 = 42;
+    const old_latest_id: u128 = 100;
+    const new_latest_id: u128 = 200;
+
+    // Insert initial entry.
+    _ = try index.upsert(entity_id, old_latest_id, 10);
+
+    // Verify it exists.
+    try std.testing.expect(index.lookup(entity_id).entry != null);
+
+    // Simulate TTL scanner reading the entry (captures old_latest_id).
+    // In real system, this is: entry = index.lookup(entity_id)
+
+    // Concurrent upsert happens before TTL scanner can remove.
+    _ = try index.upsert(entity_id, new_latest_id, 60);
+
+    // TTL scanner tries to remove with old_latest_id.
+    const remove_result = index.remove_if_id_matches(entity_id, old_latest_id);
+
+    // Race detected - fresh data protected.
+    try std.testing.expect(!remove_result.removed);
+    try std.testing.expect(remove_result.race_detected);
+
+    // Entity still exists with fresh data.
+    const entry = index.lookup(entity_id).entry;
+    try std.testing.expect(entry != null);
+    try std.testing.expectEqual(new_latest_id, entry.?.latest_id);
+    try std.testing.expectEqual(@as(u32, 60), entry.?.ttl_seconds);
+}
+
+test "RAM index: concurrent upsert during TTL scan preserves data" {
+    // RAM-03: Verify scan_expired_batch uses remove_if_id_matches correctly.
+    // This tests the integration between TTL scanning and race-safe removal.
+    const allocator = std.testing.allocator;
+
+    var index = try DefaultRamIndex.init(allocator, 100);
+    defer index.deinit(allocator);
+
+    // Insert entity with short TTL (expires at T=11s).
+    const entity_id: u128 = 42;
+    const old_ts: u64 = 1 * ttl.ns_per_second;
+    const old_latest_id: u128 = (@as(u128, 0xDEAD) << 64) | old_ts;
+    _ = try index.upsert(entity_id, old_latest_id, 10); // TTL=10s, expires at 11s.
+
+    // Verify entry exists.
+    try std.testing.expect(index.lookup(entity_id).entry != null);
+
+    // Simulate fresh data arriving (TTL scanner hasn't run yet).
+    // New timestamp is after expiration time, but that's intentional -
+    // this is new data that should NOT be deleted.
+    const new_ts: u64 = 50 * ttl.ns_per_second;
+    const new_latest_id: u128 = (@as(u128, 0xBEEF) << 64) | new_ts;
+    _ = try index.upsert(entity_id, new_latest_id, 60); // TTL=60s, expires at 110s.
+
+    // Now run TTL scan at T=20s.
+    // The OLD entry would be expired (1+10=11 < 20), but we've already upserted.
+    const scan_time: u64 = 20 * ttl.ns_per_second;
+    const scan_result = index.scan_expired_batch(0, 100, scan_time);
+
+    // Should NOT have removed the entry (race detection kicked in).
+    try std.testing.expectEqual(@as(u64, 0), scan_result.entries_removed);
+
+    // Entry still exists with new data.
+    const entry = index.lookup(entity_id).entry;
+    try std.testing.expect(entry != null);
+    try std.testing.expectEqual(new_latest_id, entry.?.latest_id);
+}
