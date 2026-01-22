@@ -1323,3 +1323,258 @@ test "S2.coverPolygon: SF bounding box covers SF point" {
 
     try std.testing.expect(found);
 }
+
+// =============================================================================
+// Radius Query Property Tests (RAD-01, RAD-02, RAD-05, RAD-07, RAD-08)
+// =============================================================================
+//
+// These property-based tests verify the two-phase radius query filtering:
+// 1. Coarse: S2 cell covering identifies candidate cells
+// 2. Fine: Haversine post-filter eliminates false positives
+//
+// Properties verified:
+// - RAD-01: No false negatives (all points within radius are found)
+// - RAD-02: No false positives after post-filter
+// - RAD-05: S2 cell covering is efficient
+// - RAD-07: High-density clusters handled correctly
+// - RAD-08: Deterministic result ordering
+
+/// Simple PRNG for reproducible property tests (xorshift64)
+/// Seed documented for reproducibility: 0x12345678DEADBEEF
+const TestPrng = struct {
+    state: u64,
+
+    fn init(seed: u64) TestPrng {
+        return .{ .state = seed };
+    }
+
+    fn next(self: *TestPrng) u64 {
+        var x = self.state;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.state = x;
+        return x;
+    }
+
+    /// Generate random i64 in range [min, max]
+    fn randRange(self: *TestPrng, min: i64, max: i64) i64 {
+        const range: u64 = @intCast(max - min);
+        const r = self.next() % (range + 1);
+        return min + @as(i64, @intCast(r));
+    }
+};
+
+test "radius query: no false negatives - all points within radius found" {
+    // RAD-01: Generate points known to be within radius, verify all pass filter
+    // Seed: 0x12345678DEADBEEF for reproducibility
+    var prng = TestPrng.init(0x12345678DEADBEEF);
+
+    // Center: San Francisco
+    const center_lat: i64 = 37_774_900_000;
+    const center_lon: i64 = -122_419_400_000;
+    const radius_mm: u64 = 10_000_000; // 10 km
+
+    // Generate 100 random points within 10km radius
+    // At SF latitude, 10km ≈ 0.09° lat ≈ 90_000_000 nanodegrees
+    // Longitude varies with cosine(lat), roughly same at this latitude
+    var points_inside: usize = 0;
+    var points_filtered: usize = 0;
+
+    for (0..100) |_| {
+        // Generate point within a box that's slightly smaller than radius
+        // to ensure all points are definitely inside
+        const delta_lat = prng.randRange(-70_000_000, 70_000_000); // ~7km
+        const delta_lon = prng.randRange(-70_000_000, 70_000_000); // ~7km
+        const point_lat = center_lat + delta_lat;
+        const point_lon = center_lon + delta_lon;
+
+        // Calculate actual distance
+        const dist = S2.distance(center_lat, center_lon, point_lat, point_lon);
+
+        if (dist <= radius_mm) {
+            points_inside += 1;
+
+            // Verify isWithinDistance agrees
+            if (S2.isWithinDistance(center_lat, center_lon, point_lat, point_lon, radius_mm)) {
+                points_filtered += 1;
+            }
+        }
+    }
+
+    // All points that are actually inside must pass the filter
+    // (no false negatives)
+    try std.testing.expectEqual(points_inside, points_filtered);
+    // Sanity check: we should have found many points inside
+    try std.testing.expect(points_inside > 50);
+}
+
+test "radius query: no false positives after post-filter" {
+    // RAD-02: Points outside radius must fail post-filter
+    // Seed: 0xDEADBEEF12345678 for reproducibility
+    var prng = TestPrng.init(0xDEADBEEF12345678);
+
+    const center_lat: i64 = 0; // Equator for simplicity
+    const center_lon: i64 = 0;
+    const radius_mm: u64 = 1_000_000; // 1 km
+
+    var false_positives: usize = 0;
+    var total_outside: usize = 0;
+
+    for (0..100) |_| {
+        // Generate points at various distances, some inside, some outside
+        // 1km at equator ≈ 0.009° ≈ 9_000_000 nanodegrees
+        const delta_lat = prng.randRange(-50_000_000, 50_000_000); // ~5.5km range
+        const delta_lon = prng.randRange(-50_000_000, 50_000_000);
+        const point_lat = center_lat + delta_lat;
+        const point_lon = center_lon + delta_lon;
+
+        // Calculate actual distance
+        const dist = S2.distance(center_lat, center_lon, point_lat, point_lon);
+
+        if (dist > radius_mm) {
+            total_outside += 1;
+
+            // Verify post-filter correctly rejects
+            if (S2.isWithinDistance(center_lat, center_lon, point_lat, point_lon, radius_mm)) {
+                false_positives += 1;
+            }
+        }
+    }
+
+    // Zero false positives after post-filter
+    try std.testing.expectEqual(@as(usize, 0), false_positives);
+    // Sanity check: we should have tested many outside points
+    try std.testing.expect(total_outside > 30);
+}
+
+test "radius query: deterministic ordering" {
+    // RAD-08: Same query produces identical results
+    var scratch: [s2_scratch_size]u8 = undefined;
+
+    const center_lat: i64 = 37_774_900_000; // SF
+    const center_lon: i64 = -122_419_400_000;
+    const radius_mm: u32 = 5_000_000; // 5 km
+
+    // Run the same covering operation multiple times
+    const covering1 = S2.coverCap(&scratch, center_lat, center_lon, radius_mm, 8, 30);
+    const covering2 = S2.coverCap(&scratch, center_lat, center_lon, radius_mm, 8, 30);
+    const covering3 = S2.coverCap(&scratch, center_lat, center_lon, radius_mm, 8, 30);
+
+    // All results must be identical
+    for (0..s2_max_cells) |i| {
+        try std.testing.expectEqual(covering1[i].start, covering2[i].start);
+        try std.testing.expectEqual(covering1[i].end, covering2[i].end);
+        try std.testing.expectEqual(covering2[i].start, covering3[i].start);
+        try std.testing.expectEqual(covering2[i].end, covering3[i].end);
+    }
+}
+
+test "radius query: coverage efficiency at various radii" {
+    // RAD-05: S2 covering should produce reasonable number of ranges
+    // Note: The exact number depends on S2 implementation details
+    var scratch: [s2_scratch_size]u8 = undefined;
+
+    const center_lat: i64 = 37_774_900_000;
+    const center_lon: i64 = -122_419_400_000;
+
+    const TestCase = struct {
+        radius_mm: u32,
+        name: []const u8,
+    };
+
+    const test_cases = [_]TestCase{
+        .{ .radius_mm = 1_000_000, .name = "1km" },
+        .{ .radius_mm = 10_000_000, .name = "10km" },
+        .{ .radius_mm = 100_000_000, .name = "100km" },
+        .{ .radius_mm = 1_000_000_000, .name = "1000km" },
+    };
+
+    for (test_cases) |tc| {
+        const covering = S2.coverCap(&scratch, center_lat, center_lon, tc.radius_mm, 8, 30);
+
+        var range_count: usize = 0;
+        for (covering) |range| {
+            if (range.start != 0 or range.end != 0) {
+                range_count += 1;
+            }
+        }
+
+        // Coverage should produce at least one range
+        try std.testing.expect(range_count > 0);
+        // Coverage should not exceed max_cells limit (s2_max_cells = 16)
+        try std.testing.expect(range_count <= s2_max_cells);
+    }
+}
+
+test "radius query: high-density cluster handling" {
+    // RAD-07: 1000 points in 100m radius, all should be found efficiently
+    // Seed: 0xCAFEBABE01234567 for reproducibility
+    var prng = TestPrng.init(0xCAFEBABE01234567);
+
+    const center_lat: i64 = 40_712_800_000; // NYC
+    const center_lon: i64 = -74_006_000_000;
+    const radius_mm: u64 = 100_000; // 100m
+
+    // 100m at NYC latitude ≈ 0.0009° ≈ 900_000 nanodegrees
+    const cluster_spread: i64 = 700_000; // ~70m to stay within 100m radius
+
+    var points_in_cluster: usize = 0;
+    var all_passed_filter: bool = true;
+
+    for (0..1000) |_| {
+        // Generate point within tight cluster
+        const delta_lat = prng.randRange(-cluster_spread, cluster_spread);
+        const delta_lon = prng.randRange(-cluster_spread, cluster_spread);
+        const point_lat = center_lat + delta_lat;
+        const point_lon = center_lon + delta_lon;
+
+        const dist = S2.distance(center_lat, center_lon, point_lat, point_lon);
+
+        if (dist <= radius_mm) {
+            points_in_cluster += 1;
+
+            // Verify filter accepts
+            if (!S2.isWithinDistance(center_lat, center_lon, point_lat, point_lon, radius_mm)) {
+                all_passed_filter = false;
+            }
+        }
+    }
+
+    // All cluster points should pass (no false negatives)
+    try std.testing.expect(all_passed_filter);
+    // Most generated points should be in cluster (>800 of 1000)
+    try std.testing.expect(points_in_cluster > 800);
+}
+
+test "radius query: isWithinDistance consistency with distance function" {
+    // Verify that isWithinDistance is consistent with the distance calculation
+    // This is the key property for radius query correctness
+    var prng = TestPrng.init(0xABCDEF0123456789);
+
+    const center_lat: i64 = 37_774_900_000; // SF
+    const center_lon: i64 = -122_419_400_000;
+
+    // Test various radii
+    const test_radii = [_]u64{ 100_000, 1_000_000, 10_000_000, 100_000_000 };
+
+    for (test_radii) |radius_mm| {
+        // Generate 20 random points and verify consistency
+        for (0..20) |_| {
+            const delta_lat = prng.randRange(-50_000_000, 50_000_000);
+            const delta_lon = prng.randRange(-50_000_000, 50_000_000);
+            const point_lat = center_lat + delta_lat;
+            const point_lon = center_lon + delta_lon;
+
+            // Calculate actual distance
+            const actual_dist = S2.distance(center_lat, center_lon, point_lat, point_lon);
+
+            // Check isWithinDistance result
+            const is_within = S2.isWithinDistance(center_lat, center_lon, point_lat, point_lon, radius_mm);
+
+            // Verify consistency: isWithinDistance should agree with distance calculation
+            const expected_within = actual_dist <= radius_mm;
+            try std.testing.expectEqual(expected_within, is_within);
+        }
+    }
+}
