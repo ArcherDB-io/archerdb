@@ -775,3 +775,247 @@ test "TieringManager: access window reset" {
     const meta = manager.getMetadata(entity_id).?;
     try std.testing.expectEqual(@as(u32, 1), meta.access_count);
 }
+
+// =============================================================================
+// Integration Tests for Complete Tiering Flow
+// =============================================================================
+
+test "TieringManager: integration - insert starts in hot tier with RAM index" {
+    // Verify that new entities start in hot tier and are in RAM index
+    const allocator = std.testing.allocator;
+
+    var manager = TieringManager.init(allocator, .{});
+    defer manager.deinit();
+
+    const entity_id: u128 = 0xDEADBEEF_12345678_90ABCDEF_CAFEBABE;
+    const now: u64 = 1_000_000_000_000;
+
+    // Insert new entity
+    try manager.recordInsert(entity_id, now);
+
+    // Verify entity is in hot tier
+    try std.testing.expectEqual(Tier.hot, manager.getTier(entity_id));
+
+    // Verify entity is in RAM index (hot/warm = true)
+    try std.testing.expect(manager.isInRamIndex(entity_id));
+
+    // Verify stats
+    try std.testing.expectEqual(@as(u64, 1), manager.stats.hot_count);
+    try std.testing.expectEqual(@as(u64, 0), manager.stats.warm_count);
+    try std.testing.expectEqual(@as(u64, 0), manager.stats.cold_count);
+}
+
+test "TieringManager: integration - inactivity demotion hot->warm->cold" {
+    // Verify complete demotion flow from hot through warm to cold
+    const allocator = std.testing.allocator;
+
+    var manager = TieringManager.init(allocator, .{
+        .hot_to_warm_timeout_ns = 1_000_000_000, // 1 second
+        .warm_to_cold_timeout_ns = 2_000_000_000, // 2 seconds
+    });
+    defer manager.deinit();
+
+    const entity_id: u128 = 44444;
+    const now: u64 = 1_000_000_000_000;
+
+    // Insert entity (hot tier)
+    try manager.recordInsert(entity_id, now);
+    try std.testing.expect(manager.isInRamIndex(entity_id));
+
+    // Tick past hot->warm timeout
+    const transitions1 = try manager.tick(now + 1_500_000_000);
+    defer manager.allocator.free(transitions1);
+    try std.testing.expectEqual(@as(usize, 1), transitions1.len);
+    try std.testing.expectEqual(Tier.warm, manager.getTier(entity_id));
+    try std.testing.expect(manager.isInRamIndex(entity_id)); // Still in RAM index
+
+    // Tick past warm->cold timeout
+    const transitions2 = try manager.tick(now + 4_000_000_000);
+    defer manager.allocator.free(transitions2);
+    try std.testing.expectEqual(@as(usize, 1), transitions2.len);
+    try std.testing.expectEqual(Tier.cold, manager.getTier(entity_id));
+    try std.testing.expect(!manager.isInRamIndex(entity_id)); // Removed from RAM index
+
+    // Verify stats
+    try std.testing.expectEqual(@as(u64, 0), manager.stats.hot_count);
+    try std.testing.expectEqual(@as(u64, 0), manager.stats.warm_count);
+    try std.testing.expectEqual(@as(u64, 1), manager.stats.cold_count);
+    try std.testing.expectEqual(@as(u64, 1), manager.stats.hot_to_warm_demotions);
+    try std.testing.expectEqual(@as(u64, 1), manager.stats.warm_to_cold_demotions);
+}
+
+test "TieringManager: integration - access pattern promotion cold->warm->hot" {
+    // Verify complete promotion flow from cold through warm to hot
+    const allocator = std.testing.allocator;
+
+    var manager = TieringManager.init(allocator, .{
+        .cold_to_warm_access_threshold = 2,
+        .warm_to_hot_access_threshold = 3,
+    });
+    defer manager.deinit();
+
+    const entity_id: u128 = 55555;
+    const now: u64 = 1_000_000_000_000;
+
+    // First access of unknown entity (starts in cold tier, tracked)
+    _ = try manager.recordAccess(entity_id, now);
+    try std.testing.expectEqual(Tier.cold, manager.getTier(entity_id));
+    try std.testing.expect(!manager.isInRamIndex(entity_id));
+
+    // Second access promotes to warm
+    const transition1 = try manager.recordAccess(entity_id, now + 1_000_000);
+    try std.testing.expect(transition1 != null);
+    try std.testing.expectEqual(Tier.warm, transition1.?.to_tier);
+    try std.testing.expect(manager.isInRamIndex(entity_id)); // Now in RAM index
+
+    // Three more accesses to promote to hot
+    _ = try manager.recordAccess(entity_id, now + 2_000_000);
+    _ = try manager.recordAccess(entity_id, now + 3_000_000);
+    const transition2 = try manager.recordAccess(entity_id, now + 4_000_000);
+    try std.testing.expect(transition2 != null);
+    try std.testing.expectEqual(Tier.hot, transition2.?.to_tier);
+
+    // Verify stats
+    try std.testing.expectEqual(@as(u64, 1), manager.stats.hot_count);
+    try std.testing.expectEqual(@as(u64, 0), manager.stats.warm_count);
+    try std.testing.expectEqual(@as(u64, 0), manager.stats.cold_count);
+    try std.testing.expectEqual(@as(u64, 1), manager.stats.cold_to_warm_promotions);
+    try std.testing.expectEqual(@as(u64, 1), manager.stats.warm_to_hot_promotions);
+}
+
+test "TieringManager: integration - tier limits enforcement" {
+    // Verify max tier limits demote excess entities
+    const allocator = std.testing.allocator;
+
+    var manager = TieringManager.init(allocator, .{
+        .max_hot_entities = 10,
+        .max_warm_entities = 20,
+    });
+    defer manager.deinit();
+
+    const now: u64 = 1_000_000_000_000;
+
+    // Insert 15 entities (exceeds max_hot_entities of 10)
+    for (0..15) |i| {
+        try manager.recordInsert(@as(u128, @intCast(i + 1)), now + i * 1_000_000);
+    }
+
+    try std.testing.expectEqual(@as(u64, 15), manager.stats.hot_count);
+
+    // Tick to enforce limits
+    const transitions = try manager.tick(now + 100_000_000);
+    defer manager.allocator.free(transitions);
+
+    // 5 entities should be demoted to warm
+    try std.testing.expectEqual(@as(usize, 5), transitions.len);
+    try std.testing.expectEqual(@as(u64, 10), manager.stats.hot_count);
+    try std.testing.expectEqual(@as(u64, 5), manager.stats.warm_count);
+}
+
+test "TieringManager: integration - cold tier query tracking" {
+    // Verify cold tier queries are tracked correctly
+    const allocator = std.testing.allocator;
+
+    var manager = TieringManager.init(allocator, .{
+        .cold_to_warm_access_threshold = 5, // High threshold to stay in cold
+    });
+    defer manager.deinit();
+
+    const now: u64 = 1_000_000_000_000;
+
+    // Access 10 unknown entities (all cold tier)
+    for (0..10) |i| {
+        _ = try manager.recordAccess(@as(u128, @intCast(i + 100)), now + i * 1_000);
+    }
+
+    // Verify cold tier queries tracked
+    try std.testing.expectEqual(@as(u64, 10), manager.stats.cold_tier_queries);
+
+    // All entities should still be cold (under threshold)
+    for (0..10) |i| {
+        try std.testing.expectEqual(Tier.cold, manager.getTier(@as(u128, @intCast(i + 100))));
+    }
+}
+
+test "TieringManager: isInRamIndex for all tiers" {
+    // Verify isInRamIndex returns correct values for each tier
+    const allocator = std.testing.allocator;
+
+    // Use very long warm->cold timeout so warm entities stay warm
+    var manager = TieringManager.init(allocator, .{
+        .hot_to_warm_timeout_ns = 1_000_000_000, // 1 second
+        .warm_to_cold_timeout_ns = 100_000_000_000_000, // Very long (100k seconds)
+        .cold_to_warm_access_threshold = 100, // High threshold to keep cold entity cold
+    });
+    defer manager.deinit();
+
+    const hot_entity: u128 = 1;
+    const warm_entity: u128 = 2;
+    const cold_entity: u128 = 3;
+    const now: u64 = 1_000_000_000_000;
+
+    // Insert warm entity first (will be demoted to warm)
+    try manager.recordInsert(warm_entity, now);
+
+    // Insert hot entity later (fresh access time will keep it hot)
+    try manager.recordInsert(hot_entity, now + 1_500_000_000);
+
+    // Tick at later time - warm_entity times out to warm, hot_entity is fresh
+    const transitions = try manager.tick(now + 2_000_000_000);
+    defer manager.allocator.free(transitions);
+
+    // Access unknown entity (cold) - stays cold with high threshold
+    _ = try manager.recordAccess(cold_entity, now + 2_000_000_000);
+
+    // Verify tiers
+    try std.testing.expectEqual(Tier.hot, manager.getTier(hot_entity));
+    try std.testing.expectEqual(Tier.warm, manager.getTier(warm_entity));
+    try std.testing.expectEqual(Tier.cold, manager.getTier(cold_entity));
+
+    // Verify isInRamIndex
+    try std.testing.expect(manager.isInRamIndex(hot_entity)); // Hot = in RAM
+    try std.testing.expect(manager.isInRamIndex(warm_entity)); // Warm = in RAM
+    try std.testing.expect(!manager.isInRamIndex(cold_entity)); // Cold = NOT in RAM
+}
+
+test "TieringManager: cost ratio calculation" {
+    // Verify cost ratio calculation for cost optimization monitoring
+    const allocator = std.testing.allocator;
+
+    var manager = TieringManager.init(allocator, .{
+        .hot_to_warm_timeout_ns = 100_000_000, // 100ms
+        .warm_to_cold_timeout_ns = 100_000_000, // 100ms
+    });
+    defer manager.deinit();
+
+    const now: u64 = 1_000_000_000_000;
+
+    // Insert 100 entities at same time
+    for (0..100) |i| {
+        try manager.recordInsert(@as(u128, @intCast(i + 1)), now);
+    }
+
+    // Access first 10 to keep them hot (update their access time)
+    for (0..10) |i| {
+        _ = try manager.recordAccess(@as(u128, @intCast(i + 1)), now + 150_000_000);
+    }
+
+    // Tick to demote the other 90 to warm (past hot timeout)
+    const t1 = try manager.tick(now + 150_000_000);
+    defer manager.allocator.free(t1);
+
+    // Access 30 warm entities to prevent further demotion
+    for (10..40) |i| {
+        _ = try manager.recordAccess(@as(u128, @intCast(i + 1)), now + 300_000_000);
+    }
+
+    // Tick again to demote the remaining 60 warm entities to cold
+    const t2 = try manager.tick(now + 300_000_000);
+    defer manager.allocator.free(t2);
+
+    // Verify cost ratio is between 0.1 (all cold) and 1.0 (all hot)
+    const stats = manager.getStats();
+    const cost_ratio = stats.estimatedCostRatio();
+    try std.testing.expect(cost_ratio >= 0.1);
+    try std.testing.expect(cost_ratio <= 1.0);
+}
