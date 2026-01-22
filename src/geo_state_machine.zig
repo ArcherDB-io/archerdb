@@ -130,6 +130,12 @@ const ttl = @import("ttl.zig");
 const CleanupRequest = ttl.CleanupRequest;
 const CleanupResponse = ttl.CleanupResponse;
 
+// Hot-warm-cold tiering integration (F2.6)
+const tiering = @import("tiering.zig");
+const TieringManager = tiering.TieringManager;
+const TieringConfig = tiering.TieringConfig;
+const Tier = tiering.Tier;
+
 // Topology discovery for Smart Client (F5.1)
 const topology_mod = @import("topology.zig");
 const TopologyResponse = topology_mod.TopologyResponse;
@@ -954,6 +960,12 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             memory_mapped_index_enabled: bool = false,
             /// Path for memory-mapped index backing file (required when enabled).
             memory_mapped_index_path: ?[]const u8 = null,
+            /// Enable hot-warm-cold tiering (F2.6).
+            /// When enabled, tracks entity access patterns for automatic tier management.
+            tiering_enabled: bool = false,
+            /// Tiering configuration (timeouts, thresholds).
+            /// Only used when tiering_enabled = true.
+            tiering_config: TieringConfig = .{},
         };
 
         /// Prefetch timestamp - set during prefetch phase.
@@ -1031,6 +1043,11 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         /// Insert operation metrics.
         insert_metrics: InsertMetrics = InsertMetrics{},
 
+        /// Hot-warm-cold tiering manager (F2.6).
+        /// Tracks entity access patterns for automatic tier management.
+        /// Null when tiering is disabled in options.
+        tiering_manager: ?*TieringManager = null,
+
         // ====================================================================
         // Initialization
         // ====================================================================
@@ -1094,6 +1111,20 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             else
                 options.default_ttl_days * seconds_per_day;
 
+            // Initialize TieringManager if enabled (F2.6)
+            var tiering_manager: ?*TieringManager = null;
+            if (options.tiering_enabled) {
+                const tm = try allocator.create(TieringManager);
+                errdefer allocator.destroy(tm);
+                tm.* = TieringManager.init(allocator, options.tiering_config);
+                tiering_manager = tm;
+                log.info("GeoStateMachine: tiering enabled", .{});
+            }
+            errdefer if (tiering_manager) |tm| {
+                tm.deinit();
+                allocator.destroy(tm);
+            };
+
             self.* = .{
                 .batch_size_limit = options.batch_size_limit,
                 .default_ttl_seconds = default_ttl_seconds,
@@ -1106,6 +1137,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .last_index_checkpoint_op = 0,
                 .ram_index = ram_index,
                 .index_recovery = .{},
+                .tiering_manager = tiering_manager,
             };
 
             // Initialize Forest for LSM tree storage (F1.2, F4.2)
@@ -1172,6 +1204,12 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             self.forest.deinit(allocator);
             self.ram_index.deinit(allocator);
             allocator.destroy(self.ram_index);
+
+            // Clean up TieringManager if enabled (F2.6)
+            if (self.tiering_manager) |tm| {
+                tm.deinit();
+                allocator.destroy(tm);
+            }
         }
 
         /// Reset state machine for state sync.
@@ -1191,6 +1229,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .index_recovery = .{},
                 .index_checkpoint_enabled = self.index_checkpoint_enabled,
                 .last_index_checkpoint_op = 0,
+                .tiering_manager = self.tiering_manager,
             };
         }
 
@@ -1505,6 +1544,35 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 archerdb_metrics.Registry.write_events_total.add(result.entries_removed);
             }
 
+            // F2.6: Process tiering maintenance during pulse
+            // This triggers tier promotions/demotions based on access patterns
+            if (self.tiering_manager) |tm| {
+                const transitions = tm.tick(timestamp) catch |err| {
+                    log.warn("tiering: tick failed: {}", .{err});
+                    return result.entries_removed;
+                };
+                defer tm.allocator.free(transitions);
+
+                // Process tier transitions (update RAM index for cold demotions)
+                for (transitions) |transition| {
+                    if (transition.to_tier == .cold) {
+                        // Entity demoted to cold tier - remove from RAM index
+                        // Cold entities are disk-only and require LSM scan for queries
+                        _ = self.ram_index.remove(transition.entity_id);
+                        log.debug("tiering: entity {x} demoted to cold tier", .{transition.entity_id});
+                    }
+                }
+
+                // Log tier statistics periodically
+                const stats = tm.getStats();
+                if (stats.totalEntities() > 0 and result.entries_removed > 0) {
+                    log.debug(
+                        "tiering: hot={d} warm={d} cold={d} (cost_ratio={d:.2})",
+                        .{ stats.hot_count, stats.warm_count, stats.cold_count, stats.estimatedCostRatio() },
+                    );
+                }
+            }
+
             return result.entries_removed;
         }
 
@@ -1588,6 +1656,11 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 // Track metrics (F2.5.5).
                 if (removed) {
                     deleted_count += 1;
+
+                    // F2.6: Record deletion in tiering manager
+                    if (self.tiering_manager) |tm| {
+                        tm.recordDelete(entity_id);
+                    }
 
                     // F2.5.3: Generate LSM tombstone for GDPR Phase 2.
                     // Per compliance/spec.md: tombstones ensure durable deletion and prevent
@@ -1809,6 +1882,13 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                         self.entries_with_ttl += 1;
                     }
 
+                    // F2.6: Record insert in tiering manager (new entities start in hot tier)
+                    if (self.tiering_manager) |tm| {
+                        tm.recordInsert(event.entity_id, event_timestamp) catch |err| {
+                            log.warn("tiering: recordInsert failed: {}", .{err});
+                        };
+                    }
+
                     if (DefaultRamIndex.supports_metadata) {
                         _ = self.ram_index.update_metadata(
                             event.entity_id,
@@ -1834,6 +1914,13 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     inserted_count += 1;
                     // Note: TTL tracking for updates is complex (old TTL vs new TTL)
                     // For simplicity, we assume updates maintain TTL status
+
+                    // F2.6: Record access in tiering manager (updates count as access)
+                    if (self.tiering_manager) |tm| {
+                        _ = tm.recordAccess(event.entity_id, event_timestamp) catch |err| {
+                            log.warn("tiering: recordAccess failed: {}", .{err});
+                        };
+                    }
 
                     if (DefaultRamIndex.supports_metadata) {
                         _ = self.ram_index.update_metadata(
@@ -2131,6 +2218,13 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 if (output.len < response_size + @sizeOf(GeoEvent)) {
                     log.warn("query_uuid: output buffer too small", .{});
                     return 0;
+                }
+
+                // F2.6: Record access in tiering manager for query
+                if (self.tiering_manager) |tm| {
+                    _ = tm.recordAccess(filter.entity_id, self.commit_timestamp) catch |err| {
+                        log.warn("tiering: recordAccess failed: {}", .{err});
+                    };
                 }
 
                 var result_event: GeoEvent = undefined;
@@ -3086,6 +3180,11 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     continue;
                 }
 
+                // F2.6: Record access in tiering manager for each returned entity
+                if (self.tiering_manager) |tm| {
+                    _ = tm.recordAccess(entry.entity_id, self.commit_timestamp) catch {};
+                }
+
                 // Build GeoEvent result
                 // NOTE: This creates a minimal GeoEvent from index data.
                 // When Forest is integrated, we should fetch the full event from LSM.
@@ -3595,6 +3694,11 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 
                 if (!in_polygon) {
                     continue;
+                }
+
+                // F2.6: Record access in tiering manager for each returned entity
+                if (self.tiering_manager) |tm| {
+                    _ = tm.recordAccess(entry.entity_id, self.commit_timestamp) catch {};
                 }
 
                 // Build GeoEvent result
