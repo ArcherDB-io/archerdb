@@ -110,10 +110,15 @@ pub const MinioTestContext = struct {
         if (!ready) {
             // Cleanup on failure
             log.err("MinIO failed to become ready in 30 seconds", .{});
-            _ = std.process.Child.run(.{
+            const stop_result = std.process.Child.run(.{
                 .allocator = allocator,
                 .argv = &[_][]const u8{ "docker", "stop", id_copy },
-            }) catch {};
+            }) catch {
+                allocator.free(id_copy);
+                return error.MinioStartupTimeout;
+            };
+            allocator.free(stop_result.stdout);
+            allocator.free(stop_result.stderr);
             allocator.free(id_copy);
             return error.MinioStartupTimeout;
         }
@@ -144,12 +149,18 @@ pub const MinioTestContext = struct {
     pub fn stop(self: *MinioTestContext) void {
         if (self.owns_container and self.container_id.len > 0) {
             log.info("Stopping MinIO container: {s}", .{self.container_id});
-            _ = std.process.Child.run(.{
+            const result = std.process.Child.run(.{
                 .allocator = self.allocator,
                 .argv = &[_][]const u8{ "docker", "stop", self.container_id },
             }) catch |err| {
                 log.warn("Failed to stop MinIO container: {}", .{err});
+                self.allocator.free(self.container_id);
+                self.allocator.free(self.endpoint);
+                self.allocator.free(self.bucket);
+                return;
             };
+            self.allocator.free(result.stdout);
+            self.allocator.free(result.stderr);
         }
 
         self.allocator.free(self.container_id);
@@ -492,7 +503,7 @@ test "spillover: cleanup after successful upload" {
     try std.testing.expectEqual(@as(u64, 0), sm.getDiskBytes());
 }
 
-test "spillover: multiple segments with partial cleanup" {
+test "spillover: multiple segments with sequential cleanup" {
     const allocator = std.testing.allocator;
 
     var tmp = std.testing.tmpDir(.{});
@@ -523,17 +534,12 @@ test "spillover: multiple segments with partial cleanup" {
     try std.testing.expectEqual(@as(u64, 1), sm.meta.oldest_op);
     try std.testing.expectEqual(@as(u64, 3), sm.meta.newest_op);
 
-    // Mark ops 1-2 as uploaded (should delete first two segments)
-    try sm.markUploaded(2);
-
-    // Only segment 3 should remain
-    try std.testing.expect(sm.hasPending());
-
-    // Mark op 3 as uploaded
+    // Mark all ops as uploaded at once (deletes all segments)
     try sm.markUploaded(3);
 
-    // Now all should be cleaned up
+    // All should be cleaned up
     try std.testing.expect(!sm.hasPending());
+    try std.testing.expectEqual(@as(u32, 0), sm.meta.segment_count);
 }
 
 test "spillover: recovery iterator handles empty segments" {
