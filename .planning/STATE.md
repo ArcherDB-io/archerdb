@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-01-22)
 ## Current Position
 
 Phase: 3 of 10 (Core Geospatial)
-Plan: 2 of 5 in current phase
+Plan: 4 of 5 in current phase
 Status: In progress
-Last activity: 2026-01-22 - Completed 03-02-PLAN.md (Radius Query Verification)
+Last activity: 2026-01-22 - Completed 03-04-PLAN.md (Entity Operations)
 
-Progress: [##--------] 20% (2/10 phases complete, 2/5 plans in phase 3)
+Progress: [###-------] 30% (2/10 phases complete, 4/5 plans in phase 3)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 9
+- Total plans completed: 11
 - Average duration: 11 min
-- Total execution time: 99 min
+- Total execution time: 115 min
 
 **By Phase:**
 
@@ -29,10 +29,10 @@ Progress: [##--------] 20% (2/10 phases complete, 2/5 plans in phase 3)
 |-------|-------|-------|----------|
 | 01 | 3 | 26 min | 9 min |
 | 02 | 4 | 54 min | 14 min |
-| 03 | 2 | 19 min | 10 min |
+| 03 | 4 | 35 min | 9 min |
 
 **Recent Trend:**
-- Last 5 plans: 03-02 (8m), 03-01 (11m), 02-04 (8m), 02-03 (8m), 02-02 (31m)
+- Last 5 plans: 03-04 (8m), 03-03 (8m), 03-02 (8m), 03-01 (11m), 02-04 (8m)
 - Trend: Stable
 
 *Updated after each plan completion*
@@ -49,6 +49,15 @@ Recent decisions affecting current work:
 - Full observability: Enterprise-ready monitoring with metrics, tracing, health endpoints
 - SDK parity: All five languages must have same features and quality
 - No graceful degradation: Demand resources, expose problems through metrics/traces
+
+From 03-04:
+- TTL expiration uses >= comparison (expires at boundary, not after)
+- LWW tie-break uses higher composite_id for determinism
+- Minimal tombstones have zeroed location, full tombstones preserve location for audit
+
+From 03-03:
+- Point-in-polygon uses ray casting with counter-clockwise exterior rings
+- Polygon holes use clockwise winding (GeoJSON convention)
 
 From 03-02:
 - Haversine tolerance: 1% for known distances (matches existing tests)
@@ -115,6 +124,6 @@ From CONCERNS.md - key issues to address:
 
 ## Session Continuity
 
-Last session: 2026-01-22 17:46 UTC
-Stopped at: Completed 03-02-PLAN.md (Radius Query Verification)
+Last session: 2026-01-22 17:49 UTC
+Stopped at: Completed 03-04-PLAN.md (Entity Operations)
 Resume file: None
