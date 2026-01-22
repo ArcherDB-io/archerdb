@@ -5900,6 +5900,354 @@ test "delete: invalid entity_id rejection" {
 }
 
 // ============================================================================
+// TTL and Query Verification Tests (ENT-08 through ENT-10)
+// ============================================================================
+//
+// These tests verify TTL expiration and query operations per query-engine/spec.md.
+
+test "TTL: entity expires after TTL seconds" {
+    // ENT-09: TTL expiration removes expired entities
+
+    var event = GeoEvent.zero();
+    event.entity_id = 0x12345678_9ABCDEF0_12345678_9ABCDEF0;
+    event.timestamp = 60 * ttl.ns_per_second; // Event created at T=60s
+    event.ttl_seconds = 60; // Expires at T=120s
+
+    // At T=100s: not yet expired (100 < 120)
+    const time_100 = 100 * ttl.ns_per_second;
+    try std.testing.expect(!event.is_expired(time_100));
+
+    // At T=121s: expired (121 > 120)
+    const time_121 = 121 * ttl.ns_per_second;
+    try std.testing.expect(event.is_expired(time_121));
+
+    // At T=120s: exactly at expiry (expired, per ttl.zig uses >= not >)
+    const time_120 = 120 * ttl.ns_per_second;
+    try std.testing.expect(event.is_expired(time_120));
+
+    // At T=119s: one second before expiry (not expired)
+    const time_119 = 119 * ttl.ns_per_second;
+    try std.testing.expect(!event.is_expired(time_119));
+}
+
+test "TTL: ttl_seconds=0 means never expires" {
+    // Per spec: ttl_seconds = 0 means infinite TTL
+
+    var event = GeoEvent.zero();
+    event.entity_id = 0xAAAABBBB_CCCCDDDD_EEEEFFFF_00001111;
+    event.timestamp = 1 * ttl.ns_per_second;
+    event.ttl_seconds = 0; // Never expires
+
+    // Should not expire even at far future
+    const far_future = 1_000_000_000 * ttl.ns_per_second;
+    try std.testing.expect(!event.is_expired(far_future));
+
+    // Maximum time value (except maxInt which causes overflow)
+    const max_safe_time = std.math.maxInt(u64) - 1;
+    try std.testing.expect(!event.is_expired(max_safe_time));
+}
+
+test "TTL: remaining_ttl calculation" {
+    // Test remaining TTL calculation
+
+    var event = GeoEvent.zero();
+    event.timestamp = 100 * ttl.ns_per_second;
+    event.ttl_seconds = 100; // Expires at 200 seconds
+
+    // At T=150s: 50 seconds remaining
+    const remaining = event.remaining_ttl(150 * ttl.ns_per_second);
+    try std.testing.expectEqual(@as(?u64, 50), remaining);
+
+    // At T=190s: 10 seconds remaining
+    const remaining2 = event.remaining_ttl(190 * ttl.ns_per_second);
+    try std.testing.expectEqual(@as(?u64, 10), remaining2);
+
+    // TTL=0 returns null (never expires)
+    event.ttl_seconds = 0;
+    try std.testing.expectEqual(@as(?u64, null), event.remaining_ttl(150 * ttl.ns_per_second));
+}
+
+test "TTL: expiration_time_ns calculation" {
+    // Test expiration time calculation
+
+    var event = GeoEvent.zero();
+    event.timestamp = 100 * ttl.ns_per_second;
+    event.ttl_seconds = 60; // Expires at 160 seconds
+
+    const expiration = event.expiration_time_ns();
+    try std.testing.expectEqual(160 * ttl.ns_per_second, expiration);
+
+    // TTL=0 returns maxInt (never expires)
+    event.ttl_seconds = 0;
+    const no_expiration = event.expiration_time_ns();
+    try std.testing.expectEqual(std.math.maxInt(u64), no_expiration);
+}
+
+test "TTL: expired entities not copied during compaction" {
+    // should_copy_forward returns false for expired events
+
+    var event = GeoEvent.zero();
+    event.timestamp = 10 * ttl.ns_per_second;
+    event.ttl_seconds = 10; // Expires at 20 seconds
+
+    // At T=30s: expired, should not copy forward
+    const time_30 = 30 * ttl.ns_per_second;
+    try std.testing.expect(!event.should_copy_forward(time_30, false));
+    try std.testing.expect(!event.should_copy_forward(time_30, true));
+
+    // At T=15s: not expired, should copy forward
+    const time_15 = 15 * ttl.ns_per_second;
+    try std.testing.expect(event.should_copy_forward(time_15, false));
+    try std.testing.expect(event.should_copy_forward(time_15, true));
+}
+
+test "UUID query: QueryUuidFilter structure" {
+    // ENT-08: UUID query filter structure
+
+    const entity_id: u128 = 0x12345678_9ABCDEF0_12345678_9ABCDEF0;
+    const filter = QueryUuidFilter{
+        .entity_id = entity_id,
+    };
+
+    try std.testing.expectEqual(entity_id, filter.entity_id);
+
+    // Reserved bytes must be zero
+    for (filter.reserved) |byte| {
+        try std.testing.expectEqual(@as(u8, 0), byte);
+    }
+
+    // Size is 32 bytes
+    try std.testing.expectEqual(@as(usize, 32), @sizeOf(QueryUuidFilter));
+}
+
+test "UUID query: QueryUuidResponse structure" {
+    // ENT-08: UUID query response structure
+    // Per spec: status indicates found (0), not_found (200), or expired (210)
+
+    // Success response (status=0 means found)
+    const success = QueryUuidResponse{
+        .status = 0,
+    };
+    try std.testing.expectEqual(@as(u8, 0), success.status);
+
+    // Not found response (status=200 = entity_not_found)
+    const not_found = QueryUuidResponse{
+        .status = @intCast(@intFromEnum(StateError.entity_not_found)),
+    };
+    try std.testing.expectEqual(@as(u8, 200), not_found.status);
+
+    // Expired response (status=210 = entity_expired)
+    const expired = QueryUuidResponse{
+        .status = @intCast(@intFromEnum(StateError.entity_expired)),
+    };
+    try std.testing.expectEqual(@as(u8, 210), expired.status);
+
+    // Size is 16 bytes (1 byte status + 15 bytes reserved)
+    try std.testing.expectEqual(@as(usize, 16), @sizeOf(QueryUuidResponse));
+}
+
+test "UUID batch query: QueryUuidBatchFilter structure" {
+    // ENT-08: Batch UUID query filter
+
+    const filter = QueryUuidBatchFilter{
+        .count = 5,
+    };
+    try std.testing.expectEqual(@as(u32, 5), filter.count);
+
+    // Max count is 10,000
+    try std.testing.expectEqual(@as(u32, 10_000), QueryUuidBatchFilter.max_count);
+
+    // Size is 8 bytes (count: u32 + reserved: u32)
+    try std.testing.expectEqual(@as(usize, 8), @sizeOf(QueryUuidBatchFilter));
+}
+
+test "UUID batch query: QueryUuidBatchResult structure" {
+    // ENT-08: Batch UUID query result
+
+    // Success result
+    const success = QueryUuidBatchResult{
+        .count = 3,
+        .status = 0,
+    };
+    try std.testing.expectEqual(@as(u32, 3), success.count);
+    try std.testing.expectEqual(@as(u32, 0), success.status);
+    try std.testing.expectEqual(@as(?StateError, null), success.error_status());
+
+    // Error result
+    const error_result = QueryUuidBatchResult.with_error(.internal_error);
+    try std.testing.expectEqual(@as(u32, 0), error_result.count);
+    try std.testing.expectEqual(StateError.internal_error, error_result.error_status().?);
+}
+
+test "latest query: QueryLatestFilter structure" {
+    // ENT-09: Latest query filter structure
+
+    const filter = QueryLatestFilter{
+        .limit = 100,
+        .group_id = 42,
+        .cursor_timestamp = 1704067200_000_000_000,
+    };
+
+    try std.testing.expectEqual(@as(u32, 100), filter.limit);
+    try std.testing.expectEqual(@as(u64, 42), filter.group_id);
+    try std.testing.expectEqual(@as(u64, 1704067200_000_000_000), filter.cursor_timestamp);
+
+    // Size is 128 bytes
+    try std.testing.expectEqual(@as(usize, 128), @sizeOf(QueryLatestFilter));
+}
+
+test "latest query: cursor_timestamp pagination semantics" {
+    // Per spec: cursor_timestamp = 0 means start from latest (no pagination)
+
+    const filter_no_cursor = QueryLatestFilter{
+        .limit = 50,
+        .group_id = 0,
+        .cursor_timestamp = 0, // No pagination
+    };
+    try std.testing.expectEqual(@as(u64, 0), filter_no_cursor.cursor_timestamp);
+
+    // When cursor_timestamp > 0, skip entries >= cursor
+    const cursor: u64 = 1704067200_000_000_000;
+    const filter_with_cursor = QueryLatestFilter{
+        .limit = 50,
+        .group_id = 0,
+        .cursor_timestamp = cursor,
+    };
+
+    // Test pagination logic
+    const entry_older: u64 = 1704060000_000_000_000; // Before cursor
+    const entry_at_cursor: u64 = cursor; // At cursor
+    const entry_newer: u64 = 1704080000_000_000_000; // After cursor
+
+    // Per implementation: skip entries at or newer than cursor
+    const should_skip_older = filter_with_cursor.cursor_timestamp > 0 and
+        entry_older >= filter_with_cursor.cursor_timestamp;
+    const should_skip_at_cursor = filter_with_cursor.cursor_timestamp > 0 and
+        entry_at_cursor >= filter_with_cursor.cursor_timestamp;
+    const should_skip_newer = filter_with_cursor.cursor_timestamp > 0 and
+        entry_newer >= filter_with_cursor.cursor_timestamp;
+
+    try std.testing.expect(!should_skip_older); // Include older entries
+    try std.testing.expect(should_skip_at_cursor); // Skip at cursor
+    try std.testing.expect(should_skip_newer); // Skip newer entries
+}
+
+test "QueryResponse: response codes and flags" {
+    // Test QueryResponse construction helpers
+
+    // Complete response (no more results)
+    const complete = QueryResponse.complete(50);
+    try std.testing.expectEqual(@as(u32, 50), complete.count);
+    try std.testing.expectEqual(@as(u8, 0), complete.has_more);
+    try std.testing.expectEqual(@as(u8, 0), complete.partial_result);
+
+    // Response with more results available
+    const with_more = QueryResponse.with_more(100);
+    try std.testing.expectEqual(@as(u32, 100), with_more.count);
+    try std.testing.expectEqual(@as(u8, 1), with_more.has_more);
+
+    // Truncated response
+    const truncated = QueryResponse.truncated(75);
+    try std.testing.expectEqual(@as(u32, 75), truncated.count);
+    try std.testing.expectEqual(@as(u8, 1), truncated.partial_result);
+
+    // Error response
+    const error_resp = QueryResponse.with_error(.internal_error);
+    try std.testing.expectEqual(@as(u32, 0), error_resp.count);
+    try std.testing.expectEqual(StateError.internal_error, error_resp.error_status().?);
+}
+
+test "TTL metrics: DeletionMetrics tracking" {
+    // ENT-10: TTL cleanup metrics exposed
+
+    var metrics_obj = DeletionMetrics{};
+
+    // Record a batch of deletions
+    metrics_obj.record_deletion_batch(10, 5, 5000); // 10 deleted, 5 not found, 5000ns
+
+    try std.testing.expectEqual(@as(u64, 10), metrics_obj.entities_deleted);
+    try std.testing.expectEqual(@as(u64, 5), metrics_obj.entities_not_found);
+    try std.testing.expectEqual(@as(u64, 1), metrics_obj.deletion_operations);
+    try std.testing.expectEqual(@as(u64, 5000), metrics_obj.total_deletion_duration_ns);
+
+    // Record another batch
+    metrics_obj.record_deletion_batch(20, 0, 3000);
+
+    try std.testing.expectEqual(@as(u64, 30), metrics_obj.entities_deleted);
+    try std.testing.expectEqual(@as(u64, 5), metrics_obj.entities_not_found);
+    try std.testing.expectEqual(@as(u64, 2), metrics_obj.deletion_operations);
+    try std.testing.expectEqual(@as(u64, 8000), metrics_obj.total_deletion_duration_ns);
+}
+
+test "TTL metrics: average deletion latency" {
+    // ENT-10: Verify average latency calculation
+
+    var metrics_obj = DeletionMetrics{};
+
+    // No deletions yet - should be 0
+    try std.testing.expectEqual(@as(u64, 0), metrics_obj.average_deletion_latency_ns());
+
+    // 10 entities deleted in 5000ns = 500ns per entity
+    metrics_obj.record_deletion_batch(10, 0, 5000);
+    try std.testing.expectEqual(@as(u64, 500), metrics_obj.average_deletion_latency_ns());
+
+    // 20 more entities in 3000ns = 8000ns total for 30 entities = 266ns per entity
+    metrics_obj.record_deletion_batch(20, 0, 3000);
+    try std.testing.expectEqual(@as(u64, 266), metrics_obj.average_deletion_latency_ns());
+}
+
+test "TTL metrics: InsertMetrics tracking" {
+    // ENT-10: Verify insert metrics tracking
+
+    var metrics_obj = InsertMetrics{};
+
+    // Record a batch
+    metrics_obj.recordInsertBatch(100, 5, 10_000); // 100 inserted, 5 rejected, 10us
+
+    try std.testing.expectEqual(@as(u64, 100), metrics_obj.events_inserted);
+    try std.testing.expectEqual(@as(u64, 5), metrics_obj.events_rejected);
+    try std.testing.expectEqual(@as(u64, 1), metrics_obj.insert_operations);
+
+    // Average latency: 10000ns / (100+5) = 95ns per event
+    try std.testing.expectEqual(@as(u64, 95), metrics_obj.averageInsertLatencyNs());
+}
+
+test "TTL metrics: TombstoneMetrics tracking" {
+    // ENT-10: Verify tombstone metrics tracking
+
+    var metrics_obj = TombstoneMetrics{};
+
+    // Record retained tombstones
+    metrics_obj.recordRetained(10);
+    try std.testing.expectEqual(@as(u64, 10), metrics_obj.tombstone_retained_compactions);
+
+    // Record eliminated tombstones with age (count, total_age_seconds, max_age, min_age)
+    metrics_obj.recordEliminated(5, 3600, 1000, 500); // 5 tombstones, total 3600s age
+    try std.testing.expectEqual(@as(u64, 5), metrics_obj.tombstone_eliminated_compactions);
+
+    // Average tombstone age (3600 total / 5 eliminated = 720 seconds)
+    const avg_age = metrics_obj.averageTombstoneAge();
+    try std.testing.expectEqual(@as(u64, 720), avg_age);
+}
+
+test "TTL metrics: retention ratio" {
+    // ENT-10: Verify retention ratio calculation
+
+    var metrics_obj = TombstoneMetrics{};
+
+    // No tombstones - ratio is 0
+    try std.testing.expectEqual(@as(f64, 0.0), metrics_obj.retentionRatio());
+
+    // All retained (10 retained, 0 eliminated)
+    metrics_obj.tombstone_retained_compactions = 10;
+    try std.testing.expectEqual(@as(f64, 1.0), metrics_obj.retentionRatio());
+
+    // Half retained (10 retained, 10 eliminated)
+    metrics_obj.tombstone_eliminated_compactions = 10;
+    try std.testing.expectEqual(@as(f64, 0.5), metrics_obj.retentionRatio());
+}
+
+// ============================================================================
 // Public API Aliases
 // ============================================================================
 
