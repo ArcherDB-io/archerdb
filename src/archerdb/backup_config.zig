@@ -5,6 +5,11 @@
 //! This module provides configuration types for the backup system that uploads
 //! closed LSM blocks to object storage (S3, GCS, Azure Blob) for disaster recovery.
 //!
+//! Features:
+//! - Scheduled backups with cron expressions or simple intervals
+//! - Retention policies (by days or block count)
+//! - Multiple destinations (S3, GCS, Azure, local filesystem)
+//! - Compression and encryption options
 //!
 //! Usage:
 //! ```zig
@@ -13,15 +18,10 @@
 //!     .provider = .s3,
 //!     .bucket = "archerdb-backups",
 //!     .region = "us-east-1",
+//!     .schedule = "0 2 * * *",  // Daily at 2am
 //! });
 //! defer config.deinit();
 //! ```
-//!
-//! Implementation Status:
-//! - Configuration types: Implemented
-//! - CLI options: Implemented
-//! - Storage provider interface: Defined (stub)
-//! - Actual S3/GCS/Azure clients: Pending external integration
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -33,6 +33,12 @@ const log = std.log.scoped(.backup_config);
 fn logErr(comptime fmt: []const u8, args: anytype) void {
     if (!builtin.is_test) {
         log.err(fmt, args);
+    }
+}
+
+fn logWarn(comptime fmt: []const u8, args: anytype) void {
+    if (!builtin.is_test) {
+        log.warn(fmt, args);
     }
 }
 
@@ -135,6 +141,343 @@ pub const CompressionMode = enum {
     }
 };
 
+// =============================================================================
+// Backup Schedule Types
+// =============================================================================
+
+/// Time unit for simple interval schedules.
+pub const TimeUnit = enum {
+    seconds,
+    minutes,
+    hours,
+    days,
+
+    /// Convert a value with this unit to nanoseconds.
+    pub fn toNanoseconds(self: TimeUnit, value: u64) u64 {
+        return switch (self) {
+            .seconds => value * std.time.ns_per_s,
+            .minutes => value * std.time.ns_per_min,
+            .hours => value * std.time.ns_per_hour,
+            .days => value * 24 * std.time.ns_per_hour,
+        };
+    }
+
+    /// Convert a value with this unit to seconds.
+    pub fn toSeconds(self: TimeUnit, value: u64) u64 {
+        return switch (self) {
+            .seconds => value,
+            .minutes => value * 60,
+            .hours => value * 3600,
+            .days => value * 86400,
+        };
+    }
+};
+
+/// Cron field specification.
+pub const FieldSpec = union(enum) {
+    /// Any value matches (*)
+    any,
+    /// Specific value (5)
+    value: u8,
+    /// Range of values (1-5)
+    range: struct { start: u8, end: u8 },
+    /// List of values (1,3,5) - stored as bitmask for efficiency
+    list: u64,
+    /// Step values (*/5)
+    step: struct { base: u8, step: u8 },
+
+    /// Check if a value matches this field specification.
+    pub fn matches(self: FieldSpec, val: u8) bool {
+        return switch (self) {
+            .any => true,
+            .value => |v| v == val,
+            .range => |r| val >= r.start and val <= r.end,
+            .list => |mask| (mask & (@as(u64, 1) << @as(u6, @intCast(val)))) != 0,
+            .step => |s| val >= s.base and (val - s.base) % s.step == 0,
+        };
+    }
+
+    /// Parse a cron field specification.
+    pub fn parse(field: []const u8, min: u8, max: u8) !FieldSpec {
+        // Handle "*"
+        if (field.len == 1 and field[0] == '*') {
+            return .any;
+        }
+
+        // Handle "*/n" (step)
+        if (field.len >= 2 and field[0] == '*' and field[1] == '/') {
+            const step = std.fmt.parseInt(u8, field[2..], 10) catch return error.InvalidCronField;
+            if (step == 0) return error.InvalidCronField;
+            return .{ .step = .{ .base = min, .step = step } };
+        }
+
+        // Handle "n-m" (range)
+        if (mem.indexOf(u8, field, "-")) |dash_pos| {
+            const start = std.fmt.parseInt(u8, field[0..dash_pos], 10) catch return error.InvalidCronField;
+            const end = std.fmt.parseInt(u8, field[dash_pos + 1 ..], 10) catch return error.InvalidCronField;
+            if (start > max or end > max or start > end) return error.InvalidCronField;
+            return .{ .range = .{ .start = start, .end = end } };
+        }
+
+        // Handle "a,b,c" (list)
+        if (mem.indexOf(u8, field, ",")) |_| {
+            var mask: u64 = 0;
+            var iter = mem.splitScalar(u8, field, ',');
+            while (iter.next()) |part| {
+                const val = std.fmt.parseInt(u8, part, 10) catch return error.InvalidCronField;
+                if (val > max or val < min) return error.InvalidCronField;
+                mask |= (@as(u64, 1) << @as(u6, @intCast(val)));
+            }
+            return .{ .list = mask };
+        }
+
+        // Handle single value
+        const val = std.fmt.parseInt(u8, field, 10) catch return error.InvalidCronField;
+        if (val < min or val > max) return error.InvalidCronField;
+        return .{ .value = val };
+    }
+
+    /// Get the next value that matches this spec, starting from `from`.
+    /// Returns null if no valid value exists (would need to wrap to next period).
+    pub fn nextMatch(self: FieldSpec, from: u8, max: u8) ?u8 {
+        var v = from;
+        while (v <= max) : (v += 1) {
+            if (self.matches(v)) return v;
+        }
+        return null;
+    }
+};
+
+/// Cron expression for scheduling.
+/// Format: minute hour day-of-month month day-of-week
+/// Example: "0 2 * * *" (daily at 2am)
+pub const CronExpression = struct {
+    /// Minute (0-59)
+    minute: FieldSpec,
+    /// Hour (0-23)
+    hour: FieldSpec,
+    /// Day of month (1-31)
+    day_of_month: FieldSpec,
+    /// Month (1-12)
+    month: FieldSpec,
+    /// Day of week (0-6, Sunday=0)
+    day_of_week: FieldSpec,
+
+    /// Parse a cron expression string.
+    /// Format: "minute hour day-of-month month day-of-week"
+    pub fn parse(spec: []const u8) !CronExpression {
+        var parts: [5][]const u8 = undefined;
+        var count: usize = 0;
+
+        var iter = mem.tokenizeScalar(u8, spec, ' ');
+        while (iter.next()) |part| {
+            if (count >= 5) return error.InvalidCronFormat;
+            parts[count] = part;
+            count += 1;
+        }
+
+        if (count != 5) return error.InvalidCronFormat;
+
+        return CronExpression{
+            .minute = try FieldSpec.parse(parts[0], 0, 59),
+            .hour = try FieldSpec.parse(parts[1], 0, 23),
+            .day_of_month = try FieldSpec.parse(parts[2], 1, 31),
+            .month = try FieldSpec.parse(parts[3], 1, 12),
+            .day_of_week = try FieldSpec.parse(parts[4], 0, 6),
+        };
+    }
+
+    /// Calculate the next run time from the given timestamp (seconds since epoch).
+    /// Returns the next matching timestamp in seconds since epoch.
+    pub fn nextTime(self: CronExpression, from_secs: i64) i64 {
+        // Start from the next minute
+        var current = from_secs + 60;
+        // Align to minute boundary
+        current = @divFloor(current, 60) * 60;
+
+        // Search for up to a year
+        const max_iterations = 366 * 24 * 60;
+        var iterations: u32 = 0;
+
+        while (iterations < max_iterations) : (iterations += 1) {
+            const dt = epochToComponents(current);
+
+            // Check all fields match
+            if (self.minute.matches(dt.minute) and
+                self.hour.matches(dt.hour) and
+                self.day_of_month.matches(dt.day) and
+                self.month.matches(dt.month) and
+                self.day_of_week.matches(dt.weekday))
+            {
+                return current;
+            }
+
+            // Advance by one minute
+            current += 60;
+        }
+
+        // Fallback: return next day if no match found (shouldn't happen with valid cron)
+        return from_secs + 86400;
+    }
+};
+
+/// Date-time components for cron matching.
+const DateTimeComponents = struct {
+    year: u16,
+    month: u8, // 1-12
+    day: u8, // 1-31
+    hour: u8, // 0-23
+    minute: u8, // 0-59
+    weekday: u8, // 0-6, Sunday=0
+};
+
+/// Convert epoch seconds to date-time components.
+fn epochToComponents(epoch_secs: i64) DateTimeComponents {
+    // Simplified conversion - in production would use proper calendar library
+    const epoch_days = @divFloor(epoch_secs, 86400);
+    const day_secs: u32 = @intCast(@mod(epoch_secs, 86400));
+
+    const hour: u8 = @intCast(day_secs / 3600);
+    const minute: u8 = @intCast((day_secs % 3600) / 60);
+
+    // Days since Jan 1, 1970 (Thursday)
+    // Weekday: (epoch_days + 4) % 7 gives 0=Sunday
+    const weekday: u8 = @intCast(@mod(epoch_days + 4, 7));
+
+    // Year and day of year calculation
+    var days_remaining = epoch_days;
+    var year: u16 = 1970;
+
+    while (true) {
+        const days_in_year: i64 = if (isLeapYear(year)) 366 else 365;
+        if (days_remaining < days_in_year) break;
+        days_remaining -= days_in_year;
+        year += 1;
+    }
+
+    // Month and day calculation
+    const is_leap = isLeapYear(year);
+    const days_in_months = if (is_leap)
+        [_]u8{ 31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 }
+    else
+        [_]u8{ 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+
+    var month: u8 = 1;
+    for (days_in_months) |days| {
+        if (days_remaining < days) break;
+        days_remaining -= days;
+        month += 1;
+    }
+
+    const day: u8 = @intCast(days_remaining + 1);
+
+    return .{
+        .year = year,
+        .month = month,
+        .day = day,
+        .hour = hour,
+        .minute = minute,
+        .weekday = weekday,
+    };
+}
+
+fn isLeapYear(year: u16) bool {
+    if (year % 400 == 0) return true;
+    if (year % 100 == 0) return false;
+    if (year % 4 == 0) return true;
+    return false;
+}
+
+/// Backup schedule - either a simple interval or a cron expression.
+pub const BackupSchedule = union(enum) {
+    /// Simple interval: "every 1h", "every 30m", "every 1d"
+    interval: struct {
+        value: u64,
+        unit: TimeUnit,
+
+        /// Convert to nanoseconds.
+        pub fn toNanoseconds(self: @This()) u64 {
+            return self.unit.toNanoseconds(self.value);
+        }
+
+        /// Convert to seconds.
+        pub fn toSeconds(self: @This()) u64 {
+            return self.unit.toSeconds(self.value);
+        }
+    },
+
+    /// Cron expression: "0 2 * * *" (daily at 2am)
+    cron: CronExpression,
+
+    /// Calculate the next run time from the given timestamp (nanoseconds since epoch).
+    pub fn nextRunTime(self: BackupSchedule, from_ns: i64) i64 {
+        return switch (self) {
+            .interval => |i| from_ns + @as(i64, @intCast(i.toNanoseconds())),
+            .cron => |c| c.nextTime(@divFloor(from_ns, std.time.ns_per_s)) * std.time.ns_per_s,
+        };
+    }
+
+    /// Calculate the next run time from the given timestamp (seconds since epoch).
+    pub fn nextRunTimeSecs(self: BackupSchedule, from_secs: i64) i64 {
+        return switch (self) {
+            .interval => |i| from_secs + @as(i64, @intCast(i.toSeconds())),
+            .cron => |c| c.nextTime(from_secs),
+        };
+    }
+};
+
+/// Parse a schedule specification.
+/// Supports:
+/// - Simple intervals: "every 1h", "every 30m", "every 1d", "every 3600s"
+/// - Cron expressions: "0 2 * * *" (5-field cron format)
+pub fn parseSchedule(spec: []const u8) !BackupSchedule {
+    const trimmed = mem.trim(u8, spec, " \t\n\r");
+
+    // Check for simple interval format: "every <value><unit>"
+    if (mem.startsWith(u8, trimmed, "every ")) {
+        return parseInterval(trimmed["every ".len..]);
+    }
+
+    // Otherwise treat as cron expression
+    return .{ .cron = try CronExpression.parse(trimmed) };
+}
+
+/// Parse a simple interval specification.
+/// Format: "<value><unit>" where unit is s/m/h/d
+fn parseInterval(spec: []const u8) !BackupSchedule {
+    const trimmed = mem.trim(u8, spec, " \t");
+    if (trimmed.len < 2) return error.InvalidInterval;
+
+    // Find where the number ends and unit begins
+    var num_end: usize = 0;
+    for (trimmed, 0..) |c, i| {
+        if (c >= '0' and c <= '9') {
+            num_end = i + 1;
+        } else {
+            break;
+        }
+    }
+
+    if (num_end == 0) return error.InvalidInterval;
+
+    const value = std.fmt.parseInt(u64, trimmed[0..num_end], 10) catch return error.InvalidInterval;
+    if (value == 0) return error.InvalidInterval;
+
+    const unit_str = mem.trim(u8, trimmed[num_end..], " ");
+    const unit: TimeUnit = if (mem.eql(u8, unit_str, "s") or mem.eql(u8, unit_str, "seconds"))
+        .seconds
+    else if (mem.eql(u8, unit_str, "m") or mem.eql(u8, unit_str, "minutes"))
+        .minutes
+    else if (mem.eql(u8, unit_str, "h") or mem.eql(u8, unit_str, "hours"))
+        .hours
+    else if (mem.eql(u8, unit_str, "d") or mem.eql(u8, unit_str, "days"))
+        .days
+    else
+        return error.InvalidInterval;
+
+    return .{ .interval = .{ .value = value, .unit = unit } };
+}
+
 /// Backup configuration options (from CLI).
 pub const BackupOptions = struct {
     /// Whether backup is enabled.
@@ -190,6 +533,12 @@ pub const BackupOptions = struct {
 
     /// Only backup from primary replica (reduces S3 costs).
     primary_only: bool = false,
+
+    // Scheduling
+
+    /// Backup schedule specification.
+    /// Supports cron format ("0 2 * * *") or intervals ("every 1h").
+    schedule: ?[]const u8 = null,
 };
 
 /// Block reference for backup tracking.
@@ -222,20 +571,88 @@ pub const BackupState = struct {
     abandoned_count: u64 = 0,
 };
 
+/// Backup scheduler - tracks when next backup should run.
+pub const BackupScheduler = struct {
+    /// Parsed schedule (null if no schedule configured).
+    schedule: ?BackupSchedule,
+    /// Next scheduled run time (nanoseconds since epoch).
+    next_run_time: i64,
+    /// Whether a backup is currently in progress.
+    in_progress: bool,
+
+    /// Initialize scheduler from options.
+    pub fn init(schedule_spec: ?[]const u8) !BackupScheduler {
+        var self = BackupScheduler{
+            .schedule = null,
+            .next_run_time = 0,
+            .in_progress = false,
+        };
+
+        if (schedule_spec) |spec| {
+            self.schedule = try parseSchedule(spec);
+            // Set initial next run time (use seconds to avoid i128 overflow concerns)
+            const now_secs = std.time.timestamp();
+            self.next_run_time = self.schedule.?.nextRunTimeSecs(now_secs) * std.time.ns_per_s;
+        }
+
+        return self;
+    }
+
+    /// Check if a backup should run now.
+    /// Returns true if current time >= next_run_time and no backup in progress.
+    pub fn shouldRun(self: *const BackupScheduler, now_ns: i64) bool {
+        if (self.schedule == null) return false;
+        if (self.in_progress) return false;
+        return now_ns >= self.next_run_time;
+    }
+
+    /// Mark backup as started.
+    pub fn markStarted(self: *BackupScheduler) void {
+        self.in_progress = true;
+    }
+
+    /// Mark backup as completed and schedule next run.
+    pub fn markCompleted(self: *BackupScheduler) void {
+        self.in_progress = false;
+        if (self.schedule) |s| {
+            const now_secs = std.time.timestamp();
+            self.next_run_time = s.nextRunTimeSecs(now_secs) * std.time.ns_per_s;
+        }
+    }
+
+    /// Tick method for integration with event loop.
+    /// Returns true if backup should be triggered.
+    pub fn tick(self: *BackupScheduler) bool {
+        const now = std.time.nanoTimestamp();
+        return self.shouldRun(now);
+    }
+};
+
 /// Backup configuration manager.
 pub const BackupConfig = struct {
     allocator: mem.Allocator,
     options: BackupOptions,
+    /// Parsed schedule (if configured).
+    parsed_schedule: ?BackupSchedule,
 
     /// Initialize backup configuration.
     pub fn init(allocator: mem.Allocator, options: BackupOptions) !BackupConfig {
         var self = BackupConfig{
             .allocator = allocator,
             .options = options,
+            .parsed_schedule = null,
         };
 
         if (options.enabled) {
             try self.validate();
+        }
+
+        // Parse schedule if provided
+        if (options.schedule) |schedule_spec| {
+            self.parsed_schedule = parseSchedule(schedule_spec) catch |err| {
+                logErr("invalid backup schedule '{s}': {}", .{ schedule_spec, err });
+                return err;
+            };
         }
 
         return self;
@@ -254,6 +671,19 @@ pub const BackupConfig = struct {
     /// Check if mandatory mode is active.
     pub fn isMandatory(self: *const BackupConfig) bool {
         return self.options.mode == .mandatory;
+    }
+
+    /// Check if scheduling is configured.
+    pub fn hasSchedule(self: *const BackupConfig) bool {
+        return self.parsed_schedule != null;
+    }
+
+    /// Get the next scheduled run time (seconds since epoch).
+    pub fn nextScheduledRun(self: *const BackupConfig, from_secs: i64) ?i64 {
+        if (self.parsed_schedule) |s| {
+            return s.nextRunTimeSecs(from_secs);
+        }
+        return null;
     }
 
     /// Validate configuration.
@@ -389,4 +819,139 @@ test "BackupMode: fromString" {
     try std.testing.expectEqual(BackupMode.best_effort, BackupMode.fromString("best-effort").?);
     try std.testing.expectEqual(BackupMode.mandatory, BackupMode.fromString("mandatory").?);
     try std.testing.expect(BackupMode.fromString("invalid") == null);
+}
+
+// =============================================================================
+// Schedule Parsing Tests
+// =============================================================================
+
+test "backup: parseSchedule every 1h" {
+    const schedule = try parseSchedule("every 1h");
+    try std.testing.expect(schedule == .interval);
+    try std.testing.expectEqual(@as(u64, 1), schedule.interval.value);
+    try std.testing.expectEqual(TimeUnit.hours, schedule.interval.unit);
+}
+
+test "backup: parseSchedule every 30m" {
+    const schedule = try parseSchedule("every 30m");
+    try std.testing.expect(schedule == .interval);
+    try std.testing.expectEqual(@as(u64, 30), schedule.interval.value);
+    try std.testing.expectEqual(TimeUnit.minutes, schedule.interval.unit);
+}
+
+test "backup: parseSchedule every 1d" {
+    const schedule = try parseSchedule("every 1d");
+    try std.testing.expect(schedule == .interval);
+    try std.testing.expectEqual(@as(u64, 1), schedule.interval.value);
+    try std.testing.expectEqual(TimeUnit.days, schedule.interval.unit);
+}
+
+test "backup: parseSchedule cron daily at 2am" {
+    const schedule = try parseSchedule("0 2 * * *");
+    try std.testing.expect(schedule == .cron);
+    try std.testing.expectEqual(FieldSpec{ .value = 0 }, schedule.cron.minute);
+    try std.testing.expectEqual(FieldSpec{ .value = 2 }, schedule.cron.hour);
+    try std.testing.expectEqual(FieldSpec.any, schedule.cron.day_of_month);
+    try std.testing.expectEqual(FieldSpec.any, schedule.cron.month);
+    try std.testing.expectEqual(FieldSpec.any, schedule.cron.day_of_week);
+}
+
+test "backup: parseSchedule cron every 15 minutes" {
+    const schedule = try parseSchedule("*/15 * * * *");
+    try std.testing.expect(schedule == .cron);
+    try std.testing.expect(schedule.cron.minute == .step);
+    try std.testing.expectEqual(@as(u8, 0), schedule.cron.minute.step.base);
+    try std.testing.expectEqual(@as(u8, 15), schedule.cron.minute.step.step);
+}
+
+test "backup: parseSchedule cron first of month" {
+    const schedule = try parseSchedule("0 0 1 * *");
+    try std.testing.expect(schedule == .cron);
+    try std.testing.expectEqual(FieldSpec{ .value = 0 }, schedule.cron.minute);
+    try std.testing.expectEqual(FieldSpec{ .value = 0 }, schedule.cron.hour);
+    try std.testing.expectEqual(FieldSpec{ .value = 1 }, schedule.cron.day_of_month);
+}
+
+test "backup: interval nextRunTime" {
+    const schedule = try parseSchedule("every 1h");
+    const from_ns: i64 = 1000 * std.time.ns_per_s;
+    const next = schedule.nextRunTime(from_ns);
+    try std.testing.expectEqual(from_ns + @as(i64, std.time.ns_per_hour), next);
+}
+
+test "backup: cron nextRunTime" {
+    const schedule = try parseSchedule("0 2 * * *");
+
+    // Start from Jan 1, 2025 00:00:00 UTC (a known Wednesday)
+    const jan1_2025: i64 = 1735689600; // seconds
+    const next_secs = schedule.nextRunTimeSecs(jan1_2025);
+
+    // Should be Jan 1, 2025 02:00:00 UTC
+    try std.testing.expectEqual(jan1_2025 + 2 * 3600, next_secs);
+}
+
+test "backup: FieldSpec matches" {
+    // Test 'any' matches everything
+    const any_spec: FieldSpec = .any;
+    try std.testing.expect(any_spec.matches(0));
+    try std.testing.expect(any_spec.matches(59));
+
+    // Test 'value' matches only that value
+    const val: FieldSpec = .{ .value = 30 };
+    try std.testing.expect(val.matches(30));
+    try std.testing.expect(!val.matches(31));
+
+    // Test 'range' matches inclusive range
+    const range: FieldSpec = .{ .range = .{ .start = 10, .end = 20 } };
+    try std.testing.expect(!range.matches(9));
+    try std.testing.expect(range.matches(10));
+    try std.testing.expect(range.matches(15));
+    try std.testing.expect(range.matches(20));
+    try std.testing.expect(!range.matches(21));
+
+    // Test 'step' matches base + N*step
+    const step: FieldSpec = .{ .step = .{ .base = 0, .step = 15 } };
+    try std.testing.expect(step.matches(0));
+    try std.testing.expect(step.matches(15));
+    try std.testing.expect(step.matches(30));
+    try std.testing.expect(step.matches(45));
+    try std.testing.expect(!step.matches(10));
+}
+
+test "backup: BackupScheduler tick" {
+    var scheduler = try BackupScheduler.init("every 1h");
+    const now: i64 = std.time.timestamp() * std.time.ns_per_s;
+
+    // Initially should not run (next_run_time is in the future)
+    try std.testing.expect(!scheduler.shouldRun(now));
+
+    // Simulate time passing
+    scheduler.next_run_time = now - 1;
+    try std.testing.expect(scheduler.shouldRun(now));
+
+    // Mark started, should not run again
+    scheduler.markStarted();
+    try std.testing.expect(!scheduler.shouldRun(now));
+
+    // Mark completed, should schedule next run
+    scheduler.markCompleted();
+    try std.testing.expect(!scheduler.shouldRun(now));
+    try std.testing.expect(scheduler.next_run_time > now);
+}
+
+test "backup: BackupConfig with schedule" {
+    var config = try BackupConfig.init(std.testing.allocator, .{
+        .enabled = true,
+        .bucket = "test-bucket",
+        .schedule = "every 1h",
+    });
+    defer config.deinit();
+
+    try std.testing.expect(config.hasSchedule());
+    try std.testing.expect(config.parsed_schedule != null);
+
+    const now: i64 = std.time.timestamp();
+    const next = config.nextScheduledRun(now);
+    try std.testing.expect(next != null);
+    try std.testing.expectEqual(now + 3600, next.?);
 }
