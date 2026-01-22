@@ -1555,6 +1555,21 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 
                 // Process tier transitions (update RAM index for cold demotions)
                 for (transitions) |transition| {
+                    // Update Prometheus metrics for tier migrations
+                    switch (transition.from_tier) {
+                        .hot => if (transition.to_tier == .warm) {
+                            _ = archerdb_metrics.Registry.tiering_migrations_hot_to_warm.fetchAdd(1, .monotonic);
+                        },
+                        .warm => if (transition.to_tier == .cold) {
+                            _ = archerdb_metrics.Registry.tiering_migrations_warm_to_cold.fetchAdd(1, .monotonic);
+                        } else if (transition.to_tier == .hot) {
+                            _ = archerdb_metrics.Registry.tiering_migrations_warm_to_hot.fetchAdd(1, .monotonic);
+                        },
+                        .cold => if (transition.to_tier == .warm) {
+                            _ = archerdb_metrics.Registry.tiering_migrations_cold_to_warm.fetchAdd(1, .monotonic);
+                        },
+                    }
+
                     if (transition.to_tier == .cold) {
                         // Entity demoted to cold tier - remove from RAM index
                         // Cold entities are disk-only and require LSM scan for queries
@@ -1563,8 +1578,19 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     }
                 }
 
-                // Log tier statistics periodically
+                // Update tier count metrics
                 const stats = tm.getStats();
+                archerdb_metrics.Registry.tier_entity_count_hot.store(stats.hot_count, .monotonic);
+                archerdb_metrics.Registry.tier_entity_count_warm.store(stats.warm_count, .monotonic);
+                archerdb_metrics.Registry.tier_entity_count_cold.store(stats.cold_count, .monotonic);
+
+                // Update cold tier query metric
+                _ = archerdb_metrics.Registry.cold_tier_fetches_total.store(
+                    stats.cold_tier_queries,
+                    .monotonic,
+                );
+
+                // Log tier statistics periodically
                 if (stats.totalEntities() > 0 and result.entries_removed > 0) {
                     log.debug(
                         "tiering: hot={d} warm={d} cold={d} (cost_ratio={d:.2})",
