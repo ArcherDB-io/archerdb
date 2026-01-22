@@ -35,12 +35,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Darwin fsync correctly uses F_FULLFSYNC with safe fallback behavior
   4. All message bus error conditions documented with clear fatal/recoverable classification
   5. Message bus connection state transitions tested and peer eviction logic verified
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 01-01: Windows removal
-- [ ] 01-02: Darwin/macOS fixes
-- [ ] 01-03: Message bus error handling
+- [ ] 01-01-PLAN.md - Windows removal (io, build, source files)
+- [ ] 01-02-PLAN.md - Darwin/macOS fixes (F_FULLFSYNC, x86_64 assertion)
+- [ ] 01-03-PLAN.md - Message bus error handling
 
 ### Phase 2: VSR & Storage
 **Goal**: Consensus and storage layers are verified correct - VSR fixes applied, durability guarantees solid, encryption verified
@@ -208,7 +208,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Platform Foundation | 0/3 | Not started | - |
+| 1. Platform Foundation | 0/3 | Planned | - |
 | 2. VSR & Storage | 0/4 | Not started | - |
 | 3. Core Geospatial | 0/5 | Not started | - |
 | 4. Replication | 0/3 | Not started | - |
@@ -221,4 +221,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 
 ---
 *Roadmap created: 2026-01-22*
+*Phase 1 planned: 2026-01-22*
 *Total requirements: 234 | All mapped*
