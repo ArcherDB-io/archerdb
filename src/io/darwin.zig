@@ -1046,6 +1046,11 @@ pub const IO = struct {
         // panic if we run out of disk space (ENOSPC).
         if (purpose == .format) try fs_allocate(fd, size);
 
+        // Validate F_FULLFSYNC support before first sync operation.
+        // This ensures we fail early with an actionable error if the filesystem
+        // doesn't support the durability guarantees we require.
+        try validate_fullfsync_support(dir_fd);
+
         // The best fsync strategy is always to fsync before reading because this prevents us from
         // making decisions on data that was never durably written by a previously crashed process.
         // We therefore always fsync when we open the path, also to wait for any pending O_DSYNC.
@@ -1064,14 +1069,42 @@ pub const IO = struct {
         return fd;
     }
 
+    // F_FULLFSYNC support status - validated once at startup
+    var fullfsync_supported: bool = false;
+    var fullfsync_checked: bool = false;
+
+    /// Validates that F_FULLFSYNC is supported on the filesystem.
+    /// Must be called during IO initialization before any data operations.
+    /// Fails with actionable error if durability cannot be guaranteed.
+    pub fn validate_fullfsync_support(data_dir_fd: fd_t) !void {
+        if (fullfsync_checked) return;
+
+        // Try F_FULLFSYNC on the data directory fd
+        _ = posix.fcntl(data_dir_fd, posix.F.FULLFSYNC, 1) catch |err| {
+            log.err("F_FULLFSYNC not supported on this filesystem", .{});
+            log.err("ArcherDB requires F_FULLFSYNC for durability guarantees", .{});
+            log.err("This typically happens with network filesystems or external drives", .{});
+            log.err("Solution: Use a local APFS or HFS+ filesystem", .{});
+            return err;
+        };
+
+        fullfsync_supported = true;
+        fullfsync_checked = true;
+        log.info("F_FULLFSYNC support verified - durability guaranteed", .{});
+    }
+
     /// Darwin's fsync() syscall does not flush past the disk cache. We must use F_FULLFSYNC
     /// instead.
     /// https://twitter.com/ArcherDBDB/status/1422491736224436225
     fn fs_sync(fd: fd_t) !void {
-        // TODO: This is of dubious safety - it's _not_ safe to fall back on posix.fsync unless it's
-        // known at startup that the disk (eg, an external disk on a Mac) doesn't support
-        // F_FULLFSYNC.
-        _ = posix.fcntl(fd, posix.F.FULLFSYNC, 1) catch return posix.fsync(fd);
+        // F_FULLFSYNC is required for durability on Darwin.
+        // Support was validated at startup - if we get here, it must work.
+        assert(fullfsync_checked);
+        assert(fullfsync_supported);
+        _ = posix.fcntl(fd, posix.F.FULLFSYNC, 1) catch |err| {
+            log.err("F_FULLFSYNC failed unexpectedly: {}", .{err});
+            @panic("F_FULLFSYNC failed after startup validation succeeded");
+        };
     }
 
     /// Allocates a file contiguously using fallocate() if supported.
