@@ -20,12 +20,10 @@ fn resolve_target(b: *std.Build, target_requested: ?[]const u8) !std.Build.Resol
         "aarch64-macos",
         "x86_64-linux",
         "x86_64-macos",
-        "x86_64-windows",
     };
     const cpus = .{
         "baseline+aes+neon",
         "baseline+aes+neon",
-        "x86_64_v3+aes",
         "x86_64_v3+aes",
         "x86_64_v3+aes",
     };
@@ -656,10 +654,7 @@ fn build_archerdb(
         break :bin archerdb_exe.getEmittedBin();
     };
 
-    const out_filename = if (options.target.result.os.tag == .windows)
-        "archerdb.exe"
-    else
-        "archerdb";
+    const out_filename = "archerdb";
 
     steps.install.dependOn(&b.addInstallBinFile(archerdb_bin, out_filename).step);
     // "zig build install" moves the server executable to the root folder:
@@ -767,11 +762,7 @@ fn build_archerdb_executable_multiversion(b: *std.Build, options: struct {
         "--tmp={s}",
         .{b.cache_root.join(b.allocator, &.{"tmp"}) catch @panic("OOM")},
     ));
-    const basename = if (options.target.result.os.tag == .windows)
-        "archerdb.exe"
-    else
-        "archerdb";
-    return build_multiversion.addPrefixedOutputFileArg("--output=", basename);
+    return build_multiversion.addPrefixedOutputFileArg("--output=", "archerdb");
 }
 
 // Downloads a pre-build llvm-objcopy from <https://github.com/archerdb/dependencies>.
@@ -797,15 +788,6 @@ fn build_archerdb_executable_get_objcopy(b: *std.Build) std.Build.LazyPath {
                 },
                 else => @panic("unsupported arch"),
             }
-        },
-        .windows => {
-            assert(b.graph.host.result.cpu.arch == .x86_64);
-            return fetch(b, .{
-                .url = "https://github.com/archerdb/dependencies/releases/download/" ++
-                    "18.1.8/llvm-objcopy-x86_64-windows.zip",
-                .file_name = "llvm-objcopy.exe",
-                .hash = "N-V-__8AAADuPABpdHRgl3oetSEQ6yq8i5kq9XJC73JDFtMH",
-            });
         },
         .macos => {
             // Both x86_64 and aarch64 macOS use the aarch64 binary.
@@ -1046,7 +1028,7 @@ fn build_test_jni(
     // available.
     const libjvm_path = b.pathJoin(&.{
         java_home,
-        if (builtin.os.tag == .windows) "/lib" else "/lib/server",
+        "/lib/server",
     });
 
     const tests = b.addTest(.{
@@ -1058,7 +1040,7 @@ fn build_test_jni(
             // https://bugzilla.redhat.com/show_bug.cgi?id=1572811#c7
             //
             // The workaround is to run the tests in "ReleaseFast" mode.
-            .optimize = if (builtin.os.tag == .windows) .ReleaseFast else options.mode,
+            .optimize = options.mode,
         }),
     });
     tests.linkLibC();
@@ -1090,7 +1072,6 @@ fn build_test_jni(
     }
 
     switch (builtin.os.tag) {
-        .windows => set_windows_dll(b.allocator, java_home),
         .macos => try b.graph.env_map.put("DYLD_LIBRARY_PATH", libjvm_path),
         .linux => try b.graph.env_map.put("LD_LIBRARY_PATH", libjvm_path),
         else => unreachable,
@@ -1267,10 +1248,6 @@ fn build_vortex_executable(
     arch_client.bundle_compiler_rt = true;
     arch_client.root_module.addImport("vsr", options.vsr_module);
     arch_client.root_module.addOptions("vsr_options", options.vsr_options);
-    if (options.target.result.os.tag == .windows) {
-        arch_client.linkSystemLibrary("ws2_32");
-        arch_client.linkSystemLibrary("advapi32");
-    }
 
     const archerdb = build_archerdb_executable(b, .{
         .vsr_module = options.vsr_module,
@@ -1308,7 +1285,6 @@ const platforms = .{
     .{ "aarch64-linux-gnu.2.27", "linux-arm64", "baseline+aes+neon" },
     .{ "aarch64-linux-musl", "linux-musl-arm64", "baseline+aes+neon" },
     .{ "aarch64-macos", "osx-arm64", "baseline+aes+neon" },
-    .{ "x86_64-windows", "win-x64", "x86_64_v3+aes" },
 };
 
 fn strip_glibc_version(triple: []const u8) []const u8 {
@@ -1451,10 +1427,6 @@ fn build_java_client(
             .root_module = root_module,
         });
         lib.linkLibC();
-        if (resolved_target.result.os.tag == .windows) {
-            lib.linkSystemLibrary("ws2_32");
-            lib.linkSystemLibrary("advapi32");
-        }
         lib.step.dependOn(&bindings.step);
 
         // NB: New way to do lib.setOutputDir(). The ../ is important to escape zig-cache/.
@@ -1490,39 +1462,8 @@ fn build_node_client(
     });
 
     // Run `npm install` to get access to node headers.
-    var npm_install = b.addSystemCommand(&.{ "npm", "install" });
+    const npm_install = b.addSystemCommand(&.{ "npm", "install" });
     npm_install.cwd = b.path("./src/clients/node");
-
-    // For windows, compile a set of all symbols that could be exported by node and write it to a
-    // `.def` file for `zig dlltool` to generate a `.lib` file from.
-    var write_def_file = b.addSystemCommand(&.{
-        "node", "--eval",
-        \\const headers = require('node-api-headers')
-        \\
-        \\const allSymbols = new Set()
-        \\for (const ver of Object.values(headers.symbols)) {
-        \\    for (const sym of ver.node_api_symbols) {
-        \\        allSymbols.add(sym)
-        \\    }
-        \\    for (const sym of ver.js_native_api_symbols) {
-        \\        allSymbols.add(sym)
-        \\    }
-        \\}
-        \\
-        \\process.stdout.write('EXPORTS\n    ' + Array.from(allSymbols).join('\n    '))
-    });
-    write_def_file.cwd = b.path("./src/clients/node");
-    write_def_file.step.dependOn(&npm_install.step);
-
-    var run_dll_tool = b.addSystemCommand(&.{
-        b.graph.zig_exe, "dlltool",
-        "-m",            "i386:x86-64",
-        "-D",            "node.exe",
-        "-l",            "node.lib",
-        "-d",
-    });
-    run_dll_tool.addFileArg(write_def_file.captureStdOut());
-    run_dll_tool.cwd = b.path("./src/clients/node");
 
     inline for (platforms) |platform| {
         const query = Query.parse(.{
@@ -1550,15 +1491,6 @@ fn build_node_client(
         lib.step.dependOn(&npm_install.step);
         lib.addSystemIncludePath(b.path("src/clients/node/node_modules/node-api-headers/include"));
         lib.linker_allow_shlib_undefined = true;
-
-        if (resolved_target.result.os.tag == .windows) {
-            lib.linkSystemLibrary("ws2_32");
-            lib.linkSystemLibrary("advapi32");
-
-            lib.step.dependOn(&run_dll_tool.step);
-            lib.addLibraryPath(b.path("src/clients/node"));
-            lib.linkSystemLibrary("node");
-        }
 
         lib.step.dependOn(&bindings.step);
         step_clients_node.dependOn(&b.addInstallFile(lib.getEmittedBin(), b.pathJoin(&.{
@@ -1615,10 +1547,6 @@ fn build_python_client(
             .root_module = root_module,
         });
         shared_lib.linkLibC();
-        if (resolved_target.result.os.tag == .windows) {
-            shared_lib.linkSystemLibrary("ws2_32");
-            shared_lib.linkSystemLibrary("advapi32");
-        }
 
         step_clients_python.dependOn(&b.addInstallFile(
             shared_lib.getEmittedBin(),
@@ -1677,10 +1605,6 @@ fn build_c_client(
 
         for ([_]*std.Build.Step.Compile{ shared_lib, static_lib }) |lib| {
             lib.linkLibC();
-            if (resolved_target.result.os.tag == .windows) {
-                lib.linkSystemLibrary("ws2_32");
-                lib.linkSystemLibrary("advapi32");
-            }
 
             step_clients_c.dependOn(&b.addInstallFile(lib.getEmittedBin(), b.pathJoin(&.{
                 "../src/clients/c/lib/",
@@ -1730,14 +1654,6 @@ fn build_clients_c_sample(
     sample.linkLibrary(static_lib);
     sample.linkLibC();
 
-    if (options.target.result.os.tag == .windows) {
-        static_lib.linkSystemLibrary("ws2_32");
-        static_lib.linkSystemLibrary("advapi32");
-
-        // TODO: Illegal instruction on Windows:
-        sample.root_module.sanitize_c = false;
-    }
-
     const install_step = b.addInstallArtifact(sample, .{});
     step_clients_c_sample.dependOn(&install_step.step);
 }
@@ -1748,25 +1664,6 @@ fn strip_root_module(root_module: *std.Build.Module) void {
     root_module.omit_frame_pointer = false;
     root_module.unwind_tables = .none;
 }
-
-/// Set the JVM DLL directory on Windows.
-fn set_windows_dll(allocator: std.mem.Allocator, java_home: []const u8) void {
-    comptime assert(builtin.os.tag == .windows);
-
-    const java_bin_path = std.fs.path.joinZ(
-        allocator,
-        &.{ java_home, "\\bin" },
-    ) catch unreachable;
-    _ = SetDllDirectoryA(java_bin_path);
-
-    const java_bin_server_path = std.fs.path.joinZ(
-        allocator,
-        &.{ java_home, "\\bin\\server" },
-    ) catch unreachable;
-    _ = SetDllDirectoryA(java_bin_server_path);
-}
-
-extern "kernel32" fn SetDllDirectoryA(path: [*:0]const u8) callconv(.c) std.os.windows.BOOL;
 
 fn print_or_install(b: *std.Build, compile: *std.Build.Step.Compile, print: bool) *std.Build.Step {
     const PrintStep = struct {
@@ -2035,7 +1932,6 @@ fn download_release(
     };
 
     const os = switch (target.result.os.tag) {
-        .windows => "windows",
         .linux => "linux",
         .macos => "macos",
         else => @panic("unsupported OS"),
@@ -2055,7 +1951,7 @@ fn download_release(
 
     return fetch(b, .{
         .url = url,
-        .file_name = if (target.result.os.tag == .windows) "archerdb.exe" else "archerdb",
+        .file_name = "archerdb",
         .hash = null,
     });
 }
