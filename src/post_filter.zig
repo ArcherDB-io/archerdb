@@ -33,6 +33,25 @@
 //!
 //! The coarse filter typically eliminates 90%+ of candidates, making the
 //! post-filter cost acceptable.
+//!
+//! ## Haversine Distance Implementation
+//!
+//! Distance calculations use the Haversine formula for great-circle distance:
+//! - Formula source: https://www.movable-type.co.uk/scripts/latlong.html
+//! - Earth radius: 6371008.8m (IUGG mean radius)
+//! - Precision: Millimeters (internal representation)
+//! - Accuracy: ~0.5% vs WGS84 ellipsoid at equator
+//!
+//! Boundary inclusivity (RAD-03): Points exactly at the radius edge ARE included.
+//! This is implemented by using `<=` comparison in `isWithinDistance()`.
+//!
+//! ## Requirements Traceability
+//!
+//! This module implements radius query post-filter requirements:
+//! - RAD-01: checkDistance returns true for all points within radius
+//! - RAD-02: checkDistance returns false for all points outside radius
+//! - RAD-03: Boundary inclusive (points at exact radius pass filter)
+//! - RAD-04: Uses Haversine great-circle distance formula
 
 const std = @import("std");
 const s2_index = @import("s2_index.zig");
