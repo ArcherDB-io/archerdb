@@ -92,6 +92,16 @@ const CLIArgs = struct {
     replica_missing_until_request: ?u32 = null,
     requests_max: ?u32 = null,
 
+    // Replay mode: deterministic replay of a specific seed for debugging
+    replay: bool = false,
+    @"replay-from-tick": ?u64 = null,
+    @"dump-on-fail": bool = false,
+
+    // Durability verification: configurable crash rate
+    @"crash-rate": ?u8 = null,
+    // Cluster configuration: specify number of replicas
+    replicas: ?u8 = null,
+
     @"--": void,
     seed: ?[]const u8 = null,
 };
@@ -126,8 +136,23 @@ pub fn main() !void {
     if (cli_args.replica_missing == null and cli_args.replica_missing_until_request != null) {
         return vsr.fatal(.cli, "--replica-missing-until-request requires --replica-missing", .{});
     }
+    if (cli_args.@"replay-from-tick" != null and !cli_args.replay) {
+        return vsr.fatal(.cli, "--replay-from-tick requires --replay", .{});
+    }
+    if (cli_args.@"crash-rate") |rate| {
+        if (rate > 100) {
+            return vsr.fatal(.cli, "--crash-rate must be 0-100 (percentage)", .{});
+        }
+    }
+    if (cli_args.replicas) |count| {
+        if (count < 1 or count > constants.replicas_max) {
+            return vsr.fatal(.cli, "--replicas must be 1-{d}", .{constants.replicas_max});
+        }
+    }
 
     log_performance_mode = cli_args.performance;
+    log_replay_mode = cli_args.replay;
+    dump_on_fail = cli_args.@"dump-on-fail";
 
     const seed_random = std.crypto.random.int(u64);
     const seed = seed_from_arg: {
@@ -139,8 +164,9 @@ pub fn main() !void {
     comptime assert(builtin.mode == .Debug or builtin.mode == .ReleaseSafe);
 
     if (seed == seed_random) {
-        if (builtin.mode != .ReleaseSafe) {
+        if (builtin.mode != .ReleaseSafe and !cli_args.replay) {
             // If no seed is provided, than Debug is too slow and ReleaseSafe is much faster.
+            // Exception: replay mode is expected to run in Debug for verbose output.
             return vsr.fatal(
                 .cli,
                 "no seed provided: the simulator must be run with -OReleaseSafe",
@@ -149,6 +175,14 @@ pub fn main() !void {
         }
         if (vsr_vopr_options.log != .short) {
             log.warn("no seed provided: full debug logs are enabled, this will be slow", .{});
+        }
+    }
+
+    // In replay mode, print the seed and enable verbose logging
+    if (cli_args.replay) {
+        log.info("REPLAY MODE: seed={d}", .{seed});
+        if (cli_args.@"replay-from-tick") |tick| {
+            log.info("REPLAY MODE: skipping to tick {d}", .{tick});
         }
     }
 
@@ -168,6 +202,21 @@ pub fn main() !void {
     }
     if (cli_args.requests_max) |requests_max| {
         options.requests_max = requests_max;
+    }
+
+    // Apply --crash-rate if specified (percentage converted to ratio)
+    if (cli_args.@"crash-rate") |crash_rate_pct| {
+        // Convert percentage to crash probability (e.g., 1% = ratio(1, 100))
+        // The crash rate is per tick, so 1% means roughly 1 crash per 100 ticks when replica has writes
+        options.storage.crash_fault_probability = ratio(crash_rate_pct, 100);
+        log.info("crash-rate set to {d}%", .{crash_rate_pct});
+    }
+
+    // Apply --replicas if specified
+    if (cli_args.replicas) |replica_count| {
+        options.cluster.replica_count = replica_count;
+        options.network.node_count = replica_count + options.cluster.standby_count;
+        log.info("replica_count set to {d}", .{replica_count});
     }
 
     log.info(
@@ -694,6 +743,9 @@ pub const Simulator = struct {
     requests_replied: usize = 0,
     requests_idle: bool = false,
 
+    /// Current tick count for replay mode decision history tracking.
+    tick_count: u64 = 0,
+
     pub fn init(
         gpa: std.mem.Allocator,
         prng: *stdx.PRNG,
@@ -822,6 +874,11 @@ pub const Simulator = struct {
         // TODO(Zig): Remove (see on_cluster_reply()).
         simulator.cluster.context = simulator;
 
+        // Record tick start in decision history for replay mode debugging
+        if (log_replay_mode) {
+            decision_history.record(simulator.tick_count, .tick_start, 0, 0);
+        }
+
         simulator.cluster.tick();
         simulator.tick_requests();
         simulator.tick_upgrade();
@@ -834,6 +891,8 @@ pub const Simulator = struct {
                 simulator.replica_crash_stability[simulator.options.replica_missing.?] = 1;
             }
         }
+
+        simulator.tick_count += 1;
     }
 
     pub fn cluster_recoverable(simulator: *Simulator, gpa: std.mem.Allocator) !bool {
@@ -1467,6 +1526,16 @@ pub const Simulator = struct {
         assert(request_message.header.into(.request).?.operation.cast(StateMachine.Operation) ==
             request_metadata.operation);
 
+        // Record request decision for replay mode debugging
+        if (log_replay_mode) {
+            decision_history.record(
+                simulator.tick_count,
+                .request_sent,
+                client_index,
+                simulator.requests_sent,
+            );
+        }
+
         simulator.requests_sent += 1;
         assert(simulator.requests_sent - simulator.cluster.client_eviction_requests_cancelled <=
             simulator.options.requests_max);
@@ -1508,6 +1577,17 @@ pub const Simulator = struct {
         if (!crash_random) return;
 
         log.debug("{}: crash replica", .{replica.replica});
+
+        // Record crash decision for replay mode debugging
+        if (log_replay_mode) {
+            decision_history.record(
+                simulator.tick_count,
+                .crash_replica,
+                replica.replica,
+                replica_writes,
+            );
+        }
+
         simulator.cluster.replica_crash(replica.replica);
 
         simulator.replica_crash_stability[replica.replica] =
@@ -1616,6 +1696,16 @@ pub const Simulator = struct {
             simulator.replica_releases[replica_index],
         });
 
+        // Record restart decision for replay mode debugging
+        if (log_replay_mode) {
+            decision_history.record(
+                simulator.tick_count,
+                .restart_replica,
+                replica_index,
+                @intFromBool(fault),
+            );
+        }
+
         replica_storage.faulty = fault;
         simulator.cluster.replica_restart(replica_index) catch unreachable;
 
@@ -1681,8 +1771,16 @@ pub const Simulator = struct {
 /// Print an error message and then exit with an exit code.
 fn fatal(failure: Failure, comptime fmt_string: []const u8, args: anytype) noreturn {
     log.err(fmt_string, args);
+
+    // Dump decision history on failure for debugging (in replay mode or if --dump-on-fail)
+    if (log_replay_mode or dump_on_fail) {
+        decision_history.dump();
+    }
+
     std.process.exit(@intFromEnum(failure));
 }
+
+var dump_on_fail: bool = false;
 
 /// Signal that something is not yet fully implemented, and abort the process.
 ///
@@ -1752,6 +1850,71 @@ var log_buffer: std.io.BufferedWriter(4096, std.fs.File.Writer) = .{
 };
 
 var log_performance_mode: bool = false;
+var log_replay_mode: bool = false;
+
+/// Decision history for deterministic replay debugging.
+/// Records the last N decisions for dumping on failure.
+const DecisionHistory = struct {
+    const max_entries = 1000;
+    const Entry = struct {
+        tick: u64,
+        decision_type: DecisionType,
+        param1: u64,
+        param2: u64,
+    };
+
+    const DecisionType = enum(u8) {
+        tick_start,
+        request_sent,
+        crash_replica,
+        restart_replica,
+        upgrade_replica,
+        pause_replica,
+        unpause_replica,
+    };
+
+    entries: [max_entries]Entry = undefined,
+    count: usize = 0,
+    head: usize = 0, // Write position in circular buffer
+
+    pub fn record(self: *DecisionHistory, tick: u64, dtype: DecisionType, param1: u64, param2: u64) void {
+        self.entries[self.head] = .{
+            .tick = tick,
+            .decision_type = dtype,
+            .param1 = param1,
+            .param2 = param2,
+        };
+        self.head = (self.head + 1) % max_entries;
+        if (self.count < max_entries) self.count += 1;
+    }
+
+    pub fn dump(self: *const DecisionHistory) void {
+        if (self.count == 0) return;
+
+        const stderr = std.io.getStdErr().writer();
+        stderr.print("\n=== Decision History (last {d} decisions) ===\n", .{self.count}) catch {};
+
+        // Calculate start position in circular buffer
+        const start = if (self.count < max_entries)
+            0
+        else
+            self.head;
+
+        for (0..self.count) |i| {
+            const idx = (start + i) % max_entries;
+            const entry = self.entries[idx];
+            stderr.print("tick={d:>8} type={s:<16} p1={d:<8} p2={d}\n", .{
+                entry.tick,
+                @tagName(entry.decision_type),
+                entry.param1,
+                entry.param2,
+            }) catch {};
+        }
+        stderr.print("=== End Decision History ===\n\n", .{}) catch {};
+    }
+};
+
+var decision_history: DecisionHistory = .{};
 
 fn log_override(
     comptime level: std.log.Level,
@@ -1761,6 +1924,8 @@ fn log_override(
 ) void {
     if ((scope == .vsr and level == .err) or scope == .gpa) {
         // Always print a message for vsr.fatal.
+    } else if (log_replay_mode) {
+        // In replay mode, show all logs for debugging
     } else {
         if (vsr_vopr_options.log == .short) {
             if (log_performance_mode) {
@@ -1772,11 +1937,16 @@ fn log_override(
     }
 
     const prefix_default = "[" ++ @tagName(level) ++ "] " ++ "(" ++ @tagName(scope) ++ "): ";
-    const prefix = if (vsr_vopr_options.log == .short) "" else prefix_default;
+    const prefix = comptime if (vsr_vopr_options.log == .short) "" else prefix_default;
 
     // Print the message to stderr using a buffer to avoid many small write() syscalls when
     // providing many format arguments. Silently ignore failure.
-    log_buffer.writer().print(prefix ++ format ++ "\n", args) catch {};
+    // In replay mode, always include prefix for better debugging
+    if (log_replay_mode) {
+        log_buffer.writer().print(prefix_default ++ format ++ "\n", args) catch {};
+    } else {
+        log_buffer.writer().print(prefix ++ format ++ "\n", args) catch {};
+    }
 
     // Flush the buffer before returning to ensure, for example, that a log message
     // immediately before a failing assertion is fully printed.
