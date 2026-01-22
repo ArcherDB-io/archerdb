@@ -49,7 +49,43 @@ const GridChecker = @import("./cluster/grid_checker.zig").GridChecker;
 const log = std.log.scoped(.storage);
 
 pub const Storage = struct {
-    /// Options for fault injection during fuzz testing
+    /// Options for fault injection during fuzz testing.
+    ///
+    /// ## Durability Verification Configuration Presets
+    ///
+    /// For rigorous durability testing, use aggressive fault injection:
+    ///
+    /// **Standard durability verification:**
+    /// - crash_fault_probability: ratio(1, 100)     // 1% chance of crash corruption
+    /// - write_fault_probability: ratio(1, 1000)    // 0.1% write corruption
+    /// - read_fault_probability: ratio(1, 1000)     // 0.1% read corruption
+    /// - write_misdirect_probability: ratio(5, 10000) // 0.05% misdirects
+    ///
+    /// **High-stress durability verification:**
+    /// - crash_fault_probability: ratio(5, 100)     // 5% chance of crash corruption
+    /// - write_fault_probability: ratio(1, 100)     // 1% write corruption
+    /// - read_fault_probability: ratio(1, 100)      // 1% read corruption
+    /// - write_misdirect_probability: ratio(1, 1000) // 0.1% misdirects
+    ///
+    /// Use with `run_vopr.sh --crash-rate=1` to inject crash faults during simulation.
+    ///
+    /// ## Fault Types
+    ///
+    /// - **read_fault_probability**: Simulates bit rot and read errors (LSE)
+    /// - **write_fault_probability**: Simulates partial/corrupt writes
+    /// - **write_misdirect_probability**: Simulates writes landing at wrong sector
+    /// - **crash_fault_probability**: Simulates torn writes from power loss
+    ///
+    /// ## Testing Scenarios
+    ///
+    /// The fault injection tests these recovery scenarios:
+    /// 1. Crash during prepare phase (WAL write)
+    /// 2. Crash during commit phase (state machine update)
+    /// 3. Crash during checkpoint write (superblock/manifest)
+    /// 4. Crash during compaction (LSM level merge)
+    /// 5. Multiple replicas crash simultaneously
+    /// 6. Partial/torn write simulation
+    ///
     pub const Options = struct {
         size: u64,
         /// Seed for the storage PRNG.
@@ -68,16 +104,17 @@ pub const Storage = struct {
         write_latency_mean: Duration = .{ .ns = 0 },
 
         /// Chance out of 100 that a read will corrupt a sector, if the target memory is within
-        /// a faulty area of this replica.
+        /// a faulty area of this replica. Simulates LSE (latent sector errors) and bit rot.
         read_fault_probability: Ratio = Ratio.zero(),
         /// Chance out of 100 that a write will corrupt a sector, if the target memory is within
-        /// a faulty area of this replica.
+        /// a faulty area of this replica. Simulates incomplete or corrupt writes.
         write_fault_probability: Ratio = Ratio.zero(),
         /// Chance out of 100 that a write will misdirect to the wrong sector, if the target memory
-        /// is within a faulty area of this replica.
+        /// is within a faulty area of this replica. Simulates firmware bugs causing misdirected I/O.
         write_misdirect_probability: Ratio = Ratio.zero(),
         /// Chance out of 100 that a crash will corrupt a sector of a pending write's target,
-        /// if the target memory is within a faulty area of this replica.
+        /// if the target memory is within a faulty area of this replica. Simulates torn writes
+        /// from power loss during I/O.
         crash_fault_probability: Ratio = Ratio.zero(),
 
         /// Enable/disable automatic read/write faults.
