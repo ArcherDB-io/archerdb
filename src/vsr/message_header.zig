@@ -1620,7 +1620,20 @@ pub const Header = extern struct {
             if (self.address == 0) return "address == 0"; // address ≠ 0
             if (!self.block_type.valid()) return "block_type invalid";
             if (self.block_type == .reserved) return "block_type == .reserved";
-            // TODO When manifest blocks include a snapshot, verify that snapshot≠0.
+
+            // Snapshot verification: index and value blocks must have non-zero snapshots.
+            // Manifest, free_set, and client_sessions blocks currently set snapshot=0.
+            // See TODOs in manifest_log.zig and checkpoint_trailer.zig for future work.
+            switch (self.block_type) {
+                .index, .value => {
+                    if (self.snapshot == 0) return "index/value block: snapshot == 0";
+                },
+                .manifest, .free_set, .client_sessions => {
+                    // These block types don't currently use the snapshot field.
+                    // When they do (per TODOs), this check should be updated.
+                },
+                .reserved => unreachable, // Already checked above
+            }
             return null;
         }
     };
