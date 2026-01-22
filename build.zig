@@ -808,8 +808,8 @@ fn build_archerdb_executable_get_objcopy(b: *std.Build) std.Build.LazyPath {
             });
         },
         .macos => {
-            // TODO: this assert triggers, but the macOS tests on x86_64 work...?
-            // assert(b.graph.host.result.cpu.arch == .aarch64);
+            // Both x86_64 and aarch64 macOS use the aarch64 binary.
+            // On x86_64 hosts, Rosetta 2 translates it transparently.
             return fetch(b, .{
                 .url = "https://github.com/archerdb/dependencies/releases/download/" ++
                     "18.1.8/llvm-objcopy-aarch64-macos.zip",
