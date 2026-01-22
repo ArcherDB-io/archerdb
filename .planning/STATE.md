@@ -10,28 +10,28 @@ See: .planning/PROJECT.md (updated 2026-01-22)
 ## Current Position
 
 Phase: 1 of 10 (Platform Foundation)
-Plan: 2 of 3 in current phase
+Plan: 2 of 3 in current phase (01-01 and 01-02 complete)
 Status: In progress
-Last activity: 2026-01-22 - Completed 01-02-PLAN.md (Darwin platform fixes)
+Last activity: 2026-01-22 - Completed 01-01-PLAN.md (Windows removal)
 
-Progress: [==========----------] 7% (2/30 plans estimated)
+Progress: [===-------] 7% (2/30 plans estimated)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 1
-- Average duration: 5 min
-- Total execution time: 5 min
+- Total plans completed: 2
+- Average duration: 10 min
+- Total execution time: 20 min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 01 | 1 | 5 min | 5 min |
+| 01 | 2 | 20 min | 10 min |
 
 **Recent Trend:**
-- Last 5 plans: 01-02 (5m)
-- Trend: N/A (first plan)
+- Last 5 plans: 01-02 (5m), 01-01 (15m)
+- Trend: N/A (early phase)
 
 *Updated after each plan completion*
 
@@ -53,6 +53,11 @@ From 01-02:
 - Startup fails immediately with actionable error if filesystem doesn't support F_FULLFSYNC
 - macOS objcopy uses aarch64 binary for all architectures (Rosetta handles x86_64)
 
+From 01-01:
+- Windows support completely removed from build targets
+- io.zig hub emits compile error for unsupported platforms
+- time.zig simplified to Darwin/Linux only
+
 ### Pending Todos
 
 None yet.
@@ -68,6 +73,6 @@ From CONCERNS.md - key issues to address:
 
 ## Session Continuity
 
-Last session: 2026-01-22T07:08:27Z
-Stopped at: Completed 01-02-PLAN.md
+Last session: 2026-01-22T07:18:25Z
+Stopped at: Completed 01-01-PLAN.md
 Resume file: None
