@@ -6066,17 +6066,17 @@ test "UUID batch query: QueryUuidBatchResult structure" {
 
     // Success result
     const success = QueryUuidBatchResult{
-        .count = 3,
-        .status = 0,
+        .found_count = 3,
+        .not_found_count = 2,
     };
-    try std.testing.expectEqual(@as(u32, 3), success.count);
-    try std.testing.expectEqual(@as(u32, 0), success.status);
+    try std.testing.expectEqual(@as(u32, 3), success.found_count);
+    try std.testing.expectEqual(@as(u32, 2), success.not_found_count);
     try std.testing.expectEqual(@as(?StateError, null), success.error_status());
 
     // Error result
-    const error_result = QueryUuidBatchResult.with_error(.internal_error);
-    try std.testing.expectEqual(@as(u32, 0), error_result.count);
-    try std.testing.expectEqual(StateError.internal_error, error_result.error_status().?);
+    const error_result = QueryUuidBatchResult.with_error(.resource_exhausted);
+    try std.testing.expectEqual(@as(u32, 0), error_result.found_count);
+    try std.testing.expectEqual(StateError.resource_exhausted, error_result.error_status().?);
 }
 
 test "latest query: QueryLatestFilter structure" {
@@ -6152,9 +6152,9 @@ test "QueryResponse: response codes and flags" {
     try std.testing.expectEqual(@as(u8, 1), truncated.partial_result);
 
     // Error response
-    const error_resp = QueryResponse.with_error(.internal_error);
+    const error_resp = QueryResponse.with_error(.resource_exhausted);
     try std.testing.expectEqual(@as(u32, 0), error_resp.count);
-    try std.testing.expectEqual(StateError.internal_error, error_resp.error_status().?);
+    try std.testing.expectEqual(StateError.resource_exhausted, error_resp.error_status().?);
 }
 
 test "TTL metrics: DeletionMetrics tracking" {
