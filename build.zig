@@ -67,6 +67,7 @@ pub fn build(b: *std.Build) !void {
     // Top-level steps you can invoke on the command line.
     const build_steps = .{
         .aof = b.step("aof", "Run ArcherDB AOF Utility"),
+        .csv_import = b.step("csv_import", "Run CSV Import Tool"),
         .check = b.step("check", "Check if ArcherDB compiles"),
         .clients_c = b.step("clients:c", "Build C client library"),
         .clients_c_sample = b.step("clients:c:sample", "Build C client sample"),
@@ -227,6 +228,12 @@ pub fn build(b: *std.Build) !void {
     build_aof(b, build_steps.aof, .{
         .stdx_module = stdx_module,
         .vsr_options = vsr_options,
+        .target = target,
+        .mode = mode,
+    });
+
+    // zig build csv_import
+    build_csv_import(b, build_steps.csv_import, .{
         .target = target,
         .mode = mode,
     });
@@ -834,6 +841,28 @@ fn build_aof(
     const run_cmd = b.addRunArtifact(aof);
     if (b.args) |args| run_cmd.addArgs(args);
     step_aof.dependOn(&run_cmd.step);
+}
+
+fn build_csv_import(
+    b: *std.Build,
+    step_csv_import: *std.Build.Step,
+    options: struct {
+        target: std.Build.ResolvedTarget,
+        mode: std.builtin.OptimizeMode,
+    },
+) void {
+    const csv_import = b.addExecutable(.{
+        .name = "csv_import",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/csv_import.zig"),
+            .target = options.target,
+            .optimize = options.mode,
+        }),
+    });
+    b.installArtifact(csv_import);
+    const run_cmd = b.addRunArtifact(csv_import);
+    if (b.args) |args| run_cmd.addArgs(args);
+    step_csv_import.dependOn(&run_cmd.step);
 }
 
 fn build_test(
