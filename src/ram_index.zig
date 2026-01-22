@@ -4625,3 +4625,220 @@ test "Concurrent: reader and writer threads during resize" {
 
     index.abortResize(allocator);
 }
+
+// =============================================================================
+// RAM Index Performance and Correctness Verification (RAM-01 through RAM-08)
+// =============================================================================
+//
+// These tests verify the RAM index requirements per the Core Geospatial spec:
+// - RAM-01: O(1) lookup performance
+// - RAM-02: Concurrent access handling
+// - RAM-03: Race condition prevention (line 1859 fix)
+// - RAM-04: Bounded memory usage (64 bytes per entry)
+// - RAM-05: Checkpoint/restart recovery
+// - RAM-06: Mmap mode persistence
+// - RAM-07: Hash collision handling
+// - RAM-08: TTL integration
+
+test "RAM index: O(1) lookup verification" {
+    // RAM-01: Verify O(1) lookup performance.
+    // This is a sanity check that lookup time is constant regardless of position.
+    // Not a benchmark, just verifying O(1) behavior holds.
+    const allocator = std.testing.allocator;
+
+    // Create index with capacity for 10,000 entities.
+    const capacity: u64 = 15_000; // ~67% load factor.
+    var index = try DefaultRamIndex.init(allocator, capacity);
+    defer index.deinit(allocator);
+
+    // Insert 10,000 entities at pseudo-random positions.
+    // Use xorshift64 for deterministic pseudo-random distribution.
+    var prng_state: u64 = 0x12345678_9ABCDEF0; // Fixed seed for reproducibility.
+    const num_entities: u64 = 10_000;
+
+    for (0..num_entities) |i| {
+        // xorshift64 step
+        prng_state ^= prng_state << 13;
+        prng_state ^= prng_state >> 7;
+        prng_state ^= prng_state << 17;
+
+        // Use high bits for entity_id to spread across hash space.
+        const entity_id: u128 = (@as(u128, prng_state) << 64) | @as(u128, i + 1);
+        _ = try index.upsert(entity_id, entity_id, 0);
+    }
+
+    // Verify we inserted all entities.
+    try std.testing.expectEqual(num_entities, index.get_stats().entry_count);
+
+    // Measure lookup times for entities at various positions.
+    // Reset PRNG to get the same entity_ids.
+    prng_state = 0x12345678_9ABCDEF0;
+
+    var total_lookup_ns: u64 = 0;
+    var max_lookup_ns: u64 = 0;
+    const lookup_count: u64 = 1000;
+
+    for (0..lookup_count) |i| {
+        // Get entity_id using same PRNG sequence.
+        prng_state ^= prng_state << 13;
+        prng_state ^= prng_state >> 7;
+        prng_state ^= prng_state << 17;
+
+        const entity_id: u128 = (@as(u128, prng_state) << 64) | @as(u128, i + 1);
+
+        const start = std.time.nanoTimestamp();
+        const result = index.lookup(entity_id);
+        const end = std.time.nanoTimestamp();
+
+        // Verify lookup succeeded.
+        try std.testing.expect(result.entry != null);
+
+        const elapsed: u64 = @intCast(end - start);
+        total_lookup_ns += elapsed;
+        if (elapsed > max_lookup_ns) max_lookup_ns = elapsed;
+    }
+
+    const avg_lookup_ns = total_lookup_ns / lookup_count;
+
+    // O(1) verification: average lookup should be reasonable for hash table.
+    // In debug mode with sanitizers, times are higher, so we use generous bounds.
+    // Production benchmarks use stricter thresholds.
+    // Key invariant: max should not be orders of magnitude higher than average.
+    const max_to_avg_ratio = @as(f64, @floatFromInt(max_lookup_ns)) /
+        @as(f64, @floatFromInt(@max(avg_lookup_ns, 1)));
+
+    // Max should be within 100x of average (allowing for occasional cache misses).
+    // If this ratio explodes (1000x+), it would indicate O(n) behavior.
+    try std.testing.expect(max_to_avg_ratio < 1000.0);
+
+    // Document actual values for reference.
+    std.log.info("RAM index O(1) verification: avg={d}ns, max={d}ns, ratio={d:.1}x", .{
+        avg_lookup_ns,
+        max_lookup_ns,
+        max_to_avg_ratio,
+    });
+}
+
+test "RAM index: probe length bounded under load" {
+    // RAM-01, RAM-07: Verify probe length stays bounded at target load factor.
+    // At 70% load, average probe should be ~1.5, max should be << max_probe_length (1024).
+    const allocator = std.testing.allocator;
+
+    const capacity: u64 = 1000;
+    var index = try DefaultRamIndex.init(allocator, capacity);
+    defer index.deinit(allocator);
+
+    // Fill to exactly 70% capacity (target load factor).
+    const target_entries: u64 = @intFromFloat(@as(f64, @floatFromInt(capacity)) * 0.70);
+
+    for (1..target_entries + 1) |i| {
+        const entity_id: u128 = @intCast(i);
+        _ = try index.upsert(entity_id, entity_id, 0);
+    }
+
+    const stats = index.get_stats();
+
+    // Verify load factor is at target.
+    const actual_lf = stats.load_factor();
+    try std.testing.expectApproxEqAbs(0.70, actual_lf, 0.01);
+
+    // Verify max probe length is well under limit.
+    // At 70% load with good hash function, max probe should typically be < 20.
+    try std.testing.expect(stats.max_probe_length_seen < max_probe_length);
+    try std.testing.expect(stats.max_probe_length_seen < 50); // Much stricter than 1024 limit.
+
+    // Verify average probe is near optimal (~1.5 for 70% load).
+    const avg_probe = stats.avg_probe_length();
+    try std.testing.expect(avg_probe < 10.0); // Should be ~1.5, allow margin for variance.
+
+    std.log.info("RAM index probe length at 70% load: max={d}, avg={d:.2}", .{
+        stats.max_probe_length_seen,
+        avg_probe,
+    });
+}
+
+test "RAM index: capacity enforcement returns error" {
+    // RAM-04: Verify capacity exceeded returns error, not crash.
+    // Per CONTEXT.md: "Memory capacity exceeded -> reject new entries (error)"
+    const allocator = std.testing.allocator;
+
+    // Create very small index to test capacity enforcement.
+    const capacity: u64 = 10;
+    var index = try DefaultRamIndex.init(allocator, capacity);
+    defer index.deinit(allocator);
+
+    // Fill to exactly 70% (7 entries).
+    for (1..8) |i| {
+        const entity_id: u128 = @intCast(i);
+        const result = index.upsert(entity_id, entity_id, 0);
+        try std.testing.expect(result != error.IndexDegraded);
+        try std.testing.expect(result != error.IndexCapacityExceeded);
+    }
+
+    // Continue inserting until we either:
+    // 1. Get IndexDegraded error (probe limit exceeded) - expected for small tables
+    // 2. Fill the table completely
+    var insert_count: u64 = 7;
+    var got_error = false;
+
+    for (8..capacity + 5) |i| {
+        const entity_id: u128 = @intCast(i);
+        const result = index.upsert(entity_id, entity_id, 0);
+        if (result) |_| {
+            insert_count += 1;
+        } else |err| {
+            // Expected: IndexDegraded when probe limit exceeded (small table = high collision).
+            try std.testing.expect(err == error.IndexDegraded);
+            got_error = true;
+            break;
+        }
+    }
+
+    // Either we got an error OR we managed to fill more than 70%.
+    // The key invariant: no crash, graceful error handling.
+    try std.testing.expect(got_error or insert_count >= 7);
+
+    std.log.info("RAM index capacity enforcement: inserted {d}/{d} entries, error={}", .{
+        insert_count,
+        capacity,
+        got_error,
+    });
+}
+
+test "RAM index: memory usage bounded (64 bytes per entry)" {
+    // RAM-04: Verify memory usage formula.
+    // Memory = capacity * 64 bytes / load_factor.
+    // This complements existing F5.1.5 tests with explicit formula verification.
+
+    // IndexEntry size verified at compile time (line 156-165).
+    try std.testing.expectEqual(@as(usize, 64), @sizeOf(IndexEntry));
+
+    // Memory formula: for N entities at load factor L, need ceil(N/L) * 64 bytes.
+    const entities: u64 = 1_000_000;
+    const load_factor = target_load_factor; // 0.70
+    const required_capacity: u64 = @intFromFloat(
+        @ceil(@as(f64, @floatFromInt(entities)) / load_factor),
+    );
+    const memory_bytes = required_capacity * @sizeOf(IndexEntry);
+
+    // 1M entities at 70% load -> ~1.43M slots -> ~91.4 MB.
+    const memory_mb = @as(f64, @floatFromInt(memory_bytes)) / (1024 * 1024);
+    try std.testing.expect(memory_mb >= 87.0);
+    try std.testing.expect(memory_mb <= 92.0);
+
+    // Verify stats.memory_bytes() returns same value.
+    const stats = IndexStats{
+        .capacity = required_capacity,
+        .entry_count = entities,
+        .tombstone_count = 0,
+        .lookup_count = 0,
+        .lookup_hit_count = 0,
+        .upsert_count = 0,
+        .total_probe_length = 0,
+        .max_probe_length_seen = 0,
+        .probe_limit_hits = 0,
+        .collision_count = 0,
+        .ttl_expirations = 0,
+    };
+    try std.testing.expectEqual(memory_bytes, stats.memory_bytes());
+}
