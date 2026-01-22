@@ -1368,6 +1368,102 @@ export function shardingStrategyToString(strategy: ShardingStrategy): string {
 }
 
 // ============================================================================
+// Jump Consistent Hash (Google, 2014)
+// Source of truth: src/sharding.zig - golden vectors MUST match exactly.
+// Reference: https://research.google/pubs/pub44824/
+// ============================================================================
+
+/**
+ * Jump Consistent Hash algorithm (Google, 2014).
+ *
+ * O(1) memory, O(log n) compute, optimal 1/(n+1) key movement on resize.
+ * Uses a linear congruential generator (LCG) with specific constants.
+ *
+ * IMPORTANT: This implementation MUST produce identical results to
+ * src/sharding.zig jumpHash() for cross-SDK compatibility.
+ *
+ * @param key 64-bit key as bigint
+ * @param numBuckets Number of buckets (shards)
+ * @returns Bucket index in range [0, numBuckets)
+ */
+export function jumpHash(key: bigint, numBuckets: number): number {
+  if (numBuckets <= 0) {
+    return 0
+  }
+
+  let b = -1n
+  let j = 0n
+  let k = key & 0xFFFFFFFFFFFFFFFFn // Ensure 64-bit unsigned
+
+  const numBucketsBig = BigInt(numBuckets)
+
+  while (j < numBucketsBig) {
+    b = j
+    // Linear congruential generator step (wrapping multiplication)
+    k = ((k * 2862933555777941757n) + 1n) & 0xFFFFFFFFFFFFFFFFn
+    // Compute next jump
+    // Note: We need to do the division in floating point for correct behavior
+    const divisor = Number((k >> 33n) + 1n)
+    j = BigInt(Math.floor(Number(b + 1n) * (2147483648 / divisor)))
+  }
+
+  return Number(b)
+}
+
+/**
+ * Compute a 64-bit shard key from a 128-bit entity_id.
+ *
+ * Uses murmur3-inspired finalization for high-quality mixing.
+ *
+ * IMPORTANT: This implementation MUST produce identical results to
+ * src/sharding.zig computeShardKey() for cross-SDK compatibility.
+ *
+ * @param entityId 128-bit entity ID as bigint
+ * @returns 64-bit shard key as bigint
+ */
+export function computeShardKey(entityId: bigint): bigint {
+  const C1 = 0xff51afd7ed558ccdn
+  const C2 = 0xc4ceb9fe1a85ec53n
+  const MASK64 = 0xFFFFFFFFFFFFFFFFn
+
+  // Extract low and high 64-bit values
+  const lo = entityId & MASK64
+  const hi = (entityId >> 64n) & MASK64
+
+  // Finalization mix for lo (h1)
+  let h1 = lo
+  h1 ^= h1 >> 33n
+  h1 = (h1 * C1) & MASK64
+  h1 ^= h1 >> 33n
+  h1 = (h1 * C2) & MASK64
+  h1 ^= h1 >> 33n
+
+  // Finalization mix for hi (h2)
+  let h2 = hi
+  h2 ^= h2 >> 33n
+  h2 = (h2 * C1) & MASK64
+  h2 ^= h2 >> 33n
+  h2 = (h2 * C2) & MASK64
+  h2 ^= h2 >> 33n
+
+  return h1 ^ h2
+}
+
+/**
+ * Compute which shard an entity belongs to.
+ *
+ * Uses JumpHash with a computed shard key from the entity ID.
+ *
+ * @param entityId 128-bit entity ID as bigint
+ * @param numShards Number of shards
+ * @returns Shard index in range [0, numShards)
+ */
+export function getShardForEntity(entityId: bigint, numShards: number): number {
+  const shardKey = computeShardKey(entityId)
+  return jumpHash(shardKey, numShards)
+}
+
+// ============================================================================
 // Geo-Sharding Types (v2.2)
 // Geographic partitioning for data locality
 // ============================================================================

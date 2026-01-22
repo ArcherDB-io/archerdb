@@ -33,6 +33,12 @@ import {
   createRadiusQuery,
   createPolygonQuery,
 
+  // Jump Hash (source of truth: src/sharding.zig)
+  jumpHash,
+  computeShardKey,
+  getShardForEntity,
+  ShardingStrategy,
+
   // Constants
   LAT_MAX,
   LON_MAX,
@@ -2409,7 +2415,156 @@ async function runTests() {
   test_polygonValidationErrorAttributes()
   test_emptyOrSmallPolygon()
 
+  // Jump Hash Golden Vector Tests (source of truth: src/sharding.zig)
+  console.log('\n--- JumpHash Golden Vector Tests ---\n')
+
+  test_jumpHash_key0()
+  test_jumpHash_keyDeadbeef()
+  test_jumpHash_keyCafebabe()
+  test_jumpHash_keyMaxU64()
+  test_jumpHash_additionalKeys()
+  test_jumpHash_determinism()
+  test_computeShardKey_goldenVectors()
+  test_computeShardKey_determinism()
+  test_getShardForEntity_determinism()
+
   console.log('\n=== All tests passed! ===\n')
+}
+
+// ============================================================================
+// Jump Hash Golden Vector Tests
+// Source of truth: src/sharding.zig - these values MUST match exactly.
+// ============================================================================
+
+function test_jumpHash_key0(): void {
+  console.log('Testing jumpHash key 0...')
+  assert.strictEqual(jumpHash(0n, 1), 0)
+  assert.strictEqual(jumpHash(0n, 10), 0)
+  assert.strictEqual(jumpHash(0n, 100), 0)
+  assert.strictEqual(jumpHash(0n, 256), 0)
+  console.log('  PASS: key 0 always maps to bucket 0')
+}
+
+function test_jumpHash_keyDeadbeef(): void {
+  console.log('Testing jumpHash key 0xDEADBEEF...')
+  assert.strictEqual(jumpHash(0xDEADBEEFn, 8), 5)
+  assert.strictEqual(jumpHash(0xDEADBEEFn, 16), 5)
+  assert.strictEqual(jumpHash(0xDEADBEEFn, 32), 16)
+  assert.strictEqual(jumpHash(0xDEADBEEFn, 64), 16)
+  assert.strictEqual(jumpHash(0xDEADBEEFn, 128), 87)
+  assert.strictEqual(jumpHash(0xDEADBEEFn, 256), 87)
+  console.log('  PASS: 0xDEADBEEF golden vectors match')
+}
+
+function test_jumpHash_keyCafebabe(): void {
+  console.log('Testing jumpHash key 0xCAFEBABE...')
+  assert.strictEqual(jumpHash(0xCAFEBABEn, 8), 5)
+  assert.strictEqual(jumpHash(0xCAFEBABEn, 16), 5)
+  assert.strictEqual(jumpHash(0xCAFEBABEn, 32), 5)
+  assert.strictEqual(jumpHash(0xCAFEBABEn, 64), 46)
+  assert.strictEqual(jumpHash(0xCAFEBABEn, 128), 85)
+  assert.strictEqual(jumpHash(0xCAFEBABEn, 256), 85)
+  console.log('  PASS: 0xCAFEBABE golden vectors match')
+}
+
+function test_jumpHash_keyMaxU64(): void {
+  console.log('Testing jumpHash key max u64...')
+  assert.strictEqual(jumpHash(0xFFFFFFFFFFFFFFFFn, 8), 7)
+  assert.strictEqual(jumpHash(0xFFFFFFFFFFFFFFFFn, 16), 10)
+  assert.strictEqual(jumpHash(0xFFFFFFFFFFFFFFFFn, 256), 248)
+  console.log('  PASS: max u64 golden vectors match')
+}
+
+function test_jumpHash_additionalKeys(): void {
+  console.log('Testing jumpHash additional keys...')
+  assert.strictEqual(jumpHash(0x123456789ABCDEF0n, 8), 4)
+  assert.strictEqual(jumpHash(0x123456789ABCDEF0n, 16), 4)
+  assert.strictEqual(jumpHash(0x123456789ABCDEF0n, 256), 33)
+
+  assert.strictEqual(jumpHash(0xFEDCBA9876543210n, 8), 1)
+  assert.strictEqual(jumpHash(0xFEDCBA9876543210n, 16), 10)
+  assert.strictEqual(jumpHash(0xFEDCBA9876543210n, 256), 143)
+  console.log('  PASS: additional key golden vectors match')
+}
+
+function test_jumpHash_determinism(): void {
+  console.log('Testing jumpHash determinism (1000 iterations)...')
+  const testCases: Array<[bigint, number, number]> = [
+    [0xDEADBEEFn, 16, 5],
+    [0xCAFEBABEn, 64, 46],
+    [0x123456789ABCDEF0n, 256, 33],
+    [0xFFFFFFFFFFFFFFFFn, 8, 7],
+  ]
+
+  for (const [key, buckets, expected] of testCases) {
+    for (let i = 0; i < 1000; i++) {
+      const result = jumpHash(key, buckets)
+      assert.strictEqual(result, expected,
+        `Iteration ${i}: jumpHash(${key}, ${buckets}) = ${result}, want ${expected}`)
+    }
+  }
+  console.log('  PASS: determinism verified over 1000 iterations')
+}
+
+function test_computeShardKey_goldenVectors(): void {
+  console.log('Testing computeShardKey golden vectors...')
+
+  // Entity ID 1
+  assert.strictEqual(
+    computeShardKey(0x00000000_00000000_00000000_00000001n),
+    0xB456BCFC34C2CB2Cn
+  )
+
+  // Entity ID DEADBEEF/CAFEBABE pattern
+  assert.strictEqual(
+    computeShardKey(0xDEADBEEF_CAFEBABE_12345678_9ABCDEF0n),
+    0x683A5932FE04E714n
+  )
+
+  // Max entity ID
+  assert.strictEqual(
+    computeShardKey(0xFFFFFFFF_FFFFFFFF_FFFFFFFF_FFFFFFFFn),
+    0x0000000000000000n
+  )
+
+  // Symmetric entity ID
+  assert.strictEqual(
+    computeShardKey(0x12345678_ABCDEF00_12345678_ABCDEF00n),
+    0x0000000000000000n
+  )
+
+  console.log('  PASS: computeShardKey golden vectors match')
+}
+
+function test_computeShardKey_determinism(): void {
+  console.log('Testing computeShardKey determinism (1000 iterations)...')
+  const testCases: Array<[bigint, bigint]> = [
+    [0x00000000_00000000_00000000_00000001n, 0xB456BCFC34C2CB2Cn],
+    [0xDEADBEEF_CAFEBABE_12345678_9ABCDEF0n, 0x683A5932FE04E714n],
+  ]
+
+  for (const [entityId, expected] of testCases) {
+    for (let i = 0; i < 1000; i++) {
+      const result = computeShardKey(entityId)
+      assert.strictEqual(result, expected,
+        `Iteration ${i}: computeShardKey(${entityId}) = ${result}, want ${expected}`)
+    }
+  }
+  console.log('  PASS: determinism verified over 1000 iterations')
+}
+
+function test_getShardForEntity_determinism(): void {
+  console.log('Testing getShardForEntity determinism...')
+  const entityId = 0xDEADBEEF_00000000_CAFEBABE_00000000n
+
+  const shard1 = getShardForEntity(entityId, 16)
+  const shard2 = getShardForEntity(entityId, 16)
+  const shard3 = getShardForEntity(entityId, 16)
+
+  assert.strictEqual(shard1, shard2)
+  assert.strictEqual(shard2, shard3)
+  assert.ok(shard1 < 16, `Shard ${shard1} should be < 16`)
+  console.log('  PASS: getShardForEntity is deterministic')
 }
 
 // Run tests when module is executed directly

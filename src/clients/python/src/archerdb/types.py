@@ -1017,6 +1017,106 @@ class ShardingStrategy(IntEnum):
 
 
 # ============================================================================
+# Jump Consistent Hash (Google, 2014)
+# Source of truth: src/sharding.zig - golden vectors MUST match exactly.
+# Reference: https://research.google/pubs/pub44824/
+# ============================================================================
+
+
+def jump_hash(key: int, num_buckets: int) -> int:
+    """
+    Jump Consistent Hash algorithm (Google, 2014).
+
+    O(1) memory, O(log n) compute, optimal 1/(n+1) key movement on resize.
+    Uses a linear congruential generator (LCG) with specific constants.
+
+    IMPORTANT: This implementation MUST produce identical results to
+    src/sharding.zig jumpHash() for cross-SDK compatibility.
+
+    Args:
+        key: 64-bit unsigned key to hash
+        num_buckets: Number of buckets (shards)
+
+    Returns:
+        Bucket (shard) index in range [0, num_buckets)
+    """
+    if num_buckets <= 0:
+        return 0
+
+    b = -1
+    j = 0
+    k = key & 0xFFFFFFFFFFFFFFFF  # Ensure 64-bit unsigned
+
+    while j < num_buckets:
+        b = j
+        # Linear congruential generator step (wrapping multiplication)
+        k = ((k * 2862933555777941757) + 1) & 0xFFFFFFFFFFFFFFFF
+        # Compute next jump
+        j = int((b + 1) * ((1 << 31) / ((k >> 33) + 1)))
+
+    return b
+
+
+def compute_shard_key(entity_id: int) -> int:
+    """
+    Compute a 64-bit shard key from a 128-bit entity_id.
+
+    Uses murmur3-inspired finalization for high-quality mixing.
+
+    IMPORTANT: This implementation MUST produce identical results to
+    src/sharding.zig computeShardKey() for cross-SDK compatibility.
+
+    Args:
+        entity_id: 128-bit entity ID
+
+    Returns:
+        64-bit shard key
+    """
+    C1 = 0xff51afd7ed558ccd
+    C2 = 0xc4ceb9fe1a85ec53
+    MASK64 = 0xFFFFFFFFFFFFFFFF
+
+    # Extract low and high 64-bit values
+    lo = entity_id & MASK64
+    hi = (entity_id >> 64) & MASK64
+
+    # Finalization mix for lo (h1)
+    h1 = lo
+    h1 ^= h1 >> 33
+    h1 = (h1 * C1) & MASK64
+    h1 ^= h1 >> 33
+    h1 = (h1 * C2) & MASK64
+    h1 ^= h1 >> 33
+
+    # Finalization mix for hi (h2)
+    h2 = hi
+    h2 ^= h2 >> 33
+    h2 = (h2 * C1) & MASK64
+    h2 ^= h2 >> 33
+    h2 = (h2 * C2) & MASK64
+    h2 ^= h2 >> 33
+
+    return h1 ^ h2
+
+
+def get_shard_for_entity(entity_id: int, num_shards: int) -> int:
+    """
+    Compute which shard an entity belongs to.
+
+    Uses JumpHash with a computed shard key from the entity ID.
+
+    Args:
+        entity_id: 128-bit entity ID
+        num_shards: Number of shards
+
+    Returns:
+        Shard index in range [0, num_shards)
+    """
+    shard_key = compute_shard_key(entity_id)
+    return jump_hash(shard_key, num_shards)
+
+
+# ============================================================================
 # Geo-Sharding Types (v2.2)
 # ============================================================================
 

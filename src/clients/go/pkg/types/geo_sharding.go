@@ -4,6 +4,7 @@
 package types
 
 import (
+	"encoding/binary"
 	"math"
 )
 
@@ -257,4 +258,75 @@ func haversineDistance(lat1Nano, lon1Nano, lat2Nano, lon2Nano int64) float64 {
 	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
 
 	return earthRadiusKm * c
+}
+
+// ============================================================================
+// Jump Consistent Hash (Google, 2014)
+// Source of truth: src/sharding.zig - golden vectors MUST match exactly.
+// Reference: https://research.google/pubs/pub44824/
+// ============================================================================
+
+// JumpHash implements Google's Jump Consistent Hash algorithm.
+// O(1) memory, O(log n) compute, optimal 1/(n+1) key movement on resize.
+//
+// The algorithm uses a linear congruential generator (LCG) with specific
+// constants to produce uniformly distributed bucket assignments.
+//
+// IMPORTANT: This implementation MUST produce identical results to
+// src/sharding.zig jumpHash() for cross-SDK compatibility.
+func JumpHash(key uint64, numBuckets uint32) uint32 {
+	if numBuckets == 0 {
+		return 0
+	}
+
+	var b int64 = -1
+	var j int64 = 0
+
+	for j < int64(numBuckets) {
+		b = j
+		// Linear congruential generator step
+		key = key*2862933555777941757 + 1
+		// Compute next jump
+		j = int64(float64(b+1) * (float64(int64(1)<<31) / float64((key>>33)+1)))
+	}
+
+	return uint32(b)
+}
+
+// ComputeShardKey computes a 64-bit shard key from a 128-bit entity_id.
+// Uses murmur3-inspired finalization for high-quality mixing.
+//
+// IMPORTANT: This implementation MUST produce identical results to
+// src/sharding.zig computeShardKey() for cross-SDK compatibility.
+func ComputeShardKey(entityID Uint128) uint64 {
+	const c1 uint64 = 0xff51afd7ed558ccd
+	const c2 uint64 = 0xc4ceb9fe1a85ec53
+
+	// Extract low and high 64-bit values from Uint128 bytes (little-endian)
+	bytes := entityID.Bytes()
+	h1 := binary.LittleEndian.Uint64(bytes[0:8])  // Low 64 bits
+	h2 := binary.LittleEndian.Uint64(bytes[8:16]) // High 64 bits
+
+	// Finalization mix for h1
+	h1 ^= h1 >> 33
+	h1 *= c1
+	h1 ^= h1 >> 33
+	h1 *= c2
+	h1 ^= h1 >> 33
+
+	// Finalization mix for h2
+	h2 ^= h2 >> 33
+	h2 *= c1
+	h2 ^= h2 >> 33
+	h2 *= c2
+	h2 ^= h2 >> 33
+
+	return h1 ^ h2
+}
+
+// GetShardForEntity computes which shard an entity belongs to.
+// Uses JumpHash with a computed shard key from the entity ID.
+func GetShardForEntity(entityID Uint128, numShards uint32) uint32 {
+	shardKey := ComputeShardKey(entityID)
+	return JumpHash(shardKey, numShards)
 }
