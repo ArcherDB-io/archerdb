@@ -900,7 +900,7 @@ fn command_start(
 
     if (replica.aof != null) {
         log.warn(
-            "{}: started with --aof - expect much reduced performance.",
+            "{}: started with --aof-file - expect much reduced performance.",
             .{replica.replica},
         );
     }

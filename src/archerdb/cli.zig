@@ -194,11 +194,8 @@ const CLIArgs = union(enum) {
         /// io_uring or kqueue aren't used, there aren't any fancy data structures. Just a simple
         /// log consisting of logged requests. Much like a redis AOF with fsync=on.
         /// Enabling this will have performance implications.
+        /// Path must end with .aof extension.
         aof_file: ?[]const u8 = null,
-
-        /// Legacy AOF option. Mututally exclusive with aof_file, and will have the same effect as
-        /// setting aof_file to '<data file path>.aof'.
-        aof: bool = false,
 
         @"--": void,
         path: []const u8,
@@ -2103,25 +2100,7 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
     const lsm_forest_node_count: u32 =
         @intCast(@divExact(lsm_manifest_memory, constants.lsm_manifest_node_size));
 
-    const aof_file: ?Command.Path = if (start.aof) blk: {
-        if (start.aof_file != null) {
-            vsr.fatal(.cli, "--aof is mutually exclusive with --aof-file", .{});
-        }
-
-        var aof_file: Command.Path = .{};
-        if (aof_file.capacity() < start.path.len + 4) {
-            vsr.fatal(.cli, "data file path is too long for --aof. use --aof-file", .{});
-        }
-        aof_file.push_slice(start.path);
-        aof_file.push_slice(".aof");
-
-        std.log.warn(
-            "--aof is deprecated. consider switching to '--aof-file={s}'",
-            .{aof_file.const_slice()},
-        );
-
-        break :blk aof_file;
-    } else if (start.aof_file) |start_aof_file| blk: {
+    const aof_file: ?Command.Path = if (start.aof_file) |start_aof_file| blk: {
         if (!std.mem.endsWith(u8, start_aof_file, ".aof")) {
             vsr.fatal(.cli, "--aof-file must end with .aof: '{s}'", .{start_aof_file});
         }
