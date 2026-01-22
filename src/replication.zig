@@ -1060,12 +1060,19 @@ pub const ShipCoordinator = struct {
         ship_interval_ns: u64 = repl_constants.async_ship_interval_ms * std.time.ns_per_ms,
         max_retries: u32 = repl_constants.ship_retry_max,
         queue_config: ShipQueue.Config = .{},
+        data_dir: ?[]const u8 = null, // For spillover
     };
 
     pub fn init(allocator: Allocator, config: Config) !ShipCoordinator {
+        // Build queue config with spillover directory if provided
+        var queue_config = config.queue_config;
+        if (config.data_dir) |dir| {
+            queue_config.spillover_dir = dir;
+        }
+
         return ShipCoordinator{
             .allocator = allocator,
-            .queue = try ShipQueue.init(allocator, config.queue_config),
+            .queue = try ShipQueue.init(allocator, queue_config),
             .followers = std.ArrayList(FollowerState).init(allocator),
             .primary_region_id = config.primary_region_id,
             .ship_interval_ns = config.ship_interval_ns,
@@ -1114,9 +1121,10 @@ pub const ShipCoordinator = struct {
     /// Called periodically from the main loop
     pub fn tick(self: *ShipCoordinator) !void {
         const now = @as(u64, @intCast(std.time.nanoTimestamp()));
+        const metrics = @import("archerdb/metrics.zig").Registry;
 
         // Process queue for each follower
-        for (self.followers.items) |*follower| {
+        for (self.followers.items, 0..) |*follower, idx| {
             // Skip if in backoff
             if (follower.consecutive_failures > 0) {
                 if (now < follower.last_retry_ns + follower.retry_backoff_ns) {
@@ -1156,7 +1164,29 @@ pub const ShipCoordinator = struct {
                     log.warn("Ship failed to region {}: {}", .{ follower.config.region_id, err });
                     follower.consecutive_failures += 1;
 
-                    // Exponential backoff with jitter
+                    // Check if we should spill to disk after max retries
+                    if (follower.consecutive_failures >= self.max_retries) {
+                        log.warn("Max retries ({}) exceeded for region {}, spilling to disk", .{
+                            self.max_retries,
+                            follower.config.region_id,
+                        });
+
+                        // Spill current queue to disk
+                        if (self.queue.spillover_manager != null) {
+                            self.queue.spillToDisk() catch |spill_err| {
+                                log.err("Spillover failed: {}", .{spill_err});
+                            };
+
+                            // Update replication state to degraded
+                            metrics.replication_state.store(1, .monotonic);
+                            metrics.replication_spillover_bytes.store(
+                                self.queue.stats.disk_bytes,
+                                .monotonic,
+                            );
+                        }
+                    }
+
+                    // Exponential backoff
                     follower.retry_backoff_ns = @min(
                         follower.retry_backoff_ns * 2,
                         repl_constants.ship_retry_backoff_max_ms * std.time.ns_per_ms,
@@ -1167,6 +1197,18 @@ pub const ShipCoordinator = struct {
 
                 // Success
                 const dequeued = self.queue.dequeue().?;
+
+                // Mark as uploaded in spillover manager (cleans up disk files)
+                if (self.queue.spillover_manager) |*sm| {
+                    sm.markUploaded(entry.header.op) catch {};
+
+                    // If spillover cleared, set state back to healthy
+                    if (!sm.hasPending()) {
+                        metrics.replication_state.store(0, .monotonic);
+                        metrics.replication_spillover_bytes.store(0, .monotonic);
+                    }
+                }
+
                 self.queue.markShipped(dequeued);
 
                 follower.lag.shipped_op = entry.header.op;
@@ -1174,7 +1216,35 @@ pub const ShipCoordinator = struct {
                 follower.consecutive_failures = 0;
                 follower.retry_backoff_ns =
                     repl_constants.ship_retry_backoff_initial_ms * std.time.ns_per_ms;
+
+                // Update queue depth metric
+                const follower_idx = @min(idx, metrics.max_followers - 1);
+                metrics.replication_ship_queue_depth[follower_idx].store(
+                    self.queue.depth(),
+                    .monotonic,
+                );
             }
+        }
+
+        // Update lag metrics
+        self.updateLagMetrics();
+    }
+
+    /// Update replication lag metrics
+    fn updateLagMetrics(self: *ShipCoordinator) void {
+        const metrics = @import("archerdb/metrics.zig").Registry;
+
+        // Calculate oldest unuploaded timestamp for lag calculation
+        if (self.queue.peek()) |oldest| {
+            const now_ns: u64 = @intCast(std.time.nanoTimestamp());
+            const lag_ns = now_ns -| oldest.queued_at_ns;
+
+            // Time-based lag (nanoseconds since oldest unuploaded)
+            metrics.replication_lag_ns.store(lag_ns, .monotonic);
+            metrics.replication_lag_ops.store(self.queue.depth(), .monotonic);
+        } else {
+            metrics.replication_lag_ns.store(0, .monotonic);
+            metrics.replication_lag_ops.store(0, .monotonic);
         }
     }
 
