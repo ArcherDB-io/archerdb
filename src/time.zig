@@ -10,7 +10,6 @@ const posix = std.posix;
 const system = posix.system;
 const assert = std.debug.assert;
 const is_darwin = builtin.target.os.tag.isDarwin();
-const is_windows = builtin.target.os.tag == .windows;
 const is_linux = builtin.target.os.tag == .linux;
 const Instant = stdx.Instant;
 
@@ -65,7 +64,6 @@ pub const TimeOS = struct {
         const self: *TimeOS = @ptrCast(@alignCast(context));
 
         const m = blk: {
-            if (is_windows) break :blk monotonic_windows();
             if (is_darwin) break :blk monotonic_darwin();
             if (is_linux) break :blk monotonic_linux();
             @compileError("unsupported OS");
@@ -75,34 +73,6 @@ pub const TimeOS = struct {
         if (m < self.monotonic_guard) @panic("a hardware/kernel bug regressed the monotonic clock");
         self.monotonic_guard = m;
         return m;
-    }
-
-    fn monotonic_windows() u64 {
-        assert(is_windows);
-        // Uses QueryPerformanceCounter() on windows due to it being the highest precision timer
-        // available while also accounting for time spent suspended by default:
-        //
-        // https://docs.microsoft.com/en-us/windows/win32/api/realtimeapiset/nf-realtimeapiset-queryunbiasedinterrupttime#remarks
-
-        // QPF need not be globally cached either as it ends up being a load from read-only memory
-        // mapped to all processed by the kernel called KUSER_SHARED_DATA (See "QpcFrequency")
-        //
-        // https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/ntddk/ns-ntddk-kuser_shared_data
-        // https://www.geoffchappell.com/studies/windows/km/ntoskrnl/inc/api/ntexapi_x/kuser_shared_data/index.htm
-        const qpc = os.windows.QueryPerformanceCounter();
-        const qpf = os.windows.QueryPerformanceFrequency();
-
-        // 10Mhz (1 qpc tick every 100ns) is a common QPF on modern systems.
-        // We can optimize towards this by converting to ns via a single multiply.
-        //
-        // https://github.com/microsoft/STL/blob/785143a0c73f030238ef618890fd4d6ae2b3a3a0/stl/inc/chrono#L694-L701
-        const common_qpf = 10_000_000;
-        if (qpf == common_qpf) return qpc * (std.time.ns_per_s / common_qpf);
-
-        // Convert qpc to nanos using fixed point to avoid expensive extra divs and
-        // overflow.
-        const scale = (std.time.ns_per_s << 32) / qpf;
-        return @as(u64, @truncate((@as(u96, qpc) * scale) >> 32));
     }
 
     fn monotonic_darwin() u64 {
@@ -144,25 +114,10 @@ pub const TimeOS = struct {
     }
 
     fn realtime(_: *anyopaque) i64 {
-        if (is_windows) return realtime_windows();
         // macos has supported clock_gettime() since 10.12:
         // https://opensource.apple.com/source/Libc/Libc-1158.1.2/gen/clock_gettime.3.auto.html
         if (is_darwin or is_linux) return realtime_unix();
         @compileError("unsupported OS");
-    }
-
-    fn realtime_windows() i64 {
-        // TODO(zig): Maybe use `std.time.nanoTimestamp()`.
-        // https://github.com/ziglang/zig/pull/22871
-        assert(is_windows);
-        var ft: os.windows.FILETIME = undefined;
-        stdx.windows.GetSystemTimePreciseAsFileTime(&ft);
-        const ft64 = (@as(u64, ft.dwHighDateTime) << 32) | ft.dwLowDateTime;
-
-        // FileTime is in units of 100 nanoseconds
-        // and uses the NTFS/Windows epoch of 1601-01-01 instead of Unix Epoch 1970-01-01.
-        const epoch_adjust = std.time.epoch.windows * (std.time.ns_per_s / 100);
-        return (@as(i64, @bitCast(ft64)) + epoch_adjust) * 100;
     }
 
     fn realtime_unix() i64 {
@@ -181,6 +136,19 @@ test "Time monotonic smoke" {
     const instant_2 = time.monotonic();
     assert(instant_1.duration_since(instant_1).ns == 0);
     assert(instant_2.duration_since(instant_1).ns >= 0);
+}
+
+test "Time realtime smoke" {
+    var time_os: TimeOS = .{};
+    const time = time_os.time();
+    const epoch = time.realtime();
+    try std.testing.expect(epoch > 0); // We're after 1970-01-01 00:00:00.
+
+    const min_epoch = 1700000000 * std.time.ns_per_s; // ~2023-11-14
+    const max_epoch = 2500000000 * std.time.ns_per_s; // ~2049-03-22
+
+    try std.testing.expect(epoch >= min_epoch);
+    try std.testing.expect(epoch <= max_epoch);
 }
 
 /// Equivalent to `std.time.Timer`,
