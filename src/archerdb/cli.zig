@@ -1068,7 +1068,8 @@ const CLIArgs = union(enum) {
     cluster: Cluster,
     index: Index,
 
-    // TODO Document --cache-geo-events, --cache-grid, --limit-storage, --limit-pipeline-requests
+    // DocTODO: Document --cache-geo-events, --cache-grid, --limit-storage, --limit-pipeline-requests
+    // (Deferred to Phase 9 - Documentation per CONTEXT.md)
     pub const help = fmt.comptimePrint(
         \\Usage:
         \\
