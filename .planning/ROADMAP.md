@@ -14,7 +14,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Platform Foundation** - Remove Windows, fix Darwin/macOS, stabilize message bus
 - [x] **Phase 2: VSR & Storage** - Fix VSR issues, verify durability, verify encryption
-- [ ] **Phase 3: Core Geospatial** - Verify S2 indexing, queries, entity operations, RAM index
+- [x] **Phase 3: Core Geospatial** - Verify S2 indexing, queries, entity operations, RAM index
 - [ ] **Phase 4: Replication** - Implement S3 backend, disk spillover, replication metrics
 - [ ] **Phase 5: Sharding & Cleanup** - Verify sharding, resolve all TODOs/FIXMEs, remove stubs
 - [ ] **Phase 6: SDK Parity** - Complete all 5 SDKs to feature and quality parity
@@ -73,11 +73,11 @@ Plans:
 **Plans**: 5 plans
 
 Plans:
-- [ ] 03-01-PLAN.md - S2 indexing verification (golden vectors from Google S2, determinism)
-- [ ] 03-02-PLAN.md - Radius query verification (Haversine, edge cases, property tests)
-- [ ] 03-03-PLAN.md - Polygon query verification (convex, concave, holes, antimeridian)
-- [ ] 03-04-PLAN.md - Entity operations verification (insert, upsert, delete, tombstones, TTL)
-- [ ] 03-05-PLAN.md - RAM index verification (O(1) lookup, race condition, checkpoint)
+- [x] 03-01-PLAN.md - S2 indexing verification (golden vectors from Google S2, determinism)
+- [x] 03-02-PLAN.md - Radius query verification (Haversine, edge cases, property tests)
+- [x] 03-03-PLAN.md - Polygon query verification (convex, concave, holes, antimeridian)
+- [x] 03-04-PLAN.md - Entity operations verification (insert, upsert, delete, tombstones, TTL)
+- [x] 03-05-PLAN.md - RAM index verification (O(1) lookup, race condition, checkpoint)
 
 ### Phase 4: Replication
 **Goal**: Cross-region replication fully implemented - S3 backend working with all providers, disk spillover prevents data loss
@@ -210,7 +210,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 |-------|----------------|--------|-----------|
 | 1. Platform Foundation | 3/3 | Complete | 2026-01-22 |
 | 2. VSR & Storage | 4/4 | Complete | 2026-01-22 |
-| 3. Core Geospatial | 0/5 | Planned | - |
+| 3. Core Geospatial | 5/5 | Complete | 2026-01-22 |
 | 4. Replication | 0/3 | Not started | - |
 | 5. Sharding & Cleanup | 0/3 | Not started | - |
 | 6. SDK Parity | 0/5 | Not started | - |
@@ -226,4 +226,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 *Phase 2 planned: 2026-01-22*
 *Phase 2 complete: 2026-01-22*
 *Phase 3 planned: 2026-01-22*
+*Phase 3 complete: 2026-01-22*
 *Total requirements: 234 | All mapped*
