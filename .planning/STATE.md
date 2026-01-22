@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-01-22)
 ## Current Position
 
 Phase: 5 of 10 (Sharding & Cleanup)
-Plan: 2 of 3 in current phase
-Status: Plan 05-02 complete
-Last activity: 2026-01-22 - Plan 05-02 complete (deprecated flag removal, TODO cleanup)
+Plan: 4 of 4 in current phase
+Status: Plan 05-04 complete
+Last activity: 2026-01-22 - Plan 05-04 complete (tiering integration)
 
-Progress: [####------] 40% (4/10 phases complete)
+Progress: [#####-----] 50% (5/10 phases complete)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 17
+- Total plans completed: 18
 - Average duration: 12 min
-- Total execution time: 213 min
+- Total execution time: 222 min
 
 **By Phase:**
 
@@ -31,11 +31,11 @@ Progress: [####------] 40% (4/10 phases complete)
 | 02 | 4 | 54 min | 14 min |
 | 03 | 5 | 43 min | 9 min |
 | 04 | 3 | 47 min | 16 min |
-| 05 | 2 | 43 min | 22 min |
+| 05 | 3 | 52 min | 17 min |
 
 **Recent Trend:**
-- Last 5 plans: 05-02 (25m), 05-01 (18m), 04-03 (15m), 04-02 (17m), 04-01 (15m)
-- Trend: TODO cleanup requires careful analysis of each marker
+- Last 5 plans: 05-04 (9m), 05-02 (25m), 05-01 (18m), 04-03 (15m), 04-02 (17m)
+- Trend: Tiering integration completed efficiently
 
 *Updated after each plan completion*
 
@@ -51,6 +51,12 @@ Recent decisions affecting current work:
 - Full observability: Enterprise-ready monitoring with metrics, tracing, health endpoints
 - SDK parity: All five languages must have same features and quality
 - No graceful degradation: Demand resources, expose problems through metrics/traces
+
+From 05-04:
+- Tiering disabled by default (opt-in via tiering_enabled config flag)
+- Cold tier entities removed from RAM index during tick()
+- Access patterns tracked on all query operations (uuid, radius, polygon)
+- Tier migrations tracked via Prometheus metrics
 
 From 05-02:
 - Use Enhancement: prefix for future features not blocking correctness
@@ -162,9 +168,10 @@ From CONCERNS.md - key issues to address:
 - ~~Message bus error handling TODOs (Phase 1)~~ RESOLVED in 01-03
 - ~~Deprecated --aof flag (Phase 5)~~ RESOLVED in 05-02 (removed, only --aof-file remains)
 - ~~Production TODOs in VSR/storage/LSM (Phase 5)~~ RESOLVED in 05-02 (converted to Enhancement:/Note:/DocTODO:)
+- ~~Tiering integration with GeoStateMachine (Phase 5)~~ RESOLVED in 05-04 (full integration with metrics)
 
 ## Session Continuity
 
 Last session: 2026-01-22
-Stopped at: Plan 05-02 complete
+Stopped at: Plan 05-04 complete (Phase 5 complete)
 Resume file: None
