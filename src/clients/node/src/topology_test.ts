@@ -41,6 +41,7 @@ function createTestTopology(numShards: number, version: bigint): TopologyRespons
     cluster_id: 1n,
     num_shards: numShards,
     resharding_status: 0,
+    flags: 0,
     shards,
     last_change_ns: BigInt(Date.now() * 1000000),
   }
@@ -171,6 +172,7 @@ console.log('\n--- TopologyResponse Tests ---\n')
     cluster_id: 1n,
     num_shards: 4,
     resharding_status: 2,
+    flags: 0,
     shards: [],
     last_change_ns: 0n,
   }
@@ -324,6 +326,7 @@ console.log('\n--- TopologyCache Tests ---\n')
     cluster_id: 1n,
     num_shards: 3,
     resharding_status: 0,
+    flags: 0,
     shards: [
       createShardInfo(0, 'node0:8080', ShardStatus.active),
       createShardInfo(1, 'node1:8080', ShardStatus.syncing),

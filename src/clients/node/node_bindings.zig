@@ -22,7 +22,6 @@ const TypeMapping = struct {
 };
 
 // ArcherDB geospatial type mappings
-// NOTE: Legacy TigerBeetle types were removed. ArcherDB is a geospatial database only.
 const type_mappings = .{
     // GeoEvent and related types
     .{ tb.GeoEvent, TypeMapping{
@@ -50,13 +49,25 @@ const type_mappings = .{
         .name = "QueryUuidFilter",
         .hidden_fields = &.{"reserved"},
     } },
+    .{ tb.QueryUuidResponse, TypeMapping{
+        .name = "QueryUuidResponse",
+        .hidden_fields = &.{"reserved"},
+    } },
+    .{ tb.QueryUuidBatchFilter, TypeMapping{
+        .name = "QueryUuidBatchFilter",
+        .hidden_fields = &.{"reserved"},
+    } },
+    .{ tb.QueryUuidBatchResult, TypeMapping{
+        .name = "QueryUuidBatchResult",
+        .hidden_fields = &.{"reserved"},
+    } },
     .{ tb.QueryRadiusFilter, TypeMapping{
         .name = "QueryRadiusFilter",
         .hidden_fields = &.{"reserved"},
     } },
     .{ tb.QueryPolygonFilter, TypeMapping{
         .name = "QueryPolygonFilter",
-        .hidden_fields = &.{"reserved"},
+        .hidden_fields = &.{ "reserved", "_reserved_align" },
     } },
     .{ tb.QueryLatestFilter, TypeMapping{
         .name = "QueryLatestFilter",
@@ -68,6 +79,66 @@ const type_mappings = .{
     } },
     .{ tb.PolygonVertex, TypeMapping{
         .name = "PolygonVertex",
+    } },
+    .{ tb.HoleDescriptor, TypeMapping{
+        .name = "HoleDescriptor",
+        .hidden_fields = &.{"reserved"},
+    } },
+    // TTL Operations
+    .{ tb.TtlOperationResult, TypeMapping{
+        .name = "TtlOperationResult",
+    } },
+    .{ tb.TtlSetRequest, TypeMapping{
+        .name = "TtlSetRequest",
+        .hidden_fields = &.{"reserved"},
+    } },
+    .{ tb.TtlSetResponse, TypeMapping{
+        .name = "TtlSetResponse",
+        .hidden_fields = &.{ "_padding", "reserved" },
+    } },
+    .{ tb.TtlExtendRequest, TypeMapping{
+        .name = "TtlExtendRequest",
+        .hidden_fields = &.{"reserved"},
+    } },
+    .{ tb.TtlExtendResponse, TypeMapping{
+        .name = "TtlExtendResponse",
+        .hidden_fields = &.{ "_padding", "reserved" },
+    } },
+    .{ tb.TtlClearRequest, TypeMapping{
+        .name = "TtlClearRequest",
+        .hidden_fields = &.{"reserved"},
+    } },
+    .{ tb.TtlClearResponse, TypeMapping{
+        .name = "TtlClearResponse",
+        .hidden_fields = &.{ "_padding", "reserved" },
+    } },
+    // Topology and status responses
+    .{ tb.PingRequest, TypeMapping{
+        .name = "PingRequest",
+    } },
+    .{ tb.StatusRequest, TypeMapping{
+        .name = "StatusRequest",
+    } },
+    .{ tb.PingResponse, TypeMapping{
+        .name = "PingResponse",
+    } },
+    .{ tb.StatusResponse, TypeMapping{
+        .name = "StatusResponse",
+        .hidden_fields = &.{ "_padding", "reserved" },
+    } },
+    .{ tb.TopologyRequest, TypeMapping{
+        .name = "TopologyRequest",
+        .hidden_fields = &.{"reserved"},
+    } },
+    .{ tb.TopologyResponse, TypeMapping{
+        .name = "TopologyResponse",
+        .hidden_fields = &.{"_padding"},
+    } },
+    .{ tb.ShardInfo, TypeMapping{
+        .name = "ShardInfo",
+    } },
+    .{ tb.ShardStatus, TypeMapping{
+        .name = "ShardStatus",
     } },
     // VSR operations
     .{ arch_client.Operation, TypeMapping{

@@ -462,6 +462,29 @@ export enum GeoOperation {
 }
 
 /**
+ * Request for archerdb_ping operation (8 bytes).
+ * The payload is optional and ignored by the server.
+ */
+export type PingRequest = {
+  ping_data: bigint
+}
+
+/**
+ * Request for archerdb_get_status operation (8 bytes).
+ * Reserved for future use.
+ */
+export type StatusRequest = {
+  reserved: bigint
+}
+
+/**
+ * Response to archerdb_ping operation (4 bytes).
+ */
+export type PingResponse = {
+  pong: number
+}
+
+/**
  * Server status response from archerdb_get_status operation.
  * Matches StatusResponse in geo_state_machine.zig (64 bytes).
  */

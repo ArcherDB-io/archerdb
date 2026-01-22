@@ -2,15 +2,107 @@
 
 High-performance geospatial database for fleet tracking, logistics, and real-time location applications.
 
-ArcherDB extends [ArcherDB](https://archerdb.com/)'s battle-tested distributed systems foundation with specialized geospatial capabilities.
+ArcherDB provides specialized geospatial capabilities on a battle-tested distributed systems foundation.
 
 ## Features
 
-- **Sub-millisecond writes** - 10,000+ location updates per second per replica
-- **Deterministic execution** - Same operations produce identical results across replicas
-- **Fault tolerance** - Survives up to f failures in a 2f+1 cluster
-- **Spatial queries** - Radius and polygon queries using S2 geometry indexing
-- **Entity tracking** - O(1) latest-position lookups via RAM index
+### Geospatial operations
+- Insert location events
+- Upsert location events
+- Delete entities (GDPR erasure)
+- Query by UUID
+- Batch query by UUID
+- Radius geospatial query
+- Polygon geospatial query
+- Latest events query
+
+### Indexing
+- S2 geospatial indexing
+- RAM entity index (latest position)
+- RAM index memory-mapped mode
+
+### Storage & durability
+- LSM-tree storage engine
+- LSM range scans
+- LSM compaction
+- Write-ahead log/journal
+- Checkpointing/snapshot
+- Append-only file durability
+- Grid/block storage
+- Sharding/partitioning
+
+### Replication & clustering
+- Consensus replication (VSR)
+- Cluster membership/reconfiguration
+- Replica sync/repair
+- Multi-region replication
+- Client session management
+- Topology discovery
+- Cluster ping/status
+
+### Data lifecycle & governance
+- TTL expiration/retention
+- Manual TTL operations
+- Data validation/integrity
+- Compliance/privacy controls
+- Encryption at rest
+- TLS/secure transport
+
+### Data movement & integration
+- Backup/restore
+- Data export
+- CSV import/export
+- Incremental load
+- ETL/data transformation
+- Change data capture (AMQP)
+
+### Observability & ops
+- Metrics/observability
+- StatsD metrics
+- Tracing/logging
+- Signal handling/graceful shutdown
+- CLI/REPL
+
+### Clients & SDKs
+- C client SDK
+- Go client SDK
+- Java client SDK
+- Node.js client SDK
+- Python client SDK
+
+### SDK Feature Matrix
+All SDK features listed below are supported across each language.
+
+| Feature | Zig | C | Go | Java | Node.js | Python |
+| --- | --- | --- | --- | --- | --- | --- |
+| TTL expiration/retention | yes | yes | yes | yes | yes | yes |
+| batch query by UUID | yes | yes | yes | yes | yes | yes |
+| cluster ping/status | yes | yes | yes | yes | yes | yes |
+| delete entities (GDPR erasure) | yes | yes | yes | yes | yes | yes |
+| insert location events | yes | yes | yes | yes | yes | yes |
+| latest events query | yes | yes | yes | yes | yes | yes |
+| manual TTL operations | yes | yes | yes | yes | yes | yes |
+| polygon geospatial query | yes | yes | yes | yes | yes | yes |
+| query by UUID | yes | yes | yes | yes | yes | yes |
+| radius geospatial query | yes | yes | yes | yes | yes | yes |
+| topology discovery | yes | yes | yes | yes | yes | yes |
+| upsert location events | yes | yes | yes | yes | yes | yes |
+
+### Tooling & testing
+- Benchmarking
+- Benchmark load generator
+- Correctness testing
+- Fuzz testing
+- Deterministic simulation/fault injection
+- Documentation generation
+- Build system
+
+### Internal infrastructure
+- Platform I/O
+- Memory management
+- Message bus/RPC
+- Randomness/sampling
+- Internal utilities
 
 ## Quick Start
 
@@ -33,18 +125,9 @@ ArcherDB extends [ArcherDB](https://archerdb.com/)'s battle-tested distributed s
 - [SDK Retry Semantics](docs/sdk-retry-semantics.md)
 - [API Reference](docs/api-reference.md) *(coming soon)*
 
-## Client SDKs
-
-| Language | Package | Status |
-|----------|---------|--------|
-| Go | `github.com/archerdb/archerdb-go` | In Development |
-| Node.js | `archerdb-node` | In Development |
-| Python | `archerdb` | In Development |
-| Java | `io.archerdb:archerdb-java` | Planned |
-
 ## Architecture
 
-ArcherDB inherits ArcherDB's core architecture:
+Core architecture:
 
 - **Consensus**: Viewstamped Replication (VR) for strong consistency
 - **Storage**: LSM-tree optimized for append-heavy workloads
@@ -52,22 +135,9 @@ ArcherDB inherits ArcherDB's core architecture:
 
 Geospatial extensions:
 
-- **GeoEvent state machine**: Replaces Account/Transfer with location-aware events
+- **GeoEvent state machine**: Location-aware events
 - **S2 indexing**: Google's S2 geometry for efficient spatial queries
 - **RAM entity index**: Sub-microsecond latest-position lookups
-
-## Project Status
-
-ArcherDB is currently in active development. See the [project board](https://github.com/orgs/ArcherDB-io/projects/1) for current progress.
-
-| Phase | Status | Description |
-|-------|--------|-------------|
-| F0: Foundation | Complete | Fork setup, knowledge acquisition |
-| F1: State Machine | In Progress | GeoEvent state machine |
-| F2: RAM Index | Planned | O(1) entity lookup |
-| F3: S2 Index | Planned | Spatial queries |
-| F4: VOPR Testing | Planned | Replication testing |
-| F5: Production | In Progress | SDKs, security, docs |
 
 ## Building from Source
 
@@ -88,22 +158,3 @@ ArcherDB is currently in active development. See the [project board](https://git
 # Run tests
 ./zig/zig build test
 ```
-
-## Contributing
-
-Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-## License
-
-ArcherDB is licensed under the Apache License 2.0. See [LICENSE](LICENSE) for details.
-
-## Acknowledgments
-
-ArcherDB is a derivative work of [TigerBeetle](https://tigerbeetle.com/), an open-source distributed database. We are grateful to the TigerBeetle team for their excellent work on:
-
-- Deterministic simulation testing (VOPR)
-- Viewstamped Replication consensus
-- LSM-tree storage engine
-- Client SDKs
-
-See [NOTICE](NOTICE) for full attribution details.

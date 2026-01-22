@@ -17,6 +17,8 @@ import (
 
 type Uint128 C.arch_uint128_t
 
+type Int128 C.arch_int128_t
+
 func (value Uint128) Bytes() [16]byte {
 	return *(*[16]byte)(unsafe.Pointer(&value))
 }

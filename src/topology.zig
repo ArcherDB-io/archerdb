@@ -78,7 +78,7 @@ pub const Address = [max_address_len]u8;
 pub const empty_address: Address = [_]u8{0} ** max_address_len;
 
 /// Information about a single shard.
-pub const ShardInfo = struct {
+pub const ShardInfo = extern struct {
     /// Shard ID (0 to num_shards-1).
     id: u32,
 
@@ -145,13 +145,13 @@ pub const ShardInfo = struct {
 
 /// Request for topology information.
 /// Empty request - no parameters needed.
-pub const TopologyRequest = struct {
+pub const TopologyRequest = extern struct {
     /// Reserved for future use (e.g., specific shard query).
     reserved: u64 = 0,
 };
 
 /// Response containing cluster topology.
-pub const TopologyResponse = struct {
+pub const TopologyResponse = extern struct {
     /// Topology version number (increments on changes).
     version: u64,
 

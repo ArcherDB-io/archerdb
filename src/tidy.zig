@@ -1038,11 +1038,11 @@ test "tidy unix permissions" {
 // Sanity check for "unexpected" files in the repository.
 test "tidy extensions" {
     const allowed_extensions = std.StaticStringMap(void).initComptime(.{
-        .{".c"},      .{".css"},     .{".go"},   .{".h"},    .{".hcl"},
-        .{".html"},   .{".java"},    .{".js"},   .{".json"}, .{".md"},
-        .{".mod"},    .{".py"},      .{".service"}, .{".sh"},   .{".sum"},
-        .{".svg"},    .{".toml"},    .{".ts"},   .{".tsv"},  .{".txt"},
-        .{".xml"},    .{".yml"},     .{".zig"},  .{".zon"},
+        .{".c"},    .{".css"},  .{".go"},      .{".h"},    .{".hcl"},
+        .{".html"}, .{".java"}, .{".js"},      .{".json"}, .{".md"},
+        .{".mod"},  .{".py"},   .{".service"}, .{".sh"},   .{".sum"},
+        .{".svg"},  .{".toml"}, .{".ts"},      .{".tsv"},  .{".txt"},
+        .{".xml"},  .{".yml"},  .{".zig"},     .{".zon"},
     });
 
     const exceptions = std.StaticStringMap(void).initComptime(.{
@@ -1100,7 +1100,7 @@ test "tidy extensions" {
         if (path.len == 0) continue;
         // Skip vendored/generated client library directories
         if (std.mem.startsWith(u8, path, "src/clients/c/lib/")) continue;
-        if (std.mem.startsWith(u8, path, "src/clients/python/src/tigerbeetle/")) continue;
+        if (std.mem.startsWith(u8, path, "src/clients/python/src/archerdb/")) continue;
         // Skip deployment configuration files
         if (std.mem.startsWith(u8, path, "deploy/")) continue;
         // Skip backup files

@@ -81,6 +81,11 @@ type TopologyResponse struct {
 	LastChangeNs int64
 }
 
+// TopologyRequest represents a topology request payload (8 bytes).
+type TopologyRequest struct {
+	Reserved uint64
+}
+
 // TopologyChangeType indicates the type of topology change.
 type TopologyChangeType uint8
 

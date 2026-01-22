@@ -60,49 +60,55 @@ pub const ShardInfo = topology_mod.ShardInfo;
 pub const ShardStatus = topology_mod.ShardStatus;
 
 // ============================================================================
-// ArcherDB Admin Response Types
+// ArcherDB Admin Request/Response Types
 // ============================================================================
 
+/// Request for archerdb_ping operation (F1.2.6).
+/// Payload is ignored by the server; included for consistent wire sizing.
+pub const PingRequest = extern struct {
+    /// Caller-provided ping payload (optional).
+    ping_data: u64 = 0,
+};
+
+/// Request for archerdb_get_status operation (F1.2.6).
+/// Payload is ignored by the server; reserved for future use.
+pub const StatusRequest = extern struct {
+    reserved: u64 = 0,
+};
+
 /// Response to archerdb_ping operation (F1.2.6).
-/// Simple echo to verify cluster connectivity at the state machine level.
+/// Simple "pong" response (4 bytes: 'p' 'o' 'n' 'g').
 pub const PingResponse = extern struct {
-    /// Server timestamp when ping was processed
-    timestamp: u64,
-    /// Reserved for future use
-    reserved: [120]u8 = @splat(0),
+    pong: u32,
 
     comptime {
-        assert(@sizeOf(PingResponse) == 128);
+        assert(@sizeOf(PingResponse) == 4);
         assert(stdx.no_padding(PingResponse));
     }
 };
 
 /// Response to archerdb_get_status operation (F1.2.6).
-/// Returns current cluster and node status information.
+/// Returns current server status information (64 bytes).
 pub const StatusResponse = extern struct {
-    /// Current view number (monotonically increasing)
-    view: u64,
-    /// Most recent commit timestamp
-    commit_timestamp: u64,
-    /// Number of entities in RAM index
-    entity_count: u64,
-    /// Checkpoint operation number
-    checkpoint_op: u64,
-    /// Current operation number (log head)
-    log_head_op: u64,
-    /// Replica index (0-based)
-    replica_index: u8,
-    /// Total replica count in cluster
-    replica_count: u8,
-    /// Status flags (bit 0: is_primary, bit 1: is_syncing)
-    status_flags: u8,
-    /// Reserved for alignment
-    reserved_byte: u8 = 0,
-    /// Reserved for future use
-    reserved: [84]u8 = @splat(0),
+    /// RAM index entry count.
+    ram_index_count: u64,
+    /// RAM index capacity.
+    ram_index_capacity: u64,
+    /// RAM index load factor (percentage * 100).
+    ram_index_load_pct: u32,
+    /// Padding for alignment.
+    _padding: u32 = 0,
+    /// Tombstone count.
+    tombstone_count: u64,
+    /// Total TTL expirations.
+    ttl_expirations: u64,
+    /// Total deletions.
+    deletion_count: u64,
+    /// Reserved for future use.
+    reserved: [16]u8 = @splat(0),
 
     comptime {
-        assert(@sizeOf(StatusResponse) == 128);
+        assert(@sizeOf(StatusResponse) == 64);
         assert(stdx.no_padding(StatusResponse));
     }
 };
@@ -155,8 +161,8 @@ pub const Operation = enum(u8) {
             .query_latest => QueryLatestFilter,
 
             // ArcherDB admin operations (F1.2.6)
-            .archerdb_ping => void,
-            .archerdb_get_status => void,
+            .archerdb_ping => PingRequest,
+            .archerdb_get_status => StatusRequest,
 
             // ArcherDB TTL cleanup (F2.4.8)
             .cleanup_expired => CleanupRequest,

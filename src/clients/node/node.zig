@@ -22,8 +22,12 @@ const QueryResponse = tb.QueryResponse;
 const QueryUuidBatchResult = tb.QueryUuidBatchResult;
 const PolygonVertex = tb.PolygonVertex;
 const HoleDescriptor = tb.HoleDescriptor;
+const PingRequest = tb.PingRequest;
+const StatusRequest = tb.StatusRequest;
 const CleanupRequest = tb.CleanupRequest;
 const TopologyRequest = tb.TopologyRequest;
+const TopologyResponse = tb.TopologyResponse;
+const ShardInfo = tb.ShardInfo;
 const TtlSetRequest = tb.TtlSetRequest;
 const TtlExtendRequest = tb.TtlExtendRequest;
 const TtlClearRequest = tb.TtlClearRequest;
@@ -740,6 +744,33 @@ fn on_completion_js(
                 else => unreachable, // all other packet status' handled in previous callback.
             }
         },
+        .get_topology => blk: {
+            const packet = packet_extern.cast();
+            defer global_allocator.destroy(packet);
+
+            const buffer: []const u8 = packet.slice();
+            defer global_allocator.free(buffer);
+
+            switch (packet.status) {
+                .ok => break :blk encode_topology_response(env, buffer),
+                .client_shutdown => {
+                    break :blk translate.throw(env, "Client was shutdown.");
+                },
+                .client_evicted => {
+                    break :blk translate.throw(env, "Client was evicted.");
+                },
+                .client_release_too_low => {
+                    break :blk translate.throw(env, "Client was evicted: release too old.");
+                },
+                .client_release_too_high => {
+                    break :blk translate.throw(env, "Client was evicted: release too new.");
+                },
+                .too_much_data => {
+                    break :blk translate.throw(env, "Too much data provided on this batch.");
+                },
+                else => unreachable, // all other packet status' handled in previous callback.
+            }
+        },
         inline else => |operation_comptime| blk: {
             const Result = operation_comptime.ResultType();
 
@@ -1047,6 +1078,204 @@ fn encode_query_response(env: c.napi_env, buffer: []const u8) !c.napi_value {
     return array;
 }
 
+fn encode_topology_response(env: c.napi_env, buffer: []const u8) !c.napi_value {
+    if (buffer.len < @sizeOf(TopologyResponse)) {
+        return translate.throw(env, "Topology response too short.");
+    }
+
+    const response = std.mem.bytesAsValue(
+        TopologyResponse,
+        buffer[0..@sizeOf(TopologyResponse)],
+    ).*;
+
+    const obj = try translate.create_object(
+        env,
+        "Failed to create TopologyResponse object.",
+    );
+
+    try translate.u64_into_object(
+        env,
+        obj,
+        add_trailing_null("version"),
+        response.version,
+        "Failed to set topology.version",
+    );
+    try translate.u32_into_object(
+        env,
+        obj,
+        add_trailing_null("num_shards"),
+        response.num_shards,
+        "Failed to set topology.num_shards",
+    );
+    try translate.u128_into_object(
+        env,
+        obj,
+        add_trailing_null("cluster_id"),
+        response.cluster_id,
+        "Failed to set topology.cluster_id",
+    );
+    try translate.i128_into_object(
+        env,
+        obj,
+        add_trailing_null("last_change_ns"),
+        response.last_change_ns,
+        "Failed to set topology.last_change_ns",
+    );
+    try translate.u8_into_object(
+        env,
+        obj,
+        add_trailing_null("resharding_status"),
+        response.resharding_status,
+        "Failed to set topology.resharding_status",
+    );
+    try translate.u8_into_object(
+        env,
+        obj,
+        add_trailing_null("flags"),
+        response.flags,
+        "Failed to set topology.flags",
+    );
+
+    const shard_count: usize = @intCast(response.num_shards);
+    const shards_array = try translate.create_array(
+        env,
+        @intCast(shard_count),
+        "Failed to allocate topology shards array.",
+    );
+    const max_replicas: usize =
+        @typeInfo(std.meta.fieldInfo(
+            ShardInfo,
+            @field(std.meta.FieldEnum(ShardInfo), "replicas"),
+        ).type).array.len;
+
+    var shard_index: usize = 0;
+    while (shard_index < shard_count) : (shard_index += 1) {
+        const shard = response.shards[shard_index];
+        const shard_obj = try translate.create_object(
+            env,
+            "Failed to create ShardInfo object.",
+        );
+
+        try translate.u32_into_object(
+            env,
+            shard_obj,
+            add_trailing_null("id"),
+            shard.id,
+            "Failed to set shard.id",
+        );
+
+        const primary = std.mem.sliceTo(&shard.primary, 0);
+        var primary_value: c.napi_value = undefined;
+        if (c.napi_create_string_utf8(
+            env,
+            primary.ptr,
+            primary.len,
+            &primary_value,
+        ) != c.napi_ok) {
+            return translate.throw(env, "Failed to create shard.primary string.");
+        }
+        if (c.napi_set_named_property(
+            env,
+            shard_obj,
+            @ptrCast(add_trailing_null("primary")),
+            primary_value,
+        ) != c.napi_ok) {
+            return translate.throw(env, "Failed to set shard.primary.");
+        }
+
+        const replica_count: usize = @min(
+            @as(usize, @intCast(shard.replica_count)),
+            max_replicas,
+        );
+        const replicas_array = try translate.create_array(
+            env,
+            @intCast(replica_count),
+            "Failed to allocate shard.replicas array.",
+        );
+        var replica_index: usize = 0;
+        while (replica_index < replica_count) : (replica_index += 1) {
+            const replica = std.mem.sliceTo(&shard.replicas[replica_index], 0);
+            var replica_value: c.napi_value = undefined;
+            if (c.napi_create_string_utf8(
+                env,
+                replica.ptr,
+                replica.len,
+                &replica_value,
+            ) != c.napi_ok) {
+                return translate.throw(env, "Failed to create shard.replicas string.");
+            }
+            try translate.set_array_element(
+                env,
+                replicas_array,
+                @intCast(replica_index),
+                replica_value,
+                "Failed to set shard.replicas element.",
+            );
+        }
+        if (c.napi_set_named_property(
+            env,
+            shard_obj,
+            @ptrCast(add_trailing_null("replicas")),
+            replicas_array,
+        ) != c.napi_ok) {
+            return translate.throw(env, "Failed to set shard.replicas.");
+        }
+
+        try translate.u8_into_object(
+            env,
+            shard_obj,
+            add_trailing_null("status"),
+            @intCast(@intFromEnum(shard.status)),
+            "Failed to set shard.status",
+        );
+        try translate.u64_into_object(
+            env,
+            shard_obj,
+            add_trailing_null("entity_count"),
+            shard.entity_count,
+            "Failed to set shard.entity_count",
+        );
+        try translate.u64_into_object(
+            env,
+            shard_obj,
+            add_trailing_null("size_bytes"),
+            shard.size_bytes,
+            "Failed to set shard.size_bytes",
+        );
+
+        try translate.set_array_element(
+            env,
+            shards_array,
+            @intCast(shard_index),
+            shard_obj,
+            "Failed to set topology shard element.",
+        );
+    }
+
+    if (c.napi_set_named_property(
+        env,
+        obj,
+        @ptrCast(add_trailing_null("shards")),
+        shards_array,
+    ) != c.napi_ok) {
+        return translate.throw(env, "Failed to set topology.shards.");
+    }
+
+    const array = try translate.create_array(
+        env,
+        1,
+        "Failed to allocate topology response array.",
+    );
+    try translate.set_array_element(
+        env,
+        array,
+        0,
+        obj,
+        "Failed to set topology response element.",
+    );
+    return array;
+}
+
 fn set_query_response_metadata(
     env: c.napi_env,
     array: c.napi_value,
@@ -1091,6 +1320,8 @@ fn decode_array(comptime Event: type, env: c.napi_env, array: c.napi_value, even
             QueryPolygonFilter,
             QueryLatestFilter,
             // Other types
+            PingRequest,
+            StatusRequest,
             CleanupRequest,
             TopologyRequest,
             TtlSetRequest,

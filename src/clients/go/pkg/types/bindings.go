@@ -182,9 +182,211 @@ type QueryUuidFilterRaw struct {
 	Reserved [16]uint8
 }
 
+type QueryUuidResponseRaw struct {
+	Status   uint8
+	Reserved [15]uint8
+}
+
+type QueryUuidBatchFilterRaw struct {
+	Count    uint32
+	Reserved uint32
+}
+
+type QueryUuidBatchResultRaw struct {
+	FoundCount    uint32
+	NotFoundCount uint32
+	Reserved      [8]uint8
+}
+
+type QueryRadiusFilterRaw struct {
+	CenterLatNano int64
+	CenterLonNano int64
+	RadiusMm      uint32
+	Limit         uint32
+	TimestampMin  uint64
+	TimestampMax  uint64
+	GroupID       uint64
+	Reserved      [80]uint8
+}
+
+type QueryPolygonFilterRaw struct {
+	VertexCount   uint32
+	HoleCount     uint32
+	Limit         uint32
+	ReservedAlign uint32
+	TimestampMin  uint64
+	TimestampMax  uint64
+	GroupID       uint64
+	Reserved      [88]uint8
+}
+
+type QueryLatestFilterRaw struct {
+	Limit           uint32
+	ReservedAlign   uint32
+	GroupID         uint64
+	CursorTimestamp uint64
+	Reserved        [104]uint8
+}
+
 type QueryResponseRaw struct {
 	Count         uint32
 	HasMore       uint8
 	PartialResult uint8
 	Reserved      [10]uint8
+}
+
+type PolygonVertexRaw struct {
+	LatNano int64
+	LonNano int64
+}
+
+type HoleDescriptorRaw struct {
+	VertexCount uint32
+	Reserved    uint32
+}
+
+type PingRequestRaw struct {
+	PingData uint64
+}
+
+type StatusRequestRaw struct {
+	Reserved uint64
+}
+
+type PingResponseRaw struct {
+	Pong uint32
+}
+
+type StatusResponseRaw struct {
+	RamIndexCount    uint64
+	RamIndexCapacity uint64
+	RamIndexLoadPct  uint32
+	Padding          uint32
+	TombstoneCount   uint64
+	TtlExpirations   uint64
+	DeletionCount    uint64
+	Reserved         [16]uint8
+}
+
+type TopologyRequestRaw struct {
+	Reserved uint64
+}
+
+type TopologyResponseRaw struct {
+	Version          uint64
+	NumShards        uint32
+	ClusterID        Uint128
+	LastChangeNs     Int128
+	ReshardingStatus uint8
+	Flags            uint8
+	Padding          [6]uint8
+	Shards           [256]ShardInfoRaw
+}
+
+type ShardInfoRaw struct {
+	ID           uint32
+	Primary      [64]uint8
+	Replicas     [6][64]uint8
+	ReplicaCount uint8
+	Status       ShardStatusRaw
+	EntityCount  uint64
+	SizeBytes    uint64
+}
+
+type ShardStatusRaw uint8
+
+const (
+	ShardStatusRawActive          ShardStatusRaw = 0
+	ShardStatusRawSyncing         ShardStatusRaw = 1
+	ShardStatusRawUnavailable     ShardStatusRaw = 2
+	ShardStatusRawMigrating       ShardStatusRaw = 3
+	ShardStatusRawDecommissioning ShardStatusRaw = 4
+)
+
+func (i ShardStatusRaw) String() string {
+	switch i {
+	case ShardStatusRawActive:
+		return "ShardStatusRawActive"
+	case ShardStatusRawSyncing:
+		return "ShardStatusRawSyncing"
+	case ShardStatusRawUnavailable:
+		return "ShardStatusRawUnavailable"
+	case ShardStatusRawMigrating:
+		return "ShardStatusRawMigrating"
+	case ShardStatusRawDecommissioning:
+		return "ShardStatusRawDecommissioning"
+	}
+	return "ShardStatusRaw(" + strconv.FormatInt(int64(i+1), 10) + ")"
+}
+
+type TtlOperationResultRaw uint8
+
+const (
+	TtlSuccess         TtlOperationResultRaw = 0
+	TtlEntityNotFound  TtlOperationResultRaw = 1
+	TtlInvalidTtl      TtlOperationResultRaw = 2
+	TtlNotPermitted    TtlOperationResultRaw = 3
+	TtlEntityImmutable TtlOperationResultRaw = 4
+)
+
+func (i TtlOperationResultRaw) String() string {
+	switch i {
+	case TtlSuccess:
+		return "TtlSuccess"
+	case TtlEntityNotFound:
+		return "TtlEntityNotFound"
+	case TtlInvalidTtl:
+		return "TtlInvalidTtl"
+	case TtlNotPermitted:
+		return "TtlNotPermitted"
+	case TtlEntityImmutable:
+		return "TtlEntityImmutable"
+	}
+	return "TtlOperationResultRaw(" + strconv.FormatInt(int64(i+1), 10) + ")"
+}
+
+type TtlSetRequestRaw struct {
+	EntityID   Uint128
+	TtlSeconds uint32
+	Flags      uint32
+	Reserved   [40]uint8
+}
+
+type TtlSetResponseRaw struct {
+	EntityID           Uint128
+	PreviousTtlSeconds uint32
+	NewTtlSeconds      uint32
+	Result             TtlOperationResultRaw
+	Padding            [3]uint8
+	Reserved           [32]uint8
+}
+
+type TtlExtendRequestRaw struct {
+	EntityID        Uint128
+	ExtendBySeconds uint32
+	Flags           uint32
+	Reserved        [40]uint8
+}
+
+type TtlExtendResponseRaw struct {
+	EntityID           Uint128
+	PreviousTtlSeconds uint32
+	NewTtlSeconds      uint32
+	Result             TtlOperationResultRaw
+	Padding            [3]uint8
+	Reserved           [32]uint8
+}
+
+type TtlClearRequestRaw struct {
+	EntityID Uint128
+	Flags    uint32
+	Reserved [44]uint8
+}
+
+type TtlClearResponseRaw struct {
+	EntityID           Uint128
+	PreviousTtlSeconds uint32
+	Result             TtlOperationResultRaw
+	Padding            [3]uint8
+	Reserved           [36]uint8
 }

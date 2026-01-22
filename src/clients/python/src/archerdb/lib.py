@@ -93,6 +93,22 @@ class c_uint128(ctypes.Structure):  # noqa: N801
         return int(self._high << 64 | self._low)
 
 
+class c_int128(ctypes.Structure):  # noqa: N801
+    _fields_ = [("_low", ctypes.c_uint64), ("_high", ctypes.c_uint64)]  # noqa: RUF012
+
+    @classmethod
+    def from_param(cls, obj: int) -> Self:
+        if obj < 0:
+            obj = (1 << 128) + obj
+        return cls(_high=obj >> 64, _low=obj & 0xFFFFFFFFFFFFFFFF)
+
+    def to_python(self) -> int:
+        value = int(self._high << 64 | self._low)
+        if value >= 1 << 127:
+            value -= 1 << 128
+        return value
+
+
 def arch_assert(value: Any) -> None:
     """
     Python's built-in assert can be silently disabled if Python is run with -O.

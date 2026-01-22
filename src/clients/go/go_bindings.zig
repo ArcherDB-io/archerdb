@@ -29,11 +29,37 @@ const type_mappings = .{
     .{ tb.DeleteEntitiesResult, "DeleteEntitiesResultRaw" },
     // Query types
     .{ tb.QueryUuidFilter, "QueryUuidFilterRaw" },
+    .{ tb.QueryUuidResponse, "QueryUuidResponseRaw" },
+    .{ tb.QueryUuidBatchFilter, "QueryUuidBatchFilterRaw" },
+    .{ tb.QueryUuidBatchResult, "QueryUuidBatchResultRaw" },
+    .{ tb.QueryRadiusFilter, "QueryRadiusFilterRaw" },
+    .{ tb.QueryPolygonFilter, "QueryPolygonFilterRaw" },
+    .{ tb.QueryLatestFilter, "QueryLatestFilterRaw" },
     .{ tb.QueryResponse, "QueryResponseRaw" },
+    .{ tb.PolygonVertex, "PolygonVertexRaw" },
+    .{ tb.HoleDescriptor, "HoleDescriptorRaw" },
+    // Status and topology
+    .{ tb.PingRequest, "PingRequestRaw" },
+    .{ tb.StatusRequest, "StatusRequestRaw" },
+    .{ tb.PingResponse, "PingResponseRaw" },
+    .{ tb.StatusResponse, "StatusResponseRaw" },
+    .{ tb.TopologyRequest, "TopologyRequestRaw" },
+    .{ tb.TopologyResponse, "TopologyResponseRaw" },
+    .{ tb.ShardInfo, "ShardInfoRaw" },
+    .{ tb.ShardStatus, "ShardStatusRaw", "ShardStatusRaw" },
+    // TTL operations
+    .{ tb.TtlOperationResult, "TtlOperationResultRaw", "Ttl" },
+    .{ tb.TtlSetRequest, "TtlSetRequestRaw" },
+    .{ tb.TtlSetResponse, "TtlSetResponseRaw" },
+    .{ tb.TtlExtendRequest, "TtlExtendRequestRaw" },
+    .{ tb.TtlExtendResponse, "TtlExtendResponseRaw" },
+    .{ tb.TtlClearRequest, "TtlClearRequestRaw" },
+    .{ tb.TtlClearResponse, "TtlClearResponseRaw" },
 };
 
 fn go_type(comptime Type: type) []const u8 {
     switch (@typeInfo(Type)) {
+        .array => |info| return comptime std.fmt.comptimePrint("[{d}]{s}", .{ info.len, go_type(info.child) }),
         .bool => return "bool",
         .@"enum" => return comptime get_mapped_type_name(Type) orelse
             @compileError("Type " ++ @typeName(Type) ++ " not mapped."),
@@ -252,7 +278,6 @@ fn emit_struct(
     });
 
     const min_len = calculate_min_len(type_info);
-    comptime var flagsField = false;
     inline for (type_info.fields) |field| {
         switch (@typeInfo(field.type)) {
             .array => |array| {
@@ -263,10 +288,6 @@ fn emit_struct(
                 });
             },
             else => {
-                if (comptime std.mem.eql(u8, field.name, "flags")) {
-                    flagsField = true;
-                }
-
                 try buffer.writer().print(
                     "\t{s} {s}\n",
                     .{
@@ -280,15 +301,9 @@ fn emit_struct(
 
     try buffer.writer().print("}}\n\n", .{});
 
-    if (flagsField) {
-        const flagTypeName = if (comptime std.mem.eql(u8, name, "GeoEventRaw"))
-            "GeoEventFlagsRaw"
-        else
-            unreachable;
-        const flagType = if (comptime std.mem.eql(u8, name, "GeoEventRaw"))
-            tb.GeoEventFlags
-        else
-            unreachable;
+    if (comptime std.mem.eql(u8, name, "GeoEventRaw")) {
+        const flagTypeName = "GeoEventFlagsRaw";
+        const flagType = tb.GeoEventFlags;
         // Conversion from packed to struct (e.g. GeoEventRaw.GetFlags())
         try buffer.writer().print(
             "func (o {s}) GetFlags() {s} {{\n" ++

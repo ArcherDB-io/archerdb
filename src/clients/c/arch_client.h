@@ -40,7 +40,7 @@ typedef struct geo_event_t {
     uint32_t ttl_seconds;
     uint32_t accuracy_mm;
     uint16_t heading_cdeg;
-    uint16_t flags;
+    GEO_EVENT_FLAGS flags;
     uint8_t reserved[12];
 } geo_event_t;
 
@@ -141,6 +141,62 @@ typedef struct hole_descriptor_t {
     uint32_t vertex_count;
     uint32_t reserved;
 } hole_descriptor_t;
+
+typedef struct ping_request_t {
+    uint64_t ping_data;
+} ping_request_t;
+
+typedef struct status_request_t {
+    uint64_t reserved;
+} status_request_t;
+
+typedef struct ping_response_t {
+    uint32_t pong;
+} ping_response_t;
+
+typedef struct status_response_t {
+    uint64_t ram_index_count;
+    uint64_t ram_index_capacity;
+    uint32_t ram_index_load_pct;
+    uint32_t _padding;
+    uint64_t tombstone_count;
+    uint64_t ttl_expirations;
+    uint64_t deletion_count;
+    uint8_t reserved[16];
+} status_response_t;
+
+typedef struct topology_request_t {
+    uint64_t reserved;
+} topology_request_t;
+
+typedef struct shard_info_t {
+    uint32_t id;
+    uint8_t primary[64];
+    uint8_t replicas[6];
+    uint8_t replica_count;
+    uint8_t status;
+    uint64_t entity_count;
+    uint64_t size_bytes;
+} shard_info_t;
+
+typedef enum SHARD_STATUS {
+    SHARD_STATUS_ACTIVE = 0,
+    SHARD_STATUS_SYNCING = 1,
+    SHARD_STATUS_UNAVAILABLE = 2,
+    SHARD_STATUS_MIGRATING = 3,
+    SHARD_STATUS_DECOMMISSIONING = 4,
+} SHARD_STATUS;
+
+typedef struct topology_response_t {
+    uint64_t version;
+    uint32_t num_shards;
+    arch_uint128_t cluster_id;
+    arch_int128_t last_change_ns;
+    uint8_t resharding_status;
+    uint8_t flags;
+    uint8_t _padding[6];
+    shard_info_t shards[256];
+} topology_response_t;
 
 typedef enum TTL_OPERATION_RESULT {
     TTL_OPERATION_SUCCESS = 0,

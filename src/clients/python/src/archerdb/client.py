@@ -1403,9 +1403,11 @@ class GeoClientSync:
             True if server responds with 'pong', False otherwise.
         """
         self._ensure_connected()
-        # NOTE: Skeleton implementation - in full impl would send ARCHERDB_PING
-        # and verify "pong" response
-        return True
+
+        def do_ping() -> bool:
+            return self._native.ping()
+
+        return _with_retry_sync(do_ping, self._retry_config)
 
     def get_status(self) -> "StatusResponse":
         """
@@ -1421,9 +1423,11 @@ class GeoClientSync:
         """
         from .types import StatusResponse
         self._ensure_connected()
-        # NOTE: Skeleton implementation - in full impl would send ARCHERDB_GET_STATUS
-        # and deserialize the 64-byte response
-        return StatusResponse()
+
+        def do_query() -> StatusResponse:
+            return self._native.get_status()
+
+        return _with_retry_sync(do_query, self._retry_config)
 
     def cleanup_expired(self, batch_size: int = 0) -> CleanupResult:
         """
@@ -1486,20 +1490,13 @@ class GeoClientSync:
             response = client.set_ttl(entity_id, ttl_seconds=604800)  # 1 week
             print(f"TTL changed from {response.previous_ttl_seconds}s to {response.new_ttl_seconds}s")
         """
-        from .types import TtlSetRequest, TtlSetResponse, TtlOperationResult
+        from .types import TtlSetRequest, TtlSetResponse
         self._ensure_connected()
 
         request = TtlSetRequest(entity_id=entity_id, ttl_seconds=ttl_seconds)
 
         def do_set_ttl() -> TtlSetResponse:
-            # NOTE: Full implementation would use native bindings
-            # For now return skeleton response
-            return TtlSetResponse(
-                entity_id=entity_id,
-                previous_ttl_seconds=0,
-                new_ttl_seconds=ttl_seconds,
-                result=TtlOperationResult.SUCCESS,
-            )
+            return self._native.ttl_set(request)
 
         return _with_retry_sync(do_set_ttl, self._retry_config)
 
@@ -1520,18 +1517,13 @@ class GeoClientSync:
         Example:
             response = client.extend_ttl(entity_id, extend_by_seconds=86400)  # +1 day
         """
-        from .types import TtlExtendRequest, TtlExtendResponse, TtlOperationResult
+        from .types import TtlExtendRequest, TtlExtendResponse
         self._ensure_connected()
 
         request = TtlExtendRequest(entity_id=entity_id, extend_by_seconds=extend_by_seconds)
 
         def do_extend_ttl() -> TtlExtendResponse:
-            return TtlExtendResponse(
-                entity_id=entity_id,
-                previous_ttl_seconds=0,
-                new_ttl_seconds=extend_by_seconds,
-                result=TtlOperationResult.SUCCESS,
-            )
+            return self._native.ttl_extend(request)
 
         return _with_retry_sync(do_extend_ttl, self._retry_config)
 
@@ -1552,17 +1544,13 @@ class GeoClientSync:
             response = client.clear_ttl(entity_id)
             print(f"Previous TTL was {response.previous_ttl_seconds}s, now infinite")
         """
-        from .types import TtlClearRequest, TtlClearResponse, TtlOperationResult
+        from .types import TtlClearRequest, TtlClearResponse
         self._ensure_connected()
 
         request = TtlClearRequest(entity_id=entity_id)
 
         def do_clear_ttl() -> TtlClearResponse:
-            return TtlClearResponse(
-                entity_id=entity_id,
-                previous_ttl_seconds=0,
-                result=TtlOperationResult.SUCCESS,
-            )
+            return self._native.ttl_clear(request)
 
         return _with_retry_sync(do_clear_ttl, self._retry_config)
 
@@ -2117,9 +2105,10 @@ class GeoClientAsync:
             True if server responds with 'pong', False otherwise.
         """
         self._ensure_connected()
-        # NOTE: Skeleton implementation - in full impl would send ARCHERDB_PING
-        # and verify "pong" response
-        return True
+        async def do_ping() -> bool:
+            return await asyncio.to_thread(self._native.ping)
+
+        return await _with_retry_async(do_ping, self._retry_config)
 
     async def get_status(self) -> "StatusResponse":
         """
@@ -2135,9 +2124,10 @@ class GeoClientAsync:
         """
         from .types import StatusResponse
         self._ensure_connected()
-        # NOTE: Skeleton implementation - in full impl would send ARCHERDB_GET_STATUS
-        # and deserialize the 64-byte response
-        return StatusResponse()
+        async def do_query() -> StatusResponse:
+            return await asyncio.to_thread(self._native.get_status)
+
+        return await _with_retry_async(do_query, self._retry_config)
 
     async def cleanup_expired(self, batch_size: int = 0) -> CleanupResult:
         """
@@ -2188,18 +2178,13 @@ class GeoClientAsync:
         Returns:
             TtlSetResponse with previous_ttl_seconds, new_ttl_seconds, and result
         """
-        from .types import TtlSetRequest, TtlSetResponse, TtlOperationResult
+        from .types import TtlSetRequest, TtlSetResponse
         self._ensure_connected()
 
         request = TtlSetRequest(entity_id=entity_id, ttl_seconds=ttl_seconds)
 
         async def do_set_ttl() -> TtlSetResponse:
-            return TtlSetResponse(
-                entity_id=entity_id,
-                previous_ttl_seconds=0,
-                new_ttl_seconds=ttl_seconds,
-                result=TtlOperationResult.SUCCESS,
-            )
+            return await asyncio.to_thread(self._native.ttl_set, request)
 
         return await _with_retry_async(do_set_ttl, self._retry_config)
 
@@ -2214,18 +2199,13 @@ class GeoClientAsync:
         Returns:
             TtlExtendResponse with previous_ttl_seconds, new_ttl_seconds, and result
         """
-        from .types import TtlExtendRequest, TtlExtendResponse, TtlOperationResult
+        from .types import TtlExtendRequest, TtlExtendResponse
         self._ensure_connected()
 
         request = TtlExtendRequest(entity_id=entity_id, extend_by_seconds=extend_by_seconds)
 
         async def do_extend_ttl() -> TtlExtendResponse:
-            return TtlExtendResponse(
-                entity_id=entity_id,
-                previous_ttl_seconds=0,
-                new_ttl_seconds=extend_by_seconds,
-                result=TtlOperationResult.SUCCESS,
-            )
+            return await asyncio.to_thread(self._native.ttl_extend, request)
 
         return await _with_retry_async(do_extend_ttl, self._retry_config)
 
@@ -2239,17 +2219,13 @@ class GeoClientAsync:
         Returns:
             TtlClearResponse with previous_ttl_seconds and result
         """
-        from .types import TtlClearRequest, TtlClearResponse, TtlOperationResult
+        from .types import TtlClearRequest, TtlClearResponse
         self._ensure_connected()
 
         request = TtlClearRequest(entity_id=entity_id)
 
         async def do_clear_ttl() -> TtlClearResponse:
-            return TtlClearResponse(
-                entity_id=entity_id,
-                previous_ttl_seconds=0,
-                result=TtlOperationResult.SUCCESS,
-            )
+            return await asyncio.to_thread(self._native.ttl_clear, request)
 
         return await _with_retry_async(do_clear_ttl, self._retry_config)
 
@@ -2274,16 +2250,8 @@ class GeoClientAsync:
         self._ensure_connected()
 
         async def do_query() -> TopologyResponse:
-            # NOTE: Skeleton implementation - in full impl would send GET_TOPOLOGY
-            # and deserialize the response
-            return TopologyResponse(
-                version=1,
-                cluster_id=self._config.cluster_id,
-                num_shards=1,
-                resharding_status=0,
-                shards=[ShardInfo(id=0, primary=self._config.addresses[0])],
-                last_change_ns=int(time.time() * 1e9),
-            )
+            raw_response = await asyncio.to_thread(self._native.get_topology)
+            return TopologyResponse.from_bytes(raw_response)
 
         topology = await _with_retry_async(do_query, self._retry_config)
         self._topology_cache.update(topology)

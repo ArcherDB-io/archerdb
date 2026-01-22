@@ -29,6 +29,14 @@ from .types import (
     QueryRadiusFilter,
     QueryPolygonFilter,
     QueryLatestFilter,
+    StatusResponse,
+    TtlSetRequest,
+    TtlSetResponse,
+    TtlExtendRequest,
+    TtlExtendResponse,
+    TtlClearRequest,
+    TtlClearResponse,
+    TopologyResponse,
     degrees_to_nano,
 )
 from .errors import ArcherDBError, StateError, StateException
@@ -694,3 +702,98 @@ class NativeClient:
                 events.append(wire_to_geo_event(c_event))
 
         return events
+
+    def ping(self) -> bool:
+        """Send a ping to verify server connectivity."""
+        import struct
+
+        request = struct.pack("<Q", 0x676e6970)  # "ping"
+        result = self.submit_bytes(GeoOperation.ARCHERDB_PING.value, request)
+
+        if result.status < 0 or result.status != bindings.PacketStatus.OK.value:
+            return False
+
+        if result.data_size >= 4 and result.data:
+            return result.data[:4] == b"pong"
+
+        return True
+
+    def get_status(self) -> StatusResponse:
+        """Fetch server status via archerdb_get_status."""
+        import struct
+
+        request = struct.pack("<Q", 0)
+        result = self.submit_bytes(GeoOperation.ARCHERDB_GET_STATUS.value, request)
+
+        if result.status < 0 or result.status != bindings.PacketStatus.OK.value:
+            return StatusResponse()
+
+        if result.data_size < 64 or not result.data:
+            return StatusResponse()
+
+        ram_index_count = struct.unpack("<Q", result.data[0:8])[0]
+        ram_index_capacity = struct.unpack("<Q", result.data[8:16])[0]
+        ram_index_load_pct = struct.unpack("<I", result.data[16:20])[0]
+        tombstone_count = struct.unpack("<Q", result.data[24:32])[0]
+        ttl_expirations = struct.unpack("<Q", result.data[32:40])[0]
+        deletion_count = struct.unpack("<Q", result.data[40:48])[0]
+
+        return StatusResponse(
+            ram_index_count=ram_index_count,
+            ram_index_capacity=ram_index_capacity,
+            ram_index_load_pct=ram_index_load_pct,
+            tombstone_count=tombstone_count,
+            ttl_expirations=ttl_expirations,
+            deletion_count=deletion_count,
+        )
+
+    def get_topology(self) -> bytes:
+        """Fetch raw topology response bytes."""
+        import struct
+
+        request = struct.pack("<Q", 0)
+        result = self.submit_bytes(GeoOperation.GET_TOPOLOGY.value, request)
+
+        if result.status < 0 or result.status != bindings.PacketStatus.OK.value:
+            raise ArcherDBError(code=result.status, message="Topology request failed")
+
+        if result.data_size == 0 or not result.data:
+            raise ArcherDBError(code=-1, message="Empty topology response")
+
+        return result.data
+
+    def ttl_set(self, request: TtlSetRequest) -> TtlSetResponse:
+        """Set TTL for an entity."""
+        result = self.submit_bytes(GeoOperation.TTL_SET.value, request.to_bytes())
+
+        if result.status < 0 or result.status != bindings.PacketStatus.OK.value:
+            raise ArcherDBError(code=result.status, message="TTL set request failed")
+
+        if result.data_size < 64 or not result.data:
+            raise ArcherDBError(code=-1, message="Invalid TTL set response")
+
+        return TtlSetResponse.from_bytes(result.data)
+
+    def ttl_extend(self, request: TtlExtendRequest) -> TtlExtendResponse:
+        """Extend TTL for an entity."""
+        result = self.submit_bytes(GeoOperation.TTL_EXTEND.value, request.to_bytes())
+
+        if result.status < 0 or result.status != bindings.PacketStatus.OK.value:
+            raise ArcherDBError(code=result.status, message="TTL extend request failed")
+
+        if result.data_size < 64 or not result.data:
+            raise ArcherDBError(code=-1, message="Invalid TTL extend response")
+
+        return TtlExtendResponse.from_bytes(result.data)
+
+    def ttl_clear(self, request: TtlClearRequest) -> TtlClearResponse:
+        """Clear TTL for an entity."""
+        result = self.submit_bytes(GeoOperation.TTL_CLEAR.value, request.to_bytes())
+
+        if result.status < 0 or result.status != bindings.PacketStatus.OK.value:
+            raise ArcherDBError(code=result.status, message="TTL clear request failed")
+
+        if result.data_size < 64 or not result.data:
+            raise ArcherDBError(code=-1, message="Invalid TTL clear response")
+
+        return TtlClearResponse.from_bytes(result.data)

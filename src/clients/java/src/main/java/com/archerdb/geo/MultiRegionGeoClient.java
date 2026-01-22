@@ -190,6 +190,30 @@ final class MultiRegionGeoClient implements GeoClient {
         return primaryClient.getStatus();
     }
 
+    @Override
+    public TopologyResponse getTopology() {
+        ensureOpen();
+        return primaryClient.getTopology();
+    }
+
+    @Override
+    public TopologyCache getTopologyCache() {
+        ensureOpen();
+        return primaryClient.getTopologyCache();
+    }
+
+    @Override
+    public TopologyResponse refreshTopology() {
+        ensureOpen();
+        return primaryClient.refreshTopology();
+    }
+
+    @Override
+    public ShardRouter getShardRouter() {
+        ensureOpen();
+        return primaryClient.getShardRouter();
+    }
+
     /**
      * Pings a specific region by name.
      *

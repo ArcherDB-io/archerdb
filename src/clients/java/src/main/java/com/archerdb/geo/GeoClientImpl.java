@@ -3,6 +3,7 @@ package com.archerdb.geo;
 import com.archerdb.core.GeoNativeBridge;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -56,6 +57,13 @@ final class GeoClientImpl implements GeoClient {
     static final int CLEANUP_RESPONSE_SIZE = 16;
     static final int TTL_REQUEST_SIZE = 64;
     static final int TTL_RESPONSE_SIZE = 64;
+    static final int TOPOLOGY_REQUEST_SIZE = 8;
+    static final int TOPOLOGY_HEADER_SIZE = 52;
+    static final int MAX_ADDRESS_LEN = 64;
+    static final int SHARD_INFO_HEADER_SIZE = 4 + MAX_ADDRESS_LEN
+            + (TopologyResponse.MAX_REPLICAS_PER_SHARD * MAX_ADDRESS_LEN) + 1 + 1;
+    static final int SHARD_INFO_PADDING = (8 - (SHARD_INFO_HEADER_SIZE % 8)) % 8;
+    static final int SHARD_INFO_SIZE = SHARD_INFO_HEADER_SIZE + SHARD_INFO_PADDING + 8 + 8;
 
     // Batch limits (from client-protocol/spec.md)
     static final int MAX_BATCH_EVENTS = 10000;
@@ -72,6 +80,8 @@ final class GeoClientImpl implements GeoClient {
     private final String[] addresses;
     private final int requestTimeoutMs;
     private final RetryPolicy retryPolicy;
+    private final TopologyCache topologyCache;
+    private final ShardRouter shardRouter;
     private GeoNativeBridge nativeBridge;
     private volatile boolean closed = false;
 
@@ -102,6 +112,15 @@ final class GeoClientImpl implements GeoClient {
         this.addresses = addresses.clone();
         this.requestTimeoutMs = requestTimeoutMs;
         this.retryPolicy = RetryPolicy.DEFAULT;
+        this.topologyCache = new TopologyCache();
+        this.shardRouter = new ShardRouter(topologyCache, () -> {
+            try {
+                refreshTopology();
+                return true;
+            } catch (Exception e) {
+                return false;
+            }
+        });
 
         if (NATIVE_ENABLED) {
             // Initialize native bridge
@@ -460,10 +479,10 @@ final class GeoClientImpl implements GeoClient {
 
             ByteBuffer response = nativeBridge.submitRequest(OP_PING, batch, requestTimeoutMs);
 
-            if (response != null && response.remaining() >= 8) {
+            if (response != null && response.remaining() >= 4) {
                 response.order(ByteOrder.LITTLE_ENDIAN);
-                long pong = response.getLong();
-                return pong == 0x676E6F70L; // "pong" in ASCII
+                int pong = response.getInt();
+                return pong == 0x676E6F70; // "pong" in ASCII
             }
             return true; // Default to success if no explicit response
         } catch (Exception e) {
@@ -500,6 +519,45 @@ final class GeoClientImpl implements GeoClient {
         }
 
         return new StatusResponse(0, 0, 0, 0, 0, 0);
+    }
+
+    @Override
+    public TopologyResponse getTopology() {
+        ensureOpen();
+
+        if (!NATIVE_ENABLED) {
+            List<ShardInfo> shards = new ArrayList<>();
+            String primary = addresses.length > 0 ? addresses[0] : "";
+            shards.add(new ShardInfo(0, primary, ShardStatus.ACTIVE));
+            TopologyResponse topology =
+                    new TopologyResponse(1L, clusterId, 1, 0, shards, System.nanoTime());
+            topologyCache.update(topology);
+            return topology;
+        }
+
+        NativeTopologyBatch batch = new NativeTopologyBatch(1);
+        batch.add();
+        batch.setReserved(0);
+
+        ByteBuffer response = nativeBridge.submitRequest(OP_GET_TOPOLOGY, batch, requestTimeoutMs);
+        TopologyResponse topology = parseTopologyResponse(response);
+        topologyCache.update(topology);
+        return topology;
+    }
+
+    @Override
+    public TopologyCache getTopologyCache() {
+        return topologyCache;
+    }
+
+    @Override
+    public TopologyResponse refreshTopology() {
+        return getTopology();
+    }
+
+    @Override
+    public ShardRouter getShardRouter() {
+        return shardRouter;
     }
 
     // ============================================================================
@@ -687,6 +745,96 @@ final class GeoClientImpl implements GeoClient {
         }
 
         return events;
+    }
+
+    /**
+     * Parses a topology response containing shard information.
+     */
+    private TopologyResponse parseTopologyResponse(ByteBuffer response) {
+        if (response == null || response.remaining() < TOPOLOGY_HEADER_SIZE) {
+            return new TopologyResponse(0L, clusterId, 0, 0, List.of(), 0L);
+        }
+
+        ByteBuffer buffer = response.slice().order(ByteOrder.LITTLE_ENDIAN);
+        int bufferSize = buffer.remaining();
+        long version = buffer.getLong(0);
+        int numShards = buffer.getInt(8);
+
+        byte[] clusterBytes = new byte[16];
+        for (int i = 0; i < 16; i++) {
+            clusterBytes[i] = buffer.get(12 + i);
+        }
+        UInt128 parsedClusterId = UInt128.fromBytes(clusterBytes);
+
+        long lastChangeNs = buffer.getLong(28);
+        int reshardingStatus = buffer.get(44) & 0xFF;
+
+        List<ShardInfo> shards = new ArrayList<>();
+        int shardOffset = TOPOLOGY_HEADER_SIZE;
+        for (int i = 0; i < numShards; i++) {
+            int offset = shardOffset + (i * SHARD_INFO_SIZE);
+            if (offset + SHARD_INFO_SIZE > bufferSize) {
+                break;
+            }
+
+            int shardId = buffer.getInt(offset);
+            int cursor = offset + 4;
+
+            String primary = decodeAddress(buffer, cursor);
+            cursor += MAX_ADDRESS_LEN;
+
+            List<String> replicas = new ArrayList<>();
+            for (int r = 0; r < TopologyResponse.MAX_REPLICAS_PER_SHARD; r++) {
+                String replica = decodeAddress(buffer, cursor);
+                cursor += MAX_ADDRESS_LEN;
+                if (!replica.isEmpty()) {
+                    replicas.add(replica);
+                }
+            }
+
+            int replicaCount = buffer.get(cursor) & 0xFF;
+            cursor += 1;
+            int statusCode = buffer.get(cursor) & 0xFF;
+            cursor += 1;
+
+            if (replicaCount < replicas.size()) {
+                replicas = replicas.subList(0, replicaCount);
+            }
+
+            int pad = (8 - (cursor % 8)) % 8;
+            cursor += pad;
+
+            long entityCount = buffer.getLong(cursor);
+            cursor += 8;
+            long sizeBytes = buffer.getLong(cursor);
+
+            ShardStatus status;
+            try {
+                status = ShardStatus.fromCode(statusCode);
+            } catch (IllegalArgumentException e) {
+                status = ShardStatus.UNAVAILABLE;
+            }
+
+            shards.add(new ShardInfo(shardId, primary, replicas, status, entityCount, sizeBytes));
+        }
+
+        return new TopologyResponse(version, parsedClusterId, numShards, reshardingStatus, shards,
+                lastChangeNs);
+    }
+
+    private String decodeAddress(ByteBuffer buffer, int offset) {
+        int end = offset;
+        int limit = offset + MAX_ADDRESS_LEN;
+        while (end < limit && buffer.get(end) != 0) {
+            end++;
+        }
+
+        byte[] bytes = new byte[end - offset];
+        for (int i = 0; i < bytes.length; i++) {
+            bytes[i] = buffer.get(offset + i);
+        }
+
+        return new String(bytes, StandardCharsets.UTF_8);
     }
 
     /**

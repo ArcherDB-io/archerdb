@@ -23,6 +23,14 @@ const type_mappings = .{
     .{ exports.query_response_t, "query_response_t" },
     .{ exports.polygon_vertex_t, "polygon_vertex_t" },
     .{ exports.hole_descriptor_t, "hole_descriptor_t" },
+    .{ exports.ping_request_t, "ping_request_t" },
+    .{ exports.status_request_t, "status_request_t" },
+    .{ exports.ping_response_t, "ping_response_t" },
+    .{ exports.status_response_t, "status_response_t" },
+    .{ exports.topology_request_t, "topology_request_t" },
+    .{ exports.shard_info_t, "shard_info_t" },
+    .{ exports.shard_status, "SHARD_STATUS" },
+    .{ exports.topology_response_t, "topology_response_t" },
     // TTL Operations
     .{ exports.ttl_operation_result, "TTL_OPERATION_RESULT" },
     .{ exports.ttl_set_request_t, "ttl_set_request_t" },
@@ -31,7 +39,6 @@ const type_mappings = .{
     .{ exports.ttl_extend_response_t, "ttl_extend_response_t" },
     .{ exports.ttl_clear_request_t, "ttl_clear_request_t" },
     .{ exports.ttl_clear_response_t, "ttl_clear_response_t" },
-    // NOTE: Legacy TigerBeetle types were removed. ArcherDB is a geospatial database only.
     .{
         exports.arch_client_t, "arch_client_t",
         \\// Opaque struct serving as a handle for the client instance.
@@ -57,7 +64,12 @@ fn resolve_c_type(comptime Type: type) []const u8 {
     switch (@typeInfo(Type)) {
         .array => |info| return resolve_c_type(info.child),
         .@"enum" => |info| return resolve_c_type(info.tag_type),
-        .@"struct" => return resolve_c_type(std.meta.Int(.unsigned, @bitSizeOf(Type))),
+        .@"struct" => {
+            inline for (type_mappings) |mapping| {
+                if (Type == mapping[0]) return mapping[1];
+            }
+            return resolve_c_type(std.meta.Int(.unsigned, @bitSizeOf(Type)));
+        },
         .bool => return "uint8_t",
         .int => |info| {
             if (info.signedness == .unsigned) {

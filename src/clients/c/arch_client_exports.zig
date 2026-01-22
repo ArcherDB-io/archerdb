@@ -80,6 +80,14 @@ pub const query_latest_filter_t = vsr.archerdb.QueryLatestFilter;
 pub const query_response_t = vsr.archerdb.QueryResponse;
 pub const polygon_vertex_t = vsr.archerdb.PolygonVertex;
 pub const hole_descriptor_t = vsr.archerdb.HoleDescriptor;
+pub const ping_request_t = vsr.archerdb.PingRequest;
+pub const status_request_t = vsr.archerdb.StatusRequest;
+pub const ping_response_t = vsr.archerdb.PingResponse;
+pub const status_response_t = vsr.archerdb.StatusResponse;
+pub const topology_request_t = vsr.archerdb.TopologyRequest;
+pub const topology_response_t = vsr.archerdb.TopologyResponse;
+pub const shard_info_t = vsr.archerdb.ShardInfo;
+pub const shard_status = vsr.archerdb.ShardStatus;
 
 // TTL Operations
 pub const ttl_operation_result = vsr.archerdb.TtlOperationResult;

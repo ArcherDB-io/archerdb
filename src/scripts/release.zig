@@ -224,7 +224,6 @@ fn build(shell: *Shell, languages: LanguageSet, info: VersionInfo, devhub: bool)
 
         try build_python(shell, info, dist_dir_python);
     }
-
 }
 
 fn build_archerdb(shell: *Shell, info: VersionInfo, dist_dir: std.fs.Dir) !void {
@@ -670,7 +669,7 @@ fn publish_go(shell: *Shell, info: VersionInfo) !void {
 
     assert(try shell.dir_exists("zig-out/dist/go"));
 
-    const token = try shell.env_get("TIGERBEETLE_GO_PAT");
+    const token = try shell.env_get("ARCHERDB_GO_PAT");
     try shell.exec(
         \\git clone --no-checkout --depth 1
         \\  https://oauth2:{token}@github.com/archerdb/archerdb-go.git archerdb-go
@@ -898,7 +897,7 @@ fn publish_docs(shell: *Shell, info: VersionInfo) !void {
         try shell.exec_zig("build", .{});
     }
 
-    const token = try shell.env_get("TIGERBEETLE_DOCS_PAT");
+    const token = try shell.env_get("ARCHERDB_DOCS_PAT");
     try shell.exec(
         \\git clone --no-checkout --depth 1
         \\  https://oauth2:{token}@github.com/archerdb/docs.git archerdb-docs

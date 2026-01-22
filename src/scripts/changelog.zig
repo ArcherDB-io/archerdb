@@ -110,11 +110,6 @@ fn format_changelog(buffer: std.ArrayList(u8).Writer, options: struct {
         \\
         \\-
         \\
-        \\### TigerTracks 🎧
-        \\
-        \\- []()
-        \\
-        \\
     , .{});
 
     try buffer.writeAll(it.all_entries);

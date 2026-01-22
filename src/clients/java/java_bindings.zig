@@ -87,6 +87,18 @@ const type_mappings = .{
         .private_fields = &.{"reserved"},
         .docs_link = "reference/query-uuid-filter#",
     } },
+    .{ tb.QueryUuidResponse, TypeMapping{
+        .name = "QueryUuidResponse",
+        .private_fields = &.{"reserved"},
+    } },
+    .{ tb.QueryUuidBatchFilter, TypeMapping{
+        .name = "QueryUuidBatchFilter",
+        .private_fields = &.{"reserved"},
+    } },
+    .{ tb.QueryUuidBatchResult, TypeMapping{
+        .name = "QueryUuidBatchResult",
+        .private_fields = &.{"reserved"},
+    } },
     .{ tb.QueryRadiusFilter, TypeMapping{
         .name = "QueryRadiusFilterBatch",
         .private_fields = &.{"reserved"},
@@ -101,6 +113,73 @@ const type_mappings = .{
         .name = "QueryLatestFilterBatch",
         .private_fields = &.{"reserved"},
         .docs_link = "reference/query-latest-filter#",
+    } },
+    .{ tb.QueryResponse, TypeMapping{
+        .name = "QueryResponse",
+        .private_fields = &.{"reserved"},
+    } },
+    .{ tb.PolygonVertex, TypeMapping{
+        .name = "PolygonVertex",
+    } },
+    .{ tb.HoleDescriptor, TypeMapping{
+        .name = "HoleDescriptor",
+        .private_fields = &.{"reserved"},
+    } },
+    // TTL Operations
+    .{ tb.TtlOperationResult, TypeMapping{
+        .name = "TtlOperationResult",
+    } },
+    .{ tb.TtlSetRequest, TypeMapping{
+        .name = "TtlSetRequest",
+        .private_fields = &.{"reserved"},
+    } },
+    .{ tb.TtlSetResponse, TypeMapping{
+        .name = "TtlSetResponse",
+        .private_fields = &.{"_padding", "reserved"},
+    } },
+    .{ tb.TtlExtendRequest, TypeMapping{
+        .name = "TtlExtendRequest",
+        .private_fields = &.{"reserved"},
+    } },
+    .{ tb.TtlExtendResponse, TypeMapping{
+        .name = "TtlExtendResponse",
+        .private_fields = &.{"_padding", "reserved"},
+    } },
+    .{ tb.TtlClearRequest, TypeMapping{
+        .name = "TtlClearRequest",
+        .private_fields = &.{"reserved"},
+    } },
+    .{ tb.TtlClearResponse, TypeMapping{
+        .name = "TtlClearResponse",
+        .private_fields = &.{"_padding", "reserved"},
+    } },
+    // Topology and status responses
+    .{ tb.PingRequest, TypeMapping{
+        .name = "PingRequest",
+    } },
+    .{ tb.StatusRequest, TypeMapping{
+        .name = "StatusRequest",
+    } },
+    .{ tb.PingResponse, TypeMapping{
+        .name = "PingResponse",
+    } },
+    .{ tb.StatusResponse, TypeMapping{
+        .name = "StatusResponse",
+        .private_fields = &.{"_padding", "reserved"},
+    } },
+    .{ tb.TopologyRequest, TypeMapping{
+        .name = "TopologyRequest",
+        .private_fields = &.{"reserved"},
+    } },
+    .{ tb.TopologyResponse, TypeMapping{
+        .name = "TopologyResponse",
+        .private_fields = &.{"_padding"},
+    } },
+    .{ tb.ShardInfo, TypeMapping{
+        .name = "ShardInfo",
+    } },
+    .{ tb.ShardStatus, TypeMapping{
+        .name = "ShardStatus",
     } },
     .{ exports.arch_init_status, TypeMapping{
         .name = "InitializationStatus",
@@ -362,6 +441,7 @@ fn emit_packed_enum(
 fn batch_type(comptime Type: type) []const u8 {
     switch (@typeInfo(Type)) {
         .int => |info| switch (info.bits) {
+            8 => return "UInt8",
             16 => return "UInt16",
             32 => return "UInt32",
             64 => return "UInt64",
@@ -452,7 +532,7 @@ fn emit_batch(
 
     // Properties:
     inline for (type_info.fields) |field| {
-        if (field.type == u128) {
+        if (field.type == u128 or field.type == i128) {
             try emit_u128_batch_accessors(buffer, mapping, field);
         } else {
             try emit_batch_accessors(buffer, mapping, field);
@@ -471,7 +551,7 @@ fn emit_batch_accessors(
     comptime mapping: TypeMapping,
     comptime field: anytype,
 ) !void {
-    comptime assert(field.type != u128);
+    comptime assert(field.type != u128 and field.type != i128);
     const is_private = comptime mapping.is_private(field.name);
     const is_read_only = comptime mapping.is_read_only(field.name);
 
@@ -603,7 +683,7 @@ fn emit_u128_batch_accessors(
     comptime mapping: TypeMapping,
     comptime field: anytype,
 ) !void {
-    comptime assert(field.type == u128);
+    comptime assert(field.type == u128 or field.type == i128);
     const is_private = comptime mapping.is_private(field.name);
     const is_read_only = comptime mapping.is_read_only(field.name);
 

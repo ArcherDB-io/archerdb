@@ -127,10 +127,19 @@ export type TopologyResponse = {
   num_shards: number
   /** Resharding status (0=idle, 1=preparing, 2=migrating, 3=finalizing). */
   resharding_status: number
+  /** Reserved flags for future use. */
+  flags: number
   /** Information about each shard. */
   shards: ShardInfo[]
   /** Timestamp of last topology change (nanoseconds since epoch). */
   last_change_ns: bigint
+}
+
+/**
+ * Request for topology information (8 bytes).
+ */
+export type TopologyRequest = {
+  reserved: bigint
 }
 
 /**

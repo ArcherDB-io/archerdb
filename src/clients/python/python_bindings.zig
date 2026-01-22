@@ -30,11 +30,23 @@ const mappings_state_machine = .{
     .{ tb.DeleteEntityResult, "DeleteEntityResult" },
     .{ tb.DeleteEntitiesResult, "DeleteEntitiesResult" },
     .{ tb.QueryUuidFilter, "QueryUuidFilter" },
+    .{ tb.QueryUuidResponse, "QueryUuidResponse" },
+    .{ tb.QueryUuidBatchFilter, "QueryUuidBatchFilter" },
+    .{ tb.QueryUuidBatchResult, "QueryUuidBatchResult" },
     .{ tb.QueryRadiusFilter, "QueryRadiusFilter" },
     .{ tb.QueryPolygonFilter, "QueryPolygonFilter" },
     .{ tb.QueryLatestFilter, "QueryLatestFilter" },
     .{ tb.QueryResponse, "QueryResponse" },
     .{ tb.PolygonVertex, "PolygonVertex" },
+    .{ tb.HoleDescriptor, "HoleDescriptor" },
+    .{ tb.PingRequest, "PingRequest" },
+    .{ tb.StatusRequest, "StatusRequest" },
+    .{ tb.PingResponse, "PingResponse" },
+    .{ tb.StatusResponse, "StatusResponse" },
+    .{ tb.TopologyRequest, "TopologyRequest" },
+    .{ tb.ShardInfo, "ShardInfo" },
+    .{ tb.TopologyResponse, "TopologyResponse" },
+    .{ tb.ShardStatus, "ShardStatus" },
     // TTL Operations
     .{ tb.TtlOperationResult, "TtlOperationResult" },
     .{ tb.TtlSetRequest, "TtlSetRequest" },
@@ -84,7 +96,15 @@ fn zig_to_ctype(comptime Type: type) []const u8 {
             });
         },
         .@"enum" => |info| return zig_to_ctype(info.tag_type),
-        .@"struct" => return zig_to_ctype(std.meta.Int(.unsigned, @bitSizeOf(Type))),
+        .@"struct" => |info| switch (info.layout) {
+            .@"packed" => return zig_to_ctype(std.meta.Int(.unsigned, @bitSizeOf(Type))),
+            else => {
+                if (mapping_name_from_type(mappings_all, Type)) |name| {
+                    return comptime "C" ++ name;
+                }
+                return zig_to_ctype(std.meta.Int(.unsigned, @bitSizeOf(Type)));
+            },
+        },
         .bool => return "ctypes.c_bool",
         .int => |info| {
             // Support both signed and unsigned integers for ArcherDB's GeoEvent
@@ -261,9 +281,17 @@ fn emit_struct_ctypes(
 
     inline for (type_info.fields) |field| {
         const field_type_info = @typeInfo(field.type);
-        const field_is_u128 = field_type_info == .int and field_type_info.int.bits == 128;
-        const convert_prefix = if (field_is_u128) "c_uint128.from_param(" else "";
-        const convert_suffix = if (field_is_u128) ")" else "";
+        const field_is_u128 = field_type_info == .int and
+            field_type_info.int.bits == 128 and field_type_info.int.signedness == .unsigned;
+        const field_is_i128 = field_type_info == .int and
+            field_type_info.int.bits == 128 and field_type_info.int.signedness == .signed;
+        const convert_prefix = if (field_is_u128)
+            "c_uint128.from_param("
+        else if (field_is_i128)
+            "c_int128.from_param("
+        else
+            "";
+        const convert_suffix = if (field_is_u128 or field_is_i128) ")" else "";
 
         if (comptime !std.mem.eql(u8, field.name, "reserved")) {
             buffer.print("            {[field_name]s}={[convert_prefix]s}" ++
@@ -334,9 +362,12 @@ fn emit_struct_dataclass(
     buffer.print("@dataclass\n", .{});
     buffer.print("class {s}:\n", .{c_name});
 
+    comptime var has_field = false;
+
     inline for (type_info.fields) |field| {
         const field_type_info = @typeInfo(field.type);
         if (comptime !std.mem.eql(u8, field.name, "reserved")) {
+            has_field = true;
             const python_type = zig_to_python(field.type);
             buffer.print("    {[name]s}: {[python_type]s} = ", .{
                 .name = field.name,
@@ -361,6 +392,10 @@ fn emit_struct_dataclass(
                 }
             }
         }
+    }
+
+    if (!has_field) {
+        buffer.print("    pass\n", .{});
     }
 
     buffer.print("\n\n", .{});
@@ -452,7 +487,7 @@ pub fn main() !void {
         \\else:
         \\    from typing_extensions import Self
         \\
-        \\from .lib import c_uint128, archclient, validate_uint, validate_int
+        \\from .lib import c_uint128, c_int128, archclient, validate_uint, validate_int
         \\
         \\# Use slots=True if the version of Python is new enough (3.10+) to support it.
         \\if sys.version_info >= (3, 10):

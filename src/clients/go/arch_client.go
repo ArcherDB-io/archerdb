@@ -69,8 +69,10 @@ func getEventSize(op C.ARCH_OPERATION) uintptr {
 		return 1 // Variable-size filter
 	case C.ARCH_OPERATION_QUERY_UUID_BATCH:
 		return 1 // Variable-size filter
-	case C.ARCH_OPERATION_ARCHERDB_PING, C.ARCH_OPERATION_ARCHERDB_GET_STATUS:
-		return 1 // Single byte placeholder
+	case C.ARCH_OPERATION_ARCHERDB_PING:
+		return unsafe.Sizeof(types.PingRequest{})
+	case C.ARCH_OPERATION_ARCHERDB_GET_STATUS:
+		return unsafe.Sizeof(types.StatusRequest{})
 	default:
 		return 1 // Return 1 for unknown ops to avoid divide by zero
 	}
@@ -90,7 +92,7 @@ func getResultSize(op C.ARCH_OPERATION) uintptr {
 		C.ARCH_OPERATION_QUERY_UUID_BATCH:
 		return 1 // Variable-size response (QueryResponse header + GeoEvents)
 	case C.ARCH_OPERATION_ARCHERDB_PING:
-		return 1
+		return unsafe.Sizeof(types.PingResponse{})
 	case C.ARCH_OPERATION_ARCHERDB_GET_STATUS:
 		return unsafe.Sizeof(types.StatusResponse{})
 	default:

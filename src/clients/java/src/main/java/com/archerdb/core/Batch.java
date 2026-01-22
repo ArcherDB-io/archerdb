@@ -310,6 +310,14 @@ public abstract class Batch {
         buffer.putInt(index, value);
     }
 
+    protected final byte getUInt8(final int index) {
+        return buffer.get(index);
+    }
+
+    protected final void putUInt8(final int index, final byte value) {
+        buffer.put(index, value);
+    }
+
     protected final int getUInt16(final int index) {
         return Short.toUnsignedInt(buffer.getShort(index));
     }

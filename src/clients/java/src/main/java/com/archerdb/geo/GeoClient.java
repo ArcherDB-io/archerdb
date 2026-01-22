@@ -351,6 +351,34 @@ public interface GeoClient extends AutoCloseable {
     StatusResponse getStatus();
 
     /**
+     * Fetches the current cluster topology.
+     *
+     * @return topology response with shard information
+     */
+    TopologyResponse getTopology();
+
+    /**
+     * Returns the topology cache for direct access.
+     *
+     * @return topology cache
+     */
+    TopologyCache getTopologyCache();
+
+    /**
+     * Forces a topology refresh from the cluster.
+     *
+     * @return updated topology response
+     */
+    TopologyResponse refreshTopology();
+
+    /**
+     * Returns a shard router for shard-aware operations.
+     *
+     * @return shard router
+     */
+    ShardRouter getShardRouter();
+
+    /**
      * Closes the client and releases resources.
      */
     @Override

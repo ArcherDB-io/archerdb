@@ -19,6 +19,10 @@ import {
   QueryResult,
   DeleteResult,
   CleanupResult,
+  PingRequest,
+  PingResponse,
+  StatusRequest,
+  StatusResponse,
   GeoEventOptions,
   RadiusQueryOptions,
   PolygonQueryOptions,
@@ -37,6 +41,8 @@ import {
   TtlClearRequest,
   TtlClearResponse,
 } from './geo'
+
+import { TopologyCache, ShardRouter, TopologyRequest, TopologyResponse } from './topology'
 
 // Import native binding for cluster communication
 import { binding, Context, Operation } from './index'
@@ -840,6 +846,8 @@ export class DeleteEntityBatch {
 export class GeoClient {
   private config: Required<Omit<GeoClientConfig, 'retry'>>
   private retryConfig: Required<RetryConfig>
+  private topologyCache: TopologyCache
+  private shardRouter: ShardRouter
   private context: Context | null = null
   private sessionId: bigint = 0n
   private requestNumber: bigint = 0n
@@ -863,6 +871,9 @@ export class GeoClient {
       total_timeout_ms: config.retry?.total_timeout_ms ?? 30000,
       jitter: config.retry?.jitter ?? true,
     }
+
+    this.topologyCache = new TopologyCache()
+    this.shardRouter = new ShardRouter(this.topologyCache, () => this.refreshTopology())
 
     // Validate configuration
     if (this.config.addresses.length === 0) {
@@ -1229,6 +1240,109 @@ export class GeoClient {
       has_more: headerHasMore ?? (events.length === filter.limit),
       cursor: events.length > 0 ? events[events.length - 1].timestamp : undefined,
     }
+  }
+
+  // ============================================================================
+  // Admin Operations
+  // ============================================================================
+
+  /**
+   * Sends a ping to verify server connectivity.
+   */
+  async ping(): Promise<boolean> {
+    this.ensureConnected()
+
+    const request: PingRequest = {
+      ping_data: 0x676e6970n, // "ping"
+    }
+
+    const results = await this._submitQuery<PingResponse>(
+      GeoOperation.archerdb_ping,
+      request
+    )
+
+    if (results.length === 0) {
+      return false
+    }
+
+    const pong = (results[0] as { pong?: number }).pong
+    if (typeof pong !== 'number') {
+      return true
+    }
+    return pong === 0x676e6f70 // "pong"
+  }
+
+  /**
+   * Returns current server status.
+   */
+  async getStatus(): Promise<StatusResponse> {
+    this.ensureConnected()
+
+    const request: StatusRequest = { reserved: 0n }
+    const results = await this._submitQuery<StatusResponse>(
+      GeoOperation.archerdb_get_status,
+      request
+    )
+
+    if (results.length === 0) {
+      return {
+        ram_index_count: 0n,
+        ram_index_capacity: 0n,
+        ram_index_load_pct: 0,
+        tombstone_count: 0n,
+        ttl_expirations: 0n,
+        deletion_count: 0n,
+      }
+    }
+
+    return results[0]
+  }
+
+  /**
+   * Fetches the current cluster topology from the server.
+   */
+  async getTopology(): Promise<TopologyResponse> {
+    this.ensureConnected()
+
+    const request: TopologyRequest = { reserved: 0n }
+    const results = await this._submitQuery<TopologyResponse>(
+      GeoOperation.get_topology,
+      request
+    )
+
+    if (results.length === 0) {
+      throw new Error('No response from topology operation')
+    }
+
+    const topology = results[0]
+    this.topologyCache.update(topology)
+    return topology
+  }
+
+  /**
+   * Returns the topology cache for direct access.
+   */
+  getTopologyCache(): TopologyCache {
+    return this.topologyCache
+  }
+
+  /**
+   * Forces a topology refresh from the cluster.
+   */
+  async refreshTopology(): Promise<boolean> {
+    try {
+      await this.getTopology()
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * Returns a shard router for shard-aware operations.
+   */
+  getShardRouter(): ShardRouter {
+    return this.shardRouter
   }
 
   // ============================================================================

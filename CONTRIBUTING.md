@@ -141,8 +141,6 @@ ArcherDB inherits ArcherDB's engineering philosophy. Key principles:
 - Add comments for non-obvious logic
 - Keep comments up to date with code changes
 
-For detailed coding guidelines, see [ArcherDB's TIGER_STYLE.md](https://github.com/archerdb/archerdb/blob/main/docs/TIGER_STYLE.md).
-
 ## Testing
 
 ### Running Tests

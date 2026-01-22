@@ -523,6 +523,7 @@ class TtlClearResponse:
 # Maximum shards supported
 MAX_SHARDS = 256
 MAX_REPLICAS_PER_SHARD = 6
+MAX_ADDRESS_LEN = 64
 
 
 class ShardStatus(IntEnum):
@@ -554,7 +555,7 @@ class TopologyChangeType(IntEnum):
 class ShardInfo:
     """
     Information about a single shard.
-    Matches ShardInfo in topology.zig (192 bytes).
+    Matches ShardInfo in topology.zig (472 bytes).
     """
     id: int = 0                     # Shard identifier (0 to num_shards-1)
     primary: str = ""               # Primary/leader node address
@@ -565,29 +566,44 @@ class ShardInfo:
 
     @classmethod
     def from_bytes(cls, data: bytes) -> "ShardInfo":
-        """Parse ShardInfo from raw bytes (192 bytes)."""
+        """Parse ShardInfo from raw bytes (472 bytes)."""
         import struct
-        if len(data) < 192:
-            raise ValueError(f"ShardInfo requires 192 bytes, got {len(data)}")
 
-        # Format: u32 id, u8 status, 3 bytes padding, u64 entity_count, u64 size_bytes
-        # Then addresses (null-terminated strings in fixed-size buffers)
-        shard_id, status, _, entity_count, size_bytes = struct.unpack("<IBHQQ", data[:24])
+        min_size = 4 + MAX_ADDRESS_LEN + (MAX_REPLICAS_PER_SHARD * MAX_ADDRESS_LEN) + 1 + 1 + 8 + 8
+        if len(data) < min_size:
+            raise ValueError(f"ShardInfo requires {min_size} bytes, got {len(data)}")
 
-        # Primary address: 64 bytes starting at offset 24
-        primary_raw = data[24:88]
+        offset = 0
+        shard_id = struct.unpack("<I", data[offset:offset + 4])[0]
+        offset += 4
+
+        primary_raw = data[offset:offset + MAX_ADDRESS_LEN]
         primary = primary_raw.split(b'\x00')[0].decode('utf-8')
+        offset += MAX_ADDRESS_LEN
 
-        # Replicas: 6 * 64 bytes starting at offset 88
         replicas = []
-        for i in range(MAX_REPLICAS_PER_SHARD):
-            start = 88 + i * 64
-            end = start + 64
-            if end <= len(data):
-                replica_raw = data[start:end]
-                replica = replica_raw.split(b'\x00')[0].decode('utf-8')
-                if replica:
-                    replicas.append(replica)
+        for _ in range(MAX_REPLICAS_PER_SHARD):
+            replica_raw = data[offset:offset + MAX_ADDRESS_LEN]
+            offset += MAX_ADDRESS_LEN
+            replica = replica_raw.split(b'\x00')[0].decode('utf-8')
+            if replica:
+                replicas.append(replica)
+
+        replica_count = data[offset]
+        offset += 1
+        status = data[offset]
+        offset += 1
+
+        # Align to 8-byte boundary for u64 fields
+        pad = (8 - (offset % 8)) % 8
+        offset += pad
+
+        entity_count = struct.unpack("<Q", data[offset:offset + 8])[0]
+        offset += 8
+        size_bytes = struct.unpack("<Q", data[offset:offset + 8])[0]
+
+        if replica_count < len(replicas):
+            replicas = replicas[:replica_count]
 
         return cls(
             id=shard_id,
@@ -609,6 +625,7 @@ class TopologyResponse:
     cluster_id: int = 0             # Cluster identifier (128-bit as int)
     num_shards: int = 0             # Number of shards in the cluster
     resharding_status: int = 0      # 0=idle, 1=preparing, 2=migrating, 3=finalizing
+    flags: int = 0                  # Reserved flags
     shards: List[ShardInfo] = field(default_factory=list)
     last_change_ns: int = 0         # Timestamp of last topology change (ns since epoch)
 
@@ -616,33 +633,44 @@ class TopologyResponse:
     def from_bytes(cls, data: bytes) -> "TopologyResponse":
         """Parse TopologyResponse from raw bytes."""
         import struct
-        if len(data) < 48:  # Minimum header size
-            raise ValueError(f"TopologyResponse requires at least 48 bytes, got {len(data)}")
+        if len(data) < 52:
+            raise ValueError(f"TopologyResponse requires at least 52 bytes, got {len(data)}")
 
-        # Header format: u64 version, u128 cluster_id (as 2x u64), u32 num_shards,
-        # u8 resharding_status, 3 bytes padding, i64 last_change_ns
         version = struct.unpack("<Q", data[0:8])[0]
-        cluster_id_lo = struct.unpack("<Q", data[8:16])[0]
-        cluster_id_hi = struct.unpack("<Q", data[16:24])[0]
-        cluster_id = cluster_id_lo | (cluster_id_hi << 64)
-        num_shards, resharding_status = struct.unpack("<IB", data[24:29])
-        last_change_ns = struct.unpack("<q", data[32:40])[0]
+        num_shards = struct.unpack("<I", data[8:12])[0]
 
-        # Parse shards (192 bytes each)
+        cluster_id_lo = struct.unpack("<Q", data[12:20])[0]
+        cluster_id_hi = struct.unpack("<Q", data[20:28])[0]
+        cluster_id = cluster_id_lo | (cluster_id_hi << 64)
+
+        last_change_lo = struct.unpack("<Q", data[28:36])[0]
+        last_change_hi = struct.unpack("<Q", data[36:44])[0]
+        last_change_ns = last_change_lo | (last_change_hi << 64)
+        if last_change_hi & (1 << 63):
+            last_change_ns -= 1 << 128
+
+        resharding_status = data[44]
+        flags = data[45]
+
+        # Parse shards (ShardInfo wire format)
+        shard_header_size = 4 + MAX_ADDRESS_LEN + (MAX_REPLICAS_PER_SHARD * MAX_ADDRESS_LEN) + 1 + 1
+        shard_padding = (8 - (shard_header_size % 8)) % 8
+        shard_info_size = shard_header_size + shard_padding + 8 + 8
+
         shards = []
-        shard_data_start = 48  # After header
+        shard_data_start = 52
         for i in range(num_shards):
-            start = shard_data_start + i * 192
-            end = start + 192
+            start = shard_data_start + i * shard_info_size
+            end = start + shard_info_size
             if end <= len(data):
-                shard = ShardInfo.from_bytes(data[start:end])
-                shards.append(shard)
+                shards.append(ShardInfo.from_bytes(data[start:end]))
 
         return cls(
             version=version,
             cluster_id=cluster_id,
             num_shards=num_shards,
             resharding_status=resharding_status,
+            flags=flags,
             shards=shards,
             last_change_ns=last_change_ns,
         )

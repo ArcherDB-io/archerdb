@@ -1009,19 +1009,25 @@ func (c *geoClient) Ping() (bool, error) {
 		return false, ClientClosedError{Msg: "client has been closed"}
 	}
 
-	// Send empty ping request
-	var dummy [1]byte
-	_, err := c.doGeoRequest(
+	request := types.PingRequest{
+		PingData: 0x676e6970, // "ping"
+	}
+	reply, err := c.doGeoRequest(
 		types.GeoOperationPing,
 		1,
-		1,
-		unsafe.Pointer(&dummy[0]),
+		unsafe.Sizeof(types.PingRequest{}),
+		unsafe.Pointer(&request),
 	)
 	if err != nil {
 		return false, err
 	}
 
-	return true, nil
+	if reply == nil || len(reply) < int(unsafe.Sizeof(types.PingResponse{})) {
+		return true, nil
+	}
+
+	pong := (*types.PingResponse)(unsafe.Pointer(&reply[0]))
+	return pong.Pong == 0x676e6f70, nil
 }
 
 // GetStatus returns current server status.
@@ -1030,13 +1036,12 @@ func (c *geoClient) GetStatus() (types.StatusResponse, error) {
 		return types.StatusResponse{}, ClientClosedError{Msg: "client has been closed"}
 	}
 
-	// Send empty status request
-	var dummy [1]byte
+	request := types.StatusRequest{Reserved: 0}
 	reply, err := c.doGeoRequest(
 		types.GeoOperationGetStatus,
 		1,
-		1,
-		unsafe.Pointer(&dummy[0]),
+		unsafe.Sizeof(types.StatusRequest{}),
+		unsafe.Pointer(&request),
 	)
 	if err != nil {
 		return types.StatusResponse{}, err
@@ -1060,13 +1065,12 @@ func (c *geoClient) GetTopology() (*types.TopologyResponse, error) {
 		return nil, ClientClosedError{Msg: "client has been closed"}
 	}
 
-	// Send empty topology request
-	var dummy [1]byte
+	request := types.TopologyRequest{Reserved: 0}
 	reply, err := c.doGeoRequest(
 		types.GeoOperationGetTopology,
 		1,
-		1,
-		unsafe.Pointer(&dummy[0]),
+		unsafe.Sizeof(types.TopologyRequest{}),
+		unsafe.Pointer(&request),
 	)
 	if err != nil {
 		return nil, err

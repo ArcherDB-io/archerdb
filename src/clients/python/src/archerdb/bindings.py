@@ -15,7 +15,7 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import Self
 
-from .lib import c_uint128, archclient, validate_uint, validate_int
+from .lib import c_uint128, c_int128, archclient, validate_uint, validate_int
 
 # Use slots=True if the version of Python is new enough (3.10+) to support it.
 if sys.version_info >= (3, 10):
@@ -119,6 +119,14 @@ class DeleteEntityResult(enum.IntEnum):
     ENTITY_ID_MUST_NOT_BE_INT_MAX = 4
 
 
+class ShardStatus(enum.IntEnum):
+    ACTIVE = 0
+    SYNCING = 1
+    UNAVAILABLE = 2
+    MIGRATING = 3
+    DECOMMISSIONING = 4
+
+
 class TtlOperationResult(enum.IntEnum):
     SUCCESS = 0
     ENTITY_NOT_FOUND = 1
@@ -163,6 +171,22 @@ class QueryUuidFilter:
 
 
 @dataclass
+class QueryUuidResponse:
+    status: int = 0
+
+
+@dataclass
+class QueryUuidBatchFilter:
+    count: int = 0
+
+
+@dataclass
+class QueryUuidBatchResult:
+    found_count: int = 0
+    not_found_count: int = 0
+
+
+@dataclass
 class QueryRadiusFilter:
     center_lat_nano: int = 0
     center_lon_nano: int = 0
@@ -203,6 +227,65 @@ class QueryResponse:
 class PolygonVertex:
     lat_nano: int = 0
     lon_nano: int = 0
+
+
+@dataclass
+class HoleDescriptor:
+    vertex_count: int = 0
+
+
+@dataclass
+class PingRequest:
+    ping_data: int = 0
+
+
+@dataclass
+class StatusRequest:
+    pass
+
+
+@dataclass
+class PingResponse:
+    pong: int = 0
+
+
+@dataclass
+class StatusResponse:
+    ram_index_count: int = 0
+    ram_index_capacity: int = 0
+    ram_index_load_pct: int = 0
+    _padding: int = 0
+    tombstone_count: int = 0
+    ttl_expirations: int = 0
+    deletion_count: int = 0
+
+
+@dataclass
+class TopologyRequest:
+    pass
+
+
+@dataclass
+class ShardInfo:
+    id: int = 0
+    primary: int[64] = 0
+    replicas: int[64][6] = 0
+    replica_count: int = 0
+    status: ShardStatus = ShardStatus.ACTIVE
+    entity_count: int = 0
+    size_bytes: int = 0
+
+
+@dataclass
+class TopologyResponse:
+    version: int = 0
+    num_shards: int = 0
+    cluster_id: int = 0
+    last_change_ns: int = 0
+    resharding_status: int = 0
+    flags: int = 0
+    _padding: int[6] = 0
+    shards: ShardInfo[256] = 0
 
 
 @dataclass
@@ -425,6 +508,70 @@ CQueryUuidFilter._fields_ = [ # noqa: SLF001
 ]
 
 
+class CQueryUuidResponse(ctypes.Structure):
+    @classmethod
+    def from_param(cls, obj: Any) -> Self:
+        validate_uint(bits=8, name="status", number=obj.status)
+        return cls(
+            status=obj.status,
+        )
+
+
+    def to_python(self) -> QueryUuidResponse:
+        return QueryUuidResponse(
+            status=self.status,
+        )
+
+CQueryUuidResponse._fields_ = [ # noqa: SLF001
+    ("status", ctypes.c_uint8),
+    ("reserved", ctypes.c_uint8 * 15),
+]
+
+
+class CQueryUuidBatchFilter(ctypes.Structure):
+    @classmethod
+    def from_param(cls, obj: Any) -> Self:
+        validate_uint(bits=32, name="count", number=obj.count)
+        return cls(
+            count=obj.count,
+        )
+
+
+    def to_python(self) -> QueryUuidBatchFilter:
+        return QueryUuidBatchFilter(
+            count=self.count,
+        )
+
+CQueryUuidBatchFilter._fields_ = [ # noqa: SLF001
+    ("count", ctypes.c_uint32),
+    ("reserved", ctypes.c_uint32),
+]
+
+
+class CQueryUuidBatchResult(ctypes.Structure):
+    @classmethod
+    def from_param(cls, obj: Any) -> Self:
+        validate_uint(bits=32, name="found_count", number=obj.found_count)
+        validate_uint(bits=32, name="not_found_count", number=obj.not_found_count)
+        return cls(
+            found_count=obj.found_count,
+            not_found_count=obj.not_found_count,
+        )
+
+
+    def to_python(self) -> QueryUuidBatchResult:
+        return QueryUuidBatchResult(
+            found_count=self.found_count,
+            not_found_count=self.not_found_count,
+        )
+
+CQueryUuidBatchResult._fields_ = [ # noqa: SLF001
+    ("found_count", ctypes.c_uint32),
+    ("not_found_count", ctypes.c_uint32),
+    ("reserved", ctypes.c_uint8 * 8),
+]
+
+
 class CQueryRadiusFilter(ctypes.Structure):
     @classmethod
     def from_param(cls, obj: Any) -> Self:
@@ -593,6 +740,225 @@ class CPolygonVertex(ctypes.Structure):
 CPolygonVertex._fields_ = [ # noqa: SLF001
     ("lat_nano", ctypes.c_int64),
     ("lon_nano", ctypes.c_int64),
+]
+
+
+class CHoleDescriptor(ctypes.Structure):
+    @classmethod
+    def from_param(cls, obj: Any) -> Self:
+        validate_uint(bits=32, name="vertex_count", number=obj.vertex_count)
+        return cls(
+            vertex_count=obj.vertex_count,
+        )
+
+
+    def to_python(self) -> HoleDescriptor:
+        return HoleDescriptor(
+            vertex_count=self.vertex_count,
+        )
+
+CHoleDescriptor._fields_ = [ # noqa: SLF001
+    ("vertex_count", ctypes.c_uint32),
+    ("reserved", ctypes.c_uint32),
+]
+
+
+class CPingRequest(ctypes.Structure):
+    @classmethod
+    def from_param(cls, obj: Any) -> Self:
+        validate_uint(bits=64, name="ping_data", number=obj.ping_data)
+        return cls(
+            ping_data=obj.ping_data,
+        )
+
+
+    def to_python(self) -> PingRequest:
+        return PingRequest(
+            ping_data=self.ping_data,
+        )
+
+CPingRequest._fields_ = [ # noqa: SLF001
+    ("ping_data", ctypes.c_uint64),
+]
+
+
+class CStatusRequest(ctypes.Structure):
+    @classmethod
+    def from_param(cls, obj: Any) -> Self:
+        return cls(
+        )
+
+
+    def to_python(self) -> StatusRequest:
+        return StatusRequest(
+        )
+
+CStatusRequest._fields_ = [ # noqa: SLF001
+    ("reserved", ctypes.c_uint64),
+]
+
+
+class CPingResponse(ctypes.Structure):
+    @classmethod
+    def from_param(cls, obj: Any) -> Self:
+        validate_uint(bits=32, name="pong", number=obj.pong)
+        return cls(
+            pong=obj.pong,
+        )
+
+
+    def to_python(self) -> PingResponse:
+        return PingResponse(
+            pong=self.pong,
+        )
+
+CPingResponse._fields_ = [ # noqa: SLF001
+    ("pong", ctypes.c_uint32),
+]
+
+
+class CStatusResponse(ctypes.Structure):
+    @classmethod
+    def from_param(cls, obj: Any) -> Self:
+        validate_uint(bits=64, name="ram_index_count", number=obj.ram_index_count)
+        validate_uint(bits=64, name="ram_index_capacity", number=obj.ram_index_capacity)
+        validate_uint(bits=32, name="ram_index_load_pct", number=obj.ram_index_load_pct)
+        validate_uint(bits=32, name="_padding", number=obj._padding)
+        validate_uint(bits=64, name="tombstone_count", number=obj.tombstone_count)
+        validate_uint(bits=64, name="ttl_expirations", number=obj.ttl_expirations)
+        validate_uint(bits=64, name="deletion_count", number=obj.deletion_count)
+        return cls(
+            ram_index_count=obj.ram_index_count,
+            ram_index_capacity=obj.ram_index_capacity,
+            ram_index_load_pct=obj.ram_index_load_pct,
+            _padding=obj._padding,
+            tombstone_count=obj.tombstone_count,
+            ttl_expirations=obj.ttl_expirations,
+            deletion_count=obj.deletion_count,
+        )
+
+
+    def to_python(self) -> StatusResponse:
+        return StatusResponse(
+            ram_index_count=self.ram_index_count,
+            ram_index_capacity=self.ram_index_capacity,
+            ram_index_load_pct=self.ram_index_load_pct,
+            _padding=self._padding,
+            tombstone_count=self.tombstone_count,
+            ttl_expirations=self.ttl_expirations,
+            deletion_count=self.deletion_count,
+        )
+
+CStatusResponse._fields_ = [ # noqa: SLF001
+    ("ram_index_count", ctypes.c_uint64),
+    ("ram_index_capacity", ctypes.c_uint64),
+    ("ram_index_load_pct", ctypes.c_uint32),
+    ("_padding", ctypes.c_uint32),
+    ("tombstone_count", ctypes.c_uint64),
+    ("ttl_expirations", ctypes.c_uint64),
+    ("deletion_count", ctypes.c_uint64),
+    ("reserved", ctypes.c_uint8 * 16),
+]
+
+
+class CTopologyRequest(ctypes.Structure):
+    @classmethod
+    def from_param(cls, obj: Any) -> Self:
+        return cls(
+        )
+
+
+    def to_python(self) -> TopologyRequest:
+        return TopologyRequest(
+        )
+
+CTopologyRequest._fields_ = [ # noqa: SLF001
+    ("reserved", ctypes.c_uint64),
+]
+
+
+class CShardInfo(ctypes.Structure):
+    @classmethod
+    def from_param(cls, obj: Any) -> Self:
+        validate_uint(bits=32, name="id", number=obj.id)
+        validate_uint(bits=8, name="replica_count", number=obj.replica_count)
+        validate_uint(bits=64, name="entity_count", number=obj.entity_count)
+        validate_uint(bits=64, name="size_bytes", number=obj.size_bytes)
+        return cls(
+            id=obj.id,
+            primary=obj.primary,
+            replicas=obj.replicas,
+            replica_count=obj.replica_count,
+            status=obj.status,
+            entity_count=obj.entity_count,
+            size_bytes=obj.size_bytes,
+        )
+
+
+    def to_python(self) -> ShardInfo:
+        return ShardInfo(
+            id=self.id,
+            primary=self.primary,
+            replicas=self.replicas,
+            replica_count=self.replica_count,
+            status=ShardStatus(self.status),
+            entity_count=self.entity_count,
+            size_bytes=self.size_bytes,
+        )
+
+CShardInfo._fields_ = [ # noqa: SLF001
+    ("id", ctypes.c_uint32),
+    ("primary", ctypes.c_uint8 * 64),
+    ("replicas", ctypes.c_uint8 * 64 * 6),
+    ("replica_count", ctypes.c_uint8),
+    ("status", ctypes.c_uint8),
+    ("entity_count", ctypes.c_uint64),
+    ("size_bytes", ctypes.c_uint64),
+]
+
+
+class CTopologyResponse(ctypes.Structure):
+    @classmethod
+    def from_param(cls, obj: Any) -> Self:
+        validate_uint(bits=64, name="version", number=obj.version)
+        validate_uint(bits=32, name="num_shards", number=obj.num_shards)
+        validate_uint(bits=128, name="cluster_id", number=obj.cluster_id)
+        validate_int(bits=128, name="last_change_ns", number=obj.last_change_ns)
+        validate_uint(bits=8, name="resharding_status", number=obj.resharding_status)
+        validate_uint(bits=8, name="flags", number=obj.flags)
+        return cls(
+            version=obj.version,
+            num_shards=obj.num_shards,
+            cluster_id=c_uint128.from_param(obj.cluster_id),
+            last_change_ns=c_int128.from_param(obj.last_change_ns),
+            resharding_status=obj.resharding_status,
+            flags=obj.flags,
+            _padding=obj._padding,
+            shards=obj.shards,
+        )
+
+
+    def to_python(self) -> TopologyResponse:
+        return TopologyResponse(
+            version=self.version,
+            num_shards=self.num_shards,
+            cluster_id=self.cluster_id.to_python(),
+            last_change_ns=self.last_change_ns.to_python(),
+            resharding_status=self.resharding_status,
+            flags=self.flags,
+            _padding=self._padding,
+            shards=self.shards,
+        )
+
+CTopologyResponse._fields_ = [ # noqa: SLF001
+    ("version", ctypes.c_uint64),
+    ("num_shards", ctypes.c_uint32),
+    ("cluster_id", c_uint128),
+    ("last_change_ns", c_int128),
+    ("resharding_status", ctypes.c_uint8),
+    ("flags", ctypes.c_uint8),
+    ("_padding", ctypes.c_uint8 * 6),
+    ("shards", CShardInfo * 256),
 ]
 
 

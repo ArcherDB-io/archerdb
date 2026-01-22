@@ -72,6 +72,19 @@ export type QueryUuidFilter = {
   entity_id: bigint
 }
 
+export type QueryUuidResponse = {
+  status: number
+}
+
+export type QueryUuidBatchFilter = {
+  count: number
+}
+
+export type QueryUuidBatchResult = {
+  found_count: number
+  not_found_count: number
+}
+
 export type QueryRadiusFilter = {
   center_lat_nano: bigint
   center_lon_nano: bigint
@@ -86,7 +99,6 @@ export type QueryPolygonFilter = {
   vertex_count: number
   hole_count: number
   limit: number
-  _reserved_align: number
   timestamp_min: bigint
   timestamp_max: bigint
   group_id: bigint
@@ -107,6 +119,107 @@ export type QueryResponse = {
 export type PolygonVertex = {
   lat_nano: bigint
   lon_nano: bigint
+}
+
+export type HoleDescriptor = {
+  vertex_count: number
+}
+
+export enum TtlOperationResult {
+  success = 0,
+  entity_not_found = 1,
+  invalid_ttl = 2,
+  not_permitted = 3,
+  entity_immutable = 4,
+}
+
+export type TtlSetRequest = {
+  entity_id: bigint
+  ttl_seconds: number
+  flags: number
+}
+
+export type TtlSetResponse = {
+  entity_id: bigint
+  previous_ttl_seconds: number
+  new_ttl_seconds: number
+  result: TtlOperationResult
+}
+
+export type TtlExtendRequest = {
+  entity_id: bigint
+  extend_by_seconds: number
+  flags: number
+}
+
+export type TtlExtendResponse = {
+  entity_id: bigint
+  previous_ttl_seconds: number
+  new_ttl_seconds: number
+  result: TtlOperationResult
+}
+
+export type TtlClearRequest = {
+  entity_id: bigint
+  flags: number
+}
+
+export type TtlClearResponse = {
+  entity_id: bigint
+  previous_ttl_seconds: number
+  result: TtlOperationResult
+}
+
+export type PingRequest = {
+  ping_data: bigint
+}
+
+export type StatusRequest = {
+  reserved: bigint
+}
+
+export type PingResponse = {
+  pong: number
+}
+
+export type StatusResponse = {
+  ram_index_count: bigint
+  ram_index_capacity: bigint
+  ram_index_load_pct: number
+  tombstone_count: bigint
+  ttl_expirations: bigint
+  deletion_count: bigint
+}
+
+export type TopologyRequest = {
+}
+
+export type TopologyResponse = {
+  version: bigint
+  num_shards: number
+  cluster_id: bigint
+  last_change_ns: bigint
+  resharding_status: number
+  flags: number
+  shards: Buffer
+}
+
+export type ShardInfo = {
+  id: number
+  primary: Buffer
+  replicas: Buffer
+  replica_count: number
+  status: ShardStatus
+  entity_count: bigint
+  size_bytes: bigint
+}
+
+export enum ShardStatus {
+  active = 0,
+  syncing = 1,
+  unavailable = 2,
+  migrating = 3,
+  decommissioning = 4,
 }
 
 export enum Operation {

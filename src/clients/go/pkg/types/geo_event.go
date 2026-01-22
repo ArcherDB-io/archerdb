@@ -390,6 +390,21 @@ type StatusResponse struct {
 	DeletionCount    uint64 // Total deletions processed
 }
 
+// PingRequest represents a ping request payload (8 bytes).
+type PingRequest struct {
+	PingData uint64
+}
+
+// StatusRequest represents a status request payload (8 bytes).
+type StatusRequest struct {
+	Reserved uint64
+}
+
+// PingResponse represents a pong response (4 bytes).
+type PingResponse struct {
+	Pong uint32
+}
+
 // LoadFactor returns the load factor as a decimal (e.g., 0.70).
 func (s *StatusResponse) LoadFactor() float64 {
 	return float64(s.RAMIndexLoadPct) / 10000.0
