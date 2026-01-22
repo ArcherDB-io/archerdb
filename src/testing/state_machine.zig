@@ -1,5 +1,39 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2024-2025 ArcherDB Contributors
+//! Testing State Machine for VOPR (CLEAN-05)
+//!
+//! This module provides a minimal state machine implementation for VOPR's
+//! "testing" mode (vopr-state-machine=testing). It implements a simple echo
+//! operation for validating VSR consensus without geospatial complexity.
+//!
+//! ## Integration with VOPR
+//!
+//! State machine tests are integrated into VOPR rather than being standalone.
+//! The vopr.zig simulator supports two state machine types:
+//!
+//! - `.testing` - Uses this module's StateMachineType for basic consensus testing
+//! - `.geo` - Uses GeoStateMachineType with geo_workload.zig for geospatial testing
+//!
+//! Both modes exercise the full VOPR infrastructure including:
+//! - Network partitions and packet loss
+//! - Storage faults (read/write/misdirect)
+//! - Replica crashes and restarts
+//! - View changes and state sync
+//!
+//! ## GeoStateMachine Coverage (see geo_workload.zig)
+//!
+//! The GeoStateMachine mode covers additional scenarios:
+//! - Geospatial insert/update/delete operations
+//! - LWW conflict resolution for concurrent updates
+//! - Spatial queries (UUID, radius, polygon)
+//! - TTL expiration during operations
+//! - Edge cases (poles, antimeridian, coordinate boundaries)
+//!
+//! Per F4.1.3 (Testing/Simulation spec), adversarial patterns test:
+//! - Coordinates at poles (lat = ±90°)
+//! - Coordinates at antimeridian (lon = ±180°)
+//! - Zero and maximum radius queries
+//! - Concave and boundary-crossing polygons
 const std = @import("std");
 const assert = std.debug.assert;
 

@@ -170,6 +170,11 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
             pole_queries: u64 = 0,
             antimeridian_queries: u64 = 0,
             boundary_queries: u64 = 0,
+            /// LWW conflict resolution scenarios (CLEAN-05)
+            /// Concurrent updates to same entity test LWW determinism
+            concurrent_updates: u64 = 0,
+            /// TTL-enabled inserts for expiration testing
+            ttl_inserts: u64 = 0,
         };
 
         pub fn init(
@@ -250,6 +255,7 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
         }
 
         /// Build an insert_events request.
+        /// Covers CLEAN-05 scenarios: TTL inserts, coordinate edge cases.
         fn build_insert_request(
             self: *@This(),
             body: []align(@alignOf(vsr.Header)) u8,
@@ -262,6 +268,11 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
 
             for (events[0..event_count]) |*event| {
                 event.* = self.generate_geo_event();
+
+                // Track TTL inserts for statistics
+                if (event.ttl_seconds > 0) {
+                    self.stats.ttl_inserts += 1;
+                }
 
                 // Track some entities for future queries/updates
                 if (self.tracked_entities.items.len < self.options.tracked_entities_max) {
@@ -280,6 +291,8 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
         }
 
         /// Build an update request (insert with existing entity_id).
+        /// Tests LWW conflict resolution when multiple updates target same entity (CLEAN-05).
+        /// VSR consensus ensures deterministic ordering; LWW uses highest timestamp wins.
         fn build_update_request(
             self: *@This(),
             body: []align(@alignOf(vsr.Header)) u8,
@@ -290,21 +303,31 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
             }
 
             const events: []GeoEvent = stdx.bytes_as_slice(.inexact, GeoEvent, body);
-            const event = &events[0];
+            const max_events = @min(events.len, self.options.batch_size_limit / @sizeOf(GeoEvent));
+
+            // Sometimes send multiple updates in same batch (tests concurrent LWW)
+            const batch_concurrent = self.prng.chance(.{ .numerator = 20, .denominator = 100 }) and
+                max_events >= 2;
+            const event_count: usize = if (batch_concurrent) @min(3, max_events) else 1;
 
             // Pick a random tracked entity
             const idx = self.prng.int(usize) % self.tracked_entities.items.len;
             const entity_id = self.tracked_entities.items[idx];
 
-            // Generate new location for existing entity
-            event.* = self.generate_geo_event();
-            event.entity_id = entity_id;
+            // Generate updates for the same entity (LWW conflict scenario)
+            for (events[0..event_count]) |*event| {
+                event.* = self.generate_geo_event();
+                event.entity_id = entity_id;
+            }
 
-            self.stats.updates_sent += 1;
+            self.stats.updates_sent += event_count;
+            if (event_count > 1) {
+                self.stats.concurrent_updates += 1;
+            }
 
             return .{
                 .operation = .insert_events,
-                .size = @sizeOf(GeoEvent),
+                .size = event_count * @sizeOf(GeoEvent),
             };
         }
 
