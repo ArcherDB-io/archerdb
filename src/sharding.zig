@@ -3478,3 +3478,95 @@ test "EntityLookupIndex: invalid entity_id zero" {
     const result = index.upsert(0, 100, 0);
     try std.testing.expectError(error.InvalidEntityId, result);
 }
+
+// =============================================================================
+// Jump Consistent Hash Golden Vector Tests (per 05-01 plan)
+// =============================================================================
+//
+// These golden vectors are CANONICAL and MUST match all SDK implementations.
+// Reference: "A Fast, Minimal Memory, Consistent Hash Algorithm"
+// by John Lamping and Eric Veach, Google, 2014.
+//
+// Any change to these values indicates an algorithm change and will break
+// cross-SDK compatibility. SDKs reference src/sharding.zig as source of truth.
+//
+
+test "jumpHash golden vectors - cross-SDK compatibility" {
+    // Golden vectors that MUST match all SDK implementations (Go, Python, Java, Node.js).
+    // If any SDK produces different values, the SDK implementation is incorrect.
+    //
+    // These values are computed from Google's Jump Consistent Hash algorithm.
+
+    // Key 0: always maps to bucket 0 regardless of bucket count
+    try std.testing.expectEqual(@as(u32, 0), jumpHash(0, 1));
+    try std.testing.expectEqual(@as(u32, 0), jumpHash(0, 10));
+    try std.testing.expectEqual(@as(u32, 0), jumpHash(0, 100));
+    try std.testing.expectEqual(@as(u32, 0), jumpHash(0, 256));
+
+    // Key 0xDEADBEEF: canonical test key
+    try std.testing.expectEqual(@as(u32, 5), jumpHash(0xDEADBEEF, 8));
+    try std.testing.expectEqual(@as(u32, 5), jumpHash(0xDEADBEEF, 16));
+    try std.testing.expectEqual(@as(u32, 16), jumpHash(0xDEADBEEF, 32));
+    try std.testing.expectEqual(@as(u32, 16), jumpHash(0xDEADBEEF, 64));
+    try std.testing.expectEqual(@as(u32, 87), jumpHash(0xDEADBEEF, 128));
+    try std.testing.expectEqual(@as(u32, 87), jumpHash(0xDEADBEEF, 256));
+
+    // Key 0xCAFEBABE: another canonical test key
+    try std.testing.expectEqual(@as(u32, 5), jumpHash(0xCAFEBABE, 8));
+    try std.testing.expectEqual(@as(u32, 5), jumpHash(0xCAFEBABE, 16));
+    try std.testing.expectEqual(@as(u32, 5), jumpHash(0xCAFEBABE, 32));
+    try std.testing.expectEqual(@as(u32, 46), jumpHash(0xCAFEBABE, 64));
+    try std.testing.expectEqual(@as(u32, 85), jumpHash(0xCAFEBABE, 128));
+    try std.testing.expectEqual(@as(u32, 85), jumpHash(0xCAFEBABE, 256));
+
+    // Key max u64 (0xFFFFFFFFFFFFFFFF): edge case
+    try std.testing.expectEqual(@as(u32, 7), jumpHash(0xFFFFFFFFFFFFFFFF, 8));
+    try std.testing.expectEqual(@as(u32, 10), jumpHash(0xFFFFFFFFFFFFFFFF, 16));
+    try std.testing.expectEqual(@as(u32, 248), jumpHash(0xFFFFFFFFFFFFFFFF, 256));
+
+    // Additional test keys for broader coverage
+    try std.testing.expectEqual(@as(u32, 4), jumpHash(0x123456789ABCDEF0, 8));
+    try std.testing.expectEqual(@as(u32, 4), jumpHash(0x123456789ABCDEF0, 16));
+    try std.testing.expectEqual(@as(u32, 33), jumpHash(0x123456789ABCDEF0, 256));
+
+    try std.testing.expectEqual(@as(u32, 1), jumpHash(0xFEDCBA9876543210, 8));
+    try std.testing.expectEqual(@as(u32, 10), jumpHash(0xFEDCBA9876543210, 16));
+    try std.testing.expectEqual(@as(u32, 143), jumpHash(0xFEDCBA9876543210, 256));
+}
+
+test "jumpHash determinism - 1000 iterations" {
+    // Verify same key+buckets always produces same result over 1000 iterations.
+    // This confirms no state leakage between calls.
+    const test_cases = [_]struct { key: u64, buckets: u32, expected: u32 }{
+        .{ .key = 0xDEADBEEF, .buckets = 16, .expected = 5 },
+        .{ .key = 0xCAFEBABE, .buckets = 64, .expected = 46 },
+        .{ .key = 0x123456789ABCDEF0, .buckets = 256, .expected = 33 },
+        .{ .key = 0xFFFFFFFFFFFFFFFF, .buckets = 8, .expected = 7 },
+    };
+
+    for (test_cases) |tc| {
+        // Run 1000 iterations for each test case
+        for (0..1000) |_| {
+            const result = jumpHash(tc.key, tc.buckets);
+            try std.testing.expectEqual(tc.expected, result);
+        }
+    }
+}
+
+test "computeShardKey determinism - 1000 iterations" {
+    // Verify same entity_id always produces same shard_key over 1000 iterations.
+    const test_cases = [_]struct { entity_id: u128, expected: u64 }{
+        .{ .entity_id = 0x00000000_00000000_00000000_00000001, .expected = 0xB456BCFC34C2CB2C },
+        .{ .entity_id = 0xDEADBEEF_CAFEBABE_12345678_9ABCDEF0, .expected = 0x683A5932FE04E714 },
+        .{ .entity_id = 0xFFFFFFFF_FFFFFFFF_FFFFFFFF_FFFFFFFF, .expected = 0x0000000000000000 },
+        .{ .entity_id = 0x12345678_ABCDEF00_12345678_ABCDEF00, .expected = 0x0000000000000000 },
+    };
+
+    for (test_cases) |tc| {
+        // Run 1000 iterations for each test case
+        for (0..1000) |_| {
+            const result = computeShardKey(tc.entity_id);
+            try std.testing.expectEqual(tc.expected, result);
+        }
+    }
+}
