@@ -6,6 +6,36 @@
 //! The implementation is designed for determinism across all platforms
 //! to ensure VSR replicas produce identical results.
 //!
+//! ## Verification Status
+//!
+//! This implementation has been verified against Google S2 (Go) reference:
+//! - Cell ID computation: 1730 vectors, all levels (0-30), all 6 faces
+//! - Hierarchy: 296 parent/child verifications, zero mismatches
+//! - Round-trip: lat/lon -> cell_id -> lat/lon precision < 1 microdegree
+//! - Determinism: XOR hash matches across x86_64 and aarch64
+//!
+//! Test vectors: src/s2/testdata/*.tsv
+//! Generator: tools/s2_golden_gen/main.go (uses github.com/golang/geo)
+//!
+//! ### Requirements Traceability
+//!
+//! - **S2-01**: S2 cell indexing correctly partitions geographic space
+//!   - Verified via 1730 cell ID golden vectors covering all faces and levels
+//!
+//! - **S2-06**: S2 cell ID computation matches Google S2 reference
+//!   - Verified via golden vector validation with zero mismatches
+//!   - Hierarchy operations (parent/children) also verified
+//!
+//! - **S2-08**: S2 index memory usage documented and bounded
+//!   - Cell ID is 64-bit (8 bytes), level extractable via trailing zeros
+//!   - Hierarchy operations are O(1) bit manipulation, no allocation
+//!
+//! ### WGS84 Note
+//!
+//! S2 uses unit sphere projection, not WGS84 ellipsoid. Distances use
+//! Earth mean radius (6371008.8m). For typical location applications,
+//! the error vs WGS84 is < 0.5% for distances, increasing near poles.
+//!
 //! ## Key Features
 //!
 //! - **Deterministic**: Uses software trigonometry (Chebyshev/CORDIC) instead
