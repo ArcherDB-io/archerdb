@@ -89,6 +89,7 @@ pub fn build(b: *std.Build) !void {
         .test_integration_build = b.step("test:integration:build", "Build integration tests"),
         .test_unit = b.step("test:unit", "Run unit tests"),
         .test_unit_build = b.step("test:unit:build", "Build unit tests"),
+        .test_integration_replication = b.step("test:integration:replication", "Run replication integration tests (requires Docker)"),
         .test_jni = b.step("test:jni", "Run Java JNI tests"),
         .vopr = b.step("vopr", "Run the VOPR"),
         .vopr_build = b.step("vopr:build", "Build the VOPR"),
@@ -250,6 +251,13 @@ pub fn build(b: *std.Build) !void {
 
     // zig build test:jni
     try build_test_jni(b, build_steps.test_jni, .{
+        .target = target,
+        .mode = mode,
+    });
+
+    // zig build test:integration:replication
+    build_test_integration_replication(b, build_steps.test_integration_replication, .{
+        .stdx_module = stdx_module,
         .target = target,
         .mode = mode,
     });
@@ -1078,6 +1086,35 @@ fn build_test_jni(
     }
 
     step_test_jni.dependOn(&b.addRunArtifact(tests).step);
+}
+
+fn build_test_integration_replication(
+    b: *std.Build,
+    step: *std.Build.Step,
+    options: struct {
+        stdx_module: *std.Build.Module,
+        target: std.Build.ResolvedTarget,
+        mode: std.builtin.OptimizeMode,
+    },
+) void {
+    // Replication integration tests (S3 upload with MinIO, disk spillover)
+    // These tests require Docker to be available
+    const replication_integration_tests = b.addTest(.{
+        .name = "test-integration-replication",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/replication/integration_test.zig"),
+            .target = options.target,
+            .optimize = options.mode,
+        }),
+        .filters = b.args orelse &.{},
+    });
+    replication_integration_tests.root_module.addImport("stdx", options.stdx_module);
+
+    const run_replication_tests = b.addRunArtifact(replication_integration_tests);
+    if (b.args != null) {
+        run_replication_tests.has_side_effects = true;
+    }
+    step.dependOn(&run_replication_tests.step);
 }
 
 fn build_vopr(
