@@ -89,12 +89,12 @@ Plans:
   3. Disk spillover writes to disk when memory queue fills and recovers on restart
   4. Replication lag exposed via metrics
   5. Integration tests verify S3 upload with MinIO and disk spillover recovery
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 04-01: S3 backend implementation
-- [ ] 04-02: Disk spillover implementation
-- [ ] 04-03: Replication integration tests
+- [ ] 04-01-PLAN.md - S3 backend implementation (SigV4, S3 client, provider adaptations, retry logic)
+- [ ] 04-02-PLAN.md - Disk spillover implementation (SpilloverManager, atomic writes, metrics)
+- [ ] 04-03-PLAN.md - Replication integration tests (MinIO, spillover recovery, end-to-end)
 
 ### Phase 5: Sharding & Cleanup
 **Goal**: Sharding verified correct, all tech debt resolved - TODOs/FIXMEs addressed, stubs implemented or removed
@@ -211,7 +211,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | 1. Platform Foundation | 3/3 | Complete | 2026-01-22 |
 | 2. VSR & Storage | 4/4 | Complete | 2026-01-22 |
 | 3. Core Geospatial | 5/5 | Complete | 2026-01-22 |
-| 4. Replication | 0/3 | Not started | - |
+| 4. Replication | 0/3 | Planned | - |
 | 5. Sharding & Cleanup | 0/3 | Not started | - |
 | 6. SDK Parity | 0/5 | Not started | - |
 | 7. Observability Core | 0/4 | Not started | - |
@@ -227,4 +227,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 *Phase 2 complete: 2026-01-22*
 *Phase 3 planned: 2026-01-22*
 *Phase 3 complete: 2026-01-22*
+*Phase 4 planned: 2026-01-22*
 *Total requirements: 234 | All mapped*
