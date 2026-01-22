@@ -121,21 +121,41 @@ All cases are handled by continuing with termination cleanup.
 
 ```
 free -> accepting -> connected -> terminating -> free
+         |              ^
+         v              |
+        error ------> free
          |
 free -> connecting -> connected -> terminating -> free
+         |              ^
+         v              |
+        error ------> terminating
 ```
 
 **States:**
 - `free`: Connection slot available for reuse
-- `accepting`: Reserved for in-progress accept operation
+- `accepting`: Reserved for in-progress accept operation (inbound)
 - `connecting`: Outbound connection in progress (to replica)
 - `connected`: Fully established, may recv/send
 - `terminating`: Cleanup in progress, waiting for I/O completion
 
-**Transitions:**
-- Any `connected` state can transition to `terminating` on error
-- `terminating` waits for pending I/O to complete before `free`
-- State assertions verify valid transitions
+**Valid Transitions (all guarded by assertions):**
+
+| From | To | Guard | Location |
+|------|-----|-------|----------|
+| free | accepting | `connection.state == .free` | accept() |
+| accepting | connected | `assert(state == .accepting)` | accept_callback success |
+| accepting | free | `assert(state == .accepting)` | accept_callback error |
+| free | connecting | `assert(state == .free)` | connect_connection() |
+| connecting | connected | `assert(state == .connecting)` | connect_callback success |
+| connecting | terminating | via terminate() | connect_callback error |
+| connected | terminating | `assert(state != .terminating && state != .free)` | terminate() |
+| terminating | free | `assert(state == .terminating)` | terminate_close_callback |
+
+**Invariants:**
+- No double-termination: `assert(connection.state != .terminating)` before terminate
+- No terminating free connections: `assert(connection.state != .free)` before terminate
+- Orderly cleanup: `terminating` state waits for pending I/O before closing fd
+- Re-initialization: Connection struct reset to defaults on close (state = .free)
 
 ## Configuration (Future Work)
 
