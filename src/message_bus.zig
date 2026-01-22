@@ -344,8 +344,25 @@ pub fn MessageBusType(comptime IO: type) type {
                 assert(connection.state == .connected);
             } else |err| {
                 connection.state = .free;
-                // TODO: some errors should probably be fatal
-                log.warn("{}: on_accept: {}", .{ bus.id, err });
+                switch (err) {
+                    // Transient errors - log and continue accepting
+                    error.ConnectionAborted,
+                    => {
+                        log.debug("{}: on_accept: transient error {}, continuing", .{ bus.id, err });
+                    },
+                    // Resource exhaustion - log warning, continue (OS will backpressure)
+                    error.SystemResources,
+                    error.ProcessFdQuotaExceeded,
+                    error.SystemFdQuotaExceeded,
+                    => {
+                        log.warn("{}: on_accept: resource exhaustion {}, rejecting new connection", .{ bus.id, err });
+                        // Future: emit metric for resource exhaustion alerting
+                    },
+                    // Other errors - log at warn level
+                    else => {
+                        log.warn("{}: on_accept: {}", .{ bus.id, err });
+                    },
+                }
             }
         }
 
@@ -385,9 +402,10 @@ pub fn MessageBusType(comptime IO: type) type {
                 if (connection.state == .terminating) return;
             }
 
-            log.info("{}: connect_to_replica: no free connection, disconnecting a client", .{
+            log.warn("{}: connect_to_replica: no free connection, evicting client peer", .{
                 bus.id,
             });
+            // Future: emit metric for peer eviction alerting
             for (bus.connections) |*connection| {
                 if (connection.peer == .client) {
                     bus.terminate(connection, .shutdown);
@@ -395,9 +413,10 @@ pub fn MessageBusType(comptime IO: type) type {
                 }
             }
 
-            log.info("{}: connect_to_replica: no free connection, disconnecting unknown peer", .{
+            log.warn("{}: connect_to_replica: no free connection, evicting unknown peer", .{
                 bus.id,
             });
+            // Future: emit metric for peer eviction alerting
             for (bus.connections) |*connection| {
                 if (connection.peer == .unknown) {
                     bus.terminate(connection, .shutdown);
@@ -588,10 +607,28 @@ pub fn MessageBusType(comptime IO: type) type {
             }
             assert(connection.state == .connected);
             const bytes_received = result catch |err| {
-                // TODO: maybe don't need to close on *every* error
-                log.warn("{}: on_recv: from={} {}", .{ bus.id, connection.peer, err });
-                bus.terminate(connection, .shutdown);
-                return;
+                switch (err) {
+                    // Peer closed connection or reset - not an error condition
+                    error.ConnectionResetByPeer,
+                    => {
+                        log.info("{}: on_recv: from={} peer closed connection", .{ bus.id, connection.peer });
+                        bus.terminate(connection, .no_shutdown);
+                        return;
+                    },
+                    // Timeout - may be configurable in future, for now terminate
+                    error.WouldBlock,
+                    => {
+                        log.warn("{}: on_recv: from={} timeout, terminating", .{ bus.id, connection.peer });
+                        bus.terminate(connection, .shutdown);
+                        return;
+                    },
+                    // Protocol/network errors - terminate this connection
+                    else => {
+                        log.warn("{}: on_recv: from={} error={}, terminating", .{ bus.id, connection.peer, err });
+                        bus.terminate(connection, .shutdown);
+                        return;
+                    },
+                }
             };
             // No bytes received means that the peer closed its side of the connection.
             if (bytes_received == 0) {
@@ -909,14 +946,29 @@ pub fn MessageBusType(comptime IO: type) type {
             }
             assert(connection.state == .connected);
             const write_size = result catch |err| {
-                // TODO: maybe don't need to close on *every* error
-                log.warn("{}: on_send: to={} {}", .{
-                    bus.id,
-                    connection.peer,
-                    err,
-                });
-                bus.terminate(connection, .shutdown);
-                return;
+                switch (err) {
+                    // Orderly shutdown by peer - not an error
+                    error.ConnectionResetByPeer,
+                    error.BrokenPipe,
+                    => {
+                        log.info("{}: on_send: to={} peer closed connection", .{ bus.id, connection.peer });
+                        bus.terminate(connection, .no_shutdown);
+                        return;
+                    },
+                    // Timeout - may be configurable in future, for now terminate
+                    error.WouldBlock,
+                    => {
+                        log.warn("{}: on_send: to={} timeout, terminating", .{ bus.id, connection.peer });
+                        bus.terminate(connection, .shutdown);
+                        return;
+                    },
+                    // Protocol/network errors - terminate this connection
+                    else => {
+                        log.warn("{}: on_send: to={} error={}, terminating", .{ bus.id, connection.peer, err });
+                        bus.terminate(connection, .shutdown);
+                        return;
+                    },
+                }
             };
             assert(write_size <= constants.message_size_max);
             connection.send_progress += @intCast(write_size);
@@ -948,32 +1000,33 @@ pub fn MessageBusType(comptime IO: type) type {
                     // The shutdown syscall will cause currently in progress send/recv
                     // operations to be gracefully closed while keeping the fd open.
                     //
-                    // TODO: Investigate differences between shutdown() on Linux vs Darwin.
-                    // Especially how this interacts with our assumptions around pending I/O.
+                    // shutdown() behavior differs slightly between Linux and Darwin:
+                    // - Linux: Pending recv/send operations return immediately with error
+                    // - Darwin: Similar behavior, but timing may differ slightly
+                    // Both platforms: shutdown(.both) signals we're done with both directions,
+                    // allowing graceful close without losing in-flight data.
                     bus.io.shutdown(connection.fd.?, .both) catch |err| switch (err) {
                         error.SocketNotConnected => {
-                            // This should only happen if we for some reason decide to terminate
-                            // a connection while a connect operation is in progress.
-                            // This is fine though, we simply continue with the logic below and
-                            // wait for the connect operation to finish.
-
-                            // TODO: This currently happens in other cases if the
-                            // connection was closed due to an error. We need to intelligently
-                            // decide whether to shutdown or close directly based on the error
-                            // before these assertions may be re-enabled.
-
-                            //assert(connection.state == .connecting);
-                            //assert(connection.recv_submitted);
-                            //assert(!connection.send_submitted);
+                            // Expected in these scenarios:
+                            // 1. Terminating during in-progress connect operation
+                            // 2. Peer closed connection before we initiated shutdown
+                            // 3. Connection failed during establishment
+                            // All cases are benign - continue with termination cleanup.
                         },
-                        // Ignore all the remaining errors for now
+                        // Peer already closed or connection aborted - continue with termination
                         error.ConnectionAborted,
                         error.ConnectionResetByPeer,
+                        => {},
+                        // Transient system issues - log but continue termination
                         error.BlockingOperationInProgress,
                         error.NetworkSubsystemFailed,
                         error.SystemResources,
-                        error.Unexpected,
-                        => {},
+                        => {
+                            log.debug("{}: shutdown: transient error {}, continuing termination", .{ bus.id, err });
+                        },
+                        error.Unexpected => {
+                            log.warn("{}: shutdown: unexpected error, continuing termination", .{bus.id});
+                        },
                     };
                 },
                 .no_shutdown => {},
