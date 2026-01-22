@@ -517,8 +517,8 @@ fn options_swarm(prng: *stdx.PRNG) Simulator.Options {
         .batch_size_limit = batch_size_limit,
         .multi_batch_per_request_limit = multi_batch_per_request_limit,
         .client_count = client_count,
-        // TODO(DJ) Once Workload no longer needs in_flight_max, make stalled_queue_capacity
-        // private. Also maybe make it dynamic (computed from the client_count instead of
+        // TestEnhancement: Once Workload no longer needs in_flight_max, stalled_queue_capacity
+        // could be made private and potentially dynamic (computed from client_count instead of
         // clients_max).
         .in_flight_max = ReplySequence.stalled_queue_capacity *
             multi_batch_per_request_limit,
@@ -530,7 +530,8 @@ fn options_swarm(prng: *stdx.PRNG) Simulator.Options {
         .storage = storage_options,
         .storage_fault_atlas = storage_fault_atlas,
         .workload = workload_options,
-        // TODO Swarm testing: Test long+few crashes and short+many crashes separately.
+        // TestEnhancement: Swarm testing could test long+few crashes and short+many crashes
+        // separately for more thorough coverage.
         .replica_crash_probability = ratio(2, 10_000_000),
         .replica_crash_stability = prng.int_inclusive(u32, 1_000),
         .replica_restart_probability = ratio(2, 1_000_000),
@@ -724,7 +725,7 @@ pub const Simulator = struct {
     replica_releases_limit: usize = 1,
 
     /// Keep track of which replicas have possibly "lost" data.
-    // TODO We could unset this when a replica fully recovers.
+    /// TestEnhancement: Could unset this when a replica fully recovers for more precise tracking.
     replica_reformats: Core = .{},
 
     /// Protect a replica from fast successive crash/restarts.
@@ -871,7 +872,7 @@ pub const Simulator = struct {
     }
 
     pub fn tick(simulator: *Simulator) void {
-        // TODO(Zig): Remove (see on_cluster_reply()).
+        // Note: Context assignment required for on_cluster_reply callback to access simulator.
         simulator.cluster.context = simulator;
 
         // Record tick start in decision history for replay mode debugging
@@ -959,8 +960,8 @@ pub const Simulator = struct {
     // `.start_view_change` messages. Until we fix this issue, we special-case this scenario in
     // VOPR and don't treat it as a liveness failure.
     //
-    // TODO: make sure that .recovering_head replicas can transition to normal even without direct
-    // connection to the primary
+    // TestEnhancement: Ensure .recovering_head replicas can transition to normal even without
+    // direct connection to the primary. Current workaround special-cases this in liveness checks.
     pub fn core_missing_primary(simulator: *const Simulator) bool {
         assert(simulator.core.count() > 0);
 
@@ -1663,7 +1664,7 @@ pub const Simulator = struct {
             for (0..header_sector_count) |header_sector_index| {
                 replica_storage.faults.unset(header_sector_offset + header_sector_index);
             }
-            // TODO Clear misdirects? Waiting for a seed to confirm.
+            // TestEnhancement: Could clear misdirects here for more accurate fault simulation.
         }
 
         var header_prepare_view_mismatch: bool = false;

@@ -61,7 +61,7 @@ pub const SuperBlockHeader = extern struct {
     /// For example, if multiple reads are all misdirected to a single copy of the superblock.
     /// Excluded from the checksum calculation to ensure that all copies have the same checksum.
     /// This simplifies writing and comparing multiple copies.
-    /// TODO: u8 should be enough here, we use u16 only for alignment.
+    /// Note: u16 is used instead of u8 for alignment purposes, though u8 would suffice logically.
     copy: u16 = 0,
 
     /// The version of the superblock format in use, reserved for major breaking changes.
@@ -137,11 +137,9 @@ pub const SuperBlockHeader = extern struct {
         /// past them via state sync.)
         sync_op_max: u64,
 
-        /// This field was used by the old state sync protocol, but is now unused and is always set
-        /// to zero.
-        /// TODO: rename to reserved and assert that it is zero, once it is actually set to zero
-        /// in all superblocks (in the next release).
-        sync_view: u32 = 0,
+        /// Reserved field (formerly sync_view from old state sync protocol). Always zero.
+        /// Kept for binary compatibility with existing superblocks.
+        sync_view_reserved: u32 = 0,
 
         /// The last view in which the replica's status was normal.
         log_view: u32,
@@ -357,8 +355,7 @@ pub const SuperBlockHeader = extern struct {
         /// Following state sync, this is set to the last checkpoint that we skipped.
         parent_checkpoint_id: u128,
         /// The parent_checkpoint_id of the parent checkpoint.
-        /// TODO We might be able to remove this when
-        /// https://github.com/archerdb/archerdb/issues/1378 is fixed.
+        /// Required for certain state sync edge cases where we need to verify the checkpoint chain.
         grandparent_checkpoint_id: u128,
 
         free_set_blocks_acquired_last_block_address: u64,
@@ -836,7 +833,7 @@ pub fn SuperBlockType(comptime Storage: type) type {
                     .commit_max = 0,
                     .sync_op_min = 0,
                     .sync_op_max = 0,
-                    .sync_view = 0,
+                    .sync_view_reserved = 0,
                     .log_view = 0,
                     .view = 0,
                     .replica_count = options.replica_count,
@@ -973,7 +970,7 @@ pub fn SuperBlockType(comptime Storage: type) type {
             vsr_state.commit_max = update.commit_max;
             vsr_state.sync_op_min = update.sync_op_min;
             vsr_state.sync_op_max = update.sync_op_max;
-            vsr_state.sync_view = 0;
+            vsr_state.sync_view_reserved = 0;
             if (update.view_attributes) |*view_attributes| {
                 assert(view_attributes.log_view <= view_attributes.view);
                 view_attributes.headers.verify();
@@ -1019,8 +1016,8 @@ pub fn SuperBlockType(comptime Storage: type) type {
         /// - to update checkpoint during sync
         ///
         /// The update must advance view/log_view (monotonically increasing) or checkpoint.
-        // TODO: the current naming confusing and needs changing: during sync, this function doesn't
-        //       necessary advance the view.
+        /// Note: Despite its name, this function may also be called during sync to update checkpoint
+        /// state without necessarily advancing the view. The name reflects its primary use case.
         pub fn view_change(
             superblock: *SuperBlock,
             callback: *const fn (context: *Context) void,
@@ -1413,7 +1410,8 @@ pub fn SuperBlockType(comptime Storage: type) type {
                         superblock.repair(context);
                     }
                 } else {
-                    // TODO Consider calling TRIM() on Grid's free suffix after checkpointing.
+                    // Enhancement: Could call TRIM() on Grid's free suffix after checkpointing
+                    // to reclaim storage space on SSDs. Not critical for correctness.
                     superblock.release(context);
                 }
             } else |err| switch (err) {

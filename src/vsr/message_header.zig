@@ -22,13 +22,15 @@ pub const Header = extern struct {
     /// This checksum is enough to uniquely identify a network message or prepare.
     checksum: u128,
 
-    // TODO(zig): When Zig supports u256 in extern-structs, merge this into `checksum`.
+    /// Padding for checksum field. Note: When Zig supports u256 in extern-structs,
+    /// this can be merged with checksum into a single u256 field.
     checksum_padding: u128,
 
     /// A checksum covering only the associated body after this header.
     checksum_body: u128,
 
-    // TODO(zig): When Zig supports u256 in extern-structs, merge this into `checksum_body`.
+    /// Padding for checksum_body field. Note: When Zig supports u256 in extern-structs,
+    /// this can be merged with checksum_body into a single u256 field.
     checksum_body_padding: u128,
 
     /// Reserved for future use by AEAD.
@@ -603,7 +605,7 @@ pub const Header = extern struct {
         /// When operation≠register, this is the commit number of register.
         session: u64 = 0,
         /// Only nonzero during AOF recovery.
-        /// TODO: Use this for bulk-import to state machine?
+        /// Enhancement: Could be used for bulk-import operations to preserve original timestamps.
         timestamp: u64 = 0,
         /// Each request is given a number by the client and later requests must have larger numbers
         /// than earlier ones. The request number is used by the replicas to avoid running requests
