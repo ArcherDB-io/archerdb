@@ -85,15 +85,29 @@ pub const SpilloverMeta = struct {
 };
 
 /// Spillover segment header (binary, fixed 64 bytes)
+/// Layout (aligned for u64):
+///   magic:       [4]u8  @ 0
+///   version:     u16    @ 4
+///   _pad1:       u16    @ 6
+///   entry_count: u32    @ 8
+///   _pad2:       u32    @ 12
+///   total_bytes: u64    @ 16
+///   first_op:    u64    @ 24
+///   last_op:     u64    @ 32
+///   checksum:    u64    @ 40 (using u64 for simpler alignment)
+///   _padding:    [16]u8 @ 48
+///   Total:       64 bytes
 pub const SpilloverSegment = extern struct {
     magic: [4]u8 = .{ 'S', 'P', 'I', 'L' },
     version: u16 = 1,
+    _pad1: u16 = 0,
     entry_count: u32 = 0,
+    _pad2: u32 = 0,
     total_bytes: u64 = 0,
     first_op: u64 = 0,
     last_op: u64 = 0,
-    checksum: u128 = 0, // CRC of all entries in segment
-    _padding: [14]u8 = .{0} ** 14,
+    checksum: u64 = 0, // Wyhash produces u64
+    _padding: [16]u8 = .{0} ** 16,
 
     pub const size = 64;
 
@@ -172,7 +186,12 @@ pub const EntryIterator = struct {
             return self.readEntry();
         }
 
-        // Try to open next segment file
+        // Current segment exhausted - if we had a file open, move to next segment
+        if (self.current_file != null) {
+            self.current_segment_id += 1;
+        }
+
+        // Try to open segment files
         while (self.current_segment_id <= self.max_segment_id) {
             if (self.openNextSegment()) {
                 if (self.entries_remaining > 0) {
@@ -238,8 +257,12 @@ pub const EntryIterator = struct {
             return null;
         }
 
-        // Read body (just return a pointer to the body data - caller must copy if needed)
-        // For now, we use empty body and expect caller to seek/read
+        // Skip past the body data to position for next entry
+        // (body is not returned in iteration - caller must re-read if needed)
+        if (header.body_size > 0) {
+            file.seekBy(@intCast(header.body_size)) catch return null;
+        }
+
         self.entries_remaining -= 1;
 
         return SpillEntry{

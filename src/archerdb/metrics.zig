@@ -859,6 +859,19 @@ pub const Registry = struct {
     pub var region_available: std.atomic.Value(u8) = std.atomic.Value(u8).init(1);
 
     // ========================================================================
+    // Spillover Metrics (Disk-based replication durability)
+    // ========================================================================
+
+    /// Bytes currently on disk spillover
+    pub var replication_spillover_bytes: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
+    /// Number of spillover segments on disk
+    pub var replication_spillover_segments: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
+
+    /// Replication state: 0=healthy, 1=degraded (spillover active), 2=failed
+    pub var replication_state: std.atomic.Value(u8) = std.atomic.Value(u8).init(0);
+
+    // ========================================================================
     // Sharding Metrics
     // ========================================================================
 
@@ -1899,6 +1912,37 @@ pub const Registry = struct {
             );
             try writer.writeAll("\n");
         }
+
+        // ====================================================================
+        // Spillover Metrics (Replication Durability)
+        // ====================================================================
+
+        // Only output spillover metrics if spillover is active or has data
+        const spillover_bytes = replication_spillover_bytes.load(.monotonic);
+        const spillover_state = replication_state.load(.monotonic);
+
+        if (spillover_bytes > 0 or spillover_state > 0) {
+            try writer.writeAll("# HELP archerdb_replication_spillover_bytes " ++
+                "Bytes currently on disk spillover\n");
+            try writer.writeAll("# TYPE archerdb_replication_spillover_bytes gauge\n");
+            try writer.print("archerdb_replication_spillover_bytes {d}\n", .{spillover_bytes});
+            try writer.writeAll("\n");
+
+            try writer.writeAll("# HELP archerdb_replication_spillover_segments " ++
+                "Number of spillover segments on disk\n");
+            try writer.writeAll("# TYPE archerdb_replication_spillover_segments gauge\n");
+            try writer.print("archerdb_replication_spillover_segments {d}\n", .{
+                replication_spillover_segments.load(.monotonic),
+            });
+            try writer.writeAll("\n");
+        }
+
+        // Always output replication state (0=healthy, 1=degraded, 2=failed)
+        try writer.writeAll("# HELP archerdb_replication_state " ++
+            "Replication state: 0=healthy, 1=degraded (spillover active), 2=failed\n");
+        try writer.writeAll("# TYPE archerdb_replication_state gauge\n");
+        try writer.print("archerdb_replication_state {d}\n", .{spillover_state});
+        try writer.writeAll("\n");
 
         // ====================================================================
         // Sharding Metrics

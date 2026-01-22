@@ -109,7 +109,7 @@ pub const S3Client = struct {
         const url_style = config.url_style orelse providers.getRecommendedUrlStyle(provider);
 
         // Create HTTP client
-        var http_client = std.http.Client{ .allocator = allocator };
+        const http_client = std.http.Client{ .allocator = allocator };
 
         // Make owned copies of strings
         const owned_endpoint = try allocator.dupe(u8, config.endpoint);
@@ -269,7 +269,7 @@ pub const S3Client = struct {
         defer req.deinit();
 
         // Send body
-        req.write(body) catch |err| {
+        _ = req.write(body) catch |err| {
             log.warn("HTTP write failed: {}", .{err});
             return error.RequestFailed;
         };
@@ -286,9 +286,9 @@ pub const S3Client = struct {
         };
 
         // Check response status
-        if (req.status != .ok and req.status != .created) {
-            log.warn("S3 PUT failed: status={}", .{req.status});
-            return switch (req.status) {
+        if (req.response.status != .ok and req.response.status != .created) {
+            log.warn("S3 PUT failed: status={}", .{req.response.status});
+            return switch (req.response.status) {
                 .forbidden => error.AccessDenied,
                 .not_found => error.BucketNotFound,
                 .unauthorized => error.AuthenticationFailed,
@@ -300,7 +300,7 @@ pub const S3Client = struct {
         var etag: []const u8 = "";
         var version_id: ?[]const u8 = null;
 
-        var header_iter = req.iterateHeaders();
+        var header_iter = req.response.iterateHeaders();
         while (header_iter.next()) |header| {
             if (std.ascii.eqlIgnoreCase(header.name, "ETag")) {
                 etag = self.allocator.dupe(u8, header.value) catch return error.OutOfMemory;
@@ -416,8 +416,8 @@ pub const S3Client = struct {
         req.finish() catch return error.RequestFailed;
         req.wait() catch return error.RequestFailed;
 
-        if (req.status != .ok) {
-            log.warn("Initiate multipart upload failed: status={}", .{req.status});
+        if (req.response.status != .ok) {
+            log.warn("Initiate multipart upload failed: status={}", .{req.response.status});
             return error.MultipartUploadFailed;
         }
 
@@ -555,18 +555,18 @@ pub const S3Client = struct {
         }) catch return error.ConnectionFailed;
         defer req.deinit();
 
-        req.write(body) catch return error.RequestFailed;
+        _ = req.write(body) catch return error.RequestFailed;
         req.finish() catch return error.RequestFailed;
         req.wait() catch return error.RequestFailed;
 
-        if (req.status != .ok) {
-            log.warn("Upload part failed: status={}", .{req.status});
+        if (req.response.status != .ok) {
+            log.warn("Upload part failed: status={}", .{req.response.status});
             return error.MultipartUploadFailed;
         }
 
         // Extract ETag from response headers
         var etag: []const u8 = "";
-        var header_iter = req.iterateHeaders();
+        var header_iter = req.response.iterateHeaders();
         while (header_iter.next()) |header| {
             if (std.ascii.eqlIgnoreCase(header.name, "ETag")) {
                 etag = self.allocator.dupe(u8, header.value) catch return error.OutOfMemory;
@@ -712,12 +712,12 @@ pub const S3Client = struct {
         }) catch return error.ConnectionFailed;
         defer req.deinit();
 
-        req.write(body) catch return error.RequestFailed;
+        _ = req.write(body) catch return error.RequestFailed;
         req.finish() catch return error.RequestFailed;
         req.wait() catch return error.RequestFailed;
 
-        if (req.status != .ok) {
-            log.warn("Complete multipart upload failed: status={}", .{req.status});
+        if (req.response.status != .ok) {
+            log.warn("Complete multipart upload failed: status={}", .{req.response.status});
             return error.MultipartUploadFailed;
         }
 
@@ -826,8 +826,8 @@ pub const S3Client = struct {
         req.finish() catch return error.RequestFailed;
         req.wait() catch return error.RequestFailed;
 
-        if (req.status != .no_content and req.status != .ok) {
-            log.warn("Abort multipart upload failed: status={}", .{req.status});
+        if (req.response.status != .no_content and req.response.status != .ok) {
+            log.warn("Abort multipart upload failed: status={}", .{req.response.status});
             return error.MultipartUploadFailed;
         }
 

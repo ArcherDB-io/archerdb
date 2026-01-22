@@ -114,7 +114,7 @@ pub fn getServiceName(provider: Provider) []const u8 {
 /// Handles provider-specific URL formatting (path style vs virtual-hosted)
 pub fn buildRequestUrl(
     allocator: Allocator,
-    provider: Provider,
+    _: Provider, // Provider type, currently unused
     endpoint: []const u8,
     bucket: []const u8,
     key: []const u8,
@@ -166,7 +166,7 @@ pub fn buildRequestUrl(
 
             // Find the host part (after scheme, before first /)
             var host_start: usize = 0;
-            var host_end: usize = clean_endpoint.len;
+            const host_end: usize = clean_endpoint.len;
 
             if (has_scheme) {
                 if (std.mem.indexOf(u8, clean_endpoint, "://")) |idx| {
@@ -300,7 +300,7 @@ pub fn extractAwsRegion(endpoint: []const u8) ?[]const u8 {
     // s3.us-east-1.amazonaws.com
     // s3-us-west-2.amazonaws.com
 
-    var end_idx = suffix_idx;
+    const end_idx = suffix_idx;
     var start_idx: usize = 0;
 
     // Find the region by looking for "s3." or "s3-"

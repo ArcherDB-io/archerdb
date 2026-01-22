@@ -135,7 +135,7 @@ pub fn createCanonicalRequest(
     defer allocator.free(canonical_uri);
 
     // Sort headers by lowercase name
-    var sorted_headers = try allocator.alloc(Header, headers.len);
+    const sorted_headers = try allocator.alloc(Header, headers.len);
     defer allocator.free(sorted_headers);
     @memcpy(sorted_headers, headers);
 
@@ -291,7 +291,7 @@ pub fn sign(
     defer signed_headers_buf.deinit();
 
     // Sort headers by lowercase name
-    var sorted_headers = try allocator.alloc(Header, request.headers.len);
+    const sorted_headers = try allocator.alloc(Header, request.headers.len);
     defer allocator.free(sorted_headers);
     @memcpy(sorted_headers, request.headers);
 
@@ -332,7 +332,7 @@ fn encodeUri(allocator: Allocator, uri: []const u8) ![]const u8 {
         if (isUnreservedUriChar(c) or c == '/') {
             try result.append(c);
         } else {
-            try result.appendSlice(&[_]u8{ '%', hexDigit(c >> 4), hexDigit(c & 0xF) });
+            try result.appendSlice(&[_]u8{ '%', hexDigit(@truncate(c >> 4)), hexDigit(@truncate(c & 0xF)) });
         }
     }
 
@@ -347,7 +347,8 @@ fn isUnreservedUriChar(c: u8) bool {
 }
 
 fn hexDigit(n: u4) u8 {
-    return if (n < 10) '0' + n else 'A' + (n - 10);
+    const digits = "0123456789ABCDEF";
+    return digits[n];
 }
 
 /// Format current time as x-amz-date: YYYYMMDD'T'HHMMSS'Z'
