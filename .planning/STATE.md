@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-01-22)
 ## Current Position
 
 Phase: 4 of 10 (Replication)
-Plan: 0 of 3 in current phase
-Status: Ready to plan Phase 4
-Last activity: 2026-01-22 - Phase 3 verified and complete (5/5 must-haves passed)
+Plan: 1 of 3 in current phase
+Status: In progress
+Last activity: 2026-01-22 - Completed 04-01-PLAN.md (S3 uploads)
 
-Progress: [###-------] 30% (3/10 phases complete)
+Progress: [###-------] 33% (3/10 phases complete, 1/3 plans in phase 4)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 12
+- Total plans completed: 13
 - Average duration: 10 min
-- Total execution time: 123 min
+- Total execution time: 138 min
 
 **By Phase:**
 
@@ -30,10 +30,11 @@ Progress: [###-------] 30% (3/10 phases complete)
 | 01 | 3 | 26 min | 9 min |
 | 02 | 4 | 54 min | 14 min |
 | 03 | 5 | 43 min | 9 min |
+| 04 | 1 | 15 min | 15 min |
 
 **Recent Trend:**
-- Last 5 plans: 03-05 (8m), 03-04 (8m), 03-03 (8m), 03-02 (8m), 03-01 (11m)
-- Trend: Stable at ~8 min per plan
+- Last 5 plans: 04-01 (15m), 03-05 (8m), 03-04 (8m), 03-03 (8m), 03-02 (8m)
+- Trend: Slight increase for S3 implementation complexity
 
 *Updated after each plan completion*
 
@@ -49,6 +50,14 @@ Recent decisions affecting current work:
 - Full observability: Enterprise-ready monitoring with metrics, tracing, health endpoints
 - SDK parity: All five languages must have same features and quality
 - No graceful degradation: Demand resources, expose problems through metrics/traces
+
+From 04-01:
+- Generic S3 API supports AWS, MinIO, R2, GCS, Backblaze via provider detection
+- Path style URLs for MinIO/generic, virtual-hosted for AWS
+- R2 uses region=auto for signing per Cloudflare spec
+- 16MB part size for multipart uploads (100MB threshold)
+- 10 retries with exponential backoff ~17 min total before failure
+- Graceful fallback to simulated uploads when credentials unavailable
 
 From 03-05:
 - Stress testing for race condition verification (1000 iterations per CONTEXT.md discretion)
@@ -119,7 +128,7 @@ None.
 ### Blockers/Concerns
 
 From CONCERNS.md - key issues to address:
-- S3 upload stub in replication.zig:828 (Phase 4)
+- ~~S3 upload stub in replication.zig:828 (Phase 4)~~ RESOLVED in 04-01 (real S3 uploads implemented)
 - Disk spillover stub in replication.zig:218 (Phase 4)
 - ~~VSR snapshot verification disabled (Phase 2)~~ PARTIALLY RESOLVED in 02-01 (index/value blocks verified, manifest/free_set/client_sessions deferred)
 - ~~Darwin fsync safety concern (Phase 1)~~ RESOLVED in 01-02
@@ -129,5 +138,5 @@ From CONCERNS.md - key issues to address:
 ## Session Continuity
 
 Last session: 2026-01-22
-Stopped at: Phase 3 complete and verified, ready to plan Phase 4
+Stopped at: Completed 04-01-PLAN.md (S3 uploads)
 Resume file: None
