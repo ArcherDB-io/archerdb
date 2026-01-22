@@ -70,14 +70,14 @@ Plans:
   3. Polygon queries handle convex, concave, holes, and antimeridian crossing correctly
   4. Entity insert/upsert/delete/query all work with proper tombstone handling
   5. RAM index provides O(1) lookup with verified race condition handling (line 1859)
-**Plans**: TBD
+**Plans**: 5 plans
 
 Plans:
-- [ ] 03-01: S2 indexing verification
-- [ ] 03-02: Radius query verification
-- [ ] 03-03: Polygon query verification
-- [ ] 03-04: Entity operations verification
-- [ ] 03-05: RAM index verification
+- [ ] 03-01-PLAN.md - S2 indexing verification (golden vectors from Google S2, determinism)
+- [ ] 03-02-PLAN.md - Radius query verification (Haversine, edge cases, property tests)
+- [ ] 03-03-PLAN.md - Polygon query verification (convex, concave, holes, antimeridian)
+- [ ] 03-04-PLAN.md - Entity operations verification (insert, upsert, delete, tombstones, TTL)
+- [ ] 03-05-PLAN.md - RAM index verification (O(1) lookup, race condition, checkpoint)
 
 ### Phase 4: Replication
 **Goal**: Cross-region replication fully implemented - S3 backend working with all providers, disk spillover prevents data loss
@@ -210,7 +210,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 |-------|----------------|--------|-----------|
 | 1. Platform Foundation | 3/3 | Complete | 2026-01-22 |
 | 2. VSR & Storage | 4/4 | Complete | 2026-01-22 |
-| 3. Core Geospatial | 0/5 | Not started | - |
+| 3. Core Geospatial | 0/5 | Planned | - |
 | 4. Replication | 0/3 | Not started | - |
 | 5. Sharding & Cleanup | 0/3 | Not started | - |
 | 6. SDK Parity | 0/5 | Not started | - |
@@ -225,4 +225,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 *Phase 1 complete: 2026-01-22*
 *Phase 2 planned: 2026-01-22*
 *Phase 2 complete: 2026-01-22*
+*Phase 3 planned: 2026-01-22*
 *Total requirements: 234 | All mapped*
