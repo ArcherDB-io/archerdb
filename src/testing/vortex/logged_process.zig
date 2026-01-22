@@ -46,7 +46,7 @@ pub fn spawn(
     try self.child.spawn();
     errdefer _ = self.child.kill() catch {};
 
-    if (options.setpgid and builtin.os.tag != .windows) {
+    if (options.setpgid) {
         if (std.posix.setpgid(self.child.id, self.child.id)) |_| {
             self.process_group = true;
         } else |err| {
@@ -65,7 +65,6 @@ pub fn destroy(self: *LoggedProcess, allocator: std.mem.Allocator) void {
 pub fn pause(
     self: *LoggedProcess,
 ) !void {
-    comptime assert(builtin.os.tag != .windows);
     assert(self.state == .running);
 
     try std.posix.kill(self.child.id, std.posix.SIG.STOP);
@@ -75,7 +74,6 @@ pub fn pause(
 pub fn unpause(
     self: *LoggedProcess,
 ) !void {
-    comptime assert(builtin.os.tag != .windows);
     assert(self.state == .paused);
 
     try std.posix.kill(self.child.id, std.posix.SIG.CONT);
@@ -92,14 +90,7 @@ pub fn terminate(
     //
     // Uses the same method as `src/testing/tmp_archerdb.zig`.
     // See: https://github.com/ziglang/zig/issues/16820
-    _ = kill: {
-        if (builtin.os.tag == .windows) {
-            const exit_code = 1;
-            break :kill std.os.windows.TerminateProcess(self.child.id, exit_code);
-        } else {
-            break :kill std.posix.kill(self.child.id, std.posix.SIG.KILL);
-        }
-    } catch |err| {
+    std.posix.kill(self.child.id, std.posix.SIG.KILL) catch |err| {
         log.err(
             "failed to kill process {d}: {any}\n",
             .{ self.child.id, err },
@@ -116,10 +107,6 @@ pub fn terminate_graceful(
     timeout: stdx.Duration,
 ) !std.process.Child.Term {
     self.expect_state_in(.{ .running, .paused });
-
-    if (builtin.os.tag == .windows) {
-        return self.terminate();
-    }
 
     const pid_target: std.posix.pid_t =
         if (self.process_group) -self.child.id else self.child.id;

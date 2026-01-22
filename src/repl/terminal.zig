@@ -3,16 +3,11 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const posix = std.posix;
-const windows = std.os.windows;
 
 const builtin = @import("builtin");
 
 pub const Terminal = struct {
-    const ModeStart = switch (builtin.os.tag) {
-        .linux, .macos => posix.termios,
-        .windows => WindowsConsoleMode,
-        else => unreachable,
-    };
+    const ModeStart = posix.termios;
 
     mode_start: ?ModeStart,
     stdin: std.io.BufferedReader(4096, std.fs.File.Reader),
@@ -33,24 +28,7 @@ pub const Terminal = struct {
         const stdin = std.io.getStdIn();
         var mode_start: ?ModeStart = null;
         if (interactive) {
-            if (builtin.os.tag == .windows) {
-                var mode_stdin: u32 = 0;
-                if (windows.kernel32.GetConsoleMode(stdin.handle, &mode_stdin) == 0) {
-                    return windows.unexpectedError(windows.kernel32.GetLastError());
-                }
-
-                var mode_stdout: u32 = 0;
-                if (windows.kernel32.GetConsoleMode(stdout.handle, &mode_stdout) == 0) {
-                    return windows.unexpectedError(windows.kernel32.GetLastError());
-                }
-
-                mode_start = WindowsConsoleMode{
-                    .stdin = mode_stdin,
-                    .stdout = mode_stdout,
-                };
-            } else {
-                mode_start = try posix.tcgetattr(stdin.handle);
-            }
+            mode_start = try posix.tcgetattr(stdin.handle);
         }
 
         self.* = Terminal{
@@ -168,55 +146,19 @@ pub const Terminal = struct {
     pub fn prompt_mode_set(self: *const Terminal) anyerror!void {
         assert(self.mode_start != null);
         const stdin = std.io.getStdIn();
-        if (builtin.os.tag == .windows) {
-            const console_mode = self.mode_start.?;
-
-            var mode_stdin: u32 = console_mode.stdin;
-            mode_stdin &= ~@intFromEnum(WindowsConsoleMode.Input.enable_processed_input);
-            mode_stdin &= ~@intFromEnum(WindowsConsoleMode.Input.enable_line_input);
-            mode_stdin &= ~@intFromEnum(WindowsConsoleMode.Input.enable_echo_input);
-            mode_stdin |= @intFromEnum(WindowsConsoleMode.Input.enable_virtual_terminal_input);
-            if (windows.kernel32.SetConsoleMode(stdin.handle, mode_stdin) == 0) {
-                return windows.unexpectedError(windows.kernel32.GetLastError());
-            }
-
-            var mode_stdout: u32 = console_mode.stdout;
-            mode_stdout |= @intFromEnum(WindowsConsoleMode.Output.enable_processed_output);
-            mode_stdout |= @intFromEnum(WindowsConsoleMode.Output.enable_wrap_at_eol_output);
-            mode_stdout |= @intFromEnum(
-                WindowsConsoleMode.Output.enable_virtual_terminal_processing,
-            );
-            mode_stdout &= ~@intFromEnum(WindowsConsoleMode.Output.disable_newline_auto_return);
-            if (windows.kernel32.SetConsoleMode(std.io.getStdOut().handle, mode_stdout) == 0) {
-                return windows.unexpectedError(windows.kernel32.GetLastError());
-            }
-        } else {
-            var termios_new = self.mode_start.?;
-            termios_new.lflag.ECHO = false;
-            termios_new.lflag.ISIG = false;
-            termios_new.lflag.ICANON = false;
-            termios_new.cc[@intFromEnum(posix.V.MIN)] = 1;
-            termios_new.cc[@intFromEnum(posix.V.TIME)] = 0;
-            try posix.tcsetattr(stdin.handle, .NOW, termios_new);
-        }
+        var termios_new = self.mode_start.?;
+        termios_new.lflag.ECHO = false;
+        termios_new.lflag.ISIG = false;
+        termios_new.lflag.ICANON = false;
+        termios_new.cc[@intFromEnum(posix.V.MIN)] = 1;
+        termios_new.cc[@intFromEnum(posix.V.TIME)] = 0;
+        try posix.tcsetattr(stdin.handle, .NOW, termios_new);
     }
 
     pub fn prompt_mode_unset(self: *const Terminal) !void {
         assert(self.mode_start != null);
-        const stdin = std.io.getStdIn();
-        if (builtin.os.tag == .windows) {
-            const console_mode = self.mode_start.?;
-            if (windows.kernel32.SetConsoleMode(stdin.handle, console_mode.stdin) == 0) {
-                return windows.unexpectedError(windows.kernel32.GetLastError());
-            }
-            const stdout = std.io.getStdOut();
-            if (windows.kernel32.SetConsoleMode(stdout.handle, console_mode.stdout) == 0) {
-                return windows.unexpectedError(windows.kernel32.GetLastError());
-            }
-        } else {
-            const termios = self.mode_start.?;
-            try posix.tcsetattr(std.io.getStdIn().handle, .NOW, termios);
-        }
+        const termios = self.mode_start.?;
+        try posix.tcsetattr(std.io.getStdIn().handle, .NOW, termios);
     }
 
     fn get_cursor_position(
@@ -370,25 +312,6 @@ const UserInput = union(enum) {
     home,
     end,
     unhandled,
-};
-
-const WindowsConsoleMode = struct {
-    stdin: u32,
-    stdout: u32,
-
-    const Input = enum(u32) {
-        enable_processed_input = 0x0001,
-        enable_line_input = 0x0002,
-        enable_echo_input = 0x0004,
-        enable_virtual_terminal_input = 0x0200,
-    };
-
-    const Output = enum(u32) {
-        enable_processed_output = 0x0001,
-        enable_wrap_at_eol_output = 0x0002,
-        enable_virtual_terminal_processing = 0x0004,
-        disable_newline_auto_return = 0x0008,
-    };
 };
 
 test "terminal.zig: Terminal cursor position change is valid" {

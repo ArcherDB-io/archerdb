@@ -18,15 +18,12 @@ const Target = union(enum) {
     const Arch = enum { x86_64, aarch64 };
 
     linux: Arch,
-    windows: Arch,
     macos, // Universal binary packing both x86_64 and aarch64 versions.
 
     pub fn parse(str: []const u8) !Target {
         const targets = [_]struct { []const u8, Target }{
             .{ "x86_64-linux", .{ .linux = .x86_64 } },
             .{ "aarch64-linux", .{ .linux = .aarch64 } },
-            .{ "x86_64-windows", .{ .windows = .x86_64 } },
-            .{ "aarch64-windows", .{ .windows = .aarch64 } },
             .{ "macos", .macos },
         };
 
@@ -81,7 +78,7 @@ pub fn main() !void {
     const target = try Target.parse(cli_args.target);
 
     switch (target) {
-        .windows, .linux => try build_multiversion_single_arch(shell, .{
+        .linux => try build_multiversion_single_arch(shell, .{
             .llvm_objcopy = cli_args.llvm_objcopy,
             .tmp_path = tmp_dir_path,
             .target = target,
@@ -148,7 +145,7 @@ fn build_multiversion_single_arch(shell: *Shell, options: struct {
         .tmp_path = options.tmp_path,
         .target = options.target,
         .arch = switch (options.target) {
-            inline .windows, .linux => |arch| arch,
+            .linux => |arch| arch,
             .macos => unreachable,
         },
         .archerdb_past = options.archerdb_past,
@@ -443,7 +440,6 @@ fn build_multiversion_body(shell: *Shell, options: struct {
     );
 
     const parsed_offsets = switch (options.target) {
-        .windows => try multiversion.parse_pe(past_binary_contents),
         .macos => try multiversion.parse_macho(past_binary_contents),
         .linux => try multiversion.parse_elf(past_binary_contents),
     };
@@ -501,13 +497,11 @@ fn build_multiversion_body(shell: *Shell, options: struct {
         });
     }
 
-    if (builtin.os.tag != .windows) {
-        const old_current_release_fd = try shell.cwd.openFile(old_current_release_output_name, .{
-            .mode = .write_only,
-        });
-        defer old_current_release_fd.close();
-        try old_current_release_fd.chmod(0o777);
-    }
+    const old_current_release_fd = try shell.cwd.openFile(old_current_release_output_name, .{
+        .mode = .write_only,
+    });
+    defer old_current_release_fd.close();
+    try old_current_release_fd.chmod(0o777);
 
     // It's important to verify the previous current_release checksum - it can't be verified at
     // runtime by multiversion.zig, since it relies on objcopy to extract.
@@ -561,7 +555,7 @@ fn build_multiversion_body(shell: *Shell, options: struct {
             multiversion.Release{ .value = past_release },
             @tagName(options.arch),
         });
-        const mode_exec = if (builtin.os.tag == .windows) 0 else 0o777;
+        const mode_exec = 0o777;
         try shell.cwd.writeFile(.{
             .sub_path = past_name,
             .data = past_binary_contents[arch_offsets.body_offset..][past_offset..][0..past_size],
@@ -679,7 +673,7 @@ fn macos_universal_binary_build(
 
     var output_file = try shell.project_root.createFile(output_path, .{
         .exclusive = true,
-        .mode = if (builtin.target.os.tag == .windows) 0 else 0o777,
+        .mode = 0o777,
     });
     defer output_file.close();
 
@@ -758,10 +752,6 @@ fn macos_universal_binary_extract(
 fn self_check_enabled(target: Target) bool {
     return switch (target) {
         .linux => |arch| builtin.target.os.tag == .linux and switch (arch) {
-            .x86_64 => builtin.target.cpu.arch == .x86_64,
-            .aarch64 => builtin.target.cpu.arch == .aarch64,
-        },
-        .windows => |arch| builtin.target.os.tag == .windows and switch (arch) {
             .x86_64 => builtin.target.cpu.arch == .x86_64,
             .aarch64 => builtin.target.cpu.arch == .aarch64,
         },

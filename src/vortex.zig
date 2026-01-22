@@ -43,11 +43,6 @@ const WorkloadArgs = struct {
 pub fn main() !void {
     comptime assert(builtin.target.cpu.arch.endian() == .little);
 
-    if (builtin.os.tag == .windows) {
-        log.err("vortex is not supported for Windows", .{});
-        return error.NotSupported;
-    }
-
     var gpa_allocator = std.heap.GeneralPurposeAllocator(.{}){};
     defer switch (gpa_allocator.deinit()) {
         .ok => {},

@@ -169,11 +169,6 @@ const Fuzzer = enum {
 };
 
 pub fn main(shell: *Shell, gpa: std.mem.Allocator, cli_args: CLIArgs) !void {
-    if (builtin.os.tag == .windows) {
-        log.err("cfo is not supported on Windows", .{});
-        return error.NotSupported;
-    }
-
     if (cli_args.budget.ns == 0) fatal("--budget: must be greater than zero", .{});
     if (cli_args.refresh.ns == 0) fatal("--refresh: must be greater than zero", .{});
     if (cli_args.timeout.ns == 0) fatal("--timeout: must be greater than zero", .{});

@@ -213,11 +213,6 @@ const quine =
     \\
     \\        const entry_path = try arena.dupe(u8, entry.path);
     \\
-    \\        // Replace the path separator to be Unix-style, for consistency on Windows.
-    \\        // Don't use entry.path directly!
-    \\        if (builtin.os.tag == .windows) {
-    \\            std.mem.replaceScalar(u8, entry_path, '\\', '/');
-    \\        }
     \\
     \\        if (!std.mem.endsWith(u8, entry_path, ".zig")) continue;
     \\
@@ -348,11 +343,6 @@ fn unit_test_files(arena: std.mem.Allocator, src_dir: std.fs.Dir) ![]const []con
 
         const entry_path = try arena.dupe(u8, entry.path);
 
-        // Replace the path separator to be Unix-style, for consistency on Windows.
-        // Don't use entry.path directly!
-        if (builtin.os.tag == .windows) {
-            std.mem.replaceScalar(u8, entry_path, '\\', '/');
-        }
 
         if (!std.mem.endsWith(u8, entry_path, ".zig")) continue;
 

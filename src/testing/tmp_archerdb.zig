@@ -208,12 +208,7 @@ const StreamReader = struct {
         // 2. Wait until the thread exits.
         // 3. Close stderr file descriptor.
         // TODO(Zig) https://github.com/ziglang/zig/issues/16820
-        if (builtin.os.tag == .windows) {
-            const exit_code = 1;
-            std.os.windows.TerminateProcess(process.id, exit_code) catch {};
-        } else {
-            std.posix.kill(process.id, std.posix.SIG.TERM) catch {};
-        }
+        std.posix.kill(process.id, std.posix.SIG.TERM) catch {};
         assert(process.stderr != null);
         self.thread.join();
         _ = process.wait() catch unreachable;

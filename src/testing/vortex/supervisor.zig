@@ -71,11 +71,6 @@ pub const CLIArgs = struct {
 };
 
 pub fn main(allocator: std.mem.Allocator, args: CLIArgs) !void {
-    if (builtin.os.tag == .windows) {
-        log.err("vortex is not supported on Windows", .{});
-        return error.NotSupported;
-    }
-
     var namespaces_enabled = false;
     if (builtin.os.tag == .linux) {
         namespaces_enabled = true;

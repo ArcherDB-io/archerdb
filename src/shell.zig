@@ -251,12 +251,10 @@ pub fn file_exists(shell: *Shell, path: []const u8) bool {
 }
 
 pub fn file_make_executable(shell: *Shell, path: []const u8) !void {
-    if (builtin.os.tag != .windows) {
-        const fd = try shell.cwd.openFile(path, .{ .mode = .read_write });
-        defer fd.close();
+    const fd = try shell.cwd.openFile(path, .{ .mode = .read_write });
+    defer fd.close();
 
-        try fd.chmod(0o777);
-    }
+    try fd.chmod(0o777);
 }
 
 fn subdir_exists(dir: std.fs.Dir, path: []const u8) !bool {
@@ -1036,9 +1034,7 @@ pub fn unzip_executable(
     defer zip_extracted.close();
 
     // Zig's std.zip.extract doesn't handle permissions.
-    if (builtin.os.tag != .windows) {
-        try zip_extracted.chmod(0o755);
-    }
+    try zip_extracted.chmod(0o755);
 }
 
 fn unix_to_dos_timestamp(date_time: stdx.DateTimeUTC) struct { time: u16, date: u16 } {
