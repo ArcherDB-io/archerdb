@@ -10,29 +10,29 @@ See: .planning/PROJECT.md (updated 2026-01-22)
 ## Current Position
 
 Phase: 2 of 10 (VSR & Storage)
-Plan: 2 of 4 in current phase
+Plan: 3 of 4 in current phase
 Status: In progress
-Last activity: 2026-01-22 - Completed 02-02-PLAN.md (Durability Verification)
+Last activity: 2026-01-22 - Completed 02-03-PLAN.md (LSM Optimization)
 
-Progress: [██--------] 17% (5/29 plans complete)
+Progress: [██--------] 21% (6/29 plans complete)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 5
+- Total plans completed: 6
 - Average duration: 11 min
-- Total execution time: 64 min
+- Total execution time: 72 min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 01 | 3 | 26 min | 9 min |
-| 02 | 2 | 38 min | 19 min |
+| 02 | 3 | 46 min | 15 min |
 
 **Recent Trend:**
-- Last 5 plans: 02-02 (31m), 02-01 (7m), 01-03 (6m), 01-02 (5m), 01-01 (15m)
-- Trend: Stable (02-02 longer due to comprehensive VOPR verification runs)
+- Last 5 plans: 02-03 (8m), 02-02 (31m), 02-01 (7m), 01-03 (6m), 01-02 (5m)
+- Trend: Stable
 
 *Updated after each plan completion*
 
@@ -76,6 +76,12 @@ From 02-02:
 - dm-flakey for Linux-only power-loss testing, SIGKILL for cross-platform
 - Decision history with circular buffer of 1000 entries for debugging
 
+From 02-03:
+- Key-range filtering instead of bloom filters - ArcherDB uses index block min/max keys
+- Enterprise tier: 7 levels, growth factor 8, 64 compaction ops, 512KB blocks
+- Mid-tier: 6 levels, growth factor 10, 32 compaction ops, 256KB blocks
+- Compaction has dedicated IOPS (18 read, 17 write) - cannot starve foreground ops
+
 ### Pending Todos
 
 None.
@@ -93,5 +99,5 @@ From CONCERNS.md - key issues to address:
 ## Session Continuity
 
 Last session: 2026-01-22
-Stopped at: Completed 02-02-PLAN.md (Durability Verification)
+Stopped at: Completed 02-03-PLAN.md (LSM Optimization)
 Resume file: None
