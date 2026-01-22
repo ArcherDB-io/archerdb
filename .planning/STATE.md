@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-01-22)
 ## Current Position
 
 Phase: 5 of 10 (Sharding & Cleanup)
-Plan: 4 of 4 in current phase
-Status: Plan 05-04 complete
-Last activity: 2026-01-22 - Plan 05-04 complete (tiering integration)
+Plan: 4 of 5 in current phase
+Status: Plan 05-03 complete (05-04 already complete)
+Last activity: 2026-01-22 - Plan 05-03 complete (REPL, TLS revocation, backup scheduling)
 
 Progress: [#####-----] 50% (5/10 phases complete)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 18
+- Total plans completed: 19
 - Average duration: 12 min
-- Total execution time: 222 min
+- Total execution time: 241 min
 
 **By Phase:**
 
@@ -31,11 +31,11 @@ Progress: [#####-----] 50% (5/10 phases complete)
 | 02 | 4 | 54 min | 14 min |
 | 03 | 5 | 43 min | 9 min |
 | 04 | 3 | 47 min | 16 min |
-| 05 | 3 | 52 min | 17 min |
+| 05 | 4 | 71 min | 18 min |
 
 **Recent Trend:**
-- Last 5 plans: 05-04 (9m), 05-02 (25m), 05-01 (18m), 04-03 (15m), 04-02 (17m)
-- Trend: Tiering integration completed efficiently
+- Last 5 plans: 05-03 (19m), 05-04 (9m), 05-02 (25m), 05-01 (18m), 04-03 (15m)
+- Trend: Stub implementations completed with full functionality
 
 *Updated after each plan completion*
 
@@ -51,6 +51,12 @@ Recent decisions affecting current work:
 - Full observability: Enterprise-ready monitoring with metrics, tracing, health endpoints
 - SDK parity: All five languages must have same features and quality
 - No graceful degradation: Demand resources, expose problems through metrics/traces
+
+From 05-03:
+- REPL transaction commands show informational message (transactions not in scope)
+- TLS CRL/OCSP uses simplified ASN.1 parsing (full X.509 parsing deferred)
+- Backup scheduling uses epoch-based timestamp calculation
+- Cron expression parser supports 5-field format with all standard field specs
 
 From 05-04:
 - Tiering disabled by default (opt-in via tiering_enabled config flag)
@@ -169,9 +175,12 @@ From CONCERNS.md - key issues to address:
 - ~~Deprecated --aof flag (Phase 5)~~ RESOLVED in 05-02 (removed, only --aof-file remains)
 - ~~Production TODOs in VSR/storage/LSM (Phase 5)~~ RESOLVED in 05-02 (converted to Enhancement:/Note:/DocTODO:)
 - ~~Tiering integration with GeoStateMachine (Phase 5)~~ RESOLVED in 05-04 (full integration with metrics)
+- ~~REPL stub (Phase 5)~~ RESOLVED in 05-03 (full interactive REPL implemented)
+- ~~TLS CRL/OCSP stub (Phase 5)~~ RESOLVED in 05-03 (revocation checking implemented)
+- ~~Backup scheduling stub (Phase 5)~~ RESOLVED in 05-03 (cron and interval support)
 
 ## Session Continuity
 
 Last session: 2026-01-22
-Stopped at: Plan 05-04 complete (Phase 5 complete)
+Stopped at: Plan 05-03 complete
 Resume file: None
