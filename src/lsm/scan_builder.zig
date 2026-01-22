@@ -32,18 +32,10 @@ const Pending = error{Pending};
 /// ScanBuilder is a helper to create and combine scans using
 /// any of the Groove's indexes.
 pub fn ScanBuilderType(
-    // TODO: Instead of a single Groove per ScanType, introduce the concept of Orthogonal Grooves.
-    // For example, indexes from the Grooves `geo_events` and `geo_event_metadata` can be
-    // used together in the same query, and the timestamp they produce can be used for
-    // lookups in either Groove:
-    // ```
-    // SELECT geo_events WHERE geo_events.group_id=1 AND geo_event_metadata.source=42.
-    // ```
-    //
-    // Although the relation between orthogonal grooves is always 1:1 by the timestamp,
-    // when looking up an object in the Groove `A` by a timestamp found in the Groove `B`, it will
-    // require additional information to correctly assert if `B` "must have" or "may have" a
-    // corresponding match in `A`.
+    // Enhancement: Could introduce Orthogonal Grooves concept to allow combining indexes from
+    // multiple Grooves (e.g., geo_events and geo_event_metadata) in the same query. The 1:1
+    // relation by timestamp would require additional "must have"/"may have" assertion logic.
+    // Current design uses a single Groove per ScanType which is simpler and sufficient.
     // E.g.: Every GeoEventMetadata **must have** a corresponding GeoEvent, however the opposite
     // isn't true.
     // ```

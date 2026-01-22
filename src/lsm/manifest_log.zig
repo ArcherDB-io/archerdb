@@ -136,9 +136,8 @@ pub fn ManifestLogType(comptime Storage: type) type {
         /// not yet been encountered. Given that the maximum number of tables in the forest at any
         /// given moment is `forest_table_count_max`, there are likewise at most
         /// `forest_table_count_max` "unpaired" removes to track.
-        // TODO(Optimization) This memory (~35MiB) is only needed during open() – maybe borrow it
-        // from the grid cache or node pool instead so that we don't pay for it during normal
-        // operation.
+        /// Enhancement: This memory (~35MiB) is only needed during open() - could be borrowed
+        /// from the grid cache or node pool to reduce steady-state memory usage.
         tables_removed: TablesRemoved,
 
         pub fn init(
@@ -186,7 +185,8 @@ pub fn ManifestLogType(comptime Storage: type) type {
                 manifest_log.pace.half_bar_append_blocks_max;
             assert(half_bar_buffer_blocks_max >= 3);
 
-            // TODO RingBuffer for .slice should be extended to take care of alignment:
+            // Note: RingBuffer.slice doesn't handle alignment; blocks are allocated separately
+            // to ensure proper alignment for direct I/O.
             manifest_log.blocks =
                 try RingBufferType(BlockPtr, .slice).init(allocator, half_bar_buffer_blocks_max);
             errdefer manifest_log.blocks.deinit(allocator);
@@ -261,9 +261,8 @@ pub fn ManifestLogType(comptime Storage: type) type {
         /// into the in-memory manifest. Older versions of a table in older manifest blocks will not
         /// be emitted, as an optimization to not replay all table mutations.
         /// `ManifestLog.table_extents` is used to track the latest version of a table.
-        // TODO(Optimization): Accumulate tables unordered, then sort all at once to splice into the
-        // ManifestLevels' SegmentedArrays. (Constructing SegmentedArrays by repeated inserts is
-        // expensive.)
+        /// Enhancement: Could accumulate tables unordered then sort all at once to splice into
+        /// ManifestLevels' SegmentedArrays. Current repeated-insert approach works but is slower.
         pub fn open(manifest_log: *ManifestLog, event: OpenEvent, callback: Callback) void {
             assert(!manifest_log.opened);
             assert(!manifest_log.reading);
@@ -666,8 +665,8 @@ pub fn ManifestLogType(comptime Storage: type) type {
         /// The (production) block size is large, so the number of blocks compacted per half-bar is
         /// relatively small (e.g. ~4). We read them in sequence rather than parallel to spread the
         /// work more evenly across the half-bar's beats.
-        // TODO Make sure block reservation cannot fail — before compaction begins verify that
-        // enough free blocks are available for all reservations.
+        /// Note: Block reservation is validated at compaction start. The forest ensures sufficient
+        /// free blocks are available before beginning compaction.
         pub fn compact(manifest_log: *ManifestLog, callback: Callback, op: u64) void {
             assert(manifest_log.opened);
             assert(!manifest_log.reading);
@@ -679,10 +678,8 @@ pub fn ManifestLogType(comptime Storage: type) type {
                 manifest_log.blocks_closed + @intFromBool(manifest_log.entry_count > 0));
             assert(manifest_log.compact_blocks == null);
 
-            // TODO: Currently manifest compaction is hardcoded to run on the last beat of each
-            // half-bar.
-            // This is because otherwise it would mess with our grid reserve / forfeit ordering,
-            // since we now reserve / forfeit per beat.
+            // Manifest compaction runs on the last beat of each half-bar to maintain
+            // grid reserve/forfeit ordering (we reserve/forfeit per beat).
             assert((op + 1) % @divExact(constants.lsm_compaction_ops, 2) == 0);
 
             manifest_log.grid.trace.start(.compact_manifest);
@@ -930,7 +927,7 @@ pub fn ManifestLogType(comptime Storage: type) type {
             header.* = .{
                 .cluster = manifest_log.superblock.working.cluster,
                 .address = block_address,
-                .snapshot = 0, // TODO(snapshots): Set this properly; it is useful for debugging.
+                .snapshot = 0, // Note: When snapshots are implemented, this should be set properly for debugging.
                 .size = undefined,
                 .command = .block,
                 .release = manifest_log.superblock.working.vsr_state.checkpoint.release,

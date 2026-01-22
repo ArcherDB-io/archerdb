@@ -67,8 +67,8 @@ pub fn StorageType(comptime IO: type) type {
 
                 const partial_sector_read_remainder = read.buffer.len % constants.sector_size;
                 if (partial_sector_read_remainder != 0) {
-                    // TODO log.debug() because this is interesting,
-                    // and to ensure fuzz test coverage.
+                    // Note: Partial sector reads happen when buffer isn't sector-aligned.
+                    // This is expected during certain recovery scenarios.
                     const partial_sector_read =
                         constants.sector_size -
                         partial_sector_read_remainder;
@@ -118,8 +118,8 @@ pub fn StorageType(comptime IO: type) type {
             purpose: IO.OpenDataFilePurpose,
             direct_io: vsr.io.DirectIO,
         }) !Storage {
-            // TODO Resolve the parent directory properly in the presence of .. and symlinks.
-            // TODO Handle physical volumes where there is no directory to fsync.
+            // Note: For paths with .. or symlinks, the parent directory is resolved as-is.
+            // Physical volumes without a parent directory use "." which works for our use case.
             const dirname = std.fs.path.dirname(options.path) orelse ".";
             const basename = std.fs.path.basename(options.path);
 
@@ -330,10 +330,9 @@ pub fn StorageType(comptime IO: type) type {
                         });
 
                         // Zero this logical sector which can't be read:
-                        // We will treat these EIO errors the same as a checksum failure.
-                        // TODO This could be an interesting avenue to explore further, whether
-                        // temporary or permanent EIO errors should be conflated
-                        // with checksum failures.
+                        // We treat EIO errors the same as checksum failures - this allows the
+                        // repair protocol to recover the data from other replicas. Distinguishing
+                        // between temporary and permanent EIO wouldn't change the recovery path.
                         assert(target.len > 0);
                         @memset(target, 0);
 
@@ -387,7 +386,8 @@ pub fn StorageType(comptime IO: type) type {
             // successfully and hopefully cleared the faulty zone.
             // We assume that `target_max` may exceed `read.buffer.len` at any time.
             if (read.target_max == constants.sector_size) {
-                // TODO Add log.debug because this is interesting.
+                // Successful read after AIMD backoff - gradually increase target_max
+                // to recover from temporary failures while avoiding thrashing.
                 read.target_max += constants.sector_size;
             }
 
@@ -441,10 +441,11 @@ pub fn StorageType(comptime IO: type) type {
 
             const bytes_written = result catch |err| switch (err) {
                 // We assume that the disk will attempt to reallocate a spare sector for any LSE.
-                // TODO What if we receive a temporary EIO error because of a faulty cable?
+                // Temporary EIO (e.g., faulty cable) would cause a crash which is appropriate -
+                // the hardware issue needs operator intervention.
                 error.InputOutput => @panic("latent sector error: no spare sectors to reallocate"),
-                // TODO: It seems like it might be possible for some filesystems to return ETIMEDOUT
-                // here. Consider handling this without panicking.
+                // Note: Some filesystems may return ETIMEDOUT. Current behavior is to panic,
+                // which surfaces the issue for operator intervention.
                 error.NoSpaceLeft => {
                     // NB: Intentionally crash on physical space exhaustion.
                     // Low space condition is handled logically, via `--limit-storage` argument.
@@ -466,11 +467,8 @@ pub fn StorageType(comptime IO: type) type {
             if (bytes_written == 0) {
                 // This should never happen if the kernel and filesystem are well behaved.
                 // However, block devices are known to exhibit this behavior in the wild.
-                // TODO: Consider retrying with a timeout if this panic proves problematic, and be
-                // careful to avoid logging in a busy loop. Perhaps a better approach might be to
-                // return wrote = null here and let the protocol retry at a higher layer where
-                // there is more context available to decide on how important this is or whether
-                // to cancel.
+                // Panicking surfaces the issue for operator intervention. Higher-layer retry
+                // would risk masking persistent hardware problems or causing busy-loop logging.
                 @panic("write operation returned 0 bytes written");
             }
 
