@@ -52,6 +52,36 @@
 //! - RAD-02: checkDistance returns false for all points outside radius
 //! - RAD-03: Boundary inclusive (points at exact radius pass filter)
 //! - RAD-04: Uses Haversine great-circle distance formula
+//!
+//! ## Point-in-Polygon Implementation
+//!
+//! Polygon containment uses the ray-casting algorithm:
+//! - Cast a horizontal ray from the test point to infinity
+//! - Count the number of polygon edge crossings
+//! - Odd count = inside, even count = outside
+//!
+//! Algorithm complexity: O(n) where n = number of polygon vertices.
+//! No preprocessing or spatial indexing - simple iteration over edges.
+//!
+//! Winding order requirements (GeoJSON convention):
+//! - Exterior ring: counter-clockwise (CCW) - positive signed area
+//! - Interior rings (holes): clockwise (CW) - negative signed area
+//!
+//! Use `S2.isCounterClockwise()` and `S2.isClockwise()` to verify winding.
+//!
+//! Hole handling (`checkPolygonWithHoles()`):
+//! 1. Check if point is inside outer ring
+//! 2. If inside outer, check if point is inside any hole
+//! 3. Point passes if inside outer AND outside all holes
+//!
+//! ## Polygon Query Requirements Traceability
+//!
+//! This module implements polygon query post-filter requirements:
+//! - POLY-01: checkPolygon returns true for all points inside polygon
+//! - POLY-02: checkPolygon returns false for all points outside polygon
+//! - POLY-03: Convex polygons tested (triangle, square, hexagon)
+//! - POLY-04: Concave polygons tested (L-shape, U-shape, star)
+//! - POLY-05: Polygons with holes handled via checkPolygonWithHoles
 
 const std = @import("std");
 const s2_index = @import("s2_index.zig");
