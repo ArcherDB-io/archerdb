@@ -104,14 +104,16 @@ Plans:
   1. Consistent hashing distributes entities evenly, jump hash matches across all client versions
   2. Cross-shard queries fan out and aggregate correctly
   3. Deprecated --aof flag removed
-  4. All 181 TODO comments resolved or converted to tracking issues
+  4. All TODO comments resolved or converted to documented enhancements
   5. All stubs implemented: REPL, state_machine_tests, tiering.zig, backup_config.zig, TLS CRL/OCSP, CDC AMQP, CSV import
-**Plans**: TBD
+**Plans**: 5 plans
 
 Plans:
-- [ ] 05-01: Sharding verification
-- [ ] 05-02: Code cleanup - TODOs and FIXMEs
-- [ ] 05-03: Stub implementation
+- [ ] 05-01-PLAN.md - Sharding verification (golden vectors, distribution tests, cross-SDK parity)
+- [ ] 05-02-PLAN.md - Code cleanup (--aof removal, TODO/FIXME resolution)
+- [ ] 05-03-PLAN.md - REPL, TLS CRL/OCSP, and backup scheduling implementation
+- [ ] 05-04-PLAN.md - Tiering integration with LSM and state machine
+- [ ] 05-05-PLAN.md - VOPR extension, CSV import tool, final stub cleanup
 
 ### Phase 6: SDK Parity
 **Goal**: All five SDKs at feature and quality parity - same operations, same error handling, same documentation, same test coverage
@@ -212,7 +214,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | 2. VSR & Storage | 4/4 | Complete | 2026-01-22 |
 | 3. Core Geospatial | 5/5 | Complete | 2026-01-22 |
 | 4. Replication | 3/3 | Complete | 2026-01-22 |
-| 5. Sharding & Cleanup | 0/3 | Not started | - |
+| 5. Sharding & Cleanup | 0/5 | Planned | - |
 | 6. SDK Parity | 0/5 | Not started | - |
 | 7. Observability Core | 0/4 | Not started | - |
 | 8. Observability Dashboards | 0/2 | Not started | - |
@@ -229,4 +231,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 *Phase 3 complete: 2026-01-22*
 *Phase 4 planned: 2026-01-22*
 *Phase 4 complete: 2026-01-22*
+*Phase 5 planned: 2026-01-22*
 *Total requirements: 234 | All mapped*
