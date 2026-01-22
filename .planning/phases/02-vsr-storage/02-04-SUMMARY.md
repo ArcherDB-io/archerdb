@@ -41,14 +41,14 @@ NIST AES-256-GCM and Aegis-256 test vectors added with comprehensive key rotatio
 
 | Task | Commit | Description |
 |------|--------|-------------|
-| 1 | 61334d1 | test(02-04): add NIST test vector validation for encryption |
+| 1 | a4c0e18 | test(02-04): add NIST test vector validation for encryption |
 | 2 | 8602c3b | docs(02-04): create key rotation runbook and operator guide |
 | 3 | 5b77147 | docs(02-04): document threat model and security appendix |
 
 ## Changes Made
 
 ### Task 1: NIST Test Vector Validation
-**Files:** src/encryption.zig (+875 lines)
+**Files:** src/encryption.zig (+471 lines)
 
 Added comprehensive test vector validation:
 - **NIST SP 800-38D Test Case 14**: AES-256-GCM with 96-bit IV, no AAD
