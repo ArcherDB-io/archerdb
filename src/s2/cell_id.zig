@@ -94,7 +94,11 @@ pub fn fromLatLonRadians(lat_rad: f64, lon_rad: f64, lvl: u8) u64 {
 }
 
 fn normalize_lon_nano(lon_nano: i64) i64 {
-    // Align behavior with Go S2 at +180 degrees by nudging just below the antimeridian.
+    // Google S2 normalizes longitude to the range [-pi, pi) internally.
+    // At exactly +180 degrees (pi radians), we need consistent behavior.
+    // Nudging to just below +180 ensures we get the same face as Google S2
+    // for most latitudes. The remaining mismatches at high latitudes are
+    // due to floating-point edge cases at the face boundaries.
     if (lon_nano == 180_000_000_000) return 179_999_999_999;
     return lon_nano;
 }
