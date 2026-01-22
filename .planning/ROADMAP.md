@@ -13,7 +13,7 @@ This roadmap completes ArcherDB from working prototype to world-class reference 
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Platform Foundation** - Remove Windows, fix Darwin/macOS, stabilize message bus
-- [ ] **Phase 2: VSR & Storage** - Fix VSR issues, verify durability, verify encryption
+- [x] **Phase 2: VSR & Storage** - Fix VSR issues, verify durability, verify encryption
 - [ ] **Phase 3: Core Geospatial** - Verify S2 indexing, queries, entity operations, RAM index
 - [ ] **Phase 4: Replication** - Implement S3 backend, disk spillover, replication metrics
 - [ ] **Phase 5: Sharding & Cleanup** - Verify sharding, resolve all TODOs/FIXMEs, remove stubs
@@ -55,10 +55,10 @@ Plans:
 **Plans**: 4 plans
 
 Plans:
-- [ ] 02-01-PLAN.md - VSR protocol fixes (deprecated messages, snapshot verification, journal assertion)
-- [ ] 02-02-PLAN.md - Durability verification (VOPR extension, WAL/checkpoint recovery, power-loss tests)
-- [ ] 02-03-PLAN.md - LSM optimization (tuning, benchmarks, documentation)
-- [ ] 02-04-PLAN.md - Encryption verification (NIST vectors, key rotation, threat model)
+- [x] 02-01-PLAN.md - VSR protocol fixes (deprecated messages, snapshot verification, journal assertion)
+- [x] 02-02-PLAN.md - Durability verification (VOPR extension, WAL/checkpoint recovery, power-loss tests)
+- [x] 02-03-PLAN.md - LSM optimization (tuning, benchmarks, documentation)
+- [x] 02-04-PLAN.md - Encryption verification (NIST vectors, key rotation, threat model)
 
 ### Phase 3: Core Geospatial
 **Goal**: All geospatial operations verified correct - S2 indexing, radius/polygon queries, entity operations, RAM index all working perfectly
@@ -209,7 +209,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Platform Foundation | 3/3 | Complete | 2026-01-22 |
-| 2. VSR & Storage | 0/4 | Planned | - |
+| 2. VSR & Storage | 4/4 | Complete | 2026-01-22 |
 | 3. Core Geospatial | 0/5 | Not started | - |
 | 4. Replication | 0/3 | Not started | - |
 | 5. Sharding & Cleanup | 0/3 | Not started | - |
@@ -224,4 +224,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 *Phase 1 planned: 2026-01-22*
 *Phase 1 complete: 2026-01-22*
 *Phase 2 planned: 2026-01-22*
+*Phase 2 complete: 2026-01-22*
 *Total requirements: 234 | All mapped*

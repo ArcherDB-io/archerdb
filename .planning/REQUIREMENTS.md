@@ -67,37 +67,37 @@ Everything below must be complete before release. No versions, no deferrals.
 
 ### Core Storage - LSM Tree (LSM)
 
-- [ ] **LSM-01**: LSM tree persists all committed data
-- [ ] **LSM-02**: LSM compaction merges levels correctly
-- [ ] **LSM-03**: LSM compaction eliminates tombstones properly
-- [ ] **LSM-04**: LSM range scans return correct ordered results
-- [ ] **LSM-05**: LSM handles write amplification within bounds
-- [ ] **LSM-06**: LSM compaction tuning parameters optimized (constants.zig)
-- [ ] **LSM-07**: LSM performance under sustained write load
-- [ ] **LSM-08**: LSM recovery from crash is correct
+- [x] **LSM-01**: LSM tree persists all committed data
+- [x] **LSM-02**: LSM compaction merges levels correctly
+- [x] **LSM-03**: LSM compaction eliminates tombstones properly
+- [x] **LSM-04**: LSM range scans return correct ordered results
+- [x] **LSM-05**: LSM handles write amplification within bounds
+- [x] **LSM-06**: LSM compaction tuning parameters optimized (constants.zig)
+- [x] **LSM-07**: LSM performance under sustained write load
+- [x] **LSM-08**: LSM recovery from crash is correct
 
 ### Core Storage - Durability (DUR)
 
-- [ ] **DUR-01**: Write-ahead log captures all mutations
-- [ ] **DUR-02**: Checkpoint captures complete consistent state
-- [ ] **DUR-03**: Recovery from checkpoint restores full state
-- [ ] **DUR-04**: Recovery from WAL replays uncommitted transactions
-- [ ] **DUR-05**: Fsync guarantees data on disk (F_FULLFSYNC on Darwin)
-- [ ] **DUR-06**: No data loss under clean shutdown
-- [ ] **DUR-07**: No data loss under crash (within WAL window)
-- [ ] **DUR-08**: Encryption at rest protects all persisted data
+- [x] **DUR-01**: Write-ahead log captures all mutations
+- [x] **DUR-02**: Checkpoint captures complete consistent state
+- [x] **DUR-03**: Recovery from checkpoint restores full state
+- [x] **DUR-04**: Recovery from WAL replays uncommitted transactions
+- [x] **DUR-05**: Fsync guarantees data on disk (F_FULLFSYNC on Darwin)
+- [x] **DUR-06**: No data loss under clean shutdown
+- [x] **DUR-07**: No data loss under crash (within WAL window)
+- [x] **DUR-08**: Encryption at rest protects all persisted data
 
 ### Core Consensus - VSR Protocol (VSR)
 
-- [ ] **VSR-01**: VSR achieves consensus across replica quorum
-- [ ] **VSR-02**: VSR handles view changes correctly
-- [ ] **VSR-03**: VSR handles replica failures and recovery
-- [ ] **VSR-04**: VSR maintains linearizable consistency
-- [ ] **VSR-05**: VSR snapshot verification enabled and working
-- [ ] **VSR-06**: VSR journal prepare checksums verified
-- [ ] **VSR-07**: VSR deprecated message types removed
-- [ ] **VSR-08**: VSR handles network partitions correctly
-- [ ] **VSR-09**: VSR state machine determinism verified
+- [x] **VSR-01**: VSR achieves consensus across replica quorum
+- [x] **VSR-02**: VSR handles view changes correctly
+- [x] **VSR-03**: VSR handles replica failures and recovery
+- [x] **VSR-04**: VSR maintains linearizable consistency
+- [x] **VSR-05**: VSR snapshot verification enabled and working
+- [x] **VSR-06**: VSR journal prepare checksums verified
+- [x] **VSR-07**: VSR deprecated message types removed
+- [x] **VSR-08**: VSR handles network partitions correctly
+- [x] **VSR-09**: VSR state machine determinism verified
 
 ### Replication - Cross-Region (REPL)
 
@@ -144,13 +144,13 @@ Everything below must be complete before release. No versions, no deferrals.
 
 ### Encryption (ENC)
 
-- [ ] **ENC-01**: AES-256-GCM encryption verified correct
-- [ ] **ENC-02**: Aegis-256 encryption verified correct
-- [ ] **ENC-03**: Key wrapping (KEK/DEK) implemented correctly
-- [ ] **ENC-04**: Key rotation procedure documented and tested
-- [ ] **ENC-05**: Hardware AES-NI detection works on all platforms
-- [ ] **ENC-06**: Software fallback works when AES-NI unavailable
-- [ ] **ENC-07**: Encrypted file format versioned for migration
+- [x] **ENC-01**: AES-256-GCM encryption verified correct
+- [x] **ENC-02**: Aegis-256 encryption verified correct
+- [x] **ENC-03**: Key wrapping (KEK/DEK) implemented correctly
+- [x] **ENC-04**: Key rotation procedure documented and tested
+- [x] **ENC-05**: Hardware AES-NI detection works on all platforms
+- [x] **ENC-06**: Software fallback works when AES-NI unavailable
+- [x] **ENC-07**: Encrypted file format versioned for migration
 
 ### SDK - C (SDKC)
 
