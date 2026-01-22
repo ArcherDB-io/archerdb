@@ -101,17 +101,17 @@ Everything below must be complete before release. No versions, no deferrals.
 
 ### Replication - Cross-Region (REPL)
 
-- [ ] **REPL-01**: S3RelayTransport uploads data to S3 (implement, not simulate)
-- [ ] **REPL-02**: S3 backend supports generic S3 API (AWS, MinIO, R2, GCS, Backblaze)
-- [ ] **REPL-03**: S3 upload handles authentication (AWS SigV4, IAM roles)
-- [ ] **REPL-04**: S3 upload handles retries with exponential backoff
-- [ ] **REPL-05**: S3 upload handles multipart uploads for large entries
-- [ ] **REPL-06**: Disk spillover writes to disk when memory queue fills
-- [ ] **REPL-07**: Disk spillover recovers from spillover files on restart
-- [ ] **REPL-08**: Disk spillover has queue persistence with metadata tracking
-- [ ] **REPL-09**: Replication lag metrics exposed
-- [ ] **REPL-10**: Integration tests verify S3 upload with MinIO
-- [ ] **REPL-11**: Integration tests verify disk spillover and recovery
+- [x] **REPL-01**: S3RelayTransport uploads data to S3 (implement, not simulate)
+- [x] **REPL-02**: S3 backend supports generic S3 API (AWS, MinIO, R2, GCS, Backblaze)
+- [x] **REPL-03**: S3 upload handles authentication (AWS SigV4, IAM roles)
+- [x] **REPL-04**: S3 upload handles retries with exponential backoff
+- [x] **REPL-05**: S3 upload handles multipart uploads for large entries
+- [x] **REPL-06**: Disk spillover writes to disk when memory queue fills
+- [x] **REPL-07**: Disk spillover recovers from spillover files on restart
+- [x] **REPL-08**: Disk spillover has queue persistence with metadata tracking
+- [x] **REPL-09**: Replication lag metrics exposed
+- [x] **REPL-10**: Integration tests verify S3 upload with MinIO
+- [x] **REPL-11**: Integration tests verify disk spillover and recovery
 
 ### Sharding (SHARD)
 

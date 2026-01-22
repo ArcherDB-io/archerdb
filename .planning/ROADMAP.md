@@ -15,7 +15,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: Platform Foundation** - Remove Windows, fix Darwin/macOS, stabilize message bus
 - [x] **Phase 2: VSR & Storage** - Fix VSR issues, verify durability, verify encryption
 - [x] **Phase 3: Core Geospatial** - Verify S2 indexing, queries, entity operations, RAM index
-- [ ] **Phase 4: Replication** - Implement S3 backend, disk spillover, replication metrics
+- [x] **Phase 4: Replication** - Implement S3 backend, disk spillover, replication metrics
 - [ ] **Phase 5: Sharding & Cleanup** - Verify sharding, resolve all TODOs/FIXMEs, remove stubs
 - [ ] **Phase 6: SDK Parity** - Complete all 5 SDKs to feature and quality parity
 - [ ] **Phase 7: Observability Core** - Metrics completion, tracing, structured logging, health endpoints
@@ -92,9 +92,9 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 04-01-PLAN.md - S3 backend implementation (SigV4, S3 client, provider adaptations, retry logic)
-- [ ] 04-02-PLAN.md - Disk spillover implementation (SpilloverManager, atomic writes, metrics)
-- [ ] 04-03-PLAN.md - Replication integration tests (MinIO, spillover recovery, end-to-end)
+- [x] 04-01-PLAN.md - S3 backend implementation (SigV4, S3 client, provider adaptations, retry logic)
+- [x] 04-02-PLAN.md - Disk spillover implementation (SpilloverManager, atomic writes, metrics)
+- [x] 04-03-PLAN.md - Replication integration tests (MinIO, spillover recovery, end-to-end)
 
 ### Phase 5: Sharding & Cleanup
 **Goal**: Sharding verified correct, all tech debt resolved - TODOs/FIXMEs addressed, stubs implemented or removed
@@ -211,7 +211,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | 1. Platform Foundation | 3/3 | Complete | 2026-01-22 |
 | 2. VSR & Storage | 4/4 | Complete | 2026-01-22 |
 | 3. Core Geospatial | 5/5 | Complete | 2026-01-22 |
-| 4. Replication | 0/3 | Planned | - |
+| 4. Replication | 3/3 | Complete | 2026-01-22 |
 | 5. Sharding & Cleanup | 0/3 | Not started | - |
 | 6. SDK Parity | 0/5 | Not started | - |
 | 7. Observability Core | 0/4 | Not started | - |
@@ -228,4 +228,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 *Phase 3 planned: 2026-01-22*
 *Phase 3 complete: 2026-01-22*
 *Phase 4 planned: 2026-01-22*
+*Phase 4 complete: 2026-01-22*
 *Total requirements: 234 | All mapped*
