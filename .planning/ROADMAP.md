@@ -162,11 +162,12 @@ Plans:
   3. Alerts configured for replication lag exceeding threshold
   4. Alerts configured for error rate spikes
   5. Dashboards and alerts documented with installation instructions
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 08-01: Grafana dashboard creation
-- [ ] 08-02: Alerting rules
+- [ ] 08-01-PLAN.md - Overview and Queries dashboards with provisioning config
+- [ ] 08-02-PLAN.md - Replication and Storage detail dashboards
+- [ ] 08-03-PLAN.md - Cluster dashboard, alerting rules, and notification templates
 
 ### Phase 9: Documentation
 **Goal**: Documentation complete for users and operators - API reference, architecture deep-dive, operations runbook
@@ -217,7 +218,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | 5. Sharding & Cleanup | 5/5 | Complete | 2026-01-23 |
 | 6. SDK Parity | 5/5 | Complete | 2026-01-23 |
 | 7. Observability Core | 4/4 | Complete | 2026-01-23 |
-| 8. Observability Dashboards | 0/2 | Not started | - |
+| 8. Observability Dashboards | 0/3 | Not started | - |
 | 9. Documentation | 0/3 | Not started | - |
 | 10. Testing & Benchmarks | 0/4 | Not started | - |
 
@@ -237,4 +238,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 *Phase 6 complete: 2026-01-23*
 *Phase 7 planned: 2026-01-23*
 *Phase 7 complete: 2026-01-23*
+*Phase 8 planned: 2026-01-23*
 *Total requirements: 234 | All mapped*
