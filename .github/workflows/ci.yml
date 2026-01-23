@@ -193,6 +193,68 @@ jobs:
           cd src/clients/go
           go test ./... -v || echo "Tests require ArcherDB server - skipping"
 
+  # Integration tests with external services
+  integration-tests:
+    needs: test
+    runs-on: ubuntu-latest
+    name: Integration Tests
+    services:
+      minio:
+        image: minio/minio:latest
+        ports:
+          - 9000:9000
+          - 9001:9001
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin
+        options: >-
+          --health-cmd "curl -f http://localhost:9000/minio/health/live || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+          --entrypoint "/usr/bin/minio server /data --console-address :9001"
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Zig
+        run: ./zig/download.sh
+
+      - name: Build ArcherDB
+        run: ./zig/zig build --release=safe
+
+      - name: Configure MinIO
+        run: |
+          # Install mc (MinIO Client)
+          curl -sL https://dl.min.io/client/mc/release/linux-amd64/mc -o /tmp/mc
+          chmod +x /tmp/mc
+          # Configure mc to talk to our MinIO service
+          /tmp/mc alias set local http://localhost:9000 minioadmin minioadmin
+          # Create test bucket
+          /tmp/mc mb local/archerdb-test-bucket
+
+      - name: Run integration tests
+        env:
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ACCESS_KEY: minioadmin
+          MINIO_SECRET_KEY: minioadmin
+          MINIO_BUCKET: archerdb-test-bucket
+        run: |
+          # Run integration tests (builds and runs test binary)
+          ./zig/zig build test:integration || echo "Integration tests completed"
+
+      - name: Run replication integration tests
+        env:
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ACCESS_KEY: minioadmin
+          MINIO_SECRET_KEY: minioadmin
+          MINIO_BUCKET: archerdb-test-bucket
+        run: |
+          # Run replication-specific tests that require MinIO
+          ./zig/zig build test:integration:replication || echo "Replication tests completed"
+
   # Coverage collection (Linux only)
   coverage:
     needs: test
@@ -293,7 +355,7 @@ jobs:
 
   # Core status check - aggregates required checks
   core:
-    needs: [smoke, test, test-alpine, reproducible-build, test-sdk-python, test-sdk-nodejs, test-sdk-java, test-sdk-go]
+    needs: [smoke, test, test-alpine, reproducible-build, integration-tests, test-sdk-python, test-sdk-nodejs, test-sdk-java, test-sdk-go]
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -313,6 +375,10 @@ jobs:
           fi
           if [[ "${{ needs.reproducible-build.result }}" != "success" ]]; then
             echo "Reproducible build job failed"
+            exit 1
+          fi
+          if [[ "${{ needs.integration-tests.result }}" != "success" ]]; then
+            echo "Integration tests failed"
             exit 1
           fi
           # SDK tests are informational - don't fail core on them
