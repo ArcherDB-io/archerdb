@@ -16,7 +16,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 2: VSR & Storage** - Fix VSR issues, verify durability, verify encryption
 - [x] **Phase 3: Core Geospatial** - Verify S2 indexing, queries, entity operations, RAM index
 - [x] **Phase 4: Replication** - Implement S3 backend, disk spillover, replication metrics
-- [ ] **Phase 5: Sharding & Cleanup** - Verify sharding, resolve all TODOs/FIXMEs, remove stubs
+- [x] **Phase 5: Sharding & Cleanup** - Verify sharding, resolve all TODOs/FIXMEs, remove stubs
 - [ ] **Phase 6: SDK Parity** - Complete all 5 SDKs to feature and quality parity
 - [ ] **Phase 7: Observability Core** - Metrics completion, tracing, structured logging, health endpoints
 - [ ] **Phase 8: Observability Dashboards** - Grafana dashboards, alerting rules
@@ -109,11 +109,11 @@ Plans:
 **Plans**: 5 plans
 
 Plans:
-- [ ] 05-01-PLAN.md - Sharding verification (golden vectors, distribution tests, cross-SDK parity)
-- [ ] 05-02-PLAN.md - Code cleanup (--aof removal, TODO/FIXME resolution)
-- [ ] 05-03-PLAN.md - REPL, TLS CRL/OCSP, and backup scheduling implementation
-- [ ] 05-04-PLAN.md - Tiering integration with LSM and state machine
-- [ ] 05-05-PLAN.md - VOPR extension, CSV import tool, final stub cleanup
+- [x] 05-01-PLAN.md - Sharding verification (golden vectors, distribution tests, cross-SDK parity)
+- [x] 05-02-PLAN.md - Code cleanup (--aof removal, TODO/FIXME resolution)
+- [x] 05-03-PLAN.md - REPL, TLS CRL/OCSP, and backup scheduling implementation
+- [x] 05-04-PLAN.md - Tiering integration with LSM and state machine
+- [x] 05-05-PLAN.md - VOPR extension, CSV import tool, final stub cleanup
 
 ### Phase 6: SDK Parity
 **Goal**: All five SDKs at feature and quality parity - same operations, same error handling, same documentation, same test coverage
@@ -214,7 +214,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | 2. VSR & Storage | 4/4 | Complete | 2026-01-22 |
 | 3. Core Geospatial | 5/5 | Complete | 2026-01-22 |
 | 4. Replication | 3/3 | Complete | 2026-01-22 |
-| 5. Sharding & Cleanup | 0/5 | Planned | - |
+| 5. Sharding & Cleanup | 5/5 | Complete | 2026-01-23 |
 | 6. SDK Parity | 0/5 | Not started | - |
 | 7. Observability Core | 0/4 | Not started | - |
 | 8. Observability Dashboards | 0/2 | Not started | - |
@@ -232,4 +232,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 *Phase 4 planned: 2026-01-22*
 *Phase 4 complete: 2026-01-22*
 *Phase 5 planned: 2026-01-22*
+*Phase 5 complete: 2026-01-23*
 *Total requirements: 234 | All mapped*
