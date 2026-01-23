@@ -1,0 +1,78 @@
+name: VOPR Fuzzer
+permissions:
+  contents: read
+
+on:
+  schedule:
+    # Daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: 'Duration in seconds (default: 7200 = 2 hours)'
+        required: false
+        default: '7200'
+      state_machine:
+        description: 'State machine to fuzz (geo, testing, or both)'
+        required: false
+        default: 'both'
+        type: choice
+        options:
+          - both
+          - geo
+          - testing
+
+jobs:
+  vopr-geo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180  # 3 hours max (2h run + margin)
+    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.state_machine == 'both' || github.event.inputs.state_machine == 'geo' }}
+    name: VOPR (geo state machine)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Zig
+        run: ./zig/download.sh
+
+      - name: Verify Zig version
+        run: ./zig/zig version
+
+      - name: Run VOPR (geo state machine)
+        run: ./.github/ci/run-vopr.sh geo ${{ github.event.inputs.duration || '7200' }}
+
+      - name: Upload VOPR logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vopr-geo-logs-${{ github.run_id }}
+          path: vopr-*.log
+          retention-days: 30
+
+  vopr-testing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.state_machine == 'both' || github.event.inputs.state_machine == 'testing' }}
+    name: VOPR (testing state machine)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Zig
+        run: ./zig/download.sh
+
+      - name: Verify Zig version
+        run: ./zig/zig version
+
+      - name: Run VOPR (testing state machine)
+        run: ./.github/ci/run-vopr.sh testing ${{ github.event.inputs.duration || '7200' }}
+
+      - name: Upload VOPR logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vopr-testing-logs-${{ github.run_id }}
+          path: vopr-*.log
+          retention-days: 30
