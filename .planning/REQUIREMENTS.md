@@ -261,32 +261,32 @@ Everything below must be complete before release. No versions, no deferrals.
 
 ### Documentation - API Reference (AREF)
 
-- [ ] **AREF-01**: All geospatial operations documented
-- [ ] **AREF-02**: Request/response formats documented
-- [ ] **AREF-03**: Error codes and meanings documented
-- [ ] **AREF-04**: Rate limits and quotas documented
-- [ ] **AREF-05**: Wire protocol documented
+- [x] **AREF-01**: All geospatial operations documented
+- [x] **AREF-02**: Request/response formats documented
+- [x] **AREF-03**: Error codes and meanings documented
+- [x] **AREF-04**: Rate limits and quotas documented
+- [x] **AREF-05**: Wire protocol documented
 
 ### Documentation - Architecture (ARCH)
 
-- [ ] **ARCH-01**: VSR consensus protocol explained
-- [ ] **ARCH-02**: LSM-tree storage engine explained
-- [ ] **ARCH-03**: S2 geospatial indexing explained
-- [ ] **ARCH-04**: RAM index design explained
-- [ ] **ARCH-05**: Sharding architecture explained
-- [ ] **ARCH-06**: Replication architecture explained
-- [ ] **ARCH-07**: Data flow diagrams
+- [x] **ARCH-01**: VSR consensus protocol explained
+- [x] **ARCH-02**: LSM-tree storage engine explained
+- [x] **ARCH-03**: S2 geospatial indexing explained
+- [x] **ARCH-04**: RAM index design explained
+- [x] **ARCH-05**: Sharding architecture explained
+- [x] **ARCH-06**: Replication architecture explained
+- [x] **ARCH-07**: Data flow diagrams
 
 ### Documentation - Operations (OPS)
 
-- [ ] **OPS-01**: Deployment guide (single node)
-- [ ] **OPS-02**: Deployment guide (cluster)
-- [ ] **OPS-03**: Kubernetes deployment guide
-- [ ] **OPS-04**: Scaling guide (horizontal and vertical)
-- [ ] **OPS-05**: Backup and restore procedures
-- [ ] **OPS-06**: Disaster recovery procedures
-- [ ] **OPS-07**: Upgrade procedures
-- [ ] **OPS-08**: Troubleshooting guide
+- [x] **OPS-01**: Deployment guide (single node)
+- [x] **OPS-02**: Deployment guide (cluster)
+- [x] **OPS-03**: Kubernetes deployment guide
+- [x] **OPS-04**: Scaling guide (horizontal and vertical)
+- [x] **OPS-05**: Backup and restore procedures
+- [x] **OPS-06**: Disaster recovery procedures
+- [x] **OPS-07**: Upgrade procedures
+- [x] **OPS-08**: Troubleshooting guide
 
 ### Documentation - Benchmarks (BENCH)
 
