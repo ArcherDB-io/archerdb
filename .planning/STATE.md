@@ -222,11 +222,17 @@ All SDK documentation complete:
 
 | Plan | SDK | Status | Resolution |
 |------|-----|--------|------------|
-| 06-01 | C | COMPLETE | README with quick start |
+| 06-01 | C | COMPLETE | Doxygen docs + README (490 lines) + complete sample |
 | 06-02 | Go | COMPLETE | Comprehensive godoc comments |
 | 06-03 | Java | COMPLETE | Javadoc + async support |
 | 06-04 | Node.js | COMPLETE | JSDoc + TypeScript types |
 | 06-05 | Python | COMPLETE | Google-style docstrings |
+
+From 06-01:
+- Doxygen documentation embedded in Zig generator for auto-regeneration
+- Error code ranges documented inline (0-599 by category)
+- Field units documented in geo_event_t (nanodegrees, millimeters, centidegrees)
+- 49 @brief annotations, memory ownership rules, thread safety warnings
 
 ## Session Continuity
 
