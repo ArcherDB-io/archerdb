@@ -207,3 +207,360 @@ ArcherDB supports several query operations:
 
 To delete entities, pass a list of entity IDs to `delete_entities`.
 This will mark all events for those entities as tombstoned.
+
+## Async Client
+
+ArcherDB provides an async client for applications using `asyncio`. The async
+client has the same API as the sync client, but all I/O operations are
+non-blocking.
+
+### Basic Async Usage
+
+```python
+import asyncio
+from archerdb import GeoClientAsync, GeoClientConfig, GeoEvent
+
+
+async def main():
+    config = GeoClientConfig(
+        cluster_id=0,
+        addresses=["127.0.0.1:3001"],
+    )
+
+    async with GeoClientAsync(config) as client:
+        # Insert events
+        batch = client.create_batch()
+        batch.add(GeoEvent(
+            entity_id=123,
+            lat_nano=37_774_900_000,   # 37.7749 degrees
+            lon_nano=-122_419_400_000, # -122.4194 degrees
+        ))
+        errors = await batch.commit()
+
+        if not errors:
+            print("Event inserted successfully")
+
+        # Query by radius
+        result = await client.query_radius(
+            latitude=37.7749,
+            longitude=-122.4194,
+            radius_m=1000,
+        )
+        print(f"Found {len(result.events)} events")
+
+        # Look up by UUID
+        event = await client.get_latest_by_uuid(123)
+        if event:
+            print(f"Entity 123 at ({event.lat_nano}, {event.lon_nano})")
+
+
+asyncio.run(main())
+```
+
+### Concurrent Operations
+
+The async client excels at concurrent operations:
+
+```python
+import asyncio
+from archerdb import GeoClientAsync, GeoClientConfig
+
+
+async def fetch_multiple_entities(client, entity_ids):
+    """Fetch multiple entities concurrently."""
+    tasks = [
+        client.get_latest_by_uuid(eid)
+        for eid in entity_ids
+    ]
+    return await asyncio.gather(*tasks)
+
+
+async def main():
+    config = GeoClientConfig(cluster_id=0, addresses=["127.0.0.1:3001"])
+
+    async with GeoClientAsync(config) as client:
+        entity_ids = [100, 101, 102, 103, 104]
+        events = await fetch_multiple_entities(client, entity_ids)
+
+        for entity_id, event in zip(entity_ids, events):
+            if event:
+                print(f"Entity {entity_id}: ({event.lat_nano}, {event.lon_nano})")
+            else:
+                print(f"Entity {entity_id}: not found")
+
+
+asyncio.run(main())
+```
+
+### Async Batch Operations
+
+```python
+async def insert_events_async(client, events):
+    """Insert events using async client."""
+    errors = await client.insert_events(events)
+    if errors:
+        for err in errors:
+            print(f"Event {err.index} failed: {err.result}")
+    return len(events) - len(errors)
+
+
+async def main():
+    config = GeoClientConfig(cluster_id=0, addresses=["127.0.0.1:3001"])
+
+    async with GeoClientAsync(config) as client:
+        events = [
+            GeoEvent(entity_id=i, lat_nano=37_000_000_000, lon_nano=-122_000_000_000)
+            for i in range(1, 101)
+        ]
+        count = await insert_events_async(client, events)
+        print(f"Inserted {count} events")
+
+
+asyncio.run(main())
+```
+
+## Error Handling
+
+ArcherDB uses typed exceptions for error handling. All exceptions inherit
+from `ArcherDBError`.
+
+### Exception Hierarchy
+
+```
+ArcherDBError (base class)
+├── ConnectionFailed      # Cannot connect to cluster
+├── ConnectionTimeout     # Connection attempt timed out
+├── ClusterUnavailable    # Cluster unreachable after retries
+├── ViewChangeInProgress  # VSR reconfiguration in progress
+├── NotPrimary            # Connected to non-primary replica
+├── InvalidCoordinates    # Coordinates out of range
+├── PolygonTooComplex     # Polygon has too many vertices
+├── BatchTooLarge         # Batch exceeds maximum size
+├── InvalidEntityId       # Entity ID is zero or invalid
+├── OperationTimeout      # Operation timed out
+├── QueryResultTooLarge   # Query limit exceeds maximum
+├── OutOfSpace            # Cluster out of storage
+├── SessionExpired        # Client session expired
+├── ClientClosedError     # Operation on closed client
+├── RetryExhausted        # All retry attempts failed
+└── CircuitBreakerOpen    # Circuit breaker is open
+```
+
+### Handling Errors
+
+```python
+from archerdb import (
+    GeoClientSync,
+    GeoClientConfig,
+    ArcherDBError,
+    InvalidCoordinates,
+    BatchTooLarge,
+    RetryExhausted,
+    ClientClosedError,
+)
+
+
+def safe_insert(client, events):
+    """Insert events with proper error handling."""
+    try:
+        errors = client.insert_events(events)
+        if errors:
+            print(f"Partial failure: {len(errors)} events failed")
+        return True
+
+    except InvalidCoordinates as e:
+        print(f"Invalid coordinates: {e}")
+        # Fix coordinates and retry
+        return False
+
+    except BatchTooLarge as e:
+        print(f"Batch too large: {e}")
+        # Split batch and retry smaller chunks
+        return False
+
+    except RetryExhausted as e:
+        print(f"Retries exhausted after {e.attempts} attempts")
+        print(f"Last error: {e.last_error}")
+        # Log and escalate
+        return False
+
+    except ClientClosedError:
+        print("Client was closed")
+        # Create new client
+        return False
+
+    except ArcherDBError as e:
+        # Catch-all for other ArcherDB errors
+        if e.retryable:
+            print(f"Retryable error (code {e.code}): {e}")
+            # Schedule for retry
+        else:
+            print(f"Permanent error (code {e.code}): {e}")
+            # Log and skip
+        return False
+```
+
+### Checking Retryability
+
+Each error has a `retryable` attribute:
+
+```python
+try:
+    client.insert_events(events)
+except ArcherDBError as e:
+    if e.retryable:
+        # Transient error - can retry
+        print(f"Retryable error: {e}")
+    else:
+        # Permanent error - don't retry
+        print(f"Permanent error: {e}")
+```
+
+## Retry Configuration
+
+The SDK automatically retries transient errors with exponential backoff.
+Configure retry behavior per-client or per-operation.
+
+### Client-Level Configuration
+
+```python
+from archerdb import GeoClientSync, GeoClientConfig, RetryConfig
+
+# Aggressive retry for critical writes
+retry = RetryConfig(
+    enabled=True,
+    max_retries=10,           # 11 total attempts
+    base_backoff_ms=50,       # Start with 50ms delay
+    max_backoff_ms=2000,      # Cap at 2 seconds
+    total_timeout_ms=60000,   # 1 minute total
+    jitter=True,              # Add random jitter
+)
+
+config = GeoClientConfig(
+    cluster_id=0,
+    addresses=["127.0.0.1:3001"],
+    retry=retry,
+)
+
+client = GeoClientSync(config)
+```
+
+### Per-Operation Override
+
+```python
+from archerdb import OperationOptions
+
+# Override retry for a specific operation
+options = OperationOptions(
+    max_retries=2,        # Only 3 attempts total
+    timeout_ms=5000,      # 5 second timeout
+)
+
+result = client.query_radius(
+    latitude=37.7749,
+    longitude=-122.4194,
+    radius_m=1000,
+    options=options,
+)
+```
+
+### Disabling Retry
+
+```python
+# Disable retry entirely
+config = GeoClientConfig(
+    cluster_id=0,
+    addresses=["127.0.0.1:3001"],
+    retry=RetryConfig(enabled=False),
+)
+```
+
+### Retry Backoff Schedule
+
+Default backoff schedule (with `base_backoff_ms=100`):
+
+| Attempt | Delay | Cumulative |
+|---------|-------|------------|
+| 1       | 0ms   | 0ms        |
+| 2       | 100ms | 100ms      |
+| 3       | 200ms | 300ms      |
+| 4       | 400ms | 700ms      |
+| 5       | 800ms | 1500ms     |
+| 6       | 1600ms | 3100ms    |
+
+With jitter enabled, each delay has random noise (0 to delay/2) added to
+prevent thundering herd when multiple clients retry simultaneously.
+
+## Type Hints
+
+The SDK provides complete type hints for all public APIs. Enable type
+checking with mypy or pyright:
+
+```python
+from archerdb import GeoClientSync, GeoClientConfig, GeoEvent, QueryResult
+
+def process_events(events: list[GeoEvent]) -> None:
+    for event in events:
+        lat: float = event.lat_nano / 1e9
+        lon: float = event.lon_nano / 1e9
+        print(f"Entity {event.entity_id} at ({lat:.6f}, {lon:.6f})")
+
+def query_area(client: GeoClientSync, lat: float, lon: float) -> QueryResult:
+    return client.query_radius(
+        latitude=lat,
+        longitude=lon,
+        radius_m=1000,
+    )
+```
+
+## Coordinate Conversion
+
+ArcherDB stores coordinates in nanodegrees (10^-9 degrees) for integer
+precision. Use the helper functions for conversion:
+
+```python
+from archerdb import (
+    degrees_to_nano,
+    nano_to_degrees,
+    meters_to_mm,
+    mm_to_meters,
+    create_geo_event,
+    id,
+)
+
+# Manual conversion
+lat_nano = degrees_to_nano(37.7749)     # 37_774_900_000
+lat_deg = nano_to_degrees(lat_nano)     # 37.7749
+
+radius_mm = meters_to_mm(1000)          # 1_000_000
+radius_m = mm_to_meters(radius_mm)      # 1000.0
+
+# Using the builder function
+event = create_geo_event(
+    entity_id=id(),         # Generate ULID
+    latitude=37.7749,       # Degrees
+    longitude=-122.4194,    # Degrees
+    velocity_mps=15.5,      # Meters per second
+    heading=90,             # Degrees (0-360)
+    altitude_m=100,         # Meters
+    accuracy_m=5,           # Meters
+    ttl_seconds=3600,       # 1 hour TTL
+)
+```
+
+## ID Generation
+
+Use `archerdb.id()` to generate ULID-based entity IDs:
+
+```python
+import archerdb
+
+# Generate unique IDs
+entity_id = archerdb.id()
+correlation_id = archerdb.id()
+
+# IDs are monotonically increasing and sortable by time
+id1 = archerdb.id()
+id2 = archerdb.id()
+assert id2 > id1  # Always true within same millisecond
+```
