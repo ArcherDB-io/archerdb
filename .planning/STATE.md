@@ -10,9 +10,9 @@ See: .planning/PROJECT.md (updated 2026-01-22)
 ## Current Position
 
 Phase: 6 of 10 (SDK Parity)
-Plan: 4 of 5 in current phase
+Plan: 3 of 5 in current phase
 Status: In progress
-Last activity: 2026-01-23 - Plan 06-04 complete (Node.js SDK documentation)
+Last activity: 2026-01-23 - Plan 06-03 complete (Java SDK Async/Javadoc)
 
 Progress: [######----] 60% (6/10 phases in progress)
 
@@ -32,10 +32,10 @@ Progress: [######----] 60% (6/10 phases in progress)
 | 03 | 5 | 43 min | 9 min |
 | 04 | 3 | 47 min | 16 min |
 | 05 | 5 | 83 min | 17 min |
-| 06 | 4 | 4 min | 1 min |
+| 06 | 3 | 6 min | 2 min |
 
 **Recent Trend:**
-- Last 5 plans: 06-04 (4m), 05-05 (12m), 05-03 (19m), 05-04 (9m), 05-02 (25m)
+- Last 5 plans: 06-03 (6m), 05-05 (12m), 05-03 (19m), 05-04 (9m), 05-02 (25m)
 - Trend: Phase 6 SDK documentation tasks completing quickly
 
 *Updated after each plan completion*
@@ -53,9 +53,10 @@ Recent decisions affecting current work:
 - SDK parity: All five languages must have same features and quality
 - No graceful degradation: Demand resources, expose problems through metrics/traces
 
-From 06-04:
-- Re-export base errors from geo_client.ts to errors.ts for unified import
-- Rename isRetryable to isRetryableCode for numeric codes, add isRetryableError for error objects
+From 06-03:
+- Use ForkJoinPool.commonPool as default executor for async operations
+- GeoClientAsync wraps GeoClient (delegation) rather than extending it
+- All async methods use supplyAsync for consistent error propagation
 
 From 05-05:
 - VOPR GeoStateMachine coverage already comprehensive in geo_workload.zig
@@ -213,7 +214,7 @@ All CLEAN requirements verified complete:
 ## Session Continuity
 
 Last session: 2026-01-23
-Stopped at: Plan 06-04 complete (Node.js SDK documentation)
+Stopped at: Plan 06-03 complete (Java SDK Async/Javadoc)
 Resume file: None
 
-Next: Plan 06-05 (Python SDK documentation)
+Next: Plan 06-04 (Node.js SDK documentation)
