@@ -22,6 +22,7 @@ const builtin = @import("builtin");
 const vsr = @import("vsr");
 const stdx = vsr.stdx;
 const metrics = vsr.archerdb_metrics;
+const correlation = @import("observability/correlation.zig");
 
 // =============================================================================
 // Process Metrics Collection
@@ -663,6 +664,12 @@ pub const MetricsServer = struct {
 
         const request = buf[0..bytes_read];
 
+        // Establish correlation context from trace headers (or create new root)
+        // This enables trace correlation in logs for metrics/health requests
+        var ctx = extractCorrelationContext(request);
+        correlation.setCurrent(&ctx);
+        defer correlation.setCurrent(null);
+
         // Parse HTTP request line (minimal parsing - just get the path)
         const path = parsePath(request) orelse {
             try sendResponse(client_fd, .bad_request, "text/plain", "Bad Request");
@@ -699,6 +706,78 @@ pub const MetricsServer = struct {
         } else {
             try sendResponse(client_fd, .not_found, "text/plain", "Not Found");
         }
+    }
+
+    /// Extract correlation context from HTTP request headers.
+    ///
+    /// Attempts to parse trace context in priority order:
+    /// 1. W3C traceparent header
+    /// 2. B3 headers (X-B3-TraceId, X-B3-SpanId, X-B3-Sampled)
+    /// 3. Falls back to creating a new root context
+    fn extractCorrelationContext(request: []const u8) correlation.CorrelationContext {
+        // Try W3C traceparent first
+        if (extractHeader(request, "traceparent")) |traceparent| {
+            if (correlation.CorrelationContext.fromTraceparent(traceparent)) |ctx| {
+                return ctx;
+            }
+        }
+
+        // Try B3 headers
+        const b3_trace_id = extractHeader(request, "x-b3-traceid");
+        const b3_span_id = extractHeader(request, "x-b3-spanid");
+        const b3_sampled = extractHeader(request, "x-b3-sampled");
+
+        if (b3_trace_id != null) {
+            if (correlation.CorrelationContext.fromB3Headers(b3_trace_id, b3_span_id, b3_sampled)) |ctx| {
+                return ctx;
+            }
+        }
+
+        // Create new root context for untraced requests
+        return correlation.CorrelationContext.newRoot(0);
+    }
+
+    /// Extract HTTP header value (case-insensitive).
+    ///
+    /// Searches for "Header-Name: value\r\n" pattern and returns the value.
+    /// Returns null if header not found.
+    fn extractHeader(request: []const u8, name: []const u8) ?[]const u8 {
+        // Search line by line
+        var lines = std.mem.splitSequence(u8, request, "\r\n");
+        while (lines.next()) |line| {
+            // Skip if line is too short
+            if (line.len < name.len + 2) continue;
+
+            // Case-insensitive header name comparison
+            var matches = true;
+            for (name, 0..) |c, i| {
+                const line_c = if (line[i] >= 'A' and line[i] <= 'Z')
+                    line[i] + 32 // lowercase
+                else
+                    line[i];
+                const name_c = if (c >= 'A' and c <= 'Z')
+                    c + 32 // lowercase
+                else
+                    c;
+                if (line_c != name_c) {
+                    matches = false;
+                    break;
+                }
+            }
+
+            if (!matches) continue;
+
+            // Check for ": " after header name
+            if (line.len > name.len + 1 and line[name.len] == ':') {
+                var value_start = name.len + 1;
+                // Skip optional whitespace after colon
+                while (value_start < line.len and (line[value_start] == ' ' or line[value_start] == '\t')) {
+                    value_start += 1;
+                }
+                return line[value_start..];
+            }
+        }
+        return null;
     }
 
     fn parsePath(request: []const u8) ?[]const u8 {
@@ -1523,4 +1602,90 @@ test "HttpStatus code includes 429 for degraded" {
     try std.testing.expectEqualStrings("200 OK", MetricsServer.HttpStatus.ok.code());
     try std.testing.expectEqualStrings("429 Too Many Requests", MetricsServer.HttpStatus.too_many_requests.code());
     try std.testing.expectEqualStrings("503 Service Unavailable", MetricsServer.HttpStatus.service_unavailable.code());
+}
+
+test "extractHeader: finds header case-insensitively" {
+    const request =
+        "GET /metrics HTTP/1.1\r\n" ++
+        "Host: localhost\r\n" ++
+        "traceparent: 00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01\r\n" ++
+        "X-B3-TraceId: abc123\r\n" ++
+        "\r\n";
+
+    // Should find lowercase header
+    const traceparent = MetricsServer.extractHeader(request, "traceparent");
+    try std.testing.expect(traceparent != null);
+    try std.testing.expectEqualStrings(
+        "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+        traceparent.?,
+    );
+
+    // Should find mixed-case header (case-insensitive)
+    const b3_trace = MetricsServer.extractHeader(request, "x-b3-traceid");
+    try std.testing.expect(b3_trace != null);
+    try std.testing.expectEqualStrings("abc123", b3_trace.?);
+
+    // Should not find non-existent header
+    const missing = MetricsServer.extractHeader(request, "x-b3-spanid");
+    try std.testing.expect(missing == null);
+}
+
+test "extractCorrelationContext: from traceparent" {
+    const request =
+        "GET /health HTTP/1.1\r\n" ++
+        "traceparent: 00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01\r\n" ++
+        "\r\n";
+
+    const ctx = MetricsServer.extractCorrelationContext(request);
+
+    // Verify trace_id was extracted
+    const trace_hex = ctx.traceIdHex();
+    try std.testing.expectEqualStrings("0af7651916cd43dd8448eb211c80319c", &trace_hex);
+
+    // Verify span_id was extracted
+    const span_hex = ctx.spanIdHex();
+    try std.testing.expectEqualStrings("b7ad6b7169203331", &span_hex);
+
+    // Verify sampled flag
+    try std.testing.expect(ctx.isSampled());
+}
+
+test "extractCorrelationContext: from B3 headers" {
+    const request =
+        "GET /metrics HTTP/1.1\r\n" ++
+        "x-b3-traceid: 0af7651916cd43dd8448eb211c80319c\r\n" ++
+        "x-b3-spanid: b7ad6b7169203331\r\n" ++
+        "x-b3-sampled: 1\r\n" ++
+        "\r\n";
+
+    const ctx = MetricsServer.extractCorrelationContext(request);
+
+    // Verify trace_id was extracted
+    const trace_hex = ctx.traceIdHex();
+    try std.testing.expectEqualStrings("0af7651916cd43dd8448eb211c80319c", &trace_hex);
+
+    // Verify sampled flag
+    try std.testing.expect(ctx.isSampled());
+}
+
+test "extractCorrelationContext: creates new root when no headers" {
+    const request =
+        "GET /health HTTP/1.1\r\n" ++
+        "Host: localhost\r\n" ++
+        "\r\n";
+
+    const ctx = MetricsServer.extractCorrelationContext(request);
+
+    // Should have generated a valid trace_id (not all zeros)
+    var all_zero = true;
+    for (ctx.trace_id) |b| {
+        if (b != 0) {
+            all_zero = false;
+            break;
+        }
+    }
+    try std.testing.expect(!all_zero);
+
+    // New root traces are sampled by default
+    try std.testing.expect(ctx.isSampled());
 }
