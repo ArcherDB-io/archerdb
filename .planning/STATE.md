@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-01-22)
 
 **Core value:** Correctness, performance, and completeness with no compromises
-**Current focus:** Phase 7 - Observability Core (IN PROGRESS)
+**Current focus:** Phase 7 - Observability Core (COMPLETE)
 
 ## Current Position
 
-Phase: 7 of 10 (Observability Core) - IN PROGRESS
-Plan: 2 of 4 in current phase - COMPLETE
-Status: Plan 07-02 complete, ready for 07-03
-Last activity: 2026-01-23 - Plan 07-02 complete (Distributed Tracing)
+Phase: 7 of 10 (Observability Core) - COMPLETE
+Plan: 4 of 4 in current phase - COMPLETE
+Status: Phase 7 complete, ready for Phase 8
+Last activity: 2026-01-23 - Plan 07-04 complete (Health Endpoints)
 
-Progress: [######----] 67% (6/10 phases + 2/4 plans complete)
+Progress: [#######---] 70% (7/10 phases complete)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 27
+- Total plans completed: 29
 - Average duration: 10 min
-- Total execution time: 285 min
+- Total execution time: 299 min
 
 **By Phase:**
 
@@ -33,10 +33,10 @@ Progress: [######----] 67% (6/10 phases + 2/4 plans complete)
 | 04 | 3 | 47 min | 16 min |
 | 05 | 5 | 83 min | 17 min |
 | 06 | 5 | 12 min | 2 min |
-| 07 | 2 | 20 min | 10 min |
+| 07 | 4 | 34 min | 9 min |
 
 **Recent Trend:**
-- Last 5 plans: 07-02 (8m), 07-01 (12m), 06-05 (8m), 06-04 (2m), 06-03 (2m)
+- Last 5 plans: 07-04 (7m), 07-03 (~), 07-02 (8m), 07-01 (12m), 06-05 (8m)
 - Trend: Consistent observability implementation pace
 
 *Updated after each plan completion*
@@ -53,6 +53,12 @@ Recent decisions affecting current work:
 - Full observability: Enterprise-ready monitoring with metrics, tracing, health endpoints
 - SDK parity: All five languages must have same features and quality
 - No graceful degradation: Demand resources, expose problems through metrics/traces
+
+From 07-04:
+- Component health checks: replica, memory, storage, replication
+- HTTP 429 for degraded health, 503 for unhealthy
+- 16GB default memory limit for percentage calculation
+- server_initialized flag must be set before /ready returns 200
 
 From 07-02:
 - POSIX sockets for HTTP POST (consistent with metrics_server.zig pattern)
@@ -249,19 +255,34 @@ From 06-01:
 - Field units documented in geo_event_t (nanodegrees, millimeters, centidegrees)
 - 49 @brief annotations, memory ownership rules, thread safety warnings
 
-## Phase 7 Observability Core Progress
+## Phase 7 Observability Core Summary
+
+All observability features complete:
 
 | Plan | Topic | Status | Resolution |
 |------|-------|--------|------------|
 | 07-01 | Prometheus Metrics | COMPLETE | S2, process, compaction, checkpoint, build_info metrics |
 | 07-02 | Distributed Tracing | COMPLETE | OTLP exporter, W3C/B3 context, CLI options |
-| 07-03 | Structured Logging | PENDING | - |
-| 07-04 | Health Endpoints | PENDING | - |
+| 07-03 | Structured Logging | COMPLETE | JSON/text formats, per-module levels, log rotation |
+| 07-04 | Health Endpoints | COMPLETE | /health/detailed, proper K8s probe semantics |
+
+From 07-04:
+- /health/detailed with component checks (replica, memory, storage, replication)
+- /health/live always returns 200 (liveness probe)
+- /health/ready returns 503 until initialized
+- HTTP status codes: 200 healthy, 429 degraded, 503 unhealthy
+- All responses include uptime_seconds, version, commit_hash
+
+From 07-03:
+- JSON log format with correlation context (trace_id, span_id, request_id)
+- Per-module log levels (--log-module-levels=info,vsr:debug,lsm:warn)
+- Log rotation with size-based rotation and file count limit
+- Auto format detection (JSON for pipes, text for TTY)
 
 ## Session Continuity
 
 Last session: 2026-01-23
-Stopped at: Plan 07-02 complete, ready for 07-03
+Stopped at: Plan 07-04 complete, Phase 7 complete
 Resume file: None
 
-Next: Phase 7 Plan 03 - Structured Logging
+Next: Phase 8 or UAT verification
