@@ -1369,6 +1369,205 @@ pub const Registry = struct {
         null,
     );
 
+    // ========================================================================
+    // S2 Index Metrics (MET-09)
+    // ========================================================================
+
+    /// Total S2 cells indexed
+    pub var s2_cells_total: Counter = Counter.init(
+        "archerdb_s2_cells_total",
+        "Total S2 cells indexed",
+        null,
+    );
+
+    /// S2 cell counts by level (levels 0-30)
+    /// We track a subset of commonly used levels: 0, 10, 15, 20, 25, 30
+    pub const s2_tracked_levels: [6]u8 = .{ 0, 10, 15, 20, 25, 30 };
+    pub var s2_cell_level_counts: [6]std.atomic.Value(u64) = [_]std.atomic.Value(u64){
+        std.atomic.Value(u64).init(0),
+        std.atomic.Value(u64).init(0),
+        std.atomic.Value(u64).init(0),
+        std.atomic.Value(u64).init(0),
+        std.atomic.Value(u64).init(0),
+        std.atomic.Value(u64).init(0),
+    };
+
+    /// S2 coverage ratio (indexed area / total area, scaled by 10000)
+    pub var s2_coverage_ratio: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
+
+    /// Record S2 cell indexing
+    pub fn recordS2CellIndexed(level: u8) void {
+        s2_cells_total.inc();
+        // Find the closest tracked level bucket
+        for (s2_tracked_levels, 0..) |tracked_level, i| {
+            if (level <= tracked_level) {
+                _ = s2_cell_level_counts[i].fetchAdd(1, .monotonic);
+                break;
+            }
+        }
+    }
+
+    /// Update S2 coverage ratio
+    /// ratio: f64 value between 0.0 and 1.0
+    pub fn updateS2CoverageRatio(ratio: f64) void {
+        const scaled: u32 = @intFromFloat(@min(1.0, @max(0.0, ratio)) * 10000.0);
+        s2_coverage_ratio.store(scaled, .monotonic);
+    }
+
+    // ========================================================================
+    // Extended Memory Metrics (MET-07)
+    // ========================================================================
+
+    /// RAM index memory usage in bytes
+    pub var memory_ram_index_bytes: Gauge = Gauge.init(
+        "archerdb_memory_ram_index_bytes",
+        "RAM index memory usage in bytes",
+        null,
+    );
+
+    /// Grid cache memory usage in bytes
+    pub var memory_cache_bytes: Gauge = Gauge.init(
+        "archerdb_memory_cache_bytes",
+        "Grid cache memory usage in bytes",
+        null,
+    );
+
+    // ========================================================================
+    // Connection Pool Metrics (MET-08)
+    // ========================================================================
+
+    /// Total connections accepted
+    pub var connections_total: Counter = Counter.init(
+        "archerdb_connections_total",
+        "Total connections accepted",
+        null,
+    );
+
+    /// Connection errors
+    pub var connections_errors_total: Counter = Counter.init(
+        "archerdb_connections_errors_total",
+        "Total connection errors",
+        null,
+    );
+
+    // ========================================================================
+    // LSM Compaction Extended Metrics (MET-06)
+    // ========================================================================
+
+    /// Compaction duration histogram (separate from latency for clarity)
+    pub var compaction_duration_seconds: LatencyHistogram = latencyHistogram(
+        "archerdb_compaction_duration_seconds",
+        "Compaction operation duration histogram",
+        null,
+    );
+
+    /// Total bytes read during compaction
+    pub var compaction_bytes_read_total: Counter = Counter.init(
+        "archerdb_compaction_bytes_read_total",
+        "Total bytes read during compaction",
+        null,
+    );
+
+    /// Total bytes written during compaction
+    pub var compaction_bytes_written_total: Counter = Counter.init(
+        "archerdb_compaction_bytes_written_total",
+        "Total bytes written during compaction",
+        null,
+    );
+
+    /// Current compaction level being processed (0-6)
+    pub var compaction_current_level: Gauge = Gauge.init(
+        "archerdb_compaction_current_level",
+        "Current compaction level being processed",
+        null,
+    );
+
+    /// Total compaction operations completed
+    pub var compaction_operations_total: Counter = Counter.init(
+        "archerdb_compaction_total",
+        "Total compaction operations completed",
+        null,
+    );
+
+    /// Record a compaction operation with detailed metrics
+    pub fn recordCompactionWithDetails(
+        level: u8,
+        bytes_read: u64,
+        bytes_written: u64,
+        duration_ns: u64,
+    ) void {
+        compaction_operations_total.inc();
+        compaction_bytes_read_total.add(bytes_read);
+        compaction_bytes_written_total.add(bytes_written);
+        compaction_current_level.set(@intCast(level));
+        if (duration_ns > 0) {
+            compaction_duration_seconds.observeNs(duration_ns);
+        }
+        // Also record in legacy metrics for compatibility
+        recordCompaction(level, bytes_written, duration_ns);
+    }
+
+    // ========================================================================
+    // Checkpoint Metrics
+    // ========================================================================
+
+    /// Checkpoint duration histogram
+    pub var checkpoint_duration_seconds: LatencyHistogram = latencyHistogram(
+        "archerdb_checkpoint_duration_seconds",
+        "Checkpoint operation duration histogram",
+        null,
+    );
+
+    /// Total checkpoints completed
+    pub var checkpoint_total: Counter = Counter.init(
+        "archerdb_checkpoint_total",
+        "Total checkpoints completed",
+        null,
+    );
+
+    /// Record a checkpoint operation
+    pub fn recordCheckpoint(duration_ns: u64) void {
+        checkpoint_total.inc();
+        if (duration_ns > 0) {
+            checkpoint_duration_seconds.observeNs(duration_ns);
+        }
+    }
+
+    // ========================================================================
+    // Build Info Metric
+    // ========================================================================
+
+    /// Build info metric with version and commit labels
+    /// This is a constant gauge that always equals 1, with metadata in labels
+    pub var build_info: Gauge = Gauge.init(
+        "archerdb_build_info",
+        "ArcherDB build information",
+        "version=\"0.0.1\",commit=\"unknown\"",
+    );
+
+    /// Build version (set at startup)
+    pub var build_version: [32]u8 = [_]u8{0} ** 32;
+    pub var build_version_len: u8 = 7; // "0.0.1" default
+
+    /// Build commit hash (set at startup)
+    pub var build_commit: [64]u8 = [_]u8{0} ** 64;
+    pub var build_commit_len: u8 = 7; // "unknown" default
+
+    /// Initialize build info with actual version and commit
+    pub fn initBuildInfo(version: []const u8, commit: []const u8) void {
+        const v_len = @min(version.len, build_version.len);
+        for (0..v_len) |i| {
+            build_version[i] = version[i];
+        }
+        build_version_len = @intCast(v_len);
+
+        const c_len = @min(commit.len, build_commit.len);
+        for (0..c_len) |i| {
+            build_commit[i] = commit[i];
+        }
+        build_commit_len = @intCast(c_len);
+    }
+
     /// Format all metrics as Prometheus text format.
     pub fn format(writer: anytype) !void {
         // Set info gauge to 1 (it's always present)
@@ -2326,6 +2525,80 @@ pub const Registry = struct {
         try membership_transition_progress.format(writer);
         try membership_promotions_total.format(writer);
         try membership_removals_total.format(writer);
+        try writer.writeAll("\n");
+
+        // ====================================================================
+        // S2 Index Metrics (MET-09)
+        // ====================================================================
+
+        try s2_cells_total.format(writer);
+        try writer.writeAll("\n");
+
+        // S2 cell counts by level
+        try writer.writeAll("# HELP archerdb_s2_cell_level Cell counts by S2 level\n");
+        try writer.writeAll("# TYPE archerdb_s2_cell_level gauge\n");
+        for (s2_tracked_levels, 0..) |level, i| {
+            const count = s2_cell_level_counts[i].load(.monotonic);
+            try writer.print("archerdb_s2_cell_level{{level=\"{d}\"}} {d}\n", .{ level, count });
+        }
+        try writer.writeAll("\n");
+
+        // S2 coverage ratio
+        try writer.writeAll("# HELP archerdb_s2_coverage_ratio Coverage ratio of indexed area\n");
+        try writer.writeAll("# TYPE archerdb_s2_coverage_ratio gauge\n");
+        const coverage_scaled = s2_coverage_ratio.load(.monotonic);
+        const coverage_f: f64 = @as(f64, @floatFromInt(coverage_scaled)) / 10000.0;
+        try writer.print("archerdb_s2_coverage_ratio {d:.4}\n", .{coverage_f});
+        try writer.writeAll("\n");
+
+        // ====================================================================
+        // Extended Memory Metrics (MET-07)
+        // ====================================================================
+
+        try memory_ram_index_bytes.format(writer);
+        try memory_cache_bytes.format(writer);
+        try writer.writeAll("\n");
+
+        // ====================================================================
+        // Connection Pool Metrics (MET-08)
+        // ====================================================================
+
+        try connections_total.format(writer);
+        try connections_errors_total.format(writer);
+        try writer.writeAll("\n");
+
+        // ====================================================================
+        // LSM Compaction Extended Metrics (MET-06)
+        // ====================================================================
+
+        try compaction_duration_seconds.format(writer);
+        try compaction_bytes_read_total.format(writer);
+        try compaction_bytes_written_total.format(writer);
+        try compaction_current_level.format(writer);
+        try compaction_operations_total.format(writer);
+        try writer.writeAll("\n");
+
+        // ====================================================================
+        // Checkpoint Metrics
+        // ====================================================================
+
+        try checkpoint_duration_seconds.format(writer);
+        try checkpoint_total.format(writer);
+        try writer.writeAll("\n");
+
+        // ====================================================================
+        // Build Info Metric
+        // ====================================================================
+
+        // Format build_info with dynamic labels
+        try writer.writeAll("# HELP archerdb_build_info ArcherDB build information\n");
+        try writer.writeAll("# TYPE archerdb_build_info gauge\n");
+        const version_str = build_version[0..build_version_len];
+        const commit_str = build_commit[0..build_commit_len];
+        try writer.print(
+            "archerdb_build_info{{version=\"{s}\",commit=\"{s}\"}} 1\n",
+            .{ version_str, commit_str },
+        );
         try writer.writeAll("\n");
     }
 
