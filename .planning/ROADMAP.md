@@ -144,13 +144,13 @@ Plans:
   3. Structured JSON logging with correlation IDs and runtime-configurable log levels
   4. Health endpoints (/health, /ready, /live) report replica and storage status
   5. Sensitive data redacted from logs, log rotation supported
-**Plans**: TBD
+**Plans**: 4 plans
 
 Plans:
-- [ ] 07-01: Metrics completion
-- [ ] 07-02: OpenTelemetry tracing
-- [ ] 07-03: Structured logging
-- [ ] 07-04: Health endpoints
+- [ ] 07-01-PLAN.md - Metrics completion (S2 index, process, memory, connection metrics)
+- [ ] 07-02-PLAN.md - OpenTelemetry tracing (OTLP export, correlation context, W3C/B3 propagation)
+- [ ] 07-03-PLAN.md - Structured logging (JSON format, correlation IDs, per-module levels)
+- [ ] 07-04-PLAN.md - Health endpoints (/health/detailed, enhanced /ready and /live)
 
 ### Phase 8: Observability Dashboards
 **Goal**: Production-ready monitoring - Grafana dashboards showing everything operators need, alerting rules for proactive response
@@ -216,7 +216,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | 4. Replication | 3/3 | Complete | 2026-01-22 |
 | 5. Sharding & Cleanup | 5/5 | Complete | 2026-01-23 |
 | 6. SDK Parity | 5/5 | Complete | 2026-01-23 |
-| 7. Observability Core | 0/4 | Not started | - |
+| 7. Observability Core | 0/4 | Planned | - |
 | 8. Observability Dashboards | 0/2 | Not started | - |
 | 9. Documentation | 0/3 | Not started | - |
 | 10. Testing & Benchmarks | 0/4 | Not started | - |
@@ -235,4 +235,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 *Phase 5 complete: 2026-01-23*
 *Phase 6 planned: 2026-01-23*
 *Phase 6 complete: 2026-01-23*
+*Phase 7 planned: 2026-01-23*
 *Total requirements: 234 | All mapped*
