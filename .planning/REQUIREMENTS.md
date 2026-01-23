@@ -290,13 +290,13 @@ Everything below must be complete before release. No versions, no deferrals.
 
 ### Documentation - Benchmarks (BENCH)
 
-- [ ] **BENCH-01**: Benchmark methodology documented
-- [ ] **BENCH-02**: Benchmark environment documented
-- [ ] **BENCH-03**: Benchmark vs PostGIS (geospatial queries)
-- [ ] **BENCH-04**: Benchmark vs Redis/Tile38 (latency)
-- [ ] **BENCH-05**: Benchmark vs Elasticsearch Geo (throughput)
-- [ ] **BENCH-06**: Benchmark vs Aerospike (write performance)
-- [ ] **BENCH-07**: Benchmark results reproducible
+- [x] **BENCH-01**: Benchmark methodology documented
+- [x] **BENCH-02**: Benchmark environment documented
+- [x] **BENCH-03**: Benchmark vs PostGIS (geospatial queries)
+- [x] **BENCH-04**: Benchmark vs Redis/Tile38 (latency)
+- [x] **BENCH-05**: Benchmark vs Elasticsearch Geo (throughput)
+- [x] **BENCH-06**: Benchmark vs Aerospike (write performance)
+- [x] **BENCH-07**: Benchmark results reproducible
 
 ### Code Cleanup (CLEAN)
 
@@ -313,34 +313,34 @@ Everything below must be complete before release. No versions, no deferrals.
 
 ### Testing - CI (CI)
 
-- [ ] **CI-01**: CI runs on Linux (ubuntu-latest)
-- [ ] **CI-02**: CI runs on macOS (macos-latest)
-- [ ] **CI-03**: VOPR fuzzer runs in CI
-- [ ] **CI-04**: All unit tests pass
-- [ ] **CI-05**: All integration tests pass
-- [ ] **CI-06**: Test coverage report generated
-- [ ] **CI-07**: Performance regression detection
+- [x] **CI-01**: CI runs on Linux (ubuntu-latest)
+- [x] **CI-02**: CI runs on macOS (macos-latest)
+- [x] **CI-03**: VOPR fuzzer runs in CI
+- [x] **CI-04**: All unit tests pass
+- [x] **CI-05**: All integration tests pass
+- [x] **CI-06**: Test coverage report generated
+- [x] **CI-07**: Performance regression detection
 
 ### Testing - Integration (INT)
 
-- [ ] **INT-01**: Integration tests for all geospatial operations
-- [ ] **INT-02**: Integration tests for replication
-- [ ] **INT-03**: Integration tests for backup/restore
-- [ ] **INT-04**: Integration tests for failover
-- [ ] **INT-05**: Integration tests for all SDKs
-- [ ] **INT-06**: Integration tests for encryption
+- [x] **INT-01**: Integration tests for all geospatial operations
+- [x] **INT-02**: Integration tests for replication
+- [x] **INT-03**: Integration tests for backup/restore
+- [x] **INT-04**: Integration tests for failover
+- [x] **INT-05**: Integration tests for all SDKs
+- [x] **INT-06**: Integration tests for encryption
 
 ### Performance (PERF)
 
-- [ ] **PERF-01**: Insert throughput benchmarked
-- [ ] **PERF-02**: Radius query latency benchmarked
-- [ ] **PERF-03**: Polygon query latency benchmarked
-- [ ] **PERF-04**: UUID lookup latency benchmarked
-- [ ] **PERF-05**: Batch query latency benchmarked
-- [ ] **PERF-06**: Compaction impact on latency measured
-- [ ] **PERF-07**: Bottlenecks identified and optimized
-- [ ] **PERF-08**: Minimum hardware requirements documented
-- [ ] **PERF-09**: Recommended hardware for different scales
+- [x] **PERF-01**: Insert throughput benchmarked
+- [x] **PERF-02**: Radius query latency benchmarked
+- [x] **PERF-03**: Polygon query latency benchmarked
+- [x] **PERF-04**: UUID lookup latency benchmarked
+- [x] **PERF-05**: Batch query latency benchmarked
+- [x] **PERF-06**: Compaction impact on latency measured
+- [x] **PERF-07**: Bottlenecks identified and optimized
+- [x] **PERF-08**: Minimum hardware requirements documented
+- [x] **PERF-09**: Recommended hardware for different scales
 
 ## Out of Scope
 
