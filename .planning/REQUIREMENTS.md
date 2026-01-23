@@ -211,41 +211,41 @@ Everything below must be complete before release. No versions, no deferrals.
 
 ### Observability - Metrics (MET)
 
-- [ ] **MET-01**: Prometheus metrics for all operations
-- [ ] **MET-02**: Latency histograms (p50, p95, p99)
-- [ ] **MET-03**: Throughput counters (ops/sec)
-- [ ] **MET-04**: Error counters by type
-- [ ] **MET-05**: Replication lag gauge
-- [ ] **MET-06**: LSM compaction metrics
-- [ ] **MET-07**: Memory usage metrics
-- [ ] **MET-08**: Connection pool metrics
-- [ ] **MET-09**: S2 index metrics (cell count, coverage)
+- [x] **MET-01**: Prometheus metrics for all operations
+- [x] **MET-02**: Latency histograms (p50, p95, p99)
+- [x] **MET-03**: Throughput counters (ops/sec)
+- [x] **MET-04**: Error counters by type
+- [x] **MET-05**: Replication lag gauge
+- [x] **MET-06**: LSM compaction metrics
+- [x] **MET-07**: Memory usage metrics
+- [x] **MET-08**: Connection pool metrics
+- [x] **MET-09**: S2 index metrics (cell count, coverage)
 
 ### Observability - Tracing (TRACE)
 
-- [ ] **TRACE-01**: OpenTelemetry tracing integration
-- [ ] **TRACE-02**: Trace spans for insert operations
-- [ ] **TRACE-03**: Trace spans for query operations
-- [ ] **TRACE-04**: Trace spans for compaction
-- [ ] **TRACE-05**: Trace spans for replication
-- [ ] **TRACE-06**: Trace context propagation across VSR
-- [ ] **TRACE-07**: Trace export to Jaeger/Zipkin
+- [x] **TRACE-01**: OpenTelemetry tracing integration
+- [x] **TRACE-02**: Trace spans for insert operations
+- [x] **TRACE-03**: Trace spans for query operations
+- [x] **TRACE-04**: Trace spans for compaction
+- [x] **TRACE-05**: Trace spans for replication
+- [x] **TRACE-06**: Trace context propagation across VSR
+- [x] **TRACE-07**: Trace export to Jaeger/Zipkin
 
 ### Observability - Logging (LOG)
 
-- [ ] **LOG-01**: Structured JSON logging
-- [ ] **LOG-02**: Correlation IDs across operations
-- [ ] **LOG-03**: Log levels configurable at runtime
-- [ ] **LOG-04**: Sensitive data redacted from logs
-- [ ] **LOG-05**: Log rotation support
+- [x] **LOG-01**: Structured JSON logging
+- [x] **LOG-02**: Correlation IDs across operations
+- [x] **LOG-03**: Log levels configurable at runtime
+- [x] **LOG-04**: Sensitive data redacted from logs
+- [x] **LOG-05**: Log rotation support
 
 ### Observability - Health (HEALTH)
 
-- [ ] **HEALTH-01**: /health endpoint (basic liveness)
-- [ ] **HEALTH-02**: /ready endpoint (can accept traffic)
-- [ ] **HEALTH-03**: /live endpoint (not deadlocked)
-- [ ] **HEALTH-04**: Health checks include replica status
-- [ ] **HEALTH-05**: Health checks include storage status
+- [x] **HEALTH-01**: /health endpoint (basic liveness)
+- [x] **HEALTH-02**: /ready endpoint (can accept traffic)
+- [x] **HEALTH-03**: /live endpoint (not deadlocked)
+- [x] **HEALTH-04**: Health checks include replica status
+- [x] **HEALTH-05**: Health checks include storage status
 
 ### Observability - Dashboards (DASH)
 
@@ -503,32 +503,32 @@ Everything below must be complete before release. No versions, no deferrals.
 | SDKP-07 | Phase 6 | Complete |
 | SDKP-08 | Phase 6 | Complete |
 | SDKP-09 | Phase 6 | Complete |
-| MET-01 | Phase 7 | Pending |
-| MET-02 | Phase 7 | Pending |
-| MET-03 | Phase 7 | Pending |
-| MET-04 | Phase 7 | Pending |
-| MET-05 | Phase 7 | Pending |
-| MET-06 | Phase 7 | Pending |
-| MET-07 | Phase 7 | Pending |
-| MET-08 | Phase 7 | Pending |
-| MET-09 | Phase 7 | Pending |
-| TRACE-01 | Phase 7 | Pending |
-| TRACE-02 | Phase 7 | Pending |
-| TRACE-03 | Phase 7 | Pending |
-| TRACE-04 | Phase 7 | Pending |
-| TRACE-05 | Phase 7 | Pending |
-| TRACE-06 | Phase 7 | Pending |
-| TRACE-07 | Phase 7 | Pending |
-| LOG-01 | Phase 7 | Pending |
-| LOG-02 | Phase 7 | Pending |
-| LOG-03 | Phase 7 | Pending |
-| LOG-04 | Phase 7 | Pending |
-| LOG-05 | Phase 7 | Pending |
-| HEALTH-01 | Phase 7 | Pending |
-| HEALTH-02 | Phase 7 | Pending |
-| HEALTH-03 | Phase 7 | Pending |
-| HEALTH-04 | Phase 7 | Pending |
-| HEALTH-05 | Phase 7 | Pending |
+| MET-01 | Phase 7 | Complete |
+| MET-02 | Phase 7 | Complete |
+| MET-03 | Phase 7 | Complete |
+| MET-04 | Phase 7 | Complete |
+| MET-05 | Phase 7 | Complete |
+| MET-06 | Phase 7 | Complete |
+| MET-07 | Phase 7 | Complete |
+| MET-08 | Phase 7 | Complete |
+| MET-09 | Phase 7 | Complete |
+| TRACE-01 | Phase 7 | Complete |
+| TRACE-02 | Phase 7 | Complete |
+| TRACE-03 | Phase 7 | Complete |
+| TRACE-04 | Phase 7 | Complete |
+| TRACE-05 | Phase 7 | Complete |
+| TRACE-06 | Phase 7 | Complete |
+| TRACE-07 | Phase 7 | Complete |
+| LOG-01 | Phase 7 | Complete |
+| LOG-02 | Phase 7 | Complete |
+| LOG-03 | Phase 7 | Complete |
+| LOG-04 | Phase 7 | Complete |
+| LOG-05 | Phase 7 | Complete |
+| HEALTH-01 | Phase 7 | Complete |
+| HEALTH-02 | Phase 7 | Complete |
+| HEALTH-03 | Phase 7 | Complete |
+| HEALTH-04 | Phase 7 | Complete |
+| HEALTH-05 | Phase 7 | Complete |
 | DASH-01 | Phase 8 | Pending |
 | DASH-02 | Phase 8 | Pending |
 | DASH-03 | Phase 8 | Pending |

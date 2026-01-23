@@ -18,7 +18,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 4: Replication** - Implement S3 backend, disk spillover, replication metrics
 - [x] **Phase 5: Sharding & Cleanup** - Verify sharding, resolve all TODOs/FIXMEs, remove stubs
 - [x] **Phase 6: SDK Parity** - Complete all 5 SDKs to feature and quality parity
-- [ ] **Phase 7: Observability Core** - Metrics completion, tracing, structured logging, health endpoints
+- [x] **Phase 7: Observability Core** - Metrics completion, tracing, structured logging, health endpoints
 - [ ] **Phase 8: Observability Dashboards** - Grafana dashboards, alerting rules
 - [ ] **Phase 9: Documentation** - API reference, architecture deep-dive, operations runbook
 - [ ] **Phase 10: Testing & Benchmarks** - CI completion, integration tests, performance benchmarks
@@ -147,10 +147,10 @@ Plans:
 **Plans**: 4 plans
 
 Plans:
-- [ ] 07-01-PLAN.md - Metrics completion (S2 index, process, memory, connection metrics)
-- [ ] 07-02-PLAN.md - OpenTelemetry tracing (OTLP export, correlation context, W3C/B3 propagation)
-- [ ] 07-03-PLAN.md - Structured logging (JSON format, correlation IDs, per-module levels)
-- [ ] 07-04-PLAN.md - Health endpoints (/health/detailed, enhanced /ready and /live)
+- [x] 07-01-PLAN.md - Metrics completion (S2 index, process, memory, connection metrics)
+- [x] 07-02-PLAN.md - OpenTelemetry tracing (OTLP export, correlation context, W3C/B3 propagation)
+- [x] 07-03-PLAN.md - Structured logging (JSON format, correlation IDs, per-module levels)
+- [x] 07-04-PLAN.md - Health endpoints (/health/detailed, enhanced /ready and /live)
 
 ### Phase 8: Observability Dashboards
 **Goal**: Production-ready monitoring - Grafana dashboards showing everything operators need, alerting rules for proactive response
@@ -216,7 +216,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | 4. Replication | 3/3 | Complete | 2026-01-22 |
 | 5. Sharding & Cleanup | 5/5 | Complete | 2026-01-23 |
 | 6. SDK Parity | 5/5 | Complete | 2026-01-23 |
-| 7. Observability Core | 0/4 | Planned | - |
+| 7. Observability Core | 4/4 | Complete | 2026-01-23 |
 | 8. Observability Dashboards | 0/2 | Not started | - |
 | 9. Documentation | 0/3 | Not started | - |
 | 10. Testing & Benchmarks | 0/4 | Not started | - |
@@ -236,4 +236,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 *Phase 6 planned: 2026-01-23*
 *Phase 6 complete: 2026-01-23*
 *Phase 7 planned: 2026-01-23*
+*Phase 7 complete: 2026-01-23*
 *Total requirements: 234 | All mapped*
