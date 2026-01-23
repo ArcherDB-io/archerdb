@@ -82,11 +82,8 @@ class JumpHashTest {
         @Test
         @DisplayName("Same key+buckets always produces same result over 1000 iterations")
         void testDeterminism1000Iterations() {
-            long[][] testCases = {
-                {0xDEADBEEFL, 16, 5},
-                {0xCAFEBABEL, 64, 46},
-                {0x123456789ABCDEF0L, 256, 33},
-                {-1L, 8, 7}, // 0xFFFFFFFFFFFFFFFF
+            long[][] testCases = {{0xDEADBEEFL, 16, 5}, {0xCAFEBABEL, 64, 46},
+                    {0x123456789ABCDEF0L, 256, 33}, {-1L, 8, 7}, // 0xFFFFFFFFFFFFFFFF
             };
 
             for (long[] tc : testCases) {
@@ -97,8 +94,8 @@ class JumpHashTest {
                 for (int i = 0; i < 1000; i++) {
                     int result = JumpHash.jumpHash(key, buckets);
                     assertEquals(expected, result,
-                        String.format("Iteration %d: jumpHash(0x%X, %d) = %d, want %d",
-                            i, key, buckets, result, expected));
+                            String.format("Iteration %d: jumpHash(0x%X, %d) = %d, want %d", i, key,
+                                    buckets, result, expected));
                 }
             }
         }
@@ -148,10 +145,8 @@ class JumpHashTest {
         @Test
         @DisplayName("Same entity_id always produces same shard_key over 1000 iterations")
         void testDeterminism1000Iterations() {
-            long[][] testCases = {
-                {0x0000000000000001L, 0x0000000000000000L, 0xB456BCFC34C2CB2CL},
-                {0x123456789ABCDEF0L, 0xDEADBEEFCAFEBABEL, 0x683A5932FE04E714L},
-            };
+            long[][] testCases = {{0x0000000000000001L, 0x0000000000000000L, 0xB456BCFC34C2CB2CL},
+                    {0x123456789ABCDEF0L, 0xDEADBEEFCAFEBABEL, 0x683A5932FE04E714L},};
 
             for (long[] tc : testCases) {
                 long lo = tc[0];
@@ -161,8 +156,9 @@ class JumpHashTest {
                 for (int i = 0; i < 1000; i++) {
                     long result = JumpHash.computeShardKey(lo, hi);
                     assertEquals(expected, result,
-                        String.format("Iteration %d: computeShardKey(0x%X, 0x%X) = 0x%X, want 0x%X",
-                            i, lo, hi, result, expected));
+                            String.format(
+                                    "Iteration %d: computeShardKey(0x%X, 0x%X) = 0x%X, want 0x%X",
+                                    i, lo, hi, result, expected));
                 }
             }
         }

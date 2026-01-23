@@ -8,12 +8,12 @@ import java.math.BigInteger;
 /**
  * Jump Consistent Hash (Google, 2014) implementation.
  * <p>
- * O(1) memory, O(log n) compute, optimal 1/(n+1) key movement on resize.
- * Uses a linear congruential generator (LCG) with specific constants.
+ * O(1) memory, O(log n) compute, optimal 1/(n+1) key movement on resize. Uses a linear congruential
+ * generator (LCG) with specific constants.
  * </p>
  * <p>
- * IMPORTANT: This implementation MUST produce identical results to
- * src/sharding.zig jumpHash() for cross-SDK compatibility.
+ * IMPORTANT: This implementation MUST produce identical results to src/sharding.zig jumpHash() for
+ * cross-SDK compatibility.
  * </p>
  *
  * @see <a href="https://research.google/pubs/pub44824/">Jump Consistent Hash (Google, 2014)</a>
@@ -34,9 +34,9 @@ public final class JumpHash {
     /**
      * Jump Consistent Hash algorithm.
      * <p>
-     * Computes a consistent bucket (shard) for the given key.
-     * Same key always maps to the same bucket for a given bucket count.
-     * When bucket count changes, approximately 1/(n+1) keys move to the new bucket.
+     * Computes a consistent bucket (shard) for the given key. Same key always maps to the same
+     * bucket for a given bucket count. When bucket count changes, approximately 1/(n+1) keys move
+     * to the new bucket.
      * </p>
      *
      * @param key 64-bit key to hash
@@ -70,8 +70,8 @@ public final class JumpHash {
      * Uses murmur3-inspired finalization for high-quality mixing.
      * </p>
      * <p>
-     * IMPORTANT: This implementation MUST produce identical results to
-     * src/sharding.zig computeShardKey() for cross-SDK compatibility.
+     * IMPORTANT: This implementation MUST produce identical results to src/sharding.zig
+     * computeShardKey() for cross-SDK compatibility.
      * </p>
      *
      * @param entityIdLo Low 64 bits of the entity ID
