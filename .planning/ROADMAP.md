@@ -19,7 +19,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 5: Sharding & Cleanup** - Verify sharding, resolve all TODOs/FIXMEs, remove stubs
 - [x] **Phase 6: SDK Parity** - Complete all 5 SDKs to feature and quality parity
 - [x] **Phase 7: Observability Core** - Metrics completion, tracing, structured logging, health endpoints
-- [ ] **Phase 8: Observability Dashboards** - Grafana dashboards, alerting rules
+- [x] **Phase 8: Observability Dashboards** - Grafana dashboards, alerting rules
 - [ ] **Phase 9: Documentation** - API reference, architecture deep-dive, operations runbook
 - [ ] **Phase 10: Testing & Benchmarks** - CI completion, integration tests, performance benchmarks
 
@@ -165,9 +165,9 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 08-01-PLAN.md - Overview and Queries dashboards with provisioning config
-- [ ] 08-02-PLAN.md - Replication and Storage detail dashboards
-- [ ] 08-03-PLAN.md - Cluster dashboard, alerting rules, and notification templates
+- [x] 08-01-PLAN.md - Overview and Queries dashboards with provisioning config
+- [x] 08-02-PLAN.md - Replication and Storage detail dashboards
+- [x] 08-03-PLAN.md - Cluster dashboard, alerting rules, and notification templates
 
 ### Phase 9: Documentation
 **Goal**: Documentation complete for users and operators - API reference, architecture deep-dive, operations runbook
@@ -218,7 +218,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | 5. Sharding & Cleanup | 5/5 | Complete | 2026-01-23 |
 | 6. SDK Parity | 5/5 | Complete | 2026-01-23 |
 | 7. Observability Core | 4/4 | Complete | 2026-01-23 |
-| 8. Observability Dashboards | 0/3 | Not started | - |
+| 8. Observability Dashboards | 3/3 | Complete | 2026-01-23 |
 | 9. Documentation | 0/3 | Not started | - |
 | 10. Testing & Benchmarks | 0/4 | Not started | - |
 
@@ -239,4 +239,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 *Phase 7 planned: 2026-01-23*
 *Phase 7 complete: 2026-01-23*
 *Phase 8 planned: 2026-01-23*
+*Phase 8 complete: 2026-01-23*
 *Total requirements: 234 | All mapped*

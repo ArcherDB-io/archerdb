@@ -249,15 +249,15 @@ Everything below must be complete before release. No versions, no deferrals.
 
 ### Observability - Dashboards (DASH)
 
-- [ ] **DASH-01**: Grafana dashboard template
-- [ ] **DASH-02**: Dashboard shows query latency
-- [ ] **DASH-03**: Dashboard shows throughput
-- [ ] **DASH-04**: Dashboard shows replication lag
-- [ ] **DASH-05**: Dashboard shows cluster health
-- [ ] **DASH-06**: Prometheus alerting rules
-- [ ] **DASH-07**: Alerts for resource exhaustion (proactive)
-- [ ] **DASH-08**: Alerts for replication lag
-- [ ] **DASH-09**: Alerts for error rate spikes
+- [x] **DASH-01**: Grafana dashboard template
+- [x] **DASH-02**: Dashboard shows query latency
+- [x] **DASH-03**: Dashboard shows throughput
+- [x] **DASH-04**: Dashboard shows replication lag
+- [x] **DASH-05**: Dashboard shows cluster health
+- [x] **DASH-06**: Prometheus alerting rules
+- [x] **DASH-07**: Alerts for resource exhaustion (proactive)
+- [x] **DASH-08**: Alerts for replication lag
+- [x] **DASH-09**: Alerts for error rate spikes
 
 ### Documentation - API Reference (AREF)
 
@@ -529,15 +529,15 @@ Everything below must be complete before release. No versions, no deferrals.
 | HEALTH-03 | Phase 7 | Complete |
 | HEALTH-04 | Phase 7 | Complete |
 | HEALTH-05 | Phase 7 | Complete |
-| DASH-01 | Phase 8 | Pending |
-| DASH-02 | Phase 8 | Pending |
-| DASH-03 | Phase 8 | Pending |
-| DASH-04 | Phase 8 | Pending |
-| DASH-05 | Phase 8 | Pending |
-| DASH-06 | Phase 8 | Pending |
-| DASH-07 | Phase 8 | Pending |
-| DASH-08 | Phase 8 | Pending |
-| DASH-09 | Phase 8 | Pending |
+| DASH-01 | Phase 8 | Complete |
+| DASH-02 | Phase 8 | Complete |
+| DASH-03 | Phase 8 | Complete |
+| DASH-04 | Phase 8 | Complete |
+| DASH-05 | Phase 8 | Complete |
+| DASH-06 | Phase 8 | Complete |
+| DASH-07 | Phase 8 | Complete |
+| DASH-08 | Phase 8 | Complete |
+| DASH-09 | Phase 8 | Complete |
 | AREF-01 | Phase 9 | Pending |
 | AREF-02 | Phase 9 | Pending |
 | AREF-03 | Phase 9 | Pending |
