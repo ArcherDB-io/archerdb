@@ -227,19 +227,126 @@ DeleteResult result = client.deleteEntities(Arrays.asList(entityId1, entityId2))
 System.out.println("Deleted " + result.getDeletedCount() + " entities");
 ```
 
-## Error Handling
+## Exception Handling
+
+ArcherDB uses a typed exception hierarchy for precise error handling:
 
 ```java
-import com.archerdb.geo.exceptions.*;
+import com.archerdb.geo.*;
 
 try {
     QueryResult result = client.queryRadius(filter);
 } catch (ValidationException e) {
-    System.out.println("Invalid input: " + e.getMessage());
+    // Invalid input (e.g., coordinates out of range, invalid polygon)
+    // Client error - fix the request, don't retry
+    System.err.println("Invalid query: " + e.getMessage());
+    System.err.println("Error code: " + e.getErrorCode());
 } catch (ConnectionException e) {
-    System.out.println("Connection failed: " + e.getMessage());
+    // Network issues - usually retryable
+    if (e.isRetryable()) {
+        // Implement retry with exponential backoff
+        System.out.println("Connection failed, retrying...");
+    }
+} catch (ClusterException e) {
+    // Cluster state issues (view change, not primary)
+    // Always retryable - SDK handles automatically
+    System.out.println("Cluster issue: " + e.getMessage());
+} catch (OperationException e) {
+    // Operation-level failures (timeout, entity not found, etc.)
+    switch (e.getErrorCode()) {
+        case OperationException.ENTITY_NOT_FOUND:
+            System.out.println("Entity does not exist");
+            break;
+        case OperationException.ENTITY_EXPIRED:
+            System.out.println("Entity has expired (TTL)");
+            break;
+        case OperationException.TIMEOUT:
+            // Timeout is retryable but with caution - operation may have committed
+            if (e.isRetryable()) {
+                System.out.println("Operation timed out, may retry");
+            }
+            break;
+        default:
+            System.err.println("Operation failed: " + e.getMessage());
+    }
 } catch (ArcherDBException e) {
-    System.out.println("ArcherDB error: " + e.getMessage());
+    // Catch-all for other ArcherDB errors
+    System.err.println("ArcherDB error: " + e.getMessage());
+    System.err.println("Error code: " + e.getErrorCode());
+    System.err.println("Retryable: " + e.isRetryable());
+}
+```
+
+### Exception Types
+
+| Exception | Error Codes | Retryable | Description |
+|-----------|-------------|-----------|-------------|
+| `ConnectionException` | 1-3 | Yes | Network connectivity issues (connection failed, timeout, TLS error) |
+| `ClusterException` | 201-203 | Yes | Cluster state issues (unavailable, view change, not primary) |
+| `ValidationException` | 100-120 | No | Invalid input parameters (coordinates, polygon, batch size) |
+| `OperationException` | 200-310 | Varies | Operation-level failures (entity not found, timeout, resource exhausted) |
+
+### Sharding Errors (220-224)
+
+For sharded clusters, use `ShardingError` to handle shard-specific errors:
+
+```java
+try {
+    QueryResult result = client.queryRadius(filter);
+} catch (ArcherDBException e) {
+    ShardingError shardError = ShardingError.fromCode(e.getErrorCode());
+    if (shardError != null) {
+        switch (shardError) {
+            case NOT_SHARD_LEADER:
+                // SDK automatically refreshes topology and retries
+                break;
+            case RESHARDING_IN_PROGRESS:
+                // Wait and retry - cluster is resharding
+                Thread.sleep(5000);
+                break;
+            case SHARD_UNAVAILABLE:
+                // Shard has no available replicas
+                System.err.println("Shard unavailable: " + e.getMessage());
+                break;
+        }
+    }
+}
+```
+
+### Encryption Errors (410-414)
+
+For clusters with encryption at rest:
+
+```java
+EncryptionError encError = EncryptionError.fromCode(e.getErrorCode());
+if (encError != null) {
+    switch (encError) {
+        case ENCRYPTION_KEY_UNAVAILABLE:
+            // KMS/Vault connectivity issue - retry with backoff
+            break;
+        case DECRYPTION_FAILED:
+            // Data corruption or tampering - do not retry
+            break;
+        case KEY_ROTATION_IN_PROGRESS:
+            // Wait for rotation to complete
+            break;
+    }
+}
+```
+
+### Retryable vs Non-Retryable
+
+```java
+try {
+    client.insertEvents(events);
+} catch (ArcherDBException e) {
+    if (e.isRetryable()) {
+        // Safe to retry with exponential backoff
+        // Examples: connection timeout, cluster view change, rate limit
+    } else {
+        // Do NOT retry - fix the request first
+        // Examples: invalid coordinates, polygon self-intersecting
+    }
 }
 ```
 
@@ -286,26 +393,129 @@ client.close();
 
 ## Async Support
 
-For async operations using CompletableFuture:
+For non-blocking operations using `CompletableFuture`, use `GeoClientAsync`:
 
 ```java
 import com.archerdb.geo.GeoClientAsync;
+import java.util.concurrent.CompletableFuture;
 
-GeoClientAsync client = GeoClientAsync.create(0L, "127.0.0.1:3001");
+// Create async client (uses ForkJoinPool.commonPool by default)
+try (GeoClientAsync client = GeoClientAsync.create(0L, "127.0.0.1:3001")) {
 
-CompletableFuture<Void> future = client.insertEventsAsync(events)
-    .thenAccept(errors -> {
-        if (errors.isEmpty()) {
-            System.out.println("All events inserted!");
+    // Basic async insert
+    client.insertEventsAsync(events)
+        .thenAccept(errors -> {
+            if (errors.isEmpty()) {
+                System.out.println("All events inserted!");
+            } else {
+                errors.forEach(e ->
+                    System.err.println("Event " + e.getIndex() + " failed"));
+            }
+        })
+        .exceptionally(ex -> {
+            System.err.println("Insert failed: " + ex.getMessage());
+            return null;
+        });
+
+    // Async query with result processing
+    CompletableFuture<QueryResult> queryFuture = client.queryRadiusAsync(filter)
+        .thenApply(result -> {
+            System.out.println("Found " + result.getEvents().size() + " events");
+            return result;
+        });
+
+    // Wait for result if needed
+    QueryResult result = queryFuture.join();
+}
+```
+
+### Parallel Queries
+
+Execute multiple queries in parallel and combine results:
+
+```java
+// Query three regions simultaneously
+CompletableFuture<QueryResult> region1 = client.queryRadiusAsync(filter1);
+CompletableFuture<QueryResult> region2 = client.queryRadiusAsync(filter2);
+CompletableFuture<QueryResult> region3 = client.queryRadiusAsync(filter3);
+
+// Wait for all to complete
+CompletableFuture.allOf(region1, region2, region3)
+    .thenRun(() -> {
+        int total = region1.join().getEvents().size()
+                  + region2.join().getEvents().size()
+                  + region3.join().getEvents().size();
+        System.out.println("Total events across all regions: " + total);
+    })
+    .join();
+```
+
+### Chaining Operations
+
+Chain dependent operations using `thenCompose`:
+
+```java
+// Look up entity, then query nearby
+client.getLatestByUuidAsync(entityId)
+    .thenCompose(event -> {
+        if (event != null) {
+            // Query around entity's current location
+            QueryRadiusFilter filter = QueryRadiusFilter.builder()
+                .setCenter(event.getLatitude(), event.getLongitude())
+                .setRadiusMeters(1000)
+                .setLimit(100)
+                .build();
+            return client.queryRadiusAsync(filter);
         }
-    });
-
-CompletableFuture<QueryResult> queryFuture = client.queryRadiusAsync(filter)
-    .thenApply(result -> {
-        System.out.println("Found " + result.getEvents().size() + " events");
-        return result;
+        return CompletableFuture.completedFuture(QueryResult.empty());
+    })
+    .thenAccept(result -> {
+        System.out.println("Found " + result.getEvents().size() + " nearby entities");
     });
 ```
+
+### Custom Executor
+
+For fine-grained control over thread pool:
+
+```java
+import java.util.concurrent.Executors;
+import java.util.concurrent.ExecutorService;
+
+// Create dedicated thread pool
+ExecutorService executor = Executors.newFixedThreadPool(4);
+
+// Wrap existing sync client with custom executor
+GeoClient syncClient = GeoClient.create(0L, "127.0.0.1:3001");
+GeoClientAsync asyncClient = GeoClientAsync.create(syncClient, executor);
+
+// Use async client...
+
+// Cleanup
+asyncClient.close();  // Closes underlying sync client
+executor.shutdown();
+```
+
+### All Async Methods
+
+`GeoClientAsync` provides async versions of all `GeoClient` operations:
+
+| Sync Method | Async Method | Return Type |
+|-------------|--------------|-------------|
+| `insertEvents()` | `insertEventsAsync()` | `CompletableFuture<List<InsertGeoEventsError>>` |
+| `upsertEvents()` | `upsertEventsAsync()` | `CompletableFuture<List<InsertGeoEventsError>>` |
+| `deleteEntities()` | `deleteEntitiesAsync()` | `CompletableFuture<DeleteResult>` |
+| `getLatestByUuid()` | `getLatestByUuidAsync()` | `CompletableFuture<GeoEvent>` |
+| `lookupBatch()` | `lookupBatchAsync()` | `CompletableFuture<Map<UInt128, GeoEvent>>` |
+| `queryRadius()` | `queryRadiusAsync()` | `CompletableFuture<QueryResult>` |
+| `queryPolygon()` | `queryPolygonAsync()` | `CompletableFuture<QueryResult>` |
+| `queryLatest()` | `queryLatestAsync()` | `CompletableFuture<QueryResult>` |
+| `setTtl()` | `setTtlAsync()` | `CompletableFuture<TtlSetResponse>` |
+| `extendTtl()` | `extendTtlAsync()` | `CompletableFuture<TtlExtendResponse>` |
+| `clearTtl()` | `clearTtlAsync()` | `CompletableFuture<TtlClearResponse>` |
+| `ping()` | `pingAsync()` | `CompletableFuture<Boolean>` |
+| `getStatus()` | `getStatusAsync()` | `CompletableFuture<StatusResponse>` |
+| `getTopology()` | `getTopologyAsync()` | `CompletableFuture<TopologyResponse>` |
 
 ## Links
 
