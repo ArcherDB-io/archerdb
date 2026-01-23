@@ -1335,3 +1335,192 @@ test "MetricsServer: parseAuthHeader" {
         }
     }
 }
+
+// =============================================================================
+// Health Endpoint Tests
+// =============================================================================
+
+test "getUptimeSeconds calculates correctly" {
+    // Save current state
+    const old_start = server_start_time_ns;
+    defer server_start_time_ns = old_start;
+
+    // Set start time to 2 seconds ago
+    const now = std.time.nanoTimestamp();
+    server_start_time_ns = now - 2_000_000_000;
+
+    const uptime = getUptimeSeconds();
+    try std.testing.expect(uptime >= 2);
+    try std.testing.expect(uptime < 5); // Should be close to 2
+}
+
+test "getUptimeSeconds returns 0 if not set" {
+    // Save current state
+    const old_start = server_start_time_ns;
+    defer server_start_time_ns = old_start;
+
+    server_start_time_ns = 0;
+    const uptime = getUptimeSeconds();
+    try std.testing.expectEqual(@as(u64, 0), uptime);
+}
+
+test "setStartTime sets time" {
+    // Save current state
+    const old_start = server_start_time_ns;
+    defer server_start_time_ns = old_start;
+
+    server_start_time_ns = 0;
+    setStartTime();
+    try std.testing.expect(server_start_time_ns > 0);
+}
+
+test "markInitialized and isInitialized" {
+    // Save current state
+    const old_init = server_initialized;
+    defer server_initialized = old_init;
+
+    server_initialized = false;
+    try std.testing.expect(!isInitialized());
+
+    markInitialized();
+    try std.testing.expect(isInitialized());
+}
+
+test "HealthStatus toString" {
+    try std.testing.expectEqualStrings("healthy", HealthStatus.healthy.toString());
+    try std.testing.expectEqualStrings("degraded", HealthStatus.degraded.toString());
+    try std.testing.expectEqualStrings("unhealthy", HealthStatus.unhealthy.toString());
+}
+
+test "CheckStatus toString" {
+    try std.testing.expectEqualStrings("pass", CheckStatus.pass.toString());
+    try std.testing.expectEqualStrings("warn", CheckStatus.warn.toString());
+    try std.testing.expectEqualStrings("fail", CheckStatus.fail.toString());
+}
+
+test "ComponentCheck struct initialization" {
+    const check = ComponentCheck{
+        .name = "test_component",
+        .status = .pass,
+        .message = "all good",
+        .duration_ms = 42,
+    };
+
+    try std.testing.expectEqualStrings("test_component", check.name);
+    try std.testing.expectEqual(CheckStatus.pass, check.status);
+    try std.testing.expectEqualStrings("all good", check.message.?);
+    try std.testing.expectEqual(@as(u32, 42), check.duration_ms.?);
+}
+
+test "ComponentCheck with null optionals" {
+    const check = ComponentCheck{
+        .name = "minimal",
+        .status = .fail,
+        .message = null,
+        .duration_ms = null,
+    };
+
+    try std.testing.expectEqualStrings("minimal", check.name);
+    try std.testing.expectEqual(CheckStatus.fail, check.status);
+    try std.testing.expect(check.message == null);
+    try std.testing.expect(check.duration_ms == null);
+}
+
+test "getBuildVersion returns registry version" {
+    // Initialize with known value
+    metrics.Registry.initBuildInfo("1.2.3-test", "abc123");
+
+    const version = getBuildVersion();
+    try std.testing.expectEqualStrings("1.2.3-test", version);
+}
+
+test "getBuildCommit returns registry commit" {
+    // Initialize with known value
+    metrics.Registry.initBuildInfo("1.2.3", "testcommit123");
+
+    const commit = getBuildCommit();
+    try std.testing.expectEqualStrings("testcommit123", commit);
+}
+
+test "health endpoint: replica state affects ready status" {
+    // Save current state
+    const old_state = replica_state;
+    const old_init = server_initialized;
+    defer {
+        replica_state = old_state;
+        server_initialized = old_init;
+    }
+
+    // Test all states
+    server_initialized = true;
+
+    replica_state = .starting;
+    try std.testing.expect(!replica_state.isReady());
+
+    replica_state = .ready;
+    try std.testing.expect(replica_state.isReady());
+
+    replica_state = .view_change;
+    try std.testing.expect(!replica_state.isReady());
+
+    replica_state = .recovering;
+    try std.testing.expect(!replica_state.isReady());
+
+    replica_state = .shutting_down;
+    try std.testing.expect(!replica_state.isReady());
+}
+
+test "health detailed: overall status aggregation logic" {
+    // Test the aggregation logic:
+    // - All pass -> healthy
+    // - Any warn, no fail -> degraded
+    // - Any fail -> unhealthy
+
+    // Simulate all pass
+    var overall: HealthStatus = .healthy;
+    const all_pass = [_]CheckStatus{ .pass, .pass, .pass };
+    for (all_pass) |status| {
+        if (status == .fail) {
+            overall = .unhealthy;
+            break;
+        }
+        if (status == .warn and overall != .unhealthy) {
+            overall = .degraded;
+        }
+    }
+    try std.testing.expectEqual(HealthStatus.healthy, overall);
+
+    // Simulate one warn
+    overall = .healthy;
+    const one_warn = [_]CheckStatus{ .pass, .warn, .pass };
+    for (one_warn) |status| {
+        if (status == .fail) {
+            overall = .unhealthy;
+            break;
+        }
+        if (status == .warn and overall != .unhealthy) {
+            overall = .degraded;
+        }
+    }
+    try std.testing.expectEqual(HealthStatus.degraded, overall);
+
+    // Simulate one fail
+    overall = .healthy;
+    const one_fail = [_]CheckStatus{ .pass, .fail, .warn };
+    for (one_fail) |status| {
+        if (status == .fail) {
+            overall = .unhealthy;
+            break;
+        }
+        if (status == .warn and overall != .unhealthy) {
+            overall = .degraded;
+        }
+    }
+    try std.testing.expectEqual(HealthStatus.unhealthy, overall);
+}
+
+test "HttpStatus code includes 429 for degraded" {
+    try std.testing.expectEqualStrings("200 OK", MetricsServer.HttpStatus.ok.code());
+    try std.testing.expectEqualStrings("429 Too Many Requests", MetricsServer.HttpStatus.too_many_requests.code());
+    try std.testing.expectEqualStrings("503 Service Unavailable", MetricsServer.HttpStatus.service_unavailable.code());
+}
