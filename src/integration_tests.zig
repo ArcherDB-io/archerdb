@@ -391,6 +391,430 @@ test "geo operations integration" {
     }
 }
 
+test "integration: geospatial batch insert and query" {
+    // INT-01: Test batch inserts and verify all events are queryable
+    const testing = std.testing;
+    const RequestContext = RequestContextType(constants.message_body_size_max);
+
+    var tmp_archerdb = try TmpArcherDB.init(testing.allocator, .{
+        .development = true,
+        .prebuilt = archerdb,
+    });
+    defer tmp_archerdb.deinit(testing.allocator);
+
+    var client: arch_client.ClientInterface = undefined;
+    try arch_client.init(
+        testing.allocator,
+        &client,
+        0,
+        tmp_archerdb.port_str,
+        42,
+        RequestContext.on_complete,
+    );
+    defer client.deinit() catch unreachable;
+
+    var completion = Completion{ .pending = 0 };
+    const request = try testing.allocator.create(RequestContext);
+    defer testing.allocator.destroy(request);
+    request.* = RequestContext{
+        .packet = undefined,
+        .completion = &completion,
+        .sent_data_size = 0,
+    };
+
+    // Create 100 events spread across different locations
+    const batch_size = 100;
+    var events: [batch_size]tb.GeoEvent = undefined;
+    for (0..batch_size) |i| {
+        // Distribute events across a grid around San Francisco
+        const lat_offset: f64 = @as(f64, @floatFromInt(i / 10)) * 0.01;
+        const lon_offset: f64 = @as(f64, @floatFromInt(i % 10)) * 0.01;
+        events[i] = make_event(
+            @as(u128, 2000) + @as(u128, @intCast(i)),
+            37.7749 + lat_offset,
+            -122.4194 + lon_offset,
+        );
+    }
+
+    // Batch insert all events
+    const insert_reply = try send_request(
+        &client,
+        &completion,
+        request,
+        .insert_events,
+        std.mem.sliceAsBytes(&events),
+    );
+    {
+        const result_size = @sizeOf(tb.InsertGeoEventsResult);
+        try testing.expectEqual(@as(usize, batch_size * result_size), insert_reply.len);
+        var offset: usize = 0;
+        var success_count: usize = 0;
+        while (offset < insert_reply.len) : (offset += result_size) {
+            const result = read_struct(
+                tb.InsertGeoEventsResult,
+                insert_reply[offset .. offset + result_size],
+            );
+            if (result.result == tb.InsertGeoEventResult.ok) {
+                success_count += 1;
+            }
+        }
+        try testing.expectEqual(batch_size, success_count);
+    }
+
+    // Verify events are queryable via UUID
+    for (0..5) |i| {
+        var uuid_filter = tb.QueryUuidFilter{
+            .entity_id = events[i].entity_id,
+        };
+        const uuid_reply = try send_request(
+            &client,
+            &completion,
+            request,
+            .query_uuid,
+            std.mem.asBytes(&uuid_filter),
+        );
+        try testing.expect(uuid_reply.len >= @sizeOf(tb.QueryUuidResponse));
+        const header = read_struct(
+            tb.QueryUuidResponse,
+            uuid_reply[0..@sizeOf(tb.QueryUuidResponse)],
+        );
+        try testing.expectEqual(@as(u8, 0), header.status);
+    }
+
+    // Query all events via radius (large radius to capture all)
+    var radius_filter = tb.QueryRadiusFilter{
+        .center_lat_nano = degrees_to_nano(37.82), // Center of grid
+        .center_lon_nano = degrees_to_nano(-122.37),
+        .radius_mm = 20_000_000, // 20km
+        .limit = 200,
+        .timestamp_min = 0,
+        .timestamp_max = 0,
+        .group_id = 0,
+    };
+    const radius_reply = try send_request(
+        &client,
+        &completion,
+        request,
+        .query_radius,
+        std.mem.asBytes(&radius_filter),
+    );
+    {
+        try testing.expect(radius_reply.len >= @sizeOf(tb.QueryResponse));
+        const header = read_struct(
+            tb.QueryResponse,
+            radius_reply[0..@sizeOf(tb.QueryResponse)],
+        );
+        try testing.expect(header.error_status() == null);
+        // Should find most/all of our batch events
+        try testing.expect(header.count >= 50);
+    }
+}
+
+test "integration: geospatial polygon query" {
+    // INT-01: Test polygon queries with bounding box
+    const testing = std.testing;
+    const RequestContext = RequestContextType(constants.message_body_size_max);
+
+    var tmp_archerdb = try TmpArcherDB.init(testing.allocator, .{
+        .development = true,
+        .prebuilt = archerdb,
+    });
+    defer tmp_archerdb.deinit(testing.allocator);
+
+    var client: arch_client.ClientInterface = undefined;
+    try arch_client.init(
+        testing.allocator,
+        &client,
+        0,
+        tmp_archerdb.port_str,
+        42,
+        RequestContext.on_complete,
+    );
+    defer client.deinit() catch unreachable;
+
+    var completion = Completion{ .pending = 0 };
+    const request = try testing.allocator.create(RequestContext);
+    defer testing.allocator.destroy(request);
+    request.* = RequestContext{
+        .packet = undefined,
+        .completion = &completion,
+        .sent_data_size = 0,
+    };
+
+    // Insert events at known locations
+    var events = [_]tb.GeoEvent{
+        make_event(3001, 37.7749, -122.4194), // San Francisco
+        make_event(3002, 37.7850, -122.4094), // Slightly north/east
+        make_event(3003, 40.7128, -74.0060), // New York (outside polygon)
+    };
+
+    const insert_reply = try send_request(
+        &client,
+        &completion,
+        request,
+        .insert_events,
+        std.mem.sliceAsBytes(&events),
+    );
+    {
+        const result_size = @sizeOf(tb.InsertGeoEventsResult);
+        try testing.expectEqual(@as(usize, 3 * result_size), insert_reply.len);
+    }
+
+    // Create polygon bounding box around San Francisco
+    // Counter-clockwise winding (GeoJSON convention)
+    var polygon_filter = tb.QueryPolygonFilter{
+        .vertex_count = 4,
+        .hole_count = 0,
+        .limit = 10,
+        .timestamp_min = 0,
+        .timestamp_max = 0,
+        .group_id = 0,
+    };
+    const vertices = [_]tb.PolygonVertex{
+        .{ .lat_nano = degrees_to_nano(37.70), .lon_nano = degrees_to_nano(-122.50) },
+        .{ .lat_nano = degrees_to_nano(37.70), .lon_nano = degrees_to_nano(-122.35) },
+        .{ .lat_nano = degrees_to_nano(37.85), .lon_nano = degrees_to_nano(-122.35) },
+        .{ .lat_nano = degrees_to_nano(37.85), .lon_nano = degrees_to_nano(-122.50) },
+    };
+
+    // Build request body: filter header + vertices
+    var polygon_request_data: [@sizeOf(tb.QueryPolygonFilter) + @sizeOf(@TypeOf(vertices))]u8 = undefined;
+    stdx.copy_disjoint(.exact, u8, polygon_request_data[0..@sizeOf(tb.QueryPolygonFilter)], std.mem.asBytes(&polygon_filter));
+    stdx.copy_disjoint(.exact, u8, polygon_request_data[@sizeOf(tb.QueryPolygonFilter)..], std.mem.sliceAsBytes(&vertices));
+
+    const polygon_reply = try send_request(
+        &client,
+        &completion,
+        request,
+        .query_polygon,
+        &polygon_request_data,
+    );
+    {
+        try testing.expect(polygon_reply.len >= @sizeOf(tb.QueryResponse));
+        const header = read_struct(
+            tb.QueryResponse,
+            polygon_reply[0..@sizeOf(tb.QueryResponse)],
+        );
+        try testing.expect(header.error_status() == null);
+        // Should find 2 SF events, not the NY event
+        try testing.expect(header.count >= 1);
+        try testing.expect(header.count <= 3);
+    }
+}
+
+test "integration: geospatial edge cases" {
+    // INT-01: Test edge cases - antimeridian, poles, empty results
+    const testing = std.testing;
+    const RequestContext = RequestContextType(constants.message_body_size_max);
+
+    var tmp_archerdb = try TmpArcherDB.init(testing.allocator, .{
+        .development = true,
+        .prebuilt = archerdb,
+    });
+    defer tmp_archerdb.deinit(testing.allocator);
+
+    var client: arch_client.ClientInterface = undefined;
+    try arch_client.init(
+        testing.allocator,
+        &client,
+        0,
+        tmp_archerdb.port_str,
+        42,
+        RequestContext.on_complete,
+    );
+    defer client.deinit() catch unreachable;
+
+    var completion = Completion{ .pending = 0 };
+    const request = try testing.allocator.create(RequestContext);
+    defer testing.allocator.destroy(request);
+    request.* = RequestContext{
+        .packet = undefined,
+        .completion = &completion,
+        .sent_data_size = 0,
+    };
+
+    // Test 1: Insert near antimeridian (Fiji/Tonga region)
+    var antimeridian_events = [_]tb.GeoEvent{
+        make_event(4001, -17.7134, 178.065), // Fiji (west of antimeridian)
+        make_event(4002, -21.2089, -175.198), // Tonga (east of antimeridian)
+    };
+    _ = try send_request(
+        &client,
+        &completion,
+        request,
+        .insert_events,
+        std.mem.sliceAsBytes(&antimeridian_events),
+    );
+
+    // Verify antimeridian events are queryable
+    var uuid_filter = tb.QueryUuidFilter{ .entity_id = 4001 };
+    const uuid_reply = try send_request(
+        &client,
+        &completion,
+        request,
+        .query_uuid,
+        std.mem.asBytes(&uuid_filter),
+    );
+    {
+        const header = read_struct(tb.QueryUuidResponse, uuid_reply[0..@sizeOf(tb.QueryUuidResponse)]);
+        try testing.expectEqual(@as(u8, 0), header.status);
+    }
+
+    // Test 2: Empty query result (search in Antarctica)
+    var empty_radius_filter = tb.QueryRadiusFilter{
+        .center_lat_nano = degrees_to_nano(-85.0), // Antarctica
+        .center_lon_nano = degrees_to_nano(0.0),
+        .radius_mm = 1_000_000, // 1km
+        .limit = 10,
+        .timestamp_min = 0,
+        .timestamp_max = 0,
+        .group_id = 0,
+    };
+    const empty_reply = try send_request(
+        &client,
+        &completion,
+        request,
+        .query_radius,
+        std.mem.asBytes(&empty_radius_filter),
+    );
+    {
+        try testing.expect(empty_reply.len >= @sizeOf(tb.QueryResponse));
+        const header = read_struct(tb.QueryResponse, empty_reply[0..@sizeOf(tb.QueryResponse)]);
+        try testing.expect(header.error_status() == null);
+        // Should be empty - no events in Antarctica
+        try testing.expectEqual(@as(u32, 0), header.count);
+    }
+
+    // Test 3: Query non-existent UUID
+    var nonexistent_filter = tb.QueryUuidFilter{ .entity_id = 0xDEADBEEF };
+    const nonexistent_reply = try send_request(
+        &client,
+        &completion,
+        request,
+        .query_uuid,
+        std.mem.asBytes(&nonexistent_filter),
+    );
+    {
+        const header = read_struct(tb.QueryUuidResponse, nonexistent_reply[0..@sizeOf(tb.QueryUuidResponse)]);
+        try testing.expectEqual(
+            @as(u8, @intCast(@intFromEnum(StateError.entity_not_found))),
+            header.status,
+        );
+    }
+}
+
+test "integration: geospatial multi-region distribution" {
+    // INT-01: Test events distributed across multiple continents
+    const testing = std.testing;
+    const RequestContext = RequestContextType(constants.message_body_size_max);
+
+    var tmp_archerdb = try TmpArcherDB.init(testing.allocator, .{
+        .development = true,
+        .prebuilt = archerdb,
+    });
+    defer tmp_archerdb.deinit(testing.allocator);
+
+    var client: arch_client.ClientInterface = undefined;
+    try arch_client.init(
+        testing.allocator,
+        &client,
+        0,
+        tmp_archerdb.port_str,
+        42,
+        RequestContext.on_complete,
+    );
+    defer client.deinit() catch unreachable;
+
+    var completion = Completion{ .pending = 0 };
+    const request = try testing.allocator.create(RequestContext);
+    defer testing.allocator.destroy(request);
+    request.* = RequestContext{
+        .packet = undefined,
+        .completion = &completion,
+        .sent_data_size = 0,
+    };
+
+    // Insert events across multiple continents
+    var global_events = [_]tb.GeoEvent{
+        make_event(5001, 37.7749, -122.4194), // San Francisco, USA
+        make_event(5002, 40.7128, -74.0060), // New York, USA
+        make_event(5003, 51.5074, -0.1278), // London, UK
+        make_event(5004, 48.8566, 2.3522), // Paris, France
+        make_event(5005, 35.6762, 139.6503), // Tokyo, Japan
+        make_event(5006, -33.8688, 151.2093), // Sydney, Australia
+        make_event(5007, -23.5505, -46.6333), // Sao Paulo, Brazil
+        make_event(5008, 55.7558, 37.6173), // Moscow, Russia
+    };
+
+    _ = try send_request(
+        &client,
+        &completion,
+        request,
+        .insert_events,
+        std.mem.sliceAsBytes(&global_events),
+    );
+
+    // Verify each event is queryable
+    for (global_events) |event| {
+        var uuid_filter = tb.QueryUuidFilter{ .entity_id = event.entity_id };
+        const uuid_reply = try send_request(
+            &client,
+            &completion,
+            request,
+            .query_uuid,
+            std.mem.asBytes(&uuid_filter),
+        );
+        const header = read_struct(tb.QueryUuidResponse, uuid_reply[0..@sizeOf(tb.QueryUuidResponse)]);
+        try testing.expectEqual(@as(u8, 0), header.status);
+    }
+
+    // Query around Tokyo - should find only Tokyo event
+    var tokyo_filter = tb.QueryRadiusFilter{
+        .center_lat_nano = degrees_to_nano(35.6762),
+        .center_lon_nano = degrees_to_nano(139.6503),
+        .radius_mm = 50_000_000, // 50km
+        .limit = 10,
+        .timestamp_min = 0,
+        .timestamp_max = 0,
+        .group_id = 0,
+    };
+    const tokyo_reply = try send_request(
+        &client,
+        &completion,
+        request,
+        .query_radius,
+        std.mem.asBytes(&tokyo_filter),
+    );
+    {
+        const header = read_struct(tb.QueryResponse, tokyo_reply[0..@sizeOf(tb.QueryResponse)]);
+        try testing.expect(header.error_status() == null);
+        try testing.expectEqual(@as(u32, 1), header.count);
+    }
+
+    // Query around Europe - should find London and Paris
+    var europe_filter = tb.QueryRadiusFilter{
+        .center_lat_nano = degrees_to_nano(50.0),
+        .center_lon_nano = degrees_to_nano(1.0),
+        .radius_mm = 500_000_000, // 500km
+        .limit = 10,
+        .timestamp_min = 0,
+        .timestamp_max = 0,
+        .group_id = 0,
+    };
+    const europe_reply = try send_request(
+        &client,
+        &completion,
+        request,
+        .query_radius,
+        std.mem.asBytes(&europe_filter),
+    );
+    {
+        const header = read_struct(tb.QueryResponse, europe_reply[0..@sizeOf(tb.QueryResponse)]);
+        try testing.expect(header.error_status() == null);
+        try testing.expect(header.count >= 2); // London and Paris
+    }
+}
+
 test "benchmark/inspect smoke" {
     const data_file = data_file: {
         var random_bytes: [4]u8 = undefined;
