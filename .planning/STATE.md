@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-01-22)
 
 **Core value:** Correctness, performance, and completeness with no compromises
-**Current focus:** Phase 8 - Observability Dashboards (IN PROGRESS)
+**Current focus:** Phase 8 - Observability Dashboards (COMPLETE)
 
 ## Current Position
 
-Phase: 8 of 10 (Observability Dashboards)
-Plan: 2 of 3 in current phase
-Status: In progress
-Last activity: 2026-01-23 - Plan 08-02 complete (Replication and Storage Dashboards)
+Phase: 8 of 10 (Observability Dashboards) - COMPLETE
+Plan: 3 of 3 in current phase - COMPLETE
+Status: Phase 8 complete
+Last activity: 2026-01-23 - Plan 08-03 complete (Cluster Dashboard + Alerting)
 
-Progress: [########--] 80% (8/10 phases in progress)
+Progress: [########--] 80% (8/10 phases complete)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 31
+- Total plans completed: 32
 - Average duration: 10 min
-- Total execution time: 309 min
+- Total execution time: 314 min
 
 **By Phase:**
 
@@ -34,11 +34,11 @@ Progress: [########--] 80% (8/10 phases in progress)
 | 05 | 5 | 83 min | 17 min |
 | 06 | 5 | 12 min | 2 min |
 | 07 | 4 | 34 min | 9 min |
-| 08 | 2 | 10 min | 5 min |
+| 08 | 3 | 15 min | 5 min |
 
 **Recent Trend:**
-- Last 5 plans: 08-02 (5m), 08-01 (~), 07-04 (7m), 07-03 (~), 07-02 (8m)
-- Trend: Dashboard creation efficient with established patterns
+- Last 5 plans: 08-03 (5m), 08-02 (5m), 08-01 (4m), 07-04 (7m), 07-03 (~)
+- Trend: Dashboard and alerting creation efficient with established patterns
 
 *Updated after each plan completion*
 
@@ -54,6 +54,18 @@ Recent decisions affecting current work:
 - Full observability: Enterprise-ready monitoring with metrics, tracing, health endpoints
 - SDK parity: All five languages must have same features and quality
 - No graceful degradation: Demand resources, expose problems through metrics/traces
+
+From 08-03:
+- Alert thresholds follow CONTEXT.md: latency 500ms/2s, memory 70%/85%, replication lag 30s/2min
+- All alerts include runbook_url annotation (required per CONTEXT.md)
+- for duration: 5m for warnings, 2m for critical (except node down at 1m)
+- Alertmanager templates provided as YAML snippets to copy, not Go templates
+
+From 08-02:
+- Replica health derived from lag metrics using clamp_max
+- Write amplification thresholds: 15x warning, 30x critical
+- Disk latency thresholds: 10ms p99 for SSDs
+- Consistent variables across dashboards: datasource, instance, terminology
 
 From 07-04:
 - Component health checks: replica, memory, storage, replication
@@ -282,24 +294,31 @@ From 07-03:
 - Separate --log-module-levels option (enum parsing incompatible with comma format)
 - Correlation context wired into metrics_server.zig request handling
 
-## Phase 8 Observability Dashboards Progress
+## Phase 8 Observability Dashboards Summary
 
-| Plan | Dashboard | Status | Resolution |
-|------|-----------|--------|------------|
-| 08-01 | Overview + Queries | COMPLETE | 8 + 10 panels |
-| 08-02 | Replication + Storage | COMPLETE | 8 + 12 panels |
-| 08-03 | Cluster + Alerting | PENDING | - |
+All dashboards and alerting complete:
 
-From 08-02:
-- Replica health derived from lag metrics using clamp_max
-- Write amplification thresholds: 15x warning, 30x critical
-- Disk latency thresholds: 10ms p99 for SSDs
-- Consistent variables across dashboards: datasource, instance, terminology
+| Plan | Component | Status | Details |
+|------|-----------|--------|---------|
+| 08-01 | Overview + Queries | COMPLETE | 8 + 10 = 18 panels |
+| 08-02 | Replication + Storage | COMPLETE | 8 + 12 = 20 panels |
+| 08-03 | Cluster + Alerting | COMPLETE | 10 panels, 29 rules, 5 templates |
+
+**Total Phase 8 Output:**
+- 5 Grafana dashboards (48 panels)
+- 29 Prometheus alerting rules (12 warning, 17 critical)
+- 5 Alertmanager notification templates (Slack, PagerDuty, OpsGenie, email, webhook)
+
+From 08-03:
+- Alert groups: latency, replication, resource, error, cluster, compaction
+- All alerts have runbook_url and remediation annotations
+- Alertmanager README with routing examples and testing instructions
+- Inhibit rules to prevent alert storms
 
 ## Session Continuity
 
 Last session: 2026-01-23
-Stopped at: Plan 08-02 complete
+Stopped at: Plan 08-03 complete (Phase 8 complete)
 Resume file: None
 
-Next: Plan 08-03 (Cluster Dashboard + Alerting Rules)
+Next: Phase 9 (Documentation)
