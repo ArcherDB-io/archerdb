@@ -1,0 +1,76 @@
+# PagerDuty Receiver Configuration Template for Alertmanager
+#
+# Copy this receiver configuration into your alertmanager.yml file.
+# Replace <YOUR_PAGERDUTY_ROUTING_KEY> with your PagerDuty integration key.
+#
+# To get a routing key:
+# 1. In PagerDuty, go to Services > Service Directory
+# 2. Select or create a service for ArcherDB
+# 3. Go to Integrations tab
+# 4. Add "Events API V2" integration
+# 5. Copy the Integration Key (this is your routing key)
+#
+# Usage in alertmanager.yml:
+#   receivers:
+#     - name: 'archerdb-pagerduty-critical'
+#       pagerduty_configs:
+#         ... (copy from below)
+
+receivers:
+  - name: 'archerdb-pagerduty-critical'
+    pagerduty_configs:
+      - routing_key: '<YOUR_PAGERDUTY_ROUTING_KEY>'
+        severity: '{{ if eq .CommonLabels.severity "critical" }}critical{{ else if eq .CommonLabels.severity "warning" }}warning{{ else }}info{{ end }}'
+        description: '{{ .CommonAnnotations.summary }}'
+        client: 'ArcherDB Alertmanager'
+        client_url: '{{ template "__alertmanagerURL" . }}'
+        details:
+          instance: '{{ .CommonLabels.instance }}'
+          alertname: '{{ .CommonLabels.alertname }}'
+          severity: '{{ .CommonLabels.severity }}'
+          team: '{{ .CommonLabels.team }}'
+          description: '{{ .CommonAnnotations.description }}'
+          remediation: '{{ .CommonAnnotations.remediation }}'
+          runbook: '{{ .CommonAnnotations.runbook_url }}'
+          firing: '{{ .Alerts.Firing | len }}'
+          resolved: '{{ .Alerts.Resolved | len }}'
+        links:
+          - href: '{{ .CommonAnnotations.runbook_url }}'
+            text: 'Runbook'
+          - href: '{{ template "__alertmanagerURL" . }}'
+            text: 'Alertmanager'
+
+  - name: 'archerdb-pagerduty-warnings'
+    pagerduty_configs:
+      - routing_key: '<YOUR_PAGERDUTY_ROUTING_KEY>'
+        severity: 'warning'
+        description: '{{ .CommonAnnotations.summary }}'
+        client: 'ArcherDB Alertmanager'
+        client_url: '{{ template "__alertmanagerURL" . }}'
+        details:
+          instance: '{{ .CommonLabels.instance }}'
+          alertname: '{{ .CommonLabels.alertname }}'
+          description: '{{ .CommonAnnotations.description }}'
+          remediation: '{{ .CommonAnnotations.remediation }}'
+          runbook: '{{ .CommonAnnotations.runbook_url }}'
+        links:
+          - href: '{{ .CommonAnnotations.runbook_url }}'
+            text: 'Runbook'
+
+# Routing example for PagerDuty:
+#
+# route:
+#   receiver: 'archerdb-slack-warnings'  # Default to Slack
+#   group_by: ['alertname', 'instance']
+#   group_wait: 30s
+#   group_interval: 5m
+#   repeat_interval: 4h
+#   routes:
+#     - match:
+#         severity: critical
+#       receiver: 'archerdb-pagerduty-critical'
+#       group_wait: 10s        # Page quickly for critical
+#       repeat_interval: 1h    # Re-page every hour if unresolved
+#
+# Note: PagerDuty automatically handles incident creation and resolution
+# based on the alert status. Send_resolved is implicit with Events API V2.

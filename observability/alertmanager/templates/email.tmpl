@@ -1,0 +1,139 @@
+# Email Receiver Configuration Template for Alertmanager
+#
+# Copy this receiver configuration into your alertmanager.yml file.
+# Replace <YOUR_EMAIL_ADDRESS> with your notification email.
+# Configure SMTP settings in the global section.
+#
+# Global SMTP configuration (add to top of alertmanager.yml):
+#
+# global:
+#   smtp_smarthost: 'smtp.example.com:587'
+#   smtp_from: 'alertmanager@example.com'
+#   smtp_auth_username: 'alertmanager@example.com'
+#   smtp_auth_password: '<YOUR_SMTP_PASSWORD>'
+#   smtp_require_tls: true
+#
+# For common providers:
+# - Gmail: smtp.gmail.com:587 (use app password, not regular password)
+# - SendGrid: smtp.sendgrid.net:587
+# - AWS SES: email-smtp.us-east-1.amazonaws.com:587
+# - Mailgun: smtp.mailgun.org:587
+
+receivers:
+  - name: 'archerdb-email'
+    email_configs:
+      - to: '<YOUR_EMAIL_ADDRESS>'
+        send_resolved: true
+        headers:
+          Subject: '{{ if eq .Status "firing" }}[FIRING:{{ .Alerts.Firing | len }}]{{ else }}[RESOLVED]{{ end }} ArcherDB: {{ .CommonLabels.alertname }}'
+        html: |
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <style>
+              body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+              .header { padding: 20px; color: white; }
+              .header.firing { background-color: #d9534f; }
+              .header.resolved { background-color: #5cb85c; }
+              .content { padding: 20px; }
+              .alert { border: 1px solid #ddd; margin: 10px 0; padding: 15px; border-radius: 4px; }
+              .alert.critical { border-left: 4px solid #d9534f; }
+              .alert.warning { border-left: 4px solid #f0ad4e; }
+              .label { font-weight: bold; color: #666; }
+              .value { margin-left: 10px; }
+              a { color: #337ab7; }
+              .runbook-link { display: inline-block; margin-top: 10px; padding: 8px 16px; background: #337ab7; color: white; text-decoration: none; border-radius: 4px; }
+            </style>
+          </head>
+          <body>
+            <div class="header {{ if eq .Status "firing" }}firing{{ else }}resolved{{ end }}">
+              <h1>{{ if eq .Status "firing" }}ALERT FIRING{{ else }}ALERT RESOLVED{{ end }}</h1>
+              <p>{{ .CommonLabels.alertname }}</p>
+            </div>
+            <div class="content">
+              <p><strong>Status:</strong> {{ .Status | toUpper }}</p>
+              <p><strong>Severity:</strong> {{ .CommonLabels.severity }}</p>
+              <p><strong>Alert Count:</strong> {{ .Alerts | len }} (Firing: {{ .Alerts.Firing | len }}, Resolved: {{ .Alerts.Resolved | len }})</p>
+
+              {{ range .Alerts }}
+              <div class="alert {{ .Labels.severity }}">
+                <p><span class="label">Instance:</span><span class="value">{{ .Labels.instance }}</span></p>
+                <p><span class="label">Summary:</span><span class="value">{{ .Annotations.summary }}</span></p>
+                <p><span class="label">Description:</span><span class="value">{{ .Annotations.description }}</span></p>
+                <p><span class="label">Remediation:</span><span class="value">{{ .Annotations.remediation }}</span></p>
+                <p><span class="label">Started:</span><span class="value">{{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}</span></p>
+                {{ if .EndsAt }}
+                <p><span class="label">Ended:</span><span class="value">{{ .EndsAt.Format "2006-01-02 15:04:05 UTC" }}</span></p>
+                {{ end }}
+                <a class="runbook-link" href="{{ .Annotations.runbook_url }}">View Runbook</a>
+              </div>
+              {{ end }}
+
+              <hr>
+              <p style="font-size: 12px; color: #666;">
+                This alert was sent by ArcherDB Alertmanager.<br>
+                <a href="{{ template "__alertmanagerURL" . }}">View in Alertmanager</a>
+              </p>
+            </div>
+          </body>
+          </html>
+
+  - name: 'archerdb-email-digest'
+    email_configs:
+      - to: '<YOUR_EMAIL_ADDRESS>'
+        send_resolved: false
+        headers:
+          Subject: '[ArcherDB Alert Digest] {{ .Alerts | len }} alerts'
+        html: |
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <style>
+              body { font-family: Arial, sans-serif; }
+              table { border-collapse: collapse; width: 100%; }
+              th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+              th { background-color: #4a4a4a; color: white; }
+              .critical { background-color: #f2dede; }
+              .warning { background-color: #fcf8e3; }
+            </style>
+          </head>
+          <body>
+            <h2>ArcherDB Alert Digest</h2>
+            <p>{{ .Alerts | len }} alerts currently firing</p>
+            <table>
+              <tr>
+                <th>Alert</th>
+                <th>Instance</th>
+                <th>Severity</th>
+                <th>Summary</th>
+                <th>Runbook</th>
+              </tr>
+              {{ range .Alerts }}
+              <tr class="{{ .Labels.severity }}">
+                <td>{{ .Labels.alertname }}</td>
+                <td>{{ .Labels.instance }}</td>
+                <td>{{ .Labels.severity }}</td>
+                <td>{{ .Annotations.summary }}</td>
+                <td><a href="{{ .Annotations.runbook_url }}">Link</a></td>
+              </tr>
+              {{ end }}
+            </table>
+          </body>
+          </html>
+
+# Routing example for Email:
+#
+# route:
+#   receiver: 'archerdb-slack-warnings'
+#   routes:
+#     - match:
+#         severity: critical
+#       receiver: 'archerdb-email'
+#       group_wait: 10s
+#       repeat_interval: 1h
+#     - match:
+#         severity: warning
+#       receiver: 'archerdb-email-digest'
+#       group_by: ['alertname']  # Group all warnings together
+#       group_wait: 5m           # Wait to collect multiple warnings
+#       repeat_interval: 24h     # Daily digest only

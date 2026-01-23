@@ -1,0 +1,88 @@
+# OpsGenie Receiver Configuration Template for Alertmanager
+#
+# Copy this receiver configuration into your alertmanager.yml file.
+# Replace <YOUR_OPSGENIE_API_KEY> with your OpsGenie API key.
+#
+# To get an API key:
+# 1. In OpsGenie, go to Settings > Integration list
+# 2. Add "Prometheus Alertmanager" integration
+# 3. Copy the API Key
+#
+# Usage in alertmanager.yml:
+#   receivers:
+#     - name: 'archerdb-opsgenie'
+#       opsgenie_configs:
+#         ... (copy from below)
+
+receivers:
+  - name: 'archerdb-opsgenie-critical'
+    opsgenie_configs:
+      - api_key: '<YOUR_OPSGENIE_API_KEY>'
+        message: '{{ .CommonAnnotations.summary }}'
+        description: |
+          {{ range .Alerts }}
+          Instance: {{ .Labels.instance }}
+          Severity: {{ .Labels.severity }}
+          Description: {{ .Annotations.description }}
+          Remediation: {{ .Annotations.remediation }}
+          Runbook: {{ .Annotations.runbook_url }}
+          {{ end }}
+        priority: '{{ if eq .CommonLabels.severity "critical" }}P1{{ else if eq .CommonLabels.severity "warning" }}P3{{ else }}P4{{ end }}'
+        tags: 'archerdb,{{ .CommonLabels.severity }},{{ .CommonLabels.team }}'
+        entity: '{{ .CommonLabels.instance }}'
+        source: 'ArcherDB Alertmanager'
+        note: 'Alert from ArcherDB monitoring. See runbook for remediation steps.'
+        details:
+          alertname: '{{ .CommonLabels.alertname }}'
+          instance: '{{ .CommonLabels.instance }}'
+          severity: '{{ .CommonLabels.severity }}'
+          team: '{{ .CommonLabels.team }}'
+          runbook_url: '{{ .CommonAnnotations.runbook_url }}'
+          remediation: '{{ .CommonAnnotations.remediation }}'
+        responders:
+          - type: team
+            name: 'database-team'  # Replace with your team name
+
+  - name: 'archerdb-opsgenie-warnings'
+    opsgenie_configs:
+      - api_key: '<YOUR_OPSGENIE_API_KEY>'
+        message: '{{ .CommonAnnotations.summary }}'
+        description: |
+          {{ range .Alerts }}
+          Instance: {{ .Labels.instance }}
+          Description: {{ .Annotations.description }}
+          Remediation: {{ .Annotations.remediation }}
+          Runbook: {{ .Annotations.runbook_url }}
+          {{ end }}
+        priority: 'P3'
+        tags: 'archerdb,warning'
+        entity: '{{ .CommonLabels.instance }}'
+        source: 'ArcherDB Alertmanager'
+        details:
+          alertname: '{{ .CommonLabels.alertname }}'
+          instance: '{{ .CommonLabels.instance }}'
+          runbook_url: '{{ .CommonAnnotations.runbook_url }}'
+
+# Routing example for OpsGenie:
+#
+# route:
+#   receiver: 'archerdb-slack-warnings'
+#   group_by: ['alertname', 'instance']
+#   routes:
+#     - match:
+#         severity: critical
+#       receiver: 'archerdb-opsgenie-critical'
+#       group_wait: 10s
+#       repeat_interval: 1h
+#     - match:
+#         severity: warning
+#       receiver: 'archerdb-opsgenie-warnings'
+#       group_wait: 30s
+#       repeat_interval: 4h
+#
+# Priority mapping:
+# - P1 (critical): Immediate page, wake people up
+# - P2 (high): Urgent, but during business hours
+# - P3 (moderate): Warning, investigate soon
+# - P4 (low): Informational
+# - P5 (informational): Noise reduction

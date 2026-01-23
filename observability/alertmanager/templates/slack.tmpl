@@ -1,0 +1,83 @@
+# Slack Receiver Configuration Template for Alertmanager
+#
+# Copy this receiver configuration into your alertmanager.yml file.
+# Replace <YOUR_SLACK_WEBHOOK_URL> with your actual Slack webhook URL.
+#
+# To get a webhook URL:
+# 1. Go to https://api.slack.com/apps
+# 2. Create a new app or select existing app
+# 3. Enable "Incoming Webhooks" feature
+# 4. Add a new webhook to your workspace
+# 5. Copy the webhook URL
+#
+# Usage in alertmanager.yml:
+#   receivers:
+#     - name: 'archerdb-slack-warnings'
+#       slack_configs:
+#         ... (copy from below)
+
+receivers:
+  - name: 'archerdb-slack-warnings'
+    slack_configs:
+      - api_url: '<YOUR_SLACK_WEBHOOK_URL>'
+        channel: '#archerdb-alerts'
+        send_resolved: true
+        title: '{{ if eq .Status "firing" }}:warning: {{ else }}:white_check_mark: {{ end }}{{ .CommonLabels.alertname }}'
+        text: |
+          {{ range .Alerts }}
+          *Instance:* {{ .Labels.instance }}
+          *Severity:* {{ .Labels.severity }}
+          *Summary:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Runbook:* {{ .Annotations.runbook_url }}
+          *Remediation:* {{ .Annotations.remediation }}
+          {{ end }}
+        color: '{{ if eq .Status "firing" }}{{ if eq .CommonLabels.severity "critical" }}danger{{ else }}warning{{ end }}{{ else }}good{{ end }}'
+        actions:
+          - type: button
+            text: 'View Runbook'
+            url: '{{ (index .Alerts 0).Annotations.runbook_url }}'
+          - type: button
+            text: 'Silence Alert'
+            url: '{{ template "__alertmanagerURL" . }}/#/silences/new?filter=%7Balertname%3D%22{{ .CommonLabels.alertname }}%22%7D'
+
+  - name: 'archerdb-slack-critical'
+    slack_configs:
+      - api_url: '<YOUR_SLACK_WEBHOOK_URL>'
+        channel: '#archerdb-alerts-critical'
+        send_resolved: true
+        title: '{{ if eq .Status "firing" }}:rotating_light: CRITICAL {{ else }}:white_check_mark: RESOLVED {{ end }}{{ .CommonLabels.alertname }}'
+        text: |
+          {{ range .Alerts }}
+          *Instance:* {{ .Labels.instance }}
+          *Severity:* {{ .Labels.severity }}
+          *Summary:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Runbook:* {{ .Annotations.runbook_url }}
+          *Remediation:* {{ .Annotations.remediation }}
+          {{ end }}
+        color: '{{ if eq .Status "firing" }}danger{{ else }}good{{ end }}'
+        actions:
+          - type: button
+            text: 'View Runbook'
+            url: '{{ (index .Alerts 0).Annotations.runbook_url }}'
+          - type: button
+            text: 'Acknowledge'
+            url: '{{ template "__alertmanagerURL" . }}/#/silences/new?filter=%7Balertname%3D%22{{ .CommonLabels.alertname }}%22%7D'
+
+# Routing example for Slack:
+#
+# route:
+#   receiver: 'archerdb-slack-warnings'
+#   group_by: ['alertname', 'instance']
+#   group_wait: 30s
+#   group_interval: 5m
+#   repeat_interval: 4h
+#   routes:
+#     - match:
+#         severity: critical
+#       receiver: 'archerdb-slack-critical'
+#       continue: true  # Also notify PagerDuty
+#     - match:
+#         severity: warning
+#       receiver: 'archerdb-slack-warnings'

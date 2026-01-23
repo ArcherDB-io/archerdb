@@ -1,0 +1,124 @@
+# Generic Webhook Receiver Configuration Template for Alertmanager
+#
+# Copy this receiver configuration into your alertmanager.yml file.
+# Replace <YOUR_WEBHOOK_URL> with your endpoint URL.
+#
+# This template is useful for:
+# - Custom notification systems
+# - Chat integrations (Discord, Mattermost, etc.)
+# - Incident management systems
+# - Automation triggers (Lambda, Cloud Functions, etc.)
+# - Custom dashboards or alerting systems
+#
+# The webhook receives a JSON payload with the following structure:
+# {
+#   "version": "4",
+#   "groupKey": "<group key>",
+#   "status": "firing|resolved",
+#   "receiver": "<receiver name>",
+#   "groupLabels": {...},
+#   "commonLabels": {...},
+#   "commonAnnotations": {...},
+#   "externalURL": "<alertmanager URL>",
+#   "alerts": [
+#     {
+#       "status": "firing|resolved",
+#       "labels": {...},
+#       "annotations": {...},
+#       "startsAt": "<timestamp>",
+#       "endsAt": "<timestamp>",
+#       "generatorURL": "<prometheus URL>"
+#     }
+#   ]
+# }
+
+receivers:
+  - name: 'archerdb-webhook'
+    webhook_configs:
+      - url: '<YOUR_WEBHOOK_URL>'
+        send_resolved: true
+        max_alerts: 10
+        # Uncomment and configure if your webhook requires authentication
+        # http_config:
+        #   basic_auth:
+        #     username: '<USERNAME>'
+        #     password: '<PASSWORD>'
+        #   # Or use bearer token:
+        #   # authorization:
+        #   #   type: Bearer
+        #   #   credentials: '<TOKEN>'
+        #   # Or use OAuth2:
+        #   # oauth2:
+        #   #   client_id: '<CLIENT_ID>'
+        #   #   client_secret: '<CLIENT_SECRET>'
+        #   #   token_url: '<TOKEN_URL>'
+        #   # Custom headers:
+        #   # headers:
+        #   #   X-Custom-Header: 'value'
+
+  - name: 'archerdb-webhook-critical'
+    webhook_configs:
+      - url: '<YOUR_CRITICAL_WEBHOOK_URL>'
+        send_resolved: true
+        max_alerts: 0  # No limit for critical alerts
+        # http_config:
+        #   tls_config:
+        #     insecure_skip_verify: false  # Always verify TLS in production
+
+# Routing example for Webhook:
+#
+# route:
+#   receiver: 'archerdb-webhook'
+#   routes:
+#     - match:
+#         severity: critical
+#       receiver: 'archerdb-webhook-critical'
+#       group_wait: 5s           # Quick notification for critical
+#       repeat_interval: 5m      # Frequent updates for critical
+#     - match:
+#         severity: warning
+#       receiver: 'archerdb-webhook'
+#       group_wait: 30s
+#       repeat_interval: 1h
+
+# Example webhook handler pseudocode:
+#
+# def handle_webhook(request):
+#     payload = json.loads(request.body)
+#
+#     for alert in payload['alerts']:
+#         if alert['status'] == 'firing':
+#             # Create incident
+#             create_incident(
+#                 title=alert['annotations']['summary'],
+#                 severity=alert['labels']['severity'],
+#                 instance=alert['labels']['instance'],
+#                 runbook=alert['annotations']['runbook_url'],
+#                 remediation=alert['annotations']['remediation']
+#             )
+#         else:
+#             # Resolve incident
+#             resolve_incident(
+#                 alertname=alert['labels']['alertname'],
+#                 instance=alert['labels']['instance']
+#             )
+#
+#     return {'status': 'ok'}
+
+# Common webhook destinations:
+#
+# Discord:
+#   url: 'https://discord.com/api/webhooks/<WEBHOOK_ID>/<TOKEN>'
+#   Note: Requires custom formatting, consider using a proxy service
+#
+# Microsoft Teams:
+#   url: 'https://outlook.office.com/webhook/<GUID>/IncomingWebhook/<PATH>'
+#   Note: Teams expects a specific format, use alertmanager-webhook-teams-adapter
+#
+# Mattermost:
+#   url: 'https://mattermost.example.com/hooks/<HOOK_ID>'
+#   Note: Mattermost can accept Alertmanager payloads natively
+#
+# Custom Lambda/Cloud Function:
+#   url: 'https://api.example.com/alerts'
+#   Note: Implement your own logic to transform and route alerts
