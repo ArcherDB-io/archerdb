@@ -8,6 +8,8 @@ This runbook provides operational procedures for running ArcherDB in production.
 - [Monitoring](#monitoring)
 - [Alerting](#alerting)
 - [Scaling](#scaling)
+- [Kubernetes Deployment](#kubernetes-deployment)
+- [Upgrade Procedures](#upgrade-procedures)
 - [Maintenance](#maintenance)
 - [Troubleshooting](#troubleshooting)
 - [Emergency Procedures](#emergency-procedures)
@@ -274,6 +276,356 @@ For read-heavy workloads, add read replicas:
 - **Batch sizing**: Larger batches (1000-5000) improve throughput
 - **Multiple clients**: Distribute load across client instances
 
+## Kubernetes Deployment
+
+Deploy ArcherDB on Kubernetes using StatefulSets for stable network identities and persistent storage.
+
+### Prerequisites
+
+- Kubernetes 1.24 or later
+- `kubectl` configured with cluster access
+- A StorageClass supporting `ReadWriteOnce` volumes (e.g., `gp3` on AWS, `pd-ssd` on GCP)
+- Network policy allowing inter-pod communication on port 3000
+
+### StatefulSet Deployment
+
+Create a namespace and deploy the ArcherDB cluster:
+
+```bash
+kubectl create namespace archerdb
+```
+
+**ConfigMap for cluster addresses:**
+
+```yaml
+# archerdb-config.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: archerdb-config
+  namespace: archerdb
+data:
+  ADDRESSES: "archerdb-0.archerdb-headless.archerdb.svc.cluster.local:3000,archerdb-1.archerdb-headless.archerdb.svc.cluster.local:3000,archerdb-2.archerdb-headless.archerdb.svc.cluster.local:3000"
+```
+
+**Headless Service for stable DNS:**
+
+```yaml
+# archerdb-headless.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: archerdb-headless
+  namespace: archerdb
+  labels:
+    app: archerdb
+spec:
+  ports:
+    - port: 3000
+      name: archerdb
+    - port: 9090
+      name: metrics
+  clusterIP: None
+  selector:
+    app: archerdb
+```
+
+**StatefulSet with 3 replicas:**
+
+```yaml
+# archerdb-statefulset.yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: archerdb
+  namespace: archerdb
+spec:
+  serviceName: archerdb-headless
+  replicas: 3
+  selector:
+    matchLabels:
+      app: archerdb
+  template:
+    metadata:
+      labels:
+        app: archerdb
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: archerdb
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: archerdb
+          image: archerdb/archerdb:latest
+          ports:
+            - containerPort: 3000
+              name: archerdb
+            - containerPort: 9090
+              name: metrics
+          envFrom:
+            - configMapRef:
+                name: archerdb-config
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          command:
+            - /bin/sh
+            - -c
+            - |
+              REPLICA_INDEX=${POD_NAME##*-}
+              ./archerdb start \
+                --addresses=$ADDRESSES \
+                --replica=$REPLICA_INDEX \
+                /data/archerdb.db
+          resources:
+            requests:
+              memory: "2Gi"
+              cpu: "1"
+            limits:
+              memory: "4Gi"
+              cpu: "2"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 9090
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 9090
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi
+```
+
+**Deploy the manifests:**
+
+```bash
+kubectl apply -f archerdb-config.yaml
+kubectl apply -f archerdb-headless.yaml
+kubectl apply -f archerdb-statefulset.yaml
+```
+
+### Verification
+
+```bash
+# Check pod status
+kubectl get pods -n archerdb -w
+
+# Expected output after ~60 seconds:
+# archerdb-0   1/1     Running   0          45s
+# archerdb-1   1/1     Running   0          30s
+# archerdb-2   1/1     Running   0          15s
+
+# Check logs for cluster formation
+kubectl logs -n archerdb archerdb-0 | grep -i "quorum"
+
+# Verify cluster health
+kubectl exec -n archerdb archerdb-0 -- curl -s localhost:9090/health/detailed
+
+# Check metrics
+kubectl exec -n archerdb archerdb-0 -- curl -s localhost:9090/metrics | grep archerdb_replica_role
+```
+
+### Client Service
+
+Expose ArcherDB to clients within the cluster:
+
+```yaml
+# archerdb-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: archerdb
+  namespace: archerdb
+spec:
+  ports:
+    - port: 3000
+      name: archerdb
+  selector:
+    app: archerdb
+```
+
+Clients connect to `archerdb.archerdb.svc.cluster.local:3000`.
+
+### Notes
+
+- **Helm charts:** For Helm-based deployment, see future releases.
+- **Operator:** A Kubernetes Operator for automated cluster management is planned for future releases.
+- For capacity planning in Kubernetes, see [docs/capacity-planning.md](capacity-planning.md).
+
+## Upgrade Procedures
+
+Upgrade ArcherDB without downtime using rolling upgrades. This section covers version upgrades, not configuration changes (see [Rolling Restart](#rolling-restart) for config updates).
+
+### Pre-Upgrade Checklist
+
+Before any upgrade:
+
+- [ ] Read the [CHANGELOG](CHANGELOG.md) for breaking changes
+- [ ] Verify current cluster health: `./archerdb status --addresses=$ADDRESSES`
+- [ ] Check all replicas are healthy: `curl localhost:9090/health/detailed` on each
+- [ ] Create a backup: `./archerdb backup create --bucket=s3://... --cluster-id=...`
+- [ ] Verify backup succeeded: `./archerdb backup verify --bucket=s3://...`
+- [ ] Test the new version in a staging environment
+- [ ] Schedule maintenance window (upgrades are non-disruptive but allow buffer time)
+
+### Version Compatibility Matrix
+
+| From Version | To Version | Upgrade Path | Notes |
+|--------------|------------|--------------|-------|
+| 1.x.y | 1.x.z | Direct | Patch upgrades always supported |
+| 1.x.y | 1.(x+1).0 | Direct | Minor upgrades always supported |
+| 1.x.y | 2.0.0 | Via 1.latest | Upgrade to latest 1.x first |
+
+**Wire protocol compatibility:**
+- Minor version upgrades maintain wire protocol compatibility
+- Major version upgrades may require all replicas to upgrade together
+
+### Rolling Upgrade Procedure
+
+**1. Identify current primary:**
+
+```bash
+# Check which replica is primary
+for node in node1 node2 node3; do
+  echo -n "$node: "
+  ssh $node "curl -s localhost:9090/metrics | grep archerdb_replica_role"
+done
+```
+
+**2. Upgrade followers first (one at a time):**
+
+```bash
+# On each follower node:
+# a. Stop the replica
+systemctl stop archerdb
+
+# b. Replace the binary
+mv /usr/local/bin/archerdb /usr/local/bin/archerdb.old
+cp /path/to/new/archerdb /usr/local/bin/archerdb
+chmod +x /usr/local/bin/archerdb
+
+# c. Start the replica
+systemctl start archerdb
+
+# d. Wait for replica to catch up
+while true; do
+  lag=$(curl -s localhost:9090/metrics | grep 'archerdb_replication_lag_ms' | awk '{print $2}')
+  if [ "$lag" -lt 100 ]; then
+    echo "Replica caught up (lag: ${lag}ms)"
+    break
+  fi
+  echo "Waiting for catch-up (lag: ${lag}ms)..."
+  sleep 5
+done
+```
+
+**3. Verify cluster health after each follower:**
+
+```bash
+# Check quorum is maintained
+./archerdb status --addresses=$ADDRESSES
+
+# Check no errors in logs
+journalctl -u archerdb --since "5 minutes ago" | grep -i error
+```
+
+**4. Upgrade the primary last:**
+
+```bash
+# On primary node:
+# This triggers a view change - new primary elected from upgraded followers
+systemctl stop archerdb
+
+# Replace binary
+mv /usr/local/bin/archerdb /usr/local/bin/archerdb.old
+cp /path/to/new/archerdb /usr/local/bin/archerdb
+chmod +x /usr/local/bin/archerdb
+
+# Start - will rejoin as follower initially
+systemctl start archerdb
+```
+
+### Kubernetes Rolling Upgrade
+
+```bash
+# Update the image tag
+kubectl set image statefulset/archerdb \
+  archerdb=archerdb/archerdb:v1.2.0 \
+  -n archerdb
+
+# Watch rollout progress
+kubectl rollout status statefulset/archerdb -n archerdb
+
+# Kubernetes upgrades pods in reverse order (archerdb-2, then archerdb-1, then archerdb-0)
+# ensuring followers upgrade before the primary
+```
+
+### Post-Upgrade Verification
+
+After all replicas upgraded:
+
+- [ ] All replicas running new version: `./archerdb version` on each node
+- [ ] Cluster health normal: `./archerdb status --addresses=$ADDRESSES`
+- [ ] Replication lag minimal: Check `archerdb_replication_lag_ms` metric
+- [ ] No errors in logs: `journalctl -u archerdb --since "30 minutes ago" | grep -i error`
+- [ ] Run smoke test queries through client
+- [ ] Monitoring dashboards show expected behavior
+
+### Rollback Procedure
+
+If issues occur during upgrade:
+
+**1. Stop the problematic replica:**
+
+```bash
+systemctl stop archerdb
+```
+
+**2. Restore the old binary:**
+
+```bash
+mv /usr/local/bin/archerdb.old /usr/local/bin/archerdb
+```
+
+**3. Start with old version:**
+
+```bash
+systemctl start archerdb
+```
+
+**4. For Kubernetes rollback:**
+
+```bash
+kubectl rollout undo statefulset/archerdb -n archerdb
+```
+
+**If rollback fails or data corruption suspected:**
+See [Disaster Recovery Procedures](disaster-recovery.md) for backup restoration.
+
 ## Maintenance
 
 ### Rolling Restart
@@ -341,6 +693,8 @@ by re-running the script with `--baseline benchmark-results/baseline.csv`.
 ```
 
 ## Troubleshooting
+
+This section covers quick troubleshooting tips. For comprehensive diagnosis and resolution procedures, see the [Troubleshooting Guide](troubleshooting.md).
 
 ### Connection Issues
 
