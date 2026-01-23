@@ -275,9 +275,11 @@ From 07-04:
 
 From 07-03:
 - JSON log format with correlation context (trace_id, span_id, request_id)
-- Per-module log levels (--log-module-levels=info,vsr:debug,lsm:warn)
-- Log rotation with size-based rotation and file count limit
-- Auto format detection (JSON for pipes, text for TTY)
+- Per-module log levels (--log-module-levels=vsr:debug,lsm:warn)
+- Sensitive data redaction at info/warn levels (coordinates, content)
+- Auto format detection as default (JSON for pipes, text for TTY)
+- Separate --log-module-levels option (enum parsing incompatible with comma format)
+- Correlation context wired into metrics_server.zig request handling
 
 ## Session Continuity
 
