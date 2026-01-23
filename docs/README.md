@@ -17,6 +17,7 @@ New to ArcherDB? Start here:
 
 ## Architecture
 
+- [Architecture Deep-Dive](architecture.md) - System design, data flow, and component interactions
 - [VSR Understanding](vsr_understanding.md) - How Viewstamped Replication provides consensus
 - [LSM Tuning](lsm-tuning.md) - Storage engine configuration and optimization
 - [Durability Verification](durability-verification.md) - How ArcherDB ensures data durability
@@ -24,6 +25,7 @@ New to ArcherDB? Start here:
 ## Operations
 
 - [Operations Runbook](operations-runbook.md) - Day-to-day operational procedures
+- [Troubleshooting Guide](troubleshooting.md) - Diagnose and resolve common issues
 - [Disaster Recovery](disaster-recovery.md) - Backup, restore, and failover procedures
 - [Capacity Planning](capacity-planning.md) - Sizing clusters for your workload
 - [Multi-Region Deployment](multi-region-deployment.md) - Cross-region replication setup
