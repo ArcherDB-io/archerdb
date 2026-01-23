@@ -3,6 +3,46 @@ ArcherDB Python SDK - GeoClient
 
 This module provides synchronous and asynchronous clients for
 ArcherDB geospatial operations, following the client-sdk spec.
+
+The SDK offers two client implementations:
+    - GeoClientSync: Thread-safe synchronous client for blocking operations
+    - GeoClientAsync: Async client for asyncio-based applications
+
+Both clients support:
+    - Batch operations (insert, upsert, delete)
+    - Query operations (radius, polygon, UUID lookup)
+    - Automatic retry with exponential backoff
+    - Circuit breaker for failure isolation
+    - Topology discovery and shard routing
+
+Example:
+    Synchronous usage::
+
+        from archerdb import GeoClientSync, GeoClientConfig, GeoEvent
+
+        config = GeoClientConfig(cluster_id=0, addresses=["127.0.0.1:3001"])
+        with GeoClientSync(config) as client:
+            batch = client.create_batch()
+            batch.add(GeoEvent(entity_id=123, lat_nano=37_000_000_000, lon_nano=-122_000_000_000))
+            batch.commit()
+
+    Asynchronous usage::
+
+        import asyncio
+        from archerdb import GeoClientAsync, GeoClientConfig, GeoEvent
+
+        async def main():
+            config = GeoClientConfig(cluster_id=0, addresses=["127.0.0.1:3001"])
+            async with GeoClientAsync(config) as client:
+                batch = client.create_batch()
+                batch.add(GeoEvent(entity_id=123, lat_nano=37_000_000_000, lon_nano=-122_000_000_000))
+                await batch.commit()
+
+        asyncio.run(main())
+
+Attributes:
+    BATCH_SIZE_MAX: Maximum events per batch (10,000 with 10MB message_size_max)
+    QUERY_LIMIT_MAX: Maximum query results (81,000)
 """
 
 from __future__ import annotations
@@ -58,7 +98,29 @@ from .topology import (
 # ============================================================================
 
 class ArcherDBError(Exception):
-    """Base class for ArcherDB errors."""
+    """
+    Base class for all ArcherDB client errors.
+
+    All ArcherDB exceptions inherit from this class, making it easy to
+    catch any SDK error with a single except clause.
+
+    Attributes:
+        code: Numeric error code for programmatic handling.
+        retryable: Whether the operation that caused this error can be retried.
+            True for transient errors (timeouts, leader changes),
+            False for permanent errors (invalid coordinates, batch too large).
+
+    Example:
+        try:
+            batch.commit()
+        except ArcherDBError as e:
+            if e.retryable:
+                # Schedule for retry
+                retry_queue.put(batch)
+            else:
+                # Log and skip
+                logger.error(f"Permanent error: {e}")
+    """
     code: int = 0
     retryable: bool = False
 
@@ -69,13 +131,32 @@ class ArcherDBError(Exception):
 # Connection Errors
 
 class ConnectionFailed(ArcherDBError):
-    """Failed to establish connection to cluster."""
+    """
+    Failed to establish connection to the ArcherDB cluster.
+
+    This error occurs when the client cannot reach any of the configured
+    replica addresses. Common causes include network issues, firewall rules,
+    or the cluster not running.
+
+    Attributes:
+        code: 1001
+        retryable: True - connection may succeed on retry after network recovery.
+    """
     code = 1001
     retryable = True
 
 
 class ConnectionTimeout(ArcherDBError):
-    """Connection attempt timed out."""
+    """
+    Connection attempt timed out before completion.
+
+    The client was unable to complete the TCP handshake within the
+    configured connect_timeout_ms (default 5000ms).
+
+    Attributes:
+        code: 1002
+        retryable: True - may succeed on retry if network latency improves.
+    """
     code = 1002
     retryable = True
 
@@ -83,19 +164,46 @@ class ConnectionTimeout(ArcherDBError):
 # Cluster Errors
 
 class ClusterUnavailable(ArcherDBError):
-    """Cluster is unavailable after exhausting retries."""
+    """
+    Cluster is unavailable after exhausting connection attempts.
+
+    All configured replica addresses were tried and none could be reached.
+    This typically indicates a cluster-wide outage.
+
+    Attributes:
+        code: 2001
+        retryable: True - cluster may become available after recovery.
+    """
     code = 2001
     retryable = True
 
 
 class ViewChangeInProgress(ArcherDBError):
-    """View change is in progress, retry later."""
+    """
+    VSR view change is in progress.
+
+    The cluster is reconfiguring leadership due to a replica failure or
+    network partition. Retry after a short delay (typically 100-500ms).
+
+    Attributes:
+        code: 2002
+        retryable: True - operation will succeed after view change completes.
+    """
     code = 2002
     retryable = True
 
 
 class NotPrimary(ArcherDBError):
-    """Connected replica is not the primary."""
+    """
+    Connected replica is not the current primary/leader.
+
+    Write operations must be sent to the primary replica. The client will
+    automatically retry with leader redirection.
+
+    Attributes:
+        code: 2003
+        retryable: True - client will redirect to the correct primary.
+    """
     code = 2003
     retryable = True
 
@@ -103,25 +211,72 @@ class NotPrimary(ArcherDBError):
 # Validation Errors
 
 class InvalidCoordinates(ArcherDBError):
-    """Coordinates are out of valid range."""
+    """
+    Geographic coordinates are out of valid range.
+
+    Latitude must be in [-90, +90] degrees (or [-90e9, +90e9] nanodegrees).
+    Longitude must be in [-180, +180] degrees (or [-180e9, +180e9] nanodegrees).
+
+    Attributes:
+        code: 3001
+        retryable: False - fix the coordinate values and retry.
+    """
     code = 3001
     retryable = False
 
 
 class PolygonTooComplex(ArcherDBError):
-    """Polygon exceeds maximum vertex count."""
+    """
+    Polygon exceeds maximum vertex count (10,000 vertices).
+
+    Simplify the polygon geometry before querying. Consider using
+    multiple smaller polygons or reducing vertex precision.
+
+    Attributes:
+        code: 3002
+        retryable: False - simplify polygon and retry.
+    """
     code = 3002
     retryable = False
 
 
 class BatchTooLarge(ArcherDBError):
-    """Batch exceeds maximum size."""
+    """
+    Batch exceeds maximum size (10,000 events).
+
+    Split the batch into smaller chunks using split_batch() helper
+    and submit each chunk separately.
+
+    Attributes:
+        code: 3003
+        retryable: False - split batch and retry individual chunks.
+
+    Example:
+        from archerdb import split_batch
+
+        chunks = split_batch(large_event_list, chunk_size=1000)
+        for chunk in chunks:
+            client.insert_events(chunk)
+    """
     code = 3003
     retryable = False
 
 
 class InvalidEntityId(ArcherDBError):
-    """Entity ID is invalid (zero or malformed)."""
+    """
+    Entity ID is invalid (zero or malformed).
+
+    Entity IDs must be non-zero 128-bit integers. Use archerdb.id() to
+    generate valid ULID-based entity IDs.
+
+    Attributes:
+        code: 3004
+        retryable: False - use a valid entity ID.
+
+    Example:
+        import archerdb
+        entity_id = archerdb.id()  # Generate valid ID
+    """
     code = 3004
     retryable = False
 
@@ -129,37 +284,99 @@ class InvalidEntityId(ArcherDBError):
 # Operation Errors
 
 class OperationTimeout(ArcherDBError):
-    """Operation timed out (may have committed)."""
+    """
+    Operation timed out before receiving confirmation.
+
+    The operation may or may not have been committed to the cluster.
+    For write operations, use the same request_number on retry to
+    ensure idempotency.
+
+    Attributes:
+        code: 4001
+        retryable: True - retry with same request_number for idempotency.
+    """
     code = 4001
     retryable = True
 
 
 class QueryResultTooLarge(ArcherDBError):
-    """Query limit exceeds maximum."""
+    """
+    Query limit exceeds maximum allowed (81,000 results).
+
+    Reduce the limit parameter or use pagination with cursor.
+
+    Attributes:
+        code: 4002
+        retryable: False - reduce limit and retry.
+    """
     code = 4002
     retryable = False
 
 
 class OutOfSpace(ArcherDBError):
-    """Cluster is out of storage space."""
+    """
+    Cluster is out of storage space.
+
+    The cluster cannot accept new writes until storage is freed.
+    Delete old data or expand storage capacity.
+
+    Attributes:
+        code: 4003
+        retryable: False - requires administrative action.
+    """
     code = 4003
     retryable = False
 
 
 class SessionExpired(ArcherDBError):
-    """Session has expired, will re-register automatically."""
+    """
+    Client session has expired.
+
+    The client will automatically re-register with the cluster.
+    This is typically transparent to the application.
+
+    Attributes:
+        code: 4004
+        retryable: True - client handles re-registration automatically.
+    """
     code = 4004
     retryable = True
 
 
 class ClientClosedError(ArcherDBError):
-    """Client has been closed."""
+    """
+    Operation attempted on a closed client.
+
+    The client has been closed via close() or context manager exit.
+    Create a new client instance to continue operations.
+
+    Attributes:
+        code: 5001
+        retryable: False - create new client instance.
+    """
     code = 5001
     retryable = False
 
 
 class RetryExhausted(ArcherDBError):
-    """All retry attempts have been exhausted."""
+    """
+    All retry attempts have been exhausted.
+
+    The operation failed after the maximum number of retries
+    (default: 5 retries = 6 total attempts).
+
+    Attributes:
+        code: 5002
+        retryable: False - maximum retries reached.
+        attempts: Number of attempts made.
+        last_error: The final error that caused the last attempt to fail.
+
+    Example:
+        try:
+            client.insert_events(events)
+        except RetryExhausted as e:
+            logger.error(f"Failed after {e.attempts} attempts: {e.last_error}")
+    """
     code = 5002
     retryable = False
 
@@ -170,7 +387,20 @@ class RetryExhausted(ArcherDBError):
 
 
 class CircuitBreakerOpen(ArcherDBError):
-    """Circuit breaker is open, request rejected."""
+    """
+    Circuit breaker is open, request rejected.
+
+    The replica has experienced too many recent failures and the
+    circuit breaker has opened to prevent cascading failures.
+    Try another replica or wait for the breaker to transition
+    to half-open state.
+
+    Attributes:
+        code: 600
+        retryable: True - try another replica or wait.
+        circuit_name: Name of the circuit breaker that opened.
+        circuit_state: Current state of the circuit breaker.
+    """
     code = 600
     retryable = True  # Client should try another replica
 
@@ -457,7 +687,46 @@ def id() -> int:
 
 @dataclass
 class RetryConfig:
-    """Retry configuration options (per client-retry/spec.md)."""
+    """
+    Configuration for automatic retry behavior.
+
+    The SDK automatically retries operations that fail with transient errors
+    (timeouts, leader changes, temporary unavailability) using exponential
+    backoff with optional jitter.
+
+    Attributes:
+        enabled: Whether automatic retry is enabled. Default True.
+        max_retries: Maximum retry attempts after initial failure. Default 5
+            (6 total attempts including the initial attempt).
+        base_backoff_ms: Base delay in milliseconds for exponential backoff.
+            Default 100ms. Doubles with each retry: 100, 200, 400, 800, 1600ms.
+        max_backoff_ms: Maximum backoff delay in milliseconds. Default 1600ms.
+            Caps the exponential growth.
+        total_timeout_ms: Total timeout for all retry attempts combined.
+            Default 30000ms (30 seconds). Prevents infinite retry loops.
+        jitter: Add random jitter (0 to delay/2) to prevent thundering herd.
+            Default True. Recommended for production.
+
+    Example:
+        # Aggressive retry for critical writes
+        retry = RetryConfig(
+            max_retries=10,
+            base_backoff_ms=50,
+            total_timeout_ms=60000,  # 1 minute total
+        )
+
+        # Quick failure for user-facing queries
+        retry = RetryConfig(
+            max_retries=2,
+            total_timeout_ms=5000,  # 5 seconds total
+        )
+
+        config = GeoClientConfig(
+            cluster_id=0,
+            addresses=["127.0.0.1:3001"],
+            retry=retry,
+        )
+    """
     enabled: bool = True              # Whether automatic retry is enabled
     max_retries: int = 5              # Maximum retry attempts after initial failure
     base_backoff_ms: int = 100        # Base backoff delay (doubles each attempt)
@@ -497,7 +766,50 @@ class OperationOptions:
 
 @dataclass
 class GeoClientConfig:
-    """Client configuration options."""
+    """
+    Configuration for creating a GeoClient.
+
+    Specifies the cluster to connect to and connection parameters.
+
+    Attributes:
+        cluster_id: Unique identifier for the ArcherDB cluster. Must match
+            the cluster_id used when starting the cluster. Use 0 for
+            single-cluster deployments.
+        addresses: List of replica addresses in "host:port" format.
+            At least one address is required. The client will try all
+            addresses to find an available replica.
+        connect_timeout_ms: Maximum time in milliseconds to wait for
+            initial connection. Default 5000ms (5 seconds).
+        request_timeout_ms: Maximum time in milliseconds to wait for
+            an operation to complete. Default 30000ms (30 seconds).
+        pool_size: Number of connections to maintain per replica.
+            Default 1. Increase for high-throughput applications.
+        retry: Retry configuration. If None, uses default RetryConfig.
+            Set to RetryConfig(enabled=False) to disable retries.
+
+    Example:
+        # Basic configuration
+        config = GeoClientConfig(
+            cluster_id=0,
+            addresses=["127.0.0.1:3001"],
+        )
+
+        # Production configuration with multiple replicas
+        config = GeoClientConfig(
+            cluster_id=12345,
+            addresses=[
+                "replica-1.example.com:3001",
+                "replica-2.example.com:3001",
+                "replica-3.example.com:3001",
+            ],
+            connect_timeout_ms=3000,
+            request_timeout_ms=10000,
+            retry=RetryConfig(max_retries=3),
+        )
+
+    Raises:
+        ValueError: If addresses list is empty when creating a client.
+    """
     cluster_id: int
     addresses: List[str]
     connect_timeout_ms: int = 5000
@@ -999,22 +1311,77 @@ class GeoClientSync:
     """
     Synchronous ArcherDB client for geospatial operations.
 
-    Supports context manager protocol for automatic cleanup.
+    Thread-safe client for blocking I/O operations. Suitable for traditional
+    threaded applications or simple scripts. For async/await applications,
+    use GeoClientAsync instead.
+
+    The client manages connection lifecycle, automatic retries, circuit
+    breakers, and topology discovery.
+
+    Attributes:
+        is_connected: True if the client is connected and not closed.
 
     Example:
-        with GeoClientSync(config) as client:
-            batch = client.create_batch()
-            batch.add(event)
-            batch.commit()
+        Basic usage with context manager::
 
-            results = client.query_radius(
-                latitude=37.7749,
-                longitude=-122.4194,
-                radius_m=1000,
-            )
+            from archerdb import GeoClientSync, GeoClientConfig, GeoEvent
+
+            config = GeoClientConfig(cluster_id=0, addresses=["127.0.0.1:3001"])
+
+            with GeoClientSync(config) as client:
+                # Insert events
+                batch = client.create_batch()
+                batch.add(GeoEvent(
+                    entity_id=123,
+                    lat_nano=37_774_900_000,
+                    lon_nano=-122_419_400_000,
+                ))
+                batch.commit()
+
+                # Query by radius
+                result = client.query_radius(
+                    latitude=37.7749,
+                    longitude=-122.4194,
+                    radius_m=1000,
+                )
+                print(f"Found {len(result.events)} events")
+
+        Manual lifecycle management::
+
+            client = GeoClientSync(config)
+            try:
+                client.insert_events(events)
+            finally:
+                client.close()
+
+    Raises:
+        ValueError: If config.addresses is empty.
+        ConnectionFailed: If unable to connect to any replica.
+
+    Note:
+        A single client instance should be shared across threads.
+        Creating multiple clients adds unnecessary connection overhead.
     """
 
     def __init__(self, config: GeoClientConfig) -> None:
+        """
+        Create a new synchronous GeoClient.
+
+        Args:
+            config: Client configuration specifying cluster ID, addresses,
+                and connection parameters.
+
+        Raises:
+            ValueError: If config.addresses is empty.
+            ConnectionFailed: If unable to connect to any replica.
+
+        Example:
+            config = GeoClientConfig(
+                cluster_id=0,
+                addresses=["127.0.0.1:3001", "127.0.0.1:3002"],
+            )
+            client = GeoClientSync(config)
+        """
         if not config.addresses:
             raise ValueError("At least one replica address is required")
 
@@ -1042,34 +1409,104 @@ class GeoClientSync:
             raise ConnectionFailed("Failed to connect to cluster")
 
     def close(self) -> None:
-        """Close the client and release resources."""
+        """
+        Close the client and release all resources.
+
+        After calling close(), the client cannot be used for any operations.
+        Attempting to use a closed client raises ClientClosedError.
+
+        This method is idempotent - calling it multiple times is safe.
+
+        Example:
+            client = GeoClientSync(config)
+            try:
+                client.insert_events(events)
+            finally:
+                client.close()
+
+        Note:
+            When using the context manager protocol (with statement),
+            close() is called automatically on exit.
+        """
         if not self._closed:
             self._native.disconnect()
             self._closed = True
 
     def __enter__(self) -> "GeoClientSync":
+        """Enter context manager, returning the client instance."""
         return self
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        """Exit context manager, closing the client."""
         self.close()
 
     @property
     def is_connected(self) -> bool:
-        """Return True if client is connected."""
+        """
+        Check if the client is connected and available for operations.
+
+        Returns:
+            True if the client is connected and not closed, False otherwise.
+        """
         return not self._closed
 
     # ========== Batch Operations ==========
 
     def create_batch(self) -> GeoEventBatch:
-        """Create a new batch for inserting events."""
+        """
+        Create a new batch for inserting events.
+
+        Events added to this batch will be inserted. Inserting an event
+        with an existing entity_id will fail with EXISTS error.
+
+        Returns:
+            GeoEventBatch: A batch builder for accumulating events.
+
+        Example:
+            batch = client.create_batch()
+            batch.add(event1)
+            batch.add(event2)
+            errors = batch.commit()
+
+        See Also:
+            create_upsert_batch: For insert-or-update semantics.
+        """
         return GeoEventBatch(self, "insert")
 
     def create_upsert_batch(self) -> GeoEventBatch:
-        """Create a new batch for upserting events."""
+        """
+        Create a new batch for upserting events.
+
+        Events added to this batch will be upserted (insert-or-update).
+        If an entity_id already exists, its location is updated.
+
+        Returns:
+            GeoEventBatch: A batch builder for accumulating events.
+
+        Example:
+            batch = client.create_upsert_batch()
+            batch.add(updated_event)
+            errors = batch.commit()
+        """
         return GeoEventBatch(self, "upsert")
 
     def create_delete_batch(self) -> DeleteEntityBatch:
-        """Create a new batch for deleting entities."""
+        """
+        Create a new batch for deleting entities.
+
+        Entity IDs added to this batch will be marked as deleted
+        (tombstoned) in the cluster.
+
+        Returns:
+            DeleteEntityBatch: A batch builder for accumulating entity IDs.
+
+        Example:
+            batch = client.create_delete_batch()
+            batch.add(entity_id_1)
+            batch.add(entity_id_2)
+            result = batch.commit()
+            print(f"Deleted: {result.deleted_count}")
+        """
         return DeleteEntityBatch(self)
 
     def insert_events(
@@ -1077,7 +1514,37 @@ class GeoClientSync:
         events: List[GeoEvent],
         options: Optional[OperationOptions] = None,
     ) -> List[InsertGeoEventsError]:
-        """Insert multiple events with automatic per-batch retry."""
+        """
+        Insert multiple events with automatic batching and retry.
+
+        Events are automatically split into batches of up to 10,000 events
+        and each batch is submitted with retry logic.
+
+        Args:
+            events: List of GeoEvent objects to insert.
+            options: Optional per-operation retry settings.
+
+        Returns:
+            List of errors for events that failed validation. Empty list
+            means all events were inserted successfully. Each error contains
+            the index of the failed event and the error code.
+
+        Raises:
+            ClientClosedError: If the client has been closed.
+            RetryExhausted: If all retry attempts fail.
+            InvalidCoordinates: If any event has invalid coordinates.
+            InvalidEntityId: If any event has entity_id=0.
+
+        Example:
+            events = [
+                GeoEvent(entity_id=1, lat_nano=37_000_000_000, lon_nano=-122_000_000_000),
+                GeoEvent(entity_id=2, lat_nano=38_000_000_000, lon_nano=-121_000_000_000),
+            ]
+            errors = client.insert_events(events)
+            if errors:
+                for err in errors:
+                    print(f"Event {err.index} failed: {err.result}")
+        """
         submit_fn = lambda op, batch: self._submit_batch(op, batch, options)
         return _submit_multi_batch_sync(GeoOperation.INSERT_EVENTS, events, submit_fn)
 
@@ -1086,18 +1553,79 @@ class GeoClientSync:
         events: List[GeoEvent],
         options: Optional[OperationOptions] = None,
     ) -> List[InsertGeoEventsError]:
-        """Upsert multiple events with automatic per-batch retry."""
+        """
+        Upsert multiple events with automatic batching and retry.
+
+        Upsert inserts new events or updates existing ones based on entity_id.
+        This is useful for tracking entities that send periodic updates.
+
+        Args:
+            events: List of GeoEvent objects to upsert.
+            options: Optional per-operation retry settings.
+
+        Returns:
+            List of errors for events that failed validation.
+
+        Raises:
+            ClientClosedError: If the client has been closed.
+            RetryExhausted: If all retry attempts fail.
+
+        Example:
+            # Track a moving vehicle
+            event = GeoEvent(
+                entity_id=vehicle_id,
+                lat_nano=new_lat,
+                lon_nano=new_lon,
+                velocity_mms=speed_mms,
+            )
+            client.upsert_events([event])
+        """
         submit_fn = lambda op, batch: self._submit_batch(op, batch, options)
         return _submit_multi_batch_sync(GeoOperation.UPSERT_EVENTS, events, submit_fn)
 
     def insert_event(self, event: GeoEvent) -> List[InsertGeoEventsError]:
-        """Insert a single event (convenience method)."""
+        """
+        Insert a single event (convenience method).
+
+        Equivalent to creating a batch, adding one event, and committing.
+
+        Args:
+            event: The GeoEvent to insert.
+
+        Returns:
+            List of errors (empty if successful).
+
+        Example:
+            errors = client.insert_event(event)
+            if not errors:
+                print("Event inserted successfully")
+        """
         batch = self.create_batch()
         batch.add(event)
         return batch.commit()
 
     def delete_entities(self, entity_ids: List[int]) -> DeleteResult:
-        """Delete entities by ID."""
+        """
+        Delete entities by ID.
+
+        Marks all events for the specified entity IDs as tombstoned.
+        Tombstoned entities are excluded from queries.
+
+        Args:
+            entity_ids: List of entity UUIDs to delete.
+
+        Returns:
+            DeleteResult with deleted_count and not_found_count.
+
+        Raises:
+            ClientClosedError: If the client has been closed.
+            InvalidEntityId: If any entity_id is 0.
+
+        Example:
+            result = client.delete_entities([entity1, entity2, entity3])
+            print(f"Deleted: {result.deleted_count}")
+            print(f"Not found: {result.not_found_count}")
+        """
         batch = self.create_delete_batch()
         for entity_id in entity_ids:
             batch.add(entity_id)
@@ -1106,7 +1634,31 @@ class GeoClientSync:
     # ========== Query Operations ==========
 
     def get_latest_by_uuid(self, entity_id: int) -> Optional[GeoEvent]:
-        """Look up the latest event for an entity by UUID."""
+        """
+        Look up the latest event for an entity by UUID.
+
+        Returns the most recent location for the specified entity, or None
+        if the entity is not found or has been deleted.
+
+        Args:
+            entity_id: The 128-bit entity UUID to look up.
+
+        Returns:
+            The latest GeoEvent for the entity, or None if not found.
+
+        Raises:
+            ClientClosedError: If the client has been closed.
+            RetryExhausted: If all retry attempts fail.
+
+        Example:
+            event = client.get_latest_by_uuid(entity_id)
+            if event:
+                lat = event.lat_nano / 1e9
+                lon = event.lon_nano / 1e9
+                print(f"Entity {entity_id} is at ({lat:.6f}, {lon:.6f})")
+            else:
+                print(f"Entity {entity_id} not found")
+        """
         self._ensure_connected()
 
         filter = QueryUuidFilter(entity_id=entity_id)
@@ -1767,22 +2319,80 @@ class GeoClientAsync:
     """
     Asynchronous ArcherDB client for geospatial operations.
 
-    Supports async context manager protocol.
+    Non-blocking client for asyncio-based applications. All I/O operations
+    are async and will not block the event loop. For synchronous applications,
+    use GeoClientSync instead.
+
+    The client manages connection lifecycle, automatic retries, circuit
+    breakers, and topology discovery.
+
+    Attributes:
+        is_connected: True if the client is connected and not closed.
 
     Example:
-        async with GeoClientAsync(config) as client:
-            batch = client.create_batch()
-            batch.add(event)
-            await batch.commit()
+        Basic usage with async context manager::
 
-            results = await client.query_radius(
-                latitude=37.7749,
-                longitude=-122.4194,
-                radius_m=1000,
-            )
+            import asyncio
+            from archerdb import GeoClientAsync, GeoClientConfig, GeoEvent
+
+            async def main():
+                config = GeoClientConfig(cluster_id=0, addresses=["127.0.0.1:3001"])
+
+                async with GeoClientAsync(config) as client:
+                    # Insert events
+                    batch = client.create_batch()
+                    batch.add(GeoEvent(
+                        entity_id=123,
+                        lat_nano=37_774_900_000,
+                        lon_nano=-122_419_400_000,
+                    ))
+                    await batch.commit()
+
+                    # Query by radius
+                    result = await client.query_radius(
+                        latitude=37.7749,
+                        longitude=-122.4194,
+                        radius_m=1000,
+                    )
+                    print(f"Found {len(result.events)} events")
+
+            asyncio.run(main())
+
+        Concurrent operations::
+
+            async def fetch_multiple(client, entity_ids):
+                tasks = [
+                    client.get_latest_by_uuid(eid)
+                    for eid in entity_ids
+                ]
+                return await asyncio.gather(*tasks)
+
+    Raises:
+        ValueError: If config.addresses is empty.
+
+    Note:
+        A single client instance should be shared across coroutines.
+        Creating multiple clients adds unnecessary connection overhead.
     """
 
     def __init__(self, config: GeoClientConfig) -> None:
+        """
+        Create a new asynchronous GeoClient.
+
+        Args:
+            config: Client configuration specifying cluster ID, addresses,
+                and connection parameters.
+
+        Raises:
+            ValueError: If config.addresses is empty.
+
+        Example:
+            config = GeoClientConfig(
+                cluster_id=0,
+                addresses=["127.0.0.1:3001"],
+            )
+            client = GeoClientAsync(config)
+        """
         if not config.addresses:
             raise ValueError("At least one replica address is required")
 
@@ -1806,36 +2416,88 @@ class GeoClientAsync:
         pass
 
     async def _connect(self) -> None:
-        """Establish connection to cluster."""
+        """Establish connection to cluster asynchronously."""
         pass
 
     async def close(self) -> None:
-        """Close the client and release resources."""
+        """
+        Close the client and release all resources.
+
+        After calling close(), the client cannot be used for any operations.
+        Attempting to use a closed client raises ClientClosedError.
+
+        This method is idempotent - calling it multiple times is safe.
+
+        Example:
+            client = GeoClientAsync(config)
+            try:
+                await client.insert_events(events)
+            finally:
+                await client.close()
+
+        Note:
+            When using the async context manager protocol (async with statement),
+            close() is called automatically on exit.
+        """
         self._closed = True
 
     async def __aenter__(self) -> "GeoClientAsync":
+        """Enter async context manager, returning the client instance."""
         await self._connect()
         return self
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        """Exit async context manager, closing the client."""
         await self.close()
 
     @property
     def is_connected(self) -> bool:
+        """
+        Check if the client is connected and available for operations.
+
+        Returns:
+            True if the client is connected and not closed, False otherwise.
+        """
         return not self._closed
 
     # ========== Batch Operations ==========
 
     def create_batch(self) -> GeoEventBatchAsync:
-        """Create a new batch for inserting events."""
+        """
+        Create a new batch for inserting events.
+
+        Events added to this batch will be inserted. The batch commit
+        is asynchronous.
+
+        Returns:
+            GeoEventBatchAsync: A batch builder for accumulating events.
+
+        Example:
+            batch = client.create_batch()
+            batch.add(event1)
+            batch.add(event2)
+            errors = await batch.commit()
+        """
         return GeoEventBatchAsync(self, "insert")
 
     def create_upsert_batch(self) -> GeoEventBatchAsync:
-        """Create a new batch for upserting events."""
+        """
+        Create a new batch for upserting events.
+
+        Events added to this batch will be upserted (insert-or-update).
+
+        Returns:
+            GeoEventBatchAsync: A batch builder for accumulating events.
+        """
         return GeoEventBatchAsync(self, "upsert")
 
     def create_delete_batch(self) -> DeleteEntityBatchAsync:
-        """Create a new batch for deleting entities."""
+        """
+        Create a new batch for deleting entities.
+
+        Returns:
+            DeleteEntityBatchAsync: A batch builder for accumulating entity IDs.
+        """
         return DeleteEntityBatchAsync(self)
 
     async def insert_events(
@@ -1843,7 +2505,29 @@ class GeoClientAsync:
         events: List[GeoEvent],
         options: Optional[OperationOptions] = None,
     ) -> List[InsertGeoEventsError]:
-        """Insert multiple events with automatic per-batch retry."""
+        """
+        Insert multiple events with automatic batching and retry.
+
+        Events are automatically split into batches and submitted
+        with retry logic. This operation is non-blocking.
+
+        Args:
+            events: List of GeoEvent objects to insert.
+            options: Optional per-operation retry settings.
+
+        Returns:
+            List of errors for events that failed validation.
+
+        Raises:
+            ClientClosedError: If the client has been closed.
+            RetryExhausted: If all retry attempts fail.
+
+        Example:
+            errors = await client.insert_events(events)
+            if errors:
+                for err in errors:
+                    print(f"Event {err.index} failed: {err.result}")
+        """
         submit_fn = lambda op, batch: self._submit_batch(op, batch, options)
         return await _submit_multi_batch_async(
             GeoOperation.INSERT_EVENTS,
@@ -1856,7 +2540,16 @@ class GeoClientAsync:
         events: List[GeoEvent],
         options: Optional[OperationOptions] = None,
     ) -> List[InsertGeoEventsError]:
-        """Upsert multiple events with automatic per-batch retry."""
+        """
+        Upsert multiple events with automatic batching and retry.
+
+        Args:
+            events: List of GeoEvent objects to upsert.
+            options: Optional per-operation retry settings.
+
+        Returns:
+            List of errors for events that failed validation.
+        """
         submit_fn = lambda op, batch: self._submit_batch(op, batch, options)
         return await _submit_multi_batch_async(
             GeoOperation.UPSERT_EVENTS,
@@ -1865,13 +2558,29 @@ class GeoClientAsync:
         )
 
     async def insert_event(self, event: GeoEvent) -> List[InsertGeoEventsError]:
-        """Insert a single event."""
+        """
+        Insert a single event (convenience method).
+
+        Args:
+            event: The GeoEvent to insert.
+
+        Returns:
+            List of errors (empty if successful).
+        """
         batch = self.create_batch()
         batch.add(event)
         return await batch.commit()
 
     async def delete_entities(self, entity_ids: List[int]) -> DeleteResult:
-        """Delete entities by ID."""
+        """
+        Delete entities by ID.
+
+        Args:
+            entity_ids: List of entity UUIDs to delete.
+
+        Returns:
+            DeleteResult with deleted_count and not_found_count.
+        """
         batch = self.create_delete_batch()
         for entity_id in entity_ids:
             batch.add(entity_id)
@@ -1880,7 +2589,20 @@ class GeoClientAsync:
     # ========== Query Operations ==========
 
     async def get_latest_by_uuid(self, entity_id: int) -> Optional[GeoEvent]:
-        """Look up the latest event for an entity by UUID."""
+        """
+        Look up the latest event for an entity by UUID.
+
+        Args:
+            entity_id: The 128-bit entity UUID to look up.
+
+        Returns:
+            The latest GeoEvent for the entity, or None if not found.
+
+        Example:
+            event = await client.get_latest_by_uuid(entity_id)
+            if event:
+                print(f"Found at ({event.lat_nano}, {event.lon_nano})")
+        """
         self._ensure_connected()
 
         filter = QueryUuidFilter(entity_id=entity_id)
