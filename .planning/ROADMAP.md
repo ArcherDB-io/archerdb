@@ -196,13 +196,13 @@ Plans:
   3. Performance benchmarks for insert throughput, radius/polygon/UUID query latency, batch queries
   4. Published benchmarks vs PostGIS, Redis/Tile38, Elasticsearch Geo, Aerospike
   5. Minimum and recommended hardware requirements documented for different scales
-**Plans**: TBD
+**Plans**: 4 plans
 
 Plans:
-- [ ] 10-01: CI completion
-- [ ] 10-02: Integration tests
-- [ ] 10-03: Performance benchmarks
-- [ ] 10-04: Competitor benchmarks
+- [ ] 10-01-PLAN.md - CI completion (multi-platform, VOPR, coverage, regression detection)
+- [ ] 10-02-PLAN.md - Integration tests (geospatial, backup/restore, failover, encryption)
+- [ ] 10-03-PLAN.md - Performance benchmarks (throughput, latency, compaction impact, hardware requirements)
+- [ ] 10-04-PLAN.md - Competitor benchmarks (PostGIS, Tile38, Elasticsearch, Aerospike)
 
 ## Progress
 
@@ -220,7 +220,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | 7. Observability Core | 4/4 | Complete | 2026-01-23 |
 | 8. Observability Dashboards | 3/3 | Complete | 2026-01-23 |
 | 9. Documentation | 3/3 | Complete | 2026-01-23 |
-| 10. Testing & Benchmarks | 0/4 | Not started | - |
+| 10. Testing & Benchmarks | 0/4 | Planned | - |
 
 ---
 *Roadmap created: 2026-01-22*
@@ -242,4 +242,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 *Phase 8 complete: 2026-01-23*
 *Phase 9 planned: 2026-01-23*
 *Phase 9 complete: 2026-01-23*
+*Phase 10 planned: 2026-01-23*
 *Total requirements: 234 | All mapped*
