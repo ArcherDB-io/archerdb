@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-01-22)
 
 **Core value:** Correctness, performance, and completeness with no compromises
-**Current focus:** Phase 5 - Sharding & Cleanup
+**Current focus:** Phase 5 - Sharding & Cleanup (COMPLETE)
 
 ## Current Position
 
-Phase: 5 of 10 (Sharding & Cleanup)
-Plan: 4 of 5 in current phase
-Status: Plan 05-03 complete (05-04 already complete)
-Last activity: 2026-01-22 - Plan 05-03 complete (REPL, TLS revocation, backup scheduling)
+Phase: 5 of 10 (Sharding & Cleanup) - COMPLETE
+Plan: 5 of 5 in current phase - COMPLETE
+Status: Phase 5 complete, ready for Phase 6
+Last activity: 2026-01-23 - Plan 05-05 complete (VOPR docs, CSV import, CLEAN verification)
 
 Progress: [#####-----] 50% (5/10 phases complete)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 19
+- Total plans completed: 20
 - Average duration: 12 min
-- Total execution time: 241 min
+- Total execution time: 253 min
 
 **By Phase:**
 
@@ -31,11 +31,11 @@ Progress: [#####-----] 50% (5/10 phases complete)
 | 02 | 4 | 54 min | 14 min |
 | 03 | 5 | 43 min | 9 min |
 | 04 | 3 | 47 min | 16 min |
-| 05 | 4 | 71 min | 18 min |
+| 05 | 5 | 83 min | 17 min |
 
 **Recent Trend:**
-- Last 5 plans: 05-03 (19m), 05-04 (9m), 05-02 (25m), 05-01 (18m), 04-03 (15m)
-- Trend: Stub implementations completed with full functionality
+- Last 5 plans: 05-05 (12m), 05-03 (19m), 05-04 (9m), 05-02 (25m), 05-01 (18m)
+- Trend: Phase 5 complete - all stubs resolved, CLEAN requirements verified
 
 *Updated after each plan completion*
 
@@ -51,6 +51,12 @@ Recent decisions affecting current work:
 - Full observability: Enterprise-ready monitoring with metrics, tracing, health endpoints
 - SDK parity: All five languages must have same features and quality
 - No graceful degradation: Demand resources, expose problems through metrics/traces
+
+From 05-05:
+- VOPR GeoStateMachine coverage already comprehensive in geo_workload.zig
+- CSV import tool is standalone CLI (external tool that connects to ArcherDB)
+- Use Enhancement: prefix for deferred CLI commands with phase reference
+- Remaining "not yet implemented" messages intentional (REPL transactions, S3 ETag edge case)
 
 From 05-03:
 - REPL transaction commands show informational message (transactions not in scope)
@@ -178,9 +184,31 @@ From CONCERNS.md - key issues to address:
 - ~~REPL stub (Phase 5)~~ RESOLVED in 05-03 (full interactive REPL implemented)
 - ~~TLS CRL/OCSP stub (Phase 5)~~ RESOLVED in 05-03 (revocation checking implemented)
 - ~~Backup scheduling stub (Phase 5)~~ RESOLVED in 05-03 (cron and interval support)
+- ~~state_machine_tests stub (Phase 5)~~ RESOLVED in 05-05 (VOPR integration documented)
+- ~~CDC AMQP stub (Phase 5)~~ RESOLVED in 05-05 (unit tests pass, CLI deferred to Phase 9)
+- ~~CSV import tool (Phase 5)~~ RESOLVED in 05-05 (standalone CLI implemented)
+
+## Phase 5 CLEAN Requirements Summary
+
+All CLEAN requirements verified complete:
+
+| ID | Requirement | Status | Resolution |
+|----|-------------|--------|------------|
+| CLEAN-01 | --aof flag removed | COMPLETE | Plan 05-02 |
+| CLEAN-02 | TODOs resolved | COMPLETE | Plan 05-02 |
+| CLEAN-03 | FIXMEs resolved | COMPLETE | Plan 05-02 |
+| CLEAN-04 | REPL implemented | COMPLETE | Plan 05-03 |
+| CLEAN-05 | state_machine_tests -> VOPR | COMPLETE | Plan 05-05 |
+| CLEAN-06 | tiering.zig integrated | COMPLETE | Plan 05-04 |
+| CLEAN-07 | backup_config scheduling | COMPLETE | Plan 05-03 |
+| CLEAN-08 | TLS CRL/OCSP | COMPLETE | Plan 05-03 |
+| CLEAN-09 | CDC AMQP | COMPLETE | Plan 05-05 (tests pass) |
+| CLEAN-10 | CSV import | COMPLETE | Plan 05-05 |
 
 ## Session Continuity
 
-Last session: 2026-01-22
-Stopped at: Plan 05-03 complete
+Last session: 2026-01-23
+Stopped at: Phase 5 complete, Plan 05-05 committed
 Resume file: None
+
+Next: Phase 6 - SDK Polish
