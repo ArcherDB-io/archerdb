@@ -174,6 +174,9 @@ const CLIArgs = union(enum) {
         memory_lsm_compaction: ?ByteSize = null,
         trace: ?[]const u8 = null,
         log_trace: bool = false,
+        // OTLP trace export options (Phase 7 Observability)
+        trace_export: ?[]const u8 = null, // "otlp" or "none"
+        otlp_endpoint: ?[]const u8 = null, // e.g., "http://localhost:4318/v1/traces"
         timeout_prepare_ms: ?u64 = null,
         timeout_grid_repair_message_ms: ?u64 = null,
         commit_stall_probability: ?Ratio = null,
@@ -1248,6 +1251,17 @@ const CLIArgs = union(enum) {
         \\        Minimum time between TTL extensions for the same entity (in seconds).
         \\        Prevents excessive extensions from frequent reads. Defaults to 3600 (1 hour).
         \\
+        \\  --trace-export=<otlp|none>
+        \\        Export traces to external collector.
+        \\        - otlp: OpenTelemetry Protocol (HTTP JSON) to OTLP collector
+        \\        - none: No export (default, traces to file only via --trace)
+        \\        Requires --experimental flag.
+        \\
+        \\  --otlp-endpoint=<url>
+        \\        OTLP collector endpoint for trace export (when --trace-export=otlp).
+        \\        Example: http://localhost:4318/v1/traces
+        \\        Default: http://localhost:4318/v1/traces
+        \\
         \\Examples:
         \\
         \\  archerdb format --cluster=0 --replica=0 --replica-count=3 0_0.archerdb
@@ -1383,6 +1397,9 @@ pub const Command = union(enum) {
         log_rotate_size: u64,
         log_rotate_count: u32,
         log_trace: bool,
+        // OTLP trace export options (Phase 7 Observability)
+        trace_export_enabled: bool,
+        otlp_endpoint: ?[]const u8,
         metrics_port: ?u16,
         metrics_bind: []const u8,
         metrics_auth_token: ?[]const u8,
@@ -2161,6 +2178,12 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
         .log_rotate_size = if (start.log_rotate_size) |s| s.bytes() else 100 * 1024 * 1024,
         .log_rotate_count = start.log_rotate_count orelse 10, // Default 10 files
         .log_trace = start.log_trace,
+        // OTLP trace export (Phase 7 Observability)
+        .trace_export_enabled = if (start.trace_export) |te|
+            std.mem.eql(u8, te, "otlp")
+        else
+            false,
+        .otlp_endpoint = start.otlp_endpoint,
         .metrics_port = start.metrics_port,
         .metrics_bind = start.metrics_bind orelse "127.0.0.1",
         .metrics_auth_token = start.metrics_auth_token,
