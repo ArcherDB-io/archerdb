@@ -269,6 +269,92 @@ pub const ReplicaState = enum {
 /// Updated by the main replica code.
 pub var replica_state: ReplicaState = .starting;
 
+// =============================================================================
+// Health Endpoint Support
+// =============================================================================
+
+/// Server start time (nanoseconds since epoch), for uptime calculation
+var server_start_time_ns: i128 = 0;
+
+/// Whether the server has completed initialization
+var server_initialized: bool = false;
+
+/// Track previous write error count for delta detection
+var last_write_errors: u64 = 0;
+
+/// Set the server start time (call at startup)
+pub fn setStartTime() void {
+    server_start_time_ns = std.time.nanoTimestamp();
+}
+
+/// Mark the server as fully initialized (call when ready to serve)
+pub fn markInitialized() void {
+    server_initialized = true;
+    log.info("server marked as initialized", .{});
+}
+
+/// Check if server is initialized
+pub fn isInitialized() bool {
+    return server_initialized;
+}
+
+/// Get server uptime in seconds
+fn getUptimeSeconds() u64 {
+    if (server_start_time_ns == 0) return 0;
+    const now = std.time.nanoTimestamp();
+    const elapsed_ns = now - server_start_time_ns;
+    if (elapsed_ns < 0) return 0;
+    return @intCast(@divFloor(elapsed_ns, 1_000_000_000));
+}
+
+/// Get build version string from metrics registry
+fn getBuildVersion() []const u8 {
+    return metrics.Registry.build_version[0..metrics.Registry.build_version_len];
+}
+
+/// Get build commit hash from metrics registry
+fn getBuildCommit() []const u8 {
+    return metrics.Registry.build_commit[0..metrics.Registry.build_commit_len];
+}
+
+/// Overall health status for the system
+pub const HealthStatus = enum {
+    healthy,
+    degraded,
+    unhealthy,
+
+    pub fn toString(self: HealthStatus) []const u8 {
+        return switch (self) {
+            .healthy => "healthy",
+            .degraded => "degraded",
+            .unhealthy => "unhealthy",
+        };
+    }
+};
+
+/// Individual component check status
+pub const CheckStatus = enum {
+    pass,
+    warn,
+    fail,
+
+    pub fn toString(self: CheckStatus) []const u8 {
+        return switch (self) {
+            .pass => "pass",
+            .warn => "warn",
+            .fail => "fail",
+        };
+    }
+};
+
+/// Result of a component health check
+pub const ComponentCheck = struct {
+    name: []const u8,
+    status: CheckStatus,
+    message: ?[]const u8,
+    duration_ms: ?u32,
+};
+
 /// Cached metrics response for avoiding recomputation on frequent scrapes.
 /// Per observability/spec.md: "Cache metrics for up to 1 second"
 const metrics_buffer_size = 256 * 1024;
@@ -596,6 +682,8 @@ pub const MetricsServer = struct {
             try handleHealthShards(client_fd);
         } else if (std.mem.eql(u8, path, "/health/encryption")) {
             try handleHealthEncryption(client_fd);
+        } else if (std.mem.eql(u8, path, "/health/detailed")) {
+            try handleHealthDetailed(client_fd);
         } else if (std.mem.eql(u8, path, "/regions")) {
             try handleRegions(client_fd);
         } else if (std.mem.eql(u8, path, "/metrics")) {
@@ -661,26 +749,51 @@ pub const MetricsServer = struct {
     }
 
     fn handleHealthLive(client_fd: posix.socket_t) !void {
-        // Liveness probe: always 200 if the process is running
-        const body =
-            \\{"status":"ok"}
-        ;
+        // Liveness probe: ALWAYS returns 200 if process is running
+        // Per CONTEXT.md: "never check external dependencies" for liveness
+        const uptime = getUptimeSeconds();
+        const version = getBuildVersion();
+        const commit = getBuildCommit();
+
+        var body_buf: [512]u8 = undefined;
+        const body = std.fmt.bufPrint(&body_buf,
+            "{{\"status\":\"ok\",\"uptime_seconds\":{d},\"version\":\"{s}\",\"commit_hash\":\"{s}\"}}",
+            .{ uptime, version, commit },
+        ) catch "{\"status\":\"ok\"}";
+
         try sendResponse(client_fd, .ok, "application/json", body);
     }
 
     fn handleHealthReady(client_fd: posix.socket_t) !void {
+        const uptime = getUptimeSeconds();
+        const version = getBuildVersion();
+        const commit = getBuildCommit();
+
+        // Must be initialized first (returns 503 until initialization complete)
+        if (!server_initialized) {
+            var body_buf: [512]u8 = undefined;
+            const body = std.fmt.bufPrint(&body_buf,
+                "{{\"status\":\"initializing\",\"reason\":\"server starting\",\"uptime_seconds\":{d},\"version\":\"{s}\",\"commit_hash\":\"{s}\"}}",
+                .{ uptime, version, commit },
+            ) catch "{\"status\":\"initializing\",\"reason\":\"server starting\"}";
+            try sendResponse(client_fd, .service_unavailable, "application/json", body);
+            return;
+        }
+
         const state = replica_state;
 
         if (state.isReady()) {
-            const body =
-                \\{"status":"ok"}
-            ;
+            var body_buf: [512]u8 = undefined;
+            const body = std.fmt.bufPrint(&body_buf,
+                "{{\"status\":\"ok\",\"uptime_seconds\":{d},\"version\":\"{s}\",\"commit_hash\":\"{s}\"}}",
+                .{ uptime, version, commit },
+            ) catch "{\"status\":\"ok\"}";
             try sendResponse(client_fd, .ok, "application/json", body);
         } else {
-            var body_buf: [256]u8 = undefined;
-            const fmt = "{{\"status\":\"unavailable\",\"reason\":\"{s}\"}}";
+            var body_buf: [512]u8 = undefined;
+            const fmt = "{{\"status\":\"unavailable\",\"reason\":\"{s}\",\"uptime_seconds\":{d},\"version\":\"{s}\",\"commit_hash\":\"{s}\"}}";
             const reason = state.reason();
-            const body = std.fmt.bufPrint(&body_buf, fmt, .{reason}) catch |err| switch (err) {
+            const body = std.fmt.bufPrint(&body_buf, fmt, .{ reason, uptime, version, commit }) catch |err| switch (err) {
                 error.NoSpaceLeft => "{\"status\":\"unavailable\"}",
             };
             const ctype = "application/json";
@@ -792,6 +905,162 @@ pub const MetricsServer = struct {
         try sendResponse(client_fd, .ok, "application/json", body);
     }
 
+    /// Health endpoint: Detailed component-level health breakdown.
+    /// Returns overall status, uptime, version, commit, and per-component checks.
+    /// HTTP status codes: 200 = healthy, 429 = degraded, 503 = unhealthy
+    fn handleHealthDetailed(client_fd: posix.socket_t) !void {
+        const uptime = getUptimeSeconds();
+        const version = getBuildVersion();
+        const commit = getBuildCommit();
+
+        // Perform component health checks
+        var checks: [8]ComponentCheck = undefined;
+        var check_count: usize = 0;
+
+        // Check 1: Replica status
+        const replica_ready = replica_state.isReady();
+        checks[check_count] = .{
+            .name = "replica",
+            .status = if (replica_ready) .pass else .fail,
+            .message = if (!replica_ready) replica_state.reason() else null,
+            .duration_ms = null,
+        };
+        check_count += 1;
+
+        // Check 2: Memory usage
+        const mem_allocated = metrics.Registry.memory_allocated_bytes.get();
+        // Use resident memory from process metrics if available
+        const pm = collectProcessMetrics();
+        const mem_used: u64 = if (pm.resident_memory_bytes > 0)
+            pm.resident_memory_bytes
+        else
+            @intCast(if (mem_allocated > 0) mem_allocated else 0);
+
+        // Memory limit estimation: 16GB default (or use configured limit)
+        // In production, this should come from config or cgroup limits
+        const mem_limit: u64 = 16 * 1024 * 1024 * 1024; // 16GB
+        const mem_pct: u64 = if (mem_limit > 0) @divFloor(mem_used * 100, mem_limit) else 0;
+
+        const mem_status: CheckStatus = if (mem_pct > 95)
+            .fail
+        else if (mem_pct > 90)
+            .warn
+        else
+            .pass;
+        const mem_msg: ?[]const u8 = if (mem_pct > 90) "high memory usage" else null;
+
+        checks[check_count] = .{
+            .name = "memory",
+            .status = mem_status,
+            .message = mem_msg,
+            .duration_ms = null,
+        };
+        check_count += 1;
+
+        // Check 3: Storage (based on recent write errors)
+        const write_errors = metrics.Registry.write_errors_total.get();
+        const error_delta = write_errors -| last_write_errors;
+        const storage_status: CheckStatus = if (error_delta > 10) .fail else .pass;
+        const storage_msg: ?[]const u8 = if (write_errors > 0) "write errors detected" else null;
+
+        checks[check_count] = .{
+            .name = "storage",
+            .status = storage_status,
+            .message = storage_msg,
+            .duration_ms = null,
+        };
+        check_count += 1;
+
+        // Update last write errors for next check
+        last_write_errors = write_errors;
+
+        // Check 4: Replication lag (if replication is active)
+        const repl_lag_ns = metrics.Registry.replication_lag_ns.load(.monotonic);
+        if (repl_lag_ns > 0) {
+            const lag_seconds = @divFloor(repl_lag_ns, 1_000_000_000);
+            const repl_status: CheckStatus = if (lag_seconds > 60)
+                .fail
+            else if (lag_seconds > 30)
+                .warn
+            else
+                .pass;
+            const repl_msg: ?[]const u8 = if (lag_seconds > 30) "high replication lag" else null;
+
+            checks[check_count] = .{
+                .name = "replication",
+                .status = repl_status,
+                .message = repl_msg,
+                .duration_ms = null,
+            };
+            check_count += 1;
+        }
+
+        // Determine overall status from component checks
+        var overall: HealthStatus = .healthy;
+        for (checks[0..check_count]) |check| {
+            if (check.status == .fail) {
+                overall = .unhealthy;
+                break;
+            }
+            if (check.status == .warn and overall != .unhealthy) {
+                overall = .degraded;
+            }
+        }
+
+        // Format JSON response
+        var body_buf: [4096]u8 = undefined;
+        var fbs = std.io.fixedBufferStream(&body_buf);
+        const writer = fbs.writer();
+
+        // Start JSON object
+        writer.print("{{\"status\":\"{s}\",\"uptime_seconds\":{d},\"version\":\"{s}\",\"commit_hash\":\"{s}\",\"checks\":[", .{
+            overall.toString(),
+            uptime,
+            version,
+            commit,
+        }) catch {
+            try sendResponse(client_fd, .service_unavailable, "application/json", "{\"status\":\"error\"}");
+            return;
+        };
+
+        // Format each component check
+        for (checks[0..check_count], 0..) |check, i| {
+            if (i > 0) writer.writeAll(",") catch {};
+
+            // Format check object
+            writer.print("{{\"name\":\"{s}\",\"status\":\"{s}\"", .{
+                check.name,
+                check.status.toString(),
+            }) catch {};
+
+            // Add optional message
+            if (check.message) |msg| {
+                writer.print(",\"message\":\"{s}\"", .{msg}) catch {};
+            }
+
+            // Add optional duration
+            if (check.duration_ms) |dur| {
+                writer.print(",\"duration_ms\":{d}", .{dur}) catch {};
+            }
+
+            writer.writeAll("}") catch {};
+        }
+
+        // Close JSON
+        writer.writeAll("]}") catch {};
+
+        const body = fbs.getWritten();
+
+        // Determine HTTP status code based on overall health
+        const http_status: HttpStatus = switch (overall) {
+            .healthy => .ok,
+            .degraded => .too_many_requests, // 429 for degraded
+            .unhealthy => .service_unavailable, // 503 for unhealthy
+        };
+
+        try sendResponse(client_fd, http_status, "application/json", body);
+    }
+
     /// Geo-routing endpoint: Returns all known regions with health status.
     fn handleRegions(client_fd: posix.socket_t) !void {
         const config = &geo_routing_config;
@@ -888,6 +1157,7 @@ pub const MetricsServer = struct {
         bad_request,
         unauthorized,
         not_found,
+        too_many_requests, // 429 - used for degraded health status
         service_unavailable,
 
         fn code(self: HttpStatus) []const u8 {
@@ -896,6 +1166,7 @@ pub const MetricsServer = struct {
                 .bad_request => "400 Bad Request",
                 .unauthorized => "401 Unauthorized",
                 .not_found => "404 Not Found",
+                .too_many_requests => "429 Too Many Requests",
                 .service_unavailable => "503 Service Unavailable",
             };
         }
