@@ -154,60 +154,60 @@ Everything below must be complete before release. No versions, no deferrals.
 
 ### SDK - C (SDKC)
 
-- [ ] **SDKC-01**: All geospatial operations available
-- [ ] **SDKC-02**: All error codes mapped from state machine
-- [ ] **SDKC-03**: Header file fully documented (arch_client.h)
-- [ ] **SDKC-04**: Memory management documented (ownership rules)
-- [ ] **SDKC-05**: Thread safety documented
-- [ ] **SDKC-06**: Sample code for all operations
-- [ ] **SDKC-07**: Test coverage complete
+- [x] **SDKC-01**: All geospatial operations available
+- [x] **SDKC-02**: All error codes mapped from state machine
+- [x] **SDKC-03**: Header file fully documented (arch_client.h)
+- [x] **SDKC-04**: Memory management documented (ownership rules)
+- [x] **SDKC-05**: Thread safety documented
+- [x] **SDKC-06**: Sample code for all operations
+- [x] **SDKC-07**: Test coverage complete
 
 ### SDK - Go (SDKG)
 
-- [ ] **SDKG-01**: All geospatial operations available
-- [ ] **SDKG-02**: All error codes mapped with errors.Is support
-- [ ] **SDKG-03**: Godoc comments complete
-- [ ] **SDKG-04**: Context support for cancellation
-- [ ] **SDKG-05**: Idiomatic Go patterns throughout
-- [ ] **SDKG-06**: Sample code for all operations
-- [ ] **SDKG-07**: Test coverage complete
-- [ ] **SDKG-08**: README with quick start guide
+- [x] **SDKG-01**: All geospatial operations available
+- [x] **SDKG-02**: All error codes mapped with errors.Is support
+- [x] **SDKG-03**: Godoc comments complete
+- [x] **SDKG-04**: Context support for cancellation
+- [x] **SDKG-05**: Idiomatic Go patterns throughout
+- [x] **SDKG-06**: Sample code for all operations
+- [x] **SDKG-07**: Test coverage complete
+- [x] **SDKG-08**: README with quick start guide
 
 ### SDK - Java (SDKJ)
 
-- [ ] **SDKJ-01**: All geospatial operations available
-- [ ] **SDKJ-02**: All error codes mapped as exceptions
-- [ ] **SDKJ-03**: Javadoc complete
-- [ ] **SDKJ-04**: CompletableFuture async support
-- [ ] **SDKJ-05**: Try-with-resources support
-- [ ] **SDKJ-06**: Sample code for all operations
-- [ ] **SDKJ-07**: Test coverage complete
-- [ ] **SDKJ-08**: README with quick start guide
-- [ ] **SDKJ-09**: Maven Central ready
+- [x] **SDKJ-01**: All geospatial operations available
+- [x] **SDKJ-02**: All error codes mapped as exceptions
+- [x] **SDKJ-03**: Javadoc complete
+- [x] **SDKJ-04**: CompletableFuture async support
+- [x] **SDKJ-05**: Try-with-resources support
+- [x] **SDKJ-06**: Sample code for all operations
+- [x] **SDKJ-07**: Test coverage complete
+- [x] **SDKJ-08**: README with quick start guide
+- [x] **SDKJ-09**: Maven Central ready
 
 ### SDK - Node.js (SDKN)
 
-- [ ] **SDKN-01**: All geospatial operations available
-- [ ] **SDKN-02**: All error codes mapped as typed errors
-- [ ] **SDKN-03**: TSDoc comments complete
-- [ ] **SDKN-04**: TypeScript types for all operations
-- [ ] **SDKN-05**: Promise/async-await support
-- [ ] **SDKN-06**: Sample code for all operations
-- [ ] **SDKN-07**: Test coverage complete
-- [ ] **SDKN-08**: README with quick start guide
-- [ ] **SDKN-09**: npm publish ready
+- [x] **SDKN-01**: All geospatial operations available
+- [x] **SDKN-02**: All error codes mapped as typed errors
+- [x] **SDKN-03**: TSDoc comments complete
+- [x] **SDKN-04**: TypeScript types for all operations
+- [x] **SDKN-05**: Promise/async-await support
+- [x] **SDKN-06**: Sample code for all operations
+- [x] **SDKN-07**: Test coverage complete
+- [x] **SDKN-08**: README with quick start guide
+- [x] **SDKN-09**: npm publish ready
 
 ### SDK - Python (SDKP)
 
-- [ ] **SDKP-01**: All geospatial operations available
-- [ ] **SDKP-02**: All error codes mapped as exceptions
-- [ ] **SDKP-03**: Docstrings complete (Google style)
-- [ ] **SDKP-04**: Type hints for all operations
-- [ ] **SDKP-05**: Async support (asyncio)
-- [ ] **SDKP-06**: Sample code for all operations
-- [ ] **SDKP-07**: Test coverage complete
-- [ ] **SDKP-08**: README with quick start guide
-- [ ] **SDKP-09**: PyPI publish ready
+- [x] **SDKP-01**: All geospatial operations available
+- [x] **SDKP-02**: All error codes mapped as exceptions
+- [x] **SDKP-03**: Docstrings complete (Google style)
+- [x] **SDKP-04**: Type hints for all operations
+- [x] **SDKP-05**: Async support (asyncio)
+- [x] **SDKP-06**: Sample code for all operations
+- [x] **SDKP-07**: Test coverage complete
+- [x] **SDKP-08**: README with quick start guide
+- [x] **SDKP-09**: PyPI publish ready
 
 ### Observability - Metrics (MET)
 
@@ -461,48 +461,48 @@ Everything below must be complete before release. No versions, no deferrals.
 | ENC-05 | Phase 2 | Pending |
 | ENC-06 | Phase 2 | Pending |
 | ENC-07 | Phase 2 | Pending |
-| SDKC-01 | Phase 6 | Pending |
-| SDKC-02 | Phase 6 | Pending |
-| SDKC-03 | Phase 6 | Pending |
-| SDKC-04 | Phase 6 | Pending |
-| SDKC-05 | Phase 6 | Pending |
-| SDKC-06 | Phase 6 | Pending |
-| SDKC-07 | Phase 6 | Pending |
-| SDKG-01 | Phase 6 | Pending |
-| SDKG-02 | Phase 6 | Pending |
-| SDKG-03 | Phase 6 | Pending |
-| SDKG-04 | Phase 6 | Pending |
-| SDKG-05 | Phase 6 | Pending |
-| SDKG-06 | Phase 6 | Pending |
-| SDKG-07 | Phase 6 | Pending |
-| SDKG-08 | Phase 6 | Pending |
-| SDKJ-01 | Phase 6 | Pending |
-| SDKJ-02 | Phase 6 | Pending |
-| SDKJ-03 | Phase 6 | Pending |
-| SDKJ-04 | Phase 6 | Pending |
-| SDKJ-05 | Phase 6 | Pending |
-| SDKJ-06 | Phase 6 | Pending |
-| SDKJ-07 | Phase 6 | Pending |
-| SDKJ-08 | Phase 6 | Pending |
-| SDKJ-09 | Phase 6 | Pending |
-| SDKN-01 | Phase 6 | Pending |
-| SDKN-02 | Phase 6 | Pending |
-| SDKN-03 | Phase 6 | Pending |
-| SDKN-04 | Phase 6 | Pending |
-| SDKN-05 | Phase 6 | Pending |
-| SDKN-06 | Phase 6 | Pending |
-| SDKN-07 | Phase 6 | Pending |
-| SDKN-08 | Phase 6 | Pending |
-| SDKN-09 | Phase 6 | Pending |
-| SDKP-01 | Phase 6 | Pending |
-| SDKP-02 | Phase 6 | Pending |
-| SDKP-03 | Phase 6 | Pending |
-| SDKP-04 | Phase 6 | Pending |
-| SDKP-05 | Phase 6 | Pending |
-| SDKP-06 | Phase 6 | Pending |
-| SDKP-07 | Phase 6 | Pending |
-| SDKP-08 | Phase 6 | Pending |
-| SDKP-09 | Phase 6 | Pending |
+| SDKC-01 | Phase 6 | Complete |
+| SDKC-02 | Phase 6 | Complete |
+| SDKC-03 | Phase 6 | Complete |
+| SDKC-04 | Phase 6 | Complete |
+| SDKC-05 | Phase 6 | Complete |
+| SDKC-06 | Phase 6 | Complete |
+| SDKC-07 | Phase 6 | Complete |
+| SDKG-01 | Phase 6 | Complete |
+| SDKG-02 | Phase 6 | Complete |
+| SDKG-03 | Phase 6 | Complete |
+| SDKG-04 | Phase 6 | Complete |
+| SDKG-05 | Phase 6 | Complete |
+| SDKG-06 | Phase 6 | Complete |
+| SDKG-07 | Phase 6 | Complete |
+| SDKG-08 | Phase 6 | Complete |
+| SDKJ-01 | Phase 6 | Complete |
+| SDKJ-02 | Phase 6 | Complete |
+| SDKJ-03 | Phase 6 | Complete |
+| SDKJ-04 | Phase 6 | Complete |
+| SDKJ-05 | Phase 6 | Complete |
+| SDKJ-06 | Phase 6 | Complete |
+| SDKJ-07 | Phase 6 | Complete |
+| SDKJ-08 | Phase 6 | Complete |
+| SDKJ-09 | Phase 6 | Complete |
+| SDKN-01 | Phase 6 | Complete |
+| SDKN-02 | Phase 6 | Complete |
+| SDKN-03 | Phase 6 | Complete |
+| SDKN-04 | Phase 6 | Complete |
+| SDKN-05 | Phase 6 | Complete |
+| SDKN-06 | Phase 6 | Complete |
+| SDKN-07 | Phase 6 | Complete |
+| SDKN-08 | Phase 6 | Complete |
+| SDKN-09 | Phase 6 | Complete |
+| SDKP-01 | Phase 6 | Complete |
+| SDKP-02 | Phase 6 | Complete |
+| SDKP-03 | Phase 6 | Complete |
+| SDKP-04 | Phase 6 | Complete |
+| SDKP-05 | Phase 6 | Complete |
+| SDKP-06 | Phase 6 | Complete |
+| SDKP-07 | Phase 6 | Complete |
+| SDKP-08 | Phase 6 | Complete |
+| SDKP-09 | Phase 6 | Complete |
 | MET-01 | Phase 7 | Pending |
 | MET-02 | Phase 7 | Pending |
 | MET-03 | Phase 7 | Pending |
