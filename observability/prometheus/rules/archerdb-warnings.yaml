@@ -1,0 +1,163 @@
+# ArcherDB Warning-Level Alerting Rules
+# These alerts fire before critical thresholds are reached, suitable for
+# dashboard indicators and Slack/email notifications.
+#
+# All alerts include:
+# - runbook_url: Link to troubleshooting documentation
+# - remediation: Brief fix suggestion
+# - severity: warning (for routing)
+
+groups:
+  - name: archerdb-latency-warnings
+    rules:
+      - alert: ArcherDBHighQueryLatencyWarning
+        expr: histogram_quantile(0.99, sum(rate(archerdb_read_latency_seconds_bucket[5m])) by (le, instance)) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "High query latency on {{ $labels.instance }}"
+          description: "p99 query latency is {{ $value | humanizeDuration }} (threshold: 500ms)"
+          runbook_url: "https://docs.archerdb.io/runbooks/high-query-latency"
+          remediation: "Check for slow queries, index health, or resource contention"
+
+      - alert: ArcherDBHighWriteLatencyWarning
+        expr: histogram_quantile(0.99, sum(rate(archerdb_write_latency_seconds_bucket[5m])) by (le, instance)) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "High write latency on {{ $labels.instance }}"
+          description: "p99 write latency is {{ $value | humanizeDuration }} (threshold: 500ms)"
+          runbook_url: "https://docs.archerdb.io/runbooks/high-write-latency"
+          remediation: "Check disk I/O, replication lag, or compaction pressure"
+
+  - name: archerdb-replication-warnings
+    rules:
+      - alert: ArcherDBReplicationLagTimeWarning
+        expr: max(archerdb_vsr_replication_lag_seconds) by (instance) > 30
+        for: 2m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "Replication lag >30s on {{ $labels.instance }}"
+          description: "Current lag: {{ $value | humanizeDuration }}"
+          runbook_url: "https://docs.archerdb.io/runbooks/replication-lag"
+          remediation: "Check network connectivity, replica health, and disk I/O"
+
+      - alert: ArcherDBReplicationLagOpsWarning
+        expr: max(archerdb_vsr_replication_lag_ops) by (instance) > 1000
+        for: 2m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "Replication lag >1000 ops on {{ $labels.instance }}"
+          description: "Current lag: {{ $value }} operations behind"
+          runbook_url: "https://docs.archerdb.io/runbooks/replication-lag"
+          remediation: "Check network connectivity, replica health, and disk I/O"
+
+      - alert: ArcherDBFrequentViewChangesWarning
+        expr: increase(archerdb_vsr_view_changes_total[1h]) > 3
+        for: 5m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "Frequent VSR view changes detected"
+          description: "{{ $value }} view changes in the last hour"
+          runbook_url: "https://docs.archerdb.io/runbooks/view-changes"
+          remediation: "Check network stability, node health, and cluster configuration"
+
+  - name: archerdb-resource-warnings
+    rules:
+      - alert: ArcherDBHighMemoryUsageWarning
+        expr: (archerdb_memory_used_bytes / archerdb_memory_allocated_bytes) * 100 > 70
+        for: 5m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "Memory usage >70% on {{ $labels.instance }}"
+          description: "Current usage: {{ $value | humanize }}%"
+          runbook_url: "https://docs.archerdb.io/runbooks/memory-pressure"
+          remediation: "Check for memory leaks, consider increasing allocation, or reduce workload"
+
+      - alert: ArcherDBHighDiskUsageWarning
+        expr: (archerdb_data_file_size_bytes / 1073741824) > 100
+        for: 5m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "Data file >100GB on {{ $labels.instance }}"
+          description: "Current size: {{ $value | humanize }}GB"
+          runbook_url: "https://docs.archerdb.io/runbooks/disk-growth"
+          remediation: "Check for TTL expiration, compaction effectiveness, or plan storage expansion"
+
+      - alert: ArcherDBHighIndexLoadFactorWarning
+        expr: archerdb_index_load_factor > 0.7
+        for: 5m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "Index load factor >70% on {{ $labels.instance }}"
+          description: "Current load factor: {{ $value | humanizePercentage }}"
+          runbook_url: "https://docs.archerdb.io/runbooks/index-pressure"
+          remediation: "Consider scaling cluster capacity or optimizing data distribution"
+
+  - name: archerdb-error-warnings
+    rules:
+      - alert: ArcherDBErrorRateWarning
+        expr: sum(rate(archerdb_write_errors_total[5m])) by (instance) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "Write errors occurring on {{ $labels.instance }}"
+          description: "Error rate: {{ $value | humanize }}/sec"
+          runbook_url: "https://docs.archerdb.io/runbooks/write-errors"
+          remediation: "Check disk health, available space, and error logs"
+
+      - alert: ArcherDBConnectionErrorsWarning
+        expr: rate(archerdb_connection_errors_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "Connection errors on {{ $labels.instance }}"
+          description: "Error rate: {{ $value | humanize }}/sec"
+          runbook_url: "https://docs.archerdb.io/runbooks/connection-errors"
+          remediation: "Check network configuration, TLS certificates, and client health"
+
+  - name: archerdb-compaction-warnings
+    rules:
+      - alert: ArcherDBHighWriteAmplificationWarning
+        expr: archerdb_lsm_write_amplification_ratio > 15
+        for: 10m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "High write amplification on {{ $labels.instance }}"
+          description: "Current write amplification: {{ $value }}x"
+          runbook_url: "https://docs.archerdb.io/runbooks/write-amplification"
+          remediation: "Review compaction settings, consider tuning LSM parameters"
+
+      - alert: ArcherDBCompactionBacklogWarning
+        expr: archerdb_lsm_tables_count{level="0"} > 4
+        for: 5m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "L0 table backlog on {{ $labels.instance }}"
+          description: "{{ $value }} tables in L0 (threshold: 4)"
+          runbook_url: "https://docs.archerdb.io/runbooks/compaction-backlog"
+          remediation: "Compaction may be falling behind write rate, check compaction metrics"
