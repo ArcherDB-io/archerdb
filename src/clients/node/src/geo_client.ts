@@ -530,36 +530,65 @@ function mergeOptions(
 }
 
 /**
- * Client configuration options.
+ * Configuration options for creating a GeoClient connection.
+ *
+ * The client automatically handles connection pooling, retry logic,
+ * and circuit breakers for fault tolerance.
+ *
+ * @example
+ * ```typescript
+ * const config: GeoClientConfig = {
+ *   cluster_id: 0n,
+ *   addresses: ['127.0.0.1:3001', '127.0.0.1:3002'],
+ *   connect_timeout_ms: 5000,
+ *   request_timeout_ms: 30000,
+ *   retry: {
+ *     enabled: true,
+ *     max_retries: 5,
+ *     base_backoff_ms: 100,
+ *   },
+ * }
+ * ```
  */
 export interface GeoClientConfig {
   /**
    * Cluster ID for connection validation.
+   * Must match the cluster_id configured on the server.
    */
   cluster_id: bigint
 
   /**
-   * List of replica addresses (host:port).
+   * List of replica addresses in host:port format.
+   * The client will automatically discover the primary and load balance reads.
+   *
+   * @example ['127.0.0.1:3001', '127.0.0.1:3002', '127.0.0.1:3003']
    */
   addresses: string[]
 
   /**
-   * Connection timeout in milliseconds (default: 5000).
+   * Connection timeout in milliseconds.
+   * How long to wait for initial connection establishment.
+   * @default 5000
    */
   connect_timeout_ms?: number
 
   /**
-   * Request timeout in milliseconds (default: 30000).
+   * Request timeout in milliseconds.
+   * How long to wait for individual operations to complete.
+   * @default 30000
    */
   request_timeout_ms?: number
 
   /**
-   * Number of connection pool slots (default: 1).
+   * Number of connection pool slots.
+   * Higher values allow more concurrent requests.
+   * @default 1
    */
   pool_size?: number
 
   /**
-   * Retry configuration (optional).
+   * Retry configuration for automatic retry on transient failures.
+   * When not specified, uses sensible defaults (enabled, 5 retries, exponential backoff).
    */
   retry?: RetryConfig
 }
@@ -949,12 +978,35 @@ export class GeoClient {
   }
 
   /**
-   * Inserts a single event (convenience method).
+   * Inserts multiple GeoEvents into the cluster.
    *
-   * For high throughput, use createBatch() to batch multiple events.
+   * Events are atomically inserted and replicated to quorum before returning.
+   * For high throughput, batch events together rather than inserting one at a time.
    *
-   * @param event - GeoEvent to insert
-   * @returns Insert result (empty array on success)
+   * @param events - Array of GeoEvents to insert
+   * @param operationOptions - Optional per-operation retry configuration
+   * @returns Promise resolving to array of per-event errors (empty on full success)
+   * @throws {BatchTooLarge} If more than 10,000 events provided
+   * @throws {InvalidCoordinates} If any event has invalid coordinates
+   * @throws {InvalidEntityId} If any event has zero entity_id
+   * @throws {ConnectionTimeout} If cluster connection times out
+   *
+   * @example
+   * ```typescript
+   * const events = [
+   *   createGeoEvent({ entity_id: id1, latitude: 37.77, longitude: -122.41 }),
+   *   createGeoEvent({ entity_id: id2, latitude: 37.78, longitude: -122.42 }),
+   * ]
+   *
+   * const errors = await client.insertEvents(events)
+   * if (errors.length === 0) {
+   *   console.log('All events inserted successfully')
+   * } else {
+   *   for (const err of errors) {
+   *     console.log(`Event ${err.index} failed: ${InsertGeoEventError[err.result]}`)
+   *   }
+   * }
+   * ```
    */
   async insertEvents(
     events: GeoEvent[],
@@ -976,10 +1028,31 @@ export class GeoClient {
   }
 
   /**
-   * Upserts multiple events.
+   * Upserts multiple GeoEvents (insert or update).
    *
-   * @param events - GeoEvents to upsert
-   * @returns Upsert results (empty array on success)
+   * If an event with the same composite ID exists, it is updated.
+   * Otherwise, a new event is inserted. Uses Last-Writer-Wins semantics.
+   *
+   * @param events - Array of GeoEvents to upsert
+   * @param operationOptions - Optional per-operation retry configuration
+   * @returns Promise resolving to array of per-event errors (empty on full success)
+   * @throws {BatchTooLarge} If more than 10,000 events provided
+   * @throws {InvalidCoordinates} If any event has invalid coordinates
+   * @throws {ConnectionTimeout} If cluster connection times out
+   *
+   * @example
+   * ```typescript
+   * // Track a moving entity - each upsert updates the latest position
+   * const event = createGeoEvent({
+   *   entity_id: vehicleId,
+   *   latitude: newLat,
+   *   longitude: newLon,
+   *   velocity_mps: speed,
+   *   heading: heading,
+   * })
+   *
+   * await client.upsertEvents([event])
+   * ```
    */
   async upsertEvents(
     events: GeoEvent[],
@@ -1017,10 +1090,26 @@ export class GeoClient {
   }
 
   /**
-   * Deletes entities by ID.
+   * Deletes entities and all their associated events.
    *
-   * @param entityIds - Array of entity UUIDs to delete
-   * @returns Delete operation results
+   * Deletion is permanent and supports GDPR compliance. The operation
+   * is atomic - all events for an entity are removed together.
+   *
+   * @param entityIds - Array of entity UUIDs (128-bit) to delete
+   * @returns Promise resolving to DeleteResult with counts
+   * @throws {BatchTooLarge} If more than 10,000 entity IDs provided
+   * @throws {InvalidEntityId} If any entity_id is zero
+   * @throws {ConnectionTimeout} If cluster connection times out
+   *
+   * @example
+   * ```typescript
+   * // Delete a single entity (GDPR right to erasure)
+   * const result = await client.deleteEntities([userId])
+   * console.log(`Deleted: ${result.deleted_count}, Not found: ${result.not_found_count}`)
+   *
+   * // Bulk delete
+   * const bulkResult = await client.deleteEntities([id1, id2, id3])
+   * ```
    */
   async deleteEntities(entityIds: bigint[]): Promise<DeleteResult> {
     const batch = this.createDeleteBatch()
@@ -1035,10 +1124,27 @@ export class GeoClient {
   // ============================================================================
 
   /**
-   * Looks up the latest event for an entity by UUID.
+   * Looks up the latest event for an entity by its UUID.
    *
-   * @param entityId - Entity UUID to look up
-   * @returns Latest GeoEvent or null if not found
+   * Returns the most recent location update for the specified entity,
+   * or null if the entity has no events or has been deleted.
+   *
+   * @param entityId - Entity UUID (128-bit) to look up
+   * @returns Promise resolving to latest GeoEvent or null if not found
+   * @throws {InvalidEntityId} If entityId is zero
+   * @throws {ConnectionTimeout} If cluster connection times out
+   *
+   * @example
+   * ```typescript
+   * const entityId = 0x12345678n
+   * const event = await client.getLatestByUuid(entityId)
+   * if (event) {
+   *   console.log(`Entity at (${event.lat_nano}, ${event.lon_nano})`)
+   *   console.log(`Last updated: ${event.timestamp}`)
+   * } else {
+   *   console.log('Entity not found')
+   * }
+   * ```
    */
   async getLatestByUuid(entityId: bigint): Promise<GeoEvent | null> {
     this.ensureConnected()
@@ -1058,8 +1164,31 @@ export class GeoClient {
   /**
    * Batch lookup of latest events for multiple entities.
    *
-   * @param entityIds - Array of entity UUIDs (max 10,000)
-   * @returns Map of entity_id to GeoEvent
+   * Efficiently retrieves the most recent event for each entity in a single
+   * round-trip. Entities not found are omitted from the returned map.
+   *
+   * @param entityIds - Array of entity UUIDs (128-bit), maximum 10,000
+   * @param operationOptions - Optional per-operation retry configuration
+   * @returns Promise resolving to Map of entity_id to GeoEvent (missing entities omitted)
+   * @throws {BatchTooLarge} If more than 10,000 UUIDs provided
+   * @throws {ConnectionTimeout} If cluster connection times out
+   *
+   * @example
+   * ```typescript
+   * const entityIds = [0x1n, 0x2n, 0x3n]
+   * const events = await client.getLatestByUuidBatch(entityIds)
+   *
+   * for (const [entityId, event] of events) {
+   *   console.log(`Entity ${entityId}: (${event.lat_nano}, ${event.lon_nano})`)
+   * }
+   *
+   * // Check which entities were not found
+   * for (const id of entityIds) {
+   *   if (!events.has(id)) {
+   *     console.log(`Entity ${id} not found`)
+   *   }
+   * }
+   * ```
    */
   async getLatestByUuidBatch(
     entityIds: bigint[],
@@ -1140,10 +1269,48 @@ export class GeoClient {
   }
 
   /**
-   * Queries events within a radius.
+   * Queries events within a circular radius of a center point.
    *
-   * @param options - Radius query options
-   * @returns Query results with pagination info
+   * Events are returned in descending timestamp order. For large result sets,
+   * use pagination with `has_more` and cursor-based continuation.
+   *
+   * @param queryOptions - Query options specifying center, radius, and filters
+   * @param queryOptions.latitude - Center latitude in degrees (-90 to 90)
+   * @param queryOptions.longitude - Center longitude in degrees (-180 to 180)
+   * @param queryOptions.radius_m - Search radius in meters
+   * @param queryOptions.limit - Maximum events to return (default: 1000, max: 81000)
+   * @param queryOptions.timestamp_min - Optional minimum timestamp filter (nanoseconds)
+   * @param queryOptions.timestamp_max - Optional maximum timestamp filter (nanoseconds)
+   * @param queryOptions.group_id - Optional group ID filter
+   * @param operationOptions - Optional per-operation retry configuration
+   * @returns Promise resolving to QueryResult with events and pagination info
+   * @throws {InvalidCoordinates} If coordinates are out of valid range
+   * @throws {QueryResultTooLarge} If limit exceeds maximum allowed
+   * @throws {ConnectionTimeout} If cluster connection times out
+   * @throws {ClusterUnavailable} If no cluster replicas are reachable
+   *
+   * @example
+   * ```typescript
+   * // Basic radius query
+   * const results = await client.queryRadius({
+   *   latitude: 37.7749,
+   *   longitude: -122.4194,
+   *   radius_m: 1000,
+   *   limit: 100,
+   * })
+   *
+   * for (const event of results.events) {
+   *   console.log(`Entity ${event.entity_id} at (${event.lat_nano}, ${event.lon_nano})`)
+   * }
+   *
+   * // Pagination
+   * if (results.has_more) {
+   *   const nextPage = await client.queryRadius({
+   *     ...queryOptions,
+   *     timestamp_max: results.cursor,
+   *   })
+   * }
+   * ```
    */
   async queryRadius(
     queryOptions: RadiusQueryOptions,
@@ -1172,11 +1339,47 @@ export class GeoClient {
   }
 
   /**
-   * Queries events within a polygon.
+   * Queries events within a polygon (geofence) region.
+   *
+   * The polygon is defined by vertices in counter-clockwise winding order.
+   * Supports holes (exclusion zones) with clockwise winding. Events are
+   * returned in descending timestamp order.
    *
    * @param queryOptions - Polygon query options
-   * @param operationOptions - Per-operation retry options
-   * @returns Query results with pagination info
+   * @param queryOptions.vertices - Polygon vertices as [lat, lon] pairs in degrees (CCW winding)
+   * @param queryOptions.holes - Optional exclusion zones as arrays of [lat, lon] pairs (CW winding)
+   * @param queryOptions.limit - Maximum events to return (default: 1000, max: 81000)
+   * @param queryOptions.timestamp_min - Optional minimum timestamp filter (nanoseconds)
+   * @param queryOptions.timestamp_max - Optional maximum timestamp filter (nanoseconds)
+   * @param queryOptions.group_id - Optional group ID filter
+   * @param operationOptions - Optional per-operation retry configuration
+   * @returns Promise resolving to QueryResult with events and pagination info
+   * @throws {PolygonTooComplex} If polygon exceeds maximum vertices (10000) or holes (100)
+   * @throws {QueryResultTooLarge} If limit exceeds maximum allowed
+   * @throws {ConnectionTimeout} If cluster connection times out
+   *
+   * @example
+   * ```typescript
+   * // Query within San Francisco downtown area
+   * const results = await client.queryPolygon({
+   *   vertices: [
+   *     [37.78, -122.42],
+   *     [37.78, -122.40],
+   *     [37.76, -122.40],
+   *     [37.76, -122.42],
+   *   ],
+   *   limit: 1000,
+   * })
+   *
+   * // With exclusion zone (hole)
+   * const resultsWithHole = await client.queryPolygon({
+   *   vertices: [[37.78, -122.42], [37.78, -122.40], [37.76, -122.40], [37.76, -122.42]],
+   *   holes: [
+   *     [[37.775, -122.415], [37.775, -122.405], [37.765, -122.405], [37.765, -122.415]]
+   *   ],
+   *   limit: 1000,
+   * })
+   * ```
    */
   async queryPolygon(
     queryOptions: PolygonQueryOptions,
@@ -1205,11 +1408,39 @@ export class GeoClient {
   }
 
   /**
-   * Queries the most recent events globally or by group.
+   * Queries the most recent events globally or filtered by group.
    *
-   * @param queryOptions - Query options (limit, group_id, cursor)
-   * @param operationOptions - Per-operation retry options
-   * @returns Query results with pagination info
+   * Returns events in reverse chronological order (newest first).
+   * Use cursor-based pagination for large result sets.
+   *
+   * @param queryOptions - Query options
+   * @param queryOptions.limit - Maximum events to return (default: 1000, max: 81000)
+   * @param queryOptions.group_id - Optional group ID filter (0 = all groups)
+   * @param queryOptions.cursor_timestamp - Pagination cursor from previous query
+   * @param operationOptions - Optional per-operation retry configuration
+   * @returns Promise resolving to QueryResult with events and pagination info
+   * @throws {QueryResultTooLarge} If limit exceeds maximum allowed
+   * @throws {ConnectionTimeout} If cluster connection times out
+   *
+   * @example
+   * ```typescript
+   * // Get latest 100 events across all groups
+   * const results = await client.queryLatest({ limit: 100 })
+   *
+   * // Get latest events for a specific fleet
+   * const fleetResults = await client.queryLatest({
+   *   limit: 100,
+   *   group_id: fleetId,
+   * })
+   *
+   * // Pagination
+   * if (results.has_more && results.cursor) {
+   *   const nextPage = await client.queryLatest({
+   *     limit: 100,
+   *     cursor_timestamp: results.cursor,
+   *   })
+   * }
+   * ```
    */
   async queryLatest(
     queryOptions?: Partial<Omit<QueryLatestFilter, '_reserved_align'>>,
