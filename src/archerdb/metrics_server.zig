@@ -17,10 +17,225 @@
 const std = @import("std");
 const posix = std.posix;
 const log = std.log.scoped(.metrics_server);
+const builtin = @import("builtin");
 
 const vsr = @import("vsr");
 const stdx = vsr.stdx;
 const metrics = vsr.archerdb_metrics;
+
+// =============================================================================
+// Process Metrics Collection
+// =============================================================================
+
+/// Process start time (seconds since epoch), captured at startup
+var process_start_time_seconds: u64 = 0;
+
+/// Initialize process metrics (call once at startup)
+pub fn initProcessMetrics() void {
+    // Capture start time
+    const ns = std.time.nanoTimestamp();
+    if (ns > 0) {
+        process_start_time_seconds = @intCast(@divFloor(ns, 1_000_000_000));
+    }
+}
+
+/// Process metrics (standard Prometheus process_* metrics)
+pub const ProcessMetrics = struct {
+    /// Resident memory in bytes (VmRSS on Linux)
+    resident_memory_bytes: u64 = 0,
+    /// Virtual memory in bytes (VmSize on Linux)
+    virtual_memory_bytes: u64 = 0,
+    /// Total CPU time in seconds (user + system)
+    cpu_seconds_total: f64 = 0.0,
+    /// Number of open file descriptors
+    open_fds: u64 = 0,
+    /// Number of threads
+    num_threads: u64 = 0,
+    /// Start time (seconds since epoch)
+    start_time_seconds: u64 = 0,
+};
+
+/// Collect process-level metrics from the operating system.
+/// Returns ProcessMetrics struct with all values populated.
+pub fn collectProcessMetrics() ProcessMetrics {
+    var pm = ProcessMetrics{
+        .start_time_seconds = process_start_time_seconds,
+    };
+
+    if (builtin.os.tag == .linux) {
+        collectLinuxProcessMetrics(&pm);
+    } else if (builtin.os.tag == .macos) {
+        collectDarwinProcessMetrics(&pm);
+    }
+
+    return pm;
+}
+
+fn collectLinuxProcessMetrics(pm: *ProcessMetrics) void {
+    // Read /proc/self/status for memory and thread count
+    if (std.fs.openFileAbsolute("/proc/self/status", .{})) |file| {
+        defer file.close();
+        var buf: [8192]u8 = undefined;
+        const bytes_read = file.read(&buf) catch 0;
+        if (bytes_read > 0) {
+            const content = buf[0..bytes_read];
+            // Parse VmRSS (resident memory)
+            if (parseStatusValue(content, "VmRSS:")) |vm_rss_kb| {
+                pm.resident_memory_bytes = vm_rss_kb * 1024;
+            }
+            // Parse VmSize (virtual memory)
+            if (parseStatusValue(content, "VmSize:")) |vm_size_kb| {
+                pm.virtual_memory_bytes = vm_size_kb * 1024;
+            }
+            // Parse Threads count
+            if (parseStatusValue(content, "Threads:")) |threads| {
+                pm.num_threads = threads;
+            }
+        }
+    } else |_| {}
+
+    // Read /proc/self/stat for CPU time
+    if (std.fs.openFileAbsolute("/proc/self/stat", .{})) |file| {
+        defer file.close();
+        var buf: [1024]u8 = undefined;
+        const bytes_read = file.read(&buf) catch 0;
+        if (bytes_read > 0) {
+            const content = buf[0..bytes_read];
+            if (parseCpuTime(content)) |cpu_secs| {
+                pm.cpu_seconds_total = cpu_secs;
+            }
+        }
+    } else |_| {}
+
+    // Count open file descriptors by reading /proc/self/fd directory
+    pm.open_fds = countOpenFds("/proc/self/fd");
+}
+
+fn collectDarwinProcessMetrics(pm: *ProcessMetrics) void {
+    // On Darwin, use getrusage for CPU time
+    var usage: posix.rusage = undefined;
+    if (posix.getrusage(.SELF, &usage) == 0) {
+        // Convert timeval to seconds
+        const user_secs = @as(f64, @floatFromInt(usage.utime.sec)) +
+            @as(f64, @floatFromInt(usage.utime.usec)) / 1_000_000.0;
+        const sys_secs = @as(f64, @floatFromInt(usage.stime.sec)) +
+            @as(f64, @floatFromInt(usage.stime.usec)) / 1_000_000.0;
+        pm.cpu_seconds_total = user_secs + sys_secs;
+
+        // Darwin's maxrss is in bytes (not pages)
+        pm.resident_memory_bytes = @intCast(usage.maxrss);
+    }
+
+    // For virtual memory and threads on Darwin, would need mach_task_info
+    // which requires additional mach headers. Leave at 0 for now.
+    // Note: thread count could be obtained via MACH_TASK_BASIC_INFO
+}
+
+/// Parse a value from /proc/self/status format: "Key:\t<value> kB"
+fn parseStatusValue(content: []const u8, key: []const u8) ?u64 {
+    if (std.mem.indexOf(u8, content, key)) |key_start| {
+        const value_start = key_start + key.len;
+        // Skip whitespace
+        var i = value_start;
+        while (i < content.len and (content[i] == ' ' or content[i] == '\t')) {
+            i += 1;
+        }
+        // Read digits
+        var j = i;
+        while (j < content.len and content[j] >= '0' and content[j] <= '9') {
+            j += 1;
+        }
+        if (j > i) {
+            return std.fmt.parseInt(u64, content[i..j], 10) catch null;
+        }
+    }
+    return null;
+}
+
+/// Parse CPU time from /proc/self/stat (fields 14 and 15: utime, stime in clock ticks)
+fn parseCpuTime(content: []const u8) ?f64 {
+    // Format: pid (comm) state ppid ... utime stime ...
+    // utime is field 14 (0-indexed: 13), stime is field 15 (0-indexed: 14)
+    // Fields are space-separated, but comm can contain spaces (in parentheses)
+
+    // Find end of comm (closing parenthesis)
+    const comm_end = std.mem.lastIndexOf(u8, content, ")") orelse return null;
+    const rest = content[comm_end + 2 ..]; // Skip ") "
+
+    var fields_seen: usize = 3; // pid, comm, state already consumed
+    var i: usize = 0;
+
+    // Skip to field 14 (utime)
+    while (fields_seen < 13 and i < rest.len) {
+        if (rest[i] == ' ') {
+            fields_seen += 1;
+        }
+        i += 1;
+    }
+
+    // Parse utime
+    var j = i;
+    while (j < rest.len and rest[j] != ' ') j += 1;
+    const utime = std.fmt.parseInt(u64, rest[i..j], 10) catch return null;
+
+    // Skip to stime
+    i = j + 1;
+    j = i;
+    while (j < rest.len and rest[j] != ' ') j += 1;
+    const stime = std.fmt.parseInt(u64, rest[i..j], 10) catch return null;
+
+    // Convert clock ticks to seconds (typically 100 ticks per second on Linux)
+    const ticks_per_second: f64 = 100.0;
+    return @as(f64, @floatFromInt(utime + stime)) / ticks_per_second;
+}
+
+/// Count open file descriptors by iterating directory entries
+fn countOpenFds(fd_dir: []const u8) u64 {
+    var count: u64 = 0;
+    var dir = std.fs.openDirAbsolute(fd_dir, .{ .iterate = true }) catch return 0;
+    defer dir.close();
+
+    var iter = dir.iterate();
+    while (iter.next() catch null) |_| {
+        count += 1;
+    }
+
+    // Subtract 1 because we have one fd open for the directory itself
+    return if (count > 0) count - 1 else 0;
+}
+
+/// Format process metrics in Prometheus format and write to a writer
+pub fn formatProcessMetrics(pm: ProcessMetrics, writer: anytype) !void {
+    // process_resident_memory_bytes
+    try writer.writeAll("# HELP process_resident_memory_bytes Resident memory size in bytes.\n");
+    try writer.writeAll("# TYPE process_resident_memory_bytes gauge\n");
+    try writer.print("process_resident_memory_bytes {d}\n\n", .{pm.resident_memory_bytes});
+
+    // process_virtual_memory_bytes
+    try writer.writeAll("# HELP process_virtual_memory_bytes Virtual memory size in bytes.\n");
+    try writer.writeAll("# TYPE process_virtual_memory_bytes gauge\n");
+    try writer.print("process_virtual_memory_bytes {d}\n\n", .{pm.virtual_memory_bytes});
+
+    // process_cpu_seconds_total
+    try writer.writeAll("# HELP process_cpu_seconds_total Total user and system CPU time spent in seconds.\n");
+    try writer.writeAll("# TYPE process_cpu_seconds_total counter\n");
+    try writer.print("process_cpu_seconds_total {d:.6}\n\n", .{pm.cpu_seconds_total});
+
+    // process_open_fds
+    try writer.writeAll("# HELP process_open_fds Number of open file descriptors.\n");
+    try writer.writeAll("# TYPE process_open_fds gauge\n");
+    try writer.print("process_open_fds {d}\n\n", .{pm.open_fds});
+
+    // process_threads (custom, not standard Prometheus but useful)
+    try writer.writeAll("# HELP process_threads Number of OS threads in the process.\n");
+    try writer.writeAll("# TYPE process_threads gauge\n");
+    try writer.print("process_threads {d}\n\n", .{pm.num_threads});
+
+    // process_start_time_seconds
+    try writer.writeAll("# HELP process_start_time_seconds Start time of the process since unix epoch in seconds.\n");
+    try writer.writeAll("# TYPE process_start_time_seconds gauge\n");
+    try writer.print("process_start_time_seconds {d}\n\n", .{pm.start_time_seconds});
+}
 
 /// State of the replica for health checks.
 pub const ReplicaState = enum {
@@ -636,10 +851,24 @@ pub const MetricsServer = struct {
             return;
         }
 
+        // Collect process metrics from OS (Linux/Darwin)
+        const pm = collectProcessMetrics();
+
         // Format all metrics to buffer
         var buf: [metrics_buffer_size]u8 = undefined;
         var fbs = std.io.fixedBufferStream(&buf);
-        metrics.Registry.format(fbs.writer()) catch |err| {
+        const writer = fbs.writer();
+
+        // Write process metrics first (standard Prometheus process_* metrics)
+        formatProcessMetrics(pm, writer) catch |err| {
+            log.warn("error formatting process metrics: {}", .{err});
+            const msg = "Error formatting metrics";
+            try sendResponse(client_fd, .service_unavailable, "text/plain", msg);
+            return;
+        };
+
+        // Write application metrics
+        metrics.Registry.format(writer) catch |err| {
             log.warn("error formatting metrics: {}", .{err});
             const msg = "Error formatting metrics";
             try sendResponse(client_fd, .service_unavailable, "text/plain", msg);
