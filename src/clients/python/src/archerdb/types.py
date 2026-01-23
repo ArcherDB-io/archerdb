@@ -3,6 +3,46 @@ ArcherDB Python SDK - Type Definitions
 
 This module provides type definitions for GeoEvent operations,
 matching the server's geo_event.zig and geo_state_machine.zig structures.
+
+The module includes:
+    - GeoEvent: The core 128-byte geospatial event record
+    - Query filters: QueryRadiusFilter, QueryPolygonFilter, etc.
+    - Result types: QueryResult, DeleteResult, StatusResponse
+    - Coordinate conversion helpers: degrees_to_nano, create_geo_event
+    - Sharding utilities: jump_hash, get_shard_for_entity
+    - GeoJSON/WKT parsing and formatting
+
+Coordinate System:
+    ArcherDB stores coordinates in nanodegrees (10^-9 degrees) for
+    integer precision. Use the helper functions to convert:
+
+    - degrees_to_nano(37.7749) -> 37_774_900_000
+    - nano_to_degrees(37_774_900_000) -> 37.7749
+
+Example:
+    Create a GeoEvent with user-friendly units::
+
+        from archerdb import create_geo_event, id
+
+        event = create_geo_event(
+            entity_id=id(),
+            latitude=37.7749,    # Degrees
+            longitude=-122.4194, # Degrees
+            velocity_mps=15.0,   # Meters per second
+            heading=90,          # Degrees (0-360)
+        )
+
+    Or use raw nanodegrees::
+
+        from archerdb import GeoEvent, id
+
+        event = GeoEvent(
+            entity_id=id(),
+            lat_nano=37_774_900_000,   # Nanodegrees
+            lon_nano=-122_419_400_000, # Nanodegrees
+            velocity_mms=15_000,       # Millimeters per second
+            heading_cdeg=9_000,        # Centidegrees (0-36000)
+        )
 """
 
 from __future__ import annotations
@@ -16,14 +56,22 @@ from typing import List, Optional
 # Constants
 # ============================================================================
 
-# Coordinate bounds
+# Coordinate bounds (degrees)
 LAT_MAX: float = 90.0
+"""Maximum latitude in degrees (+90 = North Pole)."""
+
 LON_MAX: float = 180.0
+"""Maximum longitude in degrees (+180 = antimeridian)."""
 
 # Conversion factors
 NANODEGREES_PER_DEGREE: int = 1_000_000_000
+"""Number of nanodegrees per degree (10^9)."""
+
 MM_PER_METER: int = 1000
+"""Number of millimeters per meter."""
+
 CENTIDEGREES_PER_DEGREE: int = 100
+"""Number of centidegrees per degree (used for heading)."""
 
 # Limits per spec (assumes production config with 10MB message_size_max)
 # NOTE: These limits are configuration-dependent and computed dynamically by the server.
@@ -31,17 +79,28 @@ CENTIDEGREES_PER_DEGREE: int = 100
 # With the default 1MB message_size_max, effective limits are ~8,180 events.
 # For production deployments, configure message_size_max = 10MB in server config.
 BATCH_SIZE_MAX: int = 10_000
+"""Maximum events per batch with 10MB message_size_max."""
+
 QUERY_LIMIT_MAX: int = 81_000
+"""Maximum query results with 10MB message_size_max."""
+
 POLYGON_VERTICES_MAX: int = 10_000
+"""Maximum vertices in a polygon query."""
 
 # Polygon hole limits (per spec)
 POLYGON_HOLES_MAX: int = 100
+"""Maximum number of holes in a polygon."""
+
 POLYGON_HOLE_VERTICES_MIN: int = 3
+"""Minimum vertices per hole (must form a valid polygon)."""
 
 # Safe limits for default 1MB message configuration
 # Use these if connecting to a server with default configuration
 BATCH_SIZE_MAX_DEFAULT: int = 8_000
+"""Safe batch size for default 1MB message configuration."""
+
 QUERY_LIMIT_MAX_DEFAULT: int = 8_000
+"""Safe query limit for default 1MB message configuration."""
 
 
 # ============================================================================
@@ -50,39 +109,105 @@ QUERY_LIMIT_MAX_DEFAULT: int = 8_000
 
 class GeoEventFlags(IntFlag):
     """
-    GeoEvent status flags.
-    Maps to GeoEventFlags in geo_event.zig
+    Bit flags indicating GeoEvent status and properties.
+
+    Flags can be combined using bitwise OR. Maps to GeoEventFlags in geo_event.zig.
+
+    Attributes:
+        NONE: No flags set (default state).
+        LINKED: Event is part of a linked event chain (for trip correlation).
+        IMPORTED: Event was imported with client-provided timestamp (not server-assigned).
+        STATIONARY: Entity is stationary (velocity=0 for extended period).
+        LOW_ACCURACY: GPS accuracy is below acceptable threshold.
+        OFFLINE: Entity device is offline/unreachable.
+        DELETED: Entity has been soft-deleted (GDPR compliance marker).
+
+    Example:
+        # Combine flags
+        flags = GeoEventFlags.IMPORTED | GeoEventFlags.STATIONARY
+
+        # Check flags
+        if event.flags & GeoEventFlags.DELETED:
+            print("Entity was deleted")
     """
     NONE = 0
-    LINKED = 1 << 0        # Event is part of a linked chain
-    IMPORTED = 1 << 1      # Event was imported with client-provided timestamp
-    STATIONARY = 1 << 2    # Entity is not moving
-    LOW_ACCURACY = 1 << 3  # GPS accuracy below threshold
-    OFFLINE = 1 << 4       # Entity is offline/unreachable
-    DELETED = 1 << 5       # Entity has been deleted (GDPR compliance)
+    """No flags set."""
+
+    LINKED = 1 << 0
+    """Event is part of a linked chain (trip correlation)."""
+
+    IMPORTED = 1 << 1
+    """Event was imported with client-provided timestamp."""
+
+    STATIONARY = 1 << 2
+    """Entity is not moving (velocity=0)."""
+
+    LOW_ACCURACY = 1 << 3
+    """GPS accuracy below threshold."""
+
+    OFFLINE = 1 << 4
+    """Entity is offline/unreachable."""
+
+    DELETED = 1 << 5
+    """Entity has been deleted (GDPR compliance)."""
 
 
 class GeoOperation(IntEnum):
     """
     ArcherDB geospatial operation codes.
-    Maps to Operation enum in archerdb.zig
+
+    Internal operation codes used in the wire protocol. Maps to Operation
+    enum in archerdb.zig. User code typically does not need to use these
+    directly - use the client methods instead.
+
+    Note:
+        Operation codes start at 146 (vsr_operations_reserved=128 + offset).
     """
-    INSERT_EVENTS = 146    # vsr_operations_reserved (128) + 18
-    UPSERT_EVENTS = 147    # vsr_operations_reserved (128) + 19
-    DELETE_ENTITIES = 148  # vsr_operations_reserved (128) + 20
-    QUERY_UUID = 149       # vsr_operations_reserved (128) + 21
-    QUERY_RADIUS = 150     # vsr_operations_reserved (128) + 22
-    QUERY_POLYGON = 151    # vsr_operations_reserved (128) + 23
-    ARCHERDB_PING = 152    # vsr_operations_reserved (128) + 24
-    ARCHERDB_GET_STATUS = 153  # vsr_operations_reserved (128) + 25
-    QUERY_LATEST = 154     # vsr_operations_reserved (128) + 26
-    CLEANUP_EXPIRED = 155  # vsr_operations_reserved (128) + 27
-    QUERY_UUID_BATCH = 156 # vsr_operations_reserved (128) + 28
-    GET_TOPOLOGY = 157     # vsr_operations_reserved (128) + 29
+    INSERT_EVENTS = 146
+    """Insert new events (fails if entity exists)."""
+
+    UPSERT_EVENTS = 147
+    """Insert or update events."""
+
+    DELETE_ENTITIES = 148
+    """Delete entities by ID."""
+
+    QUERY_UUID = 149
+    """Query single entity by UUID."""
+
+    QUERY_RADIUS = 150
+    """Query events within a radius."""
+
+    QUERY_POLYGON = 151
+    """Query events within a polygon."""
+
+    ARCHERDB_PING = 152
+    """Ping server for health check."""
+
+    ARCHERDB_GET_STATUS = 153
+    """Get server status and statistics."""
+
+    QUERY_LATEST = 154
+    """Query most recent events."""
+
+    CLEANUP_EXPIRED = 155
+    """Trigger TTL expiration cleanup."""
+
+    QUERY_UUID_BATCH = 156
+    """Query multiple entities by UUID."""
+
+    GET_TOPOLOGY = 157
+    """Get cluster topology."""
+
     # Manual TTL Operations
-    TTL_SET = 158          # vsr_operations_reserved (128) + 30
-    TTL_EXTEND = 159       # vsr_operations_reserved (128) + 31
-    TTL_CLEAR = 160        # vsr_operations_reserved (128) + 32
+    TTL_SET = 158
+    """Set absolute TTL for entity."""
+
+    TTL_EXTEND = 159
+    """Extend TTL by an amount."""
+
+    TTL_CLEAR = 160
+    """Clear TTL (entity never expires)."""
 
 
 class TtlOperationResult(IntEnum):
@@ -100,7 +225,28 @@ class TtlOperationResult(IntEnum):
 class InsertGeoEventResult(IntEnum):
     """
     Result codes for GeoEvent insert operations.
-    Maps to InsertGeoEventResult in geo_state_machine.zig
+
+    Maps to InsertGeoEventResult in geo_state_machine.zig. Used in
+    InsertGeoEventsError to indicate why a specific event failed.
+
+    Attributes:
+        OK: Event inserted successfully.
+        LINKED_EVENT_FAILED: A linked event in the chain failed.
+        LINKED_EVENT_CHAIN_OPEN: Linked event chain was not properly closed.
+        TIMESTAMP_MUST_BE_ZERO: Timestamp must be 0 (server-assigned).
+        RESERVED_FIELD: A reserved field contains non-zero value.
+        RESERVED_FLAG: A reserved flag bit is set.
+        ID_MUST_NOT_BE_ZERO: Event ID must not be zero.
+        ENTITY_ID_MUST_NOT_BE_ZERO: Entity ID must not be zero.
+        INVALID_COORDINATES: Coordinates are invalid (NaN or infinity).
+        LAT_OUT_OF_RANGE: Latitude outside [-90, +90] degrees.
+        LON_OUT_OF_RANGE: Longitude outside [-180, +180] degrees.
+        EXISTS_WITH_DIFFERENT_ENTITY_ID: ID collision with different entity.
+        EXISTS_WITH_DIFFERENT_COORDINATES: Entity exists at different location.
+        EXISTS: Entity already exists (use upsert to update).
+        HEADING_OUT_OF_RANGE: Heading outside [0, 36000] centidegrees.
+        TTL_INVALID: TTL value is invalid.
+        ENTITY_ID_MUST_NOT_BE_INT_MAX: Entity ID cannot be maximum value.
     """
     OK = 0
     LINKED_EVENT_FAILED = 1
@@ -124,7 +270,16 @@ class InsertGeoEventResult(IntEnum):
 class DeleteEntityResult(IntEnum):
     """
     Result codes for entity delete operations.
-    Maps to DeleteEntityResult in geo_state_machine.zig
+
+    Maps to DeleteEntityResult in geo_state_machine.zig. Used in
+    DeleteEntitiesError to indicate why a specific deletion failed.
+
+    Attributes:
+        OK: Entity deleted successfully.
+        LINKED_EVENT_FAILED: A linked event in the chain failed.
+        ENTITY_ID_MUST_NOT_BE_ZERO: Entity ID must not be zero.
+        ENTITY_NOT_FOUND: Entity does not exist.
+        ENTITY_ID_MUST_NOT_BE_INT_MAX: Entity ID cannot be maximum value.
     """
     OK = 0
     LINKED_EVENT_FAILED = 1
@@ -142,96 +297,262 @@ class GeoEvent:
     """
     128-byte geospatial event record.
 
-    Represents a single location update for a moving entity.
-    Coordinates are stored in nanodegrees (10^-9 degrees).
+    Represents a single location update for a moving entity (vehicle, device,
+    person, etc.). This is the core data structure in ArcherDB.
+
+    Coordinates are stored in nanodegrees (10^-9 degrees) for integer precision.
+    Use the helper functions degrees_to_nano() and create_geo_event() for
+    convenient unit conversion.
+
+    Attributes:
+        id: Composite key combining S2 Cell ID and timestamp. Set to 0 for
+            server-assigned IDs (recommended).
+        entity_id: 128-bit UUID identifying the entity. Must be non-zero.
+            Use archerdb.id() to generate valid IDs.
+        correlation_id: Optional 128-bit UUID for trip/session correlation.
+            Used to link multiple events together.
+        user_data: 64-bit opaque field for application metadata.
+        lat_nano: Latitude in nanodegrees. Range: [-90e9, +90e9].
+            Example: 37.7749 degrees = 37_774_900_000 nanodegrees.
+        lon_nano: Longitude in nanodegrees. Range: [-180e9, +180e9].
+            Example: -122.4194 degrees = -122_419_400_000 nanodegrees.
+        group_id: Fleet/region grouping identifier. Used for group-based queries.
+        timestamp: Nanoseconds since Unix epoch. Set to 0 for server-assigned
+            timestamps (recommended). Server uses consensus time.
+        altitude_mm: Altitude in millimeters above WGS84 ellipsoid.
+            Example: 100 meters = 100_000 mm.
+        velocity_mms: Speed in millimeters per second.
+            Example: 60 km/h = 16_667 mm/s.
+        ttl_seconds: Time-to-live in seconds. 0 = never expires.
+            After TTL, entity is automatically removed from queries.
+        accuracy_mm: GPS horizontal accuracy radius in millimeters.
+            Indicates confidence circle around the reported position.
+        heading_cdeg: Direction of travel in centidegrees (0-36000).
+            0 = North, 9000 = East, 18000 = South, 27000 = West.
+        flags: Status flags. See GeoEventFlags enum.
 
     Example:
-        event = GeoEvent(
-            entity_id=archerdb.id(),
-            lat_nano=int(37.7749 * 1e9),
-            lon_nano=int(-122.4194 * 1e9),
-            group_id=fleet_id,
-        )
+        Using raw values::
+
+            event = GeoEvent(
+                entity_id=archerdb.id(),
+                lat_nano=37_774_900_000,   # 37.7749 degrees
+                lon_nano=-122_419_400_000, # -122.4194 degrees
+                velocity_mms=16_667,       # ~60 km/h
+                heading_cdeg=4500,         # 45 degrees (NE)
+                group_id=fleet_id,
+            )
+
+        Using helper function::
+
+            from archerdb import create_geo_event, id
+
+            event = create_geo_event(
+                entity_id=id(),
+                latitude=37.7749,
+                longitude=-122.4194,
+                velocity_mps=16.67,
+                heading=45,
+            )
     """
     # Primary key fields
-    id: int = 0  # Composite key [S2 Cell ID | Timestamp], 0 = server-assigned
-    entity_id: int = 0  # UUID identifying the moving entity
-    correlation_id: int = 0  # UUID for trip/session correlation
-    user_data: int = 0  # Opaque application metadata
+    id: int = 0
+    """Composite key [S2 Cell ID | Timestamp]. 0 = server-assigned."""
+
+    entity_id: int = 0
+    """128-bit UUID identifying the moving entity. Must be non-zero."""
+
+    correlation_id: int = 0
+    """128-bit UUID for trip/session correlation."""
+
+    user_data: int = 0
+    """64-bit opaque application metadata."""
 
     # Coordinates in nanodegrees
-    lat_nano: int = 0  # -90e9 to +90e9
-    lon_nano: int = 0  # -180e9 to +180e9
+    lat_nano: int = 0
+    """Latitude in nanodegrees. Range: [-90e9, +90e9]."""
+
+    lon_nano: int = 0
+    """Longitude in nanodegrees. Range: [-180e9, +180e9]."""
 
     # Grouping and timing
-    group_id: int = 0  # Fleet/region grouping
-    timestamp: int = 0  # Nanoseconds since epoch, 0 = server-assigned
+    group_id: int = 0
+    """Fleet/region grouping identifier."""
+
+    timestamp: int = 0
+    """Nanoseconds since Unix epoch. 0 = server-assigned."""
 
     # Physical measurements
-    altitude_mm: int = 0  # Millimeters above WGS84
-    velocity_mms: int = 0  # Millimeters per second
-    ttl_seconds: int = 0  # Time-to-live (0 = never expires)
-    accuracy_mm: int = 0  # GPS accuracy radius in mm
-    heading_cdeg: int = 0  # Centidegrees (0-36000)
+    altitude_mm: int = 0
+    """Altitude in millimeters above WGS84 ellipsoid."""
+
+    velocity_mms: int = 0
+    """Speed in millimeters per second."""
+
+    ttl_seconds: int = 0
+    """Time-to-live in seconds. 0 = never expires."""
+
+    accuracy_mm: int = 0
+    """GPS horizontal accuracy radius in millimeters."""
+
+    heading_cdeg: int = 0
+    """Direction of travel in centidegrees (0-36000)."""
 
     # Status
     flags: GeoEventFlags = GeoEventFlags.NONE
+    """Status flags. See GeoEventFlags enum."""
 
 
 @dataclass
 class InsertGeoEventsError:
-    """Per-event result for batch insert operations."""
+    """
+    Per-event error result from batch insert operations.
+
+    Only failed events are included in the error list. An empty list means
+    all events were inserted successfully.
+
+    Attributes:
+        index: Zero-based index of the failed event in the batch.
+        result: Error code indicating why the event failed.
+    """
     index: int
+    """Zero-based index of the failed event."""
+
     result: InsertGeoEventResult
+    """Error code indicating why the event failed."""
 
 
 @dataclass
 class DeleteEntitiesError:
-    """Per-entity result for batch delete operations."""
+    """
+    Per-entity error result from batch delete operations.
+
+    Only failed deletions are included in the error list.
+
+    Attributes:
+        index: Zero-based index of the failed entity ID in the batch.
+        result: Error code indicating why the deletion failed.
+    """
     index: int
+    """Zero-based index of the failed entity ID."""
+
     result: DeleteEntityResult
+    """Error code indicating why the deletion failed."""
 
 
 @dataclass
 class QueryUuidFilter:
-    """Filter for UUID lookup queries."""
+    """
+    Filter for single UUID lookup queries.
+
+    Used internally by get_latest_by_uuid().
+
+    Attributes:
+        entity_id: The entity UUID to look up.
+    """
     entity_id: int
+    """The 128-bit entity UUID to look up."""
 
 
 @dataclass
 class QueryUuidBatchFilter:
-    """Filter for batch UUID lookup queries (F1.3.4)."""
+    """
+    Filter for batch UUID lookup queries.
+
+    Allows looking up multiple entities in a single network round-trip.
+
+    Attributes:
+        count: Number of entity IDs in the batch.
+        entity_ids: List of entity UUIDs to look up.
+    """
     count: int
+    """Number of entity IDs in the batch."""
+
     entity_ids: List[int]
+    """List of 128-bit entity UUIDs to look up."""
 
 
 @dataclass
 class QueryUuidBatchResult:
-    """Result of batch UUID lookup (F1.3.4)."""
+    """
+    Result of batch UUID lookup operation.
+
+    Attributes:
+        found_count: Number of entities that were found.
+        not_found_count: Number of entities that were not found.
+        not_found_indices: Indices (in original request) of entities not found.
+        events: Found events in the same order as the request.
+    """
     found_count: int
+    """Number of entities that were found."""
+
     not_found_count: int
-    not_found_indices: List[int]  # Indices of entity_ids that were not found
-    events: List['GeoEvent']  # Found events in request order
+    """Number of entities that were not found."""
+
+    not_found_indices: List[int]
+    """Indices of entity_ids that were not found."""
+
+    events: List['GeoEvent']
+    """Found events in request order."""
 
 
 @dataclass
 class QueryRadiusFilter:
-    """Filter for radius queries."""
+    """
+    Filter for radius queries.
+
+    Finds all entities within a circular region around a center point.
+    Use create_radius_query() for convenient unit conversion.
+
+    Attributes:
+        center_lat_nano: Center latitude in nanodegrees.
+        center_lon_nano: Center longitude in nanodegrees.
+        radius_mm: Search radius in millimeters.
+        limit: Maximum results to return. Default 1000.
+        timestamp_min: Minimum timestamp filter (nanoseconds). 0 = no filter.
+        timestamp_max: Maximum timestamp filter (nanoseconds). 0 = no filter.
+        group_id: Filter by group ID. 0 = all groups.
+        flags: Reserved for future use.
+    """
     center_lat_nano: int
+    """Center latitude in nanodegrees."""
+
     center_lon_nano: int
+    """Center longitude in nanodegrees."""
+
     radius_mm: int
+    """Search radius in millimeters."""
+
     limit: int = 1000
+    """Maximum results to return."""
+
     timestamp_min: int = 0
+    """Minimum timestamp filter (nanoseconds). 0 = no filter."""
+
     timestamp_max: int = 0
+    """Maximum timestamp filter (nanoseconds). 0 = no filter."""
+
     group_id: int = 0
-    flags: int = 0  # Reserved for future use
+    """Filter by group ID. 0 = all groups."""
+
+    flags: int = 0
+    """Reserved for future use."""
 
 
 @dataclass
 class PolygonVertex:
-    """Polygon vertex (lat/lon pair)."""
+    """
+    Single vertex in a polygon.
+
+    Attributes:
+        lat_nano: Latitude in nanodegrees.
+        lon_nano: Longitude in nanodegrees.
+    """
     lat_nano: int
+    """Latitude in nanodegrees."""
+
     lon_nano: int
+    """Longitude in nanodegrees."""
 
 
 @dataclass
@@ -239,35 +560,81 @@ class PolygonHole:
     """
     Polygon hole (exclusion zone within the outer boundary).
 
-    A hole is defined by a list of vertices in clockwise winding order.
+    A hole is a polygon that defines an area to exclude from the search.
+    For example, a delivery zone with a park (no-delivery area) in the middle.
+
+    Vertices should be in clockwise winding order (opposite of outer boundary).
     Points inside a hole are excluded from query results.
+
+    Attributes:
+        vertices: List of vertices defining the hole boundary.
     """
     vertices: List[PolygonVertex] = field(default_factory=list)
+    """List of vertices in clockwise winding order."""
 
 
 @dataclass
 class QueryPolygonFilter:
     """
-    Filter for polygon queries.
+    Filter for polygon (geofence) queries.
 
-    A polygon can optionally have holes (exclusion zones). The outer boundary
-    should be in counter-clockwise (CCW) winding order, while holes should
-    be in clockwise (CW) winding order.
+    Finds all entities within an arbitrary polygon boundary. The polygon
+    can optionally have holes (exclusion zones).
+
+    Winding order:
+        - Outer boundary: counter-clockwise (CCW)
+        - Holes: clockwise (CW)
+
+    Use create_polygon_query() for convenient unit conversion.
+
+    Attributes:
+        vertices: Outer boundary vertices in CCW order.
+        holes: Optional list of exclusion zones.
+        limit: Maximum results to return. Default 1000.
+        timestamp_min: Minimum timestamp filter. 0 = no filter.
+        timestamp_max: Maximum timestamp filter. 0 = no filter.
+        group_id: Filter by group ID. 0 = all groups.
     """
     vertices: List[PolygonVertex] = field(default_factory=list)
+    """Outer boundary vertices in counter-clockwise order."""
+
     holes: List[PolygonHole] = field(default_factory=list)
+    """Optional list of exclusion zones (clockwise order)."""
+
     limit: int = 1000
+    """Maximum results to return."""
+
     timestamp_min: int = 0
+    """Minimum timestamp filter (nanoseconds). 0 = no filter."""
+
     timestamp_max: int = 0
+    """Maximum timestamp filter (nanoseconds). 0 = no filter."""
+
     group_id: int = 0
+    """Filter by group ID. 0 = all groups."""
 
 
 @dataclass
 class QueryLatestFilter:
-    """Filter for query_latest operation."""
+    """
+    Filter for query_latest operation.
+
+    Retrieves the most recent events, optionally filtered by group.
+    Supports cursor-based pagination.
+
+    Attributes:
+        limit: Maximum results to return. Default 1000.
+        group_id: Filter by group ID. 0 = all groups.
+        cursor_timestamp: Pagination cursor. Pass the last event's timestamp.
+    """
     limit: int = 1000
+    """Maximum results to return."""
+
     group_id: int = 0
+    """Filter by group ID. 0 = all groups."""
+
     cursor_timestamp: int = 0
+    """Pagination cursor (timestamp from previous response)."""
 
 
 @dataclass
@@ -323,35 +690,109 @@ class QueryResponse:
 
 @dataclass
 class QueryResult:
-    """Query result with pagination support."""
+    """
+    Result of a query operation with pagination support.
+
+    Attributes:
+        events: List of matching GeoEvent records.
+        has_more: True if more results are available beyond the limit.
+        cursor: Pagination cursor for fetching next page. Pass to next query.
+
+    Example:
+        result = client.query_radius(lat=37.7749, lon=-122.4194, radius_m=1000)
+        for event in result.events:
+            print(f"Entity {event.entity_id} at ({event.lat_nano}, {event.lon_nano})")
+
+        # Pagination
+        if result.has_more:
+            next_result = client.query_latest(cursor_timestamp=result.cursor)
+    """
     events: List[GeoEvent] = field(default_factory=list)
+    """List of matching GeoEvent records."""
+
     has_more: bool = False
+    """True if more results available beyond limit."""
+
     cursor: Optional[int] = None
+    """Pagination cursor (timestamp) for next page."""
 
 
 @dataclass
 class DeleteResult:
-    """Result structure for delete operations."""
+    """
+    Result of a delete operation.
+
+    Attributes:
+        deleted_count: Number of entities successfully deleted.
+        not_found_count: Number of entities that did not exist.
+
+    Example:
+        result = client.delete_entities([id1, id2, id3])
+        print(f"Deleted {result.deleted_count} entities")
+        if result.not_found_count > 0:
+            print(f"Warning: {result.not_found_count} entities not found")
+    """
     deleted_count: int = 0
+    """Number of entities successfully deleted."""
+
     not_found_count: int = 0
+    """Number of entities that did not exist."""
 
 
 @dataclass
 class StatusResponse:
     """
-    Server status response from archerdb_get_status operation.
+    Server status response with RAM index statistics.
+
+    Provides insight into cluster health and capacity utilization.
     Matches StatusResponse in geo_state_machine.zig (64 bytes).
+
+    Attributes:
+        ram_index_count: Current number of entities in RAM index.
+        ram_index_capacity: Total RAM index capacity (based on configuration).
+        ram_index_load_pct: Load factor as percentage * 100 (e.g., 7000 = 70.00%).
+        tombstone_count: Number of tombstone entries (deleted but not yet cleaned).
+        ttl_expirations: Total TTL expirations processed since startup.
+        deletion_count: Total explicit deletions processed since startup.
+
+    Properties:
+        load_factor: Load factor as decimal (0.0 to 1.0).
+
+    Example:
+        status = client.get_status()
+        print(f"Entities: {status.ram_index_count:,}")
+        print(f"Capacity: {status.ram_index_capacity:,}")
+        print(f"Load: {status.load_factor:.1%}")
+        if status.load_factor > 0.8:
+            print("Warning: Index approaching capacity!")
     """
-    ram_index_count: int = 0       # Number of entities in RAM index
-    ram_index_capacity: int = 0    # Total RAM index capacity
-    ram_index_load_pct: int = 0    # Load factor as percentage * 100 (e.g., 7000 = 70%)
-    tombstone_count: int = 0       # Number of tombstone entries
-    ttl_expirations: int = 0       # Total TTL expirations processed
-    deletion_count: int = 0        # Total deletions processed
+    ram_index_count: int = 0
+    """Current number of entities in RAM index."""
+
+    ram_index_capacity: int = 0
+    """Total RAM index capacity."""
+
+    ram_index_load_pct: int = 0
+    """Load factor as percentage * 100 (7000 = 70.00%)."""
+
+    tombstone_count: int = 0
+    """Number of tombstone entries (deleted but not cleaned)."""
+
+    ttl_expirations: int = 0
+    """Total TTL expirations since startup."""
+
+    deletion_count: int = 0
+    """Total explicit deletions since startup."""
 
     @property
     def load_factor(self) -> float:
-        """Return the load factor as a decimal (e.g., 0.70)."""
+        """
+        Return the load factor as a decimal.
+
+        Returns:
+            Load factor between 0.0 and 1.0.
+            Example: 0.70 means 70% capacity used.
+        """
         return self.ram_index_load_pct / 10000.0
 
 
@@ -360,25 +801,49 @@ class CleanupResult:
     """
     Result of a cleanup_expired operation.
 
-    Per client-protocol/spec.md cleanup_expired (0x30) response format:
-    - entries_scanned: u64 - Number of index entries examined
-    - entries_removed: u64 - Number of expired entries cleaned up
+    cleanup_expired triggers explicit TTL expiration processing through
+    VSR consensus. This ensures all replicas process expirations at the
+    same logical time.
+
+    Attributes:
+        entries_scanned: Number of index entries examined.
+        entries_removed: Number of expired entries removed.
+
+    Properties:
+        has_removals: True if any entries were removed.
+        expiration_ratio: Percentage of scanned entries that expired.
+
+    Example:
+        result = client.cleanup_expired()
+        print(f"Scanned: {result.entries_scanned:,}")
+        print(f"Removed: {result.entries_removed:,}")
+        if result.has_removals:
+            print(f"Expiration rate: {result.expiration_ratio:.2%}")
     """
     entries_scanned: int = 0
+    """Number of index entries examined."""
+
     entries_removed: int = 0
+    """Number of expired entries removed."""
 
     @property
     def has_removals(self) -> bool:
-        """Return True if any entries were removed."""
+        """
+        Check if any entries were removed.
+
+        Returns:
+            True if entries_removed > 0.
+        """
         return self.entries_removed > 0
 
     @property
     def expiration_ratio(self) -> float:
         """
-        Return the percentage of scanned entries that were expired.
+        Calculate the percentage of scanned entries that expired.
 
         Returns:
-            Expiration ratio (0.0 to 1.0)
+            Expiration ratio between 0.0 and 1.0.
+            Returns 0.0 if no entries were scanned.
         """
         if self.entries_scanned == 0:
             return 0.0
