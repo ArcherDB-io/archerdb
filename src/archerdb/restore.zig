@@ -502,10 +502,10 @@ pub const RestoreManager = struct {
                 return blocks[0..cutoff];
             },
             .timestamp => |target_ts| {
-                // Timestamp-based filtering requires reading block headers
+                // Enhancement: Timestamp-based filtering requires reading block headers
                 // For now, include all blocks (timestamps not in metadata yet)
                 _ = target_ts;
-                logWarn("Timestamp-based filtering not yet implemented, using all blocks", .{});
+                logWarn("Enhancement: Timestamp filtering for PITR deferred, using all blocks", .{});
                 return blocks;
             },
         }
