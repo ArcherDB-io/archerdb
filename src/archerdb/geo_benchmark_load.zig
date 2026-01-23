@@ -179,6 +179,9 @@ pub fn main(
     if (benchmark.query_polygon_count > 0) {
         try benchmark.run(.query_polygon);
     }
+
+    // Print memory statistics at end of benchmark
+    print_memory_stats(benchmark.output);
 }
 
 const GeoBenchmark = struct {
@@ -779,6 +782,34 @@ fn compute_simple_s2_cell(lat_nano: i64, lon_nano: i64) u64 {
     return (face << 61) | ((i & 0xFFF) << 49) | ((j & 0xFFF) << 37);
 }
 
+/// Percentile specification with integer and decimal parts for sub-percentiles
+const PercentileSpec = struct {
+    /// Integer part (0-100)
+    p: u64,
+    /// Decimal part in tenths (e.g., 9 for .9)
+    d: u64,
+
+    fn label(self: PercentileSpec) []const u8 {
+        return switch (self.p) {
+            1 => if (self.d == 0) "p1  " else "p1.?",
+            50 => if (self.d == 0) "p50 " else "p50?",
+            95 => if (self.d == 0) "p95 " else "p95?",
+            99 => if (self.d == 0) "p99 " else if (self.d == 9) "p99.9" else "p99?",
+            100 => if (self.d == 0) "p100" else "p100",
+            else => "p???",
+        };
+    }
+
+    /// Calculate the histogram index corresponding to this percentile
+    fn histogram_index(self: PercentileSpec, histogram_total: u64) u64 {
+        // percentile = p + d/10, so for p99.9: 99 + 9/10 = 99.9
+        // histogram_percentile = total * percentile / 100
+        // = total * (p + d/10) / 100
+        // = (total * p * 10 + total * d) / 1000
+        return (histogram_total * self.p * 10 + histogram_total * self.d) / 1000;
+    }
+};
+
 fn print_percentiles_histogram(
     stdout: std.io.AnyWriter,
     label: []const u8,
@@ -792,9 +823,18 @@ fn print_percentiles_histogram(
         return;
     }
 
-    const percentiles = [_]u64{ 1, 50, 99, 100 };
-    for (percentiles) |percentile| {
-        const histogram_percentile: usize = @divTrunc(histogram_total * percentile, 100);
+    // Percentiles: p1 (min), p50 (median), p95, p99, p99.9, p100 (max)
+    const percentiles = [_]PercentileSpec{
+        .{ .p = 1, .d = 0 }, // p1 (min)
+        .{ .p = 50, .d = 0 }, // p50 (median)
+        .{ .p = 95, .d = 0 }, // p95
+        .{ .p = 99, .d = 0 }, // p99
+        .{ .p = 99, .d = 9 }, // p99.9
+        .{ .p = 100, .d = 0 }, // p100 (max)
+    };
+
+    for (percentiles) |pspec| {
+        const histogram_percentile: usize = @intCast(pspec.histogram_index(histogram_total));
 
         var sum: usize = 0;
         const latency = for (histogram_buckets, 0..) |bucket, bucket_index| {
@@ -802,11 +842,90 @@ fn print_percentiles_histogram(
             if (sum >= histogram_percentile) break bucket_index;
         } else histogram_buckets.len;
 
-        stdout.print("{s} latency p{: <3} = {} ms{s}\n", .{
+        stdout.print("{s} latency {s} = {} ms{s}\n", .{
             label,
-            percentile,
+            pspec.label(),
             latency,
             if (latency == histogram_buckets.len) "+ (exceeds histogram resolution)" else "",
+        }) catch unreachable;
+    }
+}
+
+/// Get current memory usage statistics
+fn get_memory_stats() struct { rss_bytes: u64, peak_rss_bytes: u64 } {
+    if (builtin.os.tag == .linux) {
+        // Read from /proc/self/statm for RSS, /proc/self/status for peak
+        const page_size: u64 = 4096;
+        var rss_bytes: u64 = 0;
+        var peak_rss_bytes: u64 = 0;
+
+        // Try to read current RSS from /proc/self/statm
+        if (std.fs.cwd().openFile("/proc/self/statm", .{})) |file| {
+            defer file.close();
+            var buf: [256]u8 = undefined;
+            if (file.reader().readUntilDelimiterOrEof(&buf, '\n')) |line_opt| {
+                if (line_opt) |line| {
+                    // Format: size resident shared text lib data dt
+                    var it = std.mem.splitScalar(u8, line, ' ');
+                    _ = it.next(); // size
+                    if (it.next()) |resident_str| {
+                        if (std.fmt.parseInt(u64, resident_str, 10)) |resident_pages| {
+                            rss_bytes = resident_pages * page_size;
+                        } else |_| {}
+                    }
+                }
+            } else |_| {}
+        } else |_| {}
+
+        // Try to read peak RSS from /proc/self/status
+        if (std.fs.cwd().openFile("/proc/self/status", .{})) |file| {
+            defer file.close();
+            var buf: [4096]u8 = undefined;
+            const bytes_read = file.reader().readAll(&buf) catch 0;
+            const content = buf[0..bytes_read];
+            // Look for VmHWM (high water mark)
+            if (std.mem.indexOf(u8, content, "VmHWM:")) |idx| {
+                const rest = content[idx + 6 ..];
+                var it = std.mem.tokenizeScalar(u8, rest, ' ');
+                if (it.next()) |value_str| {
+                    if (std.fmt.parseInt(u64, std.mem.trimRight(u8, value_str, " \t\n"), 10)) |value_kb| {
+                        peak_rss_bytes = value_kb * 1024;
+                    } else |_| {}
+                }
+            }
+        } else |_| {}
+
+        return .{ .rss_bytes = rss_bytes, .peak_rss_bytes = peak_rss_bytes };
+    } else if (builtin.os.tag == .macos) {
+        // Use getrusage on macOS
+        var rusage: std.posix.rusage = undefined;
+        if (std.posix.getrusage(.SELF)) |usage| {
+            rusage = usage;
+            // maxrss is in bytes on macOS
+            return .{
+                .rss_bytes = @intCast(rusage.maxrss),
+                .peak_rss_bytes = @intCast(rusage.maxrss),
+            };
+        } else |_| {
+            return .{ .rss_bytes = 0, .peak_rss_bytes = 0 };
+        }
+    } else {
+        return .{ .rss_bytes = 0, .peak_rss_bytes = 0 };
+    }
+}
+
+fn print_memory_stats(stdout: std.io.AnyWriter) void {
+    const stats = get_memory_stats();
+    if (stats.rss_bytes > 0 or stats.peak_rss_bytes > 0) {
+        stdout.print(
+            \\
+            \\=== Memory Statistics ===
+            \\current RSS = {} MB
+            \\peak RSS    = {} MB
+            \\
+        , .{
+            stats.rss_bytes / (1024 * 1024),
+            stats.peak_rss_bytes / (1024 * 1024),
         }) catch unreachable;
     }
 }
