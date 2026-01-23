@@ -125,14 +125,14 @@ Plans:
   3. Documentation complete in each SDK (header comments, godoc, javadoc, TSDoc, docstrings)
   4. Async support where idiomatic (CompletableFuture, Promise, asyncio, Context)
   5. Test coverage complete with sample code for all operations in each SDK
-**Plans**: TBD
+**Plans**: 5 plans
 
 Plans:
-- [ ] 06-01: C SDK completion
-- [ ] 06-02: Go SDK completion
-- [ ] 06-03: Java SDK completion
-- [ ] 06-04: Node.js SDK completion
-- [ ] 06-05: Python SDK completion
+- [ ] 06-01-PLAN.md - C SDK documentation (Doxygen header, README, samples)
+- [ ] 06-02-PLAN.md - Go SDK documentation (godoc, errors.Is support, README)
+- [ ] 06-03-PLAN.md - Java SDK async and documentation (CompletableFuture, Javadoc, README)
+- [ ] 06-04-PLAN.md - Node.js SDK documentation (TSDoc, TypeScript types, README)
+- [ ] 06-05-PLAN.md - Python SDK documentation (docstrings, async examples, README)
 
 ### Phase 7: Observability Core
 **Goal**: Full observability stack operational - comprehensive metrics, distributed tracing, structured logging, health endpoints
@@ -215,7 +215,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | 3. Core Geospatial | 5/5 | Complete | 2026-01-22 |
 | 4. Replication | 3/3 | Complete | 2026-01-22 |
 | 5. Sharding & Cleanup | 5/5 | Complete | 2026-01-23 |
-| 6. SDK Parity | 0/5 | Not started | - |
+| 6. SDK Parity | 0/5 | Planned | - |
 | 7. Observability Core | 0/4 | Not started | - |
 | 8. Observability Dashboards | 0/2 | Not started | - |
 | 9. Documentation | 0/3 | Not started | - |
@@ -233,4 +233,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 *Phase 4 complete: 2026-01-22*
 *Phase 5 planned: 2026-01-22*
 *Phase 5 complete: 2026-01-23*
+*Phase 6 planned: 2026-01-23*
 *Total requirements: 234 | All mapped*
