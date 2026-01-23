@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-01-22)
 
 **Core value:** Correctness, performance, and completeness with no compromises
-**Current focus:** Phase 5 - Sharding & Cleanup (COMPLETE)
+**Current focus:** Phase 6 - SDK Parity
 
 ## Current Position
 
-Phase: 5 of 10 (Sharding & Cleanup) - COMPLETE
-Plan: 5 of 5 in current phase - COMPLETE
-Status: Phase 5 complete, ready for Phase 6
-Last activity: 2026-01-23 - Plan 05-05 complete (VOPR docs, CSV import, CLEAN verification)
+Phase: 6 of 10 (SDK Parity)
+Plan: 4 of 5 in current phase
+Status: In progress
+Last activity: 2026-01-23 - Plan 06-04 complete (Node.js SDK documentation)
 
-Progress: [#####-----] 50% (5/10 phases complete)
+Progress: [######----] 60% (6/10 phases in progress)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 20
-- Average duration: 12 min
-- Total execution time: 253 min
+- Total plans completed: 24
+- Average duration: 11 min
+- Total execution time: 257 min
 
 **By Phase:**
 
@@ -32,10 +32,11 @@ Progress: [#####-----] 50% (5/10 phases complete)
 | 03 | 5 | 43 min | 9 min |
 | 04 | 3 | 47 min | 16 min |
 | 05 | 5 | 83 min | 17 min |
+| 06 | 4 | 4 min | 1 min |
 
 **Recent Trend:**
-- Last 5 plans: 05-05 (12m), 05-03 (19m), 05-04 (9m), 05-02 (25m), 05-01 (18m)
-- Trend: Phase 5 complete - all stubs resolved, CLEAN requirements verified
+- Last 5 plans: 06-04 (4m), 05-05 (12m), 05-03 (19m), 05-04 (9m), 05-02 (25m)
+- Trend: Phase 6 SDK documentation tasks completing quickly
 
 *Updated after each plan completion*
 
@@ -51,6 +52,10 @@ Recent decisions affecting current work:
 - Full observability: Enterprise-ready monitoring with metrics, tracing, health endpoints
 - SDK parity: All five languages must have same features and quality
 - No graceful degradation: Demand resources, expose problems through metrics/traces
+
+From 06-04:
+- Re-export base errors from geo_client.ts to errors.ts for unified import
+- Rename isRetryable to isRetryableCode for numeric codes, add isRetryableError for error objects
 
 From 05-05:
 - VOPR GeoStateMachine coverage already comprehensive in geo_workload.zig
@@ -208,7 +213,7 @@ All CLEAN requirements verified complete:
 ## Session Continuity
 
 Last session: 2026-01-23
-Stopped at: Phase 5 complete, Plan 05-05 committed
+Stopped at: Plan 06-04 complete (Node.js SDK documentation)
 Resume file: None
 
-Next: Phase 6 - SDK Polish
+Next: Plan 06-05 (Python SDK documentation)
