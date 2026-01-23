@@ -3543,3 +3543,303 @@ test "Registry: index health metrics format output" {
         std.mem.indexOf(u8, output, "archerdb_index_lookup_latency_seconds") != null,
     );
 }
+
+// ============================================================================
+// S2 Index Metrics Tests (MET-09)
+// ============================================================================
+
+test "Registry: S2 cells total counter" {
+    // Reset counter for clean test
+    Registry.s2_cells_total = Counter.init(
+        "archerdb_s2_cells_total",
+        "Total S2 cells indexed",
+        null,
+    );
+
+    // Verify starts at 0
+    try std.testing.expectEqual(@as(u64, 0), Registry.s2_cells_total.get());
+
+    // Record some cells at different levels
+    Registry.recordS2CellIndexed(15);
+    Registry.recordS2CellIndexed(15);
+    Registry.recordS2CellIndexed(20);
+
+    // Total should be 3
+    try std.testing.expectEqual(@as(u64, 3), Registry.s2_cells_total.get());
+}
+
+test "Registry: S2 cell level counts" {
+    // Reset level counts
+    for (&Registry.s2_cell_level_counts) |*count| {
+        count.store(0, .monotonic);
+    }
+
+    // Record cells at various levels
+    Registry.recordS2CellIndexed(5); // Goes to level 10 bucket (index 1)
+    Registry.recordS2CellIndexed(10); // Goes to level 10 bucket (index 1)
+    Registry.recordS2CellIndexed(15); // Goes to level 15 bucket (index 2)
+    Registry.recordS2CellIndexed(25); // Goes to level 25 bucket (index 4)
+
+    // Verify bucket counts
+    // tracked_levels = { 0, 10, 15, 20, 25, 30 }
+    try std.testing.expectEqual(@as(u64, 0), Registry.s2_cell_level_counts[0].load(.monotonic)); // level 0
+    try std.testing.expectEqual(@as(u64, 2), Registry.s2_cell_level_counts[1].load(.monotonic)); // level 10
+    try std.testing.expectEqual(@as(u64, 1), Registry.s2_cell_level_counts[2].load(.monotonic)); // level 15
+    try std.testing.expectEqual(@as(u64, 0), Registry.s2_cell_level_counts[3].load(.monotonic)); // level 20
+    try std.testing.expectEqual(@as(u64, 1), Registry.s2_cell_level_counts[4].load(.monotonic)); // level 25
+}
+
+test "Registry: S2 coverage ratio" {
+    // Test coverage ratio update
+    Registry.updateS2CoverageRatio(0.5); // 50% coverage
+    const scaled = Registry.s2_coverage_ratio.load(.monotonic);
+    try std.testing.expectEqual(@as(u32, 5000), scaled);
+
+    // Test boundary values
+    Registry.updateS2CoverageRatio(0.0);
+    try std.testing.expectEqual(@as(u32, 0), Registry.s2_coverage_ratio.load(.monotonic));
+
+    Registry.updateS2CoverageRatio(1.0);
+    try std.testing.expectEqual(@as(u32, 10000), Registry.s2_coverage_ratio.load(.monotonic));
+
+    // Test clamping
+    Registry.updateS2CoverageRatio(1.5);
+    try std.testing.expectEqual(@as(u32, 10000), Registry.s2_coverage_ratio.load(.monotonic));
+
+    Registry.updateS2CoverageRatio(-0.5);
+    try std.testing.expectEqual(@as(u32, 0), Registry.s2_coverage_ratio.load(.monotonic));
+}
+
+test "Registry: S2 metrics format output" {
+    // Reset for clean test
+    Registry.s2_cells_total = Counter.init(
+        "archerdb_s2_cells_total",
+        "Total S2 cells indexed",
+        null,
+    );
+    Registry.s2_cells_total.add(100);
+    Registry.updateS2CoverageRatio(0.75);
+
+    var buf: [131072]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buf);
+
+    try Registry.format(fbs.writer());
+
+    const output = fbs.getWritten();
+
+    // Verify S2 metrics are present in output
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_s2_cells_total") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_s2_cell_level") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_s2_coverage_ratio") != null);
+}
+
+// ============================================================================
+// Extended Memory Metrics Tests (MET-07)
+// ============================================================================
+
+test "Registry: Memory metrics gauges" {
+    // Test memory metrics can be set to arbitrary values
+    Registry.memory_ram_index_bytes.set(1024 * 1024); // 1MB
+    try std.testing.expectEqual(@as(i64, 1024 * 1024), Registry.memory_ram_index_bytes.get());
+
+    Registry.memory_cache_bytes.set(256 * 1024 * 1024); // 256MB
+    try std.testing.expectEqual(@as(i64, 256 * 1024 * 1024), Registry.memory_cache_bytes.get());
+}
+
+test "Registry: Memory metrics format output" {
+    Registry.memory_ram_index_bytes.set(8192);
+    Registry.memory_cache_bytes.set(16384);
+
+    var buf: [131072]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buf);
+
+    try Registry.format(fbs.writer());
+
+    const output = fbs.getWritten();
+
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_memory_ram_index_bytes") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_memory_cache_bytes") != null);
+}
+
+// ============================================================================
+// Connection Pool Metrics Tests (MET-08)
+// ============================================================================
+
+test "Registry: Connection counters" {
+    // Reset counters
+    Registry.connections_total = Counter.init(
+        "archerdb_connections_total",
+        "Total connections accepted",
+        null,
+    );
+    Registry.connections_errors_total = Counter.init(
+        "archerdb_connections_errors_total",
+        "Total connection errors",
+        null,
+    );
+
+    // Test increments
+    Registry.connections_total.inc();
+    Registry.connections_total.inc();
+    Registry.connections_total.inc();
+    try std.testing.expectEqual(@as(u64, 3), Registry.connections_total.get());
+
+    Registry.connections_errors_total.inc();
+    try std.testing.expectEqual(@as(u64, 1), Registry.connections_errors_total.get());
+}
+
+test "Registry: Connection metrics format output" {
+    var buf: [131072]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buf);
+
+    try Registry.format(fbs.writer());
+
+    const output = fbs.getWritten();
+
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_connections_total") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_connections_errors_total") != null);
+}
+
+// ============================================================================
+// LSM Compaction Extended Metrics Tests (MET-06)
+// ============================================================================
+
+test "Registry: Compaction metrics recording" {
+    // Reset counters
+    Registry.compaction_operations_total = Counter.init(
+        "archerdb_compaction_total",
+        "Total compaction operations completed",
+        null,
+    );
+    Registry.compaction_bytes_read_total = Counter.init(
+        "archerdb_compaction_bytes_read_total",
+        "Total bytes read during compaction",
+        null,
+    );
+    Registry.compaction_bytes_written_total = Counter.init(
+        "archerdb_compaction_bytes_written_total",
+        "Total bytes written during compaction",
+        null,
+    );
+
+    // Record compaction
+    Registry.recordCompactionWithDetails(2, 1024, 512, 100_000_000); // 100ms
+
+    // Verify counters
+    try std.testing.expectEqual(@as(u64, 1), Registry.compaction_operations_total.get());
+    try std.testing.expectEqual(@as(u64, 1024), Registry.compaction_bytes_read_total.get());
+    try std.testing.expectEqual(@as(u64, 512), Registry.compaction_bytes_written_total.get());
+    try std.testing.expectEqual(@as(i64, 2), Registry.compaction_current_level.get());
+}
+
+test "Registry: Compaction histogram buckets" {
+    // Reset histogram
+    Registry.compaction_duration_seconds = latencyHistogram(
+        "archerdb_compaction_duration_seconds",
+        "Compaction operation duration histogram",
+        null,
+    );
+
+    // Record observations
+    Registry.compaction_duration_seconds.observe(0.01); // 10ms
+    Registry.compaction_duration_seconds.observe(0.1); // 100ms
+    Registry.compaction_duration_seconds.observe(1.0); // 1s
+
+    try std.testing.expectEqual(@as(u64, 3), Registry.compaction_duration_seconds.getCount());
+    try std.testing.expect(Registry.compaction_duration_seconds.getSum() > 1.0);
+}
+
+test "Registry: Compaction metrics format output" {
+    var buf: [131072]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buf);
+
+    try Registry.format(fbs.writer());
+
+    const output = fbs.getWritten();
+
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_compaction_duration_seconds") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_compaction_bytes_read_total") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_compaction_bytes_written_total") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_compaction_total") != null);
+}
+
+// ============================================================================
+// Checkpoint Metrics Tests
+// ============================================================================
+
+test "Registry: Checkpoint recording" {
+    // Reset counters
+    Registry.checkpoint_total = Counter.init(
+        "archerdb_checkpoint_total",
+        "Total checkpoints completed",
+        null,
+    );
+
+    // Record checkpoints
+    Registry.recordCheckpoint(50_000_000); // 50ms
+    Registry.recordCheckpoint(100_000_000); // 100ms
+
+    try std.testing.expectEqual(@as(u64, 2), Registry.checkpoint_total.get());
+    try std.testing.expect(Registry.checkpoint_duration_seconds.getCount() >= 2);
+}
+
+test "Registry: Checkpoint metrics format output" {
+    var buf: [131072]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buf);
+
+    try Registry.format(fbs.writer());
+
+    const output = fbs.getWritten();
+
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_checkpoint_duration_seconds") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_checkpoint_total") != null);
+}
+
+// ============================================================================
+// Build Info Metrics Tests
+// ============================================================================
+
+test "Registry: Build info initialization" {
+    // Initialize with test values
+    Registry.initBuildInfo("1.2.3", "abc123def");
+
+    // Verify version was stored
+    const version = Registry.build_version[0..Registry.build_version_len];
+    try std.testing.expectEqualStrings("1.2.3", version);
+
+    // Verify commit was stored
+    const commit = Registry.build_commit[0..Registry.build_commit_len];
+    try std.testing.expectEqualStrings("abc123def", commit);
+}
+
+test "Registry: Build info format output" {
+    Registry.initBuildInfo("0.1.0", "deadbeef");
+
+    var buf: [131072]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buf);
+
+    try Registry.format(fbs.writer());
+
+    const output = fbs.getWritten();
+
+    // Verify build info metric is present with labels
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_build_info") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "version=\"0.1.0\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "commit=\"deadbeef\"") != null);
+    // Value should always be 1
+    try std.testing.expect(std.mem.indexOf(u8, output, "} 1") != null);
+}
+
+test "Registry: Build info truncation" {
+    // Test that long strings are truncated
+    const long_version = "v1.2.3-beta.4567890123456789012345678901234567890";
+    const long_commit = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+
+    Registry.initBuildInfo(long_version, long_commit);
+
+    // Version should be truncated to 32 chars
+    try std.testing.expectEqual(@as(u8, 32), Registry.build_version_len);
+
+    // Commit should be truncated to 64 chars
+    try std.testing.expectEqual(@as(u8, 64), Registry.build_commit_len);
+}
