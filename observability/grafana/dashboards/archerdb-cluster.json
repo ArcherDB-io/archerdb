@@ -1,0 +1,756 @@
+{
+  "uid": "archerdb-cluster",
+  "title": "ArcherDB Cluster",
+  "tags": ["archerdb", "cluster", "coordinator", "detail"],
+  "timezone": "browser",
+  "editable": true,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "fiscalYearStartMonth": 0,
+  "liveNow": false,
+  "weekStart": "",
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "label": "Data Source",
+        "description": "Select the Prometheus data source",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "options": [],
+        "refresh": 1,
+        "regex": ""
+      },
+      {
+        "name": "instance",
+        "type": "query",
+        "label": "Node",
+        "description": "Filter by ArcherDB node instance",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "query": "label_values(archerdb_info, instance)",
+        "refresh": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {},
+        "hide": 0,
+        "options": [],
+        "regex": "",
+        "sort": 1
+      },
+      {
+        "name": "terminology",
+        "type": "custom",
+        "label": "Terminology",
+        "description": "Display terminology style: ArcherDB terms, generic database terms, or plain English",
+        "current": {
+          "text": "ArcherDB",
+          "value": "archerdb"
+        },
+        "options": [
+          {"text": "ArcherDB", "value": "archerdb", "selected": true},
+          {"text": "Database", "value": "database", "selected": false},
+          {"text": "Plain English", "value": "plain", "selected": false}
+        ],
+        "query": "archerdb,database,plain",
+        "multi": false,
+        "includeAll": false,
+        "hide": 0
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "name": "View Changes",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "enable": true,
+        "expr": "changes(archerdb_vsr_view[5m]) > 0",
+        "iconColor": "orange",
+        "tagKeys": "instance",
+        "textFormat": "VSR view change on {{ instance }}",
+        "titleFormat": "View Change",
+        "useValueForTime": false
+      },
+      {
+        "name": "Node Restarts",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "enable": true,
+        "expr": "(time() - process_start_time_seconds{job=~\"archerdb.*\"}) < 300",
+        "iconColor": "red",
+        "tagKeys": "instance",
+        "textFormat": "Node recently started: {{ instance }}",
+        "titleFormat": "Node Start",
+        "useValueForTime": false
+      }
+    ]
+  },
+  "links": [
+    {
+      "title": "Overview",
+      "type": "link",
+      "url": "/d/archerdb-overview/archerdb-overview?orgId=1&${__url_time_range}&${__all_variables}",
+      "icon": "external link",
+      "tooltip": "Return to cluster overview dashboard",
+      "keepTime": true,
+      "includeVars": true,
+      "targetBlank": false,
+      "asDropdown": false
+    },
+    {
+      "title": "Queries Detail",
+      "type": "link",
+      "url": "/d/archerdb-queries/archerdb-queries?orgId=1&${__url_time_range}&${__all_variables}",
+      "icon": "external link",
+      "tooltip": "Detailed query performance metrics",
+      "keepTime": true,
+      "includeVars": true,
+      "targetBlank": false,
+      "asDropdown": false
+    },
+    {
+      "title": "Replication Detail",
+      "type": "link",
+      "url": "/d/archerdb-replication/archerdb-replication?orgId=1&${__url_time_range}&${__all_variables}",
+      "icon": "external link",
+      "tooltip": "VSR replication status and lag metrics",
+      "keepTime": true,
+      "includeVars": true,
+      "targetBlank": false,
+      "asDropdown": false
+    },
+    {
+      "title": "Storage Detail",
+      "type": "link",
+      "url": "/d/archerdb-storage/archerdb-storage?orgId=1&${__url_time_range}&${__all_variables}",
+      "icon": "external link",
+      "tooltip": "LSM levels, compaction, disk I/O",
+      "keepTime": true,
+      "includeVars": true,
+      "targetBlank": false,
+      "asDropdown": false
+    }
+  ],
+  "panels": [
+    {
+      "type": "row",
+      "title": "Node Health",
+      "gridPos": {"x": 0, "y": 0, "w": 24, "h": 1},
+      "id": 100,
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "table",
+      "title": "Node Overview",
+      "description": "Overview of all ArcherDB nodes showing health status, version, uptime, and active connections. Green health indicates normal operation, yellow indicates degraded performance, red indicates unhealthy state requiring investigation.",
+      "gridPos": {"x": 0, "y": 1, "w": 12, "h": 8},
+      "id": 1,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "archerdb_health_status{instance=~\"$instance\"}",
+          "legendFormat": "",
+          "refId": "A",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "expr": "archerdb_build_info{instance=~\"$instance\"}",
+          "legendFormat": "",
+          "refId": "B",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "expr": "time() - process_start_time_seconds{instance=~\"$instance\", job=~\"archerdb.*\"}",
+          "legendFormat": "",
+          "refId": "C",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "expr": "archerdb_active_connections{instance=~\"$instance\"}",
+          "legendFormat": "",
+          "refId": "D",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "job": true,
+              "commit": true
+            },
+            "indexByName": {
+              "instance": 0,
+              "Value #A": 1,
+              "version": 2,
+              "Value #C": 3,
+              "Value #D": 4
+            },
+            "renameByName": {
+              "instance": "Instance",
+              "Value #A": "Health",
+              "version": "Version",
+              "Value #C": "Uptime",
+              "Value #D": "Connections"
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null}
+            ]
+          },
+          "custom": {
+            "align": "left",
+            "displayMode": "auto",
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "Health"},
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {"type": "value", "options": {"0": {"text": "Healthy", "color": "green"}}},
+                  {"type": "value", "options": {"1": {"text": "Degraded", "color": "yellow"}}},
+                  {"type": "range", "options": {"from": 2, "to": 999, "result": {"text": "Unhealthy", "color": "red"}}}
+                ]
+              },
+              {"id": "custom.displayMode", "value": "color-background"}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "Uptime"},
+            "properties": [
+              {"id": "unit", "value": "s"}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "Connections"},
+            "properties": [
+              {"id": "unit", "value": "short"}
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": ["sum"],
+          "fields": ""
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Healthy Nodes",
+      "description": "Ratio of healthy nodes (health_status = 0) to total nodes in the cluster. A fully healthy cluster shows 100%. Any percentage below 100% indicates one or more nodes are degraded or unhealthy and require attention.",
+      "gridPos": {"x": 12, "y": 1, "w": 12, "h": 8},
+      "id": 2,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "(count(archerdb_health_status{instance=~\"$instance\"} == 0) or vector(0)) / count(archerdb_health_status{instance=~\"$instance\"}) * 100",
+          "legendFormat": "Healthy %",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "percentage",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "yellow", "value": 50},
+              {"color": "green", "value": 100}
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "type": "row",
+      "title": "Connections",
+      "gridPos": {"x": 0, "y": 9, "w": 24, "h": 1},
+      "id": 101,
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Active Connections",
+      "description": "Number of active client connections per node over time. Monitor for sudden drops (potential network issues) or sustained high values (potential connection leak or overloaded cluster). Plan capacity when connections consistently approach limits.",
+      "gridPos": {"x": 0, "y": 10, "w": 12, "h": 8},
+      "id": 3,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "archerdb_active_connections{instance=~\"$instance\"}",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null}
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "barAlignment": 0,
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "never",
+            "pointSize": 5,
+            "stacking": {"mode": "none", "group": "A"},
+            "axisPlacement": "auto",
+            "axisLabel": "",
+            "axisColorMode": "text",
+            "scaleDistribution": {"type": "linear"},
+            "axisCenteredZero": false,
+            "hideFrom": {"tooltip": false, "viz": false, "legend": false},
+            "thresholdsStyle": {"mode": "off"}
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {"mode": "multi", "sort": "desc"},
+        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Connection Errors",
+      "description": "Rate of connection errors per node. In a healthy cluster, this should be near zero. Non-zero values indicate connection failures - check network configuration, TLS certificates, or client-side issues. Sustained errors require immediate investigation.",
+      "gridPos": {"x": 12, "y": 10, "w": 12, "h": 8},
+      "id": 4,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "rate(archerdb_connection_errors_total{instance=~\"$instance\"}[5m])",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "red", "value": 0.01}
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "barAlignment": 0,
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "never",
+            "pointSize": 5,
+            "stacking": {"mode": "none", "group": "A"},
+            "axisPlacement": "auto",
+            "axisLabel": "",
+            "axisColorMode": "text",
+            "scaleDistribution": {"type": "linear"},
+            "axisCenteredZero": false,
+            "hideFrom": {"tooltip": false, "viz": false, "legend": false},
+            "thresholdsStyle": {"mode": "line+area"}
+          },
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {"mode": "multi", "sort": "desc"},
+        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}
+      }
+    },
+    {
+      "type": "row",
+      "title": "Coordinator",
+      "gridPos": {"x": 0, "y": 18, "w": 24, "h": 1},
+      "id": 102,
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Coordinator Query Rate",
+      "description": "Query rate through the coordinator by query type. 'single' queries are routed to a single shard, 'fanout' queries require coordination across multiple shards. High fanout ratios may indicate suboptimal data distribution or query patterns.",
+      "gridPos": {"x": 0, "y": 19, "w": 12, "h": 8},
+      "id": 5,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "sum(rate(archerdb_coordinator_queries_total{instance=~\"$instance\"}[5m])) by (type)",
+          "legendFormat": "{{type}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null}
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "barAlignment": 0,
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "never",
+            "pointSize": 5,
+            "stacking": {"mode": "none", "group": "A"},
+            "axisPlacement": "auto",
+            "axisLabel": "",
+            "axisColorMode": "text",
+            "scaleDistribution": {"type": "linear"},
+            "axisCenteredZero": false,
+            "hideFrom": {"tooltip": false, "viz": false, "legend": false},
+            "thresholdsStyle": {"mode": "off"}
+          },
+          "noValue": "No coordinator data"
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {"mode": "multi", "sort": "desc"},
+        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Coordinator Query Duration",
+      "description": "Latency percentiles for coordinator queries (p50, p95, p99). Higher latencies for fanout queries are expected due to cross-shard coordination. Monitor p99 for worst-case user experience. Consider query optimization if p99 consistently exceeds thresholds.",
+      "gridPos": {"x": 12, "y": 19, "w": 12, "h": 8},
+      "id": 6,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(archerdb_coordinator_query_duration_seconds_bucket{instance=~\"$instance\"}[5m])) by (le))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(archerdb_coordinator_query_duration_seconds_bucket{instance=~\"$instance\"}[5m])) by (le))",
+          "legendFormat": "p95",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(archerdb_coordinator_query_duration_seconds_bucket{instance=~\"$instance\"}[5m])) by (le))",
+          "legendFormat": "p99",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 0.5},
+              {"color": "red", "value": 2}
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "barAlignment": 0,
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "never",
+            "pointSize": 5,
+            "stacking": {"mode": "none", "group": "A"},
+            "axisPlacement": "auto",
+            "axisLabel": "",
+            "axisColorMode": "text",
+            "scaleDistribution": {"type": "linear"},
+            "axisCenteredZero": false,
+            "hideFrom": {"tooltip": false, "viz": false, "legend": false},
+            "thresholdsStyle": {"mode": "line+area"}
+          },
+          "noValue": "No coordinator data"
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {"mode": "multi", "sort": "desc"},
+        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}
+      }
+    },
+    {
+      "type": "row",
+      "title": "Shard Health",
+      "gridPos": {"x": 0, "y": 27, "w": 24, "h": 1},
+      "id": 103,
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Total Shards",
+      "description": "Total number of shards managed by the coordinator. This represents the data partitioning across the cluster. Changes in shard count may indicate cluster scaling operations or configuration changes.",
+      "gridPos": {"x": 0, "y": 28, "w": 12, "h": 8},
+      "id": 7,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "max(archerdb_coordinator_shards_total{instance=~\"$instance\"})",
+          "legendFormat": "Total Shards",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "blue", "value": null}
+            ]
+          },
+          "noValue": "No coordinator"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "type": "gauge",
+      "title": "Healthy Shards %",
+      "description": "Percentage of shards in healthy state. 90% or above is green (acceptable during maintenance), 75-90% is yellow (degraded, investigate), below 75% is red (critical, immediate action required). Unhealthy shards may cause query failures or data unavailability.",
+      "gridPos": {"x": 12, "y": 28, "w": 12, "h": 8},
+      "id": 8,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "(archerdb_coordinator_shards_healthy{instance=~\"$instance\"} / archerdb_coordinator_shards_total{instance=~\"$instance\"}) * 100",
+          "legendFormat": "Healthy %",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "yellow", "value": 75},
+              {"color": "green", "value": 90}
+            ]
+          },
+          "noValue": "No coordinator"
+        },
+        "overrides": []
+      },
+      "options": {
+        "showThresholdLabels": true,
+        "showThresholdMarkers": true,
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "type": "row",
+      "title": "Build Info",
+      "gridPos": {"x": 0, "y": 36, "w": 24, "h": 1},
+      "id": 104,
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "table",
+      "title": "Version Info",
+      "description": "Build information for each node including version number and commit hash. Use this to verify all nodes are running the same version after deployments. Mismatched versions may cause compatibility issues.",
+      "gridPos": {"x": 0, "y": 37, "w": 12, "h": 8},
+      "id": 9,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "archerdb_build_info{instance=~\"$instance\"}",
+          "legendFormat": "",
+          "refId": "A",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "job": true,
+              "Value": true
+            },
+            "indexByName": {
+              "instance": 0,
+              "version": 1,
+              "commit": 2
+            },
+            "renameByName": {
+              "instance": "Instance",
+              "version": "Version",
+              "commit": "Commit"
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null}
+            ]
+          },
+          "custom": {
+            "align": "left",
+            "displayMode": "auto",
+            "filterable": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": ["sum"],
+          "fields": ""
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Uptime",
+      "description": "Time since node process started, derived from process_start_time_seconds. Monitor for unexpected restarts - short uptimes across multiple nodes may indicate stability issues. Recent restarts are also shown as annotation markers.",
+      "gridPos": {"x": 12, "y": 37, "w": 12, "h": 8},
+      "id": 10,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "min(time() - process_start_time_seconds{instance=~\"$instance\", job=~\"archerdb.*\"})",
+          "legendFormat": "Minimum Uptime",
+          "refId": "A"
+        },
+        {
+          "expr": "max(time() - process_start_time_seconds{instance=~\"$instance\", job=~\"archerdb.*\"})",
+          "legendFormat": "Maximum Uptime",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "yellow", "value": null},
+              {"color": "green", "value": 3600}
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      }
+    }
+  ]
+}
