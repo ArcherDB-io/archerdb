@@ -1,0 +1,45 @@
+# Codecov configuration for ArcherDB
+# https://docs.codecov.io/docs/codecov-yaml
+
+coverage:
+  status:
+    project:
+      default:
+        target: 90%
+        threshold: 1%
+        # Only fail if coverage drops by more than threshold from baseline
+        if_ci_failed: error
+    patch:
+      default:
+        target: 90%
+        # New code should meet coverage threshold
+        if_ci_failed: error
+
+# Ignore test files and generated code in coverage
+ignore:
+  - "src/test/**"
+  - "src/clients/**/test*"
+  - "**/*_test.zig"
+  - "**/testdata/**"
+  - ".zig-cache/**"
+
+# Comment configuration for PRs
+comment:
+  layout: "reach,diff,flags,files"
+  behavior: default
+  require_changes: true
+  require_base: yes
+  require_head: yes
+
+# Upload processing
+parsers:
+  gcov:
+    branch_detection:
+      conditional: yes
+      loop: yes
+      method: no
+      macro: no
+
+# Notification settings
+notify:
+  require_ci_to_pass: yes
