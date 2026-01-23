@@ -1,11 +1,251 @@
 /**
- * ArcherDB v2 Error Codes and Exceptions
+ * ArcherDB Error Codes and Exceptions
  *
- * Provides error code enums and exceptions for:
- * - Multi-region errors (213-218)
- * - Sharding errors (220-224)
- * - Encryption errors (410-414)
+ * This module provides comprehensive error handling for ArcherDB operations:
+ *
+ * **Error Code Ranges:**
+ * - 1001-1002: Connection errors (retryable)
+ * - 2001-2003: Cluster errors (retryable)
+ * - 3001-3004: Validation errors (not retryable)
+ * - 4001-4004: Operation errors (varies)
+ * - 213-218: Multi-region errors (v2)
+ * - 220-224: Sharding errors (v2)
+ * - 410-414: Encryption errors (v2)
+ *
+ * **Type Guards:**
+ * - isArcherDBError(): Check if error is an ArcherDB error
+ * - isNetworkError(): Check if error is network-related
+ * - isValidationError(): Check if error is a validation error
+ * - isOperationError(): Check if error is an operation error
+ * - isRetryableError(): Check if error can be safely retried
+ *
+ * @example
+ * ```typescript
+ * import {
+ *   ArcherDBError,
+ *   ValidationError,
+ *   isArcherDBError,
+ *   isRetryableError,
+ * } from 'archerdb-node'
+ *
+ * try {
+ *   await client.queryRadius(options)
+ * } catch (error) {
+ *   if (isArcherDBError(error)) {
+ *     console.log(`Error code: ${error.code}`)
+ *     if (isRetryableError(error)) {
+ *       // Implement retry logic
+ *     }
+ *   }
+ * }
+ * ```
+ *
+ * @module errors
  */
+
+// Re-export base error types from geo_client
+export {
+  ArcherDBError,
+  ConnectionFailed,
+  ConnectionTimeout,
+  ClusterUnavailable,
+  ViewChangeInProgress,
+  NotPrimary,
+  InvalidCoordinates,
+  PolygonTooComplex,
+  BatchTooLarge,
+  InvalidEntityId,
+  OperationTimeout,
+  QueryResultTooLarge,
+  OutOfSpace,
+  SessionExpired,
+  CircuitBreakerOpen,
+  RetryExhausted,
+} from './geo_client'
+
+import {
+  ArcherDBError,
+  ConnectionFailed,
+  ConnectionTimeout,
+  ClusterUnavailable,
+  ViewChangeInProgress,
+  NotPrimary,
+  InvalidCoordinates,
+  PolygonTooComplex,
+  BatchTooLarge,
+  InvalidEntityId,
+  OperationTimeout,
+  QueryResultTooLarge,
+  OutOfSpace,
+} from './geo_client'
+
+// ============================================================================
+// Type Guards for Base Error Types
+// ============================================================================
+
+/**
+ * Type guard to check if an error is any ArcherDB error.
+ *
+ * Use this to distinguish ArcherDB errors from other JavaScript errors
+ * for centralized error handling.
+ *
+ * @param error - The error to check
+ * @returns true if error is an ArcherDBError instance
+ *
+ * @example
+ * ```typescript
+ * try {
+ *   await client.queryRadius(filter)
+ * } catch (error) {
+ *   if (isArcherDBError(error)) {
+ *     console.log(`ArcherDB error code: ${error.code}`)
+ *     console.log(`Retryable: ${error.retryable}`)
+ *   } else {
+ *     // Not an ArcherDB error - network issue, etc.
+ *     throw error
+ *   }
+ * }
+ * ```
+ */
+export function isArcherDBError(error: unknown): error is ArcherDBError {
+  return error instanceof ArcherDBError
+}
+
+/**
+ * Type guard to check if an error is network-related.
+ *
+ * Network errors are typically transient and can be retried.
+ * Includes connection errors and cluster availability errors.
+ *
+ * @param error - The error to check
+ * @returns true if error is a network/connection error
+ *
+ * @example
+ * ```typescript
+ * try {
+ *   await client.insertEvents(events)
+ * } catch (error) {
+ *   if (isNetworkError(error)) {
+ *     // Wait and retry - network is likely temporarily unavailable
+ *     await sleep(1000)
+ *     await client.insertEvents(events)
+ *   }
+ * }
+ * ```
+ */
+export function isNetworkError(error: unknown): error is
+  | ConnectionFailed
+  | ConnectionTimeout
+  | ClusterUnavailable
+  | ViewChangeInProgress
+  | NotPrimary {
+  return (
+    error instanceof ConnectionFailed ||
+    error instanceof ConnectionTimeout ||
+    error instanceof ClusterUnavailable ||
+    error instanceof ViewChangeInProgress ||
+    error instanceof NotPrimary
+  )
+}
+
+/**
+ * Type guard to check if an error is a validation error.
+ *
+ * Validation errors indicate invalid input that will never succeed.
+ * Do not retry these - fix the input data instead.
+ *
+ * @param error - The error to check
+ * @returns true if error is a validation error
+ *
+ * @example
+ * ```typescript
+ * try {
+ *   await client.queryRadius({ latitude: 200, ... }) // Invalid
+ * } catch (error) {
+ *   if (isValidationError(error)) {
+ *     // Don't retry - fix the input
+ *     console.error(`Invalid input: ${error.message}`)
+ *   }
+ * }
+ * ```
+ */
+export function isValidationError(error: unknown): error is
+  | InvalidCoordinates
+  | PolygonTooComplex
+  | BatchTooLarge
+  | InvalidEntityId {
+  return (
+    error instanceof InvalidCoordinates ||
+    error instanceof PolygonTooComplex ||
+    error instanceof BatchTooLarge ||
+    error instanceof InvalidEntityId
+  )
+}
+
+/**
+ * Type guard to check if an error is an operation error.
+ *
+ * Operation errors occur during query/write execution.
+ * Some are retryable (timeouts), others are not (result too large).
+ *
+ * @param error - The error to check
+ * @returns true if error is an operation error
+ */
+export function isOperationError(error: unknown): error is
+  | OperationTimeout
+  | QueryResultTooLarge
+  | OutOfSpace {
+  return (
+    error instanceof OperationTimeout ||
+    error instanceof QueryResultTooLarge ||
+    error instanceof OutOfSpace
+  )
+}
+
+/**
+ * Type guard to check if an error can be safely retried.
+ *
+ * This is the recommended way to implement retry logic.
+ * Checks the `retryable` property on ArcherDB errors.
+ *
+ * @param error - The error to check
+ * @returns true if the error may succeed on retry
+ *
+ * @example
+ * ```typescript
+ * async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
+ *   let lastError: Error
+ *   for (let i = 0; i < maxRetries; i++) {
+ *     try {
+ *       return await fn()
+ *     } catch (error) {
+ *       lastError = error as Error
+ *       if (!isRetryableError(error)) {
+ *         throw error // Don't retry non-retryable errors
+ *       }
+ *       await sleep(100 * Math.pow(2, i)) // Exponential backoff
+ *     }
+ *   }
+ *   throw lastError!
+ * }
+ * ```
+ */
+export function isRetryableError(error: unknown): boolean {
+  if (isArcherDBError(error)) {
+    return error.retryable
+  }
+  // Check for v2 exception types
+  if (error instanceof MultiRegionException) {
+    return error.retryable
+  }
+  if (error instanceof ShardingException) {
+    return error.retryable
+  }
+  if (error instanceof EncryptionException) {
+    return error.retryable
+  }
+  return false
+}
 
 // ============================================================================
 // Multi-Region Error Codes (213-218)
@@ -245,9 +485,22 @@ export class EncryptionException extends Error {
 // ============================================================================
 
 /**
- * Returns true if the error code indicates a retryable error.
+ * Returns true if the numeric error code indicates a retryable error.
+ *
+ * This function checks v2 error code ranges (multi-region, sharding, encryption).
+ * For error objects, use `isRetryableError()` instead.
+ *
+ * @param code - Numeric error code
+ * @returns true if the error code is retryable
+ *
+ * @example
+ * ```typescript
+ * if (isRetryableCode(error.code)) {
+ *   // Retry the operation
+ * }
+ * ```
  */
-export function isRetryable(code: number): boolean {
+export function isRetryableCode(code: number): boolean {
   if (isMultiRegionError(code)) {
     return MULTI_REGION_ERROR_RETRYABLE[code as MultiRegionError] ?? false
   }
@@ -259,6 +512,11 @@ export function isRetryable(code: number): boolean {
   }
   return false
 }
+
+/**
+ * @deprecated Use `isRetryableCode()` for numeric codes or `isRetryableError()` for error objects
+ */
+export const isRetryable = isRetryableCode
 
 /**
  * Returns the message for any v2 error code.
