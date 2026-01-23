@@ -1,3 +1,50 @@
+// Package archerdb provides a high-performance Go client for ArcherDB, a geospatial database
+// optimized for real-time location tracking and spatial queries.
+//
+// ArcherDB is designed for applications that need to track millions of moving entities
+// (vehicles, devices, people) with sub-millisecond query latency. The Go SDK provides
+// a thread-safe client that can be shared across goroutines.
+//
+// # Quick Start
+//
+// Create a client and insert a geo event:
+//
+//	client, err := archerdb.NewGeoClient(archerdb.GeoClientConfig{
+//	    ClusterID: types.ToUint128(0),
+//	    Addresses: []string{"127.0.0.1:3001"},
+//	})
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	defer client.Close()
+//
+//	event, _ := types.NewGeoEvent(types.GeoEventOptions{
+//	    EntityID:  types.ID(),
+//	    Latitude:  37.7749,
+//	    Longitude: -122.4194,
+//	})
+//	errors, err := client.InsertEvents([]types.GeoEvent{event})
+//
+// # Thread Safety
+//
+// The GeoClient is safe for concurrent use by multiple goroutines. A single client
+// instance should be created and shared across your application. The client manages
+// connection pooling and request multiplexing internally.
+//
+// # Error Handling
+//
+// All errors implement the GeoError interface and support errors.Is for type checking:
+//
+//	if errors.Is(err, archerdb.ErrConnectionFailed) {
+//	    // Handle connection failure
+//	}
+//
+// See the errors package for category helpers like IsNetworkError and IsValidationError.
+//
+// # Context Support
+//
+// Operations support Go context for cancellation and timeouts through the standard
+// client interface. Set request timeouts via GeoClientConfig.RequestTimeout.
 package archerdb
 
 /*
@@ -29,6 +76,7 @@ extern __declspec(dllexport) void onGoPacketCompletion(
 import "C"
 import (
 	"encoding/binary"
+	stderrors "errors"
 	"fmt"
 	"math/rand"
 	"runtime"
@@ -45,99 +93,375 @@ import (
 // Error Types (per SDK spec)
 // ============================================================================
 
-// GeoError is the base interface for ArcherDB errors.
+// GeoError is the base interface for all ArcherDB errors.
+//
+// All error types returned by ArcherDB operations implement this interface,
+// providing access to error codes and retry eligibility. Use errors.Is for
+// type checking and the Code() method for programmatic error handling.
+//
+// Example:
+//
+//	result, err := client.QueryRadius(filter)
+//	if err != nil {
+//	    if geoErr, ok := err.(archerdb.GeoError); ok {
+//	        log.Printf("Error code %d, retryable: %v", geoErr.Code(), geoErr.Retryable())
+//	    }
+//	}
 type GeoError interface {
 	error
+	// Code returns the numeric error code for programmatic handling.
+	// See error-codes.md for the complete list of error codes.
 	Code() int
+	// Retryable returns true if the operation can be safely retried.
+	// Network errors are typically retryable; validation errors are not.
 	Retryable() bool
 }
 
-// ConnectionFailedError indicates failure to establish connection to cluster.
+// Sentinel error variables for errors.Is comparisons.
+// Use these with errors.Is() for type-safe error checking:
+//
+//	if errors.Is(err, archerdb.ErrConnectionFailed) {
+//	    // Handle connection failure
+//	}
+var (
+	// ErrConnectionFailed is returned when the client cannot connect to any cluster node.
+	ErrConnectionFailed = &ConnectionFailedError{}
+	// ErrConnectionTimeout is returned when a connection attempt times out.
+	ErrConnectionTimeout = &ConnectionTimeoutError{}
+	// ErrClusterUnavailable is returned when the cluster is unavailable after retries.
+	ErrClusterUnavailable = &ClusterUnavailableError{}
+	// ErrInvalidCoordinates is returned when coordinates are outside valid ranges.
+	ErrInvalidCoordinates = &InvalidCoordinatesError{}
+	// ErrBatchTooLarge is returned when a batch exceeds the maximum size (10,000 events).
+	ErrBatchTooLarge = &BatchTooLargeError{}
+	// ErrInvalidEntityID is returned when an entity ID is invalid (e.g., zero).
+	ErrInvalidEntityID = &InvalidEntityIDError{}
+	// ErrEntityExpired is returned when querying an entity that has expired due to TTL.
+	ErrEntityExpired = &EntityExpiredError{}
+	// ErrOperationTimeout is returned when an operation times out.
+	ErrOperationTimeout = &OperationTimeoutError{}
+	// ErrQueryResultTooLarge is returned when query limit exceeds maximum (81,000).
+	ErrQueryResultTooLarge = &QueryResultTooLargeError{}
+	// ErrClientClosed is returned when operations are attempted on a closed client.
+	ErrClientClosed = &ClientClosedError{}
+	// ErrRetryExhausted is returned when all retry attempts have been exhausted.
+	ErrRetryExhausted = &RetryExhaustedError{}
+)
+
+// ConnectionFailedError indicates failure to establish connection to any cluster node.
+// This is a retryable error - the client will attempt to reconnect automatically
+// if retry is enabled.
+//
+// Error code: 1001
 type ConnectionFailedError struct{ Msg string }
+
 func (e ConnectionFailedError) Error() string   { return e.Msg }
 func (e ConnectionFailedError) Code() int       { return 1001 }
 func (e ConnectionFailedError) Retryable() bool { return true }
 
-// ConnectionTimeoutError indicates connection attempt timed out.
+// Is implements errors.Is support for ConnectionFailedError.
+func (e *ConnectionFailedError) Is(target error) bool {
+	_, ok := target.(*ConnectionFailedError)
+	return ok
+}
+
+// ConnectionTimeoutError indicates a connection attempt exceeded the configured timeout.
+// This is a retryable error - the client may succeed on retry if network issues resolve.
+//
+// Error code: 1002
 type ConnectionTimeoutError struct{ Msg string }
+
 func (e ConnectionTimeoutError) Error() string   { return e.Msg }
 func (e ConnectionTimeoutError) Code() int       { return 1002 }
 func (e ConnectionTimeoutError) Retryable() bool { return true }
 
-// ClusterUnavailableError indicates cluster is unavailable after exhausting retries.
+// Is implements errors.Is support for ConnectionTimeoutError.
+func (e *ConnectionTimeoutError) Is(target error) bool {
+	_, ok := target.(*ConnectionTimeoutError)
+	return ok
+}
+
+// ClusterUnavailableError indicates the cluster is not accepting requests.
+// This typically occurs during leader election or when a quorum is unavailable.
+// This is a retryable error - retry after a brief delay.
+//
+// Error code: 2001
 type ClusterUnavailableError struct{ Msg string }
+
 func (e ClusterUnavailableError) Error() string   { return e.Msg }
 func (e ClusterUnavailableError) Code() int       { return 2001 }
 func (e ClusterUnavailableError) Retryable() bool { return true }
 
-// InvalidCoordinatesError indicates coordinates are out of valid range.
+// Is implements errors.Is support for ClusterUnavailableError.
+func (e *ClusterUnavailableError) Is(target error) bool {
+	_, ok := target.(*ClusterUnavailableError)
+	return ok
+}
+
+// InvalidCoordinatesError indicates coordinates are outside valid ranges.
+// Latitude must be in [-90, +90] degrees; longitude must be in [-180, +180] degrees.
+// This is NOT a retryable error - fix the input coordinates.
+//
+// Error code: 3001
 type InvalidCoordinatesError struct{ Msg string }
+
 func (e InvalidCoordinatesError) Error() string   { return e.Msg }
 func (e InvalidCoordinatesError) Code() int       { return 3001 }
 func (e InvalidCoordinatesError) Retryable() bool { return false }
 
-// BatchTooLargeError indicates batch exceeds maximum size.
+// Is implements errors.Is support for InvalidCoordinatesError.
+func (e *InvalidCoordinatesError) Is(target error) bool {
+	_, ok := target.(*InvalidCoordinatesError)
+	return ok
+}
+
+// BatchTooLargeError indicates a batch exceeds the maximum size.
+// The maximum batch size is 10,000 events. Split larger batches into smaller chunks.
+// This is NOT a retryable error - reduce the batch size.
+//
+// Error code: 3003
 type BatchTooLargeError struct{ Msg string }
+
 func (e BatchTooLargeError) Error() string   { return e.Msg }
 func (e BatchTooLargeError) Code() int       { return 3003 }
 func (e BatchTooLargeError) Retryable() bool { return false }
 
-// InvalidEntityIDError indicates entity ID is invalid.
+// Is implements errors.Is support for BatchTooLargeError.
+func (e *BatchTooLargeError) Is(target error) bool {
+	_, ok := target.(*BatchTooLargeError)
+	return ok
+}
+
+// InvalidEntityIDError indicates an entity ID is invalid.
+// Entity IDs must not be zero. Use types.ID() to generate valid UUIDs.
+// This is NOT a retryable error - provide a valid entity ID.
+//
+// Error code: 3004
 type InvalidEntityIDError struct{ Msg string }
+
 func (e InvalidEntityIDError) Error() string   { return e.Msg }
 func (e InvalidEntityIDError) Code() int       { return 3004 }
 func (e InvalidEntityIDError) Retryable() bool { return false }
 
-// EntityExpiredError indicates entity has expired due to TTL.
+// Is implements errors.Is support for InvalidEntityIDError.
+func (e *InvalidEntityIDError) Is(target error) bool {
+	_, ok := target.(*InvalidEntityIDError)
+	return ok
+}
+
+// EntityExpiredError indicates an entity has expired due to TTL.
+// The entity existed but its TTL has elapsed. This is expected behavior for
+// time-limited data. This is NOT a retryable error.
+//
+// Error code: 210
 type EntityExpiredError struct{ Msg string }
+
 func (e EntityExpiredError) Error() string   { return e.Msg }
 func (e EntityExpiredError) Code() int       { return 210 }
 func (e EntityExpiredError) Retryable() bool { return false }
 
-// OperationTimeoutError indicates operation timed out.
+// Is implements errors.Is support for EntityExpiredError.
+func (e *EntityExpiredError) Is(target error) bool {
+	_, ok := target.(*EntityExpiredError)
+	return ok
+}
+
+// OperationTimeoutError indicates an operation exceeded its configured timeout.
+// This is a retryable error - the operation may succeed on retry.
+//
+// Error code: 4001
 type OperationTimeoutError struct{ Msg string }
+
 func (e OperationTimeoutError) Error() string   { return e.Msg }
 func (e OperationTimeoutError) Code() int       { return 4001 }
 func (e OperationTimeoutError) Retryable() bool { return true }
 
-// QueryResultTooLargeError indicates query limit exceeds maximum.
+// Is implements errors.Is support for OperationTimeoutError.
+func (e *OperationTimeoutError) Is(target error) bool {
+	_, ok := target.(*OperationTimeoutError)
+	return ok
+}
+
+// QueryResultTooLargeError indicates a query limit exceeds the maximum.
+// The maximum query limit is 81,000 results. Use pagination for larger result sets.
+// This is NOT a retryable error - reduce the limit.
+//
+// Error code: 4002
 type QueryResultTooLargeError struct{ Msg string }
+
 func (e QueryResultTooLargeError) Error() string   { return e.Msg }
 func (e QueryResultTooLargeError) Code() int       { return 4002 }
 func (e QueryResultTooLargeError) Retryable() bool { return false }
 
-// ClientClosedError indicates client has been closed.
+// Is implements errors.Is support for QueryResultTooLargeError.
+func (e *QueryResultTooLargeError) Is(target error) bool {
+	_, ok := target.(*QueryResultTooLargeError)
+	return ok
+}
+
+// ClientClosedError indicates operations were attempted on a closed client.
+// Once Close() is called, the client cannot be reused. Create a new client.
+// This is NOT a retryable error.
+//
+// Error code: 5001
 type ClientClosedError struct{ Msg string }
+
 func (e ClientClosedError) Error() string   { return e.Msg }
 func (e ClientClosedError) Code() int       { return 5001 }
 func (e ClientClosedError) Retryable() bool { return false }
 
+// Is implements errors.Is support for ClientClosedError.
+func (e *ClientClosedError) Is(target error) bool {
+	_, ok := target.(*ClientClosedError)
+	return ok
+}
+
 // RetryExhaustedError indicates all retry attempts have been exhausted.
+// This wraps the last error encountered during retry attempts.
+// Check LastError for the underlying cause.
+//
+// Error code: 5002
 type RetryExhaustedError struct {
-	Attempts  int
+	// Attempts is the total number of attempts made (including the initial attempt).
+	Attempts int
+	// LastError is the error from the final attempt.
 	LastError error
 }
+
 func (e RetryExhaustedError) Error() string {
 	return fmt.Sprintf("all %d retry attempts exhausted, last error: %v", e.Attempts, e.LastError)
 }
 func (e RetryExhaustedError) Code() int       { return 5002 }
 func (e RetryExhaustedError) Retryable() bool { return false }
 
+// Unwrap returns the underlying error for errors.Unwrap support.
+func (e RetryExhaustedError) Unwrap() error {
+	return e.LastError
+}
+
+// Is implements errors.Is support for RetryExhaustedError.
+func (e *RetryExhaustedError) Is(target error) bool {
+	_, ok := target.(*RetryExhaustedError)
+	return ok
+}
+
+// IsNetworkError returns true if err is any network-related error.
+// Network errors are typically retryable and include connection failures,
+// timeouts, and cluster unavailability.
+//
+// Example:
+//
+//	if archerdb.IsNetworkError(err) {
+//	    log.Printf("Network error, will retry: %v", err)
+//	}
+func IsNetworkError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var connFailed *ConnectionFailedError
+	var connTimeout *ConnectionTimeoutError
+	var clusterUnavail *ClusterUnavailableError
+	var opTimeout *OperationTimeoutError
+	if stderrors.As(err, &connFailed) ||
+		stderrors.As(err, &connTimeout) ||
+		stderrors.As(err, &clusterUnavail) ||
+		stderrors.As(err, &opTimeout) {
+		return true
+	}
+	return false
+}
+
+// IsValidationError returns true if err is any validation error.
+// Validation errors indicate invalid input and are NOT retryable.
+// Fix the input data before retrying.
+//
+// Example:
+//
+//	if archerdb.IsValidationError(err) {
+//	    log.Printf("Invalid input: %v", err)
+//	}
+func IsValidationError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var invalidCoords *InvalidCoordinatesError
+	var batchTooLarge *BatchTooLargeError
+	var invalidEntity *InvalidEntityIDError
+	var queryTooLarge *QueryResultTooLargeError
+	if stderrors.As(err, &invalidCoords) ||
+		stderrors.As(err, &batchTooLarge) ||
+		stderrors.As(err, &invalidEntity) ||
+		stderrors.As(err, &queryTooLarge) {
+		return true
+	}
+	return false
+}
+
 // ============================================================================
 // Configuration
 // ============================================================================
 
-// RetryConfig contains retry configuration options (per client-retry/spec.md).
+// RetryConfig configures automatic retry behavior for transient failures.
+//
+// The retry mechanism uses exponential backoff with optional jitter to prevent
+// thundering herd problems when multiple clients retry simultaneously.
+//
+// Backoff calculation: delay = min(base_backoff * 2^(attempt-1), max_backoff)
+// With jitter: delay = delay + random(0, delay/2)
+//
+// Example:
+//
+//	config := archerdb.RetryConfig{
+//	    Enabled:      true,
+//	    MaxRetries:   5,              // Up to 5 retries after initial failure
+//	    BaseBackoff:  100 * time.Millisecond,
+//	    MaxBackoff:   1600 * time.Millisecond,
+//	    TotalTimeout: 30 * time.Second,
+//	    Jitter:       true,
+//	}
 type RetryConfig struct {
-	Enabled        bool          // Whether automatic retry is enabled (default: true)
-	MaxRetries     int           // Maximum retry attempts after initial failure (default: 5)
-	BaseBackoff    time.Duration // Base backoff delay (default: 100ms)
-	MaxBackoff     time.Duration // Maximum backoff delay (default: 1600ms)
-	TotalTimeout   time.Duration // Total timeout for all retry attempts (default: 30s)
-	Jitter         bool          // Add random jitter to prevent thundering herd (default: true)
+	// Enabled controls whether automatic retry is active.
+	// When false, operations fail immediately on first error.
+	// Default: true
+	Enabled bool
+
+	// MaxRetries is the maximum number of retry attempts after the initial failure.
+	// Total attempts = 1 (initial) + MaxRetries.
+	// Default: 5
+	MaxRetries int
+
+	// BaseBackoff is the initial backoff delay before the first retry.
+	// Subsequent retries double this delay up to MaxBackoff.
+	// Default: 100ms
+	BaseBackoff time.Duration
+
+	// MaxBackoff is the maximum delay between retry attempts.
+	// Backoff will not exceed this value regardless of attempt count.
+	// Default: 1600ms
+	MaxBackoff time.Duration
+
+	// TotalTimeout is the maximum total time for all retry attempts.
+	// If this timeout is reached, RetryExhaustedError is returned.
+	// Default: 30s
+	TotalTimeout time.Duration
+
+	// Jitter adds randomness to backoff delays to prevent thundering herd.
+	// When enabled, adds random(0, delay/2) to each backoff delay.
+	// Default: true
+	Jitter bool
 }
 
 // DefaultRetryConfig returns the default retry configuration.
+//
+// Default values:
+//   - Enabled: true
+//   - MaxRetries: 5
+//   - BaseBackoff: 100ms
+//   - MaxBackoff: 1600ms
+//   - TotalTimeout: 30s
+//   - Jitter: true
+//
+// The default backoff sequence (without jitter): 100ms, 200ms, 400ms, 800ms, 1600ms
 func DefaultRetryConfig() RetryConfig {
 	return RetryConfig{
 		Enabled:      true,
@@ -149,73 +473,257 @@ func DefaultRetryConfig() RetryConfig {
 	}
 }
 
-// GeoClientConfig contains client configuration options.
+// GeoClientConfig contains configuration options for creating a GeoClient.
+//
+// Required fields:
+//   - Addresses: At least one cluster node address
+//
+// Optional fields have sensible defaults.
+//
+// Example:
+//
+//	config := archerdb.GeoClientConfig{
+//	    ClusterID:      types.ToUint128(0),
+//	    Addresses:      []string{"127.0.0.1:3001", "127.0.0.1:3002"},
+//	    ConnectTimeout: 5 * time.Second,
+//	    RequestTimeout: 10 * time.Second,
+//	    Retry: &archerdb.RetryConfig{
+//	        Enabled:    true,
+//	        MaxRetries: 3,
+//	    },
+//	}
 type GeoClientConfig struct {
-	ClusterID      types.Uint128
-	Addresses      []string
+	// ClusterID is the unique identifier for the ArcherDB cluster.
+	// Use types.ToUint128(0) for single-cluster deployments.
+	ClusterID types.Uint128
+
+	// Addresses is the list of cluster node addresses (host:port).
+	// At least one address is required. The client will connect to any
+	// available node and discover the full cluster topology.
+	Addresses []string
+
+	// ConnectTimeout is the maximum time to wait for initial connection.
+	// Default: 5 seconds
 	ConnectTimeout time.Duration
+
+	// RequestTimeout is the maximum time to wait for a single request.
+	// This timeout applies to each attempt, not total retry time.
+	// Default: 10 seconds
 	RequestTimeout time.Duration
-	Retry          *RetryConfig
+
+	// Retry configures automatic retry behavior for transient failures.
+	// If nil, DefaultRetryConfig() is used.
+	Retry *RetryConfig
 }
 
 // ============================================================================
 // GeoClient Interface
 // ============================================================================
 
-// GeoClient is the ArcherDB geospatial client interface.
+// GeoClient is the main interface for interacting with an ArcherDB cluster.
+//
+// GeoClient is safe for concurrent use by multiple goroutines. A single instance
+// should be created and shared across your application. The client manages connection
+// pooling, request multiplexing, and automatic retry internally.
+//
+// # Lifecycle
+//
+// Create a client using NewGeoClient, use it for operations, and call Close when done:
+//
+//	client, err := archerdb.NewGeoClient(config)
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	defer client.Close()
+//
+// # Operations
+//
+// The client supports these operation categories:
+//
+// Insert/Update:
+//   - InsertEvents: Insert new geo events
+//   - UpsertEvents: Insert or update geo events
+//   - DeleteEntities: Delete entities (GDPR-compliant)
+//
+// Query:
+//   - GetLatestByUUID: Get latest event for a single entity
+//   - QueryUUIDBatch: Get latest events for multiple entities
+//   - QueryRadius: Find events within a circular area
+//   - QueryPolygon: Find events within a polygon
+//   - QueryLatest: Get most recent events
+//
+// TTL Management:
+//   - SetTTL: Set absolute TTL for an entity
+//   - ExtendTTL: Extend existing TTL
+//   - ClearTTL: Remove TTL (make permanent)
+//
+// Cluster:
+//   - Ping: Check connectivity
+//   - GetStatus: Get server status
+//   - GetTopology: Get cluster topology
 type GeoClient interface {
-	// InsertEvents inserts geo events (returns only errors, success = empty slice).
+	// InsertEvents inserts geo events into the database.
+	//
+	// Events are inserted atomically - either all succeed or all fail.
+	// The returned slice contains errors for events that failed validation.
+	// A nil error with empty slice indicates all events were inserted successfully.
+	//
+	// Maximum batch size is 10,000 events. Use SplitBatch for larger datasets.
+	//
+	// Example:
+	//
+	//	errors, err := client.InsertEvents(events)
+	//	if err != nil {
+	//	    // Network or system error
+	//	}
+	//	for _, e := range errors {
+	//	    log.Printf("Event %d failed: %v", e.Index, e.Result)
+	//	}
 	InsertEvents(events []types.GeoEvent) ([]types.InsertGeoEventsError, error)
 
-	// UpsertEvents upserts geo events (update if exists, insert otherwise).
+	// UpsertEvents inserts or updates geo events.
+	//
+	// If an event with the same ID exists, it is updated. Otherwise, it is inserted.
+	// Uses Last-Writer-Wins (LWW) semantics for conflict resolution.
+	//
+	// Returns errors for events that failed validation.
 	UpsertEvents(events []types.GeoEvent) ([]types.InsertGeoEventsError, error)
 
-	// DeleteEntities deletes entities by their IDs.
+	// DeleteEntities deletes all events for the specified entities.
+	//
+	// This is a GDPR-compliant deletion that removes all historical data for each
+	// entity. The deletion is permanent and cannot be undone.
+	//
+	// Returns a DeleteResult with counts of deleted and not-found entities.
 	DeleteEntities(entityIDs []types.Uint128) (types.DeleteResult, error)
 
-	// GetLatestByUUID looks up the latest event for an entity by UUID.
+	// GetLatestByUUID returns the most recent event for an entity.
+	//
+	// Returns nil (not an error) if the entity does not exist.
+	// Returns EntityExpiredError if the entity existed but has expired.
+	//
+	// Example:
+	//
+	//	event, err := client.GetLatestByUUID(entityID)
+	//	if err != nil {
+	//	    if errors.Is(err, archerdb.ErrEntityExpired) {
+	//	        log.Printf("Entity has expired")
+	//	    }
+	//	}
+	//	if event != nil {
+	//	    log.Printf("Last seen: %v", event.Timestamp)
+	//	}
 	GetLatestByUUID(entityID types.Uint128) (*types.GeoEvent, error)
 
-	// QueryUUIDBatch looks up latest events for multiple entities.
+	// QueryUUIDBatch looks up the latest events for multiple entities in one request.
+	//
+	// More efficient than multiple GetLatestByUUID calls for batch lookups.
+	// Maximum batch size is 10,000 entity IDs.
+	//
+	// The result contains found events and indices of not-found entities.
 	QueryUUIDBatch(entityIDs []types.Uint128) (types.QueryUUIDBatchResult, error)
 
-	// QueryRadius queries events within a radius.
+	// QueryRadius finds events within a circular area.
+	//
+	// The filter specifies center coordinates (nanodegrees), radius (millimeters),
+	// and optional time/group filters. Results are ordered by timestamp (newest first).
+	//
+	// Use HasMore and Cursor for pagination through large result sets.
+	//
+	// Example:
+	//
+	//	filter := types.QueryRadiusFilter{
+	//	    CenterLatNano: 37774900000,   // 37.7749 degrees
+	//	    CenterLonNano: -122419400000, // -122.4194 degrees
+	//	    RadiusMM:      1000000,       // 1 kilometer
+	//	    Limit:         100,
+	//	}
+	//	result, err := client.QueryRadius(filter)
+	//	for _, event := range result.Events {
+	//	    // Process event
+	//	}
 	QueryRadius(filter types.QueryRadiusFilter) (types.QueryResult, error)
 
-	// QueryPolygon queries events within a polygon.
+	// QueryPolygon finds events within a polygon boundary.
+	//
+	// The polygon is defined by vertices in counter-clockwise order.
+	// Supports holes (exclusion zones) defined in clockwise order.
+	//
+	// Maximum vertices: 10,000 for outer boundary, 100 holes maximum.
 	QueryPolygon(filter types.QueryPolygonFilter) (types.QueryResult, error)
 
-	// QueryLatest queries the most recent events globally or by group.
+	// QueryLatest returns the most recent events globally or filtered by group.
+	//
+	// Useful for dashboards showing current entity positions.
+	// Results are ordered by timestamp (newest first).
 	QueryLatest(filter types.QueryLatestFilter) (types.QueryResult, error)
 
-	// Ping sends a ping to verify server connectivity.
+	// Ping verifies connectivity to the server.
+	//
+	// Returns true if the server responded with a valid pong.
+	// Use for health checks and connection validation.
 	Ping() (bool, error)
 
-	// GetStatus returns current server status.
+	// GetStatus returns current server status and statistics.
+	//
+	// Includes RAM index utilization, tombstone count, and TTL expiration counts.
 	GetStatus() (types.StatusResponse, error)
 
-	// GetTopology fetches the current cluster topology (F5.1).
+	// GetTopology fetches the current cluster topology.
+	//
+	// Returns shard assignments, primary/replica locations, and cluster health.
+	// The topology is also cached internally for shard-aware routing.
 	GetTopology() (*types.TopologyResponse, error)
 
-	// GetTopologyCache returns the topology cache for direct access (F5.1).
+	// GetTopologyCache returns the internal topology cache.
+	//
+	// Use for inspecting cached topology without a network call.
+	// The cache is automatically updated on topology changes.
 	GetTopologyCache() *types.TopologyCache
 
-	// RefreshTopology forces a topology refresh from the cluster (F5.1).
+	// RefreshTopology forces an immediate topology refresh from the cluster.
+	//
+	// Call after receiving a "not shard leader" error to update routing.
 	RefreshTopology() error
 
-	// GetShardRouter returns a shard router for shard-aware operations (F5.1.4).
+	// GetShardRouter returns a shard router for advanced shard-aware operations.
+	//
+	// Use for custom routing logic or scatter-gather queries.
 	GetShardRouter() *types.ShardRouter
 
-	// SetTTL sets an absolute TTL for an entity (Manual TTL Support).
+	// SetTTL sets an absolute TTL (time-to-live) for an entity.
+	//
+	// After ttlSeconds, the entity will be automatically expired and removed.
+	// Replaces any existing TTL. Use 0 to clear TTL (equivalent to ClearTTL).
+	//
+	// Example:
+	//
+	//	// Expire entity after 24 hours
+	//	resp, err := client.SetTTL(entityID, 86400)
 	SetTTL(entityID types.Uint128, ttlSeconds uint32) (*types.TtlSetResponse, error)
 
-	// ExtendTTL extends an entity's TTL by a relative amount (Manual TTL Support).
+	// ExtendTTL extends an entity's existing TTL by a relative amount.
+	//
+	// Adds extendBySeconds to the current TTL. If no TTL exists, sets a new TTL.
+	// Useful for "keep alive" patterns where active entities stay fresh.
+	//
+	// Example:
+	//
+	//	// Extend TTL by 1 hour
+	//	resp, err := client.ExtendTTL(entityID, 3600)
 	ExtendTTL(entityID types.Uint128, extendBySeconds uint32) (*types.TtlExtendResponse, error)
 
-	// ClearTTL removes an entity's TTL, making it never expire (Manual TTL Support).
+	// ClearTTL removes an entity's TTL, making it permanent.
+	//
+	// After clearing, the entity will never automatically expire.
+	// Use for entities that should be retained indefinitely.
 	ClearTTL(entityID types.Uint128) (*types.TtlClearResponse, error)
 
-	// Close closes the client and releases resources.
+	// Close releases all resources associated with the client.
+	//
+	// After Close is called, all operations will return ClientClosedError.
+	// Close should be called when the client is no longer needed.
+	// It is safe to call Close multiple times.
 	Close()
 }
 
@@ -223,14 +731,45 @@ type GeoClient interface {
 // GeoEvent Batch Builder
 // ============================================================================
 
-// GeoEventBatch accumulates events before commit.
+// GeoEventBatch provides a builder pattern for accumulating events before submission.
+//
+// Use batching to improve throughput when inserting many events. Events are validated
+// on Add and submitted atomically on Commit.
+//
+// Example:
+//
+//	batch := client.CreateBatch()
+//	for _, data := range locations {
+//	    err := batch.AddFromOptions(types.GeoEventOptions{
+//	        EntityID:  data.EntityID,
+//	        Latitude:  data.Lat,
+//	        Longitude: data.Lon,
+//	    })
+//	    if err != nil {
+//	        log.Printf("Invalid event: %v", err)
+//	        continue
+//	    }
+//	    if batch.IsFull() {
+//	        errors, err := batch.Commit()
+//	        // Handle results
+//	    }
+//	}
+//	// Commit remaining events
+//	errors, err := batch.Commit()
 type GeoEventBatch struct {
 	events    []types.GeoEvent
 	client    *geoClient
 	operation string // "insert" or "upsert"
 }
 
-// Add adds a GeoEvent to the batch.
+// Add adds a pre-constructed GeoEvent to the batch.
+//
+// The event is validated before being added. Returns an error if:
+//   - The batch is full (10,000 events)
+//   - Coordinates are invalid
+//   - Entity ID is zero
+//
+// Use AddFromOptions for automatic unit conversion from user-friendly values.
 func (b *GeoEventBatch) Add(event types.GeoEvent) error {
 	if len(b.events) >= types.BatchSizeMax {
 		return BatchTooLargeError{Msg: fmt.Sprintf("batch is full (max %d events)", types.BatchSizeMax)}
@@ -244,7 +783,22 @@ func (b *GeoEventBatch) Add(event types.GeoEvent) error {
 	return nil
 }
 
-// AddFromOptions adds a GeoEvent using user-friendly options.
+// AddFromOptions creates a GeoEvent from user-friendly options and adds it to the batch.
+//
+// Handles automatic unit conversion:
+//   - Latitude/Longitude: degrees to nanodegrees
+//   - Altitude/Accuracy: meters to millimeters
+//   - Velocity: meters/second to millimeters/second
+//   - Heading: degrees (0-360) to centidegrees
+//
+// Example:
+//
+//	err := batch.AddFromOptions(types.GeoEventOptions{
+//	    EntityID:  types.ID(),
+//	    Latitude:  37.7749,
+//	    Longitude: -122.4194,
+//	    Heading:   90.0,  // East
+//	})
 func (b *GeoEventBatch) AddFromOptions(opts types.GeoEventOptions) error {
 	event, err := types.NewGeoEvent(opts)
 	if err != nil {
@@ -253,22 +807,36 @@ func (b *GeoEventBatch) AddFromOptions(opts types.GeoEventOptions) error {
 	return b.Add(event)
 }
 
-// Count returns the number of events in the batch.
+// Count returns the number of events currently in the batch.
 func (b *GeoEventBatch) Count() int {
 	return len(b.events)
 }
 
-// IsFull returns true if the batch is full.
+// IsFull returns true if the batch has reached its maximum capacity (10,000 events).
+//
+// Check IsFull before adding events to avoid BatchTooLargeError.
+// When full, call Commit to send the batch and then continue adding.
 func (b *GeoEventBatch) IsFull() bool {
 	return len(b.events) >= types.BatchSizeMax
 }
 
-// Clear clears all events from the batch.
+// Clear removes all events from the batch without submitting them.
+//
+// Use Clear to discard a batch and start over, or to reuse the batch
+// after Commit for adding more events.
 func (b *GeoEventBatch) Clear() {
 	b.events = b.events[:0]
 }
 
-// Commit commits the batch to the cluster.
+// Commit submits all accumulated events to the cluster.
+//
+// Events are submitted as a single batch operation. On success, the batch
+// is automatically cleared. On failure, the batch remains unchanged so
+// you can inspect or retry.
+//
+// Returns:
+//   - []InsertGeoEventsError: Per-event validation errors (empty on full success)
+//   - error: Network or system error (nil on success)
 func (b *GeoEventBatch) Commit() ([]types.InsertGeoEventsError, error) {
 	if len(b.events) == 0 {
 		return nil, nil
@@ -294,13 +862,29 @@ func (b *GeoEventBatch) Commit() ([]types.InsertGeoEventsError, error) {
 // Delete Entity Batch Builder
 // ============================================================================
 
-// DeleteEntityBatch accumulates entity IDs for deletion.
+// DeleteEntityBatch provides a builder pattern for accumulating entity IDs to delete.
+//
+// Use for GDPR-compliant deletion of multiple entities in a single operation.
+// All events associated with each entity are permanently removed.
+//
+// Example:
+//
+//	batch := client.CreateDeleteBatch()
+//	for _, id := range entityIDsToDelete {
+//	    batch.Add(id)
+//	}
+//	result, err := batch.Commit()
+//	log.Printf("Deleted %d entities", result.DeletedCount)
 type DeleteEntityBatch struct {
 	entityIDs []types.Uint128
 	client    *geoClient
 }
 
-// Add adds an entity ID for deletion.
+// Add adds an entity ID to the deletion batch.
+//
+// Returns an error if:
+//   - The batch is full (10,000 entities)
+//   - The entity ID is zero
 func (b *DeleteEntityBatch) Add(entityID types.Uint128) error {
 	if len(b.entityIDs) >= types.BatchSizeMax {
 		return BatchTooLargeError{Msg: fmt.Sprintf("batch is full (max %d entities)", types.BatchSizeMax)}
@@ -316,17 +900,23 @@ func (b *DeleteEntityBatch) Add(entityID types.Uint128) error {
 	return nil
 }
 
-// Count returns the number of entities in the batch.
+// Count returns the number of entity IDs in the batch.
 func (b *DeleteEntityBatch) Count() int {
 	return len(b.entityIDs)
 }
 
-// Clear clears all entity IDs from the batch.
+// Clear removes all entity IDs from the batch without executing deletion.
 func (b *DeleteEntityBatch) Clear() {
 	b.entityIDs = b.entityIDs[:0]
 }
 
-// Commit commits the delete batch.
+// Commit executes the deletion for all accumulated entity IDs.
+//
+// Returns a DeleteResult containing:
+//   - DeletedCount: Number of entities successfully deleted
+//   - NotFoundCount: Number of entities that did not exist
+//
+// On success, the batch is automatically cleared.
 func (b *DeleteEntityBatch) Commit() (types.DeleteResult, error) {
 	if len(b.entityIDs) == 0 {
 		return types.DeleteResult{}, nil
@@ -344,6 +934,8 @@ func (b *DeleteEntityBatch) Commit() (types.DeleteResult, error) {
 // GeoClient Implementation
 // ============================================================================
 
+// geoClient is the concrete implementation of the GeoClient interface.
+// Use NewGeoClient or NewGeoClientEcho to create instances.
 type geoClient struct {
 	arch_client   *C.arch_client_t
 	config        GeoClientConfig
@@ -354,7 +946,30 @@ type geoClient struct {
 	closed        bool
 }
 
-// NewGeoClient creates a new ArcherDB geospatial client.
+// NewGeoClient creates a new ArcherDB geospatial client connected to a cluster.
+//
+// The client establishes connections to the provided addresses and discovers
+// the full cluster topology. At least one address must be provided, but the
+// client will automatically discover and connect to all cluster nodes.
+//
+// The returned client is safe for concurrent use by multiple goroutines.
+// Create one client and share it across your application.
+//
+// Example:
+//
+//	client, err := archerdb.NewGeoClient(archerdb.GeoClientConfig{
+//	    ClusterID: types.ToUint128(0),
+//	    Addresses: []string{"127.0.0.1:3001"},
+//	})
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	defer client.Close()
+//
+// Returns an error if:
+//   - No addresses provided
+//   - Connection to all addresses fails
+//   - System resources are exhausted
 func NewGeoClient(config GeoClientConfig) (GeoClient, error) {
 	if len(config.Addresses) == 0 {
 		return nil, errors.ErrInvalidAddress{}
@@ -418,6 +1033,13 @@ func NewGeoClient(config GeoClientConfig) (GeoClient, error) {
 }
 
 // NewGeoClientEcho creates an echo client for testing without a running server.
+//
+// The echo client returns mock responses for all operations, useful for:
+//   - Unit testing application logic
+//   - Development without a cluster
+//   - Benchmarking SDK overhead
+//
+// Do not use in production - data is not persisted.
 func NewGeoClientEcho(config GeoClientConfig) (GeoClient, error) {
 	if len(config.Addresses) == 0 {
 		return nil, errors.ErrInvalidAddress{}
@@ -461,7 +1083,10 @@ func NewGeoClientEcho(config GeoClientConfig) (GeoClient, error) {
 	return client, nil
 }
 
-// Close closes the client and releases resources.
+// Close closes the client and releases all associated resources.
+//
+// After Close is called, all pending operations will complete and subsequent
+// operations will return ClientClosedError. It is safe to call Close multiple times.
 func (c *geoClient) Close() {
 	if !c.closed {
 		C.arch_client_deinit(c.arch_client)
@@ -581,7 +1206,10 @@ func (c *geoClient) doGeoRequestBytes(op types.GeoOperation, data []byte) ([]uin
 	return reply, nil
 }
 
-// CreateBatch creates a new batch for inserting events.
+// CreateBatch creates a new batch builder for inserting events.
+//
+// Use the returned GeoEventBatch to accumulate events before submission.
+// Events added via this batch will be inserted (not upserted).
 func (c *geoClient) CreateBatch() *GeoEventBatch {
 	return &GeoEventBatch{
 		events:    make([]types.GeoEvent, 0),
@@ -590,7 +1218,10 @@ func (c *geoClient) CreateBatch() *GeoEventBatch {
 	}
 }
 
-// CreateUpsertBatch creates a new batch for upserting events.
+// CreateUpsertBatch creates a new batch builder for upserting events.
+//
+// Use the returned GeoEventBatch to accumulate events before submission.
+// Events added via this batch will be upserted (insert or update).
 func (c *geoClient) CreateUpsertBatch() *GeoEventBatch {
 	return &GeoEventBatch{
 		events:    make([]types.GeoEvent, 0),
@@ -599,7 +1230,10 @@ func (c *geoClient) CreateUpsertBatch() *GeoEventBatch {
 	}
 }
 
-// CreateDeleteBatch creates a new batch for deleting entities.
+// CreateDeleteBatch creates a new batch builder for deleting entities.
+//
+// Use the returned DeleteEntityBatch to accumulate entity IDs for deletion.
+// All events associated with each entity will be permanently removed.
 func (c *geoClient) CreateDeleteBatch() *DeleteEntityBatch {
 	return &DeleteEntityBatch{
 		entityIDs: make([]types.Uint128, 0),
@@ -1538,7 +2172,17 @@ func validateGeoEvent(event types.GeoEvent) error {
 // Batch Helpers (per client-retry spec)
 // ============================================================================
 
-// SplitBatch splits a list of items into smaller chunks for retry scenarios.
+// SplitBatch splits a slice of items into smaller chunks of the specified size.
+//
+// Useful for splitting large datasets into batches that fit within the 10,000 event limit.
+//
+// Example:
+//
+//	chunks := archerdb.SplitBatch(events, 8000)
+//	for _, chunk := range chunks {
+//	    errors, err := client.InsertEvents(chunk)
+//	    // Handle results
+//	}
 func SplitBatch[T any](items []T, chunkSize int) [][]T {
 	if chunkSize <= 0 {
 		panic("chunkSize must be greater than 0")

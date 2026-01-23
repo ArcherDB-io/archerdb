@@ -16,28 +16,55 @@ import (
 // ============================================================================
 
 const (
-	// Coordinate bounds
+	// Coordinate bounds (degrees)
+
+	// LatMax is the maximum valid latitude in degrees (+90 = North Pole).
 	LatMax float64 = 90.0
+	// LonMax is the maximum valid longitude in degrees (+180 = International Date Line).
 	LonMax float64 = 180.0
 
-	// Conversion factors
-	NanodegreesPerDegree   int64 = 1_000_000_000
-	MmPerMeter             int64 = 1000
-	CentidegreesPerDegree  int64 = 100
+	// Conversion factors for unit transformations
 
-	// Limits per spec (assumes production config with 10MB message_size_max)
-	BatchSizeMax       int = 10_000
-	QueryUUIDBatchMax  int = 10_000
-	QueryLimitMax      int = 81_000
+	// NanodegreesPerDegree is the conversion factor from degrees to nanodegrees.
+	// Example: 37.7749 degrees = 37,774,900,000 nanodegrees
+	NanodegreesPerDegree int64 = 1_000_000_000
+
+	// MmPerMeter is the conversion factor from meters to millimeters.
+	MmPerMeter int64 = 1000
+
+	// CentidegreesPerDegree is the conversion factor from degrees to centidegrees.
+	// Used for heading: 90 degrees = 9000 centidegrees
+	CentidegreesPerDegree int64 = 100
+
+	// API limits (production config with 10MB message_size_max)
+
+	// BatchSizeMax is the maximum number of events in a single insert/upsert batch.
+	BatchSizeMax int = 10_000
+
+	// QueryUUIDBatchMax is the maximum number of UUIDs in a batch lookup.
+	QueryUUIDBatchMax int = 10_000
+
+	// QueryLimitMax is the maximum number of results for a single query.
+	QueryLimitMax int = 81_000
+
+	// PolygonVerticesMax is the maximum vertices in a polygon query boundary.
 	PolygonVerticesMax int = 10_000
 
-	// Polygon hole limits (per spec)
-	PolygonHolesMax        int = 100
+	// Polygon hole limits
+
+	// PolygonHolesMax is the maximum number of holes (exclusion zones) in a polygon.
+	PolygonHolesMax int = 100
+
+	// PolygonHoleVerticesMin is the minimum vertices required for a valid hole.
 	PolygonHoleVerticesMin int = 3
 
 	// Safe limits for default 1MB message configuration
-	BatchSizeMaxDefault   int = 8_000
-	QueryLimitMaxDefault  int = 8_000
+
+	// BatchSizeMaxDefault is the recommended batch size for default configuration.
+	BatchSizeMaxDefault int = 8_000
+
+	// QueryLimitMaxDefault is the recommended query limit for default configuration.
+	QueryLimitMaxDefault int = 8_000
 )
 
 // ============================================================================
@@ -414,42 +441,69 @@ func (s *StatusResponse) LoadFactor() float64 {
 // Coordinate Conversion Helpers
 // ============================================================================
 
-// DegreesToNano converts degrees to nanodegrees.
+// DegreesToNano converts degrees to nanodegrees (10^-9 degrees).
+//
+// Use for converting latitude/longitude from standard decimal degrees
+// to ArcherDB's internal nanodegree representation.
+//
+// Example:
+//
+//	latNano := types.DegreesToNano(37.7749)  // San Francisco latitude
+//	// latNano = 37774900000
 func DegreesToNano(degrees float64) int64 {
 	return int64(degrees * float64(NanodegreesPerDegree))
 }
 
-// NanoToDegrees converts nanodegrees to degrees.
+// NanoToDegrees converts nanodegrees back to decimal degrees.
+//
+// Example:
+//
+//	lat := types.NanoToDegrees(37774900000)
+//	// lat = 37.7749
 func NanoToDegrees(nano int64) float64 {
 	return float64(nano) / float64(NanodegreesPerDegree)
 }
 
 // MetersToMM converts meters to millimeters.
+//
+// Use for altitude, radius, and accuracy values.
+//
+// Example:
+//
+//	radiusMM := types.MetersToMM(1000.5)  // 1 km radius
+//	// radiusMM = 1000500
 func MetersToMM(meters float64) int32 {
 	return int32(math.Round(meters * float64(MmPerMeter)))
 }
 
-// MMToMeters converts millimeters to meters.
+// MMToMeters converts millimeters back to meters.
 func MMToMeters(mm int32) float64 {
 	return float64(mm) / float64(MmPerMeter)
 }
 
 // HeadingToCentidegrees converts heading from degrees (0-360) to centidegrees (0-36000).
+//
+// Heading convention: 0 = North, 90 = East, 180 = South, 270 = West.
+//
+// Example:
+//
+//	heading := types.HeadingToCentidegrees(90.5)  // Heading East
+//	// heading = 9050
 func HeadingToCentidegrees(degrees float64) uint16 {
 	return uint16(degrees * float64(CentidegreesPerDegree))
 }
 
-// CentidegreesToHeading converts heading from centidegrees to degrees.
+// CentidegreesToHeading converts centidegrees back to degrees.
 func CentidegreesToHeading(cdeg uint16) float64 {
 	return float64(cdeg) / float64(CentidegreesPerDegree)
 }
 
-// IsValidLatitude checks if latitude is in valid range (-90 to +90).
+// IsValidLatitude checks if latitude is within the valid range [-90, +90] degrees.
 func IsValidLatitude(lat float64) bool {
 	return lat >= -LatMax && lat <= LatMax
 }
 
-// IsValidLongitude checks if longitude is in valid range (-180 to +180).
+// IsValidLongitude checks if longitude is within the valid range [-180, +180] degrees.
 func IsValidLongitude(lon float64) bool {
 	return lon >= -LonMax && lon <= LonMax
 }
@@ -458,24 +512,89 @@ func IsValidLongitude(lon float64) bool {
 // Builder Functions
 // ============================================================================
 
-// GeoEventOptions contains user-friendly options for creating GeoEvents.
+// GeoEventOptions provides a user-friendly way to create GeoEvents.
+//
+// All units are in standard human-readable form. The SDK handles
+// conversion to ArcherDB's internal units automatically.
+//
+// Example:
+//
+//	event, err := types.NewGeoEvent(types.GeoEventOptions{
+//	    EntityID:  types.ID(),
+//	    Latitude:  37.7749,      // Degrees
+//	    Longitude: -122.4194,    // Degrees
+//	    AltitudeM: 10.5,         // Meters above sea level
+//	    Heading:   90.0,         // Degrees (East)
+//	    GroupID:   fleetID,
+//	    TTLSeconds: 86400,       // 24-hour TTL
+//	})
 type GeoEventOptions struct {
-	EntityID      Uint128
-	Latitude      float64 // Degrees (-90 to +90)
-	Longitude     float64 // Degrees (-180 to +180)
+	// EntityID is the unique identifier for the entity (required).
+	// Use types.ID() to generate a sortable UUID.
+	EntityID Uint128
+
+	// Latitude in decimal degrees (-90 to +90).
+	// Positive = North, Negative = South.
+	Latitude float64
+
+	// Longitude in decimal degrees (-180 to +180).
+	// Positive = East, Negative = West.
+	Longitude float64
+
+	// CorrelationID links events to a trip, session, or job (optional).
 	CorrelationID Uint128
-	UserData      Uint128
-	GroupID       uint64  // Fleet/region grouping identifier
-	AltitudeM     float64 // Meters
-	VelocityMPS   float64 // Meters per second
-	TTLSeconds    uint32
-	AccuracyM     float64 // Meters
-	Heading       float64 // Degrees (0-360)
-	Flags         GeoEventFlags
+
+	// UserData is opaque application metadata (optional).
+	// Use as a foreign key to reference data in your own database.
+	UserData Uint128
+
+	// GroupID groups entities by fleet, region, or tenant (optional).
+	// Use 0 for ungrouped events.
+	GroupID uint64
+
+	// AltitudeM is the altitude in meters above WGS84 ellipsoid (optional).
+	AltitudeM float64
+
+	// VelocityMPS is the speed in meters per second (optional).
+	VelocityMPS float64
+
+	// TTLSeconds is the time-to-live in seconds (optional).
+	// After this duration, the event is automatically expired.
+	// Use 0 for no automatic expiration.
+	TTLSeconds uint32
+
+	// AccuracyM is the GPS accuracy radius in meters (optional).
+	AccuracyM float64
+
+	// Heading is the direction of travel in degrees (optional).
+	// 0 = North, 90 = East, 180 = South, 270 = West.
+	// Valid range: 0 to 360.
+	Heading float64
+
+	// Flags contains event status flags (optional).
+	Flags GeoEventFlags
 }
 
 // NewGeoEvent creates a GeoEvent from user-friendly options.
-// Handles unit conversions automatically (degrees to nanodegrees, meters to mm).
+//
+// Handles automatic unit conversions:
+//   - Latitude/Longitude: degrees to nanodegrees
+//   - Altitude/Accuracy: meters to millimeters
+//   - Velocity: meters/second to millimeters/second
+//   - Heading: degrees to centidegrees
+//
+// Returns an error if coordinates are outside valid ranges.
+//
+// Example:
+//
+//	event, err := types.NewGeoEvent(types.GeoEventOptions{
+//	    EntityID:  types.ID(),
+//	    Latitude:  37.7749,
+//	    Longitude: -122.4194,
+//	})
+//	if err != nil {
+//	    // Handle invalid coordinates
+//	}
 func NewGeoEvent(opts GeoEventOptions) (GeoEvent, error) {
 	if !IsValidLatitude(opts.Latitude) {
 		return GeoEvent{}, fmt.Errorf("invalid latitude: %f, must be between -90 and +90", opts.Latitude)
@@ -501,6 +620,20 @@ func NewGeoEvent(opts GeoEventOptions) (GeoEvent, error) {
 }
 
 // NewRadiusQuery creates a QueryRadiusFilter from user-friendly units.
+//
+// Parameters:
+//   - latitude: Center latitude in degrees (-90 to +90)
+//   - longitude: Center longitude in degrees (-180 to +180)
+//   - radiusM: Search radius in meters (must be positive)
+//   - limit: Maximum number of results to return
+//
+// Example:
+//
+//	filter, err := types.NewRadiusQuery(37.7749, -122.4194, 1000, 100)
+//	if err != nil {
+//	    // Handle invalid parameters
+//	}
+//	results, err := client.QueryRadius(filter)
 func NewRadiusQuery(latitude, longitude, radiusM float64, limit uint32) (QueryRadiusFilter, error) {
 	if !IsValidLatitude(latitude) {
 		return QueryRadiusFilter{}, fmt.Errorf("invalid latitude: %f", latitude)
@@ -521,9 +654,35 @@ func NewRadiusQuery(latitude, longitude, radiusM float64, limit uint32) (QueryRa
 }
 
 // NewPolygonQuery creates a QueryPolygonFilter from vertices in degrees.
-// vertices: outer boundary vertices in [lat, lon] format, CCW winding order
-// holes: optional list of holes, each hole is a list of [lat, lon] vertices in CW winding order
-// limit: maximum number of results to return
+//
+// Parameters:
+//   - vertices: Outer boundary vertices as [lat, lon] pairs in counter-clockwise order
+//   - limit: Maximum number of results to return
+//   - holes: Optional exclusion zones as [lat, lon] pairs in clockwise order
+//
+// Winding order is important:
+//   - Outer boundary: counter-clockwise (CCW)
+//   - Holes: clockwise (CW)
+//
+// Example:
+//
+//	// Query a rectangular area
+//	vertices := [][]float64{
+//	    {37.78, -122.42},  // NW corner
+//	    {37.78, -122.40},  // NE corner
+//	    {37.76, -122.40},  // SE corner
+//	    {37.76, -122.42},  // SW corner
+//	}
+//	filter, err := types.NewPolygonQuery(vertices, 100)
+//
+//	// With a hole (exclusion zone)
+//	hole := [][]float64{
+//	    {37.775, -122.415},
+//	    {37.770, -122.415},
+//	    {37.770, -122.410},
+//	    {37.775, -122.410},
+//	}
+//	filter, err := types.NewPolygonQuery(vertices, 100, hole)
 func NewPolygonQuery(vertices [][]float64, limit uint32, holes ...[][]float64) (QueryPolygonFilter, error) {
 	if len(vertices) < 3 {
 		return QueryPolygonFilter{}, fmt.Errorf("polygon must have at least 3 vertices, got %d", len(vertices))
@@ -593,22 +752,31 @@ func NewPolygonQuery(vertices [][]float64, limit uint32, holes ...[][]float64) (
 	}, nil
 }
 
-// Latitude returns the latitude in degrees.
+// Latitude returns the latitude in decimal degrees.
+//
+// Converts from internal nanodegree representation.
 func (e *GeoEvent) Latitude() float64 {
 	return NanoToDegrees(e.LatNano)
 }
 
-// Longitude returns the longitude in degrees.
+// Longitude returns the longitude in decimal degrees.
+//
+// Converts from internal nanodegree representation.
 func (e *GeoEvent) Longitude() float64 {
 	return NanoToDegrees(e.LonNano)
 }
 
-// Heading returns the heading in degrees.
+// Heading returns the heading in degrees (0-360).
+//
+// 0 = North, 90 = East, 180 = South, 270 = West.
+// Converts from internal centidegree representation.
 func (e *GeoEvent) Heading() float64 {
 	return CentidegreesToHeading(e.HeadingCdeg)
 }
 
-// Altitude returns the altitude in meters.
+// Altitude returns the altitude in meters above WGS84 ellipsoid.
+//
+// Converts from internal millimeter representation.
 func (e *GeoEvent) Altitude() float64 {
 	return MMToMeters(e.AltitudeMM)
 }
@@ -618,11 +786,18 @@ func (e *GeoEvent) Altitude() float64 {
 // ============================================================================
 
 const (
-	s2Level = 30 // Maximum precision level for S2 cells
+	// s2Level is the S2 cell level used for spatial indexing.
+	// Level 30 provides ~7.5mm resolution, the maximum precision.
+	s2Level = 30
 )
 
-// ComputeS2CellID computes an S2 cell ID from latitude/longitude in nanodegrees.
-// Uses level 30 for maximum precision (~7.5mm resolution).
+// ComputeS2CellID computes an S2 cell ID from coordinates in nanodegrees.
+//
+// S2 cells partition the Earth's surface into a hierarchical grid. ArcherDB
+// uses level 30 cells (~7.5mm resolution) for maximum precision spatial indexing.
+//
+// This function is called internally by PrepareGeoEvent. Most users don't need
+// to call it directly.
 func ComputeS2CellID(latNano, lonNano int64) uint64 {
 	// Convert to radians
 	lat := float64(latNano) / 1e9 * math.Pi / 180.0
@@ -710,16 +885,28 @@ func interleave(i, j uint64) uint64 {
 	return result
 }
 
-// PackCompositeID creates a composite ID from S2 cell ID and timestamp.
+// PackCompositeID creates a composite key from S2 cell ID and timestamp.
+//
+// The composite ID enables efficient spatial and temporal queries by encoding
+// both location and time in a single sortable key.
+//
 // Format: [S2 Cell ID (upper 64 bits) | Timestamp (lower 64 bits)]
-// Layout: [timestamp (lo), s2CellID (hi)] in little-endian
+//
+// This function is called internally. Most users don't need to call it directly.
 func PackCompositeID(s2CellID uint64, timestamp uint64) Uint128 {
 	values := [2]uint64{timestamp, s2CellID}
 	return *(*Uint128)(unsafe.Pointer(&values[0]))
 }
 
-// PrepareGeoEvent prepares a GeoEvent for submission by computing its composite ID.
-// This must be called before submitting events to the server.
+// PrepareGeoEvent prepares a GeoEvent for submission to the server.
+//
+// This function computes the composite ID from the event's coordinates and
+// sets the appropriate timestamp. It is called automatically by InsertEvents
+// and UpsertEvents, so most users don't need to call it directly.
+//
+// The composite ID combines:
+//   - S2 cell ID (from coordinates) - enables spatial indexing
+//   - Timestamp (current time) - enables temporal ordering
 func PrepareGeoEvent(event *GeoEvent) {
 	if event.ID == (Uint128{}) {
 		// Compute S2 cell ID from coordinates
