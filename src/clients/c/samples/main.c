@@ -1,6 +1,39 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2025 Anthus Labs, Inc.
 
+/**
+ * @file main.c
+ * @brief ArcherDB C SDK Sample - Demonstrates all geospatial operations
+ *
+ * This sample demonstrates:
+ * - Client initialization and cleanup
+ * - Insert events (batch)
+ * - Upsert events (insert or update)
+ * - Query by UUID (get latest event for an entity)
+ * - Query by radius with pagination
+ * - Query by polygon
+ * - Query latest events
+ * - Delete entities
+ * - Comprehensive error handling
+ *
+ * @par Build Instructions
+ * From the archerdb root directory:
+ *   ./zig/zig build clients:c:sample
+ *
+ * @par Usage
+ * Set ARCHERDB_ADDRESS environment variable to server address (default: "3000")
+ *   ARCHERDB_ADDRESS=127.0.0.1:3001 ./zig-out/bin/c_sample
+ *
+ * @par Coordinate Units
+ * - lat_nano, lon_nano: nanodegrees (1e-9 degrees)
+ * - altitude_mm: millimeters above sea level
+ * - velocity_mms: millimeters per second
+ * - accuracy_mm: location accuracy in millimeters
+ * - heading_cdeg: centidegrees (0-35999, where 0=North, 9000=East)
+ * - radius_mm: query radius in millimeters
+ * - timestamp: server-assigned nanoseconds since epoch (set to 0 on insert)
+ */
+
 #define IS_POSIX __unix__ || __APPLE__ || !_WIN32
 
 #include <stdlib.h>
@@ -50,7 +83,7 @@ ARCH_CLIENT_STATUS send_request(
 // For benchmarking purposes.
 long long get_time_ms(void);
 
-// Completion function, called by arch_client no notify that a request as completed.
+// Completion function, called by arch_client to notify that a request has completed.
 void on_completion(
     uintptr_t context,
     arch_packet_t *packet,
@@ -59,15 +92,90 @@ void on_completion(
     uint32_t size
 );
 
-// Helper to convert degrees to nanodegrees
+/**
+ * @brief Convert degrees to nanodegrees.
+ * @param degrees Latitude or longitude in decimal degrees
+ * @return Value in nanodegrees (1e-9 degrees)
+ */
 static int64_t degrees_to_nano(double degrees) {
     return (int64_t)(degrees * 1e9);
+}
+
+/**
+ * @brief Convert nanodegrees to degrees.
+ * @param nano Value in nanodegrees
+ * @return Value in decimal degrees
+ */
+static double nano_to_degrees(int64_t nano) {
+    return nano / 1e9;
 }
 
 // Simple pseudo-random ID generator
 static arch_uint128_t next_id = 1;
 static arch_uint128_t generate_id(void) {
     return next_id++;
+}
+
+/**
+ * @brief Print a human-readable description of an INSERT_GEO_EVENT_RESULT error.
+ * @param result The error code from insert_geo_events_result_t
+ */
+static void print_insert_error(uint32_t result) {
+    switch (result) {
+        case INSERT_GEO_EVENT_OK:
+            printf("Success");
+            break;
+        case INSERT_GEO_EVENT_LINKED_EVENT_FAILED:
+            printf("Linked event failed");
+            break;
+        case INSERT_GEO_EVENT_LINKED_EVENT_CHAIN_OPEN:
+            printf("Linked event chain still open");
+            break;
+        case INSERT_GEO_EVENT_TIMESTAMP_MUST_BE_ZERO:
+            printf("Timestamp must be zero (server assigns)");
+            break;
+        case INSERT_GEO_EVENT_RESERVED_FIELD:
+            printf("Reserved field must be zero");
+            break;
+        case INSERT_GEO_EVENT_RESERVED_FLAG:
+            printf("Reserved flag must not be set");
+            break;
+        case INSERT_GEO_EVENT_ID_MUST_NOT_BE_ZERO:
+            printf("Event ID cannot be zero");
+            break;
+        case INSERT_GEO_EVENT_ENTITY_ID_MUST_NOT_BE_ZERO:
+            printf("Entity ID cannot be zero");
+            break;
+        case INSERT_GEO_EVENT_INVALID_COORDINATES:
+            printf("Invalid coordinates");
+            break;
+        case INSERT_GEO_EVENT_LAT_OUT_OF_RANGE:
+            printf("Latitude out of range [-90, 90]");
+            break;
+        case INSERT_GEO_EVENT_LON_OUT_OF_RANGE:
+            printf("Longitude out of range [-180, 180]");
+            break;
+        case INSERT_GEO_EVENT_EXISTS_WITH_DIFFERENT_ENTITY_ID:
+            printf("Event ID exists with different entity");
+            break;
+        case INSERT_GEO_EVENT_EXISTS_WITH_DIFFERENT_COORDINATES:
+            printf("Event exists with different coordinates");
+            break;
+        case INSERT_GEO_EVENT_EXISTS:
+            printf("Event already exists");
+            break;
+        case INSERT_GEO_EVENT_HEADING_OUT_OF_RANGE:
+            printf("Heading out of range [0, 35999]");
+            break;
+        case INSERT_GEO_EVENT_TTL_INVALID:
+            printf("Invalid TTL value");
+            break;
+        case INSERT_GEO_EVENT_ENTITY_ID_MUST_NOT_BE_INT_MAX:
+            printf("Entity ID cannot be INT_MAX");
+            break;
+        default:
+            printf("Unknown error code %d", result);
+    }
 }
 
 int main(int argc, char **argv) {
@@ -241,18 +349,129 @@ int main(int argc, char **argv) {
     printf("\n");
 
     ////////////////////////////////////////////////////////////
-    // Querying events by radius:                             //
+    // Upsert events (insert or update):                      //
     ////////////////////////////////////////////////////////////
 
-    printf("Querying events by radius...\n");
+    printf("\n");
+    printf("============================================\n");
+    printf("Upserting events...\n");
+
+    // Upsert allows updating existing events or inserting new ones
+    // This is useful when you want to update an entity's location
+    geo_event_t upsert_event;
+    memset(&upsert_event, 0, sizeof(upsert_event));
+
+    upsert_event.id = generate_id();
+    upsert_event.entity_id = 1001;  // Same entity as before
+    upsert_event.lat_nano = degrees_to_nano(37.7800);  // New location
+    upsert_event.lon_nano = degrees_to_nano(-122.4100);
+    upsert_event.group_id = 1;
+    upsert_event.velocity_mms = 10000;  // 10 m/s - entity is moving
+    upsert_event.heading_cdeg = 4500;   // 45 degrees (Northeast)
+
+    packet.operation = ARCH_OPERATION_UPSERT_EVENTS;
+    packet.data = &upsert_event;
+    packet.data_size = sizeof(geo_event_t);
+    packet.user_data = &ctx;
+    packet.status = ARCH_PACKET_OK;
+
+    client_status = send_request(&client, &packet, &ctx);
+    if (client_status != ARCH_CLIENT_OK) {
+        printf("Failed to send upsert request\n");
+        exit(-1);
+    }
+
+    if (packet.status != ARCH_PACKET_OK) {
+        printf("Error calling upsert_events (status=%d)\n", packet.status);
+        exit(-1);
+    }
+
+    if (ctx.size != 0) {
+        // Check for validation errors
+        insert_geo_events_result_t *results = (insert_geo_events_result_t*)ctx.reply;
+        int results_len = ctx.size / sizeof(insert_geo_events_result_t);
+        printf("Upsert validation errors:\n");
+        for (int i = 0; i < results_len; i++) {
+            printf("  index=%d: ", results[i].index);
+            print_insert_error(results[i].result);
+            printf("\n");
+        }
+        exit(-1);
+    }
+
+    printf("Event upserted successfully\n");
+
+    ////////////////////////////////////////////////////////////
+    // Query by UUID (get latest event for entity):           //
+    ////////////////////////////////////////////////////////////
+
+    printf("\n");
+    printf("============================================\n");
+    printf("Querying by UUID (entity_id=1001)...\n");
+
+    // Query the latest event for a specific entity
+    query_uuid_filter_t uuid_filter;
+    memset(&uuid_filter, 0, sizeof(uuid_filter));
+    uuid_filter.entity_id = 1001;
+
+    packet.operation = ARCH_OPERATION_QUERY_UUID;
+    packet.data = &uuid_filter;
+    packet.data_size = sizeof(query_uuid_filter_t);
+    packet.user_data = &ctx;
+    packet.status = ARCH_PACKET_OK;
+
+    client_status = send_request(&client, &packet, &ctx);
+    if (client_status != ARCH_CLIENT_OK) {
+        printf("Failed to send query_uuid request\n");
+        exit(-1);
+    }
+
+    if (packet.status != ARCH_PACKET_OK) {
+        printf("Error calling query_uuid (status=%d)\n", packet.status);
+        exit(-1);
+    }
+
+    // Parse response: header followed by optional event
+    if (ctx.size >= sizeof(query_uuid_response_t)) {
+        query_uuid_response_t *uuid_response = (query_uuid_response_t*)ctx.reply;
+
+        if (uuid_response->status == 0) {
+            // Found the entity - event follows the header
+            if (ctx.size >= sizeof(query_uuid_response_t) + sizeof(geo_event_t)) {
+                geo_event_t *event_result = (geo_event_t*)(ctx.reply + sizeof(query_uuid_response_t));
+                printf("Found entity 1001:\n");
+                printf("  location: (%.6f, %.6f)\n",
+                       nano_to_degrees(event_result->lat_nano),
+                       nano_to_degrees(event_result->lon_nano));
+                printf("  velocity: %d mm/s\n", event_result->velocity_mms);
+                printf("  heading: %.2f degrees\n", event_result->heading_cdeg / 100.0);
+            }
+        } else {
+            printf("Entity 1001 not found (status=%d)\n", uuid_response->status);
+        }
+    } else {
+        printf("Invalid response size for query_uuid\n");
+    }
+
+    ////////////////////////////////////////////////////////////
+    // Querying events by radius with pagination:             //
+    ////////////////////////////////////////////////////////////
+
+    printf("\n");
+    printf("============================================\n");
+    printf("Querying events by radius (5 km from San Francisco)...\n");
+
     query_radius_filter_t radius_filter;
     memset(&radius_filter, 0, sizeof(radius_filter));
 
+    // Center point: San Francisco (37.7749, -122.4194)
+    // Coordinates in nanodegrees (1e-9 degrees)
     radius_filter.center_lat_nano = degrees_to_nano(37.7749);
     radius_filter.center_lon_nano = degrees_to_nano(-122.4194);
-    radius_filter.radius_mm = 5000000;  // 5 km radius
-    radius_filter.limit = 100;
-    radius_filter.group_id = 1;
+    radius_filter.radius_mm = 5000000;  // 5 km = 5,000,000 mm
+    radius_filter.limit = 10;           // Return up to 10 events
+    radius_filter.group_id = 1;         // Filter by group_id
+    // timestamp_min/max = 0 means no time filter
 
     packet.operation = ARCH_OPERATION_QUERY_RADIUS;
     packet.data = &radius_filter;
@@ -262,38 +481,234 @@ int main(int argc, char **argv) {
 
     client_status = send_request(&client, &packet, &ctx);
     if (client_status != ARCH_CLIENT_OK) {
-        printf("Failed to send the request\n");
+        printf("Failed to send query_radius request\n");
         exit(-1);
     }
 
     if (packet.status != ARCH_PACKET_OK) {
-        // Checking if the request failed:
-        printf("Error calling query_radius (ret=%d)", packet.status);
+        printf("Error calling query_radius (status=%d)\n", packet.status);
         exit(-1);
     }
 
-    if (ctx.size == 0) {
-        printf("No events found in radius\n");
-    } else {
-        // Parse response header and events
+    if (ctx.size >= sizeof(query_response_t)) {
         query_response_t *response = (query_response_t*)ctx.reply;
-        printf("%d Event(s) found in radius query\n", response->count);
-        printf("has_more=%d, partial_result=%d\n", response->has_more, response->partial_result);
-        printf("============================================\n");
+        printf("Found %d event(s) in radius query\n", response->count);
+        printf("  has_more: %s (pagination needed: %s)\n",
+               response->has_more ? "yes" : "no",
+               response->has_more ? "use cursor" : "no");
+        printf("  partial_result: %s\n", response->partial_result ? "yes (query timed out)" : "no");
 
+        // Events follow the response header
         geo_event_t *results = (geo_event_t*)(ctx.reply + sizeof(query_response_t));
-        for(int i=0; i < response->count && i < 5; i++) {  // Print first 5
-            printf("entity_id=%lu, lat=%.6f, lon=%.6f\n",
-                (unsigned long)results[i].entity_id,
-                results[i].lat_nano / 1e9,
-                results[i].lon_nano / 1e9);
+        int print_count = response->count < 5 ? response->count : 5;
+
+        for (int i = 0; i < print_count; i++) {
+            printf("  [%d] entity_id=%llu, lat=%.6f, lon=%.6f\n",
+                   i,
+                   (unsigned long long)results[i].entity_id,
+                   nano_to_degrees(results[i].lat_nano),
+                   nano_to_degrees(results[i].lon_nano));
         }
         if (response->count > 5) {
-            printf("... and %d more events\n", response->count - 5);
+            printf("  ... and %d more events\n", response->count - 5);
+        }
+    } else {
+        printf("No events found in radius\n");
+    }
+
+    ////////////////////////////////////////////////////////////
+    // Querying events by polygon:                            //
+    ////////////////////////////////////////////////////////////
+
+    printf("\n");
+    printf("============================================\n");
+    printf("Querying events by polygon (San Francisco area)...\n");
+
+    // Define a polygon covering downtown San Francisco
+    // Vertices must be in counter-clockwise order for exterior ring
+    polygon_vertex_t polygon_vertices[4];
+    polygon_vertices[0].lat_nano = degrees_to_nano(37.70);
+    polygon_vertices[0].lon_nano = degrees_to_nano(-122.50);  // SW corner
+    polygon_vertices[1].lat_nano = degrees_to_nano(37.70);
+    polygon_vertices[1].lon_nano = degrees_to_nano(-122.35);  // SE corner
+    polygon_vertices[2].lat_nano = degrees_to_nano(37.85);
+    polygon_vertices[2].lon_nano = degrees_to_nano(-122.35);  // NE corner
+    polygon_vertices[3].lat_nano = degrees_to_nano(37.85);
+    polygon_vertices[3].lon_nano = degrees_to_nano(-122.50);  // NW corner
+
+    // Build request: filter header followed by vertices
+    // For polygons with holes, hole_descriptor_t and hole vertices follow
+    uint8_t polygon_request[sizeof(query_polygon_filter_t) + sizeof(polygon_vertices)];
+    query_polygon_filter_t *polygon_filter = (query_polygon_filter_t*)polygon_request;
+    memset(polygon_filter, 0, sizeof(query_polygon_filter_t));
+
+    polygon_filter->vertex_count = 4;  // Number of exterior polygon vertices
+    polygon_filter->hole_count = 0;    // No interior holes
+    polygon_filter->limit = 100;
+    polygon_filter->group_id = 1;
+
+    // Copy vertices after the filter header
+    memcpy(polygon_request + sizeof(query_polygon_filter_t),
+           polygon_vertices,
+           sizeof(polygon_vertices));
+
+    packet.operation = ARCH_OPERATION_QUERY_POLYGON;
+    packet.data = polygon_request;
+    packet.data_size = sizeof(polygon_request);
+    packet.user_data = &ctx;
+    packet.status = ARCH_PACKET_OK;
+
+    client_status = send_request(&client, &packet, &ctx);
+    if (client_status != ARCH_CLIENT_OK) {
+        printf("Failed to send query_polygon request\n");
+        exit(-1);
+    }
+
+    if (packet.status != ARCH_PACKET_OK) {
+        printf("Error calling query_polygon (status=%d)\n", packet.status);
+        exit(-1);
+    }
+
+    if (ctx.size >= sizeof(query_response_t)) {
+        query_response_t *response = (query_response_t*)ctx.reply;
+        printf("Found %d event(s) in polygon query\n", response->count);
+
+        geo_event_t *results = (geo_event_t*)(ctx.reply + sizeof(query_response_t));
+        int print_count = response->count < 5 ? response->count : 5;
+
+        for (int i = 0; i < print_count; i++) {
+            printf("  [%d] entity_id=%llu at (%.6f, %.6f)\n",
+                   i,
+                   (unsigned long long)results[i].entity_id,
+                   nano_to_degrees(results[i].lat_nano),
+                   nano_to_degrees(results[i].lon_nano));
+        }
+        if (response->count > 5) {
+            printf("  ... and %d more events\n", response->count - 5);
+        }
+    } else {
+        printf("No events found in polygon\n");
+    }
+
+    ////////////////////////////////////////////////////////////
+    // Querying latest events (global):                       //
+    ////////////////////////////////////////////////////////////
+
+    printf("\n");
+    printf("============================================\n");
+    printf("Querying latest events (most recent across all entities)...\n");
+
+    query_latest_filter_t latest_filter;
+    memset(&latest_filter, 0, sizeof(latest_filter));
+
+    latest_filter.limit = 5;           // Return 5 most recent events
+    latest_filter.group_id = 1;        // Filter by group
+    latest_filter.cursor_timestamp = 0; // Start from most recent (no cursor)
+
+    packet.operation = ARCH_OPERATION_QUERY_LATEST;
+    packet.data = &latest_filter;
+    packet.data_size = sizeof(query_latest_filter_t);
+    packet.user_data = &ctx;
+    packet.status = ARCH_PACKET_OK;
+
+    client_status = send_request(&client, &packet, &ctx);
+    if (client_status != ARCH_CLIENT_OK) {
+        printf("Failed to send query_latest request\n");
+        exit(-1);
+    }
+
+    if (packet.status != ARCH_PACKET_OK) {
+        printf("Error calling query_latest (status=%d)\n", packet.status);
+        exit(-1);
+    }
+
+    if (ctx.size >= sizeof(query_response_t)) {
+        query_response_t *response = (query_response_t*)ctx.reply;
+        printf("Found %d latest event(s)\n", response->count);
+
+        geo_event_t *results = (geo_event_t*)(ctx.reply + sizeof(query_response_t));
+        for (uint32_t i = 0; i < response->count; i++) {
+            printf("  [%d] entity_id=%llu, timestamp=%llu\n",
+                   i,
+                   (unsigned long long)results[i].entity_id,
+                   (unsigned long long)results[i].timestamp);
+        }
+    } else {
+        printf("No events found\n");
+    }
+
+    ////////////////////////////////////////////////////////////
+    // Deleting entities:                                     //
+    ////////////////////////////////////////////////////////////
+
+    printf("\n");
+    printf("============================================\n");
+    printf("Deleting entities (entity_id=1002)...\n");
+
+    // Delete entities by their entity_id (not event_id)
+    // This deletes ALL events for the specified entities
+    arch_uint128_t entities_to_delete[1];
+    entities_to_delete[0] = 1002;
+
+    packet.operation = ARCH_OPERATION_DELETE_ENTITIES;
+    packet.data = entities_to_delete;
+    packet.data_size = sizeof(entities_to_delete);
+    packet.user_data = &ctx;
+    packet.status = ARCH_PACKET_OK;
+
+    client_status = send_request(&client, &packet, &ctx);
+    if (client_status != ARCH_CLIENT_OK) {
+        printf("Failed to send delete_entities request\n");
+        exit(-1);
+    }
+
+    if (packet.status != ARCH_PACKET_OK) {
+        printf("Error calling delete_entities (status=%d)\n", packet.status);
+        exit(-1);
+    }
+
+    // Response contains results for each entity
+    if (ctx.size > 0) {
+        delete_entities_result_t *results = (delete_entities_result_t*)ctx.reply;
+        int results_len = ctx.size / sizeof(delete_entities_result_t);
+        printf("Delete results:\n");
+        for (int i = 0; i < results_len; i++) {
+            printf("  index=%d, result=%d\n", results[i].index, results[i].result);
+        }
+    } else {
+        printf("Entities deleted successfully (no errors)\n");
+    }
+
+    // Verify entity was deleted by querying it
+    printf("Verifying entity 1002 was deleted...\n");
+    uuid_filter.entity_id = 1002;
+
+    packet.operation = ARCH_OPERATION_QUERY_UUID;
+    packet.data = &uuid_filter;
+    packet.data_size = sizeof(query_uuid_filter_t);
+    packet.user_data = &ctx;
+    packet.status = ARCH_PACKET_OK;
+
+    client_status = send_request(&client, &packet, &ctx);
+    if (client_status == ARCH_CLIENT_OK && packet.status == ARCH_PACKET_OK) {
+        if (ctx.size >= sizeof(query_uuid_response_t)) {
+            query_uuid_response_t *uuid_response = (query_uuid_response_t*)ctx.reply;
+            if (uuid_response->status != 0) {
+                printf("  Confirmed: entity 1002 not found (deleted)\n");
+            } else {
+                printf("  Warning: entity 1002 still exists\n");
+            }
         }
     }
 
-    // Cleanup:
+    ////////////////////////////////////////////////////////////
+    // Cleanup:                                               //
+    ////////////////////////////////////////////////////////////
+
+    printf("\n");
+    printf("============================================\n");
+    printf("Cleaning up...\n");
+
     completion_context_destroy(&ctx);
     client_status = arch_client_deinit(&client);
     if (client_status != ARCH_CLIENT_OK) {
@@ -301,7 +716,8 @@ int main(int argc, char **argv) {
         exit(-1);
     }
 
-    printf("\nDone!\n");
+    printf("Client closed successfully\n");
+    printf("\nDone! All operations completed.\n");
     return 0;
 }
 
