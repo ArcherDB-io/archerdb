@@ -110,7 +110,7 @@ pub const ModuleLogLevels = struct {
     /// Messages are logged if their level is <= the configured level for that scope.
     pub fn shouldLog(
         self: *const ModuleLogLevels,
-        comptime scope: @Type(.EnumLiteral),
+        comptime scope: @Type(.enum_literal),
         level: std.log.Level,
     ) bool {
         const scope_name = comptime if (scope == .default) "default" else @tagName(scope);
@@ -170,15 +170,21 @@ pub const ModuleLogLevels = struct {
 
 /// Parse a log level string to std.log.Level.
 fn parseLevel(str: []const u8) ?std.log.Level {
-    const lower = std.ascii.lowerString(&[_]u8{0} ** 8, str);
-    const level_str = lower[0..@min(str.len, 8)];
+    // Case-insensitive comparison
+    if (str.len == 0) return null;
 
-    if (std.mem.eql(u8, level_str[0..@min(3, str.len)], "err")) return .err;
-    if (std.mem.eql(u8, level_str[0..@min(5, str.len)], "error")) return .err;
-    if (std.mem.eql(u8, level_str[0..@min(4, str.len)], "warn")) return .warn;
-    if (std.mem.eql(u8, level_str[0..@min(7, str.len)], "warning")) return .warn;
-    if (std.mem.eql(u8, level_str[0..@min(4, str.len)], "info")) return .info;
-    if (std.mem.eql(u8, level_str[0..@min(5, str.len)], "debug")) return .debug;
+    // Use direct comparison with lowercasing
+    var lower_buf: [8]u8 = undefined;
+    const len = @min(str.len, 8);
+    for (str[0..len], 0..) |c, i| {
+        lower_buf[i] = std.ascii.toLower(c);
+    }
+    const level_str = lower_buf[0..len];
+
+    if (std.mem.startsWith(u8, level_str, "err")) return .err;
+    if (std.mem.startsWith(u8, level_str, "warn")) return .warn;
+    if (std.mem.startsWith(u8, level_str, "info")) return .info;
+    if (std.mem.startsWith(u8, level_str, "debug")) return .debug;
 
     return null;
 }
@@ -209,7 +215,7 @@ pub fn getGlobalModuleLogLevels() ?*const ModuleLogLevels {
 /// Check if a message should be logged based on global module configuration.
 ///
 /// If no global configuration is set, always returns true.
-pub fn shouldLogGlobal(comptime scope: @Type(.EnumLiteral), level: std.log.Level) bool {
+pub fn shouldLogGlobal(comptime scope: @Type(.enum_literal), level: std.log.Level) bool {
     if (global_module_log_levels) |levels| {
         return levels.shouldLog(scope, level);
     }

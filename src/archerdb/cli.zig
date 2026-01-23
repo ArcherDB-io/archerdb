@@ -60,6 +60,16 @@ pub const LogLevel = enum {
 pub const LogFormat = enum {
     text,
     json,
+    auto,
+
+    /// Resolve auto to text/json based on TTY detection.
+    pub fn resolve(self: LogFormat) LogFormat {
+        if (self == .auto) {
+            const stderr = std.io.getStdErr();
+            return if (stderr.isTty()) .text else .json;
+        }
+        return self;
+    }
 };
 
 const CLIArgs = union(enum) {
@@ -105,7 +115,9 @@ const CLIArgs = union(enum) {
         cache_grid: ?ByteSize = null,
         development: bool = false,
         log_level: LogLevel = .info,
-        log_format: LogFormat = .text,
+        log_format: LogFormat = .auto,
+        /// Per-module log level overrides (e.g., "vsr:debug,lsm:warn").
+        log_module_levels: ?[]const u8 = null,
         log_file: ?[]const u8 = null,
         log_rotate_size: ?ByteSize = null,
         log_rotate_count: ?u32 = null,
@@ -1169,14 +1181,21 @@ const CLIArgs = union(enum) {
         \\        Defaults to {[default_cache_grid_gb]d}GiB.
         \\
         \\  --log-level=<err|warn|info|debug>
-        \\        Set the log level for runtime filtering.
+        \\        Set the default log level for runtime filtering.
         \\        Defaults to "info".
         \\
-        \\  --log-format=<text|json>
+        \\  --log-module-levels=<module>:<level>[,<module>:<level>,...]
+        \\        Set per-module log level overrides.
+        \\        Modules: vsr, replica, lsm, s2, grid, message_bus, etc.
+        \\        Example: --log-module-levels=vsr:debug,lsm:warn
+        \\        This enables debug for VSR while keeping default for others.
+        \\
+        \\  --log-format=<text|json|auto>
         \\        Set the log output format.
         \\        Use "text" for human-readable output (development).
         \\        Use "json" for structured logging (production/log aggregation).
-        \\        Defaults to "text".
+        \\        Use "auto" to auto-detect: text for TTY, JSON for pipes/files.
+        \\        Defaults to "auto".
         \\
         \\  --log-file=<path>
         \\        Log to the specified file instead of stderr.
@@ -1393,6 +1412,9 @@ pub const Command = union(enum) {
         path: []const u8,
         log_level: LogLevel,
         log_format: LogFormat,
+        /// Raw log level spec for per-module parsing (e.g., "info,vsr:debug,lsm:warn").
+        /// Stored separately from log_level which contains just the default level.
+        log_level_spec: ?[]const u8,
         log_file: ?[]const u8,
         log_rotate_size: u64,
         log_rotate_count: u32,
@@ -1932,9 +1954,10 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
         "addresses",               "cache_grid",
         "development",             "experimental",
         "log_level",               "log_format",
-        "log_file",                "log_rotate_size",
-        "log_rotate_count",        "metrics_port",
-        "metrics_bind",            "metrics_auth_token",
+        "log_module_levels",       "log_file",
+        "log_rotate_size",         "log_rotate_count",
+        "metrics_port",            "metrics_bind",
+        "metrics_auth_token",
         "backup_enabled",          "backup_provider",
         "backup_bucket",           "backup_region",
         "backup_credentials",      "backup_mode",
@@ -2173,6 +2196,7 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
         .path = start.path,
         .log_level = start.log_level,
         .log_format = start.log_format,
+        .log_level_spec = start.log_module_levels,
         .log_file = start.log_file,
         // Default 100MB
         .log_rotate_size = if (start.log_rotate_size) |s| s.bytes() else 100 * 1024 * 1024,

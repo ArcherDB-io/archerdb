@@ -179,6 +179,12 @@ pub fn log_runtime(
     comptime format: []const u8,
     args: anytype,
 ) void {
+    // Check module-specific log level first (if configured)
+    if (!module_log_levels.shouldLogGlobal(scope, message_level)) {
+        return;
+    }
+
+    // Then check against the default runtime level
     // A microbenchmark places the cost of this if at somewhere around 1600us for 10 million calls.
     if (@intFromEnum(message_level) <= @intFromEnum(log_level_runtime)) {
         switch (log_format_runtime) {
@@ -358,6 +364,10 @@ pub fn main() !void {
     var statsd_address: ?std.net.Address = null;
     var log_trace = true;
 
+    // Module log levels storage (initialized lazily for start command)
+    var module_levels_storage: ?module_log_levels.ModuleLogLevels = null;
+    defer if (module_levels_storage) |*levels| levels.deinit();
+
     switch (command) {
         .start => |*args| {
             if (args.trace) |path| {
@@ -368,7 +378,19 @@ pub fn main() !void {
             }
             if (args.statsd) |address| statsd_address = address;
             log_trace = args.log_trace;
-            log_format_runtime = args.log_format;
+            // Resolve auto format to text/json based on TTY detection
+            log_format_runtime = args.log_format.resolve();
+
+            // Initialize per-module log levels if specified
+            if (args.log_level_spec) |spec| {
+                module_levels_storage = module_log_levels.ModuleLogLevels.init(gpa);
+                module_levels_storage.?.setDefault(log_level_runtime);
+                module_levels_storage.?.parseOverrides(spec) catch |err| {
+                    log.err("error parsing log module levels '{s}': {}", .{ spec, err });
+                    return err;
+                };
+                module_log_levels.setGlobalModuleLogLevels(&module_levels_storage.?);
+            }
 
             // Initialize rotating log if --log-file is set
             if (args.log_file) |log_path| {
