@@ -179,12 +179,12 @@ Plans:
   3. Operations runbook covers single-node, cluster, and Kubernetes deployment
   4. Backup, restore, disaster recovery, and upgrade procedures documented
   5. Troubleshooting guide covers common issues with resolution steps
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 09-01: API reference
-- [ ] 09-02: Architecture documentation
-- [ ] 09-03: Operations runbook
+- [ ] 09-01-PLAN.md - Documentation index, quickstart, and API reference (AREF-01 to AREF-05)
+- [ ] 09-02-PLAN.md - Architecture documentation deep-dive (ARCH-01 to ARCH-07)
+- [ ] 09-03-PLAN.md - Operations runbook completion and troubleshooting (OPS-03, OPS-07, OPS-08)
 
 ### Phase 10: Testing & Benchmarks
 **Goal**: Testing complete and benchmarks published - CI on all platforms, integration tests, performance benchmarks vs competitors
@@ -219,7 +219,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | 6. SDK Parity | 5/5 | Complete | 2026-01-23 |
 | 7. Observability Core | 4/4 | Complete | 2026-01-23 |
 | 8. Observability Dashboards | 3/3 | Complete | 2026-01-23 |
-| 9. Documentation | 0/3 | Not started | - |
+| 9. Documentation | 0/3 | Planned | - |
 | 10. Testing & Benchmarks | 0/4 | Not started | - |
 
 ---
@@ -240,4 +240,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 *Phase 7 complete: 2026-01-23*
 *Phase 8 planned: 2026-01-23*
 *Phase 8 complete: 2026-01-23*
+*Phase 9 planned: 2026-01-23*
 *Total requirements: 234 | All mapped*
