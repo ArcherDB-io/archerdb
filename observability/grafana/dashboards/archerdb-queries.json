@@ -1,0 +1,703 @@
+{
+  "uid": "archerdb-queries",
+  "title": "ArcherDB Queries",
+  "tags": ["archerdb", "queries", "detail"],
+  "timezone": "browser",
+  "editable": true,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "fiscalYearStartMonth": 0,
+  "liveNow": false,
+  "weekStart": "",
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "label": "Data Source",
+        "description": "Select the Prometheus data source",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "options": [],
+        "refresh": 1,
+        "regex": ""
+      },
+      {
+        "name": "instance",
+        "type": "query",
+        "label": "Node",
+        "description": "Filter by ArcherDB node instance",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "query": "label_values(archerdb_info, instance)",
+        "refresh": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {},
+        "hide": 0,
+        "options": [],
+        "regex": "",
+        "sort": 1
+      },
+      {
+        "name": "terminology",
+        "type": "custom",
+        "label": "Terminology",
+        "description": "Display terminology style: ArcherDB terms, generic database terms, or plain English",
+        "current": {
+          "text": "ArcherDB",
+          "value": "archerdb"
+        },
+        "options": [
+          {"text": "ArcherDB", "value": "archerdb", "selected": true},
+          {"text": "Database", "value": "database", "selected": false},
+          {"text": "Plain English", "value": "plain", "selected": false}
+        ],
+        "query": "archerdb,database,plain",
+        "multi": false,
+        "includeAll": false,
+        "hide": 0
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "name": "View Changes",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "enable": true,
+        "expr": "changes(archerdb_vsr_view[5m]) > 0",
+        "iconColor": "orange",
+        "tagKeys": "instance",
+        "textFormat": "VSR view change on {{ instance }}",
+        "titleFormat": "View Change",
+        "useValueForTime": false
+      }
+    ]
+  },
+  "links": [
+    {
+      "title": "Overview",
+      "type": "link",
+      "url": "/d/archerdb-overview/archerdb-overview?orgId=1&${__url_time_range}&${__all_variables}",
+      "icon": "external link",
+      "tooltip": "Back to cluster overview dashboard",
+      "keepTime": true,
+      "includeVars": true,
+      "targetBlank": false,
+      "asDropdown": false
+    },
+    {
+      "title": "Replication Detail",
+      "type": "link",
+      "url": "/d/archerdb-replication/archerdb-replication?orgId=1&${__url_time_range}&${__all_variables}",
+      "icon": "external link",
+      "tooltip": "VSR replication status, lag metrics, view changes",
+      "keepTime": true,
+      "includeVars": true,
+      "targetBlank": false,
+      "asDropdown": false
+    },
+    {
+      "title": "Storage Detail",
+      "type": "link",
+      "url": "/d/archerdb-storage/archerdb-storage?orgId=1&${__url_time_range}&${__all_variables}",
+      "icon": "external link",
+      "tooltip": "LSM levels, compaction stats, disk I/O",
+      "keepTime": true,
+      "includeVars": true,
+      "targetBlank": false,
+      "asDropdown": false
+    },
+    {
+      "title": "Cluster Detail",
+      "type": "link",
+      "url": "/d/archerdb-cluster/archerdb-cluster?orgId=1&${__url_time_range}&${__all_variables}",
+      "icon": "external link",
+      "tooltip": "Per-node health, coordinator stats, shard distribution",
+      "keepTime": true,
+      "includeVars": true,
+      "targetBlank": false,
+      "asDropdown": false
+    }
+  ],
+  "panels": [
+    {
+      "type": "row",
+      "title": "Latency Deep Dive",
+      "gridPos": {"x": 0, "y": 0, "w": 24, "h": 1},
+      "id": 100,
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Read Latency by Query Type",
+      "description": "p99 read latency broken down by query type. UUID lookups are point queries (should be fast). Radius queries search within a circle. Polygon queries search within arbitrary shapes. Latest queries return most recent events. Complex spatial queries naturally take longer than point lookups.",
+      "gridPos": {"x": 0, "y": 1, "w": 12, "h": 8},
+      "id": 1,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(archerdb_read_latency_seconds_bucket{instance=~\"$instance\", query_type=\"uuid\"}[5m])) by (le))",
+          "legendFormat": "uuid p99",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(archerdb_read_latency_seconds_bucket{instance=~\"$instance\", query_type=\"radius\"}[5m])) by (le))",
+          "legendFormat": "radius p99",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(archerdb_read_latency_seconds_bucket{instance=~\"$instance\", query_type=\"polygon\"}[5m])) by (le))",
+          "legendFormat": "polygon p99",
+          "refId": "C"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(archerdb_read_latency_seconds_bucket{instance=~\"$instance\", query_type=\"latest\"}[5m])) by (le))",
+          "legendFormat": "latest p99",
+          "refId": "D"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 0.5},
+              {"color": "red", "value": 2}
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "barAlignment": 0,
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "never",
+            "pointSize": 5,
+            "stacking": {"mode": "none", "group": "A"},
+            "axisPlacement": "auto",
+            "axisLabel": "",
+            "axisColorMode": "text",
+            "scaleDistribution": {"type": "linear"},
+            "axisCenteredZero": false,
+            "hideFrom": {"tooltip": false, "viz": false, "legend": false},
+            "thresholdsStyle": {"mode": "line+area"}
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {"mode": "multi", "sort": "desc"},
+        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Write Latency by Operation",
+      "description": "p99 write latency broken down by operation type. Insert creates new entities. Upsert updates existing or creates new. Delete removes entities (creates tombstone). All operations should have similar latency; significant differences may indicate issues with specific code paths.",
+      "gridPos": {"x": 12, "y": 1, "w": 12, "h": 8},
+      "id": 2,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(archerdb_write_latency_seconds_bucket{instance=~\"$instance\", operation=\"insert\"}[5m])) by (le))",
+          "legendFormat": "insert p99",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(archerdb_write_latency_seconds_bucket{instance=~\"$instance\", operation=\"upsert\"}[5m])) by (le))",
+          "legendFormat": "upsert p99",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(archerdb_write_latency_seconds_bucket{instance=~\"$instance\", operation=\"delete\"}[5m])) by (le))",
+          "legendFormat": "delete p99",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 0.5},
+              {"color": "red", "value": 2}
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "barAlignment": 0,
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "never",
+            "pointSize": 5,
+            "stacking": {"mode": "none", "group": "A"},
+            "axisPlacement": "auto",
+            "axisLabel": "",
+            "axisColorMode": "text",
+            "scaleDistribution": {"type": "linear"},
+            "axisCenteredZero": false,
+            "hideFrom": {"tooltip": false, "viz": false, "legend": false},
+            "thresholdsStyle": {"mode": "line+area"}
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {"mode": "multi", "sort": "desc"},
+        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}
+      }
+    },
+    {
+      "type": "row",
+      "title": "Throughput Detail",
+      "gridPos": {"x": 0, "y": 9, "w": 24, "h": 1},
+      "id": 101,
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Read Operations Rate",
+      "description": "Read operations per second by query type, stacked to show total read load. UUID lookups are typically the majority. Spatial queries (radius, polygon) may indicate analytical workloads. Monitor relative proportions to understand application access patterns.",
+      "gridPos": {"x": 0, "y": 10, "w": 12, "h": 8},
+      "id": 3,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "sum(rate(archerdb_read_operations_total{instance=~\"$instance\"}[5m])) by (query_type)",
+          "legendFormat": "{{query_type}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null}
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "barAlignment": 0,
+            "lineWidth": 1,
+            "fillOpacity": 30,
+            "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "never",
+            "pointSize": 5,
+            "stacking": {"mode": "normal", "group": "A"},
+            "axisPlacement": "auto",
+            "axisLabel": "",
+            "axisColorMode": "text",
+            "scaleDistribution": {"type": "linear"},
+            "axisCenteredZero": false,
+            "hideFrom": {"tooltip": false, "viz": false, "legend": false},
+            "thresholdsStyle": {"mode": "off"}
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {"mode": "multi", "sort": "desc"},
+        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Write Operations Rate",
+      "description": "Write operations per second by operation type, stacked to show total write load. Insert creates new entities. Upsert updates or creates. Delete removes. A healthy write mix depends on application requirements. High delete rates may indicate data cleanup or TTL expirations.",
+      "gridPos": {"x": 12, "y": 10, "w": 12, "h": 8},
+      "id": 4,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "sum(rate(archerdb_write_operations_total{instance=~\"$instance\"}[5m])) by (operation)",
+          "legendFormat": "{{operation}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null}
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "barAlignment": 0,
+            "lineWidth": 1,
+            "fillOpacity": 30,
+            "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "never",
+            "pointSize": 5,
+            "stacking": {"mode": "normal", "group": "A"},
+            "axisPlacement": "auto",
+            "axisLabel": "",
+            "axisColorMode": "text",
+            "scaleDistribution": {"type": "linear"},
+            "axisCenteredZero": false,
+            "hideFrom": {"tooltip": false, "viz": false, "legend": false},
+            "thresholdsStyle": {"mode": "off"}
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {"mode": "multi", "sort": "desc"},
+        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}
+      }
+    },
+    {
+      "type": "row",
+      "title": "Events & Bytes",
+      "gridPos": {"x": 0, "y": 18, "w": 24, "h": 1},
+      "id": 102,
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Events Processed",
+      "description": "Rate of events returned by read queries and events written. Read events indicates result set sizes. Write events shows data ingestion rate. High read event counts may indicate queries returning large result sets (consider pagination or filtering).",
+      "gridPos": {"x": 0, "y": 19, "w": 12, "h": 8},
+      "id": 5,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "sum(rate(archerdb_read_events_returned_total{instance=~\"$instance\"}[5m]))",
+          "legendFormat": "Read events/s",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(archerdb_write_events_total{instance=~\"$instance\"}[5m]))",
+          "legendFormat": "Write events/s",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null}
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "barAlignment": 0,
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "never",
+            "pointSize": 5,
+            "stacking": {"mode": "none", "group": "A"},
+            "axisPlacement": "auto",
+            "axisLabel": "",
+            "axisColorMode": "text",
+            "scaleDistribution": {"type": "linear"},
+            "axisCenteredZero": false,
+            "hideFrom": {"tooltip": false, "viz": false, "legend": false},
+            "thresholdsStyle": {"mode": "off"}
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {"mode": "multi", "sort": "desc"},
+        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Write Bytes",
+      "description": "Rate of bytes written per second. Indicates data volume being ingested. Correlate with write latency - if bytes/s is high and latency is also high, disk I/O may be saturated. Sudden drops may indicate client issues or backpressure.",
+      "gridPos": {"x": 12, "y": 19, "w": 12, "h": 8},
+      "id": 6,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "sum(rate(archerdb_write_bytes_total{instance=~\"$instance\"}[5m]))",
+          "legendFormat": "Bytes/s",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null}
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "barAlignment": 0,
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "never",
+            "pointSize": 5,
+            "stacking": {"mode": "none", "group": "A"},
+            "axisPlacement": "auto",
+            "axisLabel": "",
+            "axisColorMode": "text",
+            "scaleDistribution": {"type": "linear"},
+            "axisCenteredZero": false,
+            "hideFrom": {"tooltip": false, "viz": false, "legend": false},
+            "thresholdsStyle": {"mode": "off"}
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {"mode": "multi", "sort": "desc"},
+        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}
+      }
+    },
+    {
+      "type": "row",
+      "title": "Errors & Index",
+      "gridPos": {"x": 0, "y": 27, "w": 24, "h": 1},
+      "id": 103,
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Error Rate",
+      "description": "Rate of write errors. Healthy baseline is zero. Any errors warrant investigation. Common causes: validation failures, constraint violations, disk full, replication issues. Check error logs for details when this metric rises.",
+      "gridPos": {"x": 0, "y": 28, "w": 12, "h": 8},
+      "id": 7,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "sum(rate(archerdb_write_errors_total{instance=~\"$instance\"}[5m]))",
+          "legendFormat": "Errors/s",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 0.1},
+              {"color": "red", "value": 1}
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "barAlignment": 0,
+            "lineWidth": 2,
+            "fillOpacity": 20,
+            "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "never",
+            "pointSize": 5,
+            "stacking": {"mode": "none", "group": "A"},
+            "axisPlacement": "auto",
+            "axisLabel": "",
+            "axisColorMode": "text",
+            "scaleDistribution": {"type": "linear"},
+            "axisCenteredZero": false,
+            "hideFrom": {"tooltip": false, "viz": false, "legend": false},
+            "thresholdsStyle": {"mode": "line+area"}
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {"mode": "multi", "sort": "desc"},
+        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Index Lookup Latency",
+      "description": "Latency of index lookups (p50, p95, p99). Index performance directly affects query latency. High index lookup times may indicate: index fragmentation, high tombstone ratio, or memory pressure causing cache misses. Consider compaction if latency trends upward.",
+      "gridPos": {"x": 12, "y": 28, "w": 12, "h": 8},
+      "id": 8,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(archerdb_index_lookup_latency_seconds_bucket{instance=~\"$instance\"}[5m])) by (le))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(archerdb_index_lookup_latency_seconds_bucket{instance=~\"$instance\"}[5m])) by (le))",
+          "legendFormat": "p95",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(archerdb_index_lookup_latency_seconds_bucket{instance=~\"$instance\"}[5m])) by (le))",
+          "legendFormat": "p99",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 0.01},
+              {"color": "red", "value": 0.1}
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "barAlignment": 0,
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "never",
+            "pointSize": 5,
+            "stacking": {"mode": "none", "group": "A"},
+            "axisPlacement": "auto",
+            "axisLabel": "",
+            "axisColorMode": "text",
+            "scaleDistribution": {"type": "linear"},
+            "axisCenteredZero": false,
+            "hideFrom": {"tooltip": false, "viz": false, "legend": false},
+            "thresholdsStyle": {"mode": "line+area"}
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {"mode": "multi", "sort": "desc"},
+        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}
+      }
+    },
+    {
+      "type": "row",
+      "title": "Index Health",
+      "gridPos": {"x": 0, "y": 36, "w": 24, "h": 1},
+      "id": 104,
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "gauge",
+      "title": "Index Load Factor",
+      "description": "Average index load factor (entries / capacity). Higher values mean the index is fuller. Warning at 70% (consider resize or cleanup). Critical at 90% (index nearly full, performance may degrade). If load factor stays high, evaluate data retention or scaling.",
+      "gridPos": {"x": 0, "y": 37, "w": 12, "h": 8},
+      "id": 9,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "avg(archerdb_index_load_factor{instance=~\"$instance\"}) * 100",
+          "legendFormat": "Load Factor %",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 70},
+              {"color": "red", "value": 90}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "type": "gauge",
+      "title": "Tombstone Ratio",
+      "description": "Average ratio of tombstones (deleted entries) in the index. Tombstones consume space and slow down scans. Warning at 10% (consider compaction). Critical at 30% (compaction strongly recommended). High tombstone ratios indicate heavy delete workloads or pending cleanup.",
+      "gridPos": {"x": 12, "y": 37, "w": 12, "h": 8},
+      "id": 10,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "avg(archerdb_index_tombstone_ratio{instance=~\"$instance\"}) * 100",
+          "legendFormat": "Tombstone %",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 10},
+              {"color": "red", "value": 30}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      }
+    }
+  ]
+}
