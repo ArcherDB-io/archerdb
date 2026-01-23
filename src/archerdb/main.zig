@@ -20,6 +20,7 @@ const cli = @import("cli.zig");
 const encryption = vsr.encryption;
 const inspect = @import("inspect.zig");
 const metrics_server = @import("metrics_server.zig");
+const module_log_levels = @import("observability/module_log_levels.zig");
 
 const IO = vsr.io.IO;
 const Time = vsr.time.Time;
@@ -183,6 +184,9 @@ pub fn log_runtime(
         switch (log_format_runtime) {
             .text => log_text(message_level, scope, format, args),
             .json => log_json(message_level, scope, format, args),
+            // Auto is resolved at startup to text or json based on TTY detection
+            // If it reaches here, treat as text (fallback)
+            .auto => log_text(message_level, scope, format, args),
         }
     }
 }
