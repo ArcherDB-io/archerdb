@@ -33,6 +33,7 @@ comptime {
     _ = @import("archerdb/replica_tls.zig");
     _ = @import("archerdb/restore.zig");
     _ = @import("archerdb/signal_handler.zig");
+    _ = @import("archerdb/storage_metrics.zig");
     _ = @import("archerdb/tls_config.zig");
     _ = @import("c_client_tests.zig");
     _ = @import("cdc/amqp.zig");
@@ -59,8 +60,11 @@ comptime {
     _ = @import("lsm/binary_search_benchmark.zig");
     _ = @import("lsm/cache_map.zig");
     _ = @import("lsm/compaction.zig");
-    _ = @import("lsm/compression.zig");
+    _ = @import("lsm/compaction_metrics.zig");
+    _ = @import("lsm/compaction_throttle.zig");
     _ = @import("lsm/composite_key.zig");
+    _ = @import("lsm/compression.zig");
+    _ = @import("lsm/dedup.zig");
     _ = @import("lsm/forest.zig");
     _ = @import("lsm/forest_table_iterator.zig");
     _ = @import("lsm/k_way_merge.zig");
