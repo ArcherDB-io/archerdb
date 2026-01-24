@@ -298,6 +298,91 @@ const ConfigCluster = struct {
     /// Default: 512 bytes (below this, compression overhead exceeds benefit).
     lsm_compaction_compression_min_size: comptime_int = 512,
 
+    // =========================================================================
+    // Compaction Strategy Configuration
+    // =========================================================================
+    //
+    // Tiered compaction reduces write amplification by 2-3x compared to leveled
+    // compaction, at the cost of higher space amplification. This is ideal for
+    // write-heavy geospatial workloads with frequent location updates.
+    //
+    // Strategy comparison:
+    // - Leveled: Aggressive merge, ~10-30x write amp, ~1.1x space amp
+    //   Best for read-heavy workloads or space-constrained environments.
+    //
+    // - Tiered: Delayed merge, ~3-10x write amp, ~2-3x space amp
+    //   Best for write-heavy workloads like geospatial tracking.
+    //
+    // See src/lsm/compaction_tiered.zig for implementation details.
+    // =========================================================================
+
+    /// Compaction strategy selection (0 = leveled, 1 = tiered).
+    /// - 0 (leveled): Aggressive merge, lower space amplification.
+    ///   Best for read-heavy workloads or space-constrained environments.
+    /// - 1 (tiered): Delayed merge, lower write amplification.
+    ///   Best for write-heavy workloads like geospatial location updates.
+    /// Default: 1 (tiered, optimized for geospatial write-heavy workloads).
+    lsm_compaction_strategy: comptime_int = 1,
+
+    /// Tiered compaction: size ratio threshold for triggering compaction.
+    /// Compaction triggers when: sum(smaller_runs) >= size_ratio * largest_run
+    /// Scaled by 10 (so 20 = 2.0x ratio). Must be >= 10 (1.0x).
+    /// Default: 20 (2.0x ratio, good balance for geospatial workloads).
+    lsm_tiered_size_ratio_scaled: comptime_int = 20,
+
+    /// Tiered compaction: space amplification threshold percentage.
+    /// Compaction triggers when: physical_size > (threshold/100) * logical_size.
+    /// Must be >= 100 (1.0x). Default: 200 (allow up to 2x space overhead).
+    lsm_tiered_max_space_amp_percent: comptime_int = 200,
+
+    /// Tiered compaction: maximum sorted runs per level before forced compaction.
+    /// Prevents unbounded run growth which hurts read performance.
+    /// Must be >= 2. Default: 10.
+    lsm_tiered_max_sorted_runs: comptime_int = 10,
+
+    // =========================================================================
+    // Block Deduplication Configuration
+    // =========================================================================
+    //
+    // Block-level deduplication detects repeated value blocks via content hashing
+    // and stores references instead of duplicate data. This can reduce storage by
+    // 10-30% for trajectory-heavy workloads where vehicles visit common locations.
+    //
+    // How it works:
+    // - Content hash (XxHash64) computed for each value block
+    // - If hash matches existing block, reference existing storage
+    // - Per-level index with LRU eviction to bound memory usage
+    // - Reference counting tracks block lifecycle
+    //
+    // Memory usage: dedup_index_memory_mb per LSM level
+    // Example: 7 levels x 64 MiB = 448 MiB total for dedup indexes
+    //
+    // When to disable deduplication:
+    // - Unique data with no repetition (randomized IDs, no trajectory patterns)
+    // - Memory constrained environments
+    // - Already achieving good compression ratios without dedup
+    //
+    // =========================================================================
+
+    /// Enable block-level deduplication for LSM value blocks (0 = disabled, 1 = enabled).
+    /// Detects duplicate blocks via content hashing and references existing storage.
+    /// Default: 1 (enabled, recommended for 10-30% storage reduction on trajectory data).
+    lsm_dedup_enabled: comptime_int = 1,
+
+    /// Maximum memory for deduplication index per LSM level (in MiB).
+    /// Higher values allow tracking more unique blocks, improving dedup hit rate.
+    /// Total memory = dedup_index_memory_mb x lsm_levels
+    /// Example: 64 MiB x 7 levels = 448 MiB total
+    /// Default: 64 MiB per level.
+    /// Valid range: 1-512 MiB.
+    lsm_dedup_index_memory_mb: comptime_int = 64,
+
+    /// Minimum block size (bytes) to consider for deduplication.
+    /// Small blocks have high metadata overhead relative to savings.
+    /// Default: 4096 bytes (4 KiB).
+    /// Valid range: 1024-65536 bytes.
+    lsm_dedup_min_block_size: comptime_int = 4096,
+
     /// Minimal value.
     // TODO(batiati): Maybe this constant should be derived from `grid_iops_read_max`,
     // since each scan can read from `lsm_levels` in parallel.
