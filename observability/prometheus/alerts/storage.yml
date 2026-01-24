@@ -1,0 +1,261 @@
+# ArcherDB Storage Optimization Alerting Rules
+# Phase 12 storage-specific alerts for write amplification, compression,
+# compaction throttle, and emergency conditions.
+#
+# All alerts include:
+# - runbook_url: Link to troubleshooting documentation
+# - remediation: Brief fix suggestion
+# - severity: warning, critical, or info (for routing)
+#
+# Metric scaling notes:
+# - archerdb_compaction_write_amplification: scaled x100 (500 = 5.0x)
+# - archerdb_storage_space_amplification: scaled x100 (300 = 3.0x)
+# - archerdb_compression_ratio: scaled x1000 (700 = 0.7 ratio)
+# - archerdb_compaction_throttle_ratio: scaled x10 (1000 = 100%)
+
+groups:
+  - name: archerdb-storage-write-amplification
+    rules:
+      # Warning: Write amplification >5x for 5 minutes
+      - alert: ArcherDBWriteAmplificationSpike
+        expr: archerdb_compaction_write_amplification / 100 > 5
+        for: 5m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "High write amplification on {{ $labels.instance }}"
+          description: "Write amplification is {{ $value | printf \"%.1f\" }}x (threshold: 5x). LSM compaction is rewriting data more than expected."
+          runbook_url: "https://docs.archerdb.io/runbooks/write-amplification"
+          remediation: "Review compaction settings. Consider adjusting level multiplier or size ratio. Check for delete-heavy workloads causing tombstone accumulation."
+
+      # Critical: Write amplification >10x for 10 minutes
+      - alert: ArcherDBWriteAmplificationCritical
+        expr: archerdb_compaction_write_amplification / 100 > 10
+        for: 10m
+        labels:
+          severity: critical
+          team: database
+        annotations:
+          summary: "Critical write amplification on {{ $labels.instance }}"
+          description: "Write amplification is {{ $value | printf \"%.1f\" }}x (threshold: 10x). This severely impacts disk I/O and may cause write stalls."
+          runbook_url: "https://docs.archerdb.io/runbooks/write-amplification"
+          remediation: "URGENT: Reduce write rate, increase compaction parallelism, or adjust LSM tuning parameters."
+
+  - name: archerdb-storage-latency
+    rules:
+      # Warning: P99 write latency >100ms for 2 minutes
+      - alert: ArcherDBWriteLatencyHigh
+        expr: histogram_quantile(0.99, sum(rate(archerdb_write_latency_seconds_bucket[5m])) by (le, instance)) > 0.1
+        for: 2m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "High P99 write latency on {{ $labels.instance }}"
+          description: "P99 write latency is {{ $value | humanizeDuration }} (threshold: 100ms). May indicate compaction or I/O pressure."
+          runbook_url: "https://docs.archerdb.io/runbooks/high-write-latency"
+          remediation: "Check compaction backlog, disk I/O saturation, and throttle ratio. Consider adjusting compaction parallelism."
+
+      # Warning: P99 read latency >100ms for 2 minutes
+      - alert: ArcherDBReadLatencyHigh
+        expr: histogram_quantile(0.99, sum(rate(archerdb_read_latency_seconds_bucket[5m])) by (le, instance)) > 0.1
+        for: 2m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "High P99 read latency on {{ $labels.instance }}"
+          description: "P99 read latency is {{ $value | humanizeDuration }} (threshold: 100ms). May indicate cache pressure or disk I/O issues."
+          runbook_url: "https://docs.archerdb.io/runbooks/high-read-latency"
+          remediation: "Check cache hit ratio, disk latency, and compaction activity. Consider increasing cache size."
+
+  - name: archerdb-storage-space-amplification
+    rules:
+      # Warning: Space amplification >3x for 10 minutes
+      - alert: ArcherDBSpaceAmplificationHigh
+        expr: archerdb_storage_space_amplification / 100 > 3
+        for: 10m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "High space amplification on {{ $labels.instance }}"
+          description: "Space amplification is {{ $value | printf \"%.1f\" }}x (threshold: 3x). Disk usage is significantly higher than logical data size."
+          runbook_url: "https://docs.archerdb.io/runbooks/space-amplification"
+          remediation: "Check compaction progress. High space amp often indicates compaction falling behind or high delete rates with pending garbage collection."
+
+      # Critical: Space amplification >5x for 15 minutes
+      - alert: ArcherDBSpaceAmplificationCritical
+        expr: archerdb_storage_space_amplification / 100 > 5
+        for: 15m
+        labels:
+          severity: critical
+          team: database
+        annotations:
+          summary: "Critical space amplification on {{ $labels.instance }}"
+          description: "Space amplification is {{ $value | printf \"%.1f\" }}x (threshold: 5x). Disk may fill up faster than expected."
+          runbook_url: "https://docs.archerdb.io/runbooks/space-amplification"
+          remediation: "URGENT: Check disk capacity, trigger manual compaction if needed, investigate cause of space growth."
+
+  - name: archerdb-storage-disk
+    rules:
+      # Critical: Less than 5% disk space remaining for 5 minutes
+      - alert: ArcherDBDiskAlmostFull
+        expr: (1 - (node_filesystem_avail_bytes{mountpoint="/data"} / node_filesystem_size_bytes{mountpoint="/data"})) > 0.95
+        for: 5m
+        labels:
+          severity: critical
+          team: database
+        annotations:
+          summary: "Disk almost full on {{ $labels.instance }}"
+          description: "Data disk is {{ $value | humanizePercentage }} full (threshold: 95%). Database may become read-only."
+          runbook_url: "https://docs.archerdb.io/runbooks/disk-full"
+          remediation: "CRITICAL: Free disk space immediately. Consider emergency compaction, data cleanup, or expanding storage."
+
+      # Warning: Less than 15% disk space remaining
+      - alert: ArcherDBDiskSpaceLow
+        expr: (1 - (node_filesystem_avail_bytes{mountpoint="/data"} / node_filesystem_size_bytes{mountpoint="/data"})) > 0.85
+        for: 10m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "Low disk space on {{ $labels.instance }}"
+          description: "Data disk is {{ $value | humanizePercentage }} full (threshold: 85%). Plan capacity expansion."
+          runbook_url: "https://docs.archerdb.io/runbooks/disk-low"
+          remediation: "Monitor disk growth rate. Plan storage expansion or cleanup old data if applicable."
+
+  - name: archerdb-storage-compaction
+    rules:
+      # Critical: Compaction stalled - no writes and throttle active for 10 minutes
+      - alert: ArcherDBCompactionStall
+        expr: |
+          (
+            rate(archerdb_storage_bytes_written_total[10m]) == 0
+            and
+            archerdb_compaction_throttle_active == 1
+          )
+        for: 10m
+        labels:
+          severity: critical
+          team: database
+        annotations:
+          summary: "Compaction stalled on {{ $labels.instance }}"
+          description: "No bytes written in 10 minutes while throttle is active. Compaction may be stalled or blocked."
+          runbook_url: "https://docs.archerdb.io/runbooks/compaction-stalled"
+          remediation: "CRITICAL: Check for compaction errors, disk I/O failures, or resource exhaustion. May require manual intervention."
+
+      # Warning: Compaction throttle active for extended period
+      - alert: ArcherDBCompactionThrottleExtended
+        expr: archerdb_compaction_throttle_active == 1
+        for: 30m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "Compaction throttle active for 30+ minutes on {{ $labels.instance }}"
+          description: "Compaction throttle has been active continuously. Write rate is being limited to protect read latency."
+          runbook_url: "https://docs.archerdb.io/runbooks/compaction-throttle"
+          remediation: "Check pending compaction bytes. Consider increasing compaction parallelism or reducing write rate."
+
+      # Warning: High pending compaction bytes
+      - alert: ArcherDBCompactionPendingHigh
+        expr: archerdb_compaction_pending_bytes > 10 * 1024 * 1024 * 1024
+        for: 15m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "High pending compaction bytes on {{ $labels.instance }}"
+          description: "{{ $value | humanize1024 }}B awaiting compaction (threshold: 10GB). Compaction may be falling behind."
+          runbook_url: "https://docs.archerdb.io/runbooks/compaction-backlog"
+          remediation: "Check compaction throughput and parallelism settings. May need to increase compaction workers."
+
+  - name: archerdb-storage-compression
+    rules:
+      # Info: Compression ratio degraded (data becoming less compressible)
+      - alert: ArcherDBCompressionDegraded
+        expr: archerdb_compression_ratio / 1000 > 0.7
+        for: 30m
+        labels:
+          severity: info
+          team: database
+        annotations:
+          summary: "Compression effectiveness degraded on {{ $labels.instance }}"
+          description: "Compression ratio is {{ $value | printf \"%.2f\" }} (threshold: 0.7). Data is becoming less compressible."
+          runbook_url: "https://docs.archerdb.io/runbooks/compression-degraded"
+          remediation: "Review data patterns. May be receiving already-compressed data, random data, or encrypted content. Consider if compression should be disabled for this workload."
+
+      # Warning: Compression ratio very poor
+      - alert: ArcherDBCompressionVeryPoor
+        expr: archerdb_compression_ratio / 1000 > 0.9
+        for: 1h
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "Very poor compression on {{ $labels.instance }}"
+          description: "Compression ratio is {{ $value | printf \"%.2f\" }} (threshold: 0.9). Compression is providing minimal benefit."
+          runbook_url: "https://docs.archerdb.io/runbooks/compression-degraded"
+          remediation: "Consider disabling compression for this workload to save CPU cycles. Data appears to be incompressible."
+
+  - name: archerdb-storage-emergency
+    rules:
+      # Critical: Emergency mode active (database protecting itself from failure)
+      - alert: ArcherDBEmergencyModeActive
+        expr: archerdb_emergency_mode == 1
+        for: 0m
+        labels:
+          severity: critical
+          team: database
+        annotations:
+          summary: "EMERGENCY MODE active on {{ $labels.instance }}"
+          description: "Database has entered emergency mode to protect itself from failure. Write operations may be rejected."
+          runbook_url: "https://docs.archerdb.io/runbooks/emergency-mode"
+          remediation: "IMMEDIATE ACTION REQUIRED: Check disk space, memory, and I/O health. Emergency mode indicates imminent failure risk."
+
+      # Critical: L0 table count too high (write stall imminent)
+      - alert: ArcherDBL0Backlog
+        expr: archerdb_lsm_tables_count{level="0"} > 8
+        for: 5m
+        labels:
+          severity: critical
+          team: database
+        annotations:
+          summary: "L0 table backlog critical on {{ $labels.instance }}"
+          description: "{{ $value }} tables in L0 (threshold: 8). Write stall is imminent if compaction doesn't catch up."
+          runbook_url: "https://docs.archerdb.io/runbooks/l0-backlog"
+          remediation: "URGENT: Reduce write rate immediately. Check compaction health. L0 overflow causes write stalls."
+
+  - name: archerdb-storage-dedup
+    rules:
+      # Info: Deduplication finding many duplicates (good)
+      - alert: ArcherDBDedupHighHitRate
+        expr: |
+          (
+            sum(archerdb_dedup_duplicates_found) /
+            sum(archerdb_dedup_blocks_checked)
+          ) > 0.3
+        for: 30m
+        labels:
+          severity: info
+          team: database
+        annotations:
+          summary: "High deduplication rate on {{ $labels.instance }}"
+          description: "Deduplication hit rate is {{ $value | humanizePercentage }}. Workload has significant duplicate data patterns."
+          runbook_url: "https://docs.archerdb.io/runbooks/dedup-tuning"
+          remediation: "This is informational. Consider increasing dedup index memory limit if eviction rate is high."
+
+      # Warning: High dedup eviction rate (index memory may be too small)
+      - alert: ArcherDBDedupHighEvictions
+        expr: rate(archerdb_dedup_evictions_total[5m]) > 100
+        for: 10m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "High dedup index eviction rate on {{ $labels.instance }}"
+          description: "Dedup index eviction rate is {{ $value | printf \"%.0f\" }}/sec. Index memory limit may be too small."
+          runbook_url: "https://docs.archerdb.io/runbooks/dedup-tuning"
+          remediation: "Consider increasing dedup index memory limit in configuration if memory is available."
