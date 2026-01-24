@@ -1496,15 +1496,40 @@ pub fn GenericRamIndexType(comptime Entry: type, comptime options: struct {
             self.* = undefined;
         }
 
-        /// Hash function for entity_id (u128).
+        /// Maximum displacement chain length for cuckoo hashing.
+        /// Prevents infinite loops during insertion when table is too full.
+        /// Value of 500 provides good balance: handles high load factors while
+        /// bounding worst-case insertion time.
+        const max_displacement: u32 = 500;
+
+        /// Primary hash function for entity_id (u128).
         /// Uses Google Abseil LowLevelHash (wyhash-inspired) from stdx.
-        inline fn hash(entity_id: u128) u64 {
+        inline fn hash1(entity_id: u128) u64 {
             return stdx.hash_inline(entity_id);
         }
 
-        /// Calculate slot index from hash.
+        /// Secondary hash function for cuckoo hashing.
+        /// XORs with golden ratio constant for independence from primary hash.
+        /// The golden ratio constant (2^128 / phi) ensures good distribution
+        /// even for sequential entity_ids.
+        inline fn hash2(entity_id: u128) u64 {
+            const golden: u128 = 0x9E3779B97F4A7C15_9E3779B97F4A7C15;
+            return stdx.hash_inline(entity_id ^ golden);
+        }
+
+        /// Calculate primary slot index from hash1.
+        inline fn slot1(self: *const @This(), entity_id: u128) u64 {
+            return stdx.fastrange(hash1(entity_id), self.capacity);
+        }
+
+        /// Calculate secondary slot index from hash2.
+        inline fn slot2(self: *const @This(), entity_id: u128) u64 {
+            return stdx.fastrange(hash2(entity_id), self.capacity);
+        }
+
+        /// Legacy slot_index function - alias for slot1 for backward compatibility.
         inline fn slot_index(self: *const @This(), entity_id: u128) u64 {
-            return hash(entity_id) % self.capacity;
+            return self.slot1(entity_id);
         }
 
         /// Result of a lookup operation (generic over entry type).
@@ -1526,37 +1551,38 @@ pub fn GenericRamIndexType(comptime Entry: type, comptime options: struct {
         };
 
         /// Lookup in a specific table (helper for dual-table resize).
+        /// Uses cuckoo hashing: checks primary slot (hash1) then secondary slot (hash2).
         fn lookupInTable(
             table_entries: []align(entry_alignment) Entry,
             table_capacity: u64,
             entity_id: u128,
         ) struct { entry: ?Entry, probe_count: u32 } {
-            const slot_hash = hash(entity_id);
-            var slot = slot_hash % table_capacity;
-            var probe_count: u32 = 0;
+            // Cuckoo lookup: check exactly two slots (O(1) guaranteed)
 
-            while (probe_count < max_probe_length) {
-                const entry_ptr: *Entry = &table_entries[@intCast(slot)];
-                const entry = @as(*volatile Entry, @ptrCast(entry_ptr)).*;
+            // Check primary slot (hash1)
+            const s1 = stdx.fastrange(hash1(entity_id), table_capacity);
+            const entry1_ptr: *Entry = &table_entries[@intCast(s1)];
+            const entry1 = @as(*volatile Entry, @ptrCast(entry1_ptr)).*;
 
-                if (entry.is_empty()) {
-                    return .{ .entry = null, .probe_count = probe_count };
-                }
-
-                if (entry.entity_id == entity_id) {
-                    if (entry.is_tombstone()) {
-                        return .{ .entry = null, .probe_count = probe_count };
-                    }
-                    return .{ .entry = entry, .probe_count = probe_count };
-                }
-
-                slot = (slot + 1) % table_capacity;
-                probe_count += 1;
+            if (entry1.entity_id == entity_id and !entry1.is_tombstone()) {
+                return .{ .entry = entry1, .probe_count = 1 };
             }
 
-            return .{ .entry = null, .probe_count = probe_count };
+            // Check secondary slot (hash2)
+            const s2 = stdx.fastrange(hash2(entity_id), table_capacity);
+            const entry2_ptr: *Entry = &table_entries[@intCast(s2)];
+            const entry2 = @as(*volatile Entry, @ptrCast(entry2_ptr)).*;
+
+            if (entry2.entity_id == entity_id and !entry2.is_tombstone()) {
+                return .{ .entry = entry2, .probe_count = 2 };
+            }
+
+            // Not found in either slot
+            return .{ .entry = null, .probe_count = 2 };
         }
 
+        /// Update metadata in a specific table (helper for dual-table resize).
+        /// Uses cuckoo hashing: checks primary slot (hash1) then secondary slot (hash2).
         fn updateMetadataInTable(
             table_entries: []align(entry_alignment) Entry,
             table_capacity: u64,
@@ -1566,37 +1592,42 @@ pub fn GenericRamIndexType(comptime Entry: type, comptime options: struct {
             lon_nano: i64,
             group_id: u64,
         ) bool {
-            const slot_hash = hash(entity_id);
-            var slot = slot_hash % table_capacity;
-            var probe_count: u32 = 0;
+            // Cuckoo lookup: check exactly two slots
 
-            while (probe_count < max_probe_length) {
-                const entry_ptr: *Entry = &table_entries[@intCast(slot)];
-                const entry = @as(*volatile Entry, @ptrCast(entry_ptr)).*;
+            // Check primary slot (hash1)
+            const s1 = stdx.fastrange(hash1(entity_id), table_capacity);
+            const entry1_ptr: *Entry = &table_entries[@intCast(s1)];
+            const entry1 = @as(*volatile Entry, @ptrCast(entry1_ptr)).*;
 
-                if (entry.is_empty()) {
+            if (entry1.entity_id == entity_id and !entry1.is_tombstone()) {
+                if (entry1.latest_id != latest_id) {
                     return false;
                 }
+                var updated = entry1;
+                updated.lat_nano = lat_nano;
+                updated.lon_nano = lon_nano;
+                updated.group_id = group_id;
+                updated.reserved |= Entry.metadata_flag;
+                @as(*volatile Entry, @ptrCast(entry1_ptr)).* = updated;
+                return true;
+            }
 
-                if (entry.entity_id == entity_id) {
-                    if (entry.is_tombstone()) {
-                        return false;
-                    }
-                    if (entry.latest_id != latest_id) {
-                        return false;
-                    }
+            // Check secondary slot (hash2)
+            const s2 = stdx.fastrange(hash2(entity_id), table_capacity);
+            const entry2_ptr: *Entry = &table_entries[@intCast(s2)];
+            const entry2 = @as(*volatile Entry, @ptrCast(entry2_ptr)).*;
 
-                    var updated = entry;
-                    updated.lat_nano = lat_nano;
-                    updated.lon_nano = lon_nano;
-                    updated.group_id = group_id;
-                    updated.reserved |= Entry.metadata_flag;
-                    @as(*volatile Entry, @ptrCast(entry_ptr)).* = updated;
-                    return true;
+            if (entry2.entity_id == entity_id and !entry2.is_tombstone()) {
+                if (entry2.latest_id != latest_id) {
+                    return false;
                 }
-
-                slot = (slot + 1) % table_capacity;
-                probe_count += 1;
+                var updated = entry2;
+                updated.lat_nano = lat_nano;
+                updated.lon_nano = lon_nano;
+                updated.group_id = group_id;
+                updated.reserved |= Entry.metadata_flag;
+                @as(*volatile Entry, @ptrCast(entry2_ptr)).* = updated;
+                return true;
             }
 
             return false;
