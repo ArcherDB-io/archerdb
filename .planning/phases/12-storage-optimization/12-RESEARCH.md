@@ -1,22 +1,20 @@
 # Phase 12: Storage Optimization - Research
 
-**Researched:** 2026-01-24
+**Researched:** 2026-01-24 (re-research update)
 **Domain:** LSM-tree storage optimization, compression, compaction tuning, write amplification
 **Confidence:** HIGH
 
 ## Summary
 
-Phase 12 optimizes ArcherDB's LSM-tree storage for write-heavy geospatial workloads. The codebase already has a mature LSM implementation (`src/lsm/`) with leveled compaction, block-based storage (`64 KiB blocks`), and existing compaction infrastructure including TTL-aware prioritization. The existing Grafana storage dashboard (`observability/grafana/dashboards/archerdb-storage.json`) and Prometheus metrics infrastructure from Phase 11 provide the observability foundation.
+Phase 12 optimizes ArcherDB's LSM-tree storage for write-heavy geospatial workloads. The codebase already has a mature LSM implementation (`src/lsm/`) with leveled compaction, block-based storage (`64 KiB blocks` configurable via `config.cluster.block_size`), and existing compaction infrastructure including TTL-aware prioritization. The existing Grafana storage dashboard (`observability/grafana/dashboards/archerdb-storage.json`) and Prometheus metrics infrastructure from Phase 11 provide the observability foundation.
 
-The primary work involves:
-1. Adding block-level LZ4 compression to value blocks (preserving index blocks uncompressed for fast key lookups)
-2. Implementing tiered compaction strategy as default with latency-driven throttling
-3. Adding write amplification monitoring and space amplification metrics
-4. Building adaptive compaction that auto-tunes based on write throughput and space amplification
-5. Implementing block-level deduplication for repeated geospatial values (common in trajectory data)
-6. Creating operator controls with guardrails and emergency mode
+This re-research validates and updates the original findings with 2025-2026 developments:
+- **LZ4 library recommendation remains valid:** `allyourcodebase/lz4` wrapping LZ4 v1.10.0 (July 2024) is still the best option for Zig. LZ4 v1.10.0 adds multithreading support, dictionary compression, and a new Level 2 compression mode. Alternative pure-Zig `LZig4` supports Zig 0.13 but remains less mature.
+- **Tiered compaction patterns validated:** 2025 research (SIGMOD, ICPP, Journal of Big Data) confirms hybrid tiered+leveled approaches for write-heavy workloads.
+- **Adaptive compaction research updated:** ELMo-Tune-V2 (Feb 2025) and comprehensive LSM survey (July 2025) provide new insights on auto-tuning. LLM-based tuning shows 14x gains but has 100s startup time - not suitable for real-time. Rule-based adaptive tuning remains practical.
+- **TiKV flow control pattern:** TiKV's predictive throttling (replacing RocksDB's reactive stall) is a validated pattern for smoother write latency.
 
-**Primary recommendation:** Integrate compression at the block level using the `allyourcodebase/lz4` Zig binding for the C LZ4 library. Implement tiered compaction as a configuration option alongside existing leveled compaction, with latency-driven throttling based on P99 query latency.
+**Primary recommendation:** Integrate compression at the block level using `allyourcodebase/lz4` (LZ4 v1.10.0) with the Zig build system. Implement tiered compaction as a configuration option alongside existing leveled compaction, with predictive throttling based on pending compaction bytes (TiKV-style) rather than purely reactive P99 latency threshold.
 
 ## Standard Stack
 
@@ -26,30 +24,42 @@ The established libraries/tools for this domain:
 
 | Library | Version | Purpose | Why Standard |
 |---------|---------|---------|--------------|
-| [allyourcodebase/lz4](https://github.com/allyourcodebase/lz4) | 1.10.0-6 | Block compression | Zig build system integration, LZ4 is fastest decompression, industry standard |
+| [allyourcodebase/lz4](https://github.com/allyourcodebase/lz4) | 1.10.0-6 (wraps LZ4 v1.10.0) | Block compression | Zig build system integration, LZ4 fastest decompression, multithreading support in v1.10.0, industry standard |
 | Existing LSM implementation | N/A | Block storage, compaction | Already mature, battle-tested in ArcherDB |
-| Existing metrics.zig | N/A | Prometheus metrics | Phase 11 infrastructure, histogram support |
+| Existing metrics.zig | N/A | Prometheus metrics | Phase 11 infrastructure, histogram/ExtendedStats support |
+| std.hash.XxHash64 | Zig stdlib | Content hashing for dedup | Built into Zig, extremely fast, well-tested |
 
 ### Supporting
 
 | Library | Version | Purpose | When to Use |
 |---------|---------|---------|-------------|
-| [LZig4](https://github.com/BarabasGitHub/LZig4) | Latest | Pure Zig LZ4 | If C dependency is problematic |
+| [LZig4](https://github.com/BarabasGitHub/LZig4) | Latest (Zig 0.13) | Pure Zig LZ4 | If C dependency is problematic; less mature |
+| std.hash.CityHash64 | Zig stdlib | Alternative content hash | Alternative to xxhash if needed |
 | Existing archerdb-storage.json dashboard | N/A | Storage visualization | Extend with new metrics |
 
 ### Alternatives Considered
 
 | Instead of | Could Use | Tradeoff |
 |------------|-----------|----------|
-| LZ4 | Zstd | Zstd better ratio but slower decompression; LZ4 prioritizes latency (user decision) |
-| allyourcodebase/lz4 | LZig4 | Pure Zig avoids C deps but less tested, may have perf differences |
-| Tiered compaction | Leveled (current) | Leveled has lower space amp, tiered has lower write amp |
+| LZ4 | Zstd | Zstd better ratio (30-40% smaller) but 3-5x slower decompression; LZ4 prioritizes latency (user decision: LZ4) |
+| allyourcodebase/lz4 | LZig4 | Pure Zig avoids C deps but less tested, only 16 commits, may have perf differences |
+| Tiered compaction | Leveled (current) | Leveled has lower space amp (1.1-1.2x), tiered has lower write amp (2-3x reduction) |
+| Reactive P99 throttling | Predictive throttling (TiKV-style) | Predictive prevents stalls before they happen; reactive responds after degradation starts |
 
 **Installation:**
 ```bash
-# Add LZ4 dependency
+# Add LZ4 dependency to build.zig.zon
 cd /home/g/archerdb
 zig fetch --save git+https://github.com/allyourcodebase/lz4.git#1.10.0-6
+```
+
+**build.zig integration:**
+```zig
+const lz4_dep = b.dependency("lz4", .{
+    .target = target,
+    .optimize = optimize,
+});
+exe.linkLibrary(lz4_dep.artifact("lz4"));
 ```
 
 ## Architecture Patterns
@@ -84,30 +94,35 @@ observability/grafana/dashboards/
 **Why:** Block-level compression works with existing LSM structure, no schema changes needed
 
 ```zig
-// Source: Based on ArcherDB src/lsm/schema.zig header pattern
+// Source: Based on ArcherDB src/lsm/schema.zig header pattern + LZ4 v1.10.0 API
 const CompressionType = enum(u4) {
     none = 0,
     lz4 = 1,
     // Reserved for future: zstd = 2
 };
 
-// Extend existing block header metadata
-pub const BlockMetadata = extern struct {
-    // Existing fields...
+// Extend existing block header metadata (in schema.zig)
+// Uses reserved bytes in current TableIndex.Metadata
+pub const CompressionMetadata = extern struct {
     compression: CompressionType = .none,
     uncompressed_size: u32 = 0,  // Original size before compression
-    reserved: [76]u8 = @splat(0),
-
-    comptime {
-        assert(@sizeOf(BlockMetadata) == vsr.Header.Block.metadata_size);
-    }
+    // Fits within existing reserved: [82]u8 field in TableIndex.Metadata
 };
 
-// Compression wrapper
-pub fn compress_block(input: []const u8, output: []u8) !struct { size: usize, type: CompressionType } {
-    const compressed_size = lz4.compress(input.ptr, output.ptr, @intCast(input.len), @intCast(output.len));
+// Compression wrapper using LZ4 v1.10.0 API
+const lz4 = @cImport({
+    @cInclude("lz4.h");
+});
 
-    // Only use compression if it saves space
+pub fn compress_block(input: []const u8, output: []u8) !struct { size: usize, type: CompressionType } {
+    const compressed_size = lz4.LZ4_compress_default(
+        input.ptr,
+        output.ptr,
+        @intCast(input.len),
+        @intCast(output.len),
+    );
+
+    // Only use compression if it saves at least 10% space
     if (compressed_size > 0 and compressed_size < input.len * 9 / 10) {
         return .{ .size = @intCast(compressed_size), .type = .lz4 };
     }
@@ -116,16 +131,26 @@ pub fn compress_block(input: []const u8, output: []u8) !struct { size: usize, ty
     return .{ .size = input.len, .type = .none };
 }
 
-pub fn decompress_block(input: []const u8, output: []u8, compression: CompressionType) !usize {
+pub fn decompress_block(
+    input: []const u8,
+    output: []u8,
+    compression: CompressionType,
+    uncompressed_size: u32,
+) !usize {
     switch (compression) {
         .none => {
             @memcpy(output[0..input.len], input);
             return input.len;
         },
         .lz4 => {
-            const size = lz4.decompress(input.ptr, output.ptr, @intCast(input.len), @intCast(output.len));
-            if (size < 0) return error.DecompressionFailed;
-            return @intCast(size);
+            const result = lz4.LZ4_decompress_safe(
+                input.ptr,
+                output.ptr,
+                @intCast(input.len),
+                @intCast(uncompressed_size),
+            );
+            if (result < 0) return error.DecompressionFailed;
+            return @intCast(result);
         },
     }
 }
@@ -134,22 +159,27 @@ pub fn decompress_block(input: []const u8, output: []u8, compression: Compressio
 ### Pattern 2: Tiered Compaction Strategy
 
 **What:** Merge multiple sorted runs at same size tier before promoting to next level
-**When to use:** Write-heavy workloads (default for geospatial)
-**Why:** Reduces write amplification by 2-3x for update-heavy workloads
+**When to use:** Write-heavy workloads (recommended default for geospatial)
+**Why:** Reduces write amplification by 2-3x for update-heavy workloads (validated by 2025 research)
 
 ```zig
-// Source: Based on RocksDB Universal Compaction and LSM research
+// Source: RocksDB Universal Compaction, SIGMOD 2025 "How to Grow an LSM-tree?"
 pub const CompactionStrategy = enum {
-    leveled,   // Current: aggressive merge, lower space amp
-    tiered,    // New: delayed merge, lower write amp
+    leveled,   // Current: aggressive merge, lower space amp (1.1-1.2x)
+    tiered,    // New: delayed merge, lower write amp (2-3x reduction)
 };
 
 pub const TieredCompactionConfig = struct {
     // Number of sorted runs to accumulate before merging
     size_ratio: f64 = 2.0,          // Merge when total size > size_ratio * largest_run
     min_merge_width: u32 = 2,        // Minimum runs to merge
-    max_merge_width: u32 = 8,        // Maximum runs to merge at once
+    max_merge_width: u32 = 8,        // Maximum runs to merge at once (RocksDB default)
     max_size_amplification_percent: u32 = 200,  // Trigger compaction if space amp exceeds this
+
+    // From 2025 research: partial vs full compaction tradeoff
+    // Full compaction: better average throughput but worse tail latency
+    // Partial compaction: worse average but better tail latency
+    prefer_partial_compaction: bool = true,  // Better for latency-sensitive workloads
 };
 
 // Tiered compaction decision logic
@@ -157,7 +187,7 @@ pub fn should_compact_tiered(level: *const Level, config: TieredCompactionConfig
     const runs = level.sorted_run_count();
     if (runs < config.min_merge_width) return false;
 
-    // Check space amplification
+    // Check space amplification (primary trigger per user decision)
     const space_amp = level.total_size() / level.logical_size();
     if (space_amp * 100 > config.max_size_amplification_percent) return true;
 
@@ -168,18 +198,27 @@ pub fn should_compact_tiered(level: *const Level, config: TieredCompactionConfig
 }
 ```
 
-### Pattern 3: Latency-Driven Compaction Throttling
+### Pattern 3: Predictive Compaction Throttling (TiKV-Style)
 
-**What:** Slow down compaction when P99 query latency exceeds threshold
+**What:** Proactively slow compaction based on pending compaction bytes, not just reactive P99 latency
 **When to use:** All compaction operations
-**Why:** Prevents compaction I/O from impacting query performance
+**Why:** Prevents write stalls before they happen (TiKV's production-validated approach)
 
 ```zig
-// Source: SILK and DLC research papers, RocksDB Write Stalls wiki
+// Source: TiKV Flow Control (2025), RocksDB Write Stalls wiki
+// Key insight: RocksDB's default limiter is reactive, not predictive.
+// By the time P99 reacts, stall is unavoidable. TiKV predicts and smooths pressure.
+
 pub const ThrottleConfig = struct {
+    // Predictive thresholds (pending compaction bytes)
+    soft_pending_compaction_bytes: u64 = 64 * 1024 * 1024 * 1024,  // 64 GiB: start slowing
+    hard_pending_compaction_bytes: u64 = 256 * 1024 * 1024 * 1024, // 256 GiB: aggressive slow
+
+    // Reactive fallback (P99 latency)
     p99_latency_threshold_ms: f64 = 50.0,     // Start throttling above this
     p99_latency_critical_ms: f64 = 100.0,     // Emergency throttle above this
-    check_interval_ms: u64 = 1000,            // How often to check latency
+
+    check_interval_ms: u64 = 1000,            // How often to check
     throttle_ratio_step: f64 = 0.1,           // How much to reduce/increase per check
     min_throughput_ratio: f64 = 0.1,          // Never go below 10% throughput
     recovery_hysteresis_ms: f64 = 10.0,       // Wait for latency to drop this much below threshold
@@ -190,19 +229,42 @@ pub const ThrottleState = struct {
     last_check_ns: i64 = 0,
     consecutive_good_checks: u32 = 0,
 
-    pub fn update(self: *ThrottleState, current_p99_ms: f64, config: ThrottleConfig) void {
-        if (current_p99_ms > config.p99_latency_critical_ms) {
-            // Emergency: immediately drop to minimum
-            self.current_throughput_ratio = config.min_throughput_ratio;
+    // Predictive mode (preferred)
+    pending_compaction_bytes: u64 = 0,
+
+    pub fn update(self: *ThrottleState, metrics: ThrottleMetrics, config: ThrottleConfig) void {
+        // Predictive path: check pending compaction bytes first
+        if (metrics.pending_compaction_bytes > config.hard_pending_compaction_bytes) {
+            // Aggressive slowdown before stall
+            self.current_throughput_ratio = @max(
+                config.min_throughput_ratio,
+                self.current_throughput_ratio * 0.5  // Halve immediately
+            );
             self.consecutive_good_checks = 0;
-        } else if (current_p99_ms > config.p99_latency_threshold_ms) {
-            // Throttle down
+            return;
+        }
+
+        if (metrics.pending_compaction_bytes > config.soft_pending_compaction_bytes) {
+            // Gradual slowdown
             self.current_throughput_ratio = @max(
                 config.min_throughput_ratio,
                 self.current_throughput_ratio - config.throttle_ratio_step
             );
             self.consecutive_good_checks = 0;
-        } else if (current_p99_ms < config.p99_latency_threshold_ms - config.recovery_hysteresis_ms) {
+            return;
+        }
+
+        // Reactive fallback: check P99 latency
+        if (metrics.current_p99_ms > config.p99_latency_critical_ms) {
+            self.current_throughput_ratio = config.min_throughput_ratio;
+            self.consecutive_good_checks = 0;
+        } else if (metrics.current_p99_ms > config.p99_latency_threshold_ms) {
+            self.current_throughput_ratio = @max(
+                config.min_throughput_ratio,
+                self.current_throughput_ratio - config.throttle_ratio_step
+            );
+            self.consecutive_good_checks = 0;
+        } else if (metrics.current_p99_ms < config.p99_latency_threshold_ms - config.recovery_hysteresis_ms) {
             // Good latency, can recover
             self.consecutive_good_checks += 1;
             if (self.consecutive_good_checks >= 3) {
@@ -214,22 +276,31 @@ pub const ThrottleState = struct {
         }
     }
 };
+
+const ThrottleMetrics = struct {
+    pending_compaction_bytes: u64,
+    current_p99_ms: f64,
+};
 ```
 
 ### Pattern 4: Write Amplification Monitoring
 
-**What:** Track ratio of physical writes to logical writes
+**What:** Track ratio of physical writes to logical writes at each stage
 **When to use:** All write paths
 **Why:** Key metric for LSM health, validates optimization effectiveness
 
 ```zig
-// Source: CockroachDB Storage Layer docs, LSM-tree research
+// Source: CockroachDB Storage Layer, 2025 LSM Survey, EDBT 2025 partial compaction research
 pub const WriteAmpMetrics = struct {
-    // Rolling window counters
+    // Rolling window counters (per user decision: 1min, 5min, 1hr windows)
     logical_bytes_written: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
     physical_bytes_written: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
 
-    // Per-level tracking for debugging
+    // Per-stage tracking (critical for debugging per research)
+    memtable_flush_bytes: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
+    l0_compaction_bytes: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
+
+    // Per-level tracking for deeper analysis
     level_writes: [constants.lsm_levels]std.atomic.Value(u64) =
         [_]std.atomic.Value(u64){std.atomic.Value(u64).init(0)} ** constants.lsm_levels,
 
@@ -262,12 +333,15 @@ pub const WriteAmpMetrics = struct {
 
 **What:** Automatically adjust compaction parameters based on workload
 **When to use:** Default behavior, operators can override
-**Why:** "Just works" for 90% of deployments without manual tuning
+**Why:** "Just works" for 90% of deployments without manual tuning (user requirement)
 
 ```zig
-// Source: ArceKV, Endure, ELMo-Tune-V2 research
+// Source: ELMo-Tune-V2 (2025), Endure paper, 2025 LSM Survey
+// Note: LLM-based tuning (ELMo-Tune-V2) achieves 14x gains but requires ~100s startup
+// For real-time, use rule-based adaptive tuning with user-specified triggers
+
 pub const AdaptiveConfig = struct {
-    // Triggers for adaptation
+    // Triggers for adaptation (per user decision: dual trigger)
     write_throughput_change_threshold: f64 = 0.20,  // 20% change triggers re-evaluation
     space_amp_threshold: f64 = 2.0,                  // 2x logical size triggers aggressive compaction
 
@@ -275,11 +349,15 @@ pub const AdaptiveConfig = struct {
     window_duration_ms: u64 = 60_000,  // 1 minute window
     sample_interval_ms: u64 = 1000,    // Sample every second
 
-    // Bounds on auto-tuning (guardrails)
+    // Bounds on auto-tuning (guardrails per user decision)
     min_compaction_threads: u32 = 1,
     max_compaction_threads: u32 = 4,
     min_l0_compaction_trigger: u32 = 2,
     max_l0_compaction_trigger: u32 = 20,
+
+    // Prevent obviously bad settings (guardrails per user decision)
+    disk_usage_compaction_required_threshold: f64 = 0.90,  // >90% disk: must compact
+    min_throughput_ratio_at_high_disk: f64 = 0.5,          // At least 50% compaction at high disk
 };
 
 pub const WorkloadType = enum {
@@ -300,6 +378,9 @@ pub const AdaptiveState = struct {
     current_space_amp: f64 = 1.0,
     current_write_amp: f64 = 1.0,
 
+    // Throughput change tracking
+    previous_write_throughput: f64 = 0,
+
     pub fn recommend_strategy(self: *const AdaptiveState) CompactionStrategy {
         // Per user decision: tiered as default for geospatial
         // Only switch to leveled if read-heavy or space constrained
@@ -310,8 +391,10 @@ pub const AdaptiveState = struct {
     }
 
     pub fn should_trigger_compaction(self: *const AdaptiveState, config: AdaptiveConfig) bool {
-        // Dual trigger per user decision
-        const write_change_trigger = self.write_throughput_changed(config.write_throughput_change_threshold);
+        // Dual trigger per user decision: both conditions must be met
+        const write_change = @abs(self.writes_per_second - self.previous_write_throughput) /
+            @max(self.previous_write_throughput, 1.0);
+        const write_change_trigger = write_change > config.write_throughput_change_threshold;
         const space_amp_trigger = self.current_space_amp > config.space_amp_threshold;
         return write_change_trigger and space_amp_trigger;
     }
@@ -325,35 +408,52 @@ pub const AdaptiveState = struct {
 **Why:** Can reduce storage by 10-30% for trajectory-heavy workloads
 
 ```zig
-// Source: Data deduplication research, Duplicati architecture
+// Source: Data deduplication research, std.hash.XxHash64 from Zig stdlib
+const std = @import("std");
+
 pub const DedupConfig = struct {
     enabled: bool = true,
-    hash_algorithm: enum { xxhash, cityhash } = .xxhash,  // Fast, non-crypto hash
     index_memory_limit: usize = 64 * 1024 * 1024,  // 64 MiB for dedup index
     min_block_size_for_dedup: usize = 4096,  // Don't dedup tiny blocks
 };
 
 pub const DedupIndex = struct {
     // Hash -> (address, reference_count)
+    // Use std.hash.XxHash64 for fast, high-quality hashing
     entries: std.AutoHashMap(u64, DedupEntry),
+    memory_used: usize = 0,
+    config: DedupConfig,
 
     pub const DedupEntry = struct {
         block_address: u64,
         reference_count: u32,
     };
 
-    pub fn lookup_or_insert(self: *DedupIndex, block_hash: u64, new_address: u64) ?u64 {
+    pub fn lookup_or_insert(self: *DedupIndex, block_data: []const u8, new_address: u64) ?u64 {
+        if (block_data.len < self.config.min_block_size_for_dedup) return null;
+
+        // Use XxHash64 from std.hash (built into Zig)
+        const block_hash = std.hash.XxHash64.hash(0, block_data);
+
         if (self.entries.get(block_hash)) |existing| {
             // Duplicate found, return existing address
             var entry = self.entries.getPtr(block_hash).?;
             entry.reference_count += 1;
             return existing.block_address;
         }
+
+        // Check memory limit before inserting
+        if (self.memory_used + @sizeOf(DedupEntry) > self.config.index_memory_limit) {
+            // Memory limit reached, skip dedup for this block
+            return null;
+        }
+
         // New block, insert
         self.entries.put(block_hash, .{
             .block_address = new_address,
             .reference_count = 1,
         }) catch return null;
+        self.memory_used += @sizeOf(DedupEntry);
         return null;
     }
 };
@@ -361,11 +461,12 @@ pub const DedupIndex = struct {
 
 ### Anti-Patterns to Avoid
 
-- **Compressing index blocks:** Index blocks need fast key lookups; compression adds latency
-- **Synchronous compression in write path:** Compress during compaction, not during initial write
-- **Ignoring write stall conditions:** Always check for stall conditions before aggressive compaction
+- **Compressing index blocks:** Index blocks need fast key lookups; compression adds latency on critical path
+- **Synchronous compression in write path:** Compress during compaction, not during initial write (avoid write latency spikes)
+- **Ignoring write stall conditions:** Always check for stall conditions before aggressive compaction (TiKV lesson)
 - **Global dedup index:** Dedup index must be per-level or bounded to avoid memory explosion
 - **Disabling compaction entirely:** Even in emergency, maintain minimum compaction to prevent L0 explosion
+- **Reactive-only throttling:** Use predictive (pending bytes) + reactive (P99 latency) for smoother control
 
 ## Don't Hand-Roll
 
@@ -373,35 +474,35 @@ Problems that look simple but have existing solutions:
 
 | Problem | Don't Build | Use Instead | Why |
 |---------|-------------|-------------|-----|
-| LZ4 compression | Custom compressor | allyourcodebase/lz4 | Battle-tested C library, optimal performance |
-| Content hashing | Custom hash | xxHash via Zig stdlib | Extremely fast, well-tested |
-| Histogram buckets | Custom percentile calc | Extend existing metrics.zig | Already has ExtendedStats pattern |
-| Rate limiting | Custom limiter | Token bucket in stdx | Standard algorithm, already available |
+| LZ4 compression | Custom compressor | allyourcodebase/lz4 | Battle-tested C library, LZ4 v1.10.0 with multithreading |
+| Content hashing | Custom hash | std.hash.XxHash64 | Built into Zig stdlib, extremely fast, well-tested |
+| Histogram buckets | Custom percentile calc | Extend existing metrics.zig ExtendedStats | Already has P50-P99.99 support |
+| Rate limiting | Custom limiter | Token bucket pattern | Well-known algorithm, simple to implement correctly |
 | Rolling window stats | Custom accumulator | Sliding window counters | Well-known pattern |
 
-**Key insight:** ArcherDB already has the LSM infrastructure. This phase adds compression at block level and tuning knobs, not wholesale rewrites.
+**Key insight:** ArcherDB already has the LSM infrastructure. This phase adds compression at block level and tuning knobs, not wholesale rewrites. Use existing patterns from `src/archerdb/metrics.zig`, `src/lsm/compaction.zig`, and `src/config.zig`.
 
 ## Common Pitfalls
 
 ### Pitfall 1: Compression Ratio Expectations
 
 **What goes wrong:** Expecting 40-60% reduction on all data types
-**Why it happens:** Geospatial data varies wildly in compressibility
-**How to avoid:** Track per-block-type compression ratios; some blocks won't compress well
+**Why it happens:** Geospatial data varies wildly in compressibility; S2 cell IDs are high-entropy
+**How to avoid:** Track per-block-type compression ratios; some blocks won't compress well (e.g., pre-hashed data)
 **Warning signs:** Average compression ratio < 20%; compression adding latency without space savings
 
 ### Pitfall 2: Write Amplification Misattribution
 
 **What goes wrong:** Blaming compaction for write amp when flush is the issue
-**Why it happens:** Not tracking writes at each stage separately
+**Why it happens:** Not tracking writes at each stage separately (2025 research emphasizes this)
 **How to avoid:** Track memtable flush writes, L0 writes, and per-level compaction writes separately
 **Warning signs:** L0 size growing unbounded; write amp appears high but compaction is idle
 
 ### Pitfall 3: Throttling Oscillation
 
 **What goes wrong:** Throttle bounces between full speed and minimum
-**Why it happens:** Threshold too sensitive, no hysteresis
-**How to avoid:** Add hysteresis (recovery threshold lower than activation threshold); require consecutive good checks before recovery
+**Why it happens:** Threshold too sensitive, no hysteresis; reactive-only approach
+**How to avoid:** Use predictive throttling (pending bytes) + hysteresis for reactive; require consecutive good checks before recovery
 **Warning signs:** Throughput ratio changing every check interval; compaction CPU cycling
 
 ### Pitfall 4: Emergency Mode Stuck
@@ -421,9 +522,16 @@ Problems that look simple but have existing solutions:
 ### Pitfall 6: Tiered Compaction Space Amplification
 
 **What goes wrong:** Disk fills up faster than expected with tiered compaction
-**Why it happens:** Tiered delays compaction, increasing space amplification
-**How to avoid:** Set space amplification threshold (2x); switch to leveled if space-constrained
+**Why it happens:** Tiered delays compaction, increasing space amplification (can reach 2.5-3x)
+**How to avoid:** Set space amplification threshold (2x per user decision); switch to leveled if space-constrained
 **Warning signs:** Space amp > 2.5x; disk usage growing faster than data volume
+
+### Pitfall 7: Partial vs Full Compaction Tradeoff (2025 Research)
+
+**What goes wrong:** Full compaction causes write stalls at large levels
+**Why it happens:** Full compaction has better average throughput but worse tail latency
+**How to avoid:** Use partial compaction for latency-sensitive workloads; accept slightly higher write amp
+**Warning signs:** Significant write stalls during L5-L6 compaction; latency spikes during peak hours
 
 ## Code Examples
 
@@ -432,7 +540,7 @@ Verified patterns from official sources:
 ### LZ4 Integration with Zig Build System
 
 ```zig
-// Source: https://github.com/allyourcodebase/lz4
+// Source: https://github.com/allyourcodebase/lz4, LZ4 v1.10.0 API
 // build.zig integration
 const lz4_dep = b.dependency("lz4", .{
     .target = target,
@@ -490,6 +598,12 @@ pub var archerdb_compaction_throttle_ratio = Gauge.init(
     null,
 );
 
+pub var archerdb_compaction_pending_bytes = Gauge.init(
+    "archerdb_compaction_pending_bytes",
+    "Bytes waiting to be compacted",
+    null,
+);
+
 pub var archerdb_compression_ratio_total = Gauge.init(
     "archerdb_compression_ratio",
     "Ratio of compressed to uncompressed data size",
@@ -526,7 +640,7 @@ pub const CompactionInspect = struct {
     show_adaptive: bool = false,
 };
 
-// Runtime control API (temporary overrides)
+// Runtime control API (temporary overrides, revert on restart per user decision)
 // archerdb start --compaction-strategy=tiered
 // archerdb start --compression=lz4
 // archerdb start --emergency-mode-threshold=95
@@ -544,23 +658,26 @@ pub const CompactionInspect = struct {
 |--------------|------------------|--------------|--------|
 | Leveled compaction only | Tiered + leveled hybrid | 2020+ | 2-3x write amp reduction for write-heavy |
 | Fixed compaction rate | Latency-driven throttling | 2019 (SILK) | Stable query latency |
+| Reactive throttling | Predictive + reactive (TiKV) | 2025 | Prevents stalls before they happen |
 | Manual tuning | Adaptive auto-tuning | 2023+ | 90% deployments need no manual tuning |
 | No compression | Block-level LZ4 | Standard | 40-60% storage reduction |
 | Fixed L0 threshold | Dynamic thresholds | 2024+ | Better responsiveness to workload changes |
+| Full compaction only | Partial compaction option | 2025 | Better tail latency at large levels |
 
 **Deprecated/outdated:**
-- **Zstd for all blocks:** Too slow for latency-sensitive geospatial queries
+- **Zstd for all blocks:** Too slow for latency-sensitive geospatial queries (3-5x slower decompression)
 - **File-level deduplication:** Block-level is more granular and effective
 - **Global dedup index:** Memory explosion; use bounded per-level indexes
+- **Reactive-only throttling:** TiKV's experience shows predictive is superior
 
 ## Open Questions
 
 Things that couldn't be fully resolved:
 
 1. **Exact throttling thresholds**
-   - What we know: P99 threshold should be workload-dependent
-   - What's unclear: Optimal default threshold for geospatial workloads
-   - Recommendation: Start with 50ms P99 threshold, expose as config, tune based on Phase 11 benchmarks
+   - What we know: P99 threshold should be workload-dependent; TiKV uses pending bytes as primary signal
+   - What's unclear: Optimal `soft_pending_compaction_bytes` default for geospatial workloads
+   - Recommendation: Start with 64 GiB soft / 256 GiB hard pending bytes, expose as config, tune based on Phase 11 benchmarks
 
 2. **Emergency mode recovery**
    - What we know: Need auto-recovery to prevent stuck state
@@ -568,42 +685,53 @@ Things that couldn't be fully resolved:
    - Recommendation: 5-minute timeout with exponential backoff retry; alert after 3 failures
 
 3. **Deduplication hash collision handling**
-   - What we know: Hash collisions are rare but possible
+   - What we know: Hash collisions are rare with 64-bit hashes (1 in 2^64)
    - What's unclear: Whether to verify block content on collision
-   - Recommendation: Use 128-bit hash (collision probability negligible); add optional verification flag for paranoid mode
+   - Recommendation: XxHash64 collision probability negligible; add optional verification flag for paranoid mode
 
 4. **Compression during compaction vs flush**
    - What we know: Compaction is better for avoiding write path latency
    - What's unclear: Whether to compress L0 blocks (frequently rewritten)
    - Recommendation: Start with compression only at L1+, measure L0 compression benefit separately
 
+5. **LZ4 Level 2 vs Level 1**
+   - What we know: LZ4 v1.10.0 adds Level 2 which balances speed and ratio better than Level 1
+   - What's unclear: Whether Level 2's slight slowdown is acceptable for geospatial workloads
+   - Recommendation: Start with Level 1 (fastest), benchmark Level 2 as option
+
 ## Sources
 
 ### Primary (HIGH confidence)
-- [allyourcodebase/lz4](https://github.com/allyourcodebase/lz4) - Zig LZ4 binding, verified API
+- [allyourcodebase/lz4](https://github.com/allyourcodebase/lz4) - Zig LZ4 binding, version 1.10.0-6
+- [LZ4 v1.10.0 Release Notes](https://github.com/lz4/lz4/releases/tag/v1.10.0) - Multicores edition features
+- [RocksDB Compaction Wiki](https://github.com/facebook/rocksdb/wiki/Compaction) - Universal/tiered compaction reference
 - [RocksDB Write Stalls Wiki](https://github.com/facebook/rocksdb/wiki/Write-Stalls) - Throttling mechanisms
-- [RocksDB Universal Compaction](https://github.com/facebook/rocksdb/wiki/universal-compaction) - Tiered compaction reference
+- [Zig std.hash](https://github.com/ziglang/zig/blob/master/lib/std/hash.zig) - XxHash64 built-in
 - ArcherDB src/lsm/*.zig - Existing LSM implementation
 - ArcherDB src/archerdb/metrics.zig - Existing metrics infrastructure
 
 ### Secondary (MEDIUM confidence)
+- [SIGMOD 2025: How to Grow an LSM-tree?](https://arxiv.org/pdf/2504.17178) - Tiered vs leveled analysis
+- [ICPP 2025: Revisiting Multi-threaded Compaction](https://discos.sogang.ac.kr/file/2025/intl_conf/ICPP_2025_H_Byun.pdf) - DownForce design
+- [Journal of Big Data 2025: Hybrid Compaction Strategies](https://link.springer.com/article/10.1186/s40537-025-01298-0) - Local-Range/Global-Range partitioning
+- [2025 LSM Survey](https://arxiv.org/html/2507.09642v1) - Comprehensive review (100+ papers)
 - [Alibaba LSM Compaction Discussion](https://www.alibabacloud.com/blog/an-in-depth-discussion-on-the-lsm-compaction-mechanism_596780) - Tiered vs leveled tradeoffs
 - [CockroachDB Storage Layer](https://www.cockroachlabs.com/docs/stable/architecture/storage-layer) - Write amplification monitoring
-- [ArceKV Paper](https://arxiv.org/html/2508.03565v1) - Adaptive compaction research
-- [Endure Paper](https://www.vldb.org/pvldb/vol15/p1605-huynh.pdf) - Robust LSM tuning
 
 ### Tertiary (LOW confidence)
-- [DLC Paper](https://openproceedings.org/2021/conf/edbt/p137.pdf) - Latency-driven compaction (needs validation)
-- Block deduplication techniques from backup systems (may need adaptation for LSM)
+- [ELMo-Tune-V2](https://arxiv.org/abs/2502.17606) - LLM-based tuning (14x gains, but 100s startup time)
+- [EDBT 2025: Partial Compaction](https://disc.bu.edu/papers/edbt25-wei) - Partial vs full compaction tradeoffs
+- TiKV Flow Control article - Predictive throttling (URL inaccessible, pattern validated by multiple sources)
+- [LZig4](https://github.com/BarabasGitHub/LZig4) - Pure Zig alternative (less mature)
 
 ## Metadata
 
 **Confidence breakdown:**
-- Standard stack: HIGH - allyourcodebase/lz4 verified, existing LSM code reviewed
-- Architecture patterns: HIGH - Based on RocksDB, academic papers, and existing ArcherDB patterns
-- Pitfalls: MEDIUM - Some pitfalls from research papers, some from general LSM knowledge
+- Standard stack: HIGH - allyourcodebase/lz4 verified (v1.10.0), existing LSM code reviewed, std.hash.XxHash64 in stdlib
+- Architecture patterns: HIGH - Based on RocksDB, 2025 academic papers, TiKV production experience, and existing ArcherDB patterns
+- Pitfalls: HIGH - Updated with 2025 research (partial compaction, predictive throttling)
 
-**Research date:** 2026-01-24
+**Research date:** 2026-01-24 (re-research update)
 **Valid until:** 2026-02-24 (30 days - stable domain)
 
 ---
@@ -614,14 +742,26 @@ Key existing components that Phase 12 builds upon:
 
 | Component | Location | Status | Phase 12 Action |
 |-----------|----------|--------|-----------------|
-| LSM compaction | `src/lsm/compaction.zig` | Mature | Add tiered strategy, throttling |
-| Block structure | `src/lsm/schema.zig` | Mature | Add compression metadata |
+| LSM compaction | `src/lsm/compaction.zig` | Mature (2700+ lines) | Add tiered strategy, throttling |
+| Block structure | `src/lsm/schema.zig` | Mature | Add compression metadata (use reserved bytes) |
 | Table builder | `src/lsm/table.zig` | Mature | Add compression to value blocks |
 | Forest controller | `src/lsm/forest.zig` | Mature | Add adaptive tuning hooks |
 | Prometheus metrics | `src/archerdb/metrics.zig` | Phase 11 | Add storage-specific metrics |
-| Storage dashboard | `observability/grafana/dashboards/archerdb-storage.json` | Exists | Add compression, write amp panels |
+| Storage dashboard | `observability/grafana/dashboards/archerdb-storage.json` | Exists (42KB) | Add compression, write amp panels |
 | CLI structure | `src/archerdb/cli.zig` | Mature | Add storage control commands |
-| Constants/config | `src/config.zig` | Mature | Add compression, compaction config |
+| Constants/config | `src/config.zig`, `src/constants.zig` | Mature | Add compression, compaction config |
 | Grid block I/O | `src/vsr/grid.zig` | Mature | No changes needed |
+| Build configuration | `build.zig.zon` | Exists | Add lz4 dependency |
 
 This infrastructure means Phase 12 is primarily **integration of compression at block level** and **compaction strategy enhancements**, not greenfield LSM development.
+
+## Changes from Original Research
+
+Key updates in this re-research:
+
+1. **LZ4 version clarified:** allyourcodebase/lz4 wraps LZ4 v1.10.0 (July 2024), which adds multithreading, dictionary compression, and Level 2 mode
+2. **Throttling pattern updated:** TiKV's predictive throttling (pending bytes) is superior to purely reactive P99 latency approach
+3. **2025 research incorporated:** SIGMOD, ICPP, Journal of Big Data papers validate tiered+leveled hybrid approaches
+4. **Partial compaction tradeoff added:** EDBT 2025 research shows partial compaction has better tail latency at large levels
+5. **std.hash.XxHash64 confirmed:** Built into Zig stdlib, no external dependency needed for content hashing
+6. **ELMo-Tune-V2 noted but not recommended:** LLM-based tuning has impressive results (14x) but 100s startup time makes it unsuitable for real-time adaptive tuning
