@@ -8,6 +8,17 @@ ArcherDB is a high-performance distributed geospatial database for fleet trackin
 
 Correctness, performance, and completeness with no compromises. The system demands adequate resources rather than degrading gracefully, and screams through metrics/traces before hitting limits.
 
+## Current Milestone: v2.0 Performance & Scale
+
+**Goal:** Push ArcherDB to enterprise scale — profile, optimize, and restructure for larger fleets, higher throughput, and bigger clusters.
+
+**Target features:**
+- Comprehensive profiling and bottleneck identification
+- RAM index optimization for millions of entities
+- VSR consensus improvements for larger clusters
+- LSM storage tuning for write throughput
+- Breaking changes acceptable for significant wins
+
 ## Current State (v1.0 Shipped)
 
 **Shipped:** 2026-01-23
