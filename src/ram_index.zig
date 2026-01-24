@@ -1499,9 +1499,10 @@ pub fn GenericRamIndexType(comptime Entry: type, comptime options: struct {
 
         /// Maximum displacement chain length for cuckoo hashing.
         /// Prevents infinite loops during insertion when table is too full.
-        /// Value of 500 provides good balance: handles high load factors while
-        /// bounding worst-case insertion time.
-        const max_displacement: u32 = 500;
+        /// Value of 5000 handles pathological cases at higher load factors.
+        /// In practice, most insertions complete in <10 displacements.
+        /// If exceeded, table is too full and needs rehash (triggers IndexDegraded).
+        const max_displacement: u32 = 5000;
 
         /// Primary hash function for entity_id (u128).
         /// Uses Google Abseil LowLevelHash (wyhash-inspired) from stdx.
@@ -1510,12 +1511,14 @@ pub fn GenericRamIndexType(comptime Entry: type, comptime options: struct {
         }
 
         /// Secondary hash function for cuckoo hashing.
-        /// XORs with golden ratio constant for independence from primary hash.
-        /// The golden ratio constant (2^128 / phi) ensures good distribution
-        /// even for sequential entity_ids.
+        /// Uses bit rotation and different constant for independence from hash1.
+        /// This produces a different slot distribution even for sequential IDs.
         inline fn hash2(entity_id: u128) u64 {
-            const golden: u128 = 0x9E3779B97F4A7C15_9E3779B97F4A7C15;
-            return stdx.hash_inline(entity_id ^ golden);
+            // Rotate entity_id by 67 bits (chosen to be coprime with 128)
+            const rotated = (entity_id << 67) | (entity_id >> (128 - 67));
+            // XOR with a prime-based constant different from golden ratio
+            const constant: u128 = 0x517CC1B727220A94_517CC1B727220A94;
+            return stdx.hash_inline(rotated ^ constant);
         }
 
         /// Calculate primary slot index from hash1.
@@ -1712,94 +1715,47 @@ pub fn GenericRamIndexType(comptime Entry: type, comptime options: struct {
             }
         }
 
-        /// SIMD-accelerated batch lookup of exactly 4 keys.
-        /// Uses SIMD comparison to check multiple candidate slots at once.
+        /// Batch lookup of exactly 4 keys using cuckoo hashing.
+        /// Each lookup checks exactly 2 slots (O(1) guaranteed).
         fn batch_lookup_simd(
             self: *@This(),
             entity_ids: *const [4]u128,
             results: *[4]?Entry,
         ) void {
-            // Process each of the 4 keys. For each key, we gather candidate
-            // keys from probe positions and use SIMD to compare them.
-            inline for (0..4) |j| {
+            // With cuckoo hashing, each lookup checks exactly 2 slots.
+            // Process each key: check slot1, then slot2 if not found.
+            for (0..4) |j| {
                 const entity_id = entity_ids[j];
 
-                // Skip reserved entity ID 0
                 if (entity_id == 0) {
                     results[j] = null;
-                    continue;
-                }
+                } else {
+                    // Check slot1
+                    const s1 = self.slot1(entity_id);
+                    const entry1_ptr: *Entry = &self.entries[@intCast(s1)];
+                    const entry1 = @as(*volatile Entry, @ptrCast(entry1_ptr)).*;
 
-                // Start probing from hash position
-                const slot_hash = Index.hash(entity_id);
-                var slot = slot_hash % self.capacity;
-                var found = false;
+                    if (entry1.entity_id == entity_id and !entry1.is_tombstone()) {
+                        results[j] = entry1;
+                    } else {
+                        // Check slot2
+                        const s2 = self.slot2(entity_id);
+                        const entry2_ptr: *Entry = &self.entries[@intCast(s2)];
+                        const entry2 = @as(*volatile Entry, @ptrCast(entry2_ptr)).*;
 
-                // Probe in groups of 4 using SIMD comparison
-                var probe_count: u32 = 0;
-                while (probe_count < max_probe_length and !found) {
-                    // Gather 4 consecutive entries for SIMD comparison
-                    var candidate_keys: [4]u128 = undefined;
-                    var candidates_valid: u4 = 0;
-
-                    inline for (0..4) |k| {
-                        const probe_slot = (slot + k) % self.capacity;
-                        const entry_ptr: *Entry = &self.entries[@intCast(probe_slot)];
-                        const entry = @as(*volatile Entry, @ptrCast(entry_ptr)).*;
-                        candidate_keys[k] = entry.entity_id;
-                        if (!entry.is_empty()) {
-                            candidates_valid |= (@as(u4, 1) << @intCast(k));
-                        }
-                    }
-
-                    // SIMD compare all 4 candidates at once
-                    const match_mask = ram_index_simd.compare_keys(&candidate_keys, entity_id);
-                    const valid_matches = match_mask & candidates_valid;
-
-                    if (ram_index_simd.find_first_match(valid_matches)) |match_idx| {
-                        // Found a match - check if it's a tombstone
-                        const match_slot = (slot + match_idx) % self.capacity;
-                        const entry_ptr: *Entry = &self.entries[@intCast(match_slot)];
-                        const entry = @as(*volatile Entry, @ptrCast(entry_ptr)).*;
-
-                        if (!entry.is_tombstone()) {
-                            results[j] = entry;
-                            found = true;
+                        if (entry2.entity_id == entity_id and !entry2.is_tombstone()) {
+                            results[j] = entry2;
                         } else {
                             results[j] = null;
-                            found = true; // Tombstone counts as found (negative result)
-                        }
-                    } else {
-                        // No match in this batch - check for empty slot (end of probe chain)
-                        var hit_empty = false;
-                        inline for (0..4) |k| {
-                            if ((candidates_valid & (@as(u4, 1) << @intCast(k))) == 0) {
-                                // Found empty slot before finding key
-                                hit_empty = true;
-                                break;
-                            }
-                        }
-
-                        if (hit_empty) {
-                            results[j] = null;
-                            found = true;
                         }
                     }
-
-                    slot = (slot + 4) % self.capacity;
-                    probe_count += 4;
-                }
-
-                // If we exhausted probes without finding, result is null
-                if (!found) {
-                    results[j] = null;
                 }
             }
 
             // During resize, check old table for any not found in new table
             if (self.resize_state.isResizing()) {
                 if (self.old_entries) |old_entries| {
-                    inline for (0..4) |j| {
+                    for (0..4) |j| {
                         if (results[j] == null and entity_ids[j] != 0) {
                             const old_result = lookupInTable(old_entries, self.old_capacity, entity_ids[j]);
                             results[j] = old_result.entry;
@@ -5629,5 +5585,161 @@ test "RAM index: scan_expired_batch uses remove_if_id_matches" {
         const entry = index.lookup(entity_id).entry;
         try std.testing.expect(entry != null);
         try std.testing.expectEqual(new_latest_id, entry.?.latest_id);
+    }
+}
+
+// ============================================================================
+// batch_lookup tests
+// ============================================================================
+
+test "batch_lookup: finds all entries" {
+    const allocator = std.testing.allocator;
+
+    var index = try DefaultRamIndex.init(allocator, 1024);
+    defer index.deinit(allocator);
+
+    // Insert test entries
+    const ids = [_]u128{ 0x100, 0x200, 0x300, 0x400 };
+    for (ids) |id| {
+        _ = try index.upsert(id, id * 2, 0);
+    }
+
+    // Batch lookup
+    var results: [4]?IndexEntry = undefined;
+    index.batch_lookup(&ids, &results);
+
+    // Verify all found
+    for (results, ids) |result, id| {
+        try std.testing.expect(result != null);
+        try std.testing.expectEqual(id, result.?.entity_id);
+        try std.testing.expectEqual(id * 2, result.?.latest_id);
+    }
+}
+
+test "batch_lookup: partial matches" {
+    const allocator = std.testing.allocator;
+
+    var index = try DefaultRamIndex.init(allocator, 1024);
+    defer index.deinit(allocator);
+
+    // Insert only some entries
+    _ = try index.upsert(0x100, 0x200, 0);
+    _ = try index.upsert(0x300, 0x600, 0);
+
+    const ids = [_]u128{ 0x100, 0x200, 0x300, 0x400 };
+    var results: [4]?IndexEntry = undefined;
+    index.batch_lookup(&ids, &results);
+
+    try std.testing.expect(results[0] != null); // 0x100 found
+    try std.testing.expect(results[1] == null); // 0x200 not found
+    try std.testing.expect(results[2] != null); // 0x300 found
+    try std.testing.expect(results[3] == null); // 0x400 not found
+}
+
+test "batch_lookup: non-multiple-of-4 count" {
+    const allocator = std.testing.allocator;
+
+    var index = try DefaultRamIndex.init(allocator, 1024);
+    defer index.deinit(allocator);
+
+    // Insert entries
+    const insert_ids = [_]u128{ 0x1, 0x2, 0x3, 0x4, 0x5, 0x6 };
+    for (insert_ids) |id| {
+        _ = try index.upsert(id, id * 10, 0);
+    }
+
+    // Lookup 6 (not multiple of 4) - tests remainder handling
+    var results: [6]?IndexEntry = undefined;
+    index.batch_lookup(&insert_ids, &results);
+
+    for (results, insert_ids) |result, id| {
+        try std.testing.expect(result != null);
+        try std.testing.expectEqual(id, result.?.entity_id);
+    }
+}
+
+test "batch_lookup: empty results for missing keys" {
+    const allocator = std.testing.allocator;
+
+    var index = try DefaultRamIndex.init(allocator, 1024);
+    defer index.deinit(allocator);
+
+    // Insert one entry
+    _ = try index.upsert(0xAAA, 0xBBB, 0);
+
+    // Lookup keys that don't exist
+    const ids = [_]u128{ 0x111, 0x222, 0x333, 0x444 };
+    var results: [4]?IndexEntry = undefined;
+    index.batch_lookup(&ids, &results);
+
+    // All should be null
+    for (results) |result| {
+        try std.testing.expect(result == null);
+    }
+}
+
+test "batch_lookup: handles tombstones" {
+    const allocator = std.testing.allocator;
+
+    var index = try DefaultRamIndex.init(allocator, 1024);
+    defer index.deinit(allocator);
+
+    // Insert and then remove an entry (creates tombstone)
+    _ = try index.upsert(0x100, 0x200, 0);
+    _ = index.remove(0x100);
+
+    // Insert another entry
+    _ = try index.upsert(0x300, 0x600, 0);
+
+    const ids = [_]u128{ 0x100, 0x300 };
+    var results: [2]?IndexEntry = undefined;
+    index.batch_lookup(&ids, &results);
+
+    // Tombstoned entry should return null
+    try std.testing.expect(results[0] == null);
+    // Live entry should be found
+    try std.testing.expect(results[1] != null);
+    try std.testing.expectEqual(@as(u128, 0x300), results[1].?.entity_id);
+}
+
+test "batch_lookup: single entry" {
+    const allocator = std.testing.allocator;
+
+    var index = try DefaultRamIndex.init(allocator, 1024);
+    defer index.deinit(allocator);
+
+    _ = try index.upsert(0x42, 0x84, 0);
+
+    // Test with single entry (remainder path only)
+    const ids = [_]u128{0x42};
+    var results: [1]?IndexEntry = undefined;
+    index.batch_lookup(&ids, &results);
+
+    try std.testing.expect(results[0] != null);
+    try std.testing.expectEqual(@as(u128, 0x42), results[0].?.entity_id);
+}
+
+test "batch_lookup: large batch" {
+    const allocator = std.testing.allocator;
+
+    var index = try DefaultRamIndex.init(allocator, 2048);
+    defer index.deinit(allocator);
+
+    // Insert 100 entries
+    var insert_ids: [100]u128 = undefined;
+    for (&insert_ids, 0..) |*id, i| {
+        id.* = @as(u128, i + 1) * 0x1000;
+        _ = try index.upsert(id.*, id.* * 2, 0);
+    }
+
+    // Batch lookup all 100
+    var results: [100]?IndexEntry = undefined;
+    index.batch_lookup(&insert_ids, &results);
+
+    // Verify all found
+    for (results, insert_ids) |result, id| {
+        try std.testing.expect(result != null);
+        try std.testing.expectEqual(id, result.?.entity_id);
+        try std.testing.expectEqual(id * 2, result.?.latest_id);
     }
 }

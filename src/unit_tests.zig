@@ -85,6 +85,7 @@ comptime {
     _ = @import("post_filter.zig");
     _ = @import("queue.zig");
     _ = @import("ram_index.zig");
+    _ = @import("ram_index_simd.zig");
     _ = @import("repl.zig");
     _ = @import("repl/completion.zig");
     _ = @import("repl/parser.zig");
