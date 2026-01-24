@@ -2328,6 +2328,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 archerdb_metrics.Registry.read_latency.observeNs(duration_ns);
                 archerdb_metrics.Registry.query_result_size.observe(1.0);
 
+                // Record read for adaptive compaction (12-09: point lookup workload tracking)
+                self.forest.adaptive_record_read(1);
+
                 log.debug("query_uuid: found entity {x}", .{filter.entity_id});
                 return response_size + @sizeOf(GeoEvent);
             } else {
