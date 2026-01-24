@@ -898,17 +898,13 @@ fn get_memory_stats() struct { rss_bytes: u64, peak_rss_bytes: u64 } {
         return .{ .rss_bytes = rss_bytes, .peak_rss_bytes = peak_rss_bytes };
     } else if (builtin.os.tag == .macos) {
         // Use getrusage on macOS
-        var rusage: std.posix.rusage = undefined;
-        if (std.posix.getrusage(.SELF)) |usage| {
-            rusage = usage;
-            // maxrss is in bytes on macOS
-            return .{
-                .rss_bytes = @intCast(rusage.maxrss),
-                .peak_rss_bytes = @intCast(rusage.maxrss),
-            };
-        } else |_| {
-            return .{ .rss_bytes = 0, .peak_rss_bytes = 0 };
-        }
+        // RUSAGE_SELF = 0 (get resource usage for calling process)
+        const usage = std.posix.getrusage(0);
+        // maxrss is in bytes on macOS
+        return .{
+            .rss_bytes = @intCast(usage.maxrss),
+            .peak_rss_bytes = @intCast(usage.maxrss),
+        };
     } else {
         return .{ .rss_bytes = 0, .peak_rss_bytes = 0 };
     }

@@ -114,18 +114,17 @@ fn collectLinuxProcessMetrics(pm: *ProcessMetrics) void {
 
 fn collectDarwinProcessMetrics(pm: *ProcessMetrics) void {
     // On Darwin, use getrusage for CPU time
-    var usage: posix.rusage = undefined;
-    if (posix.getrusage(.SELF, &usage) == 0) {
-        // Convert timeval to seconds
-        const user_secs = @as(f64, @floatFromInt(usage.utime.sec)) +
-            @as(f64, @floatFromInt(usage.utime.usec)) / 1_000_000.0;
-        const sys_secs = @as(f64, @floatFromInt(usage.stime.sec)) +
-            @as(f64, @floatFromInt(usage.stime.usec)) / 1_000_000.0;
-        pm.cpu_seconds_total = user_secs + sys_secs;
+    // RUSAGE_SELF = 0 (get resource usage for calling process)
+    const usage = posix.getrusage(0);
+    // Convert timeval to seconds
+    const user_secs = @as(f64, @floatFromInt(usage.utime.sec)) +
+        @as(f64, @floatFromInt(usage.utime.usec)) / 1_000_000.0;
+    const sys_secs = @as(f64, @floatFromInt(usage.stime.sec)) +
+        @as(f64, @floatFromInt(usage.stime.usec)) / 1_000_000.0;
+    pm.cpu_seconds_total = user_secs + sys_secs;
 
-        // Darwin's maxrss is in bytes (not pages)
-        pm.resident_memory_bytes = @intCast(usage.maxrss);
-    }
+    // Darwin's maxrss is in bytes (not pages)
+    pm.resident_memory_bytes = @intCast(usage.maxrss);
 
     // For virtual memory and threads on Darwin, would need mach_task_info
     // which requires additional mach headers. Leave at 0 for now.
