@@ -29,6 +29,9 @@ const vsr = @import("../vsr.zig");
 
 const stdx = @import("stdx");
 
+const compression = @import("compression.zig");
+pub const CompressionType = compression.CompressionType;
+
 const BlockReference = vsr.BlockReference;
 
 const address_size = @sizeOf(u64);
@@ -274,16 +277,54 @@ pub const TableIndex = struct {
 
 pub const TableValue = struct {
     /// Stored in every value block's header's `metadata_bytes` field.
+    ///
+    /// Layout (96 bytes total = vsr.Header.Block.metadata_size):
+    ///   bytes 0-3:   value_count_max (u32)
+    ///   bytes 4-7:   value_count (u32)
+    ///   bytes 8-11:  value_size (u32)
+    ///   bytes 12-13: tree_id (u16)
+    ///   byte 14:     compression_type (u8, only 4 bits used)
+    ///   byte 15:     reserved_padding (u8)
+    ///   bytes 16-19: uncompressed_size (u32) - original size before compression
+    ///   bytes 20-95: reserved (76 bytes)
+    ///
     pub const Metadata = extern struct {
         value_count_max: u32,
         value_count: u32,
         value_size: u32,
         tree_id: u16,
-        reserved: [82]u8 = @splat(0),
+        /// Compression algorithm used for this block (CompressionType stored as u8)
+        compression_type: u8 = 0,
+        /// Reserved padding byte for alignment
+        reserved_padding: u8 = 0,
+        /// Original uncompressed size (0 if not compressed)
+        uncompressed_size: u32 = 0,
+        /// Reserved for future use
+        reserved: [76]u8 = @splat(0),
 
         comptime {
             assert(stdx.no_padding(Metadata));
             assert(@sizeOf(Metadata) == vsr.Header.Block.metadata_size);
+        }
+
+        /// Returns whether this block is compressed.
+        pub fn is_compressed(self: *const Metadata) bool {
+            return self.compression() != .none;
+        }
+
+        /// Returns the compression type for this block.
+        pub fn compression(self: *const Metadata) CompressionType {
+            return @enumFromInt(@as(u4, @truncate(self.compression_type)));
+        }
+
+        /// Returns the compression ratio (uncompressed_size / actual_size).
+        /// Returns 1.0 if not compressed.
+        pub fn compression_ratio(self: *const Metadata, actual_size: u32) f64 {
+            if (!self.is_compressed() or self.uncompressed_size == 0) {
+                return 1.0;
+            }
+            return @as(f64, @floatFromInt(self.uncompressed_size)) /
+                @as(f64, @floatFromInt(actual_size));
         }
     };
 
@@ -352,8 +393,23 @@ pub const TableValue = struct {
         assert(header_metadata.value_count <= header_metadata.value_count_max);
         assert(header_metadata.tree_id > 0);
         assert(stdx.zeroed(&header_metadata.reserved));
-        assert(@sizeOf(vsr.Header) + header_metadata.value_size * header_metadata.value_count ==
-            header.size);
+        // Validate compression_type is a valid enum value
+        assert(header_metadata.compression_type <= @intFromEnum(CompressionType.lz4));
+        assert(header_metadata.reserved_padding == 0);
+
+        // Size validation depends on compression state
+        const expected_uncompressed_size = @sizeOf(vsr.Header) +
+            header_metadata.value_size * header_metadata.value_count;
+        if (header_metadata.is_compressed()) {
+            // Compressed block: uncompressed_size stores original, header.size is compressed
+            assert(header_metadata.uncompressed_size == expected_uncompressed_size);
+            assert(header.size <= expected_uncompressed_size);
+            assert(header.size > @sizeOf(vsr.Header)); // At least has header
+        } else {
+            // Uncompressed block: header.size matches calculated size
+            assert(header_metadata.uncompressed_size == 0);
+            assert(expected_uncompressed_size == header.size);
+        }
 
         return header_metadata;
     }
