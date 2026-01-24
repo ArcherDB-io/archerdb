@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-24)
 ## Current Position
 
 Phase: 12 of 16 (Storage Optimization)
-Plan: 6 of 8 in current phase
-Status: In progress
-Last activity: 2026-01-24 - Completed 12-06-PLAN.md (Adaptive Compaction)
+Plan: 8 of 8 in current phase (PHASE COMPLETE)
+Status: Phase 12 complete, ready for Phase 13
+Last activity: 2026-01-24 - Completed 12-08-PLAN.md (Storage Dashboards & Alerts)
 
-Progress: [████░░░░░░] 40% (v2.0: 14/35 requirements)
+Progress: [████░░░░░░] 43% (v2.0: 15/35 requirements)
 
 ## v1.0 Summary
 
@@ -29,20 +29,20 @@ See `.planning/milestones/v1.0-REQUIREMENTS.md` for archived requirements.
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 8 (v2.0)
+- Total plans completed: 10 (v2.0)
 - Average duration: ~5min
-- Total execution time: ~46min
+- Total execution time: ~56min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 11 | 5 | ~27min | ~5min |
-| 12 | 6 | ~34min | ~6min |
+| 12 | 8 | ~44min | ~6min |
 
 **Recent Trend:**
-- Last 5 plans: 12-01, 12-02, 12-03, 12-05, 12-06
-- Trend: ~5-7min per plan
+- Last 5 plans: 12-03, 12-05, 12-06, 12-07, 12-08
+- Trend: ~5-6min per plan
 
 *Updated after each plan completion*
 
@@ -101,6 +101,11 @@ Phase 12 decisions:
 - Guardrails: L0 trigger 2-20, compaction threads 1-4 (12-06)
 - Adaptive compaction enabled by default (just works philosophy) (12-06)
 - Operator overrides take precedence over adaptive values (12-06)
+- Health status calculation: composite score from write amp + space amp + throttle state (12-08)
+- Write amplification thresholds: <3 green, 3-5 yellow, >5 red (12-08)
+- Space amplification thresholds: <2 green, 2-3 yellow, >3 red (12-08)
+- 17 alert rules covering write amp, latency, space amp, disk, compaction, compression, emergency (12-08)
+- Alert severity mapping: info (informational), warning (degradation), critical (action required) (12-08)
 
 ### Pending Todos
 
@@ -118,8 +123,8 @@ None.
 ## Session Continuity
 
 Last session: 2026-01-24
-Stopped at: Completed 12-06-PLAN.md (Adaptive Compaction)
+Stopped at: Completed 12-08-PLAN.md (Storage Dashboards & Alerts) - PHASE 12 COMPLETE
 Resume file: None
 
 ---
-*Updated: 2026-01-24 — Phase 12 plan 06 complete (Workload-aware adaptive compaction auto-tuning)*
+*Updated: 2026-01-24 — Phase 12 complete (8/8 plans). Storage optimization with compression, throttle, tiered compaction, dedup, and observability.*
