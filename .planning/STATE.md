@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-24)
 ## Current Position
 
 Phase: 12 of 16 (Storage Optimization)
-Plan: 5 of 8 in current phase
+Plan: 7 of 8 in current phase
 Status: In progress
-Last activity: 2026-01-24 - Completed 12-04-PLAN.md (Latency-Driven Compaction Throttling)
+Last activity: 2026-01-24 - Completed 12-07-PLAN.md (Block-Level Deduplication)
 
-Progress: [████░░░░░░] 34% (v2.0: 12/35 requirements)
+Progress: [████░░░░░░] 37% (v2.0: 13/35 requirements)
 
 ## v1.0 Summary
 
@@ -89,6 +89,9 @@ Phase 12 decisions:
 - TiKV-style predictive throttling with pending bytes as primary signal (12-04)
 - Reactive P99 fallback (50/100ms thresholds) for cases where pending bytes is insufficient (12-04)
 - Hysteresis (10ms) and 3 consecutive good checks required to prevent oscillation (12-04)
+- XxHash64 from Zig stdlib for block deduplication (no external dependency) (12-07)
+- Per-level bounded dedup index with LRU eviction (64 MiB default per level) (12-07)
+- Module-level dedup exports for compaction integration flexibility (12-07)
 
 ### Pending Todos
 
@@ -106,8 +109,8 @@ None.
 ## Session Continuity
 
 Last session: 2026-01-24
-Stopped at: Completed 12-04-PLAN.md (Latency-Driven Compaction Throttling)
+Stopped at: Completed 12-07-PLAN.md (Block-Level Deduplication)
 Resume file: None
 
 ---
-*Updated: 2026-01-24 — Phase 12 plan 04 complete (latency-driven compaction throttling)*
+*Updated: 2026-01-24 — Phase 12 plan 07 complete (block-level deduplication with XxHash64)*
