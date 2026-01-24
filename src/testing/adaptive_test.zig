@@ -199,3 +199,51 @@ test "adaptive: operator override takes precedence over adaptive values" {
     try testing.expectEqual(@as(u32, 20), state.getL0Trigger(20));
     try testing.expectEqual(@as(u32, 4), state.getCompactionThreads(4));
 }
+
+// =============================================================================
+// Test 5: End-to-end parameter application
+// =============================================================================
+
+test "adaptive: apply recommendations updates state and baseline" {
+    var state = AdaptiveState.init();
+    const config = AdaptiveConfig{};
+
+    // Setup: establish baseline with write-heavy workload
+    for (0..10) |i| {
+        state.sample(
+            9000, // writes (90%)
+            1000, // reads
+            100, // scans
+            1000, // elapsed_ms
+            1.5, // space amp
+            3.0, // write amp
+            config,
+            @as(i128, @intCast(i)) * std.time.ns_per_s,
+        );
+    }
+    try testing.expect(state.baseline_established);
+    try testing.expectEqual(WorkloadType.write_heavy, state.detected_workload);
+
+    // Trigger adaptation condition: change writes significantly with high space amp
+    state.writes_per_second = 15000; // Changed significantly from baseline
+    state.current_space_amp = 2.5; // Above threshold
+
+    try testing.expect(state.shouldAdapt(config));
+
+    // Get recommendations based on current workload detection
+    const rec = state.recommendAdjustments(config);
+    const old_baseline = state.baseline_writes_per_second;
+
+    // Apply recommendations
+    state.applyRecommendations(rec);
+
+    // Verify state updated with recommendation values
+    try testing.expectEqual(rec.l0_trigger, state.current_l0_trigger);
+    try testing.expectEqual(rec.compaction_threads, state.current_compaction_threads);
+    try testing.expectEqual(rec.prefer_partial_compaction, state.prefer_partial_compaction);
+
+    // Verify baseline updated for next adaptation cycle
+    // After applying recommendations, baseline should be set to current writes_per_second
+    try testing.expect(state.baseline_writes_per_second != old_baseline);
+    try testing.expectApproxEqAbs(state.writes_per_second, state.baseline_writes_per_second, 0.1);
+}
