@@ -1732,6 +1732,11 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             archerdb_metrics.Registry.write_events_total.add(deleted_count);
             archerdb_metrics.Registry.write_latency.observeNs(duration_ns);
 
+            // Record writes for adaptive compaction (12-09: deletion tombstones count as writes)
+            if (deleted_count > 0) {
+                self.forest.adaptive_record_write(deleted_count);
+            }
+
             return results_count * @sizeOf(DeleteEntitiesResult);
         }
 
@@ -1879,11 +1884,16 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 // Build composite ID: [S2 Cell ID (upper 64) | Timestamp (lower 64)]
                 const composite_id: u128 = (@as(u128, cell_id) << 64) | @as(u128, event_timestamp);
 
-                // Upsert into RAM index with LWW semantics
-                const upsert_result = self.ram_index.upsert(
+                // Upsert into RAM index with LWW semantics and metadata
+                const upsert_result = self.ram_index.upsertWithMetadata(
                     event.entity_id,
                     composite_id,
                     effective_ttl_seconds,
+                    .{
+                        .lat_nano = event.lat_nano,
+                        .lon_nano = event.lon_nano,
+                        .group_id = event.group_id,
+                    },
                 ) catch |err| {
                     // Handle index capacity errors
                     log.err("insert_events: RAM index error: {}", .{err});
@@ -1991,6 +2001,11 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             archerdb_metrics.Registry.write_operations_total.inc();
             archerdb_metrics.Registry.write_events_total.add(inserted_count);
             archerdb_metrics.Registry.write_latency.observeNs(duration_ns);
+
+            // Record writes for adaptive compaction (12-09: workload tracking)
+            if (inserted_count > 0) {
+                self.forest.adaptive_record_write(inserted_count);
+            }
 
             // Update index capacity metrics and check thresholds (F5.2 - Observability)
             const stats = self.ram_index.get_stats();
@@ -4080,6 +4095,12 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 
         /// Select S2 levels based on radius per spec decision table.
         /// Returns min_level and max_level for RegionCoverer.
+        ///
+        /// NOTE: The covering algorithm has limited cells (16 max), so for large radii
+        /// we need to use coarser levels to ensure complete coverage. The formula
+        /// min_level = floor(log2(7842km / radius_km)) is adjusted down by 2 levels
+        /// to ensure the covering fits within the cell budget while still providing
+        /// effective filtering.
         fn selectS2Levels(radius_mm: u32) struct { min_level: u8, max_level: u8 } {
             // Convert mm to meters for level selection
             const radius_m = @as(f64, @floatFromInt(radius_mm)) / 1000.0;
@@ -4087,6 +4108,10 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             // Per query-engine/spec.md decision table:
             // min_level = max(0, min(18, floor(log2(7842000 / radius_meters))))
             // max_level = min(min_level + 4, 18)
+            //
+            // However, to ensure the covering fits within 16 cells, we subtract 2
+            // from the computed min_level. This gives coarser cells that better
+            // cover the entire query region.
 
             if (radius_m <= 0) {
                 return .{ .min_level = 18, .max_level = 18 };
@@ -4104,8 +4129,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             const min_level_raw = @floor(log2_val);
 
             var min_level: u8 = 0;
-            if (min_level_raw > 0) {
-                min_level = @min(18, @as(u8, @intFromFloat(min_level_raw)));
+            if (min_level_raw > 2) {
+                // Subtract 2 levels to ensure covering fits in 16 cells
+                min_level = @min(18, @as(u8, @intFromFloat(min_level_raw)) - 2);
             }
 
             const max_level = @min(min_level + 4, 18);
