@@ -12,7 +12,7 @@ See: .planning/PROJECT.md (updated 2026-01-24)
 Phase: 11 of 16 (Measurement & Profiling Infrastructure)
 Plan: 2 of 5 in current phase
 Status: In progress
-Last activity: 2026-01-24 — Completed 11-02-PLAN.md (POOP A/B Benchmarking)
+Last activity: 2026-01-24 - Completed 11-01-PLAN.md (CPU Profiling Infrastructure) and 11-02-PLAN.md
 
 Progress: [██░░░░░░░░] 6% (v2.0: 2/35 requirements)
 
@@ -30,14 +30,14 @@ See `.planning/milestones/v1.0-REQUIREMENTS.md` for archived requirements.
 
 **Velocity:**
 - Total plans completed: 2 (v2.0)
-- Average duration: ~3min
-- Total execution time: ~6min
+- Average duration: ~4min
+- Total execution time: ~8min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 11 | 2 | ~6min | ~3min |
+| 11 | 2 | ~8min | ~4min |
 
 **Recent Trend:**
 - Last 5 plans: N/A (new milestone, only 2 complete)
@@ -57,9 +57,11 @@ v2.0 decisions:
 - Breaking changes grouped in Phase 16 for coordinated v2.0 release
 
 Phase 11 decisions:
+- --call-graph dwarf for complete stack traces with perf
+- 99Hz default sampling to avoid lockstep patterns
+- JSON output mode for CI integration in profiling scripts
 - POOP over hyperfine for hardware counter access (cycles, cache misses, branches)
 - 5% threshold for statistical significance in A/B comparisons
-- JSON output format for CI integration
 
 ### Pending Todos
 
@@ -77,8 +79,8 @@ None.
 ## Session Continuity
 
 Last session: 2026-01-24
-Stopped at: Completed 11-02-PLAN.md
+Stopped at: Completed 11-01-PLAN.md and 11-02-PLAN.md
 Next action: Execute 11-03-PLAN.md (Memory Allocation Tracking)
 
 ---
-*Updated: 2026-01-24 — Completed 11-02-PLAN.md*
+*Updated: 2026-01-24 - Completed 11-01-PLAN.md*
