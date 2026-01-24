@@ -1,0 +1,159 @@
+# Roadmap: ArcherDB v2.0 Performance & Scale
+
+## Overview
+
+ArcherDB v2.0 transforms the production-ready v1.0 into an enterprise-scale database. The roadmap follows a measurement-first philosophy: build comprehensive profiling infrastructure before any optimization work, then proceed through storage, memory, query, consensus, and scale-out optimizations in dependency order. Breaking changes (online resharding, compact index format) are grouped in the final phase for v2.0 coordination.
+
+## Milestones
+
+- v1.0 Shipped (Phases 1-10) - See `.planning/milestones/v1.0-ROADMAP.md`
+- **v2.0 Performance & Scale** (Phases 11-16) - In progress
+
+## Phases
+
+**Phase Numbering:**
+- Integer phases (11, 12, 13...): Planned milestone work
+- Decimal phases (11.1, 11.2): Urgent insertions (marked with INSERTED)
+
+Decimal phases appear between their surrounding integers in numeric order.
+
+- [ ] **Phase 11: Measurement & Profiling Infrastructure** - Build profiling foundation before any optimization
+- [ ] **Phase 12: Storage Optimization** - LSM compaction tuning for write throughput
+- [ ] **Phase 13: Memory & RAM Index** - Memory efficiency for 100M+ entity support
+- [ ] **Phase 14: Query Performance** - Caching and batch operations for enterprise dashboards
+- [ ] **Phase 15: Cluster & Consensus** - Connection pooling, load shedding, consensus tuning
+- [ ] **Phase 16: Sharding & Scale-Out** - Read replicas, distributed tracing, online resharding
+
+## Phase Details
+
+### Phase 11: Measurement & Profiling Infrastructure
+**Goal**: Establish comprehensive profiling infrastructure so all subsequent optimization work is data-driven
+**Depends on**: Nothing (first phase of v2.0)
+**Requirements**: PROF-01, PROF-02, PROF-03, PROF-04, PROF-05, PROF-06, PROF-07
+**Success Criteria** (what must be TRUE):
+  1. Developer can generate CPU flame graphs from any ArcherDB workload using Linux perf
+  2. Developer can run A/B benchmarks with hardware counter comparison using POOP
+  3. Memory allocations are tracked and reported in test builds via DebugAllocator
+  4. Latency histograms (P50/P90/P99/P999) are available per operation type in metrics
+  5. Benchmark harness produces reproducible performance results with statistical analysis
+**Plans**: TBD
+
+Plans:
+- [ ] 11-01: TBD
+- [ ] 11-02: TBD
+- [ ] 11-03: TBD
+
+### Phase 12: Storage Optimization
+**Goal**: Optimize LSM-tree storage for write-heavy geospatial workloads with compression and tuned compaction
+**Depends on**: Phase 11 (profiling data needed to validate optimizations)
+**Requirements**: STOR-01, STOR-02, STOR-03, STOR-04, STOR-05, STOR-06
+**Success Criteria** (what must be TRUE):
+  1. Data compression reduces storage footprint by 40-60% for typical geospatial workloads
+  2. Write amplification is monitored and exposed in metrics dashboard
+  3. Compaction throttling prevents I/O spikes from impacting query latency
+  4. Tiered compaction strategy demonstrates improved write throughput in benchmarks
+  5. Adaptive compaction auto-tunes based on workload patterns without manual intervention
+**Plans**: TBD
+
+Plans:
+- [ ] 12-01: TBD
+- [ ] 12-02: TBD
+- [ ] 12-03: TBD
+
+### Phase 13: Memory & RAM Index
+**Goal**: Reduce RAM index memory footprint by 50% to support 100M+ entities on enterprise hardware
+**Depends on**: Phase 11 (profiling data needed), can parallelize with Phase 12
+**Requirements**: MEM-01, MEM-02, MEM-03, MEM-04, MEM-05
+**Success Criteria** (what must be TRUE):
+  1. Compact index format (32B entries) reduces memory usage by 50% compared to standard format
+  2. Memory usage metrics are exposed in Prometheus for monitoring and alerting
+  3. Hot path allocators are audited and optimized based on profiling data
+  4. SIMD-accelerated probes demonstrate measurable lookup performance improvement
+  5. Memory-mapped tiering offloads cold data without impacting hot path performance
+**Plans**: TBD
+
+Plans:
+- [ ] 13-01: TBD
+- [ ] 13-02: TBD
+
+### Phase 14: Query Performance
+**Goal**: Achieve 80%+ cache hit ratio for dashboard workloads with sub-millisecond cached queries
+**Depends on**: Phase 11 (profiling), Phase 12 (storage), Phase 13 (memory)
+**Requirements**: QUERY-01, QUERY-02, QUERY-03, QUERY-04, QUERY-05, QUERY-06
+**Success Criteria** (what must be TRUE):
+  1. Query result cache achieves 80%+ hit ratio for repeated dashboard queries
+  2. Batch query API processes multiple operations in single request with reduced overhead
+  3. S2 cell covering cache eliminates redundant computation for repeated spatial patterns
+  4. Query latency breakdown shows parse/plan/execute/serialize times in metrics
+  5. Prepared queries demonstrate measurable performance improvement for repeated patterns
+**Plans**: TBD
+
+Plans:
+- [ ] 14-01: TBD
+- [ ] 14-02: TBD
+- [ ] 14-03: TBD
+
+### Phase 15: Cluster & Consensus
+**Goal**: Harden cluster for enterprise scale with connection pooling, load shedding, and consensus tuning
+**Depends on**: Phases 11-14 (single-node optimization complete before cluster changes)
+**Requirements**: CLUST-01, CLUST-02, CLUST-03, CLUST-04, CLUST-05, CLUST-06
+**Success Criteria** (what must be TRUE):
+  1. Connection pooling prevents connection storms and reduces per-connection memory overhead
+  2. VSR timeout tuning with jitter reduces unnecessary view changes under network variance
+  3. Load shedding rejects requests under overload before cascading failure occurs
+  4. Cluster health dashboard shows replica status, replication lag, and consensus metrics
+  5. Read replicas serve read queries without consensus overhead, achieving 10x read scaling
+**Plans**: TBD
+
+Plans:
+- [ ] 15-01: TBD
+- [ ] 15-02: TBD
+- [ ] 15-03: TBD
+
+### Phase 16: Sharding & Scale-Out
+**Goal**: Enable horizontal scale-out with online resharding and full request path visibility
+**Depends on**: Phase 15 (cluster stability required before sharding changes)
+**Requirements**: SHARD-01, SHARD-02, SHARD-03, SHARD-04, SHARD-05
+**Success Criteria** (what must be TRUE):
+  1. Shard rebalancing metrics show migration progress and completion status
+  2. Cross-shard queries execute in parallel with optimized fan-out and result aggregation
+  3. Distributed tracing shows full request path across all shards via OpenTelemetry
+  4. Online resharding adds/removes shards without application downtime [BREAKING]
+  5. Hot shard detection identifies imbalanced shards and triggers rebalancing alerts
+**Plans**: TBD
+
+Plans:
+- [ ] 16-01: TBD
+- [ ] 16-02: TBD
+- [ ] 16-03: TBD
+
+## Progress
+
+**Execution Order:**
+Phases execute in numeric order: 11 -> 11.x -> 12 -> 12.x -> ... -> 16
+
+| Phase | Plans Complete | Status | Completed |
+|-------|----------------|--------|-----------|
+| 11. Measurement & Profiling | 0/TBD | Not started | - |
+| 12. Storage Optimization | 0/TBD | Not started | - |
+| 13. Memory & RAM Index | 0/TBD | Not started | - |
+| 14. Query Performance | 0/TBD | Not started | - |
+| 15. Cluster & Consensus | 0/TBD | Not started | - |
+| 16. Sharding & Scale-Out | 0/TBD | Not started | - |
+
+## Requirement Coverage
+
+| Category | Requirements | Phase | Count |
+|----------|--------------|-------|-------|
+| Profiling & Measurement | PROF-01 to PROF-07 | Phase 11 | 7 |
+| Storage Optimization | STOR-01 to STOR-06 | Phase 12 | 6 |
+| Memory & RAM Index | MEM-01 to MEM-05 | Phase 13 | 5 |
+| Query Performance | QUERY-01 to QUERY-06 | Phase 14 | 6 |
+| Cluster & Consensus | CLUST-01 to CLUST-06 | Phase 15 | 6 |
+| Sharding & Scale-Out | SHARD-01 to SHARD-05 | Phase 16 | 5 |
+
+**Total:** 35/35 requirements mapped (100% coverage)
+
+---
+*Roadmap created: 2026-01-24*
+*Last updated: 2026-01-24*

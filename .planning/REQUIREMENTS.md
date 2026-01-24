@@ -90,51 +90,51 @@ Explicitly excluded from v2.0.
 
 ## Traceability
 
-Which phases cover which requirements. Updated during roadmap creation.
+Which phases cover which requirements.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| PROF-01 | TBD | Pending |
-| PROF-02 | TBD | Pending |
-| PROF-03 | TBD | Pending |
-| PROF-04 | TBD | Pending |
-| PROF-05 | TBD | Pending |
-| PROF-06 | TBD | Pending |
-| PROF-07 | TBD | Pending |
-| STOR-01 | TBD | Pending |
-| STOR-02 | TBD | Pending |
-| STOR-03 | TBD | Pending |
-| STOR-04 | TBD | Pending |
-| STOR-05 | TBD | Pending |
-| STOR-06 | TBD | Pending |
-| MEM-01 | TBD | Pending |
-| MEM-02 | TBD | Pending |
-| MEM-03 | TBD | Pending |
-| MEM-04 | TBD | Pending |
-| MEM-05 | TBD | Pending |
-| QUERY-01 | TBD | Pending |
-| QUERY-02 | TBD | Pending |
-| QUERY-03 | TBD | Pending |
-| QUERY-04 | TBD | Pending |
-| QUERY-05 | TBD | Pending |
-| QUERY-06 | TBD | Pending |
-| CLUST-01 | TBD | Pending |
-| CLUST-02 | TBD | Pending |
-| CLUST-03 | TBD | Pending |
-| CLUST-04 | TBD | Pending |
-| CLUST-05 | TBD | Pending |
-| CLUST-06 | TBD | Pending |
-| SHARD-01 | TBD | Pending |
-| SHARD-02 | TBD | Pending |
-| SHARD-03 | TBD | Pending |
-| SHARD-04 | TBD | Pending |
-| SHARD-05 | TBD | Pending |
+| PROF-01 | Phase 11 | Pending |
+| PROF-02 | Phase 11 | Pending |
+| PROF-03 | Phase 11 | Pending |
+| PROF-04 | Phase 11 | Pending |
+| PROF-05 | Phase 11 | Pending |
+| PROF-06 | Phase 11 | Pending |
+| PROF-07 | Phase 11 | Pending |
+| STOR-01 | Phase 12 | Pending |
+| STOR-02 | Phase 12 | Pending |
+| STOR-03 | Phase 12 | Pending |
+| STOR-04 | Phase 12 | Pending |
+| STOR-05 | Phase 12 | Pending |
+| STOR-06 | Phase 12 | Pending |
+| MEM-01 | Phase 13 | Pending |
+| MEM-02 | Phase 13 | Pending |
+| MEM-03 | Phase 13 | Pending |
+| MEM-04 | Phase 13 | Pending |
+| MEM-05 | Phase 13 | Pending |
+| QUERY-01 | Phase 14 | Pending |
+| QUERY-02 | Phase 14 | Pending |
+| QUERY-03 | Phase 14 | Pending |
+| QUERY-04 | Phase 14 | Pending |
+| QUERY-05 | Phase 14 | Pending |
+| QUERY-06 | Phase 14 | Pending |
+| CLUST-01 | Phase 15 | Pending |
+| CLUST-02 | Phase 15 | Pending |
+| CLUST-03 | Phase 15 | Pending |
+| CLUST-04 | Phase 15 | Pending |
+| CLUST-05 | Phase 15 | Pending |
+| CLUST-06 | Phase 15 | Pending |
+| SHARD-01 | Phase 16 | Pending |
+| SHARD-02 | Phase 16 | Pending |
+| SHARD-03 | Phase 16 | Pending |
+| SHARD-04 | Phase 16 | Pending |
+| SHARD-05 | Phase 16 | Pending |
 
 **Coverage:**
 - v2.0 requirements: 35 total
-- Mapped to phases: 0
-- Unmapped: 35 (pending roadmap creation)
+- Mapped to phases: 35
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-01-24*
-*Last updated: 2026-01-24 after initial definition*
+*Last updated: 2026-01-24 after roadmap creation*
