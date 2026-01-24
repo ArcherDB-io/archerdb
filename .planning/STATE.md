@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-24)
 ## Current Position
 
 Phase: 11 of 16 (Measurement & Profiling Infrastructure)
-Plan: 5 of 5 in current phase
+Plan: 4 of 5 in current phase (01, 02, 03, 05 done; 04 pending)
 Status: In progress
-Last activity: 2026-01-24 - Completed 11-05-PLAN.md (Tracy/Parca Profiling Infrastructure)
+Last activity: 2026-01-24 - Completed 11-03-PLAN.md (Memory Tracking & Extended Histograms)
 
-Progress: [██░░░░░░░░] 14% (v2.0: 5/35 requirements)
+Progress: [██░░░░░░░░] 11% (v2.0: 4/35 requirements)
 
 ## v1.0 Summary
 
@@ -29,19 +29,19 @@ See `.planning/milestones/v1.0-REQUIREMENTS.md` for archived requirements.
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 5 (v2.0)
-- Average duration: ~4min
-- Total execution time: ~20min
+- Total plans completed: 4 (v2.0)
+- Average duration: ~6min
+- Total execution time: ~24min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 11 | 5 | ~20min | ~4min |
+| 11 | 4 | ~24min | ~6min |
 
 **Recent Trend:**
-- Last 5 plans: 11-01 through 11-05
-- Trend: Consistent ~4min per plan
+- Last 4 plans: 11-01, 11-02, 11-03, 11-05
+- Trend: ~6min per plan
 
 *Updated after each plan completion*
 
@@ -67,6 +67,8 @@ Phase 11 decisions:
 - Semantic color scheme for subsystems (query=green, storage=blue, etc)
 - Parca via eBPF for production continuous profiling (<1% overhead)
 - Profile builds use ReleaseFast with frame pointers
+- Simple allocator wrapper pattern over direct DebugAllocator embedding (11-03)
+- ExtendedStats struct outside HistogramType for reusability (11-03)
 
 ### Pending Todos
 
@@ -84,8 +86,8 @@ None.
 ## Session Continuity
 
 Last session: 2026-01-24
-Stopped at: Completed 11-05-PLAN.md
-Next action: Phase 11 complete - ready for Phase 12 (Storage Layer Optimization)
+Stopped at: Completed 11-03-PLAN.md
+Next action: Execute 11-04-PLAN.md (Benchmark Harness)
 
 ---
-*Updated: 2026-01-24 - Completed 11-05-PLAN.md*
+*Updated: 2026-01-24 - Completed 11-03-PLAN.md*
