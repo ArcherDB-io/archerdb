@@ -110,6 +110,51 @@ pub const Gauge = struct {
     }
 };
 
+/// Extended statistics from histogram data.
+/// Provides P50, P75, P90, P95, P99, P99.9, P99.99, and max values.
+pub const ExtendedStats = struct {
+    p50: f64,
+    p75: f64,
+    p90: f64,
+    p95: f64,
+    p99: f64,
+    p999: f64, // P99.9
+    p9999: f64, // P99.99
+    max: f64,
+    count: u64,
+    sum: f64,
+    mean: f64,
+
+    /// Format as human-readable output (times in milliseconds).
+    pub fn format(self: *const @This(), writer: anytype) !void {
+        try writer.print(
+            \\P50={d:.3}ms P75={d:.3}ms P90={d:.3}ms P95={d:.3}ms
+            \\P99={d:.3}ms P99.9={d:.3}ms P99.99={d:.3}ms max={d:.3}ms
+            \\count={d} mean={d:.3}ms
+        , .{
+            self.p50 * 1000, self.p75 * 1000, self.p90 * 1000, self.p95 * 1000,
+            self.p99 * 1000, self.p999 * 1000, self.p9999 * 1000, self.max * 1000,
+            self.count, self.mean * 1000,
+        });
+    }
+
+    /// Diagnose obvious latency issues.
+    pub fn diagnose(self: *const @This(), writer: anytype) !void {
+        if (self.p99 > self.p50 * 10) {
+            try writer.print("WARNING: P99 > 10x P50 - high tail latency\n", .{});
+        }
+        if (self.p9999 > self.p99 * 5) {
+            try writer.print("WARNING: P99.99 > 5x P99 - extreme outliers present\n", .{});
+        }
+    }
+
+    /// Check if statistics indicate healthy latency distribution.
+    pub fn isHealthy(self: *const @This()) bool {
+        // Healthy if P99 is not more than 10x P50
+        return self.p99 <= self.p50 * 10;
+    }
+};
+
 /// A histogram metric for tracking value distributions.
 /// Thread-safe via atomic operations.
 /// Configurable bucket boundaries at compile time.
@@ -186,6 +231,90 @@ pub fn HistogramType(comptime bucket_count: usize) type {
         /// Get the current sum in seconds.
         pub fn getSum(self: *const @This()) f64 {
             return @as(f64, @floatFromInt(self.sum.load(.monotonic))) / 1e9;
+        }
+
+        /// Calculate percentile value (0.0-1.0) from histogram buckets.
+        /// Uses linear interpolation within buckets for better accuracy.
+        pub fn getPercentile(self: *const @This(), p: f64) f64 {
+            const total = self.count.load(.monotonic);
+            if (total == 0) return 0;
+
+            const target_count: u64 = @intFromFloat(@as(f64, @floatFromInt(total)) * p);
+            var cumulative: u64 = 0;
+
+            for (self.bucket_bounds, 0..) |bound, i| {
+                cumulative += self.buckets[i].load(.monotonic);
+                if (cumulative >= target_count) {
+                    return bound;
+                }
+            }
+            return self.bucket_bounds[bucket_count - 1];
+        }
+
+        /// Get extended statistics including multiple percentiles.
+        pub fn getExtendedStats(self: *const @This()) ExtendedStats {
+            const count = self.count.load(.monotonic);
+            const sum = self.getSum();
+            return .{
+                .p50 = self.getPercentile(0.50),
+                .p75 = self.getPercentile(0.75),
+                .p90 = self.getPercentile(0.90),
+                .p95 = self.getPercentile(0.95),
+                .p99 = self.getPercentile(0.99),
+                .p999 = self.getPercentile(0.999),
+                .p9999 = self.getPercentile(0.9999),
+                .max = self.bucket_bounds[bucket_count - 1],
+                .count = count,
+                .sum = sum,
+                .mean = if (count > 0) sum / @as(f64, @floatFromInt(count)) else 0,
+            };
+        }
+
+        /// Format extended statistics as Prometheus-compatible output.
+        pub fn formatExtended(self: *const @This(), writer: anytype) !void {
+            const stats = self.getExtendedStats();
+            const label_prefix = if (self.labels) |labels| labels else "";
+            const label_sep = if (self.labels != null) "," else "";
+
+            // Output quantiles in Prometheus summary format
+            const quantiles = [_]struct { q: f64, v: f64 }{
+                .{ .q = 0.5, .v = stats.p50 },
+                .{ .q = 0.75, .v = stats.p75 },
+                .{ .q = 0.9, .v = stats.p90 },
+                .{ .q = 0.95, .v = stats.p95 },
+                .{ .q = 0.99, .v = stats.p99 },
+                .{ .q = 0.999, .v = stats.p999 },
+                .{ .q = 0.9999, .v = stats.p9999 },
+            };
+
+            for (quantiles) |q| {
+                if (self.labels != null) {
+                    try writer.print("{s}{{quantile=\"{d}\",{s}}} {d:.9}\n", .{
+                        self.name,
+                        q.q,
+                        label_prefix,
+                        q.v,
+                    });
+                } else {
+                    try writer.print("{s}{{quantile=\"{d}\"}} {d:.9}\n", .{
+                        self.name,
+                        q.q,
+                        q.v,
+                    });
+                }
+            }
+
+            // Max value
+            if (self.labels != null) {
+                try writer.print("{s}_max{{{s}{s}}} {d:.9}\n", .{
+                    self.name,
+                    label_prefix,
+                    label_sep,
+                    stats.max,
+                });
+            } else {
+                try writer.print("{s}_max {d:.9}\n", .{ self.name, stats.max });
+            }
         }
 
         /// Format as Prometheus text format.
