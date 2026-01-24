@@ -183,6 +183,12 @@ pub fn build(b: *std.Build) !void {
     const target = try resolve_target(b, build_options.target);
     const stdx_module = b.addModule("stdx", .{ .root_source_file = b.path("src/stdx/stdx.zig") });
 
+    // LZ4 compression library dependency
+    const lz4_dep = b.dependency("lz4", .{
+        .target = target,
+        .optimize = mode,
+    });
+
     assert(build_options.git_commit.len == 40);
     const vsr_options, const vsr_module = build_vsr_module(b, .{
         .stdx_module = stdx_module,
@@ -262,6 +268,7 @@ pub fn build(b: *std.Build) !void {
         .vsr_options = vsr_options,
         .llvm_objcopy = build_options.llvm_objcopy,
         .arch_client_header = arch_client_header,
+        .lz4_dep = lz4_dep,
         .target = target,
         .mode = mode,
         .integration_past = build_options.integration_past,
@@ -959,6 +966,7 @@ fn build_test(
         stdx_module: *std.Build.Module,
         vsr_options: *std.Build.Step.Options,
         arch_client_header: *Generated,
+        lz4_dep: *std.Build.Dependency,
         target: std.Build.ResolvedTarget,
         mode: std.builtin.OptimizeMode,
         integration_past: ?[]const u8,
@@ -995,6 +1003,9 @@ fn build_test(
     unit_tests.root_module.addImport("stdx", options.stdx_module);
     unit_tests.root_module.addOptions("vsr_options", options.vsr_options);
     unit_tests.root_module.addOptions("test_options", test_options);
+
+    // Link LZ4 compression library for compression module tests
+    unit_tests.linkLibrary(options.lz4_dep.artifact("lz4"));
 
     steps.test_unit_build.dependOn(&b.addInstallArtifact(stdx_unit_tests, .{}).step);
     steps.test_unit_build.dependOn(&b.addInstallArtifact(unit_tests, .{}).step);
