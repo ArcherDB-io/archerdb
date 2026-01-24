@@ -11,6 +11,10 @@
 
 const std = @import("std");
 
+/// Storage-specific metrics for write/space amplification monitoring.
+/// Provides Prometheus-compatible metrics for LSM tree health tracking.
+pub const storage = @import("storage_metrics.zig");
+
 /// A monotonically increasing counter metric.
 /// Thread-safe via atomic operations.
 pub const Counter = struct {
@@ -2706,6 +2710,12 @@ pub const Registry = struct {
         try compaction_current_level.format(writer);
         try compaction_operations_total.format(writer);
         try writer.writeAll("\n");
+
+        // ====================================================================
+        // Storage Amplification Metrics (12-02)
+        // ====================================================================
+
+        try storage.format_all(writer);
 
         // ====================================================================
         // Checkpoint Metrics
