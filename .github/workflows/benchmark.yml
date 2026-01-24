@@ -1,0 +1,131 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2025 ArcherDB Contributors
+#
+# Performance Benchmark Workflow
+# Runs benchmarks on PRs (quick mode) and main (full mode).
+# Posts comparison results as PR comments.
+
+name: Performance Benchmarks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Need history for baseline comparison
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq bc
+
+      - name: Download baseline (main branch)
+        if: github.event_name == 'pull_request'
+        uses: actions/download-artifact@v4
+        with:
+          name: benchmark-baseline
+          path: baseline/
+        continue-on-error: true  # OK if no baseline exists yet
+
+      - name: Run benchmarks
+        run: |
+          MODE="quick"
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
+            MODE="full"
+          fi
+          ./scripts/benchmark-ci.sh --mode "$MODE" --output benchmark-results.json
+
+      - name: Compare with baseline
+        if: github.event_name == 'pull_request' && hashFiles('baseline/benchmark-results.json') != ''
+        run: |
+          REGRESSION=0
+          ./scripts/benchmark-ci.sh --compare \
+            --baseline baseline/benchmark-results.json \
+            --output benchmark-results.json \
+            > comparison.txt 2>&1 || REGRESSION=1
+
+          # Create PR comment content
+          if [[ -f comparison.txt ]]; then
+            echo "## Performance Benchmark Results" > comment.md
+            echo "" >> comment.md
+            echo '```' >> comment.md
+            cat comparison.txt >> comment.md
+            echo '```' >> comment.md
+
+            if [[ "$REGRESSION" == "1" ]]; then
+              echo "" >> comment.md
+              echo "**Warning: Performance regression detected!**" >> comment.md
+              echo "" >> comment.md
+              echo "The current changes show performance degradation exceeding 2 standard deviations from the baseline." >> comment.md
+              echo "Please review the benchmark results and consider optimizing the affected code paths." >> comment.md
+            else
+              echo "" >> comment.md
+              echo "No performance regression detected." >> comment.md
+            fi
+          fi
+
+          # Exit with regression status for workflow
+          exit $REGRESSION
+        continue-on-error: true  # Don't fail the workflow, just warn
+
+      - name: Upload results as baseline
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-baseline
+          path: benchmark-results.json
+          retention-days: 90
+
+      - name: Post PR comment
+        if: github.event_name == 'pull_request' && hashFiles('comment.md') != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const comment = fs.readFileSync('comment.md', 'utf8');
+
+            // Find and update existing comment or create new one
+            const { data: comments } = await github.rest.issues.listComments({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo
+            });
+
+            const botComment = comments.find(c =>
+              c.user.type === 'Bot' &&
+              c.body.includes('Performance Benchmark Results')
+            );
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                comment_id: botComment.id,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: comment
+              });
+            } else {
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: comment
+              });
+            }
+
+      - name: Upload benchmark results artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-${{ github.sha }}
+          path: benchmark-results.json
+          retention-days: 30
