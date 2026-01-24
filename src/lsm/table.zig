@@ -14,6 +14,66 @@ const div_ceil = stdx.div_ceil;
 
 const TreeTableInfoType = @import("manifest.zig").TreeTableInfoType;
 const schema = @import("schema.zig");
+const compression = @import("compression.zig");
+const dedup = @import("dedup.zig");
+
+// Re-export dedup types for use by compaction and other modules.
+// These types are used to check for duplicate value blocks during table writing.
+pub const DedupIndex = dedup.DedupIndex;
+pub const DedupConfig = dedup.DedupConfig;
+pub const DedupEntry = dedup.DedupEntry;
+pub const DedupLookupResult = dedup.LookupResult;
+pub const DedupMetrics = dedup.Metrics;
+
+/// Result of checking a value block for deduplication.
+pub const DedupCheckResult = union(enum) {
+    /// Block is a duplicate - use this existing address instead of writing
+    duplicate: struct {
+        existing_address: u64,
+        bytes_saved: usize,
+    },
+    /// Block is unique - proceed with normal write
+    unique: void,
+};
+
+/// Check if a finalized value block is a duplicate using the dedup index.
+/// Call this after value_block_finish() and before writing to storage.
+///
+/// Parameters:
+/// - block: The finalized value block (with header already set)
+/// - dedup_index: Optional dedup index to check against
+/// - new_address: The address that would be assigned if this is a new block
+///
+/// Returns: DedupCheckResult indicating if this is a duplicate
+pub fn check_block_dedup(
+    block: BlockPtrConst,
+    dedup_index: ?*DedupIndex,
+    new_address: u64,
+) DedupCheckResult {
+    const index = dedup_index orelse return .unique;
+
+    const header = schema.header_from_block(block);
+    const block_body = block[@sizeOf(vsr.Header)..header.size];
+
+    const result = index.lookup_or_insert(block_body, new_address);
+    return switch (result) {
+        .duplicate => |existing_address| .{
+            .duplicate = .{
+                .existing_address = existing_address,
+                .bytes_saved = block_body.len,
+            },
+        },
+        .unique => .unique,
+    };
+}
+
+/// Compute content hash for a value block body (excluding header).
+/// Useful for pre-checking deduplication without modifying the index.
+pub fn compute_block_hash(block: BlockPtrConst) u64 {
+    const header = schema.header_from_block(block);
+    const block_body = block[@sizeOf(vsr.Header)..header.size];
+    return dedup.compute_hash(block_body);
+}
 
 pub const TableUsage = enum {
     /// General purpose table.
@@ -606,4 +666,43 @@ test "Table" {
     );
 
     std.testing.refAllDecls(Table.Builder);
+}
+
+test "table: dedup type exports" {
+    // Verify dedup types are properly exported
+    _ = DedupIndex;
+    _ = DedupConfig;
+    _ = DedupEntry;
+    _ = DedupLookupResult;
+    _ = DedupMetrics;
+    _ = DedupCheckResult;
+
+    // Test DedupCheckResult variants
+    const result_unique: DedupCheckResult = .unique;
+    const result_dup: DedupCheckResult = .{ .duplicate = .{
+        .existing_address = 12345,
+        .bytes_saved = 4096,
+    } };
+
+    try std.testing.expect(result_unique == .unique);
+    try std.testing.expect(result_dup == .duplicate);
+    try std.testing.expectEqual(@as(u64, 12345), result_dup.duplicate.existing_address);
+    try std.testing.expectEqual(@as(usize, 4096), result_dup.duplicate.bytes_saved);
+}
+
+test "table: check_block_dedup with null index" {
+    // When dedup_index is null, should always return unique
+    const dummy_block: [constants.block_size]u8 align(constants.sector_size) = undefined;
+    const result = check_block_dedup(&dummy_block, null, 100);
+    try std.testing.expect(result == .unique);
+}
+
+test "table: compute_block_hash consistency" {
+    // Verify hash computation is consistent
+    const hash1 = dedup.compute_hash("test data 12345");
+    const hash2 = dedup.compute_hash("test data 12345");
+    const hash3 = dedup.compute_hash("different data");
+
+    try std.testing.expectEqual(hash1, hash2);
+    try std.testing.expect(hash1 != hash3);
 }

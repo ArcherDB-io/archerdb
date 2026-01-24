@@ -302,11 +302,12 @@ test "dedup: basic duplicate detection" {
 
     // First insert - should be unique
     const result1 = index.lookup_or_insert(block1, 100);
-    try std.testing.expect(result1 == .unique);
+    try std.testing.expectEqual(LookupResult.unique, result1);
 
     // Second insert of same content - should find duplicate
     const result2 = index.lookup_or_insert(block1, 200);
-    try std.testing.expect(result2 == .{ .duplicate = 100 });
+    try std.testing.expect(result2 == .duplicate);
+    try std.testing.expectEqual(@as(u64, 100), result2.duplicate);
 
     // Verify metrics
     const metrics = index.getMetrics();
