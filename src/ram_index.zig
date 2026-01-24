@@ -1343,6 +1343,129 @@ pub const AlertManager = struct {
     }
 };
 
+// ============================================================================
+// RAM Estimation and Validation
+// ============================================================================
+
+/// Cuckoo hashing target load factor.
+/// Lower than linear probing's 70% due to displacement chains.
+/// At 50% load factor, cuckoo hashing has reliable insertion.
+pub const cuckoo_load_factor: f64 = 0.50;
+
+/// Estimate RAM bytes required for a given entity count.
+/// Uses cuckoo hashing target load factor of 0.5 for safety.
+///
+/// Returns the memory required for the index entries only.
+/// Does not include allocator overhead or per-index metadata.
+pub fn estimate_ram_bytes(entity_count: u64, comptime EntryType: type) u64 {
+    // Cuckoo hashing works best at 50% load factor
+    // (lower than linear probing's 70% due to displacement chains)
+    const capacity = @as(u64, @intFromFloat(@as(f64, @floatFromInt(entity_count)) / cuckoo_load_factor)) + 1;
+    return capacity * @sizeOf(EntryType);
+}
+
+/// Estimate RAM bytes using default 64-byte IndexEntry.
+pub fn estimate_ram_bytes_default(entity_count: u64) u64 {
+    return estimate_ram_bytes(entity_count, IndexEntry);
+}
+
+/// Format RAM estimate as human-readable string.
+/// Returns bytes formatted as "X.XX GiB" or "X.XX MiB".
+pub fn format_ram_estimate(bytes: u64, buffer: []u8) []const u8 {
+    const gib: f64 = @as(f64, @floatFromInt(bytes)) / (1024 * 1024 * 1024);
+    const mib: f64 = @as(f64, @floatFromInt(bytes)) / (1024 * 1024);
+
+    if (gib >= 1.0) {
+        return std.fmt.bufPrint(buffer, "{d:.2} GiB", .{gib}) catch buffer[0..0];
+    } else {
+        return std.fmt.bufPrint(buffer, "{d:.2} MiB", .{mib}) catch buffer[0..0];
+    }
+}
+
+/// Error returned when system does not have enough RAM for requested index size.
+pub const InsufficientMemoryError = error{InsufficientMemory};
+
+/// Get available system memory in bytes.
+/// On Linux, reads MemAvailable from /proc/meminfo.
+/// On macOS, uses sysctl for hw.memsize (total memory as proxy).
+/// Returns error.UnsupportedPlatform on other platforms.
+pub fn get_available_memory() !u64 {
+    const builtin = @import("builtin");
+
+    if (builtin.os.tag == .linux) {
+        return get_available_memory_linux();
+    } else if (builtin.os.tag == .macos) {
+        return get_available_memory_macos();
+    } else {
+        return error.UnsupportedPlatform;
+    }
+}
+
+fn get_available_memory_linux() !u64 {
+    var file = std.fs.openFileAbsolute("/proc/meminfo", .{}) catch |err| {
+        std.log.warn("Cannot open /proc/meminfo: {}", .{err});
+        return error.UnsupportedPlatform;
+    };
+    defer file.close();
+
+    var buf: [4096]u8 = undefined;
+    const bytes_read = file.readAll(&buf) catch |err| {
+        std.log.warn("Cannot read /proc/meminfo: {}", .{err});
+        return error.UnsupportedPlatform;
+    };
+
+    const content = buf[0..bytes_read];
+
+    // Look for "MemAvailable:" line
+    var lines = std.mem.splitScalar(u8, content, '\n');
+    while (lines.next()) |line| {
+        if (std.mem.startsWith(u8, line, "MemAvailable:")) {
+            // Parse value (in kB)
+            const value_start = (std.mem.indexOf(u8, line, ":") orelse return error.UnsupportedPlatform) + 1;
+            const trimmed = std.mem.trim(u8, line[value_start..], " \t");
+            const kb_end = std.mem.indexOf(u8, trimmed, " ") orelse trimmed.len;
+            const kb_str = trimmed[0..kb_end];
+            const kb = std.fmt.parseInt(u64, kb_str, 10) catch {
+                return error.UnsupportedPlatform;
+            };
+            return kb * 1024;
+        }
+    }
+
+    // MemAvailable not found (older kernel), fall back to MemFree
+    lines = std.mem.splitScalar(u8, content, '\n');
+    while (lines.next()) |line| {
+        if (std.mem.startsWith(u8, line, "MemFree:")) {
+            const value_start = (std.mem.indexOf(u8, line, ":") orelse return error.UnsupportedPlatform) + 1;
+            const trimmed = std.mem.trim(u8, line[value_start..], " \t");
+            const kb_end = std.mem.indexOf(u8, trimmed, " ") orelse trimmed.len;
+            const kb_str = trimmed[0..kb_end];
+            const kb = std.fmt.parseInt(u64, kb_str, 10) catch {
+                return error.UnsupportedPlatform;
+            };
+            return kb * 1024;
+        }
+    }
+
+    return error.UnsupportedPlatform;
+}
+
+fn get_available_memory_macos() !u64 {
+    // macOS: Use sysctlbyname for hw.memsize (total physical memory)
+    // Note: This returns total memory, not available. For fail-fast purposes,
+    // we use a fraction (e.g., 80%) as "available" estimate.
+    var size: usize = @sizeOf(u64);
+    var memsize: u64 = 0;
+
+    const result = std.c.sysctlbyname("hw.memsize", @ptrCast(&memsize), &size, null, 0);
+    if (result != 0) {
+        return error.UnsupportedPlatform;
+    }
+
+    // Return 80% of total as "available" estimate
+    return (memsize * 80) / 100;
+}
+
 /// Generic RAM Index - O(1) entity lookup index parameterized on entry type.
 ///
 /// Thread-safety model:
@@ -1481,6 +1604,92 @@ pub fn GenericRamIndexType(comptime Entry: type, comptime options: struct {
                 } else {},
                 .mmap_region = region,
             };
+        }
+
+        /// Initialize index with upfront RAM validation.
+        /// Fails fast with clear error if insufficient memory available.
+        ///
+        /// Parameters:
+        /// - allocator: Memory allocator to use
+        /// - expected_entities: Expected number of entities to store
+        /// - headroom_percent: Percentage of available memory to leave free (default 10)
+        ///
+        /// Returns error.InsufficientMemory if required RAM exceeds (100 - headroom)%
+        /// of available memory. The error message includes required and available amounts.
+        pub fn init_with_validation(
+            allocator: Allocator,
+            expected_entities: u64,
+            headroom_percent: u8,
+        ) (IndexError || InsufficientMemoryError || error{UnsupportedPlatform})!@This() {
+            const required_bytes = estimate_ram_bytes(expected_entities, Entry);
+            const headroom = @min(headroom_percent, 50); // Cap at 50%
+
+            // Try to get available memory (non-fatal if unsupported)
+            const available_bytes = get_available_memory() catch |err| {
+                if (err == error.UnsupportedPlatform) {
+                    // Log warning and proceed without validation
+                    var buf1: [32]u8 = undefined;
+                    std.log.warn(
+                        "Cannot detect available memory on this platform. " ++
+                            "Proceeding with allocation of {s} for {d} entities.",
+                        .{ format_ram_estimate(required_bytes, &buf1), expected_entities },
+                    );
+                    // Proceed with standard init
+                    const capacity = @as(u64, @intFromFloat(
+                        @as(f64, @floatFromInt(expected_entities)) / cuckoo_load_factor,
+                    )) + 1;
+                    return @This().init(allocator, capacity);
+                }
+                return err;
+            };
+
+            // Calculate usable memory (available - headroom)
+            const usable_bytes = (available_bytes * (100 - @as(u64, headroom))) / 100;
+
+            if (required_bytes > usable_bytes) {
+                var buf1: [32]u8 = undefined;
+                var buf2: [32]u8 = undefined;
+                var buf3: [32]u8 = undefined;
+                std.log.err(
+                    "Insufficient RAM for {d} entities.\n" ++
+                        "  Required:  {s}\n" ++
+                        "  Available: {s}\n" ++
+                        "  Usable:    {s} ({d}% headroom)\n" ++
+                        "Reduce entity count or provision more memory.",
+                    .{
+                        expected_entities,
+                        format_ram_estimate(required_bytes, &buf1),
+                        format_ram_estimate(available_bytes, &buf2),
+                        format_ram_estimate(usable_bytes, &buf3),
+                        headroom,
+                    },
+                );
+                return error.InsufficientMemory;
+            }
+
+            // Log successful validation
+            var buf1: [32]u8 = undefined;
+            var buf2: [32]u8 = undefined;
+            std.log.info(
+                "RAM validation passed: allocating {s} for {d} entities ({s} available)",
+                .{
+                    format_ram_estimate(required_bytes, &buf1),
+                    expected_entities,
+                    format_ram_estimate(available_bytes, &buf2),
+                },
+            );
+
+            // Calculate capacity for cuckoo hashing
+            const capacity = @as(u64, @intFromFloat(
+                @as(f64, @floatFromInt(expected_entities)) / cuckoo_load_factor,
+            )) + 1;
+
+            return @This().init(allocator, capacity);
+        }
+
+        /// Convenience wrapper with default 10% headroom.
+        pub fn init_validated(allocator: Allocator, expected_entities: u64) !@This() {
+            return init_with_validation(allocator, expected_entities, 10);
         }
 
         /// Deinitialize and free index memory.
@@ -2714,6 +2923,89 @@ pub const index_format_name: []const u8 = @tagName(build_config.index_format);
 // ============================================================================
 // Unit Tests
 // ============================================================================
+
+const testing = std.testing;
+
+// ============================================================================
+// RAM Estimation Tests
+// ============================================================================
+
+test "estimate_ram_bytes: 1M entities" {
+    const bytes = estimate_ram_bytes_default(1_000_000);
+    // 1M entities at 50% load = 2M slots * 64 bytes = ~128MB (decimal)
+    // 2,000,001 * 64 = 128,000,064 bytes (~122 MiB)
+    try testing.expect(bytes >= 128_000_000);
+    try testing.expect(bytes <= 129_000_000);
+}
+
+test "estimate_ram_bytes: 100M entities" {
+    const bytes = estimate_ram_bytes_default(100_000_000);
+    // 100M entities at 50% load = 200M slots * 64 bytes = 12.8GB (decimal)
+    // 200,000,001 * 64 = 12,800,000,064 bytes (~11.9 GiB)
+    const expected_gb: f64 = 12.8; // decimal GB
+    const actual_gb = @as(f64, @floatFromInt(bytes)) / (1000 * 1000 * 1000); // decimal GB
+    try testing.expect(actual_gb >= expected_gb - 0.1);
+    try testing.expect(actual_gb <= expected_gb + 0.1);
+}
+
+test "estimate_ram_bytes: zero entities" {
+    const bytes = estimate_ram_bytes_default(0);
+    // Should return at least one slot
+    try testing.expect(bytes >= @sizeOf(IndexEntry));
+}
+
+test "format_ram_estimate: GiB format" {
+    var buf: [32]u8 = undefined;
+    const result = format_ram_estimate(2 * 1024 * 1024 * 1024, &buf);
+    try testing.expect(std.mem.indexOf(u8, result, "GiB") != null);
+}
+
+test "format_ram_estimate: MiB format" {
+    var buf: [32]u8 = undefined;
+    const result = format_ram_estimate(512 * 1024 * 1024, &buf);
+    try testing.expect(std.mem.indexOf(u8, result, "MiB") != null);
+}
+
+test "get_available_memory: returns reasonable value or UnsupportedPlatform" {
+    const result = get_available_memory();
+    if (result) |bytes| {
+        // Should be at least 1GB and at most 1TB
+        try testing.expect(bytes >= 1024 * 1024 * 1024);
+        try testing.expect(bytes <= 1024 * 1024 * 1024 * 1024);
+    } else |err| {
+        // UnsupportedPlatform is acceptable in test environments
+        try testing.expectEqual(error.UnsupportedPlatform, err);
+    }
+}
+
+test "init_with_validation: succeeds with small entity count" {
+    // Small allocation should always succeed
+    var index = GenericRamIndexType(IndexEntry, .{ .track_stats = true }).init_with_validation(
+        testing.allocator,
+        1000, // 1000 entities = ~128KB
+        10, // 10% headroom
+    ) catch |err| {
+        // If platform doesn't support memory detection, that's OK
+        if (err == error.UnsupportedPlatform) return;
+        return err;
+    };
+    defer index.deinit(testing.allocator);
+
+    try testing.expect(index.capacity >= 2000); // At least 2x for 50% load
+}
+
+test "init_validated: convenience wrapper works" {
+    var index = GenericRamIndexType(IndexEntry, .{ .track_stats = true }).init_validated(
+        testing.allocator,
+        1000,
+    ) catch |err| {
+        if (err == error.UnsupportedPlatform) return;
+        return err;
+    };
+    defer index.deinit(testing.allocator);
+
+    try testing.expect(index.capacity >= 2000);
+}
 
 test "IndexEntry: size and alignment" {
     // IndexEntry must be exactly 64 bytes (cache line).
