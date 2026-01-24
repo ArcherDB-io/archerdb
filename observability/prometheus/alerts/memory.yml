@@ -1,0 +1,102 @@
+# ArcherDB RAM Index Memory Alerting Rules
+# Phase 13 RAM index-specific alerts for load factor, memory usage,
+# lookup hit rate, and cuckoo hashing performance.
+#
+# All alerts include:
+# - runbook_url: Link to troubleshooting documentation
+# - remediation: Brief fix suggestion
+# - severity: warning, critical, or info (for routing)
+#
+# Metric scaling notes:
+# - archerdb_ram_index_load_factor: scaled x1000 (700 = 70%)
+
+groups:
+  - name: archerdb-ram-index-load
+    rules:
+      # Warning: Load factor >70% for 10 minutes
+      - alert: ArcherDBRamIndexLoadFactorHigh
+        expr: archerdb_ram_index_load_factor > 700
+        for: 10m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "RAM index load factor exceeds 70% on {{ $labels.instance }}"
+          description: "Load factor is {{ $value | printf \"%.0f\" | divf 10 }}%. Cuckoo hashing performance degrades above 70%. Consider increasing capacity."
+          runbook_url: "https://docs.archerdb.io/runbooks/ram-index-load-factor"
+          remediation: "Index will auto-resize on next insert. If sustained, check for memory pressure preventing resize or unusually high entity count."
+
+      # Critical: Load factor >80% for 5 minutes
+      - alert: ArcherDBRamIndexLoadFactorCritical
+        expr: archerdb_ram_index_load_factor > 800
+        for: 5m
+        labels:
+          severity: critical
+          team: database
+        annotations:
+          summary: "RAM index load factor exceeds 80% on {{ $labels.instance }}"
+          description: "Load factor is {{ $value | printf \"%.0f\" | divf 10 }}%. Index is approaching failure threshold. Immediate action required."
+          runbook_url: "https://docs.archerdb.io/runbooks/ram-index-load-factor"
+          remediation: "URGENT: Check available memory. Index needs to resize but may be blocked by memory pressure. Consider adding RAM."
+
+  - name: archerdb-ram-index-memory
+    rules:
+      # Info: RAM index using significant memory (>100 GiB)
+      - alert: ArcherDBRamIndexMemoryHigh
+        expr: archerdb_ram_index_memory_bytes > 100 * 1024 * 1024 * 1024
+        for: 5m
+        labels:
+          severity: info
+          team: database
+        annotations:
+          summary: "RAM index using over 100 GiB on {{ $labels.instance }}"
+          description: "RAM index is using {{ $value | humanize1024 }}B. Monitor system memory utilization."
+          runbook_url: "https://docs.archerdb.io/runbooks/ram-index-memory"
+          remediation: "This is informational. Ensure system has adequate RAM headroom. Each entity requires 64 bytes in the index."
+
+  - name: archerdb-ram-index-lookup
+    rules:
+      # Warning: Lookup hit rate <50% for 15 minutes
+      - alert: ArcherDBRamIndexHitRateLow
+        expr: |
+          (
+            sum(rate(archerdb_ram_index_lookup_hits_total[5m])) /
+            sum(rate(archerdb_ram_index_lookups_total[5m]))
+          ) < 0.5
+        for: 15m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "RAM index lookup hit rate below 50% on {{ $labels.instance }}"
+          description: "Hit rate is {{ $value | humanizePercentage }}. High miss rate may indicate entities not being found or stale lookups."
+          runbook_url: "https://docs.archerdb.io/runbooks/ram-index-hit-rate"
+          remediation: "Review query patterns. Frequent misses may indicate queries for deleted entities, incorrect entity IDs, or index sync issues."
+
+  - name: archerdb-ram-index-insert
+    rules:
+      # Warning: High displacement rate for 10 minutes
+      - alert: ArcherDBRamIndexHighDisplacements
+        expr: rate(archerdb_ram_index_displacements_total[5m]) > 1000
+        for: 10m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "RAM index cuckoo displacement rate high on {{ $labels.instance }}"
+          description: "Displacement rate is {{ $value | printf \"%.0f\" }}/s. High displacement indicates load factor too high or poor hash distribution."
+          runbook_url: "https://docs.archerdb.io/runbooks/ram-index-displacements"
+          remediation: "Check load factor gauge. If high, index should auto-resize. If displacements persist at low load factor, may indicate hash collision patterns in entity IDs."
+
+      # Critical: Insert failures detected (displacement chain exceeded max)
+      - alert: ArcherDBRamIndexInsertFailures
+        expr: increase(archerdb_ram_index_insert_failures_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          team: database
+        annotations:
+          summary: "RAM index insert failures detected on {{ $labels.instance }}"
+          description: "Insert operations are failing. Index may be full or encountering displacement loops."
+          runbook_url: "https://docs.archerdb.io/runbooks/ram-index-insert-failure"
+          remediation: "CRITICAL: Index cannot accept new entries. Check memory availability for resize. May need to restart with larger initial capacity."
