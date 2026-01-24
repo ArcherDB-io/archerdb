@@ -135,6 +135,31 @@ pub var archerdb_compression_bytes_out_total = Counter.init(
 );
 
 // ============================================================================
+// Compaction Throttle Metrics
+// ============================================================================
+
+/// Compaction throttle ratio (0-1000, where 1000 = 100% = full throughput).
+pub var archerdb_compaction_throttle_ratio = Gauge.init(
+    "archerdb_compaction_throttle_ratio",
+    "Current compaction throughput ratio (0-1000, where 1000 = 100%)",
+    null,
+);
+
+/// Whether compaction throttle is currently active (0 or 1).
+pub var archerdb_compaction_throttle_active = Gauge.init(
+    "archerdb_compaction_throttle_active",
+    "Whether compaction throttle is active (0=no, 1=yes)",
+    null,
+);
+
+/// Pending compaction bytes - total bytes awaiting compaction across all levels.
+pub var archerdb_compaction_pending_bytes = Gauge.init(
+    "archerdb_compaction_pending_bytes",
+    "Total bytes awaiting compaction across all levels",
+    null,
+);
+
+// ============================================================================
 // Rolling Window Rate Metrics
 // ============================================================================
 
@@ -228,6 +253,13 @@ pub fn record_compression(uncompressed_bytes: u64, compressed_bytes: u64) void {
     }
 }
 
+/// Update compaction throttle metrics.
+pub fn update_throttle_metrics(throughput_ratio_scaled: u32, is_active: bool, pending_bytes: u64) void {
+    archerdb_compaction_throttle_ratio.set(@intCast(throughput_ratio_scaled));
+    archerdb_compaction_throttle_active.set(if (is_active) 1 else 0);
+    archerdb_compaction_pending_bytes.set(@intCast(pending_bytes));
+}
+
 // ============================================================================
 // Prometheus Format Output
 // ============================================================================
@@ -287,6 +319,12 @@ pub fn format_all(writer: anytype) !void {
     try archerdb_storage_write_rate_1m.format(writer);
     try archerdb_storage_write_rate_5m.format(writer);
     try archerdb_storage_write_rate_1h.format(writer);
+    try writer.writeAll("\n");
+
+    // Compaction throttle metrics
+    try archerdb_compaction_throttle_ratio.format(writer);
+    try archerdb_compaction_throttle_active.format(writer);
+    try archerdb_compaction_pending_bytes.format(writer);
     try writer.writeAll("\n");
 }
 
@@ -349,6 +387,18 @@ test "storage_metrics: record_compression" {
     try std.testing.expectEqual(@as(i64, 400), ratio_scaled);
 }
 
+test "storage_metrics: update_throttle_metrics" {
+    update_throttle_metrics(750, true, 100 * 1024 * 1024 * 1024);
+
+    try std.testing.expectEqual(@as(i64, 750), archerdb_compaction_throttle_ratio.get());
+    try std.testing.expectEqual(@as(i64, 1), archerdb_compaction_throttle_active.get());
+    try std.testing.expectEqual(@as(i64, 100 * 1024 * 1024 * 1024), archerdb_compaction_pending_bytes.get());
+
+    update_throttle_metrics(1000, false, 0);
+    try std.testing.expectEqual(@as(i64, 1000), archerdb_compaction_throttle_ratio.get());
+    try std.testing.expectEqual(@as(i64, 0), archerdb_compaction_throttle_active.get());
+}
+
 test "storage_metrics: format_all produces valid output" {
     var buffer: [8192]u8 = undefined;
     var stream = std.io.fixedBufferStream(&buffer);
@@ -358,9 +408,11 @@ test "storage_metrics: format_all produces valid output" {
 
     const output = stream.getWritten();
 
-    // Verify expected metric names appear in output
     try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_compaction_write_amplification") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_storage_space_amplification") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_compaction_level_bytes_total") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_compression_ratio") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_compaction_throttle_ratio") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_compaction_throttle_active") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_compaction_pending_bytes") != null);
 }

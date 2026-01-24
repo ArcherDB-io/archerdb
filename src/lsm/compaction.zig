@@ -40,6 +40,7 @@ const Allocator = std.mem.Allocator;
 const log = std.log.scoped(.compaction);
 
 const constants = @import("../constants.zig");
+const compaction_throttle = @import("compaction_throttle.zig");
 
 const stdx = @import("stdx");
 const maybe = stdx.maybe;
@@ -94,6 +95,18 @@ pub fn ResourcePoolType(comptime Grid: type) type {
         blocks: StackType(Block),
         blocks_backing_storage: []Block,
         grid_reservation: ?Grid.Reservation = null,
+
+        /// Throttle state for latency-driven compaction pacing.
+        throttle_state: compaction_throttle.ThrottleState = compaction_throttle.ThrottleState.init(),
+
+        /// Throttle configuration (from process config).
+        throttle_config: compaction_throttle.ThrottleConfig = .{},
+
+        /// Whether throttling is enabled (from config).
+        throttle_enabled: bool = true,
+
+        /// Current pending compaction bytes estimate.
+        pending_compaction_bytes: u64 = 0,
 
         const ResourcePool = @This();
 
@@ -197,12 +210,16 @@ pub fn ResourcePoolType(comptime Grid: type) type {
         }
 
         pub fn reset(pool: *ResourcePool) void {
+            const throttle_config = pool.throttle_config;
+            const throttle_enabled = pool.throttle_enabled;
             pool.* = .{
                 .blocks = StackType(Block).init(.{
                     .capacity = pool.blocks.capacity(),
                     .verify_push = false,
                 }),
                 .blocks_backing_storage = pool.blocks_backing_storage,
+                .throttle_config = throttle_config,
+                .throttle_enabled = throttle_enabled,
             };
             for (pool.blocks_backing_storage) |*block| {
                 block.* = .{
@@ -242,6 +259,55 @@ pub fn ResourcePoolType(comptime Grid: type) type {
             assert(block.stage == .free);
             assert(block.link.next == null);
             pool.blocks.push(block);
+        }
+
+        /// Update throttle state based on current metrics.
+        pub fn updateThrottle(pool: *ResourcePool, current_p99_ms: f64, current_time_ns: i128) void {
+            if (!pool.throttle_enabled) return;
+            if (!pool.throttle_state.shouldCheck(current_time_ns, pool.throttle_config)) return;
+
+            const metrics = compaction_throttle.ThrottleMetrics{
+                .pending_compaction_bytes = pool.pending_compaction_bytes,
+                .current_p99_ms = current_p99_ms,
+            };
+
+            const old_ratio = pool.throttle_state.current_throughput_ratio;
+            pool.throttle_state.update(metrics, pool.throttle_config, current_time_ns);
+            const new_ratio = pool.throttle_state.current_throughput_ratio;
+
+            const ratio_change = if (new_ratio > old_ratio) new_ratio - old_ratio else old_ratio - new_ratio;
+            if (ratio_change > 0.2) {
+                if (new_ratio < old_ratio) {
+                    log.info("compaction throttle: {d:.0}% -> {d:.0}% (pending={d} MiB, p99={d:.1}ms)", .{
+                        old_ratio * 100.0, new_ratio * 100.0, pool.pending_compaction_bytes / (1024 * 1024), current_p99_ms,
+                    });
+                } else {
+                    log.info("compaction throttle: recovering {d:.0}% -> {d:.0}%", .{ old_ratio * 100.0, new_ratio * 100.0 });
+                }
+            }
+
+            archerdb_metrics.storage.update_throttle_metrics(
+                pool.throttle_state.getThroughputRatioScaled(),
+                pool.throttle_state.isActive(),
+                pool.pending_compaction_bytes,
+            );
+        }
+
+        /// Get the current throughput ratio (0.1 to 1.0).
+        pub fn getThroughputRatio(pool: *const ResourcePool) f64 {
+            if (!pool.throttle_enabled) return 1.0;
+            return pool.throttle_state.current_throughput_ratio;
+        }
+
+        /// Get delay in nanoseconds to add after work of given duration.
+        pub fn getThrottleDelayNs(pool: *const ResourcePool, work_duration_ns: u64) u64 {
+            if (!pool.throttle_enabled) return 0;
+            return pool.throttle_state.getDelayNs(work_duration_ns);
+        }
+
+        /// Update pending compaction bytes estimate.
+        pub fn setPendingCompactionBytes(pool: *ResourcePool, pending_bytes: u64) void {
+            pool.pending_compaction_bytes = pending_bytes;
         }
 
         pub fn format(
