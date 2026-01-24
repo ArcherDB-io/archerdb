@@ -208,6 +208,42 @@ const ConfigCluster = struct {
     lsm_table_coalescing_threshold_percent: comptime_int = 50,
     vsr_releases_max: u32 = 64,
 
+    // =========================================================================
+    // Block Compression Configuration
+    // =========================================================================
+    //
+    // Value blocks are compressed using LZ4 to reduce storage footprint by 40-60%.
+    // Index blocks remain uncompressed for fast key lookups.
+    //
+    // Why compression is enabled by default:
+    // - Typical geospatial data achieves 40-60% compression ratio
+    // - LZ4 decompression is extremely fast (~4 GB/s), minimal query latency impact
+    // - Significant storage cost reduction for large datasets
+    //
+    // When to disable compression:
+    // - Data is already compressed (JPEG, PNG, encrypted)
+    // - Extreme latency sensitivity (every microsecond matters)
+    // - Storage is not a constraint
+    //
+    // =========================================================================
+
+    /// Enable LZ4 compression for LSM value blocks (0 = disabled, 1 = enabled).
+    /// Index blocks remain uncompressed for fast key lookups.
+    /// Default: 1 (enabled, recommended for 40-60% storage reduction).
+    lsm_compaction_block_compression: comptime_int = 1,
+
+    /// Compression threshold as a percentage (1-100).
+    /// Only use compression if compressed size <= (threshold% × original size).
+    /// Example: 90 means only compress if output is ≤90% of input (≥10% savings).
+    /// Default: 90 (require at least 10% compression savings to be worthwhile).
+    lsm_compaction_compression_threshold_percent: comptime_int = 90,
+
+    /// Minimum block body size (bytes) to attempt compression.
+    /// Blocks smaller than this are stored uncompressed.
+    /// Small blocks have poor compression ratios and high overhead.
+    /// Default: 512 bytes (below this, compression overhead exceeds benefit).
+    lsm_compaction_compression_min_size: comptime_int = 512,
+
     /// Minimal value.
     // TODO(batiati): Maybe this constant should be derived from `grid_iops_read_max`,
     // since each scan can read from `lsm_levels` in parallel.
