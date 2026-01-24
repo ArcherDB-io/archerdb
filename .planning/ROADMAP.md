@@ -36,12 +36,14 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Memory allocations are tracked and reported in test builds via DebugAllocator
   4. Latency histograms (P50/P90/P99/P999) are available per operation type in metrics
   5. Benchmark harness produces reproducible performance results with statistical analysis
-**Plans**: TBD
+**Plans**: 5 plans in 2 waves
 
 Plans:
-- [ ] 11-01: TBD
-- [ ] 11-02: TBD
-- [ ] 11-03: TBD
+- [ ] 11-01-PLAN.md — CPU profiling with Linux perf and FlameGraph scripts
+- [ ] 11-02-PLAN.md — POOP A/B benchmarking with hardware counters
+- [ ] 11-03-PLAN.md — Memory allocation tracking and extended latency histograms
+- [ ] 11-04-PLAN.md — Statistical benchmark harness and CI integration
+- [ ] 11-05-PLAN.md — Tracy instrumentation and Parca continuous profiling
 
 ### Phase 12: Storage Optimization
 **Goal**: Optimize LSM-tree storage for write-heavy geospatial workloads with compression and tuned compaction
@@ -134,7 +136,7 @@ Phases execute in numeric order: 11 -> 11.x -> 12 -> 12.x -> ... -> 16
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 11. Measurement & Profiling | 0/TBD | Not started | - |
+| 11. Measurement & Profiling | 0/5 | Planned | - |
 | 12. Storage Optimization | 0/TBD | Not started | - |
 | 13. Memory & RAM Index | 0/TBD | Not started | - |
 | 14. Query Performance | 0/TBD | Not started | - |
@@ -156,4 +158,4 @@ Phases execute in numeric order: 11 -> 11.x -> 12 -> 12.x -> ... -> 16
 
 ---
 *Roadmap created: 2026-01-24*
-*Last updated: 2026-01-24*
+*Last updated: 2026-01-24 — Phase 11 planned (5 plans, 2 waves)*
