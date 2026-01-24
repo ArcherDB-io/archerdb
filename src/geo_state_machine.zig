@@ -3268,6 +3268,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             archerdb_metrics.Registry.read_latency.observeNs(duration_ns);
             archerdb_metrics.Registry.query_result_size.observe(@floatFromInt(result_count));
 
+            // Record scan for adaptive compaction (12-09: range scan workload tracking)
+            self.forest.adaptive_record_scan(1);
+
             // Write QueryResponse header
             const header = mem.bytesAsValue(QueryResponse, output[0..@sizeOf(QueryResponse)]);
             if (has_more) {
@@ -3782,6 +3785,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             archerdb_metrics.Registry.read_latency.observeNs(duration_ns);
             archerdb_metrics.Registry.query_result_size.observe(@floatFromInt(result_count));
 
+            // Record scan for adaptive compaction (12-09: range scan workload tracking)
+            self.forest.adaptive_record_scan(1);
+
             // Write QueryResponse header
             const header = mem.bytesAsValue(QueryResponse, output[0..@sizeOf(QueryResponse)]);
             if (has_more) {
@@ -4023,6 +4029,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             self.query_metrics.query_latest_count += 1;
             self.query_metrics.total_results_returned += result_count;
             self.query_metrics.total_query_duration_ns += duration_ns;
+
+            // Record scan for adaptive compaction (12-09: index scan workload tracking)
+            self.forest.adaptive_record_scan(1);
 
             // Write QueryResponse header
             const header = mem.bytesAsValue(QueryResponse, output[0..@sizeOf(QueryResponse)]);
