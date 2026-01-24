@@ -45,6 +45,7 @@ const stdx = @import("stdx");
 const build_config = @import("config.zig");
 const metrics = @import("archerdb/metrics.zig");
 const ttl = @import("ttl.zig");
+const ram_index_simd = @import("ram_index_simd.zig");
 
 const MmapRegion = struct {
     file: std.fs.File,
@@ -1811,7 +1812,10 @@ pub fn GenericRamIndexType(comptime Entry: type, comptime options: struct {
         ///   - new_timestamp > old_timestamp: update (new wins)
         ///   - new_timestamp < old_timestamp: ignore (old wins)
         ///   - timestamps equal: higher latest_id wins (deterministic tie-break)
-        /// - If slot has different entity_id: probe next slot
+        /// - If both cuckoo slots occupied: displace entry and retry
+        ///
+        /// Cuckoo hashing guarantees O(1) lookup by checking exactly two slots.
+        /// Insertion may require displacement chains (bounded by max_displacement).
         ///
         /// Note: For CompactIndexEntry, ttl_seconds and metadata are ignored.
         ///
@@ -1829,115 +1833,194 @@ pub fn GenericRamIndexType(comptime Entry: type, comptime options: struct {
                 return error.InvalidConfiguration;
             }
 
-            var slot = self.slot_index(entity_id);
-            var probe_count: u32 = 0;
+            // First, check if entry already exists (in either slot).
+            // If so, apply LWW update in-place.
+            const s1_initial = self.slot1(entity_id);
+            const s2_initial = self.slot2(entity_id);
 
-            while (probe_count < max_probe_length) {
-                const entry_ptr: *Entry = &self.entries[@intCast(slot)];
-                const entry = entry_ptr.*;
-
-                if (entry.is_empty() or entry.is_tombstone()) {
-                    // Empty or tombstone slot - insert new entry.
-                    const new_entry = makeEntry(entity_id, latest_id, ttl_seconds, metadata);
-
-                    // Write with Release semantics.
-                    @as(*volatile Entry, @ptrCast(entry_ptr)).* = new_entry;
-
-                    // Update count if this was an empty slot (not tombstone reuse).
-                    if (entry.is_empty()) {
-                        _ = self.count.fetchAdd(1, .monotonic);
-                    }
-
-                    self.updateUpsertStats(probe_count, true, entry.is_tombstone());
-                    return .{ .inserted = true, .updated = true, .probe_count = probe_count };
-                }
-
-                if (entry.entity_id == entity_id) {
-                    // Found existing entry - apply LWW.
-                    const new_timestamp = @as(u64, @truncate(latest_id));
-                    const old_timestamp = entry.timestamp();
-
-                    var should_update = false;
-                    if (new_timestamp > old_timestamp) {
-                        // New write wins.
-                        should_update = true;
-                    } else if (new_timestamp == old_timestamp) {
-                        // Tie-break: higher latest_id wins (deterministic).
-                        should_update = latest_id > entry.latest_id;
-                    }
-                    // else: new_timestamp < old_timestamp - old wins, ignore.
-
-                    if (should_update) {
-                        const new_entry = makeEntry(entity_id, latest_id, ttl_seconds, metadata);
-
-                        // Write with Release semantics.
-                        @as(*volatile Entry, @ptrCast(entry_ptr)).* = new_entry;
-                    }
-
-                    self.updateUpsertStats(probe_count, false, false);
-                    return .{
-                        .inserted = false,
-                        .updated = should_update,
-                        .probe_count = probe_count,
-                    };
-                }
-
-                // Different entity - collision, probe next slot.
-                slot = (slot + 1) % self.capacity;
-                probe_count += 1;
+            const entry1_ptr: *Entry = &self.entries[@intCast(s1_initial)];
+            const entry1 = entry1_ptr.*;
+            if (entry1.entity_id == entity_id and !entry1.is_tombstone()) {
+                // Found in slot1 - apply LWW
+                return self.applyLWW(entry1_ptr, entry1, entity_id, latest_id, ttl_seconds, metadata);
             }
 
-            // Probe limit exceeded - index degraded.
+            const entry2_ptr: *Entry = &self.entries[@intCast(s2_initial)];
+            const entry2 = entry2_ptr.*;
+            if (entry2.entity_id == entity_id and !entry2.is_tombstone()) {
+                // Found in slot2 - apply LWW
+                return self.applyLWW(entry2_ptr, entry2, entity_id, latest_id, ttl_seconds, metadata);
+            }
+
+            // Entry not found - insert new entry using cuckoo displacement
+            // Try slot1 first if empty/tombstone
+            if (entry1.is_empty() or entry1.is_tombstone()) {
+                const new_entry = makeEntry(entity_id, latest_id, ttl_seconds, metadata);
+                @as(*volatile Entry, @ptrCast(entry1_ptr)).* = new_entry;
+                if (entry1.is_empty()) {
+                    _ = self.count.fetchAdd(1, .monotonic);
+                }
+                self.updateUpsertStats(1, true, entry1.is_tombstone());
+                return .{ .inserted = true, .updated = true, .probe_count = 1 };
+            }
+
+            // Try slot2 if empty/tombstone
+            if (entry2.is_empty() or entry2.is_tombstone()) {
+                const new_entry = makeEntry(entity_id, latest_id, ttl_seconds, metadata);
+                @as(*volatile Entry, @ptrCast(entry2_ptr)).* = new_entry;
+                if (entry2.is_empty()) {
+                    _ = self.count.fetchAdd(1, .monotonic);
+                }
+                self.updateUpsertStats(2, true, entry2.is_tombstone());
+                return .{ .inserted = true, .updated = true, .probe_count = 2 };
+            }
+
+            // Both slots occupied - need to displace using cuckoo chain.
+            // Start by displacing from slot1, then move displaced entries to their alternate slots.
+            var current_entry = makeEntry(entity_id, latest_id, ttl_seconds, metadata);
+            var current_slot = s1_initial; // Start by displacing from slot1
+            var displacement_count: u32 = 0;
+
+            while (displacement_count < max_displacement) {
+                const target_ptr: *Entry = &self.entries[@intCast(current_slot)];
+                const displaced = target_ptr.*;
+
+                // Place current entry in this slot
+                @as(*volatile Entry, @ptrCast(target_ptr)).* = current_entry;
+
+                // If displaced slot was empty/tombstone, we're done (shouldn't happen in loop)
+                if (displaced.is_empty() or displaced.is_tombstone()) {
+                    if (displaced.is_empty()) {
+                        _ = self.count.fetchAdd(1, .monotonic);
+                    }
+                    self.updateUpsertStats(displacement_count + 2, true, displaced.is_tombstone());
+                    return .{ .inserted = true, .updated = true, .probe_count = displacement_count + 2 };
+                }
+
+                // Find the alternate slot for the displaced entry.
+                // If displaced was at slot1(id), move it to slot2(id), and vice versa.
+                const displaced_id = displaced.entity_id;
+                const displaced_s1 = self.slot1(displaced_id);
+                const displaced_s2 = self.slot2(displaced_id);
+
+                // Determine alternate slot (the one it wasn't in)
+                const alternate_slot = if (current_slot == displaced_s1) displaced_s2 else displaced_s1;
+
+                // Check if alternate slot is available
+                const alt_ptr: *Entry = &self.entries[@intCast(alternate_slot)];
+                const alt_entry = alt_ptr.*;
+
+                if (alt_entry.is_empty() or alt_entry.is_tombstone()) {
+                    // Place displaced entry in its alternate slot - done!
+                    @as(*volatile Entry, @ptrCast(alt_ptr)).* = displaced;
+                    if (alt_entry.is_empty()) {
+                        _ = self.count.fetchAdd(1, .monotonic);
+                    }
+                    self.updateUpsertStats(displacement_count + 2, true, alt_entry.is_tombstone());
+                    return .{ .inserted = true, .updated = true, .probe_count = displacement_count + 2 };
+                }
+
+                // Continue chain: displaced entry needs to go to alternate slot,
+                // which requires displacing whatever is there.
+                current_entry = displaced;
+                current_slot = alternate_slot;
+                displacement_count += 1;
+            }
+
+            // Max displacement reached - table too full
             self.updateProbeLimit();
             return error.IndexDegraded;
         }
 
+        /// Apply LWW (Last-Write-Wins) semantics for an existing entry.
+        fn applyLWW(
+            self: *@This(),
+            entry_ptr: *Entry,
+            entry: Entry,
+            entity_id: u128,
+            latest_id: u128,
+            ttl_seconds: u32,
+            metadata: ?Metadata,
+        ) UpsertResult {
+            const new_timestamp = @as(u64, @truncate(latest_id));
+            const old_timestamp = entry.timestamp();
+
+            var should_update = false;
+            if (new_timestamp > old_timestamp) {
+                // New write wins.
+                should_update = true;
+            } else if (new_timestamp == old_timestamp) {
+                // Tie-break: higher latest_id wins (deterministic).
+                should_update = latest_id > entry.latest_id;
+            }
+            // else: new_timestamp < old_timestamp - old wins, ignore.
+
+            if (should_update) {
+                const new_entry = makeEntry(entity_id, latest_id, ttl_seconds, metadata);
+                @as(*volatile Entry, @ptrCast(entry_ptr)).* = new_entry;
+            }
+
+            self.updateUpsertStats(1, false, false);
+            return .{
+                .inserted = false,
+                .updated = should_update,
+                .probe_count = 1,
+            };
+        }
+
         /// Mark an entity as deleted (create tombstone).
         ///
+        /// Uses cuckoo hashing: checks exactly two slots (O(1) guaranteed).
         /// Tombstones preserve the slot for the entity_id to ensure
-        /// proper probe chain behavior. They are reclaimed during rebuild.
+        /// proper cuckoo rehashing during rebuild.
         pub fn remove(self: *@This(), entity_id: u128) bool {
             if (entity_id == 0) return false;
 
-            var slot = self.slot_index(entity_id);
-            var probe_count: u32 = 0;
+            // Check slot1
+            const s1 = self.slot1(entity_id);
+            const entry1_ptr: *Entry = &self.entries[@intCast(s1)];
+            const entry1 = entry1_ptr.*;
 
-            while (probe_count < max_probe_length) {
-                const entry_ptr: *Entry = &self.entries[@intCast(slot)];
-                const entry = entry_ptr.*;
-
-                if (entry.is_empty()) {
-                    // Not found.
-                    return false;
+            if (entry1.entity_id == entity_id) {
+                if (entry1.is_tombstone()) {
+                    return false; // Already deleted.
                 }
+                const tombstone = makeTombstone(entity_id);
+                @as(*volatile Entry, @ptrCast(entry1_ptr)).* = tombstone;
 
-                if (entry.entity_id == entity_id) {
-                    if (entry.is_tombstone()) {
-                        // Already deleted.
-                        return false;
-                    }
-
-                    // Create tombstone (keep entity_id, zero latest_id).
-                    const tombstone = makeTombstone(entity_id);
-
-                    @as(*volatile Entry, @ptrCast(entry_ptr)).* = tombstone;
-
-                    if (options.track_stats) {
-                        self.stats.tombstone_count += 1;
-                        self.stats.entry_count -|= 1;
-                    }
-
-                    return true;
+                if (options.track_stats) {
+                    self.stats.tombstone_count += 1;
+                    self.stats.entry_count -|= 1;
                 }
-
-                slot = (slot + 1) % self.capacity;
-                probe_count += 1;
+                return true;
             }
 
+            // Check slot2
+            const s2 = self.slot2(entity_id);
+            const entry2_ptr: *Entry = &self.entries[@intCast(s2)];
+            const entry2 = entry2_ptr.*;
+
+            if (entry2.entity_id == entity_id) {
+                if (entry2.is_tombstone()) {
+                    return false; // Already deleted.
+                }
+                const tombstone = makeTombstone(entity_id);
+                @as(*volatile Entry, @ptrCast(entry2_ptr)).* = tombstone;
+
+                if (options.track_stats) {
+                    self.stats.tombstone_count += 1;
+                    self.stats.entry_count -|= 1;
+                }
+                return true;
+            }
+
+            // Not found in either slot
             return false;
         }
 
         /// Atomically remove an entity only if its latest_id matches.
+        ///
+        /// Uses cuckoo hashing: checks exactly two slots (O(1) guaranteed).
         ///
         /// This is used for TTL expiration to prevent race conditions:
         /// - If latest_id matches: entry is removed (expired entry, no concurrent upsert)
@@ -1955,50 +2038,53 @@ pub fn GenericRamIndexType(comptime Entry: type, comptime options: struct {
                 return .{ .removed = false, .race_detected = false };
             }
 
-            var slot = self.slot_index(entity_id);
-            var probe_count: u32 = 0;
+            // Check slot1
+            const s1 = self.slot1(entity_id);
+            const entry1_ptr: *Entry = &self.entries[@intCast(s1)];
+            const entry1 = entry1_ptr.*;
 
-            while (probe_count < max_probe_length) {
-                const entry_ptr: *Entry = &self.entries[@intCast(slot)];
-                const entry = entry_ptr.*;
-
-                if (entry.is_empty()) {
-                    // Not found.
-                    return .{ .removed = false, .race_detected = false };
+            if (entry1.entity_id == entity_id) {
+                if (entry1.is_tombstone()) {
+                    return .{ .removed = false, .race_detected = false }; // Already deleted
                 }
-
-                if (entry.entity_id == entity_id) {
-                    if (entry.is_tombstone()) {
-                        // Already deleted.
-                        return .{ .removed = false, .race_detected = false };
-                    }
-
-                    // Check if latest_id still matches what we expected.
-                    if (entry.latest_id != expected_latest_id) {
-                        // Race condition: a concurrent upsert changed the entry.
-                        // Do NOT remove - the new data is fresh.
-                        return .{ .removed = false, .race_detected = true };
-                    }
-
-                    // latest_id matches - safe to remove (expired entry).
-                    const tombstone = makeTombstone(entity_id);
-
-                    @as(*volatile Entry, @ptrCast(entry_ptr)).* = tombstone;
-
-                    if (options.track_stats) {
-                        self.stats.tombstone_count += 1;
-                        self.stats.entry_count -|= 1;
-                        // Track TTL expirations separately.
-                        self.stats.ttl_expirations += 1;
-                    }
-
-                    return .{ .removed = true, .race_detected = false };
+                if (entry1.latest_id != expected_latest_id) {
+                    return .{ .removed = false, .race_detected = true }; // Race detected
                 }
+                const tombstone = makeTombstone(entity_id);
+                @as(*volatile Entry, @ptrCast(entry1_ptr)).* = tombstone;
 
-                slot = (slot + 1) % self.capacity;
-                probe_count += 1;
+                if (options.track_stats) {
+                    self.stats.tombstone_count += 1;
+                    self.stats.entry_count -|= 1;
+                    self.stats.ttl_expirations += 1;
+                }
+                return .{ .removed = true, .race_detected = false };
             }
 
+            // Check slot2
+            const s2 = self.slot2(entity_id);
+            const entry2_ptr: *Entry = &self.entries[@intCast(s2)];
+            const entry2 = entry2_ptr.*;
+
+            if (entry2.entity_id == entity_id) {
+                if (entry2.is_tombstone()) {
+                    return .{ .removed = false, .race_detected = false }; // Already deleted
+                }
+                if (entry2.latest_id != expected_latest_id) {
+                    return .{ .removed = false, .race_detected = true }; // Race detected
+                }
+                const tombstone = makeTombstone(entity_id);
+                @as(*volatile Entry, @ptrCast(entry2_ptr)).* = tombstone;
+
+                if (options.track_stats) {
+                    self.stats.tombstone_count += 1;
+                    self.stats.entry_count -|= 1;
+                    self.stats.ttl_expirations += 1;
+                }
+                return .{ .removed = true, .race_detected = false };
+            }
+
+            // Not found in either slot
             return .{ .removed = false, .race_detected = false };
         }
 
@@ -2438,9 +2524,20 @@ pub fn GenericRamIndexType(comptime Entry: type, comptime options: struct {
             }
         }
 
+        /// Update Prometheus metrics from current index state.
+        /// Call this on metrics scrape (lazy update pattern for gauges).
+        /// Counters (lookups, inserts) are updated per-operation.
+        pub fn update_prometheus_metrics(self: *const @This()) void {
+            const entry_count = self.count.load(.monotonic);
+            metrics.index.update_from_index(entry_count, self.capacity, @sizeOf(Entry));
+        }
+
         // Internal stats update functions.
 
         fn updateLookupStats(self: *@This(), probe_count: u32, hit: bool) void {
+            // Update Prometheus metrics (unconditional for observability).
+            metrics.index.record_lookup(hit);
+
             if (options.track_stats) {
                 self.stats.lookup_count += 1;
                 if (hit) self.stats.lookup_hit_count += 1;
@@ -2458,6 +2555,10 @@ pub fn GenericRamIndexType(comptime Entry: type, comptime options: struct {
             inserted: bool,
             tombstone_reuse: bool,
         ) void {
+            // Update Prometheus metrics (unconditional for observability).
+            // Note: probe_count represents collision/displacement count for inserts.
+            metrics.index.record_insert(probe_count);
+
             if (options.track_stats) {
                 self.stats.upsert_count += 1;
                 self.stats.total_probe_length += probe_count;
