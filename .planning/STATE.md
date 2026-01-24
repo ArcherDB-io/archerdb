@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-24)
 ## Current Position
 
 Phase: 12 of 16 (Storage Optimization)
-Plan: 2 of 8 in current phase
+Plan: 5 of 8 in current phase
 Status: In progress
-Last activity: 2026-01-24 - Completed 12-02-PLAN.md (Write/Space Amplification Metrics)
+Last activity: 2026-01-24 - Completed 12-05-PLAN.md (Tiered Compaction Strategy)
 
-Progress: [███░░░░░░░] 26% (v2.0: 9/35 requirements)
+Progress: [████░░░░░░] 34% (v2.0: 12/35 requirements)
 
 ## v1.0 Summary
 
@@ -38,10 +38,10 @@ See `.planning/milestones/v1.0-REQUIREMENTS.md` for archived requirements.
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 11 | 5 | ~27min | ~5min |
-| 12 | 2 | ~12min | ~6min |
+| 12 | 5 | ~27min | ~5min |
 
 **Recent Trend:**
-- Last 5 plans: 11-03, 11-04, 11-05, 12-01, 12-02
+- Last 5 plans: 11-05, 12-01, 12-02, 12-03, 12-05
 - Trend: ~5-6min per plan
 
 *Updated after each plan completion*
@@ -81,6 +81,11 @@ Phase 12 decisions:
 - Scale ratios by 100 or 1000 for Gauge i64 precision (12-02)
 - Array of atomics per level using constants.lsm_levels (12-02)
 - Rolling window metrics: 1min, 5min, 1hr standard observability windows (12-02)
+- Tiered as default compaction strategy for write-heavy geospatial workloads (12-05)
+- Size ratio 2.0x for balanced write amplification trigger (12-05)
+- 200% space amplification threshold before forced compaction (12-05)
+- 10 max sorted runs per level to bound read amplification (12-05)
+- prefer_partial_compaction=true for better tail latency (12-05)
 
 ### Pending Todos
 
@@ -98,8 +103,8 @@ None.
 ## Session Continuity
 
 Last session: 2026-01-24
-Stopped at: Completed 12-02-PLAN.md (Write/Space Amplification Metrics)
+Stopped at: Completed 12-05-PLAN.md (Tiered Compaction Strategy)
 Resume file: None
 
 ---
-*Updated: 2026-01-24 — Phase 12 plan 02 complete (amplification metrics infrastructure)*
+*Updated: 2026-01-24 — Phase 12 plan 05 complete (tiered compaction strategy with manifest integration)*
