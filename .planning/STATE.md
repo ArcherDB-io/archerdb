@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-24)
 ## Current Position
 
 Phase: 13 of 16 (Memory & RAM Index)
-Plan: 03 of 05 in current phase
-Status: In progress - 13-03 complete
-Last activity: 2026-01-24 - Completed 13-03-PLAN.md (Index Metrics)
+Plan: 03 of 05 in current phase (13-02 and 13-03 complete, wave 1 done)
+Status: In progress - wave 1 complete
+Last activity: 2026-01-24 - Completed 13-02-PLAN.md (SIMD Batch Lookup)
 
-Progress: [█████░░░░░] 53% (v2.0: 14/35 requirements)
+Progress: [█████░░░░░] 54% (v2.0: 15/35 requirements)
 
 ## v1.0 Summary
 
@@ -29,9 +29,9 @@ See `.planning/milestones/v1.0-REQUIREMENTS.md` for archived requirements.
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 14 (v2.0)
-- Average duration: ~5min
-- Total execution time: ~76min
+- Total plans completed: 15 (v2.0)
+- Average duration: ~6min
+- Total execution time: ~87min
 
 **By Phase:**
 
@@ -39,11 +39,11 @@ See `.planning/milestones/v1.0-REQUIREMENTS.md` for archived requirements.
 |-------|-------|-------|----------|
 | 11 | 5 | ~27min | ~5min |
 | 12 | 9 | ~49min | ~5min |
-| 13 | 3 | ~15min | ~5min |
+| 13 | 4 | ~26min | ~7min |
 
 **Recent Trend:**
-- Last 5 plans: 12-10, 12-11, 13-01, 13-02, 13-03
-- Trend: ~5min per plan
+- Last 5 plans: 12-11, 13-01, 13-02, 13-03, 13-02 (simd)
+- Trend: ~6min per plan
 
 *Updated after each plan completion*
 
@@ -113,6 +113,9 @@ Phase 12 decisions:
 - Integration test patterns simulate workload shifts via sample() calls with varying op mixes (12-11)
 
 Phase 13 decisions:
+- Split u128 keys into high/low u64 halves for SIMD (u128 too wide for most SIMD registers) (13-02)
+- Batch size of 4 keys (64 bytes = one cache line) for SIMD operations (13-02)
+- @Vector(4, u64) pattern for portable SIMD across AVX2/SSE/NEON (13-02)
 - Per-operation counters vs lazy update: counters increment per lookup/insert, gauges lazy-update on scrape (13-03)
 - Unconditional Prometheus recording: metrics recorded regardless of track_stats option (13-03)
 - Displacement count as proxy for insert cost via probe_count (13-03)
@@ -132,8 +135,8 @@ None.
 ## Session Continuity
 
 Last session: 2026-01-24
-Stopped at: Completed 13-03-PLAN.md (Index Metrics)
+Stopped at: Completed 13-02-PLAN.md (SIMD Batch Lookup)
 Resume file: None
 
 ---
-*Updated: 2026-01-24 — Phase 13 plan 03 complete. Index metrics integrated into Prometheus.*
+*Updated: 2026-01-24 — Phase 13 wave 1 complete (13-01, 13-02, 13-03). SIMD batch lookup added.*
