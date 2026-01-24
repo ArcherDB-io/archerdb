@@ -71,20 +71,23 @@ Plans:
 - [x] 12-11-PLAN.md — [GAP CLOSURE] Adaptive compaction integration tests
 
 ### Phase 13: Memory & RAM Index
-**Goal**: Reduce RAM index memory footprint by 50% to support 100M+ entities on enterprise hardware
-**Depends on**: Phase 11 (profiling data needed), can parallelize with Phase 12
-**Requirements**: MEM-01, MEM-02, MEM-03, MEM-04, MEM-05
+**Goal**: Optimize RAM index for extreme performance at 100M+ entity scale with cuckoo hashing and SIMD
+**Depends on**: Phase 11 (profiling data needed)
+**Requirements**: MEM-01 (modified), MEM-02, MEM-03, MEM-04, MEM-05 (modified)
 **Success Criteria** (what must be TRUE):
-  1. Compact index format (32B entries) reduces memory usage by 50% compared to standard format
+  1. Cuckoo hashing provides guaranteed O(1) lookups (exactly 2 slot checks)
   2. Memory usage metrics are exposed in Prometheus for monitoring and alerting
-  3. Hot path allocators are audited and optimized based on profiling data
-  4. SIMD-accelerated probes demonstrate measurable lookup performance improvement
-  5. Memory-mapped tiering offloads cold data without impacting hot path performance
-**Plans**: TBD
+  3. SIMD-accelerated batch lookups demonstrate measurable performance improvement
+  4. RAM estimation validates memory before allocation with fail-fast on insufficient memory
+  5. Grafana dashboard and Prometheus alerts provide visibility into RAM index health
+**Plans**: 5 plans in 2 waves
 
 Plans:
-- [ ] 13-01: TBD
-- [ ] 13-02: TBD
+- [ ] 13-01-PLAN.md — Cuckoo hash table with two hash functions
+- [ ] 13-02-PLAN.md — SIMD-accelerated key comparison for batch lookups
+- [ ] 13-03-PLAN.md — Prometheus metrics for RAM index memory
+- [ ] 13-04-PLAN.md — RAM estimation and fail-fast validation
+- [ ] 13-05-PLAN.md — Grafana dashboard and Prometheus alerts
 
 ### Phase 14: Query Performance
 **Goal**: Achieve 80%+ cache hit ratio for dashboard workloads with sub-millisecond cached queries
@@ -146,7 +149,7 @@ Phases execute in numeric order: 11 -> 11.x -> 12 -> 12.x -> ... -> 16
 |-------|----------------|--------|-----------|
 | 11. Measurement & Profiling | 5/5 | ✓ Complete | 2026-01-24 |
 | 12. Storage Optimization | 11/11 | ✓ Complete | 2026-01-24 |
-| 13. Memory & RAM Index | 0/TBD | Not started | - |
+| 13. Memory & RAM Index | 0/5 | Planning complete | - |
 | 14. Query Performance | 0/TBD | Not started | - |
 | 15. Cluster & Consensus | 0/TBD | Not started | - |
 | 16. Sharding & Scale-Out | 0/TBD | Not started | - |
@@ -166,4 +169,4 @@ Phases execute in numeric order: 11 -> 11.x -> 12 -> 12.x -> ... -> 16
 
 ---
 *Roadmap created: 2026-01-24*
-*Last updated: 2026-01-24 — Phase 12 complete (11/11 plans, all 6 STOR requirements satisfied)*
+*Last updated: 2026-01-24 — Phase 13 planning complete (5 plans in 2 waves)*
