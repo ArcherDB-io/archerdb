@@ -55,12 +55,20 @@ Plans:
   3. Compaction throttling prevents I/O spikes from impacting query latency
   4. Tiered compaction strategy demonstrates improved write throughput in benchmarks
   5. Adaptive compaction auto-tunes based on workload patterns without manual intervention
-**Plans**: TBD
+**Plans**: 11 plans in 2 waves (8 core + 3 gap closure)
 
 Plans:
-- [ ] 12-01: TBD
-- [ ] 12-02: TBD
-- [ ] 12-03: TBD
+- [x] 12-01-PLAN.md — LZ4 compression for value blocks
+- [x] 12-02-PLAN.md — Write amplification metrics and monitoring
+- [x] 12-03-PLAN.md — Compression integration into read/write paths
+- [x] 12-04-PLAN.md — Compaction throttling with predictive control
+- [x] 12-05-PLAN.md — Tiered compaction strategy implementation
+- [x] 12-06-PLAN.md — Adaptive compaction with workload detection
+- [x] 12-07-PLAN.md — Block deduplication with XxHash64
+- [x] 12-08-PLAN.md — Storage dashboards and alerting rules
+- [ ] 12-09-PLAN.md — [GAP CLOSURE] Wire state machine to adaptive tracking
+- [ ] 12-10-PLAN.md — [GAP CLOSURE] Storage optimization benchmarks
+- [ ] 12-11-PLAN.md — [GAP CLOSURE] Adaptive compaction integration tests
 
 ### Phase 13: Memory & RAM Index
 **Goal**: Reduce RAM index memory footprint by 50% to support 100M+ entities on enterprise hardware
@@ -137,7 +145,7 @@ Phases execute in numeric order: 11 -> 11.x -> 12 -> 12.x -> ... -> 16
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 11. Measurement & Profiling | 5/5 | ✓ Complete | 2026-01-24 |
-| 12. Storage Optimization | 0/TBD | Not started | - |
+| 12. Storage Optimization | 8/11 | Gap closure in progress | - |
 | 13. Memory & RAM Index | 0/TBD | Not started | - |
 | 14. Query Performance | 0/TBD | Not started | - |
 | 15. Cluster & Consensus | 0/TBD | Not started | - |
@@ -158,4 +166,4 @@ Phases execute in numeric order: 11 -> 11.x -> 12 -> 12.x -> ... -> 16
 
 ---
 *Roadmap created: 2026-01-24*
-*Last updated: 2026-01-24 — Phase 11 complete (5 plans, 7 requirements)*
+*Last updated: 2026-01-24 — Phase 12 gap closure planned (3 plans to close verification gaps)*
