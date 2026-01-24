@@ -381,13 +381,16 @@ pub const AdaptiveState = struct {
         if (!self.baseline_established) return false;
 
         // Condition 1: Write throughput change
-        const write_change = if (self.baseline_writes_per_second > 0.001)
-            @abs(self.writes_per_second - self.baseline_writes_per_second) /
-                self.baseline_writes_per_second
-        else if (self.writes_per_second > 0.001)
-            1.0 // Went from ~0 to some writes = 100% change
-        else
-            0.0; // Both ~0 = no change
+        const write_change: f64 = blk: {
+            if (self.baseline_writes_per_second > 0.001) {
+                break :blk @abs(self.writes_per_second - self.baseline_writes_per_second) /
+                    self.baseline_writes_per_second;
+            } else if (self.writes_per_second > 0.001) {
+                break :blk 1.0; // Went from ~0 to some writes = 100% change
+            } else {
+                break :blk 0.0; // Both ~0 = no change
+            }
+        };
 
         const throughput_changed = write_change > config.write_throughput_change_threshold;
 

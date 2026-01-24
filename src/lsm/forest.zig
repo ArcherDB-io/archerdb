@@ -24,6 +24,10 @@ const compaction_op_min = @import("compaction.zig").compaction_op_min;
 const compaction_block_count_beat_min = @import("compaction.zig").compaction_block_count_beat_min;
 const compaction_input_tables_max = @import("compaction.zig").compaction_tables_input_max;
 
+const compaction_adaptive = @import("compaction_adaptive.zig");
+const AdaptiveState = compaction_adaptive.AdaptiveState;
+const AdaptiveConfig = compaction_adaptive.AdaptiveConfig;
+
 /// TTL-aware compaction: threshold for prioritizing levels with high expired ratio.
 /// are compacted before levels with lower ratio.
 const ttl_priority_threshold: f64 = 0.30;
@@ -262,6 +266,36 @@ pub fn ForestType(comptime _Storage: type, comptime groove_cfg: anytype) type {
         /// Per ttl-retention/spec.md: use consensus timestamp for determinism.
         compaction_timestamp_ns: u64 = 0,
 
+        // =========================================================================
+        // Adaptive Compaction State
+        // =========================================================================
+
+        /// Adaptive compaction state for workload-aware auto-tuning.
+        /// Tracks workload metrics and provides parameter recommendations.
+        adaptive_state: AdaptiveState = AdaptiveState.init(),
+
+        /// Adaptive compaction configuration (immutable after init).
+        /// Loaded from process config or defaults.
+        adaptive_config: AdaptiveConfig = AdaptiveConfig{},
+
+        /// Operator override for L0 trigger (null = use adaptive).
+        adaptive_override_l0_trigger: ?u32 = null,
+
+        /// Operator override for compaction threads (null = use adaptive).
+        adaptive_override_compaction_threads: ?u32 = null,
+
+        /// Timestamp of last adaptive sample (ns) - for sample interval tracking.
+        adaptive_last_sample_ns: i128 = 0,
+
+        /// Accumulated write count since last adaptive sample.
+        adaptive_write_count: u64 = 0,
+
+        /// Accumulated read count since last adaptive sample.
+        adaptive_read_count: u64 = 0,
+
+        /// Accumulated scan count since last adaptive sample.
+        adaptive_scan_count: u64 = 0,
+
         pub fn init(
             forest: *Forest,
             allocator: mem.Allocator,
@@ -373,6 +407,11 @@ pub fn ForestType(comptime _Storage: type, comptime groove_cfg: anytype) type {
             forest.scan_buffer_pool.reset();
             forest.compaction_schedule.reset();
 
+            // Preserve adaptive config and overrides during reset.
+            const adaptive_config_preserved = forest.adaptive_config;
+            const override_l0_preserved = forest.adaptive_override_l0_trigger;
+            const override_threads_preserved = forest.adaptive_override_compaction_threads;
+
             forest.* = .{
                 // Don't reset the grid – replica is responsible for grid cancellation.
                 .grid = forest.grid,
@@ -384,6 +423,11 @@ pub fn ForestType(comptime _Storage: type, comptime groove_cfg: anytype) type {
 
                 .scan_buffer_pool = forest.scan_buffer_pool,
                 .radix_buffer = forest.radix_buffer,
+
+                // Restore adaptive config but reset state to defaults.
+                .adaptive_config = adaptive_config_preserved,
+                .adaptive_override_l0_trigger = override_l0_preserved,
+                .adaptive_override_compaction_threads = override_threads_preserved,
             };
         }
 
@@ -447,6 +491,10 @@ pub fn ForestType(comptime _Storage: type, comptime groove_cfg: anytype) type {
             // Store timestamp for TTL expiration checks during compaction.
             // Per ttl-retention/spec.md: use consensus timestamp for determinism.
             forest.compaction_timestamp_ns = compaction_timestamp_ns;
+
+            // Adaptive compaction: periodic sampling and adaptation check.
+            // Uses compaction_timestamp_ns as the time source for deterministic behavior.
+            forest.adaptive_sample_and_adapt(compaction_timestamp_ns);
 
             const compaction_beat = op % constants.lsm_compaction_ops;
 
@@ -878,6 +926,159 @@ pub fn ForestType(comptime _Storage: type, comptime groove_cfg: anytype) type {
 
             return compaction_blocks_released_pipeline_max +
                 manifest_log_blocks_released_pipeline_max;
+        }
+
+        // =========================================================================
+        // Adaptive Compaction Methods
+        // =========================================================================
+
+        /// Sample workload metrics and check for adaptation.
+        ///
+        /// Called on each compact() to periodically:
+        /// 1. Sample current workload metrics (if sample interval elapsed)
+        /// 2. Check dual trigger conditions for adaptation
+        /// 3. Apply parameter changes if adaptation is warranted
+        ///
+        /// Uses compaction_timestamp_ns for timing (deterministic across replicas).
+        fn adaptive_sample_and_adapt(forest: *Forest, timestamp_ns: u64) void {
+            if (!forest.adaptive_config.enabled) return;
+
+            // Convert to i128 for AdaptiveState compatibility
+            const current_time_ns: i128 = @as(i128, timestamp_ns);
+
+            // Check if it's time to sample
+            if (!forest.adaptive_state.shouldSample(current_time_ns, forest.adaptive_config)) {
+                return;
+            }
+
+            // Calculate elapsed time since last sample
+            const elapsed_ns = current_time_ns - forest.adaptive_last_sample_ns;
+            const elapsed_ms: u64 = if (elapsed_ns > 0)
+                @intCast(@divFloor(elapsed_ns, std.time.ns_per_ms))
+            else
+                0;
+
+            if (elapsed_ms == 0) return;
+
+            // Calculate space amplification (simplified estimate).
+            // Note: A full implementation would track physical vs logical bytes.
+            // For now, use a placeholder that can be enhanced with compaction_metrics.
+            const space_amp = forest.estimate_space_amplification();
+
+            // Sample the adaptive state
+            forest.adaptive_state.sample(
+                forest.adaptive_write_count,
+                forest.adaptive_read_count,
+                forest.adaptive_scan_count,
+                elapsed_ms,
+                space_amp,
+                forest.adaptive_state.current_write_amp, // Preserve current
+                forest.adaptive_config,
+                current_time_ns,
+            );
+
+            // Reset counters for next sample period
+            forest.adaptive_write_count = 0;
+            forest.adaptive_read_count = 0;
+            forest.adaptive_scan_count = 0;
+            forest.adaptive_last_sample_ns = current_time_ns;
+
+            // Check if adaptation should occur
+            if (forest.adaptive_state.shouldAdapt(forest.adaptive_config)) {
+                forest.adaptive_apply_recommendations();
+            }
+        }
+
+        /// Apply adaptive recommendations and log the change.
+        fn adaptive_apply_recommendations(forest: *Forest) void {
+            const old_l0 = forest.adaptive_state.current_l0_trigger;
+            const old_threads = forest.adaptive_state.current_compaction_threads;
+
+            const recommendations = forest.adaptive_state.recommendAdjustments(
+                forest.adaptive_config,
+            );
+
+            forest.adaptive_state.applyRecommendations(recommendations);
+
+            // Log adaptation (only if values actually changed)
+            if (recommendations.l0_trigger != old_l0 or
+                recommendations.compaction_threads != old_threads)
+            {
+                log.info("Adaptive compaction: detected {s}, L0 trigger {}->{}, threads {}->{}", .{
+                    recommendations.workload.name(),
+                    old_l0,
+                    recommendations.l0_trigger,
+                    old_threads,
+                    recommendations.compaction_threads,
+                });
+            }
+        }
+
+        /// Estimate current space amplification.
+        ///
+        /// Space amplification = physical_size / logical_size
+        /// This is a simplified estimate based on table counts and levels.
+        /// A more accurate implementation would track actual byte sizes.
+        fn estimate_space_amplification(forest: *const Forest) f64 {
+            // Count tables across all levels for a rough estimate
+            var total_tables: u64 = 0;
+            var l0_tables: u64 = 0;
+
+            inline for (comptime std.enums.values(TreeID)) |tree_id| {
+                const tree = forest.tree_for_id_const(tree_id);
+                for (0..constants.lsm_levels) |level| {
+                    const level_tables = tree.manifest.levels[level].tables.len();
+                    total_tables += level_tables;
+                    if (level == 0) {
+                        l0_tables += level_tables;
+                    }
+                }
+            }
+
+            // Rough space amp estimate: more L0 tables relative to total = higher space amp
+            // This is a heuristic; real implementation would use actual byte tracking.
+            if (total_tables == 0) return 1.0;
+
+            // Base space amp of 1.0 + penalty for L0 buildup
+            const l0_ratio = @as(f64, @floatFromInt(l0_tables)) /
+                @as(f64, @floatFromInt(total_tables + 1));
+
+            return 1.0 + l0_ratio * 2.0; // Max ~3x space amp estimate
+        }
+
+        /// Record a write operation for adaptive tracking.
+        /// Called by the state machine on each write.
+        pub fn adaptive_record_write(forest: *Forest, count: u64) void {
+            forest.adaptive_write_count +|= count;
+        }
+
+        /// Record a point read operation for adaptive tracking.
+        /// Called by the state machine on each point lookup.
+        pub fn adaptive_record_read(forest: *Forest, count: u64) void {
+            forest.adaptive_read_count +|= count;
+        }
+
+        /// Record a range scan operation for adaptive tracking.
+        /// Called by the state machine on each range scan.
+        pub fn adaptive_record_scan(forest: *Forest, count: u64) void {
+            forest.adaptive_scan_count +|= count;
+        }
+
+        /// Get the current L0 trigger value (adaptive or override).
+        pub fn adaptive_get_l0_trigger(forest: *const Forest) u32 {
+            return forest.adaptive_state.getL0Trigger(forest.adaptive_override_l0_trigger);
+        }
+
+        /// Get the current compaction threads value (adaptive or override).
+        pub fn adaptive_get_compaction_threads(forest: *const Forest) u32 {
+            return forest.adaptive_state.getCompactionThreads(
+                forest.adaptive_override_compaction_threads,
+            );
+        }
+
+        /// Get the detected workload type for metrics.
+        pub fn adaptive_get_workload_metric(forest: *const Forest) u8 {
+            return forest.adaptive_state.getWorkloadMetric();
         }
     };
 }
