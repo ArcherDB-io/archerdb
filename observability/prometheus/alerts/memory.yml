@@ -88,15 +88,17 @@ groups:
           runbook_url: "https://docs.archerdb.io/runbooks/ram-index-displacements"
           remediation: "Check load factor gauge. If high, index should auto-resize. If displacements persist at low load factor, may indicate hash collision patterns in entity IDs."
 
-      # Critical: Insert failures detected (displacement chain exceeded max)
-      - alert: ArcherDBRamIndexInsertFailures
-        expr: increase(archerdb_ram_index_insert_failures_total[5m]) > 0
-        for: 1m
-        labels:
-          severity: critical
-          team: database
-        annotations:
-          summary: "RAM index insert failures detected on {{ $labels.instance }}"
-          description: "Insert operations are failing. Index may be full or encountering displacement loops."
-          runbook_url: "https://docs.archerdb.io/runbooks/ram-index-insert-failure"
-          remediation: "CRITICAL: Index cannot accept new entries. Check memory availability for resize. May need to restart with larger initial capacity."
+      # Note: Insert failure metric (archerdb_ram_index_insert_failures_total) not currently
+      # exposed. When/if added, enable this alert:
+      #
+      # - alert: ArcherDBRamIndexInsertFailures
+      #   expr: increase(archerdb_ram_index_insert_failures_total[5m]) > 0
+      #   for: 1m
+      #   labels:
+      #     severity: critical
+      #     team: database
+      #   annotations:
+      #     summary: "RAM index insert failures detected on {{ $labels.instance }}"
+      #     description: "Insert operations are failing. Index may be full or encountering displacement loops."
+      #     runbook_url: "https://docs.archerdb.io/runbooks/ram-index-insert-failure"
+      #     remediation: "CRITICAL: Index cannot accept new entries. Check memory availability for resize."
