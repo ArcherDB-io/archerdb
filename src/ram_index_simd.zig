@@ -41,8 +41,10 @@ pub inline fn compare_keys(
     const match_lo = keys_lo == target_lo_vec;
     const match_hi = keys_hi == target_hi_vec;
 
-    // Both halves must match - AND the results
-    const match_both: @Vector(batch_size, bool) = match_lo and match_hi;
+    // Both halves must match - AND the bool vectors element-wise
+    // Using @select: if match_lo is true, return match_hi, else false
+    const false_vec: @Vector(batch_size, bool) = @splat(false);
+    const match_both = @select(bool, match_lo, match_hi, false_vec);
 
     return @bitCast(match_both);
 }
