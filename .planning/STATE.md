@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-24)
 ## Current Position
 
 Phase: 12 of 16 (Storage Optimization)
-Plan: 7 of 8 in current phase
+Plan: 6 of 8 in current phase
 Status: In progress
-Last activity: 2026-01-24 - Completed 12-07-PLAN.md (Block-Level Deduplication)
+Last activity: 2026-01-24 - Completed 12-06-PLAN.md (Adaptive Compaction)
 
-Progress: [████░░░░░░] 37% (v2.0: 13/35 requirements)
+Progress: [████░░░░░░] 40% (v2.0: 14/35 requirements)
 
 ## v1.0 Summary
 
@@ -29,20 +29,20 @@ See `.planning/milestones/v1.0-REQUIREMENTS.md` for archived requirements.
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 7 (v2.0)
+- Total plans completed: 8 (v2.0)
 - Average duration: ~5min
-- Total execution time: ~39min
+- Total execution time: ~46min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 11 | 5 | ~27min | ~5min |
-| 12 | 5 | ~27min | ~5min |
+| 12 | 6 | ~34min | ~6min |
 
 **Recent Trend:**
-- Last 5 plans: 11-05, 12-01, 12-02, 12-03, 12-05
-- Trend: ~5-6min per plan
+- Last 5 plans: 12-01, 12-02, 12-03, 12-05, 12-06
+- Trend: ~5-7min per plan
 
 *Updated after each plan completion*
 
@@ -95,6 +95,12 @@ Phase 12 decisions:
 - Decompress at read callback for transparent block handling (12-03)
 - In-memory header update after decompression for downstream compatibility (12-03)
 - Grid buffer as source for decompression (avoid extra allocation) (12-03)
+- Dual trigger for adaptive compaction: write throughput change AND space amp required (12-06)
+- EMA smoothing (alpha=0.1) for workload statistics (12-06)
+- Workload classification: 70% threshold for write/read heavy, 30% for scan heavy (12-06)
+- Guardrails: L0 trigger 2-20, compaction threads 1-4 (12-06)
+- Adaptive compaction enabled by default (just works philosophy) (12-06)
+- Operator overrides take precedence over adaptive values (12-06)
 
 ### Pending Todos
 
@@ -112,8 +118,8 @@ None.
 ## Session Continuity
 
 Last session: 2026-01-24
-Stopped at: Completed 12-03-PLAN.md (Block Compression Integration)
+Stopped at: Completed 12-06-PLAN.md (Adaptive Compaction)
 Resume file: None
 
 ---
-*Updated: 2026-01-24 — Phase 12 plan 03 complete (LZ4 block compression write/read path integration)*
+*Updated: 2026-01-24 — Phase 12 plan 06 complete (Workload-aware adaptive compaction auto-tuning)*
