@@ -28,11 +28,11 @@ Requirements for enterprise-scale performance. Each maps to roadmap phases.
 
 ### Memory & RAM Index
 
-- [ ] **MEM-01**: Compact index format (32B entries, 50% memory reduction)
-- [ ] **MEM-02**: Allocator audit and optimization for hot paths
-- [ ] **MEM-03**: Memory usage metrics and reporting
-- [ ] **MEM-04**: SIMD-accelerated index probes for lookup performance
-- [ ] **MEM-05**: Memory-mapped tiering for cold data offload
+- [x] **MEM-01**: Cuckoo hashing for O(1) guaranteed lookups (modified from compact format)
+- [x] **MEM-02**: RAM estimation with fail-fast validation (modified from allocator audit)
+- [x] **MEM-03**: Memory usage metrics and reporting
+- [x] **MEM-04**: SIMD-accelerated index probes for lookup performance
+- [x] **MEM-05**: Grafana dashboard and Prometheus alerts (modified from mmap tiering)
 
 ### Query Performance
 
@@ -107,11 +107,11 @@ Which phases cover which requirements.
 | STOR-04 | Phase 12 | Complete |
 | STOR-05 | Phase 12 | Complete |
 | STOR-06 | Phase 12 | Complete |
-| MEM-01 | Phase 13 | Pending |
-| MEM-02 | Phase 13 | Pending |
-| MEM-03 | Phase 13 | Pending |
-| MEM-04 | Phase 13 | Pending |
-| MEM-05 | Phase 13 | Pending |
+| MEM-01 | Phase 13 | Complete |
+| MEM-02 | Phase 13 | Complete |
+| MEM-03 | Phase 13 | Complete |
+| MEM-04 | Phase 13 | Complete |
+| MEM-05 | Phase 13 | Complete |
 | QUERY-01 | Phase 14 | Pending |
 | QUERY-02 | Phase 14 | Pending |
 | QUERY-03 | Phase 14 | Pending |
@@ -137,4 +137,4 @@ Which phases cover which requirements.
 
 ---
 *Requirements defined: 2026-01-24*
-*Last updated: 2026-01-24 — Phase 12 requirements complete (13/35)*
+*Last updated: 2026-01-24 — Phase 13 requirements complete (18/35)*
