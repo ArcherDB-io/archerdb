@@ -3096,6 +3096,117 @@ test "Histogram: basic operations" {
     try std.testing.expect(hist.getSum() > 0);
 }
 
+test "Histogram: extended percentiles" {
+    var hist = latencyHistogram("test_latency", "Test latency histogram", null);
+
+    // Add observations across buckets
+    hist.observe(0.0001); // 100us
+    hist.observe(0.001); // 1ms
+    hist.observe(0.005); // 5ms
+    hist.observe(0.01); // 10ms
+    hist.observe(0.1); // 100ms (outlier)
+
+    const stats = hist.getExtendedStats();
+    try std.testing.expectEqual(@as(u64, 5), stats.count);
+    try std.testing.expect(stats.p50 > 0);
+    try std.testing.expect(stats.p99 >= stats.p50);
+    try std.testing.expect(stats.mean > 0);
+    try std.testing.expect(stats.sum > 0);
+}
+
+test "Histogram: percentile calculation" {
+    var hist = latencyHistogram("test_latency", "Test percentile", null);
+
+    // All observations in the same bucket (1ms)
+    for (0..100) |_| {
+        hist.observe(0.001);
+    }
+
+    const stats = hist.getExtendedStats();
+    try std.testing.expectEqual(@as(u64, 100), stats.count);
+    // All percentiles should be in the 1ms bucket
+    try std.testing.expectEqual(@as(f64, 0.001), stats.p50);
+    try std.testing.expectEqual(@as(f64, 0.001), stats.p99);
+}
+
+test "Histogram: empty histogram stats" {
+    var hist = latencyHistogram("test_latency", "Test empty", null);
+
+    const stats = hist.getExtendedStats();
+    try std.testing.expectEqual(@as(u64, 0), stats.count);
+    try std.testing.expectEqual(@as(f64, 0), stats.p50);
+    try std.testing.expectEqual(@as(f64, 0), stats.mean);
+}
+
+test "Histogram: extended stats format" {
+    var hist = latencyHistogram("test_latency", "Test format", null);
+    hist.observe(0.001); // 1ms
+    hist.observe(0.01); // 10ms
+
+    const stats = hist.getExtendedStats();
+
+    var buf: [1024]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buf);
+
+    try stats.format(fbs.writer());
+    const output = fbs.getWritten();
+
+    try std.testing.expect(std.mem.indexOf(u8, output, "P50=") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "P99=") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "mean=") != null);
+}
+
+test "Histogram: extended stats diagnose" {
+    const healthy_stats = ExtendedStats{
+        .p50 = 0.001, // 1ms
+        .p75 = 0.002,
+        .p90 = 0.003,
+        .p95 = 0.004,
+        .p99 = 0.005, // 5ms (5x P50 - healthy)
+        .p999 = 0.006,
+        .p9999 = 0.007,
+        .max = 0.01,
+        .count = 100,
+        .sum = 0.2,
+        .mean = 0.002,
+    };
+
+    try std.testing.expect(healthy_stats.isHealthy());
+
+    const unhealthy_stats = ExtendedStats{
+        .p50 = 0.001, // 1ms
+        .p75 = 0.002,
+        .p90 = 0.003,
+        .p95 = 0.005,
+        .p99 = 0.015, // 15ms (15x P50 - unhealthy tail)
+        .p999 = 0.1,
+        .p9999 = 0.5,
+        .max = 1.0,
+        .count = 100,
+        .sum = 0.3,
+        .mean = 0.003,
+    };
+
+    try std.testing.expect(!unhealthy_stats.isHealthy());
+}
+
+test "Histogram: formatExtended output" {
+    var hist = latencyHistogram("test_latency", "Test quantiles", null);
+    hist.observe(0.001);
+    hist.observe(0.005);
+
+    var buf: [2048]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buf);
+
+    try hist.formatExtended(fbs.writer());
+    const output = fbs.getWritten();
+
+    // Check for Prometheus-style quantile output
+    try std.testing.expect(std.mem.indexOf(u8, output, "quantile=\"0.5\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "quantile=\"0.99\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "quantile=\"0.999\"") != null);
+}
+
 test "Counter: prometheus format" {
     var counter = Counter.init("test_total", "Test counter", null);
     counter.add(42);
