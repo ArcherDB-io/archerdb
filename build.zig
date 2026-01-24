@@ -94,6 +94,7 @@ pub fn build(b: *std.Build) !void {
         .test_jni = b.step("test:jni", "Run Java JNI tests"),
         .vopr = b.step("vopr", "Run the VOPR"),
         .vopr_build = b.step("vopr:build", "Build the VOPR"),
+        .profile = b.step("profile", "Build with profiling instrumentation (Tracy on-demand, frame pointers)"),
     };
 
     const mode = b.standardOptimizeOption(.{ .preferred_optimize_mode = .ReleaseSafe });
@@ -167,6 +168,16 @@ pub fn build(b: *std.Build) !void {
             "index-format",
             "RAM index format: 'standard' (64B, TTL) or 'compact' (32B, no TTL).",
         ) orelse .standard,
+        .enable_tracy = b.option(
+            bool,
+            "tracy",
+            "Enable Tracy profiler instrumentation (requires Tracy sources)",
+        ) orelse false,
+        .enable_profiling = b.option(
+            bool,
+            "profiling",
+            "Enable profiling build (frame pointers, Tracy if available)",
+        ) orelse false,
     };
 
     const target = try resolve_target(b, build_options.target);
@@ -362,6 +373,19 @@ pub fn build(b: *std.Build) !void {
         const nested_build = b.addSystemCommand(&.{ b.graph.zig_exe, "build" });
         nested_build.setCwd(b.path("./src/docs_website/"));
         break :blk &nested_build.step;
+    });
+
+    // zig build profile
+    // Profile build creates a release binary with frame pointers preserved for profiling.
+    // When Tracy is enabled (-Dtracy=true), Tracy instrumentation is active.
+    // On-demand mode means zero overhead unless Tracy profiler GUI is connected.
+    build_profile(b, build_steps.profile, .{
+        .stdx_module = stdx_module,
+        .vsr_module = vsr_module,
+        .vsr_options = vsr_options,
+        .target = target,
+        .enable_tracy = build_options.enable_tracy,
+        .enable_profiling = build_options.enable_profiling,
     });
 
     // zig build ci
@@ -615,6 +639,61 @@ fn build_check(
     archerdb.root_module.addImport("stdx", options.stdx_module);
     archerdb.root_module.addImport("vsr", options.vsr_module);
     step_check.dependOn(&archerdb.step);
+}
+
+/// Build with profiling instrumentation enabled.
+/// - Frame pointers preserved for accurate stack traces
+/// - ReleaseFast optimization for representative performance
+/// - Tracy instrumentation available when -Dtracy=true
+fn build_profile(
+    b: *std.Build,
+    step_profile: *std.Build.Step,
+    options: struct {
+        stdx_module: *std.Build.Module,
+        vsr_module: *std.Build.Module,
+        vsr_options: *std.Build.Step.Options,
+        target: std.Build.ResolvedTarget,
+        enable_tracy: bool,
+        enable_profiling: bool,
+    },
+) void {
+    const root_module = b.createModule(.{
+        .root_source_file = b.path("src/archerdb/main.zig"),
+        .target = options.target,
+        .optimize = .ReleaseFast, // Profile builds use ReleaseFast for representative perf
+    });
+    root_module.addImport("vsr", options.vsr_module);
+    root_module.addOptions("vsr_options", options.vsr_options);
+
+    // Preserve frame pointers for profiling stack traces
+    root_module.omit_frame_pointer = false;
+
+    const archerdb = b.addExecutable(.{
+        .name = "archerdb-profile",
+        .root_module = root_module,
+    });
+
+    // Define TRACY_ENABLE compile-time flag when Tracy is enabled
+    if (options.enable_tracy) {
+        // Note: Full Tracy integration requires TracyClient.cpp from Tracy sources.
+        // The tracy_zones.zig helpers provide no-op fallbacks when Tracy is not linked.
+        // To fully enable Tracy:
+        // 1. Clone Tracy: git clone https://github.com/wolfpld/tracy
+        // 2. Build with -Dtracy=true and link TracyClient.cpp
+        archerdb.root_module.addCMacro("TRACY_ENABLE", "1");
+        archerdb.root_module.addCMacro("TRACY_ON_DEMAND", "1");
+    }
+
+    const install = b.addInstallArtifact(archerdb, .{
+        .dest_sub_path = "archerdb-profile",
+    });
+    step_profile.dependOn(&install.step);
+
+    // Also install to root for convenience
+    step_profile.dependOn(&b.addInstallFile(
+        archerdb.getEmittedBin(),
+        b.pathJoin(&.{ "../", "archerdb-profile" }),
+    ).step);
 }
 
 fn build_archerdb(
