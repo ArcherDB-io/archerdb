@@ -19,12 +19,12 @@ Requirements for enterprise-scale performance. Each maps to roadmap phases.
 
 ### Storage Optimization
 
-- [ ] **STOR-01**: Data compression for values (LZ4 for speed, Zstd for ratio)
-- [ ] **STOR-02**: Tiered compaction strategy for write-heavy workloads
-- [ ] **STOR-03**: Write amplification monitoring and metrics
-- [ ] **STOR-04**: Compaction throttling to prevent I/O spikes
-- [ ] **STOR-05**: Adaptive compaction (auto-tune based on workload patterns)
-- [ ] **STOR-06**: Block-level deduplication for repeated values
+- [x] **STOR-01**: Data compression for values (LZ4 for speed, Zstd for ratio)
+- [x] **STOR-02**: Tiered compaction strategy for write-heavy workloads
+- [x] **STOR-03**: Write amplification monitoring and metrics
+- [x] **STOR-04**: Compaction throttling to prevent I/O spikes
+- [x] **STOR-05**: Adaptive compaction (auto-tune based on workload patterns)
+- [x] **STOR-06**: Block-level deduplication for repeated values
 
 ### Memory & RAM Index
 
@@ -101,12 +101,12 @@ Which phases cover which requirements.
 | PROF-05 | Phase 11 | Complete |
 | PROF-06 | Phase 11 | Complete |
 | PROF-07 | Phase 11 | Complete |
-| STOR-01 | Phase 12 | Pending |
-| STOR-02 | Phase 12 | Pending |
-| STOR-03 | Phase 12 | Pending |
-| STOR-04 | Phase 12 | Pending |
-| STOR-05 | Phase 12 | Pending |
-| STOR-06 | Phase 12 | Pending |
+| STOR-01 | Phase 12 | Complete |
+| STOR-02 | Phase 12 | Complete |
+| STOR-03 | Phase 12 | Complete |
+| STOR-04 | Phase 12 | Complete |
+| STOR-05 | Phase 12 | Complete |
+| STOR-06 | Phase 12 | Complete |
 | MEM-01 | Phase 13 | Pending |
 | MEM-02 | Phase 13 | Pending |
 | MEM-03 | Phase 13 | Pending |
@@ -137,4 +137,4 @@ Which phases cover which requirements.
 
 ---
 *Requirements defined: 2026-01-24*
-*Last updated: 2026-01-24 — Phase 11 requirements complete (7/35)*
+*Last updated: 2026-01-24 — Phase 12 requirements complete (13/35)*
