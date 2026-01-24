@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-24)
 ## Current Position
 
 Phase: 11 of 16 (Measurement & Profiling Infrastructure)
-Plan: 4 of 5 in current phase (01, 02, 03, 05 done; 04 pending)
-Status: In progress
-Last activity: 2026-01-24 - Completed 11-03-PLAN.md (Memory Tracking & Extended Histograms)
+Plan: 5 of 5 in current phase (all complete)
+Status: Phase 11 complete
+Last activity: 2026-01-24 - Completed 11-04-PLAN.md (Benchmark Harness with CI Integration)
 
-Progress: [██░░░░░░░░] 11% (v2.0: 4/35 requirements)
+Progress: [██░░░░░░░░] 14% (v2.0: 5/35 requirements)
 
 ## v1.0 Summary
 
@@ -29,19 +29,19 @@ See `.planning/milestones/v1.0-REQUIREMENTS.md` for archived requirements.
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 4 (v2.0)
-- Average duration: ~6min
-- Total execution time: ~24min
+- Total plans completed: 5 (v2.0)
+- Average duration: ~5min
+- Total execution time: ~27min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 11 | 4 | ~24min | ~6min |
+| 11 | 5 | ~27min | ~5min |
 
 **Recent Trend:**
-- Last 4 plans: 11-01, 11-02, 11-03, 11-05
-- Trend: ~6min per plan
+- Last 5 plans: 11-01, 11-02, 11-03, 11-04, 11-05
+- Trend: ~5min per plan
 
 *Updated after each plan completion*
 
@@ -69,6 +69,9 @@ Phase 11 decisions:
 - Profile builds use ReleaseFast with frame pointers
 - Simple allocator wrapper pattern over direct DebugAllocator embedding (11-03)
 - ExtendedStats struct outside HistogramType for reusability (11-03)
+- IQR method for outlier removal in statistical analysis (11-04)
+- 2 stddev threshold for regression detection (11-04)
+- Artifact-based baseline storage for CI benchmarks (11-04)
 
 ### Pending Todos
 
@@ -86,8 +89,8 @@ None.
 ## Session Continuity
 
 Last session: 2026-01-24
-Stopped at: Completed 11-03-PLAN.md
-Next action: Execute 11-04-PLAN.md (Benchmark Harness)
+Stopped at: Completed 11-04-PLAN.md (Phase 11 complete)
+Next action: Execute Phase 12 (Storage & Compaction Optimization)
 
 ---
-*Updated: 2026-01-24 - Completed 11-03-PLAN.md*
+*Updated: 2026-01-24 - Completed 11-04-PLAN.md (Phase 11 complete)*
