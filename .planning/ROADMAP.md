@@ -17,7 +17,7 @@ ArcherDB v2.0 transforms the production-ready v1.0 into an enterprise-scale data
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 11: Measurement & Profiling Infrastructure** - Build profiling foundation before any optimization
+- [x] **Phase 11: Measurement & Profiling Infrastructure** - Build profiling foundation before any optimization
 - [ ] **Phase 12: Storage Optimization** - LSM compaction tuning for write throughput
 - [ ] **Phase 13: Memory & RAM Index** - Memory efficiency for 100M+ entity support
 - [ ] **Phase 14: Query Performance** - Caching and batch operations for enterprise dashboards
@@ -39,11 +39,11 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 5 plans in 2 waves
 
 Plans:
-- [ ] 11-01-PLAN.md — CPU profiling with Linux perf and FlameGraph scripts
-- [ ] 11-02-PLAN.md — POOP A/B benchmarking with hardware counters
-- [ ] 11-03-PLAN.md — Memory allocation tracking and extended latency histograms
-- [ ] 11-04-PLAN.md — Statistical benchmark harness and CI integration
-- [ ] 11-05-PLAN.md — Tracy instrumentation and Parca continuous profiling
+- [x] 11-01-PLAN.md — CPU profiling with Linux perf and FlameGraph scripts
+- [x] 11-02-PLAN.md — POOP A/B benchmarking with hardware counters
+- [x] 11-03-PLAN.md — Memory allocation tracking and extended latency histograms
+- [x] 11-04-PLAN.md — Statistical benchmark harness and CI integration
+- [x] 11-05-PLAN.md — Tracy instrumentation and Parca continuous profiling
 
 ### Phase 12: Storage Optimization
 **Goal**: Optimize LSM-tree storage for write-heavy geospatial workloads with compression and tuned compaction
@@ -136,7 +136,7 @@ Phases execute in numeric order: 11 -> 11.x -> 12 -> 12.x -> ... -> 16
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 11. Measurement & Profiling | 0/5 | Planned | - |
+| 11. Measurement & Profiling | 5/5 | ✓ Complete | 2026-01-24 |
 | 12. Storage Optimization | 0/TBD | Not started | - |
 | 13. Memory & RAM Index | 0/TBD | Not started | - |
 | 14. Query Performance | 0/TBD | Not started | - |
@@ -158,4 +158,4 @@ Phases execute in numeric order: 11 -> 11.x -> 12 -> 12.x -> ... -> 16
 
 ---
 *Roadmap created: 2026-01-24*
-*Last updated: 2026-01-24 — Phase 11 planned (5 plans, 2 waves)*
+*Last updated: 2026-01-24 — Phase 11 complete (5 plans, 7 requirements)*

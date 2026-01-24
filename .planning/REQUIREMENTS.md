@@ -9,13 +9,13 @@ Requirements for enterprise-scale performance. Each maps to roadmap phases.
 
 ### Profiling & Measurement
 
-- [ ] **PROF-01**: CPU profiling with Linux perf integration (frame pointers preserved)
-- [ ] **PROF-02**: POOP benchmarking for Zig A/B comparisons with hardware counters
-- [ ] **PROF-03**: Memory allocation tracking via DebugAllocator in test builds
-- [ ] **PROF-04**: Latency histograms per operation type (P50/P99/P999)
-- [ ] **PROF-05**: Benchmark harness for reproducible performance tests
-- [ ] **PROF-06**: Tracy real-time instrumentation with on-demand mode
-- [ ] **PROF-07**: Continuous profiling infrastructure (Parca/eBPF)
+- [x] **PROF-01**: CPU profiling with Linux perf integration (frame pointers preserved)
+- [x] **PROF-02**: POOP benchmarking for Zig A/B comparisons with hardware counters
+- [x] **PROF-03**: Memory allocation tracking via DebugAllocator in test builds
+- [x] **PROF-04**: Latency histograms per operation type (P50/P99/P999)
+- [x] **PROF-05**: Benchmark harness for reproducible performance tests
+- [x] **PROF-06**: Tracy real-time instrumentation with on-demand mode
+- [x] **PROF-07**: Continuous profiling infrastructure (Parca/eBPF)
 
 ### Storage Optimization
 
@@ -94,13 +94,13 @@ Which phases cover which requirements.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| PROF-01 | Phase 11 | Pending |
-| PROF-02 | Phase 11 | Pending |
-| PROF-03 | Phase 11 | Pending |
-| PROF-04 | Phase 11 | Pending |
-| PROF-05 | Phase 11 | Pending |
-| PROF-06 | Phase 11 | Pending |
-| PROF-07 | Phase 11 | Pending |
+| PROF-01 | Phase 11 | Complete |
+| PROF-02 | Phase 11 | Complete |
+| PROF-03 | Phase 11 | Complete |
+| PROF-04 | Phase 11 | Complete |
+| PROF-05 | Phase 11 | Complete |
+| PROF-06 | Phase 11 | Complete |
+| PROF-07 | Phase 11 | Complete |
 | STOR-01 | Phase 12 | Pending |
 | STOR-02 | Phase 12 | Pending |
 | STOR-03 | Phase 12 | Pending |
@@ -137,4 +137,4 @@ Which phases cover which requirements.
 
 ---
 *Requirements defined: 2026-01-24*
-*Last updated: 2026-01-24 after roadmap creation*
+*Last updated: 2026-01-24 — Phase 11 requirements complete (7/35)*
