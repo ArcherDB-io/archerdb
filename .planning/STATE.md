@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-01-24)
 
 **Core value:** Correctness, performance, and completeness with no compromises
-**Current focus:** v2.0 Performance & Scale - Phase 12 verified, Phase 13 next
+**Current focus:** v2.0 Performance & Scale - Phase 13 (Memory & RAM Index) in progress
 
 ## Current Position
 
-Phase: 12 of 16 (Storage Optimization)
-Plan: 11 of 11 in current phase (complete)
-Status: Phase 12 complete and verified — ready for Phase 13
-Last activity: 2026-01-24 - Phase 12 verification passed (5/5 success criteria)
+Phase: 13 of 16 (Memory & RAM Index)
+Plan: 03 of 05 in current phase
+Status: In progress - 13-03 complete
+Last activity: 2026-01-24 - Completed 13-03-PLAN.md (Index Metrics)
 
-Progress: [█████░░░░░] 51% (v2.0: 13/35 requirements)
+Progress: [█████░░░░░] 53% (v2.0: 14/35 requirements)
 
 ## v1.0 Summary
 
@@ -29,9 +29,9 @@ See `.planning/milestones/v1.0-REQUIREMENTS.md` for archived requirements.
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 11 (v2.0)
+- Total plans completed: 14 (v2.0)
 - Average duration: ~5min
-- Total execution time: ~61min
+- Total execution time: ~76min
 
 **By Phase:**
 
@@ -39,9 +39,10 @@ See `.planning/milestones/v1.0-REQUIREMENTS.md` for archived requirements.
 |-------|-------|-------|----------|
 | 11 | 5 | ~27min | ~5min |
 | 12 | 9 | ~49min | ~5min |
+| 13 | 3 | ~15min | ~5min |
 
 **Recent Trend:**
-- Last 5 plans: 12-06, 12-07, 12-08, 12-10, 12-11
+- Last 5 plans: 12-10, 12-11, 13-01, 13-02, 13-03
 - Trend: ~5min per plan
 
 *Updated after each plan completion*
@@ -111,6 +112,11 @@ Phase 12 decisions:
 - Theoretical LSM-tree model for compaction estimation without runtime (12-10)
 - Integration test patterns simulate workload shifts via sample() calls with varying op mixes (12-11)
 
+Phase 13 decisions:
+- Per-operation counters vs lazy update: counters increment per lookup/insert, gauges lazy-update on scrape (13-03)
+- Unconditional Prometheus recording: metrics recorded regardless of track_stats option (13-03)
+- Displacement count as proxy for insert cost via probe_count (13-03)
+
 ### Pending Todos
 
 None.
@@ -121,12 +127,13 @@ None.
 - ~90 TODOs remain in infrastructure code (Zig language limitations)
 - Antimeridian polygon queries require splitting at 180 meridian
 - Snapshot verification for manifest/free_set/client_sessions is future work
+- Pre-existing flaky tests in ram_index.zig (concurrent/resize stress tests)
 
 ## Session Continuity
 
 Last session: 2026-01-24
-Stopped at: Completed 12-11-PLAN.md (Adaptive Compaction Integration Tests) - Phase 12 complete
+Stopped at: Completed 13-03-PLAN.md (Index Metrics)
 Resume file: None
 
 ---
-*Updated: 2026-01-24 — Phase 12 verified and complete. 11 plans, 6 requirements, 5/5 success criteria.*
+*Updated: 2026-01-24 — Phase 13 plan 03 complete. Index metrics integrated into Prometheus.*
