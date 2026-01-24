@@ -2,10 +2,12 @@
 // Copyright (c) 2024-2025 ArcherDB Contributors
 //! Memory allocation tracking for test builds.
 //!
-//! Provides a wrapper around std.heap.DebugAllocator that tracks:
+//! Provides a wrapper around any allocator that tracks:
 //! - Total allocations and frees
 //! - Current and peak allocated bytes
-//! - Memory leak detection with stack traces
+//! - Memory leak detection
+//!
+//! For detailed stack traces on leaks, use std.heap.DebugAllocator directly.
 //!
 //! Usage:
 //!     var tracker = TrackingAllocator.init(std.testing.allocator);
@@ -46,15 +48,12 @@ pub const LeakCheckResult = enum {
     leak,
 };
 
-/// Memory allocation tracker wrapping std.heap.DebugAllocator.
+/// Memory allocation tracker wrapping any allocator.
 ///
 /// Tracks allocation statistics and can detect memory leaks.
-/// Uses DebugAllocator's built-in stack trace capture for leak diagnostics.
+/// For stack traces on leaks, use std.heap.DebugAllocator as the backing allocator.
 pub const TrackingAllocator = struct {
-    debug_allocator: std.heap.DebugAllocator(.{
-        .stack_trace_frames = 10,
-        .retain_metadata = true,
-    }),
+    backing_allocator: std.mem.Allocator,
 
     // Statistics
     total_allocations: usize,
@@ -67,10 +66,7 @@ pub const TrackingAllocator = struct {
     /// Initialize with a backing allocator.
     pub fn init(backing_allocator: std.mem.Allocator) Self {
         return .{
-            .debug_allocator = std.heap.DebugAllocator(.{
-                .stack_trace_frames = 10,
-                .retain_metadata = true,
-            }).init(backing_allocator),
+            .backing_allocator = backing_allocator,
             .total_allocations = 0,
             .total_frees = 0,
             .current_allocated_bytes = 0,
@@ -82,7 +78,6 @@ pub const TrackingAllocator = struct {
     /// Returns .leak if any allocations were not freed.
     pub fn deinit(self: *Self) LeakCheckResult {
         const result: LeakCheckResult = if (self.hasLeaks()) .leak else .ok;
-        self.debug_allocator.deinit();
         self.* = undefined;
         return result;
     }
@@ -94,6 +89,7 @@ pub const TrackingAllocator = struct {
             .vtable = &.{
                 .alloc = alloc,
                 .resize = resize,
+                .remap = remap,
                 .free = free,
             },
         };
@@ -115,7 +111,6 @@ pub const TrackingAllocator = struct {
     }
 
     /// Dump leak information to a writer.
-    /// Note: DebugAllocator prints leak info to stderr on deinit automatically.
     pub fn dumpLeaks(self: *const Self, writer: anytype) !void {
         const stats = self.getStats();
         if (stats.hasLeaks()) {
@@ -125,7 +120,6 @@ pub const TrackingAllocator = struct {
             try writer.print("  Total allocations: {d}\n", .{stats.total_allocations});
             try writer.print("  Total frees: {d}\n", .{stats.total_frees});
             try writer.print("  Peak allocated bytes: {d}\n", .{stats.peak_allocated_bytes});
-            try writer.print("Note: Stack traces printed by DebugAllocator on deinit\n", .{});
         } else {
             try writer.print("No memory leaks detected.\n", .{});
         }
@@ -133,7 +127,7 @@ pub const TrackingAllocator = struct {
 
     fn alloc(ctx: *anyopaque, len: usize, ptr_align: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
         const self: *Self = @ptrCast(@alignCast(ctx));
-        const result = self.debug_allocator.allocator().rawAlloc(len, ptr_align, ret_addr);
+        const result = self.backing_allocator.rawAlloc(len, ptr_align, ret_addr);
         if (result != null) {
             self.total_allocations += 1;
             self.current_allocated_bytes += len;
@@ -147,8 +141,26 @@ pub const TrackingAllocator = struct {
     fn resize(ctx: *anyopaque, buf: []u8, buf_align: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
         const self: *Self = @ptrCast(@alignCast(ctx));
         const old_len = buf.len;
-        const result = self.debug_allocator.allocator().rawResize(buf, buf_align, new_len, ret_addr);
+        const result = self.backing_allocator.rawResize(buf, buf_align, new_len, ret_addr);
         if (result) {
+            // Update current allocated bytes based on size change
+            if (new_len > old_len) {
+                self.current_allocated_bytes += (new_len - old_len);
+            } else {
+                self.current_allocated_bytes -= (old_len - new_len);
+            }
+            if (self.current_allocated_bytes > self.peak_allocated_bytes) {
+                self.peak_allocated_bytes = self.current_allocated_bytes;
+            }
+        }
+        return result;
+    }
+
+    fn remap(ctx: *anyopaque, buf: []u8, buf_align: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        const old_len = buf.len;
+        const result = self.backing_allocator.rawRemap(buf, buf_align, new_len, ret_addr);
+        if (result != null) {
             // Update current allocated bytes based on size change
             if (new_len > old_len) {
                 self.current_allocated_bytes += (new_len - old_len);
@@ -164,7 +176,7 @@ pub const TrackingAllocator = struct {
 
     fn free(ctx: *anyopaque, buf: []u8, buf_align: std.mem.Alignment, ret_addr: usize) void {
         const self: *Self = @ptrCast(@alignCast(ctx));
-        self.debug_allocator.allocator().rawFree(buf, buf_align, ret_addr);
+        self.backing_allocator.rawFree(buf, buf_align, ret_addr);
         self.total_frees += 1;
         if (self.current_allocated_bytes >= buf.len) {
             self.current_allocated_bytes -= buf.len;
@@ -179,6 +191,53 @@ pub const TrackingAllocator = struct {
 pub fn createTestAllocator() TrackingAllocator {
     return TrackingAllocator.init(std.heap.page_allocator);
 }
+
+/// Create a tracking allocator with debug capabilities.
+/// Uses std.heap.DebugAllocator for stack traces on leaks.
+/// Returns struct with both the debug allocator (for deinit) and tracking allocator.
+pub const DebugTrackingAllocator = struct {
+    debug_allocator: std.heap.DebugAllocator(.{
+        .stack_trace_frames = 10,
+        .retain_metadata = true,
+        .never_unmap = true,
+    }),
+    tracker: TrackingAllocator,
+
+    const Self = @This();
+
+    pub fn init() Self {
+        var self: Self = .{
+            .debug_allocator = .{
+                .backing_allocator = std.heap.page_allocator,
+            },
+            .tracker = undefined,
+        };
+        self.tracker = TrackingAllocator.init(self.debug_allocator.allocator());
+        return self;
+    }
+
+    pub fn allocator(self: *Self) std.mem.Allocator {
+        return self.tracker.allocator();
+    }
+
+    pub fn getStats(self: *const Self) AllocationStats {
+        return self.tracker.getStats();
+    }
+
+    pub fn hasLeaks(self: *const Self) bool {
+        return self.tracker.hasLeaks();
+    }
+
+    pub fn deinit(self: *Self) LeakCheckResult {
+        const tracker_result = self.tracker.deinit();
+        const debug_result = self.debug_allocator.deinit();
+        // Return leak if either detected a leak
+        if (tracker_result == .leak or debug_result == .leak) {
+            return .leak;
+        }
+        return .ok;
+    }
+};
 
 /// Format allocation statistics as human-readable output.
 pub fn formatStats(stats: AllocationStats, writer: anytype) !void {
