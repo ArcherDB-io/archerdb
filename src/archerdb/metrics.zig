@@ -15,6 +15,10 @@ const std = @import("std");
 /// Provides Prometheus-compatible metrics for LSM tree health tracking.
 pub const storage = @import("storage_metrics.zig");
 
+/// RAM index metrics for memory monitoring.
+/// Provides Prometheus-compatible metrics for index health tracking.
+pub const index = @import("index_metrics.zig");
+
 /// A monotonically increasing counter metric.
 /// Thread-safe via atomic operations.
 pub const Counter = struct {
@@ -2716,6 +2720,12 @@ pub const Registry = struct {
         // ====================================================================
 
         try storage.format_all(writer);
+
+        // ====================================================================
+        // RAM Index Metrics (13-03)
+        // ====================================================================
+
+        try index.format_all(writer);
 
         // ====================================================================
         // Checkpoint Metrics
