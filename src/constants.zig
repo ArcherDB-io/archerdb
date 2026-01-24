@@ -699,6 +699,27 @@ comptime {
     assert(lsm_table_coalescing_threshold_percent < 100); // Don't coalesce full tables.
 }
 
+/// Enable LZ4 compression for LSM value blocks (1 = enabled, 0 = disabled).
+/// Index blocks remain uncompressed for fast key lookups.
+pub const lsm_compaction_block_compression: bool =
+    config.cluster.lsm_compaction_block_compression == 1;
+
+/// Compression threshold as a percentage (1-100).
+/// Only use compression if compressed size <= (threshold% * original size).
+pub const lsm_compaction_compression_threshold_percent =
+    config.cluster.lsm_compaction_compression_threshold_percent;
+
+/// Minimum block body size (bytes) to attempt compression.
+/// Blocks smaller than this are stored uncompressed.
+pub const lsm_compaction_compression_min_size =
+    config.cluster.lsm_compaction_compression_min_size;
+
+comptime {
+    assert(lsm_compaction_compression_threshold_percent > 0);
+    assert(lsm_compaction_compression_threshold_percent <= 100);
+    assert(lsm_compaction_compression_min_size > 0);
+}
+
 /// The number of milliseconds between each replica tick, the basic unit of time in ArcherDB.
 /// Used to regulate heartbeats, retries and timeouts, all specified as multiples of a tick.
 pub const tick_ms = config.process.tick_ms;
