@@ -533,11 +533,149 @@ Focus optimization efforts based on profiling data:
 3. **Branch mispredictions**: High miss rate (>5%) in loops
 4. **Memory allocations**: Excessive allocations in hot paths
 
+## Tracy Real-Time Instrumentation
+
+Tracy provides real-time instrumentation with visualization. ArcherDB supports Tracy in on-demand mode - zero overhead unless the Tracy profiler GUI is connected.
+
+### Building with Tracy
+
+```bash
+# Build with Tracy profiling enabled (on-demand mode)
+./zig/zig build profile -Dtracy=true
+
+# Or use the profiling flag
+./zig/zig build -Dprofiling=true -Dtracy=true
+```
+
+### Using Tracy Zones
+
+ArcherDB provides ergonomic Tracy zone helpers that compile to no-ops when Tracy is disabled:
+
+```zig
+const tracy = @import("testing/tracy_zones.zig");
+
+fn processQuery(query: Query) !Result {
+    const zone = tracy.zone(@src(), "process_query");
+    defer zone.end();
+
+    // Add context to the zone
+    zone.text(query.type);
+    zone.value(query.entity_count);
+
+    // ... processing ...
+}
+```
+
+Available zone helpers:
+
+| Function | Purpose |
+|----------|---------|
+| `zone(@src(), "name")` | Create a named profiling zone |
+| `zoneN(@src(), name)` | Create zone with runtime name |
+| `frameMark()` | Mark frame boundary |
+| `message(text)` | Log to Tracy timeline |
+| `plot(name, value)` | Plot metric over time |
+
+### Predefined Colors
+
+Use semantic colors for different subsystems:
+
+```zig
+const colors = tracy.colors;
+
+zone.color(colors.query);      // Green - query processing
+zone.color(colors.storage);    // Blue - storage operations
+zone.color(colors.consensus);  // Red - consensus/Raft
+zone.color(colors.network);    // Yellow - network I/O
+zone.color(colors.index);      // Magenta - index operations
+zone.color(colors.geo);        // Orange - geo/S2 operations
+```
+
+### Running Tracy
+
+1. Download Tracy profiler from https://github.com/wolfpld/tracy/releases
+2. Run the ArcherDB binary built with `-Dtracy=true`
+3. Connect Tracy profiler to the running process
+4. Zones will appear in the timeline when profiler connects
+
+Tracy on-demand mode means the instrumentation has near-zero overhead when the profiler is not connected. Profiling only activates when the Tracy GUI establishes a connection.
+
+## Parca Continuous Profiling
+
+Parca provides always-on continuous profiling using eBPF with <1% overhead. Ideal for production monitoring and historical analysis.
+
+### Prerequisites
+
+- Linux kernel >= 5.6 with eBPF support
+- Root privileges for eBPF programs
+
+### Quick Start
+
+```bash
+# Install Parca agent
+sudo ./scripts/parca-agent.sh install
+
+# Start with local Parca server
+sudo ./scripts/parca-agent.sh start
+
+# Check status
+./scripts/parca-agent.sh status
+```
+
+### Parca Server
+
+Run a local Parca server for development:
+
+```bash
+# Using Docker
+docker run -p 7070:7070 ghcr.io/parca-dev/parca:latest
+
+# Or download binary
+curl -sL https://github.com/parca-dev/parca/releases/latest/download/parca_Linux_x86_64.tar.gz | tar xz
+./parca --config-path=parca.yaml
+```
+
+For production, consider [Parca Cloud](https://www.polarsignals.com/) or self-hosted deployment.
+
+### Analyzing Profiles
+
+1. Open Parca UI at http://localhost:7070
+2. Select time range and process
+3. View flame graph of CPU usage over time
+4. Compare profiles between time periods to find regressions
+
+### Parca Features
+
+- **Continuous profiling**: Always-on with <1% overhead
+- **Historical data**: Query profiles from any point in time
+- **Differential analysis**: Compare profiles to find regressions
+- **Label-based queries**: Filter by process, container, node
+- **eBPF-based**: No code changes required
+
+## Profile Build Mode
+
+ArcherDB provides a dedicated profile build mode optimized for profiling:
+
+```bash
+# Build with profiling support (frame pointers preserved)
+./zig/zig build profile
+
+# Build with Tracy instrumentation
+./zig/zig build profile -Dtracy=true
+```
+
+The profile build:
+- Uses `ReleaseFast` optimization for representative performance
+- Preserves frame pointers for accurate stack traces
+- Outputs `archerdb-profile` binary
+
 ## Additional Resources
 
 - [Brendan Gregg's Flame Graphs](https://www.brendangregg.com/flamegraphs.html) - Original flame graph documentation
 - [perf Examples](https://www.brendangregg.com/perf.html) - Comprehensive perf tutorial
 - [Linux Perf Wiki](https://perf.wiki.kernel.org/) - Official perf documentation
+- [Tracy Profiler](https://github.com/wolfpld/tracy) - Real-time frame profiler
+- [Parca Documentation](https://www.parca.dev/docs/) - Continuous profiling
 
 ## Related Documentation
 
