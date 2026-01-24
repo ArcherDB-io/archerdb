@@ -56,6 +56,7 @@ const allocate_block = @import("../vsr/grid.zig").allocate_block;
 const TableInfoType = @import("manifest.zig").TreeTableInfoType;
 const ManifestType = @import("manifest.zig").ManifestType;
 const schema = @import("schema.zig");
+const compression = @import("compression.zig");
 const RingBufferType = stdx.RingBufferType;
 
 /// The upper-bound count of input tables to a single tree's compaction.
@@ -1659,7 +1660,61 @@ pub fn CompactionType(
             compaction.pool.?.reads.release(read);
 
             assert(block.stage == .read_value_block);
+
+            // Copy the raw block data first
             stdx.copy_disjoint(.exact, u8, block.ptr, value_block);
+
+            // Check if block is compressed and decompress if needed
+            const header = schema.header_from_block(block.ptr);
+            const metadata = mem.bytesAsValue(
+                schema.TableValue.Metadata,
+                header.metadata_bytes[0..@sizeOf(schema.TableValue.Metadata)],
+            );
+
+            if (metadata.is_compressed()) {
+                // Block is compressed - decompress it
+                const compressed_body_size = header.size - @sizeOf(vsr.Header);
+                const uncompressed_body_size = metadata.uncompressed_size - @sizeOf(vsr.Header);
+
+                // Source: compressed body from original grid buffer (still valid)
+                const compressed_body = value_block[@sizeOf(vsr.Header)..][0..compressed_body_size];
+
+                // Destination: body area in our block buffer
+                const decompressed_body = block.ptr[@sizeOf(vsr.Header)..][0..uncompressed_body_size];
+
+                // Decompress
+                _ = compression.decompress_block(
+                    compressed_body,
+                    decompressed_body,
+                    metadata.compression(),
+                    uncompressed_body_size,
+                ) catch |err| {
+                    // Decompression failed - this is a data corruption issue
+                    log.err("Decompression failed for value block at address {}: {}", .{
+                        header.address,
+                        err,
+                    });
+                    @panic("Value block decompression failed - data corruption detected");
+                };
+
+                // Update header in our block to reflect decompressed state
+                // This makes the in-memory block appear uncompressed for subsequent operations
+                const block_header = mem.bytesAsValue(vsr.Header.Block, block.ptr[0..@sizeOf(vsr.Header)]);
+                block_header.size = metadata.uncompressed_size;
+
+                // Update metadata to indicate no compression (in-memory representation)
+                const block_metadata = mem.bytesAsValue(
+                    schema.TableValue.Metadata,
+                    block_header.metadata_bytes[0..@sizeOf(schema.TableValue.Metadata)],
+                );
+                block_metadata.compression_type = 0; // .none
+                block_metadata.uncompressed_size = 0;
+
+                // Recalculate checksums for the decompressed block (for verification)
+                block_header.set_checksum_body(block.ptr[@sizeOf(vsr.Header)..block_header.size]);
+                block_header.set_checksum();
+            }
+
             block.stage = .read_value_block_done;
             compaction.counters.in += Table.value_block_values_used(block.ptr).len;
             compaction.compaction_dispatch();

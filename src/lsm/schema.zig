@@ -445,11 +445,16 @@ pub const TableValue = struct {
         const header = header_from_block(value_block);
         assert(header.block_type == .value);
 
-        const used_values: u32 = block_metadata(schema, value_block).value_count;
+        const meta = block_metadata(schema, value_block);
+        const used_values: u32 = meta.value_count;
         assert(used_values > 0);
         assert(used_values <= schema.value_count_max);
 
         const used_bytes = used_values * schema.value_size;
+
+        // Blocks must be decompressed before accessing values.
+        // If this assertion fails, the block was not decompressed during read.
+        assert(!meta.is_compressed()); // Block must be decompressed before accessing values
         assert(@sizeOf(vsr.Header) + used_bytes == header.size);
         assert(header.size <= schema.padding_offset); // This is the maximum padding_offset
         return schema.block_values_bytes_const(value_block)[0..used_bytes];
