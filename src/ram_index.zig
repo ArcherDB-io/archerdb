@@ -1679,6 +1679,136 @@ pub fn GenericRamIndexType(comptime Entry: type, comptime options: struct {
             return .{ .entry = null, .probe_count = active_result.probe_count };
         }
 
+        /// Batch lookup of multiple entity IDs using SIMD acceleration.
+        /// Processes 4 keys at a time for optimal cache and SIMD utilization.
+        ///
+        /// Results slice must have same length as entity_ids.
+        /// Each result is either the Entry or null if not found.
+        ///
+        /// This function is optimized for sequential batch lookups where
+        /// the SIMD comparison can check multiple keys in parallel.
+        pub fn batch_lookup(
+            self: *@This(),
+            entity_ids: []const u128,
+            results: []?Entry,
+        ) void {
+            std.debug.assert(entity_ids.len == results.len);
+
+            const simd_batch_size = ram_index_simd.batch_size;
+            var i: usize = 0;
+
+            // Process batches of 4 keys using SIMD
+            while (i + simd_batch_size <= entity_ids.len) : (i += simd_batch_size) {
+                self.batch_lookup_simd(
+                    entity_ids[i..][0..simd_batch_size],
+                    results[i..][0..simd_batch_size],
+                );
+            }
+
+            // Handle remainder with scalar lookups
+            while (i < entity_ids.len) : (i += 1) {
+                const result = self.lookup(entity_ids[i]);
+                results[i] = result.entry;
+            }
+        }
+
+        /// SIMD-accelerated batch lookup of exactly 4 keys.
+        /// Uses SIMD comparison to check multiple candidate slots at once.
+        fn batch_lookup_simd(
+            self: *@This(),
+            entity_ids: *const [4]u128,
+            results: *[4]?Entry,
+        ) void {
+            // Process each of the 4 keys. For each key, we gather candidate
+            // keys from probe positions and use SIMD to compare them.
+            inline for (0..4) |j| {
+                const entity_id = entity_ids[j];
+
+                // Skip reserved entity ID 0
+                if (entity_id == 0) {
+                    results[j] = null;
+                    continue;
+                }
+
+                // Start probing from hash position
+                const slot_hash = Index.hash(entity_id);
+                var slot = slot_hash % self.capacity;
+                var found = false;
+
+                // Probe in groups of 4 using SIMD comparison
+                var probe_count: u32 = 0;
+                while (probe_count < max_probe_length and !found) {
+                    // Gather 4 consecutive entries for SIMD comparison
+                    var candidate_keys: [4]u128 = undefined;
+                    var candidates_valid: u4 = 0;
+
+                    inline for (0..4) |k| {
+                        const probe_slot = (slot + k) % self.capacity;
+                        const entry_ptr: *Entry = &self.entries[@intCast(probe_slot)];
+                        const entry = @as(*volatile Entry, @ptrCast(entry_ptr)).*;
+                        candidate_keys[k] = entry.entity_id;
+                        if (!entry.is_empty()) {
+                            candidates_valid |= (@as(u4, 1) << @intCast(k));
+                        }
+                    }
+
+                    // SIMD compare all 4 candidates at once
+                    const match_mask = ram_index_simd.compare_keys(&candidate_keys, entity_id);
+                    const valid_matches = match_mask & candidates_valid;
+
+                    if (ram_index_simd.find_first_match(valid_matches)) |match_idx| {
+                        // Found a match - check if it's a tombstone
+                        const match_slot = (slot + match_idx) % self.capacity;
+                        const entry_ptr: *Entry = &self.entries[@intCast(match_slot)];
+                        const entry = @as(*volatile Entry, @ptrCast(entry_ptr)).*;
+
+                        if (!entry.is_tombstone()) {
+                            results[j] = entry;
+                            found = true;
+                        } else {
+                            results[j] = null;
+                            found = true; // Tombstone counts as found (negative result)
+                        }
+                    } else {
+                        // No match in this batch - check for empty slot (end of probe chain)
+                        var hit_empty = false;
+                        inline for (0..4) |k| {
+                            if ((candidates_valid & (@as(u4, 1) << @intCast(k))) == 0) {
+                                // Found empty slot before finding key
+                                hit_empty = true;
+                                break;
+                            }
+                        }
+
+                        if (hit_empty) {
+                            results[j] = null;
+                            found = true;
+                        }
+                    }
+
+                    slot = (slot + 4) % self.capacity;
+                    probe_count += 4;
+                }
+
+                // If we exhausted probes without finding, result is null
+                if (!found) {
+                    results[j] = null;
+                }
+            }
+
+            // During resize, check old table for any not found in new table
+            if (self.resize_state.isResizing()) {
+                if (self.old_entries) |old_entries| {
+                    inline for (0..4) |j| {
+                        if (results[j] == null and entity_ids[j] != 0) {
+                            const old_result = lookupInTable(old_entries, self.old_capacity, entity_ids[j]);
+                            results[j] = old_result.entry;
+                        }
+                    }
+                }
+            }
+        }
+
         /// Update stored metadata for an existing entry.
         /// Returns false if the entry is missing or no metadata is supported.
         pub fn update_metadata(
