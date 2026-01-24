@@ -363,13 +363,80 @@ pub fn TableType(
             pub fn value_block_finish(builder: *Builder, options: DataFinishOptions) void {
                 assert(builder.state == .index_and_value_block);
 
-                // For each block we write the sorted values,
+                // For each block we write the sorted values, optionally compress,
                 // complete the block header, and add the block's max key to the table index.
 
                 assert(options.address > 0);
                 assert(builder.value_count > 0);
 
                 const block = builder.value_block;
+
+                // Get values BEFORE any compression (for key extraction and sanity checks)
+                const values = Table.value_block_values(block)[0..builder.value_count];
+
+                // Calculate uncompressed body size
+                const uncompressed_body_size: u32 = builder.value_count * @sizeOf(Value);
+                const uncompressed_size: u32 = @sizeOf(vsr.Header) + uncompressed_body_size;
+
+                // Extract keys BEFORE compression modifies the block data
+                const key_min = key_from_value(&values[0]);
+                const key_max = if (values.len == 1) key_min else blk: {
+                    const key = key_from_value(&values[values.len - 1]);
+                    assert(key_min < key);
+                    break :blk key;
+                };
+
+                // Verify values are sorted (must do before compression)
+                if (constants.verify) {
+                    var a = &values[0];
+                    for (values[1..]) |*b| {
+                        assert(key_from_value(a) < key_from_value(b));
+                        a = b;
+                    }
+                }
+
+                // Determine if we should attempt compression:
+                // - Compression must be enabled globally
+                // - Block body must meet minimum size threshold
+                const compression_enabled = constants.lsm_compaction_block_compression;
+                const min_size = constants.lsm_compaction_compression_min_size;
+                const should_compress = compression_enabled and uncompressed_body_size >= min_size;
+
+                // Default: no compression
+                var final_compression_type: compression.CompressionType = .none;
+                var final_body_size: u32 = uncompressed_body_size;
+                var final_uncompressed_size: u32 = 0; // 0 means uncompressed
+
+                if (should_compress) {
+                    // Attempt compression using padding area as temp buffer
+                    const body_start = @sizeOf(vsr.Header);
+                    const body_end = body_start + uncompressed_body_size;
+                    const body_bytes = block[body_start..body_end];
+
+                    const max_compressed = compression.max_compressed_size(uncompressed_body_size);
+
+                    // Use padding area for compression output if large enough
+                    if (data.padding_size >= max_compressed) {
+                        const padding_start = data.padding_offset;
+                        const temp_buffer = block[padding_start..][0..max_compressed];
+
+                        const result = compression.compress_block(body_bytes, temp_buffer);
+
+                        if (result.compression_type == .lz4) {
+                            // Compression was effective - copy compressed data to body
+                            @memcpy(block[body_start..][0..result.compressed_size], temp_buffer[0..result.compressed_size]);
+                            // Zero out rest to avoid data leakage
+                            @memset(block[body_start + result.compressed_size..body_end], 0);
+
+                            final_compression_type = .lz4;
+                            final_body_size = @intCast(result.compressed_size);
+                            final_uncompressed_size = uncompressed_size;
+                        }
+                    }
+                }
+
+                const final_size: u32 = @sizeOf(vsr.Header) + final_body_size;
+
                 const header = mem.bytesAsValue(vsr.Header.Block, block[0..@sizeOf(vsr.Header)]);
                 header.* = .{
                     .cluster = options.cluster,
@@ -378,10 +445,12 @@ pub fn TableType(
                         .value_count = builder.value_count,
                         .value_size = value_size,
                         .tree_id = options.tree_id,
+                        .compression_type = @intFromEnum(final_compression_type),
+                        .uncompressed_size = final_uncompressed_size,
                     }),
                     .address = options.address,
                     .snapshot = options.snapshot_min,
-                    .size = @sizeOf(vsr.Header) + builder.value_count * @sizeOf(Value),
+                    .size = final_size,
                     .command = .block,
                     .release = options.release,
                     .block_type = .value,
@@ -389,29 +458,6 @@ pub fn TableType(
 
                 header.set_checksum_body(block[@sizeOf(vsr.Header)..header.size]);
                 header.set_checksum();
-
-                const values = Table.value_block_values_used(block);
-                { // Now that we have checksummed the block, sanity-check the result:
-
-                    if (constants.verify) {
-                        var a = &values[0];
-                        for (values[1..]) |*b| {
-                            assert(key_from_value(a) < key_from_value(b));
-                            a = b;
-                        }
-                    }
-
-                    assert(builder.value_count == values.len);
-                    assert(block_size - header.size ==
-                        (data.value_count_max - values.len) * @sizeOf(Value) + data.padding_size);
-                }
-
-                const key_min = key_from_value(&values[0]);
-                const key_max = if (values.len == 1) key_min else blk: {
-                    const key = key_from_value(&values[values.len - 1]);
-                    assert(key_min < key);
-                    break :blk key;
-                };
 
                 const current = builder.value_block_count;
                 { // Update the index block:
@@ -435,7 +481,7 @@ pub fn TableType(
                 if (current > 0) {
                     const slice = index_value_keys(builder.index_block, .key_max);
                     const key_max_prev = slice[current - 1];
-                    assert(key_max_prev < key_from_value(&values[0]));
+                    assert(key_max_prev < key_min);
                 }
 
                 builder.value_block_count += 1;

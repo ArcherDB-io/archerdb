@@ -192,6 +192,7 @@ pub fn build(b: *std.Build) !void {
     assert(build_options.git_commit.len == 40);
     const vsr_options, const vsr_module = build_vsr_module(b, .{
         .stdx_module = stdx_module,
+        .lz4_dep = lz4_dep,
         .git_commit = build_options.git_commit[0..40].*,
         .config_verify = build_options.config_verify,
         .config_release = build_options.config_release,
@@ -221,6 +222,7 @@ pub fn build(b: *std.Build) !void {
     build_check(b, build_steps.check, .{
         .stdx_module = stdx_module,
         .vsr_module = vsr_module,
+        .lz4_dep = lz4_dep,
         .target = target,
         .mode = mode,
     });
@@ -233,6 +235,7 @@ pub fn build(b: *std.Build) !void {
         .stdx_module = stdx_module,
         .vsr_module = vsr_module,
         .vsr_options = vsr_options,
+        .lz4_dep = lz4_dep,
         .llvm_objcopy = build_options.llvm_objcopy,
         .target = target,
         .mode = mode,
@@ -331,6 +334,7 @@ pub fn build(b: *std.Build) !void {
         .stdx_module = stdx_module,
         .vsr_module = vsr_module,
         .vsr_options = vsr_options,
+        .lz4_dep = lz4_dep,
         .target = target,
         .mode = mode,
         .arch_client_header = arch_client_header.path,
@@ -404,6 +408,7 @@ pub fn build(b: *std.Build) !void {
 
 fn build_vsr_module(b: *std.Build, options: struct {
     stdx_module: *std.Build.Module,
+    lz4_dep: *std.Build.Dependency,
     git_commit: [40]u8,
     config_verify: bool,
     config_release: ?[]const u8,
@@ -443,6 +448,11 @@ fn build_vsr_module(b: *std.Build, options: struct {
     });
     vsr_module.addImport("stdx", options.stdx_module);
     vsr_module.addOptions("vsr_options", vsr_options);
+
+    // Add LZ4 include path for @cImport in compression.zig
+    const lz4_artifact = options.lz4_dep.artifact("lz4");
+    vsr_module.addIncludePath(lz4_artifact.getEmittedIncludeTree());
+    vsr_module.linkLibrary(lz4_artifact);
 
     return .{ vsr_options, vsr_module };
 }
@@ -631,6 +641,7 @@ fn build_check(
     options: struct {
         stdx_module: *std.Build.Module,
         vsr_module: *std.Build.Module,
+        lz4_dep: *std.Build.Dependency,
         target: std.Build.ResolvedTarget,
         mode: std.builtin.OptimizeMode,
     },
@@ -645,6 +656,8 @@ fn build_check(
     });
     archerdb.root_module.addImport("stdx", options.stdx_module);
     archerdb.root_module.addImport("vsr", options.vsr_module);
+    // Link LZ4 for block compression
+    archerdb.linkLibrary(options.lz4_dep.artifact("lz4"));
     step_check.dependOn(&archerdb.step);
 }
 
@@ -713,6 +726,7 @@ fn build_archerdb(
         stdx_module: *std.Build.Module,
         vsr_module: *std.Build.Module,
         vsr_options: *std.Build.Step.Options,
+        lz4_dep: *std.Build.Dependency,
         llvm_objcopy: ?[]const u8,
         target: std.Build.ResolvedTarget,
         mode: std.builtin.OptimizeMode,
@@ -734,6 +748,7 @@ fn build_archerdb(
             .stdx_module = options.stdx_module,
             .vsr_module = options.vsr_module,
             .vsr_options = options.vsr_options,
+            .lz4_dep = options.lz4_dep,
             .llvm_objcopy = options.llvm_objcopy,
             .archerdb_previous = multiversion_lazy_path,
             .target = options.target,
@@ -743,6 +758,7 @@ fn build_archerdb(
         const archerdb_exe = build_archerdb_executable(b, .{
             .vsr_module = options.vsr_module,
             .vsr_options = options.vsr_options,
+            .lz4_dep = options.lz4_dep,
             .target = options.target,
             .mode = options.mode,
         });
@@ -773,6 +789,7 @@ fn build_archerdb(
 fn build_archerdb_executable(b: *std.Build, options: struct {
     vsr_module: *std.Build.Module,
     vsr_options: *std.Build.Step.Options,
+    lz4_dep: *std.Build.Dependency,
     target: std.Build.ResolvedTarget,
     mode: std.builtin.OptimizeMode,
 }) *std.Build.Step.Compile {
@@ -789,6 +806,8 @@ fn build_archerdb_executable(b: *std.Build, options: struct {
         .name = "archerdb",
         .root_module = root_module,
     });
+    // Link LZ4 for block compression
+    archerdb.linkLibrary(options.lz4_dep.artifact("lz4"));
 
     return archerdb;
 }
@@ -797,6 +816,7 @@ fn build_archerdb_executable_multiversion(b: *std.Build, options: struct {
     stdx_module: *std.Build.Module,
     vsr_module: *std.Build.Module,
     vsr_options: *std.Build.Step.Options,
+    lz4_dep: *std.Build.Dependency,
     llvm_objcopy: ?[]const u8,
     archerdb_previous: std.Build.LazyPath,
     target: std.Build.ResolvedTarget,
@@ -833,6 +853,7 @@ fn build_archerdb_executable_multiversion(b: *std.Build, options: struct {
                 build_archerdb_executable(b, .{
                     .vsr_module = options.vsr_module,
                     .vsr_options = options.vsr_options,
+                    .lz4_dep = options.lz4_dep,
                     .target = resolve_target(b, arch ++ "-macos") catch unreachable,
                     .mode = options.mode,
                 }).getEmittedBin(),
@@ -848,6 +869,7 @@ fn build_archerdb_executable_multiversion(b: *std.Build, options: struct {
             build_archerdb_executable(b, .{
                 .vsr_module = options.vsr_module,
                 .vsr_options = options.vsr_options,
+                .lz4_dep = options.lz4_dep,
                 .target = options.target,
                 .mode = options.mode,
             }).getEmittedBin(),
@@ -1030,6 +1052,7 @@ fn build_test(
         .arch_client_header = options.arch_client_header.path,
         .llvm_objcopy = options.llvm_objcopy,
         .stdx_module = options.stdx_module,
+        .lz4_dep = options.lz4_dep,
         .target = options.target,
         .mode = options.mode,
         .integration_past = options.integration_past,
@@ -1056,6 +1079,7 @@ fn build_test_integration(
         arch_client_header: std.Build.LazyPath,
         llvm_objcopy: ?[]const u8,
         stdx_module: *std.Build.Module,
+        lz4_dep: *std.Build.Dependency,
         target: std.Build.ResolvedTarget,
         mode: std.builtin.OptimizeMode,
         integration_past: ?[]const u8,
@@ -1065,6 +1089,7 @@ fn build_test_integration(
     // the test binary and server share the same message size limits.
     const vsr_options, const vsr_module = build_vsr_module(b, .{
         .stdx_module = options.stdx_module,
+        .lz4_dep = options.lz4_dep,
         .git_commit = "a2c4e2db00000000000000000000000000a2c4e2".*, // ArcherDB-hash!
         .config_verify = true,
         .config_release = "65535.0.0",
@@ -1082,6 +1107,7 @@ fn build_test_integration(
             .stdx_module = options.stdx_module,
             .vsr_module = vsr_module,
             .vsr_options = vsr_options,
+            .lz4_dep = options.lz4_dep,
             .llvm_objcopy = options.llvm_objcopy,
             .archerdb_previous = previous,
             .target = options.target,
@@ -1091,6 +1117,7 @@ fn build_test_integration(
         break :blk build_archerdb_executable(b, .{
             .vsr_module = vsr_module,
             .vsr_options = vsr_options,
+            .lz4_dep = options.lz4_dep,
             .target = options.target,
             .mode = options.mode,
         }).getEmittedBin();
@@ -1102,6 +1129,7 @@ fn build_test_integration(
         .stdx_module = options.stdx_module,
         .vsr_module = vsr_module,
         .vsr_options = vsr_options,
+        .lz4_dep = options.lz4_dep,
         .target = options.target,
         .mode = options.mode,
     });
@@ -1357,6 +1385,7 @@ fn build_vortex(
         stdx_module: *std.Build.Module,
         vsr_module: *std.Build.Module,
         vsr_options: *std.Build.Step.Options,
+        lz4_dep: *std.Build.Dependency,
         target: std.Build.ResolvedTarget,
         mode: std.builtin.OptimizeMode,
         print_exe: bool,
@@ -1367,6 +1396,7 @@ fn build_vortex(
         .stdx_module = options.stdx_module,
         .vsr_module = options.vsr_module,
         .vsr_options = options.vsr_options,
+        .lz4_dep = options.lz4_dep,
         .target = options.target,
         .mode = options.mode,
     });
@@ -1386,6 +1416,7 @@ fn build_vortex_executable(
         stdx_module: *std.Build.Module,
         vsr_module: *std.Build.Module,
         vsr_options: *std.Build.Step.Options,
+        lz4_dep: *std.Build.Dependency,
         target: std.Build.ResolvedTarget,
         mode: std.builtin.OptimizeMode,
     },
@@ -1408,6 +1439,7 @@ fn build_vortex_executable(
     const archerdb = build_archerdb_executable(b, .{
         .vsr_module = options.vsr_module,
         .vsr_options = options.vsr_options,
+        .lz4_dep = options.lz4_dep,
         .target = options.target,
         .mode = options.mode,
     });
