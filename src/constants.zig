@@ -720,6 +720,25 @@ comptime {
     assert(lsm_compaction_compression_min_size > 0);
 }
 
+/// Compaction strategy (0 = leveled, 1 = tiered).
+pub const lsm_compaction_strategy = config.cluster.lsm_compaction_strategy;
+
+/// Tiered compaction: size ratio threshold (scaled by 10, so 20 = 2.0x).
+pub const lsm_tiered_size_ratio_scaled = config.cluster.lsm_tiered_size_ratio_scaled;
+
+/// Tiered compaction: space amplification threshold percentage.
+pub const lsm_tiered_max_space_amp_percent = config.cluster.lsm_tiered_max_space_amp_percent;
+
+/// Tiered compaction: maximum sorted runs per level before forced compaction.
+pub const lsm_tiered_max_sorted_runs = config.cluster.lsm_tiered_max_sorted_runs;
+
+comptime {
+    assert(lsm_compaction_strategy <= 1);
+    assert(lsm_tiered_size_ratio_scaled >= 10);
+    assert(lsm_tiered_max_space_amp_percent >= 100);
+    assert(lsm_tiered_max_sorted_runs >= 2);
+}
+
 /// The number of milliseconds between each replica tick, the basic unit of time in ArcherDB.
 /// Used to regulate heartbeats, retries and timeouts, all specified as multiples of a tick.
 pub const tick_ms = config.process.tick_ms;

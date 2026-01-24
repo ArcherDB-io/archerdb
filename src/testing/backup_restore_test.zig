@@ -214,7 +214,7 @@ test "integration: backup queue pressure handling" {
         _ = queue.enqueue(BlockRef{
             .sequence = @intCast(i + 1),
             .address = @intCast(1000 + i),
-            .checksum = @intCast(0xBACKUP00 + i),
+            .checksum = @intCast(0xBAC0000 + i),
             .closed_timestamp = @intCast(1704067200 + @as(i64, @intCast(i)) * 60),
         });
     }

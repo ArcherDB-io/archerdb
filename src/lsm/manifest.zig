@@ -20,6 +20,7 @@ const TreeConfig = @import("tree.zig").TreeConfig;
 const Direction = @import("../direction.zig").Direction;
 const ManifestLogType = @import("manifest_log.zig").ManifestLogType;
 const ManifestLevelType = @import("manifest_level.zig").ManifestLevelType;
+const compaction_tiered = @import("compaction_tiered.zig");
 const NodePool = @import("node_pool.zig").NodePoolType(constants.lsm_manifest_node_size, 16);
 const TableInfo = schema.ManifestNode.TableInfo;
 const Tracer = vsr.trace.Tracer;
@@ -692,6 +693,114 @@ pub fn ManifestType(comptime Table: type, comptime Storage: type) type {
 
             assert(level_c == constants.lsm_levels);
             return true;
+        }
+
+        // =========================================================================
+        // Tiered Compaction Support
+        // =========================================================================
+        //
+        // These functions support tiered compaction strategy by providing level
+        // statistics needed for compaction decisions. The compaction strategy is
+        // configured via constants.lsm_compaction_strategy.
+        //
+        // Strategy selection (constants.lsm_compaction_strategy):
+        // - 0 (leveled): Use compaction_table() for single-table selection
+        // - 1 (tiered): Use should_compact_tiered() with level_statistics()
+        // =========================================================================
+
+        /// Statistics for a single level, used for tiered compaction decisions.
+        pub const LevelStatistics = struct {
+            /// Number of visible tables (sorted runs) at this level.
+            sorted_run_count: u32,
+            /// Total size in bytes across all tables (estimated from value_count).
+            total_size: u64,
+            /// Size of the largest table (sorted run) at this level.
+            largest_run_size: u64,
+            /// Number of values at this level (for logical size estimation).
+            value_count: u64,
+        };
+
+        /// Get statistics for a level needed for tiered compaction decisions.
+        pub fn level_statistics(manifest: *const Manifest, level: u8) LevelStatistics {
+            assert(level < constants.lsm_levels);
+
+            const manifest_level: *const Level = &manifest.levels[level];
+
+            var sorted_run_count: u32 = 0;
+            var total_value_count: u64 = 0;
+            var largest_value_count: u64 = 0;
+
+            // Iterate visible tables to gather statistics
+            var it = manifest_level.iterator(
+                .visible,
+                &[_]u64{snapshot_latest},
+                .ascending,
+                null,
+            );
+
+            while (it.next()) |table| {
+                sorted_run_count += 1;
+                total_value_count += table.value_count;
+                if (table.value_count > largest_value_count) {
+                    largest_value_count = table.value_count;
+                }
+            }
+
+            // Estimate sizes based on value count (conservative 64 byte estimate)
+            const estimated_value_size: u64 = 64;
+            const total_size = total_value_count * estimated_value_size;
+            const largest_run_size = largest_value_count * estimated_value_size;
+
+            return .{
+                .sorted_run_count = sorted_run_count,
+                .total_size = total_size,
+                .largest_run_size = largest_run_size,
+                .value_count = total_value_count,
+            };
+        }
+
+        /// Check if tiered compaction should trigger for a level.
+        pub fn should_compact_tiered(
+            manifest: *const Manifest,
+            level_a: u8,
+            logical_size: u64,
+        ) bool {
+            assert(level_a < constants.lsm_levels - 1);
+
+            const stats = manifest.level_statistics(level_a);
+
+            const config = compaction_tiered.TieredCompactionConfig{
+                .size_ratio = @as(f64, @floatFromInt(constants.lsm_tiered_size_ratio_scaled)) / 10.0,
+                .max_space_amplification_percent = constants.lsm_tiered_max_space_amp_percent,
+                .max_sorted_runs_per_level = constants.lsm_tiered_max_sorted_runs,
+                .min_merge_width = 2,
+                .max_merge_width = 8,
+            };
+
+            return compaction_tiered.should_compact_tiered(
+                stats.sorted_run_count,
+                stats.total_size,
+                stats.largest_run_size,
+                logical_size,
+                config,
+            );
+        }
+
+        /// Get the current compaction strategy from configuration.
+        pub fn compaction_strategy() compaction_tiered.CompactionStrategy {
+            return if (constants.lsm_compaction_strategy == 0) .leveled else .tiered;
+        }
+
+        /// Unified compaction decision that respects the configured strategy.
+        pub fn should_compact_level(
+            manifest: *const Manifest,
+            level_a: u8,
+            logical_size: u64,
+        ) bool {
+            switch (compaction_strategy()) {
+                .leveled => return manifest.compaction_table(level_a) != null,
+                .tiered => return manifest.should_compact_tiered(level_a, logical_size),
+            }
         }
 
         pub fn verify(manifest: *const Manifest, snapshot: u64) void {
