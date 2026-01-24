@@ -117,10 +117,6 @@ None.
 
 ### Blockers/Concerns
 
-**Pre-existing build issues:**
-- `geo_benchmark_load.zig:902` and `metrics_server.zig:118` have `getrusage` API incompatibility with Zig 0.14.1
-- These do not block core functionality or tests, only benchmark/metrics utilities
-
 **Known limitations carried forward:**
 - ~90 TODOs remain in infrastructure code (Zig language limitations)
 - Antimeridian polygon queries require splitting at 180 meridian
@@ -133,4 +129,4 @@ Stopped at: Completed 12-11-PLAN.md (Adaptive Compaction Integration Tests) - Ph
 Resume file: None
 
 ---
-*Updated: 2026-01-24 — Phase 12 complete (11/11 plans). Adaptive compaction integration tests close gap for auto-tuning verification.*
+*Updated: 2026-01-24 — Phase 12 complete (11/11 plans). Fixed getrusage API for Zig 0.14.1 macOS compatibility.*
