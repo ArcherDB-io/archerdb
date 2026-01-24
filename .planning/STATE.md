@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-24)
 ## Current Position
 
 Phase: 12 of 16 (Storage Optimization)
-Plan: 1 of 8 in current phase
+Plan: 2 of 8 in current phase
 Status: In progress
-Last activity: 2026-01-24 - Completed 12-01-PLAN.md (LZ4 Compression Library Integration)
+Last activity: 2026-01-24 - Completed 12-02-PLAN.md (Write/Space Amplification Metrics)
 
-Progress: [██░░░░░░░░] 23% (v2.0: 8/35 requirements)
+Progress: [███░░░░░░░] 26% (v2.0: 9/35 requirements)
 
 ## v1.0 Summary
 
@@ -29,20 +29,20 @@ See `.planning/milestones/v1.0-REQUIREMENTS.md` for archived requirements.
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 6 (v2.0)
+- Total plans completed: 7 (v2.0)
 - Average duration: ~5min
-- Total execution time: ~32min
+- Total execution time: ~39min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 11 | 5 | ~27min | ~5min |
-| 12 | 1 | ~5min | ~5min |
+| 12 | 2 | ~12min | ~6min |
 
 **Recent Trend:**
-- Last 5 plans: 11-02, 11-03, 11-04, 11-05, 12-01
-- Trend: ~5min per plan
+- Last 5 plans: 11-03, 11-04, 11-05, 12-01, 12-02
+- Trend: ~5-6min per plan
 
 *Updated after each plan completion*
 
@@ -78,6 +78,9 @@ Phase 12 decisions:
 - 90% compression threshold: Only compress if savings exceed 10% (12-01)
 - CompressionType stored as u8 with 4-bit enum for future expansion (12-01)
 - Index blocks stay uncompressed for fast key lookups (12-01)
+- Scale ratios by 100 or 1000 for Gauge i64 precision (12-02)
+- Array of atomics per level using constants.lsm_levels (12-02)
+- Rolling window metrics: 1min, 5min, 1hr standard observability windows (12-02)
 
 ### Pending Todos
 
@@ -95,8 +98,8 @@ None.
 ## Session Continuity
 
 Last session: 2026-01-24
-Stopped at: Completed 12-01-PLAN.md (LZ4 Compression Library Integration)
+Stopped at: Completed 12-02-PLAN.md (Write/Space Amplification Metrics)
 Resume file: None
 
 ---
-*Updated: 2026-01-24 — Phase 12 plan 01 complete (LZ4 integration)*
+*Updated: 2026-01-24 — Phase 12 plan 02 complete (amplification metrics infrastructure)*
