@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-24)
 ## Current Position
 
 Phase: 11 of 16 (Measurement & Profiling Infrastructure)
-Plan: 2 of 5 in current phase
+Plan: 5 of 5 in current phase
 Status: In progress
-Last activity: 2026-01-24 - Completed 11-01-PLAN.md (CPU Profiling Infrastructure) and 11-02-PLAN.md
+Last activity: 2026-01-24 - Completed 11-05-PLAN.md (Tracy/Parca Profiling Infrastructure)
 
-Progress: [██░░░░░░░░] 6% (v2.0: 2/35 requirements)
+Progress: [██░░░░░░░░] 14% (v2.0: 5/35 requirements)
 
 ## v1.0 Summary
 
@@ -29,19 +29,19 @@ See `.planning/milestones/v1.0-REQUIREMENTS.md` for archived requirements.
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 2 (v2.0)
+- Total plans completed: 5 (v2.0)
 - Average duration: ~4min
-- Total execution time: ~8min
+- Total execution time: ~20min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 11 | 2 | ~8min | ~4min |
+| 11 | 5 | ~20min | ~4min |
 
 **Recent Trend:**
-- Last 5 plans: N/A (new milestone, only 2 complete)
-- Trend: N/A
+- Last 5 plans: 11-01 through 11-05
+- Trend: Consistent ~4min per plan
 
 *Updated after each plan completion*
 
@@ -62,6 +62,11 @@ Phase 11 decisions:
 - JSON output mode for CI integration in profiling scripts
 - POOP over hyperfine for hardware counter access (cycles, cache misses, branches)
 - 5% threshold for statistical significance in A/B comparisons
+- Tracy on-demand mode for zero overhead when profiler not connected
+- No-op fallback design for Tracy zones (compile to nothing when disabled)
+- Semantic color scheme for subsystems (query=green, storage=blue, etc)
+- Parca via eBPF for production continuous profiling (<1% overhead)
+- Profile builds use ReleaseFast with frame pointers
 
 ### Pending Todos
 
@@ -79,8 +84,8 @@ None.
 ## Session Continuity
 
 Last session: 2026-01-24
-Stopped at: Completed 11-01-PLAN.md and 11-02-PLAN.md
-Next action: Execute 11-03-PLAN.md (Memory Allocation Tracking)
+Stopped at: Completed 11-05-PLAN.md
+Next action: Phase 11 complete - ready for Phase 12 (Storage Layer Optimization)
 
 ---
-*Updated: 2026-01-24 - Completed 11-01-PLAN.md*
+*Updated: 2026-01-24 - Completed 11-05-PLAN.md*
