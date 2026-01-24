@@ -176,6 +176,60 @@ const ConfigProcess = struct {
     aof_recovery: bool = false,
     multiversion_binary_platform_size_max: u64 = 64 * MiB,
     multiversion_poll_interval_ms: u64 = 1000,
+
+    // =========================================================================
+    // Compaction Throttling Configuration
+    // =========================================================================
+    //
+    // Latency-driven compaction throttling prevents I/O spikes from impacting
+    // query latency. The throttle has two modes:
+    //
+    // 1. **Predictive (Primary)**: Monitors pending compaction bytes and
+    //    proactively slows compaction before write stalls occur. This is the
+    //    preferred path since it prevents degradation before it happens.
+    //
+    // 2. **Reactive (Fallback)**: Monitors P99 query latency and reduces
+    //    compaction throughput when latency exceeds threshold.
+    //
+    // These settings are tuned for geospatial workloads. For different workloads:
+    // - High-throughput, latency-tolerant: increase thresholds
+    // - Latency-sensitive: decrease thresholds
+    //
+    // See Phase 11 benchmarks for tuning guidance.
+    // =========================================================================
+
+    /// Enable compaction throttling (default: enabled).
+    /// When enabled, compaction throughput is reduced when pending compaction
+    /// bytes or P99 query latency exceeds configured thresholds.
+    compaction_throttle_enabled: bool = true,
+
+    /// P99 latency threshold in milliseconds to start throttling (default: 50ms).
+    /// When P99 query latency exceeds this threshold, compaction throughput
+    /// is gradually reduced. This is the "soft" threshold for the reactive path.
+    /// Must be > 0.
+    compaction_p99_threshold_ms: u32 = 50,
+
+    /// P99 latency critical threshold in milliseconds (default: 100ms).
+    /// When P99 exceeds this threshold, compaction immediately drops to
+    /// minimum throughput. This is the "emergency" threshold.
+    /// Must be > compaction_p99_threshold_ms.
+    compaction_p99_critical_ms: u32 = 100,
+
+    /// Minimum compaction throughput ratio (default: 10% = 100).
+    /// Compaction never drops below this percentage of full throughput.
+    /// Stored as permille (1000 = 100%, 100 = 10%).
+    /// Must be between 10 (1%) and 1000 (100%).
+    compaction_min_throughput_permille: u32 = 100,
+
+    /// Soft pending compaction bytes threshold in GiB (default: 64 GiB).
+    /// When pending compaction bytes exceed this threshold, compaction
+    /// throughput is gradually reduced (predictive throttling).
+    compaction_soft_pending_gib: u32 = 64,
+
+    /// Hard pending compaction bytes threshold in GiB (default: 256 GiB).
+    /// When pending compaction bytes exceed this threshold, compaction
+    /// throughput is immediately halved (aggressive predictive throttling).
+    compaction_hard_pending_gib: u32 = 256,
 };
 
 /// Configurations which are tunable per-cluster.
