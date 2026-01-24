@@ -129,3 +129,73 @@ test "adaptive: detects workload shift to scan-heavy" {
     // Scan-heavy uses L0 trigger of 6 (moderate)
     try testing.expectEqual(@as(u32, 6), rec.l0_trigger);
 }
+
+// =============================================================================
+// Test 3: No adaptation when conditions not met (single trigger)
+// =============================================================================
+
+test "adaptive: no adaptation without dual trigger" {
+    var state = AdaptiveState.init();
+    const config = AdaptiveConfig{};
+
+    // Establish baseline with 10 samples
+    for (0..10) |i| {
+        state.sample(
+            5000, // writes
+            5000, // reads
+            500, // scans
+            1000, // elapsed_ms
+            1.5, // space amp
+            3.0, // write amp
+            config,
+            @as(i128, @intCast(i)) * std.time.ns_per_s,
+        );
+    }
+    try testing.expect(state.baseline_established);
+
+    const initial_l0 = state.current_l0_trigger;
+
+    // Case 1: Write change WITHOUT space amp threshold
+    // Simulate 50% change in writes but space amp stays below 2.0
+    state.writes_per_second = state.baseline_writes_per_second * 1.5; // 50% change
+    state.current_space_amp = 1.5; // Below 2.0 threshold
+    try testing.expect(!state.shouldAdapt(config)); // Should NOT adapt
+
+    // Case 2: Space amp WITHOUT write change
+    // Space amp above threshold but writes changed by only 10%
+    state.writes_per_second = state.baseline_writes_per_second * 1.1; // 10% change
+    state.current_space_amp = 2.5; // Above 2.0 threshold
+    try testing.expect(!state.shouldAdapt(config)); // Should NOT adapt
+
+    // Case 3: Both conditions met - SHOULD adapt
+    state.writes_per_second = state.baseline_writes_per_second * 1.5; // 50% change
+    state.current_space_amp = 2.5; // Above 2.0 threshold
+    try testing.expect(state.shouldAdapt(config)); // Now it SHOULD adapt
+
+    // Verify parameters unchanged until we explicitly apply recommendations
+    try testing.expectEqual(initial_l0, state.current_l0_trigger);
+}
+
+// =============================================================================
+// Test 4: Operator override takes precedence
+// =============================================================================
+
+test "adaptive: operator override takes precedence over adaptive values" {
+    var state = AdaptiveState.init();
+
+    // Set adaptive values (simulating what adaptive tuning would set)
+    state.current_l0_trigger = 8;
+    state.current_compaction_threads = 3;
+
+    // Without override - use adaptive values
+    try testing.expectEqual(@as(u32, 8), state.getL0Trigger(null));
+    try testing.expectEqual(@as(u32, 3), state.getCompactionThreads(null));
+
+    // With override - operator values take precedence
+    try testing.expectEqual(@as(u32, 4), state.getL0Trigger(4));
+    try testing.expectEqual(@as(u32, 1), state.getCompactionThreads(1));
+
+    // Different override values
+    try testing.expectEqual(@as(u32, 20), state.getL0Trigger(20));
+    try testing.expectEqual(@as(u32, 4), state.getCompactionThreads(4));
+}
