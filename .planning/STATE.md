@@ -92,6 +92,9 @@ Phase 12 decisions:
 - XxHash64 from Zig stdlib for block deduplication (no external dependency) (12-07)
 - Per-level bounded dedup index with LRU eviction (64 MiB default per level) (12-07)
 - Module-level dedup exports for compaction integration flexibility (12-07)
+- Decompress at read callback for transparent block handling (12-03)
+- In-memory header update after decompression for downstream compatibility (12-03)
+- Grid buffer as source for decompression (avoid extra allocation) (12-03)
 
 ### Pending Todos
 
@@ -109,8 +112,8 @@ None.
 ## Session Continuity
 
 Last session: 2026-01-24
-Stopped at: Completed 12-07-PLAN.md (Block-Level Deduplication)
+Stopped at: Completed 12-03-PLAN.md (Block Compression Integration)
 Resume file: None
 
 ---
-*Updated: 2026-01-24 — Phase 12 plan 07 complete (block-level deduplication with XxHash64)*
+*Updated: 2026-01-24 — Phase 12 plan 03 complete (LZ4 block compression write/read path integration)*
