@@ -113,6 +113,11 @@ Phase 12 decisions:
 - Integration test patterns simulate workload shifts via sample() calls with varying op mixes (12-11)
 
 Phase 13 decisions:
+- Cuckoo hashing with two hash functions for O(1) guaranteed lookup (13-01)
+- hash2 uses bit rotation (67 bits) plus different constant for hash independence (13-01)
+- max_displacement=10000 for bounded worst-case insertion (13-01)
+- 50% target load factor for reliable cuckoo insertion (13-01)
+- Single-slot cuckoo (no buckets) for simplicity while guaranteeing O(1) lookup (13-01)
 - Split u128 keys into high/low u64 halves for SIMD (u128 too wide for most SIMD registers) (13-02)
 - Batch size of 4 keys (64 bytes = one cache line) for SIMD operations (13-02)
 - @Vector(4, u64) pattern for portable SIMD across AVX2/SSE/NEON (13-02)
