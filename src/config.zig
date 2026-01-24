@@ -230,6 +230,61 @@ const ConfigProcess = struct {
     /// When pending compaction bytes exceed this threshold, compaction
     /// throughput is immediately halved (aggressive predictive throttling).
     compaction_hard_pending_gib: u32 = 256,
+
+    // =========================================================================
+    // Adaptive Compaction Configuration
+    // =========================================================================
+    //
+    // Adaptive compaction automatically tunes compaction parameters based on
+    // observed workload patterns. This is the "just works" approach - most
+    // deployments shouldn't need manual compaction tuning.
+    //
+    // How it works:
+    // 1. Monitors workload metrics (writes/sec, reads/sec, scans/sec)
+    // 2. Classifies workload type (write_heavy, read_heavy, scan_heavy, balanced)
+    // 3. Adjusts parameters to optimize for detected workload
+    //
+    // Dual trigger prevents unnecessary parameter churn:
+    // - Write throughput must change by >threshold% from baseline
+    // - Space amplification must exceed threshold
+    // Only when BOTH conditions are met does adaptation occur.
+    //
+    // Operator overrides: Set override_l0_trigger or override_compaction_threads
+    // to lock specific parameters, preventing adaptive adjustment.
+    //
+    // See src/lsm/compaction_adaptive.zig for implementation details.
+    // =========================================================================
+
+    /// Enable adaptive compaction tuning (default: enabled).
+    /// When enabled, compaction parameters auto-adjust based on workload patterns.
+    /// Disable if you want full manual control over compaction settings.
+    adaptive_compaction_enabled: bool = true,
+
+    /// Write throughput change threshold for adaptation (default: 20% = 0.20).
+    /// Adaptation triggers when writes/sec changes by more than this percentage
+    /// from the baseline. Combined with space_amp_threshold for dual trigger.
+    /// Must be between 0.05 (5%) and 0.50 (50%).
+    /// Stored as permille (200 = 20%, range: 50-500).
+    adaptive_write_change_threshold_permille: u32 = 200,
+
+    /// Space amplification threshold for adaptation (default: 2.0x).
+    /// Adaptation triggers when physical_size / logical_size exceeds this ratio.
+    /// Combined with write_change_threshold for dual trigger.
+    /// Must be between 1.5x and 5.0x.
+    /// Stored as percentage (200 = 2.0x, range: 150-500).
+    adaptive_space_amp_threshold_percent: u32 = 200,
+
+    /// Operator override for L0 compaction trigger (default: null = use adaptive).
+    /// If set, overrides the adaptive L0 trigger with this fixed value.
+    /// Useful when you know the optimal L0 trigger for your workload.
+    /// Valid range: 2-20.
+    override_l0_trigger: ?u32 = null,
+
+    /// Operator override for compaction thread count (default: null = use adaptive).
+    /// If set, overrides the adaptive thread count with this fixed value.
+    /// Useful when you want to limit compaction I/O impact.
+    /// Valid range: 1-4.
+    override_compaction_threads: ?u32 = null,
 };
 
 /// Configurations which are tunable per-cluster.
