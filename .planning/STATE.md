@@ -124,6 +124,10 @@ Phase 13 decisions:
 - Per-operation counters vs lazy update: counters increment per lookup/insert, gauges lazy-update on scrape (13-03)
 - Unconditional Prometheus recording: metrics recorded regardless of track_stats option (13-03)
 - Displacement count as proxy for insert cost via probe_count (13-03)
+- 50% load factor for RAM estimation matches cuckoo implementation (13-04)
+- Linux /proc/meminfo parsing with MemFree fallback for older kernels (13-04)
+- macOS 80% of hw.memsize as available memory estimate (13-04)
+- Default 10% headroom for validated init, capped at 50% max (13-04)
 - Load factor thresholds for cuckoo hashing: 50% optimal, 70% warning, 80% critical (13-05)
 - Commented out insert_failures_total alert (metric not implemented) for future use (13-05)
 
