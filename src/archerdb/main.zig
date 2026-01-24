@@ -1125,6 +1125,7 @@ fn command_repl(
         .cluster_id = args.cluster,
         .addresses = args.addresses.const_slice(),
         .verbose = args.verbose,
+        .statements = if (args.statements.len > 0) args.statements else null,
     });
     defer repl_instance.deinit(gpa);
 

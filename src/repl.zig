@@ -204,7 +204,9 @@ pub fn ReplType(comptime MessageBus: type) type {
             };
 
             // Initialize terminal
-            try self.terminal.init(true);
+            // Non-interactive mode when statements are provided via --command
+            const interactive = self.options.statements == null;
+            try self.terminal.init(interactive);
 
             // Initialize completion engine
             try self.completion.init();
@@ -962,7 +964,8 @@ test "repl: history buffer wraps around" {
     try std.testing.expectEqual(HISTORY_SIZE, history.count);
 
     // Most recent should be last added
-    const last = std.fmt.bufPrint(&[_]u8{0} ** 32, "cmd{d}", .{HISTORY_SIZE + 9}) catch unreachable;
+    var buf: [32]u8 = [_]u8{0} ** 32;
+    const last = std.fmt.bufPrint(&buf, "cmd{d}", .{HISTORY_SIZE + 9}) catch unreachable;
     _ = last;
 }
 

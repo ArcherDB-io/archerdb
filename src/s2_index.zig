@@ -1033,6 +1033,183 @@ test "S2.coverCap: basic" {
     try std.testing.expect(has_valid_range);
 }
 
+test "S2.cell_id: fromPoint vs fromLatLonNano consistency" {
+    // Test that fromPoint(cap.center) gives the same cell as fromLatLonNano
+    const lat_nano: i64 = 37_820_000_000; // 37.82 degrees
+    const lon_nano: i64 = -122_370_000_000; // -122.37 degrees
+
+    // Method 1: Direct via fromLatLonNano
+    const cell_via_latlon = s2.cell_id.fromLatLonNano(lat_nano, lon_nano, 8);
+
+    // Method 2: Via Cap center
+    const cap = s2.Cap.fromLatLonNanoRadius(lat_nano, lon_nano, 1000.0);
+    const cell_via_cap = s2.cell_id.fromPoint(cap.center_x, cap.center_y, cap.center_z, 8);
+
+    std.debug.print("\n[TEST] Cell via fromLatLonNano: 0x{X}\n", .{cell_via_latlon});
+    std.debug.print("[TEST] Cell via Cap center: 0x{X}\n", .{cell_via_cap});
+    std.debug.print("[TEST] Cap center: ({d:.6}, {d:.6}, {d:.6})\n", .{ cap.center_x, cap.center_y, cap.center_z });
+
+    // Also compute the expected (x,y,z) from lat/lon
+    const smath = std.math;
+    const lat_rad = @as(f64, @floatFromInt(lat_nano)) * (smath.pi / 180_000_000_000.0);
+    const lon_rad = @as(f64, @floatFromInt(lon_nano)) * (smath.pi / 180_000_000_000.0);
+    const cos_lat = smath.cos(lat_rad);
+    const expected_x = cos_lat * smath.cos(lon_rad);
+    const expected_y = cos_lat * smath.sin(lon_rad);
+    const expected_z = smath.sin(lat_rad);
+    std.debug.print("[TEST] Expected (x,y,z): ({d:.6}, {d:.6}, {d:.6})\n", .{ expected_x, expected_y, expected_z });
+
+    try std.testing.expectEqual(cell_via_latlon, cell_via_cap);
+}
+
+test "S2.coverCap: debug covering cells" {
+    // Debug the covering to see what cells are generated
+    const lat_nano: i64 = 37_820_000_000;
+    const lon_nano: i64 = -122_370_000_000;
+    const radius_mm: u32 = 20_000_000; // 20km
+
+    const cap = s2.Cap.fromLatLonNanoRadius(lat_nano, lon_nano, @as(f64, @floatFromInt(radius_mm)) / 1000.0);
+
+    // Use a simple allocator for testing
+    const allocator = std.testing.allocator;
+
+    // Create coverer with min_level=4, max_level=18 to see full behavior
+    const coverer = s2.RegionCoverer.initWithParams(4, 18, 16);
+
+    var covering = coverer.coverCap(cap, allocator) catch |err| {
+        std.debug.print("[TEST] coverCap failed: {}\n", .{err});
+        return err;
+    };
+    defer covering.deinit();
+
+    std.debug.print("\n[TEST] Covering has {d} ranges:\n", .{covering.ranges.len});
+    for (covering.ranges, 0..) |range, i| {
+        std.debug.print("  Range {d}: [0x{X}, 0x{X}]\n", .{ i, range.range_min, range.range_max });
+    }
+
+    // Check if the center cell is covered
+    const center_cell = s2.cell_id.fromLatLonNano(lat_nano, lon_nano, 30);
+    const is_covered = covering.containsCell(center_cell);
+    std.debug.print("[TEST] Center cell 0x{X} covered: {}\n", .{ center_cell, is_covered });
+
+    // Check the level-8 cell
+    const level8_direct = s2.cell_id.fromLatLonNano(lat_nano, lon_nano, 8);
+    const level8_parent = s2.cell_id.parentAtLevel(center_cell, 8);
+    std.debug.print("[TEST] Level-8 via fromLatLonNano: 0x{X}\n", .{level8_direct});
+    std.debug.print("[TEST] Level-8 via parent: 0x{X}\n", .{level8_parent});
+    std.debug.print("[TEST] Level-8 cells match: {}\n", .{level8_direct == level8_parent});
+
+    try std.testing.expect(is_covered);
+}
+
+test "S2.coverCap: point within radius is covered" {
+    // Test case from integration_tests.zig
+    // Event at: lat=37.7749, lon=-122.4194
+    // Query center: lat=37.82, lon=-122.37, radius=20km
+    // Event should be within the query's covering
+
+    const event_lat_nano: i64 = 37_774_900_000; // 37.7749 degrees
+    const event_lon_nano: i64 = -122_419_400_000; // -122.4194 degrees
+
+    const query_center_lat_nano: i64 = 37_820_000_000; // 37.82 degrees
+    const query_center_lon_nano: i64 = -122_370_000_000; // -122.37 degrees
+    const query_radius_mm: u32 = 20_000_000; // 20km
+
+    // Get the cell ID for the event location at level 30
+    const event_cell_id = S2.latLonToCellId(event_lat_nano, event_lon_nano, 30);
+    std.debug.print("\n[TEST] Event cell ID: 0x{X}\n", .{event_cell_id});
+
+    // First, verify the event is within 20km
+    try std.testing.expect(S2.isWithinDistance(
+        query_center_lat_nano,
+        query_center_lon_nano,
+        event_lat_nano,
+        event_lon_nano,
+        query_radius_mm,
+    ));
+    std.debug.print("[TEST] Event is within {d}mm of query center\n", .{query_radius_mm});
+
+    // Debug: Check the Cap's center point vs cell_id.fromLatLonNano
+    const cap = s2.Cap.fromLatLonNanoRadius(
+        query_center_lat_nano,
+        query_center_lon_nano,
+        @as(f64, @floatFromInt(query_radius_mm)) / 1000.0,
+    );
+    const cap_center_cell = s2.cell_id.fromPoint(cap.center_x, cap.center_y, cap.center_z, 8);
+    std.debug.print("[TEST] Cap center (x,y,z) = ({d:.6}, {d:.6}, {d:.6})\n", .{ cap.center_x, cap.center_y, cap.center_z });
+    std.debug.print("[TEST] Cap center cell at level 8: 0x{X}\n", .{cap_center_cell});
+
+    // Generate covering for the query
+    // For 20km radius: log2(7842000/20000) ≈ 8.6, floor = 8
+    // So min_level = 8, max_level = 12
+    // But the covering might be too tight, so let's try 4-18 to debug
+    var scratch: [s2_scratch_size]u8 = undefined;
+    const covering = S2.coverCap(
+        &scratch,
+        query_center_lat_nano,
+        query_center_lon_nano,
+        query_radius_mm,
+        4, // Try wider min_level to see if covering works
+        18, // Wider max_level
+    );
+
+    // Print covering ranges for debugging
+    var valid_range_count: usize = 0;
+    for (covering, 0..) |range, i| {
+        if (range.start != 0 or range.end != 0) {
+            std.debug.print("[TEST] Range {d}: [0x{X}, 0x{X})\n", .{ i, range.start, range.end });
+            valid_range_count += 1;
+        }
+    }
+    std.debug.print("[TEST] Total ranges: {d}\n", .{valid_range_count});
+
+    // Check if event cell is within any covering range
+    var found_in_covering = false;
+    for (covering) |range| {
+        if (range.start == 0 and range.end == 0) continue;
+        if (event_cell_id >= range.start and event_cell_id < range.end) {
+            found_in_covering = true;
+            break;
+        }
+    }
+
+    std.debug.print("[TEST] Event in covering: {}\n", .{found_in_covering});
+
+    // If not found, let's debug: find what cell at level 8 contains the event
+    if (!found_in_covering) {
+        // Get parent cells at different levels
+        std.debug.print("[TEST] Event cell ancestry:\n", .{});
+        var cell = event_cell_id;
+        var lvl: u8 = 30;
+        while (lvl > 0) : (lvl -= 1) {
+            cell = s2.cell_id.parent(cell);
+            if (lvl <= 12) {
+                // Check if this ancestor is in any range
+                var in_range = false;
+                for (covering) |range| {
+                    if (range.start == 0 and range.end == 0) continue;
+                    if (cell >= range.start and cell < range.end) {
+                        in_range = true;
+                        break;
+                    }
+                }
+                std.debug.print("  Level {d}: 0x{X} in_range={}\n", .{ lvl, cell, in_range });
+            }
+        }
+
+        // Check what the expected covering cell at level 8 is
+        const event_cell_at_8 = s2.cell_id.fromLatLonNano(event_lat_nano, event_lon_nano, 8);
+        std.debug.print("[TEST] Event's level-8 cell: 0x{X}\n", .{event_cell_at_8});
+
+        // Check query center's level-8 cell
+        const center_cell_at_8 = s2.cell_id.fromLatLonNano(query_center_lat_nano, query_center_lon_nano, 8);
+        std.debug.print("[TEST] Query center's level-8 cell: 0x{X}\n", .{center_cell_at_8});
+    }
+
+    // The event should be within the covering since it's within 20km of the center
+    try std.testing.expect(found_in_covering);
+}
+
 test "S2.isWithinDistance: basic" {
     // Same point
     try std.testing.expect(S2.isWithinDistance(0, 0, 0, 0, 1));

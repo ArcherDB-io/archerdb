@@ -138,124 +138,111 @@ pub const RegionCoverer = struct {
 
     /// Generate a covering for a Cap (used for radius queries).
     ///
-    /// This algorithm ensures the cap's center point is always covered by:
-    /// 1. Finding the cell that contains the center at each level
-    /// 2. Prioritizing that cell by adding it last to the stack (processed first)
-    /// 3. Expanding outward from the center to cover the rest of the cap
+    /// IMPORTANT: This algorithm guarantees COMPLETE coverage of the cap region.
+    /// All cells that may intersect the cap are included in the covering.
+    ///
+    /// Strategy:
+    /// 1. Start at a level where cells are large enough to cover the cap with few cells
+    /// 2. If too many cells are needed, use coarser cells
+    /// 3. Never drop cells that intersect the cap - use coarser level instead
     pub fn coverCap(self: RegionCoverer, cap: Cap, allocator: Allocator) !Covering {
-        // Calculate appropriate levels based on cap radius
+        // Calculate the minimum level based on cap radius
         const radius = cap.radiusMeters();
-        const suggested_min = levelForRadius(radius);
+        var target_level = levelForRadius(radius);
 
-        const actual_min = @max(self.min_level, suggested_min);
-        const actual_max = @min(self.max_level, @min(actual_min + 4, default_max_level));
+        // Apply configured min/max constraints
+        target_level = @max(self.min_level, target_level);
+        target_level = @min(self.max_level, target_level);
 
-        // Work list of cells to process (stack - LIFO order)
-        var candidates = std.ArrayList(u64).init(allocator);
-        defer candidates.deinit();
+        // Try progressively coarser levels until we can fit all intersecting cells
+        var actual_level = target_level;
+        while (actual_level > 0) {
+            const count = countIntersectingCells(cap, actual_level);
+            if (count <= self.max_cells) {
+                break;
+            }
+            // Too many cells at this level, try coarser
+            actual_level -= 1;
+        }
 
-        // Result cells
+        // Collect all cells at actual_level that intersect the cap
         var result_cells = std.ArrayList(u64).init(allocator);
         defer result_cells.deinit();
 
-        // Find the cell at level 0 that contains the cap's center
-        const center_cell_level0 = cell_id.fromPoint(
-            cap.center_x,
-            cap.center_y,
-            cap.center_z,
-            0,
-        );
-
-        // Start with the 6 face cells at LEVEL 0, but add the center cell LAST
-        // so it gets processed FIRST (stack is LIFO).
-        // First add non-center face cells that intersect
-        for (0..6) |f| {
-            const face_cell = makeFaceCell(@intCast(f), 0);
-            if (face_cell != center_cell_level0 and cap.mayIntersectCell(face_cell)) {
-                try candidates.append(face_cell);
-            }
-        }
-        // Then add the center cell (will be processed first)
-        if (cap.mayIntersectCell(center_cell_level0)) {
-            try candidates.append(center_cell_level0);
-        }
-
-        // Process candidates
-        while (candidates.items.len > 0 and result_cells.items.len < self.max_cells) {
-            const current = candidates.pop().?;
-            const current_level = cell_id.level(current);
-
-            // For cells below actual_min, always subdivide
-            if (current_level < actual_min) {
-                // Find which child contains the cap's center
-                const center_at_next_level = cell_id.fromPoint(
-                    cap.center_x,
-                    cap.center_y,
-                    cap.center_z,
-                    current_level + 1,
-                );
-
-                const kids = cell_id.children(current);
-                // Add non-center children first
-                for (kids) |kid| {
-                    if (kid != center_at_next_level and cap.mayIntersectCell(kid)) {
-                        try candidates.append(kid);
-                    }
-                }
-                // Add center child last (processed first due to LIFO)
-                for (kids) |kid| {
-                    if (kid == center_at_next_level and cap.mayIntersectCell(kid)) {
-                        try candidates.append(kid);
-                    }
-                }
-                continue;
-            }
-
-            if (cap.containsCell(current)) {
-                // Cell fully inside - add to result
-                try result_cells.append(current);
-            } else if (cap.mayIntersectCell(current)) {
-                // Cell partially inside
-                if (current_level < actual_max and
-                    result_cells.items.len + candidates.items.len < self.max_cells * 4)
-                {
-                    // Find which child contains the cap's center
-                    const center_at_next_level = cell_id.fromPoint(
-                        cap.center_x,
-                        cap.center_y,
-                        cap.center_z,
-                        current_level + 1,
-                    );
-
-                    // Subdivide into children, prioritizing center child
-                    const kids = cell_id.children(current);
-                    // Add non-center children first
-                    for (kids) |kid| {
-                        if (kid != center_at_next_level and cap.mayIntersectCell(kid)) {
-                            try candidates.append(kid);
-                        }
-                    }
-                    // Add center child last (processed first due to LIFO)
-                    for (kids) |kid| {
-                        if (kid == center_at_next_level and cap.mayIntersectCell(kid)) {
-                            try candidates.append(kid);
-                        }
-                    }
-                } else {
-                    // At max level or too many candidates, add as-is
-                    try result_cells.append(current);
-                }
-            }
-            // Else: fully outside, discard
-        }
-
-        // If we hit max_cells limit, add remaining candidates
-        while (candidates.items.len > 0 and result_cells.items.len < self.max_cells) {
-            try result_cells.append(candidates.pop().?);
-        }
+        try collectIntersectingCells(cap, actual_level, &result_cells);
 
         // Convert cells to ranges
         return cellsToRanges(result_cells.items, allocator);
+    }
+
+    /// Count cells at a given level that intersect a cap.
+    fn countIntersectingCells(cap: Cap, target_level: u8) u32 {
+        var count: u32 = 0;
+
+        // Process each face
+        for (0..6) |f| {
+            const face_cell = makeFaceCell(@intCast(f), 0);
+            if (cap.mayIntersectCell(face_cell)) {
+                count += countIntersectingCellsRecursive(cap, face_cell, target_level);
+            }
+        }
+
+        return count;
+    }
+
+    fn countIntersectingCellsRecursive(cap: Cap, current: u64, target_level: u8) u32 {
+        const current_level = cell_id.level(current);
+
+        if (!cap.mayIntersectCell(current)) {
+            return 0;
+        }
+
+        if (current_level == target_level) {
+            return 1;
+        }
+
+        // Recurse to children
+        var count: u32 = 0;
+        const kids = cell_id.children(current);
+        for (kids) |kid| {
+            count += countIntersectingCellsRecursive(cap, kid, target_level);
+        }
+        return count;
+    }
+
+    /// Collect all cells at target_level that intersect the cap.
+    fn collectIntersectingCells(cap: Cap, target_level: u8, result: *std.ArrayList(u64)) !void {
+        // Process each face
+        for (0..6) |f| {
+            const face_cell = makeFaceCell(@intCast(f), 0);
+            if (cap.mayIntersectCell(face_cell)) {
+                try collectIntersectingCellsRecursive(cap, face_cell, target_level, result);
+            }
+        }
+    }
+
+    fn collectIntersectingCellsRecursive(
+        cap: Cap,
+        current: u64,
+        target_level: u8,
+        result: *std.ArrayList(u64),
+    ) !void {
+        const current_level = cell_id.level(current);
+
+        if (!cap.mayIntersectCell(current)) {
+            return;
+        }
+
+        if (current_level == target_level) {
+            try result.append(current);
+            return;
+        }
+
+        // Recurse to children
+        const kids = cell_id.children(current);
+        for (kids) |kid| {
+            try collectIntersectingCellsRecursive(cap, kid, target_level, result);
+        }
     }
 
     /// Generate a covering for a cell (used for testing/debugging).

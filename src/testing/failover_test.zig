@@ -21,7 +21,8 @@ const stdx = @import("stdx");
 const constants = @import("../constants.zig");
 const tb = @import("../vsr.zig").archerdb;
 
-const archerdb: []const u8 = @import("test_options").archerdb_exe;
+const test_options = @import("test_options");
+const archerdb: []const u8 = if (@hasDecl(test_options, "archerdb_exe")) test_options.archerdb_exe else "";
 
 // =============================================================================
 // Failover Test Infrastructure
@@ -128,6 +129,7 @@ test "integration: failover cluster formation" {
     if (builtin.target.os.tag == .windows) {
         return error.SkipZigTest; // Windows not supported
     }
+    if (archerdb.len == 0) return error.SkipZigTest; // Unit tests skip
 
     const cluster = try FailoverCluster.init(testing.allocator);
     defer cluster.deinit(testing.allocator);
@@ -155,6 +157,7 @@ test "integration: failover single replica failure" {
     if (builtin.target.os.tag == .windows) {
         return error.SkipZigTest;
     }
+    if (archerdb.len == 0) return error.SkipZigTest;
 
     const cluster = try FailoverCluster.init(testing.allocator);
     defer cluster.deinit(testing.allocator);
@@ -189,6 +192,7 @@ test "integration: failover replica recovery" {
     if (builtin.target.os.tag == .windows) {
         return error.SkipZigTest;
     }
+    if (archerdb.len == 0) return error.SkipZigTest;
 
     const cluster = try FailoverCluster.init(testing.allocator);
     defer cluster.deinit(testing.allocator);
@@ -226,6 +230,7 @@ test "integration: failover quorum loss detection" {
     if (builtin.target.os.tag == .windows) {
         return error.SkipZigTest;
     }
+    if (archerdb.len == 0) return error.SkipZigTest;
 
     const cluster = try FailoverCluster.init(testing.allocator);
     defer cluster.deinit(testing.allocator);
@@ -256,6 +261,7 @@ test "integration: failover quorum recovery" {
     if (builtin.target.os.tag == .windows) {
         return error.SkipZigTest;
     }
+    if (archerdb.len == 0) return error.SkipZigTest;
 
     const cluster = try FailoverCluster.init(testing.allocator);
     defer cluster.deinit(testing.allocator);
@@ -293,6 +299,7 @@ test "integration: failover rolling restart" {
     if (builtin.target.os.tag == .windows) {
         return error.SkipZigTest;
     }
+    if (archerdb.len == 0) return error.SkipZigTest;
 
     const cluster = try FailoverCluster.init(testing.allocator);
     defer cluster.deinit(testing.allocator);

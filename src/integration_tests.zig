@@ -31,6 +31,9 @@ const skip_upgrade: bool = @import("test_options").skip_upgrade;
 
 comptime {
     _ = @import("clients/c/arch_client_header_test.zig");
+    _ = @import("testing/backup_restore_test.zig");
+    _ = @import("testing/encryption_test.zig");
+    _ = @import("testing/failover_test.zig");
 }
 
 fn pickFreePort() !u16 {
@@ -422,8 +425,9 @@ test "integration: geospatial batch insert and query" {
         .sent_data_size = 0,
     };
 
-    // Create 100 events spread across different locations
-    const batch_size = 100;
+    // Create events spread across different locations
+    // Use 20 events to fit within lite config's smaller message_body_size
+    const batch_size = 20;
     var events: [batch_size]tb.GeoEvent = undefined;
     for (0..batch_size) |i| {
         // Distribute events across a grid around San Francisco
@@ -482,6 +486,8 @@ test "integration: geospatial batch insert and query" {
     }
 
     // Query all events via radius (large radius to capture all)
+    // Event coords: lat 37.7749 to 37.7849, lon -122.4194 to -122.3194
+    // Query center: lat 37.82, lon -122.37, radius 20km
     var radius_filter = tb.QueryRadiusFilter{
         .center_lat_nano = degrees_to_nano(37.82), // Center of grid
         .center_lon_nano = degrees_to_nano(-122.37),
@@ -489,7 +495,7 @@ test "integration: geospatial batch insert and query" {
         .limit = 200,
         .timestamp_min = 0,
         .timestamp_max = 0,
-        .group_id = 0,
+        .group_id = 1, // Match the group_id used in make_event
     };
     const radius_reply = try send_request(
         &client,
@@ -505,8 +511,8 @@ test "integration: geospatial batch insert and query" {
             radius_reply[0..@sizeOf(tb.QueryResponse)],
         );
         try testing.expect(header.error_status() == null);
-        // Should find most/all of our batch events
-        try testing.expect(header.count >= 50);
+        // Should find most/all of our batch events (adjusted for lite config batch size)
+        try testing.expect(header.count >= batch_size / 2);
     }
 }
 
@@ -776,7 +782,7 @@ test "integration: geospatial multi-region distribution" {
         .limit = 10,
         .timestamp_min = 0,
         .timestamp_max = 0,
-        .group_id = 0,
+        .group_id = 1, // Match group_id used in make_event
     };
     const tokyo_reply = try send_request(
         &client,
@@ -799,7 +805,7 @@ test "integration: geospatial multi-region distribution" {
         .limit = 10,
         .timestamp_min = 0,
         .timestamp_max = 0,
-        .group_id = 0,
+        .group_id = 1, // Match group_id used in make_event
     };
     const europe_reply = try send_request(
         &client,
@@ -990,8 +996,9 @@ test "repl smoke" {
         "{archerdb} repl --cluster=0 --addresses=127.0.0.1:3001 --command=STATUS",
         .{ .archerdb = archerdb },
     );
-    _ = stdout;
-    try expectContains(stderr, "REPL is not yet implemented");
+    _ = stderr;
+    // Verify REPL outputs cluster status information
+    try expectContains(stdout, "Cluster Status");
 }
 
 test "in-place upgrade" {

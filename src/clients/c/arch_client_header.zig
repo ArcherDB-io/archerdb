@@ -478,7 +478,13 @@ fn resolve_c_type(comptime Type: type) []const u8 {
     switch (@typeInfo(Type)) {
         .array => |info| return resolve_c_type(info.child),
         .@"enum" => |info| return resolve_c_type(info.tag_type),
-        .@"struct" => {
+        .@"struct" => |info| {
+            // Packed structs must be emitted as integers when used as struct fields
+            // to ensure correct ABI (C enums are typically 4 bytes, not matching packed size)
+            if (info.layout == .@"packed") {
+                return resolve_c_type(std.meta.Int(.unsigned, @bitSizeOf(Type)));
+            }
+            // For extern structs, look up in type_mappings
             inline for (type_mappings) |mapping| {
                 if (Type == mapping[0]) return mapping[1];
             }

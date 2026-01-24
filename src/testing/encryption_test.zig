@@ -200,7 +200,7 @@ test "integration: encryption file header validation" {
     // Corrupt magic bytes
     header.magic = .{ 'B', 'A', 'D', '!' };
     const corrupt_magic_result = header.validate();
-    try testing.expectError(EncryptionError.InvalidHeader, corrupt_magic_result);
+    try testing.expectError(EncryptionError.InvalidMagic, corrupt_magic_result);
 
     // Fix magic, corrupt version
     header.magic = ENCRYPTED_FILE_MAGIC;
@@ -274,9 +274,15 @@ test "integration: encrypted file roundtrip" {
     var key: [DEK_SIZE]u8 = undefined;
     crypto.random.bytes(&key);
 
-    // Test data representing serialized GeoEvents
-    const test_data = @embedFile("../testdata/sample_events.bin");
-    _ = test_data; // Placeholder - actual data embedded if available
+    // Verify key is populated (basic sanity check)
+    var all_zero = true;
+    for (key) |b| {
+        if (b != 0) {
+            all_zero = false;
+            break;
+        }
+    }
+    try testing.expect(!all_zero);
 
     // File roundtrip is tested in src/encryption.zig test cases
     // This test validates the module linkage
@@ -285,17 +291,30 @@ test "integration: encrypted file roundtrip" {
 test "integration: encryption statistics tracking" {
     // INT-06: Verify encryption statistics are tracked correctly
 
-    var stats = encryption.EncryptionStats{};
+    var stats = encryption.EncryptionStats.init();
 
-    // Simulate encryption operations
-    stats.recordEncryption(1024);
-    stats.recordEncryption(2048);
-    stats.recordDecryption(1024);
+    // Verify initial state is zero
+    try testing.expectEqual(@as(u64, 0), stats.encrypt_ops.load(.monotonic));
+    try testing.expectEqual(@as(u64, 0), stats.decrypt_ops.load(.monotonic));
+    try testing.expectEqual(@as(u64, 0), stats.bytes_encrypted.load(.monotonic));
+    try testing.expectEqual(@as(u64, 0), stats.bytes_decrypted.load(.monotonic));
 
-    try testing.expectEqual(@as(u64, 2), stats.encryptions);
-    try testing.expectEqual(@as(u64, 1), stats.decryptions);
-    try testing.expectEqual(@as(u64, 3072), stats.bytes_encrypted);
-    try testing.expectEqual(@as(u64, 1024), stats.bytes_decrypted);
+    // Simulate encryption operations using atomic increments
+    _ = stats.encrypt_ops.fetchAdd(1, .monotonic);
+    _ = stats.bytes_encrypted.fetchAdd(1024, .monotonic);
+    _ = stats.encrypt_ops.fetchAdd(1, .monotonic);
+    _ = stats.bytes_encrypted.fetchAdd(2048, .monotonic);
+    _ = stats.decrypt_ops.fetchAdd(1, .monotonic);
+    _ = stats.bytes_decrypted.fetchAdd(1024, .monotonic);
+
+    try testing.expectEqual(@as(u64, 2), stats.encrypt_ops.load(.monotonic));
+    try testing.expectEqual(@as(u64, 1), stats.decrypt_ops.load(.monotonic));
+    try testing.expectEqual(@as(u64, 3072), stats.bytes_encrypted.load(.monotonic));
+    try testing.expectEqual(@as(u64, 1024), stats.bytes_decrypted.load(.monotonic));
+
+    // Test reset
+    stats.reset();
+    try testing.expectEqual(@as(u64, 0), stats.encrypt_ops.load(.monotonic));
 }
 
 // =============================================================================
@@ -308,7 +327,7 @@ test "integration: key provider type parsing" {
     const KeyProviderType = encryption.KeyProviderType;
 
     try testing.expectEqual(KeyProviderType.file, KeyProviderType.fromString("file").?);
-    try testing.expectEqual(KeyProviderType.aws_kms, KeyProviderType.fromString("aws_kms").?);
+    try testing.expectEqual(KeyProviderType.aws_kms, KeyProviderType.fromString("aws-kms").?);
     try testing.expectEqual(KeyProviderType.vault, KeyProviderType.fromString("vault").?);
 
     try testing.expect(KeyProviderType.fromString("invalid") == null);
@@ -332,23 +351,37 @@ test "integration: file key provider basic operations" {
     var kek: [DEK_SIZE]u8 = undefined;
     crypto.random.bytes(&kek);
 
-    const file = try tmp_dir.dir.createFile("test.key", .{});
-    try file.writeAll(&kek);
-    file.close();
+    {
+        const file = try tmp_dir.dir.createFile("test.key", .{});
+        defer file.close();
+        try file.writeAll(&kek);
+    }
 
-    // Initialize FileKeyProvider
-    var provider = try encryption.FileKeyProvider.init(testing.allocator, full_key_path);
-    defer provider.deinit();
+    // Set file permissions to 0400 (required by FileKeyProvider)
+    const builtin = @import("builtin");
+    if (builtin.os.tag != .windows) {
+        const posix = std.posix;
+        const key_file = try std.fs.cwd().openFile(full_key_path, .{});
+        defer key_file.close();
+        posix.fchmod(key_file.handle, 0o400) catch {};
+    }
+
+    // Initialize FileKeyProvider with key_id
+    var file_provider = try encryption.FileKeyProvider.init(testing.allocator, full_key_path, "test-key");
+    defer file_provider.deinit();
+
+    // Load the key from file
+    try file_provider.loadKey();
+
+    // Get KeyProvider interface
+    const key_provider = file_provider.provider();
 
     // Test wrap/unwrap cycle
     var dek: [DEK_SIZE]u8 = undefined;
     crypto.random.bytes(&dek);
 
-    var wrapped: [encryption.WRAPPED_DEK_SIZE]u8 = undefined;
-    try provider.wrapKey(&dek, &wrapped);
-
-    var unwrapped: [DEK_SIZE]u8 = undefined;
-    try provider.unwrapKey(&wrapped, &unwrapped);
+    const wrapped = try key_provider.wrapDek(&dek);
+    const unwrapped = try key_provider.unwrapDek(&wrapped);
 
     try testing.expectEqualSlices(u8, &dek, &unwrapped);
 }

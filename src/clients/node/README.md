@@ -491,3 +491,4 @@ const results = await client.queryRadius({
   radius_m: 5000,
   group_id: fleetId,  // Only returns events in this fleet
 })
+```

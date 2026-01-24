@@ -110,7 +110,7 @@ typedef struct geo_event_t {
     uint32_t ttl_seconds;
     uint32_t accuracy_mm;
     uint16_t heading_cdeg;
-    GEO_EVENT_FLAGS flags;
+    uint16_t flags;
     uint8_t reserved[12];
 } geo_event_t;
 
