@@ -1240,6 +1240,36 @@ const CLIArgs = union(enum) {
         \\        Defaults to "127.0.0.1" for security (localhost only).
         \\        Use "0.0.0.0" to listen on all interfaces (requires explicit opt-in).
         \\
+        \\  --vsr-timeout-profile=<cloud|datacenter|custom>
+        \\        Select timeout profile preset for replication (cloud/datacenter/custom).
+        \\
+        \\  --vsr-timeout-jitter-pct=<percent>
+        \\        Jitter range percentage (+/-) applied to timeout values.
+        \\
+        \\  --vsr-timeout-heartbeat-ms=<ms>
+        \\        Override heartbeat interval in milliseconds (custom profile).
+        \\
+        \\  --vsr-timeout-election-ms=<ms>
+        \\        Override election timeout in milliseconds (custom profile).
+        \\
+        \\  --vsr-timeout-request-ms=<ms>
+        \\        Override request timeout in milliseconds (custom profile).
+        \\
+        \\  --vsr-timeout-connection-ms=<ms>
+        \\        Override connection timeout in milliseconds (custom profile).
+        \\
+        \\  --vsr-timeout-view-change-ms=<ms>
+        \\        Override view change timeout in milliseconds (custom profile).
+        \\
+        \\  --vsr-quorum-preset=<classic|fast_commit|strong_leader>
+        \\        Select quorum preset for flexible Paxos configuration.
+        \\
+        \\  --vsr-quorum-phase1=<n>
+        \\        Override phase-1 quorum size (election).
+        \\
+        \\  --vsr-quorum-phase2=<n>
+        \\        Override phase-2 quorum size (commit).
+        \\
         \\  --verbose
         \\        Print compile-time configuration along with the build version.
         \\

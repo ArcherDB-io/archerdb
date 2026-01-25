@@ -45,12 +45,12 @@ Requirements for enterprise-scale performance. Each maps to roadmap phases.
 
 ### Cluster & Consensus
 
-- [ ] **CLUST-01**: Connection pooling for client connections
-- [ ] **CLUST-02**: VSR timeout tuning with randomized jitter
-- [ ] **CLUST-03**: Load shedding and circuit breakers for overload protection
-- [ ] **CLUST-04**: Cluster health metrics and dashboard
-- [ ] **CLUST-05**: Flexible Paxos configuration (reduced quorum for latency)
-- [ ] **CLUST-06**: Read replicas with async replication for read scaling
+- [x] **CLUST-01**: Connection pooling for client connections
+- [x] **CLUST-02**: VSR timeout tuning with randomized jitter
+- [x] **CLUST-03**: Load shedding and circuit breakers for overload protection
+- [x] **CLUST-04**: Cluster health metrics and dashboard
+- [x] **CLUST-05**: Flexible Paxos configuration (reduced quorum for latency)
+- [x] **CLUST-06**: Read replicas with async replication for read scaling
 
 ### Sharding & Scale-Out
 
@@ -118,12 +118,12 @@ Which phases cover which requirements.
 | QUERY-04 | Phase 14 | Pending |
 | QUERY-05 | Phase 14 | Pending |
 | QUERY-06 | Phase 14 | Pending |
-| CLUST-01 | Phase 15 | Pending |
-| CLUST-02 | Phase 15 | Pending |
-| CLUST-03 | Phase 15 | Pending |
-| CLUST-04 | Phase 15 | Pending |
-| CLUST-05 | Phase 15 | Pending |
-| CLUST-06 | Phase 15 | Pending |
+| CLUST-01 | Phase 15 | Complete |
+| CLUST-02 | Phase 15 | Complete |
+| CLUST-03 | Phase 15 | Complete |
+| CLUST-04 | Phase 15 | Complete |
+| CLUST-05 | Phase 15 | Complete |
+| CLUST-06 | Phase 15 | Complete |
 | SHARD-01 | Phase 16 | Pending |
 | SHARD-02 | Phase 16 | Pending |
 | SHARD-03 | Phase 16 | Pending |
@@ -137,4 +137,4 @@ Which phases cover which requirements.
 
 ---
 *Requirements defined: 2026-01-24*
-*Last updated: 2026-01-24 — Phase 13 requirements complete (18/35)*
+*Last updated: 2026-01-25 — Phase 15 requirements complete (30/35)*
