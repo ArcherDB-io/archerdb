@@ -13,6 +13,7 @@
 
 const std = @import("std");
 const metrics = @import("metrics.zig");
+const constants = @import("../constants.zig");
 
 const Gauge = metrics.Gauge;
 const Counter = metrics.Counter;
@@ -187,6 +188,45 @@ pub var archerdb_shed_retry_after_ms = ShedRetryHistogram.init(
 );
 
 // ============================================================================
+// Read Replica Routing Metrics
+// ============================================================================
+
+/// Total read queries routed (including failover to leader).
+pub var archerdb_routing_reads_total = Counter.init(
+    "archerdb_routing_reads_total",
+    "Total read queries routed through read replica router",
+    null,
+);
+
+/// Total write queries routed.
+pub var archerdb_routing_writes_total = Counter.init(
+    "archerdb_routing_writes_total",
+    "Total write queries routed to leader",
+    null,
+);
+
+/// Total reads successfully routed to a replica.
+pub var archerdb_routing_to_replica_total = Counter.init(
+    "archerdb_routing_to_replica_total",
+    "Read queries routed to healthy replicas",
+    null,
+);
+
+/// Total reads failed over to leader due to unhealthy replicas.
+pub var archerdb_routing_failover_total = Counter.init(
+    "archerdb_routing_failover_total",
+    "Read queries failed over to leader due to unhealthy replicas",
+    null,
+);
+
+/// Current round-robin index used for replica selection.
+pub var archerdb_routing_round_robin_index = Gauge.init(
+    "archerdb_routing_round_robin_index",
+    "Current round-robin index for replica selection",
+    null,
+);
+
+// ============================================================================
 // Load Shedding Helper Functions
 // ============================================================================
 
@@ -250,12 +290,22 @@ pub const ClientStats = struct {
     }
 };
 
+/// Per-replica routing statistics (health and lag).
+pub const RoutingReplicaStats = struct {
+    replica_id: u128 = 0,
+    health: std.atomic.Value(u8) = std.atomic.Value(u8).init(0),
+    replication_lag_ops: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
+    last_update_ms: std.atomic.Value(i64) = std.atomic.Value(i64).init(0),
+};
+
 /// ClusterMetrics manages pool metrics with optional per-client tracking.
 pub const ClusterMetrics = struct {
     /// Top-N client tracking slots
     top_clients: [10]ClientStats,
     /// Configuration
     config: TopClientConfig,
+    /// Per-replica routing stats (bounded cardinality)
+    routing_replicas: [constants.replicas_max]RoutingReplicaStats,
 
     const Self = @This();
 
@@ -264,6 +314,7 @@ pub const ClusterMetrics = struct {
         return .{
             .top_clients = [_]ClientStats{.{}} ** 10,
             .config = .{},
+            .routing_replicas = [_]RoutingReplicaStats{.{}} ** constants.replicas_max,
         };
     }
 
@@ -272,6 +323,7 @@ pub const ClusterMetrics = struct {
         return .{
             .top_clients = [_]ClientStats{.{}} ** 10,
             .config = config,
+            .routing_replicas = [_]RoutingReplicaStats{.{}} ** constants.replicas_max,
         };
     }
 
@@ -335,6 +387,52 @@ pub const ClusterMetrics = struct {
         archerdb_pool_connections_total.inc();
     }
 
+    /// Record a read routed through the replica router.
+    pub fn recordRoutingRead(self: *Self) void {
+        _ = self;
+        archerdb_routing_reads_total.inc();
+    }
+
+    /// Record a write routed to the leader.
+    pub fn recordRoutingWrite(self: *Self) void {
+        _ = self;
+        archerdb_routing_writes_total.inc();
+    }
+
+    /// Record a read routed to a replica.
+    pub fn recordRoutingToReplica(self: *Self) void {
+        _ = self;
+        archerdb_routing_to_replica_total.inc();
+    }
+
+    /// Record a read failed over to the leader.
+    pub fn recordRoutingFailover(self: *Self) void {
+        _ = self;
+        archerdb_routing_failover_total.inc();
+    }
+
+    /// Update the round-robin index gauge.
+    pub fn recordRoutingRoundRobinIndex(self: *Self, index: usize) void {
+        _ = self;
+        archerdb_routing_round_robin_index.set(@intCast(index));
+    }
+
+    /// Update per-replica health gauge.
+    pub fn updateRoutingReplicaHealth(self: *Self, replica_id: u128, healthy: bool) void {
+        const now_ms = std.time.milliTimestamp();
+        const slot = self.upsertRoutingReplica(replica_id);
+        slot.health.store(if (healthy) 1 else 0, .monotonic);
+        slot.last_update_ms.store(now_ms, .monotonic);
+    }
+
+    /// Update per-replica replication lag gauge.
+    pub fn updateRoutingReplicationLag(self: *Self, replica_id: u128, lag_ops: u64) void {
+        const now_ms = std.time.milliTimestamp();
+        const slot = self.upsertRoutingReplica(replica_id);
+        slot.replication_lag_ops.store(lag_ops, .monotonic);
+        slot.last_update_ms.store(now_ms, .monotonic);
+    }
+
     /// Update per-client statistics.
     fn updateClientStats(self: *Self, client_id: []const u8, is_acquire: bool) void {
         const now_ms = std.time.milliTimestamp();
@@ -385,6 +483,36 @@ pub const ClusterMetrics = struct {
         }
     }
 
+    fn upsertRoutingReplica(self: *Self, replica_id: u128) *RoutingReplicaStats {
+        var empty_slot: ?*RoutingReplicaStats = null;
+        var lru_slot: *RoutingReplicaStats = &self.routing_replicas[0];
+        var lru_time: i64 = std.math.maxInt(i64);
+
+        for (&self.routing_replicas) |*slot| {
+            const last_seen = slot.last_update_ms.load(.monotonic);
+            if (slot.replica_id == replica_id and last_seen != 0) {
+                return slot;
+            }
+
+            if (last_seen == 0 and empty_slot == null) {
+                empty_slot = slot;
+            }
+
+            if (last_seen < lru_time) {
+                lru_time = last_seen;
+                lru_slot = slot;
+            }
+        }
+
+        const slot = empty_slot orelse lru_slot;
+        if (slot.replica_id != replica_id) {
+            slot.replica_id = replica_id;
+            slot.health.store(0, .monotonic);
+            slot.replication_lag_ops.store(0, .monotonic);
+        }
+        return slot;
+    }
+
     /// Format all cluster metrics in Prometheus text format.
     pub fn format(self: *const Self, writer: anytype) !void {
         // Pool state gauges
@@ -419,6 +547,43 @@ pub const ClusterMetrics = struct {
         try archerdb_shed_memory_pressure_pct.format(writer);
         try archerdb_shed_threshold.format(writer);
         try archerdb_shed_retry_after_ms.format(writer);
+        try writer.writeAll("\n");
+
+        // Read replica routing metrics
+        try archerdb_routing_reads_total.format(writer);
+        try archerdb_routing_writes_total.format(writer);
+        try archerdb_routing_to_replica_total.format(writer);
+        try archerdb_routing_failover_total.format(writer);
+        try archerdb_routing_round_robin_index.format(writer);
+        try writer.writeAll("\n");
+
+        // Per-replica routing metrics (bounded cardinality)
+        try writer.writeAll("# HELP archerdb_routing_replica_health Replica health (1=healthy, 0=unhealthy)\n");
+        try writer.writeAll("# TYPE archerdb_routing_replica_health gauge\n");
+        for (&self.routing_replicas) |*slot| {
+            const last_seen = slot.last_update_ms.load(.monotonic);
+            if (last_seen != 0) {
+                const health = slot.health.load(.monotonic);
+                try writer.print(
+                    "archerdb_routing_replica_health{{replica_id=\"0x{x}\"}} {d}\n",
+                    .{ slot.replica_id, health },
+                );
+            }
+        }
+        try writer.writeAll("\n");
+
+        try writer.writeAll("# HELP archerdb_routing_replication_lag_ops Replication lag per replica (ops)\n");
+        try writer.writeAll("# TYPE archerdb_routing_replication_lag_ops gauge\n");
+        for (&self.routing_replicas) |*slot| {
+            const last_seen = slot.last_update_ms.load(.monotonic);
+            if (last_seen != 0) {
+                const lag_ops = slot.replication_lag_ops.load(.monotonic);
+                try writer.print(
+                    "archerdb_routing_replication_lag_ops{{replica_id=\"0x{x}\"}} {d}\n",
+                    .{ slot.replica_id, lag_ops },
+                );
+            }
+        }
         try writer.writeAll("\n");
 
         // Per-client metrics (top-N only)
