@@ -32,7 +32,7 @@ const sharding = @import("sharding.zig");
 const metrics = @import("archerdb/metrics.zig");
 const observability = @import("archerdb/observability.zig");
 const geo_event = @import("geo_event.zig");
-const GeoEvent = geo_event.GeoEvent;
+pub const GeoEvent = geo_event.GeoEvent;
 
 /// Maximum number of shards supported.
 pub const MAX_SHARDS: u32 = 256;
@@ -204,6 +204,28 @@ pub const FanOutResult = struct {
     errors: []FanOutShardError,
     /// Total query time in nanoseconds.
     total_time_ns: u64,
+};
+
+/// Fan-out shard query function signature.
+pub const ShardQueryFn = *const fn (ctx: *anyopaque, shard: ShardInfo) anyerror![]GeoEvent;
+
+/// Coordinator query request.
+pub const CoordinatorQuery = struct {
+    query_type: QueryType,
+    entity_id: ?u128 = null,
+    traceparent: ?[]const u8 = null,
+    b3_trace_id: ?[]const u8 = null,
+    b3_span_id: ?[]const u8 = null,
+    b3_sampled: ?[]const u8 = null,
+    policy_override: ?FanOutPolicy = null,
+    shard_query: ?ShardQueryFn = null,
+    ctx: ?*anyopaque = null,
+};
+
+/// Coordinator query response.
+pub const QueryResponse = struct {
+    route: ?RouteResult = null,
+    fan_out: ?FanOutResult = null,
 };
 
 /// Coordinator configuration.
@@ -832,6 +854,65 @@ pub const Coordinator = struct {
             const ns: u64 = @intCast(std.time.nanoTimestamp());
             self.topology.shards[shard_id].last_health_check_ns = ns;
         }
+    }
+
+    /// Execute a coordinator query and route to fan-out when required.
+    pub fn executeQuery(self: *Coordinator, request: CoordinatorQuery) !QueryResponse {
+        if (!Coordinator.requiresFanOut(request.query_type)) {
+            const entity_id = request.entity_id orelse return error.InvalidEntityId;
+            return .{ .route = self.routeQuery(entity_id) };
+        }
+
+        const query_fn = request.shard_query orelse return error.MissingShardQuery;
+        const query_ctx = request.ctx orelse return error.MissingShardQuery;
+
+        const policy = request.policy_override orelse
+            Coordinator.defaultFanOutPolicy(request.query_type);
+
+        var ctx_storage: observability.CorrelationContext = undefined;
+        const correlation_ptr: ?*const observability.CorrelationContext = if (parseCorrelationContext(
+            &request,
+        )) |ctx| blk: {
+            ctx_storage = ctx;
+            break :blk &ctx_storage;
+        } else null;
+        const result = try self.fanOutQuery(
+            request.query_type,
+            query_fn,
+            query_ctx,
+            correlation_ptr,
+            @as(?FanOutPolicy, policy),
+        );
+
+        return .{ .fan_out = result };
+    }
+
+    /// Release buffers from a query response.
+    pub fn deinitQueryResponse(self: *Coordinator, response: QueryResponse) void {
+        if (response.fan_out) |fan_out| {
+            self.allocator.free(fan_out.events);
+            self.allocator.free(fan_out.errors);
+        }
+    }
+
+    fn parseCorrelationContext(request: *const CoordinatorQuery) ?observability.CorrelationContext {
+        if (request.traceparent) |traceparent| {
+            if (observability.CorrelationContext.fromTraceparent(traceparent)) |ctx| {
+                return ctx;
+            }
+        }
+
+        if (request.b3_trace_id) |trace_id| {
+            if (observability.CorrelationContext.fromB3Headers(
+                trace_id,
+                request.b3_span_id,
+                request.b3_sampled,
+            )) |ctx| {
+                return ctx;
+            }
+        }
+
+        return null;
     }
 };
 
