@@ -144,6 +144,21 @@ const TopologyResponse = topology_mod.TopologyResponse;
 const s2_index = @import("s2_index.zig");
 const S2 = s2_index.S2;
 
+// S2 covering cache integration (14-02)
+const s2_covering_cache = @import("s2_covering_cache.zig");
+const S2CoveringCache = s2_covering_cache.S2CoveringCache;
+
+// Query result cache integration (14-01)
+const query_cache = @import("query_cache.zig");
+const QueryResultCache = query_cache.QueryResultCache;
+
+// Query latency breakdown metrics (14-03)
+const query_metrics_mod = @import("archerdb/query_metrics.zig");
+const QueryLatencyBreakdown = query_metrics_mod.QueryLatencyBreakdown;
+const SpatialIndexStats = query_metrics_mod.SpatialIndexStats;
+const LatencyBreakdown = query_metrics_mod.Breakdown;
+const QueryTypeMetric = query_metrics_mod.QueryType;
+
 // ============================================================================
 // Tree IDs for LSM Storage
 // ============================================================================
@@ -462,9 +477,13 @@ pub const QueryMetrics = struct {
     /// Query timing (cumulative nanoseconds).
     total_query_duration_ns: u64 = 0,
 
-    /// Cache hit/miss tracking.
+    /// RAM index hit/miss tracking.
     index_hits: u64 = 0,
     index_misses: u64 = 0,
+
+    /// Query result cache hit/miss tracking (14-01).
+    cache_hits: u64 = 0,
+    cache_misses: u64 = 0,
 
     /// Record a UUID query.
     pub fn recordUuidQuery(self: *QueryMetrics, found: bool, duration_ns: u64) void {
@@ -500,6 +519,16 @@ pub const QueryMetrics = struct {
         return self.total_query_duration_ns / total_queries;
     }
 
+    /// Record a query cache hit.
+    pub fn recordCacheHit(self: *QueryMetrics) void {
+        self.cache_hits += 1;
+    }
+
+    /// Record a query cache miss.
+    pub fn recordCacheMiss(self: *QueryMetrics) void {
+        self.cache_misses += 1;
+    }
+
     /// Export metrics in Prometheus text format.
     pub fn toPrometheus(self: QueryMetrics, writer: anytype) !void {
         try writer.print(
@@ -524,6 +553,12 @@ pub const QueryMetrics = struct {
             \\# HELP archerdb_index_misses_total RAM index cache misses
             \\# TYPE archerdb_index_misses_total counter
             \\archerdb_index_misses_total {d}
+            \\# HELP archerdb_query_cache_hits_total Query result cache hits
+            \\# TYPE archerdb_query_cache_hits_total counter
+            \\archerdb_query_cache_hits_total {d}
+            \\# HELP archerdb_query_cache_misses_total Query result cache misses
+            \\# TYPE archerdb_query_cache_misses_total counter
+            \\archerdb_query_cache_misses_total {d}
             \\
         , .{
             self.query_uuid_count,
@@ -533,6 +568,8 @@ pub const QueryMetrics = struct {
             self.total_query_duration_ns,
             self.index_hits,
             self.index_misses,
+            self.cache_hits,
+            self.cache_misses,
         });
     }
 };
@@ -1040,6 +1077,17 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         /// Query operation metrics (F3.3).
         query_metrics: QueryMetrics = QueryMetrics{},
 
+        /// Query latency breakdown metrics (14-03).
+        /// Tracks per-phase latency (parse, plan, execute, serialize) for performance diagnosis.
+        latency_breakdown: QueryLatencyBreakdown = QueryLatencyBreakdown.init(),
+
+        /// Spatial index statistics (14-03).
+        /// Tracks RAM index and S2 covering statistics for query planning insights.
+        spatial_stats: SpatialIndexStats = SpatialIndexStats.init(),
+
+        /// Counter for periodic spatial stats updates (every 100 queries).
+        spatial_stats_update_counter: u64 = 0,
+
         /// Insert operation metrics.
         insert_metrics: InsertMetrics = InsertMetrics{},
 
@@ -1047,6 +1095,17 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         /// Tracks entity access patterns for automatic tier management.
         /// Null when tiering is disabled in options.
         tiering_manager: ?*TieringManager = null,
+
+        /// Query result cache for dashboard workload optimization (14-01).
+        /// Caches query results with write-invalidation semantics.
+        /// Null if allocation fails (graceful degradation to no caching).
+        result_cache: ?*QueryResultCache = null,
+
+        /// S2 covering cache for spatial query optimization (14-02).
+        /// Caches computed S2 cell coverings to avoid redundant computation
+        /// for repeated dashboard queries over the same geographic regions.
+        /// Null if allocation fails (graceful degradation to recompute each time).
+        covering_cache: ?*S2CoveringCache = null,
 
         // ====================================================================
         // Initialization
@@ -1125,6 +1184,46 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 allocator.destroy(tm);
             };
 
+            // Initialize QueryResultCache (14-01)
+            // Graceful degradation: if allocation fails, caching is disabled
+            var result_cache: ?*QueryResultCache = null;
+            if (allocator.create(QueryResultCache)) |cache_ptr| {
+                if (QueryResultCache.init(allocator, 1024)) |cache| {
+                    cache_ptr.* = cache;
+                    result_cache = cache_ptr;
+                    log.info("GeoStateMachine: query result cache enabled (1024 entries)", .{});
+                } else |cache_err| {
+                    log.warn("GeoStateMachine: query cache init failed: {}, caching disabled", .{cache_err});
+                    allocator.destroy(cache_ptr);
+                }
+            } else |alloc_err| {
+                log.warn("GeoStateMachine: query cache alloc failed: {}, caching disabled", .{alloc_err});
+            }
+            errdefer if (result_cache) |cache| {
+                cache.deinit(allocator);
+                allocator.destroy(cache);
+            };
+
+            // Initialize S2CoveringCache (14-02)
+            // Graceful degradation: if allocation fails, coverings are recomputed each time
+            var covering_cache: ?*S2CoveringCache = null;
+            if (allocator.create(S2CoveringCache)) |cache_ptr| {
+                if (S2CoveringCache.init(allocator, 512, .{ .name = "s2_covering" })) |cache| {
+                    cache_ptr.* = cache;
+                    covering_cache = cache_ptr;
+                    log.info("GeoStateMachine: S2 covering cache enabled (512 entries)", .{});
+                } else |cache_err| {
+                    log.warn("GeoStateMachine: S2 covering cache init failed: {}, caching disabled", .{cache_err});
+                    allocator.destroy(cache_ptr);
+                }
+            } else |alloc_err| {
+                log.warn("GeoStateMachine: S2 covering cache alloc failed: {}, caching disabled", .{alloc_err});
+            }
+            errdefer if (covering_cache) |cache| {
+                cache.deinit(allocator);
+                allocator.destroy(cache);
+            };
+
             self.* = .{
                 .batch_size_limit = options.batch_size_limit,
                 .default_ttl_seconds = default_ttl_seconds,
@@ -1138,6 +1237,8 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .ram_index = ram_index,
                 .index_recovery = .{},
                 .tiering_manager = tiering_manager,
+                .result_cache = result_cache,
+                .covering_cache = covering_cache,
             };
 
             // Initialize Forest for LSM tree storage (F1.2, F4.2)
@@ -1210,12 +1311,33 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 tm.deinit();
                 allocator.destroy(tm);
             }
+
+            // Clean up QueryResultCache (14-01)
+            if (self.result_cache) |cache| {
+                cache.deinit(allocator);
+                allocator.destroy(cache);
+            }
+
+            // Clean up S2CoveringCache (14-02)
+            if (self.covering_cache) |cache| {
+                cache.deinit(allocator);
+                allocator.destroy(cache);
+            }
         }
 
         /// Reset state machine for state sync.
         /// Called when a replica needs to sync from another replica's state.
         pub fn reset(self: *GeoStateMachine) void {
             self.forest.reset();
+
+            // Reset query result cache (14-01)
+            if (self.result_cache) |cache| {
+                cache.reset();
+            }
+
+            // Reset S2 covering cache (14-02)
+            // Note: Covering cache doesn't need reset on state sync as coverings
+            // are determined by geometry, not data state. Keep cached values.
 
             self.* = .{
                 .batch_size_limit = self.batch_size_limit,
@@ -1230,6 +1352,8 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .index_checkpoint_enabled = self.index_checkpoint_enabled,
                 .last_index_checkpoint_op = 0,
                 .tiering_manager = self.tiering_manager,
+                .result_cache = self.result_cache,
+                .covering_cache = self.covering_cache,
             };
         }
 
@@ -1735,6 +1859,11 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             // Record writes for adaptive compaction (12-09: deletion tombstones count as writes)
             if (deleted_count > 0) {
                 self.forest.adaptive_record_write(deleted_count);
+
+                // Invalidate query result cache on deletes (14-01)
+                if (self.result_cache) |cache| {
+                    cache.invalidateAll();
+                }
             }
 
             return results_count * @sizeOf(DeleteEntitiesResult);
@@ -2005,6 +2134,11 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             // Record writes for adaptive compaction (12-09: workload tracking)
             if (inserted_count > 0) {
                 self.forest.adaptive_record_write(inserted_count);
+
+                // Invalidate query result cache on writes (14-01)
+                if (self.result_cache) |cache| {
+                    cache.invalidateAll();
+                }
             }
 
             // Update index capacity metrics and check thresholds (F5.2 - Observability)
@@ -2176,6 +2310,23 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             const start_time = std.time.nanoTimestamp();
             const response_size = @sizeOf(QueryUuidResponse);
 
+            // Check query result cache (14-01)
+            const query_hash = if (self.result_cache != null)
+                QueryResultCache.hashQuery(@intFromEnum(Operation.query_uuid), input)
+            else
+                0;
+            if (self.result_cache) |cache| {
+                if (cache.get(query_hash)) |cached| {
+                    const cached_data = cached.getData();
+                    if (cached_data.len <= output.len) {
+                        @memcpy(output[0..cached_data.len], cached_data);
+                        self.query_metrics.recordCacheHit();
+                        return cached_data.len;
+                    }
+                }
+                self.query_metrics.recordCacheMiss();
+            }
+
             // Validate input size
             if (input.len != @sizeOf(QueryUuidFilter)) {
                 log.warn("query_uuid: input size invalid ({d} != {d})", .{
@@ -2190,6 +2341,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 QueryUuidFilter,
                 input[0..@sizeOf(QueryUuidFilter)],
             ).*;
+            const end_parse = std.time.nanoTimestamp();
 
             // Validate entity_id
             if (filter.entity_id == 0) {
@@ -2197,7 +2349,10 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 return 0;
             }
 
-            // O(1) lookup in RAM index
+            // No plan phase for UUID queries (no S2 covering)
+            const end_plan = end_parse;
+
+            // O(1) lookup in RAM index (execute phase)
             const lookup_result = self.ram_index.lookup(filter.entity_id);
 
             if (self.index_recovery_blocks_entry(lookup_result.entry)) {
@@ -2298,8 +2453,10 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                         };
                     },
                 }
+                const end_execute = std.time.nanoTimestamp();
 
-                // Write to output
+                // Write to output (serialize phase)
+                const start_serialize = end_execute;
                 const header = mem.bytesAsValue(
                     QueryUuidResponse,
                     output[0..response_size],
@@ -2328,10 +2485,24 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 archerdb_metrics.Registry.read_latency.observeNs(duration_ns);
                 archerdb_metrics.Registry.query_result_size.observe(1.0);
 
+                // Record query latency breakdown (14-03)
+                self.latency_breakdown.recordPhases(.{
+                    .query_type = .uuid,
+                    .parse_ns = @intCast(@max(0, end_parse - start_time)),
+                    .plan_ns = 0, // No S2 covering for UUID queries
+                    .execute_ns = @intCast(@max(0, end_execute - end_plan)),
+                    .serialize_ns = @intCast(@max(0, end_time - start_serialize)),
+                });
+
                 // Record read for adaptive compaction (12-09: point lookup workload tracking)
                 self.forest.adaptive_record_read(1);
 
                 log.debug("query_uuid: found entity {x}", .{filter.entity_id});
+
+                // Cache the result (14-01)
+                if (self.result_cache) |cache| {
+                    cache.put(query_hash, output[0..response_size + @sizeOf(GeoEvent)]);
+                }
                 return response_size + @sizeOf(GeoEvent);
             } else {
                 // Not found - record metrics
@@ -3067,11 +3238,12 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 return 0;
             }
 
-            // Parse filter from input
+            // Parse filter from input (parse phase)
             const filter = mem.bytesAsValue(
                 QueryRadiusFilter,
                 input[0..@sizeOf(QueryRadiusFilter)],
             ).*;
+            const end_parse = std.time.nanoTimestamp();
 
             // Validate filter parameters
             if (filter.radius_mm == 0) {
@@ -3094,28 +3266,72 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 return @sizeOf(QueryResponse);
             }
 
-            // Generate S2 covering for the query region
+            // Generate S2 covering for the query region (plan phase)
+            // Try covering cache first (14-02)
             var scratch: [s2_index.s2_scratch_size]u8 = undefined;
 
             // Select S2 levels based on radius per spec decision table
             const level_params = selectS2Levels(filter.radius_mm);
 
-            const covering = S2.coverCap(
-                &scratch,
-                filter.center_lat_nano,
-                filter.center_lon_nano,
-                filter.radius_mm,
-                level_params.min_level,
-                level_params.max_level,
-            );
-
-            // Count non-empty ranges for logging
+            var covering: [s2_index.s2_max_cells]s2_index.CellRange = undefined;
             var num_ranges: usize = 0;
-            for (covering) |range| {
-                if (range.start != 0 or range.end != 0) {
-                    num_ranges += 1;
+
+            if (self.covering_cache) |cache| {
+                if (cache.getCapCovering(
+                    filter.center_lat_nano,
+                    filter.center_lon_nano,
+                    filter.radius_mm,
+                )) |cached| {
+                    // Cache hit - use cached covering
+                    covering = cached.ranges;
+                    num_ranges = cached.num_ranges;
+                    archerdb_metrics.Registry.s2_covering_cache_hits_total.inc();
+                } else {
+                    // Cache miss - compute and cache
+                    archerdb_metrics.Registry.s2_covering_cache_misses_total.inc();
+                    covering = S2.coverCap(
+                        &scratch,
+                        filter.center_lat_nano,
+                        filter.center_lon_nano,
+                        filter.radius_mm,
+                        level_params.min_level,
+                        level_params.max_level,
+                    );
+                    // Count non-empty ranges
+                    for (covering) |range| {
+                        if (range.start != 0 or range.end != 0) {
+                            num_ranges += 1;
+                        }
+                    }
+                    // Cache the result
+                    cache.putCapCovering(
+                        filter.center_lat_nano,
+                        filter.center_lon_nano,
+                        filter.radius_mm,
+                        covering,
+                    );
+                }
+            } else {
+                // No cache - compute directly
+                covering = S2.coverCap(
+                    &scratch,
+                    filter.center_lat_nano,
+                    filter.center_lon_nano,
+                    filter.radius_mm,
+                    level_params.min_level,
+                    level_params.max_level,
+                );
+                // Count non-empty ranges
+                for (covering) |range| {
+                    if (range.start != 0 or range.end != 0) {
+                        num_ranges += 1;
+                    }
                 }
             }
+            const end_plan = std.time.nanoTimestamp();
+
+            // Record S2 covering size for spatial stats (14-03)
+            self.spatial_stats.recordCoveringSize(.radius, @intCast(num_ranges));
 
             log.debug("query_radius: covering generated with {d} ranges", .{num_ranges});
 
@@ -3252,6 +3468,16 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 
                 result_count += 1;
             }
+            const end_execute = std.time.nanoTimestamp();
+
+            // Write QueryResponse header (serialize phase)
+            const start_serialize = end_execute;
+            const header = mem.bytesAsValue(QueryResponse, output[0..@sizeOf(QueryResponse)]);
+            if (has_more) {
+                header.* = QueryResponse.with_more(@intCast(result_count));
+            } else {
+                header.* = QueryResponse.complete(@intCast(result_count));
+            }
 
             // Record metrics
             const end_time = std.time.nanoTimestamp();
@@ -3268,15 +3494,26 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             archerdb_metrics.Registry.read_latency.observeNs(duration_ns);
             archerdb_metrics.Registry.query_result_size.observe(@floatFromInt(result_count));
 
+            // Record query latency breakdown (14-03)
+            self.latency_breakdown.recordPhases(.{
+                .query_type = .radius,
+                .parse_ns = @intCast(@max(0, end_parse - start_time)),
+                .plan_ns = @intCast(@max(0, end_plan - end_parse)),
+                .execute_ns = @intCast(@max(0, end_execute - end_plan)),
+                .serialize_ns = @intCast(@max(0, end_time - start_serialize)),
+            });
+
             // Record scan for adaptive compaction (12-09: range scan workload tracking)
             self.forest.adaptive_record_scan(1);
 
-            // Write QueryResponse header
-            const header = mem.bytesAsValue(QueryResponse, output[0..@sizeOf(QueryResponse)]);
-            if (has_more) {
-                header.* = QueryResponse.with_more(@intCast(result_count));
-            } else {
-                header.* = QueryResponse.complete(@intCast(result_count));
+            // Update spatial stats periodically (every 100 queries)
+            self.spatial_stats_update_counter += 1;
+            if (self.spatial_stats_update_counter >= 100) {
+                self.spatial_stats.updateFromIndex(
+                    self.ram_index.stats.entry_count,
+                    self.ram_index.stats.capacity,
+                );
+                self.spatial_stats_update_counter = 0;
             }
 
             log.debug(
@@ -3325,11 +3562,12 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 return 0;
             }
 
-            // Parse filter header
+            // Parse filter header (parse phase)
             const filter = mem.bytesAsValue(
                 QueryPolygonFilter,
                 input[0..@sizeOf(QueryPolygonFilter)],
             ).*;
+            const end_parse = std.time.nanoTimestamp();
 
             // Validate vertex count (minimum 3 for a polygon)
             if (filter.vertex_count < 3) {
@@ -3603,25 +3841,62 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 return @sizeOf(QueryResponse);
             }
 
-            // Generate S2 covering for the polygon
+            // Generate S2 covering for the polygon (plan phase)
+            // Try covering cache first (14-02)
             var scratch: [s2_index.s2_scratch_size]u8 = undefined;
 
             // Use polygon covering (bounding box approximation for now)
             // NOTE: Uses bounding box approximation. Full S2Loop covering is an enhancement.
-            const covering = S2.coverPolygon(
-                &scratch,
-                polygon_slice,
-                8, // min_level
-                18, // max_level
-            );
 
-            // Count non-empty ranges for logging
+            var covering: [s2_index.s2_max_cells]s2_index.CellRange = undefined;
             var num_ranges: usize = 0;
-            for (covering) |range| {
-                if (range.start != 0 or range.end != 0) {
-                    num_ranges += 1;
+
+            // Compute hash for polygon vertices (integer-only for stability)
+            const vertices_hash = s2_covering_cache.hashPolygonParams(polygon_slice);
+
+            if (self.covering_cache) |cache| {
+                if (cache.getPolygonCovering(vertices_hash)) |cached| {
+                    // Cache hit - use cached covering
+                    covering = cached.ranges;
+                    num_ranges = cached.num_ranges;
+                    archerdb_metrics.Registry.s2_covering_cache_hits_total.inc();
+                } else {
+                    // Cache miss - compute and cache
+                    archerdb_metrics.Registry.s2_covering_cache_misses_total.inc();
+                    covering = S2.coverPolygon(
+                        &scratch,
+                        polygon_slice,
+                        8, // min_level
+                        18, // max_level
+                    );
+                    // Count non-empty ranges
+                    for (covering) |range| {
+                        if (range.start != 0 or range.end != 0) {
+                            num_ranges += 1;
+                        }
+                    }
+                    // Cache the result
+                    cache.putPolygonCovering(vertices_hash, covering);
+                }
+            } else {
+                // No cache - compute directly
+                covering = S2.coverPolygon(
+                    &scratch,
+                    polygon_slice,
+                    8, // min_level
+                    18, // max_level
+                );
+                // Count non-empty ranges
+                for (covering) |range| {
+                    if (range.start != 0 or range.end != 0) {
+                        num_ranges += 1;
+                    }
                 }
             }
+            const end_plan = std.time.nanoTimestamp();
+
+            // Record S2 covering size for spatial stats (14-03)
+            self.spatial_stats.recordCoveringSize(.polygon, @intCast(num_ranges));
 
             log.debug(
                 "query_polygon: covering generated with {d} ranges for " ++
@@ -3769,6 +4044,16 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 
                 result_count += 1;
             }
+            const end_execute = std.time.nanoTimestamp();
+
+            // Write QueryResponse header (serialize phase)
+            const start_serialize = end_execute;
+            const header = mem.bytesAsValue(QueryResponse, output[0..@sizeOf(QueryResponse)]);
+            if (has_more) {
+                header.* = QueryResponse.with_more(@intCast(result_count));
+            } else {
+                header.* = QueryResponse.complete(@intCast(result_count));
+            }
 
             // Record metrics
             const end_time = std.time.nanoTimestamp();
@@ -3785,16 +4070,17 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             archerdb_metrics.Registry.read_latency.observeNs(duration_ns);
             archerdb_metrics.Registry.query_result_size.observe(@floatFromInt(result_count));
 
+            // Record query latency breakdown (14-03)
+            self.latency_breakdown.recordPhases(.{
+                .query_type = .polygon,
+                .parse_ns = @intCast(@max(0, end_parse - start_time)),
+                .plan_ns = @intCast(@max(0, end_plan - end_parse)),
+                .execute_ns = @intCast(@max(0, end_execute - end_plan)),
+                .serialize_ns = @intCast(@max(0, end_time - start_serialize)),
+            });
+
             // Record scan for adaptive compaction (12-09: range scan workload tracking)
             self.forest.adaptive_record_scan(1);
-
-            // Write QueryResponse header
-            const header = mem.bytesAsValue(QueryResponse, output[0..@sizeOf(QueryResponse)]);
-            if (has_more) {
-                header.* = QueryResponse.with_more(@intCast(result_count));
-            } else {
-                header.* = QueryResponse.complete(@intCast(result_count));
-            }
 
             log.debug(
                 "query_polygon: scan complete: entries_seen={d}, covering_passed={d}, " ++
@@ -3821,7 +4107,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         ) usize {
             const start_time = std.time.nanoTimestamp();
 
-            // Parse filter
+            // Parse filter (parse phase)
             if (input.len < @sizeOf(QueryLatestFilter)) {
                 log.warn("query_latest: input too small", .{});
                 return 0;
@@ -3831,6 +4117,10 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 QueryLatestFilter,
                 input[0..@sizeOf(QueryLatestFilter)],
             ).*;
+            const end_parse = std.time.nanoTimestamp();
+
+            // No plan phase for latest queries (no S2 covering)
+            const end_plan = end_parse;
 
             // Validate filter
             if (filter.limit == 0) {
@@ -4019,6 +4309,17 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     };
                 }
             }
+            const end_execute = std.time.nanoTimestamp();
+
+            // Write QueryResponse header (serialize phase)
+            const start_serialize = end_execute;
+            const header = mem.bytesAsValue(QueryResponse, output[0..@sizeOf(QueryResponse)]);
+            const has_more = matching_count > candidate_count;
+            if (has_more) {
+                header.* = QueryResponse.with_more(@intCast(result_count));
+            } else {
+                header.* = QueryResponse.complete(@intCast(result_count));
+            }
 
             // Record metrics
             const end_time = std.time.nanoTimestamp();
@@ -4030,17 +4331,17 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             self.query_metrics.total_results_returned += result_count;
             self.query_metrics.total_query_duration_ns += duration_ns;
 
+            // Record query latency breakdown (14-03)
+            self.latency_breakdown.recordPhases(.{
+                .query_type = .latest,
+                .parse_ns = @intCast(@max(0, end_parse - start_time)),
+                .plan_ns = 0, // No S2 covering for latest queries
+                .execute_ns = @intCast(@max(0, end_execute - end_plan)),
+                .serialize_ns = @intCast(@max(0, end_time - start_serialize)),
+            });
+
             // Record scan for adaptive compaction (12-09: index scan workload tracking)
             self.forest.adaptive_record_scan(1);
-
-            // Write QueryResponse header
-            const header = mem.bytesAsValue(QueryResponse, output[0..@sizeOf(QueryResponse)]);
-            const has_more = matching_count > candidate_count;
-            if (has_more) {
-                header.* = QueryResponse.with_more(@intCast(result_count));
-            } else {
-                header.* = QueryResponse.complete(@intCast(result_count));
-            }
 
             log.debug(
                 "query_latest: returning {d} results, has_more={}",

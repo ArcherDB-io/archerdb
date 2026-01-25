@@ -44,10 +44,12 @@ const stdx = @import("stdx");
 const SetAssociativeCacheType = @import("lsm/set_associative_cache.zig").SetAssociativeCacheType;
 
 /// Maximum size of a cached result in bytes.
-/// 4096 bytes fits most dashboard query responses (up to ~32 GeoEvents).
-pub const max_cached_result_size: usize = 4096;
+/// Set to make CachedResult exactly 4096 bytes (power of 2 for SetAssociativeCacheType).
+/// Fits most dashboard query responses (up to ~31 GeoEvents at 128 bytes each).
+pub const max_cached_result_size: usize = 4072;
 
 /// Cached query result with generation tracking.
+/// Size is exactly 4096 bytes (power of 2) for efficient cache layout.
 pub const CachedResult = extern struct {
     /// Query hash (used as key)
     query_hash: u64,
@@ -61,9 +63,9 @@ pub const CachedResult = extern struct {
     result_data: [max_cached_result_size]u8,
 
     comptime {
-        // Ensure size is power of 2 for efficient cache layout
-        assert(@sizeOf(CachedResult) == 4096 + 24);
-        assert(@sizeOf(CachedResult) % 8 == 0);
+        // Ensure size is power of 2 for SetAssociativeCacheType
+        assert(@sizeOf(CachedResult) == 4096);
+        assert(std.math.isPowerOfTwo(@sizeOf(CachedResult)));
         assert(stdx.no_padding(CachedResult));
     }
 

@@ -42,6 +42,7 @@ const SetAssociativeCacheType = @import("lsm/set_associative_cache.zig").SetAsso
 const stdx = @import("stdx");
 
 const assert = std.debug.assert;
+const math = std.math;
 const mem = std.mem;
 
 /// Import CellRange from s2_index
@@ -55,6 +56,8 @@ pub const s2_max_cells = s2_index.s2_max_cells;
 /// Stores a computed S2 cell covering along with the parameter hash
 /// for cache validation. The ranges array is fixed-size with num_ranges
 /// indicating how many entries are valid.
+///
+/// Size is padded to 512 bytes (power of 2) for SetAssociativeCacheType compatibility.
 pub const CachedCovering = struct {
     /// Hash of the parameters used to compute this covering.
     /// Used for cache key validation on lookup.
@@ -63,11 +66,15 @@ pub const CachedCovering = struct {
     /// Number of valid cell ranges (0 to s2_max_cells)
     num_ranges: u8,
 
-    /// Padding to ensure proper alignment
-    _reserved: [7]u8 = [_]u8{0} ** 7,
+    /// Padding to ensure proper alignment after num_ranges
+    _reserved1: [7]u8 = [_]u8{0} ** 7,
 
     /// The computed cell ranges. Only ranges[0..num_ranges] are valid.
     ranges: [s2_max_cells]CellRange,
+
+    /// Padding to reach 512 bytes (power of 2) for SetAssociativeCacheType.
+    /// 512 - 8 (param_hash) - 1 (num_ranges) - 7 (reserved1) - 256 (ranges) = 240
+    _reserved2: [240]u8 = [_]u8{0} ** 240,
 
     /// Create a CachedCovering from computed ranges
     pub fn fromRanges(param_hash: u64, ranges: [s2_max_cells]CellRange) CachedCovering {
@@ -94,11 +101,12 @@ pub const CachedCovering = struct {
 
 // Compile-time assertions for cache layout
 comptime {
-    // Ensure CachedCovering has no padding issues for SetAssociativeCache
+    // Ensure CachedCovering is power-of-2 size for SetAssociativeCacheType
     // CellRange is 2 x u64 = 16 bytes, s2_max_cells = 16, so ranges = 256 bytes
-    // param_hash (8) + num_ranges (1) + reserved (7) + ranges (256) = 272 bytes
-    assert(@sizeOf(CachedCovering) == 272);
+    // param_hash (8) + num_ranges (1) + reserved1 (7) + ranges (256) + reserved2 (240) = 512 bytes
+    assert(@sizeOf(CachedCovering) == 512);
     assert(@alignOf(CachedCovering) == 8);
+    assert(std.math.isPowerOfTwo(@sizeOf(CachedCovering)));
 }
 
 /// Hash function for cap (radius) query parameters.
@@ -114,10 +122,11 @@ comptime {
 pub fn hashCapParams(center_lat_nano: i64, center_lon_nano: i64, radius_mm: u32) u64 {
     // Use stdx.hash_inline for deterministic hashing of each component
     // Combine with prime multipliers to spread bits
+    // Cast to unsigned for hash_inline which requires unsigned ints
     var h: u64 = 0;
-    h ^= stdx.hash_inline(@as([8]u8, @bitCast(center_lat_nano)));
-    h ^= stdx.hash_inline(@as([8]u8, @bitCast(center_lon_nano))) *% 31;
-    h ^= stdx.hash_inline(@as([4]u8, @bitCast(radius_mm))) *% 17;
+    h ^= stdx.hash_inline(@as(u64, @bitCast(center_lat_nano)));
+    h ^= stdx.hash_inline(@as(u64, @bitCast(center_lon_nano))) *% 31;
+    h ^= stdx.hash_inline(@as(u32, radius_mm)) *% 17;
     return h;
 }
 
@@ -131,10 +140,11 @@ pub fn hashCapParams(center_lat_nano: i64, center_lon_nano: i64, radius_mm: u32)
 /// - vertices: Array of LatLon vertices defining the polygon
 pub fn hashPolygonParams(vertices: []const s2_index.LatLon) u64 {
     // Hash all vertices in order
+    // Cast to unsigned for hash_inline which requires unsigned ints
     var h: u64 = 0;
     for (vertices) |v| {
-        h ^= stdx.hash_inline(@as([8]u8, @bitCast(v.lat_nano)));
-        h ^= stdx.hash_inline(@as([8]u8, @bitCast(v.lon_nano))) *% 31;
+        h ^= stdx.hash_inline(@as(u64, @bitCast(v.lat_nano)));
+        h ^= stdx.hash_inline(@as(u64, @bitCast(v.lon_nano))) *% 31;
     }
     return h;
 }
