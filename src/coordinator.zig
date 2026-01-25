@@ -30,6 +30,7 @@ const Allocator = std.mem.Allocator;
 const stdx = @import("stdx");
 const sharding = @import("sharding.zig");
 const metrics = @import("archerdb/metrics.zig");
+const observability = @import("archerdb/observability.zig");
 const geo_event = @import("geo_event.zig");
 const GeoEvent = geo_event.GeoEvent;
 
@@ -221,6 +222,8 @@ pub const CoordinatorConfig = struct {
     max_retries: u32 = 3,
     /// Enable read-from-replica for load balancing.
     read_from_replicas: bool = true,
+    /// Optional OTLP trace exporter for fan-out spans.
+    trace_exporter: ?*observability.OtlpTraceExporter = null,
 };
 
 /// Coordinator statistics.
@@ -284,6 +287,7 @@ pub const CoordinatorState = enum {
 pub const Coordinator = struct {
     allocator: Allocator,
     config: CoordinatorConfig,
+    trace_exporter: ?*observability.OtlpTraceExporter,
     state: CoordinatorState,
     topology: Topology,
     stats: CoordinatorStats,
@@ -309,6 +313,7 @@ pub const Coordinator = struct {
         return .{
             .allocator = allocator,
             .config = config,
+            .trace_exporter = config.trace_exporter,
             .state = .stopped,
             .topology = Topology.init(),
             .stats = .{},
@@ -455,8 +460,49 @@ pub const Coordinator = struct {
         query_type: QueryType,
         shard_query: *const fn (ctx: *anyopaque, shard: ShardInfo) anyerror![]GeoEvent,
         ctx: *anyopaque,
+        correlation_ctx: ?*const observability.CorrelationContext,
         policy_override: ?FanOutPolicy,
     ) !FanOutResult {
+        var root_parent_span_id: ?[8]u8 = null;
+        var root_ctx: observability.CorrelationContext = undefined;
+        if (correlation_ctx) |ctx_ptr| {
+            root_parent_span_id = ctx_ptr.span_id;
+            root_ctx = ctx_ptr.newChild();
+        } else {
+            root_ctx = observability.CorrelationContext.newRoot(0);
+        }
+        const tracing_enabled = self.trace_exporter != null and root_ctx.isSampled();
+        const root_start_ns: i128 = std.time.nanoTimestamp();
+        var root_shards_queried: u32 = 0;
+        var root_shards_succeeded: u32 = 0;
+        var root_shards_failed: u32 = 0;
+        var root_status: observability.SpanStatus = .ok;
+        var root_status_message: ?[]const u8 = null;
+
+        defer if (tracing_enabled) {
+            const root_end_ns: i128 = std.time.nanoTimestamp();
+            const root_attributes = [_]observability.Attribute{
+                .{ .key = "query_type", .value = .{ .string = @tagName(query_type) } },
+                .{ .key = "shards_queried", .value = .{ .int = @as(i64, @intCast(root_shards_queried)) } },
+                .{ .key = "shards_succeeded", .value = .{ .int = @as(i64, @intCast(root_shards_succeeded)) } },
+                .{ .key = "shards_failed", .value = .{ .int = @as(i64, @intCast(root_shards_failed)) } },
+            };
+            self.trace_exporter.?.recordSpan(.{
+                .trace_id = root_ctx.trace_id,
+                .span_id = root_ctx.span_id,
+                .parent_span_id = root_parent_span_id,
+                .name = "coordinator.fanout",
+                .kind = .server,
+                .start_time_ns = root_start_ns,
+                .end_time_ns = root_end_ns,
+                .attributes = &root_attributes,
+                .links = &[_]observability.SpanLink{},
+                .events = &[_]observability.trace_export.SpanEvent{},
+                .status = root_status,
+                .status_message = root_status_message,
+            });
+        };
+
         var shard_buffer: [MAX_SHARDS]ShardInfo = undefined;
         var shard_count: usize = 0;
         const shards = self.topology.getActiveShards();
@@ -471,8 +517,12 @@ pub const Coordinator = struct {
             @as(i64, @intCast(shard_count)),
         );
 
+        root_shards_queried = @intCast(shard_count);
+
         if (shard_count == 0) {
             metrics.Registry.coordinator_query_errors_unavailable.inc();
+            root_status = .@"error";
+            root_status_message = @errorName(error.NoShardsAvailable);
             return error.NoShardsAvailable;
         }
 
@@ -509,9 +559,16 @@ pub const Coordinator = struct {
                 query_fn: *const fn (ctx: *anyopaque, shard: ShardInfo) anyerror![]GeoEvent,
                 ctx_ptr: *anyopaque,
                 shard_info: ShardInfo,
+                trace_exporter: ?*observability.OtlpTraceExporter,
+                trace_enabled: bool,
+                root_context: observability.CorrelationContext,
+                root_span_id: [8]u8,
             ) void {
+                const shard_start_ns: i128 = std.time.nanoTimestamp();
                 const query_result = query_fn(ctx_ptr, shard_info);
                 if (query_result) |events| {
+                    var append_failed = false;
+                    var append_error_name: ?[]const u8 = null;
                     shared_ptr.mutex.lock();
                     defer shared_ptr.mutex.unlock();
                     if (shared_ptr.append_error != null) return;
@@ -520,6 +577,35 @@ pub const Coordinator = struct {
                     } else |err| {
                         shared_ptr.append_error = err;
                         shared_ptr.shards_failed += 1;
+                        append_failed = true;
+                        append_error_name = @errorName(err);
+                    }
+
+                    if (trace_enabled) {
+                        const child_ctx = root_context.newChild();
+                        const span_attributes = [_]observability.Attribute{
+                            .{ .key = "shard_id", .value = .{ .int = @as(i64, @intCast(shard_info.id)) } },
+                            .{ .key = "shard_status", .value = .{ .string = @tagName(shard_info.status) } },
+                            .{ .key = "result_count", .value = .{ .int = @as(i64, @intCast(events.len)) } },
+                            .{ .key = "error", .value = .{ .bool = append_failed } },
+                        };
+                        const links = [_]observability.SpanLink{
+                            .{ .trace_id = root_context.trace_id, .span_id = root_span_id, .attributes = &[_]observability.Attribute{} },
+                        };
+                        trace_exporter.?.recordSpan(.{
+                            .trace_id = child_ctx.trace_id,
+                            .span_id = child_ctx.span_id,
+                            .parent_span_id = root_span_id,
+                            .name = "coordinator.shard_query",
+                            .kind = .client,
+                            .start_time_ns = shard_start_ns,
+                            .end_time_ns = std.time.nanoTimestamp(),
+                            .attributes = &span_attributes,
+                            .links = &links,
+                            .events = &[_]observability.trace_export.SpanEvent{},
+                            .status = if (append_failed) .@"error" else .ok,
+                            .status_message = append_error_name,
+                        });
                     }
                 } else |err| {
                     if (err == error.Timeout or err == error.ConnectionTimedOut) {
@@ -535,12 +621,48 @@ pub const Coordinator = struct {
                         }
                     }
                     shared_ptr.shards_failed += 1;
+
+                    if (trace_enabled) {
+                        const child_ctx = root_context.newChild();
+                        const span_attributes = [_]observability.Attribute{
+                            .{ .key = "shard_id", .value = .{ .int = @as(i64, @intCast(shard_info.id)) } },
+                            .{ .key = "shard_status", .value = .{ .string = @tagName(shard_info.status) } },
+                            .{ .key = "result_count", .value = .{ .int = 0 } },
+                            .{ .key = "error", .value = .{ .bool = true } },
+                        };
+                        const links = [_]observability.SpanLink{
+                            .{ .trace_id = root_context.trace_id, .span_id = root_span_id, .attributes = &[_]observability.Attribute{} },
+                        };
+                        trace_exporter.?.recordSpan(.{
+                            .trace_id = child_ctx.trace_id,
+                            .span_id = child_ctx.span_id,
+                            .parent_span_id = root_span_id,
+                            .name = "coordinator.shard_query",
+                            .kind = .client,
+                            .start_time_ns = shard_start_ns,
+                            .end_time_ns = std.time.nanoTimestamp(),
+                            .attributes = &span_attributes,
+                            .links = &links,
+                            .events = &[_]observability.trace_export.SpanEvent{},
+                            .status = .@"error",
+                            .status_message = @errorName(err),
+                        });
+                    }
                 }
             }
         };
 
         for (shard_buffer[0..shard_count]) |shard| {
-            pool.spawnWg(&wait_group, Runner.run, .{ &shared, shard_query, ctx, shard });
+            pool.spawnWg(&wait_group, Runner.run, .{
+                &shared,
+                shard_query,
+                ctx,
+                shard,
+                self.trace_exporter,
+                tracing_enabled,
+                root_ctx,
+                root_ctx.span_id,
+            });
         }
         wait_group.wait();
 
@@ -551,6 +673,10 @@ pub const Coordinator = struct {
         if (shared.append_error) |err| {
             metrics.Registry.coordinator_query_errors_unavailable.inc();
             self.stats.recordQuery(elapsed_ns, true, false);
+            root_shards_succeeded = shared.shards_succeeded;
+            root_shards_failed = shared.shards_failed;
+            root_status = .@"error";
+            root_status_message = @errorName(err);
             return err;
         }
 
@@ -571,8 +697,15 @@ pub const Coordinator = struct {
         if (!policy_ok) {
             metrics.Registry.coordinator_query_errors_unavailable.inc();
             self.stats.recordQuery(elapsed_ns, true, false);
+            root_shards_succeeded = shards_succeeded;
+            root_shards_failed = shards_failed;
+            root_status = .@"error";
+            root_status_message = @errorName(error.FanOutPolicyUnsatisfied);
             return error.FanOutPolicyUnsatisfied;
         }
+
+        root_shards_succeeded = shards_succeeded;
+        root_shards_failed = shards_failed;
 
         const events = try shared.results.toOwnedSlice();
         errdefer self.allocator.free(events);
@@ -827,7 +960,7 @@ test "Coordinator: fan-out policy all fails on shard error" {
 
     try std.testing.expectError(
         error.FanOutPolicyUnsatisfied,
-        coordinator.fanOutQuery(.radius, mockFanOutQuery, @ptrCast(&ctx), .all),
+        coordinator.fanOutQuery(.radius, mockFanOutQuery, @ptrCast(&ctx), null, .all),
     );
 }
 
@@ -851,6 +984,7 @@ test "Coordinator: fan-out policy majority succeeds with partial" {
         .polygon,
         mockFanOutQuery,
         @ptrCast(&ctx),
+        null,
         .majority,
     );
     defer allocator.free(result.events);
@@ -884,6 +1018,7 @@ test "Coordinator: fan-out policy best-effort tracks partial metrics" {
         .latest,
         mockFanOutQuery,
         @ptrCast(&ctx),
+        null,
         .best_effort,
     );
     defer allocator.free(result.events);
