@@ -1,6 +1,7 @@
 {
   "uid": "archerdb-cluster-health",
   "title": "ArcherDB Cluster Health",
+  "description": "Purpose: Consolidated operational view of connection pool health, load shedding, read replica routing, and VSR consensus state.\n\nWhen to use: Day-to-day cluster operations, incident response, and post-change validation.\n\nPrerequisites: Phase 15 metrics enabled (archerdb_pool, archerdb_shed, archerdb_routing, archerdb_vsr_*).\n\nRelated dashboards: Cluster Detail (/d/archerdb-cluster/archerdb-cluster), Overview (/d/archerdb-overview/archerdb-overview).\n\nDashboard version v1 - created 2026-01-25.",
   "tags": ["archerdb", "cluster", "health", "overview"],
   "timezone": "browser",
   "editable": true,
@@ -100,6 +101,7 @@
     {
       "type": "stat",
       "title": "Total Connections",
+      "description": "Total active + idle connections in the server-side pool. Sustained growth indicates increased client load or potential leaks.",
       "gridPos": {"x": 0, "y": 1, "w": 6, "h": 6},
       "id": 1,
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
@@ -138,6 +140,7 @@
     {
       "type": "stat",
       "title": "Load Shedding Active",
+      "description": "Boolean indicator for active load shedding (shed score >= threshold). 1 indicates new requests are being rejected.",
       "gridPos": {"x": 6, "y": 1, "w": 6, "h": 6},
       "id": 2,
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
@@ -175,6 +178,7 @@
     {
       "type": "stat",
       "title": "Healthy Replicas",
+      "description": "Count of replicas reporting healthy routing state (health=1). Zero indicates all reads will fail over to leader.",
       "gridPos": {"x": 12, "y": 1, "w": 6, "h": 6},
       "id": 3,
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
@@ -215,6 +219,7 @@
     {
       "type": "stat",
       "title": "Consensus Status",
+      "description": "Replica status: 0=normal, 1=view_change, 2=recovering. Non-zero means consensus is in transition.",
       "gridPos": {"x": 18, "y": 1, "w": 6, "h": 6},
       "id": 4,
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
@@ -252,8 +257,28 @@
     },
     {
       "type": "row",
-      "title": "Connection Pool",
+      "title": "Overview Info",
       "gridPos": {"x": 0, "y": 7, "w": 24, "h": 1},
+      "id": 200,
+      "collapsed": true,
+      "panels": [
+        {
+          "type": "text",
+          "title": "Overview Stats Info",
+          "description": "Summary guidance for cluster overview stats.",
+          "gridPos": {"x": 0, "y": 0, "w": 24, "h": 4},
+          "id": 201,
+          "options": {
+            "mode": "markdown",
+            "content": "**Metrics:** pool connection totals, load shedding active flag, healthy replica count, and VSR status.\n\n**Healthy:** shedding inactive, >=1 healthy replica, status=0 (normal).\n\n**Troubleshooting:** confirm pool waiters, check replica health endpoints, inspect VSR logs for view changes.\n\n**Runbook:** https://docs.archerdb.io/runbooks/cluster-health"
+          }
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Connection Pool",
+      "gridPos": {"x": 0, "y": 8, "w": 24, "h": 1},
       "id": 101,
       "collapsed": false,
       "panels": []
@@ -261,7 +286,8 @@
     {
       "type": "timeseries",
       "title": "Active vs Idle Connections",
-      "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+      "description": "Active and idle connections per node. Idle should remain above zero during steady-state; spikes in active connections may indicate bursts or leaks.",
+      "gridPos": {"x": 0, "y": 9, "w": 12, "h": 8},
       "id": 5,
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "targets": [
@@ -301,7 +327,8 @@
     {
       "type": "gauge",
       "title": "Pool Utilization %",
-      "gridPos": {"x": 12, "y": 8, "w": 4, "h": 8},
+      "description": "Percentage of active connections relative to active+idle pool size. Sustained >90% indicates pool saturation.",
+      "gridPos": {"x": 12, "y": 9, "w": 4, "h": 8},
       "id": 6,
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "targets": [
@@ -340,7 +367,8 @@
     {
       "type": "stat",
       "title": "Acquire Ops/sec",
-      "gridPos": {"x": 16, "y": 8, "w": 4, "h": 8},
+      "description": "Rate of connection acquire operations across the cluster. Correlates with client load.",
+      "gridPos": {"x": 16, "y": 9, "w": 4, "h": 8},
       "id": 7,
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "targets": [
@@ -378,7 +406,8 @@
     {
       "type": "stat",
       "title": "Acquire Timeout Rate",
-      "gridPos": {"x": 20, "y": 8, "w": 4, "h": 8},
+      "description": "Rate of acquire timeouts. Any sustained non-zero rate indicates pool pressure or a sizing issue.",
+      "gridPos": {"x": 20, "y": 9, "w": 4, "h": 8},
       "id": 8,
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "targets": [
@@ -417,7 +446,8 @@
     {
       "type": "timeseries",
       "title": "Health Check Failures",
-      "gridPos": {"x": 0, "y": 16, "w": 24, "h": 6},
+      "description": "Rate of failed pool health checks. Non-zero values indicate unhealthy connections being closed.",
+      "gridPos": {"x": 0, "y": 17, "w": 24, "h": 6},
       "id": 9,
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "targets": [
@@ -452,8 +482,28 @@
     },
     {
       "type": "row",
+      "title": "Connection Pool Info",
+      "gridPos": {"x": 0, "y": 23, "w": 24, "h": 1},
+      "id": 202,
+      "collapsed": true,
+      "panels": [
+        {
+          "type": "text",
+          "title": "Connection Pool Info",
+          "description": "Operational guidance for connection pool metrics.",
+          "gridPos": {"x": 0, "y": 0, "w": 24, "h": 4},
+          "id": 203,
+          "options": {
+            "mode": "markdown",
+            "content": "**Metrics:** active/idle pool counts, utilization, acquire rate, timeout rate, health check failures.\n\n**Healthy:** idle > 0, timeouts near zero, health check failures near zero.\n\n**Troubleshooting:** inspect pool size limits, confirm waiters, and investigate backend connection health.\n\n**Runbook:** https://docs.archerdb.io/runbooks/connection-pool"
+          }
+        }
+      ]
+    },
+    {
+      "type": "row",
       "title": "Load Shedding",
-      "gridPos": {"x": 0, "y": 22, "w": 24, "h": 1},
+      "gridPos": {"x": 0, "y": 24, "w": 24, "h": 1},
       "id": 102,
       "collapsed": false,
       "panels": []
@@ -461,7 +511,8 @@
     {
       "type": "gauge",
       "title": "Composite Score",
-      "gridPos": {"x": 0, "y": 23, "w": 6, "h": 8},
+      "description": "Current overload score (0-100). Values above the threshold indicate active shedding.",
+      "gridPos": {"x": 0, "y": 25, "w": 6, "h": 8},
       "id": 10,
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "targets": [
@@ -500,7 +551,8 @@
     {
       "type": "timeseries",
       "title": "Shed Requests Rate",
-      "gridPos": {"x": 6, "y": 23, "w": 6, "h": 8},
+      "description": "Rate of requests rejected due to load shedding. Use alongside score to determine sustained overload.",
+      "gridPos": {"x": 6, "y": 25, "w": 6, "h": 8},
       "id": 11,
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "targets": [
@@ -536,7 +588,8 @@
     {
       "type": "timeseries",
       "title": "Score Components",
-      "gridPos": {"x": 12, "y": 23, "w": 12, "h": 8},
+      "description": "Component signals feeding the composite shed score: queue depth, P99 latency, and memory pressure.",
+      "gridPos": {"x": 12, "y": 25, "w": 12, "h": 8},
       "id": 12,
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "targets": [
@@ -580,7 +633,8 @@
     {
       "type": "heatmap",
       "title": "Retry-After Distribution",
-      "gridPos": {"x": 0, "y": 31, "w": 24, "h": 8},
+      "description": "Heatmap of Retry-After values returned to clients. Higher buckets indicate more severe overload.",
+      "gridPos": {"x": 0, "y": 33, "w": 24, "h": 8},
       "id": 13,
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "targets": [
@@ -607,8 +661,28 @@
     },
     {
       "type": "row",
+      "title": "Load Shedding Info",
+      "gridPos": {"x": 0, "y": 41, "w": 24, "h": 1},
+      "id": 204,
+      "collapsed": true,
+      "panels": [
+        {
+          "type": "text",
+          "title": "Load Shedding Info",
+          "description": "Operational guidance for load shedding metrics.",
+          "gridPos": {"x": 0, "y": 0, "w": 24, "h": 4},
+          "id": 205,
+          "options": {
+            "mode": "markdown",
+            "content": "**Metrics:** composite score, shed request rate, signal components, Retry-After distribution.\n\n**Healthy:** score below threshold, shed rate near zero, Retry-After buckets quiet.\n\n**Troubleshooting:** inspect queue depth, latency P99, and memory pressure signals; reduce load if sustained.\n\n**Runbook:** https://docs.archerdb.io/runbooks/load-shedding"
+          }
+        }
+      ]
+    },
+    {
+      "type": "row",
       "title": "Read Replica Routing",
-      "gridPos": {"x": 0, "y": 39, "w": 24, "h": 1},
+      "gridPos": {"x": 0, "y": 42, "w": 24, "h": 1},
       "id": 103,
       "collapsed": false,
       "panels": []
@@ -616,7 +690,8 @@
     {
       "type": "piechart",
       "title": "Replica vs Leader Reads",
-      "gridPos": {"x": 0, "y": 40, "w": 6, "h": 8},
+      "description": "Distribution of read traffic between replicas and leader failover. High leader share indicates unhealthy replicas.",
+      "gridPos": {"x": 0, "y": 43, "w": 6, "h": 8},
       "id": 14,
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "targets": [
@@ -640,7 +715,8 @@
     {
       "type": "timeseries",
       "title": "Routing Decisions/sec",
-      "gridPos": {"x": 6, "y": 40, "w": 6, "h": 8},
+      "description": "Rate of routing decisions by type (reads, writes, and failovers). Spikes in failovers indicate replica instability.",
+      "gridPos": {"x": 6, "y": 43, "w": 6, "h": 8},
       "id": 15,
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "targets": [
@@ -685,7 +761,8 @@
     {
       "type": "table",
       "title": "Per-Replica Health",
-      "gridPos": {"x": 12, "y": 40, "w": 12, "h": 8},
+      "description": "Current health and replication lag per replica. Healthy=1 indicates routing is enabled.",
+      "gridPos": {"x": 12, "y": 43, "w": 12, "h": 8},
       "id": 16,
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "targets": [
@@ -768,7 +845,8 @@
     {
       "type": "timeseries",
       "title": "Replication Lag per Replica",
-      "gridPos": {"x": 0, "y": 48, "w": 24, "h": 8},
+      "description": "Replication lag in operations per replica. Sustained growth suggests replica falling behind leader.",
+      "gridPos": {"x": 0, "y": 51, "w": 24, "h": 8},
       "id": 17,
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "targets": [
@@ -802,8 +880,28 @@
     },
     {
       "type": "row",
+      "title": "Read Replica Routing Info",
+      "gridPos": {"x": 0, "y": 59, "w": 24, "h": 1},
+      "id": 206,
+      "collapsed": true,
+      "panels": [
+        {
+          "type": "text",
+          "title": "Read Replica Routing Info",
+          "description": "Operational guidance for replica routing metrics.",
+          "gridPos": {"x": 0, "y": 0, "w": 24, "h": 4},
+          "id": 207,
+          "options": {
+            "mode": "markdown",
+            "content": "**Metrics:** replica vs leader read share, routing decision rates, per-replica health and lag.\n\n**Healthy:** majority of reads go to replicas, lag remains low, failovers minimal.\n\n**Troubleshooting:** verify replica health checks, check replication throughput and network latency.\n\n**Runbook:** https://docs.archerdb.io/runbooks/read-replica-routing"
+          }
+        }
+      ]
+    },
+    {
+      "type": "row",
       "title": "Consensus & Quorum",
-      "gridPos": {"x": 0, "y": 56, "w": 24, "h": 1},
+      "gridPos": {"x": 0, "y": 60, "w": 24, "h": 1},
       "id": 104,
       "collapsed": false,
       "panels": []
@@ -811,7 +909,8 @@
     {
       "type": "stat",
       "title": "Current View",
-      "gridPos": {"x": 0, "y": 57, "w": 6, "h": 8},
+      "description": "Current VSR view number. Increases on leader election and configuration changes.",
+      "gridPos": {"x": 0, "y": 61, "w": 6, "h": 8},
       "id": 18,
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "targets": [
@@ -849,7 +948,8 @@
     {
       "type": "timeseries",
       "title": "View Change Rate",
-      "gridPos": {"x": 6, "y": 57, "w": 6, "h": 8},
+      "description": "Rate of VSR view changes. Sustained increases indicate leader instability or network issues.",
+      "gridPos": {"x": 6, "y": 61, "w": 6, "h": 8},
       "id": 19,
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "targets": [
@@ -885,7 +985,8 @@
     {
       "type": "timeseries",
       "title": "Leader Election Activity",
-      "gridPos": {"x": 12, "y": 57, "w": 12, "h": 8},
+      "description": "Replica status over time (0 normal, 1 view_change, 2 recovering). Elevated values indicate election or recovery activity.",
+      "gridPos": {"x": 12, "y": 61, "w": 12, "h": 8},
       "id": 20,
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "targets": [
@@ -920,8 +1021,28 @@
     },
     {
       "type": "row",
+      "title": "Consensus & Quorum Info",
+      "gridPos": {"x": 0, "y": 69, "w": 24, "h": 1},
+      "id": 208,
+      "collapsed": true,
+      "panels": [
+        {
+          "type": "text",
+          "title": "Consensus & Quorum Info",
+          "description": "Operational guidance for VSR consensus metrics.",
+          "gridPos": {"x": 0, "y": 0, "w": 24, "h": 4},
+          "id": 209,
+          "options": {
+            "mode": "markdown",
+            "content": "**Metrics:** current view number, view change rate, replica status transitions.\n\n**Healthy:** status=0 with infrequent view changes.\n\n**Troubleshooting:** verify heartbeat timeouts, jitter configuration, and network stability.\n\n**Runbook:** https://docs.archerdb.io/runbooks/consensus-health"
+          }
+        }
+      ]
+    },
+    {
+      "type": "row",
       "title": "Alerts Overview",
-      "gridPos": {"x": 0, "y": 65, "w": 24, "h": 1},
+      "gridPos": {"x": 0, "y": 70, "w": 24, "h": 1},
       "id": 105,
       "collapsed": false,
       "panels": []
@@ -929,7 +1050,8 @@
     {
       "type": "alertlist",
       "title": "Active Cluster Alerts",
-      "gridPos": {"x": 0, "y": 66, "w": 24, "h": 8},
+      "description": "Active alerts sourced from archerdb-cluster.yaml for pool, shedding, replica, and consensus issues.",
+      "gridPos": {"x": 0, "y": 71, "w": 24, "h": 8},
       "id": 21,
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "options": {
@@ -937,7 +1059,27 @@
         "maxItems": 20,
         "sortOrder": 1
       }
+    },
+    {
+      "type": "row",
+      "title": "Alerts Overview Info",
+      "gridPos": {"x": 0, "y": 79, "w": 24, "h": 1},
+      "id": 210,
+      "collapsed": true,
+      "panels": [
+        {
+          "type": "text",
+          "title": "Alerts Overview Info",
+          "description": "Operational guidance for alert triage.",
+          "gridPos": {"x": 0, "y": 0, "w": 24, "h": 4},
+          "id": 211,
+          "options": {
+            "mode": "markdown",
+            "content": "**Metrics:** Active alerts from Prometheus rules in observability/prometheus/rules/archerdb-cluster.yaml.\n\n**Healthy:** No active alerts; pending alerts resolve within expected windows.\n\n**Troubleshooting:** triage alert summaries and follow linked runbooks for remediation steps.\n\n**Runbook:** https://docs.archerdb.io/runbooks/alert-triage"
+          }
+        }
+      ]
     }
   ],
-  "version": 1
+  "version": 2
 }
