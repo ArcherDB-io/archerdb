@@ -30,6 +30,7 @@ pub const SpanKind = trace_export.SpanKind;
 pub const SpanStatus = trace_export.SpanStatus;
 pub const Attribute = trace_export.Attribute;
 pub const AttributeValue = trace_export.AttributeValue;
+pub const SpanLink = trace_export.SpanLink;
 
 // Thread-local context management
 pub const setCurrent = correlation.setCurrent;
@@ -37,6 +38,7 @@ pub const getCurrent = correlation.getCurrent;
 
 // Span builder helpers
 pub const geoSpan = trace_export.geoSpan;
+pub const spanWithAttributes = trace_export.spanWithAttributes;
 
 test {
     _ = correlation;

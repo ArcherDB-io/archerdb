@@ -83,6 +83,13 @@ pub const SpanEvent = struct {
     attributes: []const Attribute,
 };
 
+/// Span link connecting spans across services/shards.
+pub const SpanLink = struct {
+    trace_id: [16]u8,
+    span_id: [8]u8,
+    attributes: []const Attribute,
+};
+
 /// A recorded span for export.
 pub const Span = struct {
     /// W3C trace-id (16 bytes).
@@ -101,6 +108,8 @@ pub const Span = struct {
     end_time_ns: i128,
     /// Span attributes.
     attributes: []const Attribute,
+    /// Span links for fan-out/parallel operations.
+    links: []const SpanLink,
     /// Span events.
     events: []const SpanEvent,
     /// Span status.
@@ -134,8 +143,8 @@ const OwnedSpan = struct {
     end_time_ns: i128,
     status: SpanStatus,
     status_message: ?[]const u8,
-    // Simplified: we don't copy attributes/events for now
-    // In production, you'd want a more sophisticated approach
+    attributes: []const Attribute,
+    links: []const SpanLink,
 };
 
 /// OTLP trace exporter.
@@ -232,10 +241,7 @@ pub const OtlpTraceExporter = struct {
         defer self.mutex.unlock();
 
         for (self.buffer.items) |span| {
-            self.allocator.free(span.name);
-            if (span.status_message) |msg| {
-                self.allocator.free(msg);
-            }
+            freeOwnedSpan(self.allocator, &span);
         }
         self.buffer.deinit();
 
@@ -248,27 +254,9 @@ pub const OtlpTraceExporter = struct {
     /// This method is safe to call from any thread and will not block
     /// request processing. Spans are batched and sent asynchronously.
     pub fn recordSpan(self: *OtlpTraceExporter, span: Span) void {
-        // Copy span data for owned storage
-        const name_copy = self.allocator.dupe(u8, span.name) catch {
-            log.warn("failed to allocate span name, dropping span", .{});
+        const owned_span = copySpan(self.allocator, span) catch |err| {
+            log.warn("failed to allocate span ({}), dropping span", .{err});
             return;
-        };
-
-        const status_msg_copy: ?[]const u8 = if (span.status_message) |msg|
-            self.allocator.dupe(u8, msg) catch null
-        else
-            null;
-
-        const owned_span = OwnedSpan{
-            .trace_id = span.trace_id,
-            .span_id = span.span_id,
-            .parent_span_id = span.parent_span_id,
-            .name = name_copy,
-            .kind = span.kind,
-            .start_time_ns = span.start_time_ns,
-            .end_time_ns = span.end_time_ns,
-            .status = span.status,
-            .status_message = status_msg_copy,
         };
 
         self.mutex.lock();
@@ -276,8 +264,7 @@ pub const OtlpTraceExporter = struct {
 
         self.buffer.append(owned_span) catch {
             log.warn("span buffer full, dropping span", .{});
-            self.allocator.free(name_copy);
-            if (status_msg_copy) |msg| self.allocator.free(msg);
+            freeOwnedSpan(self.allocator, &owned_span);
             return;
         };
 
@@ -323,16 +310,14 @@ pub const OtlpTraceExporter = struct {
             if (self.buffer.items.len == 0) return;
 
             // Move buffer contents to local variable
-            spans_to_export = self.buffer.moveToUnmanaged().toManaged(self.allocator);
+            var unmanaged = self.buffer.moveToUnmanaged();
+            spans_to_export = unmanaged.toManaged(self.allocator);
             self.buffer = std.ArrayList(OwnedSpan).init(self.allocator);
         }
         defer {
             // Free exported spans
             for (spans_to_export.items) |span| {
-                self.allocator.free(span.name);
-                if (span.status_message) |msg| {
-                    self.allocator.free(msg);
-                }
+                freeOwnedSpan(self.allocator, &span);
             }
             spans_to_export.deinit();
         }
@@ -396,19 +381,8 @@ pub const OtlpTraceExporter = struct {
     fn formatSpan(self: *OtlpTraceExporter, writer: anytype, span: OwnedSpan) !void {
         _ = self;
 
-        // Format trace_id and span_id as hex
-        var trace_id_hex: [32]u8 = undefined;
-        var span_id_hex: [16]u8 = undefined;
-
-        for (span.trace_id, 0..) |b, j| {
-            trace_id_hex[j * 2] = hexChar(b >> 4);
-            trace_id_hex[j * 2 + 1] = hexChar(b & 0x0F);
-        }
-
-        for (span.span_id, 0..) |b, j| {
-            span_id_hex[j * 2] = hexChar(b >> 4);
-            span_id_hex[j * 2 + 1] = hexChar(b & 0x0F);
-        }
+        const trace_id_hex = encodeTraceId(span.trace_id);
+        const span_id_hex = encodeSpanId(span.span_id);
 
         try writer.print(
             "{{\"traceId\":\"{s}\",\"spanId\":\"{s}\"",
@@ -444,8 +418,18 @@ pub const OtlpTraceExporter = struct {
         }
         try writer.writeByte('}');
 
-        // Empty attributes and events for now
-        try writer.writeAll(",\"attributes\":[],\"events\":[]}");
+        try writer.writeAll(",\"attributes\":[");
+        try formatAttributes(writer, span.attributes);
+        try writer.writeByte(']');
+
+        if (span.links.len > 0) {
+            try writer.writeAll(",\"links\":[");
+            try formatLinks(writer, span.links);
+            try writer.writeByte(']');
+        }
+
+        // Empty events for now
+        try writer.writeAll(",\"events\":[]}");
     }
 
     /// Send HTTP POST request with JSON payload.
@@ -566,6 +550,173 @@ fn hexChar(val: u8) u8 {
     return if (val < 10) '0' + val else 'a' + val - 10;
 }
 
+fn encodeTraceId(trace_id: [16]u8) [32]u8 {
+    var trace_id_hex: [32]u8 = undefined;
+    for (trace_id, 0..) |b, j| {
+        trace_id_hex[j * 2] = hexChar(b >> 4);
+        trace_id_hex[j * 2 + 1] = hexChar(b & 0x0F);
+    }
+    return trace_id_hex;
+}
+
+fn encodeSpanId(span_id: [8]u8) [16]u8 {
+    var span_id_hex: [16]u8 = undefined;
+    for (span_id, 0..) |b, j| {
+        span_id_hex[j * 2] = hexChar(b >> 4);
+        span_id_hex[j * 2 + 1] = hexChar(b & 0x0F);
+    }
+    return span_id_hex;
+}
+
+fn formatAttributes(writer: anytype, attributes: []const Attribute) !void {
+    for (attributes, 0..) |attr, i| {
+        if (i > 0) try writer.writeByte(',');
+        try writer.print("{{\"key\":\"{s}\",\"value\":{{", .{attr.key});
+        switch (attr.value) {
+            .string => |value| try writer.print("\"stringValue\":\"{s}\"", .{value}),
+            .int => |value| try writer.print("\"intValue\":\"{d}\"", .{value}),
+            .float => |value| try writer.print("\"doubleValue\":{d}", .{value}),
+            .bool => |value| try writer.print("\"boolValue\":{s}", .{if (value) "true" else "false"}),
+        }
+        try writer.writeAll("}}");
+    }
+}
+
+fn formatLinks(writer: anytype, links: []const SpanLink) !void {
+    for (links, 0..) |link, i| {
+        if (i > 0) try writer.writeByte(',');
+        const trace_id_hex = encodeTraceId(link.trace_id);
+        const span_id_hex = encodeSpanId(link.span_id);
+        try writer.print("{{\"traceId\":\"{s}\",\"spanId\":\"{s}\"", .{ trace_id_hex, span_id_hex });
+        if (link.attributes.len > 0) {
+            try writer.writeAll(",\"attributes\":[");
+            try formatAttributes(writer, link.attributes);
+            try writer.writeByte(']');
+        }
+        try writer.writeByte('}');
+    }
+}
+
+fn copySpan(allocator: std.mem.Allocator, span: Span) !OwnedSpan {
+    const name_copy = try allocator.dupe(u8, span.name);
+    errdefer allocator.free(name_copy);
+
+    const status_msg_copy: ?[]const u8 = if (span.status_message) |msg|
+        try allocator.dupe(u8, msg)
+    else
+        null;
+    errdefer if (status_msg_copy) |msg| allocator.free(msg);
+
+    const attributes_copy = try copyAttributes(allocator, span.attributes);
+    errdefer freeAttributes(allocator, attributes_copy);
+
+    const links_copy = try copyLinks(allocator, span.links);
+    errdefer freeLinks(allocator, links_copy);
+
+    return OwnedSpan{
+        .trace_id = span.trace_id,
+        .span_id = span.span_id,
+        .parent_span_id = span.parent_span_id,
+        .name = name_copy,
+        .kind = span.kind,
+        .start_time_ns = span.start_time_ns,
+        .end_time_ns = span.end_time_ns,
+        .status = span.status,
+        .status_message = status_msg_copy,
+        .attributes = attributes_copy,
+        .links = links_copy,
+    };
+}
+
+fn copyAttributes(allocator: std.mem.Allocator, attributes: []const Attribute) ![]Attribute {
+    if (attributes.len == 0) return &[_]Attribute{};
+    var owned = try allocator.alloc(Attribute, attributes.len);
+    var i: usize = 0;
+    errdefer {
+        var j: usize = 0;
+        while (j < i) : (j += 1) {
+            allocator.free(owned[j].key);
+            if (owned[j].value == .string) allocator.free(owned[j].value.string);
+        }
+        allocator.free(owned);
+    }
+
+    for (attributes, 0..) |attr, idx| {
+        const key_copy = try allocator.dupe(u8, attr.key);
+        errdefer allocator.free(key_copy);
+
+        const value_copy = switch (attr.value) {
+            .string => |value| blk: {
+                const string_copy = try allocator.dupe(u8, value);
+                break :blk AttributeValue{ .string = string_copy };
+            },
+            .int => |value| AttributeValue{ .int = value },
+            .float => |value| AttributeValue{ .float = value },
+            .bool => |value| AttributeValue{ .bool = value },
+        };
+        errdefer if (value_copy == .string) allocator.free(value_copy.string);
+
+        owned[idx] = .{
+            .key = key_copy,
+            .value = value_copy,
+        };
+        i = idx + 1;
+    }
+
+    return owned;
+}
+
+fn copyLinks(allocator: std.mem.Allocator, links: []const SpanLink) ![]SpanLink {
+    if (links.len == 0) return &[_]SpanLink{};
+    var owned = try allocator.alloc(SpanLink, links.len);
+    var i: usize = 0;
+    errdefer {
+        var j: usize = 0;
+        while (j < i) : (j += 1) {
+            freeAttributes(allocator, owned[j].attributes);
+        }
+        allocator.free(owned);
+    }
+
+    for (links, 0..) |link, idx| {
+        const attrs_copy = try copyAttributes(allocator, link.attributes);
+        owned[idx] = .{
+            .trace_id = link.trace_id,
+            .span_id = link.span_id,
+            .attributes = attrs_copy,
+        };
+        i = idx + 1;
+    }
+
+    return owned;
+}
+
+fn freeAttributes(allocator: std.mem.Allocator, attributes: []const Attribute) void {
+    if (attributes.len == 0) return;
+    for (attributes) |attr| {
+        allocator.free(attr.key);
+        if (attr.value == .string) allocator.free(attr.value.string);
+    }
+    allocator.free(attributes);
+}
+
+fn freeLinks(allocator: std.mem.Allocator, links: []const SpanLink) void {
+    if (links.len == 0) return;
+    for (links) |link| {
+        freeAttributes(allocator, link.attributes);
+    }
+    allocator.free(links);
+}
+
+fn freeOwnedSpan(allocator: std.mem.Allocator, span: *const OwnedSpan) void {
+    allocator.free(span.name);
+    if (span.status_message) |msg| {
+        allocator.free(msg);
+    }
+    freeAttributes(allocator, span.attributes);
+    freeLinks(allocator, span.links);
+}
+
 // =============================================================================
 // Builder helpers for creating spans with attributes
 // =============================================================================
@@ -586,6 +737,33 @@ pub fn geoSpan(
         .start_time_ns = start_ns,
         .end_time_ns = end_ns,
         .attributes = &[_]Attribute{},
+        .links = &[_]SpanLink{},
+        .events = &[_]SpanEvent{},
+        .status = .ok,
+        .status_message = null,
+    };
+}
+
+/// Helper to create a span with attributes and links.
+pub fn spanWithAttributes(
+    ctx: *const correlation.CorrelationContext,
+    name: []const u8,
+    kind: SpanKind,
+    start_ns: i128,
+    end_ns: i128,
+    attributes: []const Attribute,
+    links: []const SpanLink,
+) Span {
+    return Span{
+        .trace_id = ctx.trace_id,
+        .span_id = ctx.span_id,
+        .parent_span_id = null,
+        .name = name,
+        .kind = kind,
+        .start_time_ns = start_ns,
+        .end_time_ns = end_ns,
+        .attributes = attributes,
+        .links = links,
         .events = &[_]SpanEvent{},
         .status = .ok,
         .status_message = null,
@@ -641,6 +819,7 @@ test "Span initialization" {
         .start_time_ns = 1000,
         .end_time_ns = 2000,
         .attributes = &[_]Attribute{},
+        .links = &[_]SpanLink{},
         .events = &[_]SpanEvent{},
         .status = .ok,
         .status_message = null,
@@ -662,4 +841,66 @@ test "geoSpan helper" {
     try std.testing.expectEqualSlices(u8, &ctx.span_id, &span.span_id);
     try std.testing.expectEqualStrings("geo.radius_query", span.name);
     try std.testing.expectEqual(SpanKind.server, span.kind);
+}
+
+test "formatSpan includes attributes and links" {
+    const allocator = std.testing.allocator;
+    var exporter = OtlpTraceExporter{
+        .endpoint = "http://localhost:4318/v1/traces",
+        .host = "localhost",
+        .port = 4318,
+        .path = "/v1/traces",
+        .buffer = std.ArrayList(OwnedSpan).init(allocator),
+        .allocator = allocator,
+        .config = .{},
+        .last_flush_ns = 0,
+        .mutex = .{},
+        .export_thread = null,
+        .running = std.atomic.Value(bool).init(false),
+        .flush_requested = std.atomic.Value(bool).init(false),
+    };
+    defer exporter.buffer.deinit();
+
+    const attributes = [_]Attribute{
+        .{ .key = "shard_id", .value = .{ .int = 3 } },
+        .{ .key = "result_count", .value = .{ .int = 42 } },
+    };
+    const link_attributes = [_]Attribute{
+        .{ .key = "fanout", .value = .{ .bool = true } },
+    };
+    const links = [_]SpanLink{
+        .{
+            .trace_id = [_]u8{0x10} ** 16,
+            .span_id = [_]u8{0x20} ** 8,
+            .attributes = &link_attributes,
+        },
+    };
+
+    const span = Span{
+        .trace_id = [_]u8{0x01} ** 16,
+        .span_id = [_]u8{0x02} ** 8,
+        .parent_span_id = null,
+        .name = "fanout",
+        .kind = .server,
+        .start_time_ns = 1000,
+        .end_time_ns = 2000,
+        .attributes = &attributes,
+        .links = &links,
+        .events = &[_]SpanEvent{},
+        .status = .ok,
+        .status_message = null,
+    };
+
+    var owned_span = try copySpan(allocator, span);
+    defer freeOwnedSpan(allocator, &owned_span);
+
+    var buffer: [8192]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buffer);
+    try exporter.formatOtlpJson(fbs.writer(), &[_]OwnedSpan{owned_span});
+    const output = fbs.getWritten();
+
+    try std.testing.expect(std.mem.indexOf(u8, output, "\"shard_id\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "\"result_count\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "\"links\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "\"fanout\"") != null);
 }
