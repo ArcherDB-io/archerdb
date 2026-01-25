@@ -408,6 +408,9 @@ var metrics_cache: MetricsCache = .{};
 /// Per observability/spec.md: Bearer token auth for production deployments.
 var bearer_token: ?[]const u8 = null;
 
+/// Pending online resharding request (0 = none).
+var resharding_request_target: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
+
 /// Set the bearer token for metrics authentication.
 /// Call before start() to enable authentication.
 pub fn setAuthToken(token: []const u8) void {
@@ -419,6 +422,12 @@ pub fn setAuthToken(token: []const u8) void {
 pub fn clearAuthToken() void {
     bearer_token = null;
     log.info("metrics server authentication disabled", .{});
+}
+
+/// Consume a pending resharding request if one exists.
+pub fn takeReshardingRequest() ?u32 {
+    const target = resharding_request_target.swap(0, .acq_rel);
+    return if (target == 0) null else target;
 }
 
 // =============================================================================
@@ -723,6 +732,15 @@ pub const MetricsServer = struct {
             try handleHealthDetailed(client_fd);
         } else if (std.mem.eql(u8, path, "/regions")) {
             try handleRegions(client_fd);
+        } else if (std.mem.startsWith(u8, path, "/control/reshard/")) {
+            if (bearer_token) |expected_token| {
+                const auth_header = parseAuthHeader(request);
+                if (auth_header == null or !std.mem.eql(u8, auth_header.?, expected_token)) {
+                    try sendResponse(client_fd, .unauthorized, "text/plain", "Unauthorized");
+                    return;
+                }
+            }
+            try handleControlReshard(client_fd, path);
         } else if (std.mem.eql(u8, path, "/metrics")) {
             // Check bearer token authentication if configured
             if (bearer_token) |expected_token| {
@@ -1026,7 +1044,7 @@ pub const MetricsServer = struct {
         const resharding_progress_val = metrics.Registry.resharding_progress.load(.monotonic);
 
         // Status is healthy if not resharding or resharding is complete
-        const is_resharding = resharding_status_val == 1;
+        const is_resharding = resharding_status_val != 0;
         const status = if (is_resharding) "resharding" else "ok";
 
         const resharding_mode_val = metrics.Registry.resharding_mode.load(.monotonic);
@@ -1117,6 +1135,37 @@ pub const MetricsServer = struct {
         }) catch "{\"status\":\"error\"}";
 
         try sendResponse(client_fd, .ok, "application/json", body);
+    }
+
+    fn handleControlReshard(client_fd: posix.socket_t, path: []const u8) !void {
+        const prefix = "/control/reshard/";
+        const target_slice = path[prefix.len..];
+        if (target_slice.len == 0) {
+            try sendResponse(client_fd, .bad_request, "text/plain", "Missing target shard count");
+            return;
+        }
+
+        const target = std.fmt.parseUnsigned(u32, target_slice, 10) catch {
+            try sendResponse(client_fd, .bad_request, "text/plain", "Invalid target shard count");
+            return;
+        };
+        if (target == 0) {
+            try sendResponse(client_fd, .bad_request, "text/plain", "Target shard count must be > 0");
+            return;
+        }
+
+        if (metrics.Registry.resharding_status.load(.monotonic) != 0) {
+            try sendResponse(client_fd, .bad_request, "text/plain", "Resharding already in progress");
+            return;
+        }
+
+        if (resharding_request_target.load(.acquire) != 0) {
+            try sendResponse(client_fd, .bad_request, "text/plain", "Resharding request already pending");
+            return;
+        }
+
+        resharding_request_target.store(target, .release);
+        try sendResponse(client_fd, .ok, "text/plain", "Resharding request accepted");
     }
 
     /// Health endpoint: Encryption at rest status.

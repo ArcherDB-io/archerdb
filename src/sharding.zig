@@ -1862,6 +1862,13 @@ pub const OnlineReshardingController = struct {
         self.resetMetrics();
         self.setReshardingMode(.preparing);
 
+        metrics.Registry.resharding_source_shards.store(self.manager.current_shards, .monotonic);
+        metrics.Registry.resharding_target_shards.store(new_shard_count, .monotonic);
+        metrics.Registry.resharding_start_ns.store(
+            @intCast(std.time.nanoTimestamp()),
+            .monotonic,
+        );
+
         try self.manager.startResharding(new_shard_count);
         try self.worker.start(total_entities);
         self.updateDualWriteMetric();
@@ -1966,6 +1973,9 @@ pub const OnlineReshardingController = struct {
         _ = self;
         metrics.Registry.resharding_mode.store(0, .monotonic);
         metrics.Registry.resharding_status.store(@intFromEnum(ReshardingStatus.idle), .monotonic);
+        metrics.Registry.resharding_source_shards.store(0, .monotonic);
+        metrics.Registry.resharding_target_shards.store(0, .monotonic);
+        metrics.Registry.resharding_start_ns.store(0, .monotonic);
         metrics.Registry.resharding_dual_write_enabled.store(0, .monotonic);
         metrics.Registry.resharding_migration_rate.store(0, .monotonic);
         metrics.Registry.resharding_batches_processed.store(0, .monotonic);
@@ -1978,6 +1988,9 @@ pub const OnlineReshardingController = struct {
         _ = self;
         metrics.Registry.resharding_mode.store(0, .monotonic);
         metrics.Registry.resharding_status.store(@intFromEnum(ReshardingStatus.idle), .monotonic);
+        metrics.Registry.resharding_source_shards.store(0, .monotonic);
+        metrics.Registry.resharding_target_shards.store(0, .monotonic);
+        metrics.Registry.resharding_start_ns.store(0, .monotonic);
         metrics.Registry.resharding_dual_write_enabled.store(0, .monotonic);
         metrics.Registry.resharding_migration_rate.store(0, .monotonic);
         metrics.Registry.resharding_batches_processed.store(0, .monotonic);

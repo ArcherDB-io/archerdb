@@ -606,6 +606,8 @@ const CLIArgs = union(enum) {
             to: u32,
             /// Resharding mode (offline, online)
             mode: ?[]const u8 = null,
+            /// Metrics port for control plane (defaults to 9091)
+            @"metrics-port": ?u16 = null,
             /// Dry run - show what would happen
             @"dry-run": bool = false,
             @"log-level": LogLevel = .info,
@@ -651,6 +653,10 @@ const CLIArgs = union(enum) {
             \\  --mode=<offline|online>
             \\        Resharding mode. 'offline' is stop-the-world (default).
             \\        'online' allows reads during migration.
+            \\
+            \\  --metrics-port=<port>
+            \\        Metrics server port to submit online resharding control requests.
+            \\        Defaults to 9091 when not provided.
             \\
             \\  --format=<text|json>
             \\        Output format. Defaults to 'text'.
@@ -1691,6 +1697,7 @@ pub const Command = union(enum) {
             cluster: u128,
             to: u32,
             mode: ReshardMode,
+            metrics_port: ?u16,
             dry_run: bool,
             log_level: LogLevel,
         },
@@ -2688,6 +2695,7 @@ fn parse_args_shard(shard: CLIArgs.Shard) Command.Shard {
                     .cluster = reshard.cluster,
                     .to = reshard.to,
                     .mode = parse_reshard_mode(reshard.mode),
+                    .metrics_port = reshard.@"metrics-port",
                     .dry_run = reshard.@"dry-run",
                     .log_level = reshard.@"log-level",
                 },

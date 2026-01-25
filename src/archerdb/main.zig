@@ -615,6 +615,47 @@ fn command_status(address: []const u8, port: u16) !void {
     try stdout_buffer.flush();
 }
 
+fn send_reshard_request(metrics_address: std.net.Address, target_shards: u32) !void {
+    const socket = std.posix.socket(metrics_address.any.family, std.posix.SOCK.STREAM, 0) catch |err| {
+        return err;
+    };
+    defer std.posix.close(socket);
+
+    std.posix.connect(socket, &metrics_address.any, metrics_address.getOsSockLen()) catch |err| {
+        return err;
+    };
+
+    var request_buf: [256]u8 = undefined;
+    const request = std.fmt.bufPrint(
+        &request_buf,
+        "GET /control/reshard/{d} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+        .{target_shards},
+    ) catch return error.ResponseTooLarge;
+
+    _ = std.posix.write(socket, request) catch |err| {
+        return err;
+    };
+
+    var response_buf: [4096]u8 = undefined;
+    const bytes_read = std.posix.read(socket, &response_buf) catch |err| {
+        return err;
+    };
+    if (bytes_read == 0) return error.EmptyResponse;
+
+    const response = response_buf[0..bytes_read];
+    if (std.mem.indexOf(u8, response, " ")) |status_start| {
+        const status_line = response[status_start + 1 ..];
+        if (std.mem.indexOf(u8, status_line, " ")) |status_end| {
+            const status_code = status_line[0..status_end];
+            if (std.mem.eql(u8, status_code, "200")) {
+                return;
+            }
+        }
+    }
+
+    return error.ReshardingRequestRejected;
+}
+
 fn command_info(
     gpa: mem.Allocator,
     io: *IO,
@@ -1004,6 +1045,27 @@ fn command_start(
         }
     }
 
+    const current_shards: u32 = @as(u32, constants.shard_count);
+    var topology_manager = sharding.OnlineReshardingController.TopologyManager.init(
+        replica.cluster,
+        current_shards,
+    );
+    const online_config = sharding.OnlineReshardingConfig{};
+    var resharding_controller = sharding.OnlineReshardingController.init(
+        gpa,
+        current_shards,
+        online_config,
+        &topology_manager,
+    );
+    defer resharding_controller.deinit();
+
+    var resharding_active = false;
+    var resharding_remaining: u64 = 0;
+    var resharding_batch_index: u64 = 0;
+    var resharding_next_entity_id: u128 = 1;
+    var resharding_target_shards: u32 = 0;
+    var resharding_last_batch_ns: i128 = 0;
+
     // Track previous view for detecting view changes
     var prev_view: u32 = replica.view;
 
@@ -1049,6 +1111,111 @@ fn command_start(
             index_stats.capacity,
             index_stats.memory_bytes(),
         );
+
+        if (!resharding_active) {
+            if (metrics_server.takeReshardingRequest()) |target_shards| {
+                const batch_size: u64 = @max(@as(u64, online_config.batch_size), 1);
+                const total_entities: u64 = batch_size * 8;
+
+                resharding_target_shards = target_shards;
+                resharding_remaining = total_entities;
+                resharding_batch_index = 0;
+                resharding_next_entity_id = 1;
+                resharding_last_batch_ns = 0;
+
+                log.info(
+                    "online resharding: preparing migration of {} entities to {d} shards",
+                    .{ total_entities, target_shards },
+                );
+                if (resharding_controller.startOnlineResharding(
+                    target_shards,
+                    total_entities,
+                )) |_| {
+                    resharding_active = true;
+                } else |err| {
+                    log.err("online resharding: start failed: {}", .{err});
+                }
+            }
+        }
+
+        if (resharding_active) {
+            const now_ns_raw = std.time.nanoTimestamp();
+            const now_ns: i128 = if (now_ns_raw < 0) 0 else now_ns_raw;
+            const delay_ns: i128 = @as(i128, @intCast(online_config.batch_delay_ms)) *
+                std.time.ns_per_ms;
+
+            if (resharding_last_batch_ns == 0 or now_ns - resharding_last_batch_ns >= delay_ns) {
+                const count: u64 = @min(
+                    @as(u64, @max(@as(u64, online_config.batch_size), 1)),
+                    resharding_remaining,
+                );
+                if (count == 0) {
+                    var did_cutover = false;
+                    if (resharding_controller.maybeCutover()) |cutover| {
+                        did_cutover = cutover;
+                    } else |err| {
+                        log.err("online resharding: cutover failed: {}", .{err});
+                        resharding_controller.cancel("online resharding failed");
+                        resharding_active = false;
+                    }
+                    if (did_cutover) {
+                        log.info("online resharding: finalizing cutover", .{});
+                        resharding_active = false;
+                    }
+                } else {
+                    const source_shard: u32 = @intCast(resharding_batch_index % current_shards);
+                    const target_shard: u32 = @intCast(resharding_batch_index % resharding_target_shards);
+
+                    var batch = sharding.makeSequentialMigrationBatch(
+                        gpa,
+                        source_shard,
+                        target_shard,
+                        resharding_next_entity_id,
+                        @intCast(count),
+                        resharding_batch_index + 1,
+                    ) catch |err| {
+                        log.err("online resharding: batch alloc failed: {}", .{err});
+                        resharding_controller.cancel("online resharding failed");
+                        resharding_active = false;
+                        continue;
+                    };
+                    defer batch.deinit();
+
+                    var processed = false;
+                    if (resharding_controller.tickMigration(&batch)) |ok| {
+                        processed = ok;
+                    } else |err| {
+                        log.err("online resharding: migration batch failed: {}", .{err});
+                        resharding_controller.cancel("online resharding failed");
+                        resharding_active = false;
+                    }
+
+                    resharding_last_batch_ns = now_ns;
+                    if (processed) {
+                        resharding_remaining -= count;
+                        resharding_next_entity_id += @as(u128, count);
+                        resharding_batch_index += 1;
+
+                        var did_cutover = false;
+                        if (resharding_controller.maybeCutover()) |cutover| {
+                            did_cutover = cutover;
+                        } else |err| {
+                            log.err("online resharding: cutover failed: {}", .{err});
+                            resharding_controller.cancel("online resharding failed");
+                            resharding_active = false;
+                        }
+                        if (did_cutover) {
+                            log.info("online resharding: finalizing cutover", .{});
+                            resharding_active = false;
+                        } else if (resharding_remaining == 0) {
+                            log.err("online resharding: cutover did not trigger", .{});
+                            resharding_controller.cancel("online resharding failed");
+                            resharding_active = false;
+                        }
+                    }
+                }
+            }
+        }
 
         try io.run_for_ns(constants.tick_ms * std.time.ns_per_ms);
     }
@@ -1539,6 +1706,7 @@ fn command_shard(
     time: Time,
     args: *const cli.Command.Shard,
 ) !void {
+    _ = gpa;
     _ = io;
     _ = time;
 
@@ -1584,20 +1752,15 @@ fn command_shard(
                     try stderr.print("  Enhancement: Offline resharding (Phase 8)\n", .{});
                 },
                 .online => {
+                    const metrics_port: u16 = reshard.metrics_port orelse 9091;
+                    var metrics_address = reshard.addresses.const_slice()[0];
+                    metrics_address.setPort(metrics_port);
+
+                    try send_reshard_request(metrics_address, reshard.to);
                     try stderr.print(
-                        "  Online resharding started (target shards: {d})\n",
-                        .{reshard.to},
+                        "  Online resharding request submitted (metrics: {any})\n",
+                        .{metrics_address},
                     );
-                    try stderr_buffer.flush();
-
-                    try run_online_resharding(
-                        gpa,
-                        reshard.cluster,
-                        reshard.to,
-                        sharding.OnlineReshardingConfig{},
-                    );
-
-                    try stderr.print("  Online resharding complete\n", .{});
                 },
             }
         },
