@@ -23,6 +23,7 @@ const MessagePool = @import("../message_pool.zig").MessagePool;
 const Message = @import("../message_pool.zig").MessagePool.Message;
 const MessageBuffer = @import("../message_buffer.zig").MessageBuffer;
 const load_shedding = @import("../load_shedding.zig");
+const read_replica_router = @import("../read_replica_router.zig");
 const ForestTableIteratorType =
     @import("../lsm/forest_table_iterator.zig").ForestTableIteratorType;
 const TestStorage = @import("../testing/storage.zig").Storage;
@@ -46,6 +47,9 @@ const ClientSessions = vsr.ClientSessions;
 const Tracer = vsr.trace.Tracer;
 const membership = @import("membership.zig");
 const MembershipConfig = membership.MembershipConfig;
+const ReadReplicaRouter = read_replica_router.ReadReplicaRouter;
+const ReplicaHealth = read_replica_router.ReplicaHealth;
+const RoutingQueryType = read_replica_router.QueryType;
 
 const log = marks.wrap_log(stdx.log.scoped(.replica));
 
@@ -498,6 +502,9 @@ pub fn ReplicaType(
         },
 
         routing: vsr.Routing,
+        read_replica_router: ReadReplicaRouter,
+        replica_health: [constants.replicas_max]ReplicaHealth,
+        replica_health_count: u8,
         load_shedder: load_shedding.LoadShedder,
 
         /// When "log_view < view": The DVC headers.
@@ -1261,6 +1268,25 @@ pub fn ReplicaType(
             assert(request_size_limit <= constants.message_size_max);
             assert(request_size_limit > @sizeOf(Header));
 
+            const leader_index: u8 = @intCast(@mod(
+                self.superblock.working.vsr_state.view,
+                @as(u32, replica_count),
+            ));
+            const leader_id = self.superblock.working.vsr_state.members[leader_index];
+            const now_ms = std.time.milliTimestamp();
+            var replica_health: [constants.replicas_max]ReplicaHealth =
+                [_]ReplicaHealth{ReplicaHealth.init(0, false, 0, 0)} ** constants.replicas_max;
+            var replica_health_count: u8 = 0;
+            for (0..replica_count) |index| {
+                if (index == leader_index) continue;
+                const member_id = self.superblock.working.vsr_state.members[index];
+                if (member_id == 0) continue;
+
+                const health_index: usize = @intCast(replica_health_count);
+                replica_health[health_index] = ReplicaHealth.init(member_id, true, now_ms, 0);
+                replica_health_count += 1;
+            }
+
             // The clock is special-cased for standbys. We want to balance two concerns:
             //   - standby clock should never affect cluster time,
             //   - standby should have up-to-date clock, such that it can quickly join the cluster
@@ -1416,6 +1442,9 @@ pub fn ReplicaType(
                     .replica_count = replica_count,
                     .standby_count = standby_count,
                 }),
+                .read_replica_router = undefined,
+                .replica_health = replica_health,
+                .replica_health_count = replica_health_count,
                 .load_shedder = load_shedding.LoadShedder.initDefault(),
                 .view_headers = vsr.Headers.ViewChangeArray.init(
                     self.superblock.working.view_headers().command,
@@ -1526,6 +1555,14 @@ pub fn ReplicaType(
                 .aof = options.aof,
                 .replicate_options = options.replicate_options,
             };
+            const health_check_interval_ms: u64 =
+                @as(u64, self.normal_heartbeat_timeout.after) * constants.tick_ms;
+            self.read_replica_router = ReadReplicaRouter.init(
+                leader_id,
+                self.replica_health[0..@as(usize, self.replica_health_count)],
+                archerdb_metrics.Registry.clusterMetrics(),
+                health_check_interval_ms,
+            );
             self.routing.view_change(self.view);
 
             log.debug("{}: init: replica_count={} quorum_view_change={} quorum_replication={} " ++
@@ -1864,6 +1901,17 @@ pub fn ReplicaType(
                 .pong_timestamp_wall = @bitCast(self.clock.realtime()),
             }));
 
+            if (self.status == .normal and
+                self.primary_index(self.view) == self.replica and
+                message.header.replica < self.replica_count)
+            {
+                const replica_id =
+                    self.superblock.working.vsr_state.members[message.header.replica];
+                if (replica_id != 0 and replica_id != self.read_replica_router.leader_id) {
+                    self.read_replica_router.updateReplicaHealth(replica_id, true);
+                }
+            }
+
             if (self.status == .normal and self.backup()) {
                 if (message.header.view == self.view and message.header.route != 0) {
                     const route = self.routing.route_decode(message.header.route).?;
@@ -1918,6 +1966,17 @@ pub fn ReplicaType(
             if (self.clock.round_trip_time_median_ns()) |rtt_ns| {
                 self.prepare_timeout.set_rtt_ns(rtt_ns);
             }
+
+            if (self.status == .normal and
+                self.primary_index(self.view) == self.replica and
+                message.header.replica < self.replica_count)
+            {
+                const replica_id =
+                    self.superblock.working.vsr_state.members[message.header.replica];
+                if (replica_id != 0 and replica_id != self.read_replica_router.leader_id) {
+                    self.read_replica_router.updateReplicaHealth(replica_id, true);
+                }
+            }
         }
 
         /// Pings are used by clients to learn about the current view.
@@ -1959,6 +2018,29 @@ pub fn ReplicaType(
             assert(message.header.operation != .reserved);
             assert(message.header.operation != .root);
             assert(message.header.view <= self.view); // The client's view may be behind ours.
+
+            if (StateMachine.Operation == @import("../archerdb.zig").Operation) {
+                if (StateMachine.Operation.from_vsr(message.header.operation)) |operation| {
+                    const query_type: RoutingQueryType = .{
+                        .has_mutation = !operation.isReadOnly(),
+                        .has_transaction = false,
+                    };
+                    const decision = self.read_replica_router.route(query_type);
+                    if (decision.target == .replica) {
+                        if (decision.replica_id) |replica_id| {
+                            if (vsr.member_index(
+                                &self.superblock.working.vsr_state.members,
+                                replica_id,
+                            )) |replica_index| {
+                                if (replica_index != self.replica) {
+                                    self.send_message_to_replica(replica_index, message);
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
 
             // Messages with `client == 0` are sent from itself, setting `realtime` to zero
             // so the StateMachine `{prepare,commit}_timestamp` will be used instead.
@@ -2292,6 +2374,15 @@ pub fn ReplicaType(
             assert(message.header.commit_min <=
                 self.commit_min + constants.pipeline_prepare_queue_max);
             prepare.commit_mins[message.header.replica] = message.header.commit_min;
+
+            if (message.header.replica < self.replica_count) {
+                const replica_id =
+                    self.superblock.working.vsr_state.members[message.header.replica];
+                if (replica_id != 0 and replica_id != self.read_replica_router.leader_id) {
+                    const replication_lag_ops = self.commit_max -| message.header.commit_min;
+                    self.read_replica_router.updateReplicationLag(replica_id, replication_lag_ops);
+                }
+            }
 
             const count = self.count_message_and_receive_quorum_exactly_once(
                 &prepare.ok_from_all_replicas,

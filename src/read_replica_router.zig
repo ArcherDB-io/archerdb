@@ -96,14 +96,14 @@ pub const ReadReplicaRouter = struct {
     pub fn init(
         leader_id: u128,
         replicas: []ReplicaHealth,
-        metrics: *ClusterMetrics,
+        metrics_registry: *ClusterMetrics,
         health_check_interval_ms: u64,
     ) Self {
         return .{
             .leader_id = leader_id,
             .replicas = replicas,
             .round_robin_index = std.atomic.Value(usize).init(0),
-            .metrics = metrics,
+            .metrics = metrics_registry,
             .health_check_interval_ms = health_check_interval_ms,
         };
     }
@@ -178,17 +178,17 @@ const testing = std.testing;
 fn makeRouter(
     leader_id: u128,
     replicas: []ReplicaHealth,
-    metrics: *ClusterMetrics,
+    metrics_registry: *ClusterMetrics,
 ) ReadReplicaRouter {
-    return ReadReplicaRouter.init(leader_id, replicas, metrics, 10_000);
+    return ReadReplicaRouter.init(leader_id, replicas, metrics_registry, 10_000);
 }
 
 test "read_replica_router: write operation routes to leader" {
-    var metrics = ClusterMetrics.init();
+    var metrics_state = ClusterMetrics.init();
     var replicas = [_]ReplicaHealth{
         ReplicaHealth.init(1, true, std.time.milliTimestamp(), 0),
     };
-    var router = makeRouter(10, replicas[0..], &metrics);
+    var router = makeRouter(10, replicas[0..], &metrics_state);
 
     const decision = router.route(.{ .has_mutation = true, .has_transaction = false });
 
@@ -198,11 +198,11 @@ test "read_replica_router: write operation routes to leader" {
 }
 
 test "read_replica_router: read operation routes to healthy replica" {
-    var metrics = ClusterMetrics.init();
+    var metrics_state = ClusterMetrics.init();
     var replicas = [_]ReplicaHealth{
         ReplicaHealth.init(42, true, std.time.milliTimestamp(), 0),
     };
-    var router = makeRouter(7, replicas[0..], &metrics);
+    var router = makeRouter(7, replicas[0..], &metrics_state);
 
     const decision = router.route(.{ .has_mutation = false, .has_transaction = false });
 
@@ -212,12 +212,12 @@ test "read_replica_router: read operation routes to healthy replica" {
 }
 
 test "read_replica_router: read fails over to leader when replicas unhealthy" {
-    var metrics = ClusterMetrics.init();
+    var metrics_state = ClusterMetrics.init();
     var replicas = [_]ReplicaHealth{
         ReplicaHealth.init(1, false, 0, 0),
         ReplicaHealth.init(2, false, 0, 0),
     };
-    var router = makeRouter(9, replicas[0..], &metrics);
+    var router = makeRouter(9, replicas[0..], &metrics_state);
 
     const decision = router.route(.{ .has_mutation = false, .has_transaction = false });
 
@@ -226,13 +226,13 @@ test "read_replica_router: read fails over to leader when replicas unhealthy" {
 }
 
 test "read_replica_router: round-robin distributes across replicas" {
-    var metrics = ClusterMetrics.init();
+    var metrics_state = ClusterMetrics.init();
     const now_ms = std.time.milliTimestamp();
     var replicas = [_]ReplicaHealth{
         ReplicaHealth.init(11, true, now_ms, 0),
         ReplicaHealth.init(22, true, now_ms, 0),
     };
-    var router = makeRouter(5, replicas[0..], &metrics);
+    var router = makeRouter(5, replicas[0..], &metrics_state);
 
     const first = router.route(.{ .has_mutation = false, .has_transaction = false });
     const second = router.route(.{ .has_mutation = false, .has_transaction = false });
@@ -242,24 +242,24 @@ test "read_replica_router: round-robin distributes across replicas" {
 }
 
 test "read_replica_router: unhealthy replicas are skipped" {
-    var metrics = ClusterMetrics.init();
+    var metrics_state = ClusterMetrics.init();
     const now_ms = std.time.milliTimestamp();
     var replicas = [_]ReplicaHealth{
         ReplicaHealth.init(11, false, now_ms, 0),
         ReplicaHealth.init(22, true, now_ms, 0),
     };
-    var router = makeRouter(5, replicas[0..], &metrics);
+    var router = makeRouter(5, replicas[0..], &metrics_state);
 
     const decision = router.route(.{ .has_mutation = false, .has_transaction = false });
     try testing.expectEqual(@as(u128, 22), decision.replica_id.?);
 }
 
 test "read_replica_router: updateReplicaHealth updates state" {
-    var metrics = ClusterMetrics.init();
+    var metrics_state = ClusterMetrics.init();
     var replicas = [_]ReplicaHealth{
         ReplicaHealth.init(55, false, 0, 0),
     };
-    var router = makeRouter(1, replicas[0..], &metrics);
+    var router = makeRouter(1, replicas[0..], &metrics_state);
 
     router.updateReplicaHealth(55, true);
     const now_ms = std.time.milliTimestamp();
@@ -268,11 +268,11 @@ test "read_replica_router: updateReplicaHealth updates state" {
 }
 
 test "read_replica_router: updateReplicationLag updates lag" {
-    var metrics = ClusterMetrics.init();
+    var metrics_state = ClusterMetrics.init();
     var replicas = [_]ReplicaHealth{
         ReplicaHealth.init(77, true, std.time.milliTimestamp(), 0),
     };
-    var router = makeRouter(1, replicas[0..], &metrics);
+    var router = makeRouter(1, replicas[0..], &metrics_state);
 
     router.updateReplicationLag(77, 1234);
 
@@ -290,11 +290,11 @@ test "read_replica_router: query type classification" {
 }
 
 test "read_replica_router: transaction operations route to leader" {
-    var metrics = ClusterMetrics.init();
+    var metrics_state = ClusterMetrics.init();
     var replicas = [_]ReplicaHealth{
         ReplicaHealth.init(1, true, std.time.milliTimestamp(), 0),
     };
-    var router = makeRouter(99, replicas[0..], &metrics);
+    var router = makeRouter(99, replicas[0..], &metrics_state);
 
     const decision = router.route(.{ .has_mutation = false, .has_transaction = true });
 
@@ -303,9 +303,9 @@ test "read_replica_router: transaction operations route to leader" {
 }
 
 test "read_replica_router: empty replica list routes to leader" {
-    var metrics = ClusterMetrics.init();
+    var metrics_state = ClusterMetrics.init();
     var replicas: [0]ReplicaHealth = .{};
-    var router = makeRouter(88, replicas[0..], &metrics);
+    var router = makeRouter(88, replicas[0..], &metrics_state);
 
     const decision = router.route(.{ .has_mutation = false, .has_transaction = false });
 
@@ -314,13 +314,13 @@ test "read_replica_router: empty replica list routes to leader" {
 }
 
 test "read_replica_router: concurrent routing balances replicas" {
-    var metrics = ClusterMetrics.init();
+    var metrics_state = ClusterMetrics.init();
     const now_ms = std.time.milliTimestamp();
     var replicas = [_]ReplicaHealth{
         ReplicaHealth.init(1, true, now_ms, 0),
         ReplicaHealth.init(2, true, now_ms, 0),
     };
-    var router = makeRouter(10, replicas[0..], &metrics);
+    var router = makeRouter(10, replicas[0..], &metrics_state);
 
     var counts = [_]std.atomic.Value(u64){
         std.atomic.Value(u64).init(0),
@@ -369,11 +369,11 @@ test "read_replica_router: concurrent routing balances replicas" {
 }
 
 test "read_replica_router: concurrent health updates are safe" {
-    var metrics = ClusterMetrics.init();
+    var metrics_state = ClusterMetrics.init();
     var replicas = [_]ReplicaHealth{
         ReplicaHealth.init(9, false, 0, 0),
     };
-    var router = makeRouter(10, replicas[0..], &metrics);
+    var router = makeRouter(10, replicas[0..], &metrics_state);
 
     const ThreadContext = struct {
         router: *ReadReplicaRouter,
