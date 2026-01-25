@@ -7,7 +7,7 @@ ArcherDB v2.0 transforms the production-ready v1.0 into an enterprise-scale data
 ## Milestones
 
 - v1.0 Shipped (Phases 1-10) - See `.planning/milestones/v1.0-ROADMAP.md`
-- **v2.0 Performance & Scale** (Phases 11-16) - In progress
+- **v2.0 Performance & Scale** (Phases 11-16) - Complete (2026-01-25)
 
 ## Phases
 
@@ -22,7 +22,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 13: Memory & RAM Index** - Memory efficiency for 100M+ entity support
 - [x] **Phase 14: Query Performance** - Caching and batch operations for enterprise dashboards
 - [x] **Phase 15: Cluster & Consensus** - Connection pooling, load shedding, consensus tuning
-- [ ] **Phase 16: Sharding & Scale-Out** - Read replicas, distributed tracing, online resharding
+- [x] **Phase 16: Sharding & Scale-Out** - Read replicas, distributed tracing, online resharding
 
 ## Phase Details
 
@@ -144,13 +144,15 @@ Plans:
   3. Distributed tracing shows full request path across all shards via OpenTelemetry
   4. Online resharding adds/removes shards without application downtime [BREAKING]
   5. Hot shard detection identifies imbalanced shards and triggers rebalancing alerts
-**Plans**: 4 plans in 2 waves
+**Plans**: 6 plans in 2 waves
 
 Plans:
 - [x] 16-01-PLAN.md — Shard rebalancing metrics + hot shard alerts
-- [ ] 16-02-PLAN.md — Online resharding controller + topology notifications
-- [ ] 16-03-PLAN.md — Parallel fan-out queries with partial failure policy
-- [ ] 16-04-PLAN.md — OTel span links + coordinator tracing
+- [x] 16-02-PLAN.md — Online resharding controller + topology notifications
+- [x] 16-03-PLAN.md — Parallel fan-out queries with partial failure policy
+- [x] 16-04-PLAN.md — OTel span links + coordinator tracing
+- [x] 16-05-PLAN.md — Online resharding runtime wiring
+- [x] 16-06-PLAN.md — Coordinator fan-out execution + OTLP export
 
 ## Progress
 
@@ -164,7 +166,7 @@ Phases execute in numeric order: 11 -> 11.x -> 12 -> 12.x -> ... -> 16
 | 13. Memory & RAM Index | 5/5 | ✓ Complete | 2026-01-24 |
 | 14. Query Performance | 6/6 | ✓ Complete | 2026-01-25 |
 | 15. Cluster & Consensus | 11/11 | ✓ Complete | 2026-01-25 |
-| 16. Sharding & Scale-Out | 1/4 | In progress | 2026-01-25 |
+| 16. Sharding & Scale-Out | 6/6 | ✓ Complete | 2026-01-25 |
 
 ## Requirement Coverage
 
@@ -181,4 +183,4 @@ Phases execute in numeric order: 11 -> 11.x -> 12 -> 12.x -> ... -> 16
 
 ---
 *Roadmap created: 2026-01-24*
-*Last updated: 2026-01-25 — Phase 16 started (1/4 plans complete)*
+*Last updated: 2026-01-25 — Phase 16 complete (6/6 plans complete)*
