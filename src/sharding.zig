@@ -1813,15 +1813,14 @@ pub const OnlineReshardingController = struct {
         config: OnlineReshardingConfig,
         topology_manager: ?*TopologyManager,
     ) OnlineReshardingController {
-        var manager = ReshardingManager.init(allocator, initial_shards);
-        const worker = OnlineMigrationWorker.init(allocator, &manager, config);
-
-        return .{
-            .manager = manager,
-            .worker = worker,
+        var controller = OnlineReshardingController{
+            .manager = ReshardingManager.init(allocator, initial_shards),
+            .worker = undefined,
             .config = config,
             .topology_manager = topology_manager,
         };
+        controller.worker = OnlineMigrationWorker.init(allocator, &controller.manager, config);
+        return controller;
     }
 
     pub fn deinit(self: *OnlineReshardingController) void {
@@ -1835,6 +1834,7 @@ pub const OnlineReshardingController = struct {
         new_shard_count: u32,
         total_entities: u64,
     ) !void {
+        self.bindManager();
         self.resetMetrics();
         self.setReshardingMode(.preparing);
 
@@ -1851,6 +1851,7 @@ pub const OnlineReshardingController = struct {
 
     /// Tick migration worker and update metrics.
     pub fn tickMigration(self: *OnlineReshardingController, batch: *MigrationBatch) !bool {
+        self.bindManager();
         if (self.worker.state == .scanning) {
             self.worker.state = .migrating;
         }
@@ -1867,6 +1868,7 @@ pub const OnlineReshardingController = struct {
 
     /// Perform cutover if migration is ready.
     pub fn maybeCutover(self: *OnlineReshardingController) !bool {
+        self.bindManager();
         if (!self.worker.isReadyForCutover()) return false;
 
         self.setReshardingMode(.finalizing);
@@ -1884,6 +1886,7 @@ pub const OnlineReshardingController = struct {
 
     /// Cancel resharding and rollback.
     pub fn cancel(self: *OnlineReshardingController, reason: []const u8) void {
+        self.bindManager();
         self.worker.cancel(reason);
         self.resetWorkerState();
         self.resetManagerProgress();
@@ -1974,6 +1977,10 @@ pub const OnlineReshardingController = struct {
     fn resetManagerProgress(self: *OnlineReshardingController) void {
         self.manager.progress = .{};
         self.manager.error_message = null;
+    }
+
+    fn bindManager(self: *OnlineReshardingController) void {
+        self.worker.resharding_manager = &self.manager;
     }
 };
 
