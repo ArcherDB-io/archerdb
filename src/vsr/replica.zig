@@ -47,7 +47,8 @@ const ClientSessions = vsr.ClientSessions;
 const Tracer = vsr.trace.Tracer;
 const membership = @import("membership.zig");
 const MembershipConfig = membership.MembershipConfig;
-const timeout_profiles = @import("timeout_profiles.zig");
+const timeout_profiles = vsr.timeout_profiles;
+const flexible_paxos = vsr.flexible_paxos;
 const ReadReplicaRouter = read_replica_router.ReadReplicaRouter;
 const ReplicaHealth = read_replica_router.ReplicaHealth;
 const RoutingQueryType = read_replica_router.QueryType;
@@ -680,6 +681,7 @@ pub fn ReplicaType(
             timeout_prepare_ticks: ?u64 = null,
             timeout_grid_repair_message_ticks: ?u64 = null,
             timeout_config: timeout_profiles.TimeoutConfig,
+            quorum_config: flexible_paxos.QuorumConfig,
             commit_stall_probability: ?Ratio,
             replicate_options: ReplicateOptions = .{},
         };
@@ -769,6 +771,7 @@ pub fn ReplicaType(
                     .timeout_prepare_ticks = options.timeout_prepare_ticks,
                     .timeout_grid_repair_message_ticks = options.timeout_grid_repair_message_ticks,
                     .timeout_config = options.timeout_config,
+                    .quorum_config = options.quorum_config,
                     .commit_stall_probability = options.commit_stall_probability,
                     .replicate_options = options.replicate_options,
                 },
@@ -1153,6 +1156,7 @@ pub fn ReplicaType(
             timeout_prepare_ticks: ?u64,
             timeout_grid_repair_message_ticks: ?u64,
             timeout_config: timeout_profiles.TimeoutConfig,
+            quorum_config: flexible_paxos.QuorumConfig,
             commit_stall_probability: ?Ratio,
             replicate_options: ReplicateOptions,
         };
@@ -1242,7 +1246,16 @@ pub fn ReplicaType(
             assert(self.superblock.opened);
             self.superblock.working.vsr_state.assert_internally_consistent();
 
-            const quorums = vsr.quorums(replica_count);
+            const quorum_config = options.quorum_config;
+            assert(quorum_config.cluster_size == replica_count);
+            flexible_paxos.validateQuorums(quorum_config) catch |err| {
+                vsr.fatal(
+                    .cli,
+                    "invalid quorum configuration: {s}",
+                    .{@errorName(err)},
+                );
+            };
+            const quorums = vsr.quorumsFromConfig(quorum_config);
             const quorum_replication = quorums.replication;
             const quorum_view_change = quorums.view_change;
             const quorum_nack_prepare = quorums.nack_prepare;
@@ -1251,14 +1264,6 @@ pub fn ReplicaType(
             assert(quorum_view_change <= replica_count);
             assert(quorum_nack_prepare <= replica_count);
             assert(quorum_majority <= replica_count);
-
-            if (replica_count <= 2) {
-                assert(quorum_replication == replica_count);
-                assert(quorum_view_change == replica_count);
-            } else {
-                assert(quorum_replication < replica_count);
-                assert(quorum_view_change < replica_count);
-            }
 
             // Flexible quorums are safe if these two quorums intersect so that this relation holds:
             assert(quorum_replication + quorum_view_change > replica_count);

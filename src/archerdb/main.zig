@@ -838,6 +838,7 @@ fn command_start(
             .timeout_prepare_ticks = args.timeout_prepare_ticks,
             .timeout_grid_repair_message_ticks = args.timeout_grid_repair_message_ticks,
             .timeout_config = args.timeout_config,
+            .quorum_config = args.quorum_config,
             .commit_stall_probability = args.commit_stall_probability,
             .state_machine_options = .{
                 .batch_size_limit = args.request_size_limit - @sizeOf(vsr.Header),

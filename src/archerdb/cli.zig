@@ -30,7 +30,8 @@ const Ratio = stdx.PRNG.Ratio;
 const ByteSize = stdx.ByteSize;
 const Operation = archerdb.Operation;
 const backup_config = vsr.backup_config;
-const timeout_profiles = @import("../vsr/timeout_profiles.zig");
+const timeout_profiles = vsr.timeout_profiles;
+const flexible_paxos = vsr.flexible_paxos;
 
 comptime {
     // Make sure we are running the GeoStateMachine.
@@ -198,6 +199,10 @@ const CLIArgs = union(enum) {
         vsr_timeout_request_ms: ?u64 = null,
         vsr_timeout_connection_ms: ?u64 = null,
         vsr_timeout_view_change_ms: ?u64 = null,
+        // Flexible Paxos quorum configuration
+        vsr_quorum_preset: ?[]const u8 = null, // classic, fast_commit, strong_leader
+        vsr_quorum_phase1: ?u8 = null,
+        vsr_quorum_phase2: ?u8 = null,
         timeout_prepare_ms: ?u64 = null,
         timeout_grid_repair_message_ms: ?u64 = null,
         commit_stall_probability: ?Ratio = null,
@@ -1413,6 +1418,7 @@ pub const Command = union(enum) {
         timeout_prepare_ticks: ?u64,
         timeout_grid_repair_message_ticks: ?u64,
         timeout_config: timeout_profiles.TimeoutConfig,
+        quorum_config: flexible_paxos.QuorumConfig,
         commit_stall_probability: ?Ratio,
         trace: ?[]const u8,
         development: bool,
@@ -1979,8 +1985,10 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
         "vsr_timeout_heartbeat_ms",   "vsr_timeout_election_ms",
         "vsr_timeout_request_ms",     "vsr_timeout_connection_ms",
         "vsr_timeout_view_change_ms",
+        "vsr_quorum_preset",          "vsr_quorum_phase1",
+        "vsr_quorum_phase2",
     };
-    @setEvalBranchQuota(120_000);
+    @setEvalBranchQuota(160_000);
     inline for (std.meta.fields(@TypeOf(start))) |field| {
         // Positional arguments can't be experimental.
         comptime if (std.mem.eql(u8, field.name, "--")) break;
@@ -2018,6 +2026,7 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
     const GeoEventsValuesCache = groove_config.geo_events.ObjectsCache.Cache;
 
     const addresses = parse_addresses(start.addresses, "--addresses", Command.Addresses);
+    const replica_count = addresses.count_as(u8);
     const defaults =
         if (start.development) start_defaults_development else start_defaults_production;
 
@@ -2175,6 +2184,10 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
         .overrides = timeout_overrides,
     };
 
+    var quorum_config = parse_quorum_preset(start.vsr_quorum_preset, replica_count);
+    if (start.vsr_quorum_phase1) |q1| quorum_config.phase1_quorum = q1;
+    if (start.vsr_quorum_phase2) |q2| quorum_config.phase2_quorum = q2;
+
     const aof_file: ?Command.Path = if (start.aof_file) |start_aof_file| blk: {
         if (!std.mem.endsWith(u8, start_aof_file, ".aof")) {
             vsr.fatal(.cli, "--aof-file must end with .aof: '{s}'", .{start_aof_file});
@@ -2222,6 +2235,7 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
             "--timeout-grid-repair-message-ms",
         ),
         .timeout_config = timeout_config,
+        .quorum_config = quorum_config,
         .commit_stall_probability = start.commit_stall_probability,
         .development = start.development,
         .experimental = start.experimental,
@@ -3033,6 +3047,28 @@ fn parse_timeout_profile(value: ?[]const u8) timeout_profiles.TimeoutProfile {
         .cli,
         "--vsr-timeout-profile: invalid '{s}' (cloud/datacenter/custom)",
         .{profile},
+    );
+}
+
+fn parse_quorum_preset(
+    value: ?[]const u8,
+    replica_count: u8,
+) flexible_paxos.QuorumConfig {
+    if (value == null) return flexible_paxos.QuorumPreset.classic(replica_count);
+    const preset = value.?;
+    if (std.mem.eql(u8, preset, "classic")) {
+        return flexible_paxos.QuorumPreset.classic(replica_count);
+    }
+    if (std.mem.eql(u8, preset, "fast_commit")) {
+        return flexible_paxos.QuorumPreset.fast_commit(replica_count);
+    }
+    if (std.mem.eql(u8, preset, "strong_leader")) {
+        return flexible_paxos.QuorumPreset.strong_leader(replica_count);
+    }
+    vsr.fatal(
+        .cli,
+        "--vsr-quorum-preset: invalid '{s}' (classic/fast_commit/strong_leader)",
+        .{preset},
     );
 }
 

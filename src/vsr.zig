@@ -28,6 +28,8 @@ pub const trace = @import("trace.zig");
 pub const stdx = @import("stdx");
 pub const grid = @import("vsr/grid.zig");
 pub const superblock = @import("vsr/superblock.zig");
+pub const timeout_profiles = @import("vsr/timeout_profiles.zig");
+pub const flexible_paxos = @import("vsr/flexible_paxos.zig");
 pub const aof = @import("aof.zig");
 pub const repl = @import("repl.zig");
 pub const archerdb_metrics = @import("archerdb/metrics.zig");
@@ -1201,6 +1203,37 @@ pub fn quorums(replica_count: u8) struct {
     assert(quorum_upgrade <= replica_count);
     assert(quorum_upgrade >= quorum_replication);
     assert(quorum_upgrade >= quorum_view_change);
+
+    return .{
+        .replication = quorum_replication,
+        .view_change = quorum_view_change,
+        .nack_prepare = quorum_nack_prepare,
+        .majority = quorum_majority,
+        .upgrade = quorum_upgrade,
+    };
+}
+
+pub fn quorumsFromConfig(config: flexible_paxos.QuorumConfig) struct {
+    replication: u8,
+    view_change: u8,
+    nack_prepare: u8,
+    majority: u8,
+    upgrade: u8,
+} {
+    assert(config.cluster_size > 0);
+    assert(config.phase1_quorum > 0);
+    assert(config.phase2_quorum > 0);
+    assert(config.phase1_quorum <= config.cluster_size);
+    assert(config.phase2_quorum <= config.cluster_size);
+
+    const quorum_replication = config.phase2_quorum;
+    const quorum_view_change = config.phase1_quorum;
+    const quorum_nack_prepare = config.cluster_size - quorum_replication + 1;
+    const quorum_majority = @max(quorum_view_change, quorum_replication);
+    const quorum_upgrade = config.cluster_size;
+
+    assert(quorum_nack_prepare + quorum_replication > config.cluster_size);
+    assert(quorum_view_change + quorum_replication > config.cluster_size);
 
     return .{
         .replication = quorum_replication,
