@@ -8,7 +8,10 @@
 
 const std = @import("std");
 
-const ClusterMetrics = @import("archerdb/cluster_metrics.zig").ClusterMetrics;
+const cluster_metrics = @import("archerdb/cluster_metrics.zig");
+const metrics = @import("archerdb/metrics.zig");
+
+const ClusterMetrics = cluster_metrics.ClusterMetrics;
 
 pub const RouteTarget = enum {
     leader,
@@ -399,4 +402,49 @@ test "read_replica_router: concurrent health updates are safe" {
     const lag = router.replicas[0].getReplicationLag();
     try testing.expect(lag == 10 or lag == 20 or lag == 30 or lag == 40);
     try testing.expect(router.replicas[0].is_healthy.load(.monotonic) <= 1);
+}
+
+test "read_replica_router: routing metrics record decisions" {
+    cluster_metrics.archerdb_routing_reads_total = metrics.Counter.init(
+        "archerdb_routing_reads_total",
+        "Total read queries routed through read replica router",
+        null,
+    );
+    cluster_metrics.archerdb_routing_writes_total = metrics.Counter.init(
+        "archerdb_routing_writes_total",
+        "Total write queries routed to leader",
+        null,
+    );
+    cluster_metrics.archerdb_routing_to_replica_total = metrics.Counter.init(
+        "archerdb_routing_to_replica_total",
+        "Read queries routed to healthy replicas",
+        null,
+    );
+    cluster_metrics.archerdb_routing_failover_total = metrics.Counter.init(
+        "archerdb_routing_failover_total",
+        "Read queries failed over to leader due to unhealthy replicas",
+        null,
+    );
+    cluster_metrics.archerdb_routing_round_robin_index = metrics.Gauge.init(
+        "archerdb_routing_round_robin_index",
+        "Current round-robin index for replica selection",
+        null,
+    );
+
+    var metrics_state = ClusterMetrics.init();
+    const now_ms = std.time.milliTimestamp();
+    var replicas = [_]ReplicaHealth{
+        ReplicaHealth.init(1, true, now_ms, 0),
+        ReplicaHealth.init(2, false, now_ms, 0),
+    };
+    var router = makeRouter(10, replicas[0..], &metrics_state);
+
+    _ = router.route(.{ .has_mutation = true, .has_transaction = false });
+    _ = router.route(.{ .has_mutation = false, .has_transaction = false });
+    router.updateReplicaHealth(2, false);
+
+    try testing.expectEqual(@as(u64, 1), cluster_metrics.archerdb_routing_writes_total.get());
+    try testing.expectEqual(@as(u64, 1), cluster_metrics.archerdb_routing_reads_total.get());
+    try testing.expectEqual(@as(u64, 1), cluster_metrics.archerdb_routing_to_replica_total.get());
+    try testing.expectEqual(@as(i64, 1), cluster_metrics.archerdb_routing_round_robin_index.get());
 }
