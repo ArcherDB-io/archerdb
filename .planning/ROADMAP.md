@@ -147,7 +147,7 @@ Plans:
 **Plans**: 4 plans in 2 waves
 
 Plans:
-- [ ] 16-01-PLAN.md — Shard rebalancing metrics + hot shard alerts
+- [x] 16-01-PLAN.md — Shard rebalancing metrics + hot shard alerts
 - [ ] 16-02-PLAN.md — Online resharding controller + topology notifications
 - [ ] 16-03-PLAN.md — Parallel fan-out queries with partial failure policy
 - [ ] 16-04-PLAN.md — OTel span links + coordinator tracing
@@ -164,7 +164,7 @@ Phases execute in numeric order: 11 -> 11.x -> 12 -> 12.x -> ... -> 16
 | 13. Memory & RAM Index | 5/5 | ✓ Complete | 2026-01-24 |
 | 14. Query Performance | 6/6 | ✓ Complete | 2026-01-25 |
 | 15. Cluster & Consensus | 11/11 | ✓ Complete | 2026-01-25 |
-| 16. Sharding & Scale-Out | 0/TBD | Not started | - |
+| 16. Sharding & Scale-Out | 1/4 | In progress | 2026-01-25 |
 
 ## Requirement Coverage
 
@@ -181,4 +181,4 @@ Phases execute in numeric order: 11 -> 11.x -> 12 -> 12.x -> ... -> 16
 
 ---
 *Roadmap created: 2026-01-24*
-*Last updated: 2026-01-25 — Phase 15 complete (11 plans in 5 waves)*
+*Last updated: 2026-01-25 — Phase 16 started (1/4 plans complete)*

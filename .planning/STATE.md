@@ -9,12 +9,12 @@ See: .planning/PROJECT.md (updated 2026-01-24)
 
 ## Current Position
 
-Phase: 15 of 16 (Cluster & Consensus)
-Plan: 11 of 11 in current phase (15-01 through 15-11 complete)
-Status: Phase complete
-Last activity: 2026-01-25 - Completed 15-11-PLAN.md (HTTP overload responses)
+Phase: 16 of 16 (Sharding & Scale-Out)
+Plan: 1 of 4 in current phase (16-01 complete)
+Status: In progress
+Last activity: 2026-01-25 - Completed 16-01-PLAN.md (Shard rebalancing metrics + hot shard alerts)
 
-Progress: [██████████] 100% (plans: 77/77)
+Progress: [█████████░] 96% (plans: 78/81)
 
 ## v1.0 Summary
 
@@ -29,12 +29,12 @@ See `.planning/milestones/v1.0-REQUIREMENTS.md` for archived requirements.
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 28 (v2.0)
+- Total plans completed: 30 (v2.0)
 - Average duration: ~6min
-- Total execution time: ~171min
+- Total execution time: ~181min
 
 **Recent Trend:**
-- Last 5 plans: 15-03, 15-04, 15-05, 15-06, 15-07
+- Last 5 plans: 15-08, 15-09, 15-10, 15-11, 16-01
 - Trend: ~6min per plan
 
 *Updated after each plan completion*
@@ -49,6 +49,8 @@ v2.0 decisions:
 - Measurement-first approach: All optimization work requires profiling data
 - Phase order follows dependency/risk: low-risk measurement -> medium-risk storage/memory -> high-risk consensus/sharding
 - Breaking changes grouped in Phase 16 for coordinated v2.0 release
+- Hot shard scoring normalized to load_shedding thresholds for consistent weighting (16-01)
+- Rebalance gauges model cooldown decay for active move slots (16-01)
 
 Phase 15 decisions:
 - Generic ServerConnectionPool function over connection type for protocol flexibility (15-01)
@@ -86,9 +88,9 @@ Phase 15 decisions:
 
 ## Session Continuity
 
-Last session: 2026-01-25 09:36 UTC
-Stopped at: Completed 15-11-PLAN.md
+Last session: 2026-01-25 13:03 UTC
+Stopped at: Completed 16-01-PLAN.md
 Resume file: None
 
 ---
-*Updated: 2026-01-25 — Completed 15-11 HTTP overload responses*
+*Updated: 2026-01-25 — Completed 16-01 shard rebalancing visibility*
