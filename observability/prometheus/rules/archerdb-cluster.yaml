@@ -1,0 +1,155 @@
+# ArcherDB Cluster-Level Alerting Rules
+# Covers connection pooling, load shedding, read replicas, and consensus health.
+
+groups:
+  - name: archerdb-cluster-pool
+    rules:
+      - alert: ArcherDBPoolExhausted
+        expr: (archerdb_pool_connections_idle == 0) and (archerdb_pool_waiters > 0)
+        for: 1m
+        labels:
+          severity: critical
+          team: database
+        annotations:
+          summary: "Connection pool exhausted on {{ $labels.instance }}"
+          description: "Pool has no idle connections and waiters are queued"
+          runbook_url: "https://docs.archerdb.io/runbooks/pool-exhausted"
+          remediation: "Increase pool size or reduce incoming connection pressure"
+
+      - alert: ArcherDBPoolHighTimeout
+        expr: sum(rate(archerdb_pool_acquire_timeout_total[5m])) * 60 > 10
+        for: 5m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "High connection acquire timeouts"
+          description: "Acquire timeouts exceed 10/min for 5 minutes"
+          runbook_url: "https://docs.archerdb.io/runbooks/pool-timeouts"
+          remediation: "Check pool sizing, queue depth, and client connection patterns"
+
+      - alert: ArcherDBPoolHealthCheckFailing
+        expr: sum(rate(archerdb_pool_health_check_failed_total[5m])) * 60 > 5
+        for: 5m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "Pool health check failures detected"
+          description: "More than 5 failed health checks per minute"
+          runbook_url: "https://docs.archerdb.io/runbooks/pool-health-check"
+          remediation: "Investigate backend connection failures or network instability"
+
+  - name: archerdb-cluster-shedding
+    rules:
+      - alert: ArcherDBHighShedRate
+        expr: sum(rate(archerdb_shed_requests_total[5m])) * 60 > 100
+        for: 5m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "Elevated load shedding rate"
+          description: "Shed requests exceed 100/min for 5 minutes"
+          runbook_url: "https://docs.archerdb.io/runbooks/load-shedding"
+          remediation: "Reduce load or scale cluster capacity to drop shed rate"
+
+      - alert: ArcherDBCriticalShedRate
+        expr: sum(rate(archerdb_shed_requests_total[2m])) * 60 > 1000
+        for: 2m
+        labels:
+          severity: critical
+          team: database
+        annotations:
+          summary: "Critical load shedding rate"
+          description: "Shed requests exceed 1000/min for 2 minutes"
+          runbook_url: "https://docs.archerdb.io/runbooks/load-shedding-critical"
+          remediation: "Immediate action required: throttle traffic or add capacity"
+
+      - alert: ArcherDBNearShedThreshold
+        expr: max(archerdb_shed_score) > 70
+        for: 10m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "Load shedding score near threshold"
+          description: "Composite load score above 70% for 10 minutes"
+          runbook_url: "https://docs.archerdb.io/runbooks/load-shedding-threshold"
+          remediation: "Investigate queue depth, latency, and memory pressure trends"
+
+  - name: archerdb-cluster-replicas
+    rules:
+      - alert: ArcherDBNoHealthyReplicas
+        expr: sum(archerdb_routing_replica_health) == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: database
+        annotations:
+          summary: "No healthy read replicas"
+          description: "All read replicas are unhealthy or missing"
+          runbook_url: "https://docs.archerdb.io/runbooks/replica-unhealthy"
+          remediation: "Failover to leader and investigate replica health checks"
+
+      - alert: ArcherDBHighReplicationLag
+        expr: max(archerdb_routing_replication_lag_ops) > 1000
+        for: 5m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "High replication lag"
+          description: "Replication lag exceeds 1000 ops for 5 minutes"
+          runbook_url: "https://docs.archerdb.io/runbooks/replication-lag"
+          remediation: "Check replica throughput, network latency, and disk pressure"
+
+      - alert: ArcherDBCriticalReplicationLag
+        expr: max(archerdb_routing_replication_lag_ops) > 10000
+        for: 2m
+        labels:
+          severity: critical
+          team: database
+        annotations:
+          summary: "Critical replication lag"
+          description: "Replication lag exceeds 10000 ops for 2 minutes"
+          runbook_url: "https://docs.archerdb.io/runbooks/replication-lag-critical"
+          remediation: "Immediate action: consider resync or reduce write load"
+
+      - alert: ArcherDBHighFailoverRate
+        expr: (sum(rate(archerdb_routing_failover_total[5m])) / sum(rate(archerdb_routing_reads_total[5m]))) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "High read replica failover rate"
+          description: "More than 50% of reads fail over to leader"
+          runbook_url: "https://docs.archerdb.io/runbooks/replica-failover"
+          remediation: "Inspect replica health, lag, and network connectivity"
+
+  - name: archerdb-cluster-consensus
+    rules:
+      - alert: ArcherDBFrequentViewChanges
+        expr: sum(increase(archerdb_vsr_view_changes_total[10m])) > 3
+        for: 10m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "Frequent VSR view changes"
+          description: "More than 3 view changes in 10 minutes"
+          runbook_url: "https://docs.archerdb.io/runbooks/view-changes"
+          remediation: "Investigate leader stability, heartbeat timeouts, and network jitter"
+
+      - alert: ArcherDBQuorumAtRisk
+        expr: count(archerdb_vsr_status == 0) < (count(archerdb_vsr_status) / 2 + 1)
+        for: 2m
+        labels:
+          severity: critical
+          team: database
+        annotations:
+          summary: "Cluster quorum at risk"
+          description: "Healthy replicas below majority quorum threshold"
+          runbook_url: "https://docs.archerdb.io/runbooks/quorum-risk"
+          remediation: "Restore replica health or add capacity to maintain quorum"
