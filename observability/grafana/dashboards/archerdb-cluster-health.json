@@ -1,0 +1,943 @@
+{
+  "uid": "archerdb-cluster-health",
+  "title": "ArcherDB Cluster Health",
+  "tags": ["archerdb", "cluster", "health", "overview"],
+  "timezone": "browser",
+  "editable": true,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "fiscalYearStartMonth": 0,
+  "liveNow": false,
+  "weekStart": "",
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "label": "Data Source",
+        "description": "Select the Prometheus data source",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "options": [],
+        "refresh": 1,
+        "regex": ""
+      },
+      {
+        "name": "instance",
+        "type": "query",
+        "label": "Node",
+        "description": "Filter by ArcherDB node instance",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "query": "label_values(archerdb_info, instance)",
+        "refresh": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {},
+        "hide": 0,
+        "options": [],
+        "regex": "",
+        "sort": 1
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "name": "View Changes",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "enable": true,
+        "expr": "changes(archerdb_vsr_view[5m]) > 0",
+        "iconColor": "orange",
+        "tagKeys": "instance",
+        "textFormat": "VSR view change on {{ instance }}",
+        "titleFormat": "View Change",
+        "useValueForTime": false
+      }
+    ]
+  },
+  "links": [
+    {
+      "title": "Cluster Detail",
+      "type": "link",
+      "url": "/d/archerdb-cluster/archerdb-cluster?orgId=1&${__url_time_range}&${__all_variables}",
+      "icon": "external link",
+      "tooltip": "Detailed cluster metrics",
+      "keepTime": true,
+      "includeVars": true,
+      "targetBlank": false,
+      "asDropdown": false
+    },
+    {
+      "title": "Overview",
+      "type": "link",
+      "url": "/d/archerdb-overview/archerdb-overview?orgId=1&${__url_time_range}&${__all_variables}",
+      "icon": "external link",
+      "tooltip": "Return to cluster overview dashboard",
+      "keepTime": true,
+      "includeVars": true,
+      "targetBlank": false,
+      "asDropdown": false
+    }
+  ],
+  "panels": [
+    {
+      "type": "row",
+      "title": "Overview Stats",
+      "gridPos": {"x": 0, "y": 0, "w": 24, "h": 1},
+      "id": 100,
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Total Connections",
+      "gridPos": {"x": 0, "y": 1, "w": 6, "h": 6},
+      "id": 1,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "sum(archerdb_pool_connections_active{instance=~\"$instance\"}) + sum(archerdb_pool_connections_idle{instance=~\"$instance\"})",
+          "legendFormat": "Connections",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Load Shedding Active",
+      "gridPos": {"x": 6, "y": 1, "w": 6, "h": 6},
+      "id": 2,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "max(archerdb_shed_score{instance=~\"$instance\"}) >= max(archerdb_shed_threshold{instance=~\"$instance\"})",
+          "legendFormat": "Shedding",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "red", "value": 1}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Healthy Replicas",
+      "gridPos": {"x": 12, "y": 1, "w": 6, "h": 6},
+      "id": 3,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "sum(archerdb_routing_replica_health)",
+          "legendFormat": "Healthy",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "yellow", "value": 1},
+              {"color": "green", "value": 2}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Consensus Status",
+      "gridPos": {"x": 18, "y": 1, "w": 6, "h": 6},
+      "id": 4,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "max(archerdb_vsr_status{instance=~\"$instance\"})",
+          "legendFormat": "Status",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 1},
+              {"color": "red", "value": 2}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "type": "row",
+      "title": "Connection Pool",
+      "gridPos": {"x": 0, "y": 7, "w": 24, "h": 1},
+      "id": 101,
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Active vs Idle Connections",
+      "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+      "id": 5,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "archerdb_pool_connections_active{instance=~\"$instance\"}",
+          "legendFormat": "Active {{instance}}",
+          "refId": "A"
+        },
+        {
+          "expr": "archerdb_pool_connections_idle{instance=~\"$instance\"}",
+          "legendFormat": "Idle {{instance}}",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "stacking": {"mode": "none", "group": "A"},
+            "axisPlacement": "auto",
+            "axisColorMode": "text",
+            "scaleDistribution": {"type": "linear"}
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {"mode": "multi", "sort": "desc"},
+        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}
+      }
+    },
+    {
+      "type": "gauge",
+      "title": "Pool Utilization %",
+      "gridPos": {"x": 12, "y": 8, "w": 4, "h": 8},
+      "id": 6,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "(sum(archerdb_pool_connections_active{instance=~\"$instance\"}) / (sum(archerdb_pool_connections_active{instance=~\"$instance\"}) + sum(archerdb_pool_connections_idle{instance=~\"$instance\"}))) * 100",
+          "legendFormat": "Utilization",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 70},
+              {"color": "red", "value": 90}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showThresholdLabels": true,
+        "showThresholdMarkers": true,
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Acquire Ops/sec",
+      "gridPos": {"x": 16, "y": 8, "w": 4, "h": 8},
+      "id": 7,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "sum(rate(archerdb_pool_acquire_total{instance=~\"$instance\"}[5m]))",
+          "legendFormat": "Acquire",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Acquire Timeout Rate",
+      "gridPos": {"x": 20, "y": 8, "w": 4, "h": 8},
+      "id": 8,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "sum(rate(archerdb_pool_acquire_timeout_total{instance=~\"$instance\"}[5m]))",
+          "legendFormat": "Timeout",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "red", "value": 0.1}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Health Check Failures",
+      "gridPos": {"x": 0, "y": 16, "w": 24, "h": 6},
+      "id": 9,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "sum(rate(archerdb_pool_health_check_failed_total{instance=~\"$instance\"}[5m]))",
+          "legendFormat": "Failures",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "stacking": {"mode": "none", "group": "A"},
+            "axisPlacement": "auto",
+            "axisColorMode": "text",
+            "scaleDistribution": {"type": "linear"}
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {"mode": "multi", "sort": "desc"},
+        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}
+      }
+    },
+    {
+      "type": "row",
+      "title": "Load Shedding",
+      "gridPos": {"x": 0, "y": 22, "w": 24, "h": 1},
+      "id": 102,
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "gauge",
+      "title": "Composite Score",
+      "gridPos": {"x": 0, "y": 23, "w": 6, "h": 8},
+      "id": 10,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "max(archerdb_shed_score{instance=~\"$instance\"})",
+          "legendFormat": "Score",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 70},
+              {"color": "red", "value": 90}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showThresholdLabels": true,
+        "showThresholdMarkers": true,
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Shed Requests Rate",
+      "gridPos": {"x": 6, "y": 23, "w": 6, "h": 8},
+      "id": 11,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "sum(rate(archerdb_shed_requests_total{instance=~\"$instance\"}[5m]))",
+          "legendFormat": "Shed/sec",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "stacking": {"mode": "none", "group": "A"},
+            "axisPlacement": "auto",
+            "axisColorMode": "text",
+            "scaleDistribution": {"type": "linear"}
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {"mode": "multi", "sort": "desc"},
+        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Score Components",
+      "gridPos": {"x": 12, "y": 23, "w": 12, "h": 8},
+      "id": 12,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "max(archerdb_shed_queue_depth{instance=~\"$instance\"})",
+          "legendFormat": "Queue Depth",
+          "refId": "A"
+        },
+        {
+          "expr": "max(archerdb_shed_latency_p99_ms{instance=~\"$instance\"})",
+          "legendFormat": "Latency P99 (ms)",
+          "refId": "B"
+        },
+        {
+          "expr": "max(archerdb_shed_memory_pressure_pct{instance=~\"$instance\"})",
+          "legendFormat": "Memory Pressure %",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "stacking": {"mode": "none", "group": "A"},
+            "axisPlacement": "auto",
+            "axisColorMode": "text",
+            "scaleDistribution": {"type": "linear"}
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {"mode": "multi", "sort": "desc"},
+        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}
+      }
+    },
+    {
+      "type": "heatmap",
+      "title": "Retry-After Distribution",
+      "gridPos": {"x": 0, "y": 31, "w": 24, "h": 8},
+      "id": 13,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "sum(rate(archerdb_shed_retry_after_ms_bucket{instance=~\"$instance\"}[5m])) by (le)",
+          "legendFormat": "{{le}} ms",
+          "refId": "A",
+          "format": "heatmap"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "scaleDistribution": {"type": "linear"}
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "color": {"mode": "scheme", "scheme": "Spectral"},
+        "legend": {"show": true},
+        "tooltip": {"show": true}
+      }
+    },
+    {
+      "type": "row",
+      "title": "Read Replica Routing",
+      "gridPos": {"x": 0, "y": 39, "w": 24, "h": 1},
+      "id": 103,
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "piechart",
+      "title": "Replica vs Leader Reads",
+      "gridPos": {"x": 0, "y": 40, "w": 6, "h": 8},
+      "id": 14,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "sum(rate(archerdb_routing_to_replica_total{instance=~\"$instance\"}[5m]))",
+          "legendFormat": "Replica",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(archerdb_routing_failover_total{instance=~\"$instance\"}[5m]))",
+          "legendFormat": "Leader Failover",
+          "refId": "B"
+        }
+      ],
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "displayLabels": ["name", "percent"],
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Routing Decisions/sec",
+      "gridPos": {"x": 6, "y": 40, "w": 6, "h": 8},
+      "id": 15,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "sum(rate(archerdb_routing_reads_total{instance=~\"$instance\"}[5m]))",
+          "legendFormat": "Reads",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(archerdb_routing_writes_total{instance=~\"$instance\"}[5m]))",
+          "legendFormat": "Writes",
+          "refId": "B"
+        },
+        {
+          "expr": "sum(rate(archerdb_routing_failover_total{instance=~\"$instance\"}[5m]))",
+          "legendFormat": "Failovers",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "stacking": {"mode": "none", "group": "A"},
+            "axisPlacement": "auto",
+            "axisColorMode": "text",
+            "scaleDistribution": {"type": "linear"}
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {"mode": "multi", "sort": "desc"},
+        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}
+      }
+    },
+    {
+      "type": "table",
+      "title": "Per-Replica Health",
+      "gridPos": {"x": 12, "y": 40, "w": 12, "h": 8},
+      "id": 16,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "archerdb_routing_replica_health",
+          "legendFormat": "",
+          "refId": "A",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "expr": "archerdb_routing_replication_lag_ops",
+          "legendFormat": "",
+          "refId": "B",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true
+            },
+            "indexByName": {
+              "replica_id": 0,
+              "Value #A": 1,
+              "Value #B": 2
+            },
+            "renameByName": {
+              "replica_id": "Replica",
+              "Value #A": "Healthy",
+              "Value #B": "Lag (ops)"
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "left",
+            "displayMode": "auto",
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "Healthy"},
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {"type": "value", "options": {"0": {"text": "Unhealthy", "color": "red"}}},
+                  {"type": "value", "options": {"1": {"text": "Healthy", "color": "green"}}}
+                ]
+              },
+              {"id": "custom.displayMode", "value": "color-background"}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "Lag (ops)"},
+            "properties": [
+              {"id": "unit", "value": "short"}
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {"show": false, "reducer": ["sum"], "fields": ""}
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Replication Lag per Replica",
+      "gridPos": {"x": 0, "y": 48, "w": 24, "h": 8},
+      "id": 17,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "archerdb_routing_replication_lag_ops",
+          "legendFormat": "{{replica_id}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "stacking": {"mode": "none", "group": "A"},
+            "axisPlacement": "auto",
+            "axisColorMode": "text",
+            "scaleDistribution": {"type": "linear"}
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {"mode": "multi", "sort": "desc"},
+        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}
+      }
+    },
+    {
+      "type": "row",
+      "title": "Consensus & Quorum",
+      "gridPos": {"x": 0, "y": 56, "w": 24, "h": 1},
+      "id": 104,
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Current View",
+      "gridPos": {"x": 0, "y": 57, "w": 6, "h": 8},
+      "id": 18,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "max(archerdb_vsr_view{instance=~\"$instance\"})",
+          "legendFormat": "View",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "View Change Rate",
+      "gridPos": {"x": 6, "y": 57, "w": 6, "h": 8},
+      "id": 19,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "sum(rate(archerdb_vsr_view_changes_total{instance=~\"$instance\"}[5m]))",
+          "legendFormat": "View Changes/sec",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "stacking": {"mode": "none", "group": "A"},
+            "axisPlacement": "auto",
+            "axisColorMode": "text",
+            "scaleDistribution": {"type": "linear"}
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {"mode": "multi", "sort": "desc"},
+        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Leader Election Activity",
+      "gridPos": {"x": 12, "y": 57, "w": 12, "h": 8},
+      "id": 20,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "max(archerdb_vsr_status{instance=~\"$instance\"})",
+          "legendFormat": "Replica Status",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 2,
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "stacking": {"mode": "none", "group": "A"},
+            "axisPlacement": "auto",
+            "axisColorMode": "text",
+            "scaleDistribution": {"type": "linear"}
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {"mode": "single"},
+        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}
+      }
+    },
+    {
+      "type": "row",
+      "title": "Alerts Overview",
+      "gridPos": {"x": 0, "y": 65, "w": 24, "h": 1},
+      "id": 105,
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "alertlist",
+      "title": "Active Cluster Alerts",
+      "gridPos": {"x": 0, "y": 66, "w": 24, "h": 8},
+      "id": 21,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "options": {
+        "stateFilter": ["alerting", "pending"],
+        "maxItems": 20,
+        "sortOrder": 1
+      }
+    }
+  ],
+  "version": 1
+}
