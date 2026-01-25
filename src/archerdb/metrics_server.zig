@@ -22,6 +22,7 @@ const builtin = @import("builtin");
 const vsr = @import("vsr");
 const stdx = vsr.stdx;
 const metrics = vsr.archerdb_metrics;
+const cluster_metrics = @import("cluster_metrics.zig");
 const correlation = @import("observability/correlation.zig");
 
 // =============================================================================
@@ -675,6 +676,28 @@ pub const MetricsServer = struct {
             return;
         };
 
+        const shed_threshold = cluster_metrics.archerdb_shed_threshold.get();
+        const shed_score = cluster_metrics.archerdb_shed_score.get();
+        if (shed_threshold > 0 and shed_score >= shed_threshold) {
+            const retry_after_last = cluster_metrics.archerdb_shed_retry_after_last_ms.get();
+            const retry_after_ms: u64 = if (retry_after_last > 0) @intCast(retry_after_last) else 0;
+            const retry_after_sec = @max(@as(u64, 1), (retry_after_ms + 999) / 1000);
+            var header_buf: [64]u8 = undefined;
+            const retry_header = std.fmt.bufPrint(
+                &header_buf,
+                "Retry-After: {d}\r\n",
+                .{retry_after_sec},
+            ) catch return error.ResponseTooLarge;
+            try sendResponseWithHeaders(
+                client_fd,
+                .too_many_requests,
+                "text/plain",
+                "Too Many Requests",
+                retry_header,
+            );
+            return;
+        }
+
         // Route request
         if (std.mem.eql(u8, path, "/health/live")) {
             try handleHealthLive(client_fd);
@@ -1256,15 +1279,28 @@ pub const MetricsServer = struct {
         content_type: []const u8,
         body: []const u8,
     ) !void {
+        try sendResponseWithHeaders(client_fd, status, content_type, body, null);
+    }
+
+    fn sendResponseWithHeaders(
+        client_fd: posix.socket_t,
+        status: HttpStatus,
+        content_type: []const u8,
+        body: []const u8,
+        extra_headers: ?[]const u8,
+    ) !void {
         var header_buf: [512]u8 = undefined;
+        const extra = extra_headers orelse "";
         const http_fmt = "HTTP/1.1 {s}\r\n" ++
             "Content-Type: {s}\r\n" ++
             "Content-Length: {d}\r\n" ++
+            "{s}" ++
             "Connection: close\r\n\r\n";
         const header = std.fmt.bufPrint(&header_buf, http_fmt, .{
             status.code(),
             content_type,
             body.len,
+            extra,
         }) catch return error.ResponseTooLarge;
 
         _ = try posix.write(client_fd, header);
@@ -1321,6 +1357,27 @@ test "MetricsServer: sendResponse handles large body" {
     const response = buffer[0..total];
     try std.testing.expect(std.mem.indexOf(u8, response, "Content-Length: 9000") != null);
     try std.testing.expect(std.mem.endsWith(u8, response, &body));
+}
+
+test "MetricsServer: sendResponseWithHeaders emits retry-after" {
+    const fds = try posix.pipe();
+    defer posix.close(fds[0]);
+    defer posix.close(fds[1]);
+
+    try MetricsServer.sendResponseWithHeaders(
+        fds[1],
+        .too_many_requests,
+        "text/plain",
+        "Too Many Requests",
+        "Retry-After: 3\r\n",
+    );
+
+    var buffer: [2048]u8 = undefined;
+    const read_len = try posix.read(fds[0], &buffer);
+    const response = buffer[0..read_len];
+
+    try std.testing.expect(std.mem.indexOf(u8, response, "429 Too Many Requests") != null);
+    try std.testing.expect(std.mem.indexOf(u8, response, "Retry-After: 3") != null);
 }
 
 test "ReplicaState: isReady" {
