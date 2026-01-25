@@ -36,12 +36,12 @@ Requirements for enterprise-scale performance. Each maps to roadmap phases.
 
 ### Query Performance
 
-- [ ] **QUERY-01**: Query result caching (in-memory, configurable TTL)
-- [ ] **QUERY-02**: Batch query API for multiple operations per request
-- [ ] **QUERY-03**: S2 cell covering cache (reuse expensive computations)
-- [ ] **QUERY-04**: Query latency breakdown (parse, plan, execute, serialize)
-- [ ] **QUERY-05**: Spatial index statistics for query planning
-- [ ] **QUERY-06**: Prepared query compilation for repeated patterns
+- [x] **QUERY-01**: Query result caching (in-memory, configurable TTL)
+- [x] **QUERY-02**: Batch query API for multiple operations per request
+- [x] **QUERY-03**: S2 cell covering cache (reuse expensive computations)
+- [x] **QUERY-04**: Query latency breakdown (parse, plan, execute, serialize)
+- [x] **QUERY-05**: Spatial index statistics for query planning
+- [x] **QUERY-06**: Prepared query compilation for repeated patterns
 
 ### Cluster & Consensus
 
