@@ -14,6 +14,7 @@ const Ratio = stdx.PRNG.Ratio;
 const Duration = stdx.Duration;
 
 const StaticAllocator = @import("../static_allocator.zig");
+const connection_pool = @import("../connection_pool.zig");
 const allocate_block = @import("grid.zig").allocate_block;
 const GridType = @import("grid.zig").GridType;
 const BlockPtr = @import("grid.zig").BlockPtr;
@@ -21,6 +22,7 @@ const IOPSType = @import("../iops.zig").IOPSType;
 const MessagePool = @import("../message_pool.zig").MessagePool;
 const Message = @import("../message_pool.zig").MessagePool.Message;
 const MessageBuffer = @import("../message_buffer.zig").MessageBuffer;
+const load_shedding = @import("../load_shedding.zig");
 const ForestTableIteratorType =
     @import("../lsm/forest_table_iterator.zig").ForestTableIteratorType;
 const TestStorage = @import("../testing/storage.zig").Storage;
@@ -34,6 +36,7 @@ const marks = @import("../testing/marks.zig");
 
 const vsr = @import("../vsr.zig");
 const archerdb_metrics = vsr.archerdb_metrics;
+const cluster_metrics = @import("../archerdb/cluster_metrics.zig");
 const Header = vsr.Header;
 const Timeout = vsr.Timeout;
 const Command = vsr.Command;
@@ -495,6 +498,7 @@ pub fn ReplicaType(
         },
 
         routing: vsr.Routing,
+        load_shedder: load_shedding.LoadShedder,
 
         /// When "log_view < view": The DVC headers.
         /// When "log_view = view": The SV headers. (Just as a cache,
@@ -1412,6 +1416,7 @@ pub fn ReplicaType(
                     .replica_count = replica_count,
                     .standby_count = standby_count,
                 }),
+                .load_shedder = load_shedding.LoadShedder.initDefault(),
                 .view_headers = vsr.Headers.ViewChangeArray.init(
                     self.superblock.working.view_headers().command,
                     self.superblock.working.view_headers().slice,
@@ -6020,6 +6025,7 @@ pub fn ReplicaType(
                     self.send_eviction_message_to_client(
                         message.header.client,
                         .client_release_too_low,
+                        0,
                     );
                 }
 
@@ -6038,6 +6044,7 @@ pub fn ReplicaType(
                     self.send_eviction_message_to_client(
                         message.header.client,
                         .client_release_too_high,
+                        0,
                     );
                 }
                 return true;
@@ -6265,6 +6272,7 @@ pub fn ReplicaType(
                 self.send_eviction_message_to_client(
                     message.header.client,
                     .client_release_too_low,
+                    0,
                 );
                 return true;
             }
@@ -6280,6 +6288,7 @@ pub fn ReplicaType(
                 self.send_eviction_message_to_client(
                     message.header.client,
                     .client_release_too_high,
+                    0,
                 );
                 return true;
             }
@@ -6294,6 +6303,7 @@ pub fn ReplicaType(
                 self.send_eviction_message_to_client(
                     message.header.client,
                     .invalid_request_body_size,
+                    0,
                 );
                 return true;
             }
@@ -6311,6 +6321,7 @@ pub fn ReplicaType(
                 self.send_eviction_message_to_client(
                     message.header.client,
                     .invalid_request_operation,
+                    0,
                 );
                 return true;
             }
@@ -6330,6 +6341,7 @@ pub fn ReplicaType(
                     self.send_eviction_message_to_client(
                         message.header.client,
                         .invalid_request_body,
+                        0,
                     );
                     return true;
                 }
@@ -6356,6 +6368,7 @@ pub fn ReplicaType(
                 self.send_eviction_message_to_client(
                     message.header.client,
                     .invalid_request_body_size,
+                    0,
                 );
                 return true;
             }
@@ -6364,6 +6377,48 @@ pub fn ReplicaType(
                 log.debug("{}: on_request: ignoring (still persisting view)", .{
                     self.log_prefix(),
                 });
+                return true;
+            }
+
+            const queue_depth: u32 = @intCast(
+                self.pipeline.queue.request_queue.count +
+                    self.pipeline.queue.prepare_queue.count,
+            );
+            const read_latency_stats = archerdb_metrics.Registry.read_latency.getExtendedStats();
+            const write_latency_stats = archerdb_metrics.Registry.write_latency.getExtendedStats();
+            const read_latency_ms: u64 = @intFromFloat(read_latency_stats.p99 * 1000.0);
+            const write_latency_ms: u64 = @intFromFloat(write_latency_stats.p99 * 1000.0);
+            const latency_p99_ms: u64 = @max(read_latency_ms, write_latency_ms);
+            var memory_used_pct: u8 = 0;
+            if (connection_pool.getAvailableMemory()) |available| {
+                if (connection_pool.getTotalMemory()) |total| {
+                    if (total > 0) {
+                        const available_pct: u64 = @min(100, (available * 100) / total);
+                        const used_pct = 100 - available_pct;
+                        memory_used_pct = @intCast(@min(used_pct, 100));
+                    }
+                } else |_| {}
+            } else |_| {}
+
+            self.load_shedder.updateQueueDepth(queue_depth);
+            self.load_shedder.updateLatencyP99(latency_p99_ms * std.time.ns_per_ms);
+            self.load_shedder.updateMemoryPressure(memory_used_pct);
+            const shed_decision = self.load_shedder.shouldShed();
+            cluster_metrics.updateShedMetrics(
+                shed_decision.score,
+                queue_depth,
+                latency_p99_ms,
+                memory_used_pct,
+                self.load_shedder.config.threshold,
+            );
+            if (shed_decision.shed) {
+                const retry_after_ms = shed_decision.retry_after_ms orelse 0;
+                cluster_metrics.recordShedRequest(retry_after_ms);
+                self.send_eviction_message_to_client(
+                    message.header.client,
+                    .overloaded,
+                    retry_after_ms,
+                );
                 return true;
             }
 
@@ -6509,7 +6564,11 @@ pub fn ReplicaType(
                     // 8. `A` sends a second request (`A₂`), but `A` has the session number from the
                     //    first time `A₁` was committed.
                     log.mark.err("{}: on_request: ignoring older session", .{self.log_prefix()});
-                    self.send_eviction_message_to_client(message.header.client, .session_too_low);
+                    self.send_eviction_message_to_client(
+                        message.header.client,
+                        .session_too_low,
+                        0,
+                    );
                     return true;
                 } else if (entry.session < message.header.session) {
                     // This cannot be because of a partition since we check the client's view
@@ -6531,6 +6590,7 @@ pub fn ReplicaType(
                     self.send_eviction_message_to_client(
                         message.header.client,
                         .session_release_mismatch,
+                        0,
                     );
                     return true;
                 }
@@ -6601,7 +6661,11 @@ pub fn ReplicaType(
                     // this by having clients include the view number and rejecting messages from
                     // clients with newer views.
                     log.warn("{}: on_request: no session", .{self.log_prefix()});
-                    self.send_eviction_message_to_client(message.header.client, .no_session);
+                    self.send_eviction_message_to_client(
+                        message.header.client,
+                        .no_session,
+                        0,
+                    );
                     return true;
                 }
             }
@@ -8978,6 +9042,7 @@ pub fn ReplicaType(
             self: *Replica,
             client: u128,
             reason: vsr.Header.Eviction.Reason,
+            retry_after_ms: u64,
         ) void {
             assert(self.status == .normal);
             assert(self.primary());
@@ -8995,6 +9060,7 @@ pub fn ReplicaType(
                 .replica = self.replica,
                 .view = self.log_view_durable(),
                 .client = client,
+                .retry_after_ms = retry_after_ms,
                 .reason = reason,
             }));
         }
