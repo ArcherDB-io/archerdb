@@ -7,6 +7,7 @@ const assert = std.debug.assert;
 const log = std.log.scoped(.arch_client_context);
 
 const vsr = @import("../arch_client.zig").vsr;
+const ErrorCode = @import("../../../error_codes.zig").ErrorCode;
 
 const constants = vsr.constants;
 const stdx = vsr.stdx;
@@ -217,6 +218,8 @@ pub fn ContextType(
 
         signal: Signal,
         eviction_reason: ?vsr.Header.Eviction.Reason,
+        eviction_retry_after_ms: ?u64,
+        eviction_error_code: ?ErrorCode,
         thread: std.Thread,
 
         previous_request_instant: ?stdx.Instant = null,
@@ -346,6 +349,8 @@ pub fn ContextType(
             context.completion_context = completion_ctx;
             context.completion_callback = completion_callback;
             context.eviction_reason = null;
+            context.eviction_retry_after_ms = null;
+            context.eviction_error_code = null;
 
             log.debug("{}: init: initializing signal", .{context.client_id});
             try context.signal.init(&context.io, Context.signal_notify_callback);
@@ -770,16 +775,36 @@ pub fn ContextType(
             const self: *Context = @fieldParentPtr("client", client);
             assert(self.eviction_reason == null);
 
-            log.debug("{}: client_eviction_callback: reason={?s} reason_int={}", .{
-                self.client_id,
-                std.enums.tagName(vsr.Header.Eviction.Reason, eviction.header.reason),
-                @intFromEnum(eviction.header.reason),
-            });
+            if (eviction.header.reason == .overloaded) {
+                log.debug(
+                    "{}: client_eviction_callback: reason={?s} reason_int={} retry_after_ms={}",
+                    .{
+                        self.client_id,
+                        std.enums.tagName(vsr.Header.Eviction.Reason, eviction.header.reason),
+                        @intFromEnum(eviction.header.reason),
+                        eviction.header.retry_after_ms,
+                    },
+                );
+            } else {
+                log.debug("{}: client_eviction_callback: reason={?s} reason_int={}", .{
+                    self.client_id,
+                    std.enums.tagName(vsr.Header.Eviction.Reason, eviction.header.reason),
+                    @intFromEnum(eviction.header.reason),
+                });
+            }
 
             // Now that the client is evicted, no more requests can be submitted to it and we can
             // safely deinitialize it. First, we stop the IO thread, which then deinitializes the
             // client before it exits (see `io_thread`).
             self.eviction_reason = eviction.header.reason;
+            self.eviction_retry_after_ms = if (eviction.header.reason == .overloaded)
+                eviction.header.retry_after_ms
+            else
+                null;
+            self.eviction_error_code = if (eviction.header.reason == .overloaded)
+                .{ .resource = .too_many_queries }
+            else
+                null;
             self.signal.stop();
         }
 

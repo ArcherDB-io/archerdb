@@ -445,16 +445,29 @@ pub fn ClientType(
                         "same version as your cluster",
                     else => "",
                 };
-                log.err(
-                    "{}: session evicted: reason={?s} (cluster_release={}, client_release={}){s}",
-                    .{
-                        self.id,
-                        std.enums.tagName(vsr.Header.Eviction.Reason, eviction.header.reason),
-                        eviction.header.release,
-                        self.release,
-                        eviction_specific_log,
-                    },
-                );
+                if (eviction.header.reason == .overloaded) {
+                    log.err(
+                        "{}: session evicted: reason={?s} (cluster_release={}, client_release={}, retry_after_ms={})",
+                        .{
+                            self.id,
+                            std.enums.tagName(vsr.Header.Eviction.Reason, eviction.header.reason),
+                            eviction.header.release,
+                            self.release,
+                            eviction.header.retry_after_ms,
+                        },
+                    );
+                } else {
+                    log.err(
+                        "{}: session evicted: reason={?s} (cluster_release={}, client_release={}){s}",
+                        .{
+                            self.id,
+                            std.enums.tagName(vsr.Header.Eviction.Reason, eviction.header.reason),
+                            eviction.header.release,
+                            self.release,
+                            eviction_specific_log,
+                        },
+                    );
+                }
 
                 self.evicted = true;
                 self.on_eviction_callback = null;

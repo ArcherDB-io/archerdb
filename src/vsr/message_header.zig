@@ -1482,7 +1482,8 @@ pub const Header = extern struct {
         reserved_frame: [12]u8 = @splat(0),
 
         client: u128,
-        reserved: [111]u8 = @splat(0),
+        retry_after_ms: u64 = 0,
+        reserved: [103]u8 = @splat(0),
         reason: Reason,
 
         pub const frame = HeaderFunctionsType(@This()).frame;
@@ -1503,6 +1504,9 @@ pub const Header = extern struct {
             if (self.release.value == 0) return "release == 0";
             if (self.client == 0) return "client == 0";
             if (!stdx.zeroed(&self.reserved)) return "reserved != 0";
+            if (self.reason != .overloaded and self.retry_after_ms != 0) {
+                return "retry_after_ms != 0";
+            }
 
             const reasons = comptime std.enums.values(Reason);
             inline for (reasons) |reason| {
@@ -1522,6 +1526,7 @@ pub const Header = extern struct {
             invalid_request_body_size = 6,
             session_too_low = 7,
             session_release_mismatch = 8,
+            overloaded = 9,
 
             comptime {
                 for (std.enums.values(Reason), 0..) |reason, index| {
