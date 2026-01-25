@@ -7,8 +7,9 @@
 //! - Acquire/release operations and timeouts
 //! - Health check statistics
 //! - Memory pressure events
+//! - Load shedding decisions (overload score, shed requests, retry-after values)
 //!
-//! All metrics follow Prometheus naming conventions (archerdb_pool_*).
+//! All metrics follow Prometheus naming conventions (archerdb_pool_*, archerdb_shed_*).
 
 const std = @import("std");
 const metrics = @import("metrics.zig");
@@ -126,6 +127,93 @@ pub var archerdb_pool_waiters = Gauge.init(
     "Number of acquire requests waiting for a connection",
     null,
 );
+
+// ============================================================================
+// Load Shedding Metrics
+// ============================================================================
+
+/// Total requests shed (rejected with 429).
+pub var archerdb_shed_requests_total = Counter.init(
+    "archerdb_shed_requests_total",
+    "Total requests shed due to overload",
+    null,
+);
+
+/// Current composite overload score (0-100 scaled for integer).
+/// 0 = no load, 100 = fully overloaded.
+pub var archerdb_shed_score = Gauge.init(
+    "archerdb_shed_score",
+    "Current composite overload score (0-100, where 100 = fully overloaded)",
+    null,
+);
+
+/// Current queue depth used for shedding decision.
+pub var archerdb_shed_queue_depth = Gauge.init(
+    "archerdb_shed_queue_depth",
+    "Current queue depth used for load shedding decision",
+    null,
+);
+
+/// Current P99 latency in milliseconds used for shedding decision.
+pub var archerdb_shed_latency_p99_ms = Gauge.init(
+    "archerdb_shed_latency_p99_ms",
+    "Current P99 latency in milliseconds for load shedding",
+    null,
+);
+
+/// Current memory pressure percentage used for shedding decision.
+pub var archerdb_shed_memory_pressure_pct = Gauge.init(
+    "archerdb_shed_memory_pressure_pct",
+    "Current memory pressure percentage (0-100)",
+    null,
+);
+
+/// Current configured shedding threshold (scaled 0-100).
+/// Useful for alerting when threshold is changed.
+pub var archerdb_shed_threshold = Gauge.init(
+    "archerdb_shed_threshold",
+    "Current configured shedding threshold (0-100)",
+    null,
+);
+
+/// Histogram of Retry-After values sent in milliseconds.
+/// Buckets: 1s, 2s, 5s, 10s, 15s, 20s, 30s
+pub const ShedRetryHistogram = metrics.HistogramType(7);
+pub var archerdb_shed_retry_after_ms = ShedRetryHistogram.init(
+    "archerdb_shed_retry_after_ms",
+    "Distribution of Retry-After values sent to clients (milliseconds)",
+    null,
+    .{ 1000, 2000, 5000, 10000, 15000, 20000, 30000 },
+);
+
+// ============================================================================
+// Load Shedding Helper Functions
+// ============================================================================
+
+/// Update load shedding metrics from shedder state.
+pub fn updateShedMetrics(
+    score: f32,
+    queue_depth: u32,
+    latency_p99_ms: u64,
+    memory_pct: u8,
+    threshold: f32,
+) void {
+    // Scale score and threshold to 0-100 integer range
+    archerdb_shed_score.set(@intFromFloat(score * 100));
+    archerdb_shed_threshold.set(@intFromFloat(threshold * 100));
+
+    archerdb_shed_queue_depth.set(@intCast(queue_depth));
+    archerdb_shed_latency_p99_ms.set(@intCast(latency_p99_ms));
+    archerdb_shed_memory_pressure_pct.set(@intCast(memory_pct));
+}
+
+/// Record a shed decision (request rejected).
+pub fn recordShedRequest(retry_after_ms: u64) void {
+    archerdb_shed_requests_total.inc();
+    // Convert to seconds for histogram observation
+    const retry_sec: f64 = @as(f64, @floatFromInt(retry_after_ms)) / 1000.0;
+    archerdb_shed_retry_after_ms.observe(retry_sec);
+}
 
 // ============================================================================
 // Per-Client Metrics (Top-N Tracking)
@@ -321,6 +409,16 @@ pub const ClusterMetrics = struct {
         // Resource pressure counters
         try archerdb_pool_memory_pressure_detected_total.format(writer);
         try archerdb_pool_connections_reaped_total.format(writer);
+        try writer.writeAll("\n");
+
+        // Load shedding metrics
+        try archerdb_shed_requests_total.format(writer);
+        try archerdb_shed_score.format(writer);
+        try archerdb_shed_queue_depth.format(writer);
+        try archerdb_shed_latency_p99_ms.format(writer);
+        try archerdb_shed_memory_pressure_pct.format(writer);
+        try archerdb_shed_threshold.format(writer);
+        try archerdb_shed_retry_after_ms.format(writer);
         try writer.writeAll("\n");
 
         // Per-client metrics (top-N only)
@@ -526,4 +624,99 @@ test "ClusterMetrics: memory pressure tracking" {
     cm.recordMemoryPressure(true);
     try std.testing.expectEqual(@as(i64, 1), archerdb_pool_memory_pressure_state.get());
     try std.testing.expectEqual(@as(u64, 1), archerdb_pool_memory_pressure_detected_total.get());
+}
+
+// ============================================================================
+// Load Shedding Metrics Tests
+// ============================================================================
+
+test "updateShedMetrics: scales score to 0-100" {
+    // Reset for test isolation
+    archerdb_shed_score = Gauge.init(
+        "archerdb_shed_score",
+        "Current composite overload score (0-100, where 100 = fully overloaded)",
+        null,
+    );
+    archerdb_shed_threshold = Gauge.init(
+        "archerdb_shed_threshold",
+        "Current configured shedding threshold (0-100)",
+        null,
+    );
+    archerdb_shed_queue_depth = Gauge.init(
+        "archerdb_shed_queue_depth",
+        "Current queue depth used for load shedding decision",
+        null,
+    );
+    archerdb_shed_latency_p99_ms = Gauge.init(
+        "archerdb_shed_latency_p99_ms",
+        "Current P99 latency in milliseconds for load shedding",
+        null,
+    );
+    archerdb_shed_memory_pressure_pct = Gauge.init(
+        "archerdb_shed_memory_pressure_pct",
+        "Current memory pressure percentage (0-100)",
+        null,
+    );
+
+    updateShedMetrics(0.75, 5000, 250, 60, 0.8);
+
+    try std.testing.expectEqual(@as(i64, 75), archerdb_shed_score.get());
+    try std.testing.expectEqual(@as(i64, 80), archerdb_shed_threshold.get());
+    try std.testing.expectEqual(@as(i64, 5000), archerdb_shed_queue_depth.get());
+    try std.testing.expectEqual(@as(i64, 250), archerdb_shed_latency_p99_ms.get());
+    try std.testing.expectEqual(@as(i64, 60), archerdb_shed_memory_pressure_pct.get());
+}
+
+test "recordShedRequest: increments counter and records histogram" {
+    // Reset for test isolation
+    archerdb_shed_requests_total = Counter.init(
+        "archerdb_shed_requests_total",
+        "Total requests shed due to overload",
+        null,
+    );
+    archerdb_shed_retry_after_ms = ShedRetryHistogram.init(
+        "archerdb_shed_retry_after_ms",
+        "Distribution of Retry-After values sent to clients (milliseconds)",
+        null,
+        .{ 1000, 2000, 5000, 10000, 15000, 20000, 30000 },
+    );
+
+    recordShedRequest(1500);
+    recordShedRequest(5000);
+    recordShedRequest(25000);
+
+    try std.testing.expectEqual(@as(u64, 3), archerdb_shed_requests_total.get());
+    try std.testing.expectEqual(@as(u64, 3), archerdb_shed_retry_after_ms.getCount());
+}
+
+test "ClusterMetrics: format includes shed metrics" {
+    // Reset shed metrics
+    archerdb_shed_score = Gauge.init(
+        "archerdb_shed_score",
+        "Current composite overload score (0-100, where 100 = fully overloaded)",
+        null,
+    );
+    archerdb_shed_requests_total = Counter.init(
+        "archerdb_shed_requests_total",
+        "Total requests shed due to overload",
+        null,
+    );
+
+    updateShedMetrics(0.5, 1000, 100, 50, 0.8);
+
+    var cm = ClusterMetrics.init();
+    var buffer: [16384]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&buffer);
+    const writer = stream.writer();
+
+    try cm.format(writer);
+
+    const output = stream.getWritten();
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_shed_requests_total") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_shed_score") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_shed_queue_depth") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_shed_latency_p99_ms") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_shed_memory_pressure_pct") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_shed_threshold") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_shed_retry_after_ms") != null);
 }
