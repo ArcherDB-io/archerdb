@@ -119,7 +119,7 @@ Plans:
   3. Load shedding rejects requests under overload before cascading failure occurs
   4. Cluster health dashboard shows replica status, replication lag, and consensus metrics
   5. Read replicas serve read queries without consensus overhead, achieving 10x read scaling
-**Plans**: 6 plans in 2 waves
+**Plans**: 11 plans in 5 waves (6 core + 5 gap closure)
 
 Plans:
 - [x] 15-01-PLAN.md — Server-side connection pooling with adaptive reaping
@@ -128,6 +128,11 @@ Plans:
 - [x] 15-04-PLAN.md — Flexible Paxos quorum configuration
 - [x] 15-05-PLAN.md — Read replica routing with automatic classification
 - [x] 15-06-PLAN.md — Cluster health dashboard and alerting rules
+- [x] 15-07-PLAN.md — [GAP CLOSURE] Connection pool integration + registry export
+- [x] 15-08-PLAN.md — [GAP CLOSURE] Load shedding request pipeline wiring
+- [x] 15-09-PLAN.md — [GAP CLOSURE] Read replica routing activation
+- [x] 15-10-PLAN.md — [GAP CLOSURE] Timeout profiles + quorum wiring
+- [x] 15-11-PLAN.md — [GAP CLOSURE] HTTP overload responses with Retry-After
 
 ### Phase 16: Sharding & Scale-Out
 **Goal**: Enable horizontal scale-out with online resharding and full request path visibility
@@ -139,12 +144,13 @@ Plans:
   3. Distributed tracing shows full request path across all shards via OpenTelemetry
   4. Online resharding adds/removes shards without application downtime [BREAKING]
   5. Hot shard detection identifies imbalanced shards and triggers rebalancing alerts
-**Plans**: TBD
+**Plans**: 4 plans in 2 waves
 
 Plans:
-- [ ] 16-01: TBD
-- [ ] 16-02: TBD
-- [ ] 16-03: TBD
+- [ ] 16-01-PLAN.md — Shard rebalancing metrics + hot shard alerts
+- [ ] 16-02-PLAN.md — Online resharding controller + topology notifications
+- [ ] 16-03-PLAN.md — Parallel fan-out queries with partial failure policy
+- [ ] 16-04-PLAN.md — OTel span links + coordinator tracing
 
 ## Progress
 
@@ -157,7 +163,7 @@ Phases execute in numeric order: 11 -> 11.x -> 12 -> 12.x -> ... -> 16
 | 12. Storage Optimization | 11/11 | ✓ Complete | 2026-01-24 |
 | 13. Memory & RAM Index | 5/5 | ✓ Complete | 2026-01-24 |
 | 14. Query Performance | 6/6 | ✓ Complete | 2026-01-25 |
-| 15. Cluster & Consensus | 6/6 | ✓ Complete | 2026-01-25 |
+| 15. Cluster & Consensus | 11/11 | ✓ Complete | 2026-01-25 |
 | 16. Sharding & Scale-Out | 0/TBD | Not started | - |
 
 ## Requirement Coverage
@@ -175,4 +181,4 @@ Phases execute in numeric order: 11 -> 11.x -> 12 -> 12.x -> ... -> 16
 
 ---
 *Roadmap created: 2026-01-24*
-*Last updated: 2026-01-25 — Phase 15 complete (6 plans in 2 waves)*
+*Last updated: 2026-01-25 — Phase 15 complete (11 plans in 5 waves)*
