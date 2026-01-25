@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-01-24)
 
 **Core value:** Correctness, performance, and completeness with no compromises
-**Current focus:** v2.0 Performance & Scale - Phase 15 complete
+**Current focus:** v2.0 Performance & Scale - Phase 16 planning
 
 ## Current Position
 
 Phase: 15 of 16 (Cluster & Consensus)
-Plan: 9 of 10 in current phase (15-01 through 15-09 complete)
-Status: In progress
-Last activity: 2026-01-25 - Completed 15-09-PLAN.md (Read replica routing activation)
+Plan: 10 of 10 in current phase (15-01 through 15-10 complete)
+Status: Phase complete
+Last activity: 2026-01-25 - Completed 15-10-PLAN.md (Timeout profiles + quorum wiring)
 
-Progress: [█████████░] 99% (plans: 75/76)
+Progress: [██████████] 100% (plans: 76/76)
 
 ## v1.0 Summary
 
@@ -29,9 +29,9 @@ See `.planning/milestones/v1.0-REQUIREMENTS.md` for archived requirements.
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 27 (v2.0)
+- Total plans completed: 28 (v2.0)
 - Average duration: ~6min
-- Total execution time: ~165min
+- Total execution time: ~171min
 
 **Recent Trend:**
 - Last 5 plans: 15-03, 15-04, 15-05, 15-06, 15-07
@@ -61,7 +61,9 @@ Phase 15 decisions:
 - Custom profile starts from cloud defaults, allows selective overrides (15-02)
 - Jitter default 20% (+/- 20% variation) to prevent thundering herd (15-02)
 - Saturating arithmetic for jitter bounds to prevent overflow (15-02)
+- Replica timeouts use jittered profile values with ceil-to-ticks conversion (15-10)
 - Q1 + Q2 > N invariant enforced at validation time, not construction time (15-04)
+- Quorum presets allow phase-1/phase-2 overrides while enforcing Q1+Q2>N (15-10)
 - fast_commit falls back to classic for N < 3 (can't meaningfully reduce Q2) (15-04)
 - strong_leader uses Q1=N, Q2=1 for maximum commit speed at election availability cost (15-04)
 - Fault tolerance helpers (phase1FaultTolerance, phase2FaultTolerance) for operational insight (15-04)
@@ -84,9 +86,9 @@ Phase 15 decisions:
 
 ## Session Continuity
 
-Last session: 2026-01-25 08:15 UTC
-Stopped at: Completed 15-09-PLAN.md
+Last session: 2026-01-25 08:29 UTC
+Stopped at: Completed 15-10-PLAN.md
 Resume file: None
 
 ---
-*Updated: 2026-01-25 — Completed 15-08 Load shedding integration*
+*Updated: 2026-01-25 — Completed 15-10 Timeout profiles + quorum wiring*
