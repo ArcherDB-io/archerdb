@@ -159,6 +159,23 @@ const SpatialIndexStats = query_metrics_mod.SpatialIndexStats;
 const LatencyBreakdown = query_metrics_mod.Breakdown;
 const QueryTypeMetric = query_metrics_mod.QueryType;
 
+// Batch query integration (14-04)
+const batch_query_mod = @import("batch_query.zig");
+const BatchQueryMetrics = batch_query_mod.BatchQueryMetrics;
+
+// Prepared query integration (14-05)
+const prepared_queries = @import("prepared_queries.zig");
+const SessionPreparedQueries = prepared_queries.SessionPreparedQueries;
+const PreparedQueryMetrics = prepared_queries.PreparedQueryMetrics;
+
+// Prepared query wire formats (from archerdb.zig)
+const archerdb_mod = @import("archerdb.zig");
+const PrepareQueryRequest = archerdb_mod.PrepareQueryRequest;
+const PrepareQueryResult = archerdb_mod.PrepareQueryResult;
+const ExecutePreparedRequest = archerdb_mod.ExecutePreparedRequest;
+const DeallocatePreparedRequest = archerdb_mod.DeallocatePreparedRequest;
+const DeallocatePreparedResult = archerdb_mod.DeallocatePreparedResult;
+
 // ============================================================================
 // Tree IDs for LSM Storage
 // ============================================================================
@@ -1107,6 +1124,23 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         /// Null if allocation fails (graceful degradation to recompute each time).
         covering_cache: ?*S2CoveringCache = null,
 
+        /// Batch query metrics for dashboard workload optimization (14-04).
+        /// Tracks batch query operations, success rates, and truncation events.
+        batch_query_metrics: BatchQueryMetrics = BatchQueryMetrics{},
+
+        /// Prepared query session storage (14-05).
+        /// Maps client IDs to their prepared query sessions.
+        /// Session-scoped: when a client session expires, their prepared queries
+        /// are deallocated (PostgreSQL semantics per query-performance/spec.md).
+        session_prepared_queries: std.AutoHashMap(u128, SessionPreparedQueries) = undefined,
+
+        /// Prepared query metrics for observability (14-05).
+        /// Tracks compile, execute, and error counts.
+        prepared_query_metrics: PreparedQueryMetrics = PreparedQueryMetrics{},
+
+        /// Flag indicating if session_prepared_queries is initialized.
+        session_queries_initialized: bool = false,
+
         // ====================================================================
         // Initialization
         // ====================================================================
@@ -1224,6 +1258,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 allocator.destroy(cache);
             };
 
+            // Initialize session prepared queries map (14-05)
+            const session_prepared_queries = std.AutoHashMap(u128, SessionPreparedQueries).init(allocator);
+
             self.* = .{
                 .batch_size_limit = options.batch_size_limit,
                 .default_ttl_seconds = default_ttl_seconds,
@@ -1239,6 +1276,8 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .tiering_manager = tiering_manager,
                 .result_cache = result_cache,
                 .covering_cache = covering_cache,
+                .session_prepared_queries = session_prepared_queries,
+                .session_queries_initialized = true,
             };
 
             // Initialize Forest for LSM tree storage (F1.2, F4.2)
@@ -1323,6 +1362,11 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 cache.deinit(allocator);
                 allocator.destroy(cache);
             }
+
+            // Clean up session prepared queries (14-05)
+            if (self.session_queries_initialized) {
+                self.session_prepared_queries.deinit();
+            }
         }
 
         /// Reset state machine for state sync.
@@ -1354,6 +1398,8 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .tiering_manager = self.tiering_manager,
                 .result_cache = self.result_cache,
                 .covering_cache = self.covering_cache,
+                .session_prepared_queries = self.session_prepared_queries,
+                .session_queries_initialized = self.session_queries_initialized,
             };
         }
 
@@ -1472,6 +1518,12 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .ttl_set,
                 .ttl_extend,
                 .ttl_clear,
+                // Batch query (14-04)
+                .batch_query,
+                // Prepared query operations (14-05)
+                .prepare_query,
+                .execute_prepared,
+                .deallocate_prepared,
                 => 0,
             };
         }
@@ -1532,6 +1584,12 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .ttl_set,
                 .ttl_extend,
                 .ttl_clear,
+                // Batch query (14-04)
+                .batch_query,
+                // Prepared query operations (14-05)
+                .prepare_query,
+                .execute_prepared,
+                .deallocate_prepared,
                 => {
                     // Optimistic execution - RAM index provides fast access
                     self.prefetch_finish();
@@ -1617,6 +1675,14 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .ttl_set => self.execute_ttl_set(message_body_used, output),
                 .ttl_extend => self.execute_ttl_extend(message_body_used, output),
                 .ttl_clear => self.execute_ttl_clear(message_body_used, output),
+
+                // Batch query operation (14-04: Dashboard batch queries)
+                .batch_query => self.execute_batch_query(message_body_used, output),
+
+                // Prepared query operations (14-05: Dashboard prepared queries)
+                .prepare_query => self.execute_prepare_query(client, message_body_used, output),
+                .execute_prepared => self.execute_execute_prepared(client, message_body_used, output),
+                .deallocate_prepared => self.execute_deallocate_prepared(client, message_body_used, output),
             };
 
             return result;
@@ -3189,6 +3255,91 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             response_ptr.* = response;
 
             return @sizeOf(TtlClearResponse);
+        }
+
+        // ====================================================================
+        // 14-04: Batch Query Implementation
+        // ====================================================================
+
+        /// Execute batch query operation (14-04).
+        ///
+        /// Executes multiple queries in a single request with DynamoDB-style
+        /// partial success handling. Each query in the batch succeeds or fails
+        /// independently without affecting others.
+        ///
+        /// Arguments:
+        /// - input: BatchQueryRequest + entries + filter data
+        /// - output: Buffer for BatchQueryResponse + result entries + result data
+        ///
+        /// Returns: Size of response written to output (number of bytes)
+        fn execute_batch_query(
+            self: *GeoStateMachine,
+            input: []const u8,
+            output: []u8,
+        ) usize {
+            // Use the generic batch query executor
+            const BatchQueryExecutor = batch_query_mod.BatchQueryExecutor(GeoStateMachine);
+            return BatchQueryExecutor.executeBatch(self, input, output);
+        }
+
+        // ====================================================================
+        // 14-05: Prepared Query Implementation (Stubs)
+        // ====================================================================
+
+        /// Execute prepare_query operation (14-05 stub).
+        /// TODO: Full implementation in plan 14-05.
+        fn execute_prepare_query(
+            self: *GeoStateMachine,
+            client: u128,
+            input: []const u8,
+            output: []u8,
+        ) usize {
+            _ = self;
+            _ = client;
+            _ = input;
+            // Return error: not implemented
+            if (output.len < 16) return 0;
+            // PrepareQueryResult with status=unsupported_query_type
+            @memset(output[0..16], 0);
+            output[0] = 0xFF; // slot = 0xFFFFFFFF (error)
+            output[1] = 0xFF;
+            output[2] = 0xFF;
+            output[3] = 0xFF;
+            output[4] = 4; // status = unsupported_query_type
+            return 16;
+        }
+
+        /// Execute execute_prepared operation (14-05 stub).
+        /// TODO: Full implementation in plan 14-05.
+        fn execute_execute_prepared(
+            self: *GeoStateMachine,
+            client: u128,
+            input: []const u8,
+            output: []u8,
+        ) usize {
+            _ = self;
+            _ = client;
+            _ = input;
+            _ = output;
+            // No results - prepared statement doesn't exist
+            return 0;
+        }
+
+        /// Execute deallocate_prepared operation (14-05 stub).
+        /// TODO: Full implementation in plan 14-05.
+        fn execute_deallocate_prepared(
+            self: *GeoStateMachine,
+            client: u128,
+            input: []const u8,
+            output: []u8,
+        ) usize {
+            _ = self;
+            _ = client;
+            _ = input;
+            // Return DeallocatePreparedResult with deallocated=0
+            if (output.len < 16) return 0;
+            @memset(output[0..16], 0);
+            return 16;
         }
 
         // ====================================================================

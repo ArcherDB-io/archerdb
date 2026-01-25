@@ -18,6 +18,8 @@ const geo_event = @import("geo_event.zig");
 const geo_state_machine = @import("geo_state_machine.zig");
 const ttl = @import("ttl.zig");
 const topology_mod = @import("topology.zig");
+const prepared_queries = @import("prepared_queries.zig");
+const batch_query = @import("batch_query.zig");
 
 // ============================================================================
 // ArcherDB Geospatial Types
@@ -58,6 +60,19 @@ pub const TopologyRequest = topology_mod.TopologyRequest;
 pub const TopologyResponse = topology_mod.TopologyResponse;
 pub const ShardInfo = topology_mod.ShardInfo;
 pub const ShardStatus = topology_mod.ShardStatus;
+
+// Prepared query types (14-05: Dashboard prepared queries)
+pub const PreparedQuery = prepared_queries.PreparedQuery;
+pub const SessionPreparedQueries = prepared_queries.SessionPreparedQueries;
+pub const CompiledQuery = prepared_queries.CompiledQuery;
+pub const PreparedQueryMetrics = prepared_queries.PreparedQueryMetrics;
+
+// Batch query types (14-04: Dashboard batch queries)
+pub const BatchQueryRequest = batch_query.BatchQueryRequest;
+pub const BatchQueryResponse = batch_query.BatchQueryResponse;
+pub const BatchQueryEntry = batch_query.BatchQueryEntry;
+pub const BatchQueryResultEntry = batch_query.BatchQueryResultEntry;
+pub const BatchQueryType = batch_query.QueryType;
 
 // ============================================================================
 // ArcherDB Admin Request/Response Types
@@ -114,6 +129,102 @@ pub const StatusResponse = extern struct {
 };
 
 // ============================================================================
+// ArcherDB Prepared Query Request/Response Types (14-05)
+// ============================================================================
+
+/// Request for prepare_query operation.
+/// Wire format: [PrepareQueryRequest: 16 bytes][name: name_len bytes][query: query_len bytes]
+pub const PrepareQueryRequest = extern struct {
+    /// Length of query name in bytes
+    name_len: u32,
+    /// Length of query text in bytes
+    query_len: u32,
+    /// Reserved for future use
+    reserved: [8]u8 = @splat(0),
+
+    comptime {
+        assert(@sizeOf(PrepareQueryRequest) == 16);
+        assert(stdx.no_padding(PrepareQueryRequest));
+    }
+};
+
+/// Response for prepare_query operation.
+pub const PrepareQueryResult = extern struct {
+    /// Slot number for execution (0xFFFFFFFF on error)
+    slot: u32,
+    /// Status: 0 = success, non-zero = error code
+    status: u32,
+    /// Reserved for future use
+    reserved: [8]u8 = @splat(0),
+
+    comptime {
+        assert(@sizeOf(PrepareQueryResult) == 16);
+        assert(stdx.no_padding(PrepareQueryResult));
+    }
+
+    /// Status codes for prepare result
+    pub const Status = enum(u32) {
+        ok = 0,
+        session_full = 1,
+        already_exists = 2,
+        invalid_query = 3,
+        unsupported_query_type = 4,
+    };
+
+    pub fn success(slot: u32) PrepareQueryResult {
+        return .{ .slot = slot, .status = 0 };
+    }
+
+    pub fn err(status: Status) PrepareQueryResult {
+        return .{ .slot = 0xFFFFFFFF, .status = @intFromEnum(status) };
+    }
+};
+
+/// Request for execute_prepared operation.
+/// Wire format: [ExecutePreparedRequest: 16 bytes][params: variable length]
+pub const ExecutePreparedRequest = extern struct {
+    /// Slot number from prepare_query result
+    slot: u32,
+    /// Number of parameters
+    param_count: u32,
+    /// Reserved for future use
+    reserved: [8]u8 = @splat(0),
+
+    comptime {
+        assert(@sizeOf(ExecutePreparedRequest) == 16);
+        assert(stdx.no_padding(ExecutePreparedRequest));
+    }
+};
+
+/// Request for deallocate_prepared operation.
+pub const DeallocatePreparedRequest = extern struct {
+    /// Slot number to deallocate (0xFFFFFFFF for all)
+    slot: u32,
+    /// Reserved/padding for alignment
+    _padding: u32 = 0,
+    /// Name hash for deallocate by name (0 to use slot)
+    name_hash: u64,
+
+    comptime {
+        assert(@sizeOf(DeallocatePreparedRequest) == 16);
+        assert(stdx.no_padding(DeallocatePreparedRequest));
+    }
+};
+
+/// Response for deallocate_prepared operation.
+pub const DeallocatePreparedResult = extern struct {
+    /// 1 if deallocated, 0 if not found
+    deallocated: u32,
+    /// Reserved for future use
+    reserved: [12]u8 = @splat(0),
+
+    comptime {
+        assert(@sizeOf(DeallocatePreparedResult) == 16);
+        assert(stdx.no_padding(DeallocatePreparedResult));
+    }
+};
+
+// ============================================================================
 // ArcherDB Operations
 // ============================================================================
 
@@ -146,6 +257,14 @@ pub const Operation = enum(u8) {
     ttl_extend = constants.vsr_operations_reserved + 31,
     ttl_clear = constants.vsr_operations_reserved + 32,
 
+    // ArcherDB Batch Query Operation (14-04: Dashboard batch queries)
+    batch_query = constants.vsr_operations_reserved + 33,
+
+    // ArcherDB Prepared Query Operations (14-05: Dashboard prepared queries)
+    prepare_query = constants.vsr_operations_reserved + 34,
+    execute_prepared = constants.vsr_operations_reserved + 35,
+    deallocate_prepared = constants.vsr_operations_reserved + 36,
+
     pub fn EventType(comptime operation: Operation) type {
         return switch (operation) {
             .pulse => void,
@@ -174,6 +293,14 @@ pub const Operation = enum(u8) {
             .ttl_set => TtlSetRequest,
             .ttl_extend => TtlExtendRequest,
             .ttl_clear => TtlClearRequest,
+
+            // ArcherDB Batch Query (14-04)
+            .batch_query => BatchQueryRequest,
+
+            // ArcherDB Prepared Query Operations (14-05)
+            .prepare_query => PrepareQueryRequest,
+            .execute_prepared => ExecutePreparedRequest,
+            .deallocate_prepared => DeallocatePreparedRequest,
         };
     }
 
@@ -205,6 +332,14 @@ pub const Operation = enum(u8) {
             .ttl_set => TtlSetResponse,
             .ttl_extend => TtlExtendResponse,
             .ttl_clear => TtlClearResponse,
+
+            // ArcherDB Batch Query (14-04)
+            .batch_query => BatchQueryResponse,
+
+            // ArcherDB Prepared Query Operations (14-05)
+            .prepare_query => PrepareQueryResult,
+            .execute_prepared => GeoEvent, // Returns query results (same as radius/polygon)
+            .deallocate_prepared => DeallocatePreparedResult,
         };
     }
 
@@ -253,6 +388,14 @@ pub const Operation = enum(u8) {
             .ttl_set => false,
             .ttl_extend => false,
             .ttl_clear => false,
+
+            // ArcherDB Batch Query (14-04)
+            .batch_query => false,
+
+            // ArcherDB Prepared Query Operations (14-05)
+            .prepare_query => false,
+            .execute_prepared => false,
+            .deallocate_prepared => false,
         };
     }
 
@@ -286,6 +429,14 @@ pub const Operation = enum(u8) {
             .ttl_set => false,
             .ttl_extend => false,
             .ttl_clear => false,
+
+            // ArcherDB Batch Query (14-04)
+            .batch_query => false,
+
+            // ArcherDB Prepared Query Operations (14-05)
+            .prepare_query => false,
+            .execute_prepared => false,
+            .deallocate_prepared => false,
         };
     }
 
@@ -296,6 +447,12 @@ pub const Operation = enum(u8) {
             .query_polygon => true,
             // query_uuid_batch body = QueryUuidBatchFilter + entity_ids[]
             .query_uuid_batch => true,
+            // batch_query body = BatchQueryRequest + variable queries
+            .batch_query => true,
+            // prepare_query body = PrepareQueryRequest + name + query_text
+            .prepare_query => true,
+            // execute_prepared body = ExecutePreparedRequest + params
+            .execute_prepared => true,
             else => false,
         };
     }
@@ -488,6 +645,14 @@ pub const Operation = enum(u8) {
 
             // Manual TTL operations - each returns exactly 1 response
             .ttl_set, .ttl_extend, .ttl_clear => 1,
+
+            // Batch query - returns 1 BatchQueryResponse (variable-length body)
+            .batch_query => 1,
+
+            // Prepared query operations - return 1 result each
+            .prepare_query => 1,
+            .execute_prepared => Operation.query_radius.result_max(constants.message_body_size_max),
+            .deallocate_prepared => 1,
         };
     }
 
