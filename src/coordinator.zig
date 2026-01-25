@@ -171,6 +171,22 @@ pub const QueryType = enum {
     latest,
 };
 
+/// Fan-out policy for shard queries.
+pub const FanOutPolicy = enum {
+    /// Require all shards to succeed.
+    all,
+    /// Require a majority of shards to succeed.
+    majority,
+    /// Return partial results when possible.
+    best_effort,
+};
+
+/// Per-shard error information for fan-out queries.
+pub const FanOutShardError = struct {
+    shard_id: u32,
+    err: anyerror,
+};
+
 /// Fan-out query result.
 pub const FanOutResult = struct {
     /// Merged results from all shards.
@@ -179,6 +195,12 @@ pub const FanOutResult = struct {
     shards_queried: u32,
     /// Number of shards that succeeded.
     shards_succeeded: u32,
+    /// Number of shards that failed.
+    shards_failed: u32,
+    /// Whether the result is partial.
+    partial: bool,
+    /// Per-shard errors collected during fan-out.
+    errors: []FanOutShardError,
     /// Total query time in nanoseconds.
     total_time_ns: u64,
 };
@@ -416,6 +438,155 @@ pub const Coordinator = struct {
         };
     }
 
+    /// Default fan-out policy per query type.
+    pub fn defaultFanOutPolicy(query_type: QueryType) FanOutPolicy {
+        return switch (query_type) {
+            .uuid_lookup => .all,
+            .uuid_batch => .all,
+            .radius => .majority,
+            .polygon => .majority,
+            .latest => .majority,
+        };
+    }
+
+    /// Execute a fan-out query concurrently across shards.
+    pub fn fanOutQuery(
+        self: *Coordinator,
+        query_type: QueryType,
+        shard_query: *const fn (ctx: *anyopaque, shard: ShardInfo) anyerror![]GeoEvent,
+        ctx: *anyopaque,
+        policy_override: ?FanOutPolicy,
+    ) !FanOutResult {
+        var shard_buffer: [MAX_SHARDS]ShardInfo = undefined;
+        var shard_count: usize = 0;
+        const shards = self.topology.getActiveShards();
+        for (shards) |shard| {
+            if (shard.status != .active) continue;
+            shard_buffer[shard_count] = shard;
+            shard_count += 1;
+        }
+
+        metrics.Registry.coordinator_queries_fanout.inc();
+        metrics.Registry.coordinator_fanout_shards_queried.set(
+            @as(i64, @intCast(shard_count)),
+        );
+
+        if (shard_count == 0) {
+            metrics.Registry.coordinator_query_errors_unavailable.inc();
+            return error.NoShardsAvailable;
+        }
+
+        const policy = policy_override orelse Coordinator.defaultFanOutPolicy(query_type);
+        const start_ns: i128 = std.time.nanoTimestamp();
+
+        const FanOutShared = struct {
+            mutex: std.Thread.Mutex = .{},
+            results: std.ArrayList(GeoEvent),
+            errors: std.ArrayList(FanOutShardError),
+            shards_succeeded: u32 = 0,
+            shards_failed: u32 = 0,
+            append_error: ?anyerror = null,
+        };
+
+        var shared = FanOutShared{
+            .results = std.ArrayList(GeoEvent).init(self.allocator),
+            .errors = std.ArrayList(FanOutShardError).init(self.allocator),
+        };
+        errdefer shared.results.deinit();
+        errdefer shared.errors.deinit();
+
+        const cpu_count = std.Thread.getCpuCount() catch 1;
+        const max_jobs = @max(@as(usize, 1), @min(shard_count, cpu_count));
+        var pool: std.Thread.Pool = undefined;
+        try pool.init(.{ .allocator = self.allocator, .n_jobs = max_jobs });
+        defer pool.deinit();
+
+        var wait_group: std.Thread.WaitGroup = .{};
+
+        const Runner = struct {
+            fn run(
+                shared_ptr: *FanOutShared,
+                query_fn: *const fn (ctx: *anyopaque, shard: ShardInfo) anyerror![]GeoEvent,
+                ctx_ptr: *anyopaque,
+                shard_info: ShardInfo,
+            ) void {
+                const query_result = query_fn(ctx_ptr, shard_info);
+                if (query_result) |events| {
+                    shared_ptr.mutex.lock();
+                    defer shared_ptr.mutex.unlock();
+                    if (shared_ptr.append_error != null) return;
+                    if (shared_ptr.results.appendSlice(events)) |_| {
+                        shared_ptr.shards_succeeded += 1;
+                    } else |err| {
+                        shared_ptr.append_error = err;
+                        shared_ptr.shards_failed += 1;
+                    }
+                } else |err| {
+                    if (err == error.Timeout or err == error.ConnectionTimedOut) {
+                        metrics.Registry.coordinator_query_errors_timeout.inc();
+                    } else {
+                        metrics.Registry.coordinator_query_errors_unavailable.inc();
+                    }
+                    shared_ptr.mutex.lock();
+                    defer shared_ptr.mutex.unlock();
+                    if (shared_ptr.append_error == null) {
+                        if (shared_ptr.errors.append(.{ .shard_id = shard_info.id, .err = err })) |_| {} else |append_err| {
+                            shared_ptr.append_error = append_err;
+                        }
+                    }
+                    shared_ptr.shards_failed += 1;
+                }
+            }
+        };
+
+        for (shard_buffer[0..shard_count]) |shard| {
+            pool.spawnWg(&wait_group, Runner.run, .{ &shared, shard_query, ctx, shard });
+        }
+        wait_group.wait();
+
+        const end_ns: i128 = std.time.nanoTimestamp();
+        const elapsed_ns: u64 = @intCast(@max(end_ns - start_ns, 0));
+        metrics.Registry.coordinator_query_latency.observeNs(elapsed_ns);
+
+        if (shared.append_error) |err| {
+            metrics.Registry.coordinator_query_errors_unavailable.inc();
+            self.stats.recordQuery(elapsed_ns, true, false);
+            return err;
+        }
+
+        const shards_queried: u32 = @intCast(shard_count);
+        const shards_succeeded = shared.shards_succeeded;
+        const shards_failed = shared.shards_failed;
+        const partial = shards_failed > 0;
+        if (partial) {
+            metrics.Registry.coordinator_fanout_partial_total.inc();
+        }
+
+        const policy_ok = switch (policy) {
+            .all => shards_succeeded == shards_queried,
+            .majority => shards_succeeded > shards_queried / 2,
+            .best_effort => true,
+        };
+
+        if (!policy_ok) {
+            metrics.Registry.coordinator_query_errors_unavailable.inc();
+            self.stats.recordQuery(elapsed_ns, true, false);
+            return error.FanOutPolicyUnsatisfied;
+        }
+
+        self.stats.recordQuery(elapsed_ns, true, true);
+
+        return .{
+            .events = shared.results.items,
+            .shards_queried = shards_queried,
+            .shards_succeeded = shards_succeeded,
+            .shards_failed = shards_failed,
+            .partial = partial,
+            .errors = shared.errors.items,
+            .total_time_ns = elapsed_ns,
+        };
+    }
+
     /// Start a fan-out query.
     pub fn startFanOutQuery(self: *Coordinator, query_type: QueryType) !u64 {
         const query_id = self.next_query_id;
@@ -484,6 +655,9 @@ pub const Coordinator = struct {
             .events = pq.results.items,
             .shards_queried = pq.shards_pending,
             .shards_succeeded = pq.shards_completed,
+            .shards_failed = 0,
+            .partial = false,
+            .errors = &[_]FanOutShardError{},
             .total_time_ns = latency,
         };
     }
@@ -537,6 +711,7 @@ pub const RouteError = enum {
 // =============================================================================
 // Tests
 // =============================================================================
+
 
 test "Coordinator: initialization" {
     const allocator = std.testing.allocator;

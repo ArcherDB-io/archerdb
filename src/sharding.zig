@@ -1784,6 +1784,199 @@ pub const OnlineMigrationWorker = struct {
     }
 };
 
+/// Online resharding controller coordinating dual-write migration and cutover.
+pub const OnlineReshardingController = struct {
+    const TopologyManager = @import("topology.zig").TopologyManager;
+
+    const ReshardingStatus = enum(u8) {
+        idle = 0,
+        preparing = 1,
+        migrating = 2,
+        finalizing = 3,
+    };
+
+    /// Resharding manager for shard map state.
+    manager: ReshardingManager,
+
+    /// Background migration worker.
+    worker: OnlineMigrationWorker,
+
+    /// Configuration for online resharding.
+    config: OnlineReshardingConfig,
+
+    /// Optional topology manager for notifications.
+    topology_manager: ?*TopologyManager,
+
+    pub fn init(
+        allocator: std.mem.Allocator,
+        initial_shards: u32,
+        config: OnlineReshardingConfig,
+        topology_manager: ?*TopologyManager,
+    ) OnlineReshardingController {
+        var manager = ReshardingManager.init(allocator, initial_shards);
+        const worker = OnlineMigrationWorker.init(allocator, &manager, config);
+
+        return .{
+            .manager = manager,
+            .worker = worker,
+            .config = config,
+            .topology_manager = topology_manager,
+        };
+    }
+
+    pub fn deinit(self: *OnlineReshardingController) void {
+        self.worker.deinit();
+        self.manager.deinit();
+    }
+
+    /// Start online resharding to a new shard count.
+    pub fn startOnlineResharding(
+        self: *OnlineReshardingController,
+        new_shard_count: u32,
+        total_entities: u64,
+    ) !void {
+        self.resetMetrics();
+        self.setReshardingMode(.preparing);
+
+        try self.manager.startResharding(new_shard_count);
+        try self.worker.start(total_entities);
+        self.updateDualWriteMetric();
+
+        if (self.topology_manager) |manager| {
+            if (@hasDecl(TopologyManager, "beginResharding")) {
+                manager.beginResharding(new_shard_count);
+            }
+        }
+    }
+
+    /// Tick migration worker and update metrics.
+    pub fn tickMigration(self: *OnlineReshardingController, batch: *MigrationBatch) !bool {
+        if (self.worker.state == .scanning) {
+            self.worker.state = .migrating;
+        }
+
+        const processed = try self.worker.processBatch(batch);
+        if (processed) {
+            self.setReshardingMode(.migrating);
+            self.updateMigrationMetrics();
+        }
+
+        self.updateDualWriteMetric();
+        return processed;
+    }
+
+    /// Perform cutover if migration is ready.
+    pub fn maybeCutover(self: *OnlineReshardingController) !bool {
+        if (!self.worker.isReadyForCutover()) return false;
+
+        self.setReshardingMode(.finalizing);
+        try self.worker.performCutover();
+
+        if (self.topology_manager) |manager| {
+            if (@hasDecl(TopologyManager, "completeResharding")) {
+                manager.completeResharding(self.manager.current_shards);
+            }
+        }
+
+        self.finishResharding();
+        return true;
+    }
+
+    /// Cancel resharding and rollback.
+    pub fn cancel(self: *OnlineReshardingController, reason: []const u8) void {
+        self.worker.cancel(reason);
+        self.resetWorkerState();
+        self.resetManagerProgress();
+
+        if (self.topology_manager) |manager| {
+            if (@hasDecl(TopologyManager, "abortResharding")) {
+                manager.abortResharding();
+            }
+        }
+
+        self.finishResharding();
+    }
+
+    fn setReshardingMode(_: *OnlineReshardingController, status: ReshardingStatus) void {
+        metrics.Registry.resharding_mode.store(2, .monotonic);
+        metrics.Registry.resharding_status.store(@intFromEnum(status), .monotonic);
+    }
+
+    fn updateDualWriteMetric(self: *OnlineReshardingController) void {
+        const enabled: u8 = if (self.manager.isDualWriteRequired()) 1 else 0;
+        metrics.Registry.resharding_dual_write_enabled.store(enabled, .monotonic);
+    }
+
+    fn updateMigrationMetrics(self: *OnlineReshardingController) void {
+        const rate_scaled: u32 = @intCast(@min(
+            @as(u64, @intFromFloat(self.worker.stats.current_rate * 100.0)),
+            @as(u64, std.math.maxInt(u32)),
+        ));
+        metrics.Registry.resharding_migration_rate.store(rate_scaled, .monotonic);
+        metrics.Registry.resharding_batches_processed.store(
+            self.worker.stats.batches_processed,
+            .monotonic,
+        );
+        metrics.Registry.resharding_migration_failures.store(
+            self.worker.stats.failed_attempts,
+            .monotonic,
+        );
+
+        const progress_scaled: u32 = @intCast(@min(
+            @as(u64, @intFromFloat(self.worker.getProgress() * 1000.0)),
+            @as(u64, std.math.maxInt(u32)),
+        ));
+        metrics.Registry.resharding_progress.store(progress_scaled, .monotonic);
+
+        if (self.worker.getEtaSeconds()) |eta| {
+            metrics.Registry.resharding_eta_seconds.store(@intCast(eta), .monotonic);
+        } else {
+            metrics.Registry.resharding_eta_seconds.store(0, .monotonic);
+        }
+    }
+
+    fn resetMetrics(self: *OnlineReshardingController) void {
+        _ = self;
+        metrics.Registry.resharding_mode.store(0, .monotonic);
+        metrics.Registry.resharding_status.store(@intFromEnum(ReshardingStatus.idle), .monotonic);
+        metrics.Registry.resharding_dual_write_enabled.store(0, .monotonic);
+        metrics.Registry.resharding_migration_rate.store(0, .monotonic);
+        metrics.Registry.resharding_batches_processed.store(0, .monotonic);
+        metrics.Registry.resharding_migration_failures.store(0, .monotonic);
+        metrics.Registry.resharding_eta_seconds.store(0, .monotonic);
+        metrics.Registry.resharding_progress.store(0, .monotonic);
+    }
+
+    fn finishResharding(self: *OnlineReshardingController) void {
+        _ = self;
+        metrics.Registry.resharding_mode.store(0, .monotonic);
+        metrics.Registry.resharding_status.store(@intFromEnum(ReshardingStatus.idle), .monotonic);
+        metrics.Registry.resharding_dual_write_enabled.store(0, .monotonic);
+        metrics.Registry.resharding_migration_rate.store(0, .monotonic);
+        metrics.Registry.resharding_batches_processed.store(0, .monotonic);
+        metrics.Registry.resharding_migration_failures.store(0, .monotonic);
+        metrics.Registry.resharding_eta_seconds.store(0, .monotonic);
+        metrics.Registry.resharding_progress.store(0, .monotonic);
+    }
+
+    fn resetWorkerState(self: *OnlineReshardingController) void {
+        for (self.worker.pending_batches.items) |*batch| {
+            batch.deinit();
+        }
+        self.worker.pending_batches.clearRetainingCapacity();
+        self.worker.checkpoints.clearRetainingCapacity();
+        self.worker.stats = .{};
+        self.worker.error_message = null;
+        self.worker.state = .idle;
+        self.worker.rate_limiter = .{};
+    }
+
+    fn resetManagerProgress(self: *OnlineReshardingController) void {
+        self.manager.progress = .{};
+        self.manager.error_message = null;
+    }
+};
+
 /// Resharding mode for CLI.
 pub const ReshardingMode = enum {
     /// Stop-the-world (offline) resharding.
@@ -3210,6 +3403,102 @@ test "OnlineMigrationWorker cancel triggers rollback" {
 
     try std.testing.expectEqual(MigrationWorkerState.failed, worker.state);
     try std.testing.expectEqual(ReshardingState.idle, manager.state);
+}
+
+fn resetOnlineReshardingMetrics() void {
+    metrics.Registry.resharding_mode.store(0, .monotonic);
+    metrics.Registry.resharding_status.store(0, .monotonic);
+    metrics.Registry.resharding_dual_write_enabled.store(0, .monotonic);
+    metrics.Registry.resharding_migration_rate.store(0, .monotonic);
+    metrics.Registry.resharding_batches_processed.store(0, .monotonic);
+    metrics.Registry.resharding_migration_failures.store(0, .monotonic);
+    metrics.Registry.resharding_eta_seconds.store(0, .monotonic);
+    metrics.Registry.resharding_progress.store(0, .monotonic);
+}
+
+test "OnlineReshardingController migration flow" {
+    resetOnlineReshardingMetrics();
+
+    var controller = OnlineReshardingController.init(
+        std.testing.allocator,
+        8,
+        OnlineReshardingConfig{ .max_cutover_lag = 0 },
+        null,
+    );
+    defer controller.deinit();
+
+    try controller.startOnlineResharding(16, 10);
+
+    try std.testing.expectEqual(@as(u8, 2), metrics.Registry.resharding_mode.load(.monotonic));
+    try std.testing.expectEqual(@as(u8, 1), metrics.Registry.resharding_status.load(.monotonic));
+    try std.testing.expectEqual(
+        @as(u8, 1),
+        metrics.Registry.resharding_dual_write_enabled.load(.monotonic),
+    );
+
+    controller.worker.stats.start_time -= 1;
+
+    const entity_ids = try std.testing.allocator.alloc(u128, 10);
+    defer std.testing.allocator.free(entity_ids);
+    for (entity_ids, 0..) |*entry, idx| {
+        entry.* = @as(u128, idx + 1);
+    }
+
+    var batch = MigrationBatch{
+        .source_shard = 0,
+        .target_shard = 1,
+        .entity_ids = entity_ids,
+        .sequence = 1,
+        .retry_count = 0,
+        .allocator = std.testing.allocator,
+    };
+
+    const processed = try controller.tickMigration(&batch);
+    try std.testing.expect(processed);
+    try std.testing.expectEqual(@as(u8, 2), metrics.Registry.resharding_status.load(.monotonic));
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        metrics.Registry.resharding_batches_processed.load(.monotonic),
+    );
+    try std.testing.expectEqual(
+        @as(u32, 1000),
+        metrics.Registry.resharding_progress.load(.monotonic),
+    );
+
+    const did_cutover = try controller.maybeCutover();
+    try std.testing.expect(did_cutover);
+    try std.testing.expectEqual(@as(u8, 0), metrics.Registry.resharding_mode.load(.monotonic));
+    try std.testing.expectEqual(@as(u8, 0), metrics.Registry.resharding_status.load(.monotonic));
+    try std.testing.expectEqual(
+        @as(u8, 0),
+        metrics.Registry.resharding_dual_write_enabled.load(.monotonic),
+    );
+}
+
+test "OnlineReshardingController cancel resets state" {
+    resetOnlineReshardingMetrics();
+
+    var controller = OnlineReshardingController.init(
+        std.testing.allocator,
+        8,
+        OnlineReshardingConfig{},
+        null,
+    );
+    defer controller.deinit();
+
+    try controller.startOnlineResharding(16, 100);
+    controller.cancel("test cancel");
+
+    try std.testing.expectEqual(ReshardingState.idle, controller.manager.state);
+    try std.testing.expect(controller.manager.target_ring == null);
+    try std.testing.expectEqual(MigrationWorkerState.idle, controller.worker.state);
+    try std.testing.expectEqual(@as(u8, 0), metrics.Registry.resharding_mode.load(.monotonic));
+    try std.testing.expectEqual(@as(u8, 0), metrics.Registry.resharding_status.load(.monotonic));
+    try std.testing.expectEqual(
+        @as(u8, 0),
+        metrics.Registry.resharding_dual_write_enabled.load(.monotonic),
+    );
+    try std.testing.expectEqual(@as(u32, 0), metrics.Registry.resharding_progress.load(.monotonic));
 }
 
 test "ReshardingMode parsing" {
