@@ -119,12 +119,15 @@ Plans:
   3. Load shedding rejects requests under overload before cascading failure occurs
   4. Cluster health dashboard shows replica status, replication lag, and consensus metrics
   5. Read replicas serve read queries without consensus overhead, achieving 10x read scaling
-**Plans**: TBD
+**Plans**: 6 plans in 2 waves
 
 Plans:
-- [ ] 15-01: TBD
-- [ ] 15-02: TBD
-- [ ] 15-03: TBD
+- [ ] 15-01-PLAN.md — Server-side connection pooling with adaptive reaping
+- [ ] 15-02-PLAN.md — VSR timeout profiles (cloud/datacenter) with jitter
+- [ ] 15-03-PLAN.md — Load shedding with composite signal and guardrails
+- [ ] 15-04-PLAN.md — Flexible Paxos quorum configuration
+- [ ] 15-05-PLAN.md — Read replica routing with automatic classification
+- [ ] 15-06-PLAN.md — Cluster health dashboard and alerting rules
 
 ### Phase 16: Sharding & Scale-Out
 **Goal**: Enable horizontal scale-out with online resharding and full request path visibility
@@ -154,7 +157,7 @@ Phases execute in numeric order: 11 -> 11.x -> 12 -> 12.x -> ... -> 16
 | 12. Storage Optimization | 11/11 | ✓ Complete | 2026-01-24 |
 | 13. Memory & RAM Index | 5/5 | ✓ Complete | 2026-01-24 |
 | 14. Query Performance | 6/6 | ✓ Complete | 2026-01-25 |
-| 15. Cluster & Consensus | 0/TBD | Not started | - |
+| 15. Cluster & Consensus | 0/6 | Planned | - |
 | 16. Sharding & Scale-Out | 0/TBD | Not started | - |
 
 ## Requirement Coverage
@@ -172,4 +175,4 @@ Phases execute in numeric order: 11 -> 11.x -> 12 -> 12.x -> ... -> 16
 
 ---
 *Roadmap created: 2026-01-24*
-*Last updated: 2026-01-25 — Phase 14 complete (6 plans, 5/5 success criteria verified, 99% cache hit ratio)*
+*Last updated: 2026-01-25 — Phase 15 planned (6 plans in 2 waves)*
