@@ -347,11 +347,13 @@ pub const ClusterMetrics = struct {
 
     /// Record an acquire timeout.
     pub fn recordAcquireTimeout(self: *Self) void {
+        _ = self;
         archerdb_pool_acquire_timeout_total.inc();
     }
 
     /// Record a health check result.
     pub fn recordHealthCheck(self: *Self, passed: bool) void {
+        _ = self;
         archerdb_pool_health_check_total.inc();
         if (!passed) {
             archerdb_pool_health_check_failed_total.inc();

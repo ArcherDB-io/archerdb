@@ -18,6 +18,7 @@ pub const storage = @import("storage_metrics.zig");
 /// RAM index metrics for memory monitoring.
 /// Provides Prometheus-compatible metrics for index health tracking.
 pub const index = @import("index_metrics.zig");
+const cluster = @import("cluster_metrics.zig");
 
 /// A monotonically increasing counter metric.
 /// Thread-safe via atomic operations.
@@ -645,6 +646,9 @@ pub const Registry = struct {
         "Number of active client connections",
         null,
     );
+
+    /// Cluster metrics (pool, shedding, routing)
+    pub var cluster_metrics: cluster.ClusterMetrics = cluster.ClusterMetrics.init();
 
     // VSR (ViewStamped Replication) metrics (F5.2.2 - Observability)
     pub var vsr_view: Gauge = Gauge.init(
@@ -1708,6 +1712,11 @@ pub const Registry = struct {
     pub var build_commit: [64]u8 = [_]u8{0} ** 64;
     pub var build_commit_len: u8 = 7; // "unknown" default
 
+    /// Access cluster metrics for pool/shed/routing subsystems.
+    pub fn clusterMetrics() *cluster.ClusterMetrics {
+        return &cluster_metrics;
+    }
+
     /// Initialize build info with actual version and commit
     pub fn initBuildInfo(version: []const u8, commit: []const u8) void {
         const v_len = @min(version.len, build_version.len);
@@ -1823,6 +1832,10 @@ pub const Registry = struct {
             }
             try writer.writeAll("\n");
         }
+
+        // Cluster metrics (pool, shedding, routing)
+        try cluster_metrics.format(writer);
+        try writer.writeAll("\n");
 
         // Resource metrics
         try memory_allocated_bytes.format(writer);
