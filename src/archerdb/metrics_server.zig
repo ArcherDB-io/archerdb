@@ -23,6 +23,7 @@ const vsr = @import("vsr");
 const stdx = vsr.stdx;
 const metrics = vsr.archerdb_metrics;
 const cluster_metrics = @import("cluster_metrics.zig");
+const load_shedding = @import("../load_shedding.zig");
 const correlation = @import("observability/correlation.zig");
 
 // =============================================================================
@@ -282,6 +283,12 @@ var server_initialized: bool = false;
 
 /// Track previous write error count for delta detection
 var last_write_errors: u64 = 0;
+
+/// Timestamp of the last rebalance trigger (nanoseconds since epoch)
+var last_rebalance_ns: i128 = 0;
+
+/// Active rebalance moves currently in progress
+var rebalance_active_moves: u32 = 0;
 
 /// Set the server start time (call at startup)
 pub fn setStartTime() void {
@@ -676,10 +683,11 @@ pub const MetricsServer = struct {
             return;
         };
 
-        const shed_threshold = cluster_metrics.archerdb_shed_threshold.get();
-        const shed_score = cluster_metrics.archerdb_shed_score.get();
+        const cluster_metrics = metrics.Registry.clusterMetrics();
+        const shed_threshold = cluster_metrics.shedThreshold();
+        const shed_score = cluster_metrics.shedScore();
         if (shed_threshold > 0 and shed_score >= shed_threshold) {
-            const retry_after_last = cluster_metrics.archerdb_shed_retry_after_last_ms.get();
+            const retry_after_last = cluster_metrics.shedRetryAfterLastMs();
             const retry_after_ms: u64 = if (retry_after_last > 0) @intCast(retry_after_last) else 0;
             const retry_after_sec = @max(@as(u64, 1), (retry_after_ms + 999) / 1000);
             var header_buf: [64]u8 = undefined;
@@ -944,6 +952,72 @@ pub const MetricsServer = struct {
         try sendResponse(client_fd, http_status, "application/json", body);
     }
 
+    const HotShardSignal = struct {
+        shard_id: i64,
+        score: f64,
+    };
+
+    fn computeHotShardSignal(active_shards: u32) HotShardSignal {
+        if (active_shards == 0) {
+            return .{ .shard_id = -1, .score = 0.0 };
+        }
+
+        const shard_limit = @min(active_shards, metrics.Registry.max_shards);
+        var total_throughput: u64 = 0;
+        for (0..shard_limit) |shard| {
+            const reads = metrics.Registry.shard_read_rate[shard].load(.monotonic);
+            const writes = metrics.Registry.shard_write_rate[shard].load(.monotonic);
+            total_throughput += reads + writes;
+        }
+
+        const avg_throughput: f64 = if (shard_limit > 0)
+            @as(f64, @floatFromInt(total_throughput)) / @as(f64, @floatFromInt(shard_limit))
+        else
+            0.0;
+
+        const shed_config = load_shedding.ShedConfig{};
+        const queue_depth_raw = cluster_metrics.archerdb_shed_queue_depth.get();
+        const queue_depth = if (queue_depth_raw > 0) @as(u64, @intCast(queue_depth_raw)) else 0;
+        const queue_score_raw: f64 = if (shed_config.max_queue_depth > 0)
+            @as(f64, @floatFromInt(queue_depth)) / @as(f64, @floatFromInt(shed_config.max_queue_depth))
+        else
+            0.0;
+        const queue_score = std.math.clamp(queue_score_raw, 0.0, 1.0);
+
+        const latency_stats = metrics.Registry.read_latency.getExtendedStats();
+        const latency_ms = latency_stats.p99 * 1000.0;
+        const latency_score_raw: f64 = if (shed_config.max_latency_p99_ms > 0)
+            latency_ms / @as(f64, @floatFromInt(shed_config.max_latency_p99_ms))
+        else
+            0.0;
+        const latency_score = std.math.clamp(latency_score_raw, 0.0, 1.0);
+
+        var hottest_score: f64 = -1.0;
+        var hottest_shard: i64 = -1;
+        for (0..shard_limit) |shard| {
+            const reads = metrics.Registry.shard_read_rate[shard].load(.monotonic);
+            const writes = metrics.Registry.shard_write_rate[shard].load(.monotonic);
+            const throughput = reads + writes;
+            const throughput_score_raw: f64 = if (avg_throughput > 0.0)
+                @as(f64, @floatFromInt(throughput)) / avg_throughput
+            else
+                0.0;
+            const throughput_score = std.math.clamp(throughput_score_raw, 0.0, 1.0);
+
+            const score = 0.34 * throughput_score + 0.33 * latency_score + 0.33 * queue_score;
+            if (score > hottest_score) {
+                hottest_score = score;
+                hottest_shard = @intCast(shard);
+            }
+        }
+
+        if (hottest_score < 0.0) {
+            return .{ .shard_id = -1, .score = 0.0 };
+        }
+
+        return .{ .shard_id = hottest_shard, .score = hottest_score };
+    }
+
     /// Health endpoint: Shard distribution and status.
     fn handleHealthShards(client_fd: posix.socket_t) !void {
         // Get sharding metrics from the registry (raw atomics use .load())
@@ -957,6 +1031,58 @@ pub const MetricsServer = struct {
 
         // Progress is stored as 0-1000, convert to percentage
         const progress_pct: f64 = @as(f64, @floatFromInt(resharding_progress_val)) / 10.0;
+
+        const hot_signal = computeHotShardSignal(shard_count_val);
+        const hot_score_scaled = std.math.clamp(hot_signal.score * 100.0, 0.0, 100.0);
+        const hot_ratio_scaled = metrics.Registry.shard_hottest_ratio.load(.monotonic);
+        const hot_ratio: f64 = @as(f64, @floatFromInt(hot_ratio_scaled)) / 10000.0;
+
+        const rebalance_threshold: f64 = 0.70;
+        const ratio_guard: f64 = 1.5;
+        const cooldown_seconds: u64 = 300;
+        const max_concurrent_moves: u32 = 2;
+        const ns_per_s: i128 = @as(i128, @intCast(std.time.ns_per_s));
+        const cooldown_ns: i128 = @as(i128, @intCast(cooldown_seconds)) * ns_per_s;
+        const now_ns_raw = std.time.nanoTimestamp();
+        const now_ns: i128 = if (now_ns_raw < 0) 0 else now_ns_raw;
+
+        if (rebalance_active_moves > 0 and last_rebalance_ns > 0 and now_ns >= last_rebalance_ns) {
+            const elapsed_ns = now_ns - last_rebalance_ns;
+            if (elapsed_ns >= cooldown_ns) {
+                rebalance_active_moves -= 1;
+                if (rebalance_active_moves == 0) {
+                    last_rebalance_ns = 0;
+                } else {
+                    last_rebalance_ns = now_ns;
+                }
+            }
+        }
+
+        const elapsed_ns_since_rebalance: i128 = if (last_rebalance_ns > 0 and now_ns >= last_rebalance_ns)
+            now_ns - last_rebalance_ns
+        else
+            0;
+
+        var cooldown_remaining_seconds: i64 = 0;
+        if (elapsed_ns_since_rebalance > 0 and elapsed_ns_since_rebalance < cooldown_ns) {
+            cooldown_remaining_seconds = @intCast(@divFloor(cooldown_ns - elapsed_ns_since_rebalance, ns_per_s));
+        }
+
+        var rebalance_needed: i64 = 0;
+        const hot_signal_active = hot_signal.score >= rebalance_threshold and hot_ratio >= ratio_guard;
+        const cooldown_elapsed = last_rebalance_ns == 0 or elapsed_ns_since_rebalance >= cooldown_ns;
+        if (hot_signal_active and cooldown_elapsed and rebalance_active_moves < max_concurrent_moves) {
+            rebalance_needed = 1;
+            last_rebalance_ns = now_ns;
+            rebalance_active_moves += 1;
+            cooldown_remaining_seconds = @intCast(cooldown_seconds);
+        }
+
+        metrics.Registry.shard_hot_id.set(hot_signal.shard_id);
+        metrics.Registry.shard_hot_score.set(@intFromFloat(hot_score_scaled));
+        metrics.Registry.shard_rebalance_needed.set(rebalance_needed);
+        metrics.Registry.shard_rebalance_active_moves.set(@intCast(rebalance_active_moves));
+        metrics.Registry.shard_rebalance_cooldown_seconds.set(cooldown_remaining_seconds);
 
         var body_buf: [512]u8 = undefined;
         const fmt =
@@ -1378,6 +1504,29 @@ test "MetricsServer: sendResponseWithHeaders emits retry-after" {
 
     try std.testing.expect(std.mem.indexOf(u8, response, "429 Too Many Requests") != null);
     try std.testing.expect(std.mem.indexOf(u8, response, "Retry-After: 3") != null);
+}
+
+test "MetricsServer: overload response includes retry-after header" {
+    const fds = try posix.socketpair(posix.AF.UNIX, posix.SOCK.STREAM, 0);
+    defer posix.close(fds[0]);
+    defer posix.close(fds[1]);
+
+    const cluster_metrics = metrics.Registry.clusterMetrics();
+    cluster_metrics.updateShedSignals(1.0, 0, 0, 0, 0.5);
+    cluster_metrics.recordShedRetryAfter(3000);
+
+    _ = try posix.write(fds[0], "GET /metrics HTTP/1.1\r\n\r\n");
+    try MetricsServer.handleRequest(fds[1]);
+
+    var buffer: [4096]u8 = undefined;
+    const read_len = try posix.read(fds[0], &buffer);
+    const response = buffer[0..read_len];
+
+    try std.testing.expect(std.mem.indexOf(u8, response, "429 Too Many Requests") != null);
+    try std.testing.expect(std.mem.indexOf(u8, response, "Retry-After: 3") != null);
+
+    cluster_metrics.updateShedSignals(0.0, 0, 0, 0, 0.0);
+    cluster_metrics.recordShedRetryAfter(0);
 }
 
 test "ReplicaState: isReady" {
