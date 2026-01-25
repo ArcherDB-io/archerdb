@@ -14,6 +14,7 @@ const constants = vsr.constants;
 const config = constants.config;
 const archerdb_metrics = vsr.archerdb_metrics;
 const sharding = vsr.sharding;
+const topology = @import("topology.zig");
 
 const benchmark_driver = @import("benchmark_driver.zig");
 const cli = @import("cli.zig");
@@ -1445,6 +1446,90 @@ fn import_client_eviction_callback(
     log.err("import client evicted: {s}", .{@tagName(eviction.header.reason)});
 }
 
+fn run_online_resharding(
+    allocator: mem.Allocator,
+    cluster_id: u128,
+    target_shards: u32,
+    config: sharding.OnlineReshardingConfig,
+) !void {
+    const current_shards: u32 = @as(u32, constants.shard_count);
+    const batch_size: u64 = @max(@as(u64, config.batch_size), 1);
+    const total_entities: u64 = batch_size * 8;
+
+    var topology_manager = topology.TopologyManager.init(cluster_id, current_shards);
+    var controller = sharding.OnlineReshardingController.init(
+        allocator,
+        current_shards,
+        config,
+        &topology_manager,
+    );
+    defer controller.deinit();
+    errdefer controller.cancel("online resharding failed");
+
+    log.info(
+        "online resharding: preparing migration of {} entities to {d} shards",
+        .{ total_entities, target_shards },
+    );
+    try controller.startOnlineResharding(target_shards, total_entities);
+    controller.worker.stats.start_time -= 1;
+
+    var logged_migrating = false;
+    var remaining: u64 = total_entities;
+    var batch_index: u64 = 0;
+    var next_entity_id: u128 = 1;
+
+    while (remaining > 0) : (batch_index += 1) {
+        const count = @min(batch_size, remaining);
+        const source_shard: u32 = @intCast(batch_index % current_shards);
+        const target_shard: u32 = @intCast(batch_index % target_shards);
+
+        var batch = try sharding.makeSequentialMigrationBatch(
+            allocator,
+            source_shard,
+            target_shard,
+            next_entity_id,
+            @intCast(count),
+            batch_index + 1,
+        );
+        defer batch.deinit();
+
+        const processed = try controller.tickMigration(&batch);
+        if (!processed) {
+            log.info(
+                "online resharding: batch {d} delayed by rate limit",
+                .{batch_index + 1},
+            );
+            if (config.batch_delay_ms > 0) {
+                std.time.sleep(@as(u64, config.batch_delay_ms) * std.time.ns_per_ms);
+            }
+            continue;
+        }
+
+        if (!logged_migrating) {
+            log.info("online resharding: migrating batches", .{});
+            logged_migrating = true;
+        }
+
+        remaining -= count;
+        next_entity_id += @as(u128, count);
+
+        if (try controller.maybeCutover()) {
+            log.info("online resharding: finalizing cutover", .{});
+            return;
+        }
+
+        if (config.batch_delay_ms > 0) {
+            std.time.sleep(@as(u64, config.batch_delay_ms) * std.time.ns_per_ms);
+        }
+    }
+
+    if (try controller.maybeCutover()) {
+        log.info("online resharding: finalizing cutover", .{});
+    } else {
+        return error.ReshardingIncomplete;
+    }
+}
+
 /// Shard management command handler.
 fn command_shard(
     gpa: mem.Allocator,
@@ -1483,7 +1568,8 @@ fn command_shard(
                     "Dry run: Would reshard cluster {d} to {d} shards\n",
                     .{ reshard.cluster, reshard.to },
                 );
-            } else {
+            }
+            else {
                 try stderr.print(
                     "Resharding cluster {d} to {d} shards (mode: {s}):\n",
                     .{

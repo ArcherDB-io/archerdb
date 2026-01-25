@@ -1472,6 +1472,30 @@ pub const MigrationBatch = struct {
     }
 };
 
+/// Build a migration batch with sequential entity IDs.
+pub fn makeSequentialMigrationBatch(
+    allocator: std.mem.Allocator,
+    source_shard: u32,
+    target_shard: u32,
+    start_id: u128,
+    count: usize,
+    sequence: u64,
+) !MigrationBatch {
+    const entity_ids = try allocator.alloc(u128, count);
+    for (entity_ids, 0..) |*entry, idx| {
+        entry.* = start_id + @as(u128, idx);
+    }
+
+    return MigrationBatch{
+        .source_shard = source_shard,
+        .target_shard = target_shard,
+        .entity_ids = entity_ids,
+        .sequence = sequence,
+        .retry_count = 0,
+        .allocator = allocator,
+    };
+}
+
 /// Online migration worker state.
 pub const MigrationWorkerState = enum {
     /// Worker is idle.
