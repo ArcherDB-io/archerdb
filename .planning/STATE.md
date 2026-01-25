@@ -9,12 +9,12 @@ See: .planning/PROJECT.md (updated 2026-01-24)
 
 ## Current Position
 
-Phase: 14 of 16 (Query Performance) - COMPLETE
-Plan: 6 of 6 in current phase (complete)
-Status: Phase 14 Query Performance complete
-Last activity: 2026-01-25 - Completed 14-06-PLAN.md (Dashboard and Alerts)
+Phase: 15 of 16 (Cluster & Consensus)
+Plan: 4 of 6 in current phase
+Status: In progress
+Last activity: 2026-01-25 - Completed 15-04-PLAN.md (Flexible Paxos)
 
-Progress: [████████░░] 77% (v2.0: 27/35 requirements)
+Progress: [████████░░] 83% (v2.0: 30/35 requirements)
 
 ## v1.0 Summary
 
@@ -160,11 +160,11 @@ None.
 ## Session Continuity
 
 Last session: 2026-01-25
-Stopped at: Phase 14 verified and complete — ready for Phase 15
+Stopped at: Completed 15-04-PLAN.md (Flexible Paxos)
 Resume file: None
 
 ---
-*Updated: 2026-01-25 — Phase 14 verified: 5/5 success criteria passed (99% cache hit ratio, 53% prepared query speedup, 0.001ms P99 latency)*
+*Updated: 2026-01-25 — Completed 15-04 Flexible Paxos: independent phase-1/phase-2 quorums for lower commit latency*
 
 Phase 14 decisions (continued):
 - 4096 bytes per cache entry (power of 2 for SetAssociativeCacheType) (14-01)
@@ -184,3 +184,14 @@ Phase 14 decisions (continued):
 - 10s dashboard refresh rate for query workload patterns (14-06)
 - Cache hit ratio thresholds: 80%+ green (target), 60-80% yellow, <60% red (14-06)
 - RAM index load factor thresholds: <50% green, 50-70% yellow, >70% red (cuckoo optimal) (14-06)
+
+Phase 15 decisions:
+- Cloud profile: 500ms heartbeat, 2000ms election (4x heartbeat for aggressive detection) (15-02)
+- Datacenter profile: 100ms heartbeat, 500ms election (5x heartbeat for fast failover) (15-02)
+- Custom profile starts from cloud defaults, allows selective overrides (15-02)
+- Jitter default 20% (+/- 20% variation) to prevent thundering herd (15-02)
+- Saturating arithmetic for jitter bounds to prevent overflow (15-02)
+- Q1 + Q2 > N invariant enforced at validation time, not construction time (15-04)
+- fast_commit falls back to classic for N < 3 (can't meaningfully reduce Q2) (15-04)
+- strong_leader uses Q1=N, Q2=1 for maximum commit speed at election availability cost (15-04)
+- Fault tolerance helpers (phase1FaultTolerance, phase2FaultTolerance) for operational insight (15-04)
