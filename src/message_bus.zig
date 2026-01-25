@@ -8,6 +8,8 @@ const constants = @import("constants.zig");
 const log = std.log.scoped(.message_bus);
 
 const vsr = @import("vsr.zig");
+const connection_pool = @import("connection_pool.zig");
+const metrics = @import("archerdb/metrics.zig");
 
 const stdx = @import("stdx");
 const maybe = stdx.maybe;
@@ -27,6 +29,10 @@ pub fn MessageBusType(comptime IO: type) type {
     };
 
     return struct {
+        const ServerConnectionPool = connection_pool.ServerConnectionPool(Connection);
+        const PooledConnection = connection_pool.PooledConnection(Connection);
+        var pool_connections: ?[]Connection = null;
+
         pool: *MessagePool,
         io: *IO,
 
@@ -44,7 +50,8 @@ pub fn MessageBusType(comptime IO: type) type {
         accept_completion: IO.Completion = undefined,
         /// The connection reserved for the currently in progress accept operation.
         /// This is non-null exactly when an accept operation is submitted.
-        accept_connection: ?*Connection = null,
+        accept_connection: ?*PooledConnection = null,
+        accept_reject: bool = false,
 
         /// The callback to be called when a message is received.
         on_messages_callback: *const fn (message_bus: *MessageBus, buffer: *MessageBuffer) void,
@@ -55,6 +62,12 @@ pub fn MessageBusType(comptime IO: type) type {
         connections: []Connection,
         /// Number of connections currently in use (i.e. connection.state != .free).
         connections_used: u32 = 0,
+        /// Connection pool for inbound client/replica accepts (replica-only).
+        client_pool: ?*ServerConnectionPool = null,
+        /// Map connection slots to pooled entries for release tracking.
+        client_pool_entries: []?*PooledConnection = &[_]?*PooledConnection{},
+        /// Offset separating outbound replica slots from pooled accept slots.
+        client_pool_offset: usize = 0,
         connections_suspended: QueueType(Connection) = QueueType(Connection).init(.{
             .name = null,
         }),
@@ -91,6 +104,32 @@ pub fn MessageBusType(comptime IO: type) type {
         };
         const Address = std.net.Address;
         const MessageBus = @This();
+
+        fn poolConnectionFactory(allocator: mem.Allocator) !*Connection {
+            _ = allocator;
+            const connections = pool_connections orelse return error.PoolContextMissing;
+            for (connections) |*connection| {
+                if (connection.state == .free) return connection;
+            }
+            return error.PoolExhausted;
+        }
+
+        fn poolConnectionDestructor(connection: *Connection, allocator: mem.Allocator) void {
+            _ = allocator;
+            const send_queue_buffer = connection.send_queue.buffer;
+            connection.* = .{
+                .send_queue = .{ .buffer = send_queue_buffer },
+            };
+        }
+
+        fn connectionIndex(bus: *MessageBus, connection: *Connection) usize {
+            const base = @intFromPtr(bus.connections.ptr);
+            const ptr = @intFromPtr(connection);
+            const stride = @sizeOf(Connection);
+            const index = (ptr - base) / stride;
+            assert(index < bus.connections.len);
+            return index;
+        }
 
         /// Initialize the MessageBus for the given configuration and replica/client process.
         pub fn init(
@@ -151,6 +190,14 @@ pub fn MessageBusType(comptime IO: type) type {
                 .client => |client| @as(u64, @truncate(client)),
             };
 
+            const pool_offset: usize = switch (process_id) {
+                .replica => |replica| blk: {
+                    const replica_index: usize = @intCast(replica);
+                    break :blk (options.configuration.len - 1) - replica_index;
+                },
+                .client => connections.len,
+            };
+
             var bus: MessageBus = .{
                 .pool = message_pool,
                 .io = options.io,
@@ -166,6 +213,7 @@ pub fn MessageBusType(comptime IO: type) type {
                 .replicas_addresses = replicas_addresses,
                 .replicas_connect_attempts = replicas_connect_attempts,
                 .prng = stdx.PRNG.from_seed(prng_seed),
+                .client_pool_offset = pool_offset,
             };
 
             switch (process_id) {
@@ -175,6 +223,19 @@ pub fn MessageBusType(comptime IO: type) type {
                     try bus.clients.ensureTotalCapacity(allocator, connections_max);
                     errdefer bus.clients.deinit(allocator);
 
+                    pool_connections = connections[pool_offset..];
+                    bus.client_pool_entries = try allocator.alloc(?*PooledConnection, connections.len);
+                    @memset(bus.client_pool_entries, null);
+                    errdefer allocator.free(bus.client_pool_entries);
+
+                    bus.client_pool = try ServerConnectionPool.init(
+                        allocator,
+                        .{},
+                        metrics.Registry.clusterMetrics(),
+                        poolConnectionFactory,
+                        poolConnectionDestructor,
+                    );
+
                     return bus;
                 },
                 .client => return bus,
@@ -183,6 +244,16 @@ pub fn MessageBusType(comptime IO: type) type {
 
         pub fn deinit(bus: *MessageBus, allocator: std.mem.Allocator) void {
             bus.clients.deinit(allocator);
+
+            if (bus.client_pool) |pool| {
+                pool.deinit();
+                bus.client_pool = null;
+                pool_connections = null;
+            }
+            if (bus.client_pool_entries.len > 0) {
+                allocator.free(bus.client_pool_entries);
+                bus.client_pool_entries = &[_]?*PooledConnection{};
+            }
 
             if (bus.accept_fd) |fd| {
                 assert(bus.process == .replica);
@@ -295,16 +366,36 @@ pub fn MessageBusType(comptime IO: type) type {
             assert(bus.process == .replica);
             assert(bus.accept_fd != null);
 
-            if (bus.accept_connection != null) return;
-            // All connections are currently in use, do nothing.
-            if (bus.connections_used == bus.connections.len) return;
-            assert(bus.connections_used < bus.connections.len);
-            bus.accept_connection = for (bus.connections) |*connection| {
-                if (connection.state == .free) {
-                    connection.state = .accepting;
-                    break connection;
+            if (bus.accept_connection != null or bus.accept_reject) return;
+
+            const pool = bus.client_pool orelse {
+                log.warn("{}: on_accept: missing client pool", .{bus.id});
+                return;
+            };
+            const pooled = pool.acquire() catch |err| {
+                switch (err) {
+                    error.AcquireTimeout,
+                    error.WaiterQueueFull,
+                    => {
+                        bus.accept_reject = true;
+                        bus.io.accept(
+                            *MessageBus,
+                            bus,
+                            accept_callback,
+                            &bus.accept_completion,
+                            bus.accept_fd.?,
+                        );
+                    },
+                    else => {
+                        log.warn("{}: on_accept: pool acquire failed {}", .{ bus.id, err });
+                    },
                 }
-            } else unreachable;
+                return;
+            };
+
+            const connection = pooled.connection;
+            connection.state = .accepting;
+            bus.accept_connection = pooled;
             bus.io.accept(
                 *MessageBus,
                 bus,
@@ -321,8 +412,19 @@ pub fn MessageBusType(comptime IO: type) type {
         ) void {
             assert(bus.process == .replica);
 
+            if (bus.accept_reject) {
+                bus.accept_reject = false;
+                if (result) |fd| {
+                    bus.io.close_socket(fd);
+                } else |err| {
+                    log.debug("{}: on_accept: reject accept error {}", .{ bus.id, err });
+                }
+                return;
+            }
+
             assert(bus.accept_connection != null);
-            const connection: *Connection = bus.accept_connection.?;
+            const pooled = bus.accept_connection.?;
+            const connection: *Connection = pooled.connection;
             bus.accept_connection = null;
 
             assert(connection.peer == .unknown);
@@ -335,6 +437,11 @@ pub fn MessageBusType(comptime IO: type) type {
                 connection.fd = fd;
                 bus.connections_used += 1;
 
+                if (bus.client_pool_entries.len > 0) {
+                    const index = connectionIndex(bus, connection);
+                    bus.client_pool_entries[index] = pooled;
+                }
+
                 bus.assert_connection_initial_state(connection);
                 assert(connection.recv_buffer == null);
                 connection.recv_buffer = MessageBuffer.init(bus.pool);
@@ -344,6 +451,7 @@ pub fn MessageBusType(comptime IO: type) type {
                 assert(connection.state == .connected);
             } else |err| {
                 connection.state = .free;
+                pooled.release();
                 switch (err) {
                     // Transient errors - log and continue accepting
                     error.ConnectionAborted,
@@ -376,7 +484,8 @@ pub fn MessageBusType(comptime IO: type) type {
             // be a replica. Since shutting a connection down does not happen
             // instantly, simply return after starting the shutdown and try again
             // on the next tick().
-            const connection_free: *Connection = for (bus.connections) |*connection| {
+            const candidates = bus.connections[0..bus.client_pool_offset];
+            const connection_free: *Connection = for (candidates) |*connection| {
                 if (connection.state == .free) break connection;
             } else {
                 bus.connect_reclaim_connection();
@@ -395,10 +504,11 @@ pub fn MessageBusType(comptime IO: type) type {
         }
 
         fn connect_reclaim_connection(bus: *MessageBus) void {
-            for (bus.connections) |*connection| assert(connection.state != .free);
+            const candidates = bus.connections[0..bus.client_pool_offset];
+            for (candidates) |*connection| assert(connection.state != .free);
 
             // If there is already a connection being shut down, no need to kill another.
-            for (bus.connections) |*connection| {
+            for (candidates) |*connection| {
                 if (connection.state == .terminating) return;
             }
 
@@ -406,7 +516,7 @@ pub fn MessageBusType(comptime IO: type) type {
                 bus.id,
             });
             // Future: emit metric for peer eviction alerting
-            for (bus.connections) |*connection| {
+            for (candidates) |*connection| {
                 if (connection.peer == .client) {
                     bus.terminate(connection, .shutdown);
                     return;
@@ -417,7 +527,7 @@ pub fn MessageBusType(comptime IO: type) type {
                 bus.id,
             });
             // Future: emit metric for peer eviction alerting
-            for (bus.connections) |*connection| {
+            for (candidates) |*connection| {
                 if (connection.peer == .unknown) {
                     bus.terminate(connection, .shutdown);
                     return;
@@ -1132,6 +1242,14 @@ pub fn MessageBusType(comptime IO: type) type {
                     .buffer = connection.send_queue.buffer,
                 },
             };
+
+            if (bus.client_pool_entries.len > 0) {
+                const index = connectionIndex(bus, connection);
+                if (bus.client_pool_entries[index]) |pooled| {
+                    bus.client_pool_entries[index] = null;
+                    pooled.release();
+                }
+            }
         }
 
         pub fn get_message(
