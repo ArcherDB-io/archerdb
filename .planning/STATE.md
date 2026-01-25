@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-24)
 ## Current Position
 
 Phase: 16 of 16 (Sharding & Scale-Out)
-Plan: 1 of 4 in current phase (16-01 complete)
+Plan: 2 of 4 in current phase (16-03 complete)
 Status: In progress
-Last activity: 2026-01-25 - Completed 16-01-PLAN.md (Shard rebalancing metrics + hot shard alerts)
+Last activity: 2026-01-25 - Completed 16-03-PLAN.md (Parallel fan-out queries)
 
-Progress: [█████████░] 96% (plans: 78/81)
+Progress: [█████████░] 98% (plans: 79/81)
 
 ## v1.0 Summary
 
@@ -29,12 +29,12 @@ See `.planning/milestones/v1.0-REQUIREMENTS.md` for archived requirements.
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 30 (v2.0)
+- Total plans completed: 31 (v2.0)
 - Average duration: ~6min
-- Total execution time: ~181min
+- Total execution time: ~191min
 
 **Recent Trend:**
-- Last 5 plans: 15-08, 15-09, 15-10, 15-11, 16-01
+- Last 5 plans: 15-09, 15-10, 15-11, 16-01, 16-03
 - Trend: ~6min per plan
 
 *Updated after each plan completion*
@@ -51,6 +51,7 @@ v2.0 decisions:
 - Breaking changes grouped in Phase 16 for coordinated v2.0 release
 - Hot shard scoring normalized to load_shedding thresholds for consistent weighting (16-01)
 - Rebalance gauges model cooldown decay for active move slots (16-01)
+- Default fan-out policy uses all for uuid_batch and majority for radius/polygon/latest (16-03)
 
 Phase 15 decisions:
 - Generic ServerConnectionPool function over connection type for protocol flexibility (15-01)
@@ -88,9 +89,9 @@ Phase 15 decisions:
 
 ## Session Continuity
 
-Last session: 2026-01-25 13:03 UTC
-Stopped at: Completed 16-01-PLAN.md
+Last session: 2026-01-25 13:05 UTC
+Stopped at: Completed 16-03-PLAN.md
 Resume file: None
 
 ---
-*Updated: 2026-01-25 — Completed 16-01 shard rebalancing visibility*
+*Updated: 2026-01-25 — Completed 16-03 parallel fan-out queries*
