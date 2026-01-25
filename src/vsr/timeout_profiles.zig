@@ -230,3 +230,153 @@ pub const TimeoutConfig = struct {
         return prng.range_inclusive(u64, min_value, max_value);
     }
 };
+
+// ============================================================================
+// Unit Tests
+// ============================================================================
+
+const testing = std.testing;
+
+test "timeout_profiles: cloud profile returns expected default values" {
+    const cloud = ProfilePresets.cloud;
+
+    try testing.expectEqual(@as(u64, 500), cloud.heartbeat_interval_ms);
+    try testing.expectEqual(@as(u64, 2000), cloud.election_timeout_ms);
+    try testing.expectEqual(@as(u64, 5000), cloud.request_timeout_ms);
+    try testing.expectEqual(@as(u64, 10000), cloud.connection_timeout_ms);
+    try testing.expectEqual(@as(u64, 3000), cloud.view_change_timeout_ms);
+
+    // Verify election timeout is 4x heartbeat (aggressive detection)
+    try testing.expectEqual(cloud.heartbeat_interval_ms * 4, cloud.election_timeout_ms);
+}
+
+test "timeout_profiles: datacenter profile returns expected default values" {
+    const datacenter = ProfilePresets.datacenter;
+
+    try testing.expectEqual(@as(u64, 100), datacenter.heartbeat_interval_ms);
+    try testing.expectEqual(@as(u64, 500), datacenter.election_timeout_ms);
+    try testing.expectEqual(@as(u64, 1000), datacenter.request_timeout_ms);
+    try testing.expectEqual(@as(u64, 2000), datacenter.connection_timeout_ms);
+    try testing.expectEqual(@as(u64, 750), datacenter.view_change_timeout_ms);
+
+    // Verify election timeout is 5x heartbeat (aggressive detection)
+    try testing.expectEqual(datacenter.heartbeat_interval_ms * 5, datacenter.election_timeout_ms);
+}
+
+test "timeout_profiles: custom profile with overrides applies overrides correctly" {
+    const config = TimeoutConfig{
+        .profile = .custom,
+        .overrides = .{
+            .heartbeat_interval_ms = 300,
+            .election_timeout_ms = 1200,
+            // Leave other values as null to use defaults
+        },
+    };
+
+    const values = config.getEffectiveValues();
+
+    // Overridden values
+    try testing.expectEqual(@as(u64, 300), values.heartbeat_interval_ms);
+    try testing.expectEqual(@as(u64, 1200), values.election_timeout_ms);
+
+    // Default values (from cloud profile, which is base for custom)
+    try testing.expectEqual(@as(u64, 5000), values.request_timeout_ms);
+    try testing.expectEqual(@as(u64, 10000), values.connection_timeout_ms);
+    try testing.expectEqual(@as(u64, 3000), values.view_change_timeout_ms);
+}
+
+test "timeout_profiles: jitter stays within specified range" {
+    var prng = stdx.PRNG.from_seed(12345);
+
+    const config = TimeoutConfig{
+        .profile = .cloud,
+        .jitter_range_pct = 20,
+    };
+
+    const base_value: u64 = 1000;
+    const min_expected: u64 = 800; // 1000 - 20%
+    const max_expected: u64 = 1200; // 1000 + 20%
+
+    // Generate many jittered values and verify all are within range
+    for (0..1000) |_| {
+        const jittered = config.applyJitter(base_value, &prng);
+        try testing.expect(jittered >= min_expected);
+        try testing.expect(jittered <= max_expected);
+    }
+}
+
+test "timeout_profiles: jitter produces different values across calls" {
+    var prng = stdx.PRNG.from_seed(54321);
+
+    const config = TimeoutConfig{
+        .profile = .cloud,
+        .jitter_range_pct = 20,
+    };
+
+    const base_value: u64 = 1000;
+
+    // Collect multiple jittered values
+    var values: [10]u64 = undefined;
+    for (&values) |*v| {
+        v.* = config.applyJitter(base_value, &prng);
+    }
+
+    // Verify at least some values are different (not all identical)
+    var all_same = true;
+    for (values[1..]) |v| {
+        if (v != values[0]) {
+            all_same = false;
+            break;
+        }
+    }
+
+    try testing.expect(!all_same);
+}
+
+test "timeout_profiles: getEffectiveValues merges profile defaults with overrides" {
+    // Test that custom profile starts from cloud defaults
+    const config_no_overrides = TimeoutConfig{
+        .profile = .custom,
+        .overrides = null,
+    };
+    const values_no_overrides = config_no_overrides.getEffectiveValues();
+    try testing.expectEqual(ProfilePresets.cloud.heartbeat_interval_ms, values_no_overrides.heartbeat_interval_ms);
+
+    // Test that non-custom profiles ignore overrides
+    const config_cloud_with_overrides = TimeoutConfig{
+        .profile = .cloud,
+        .overrides = .{ .heartbeat_interval_ms = 999 },
+    };
+    const values_cloud = config_cloud_with_overrides.getEffectiveValues();
+    try testing.expectEqual(ProfilePresets.cloud.heartbeat_interval_ms, values_cloud.heartbeat_interval_ms);
+
+    // Test that datacenter profile returns datacenter values
+    const config_datacenter = TimeoutConfig{
+        .profile = .datacenter,
+    };
+    const values_datacenter = config_datacenter.getEffectiveValues();
+    try testing.expectEqual(ProfilePresets.datacenter.heartbeat_interval_ms, values_datacenter.heartbeat_interval_ms);
+}
+
+test "timeout_profiles: zero percent jitter returns exact base value" {
+    var prng = stdx.PRNG.from_seed(99999);
+
+    const config = TimeoutConfig{
+        .profile = .cloud,
+        .jitter_range_pct = 0, // No jitter
+    };
+
+    const base_value: u64 = 1000;
+
+    // With 0% jitter, should always return exact base value
+    for (0..100) |_| {
+        const jittered = config.applyJitter(base_value, &prng);
+        try testing.expectEqual(base_value, jittered);
+    }
+}
+
+test "timeout_profiles: ProfilePresets.get returns correct profile" {
+    try testing.expectEqual(ProfilePresets.cloud, ProfilePresets.get(.cloud));
+    try testing.expectEqual(ProfilePresets.datacenter, ProfilePresets.get(.datacenter));
+    try testing.expectEqual(ProfilePresets.cloud, ProfilePresets.get(.custom)); // custom defaults to cloud
+}
