@@ -186,6 +186,11 @@ Phase 14 decisions (continued):
 - RAM index load factor thresholds: <50% green, 50-70% yellow, >70% red (cuckoo optimal) (14-06)
 
 Phase 15 decisions:
+- Generic ServerConnectionPool function over connection type for protocol flexibility (15-01)
+- 20% memory threshold for pressure detection (available < 20% of total) (15-01)
+- Bounded waiter queue (64 max) instead of unbounded queue (15-01)
+- Top-10 client tracking with LRU eviction to avoid cardinality explosion (15-01)
+- Memory detection via /proc/meminfo (Linux) and hw.memsize sysctl (macOS) (15-01)
 - Cloud profile: 500ms heartbeat, 2000ms election (4x heartbeat for aggressive detection) (15-02)
 - Datacenter profile: 100ms heartbeat, 500ms election (5x heartbeat for fast failover) (15-02)
 - Custom profile starts from cloud defaults, allows selective overrides (15-02)
