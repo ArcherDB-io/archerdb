@@ -21,7 +21,8 @@ const encryption = vsr.encryption;
 const inspect = @import("inspect.zig");
 const metrics_server = @import("metrics_server.zig");
 const module_log_levels = @import("observability/module_log_levels.zig");
-const coordinator = @import("coordinator.zig");
+const observability = vsr.observability;
+const coordinator = @import("../coordinator.zig");
 
 const IO = vsr.io.IO;
 const Time = vsr.time.Time;
@@ -1875,20 +1876,33 @@ fn command_coordinator(
             try stdout.print("  Fan-out policy: {s}\n", .{@tagName(start.fan_out_policy)});
             try stdout.writeAll("\n");
 
+            var trace_exporter: ?*observability.OtlpTraceExporter = null;
+            defer if (trace_exporter) |exporter| {
+                exporter.flush();
+                exporter.deinit();
+            };
+
+            if (start.trace_export_enabled) {
+                const endpoint = start.otlp_endpoint orelse
+                    "http://localhost:4318/v1/traces";
+                trace_exporter = try observability.OtlpTraceExporter.init(gpa, endpoint);
+            }
+
             var coordinator_instance = coordinator.Coordinator.init(gpa, .{
                 .bind_address = coordinator.Address.init(start.bind_host, start.bind_port),
                 .max_connections = start.max_connections,
                 .query_timeout_ms = start.query_timeout_ms,
                 .health_check_interval_ms = start.health_check_ms,
                 .read_from_replicas = start.read_from_replicas,
+                .trace_exporter = trace_exporter,
             });
             defer coordinator_instance.deinit();
 
             try coordinator_instance.start();
             if (start.shards) |shards| {
-                try seedCoordinatorShards(&coordinator_instance, shards);
+                try seedCoordinatorShards(&coordinator_instance, shards.const_slice());
             } else if (start.seed_nodes) |seeds| {
-                try seedCoordinatorShards(&coordinator_instance, seeds);
+                try seedCoordinatorShards(&coordinator_instance, seeds.const_slice());
             }
 
             try coordinatorProbeQuery(&coordinator_instance, stdout);
@@ -1914,9 +1928,9 @@ fn command_coordinator(
 
 fn seedCoordinatorShards(
     coordinator_instance: *coordinator.Coordinator,
-    addresses: cli.Command.Addresses,
+    addresses: []const std.net.Address,
 ) !void {
-    for (addresses.const_slice(), 0..) |address, index| {
+    for (addresses, 0..) |address, index| {
         const shard_address = coordinatorAddressFromNet(address);
         try coordinator_instance.addShard(@intCast(index), shard_address);
     }
@@ -1943,10 +1957,19 @@ fn coordinatorProbeQuery(
     stdout: anytype,
 ) !void {
     var ctx_marker: u8 = 0;
+    var traceparent_buf: [64]u8 = undefined;
+    var traceparent: ?[]const u8 = null;
+
+    if (coordinator_instance.config.trace_exporter != null) {
+        var root_ctx = observability.CorrelationContext.newRoot(0);
+        traceparent = root_ctx.toTraceparent(&traceparent_buf);
+    }
+
     const request = coordinator.CoordinatorQuery{
         .query_type = .latest,
         .shard_query = coordinatorStubShardQuery,
         .ctx = &ctx_marker,
+        .traceparent = traceparent,
     };
 
     if (coordinator_instance.executeQuery(request)) |response| {

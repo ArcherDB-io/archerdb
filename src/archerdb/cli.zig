@@ -997,6 +997,9 @@ const CLIArgs = union(enum) {
             @"fan-out-policy": ?[]const u8 = null,
             /// Log level
             @"log-level": LogLevel = .info,
+            /// OTLP trace export options (Phase 7 Observability)
+            trace_export: ?[]const u8 = null, // "otlp" or "none"
+            otlp_endpoint: ?[]const u8 = null, // e.g., "http://localhost:4318/v1/traces"
             /// Metrics port (optional)
             @"metrics-port": ?u16 = null,
         },
@@ -1069,6 +1072,12 @@ const CLIArgs = union(enum) {
             \\  --fan-out-policy=<policy>
             \\        Policy for fan-out queries: 'all' (wait for all), 'majority',
             \\        or 'first' (return first response). Defaults to 'all'.
+            \\
+            \\  --trace-export=<otlp|none>
+            \\        Enable OTLP trace export for coordinator fan-out spans.
+            \\
+            \\  --otlp-endpoint=<url>
+            \\        OTLP collector endpoint. Defaults to http://localhost:4318/v1/traces.
             \\
             \\  --format=<text|json>
             \\        Output format for status command. Defaults to 'text'.
@@ -1758,6 +1767,8 @@ pub const Command = union(enum) {
             read_from_replicas: bool,
             fan_out_policy: FanOutPolicy,
             log_level: LogLevel,
+            trace_export_enabled: bool,
+            otlp_endpoint: ?[]const u8,
             metrics_port: ?u16,
         },
         status: struct {
@@ -2822,6 +2833,11 @@ fn parse_args_coordinator(coordinator: CLIArgs.Coordinator) Command.Coordinator 
                     .read_from_replicas = !start.@"no-read-from-replicas",
                     .fan_out_policy = parse_fan_out_policy(start.@"fan-out-policy"),
                     .log_level = start.@"log-level",
+                    .trace_export_enabled = if (start.trace_export) |te|
+                        std.mem.eql(u8, te, "otlp")
+                    else
+                        false,
+                    .otlp_endpoint = start.otlp_endpoint,
                     .metrics_port = start.@"metrics-port",
                 },
             };
