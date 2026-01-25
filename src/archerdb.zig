@@ -457,6 +457,33 @@ pub const Operation = enum(u8) {
         };
     }
 
+    pub fn isReadOnly(self: Operation) bool {
+        return switch (self) {
+            .query_uuid,
+            .query_uuid_batch,
+            .query_radius,
+            .query_polygon,
+            .query_latest,
+            .archerdb_ping,
+            .archerdb_get_status,
+            .get_topology,
+            .batch_query,
+            .execute_prepared,
+            => true,
+            .pulse,
+            .insert_events,
+            .upsert_events,
+            .delete_entities,
+            .cleanup_expired,
+            .ttl_set,
+            .ttl_extend,
+            .ttl_clear,
+            .prepare_query,
+            .deallocate_prepared,
+            => false,
+        };
+    }
+
     /// The maximum number of events per batch.
     pub inline fn event_max(operation: Operation, batch_size_limit: u32) u32 {
         assert(batch_size_limit > 0);
