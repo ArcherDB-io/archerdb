@@ -439,6 +439,51 @@ pub const TopologyManager = struct {
         self.topology.last_change_ns = std.time.nanoTimestamp();
     }
 
+    /// Begin resharding and mark shards as migrating.
+    pub fn beginResharding(self: *TopologyManager, target_shards: u32) void {
+        self.mutex.lock();
+
+        self.topology.resharding_status = 1; // preparing
+        for (0..self.topology.num_shards) |i| {
+            self.topology.shards[i].status = .migrating;
+        }
+        self.topology.version += 1;
+        self.topology.last_change_ns = std.time.nanoTimestamp();
+
+        self.mutex.unlock();
+        self.notifySubscribers(.resharding_started, target_shards);
+    }
+
+    /// Complete resharding, update shard count, and mark shards as active.
+    pub fn completeResharding(self: *TopologyManager, new_shard_count: u32) void {
+        self.mutex.lock();
+
+        self.topology.num_shards = new_shard_count;
+        self.topology.resharding_status = 0;
+        for (0..new_shard_count) |i| {
+            self.topology.shards[i].status = .active;
+        }
+        self.topology.version += 1;
+        self.topology.last_change_ns = std.time.nanoTimestamp();
+
+        self.mutex.unlock();
+        self.notifySubscribers(.resharding_completed, new_shard_count);
+    }
+
+    /// Abort resharding and restore shard status.
+    pub fn abortResharding(self: *TopologyManager) void {
+        self.mutex.lock();
+
+        self.topology.resharding_status = 0;
+        for (0..self.topology.num_shards) |i| {
+            self.topology.shards[i].status = .active;
+        }
+        self.topology.version += 1;
+        self.topology.last_change_ns = std.time.nanoTimestamp();
+
+        self.mutex.unlock();
+    }
+
     /// Add a replica to a shard.
     pub fn addShardReplica(self: *TopologyManager, shard_id: u32, address: []const u8) !void {
         self.mutex.lock();
@@ -769,6 +814,65 @@ test "TopologyManager resharding status" {
 
     manager.setReshardingStatus(0); // idle - no version bump
     try std.testing.expectEqual(@as(u8, 0), manager.getTopology().resharding_status);
+}
+
+test "TopologyManager resharding helpers" {
+    var manager = TopologyManager.init(42, 4);
+
+    const Context = struct {
+        started: u32 = 0,
+        completed: u32 = 0,
+
+        fn callback(notification: *const TopologyChangeNotification, ctx: ?*anyopaque) void {
+            if (ctx) |c| {
+                const self: *@This() = @ptrCast(@alignCast(c));
+                switch (notification.change_type) {
+                    .resharding_started => self.started += 1,
+                    .resharding_completed => self.completed += 1,
+                    else => {},
+                }
+            }
+        }
+    };
+
+    var ctx = Context{};
+    _ = manager.subscribe(Context.callback, &ctx);
+
+    const version_before = manager.getVersion();
+    manager.beginResharding(8);
+
+    const started_topology = manager.getTopology();
+    try std.testing.expectEqual(@as(u8, 1), started_topology.resharding_status);
+    try std.testing.expect(manager.getVersion() > version_before);
+    for (0..started_topology.num_shards) |i| {
+        try std.testing.expectEqual(ShardStatus.migrating, started_topology.shards[i].status);
+    }
+    try std.testing.expectEqual(@as(u32, 1), ctx.started);
+
+    const version_after_start = manager.getVersion();
+    manager.completeResharding(8);
+
+    const completed_topology = manager.getTopology();
+    try std.testing.expectEqual(@as(u8, 0), completed_topology.resharding_status);
+    try std.testing.expectEqual(@as(u32, 8), completed_topology.num_shards);
+    try std.testing.expect(manager.getVersion() > version_after_start);
+    for (0..completed_topology.num_shards) |i| {
+        try std.testing.expectEqual(ShardStatus.active, completed_topology.shards[i].status);
+    }
+    try std.testing.expectEqual(@as(u32, 1), ctx.completed);
+}
+
+test "TopologyManager abortResharding resets status" {
+    var manager = TopologyManager.init(7, 3);
+
+    manager.beginResharding(3);
+    manager.abortResharding();
+
+    const topology = manager.getTopology();
+    try std.testing.expectEqual(@as(u8, 0), topology.resharding_status);
+    for (0..topology.num_shards) |i| {
+        try std.testing.expectEqual(ShardStatus.active, topology.shards[i].status);
+    }
 }
 
 test "topologyToJson" {
