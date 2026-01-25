@@ -574,15 +574,20 @@ pub const Coordinator = struct {
             return error.FanOutPolicyUnsatisfied;
         }
 
+        const events = try shared.results.toOwnedSlice();
+        errdefer self.allocator.free(events);
+        const errors = try shared.errors.toOwnedSlice();
+        errdefer self.allocator.free(errors);
+
         self.stats.recordQuery(elapsed_ns, true, true);
 
         return .{
-            .events = shared.results.items,
+            .events = events,
             .shards_queried = shards_queried,
             .shards_succeeded = shards_succeeded,
             .shards_failed = shards_failed,
             .partial = partial,
-            .errors = shared.errors.items,
+            .errors = errors,
             .total_time_ns = elapsed_ns,
         };
     }
@@ -651,8 +656,11 @@ pub const Coordinator = struct {
 
         _ = self.pending_queries.remove(query_id);
 
+        var results = pq.results;
+        const events = try results.toOwnedSlice();
+
         return .{
-            .events = pq.results.items,
+            .events = events,
             .shards_queried = pq.shards_pending,
             .shards_succeeded = pq.shards_completed,
             .shards_failed = 0,
@@ -712,6 +720,44 @@ pub const RouteError = enum {
 // Tests
 // =============================================================================
 
+const MockFanOutContext = struct {
+    fail_mask: u32,
+    timeout_mask: u32,
+    events: [1]GeoEvent,
+};
+
+fn makeTestEvent(id: u128) GeoEvent {
+    return .{
+        .id = id,
+        .entity_id = 0,
+        .correlation_id = 0,
+        .user_data = 0,
+        .lat_nano = 0,
+        .lon_nano = 0,
+        .group_id = 0,
+        .timestamp = 0,
+        .altitude_mm = 0,
+        .velocity_mms = 0,
+        .ttl_seconds = 0,
+        .accuracy_mm = 0,
+        .heading_cdeg = 0,
+        .flags = .{},
+        .reserved = [_]u8{0} ** 12,
+    };
+}
+
+fn mockFanOutQuery(ctx: *anyopaque, shard: ShardInfo) anyerror![]GeoEvent {
+    const data: *MockFanOutContext = @ptrCast(@alignCast(ctx));
+    const shard_bit: u32 = @as(u32, 1) << @intCast(shard.id);
+    if ((data.fail_mask & shard_bit) != 0) {
+        return error.ShardUnavailable;
+    }
+    if ((data.timeout_mask & shard_bit) != 0) {
+        return error.Timeout;
+    }
+    return data.events[0..];
+}
+
 
 test "Coordinator: initialization" {
     const allocator = std.testing.allocator;
@@ -761,6 +807,91 @@ test "Coordinator: fan-out determination" {
     try std.testing.expect(Coordinator.requiresFanOut(.radius));
     try std.testing.expect(Coordinator.requiresFanOut(.polygon));
     try std.testing.expect(Coordinator.requiresFanOut(.latest));
+}
+
+test "Coordinator: fan-out policy all fails on shard error" {
+    const allocator = std.testing.allocator;
+
+    var coordinator = Coordinator.init(allocator, .{});
+    defer coordinator.deinit();
+
+    try coordinator.addShard(0, Address.init("node-0", 5000));
+    try coordinator.addShard(1, Address.init("node-1", 5000));
+    try coordinator.addShard(2, Address.init("node-2", 5000));
+
+    var ctx = MockFanOutContext{
+        .fail_mask = 0b010,
+        .timeout_mask = 0,
+        .events = .{makeTestEvent(1)},
+    };
+
+    try std.testing.expectError(
+        error.FanOutPolicyUnsatisfied,
+        coordinator.fanOutQuery(.radius, mockFanOutQuery, @ptrCast(&ctx), .all),
+    );
+}
+
+test "Coordinator: fan-out policy majority succeeds with partial" {
+    const allocator = std.testing.allocator;
+
+    var coordinator = Coordinator.init(allocator, .{});
+    defer coordinator.deinit();
+
+    try coordinator.addShard(0, Address.init("node-0", 5000));
+    try coordinator.addShard(1, Address.init("node-1", 5000));
+    try coordinator.addShard(2, Address.init("node-2", 5000));
+
+    var ctx = MockFanOutContext{
+        .fail_mask = 0b100,
+        .timeout_mask = 0,
+        .events = .{makeTestEvent(2)},
+    };
+
+    const result = try coordinator.fanOutQuery(
+        .polygon,
+        mockFanOutQuery,
+        @ptrCast(&ctx),
+        .majority,
+    );
+    defer allocator.free(result.events);
+    defer allocator.free(result.errors);
+
+    try std.testing.expectEqual(@as(u32, 3), result.shards_queried);
+    try std.testing.expectEqual(@as(u32, 2), result.shards_succeeded);
+    try std.testing.expectEqual(@as(u32, 1), result.shards_failed);
+    try std.testing.expect(result.partial);
+}
+
+test "Coordinator: fan-out policy best-effort tracks partial metrics" {
+    const allocator = std.testing.allocator;
+
+    var coordinator = Coordinator.init(allocator, .{});
+    defer coordinator.deinit();
+
+    try coordinator.addShard(0, Address.init("node-0", 5000));
+    try coordinator.addShard(1, Address.init("node-1", 5000));
+    try coordinator.addShard(2, Address.init("node-2", 5000));
+
+    const before = metrics.Registry.coordinator_fanout_partial_total.get();
+
+    var ctx = MockFanOutContext{
+        .fail_mask = 0b001,
+        .timeout_mask = 0,
+        .events = .{makeTestEvent(3)},
+    };
+
+    const result = try coordinator.fanOutQuery(
+        .latest,
+        mockFanOutQuery,
+        @ptrCast(&ctx),
+        .best_effort,
+    );
+    defer allocator.free(result.events);
+    defer allocator.free(result.errors);
+
+    try std.testing.expect(result.partial);
+    try std.testing.expectEqual(@as(u32, 1), result.shards_failed);
+    try std.testing.expectEqual(before + 1, metrics.Registry.coordinator_fanout_partial_total.get());
 }
 
 test "Coordinator: shard health tracking" {
