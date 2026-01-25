@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-24)
 ## Current Position
 
 Phase: 16 of 16 (Sharding & Scale-Out)
-Plan: 4 of 4 in current phase
-Status: Phase complete
-Last activity: 2026-01-25 - Completed 16-04-PLAN.md (OTel span links + coordinator tracing)
+Plan: 5 of 6 in current phase
+Status: In progress
+Last activity: 2026-01-25 - Completed 16-05-PLAN.md (Online resharding runtime wiring)
 
-Progress: [██████████] 100% (plans: 81/81)
+Progress: [█████████░] 99% (plans: 82/83)
 
 ## v1.0 Summary
 
@@ -29,12 +29,12 @@ See `.planning/milestones/v1.0-REQUIREMENTS.md` for archived requirements.
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 32 (v2.0)
+- Total plans completed: 33 (v2.0)
 - Average duration: ~6min
-- Total execution time: ~201min
+- Total execution time: ~217min
 
 **Recent Trend:**
-- Last 5 plans: 15-10, 15-11, 16-01, 16-03, 16-04
+- Last 5 plans: 15-11, 16-01, 16-03, 16-04, 16-05
 - Trend: ~6min per plan
 
 *Updated after each plan completion*
@@ -52,6 +52,7 @@ v2.0 decisions:
 - Hot shard scoring normalized to load_shedding thresholds for consistent weighting (16-01)
 - Rebalance gauges model cooldown decay for active move slots (16-01)
 - Default fan-out policy uses all for uuid_batch and majority for radius/polygon/latest (16-03)
+- Online resharding control requests are routed through the metrics server to trigger runtime ticks (16-05)
 
 Phase 15 decisions:
 - Generic ServerConnectionPool function over connection type for protocol flexibility (15-01)
@@ -89,9 +90,9 @@ Phase 15 decisions:
 
 ## Session Continuity
 
-Last session: 2026-01-25 13:22 UTC
-Stopped at: Completed 16-04-PLAN.md
+Last session: 2026-01-25 20:53 UTC
+Stopped at: Completed 16-05-PLAN.md
 Resume file: None
 
 ---
-*Updated: 2026-01-25 — Completed 16-04 OTel span links + coordinator tracing*
+*Updated: 2026-01-25 — Completed 16-05 online resharding runtime wiring*
