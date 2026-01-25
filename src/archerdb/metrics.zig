@@ -2706,6 +2706,11 @@ pub const Registry = struct {
         try writer.print("archerdb_s2_coverage_ratio {d:.4}\n", .{coverage_f});
         try writer.writeAll("\n");
 
+        // S2 covering cache metrics (14-02)
+        try s2_covering_cache_hits_total.format(writer);
+        try s2_covering_cache_misses_total.format(writer);
+        try writer.writeAll("\n");
+
         // ====================================================================
         // Extended Memory Metrics (MET-07)
         // ====================================================================
