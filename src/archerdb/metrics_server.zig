@@ -1029,6 +1029,12 @@ pub const MetricsServer = struct {
         const is_resharding = resharding_status_val == 1;
         const status = if (is_resharding) "resharding" else "ok";
 
+        const resharding_mode_val = metrics.Registry.resharding_mode.load(.monotonic);
+        const resharding_source_shards_val = metrics.Registry.resharding_source_shards.load(.monotonic);
+        const resharding_target_shards_val = metrics.Registry.resharding_target_shards.load(.monotonic);
+        const resharding_eta_seconds_val = metrics.Registry.resharding_eta_seconds.load(.monotonic);
+        const resharding_dual_write_val = metrics.Registry.resharding_dual_write_enabled.load(.monotonic) != 0;
+
         // Progress is stored as 0-1000, convert to percentage
         const progress_pct: f64 = @as(f64, @floatFromInt(resharding_progress_val)) / 10.0;
 
@@ -1084,15 +1090,30 @@ pub const MetricsServer = struct {
         metrics.Registry.shard_rebalance_active_moves.set(@intCast(rebalance_active_moves));
         metrics.Registry.shard_rebalance_cooldown_seconds.set(cooldown_remaining_seconds);
 
-        var body_buf: [512]u8 = undefined;
+        var body_buf: [1024]u8 = undefined;
         const fmt =
-            \\{{"status":"{s}","shard_count":{d},"resharding":{s},"resharding_progress":{d:.1}}}
+            \\{{"status":"{s}","shard_count":{d},"resharding":{s},"resharding_progress":{d:.1},
+        ++
+            \\"resharding_mode":{d},"resharding_source_shards":{d},"resharding_target_shards":{d},
+        ++
+            \\"resharding_eta_seconds":{d},"resharding_dual_write":{s},
+        ++
+            \\"hot_shard_id":{d},"hot_shard_score":{d:.2},"rebalance_needed":{d},"rebalance_active_moves":{d}}}
         ;
         const body = std.fmt.bufPrint(&body_buf, fmt, .{
             status,
             shard_count_val,
             if (is_resharding) "true" else "false",
             progress_pct,
+            resharding_mode_val,
+            resharding_source_shards_val,
+            resharding_target_shards_val,
+            resharding_eta_seconds_val,
+            if (resharding_dual_write_val) "true" else "false",
+            hot_signal.shard_id,
+            hot_score_scaled,
+            rebalance_needed,
+            rebalance_active_moves,
         }) catch "{\"status\":\"error\"}";
 
         try sendResponse(client_fd, .ok, "application/json", body);
@@ -1623,6 +1644,88 @@ test "MetricsServer: parseAuthHeader" {
 // =============================================================================
 // Health Endpoint Tests
 // =============================================================================
+
+test "MetricsServer: /health/shards includes rebalance fields" {
+    const fds = try posix.socketpair(posix.AF.UNIX, posix.SOCK.STREAM, 0);
+    defer posix.close(fds[0]);
+    defer posix.close(fds[1]);
+
+    const old_shard_count = metrics.Registry.shard_count.load(.monotonic);
+    const old_shard0_read = metrics.Registry.shard_read_rate[0].load(.monotonic);
+    const old_shard0_write = metrics.Registry.shard_write_rate[0].load(.monotonic);
+    const old_shard1_read = metrics.Registry.shard_read_rate[1].load(.monotonic);
+    const old_shard1_write = metrics.Registry.shard_write_rate[1].load(.monotonic);
+    const old_hottest_ratio = metrics.Registry.shard_hottest_ratio.load(.monotonic);
+    const old_resharding_status = metrics.Registry.resharding_status.load(.monotonic);
+    const old_resharding_progress = metrics.Registry.resharding_progress.load(.monotonic);
+    const old_resharding_mode = metrics.Registry.resharding_mode.load(.monotonic);
+    const old_source_shards = metrics.Registry.resharding_source_shards.load(.monotonic);
+    const old_target_shards = metrics.Registry.resharding_target_shards.load(.monotonic);
+    const old_eta_seconds = metrics.Registry.resharding_eta_seconds.load(.monotonic);
+    const old_dual_write = metrics.Registry.resharding_dual_write_enabled.load(.monotonic);
+    const old_queue_depth = cluster_metrics.archerdb_shed_queue_depth.get();
+    const old_read_latency = metrics.Registry.read_latency;
+    const old_last_rebalance = last_rebalance_ns;
+    const old_active_moves = rebalance_active_moves;
+
+    defer metrics.Registry.shard_count.store(old_shard_count, .monotonic);
+    defer metrics.Registry.shard_read_rate[0].store(old_shard0_read, .monotonic);
+    defer metrics.Registry.shard_write_rate[0].store(old_shard0_write, .monotonic);
+    defer metrics.Registry.shard_read_rate[1].store(old_shard1_read, .monotonic);
+    defer metrics.Registry.shard_write_rate[1].store(old_shard1_write, .monotonic);
+    defer metrics.Registry.shard_hottest_ratio.store(old_hottest_ratio, .monotonic);
+    defer metrics.Registry.resharding_status.store(old_resharding_status, .monotonic);
+    defer metrics.Registry.resharding_progress.store(old_resharding_progress, .monotonic);
+    defer metrics.Registry.resharding_mode.store(old_resharding_mode, .monotonic);
+    defer metrics.Registry.resharding_source_shards.store(old_source_shards, .monotonic);
+    defer metrics.Registry.resharding_target_shards.store(old_target_shards, .monotonic);
+    defer metrics.Registry.resharding_eta_seconds.store(old_eta_seconds, .monotonic);
+    defer metrics.Registry.resharding_dual_write_enabled.store(old_dual_write, .monotonic);
+    defer cluster_metrics.archerdb_shed_queue_depth.set(old_queue_depth);
+    defer metrics.Registry.read_latency = old_read_latency;
+    defer last_rebalance_ns = old_last_rebalance;
+    defer rebalance_active_moves = old_active_moves;
+
+    metrics.Registry.shard_count.store(2, .monotonic);
+    metrics.Registry.shard_read_rate[0].store(100, .monotonic);
+    metrics.Registry.shard_write_rate[0].store(0, .monotonic);
+    metrics.Registry.shard_read_rate[1].store(200, .monotonic);
+    metrics.Registry.shard_write_rate[1].store(0, .monotonic);
+    metrics.Registry.shard_hottest_ratio.store(16000, .monotonic);
+    metrics.Registry.resharding_status.store(1, .monotonic);
+    metrics.Registry.resharding_progress.store(250, .monotonic);
+    metrics.Registry.resharding_mode.store(2, .monotonic);
+    metrics.Registry.resharding_source_shards.store(2, .monotonic);
+    metrics.Registry.resharding_target_shards.store(4, .monotonic);
+    metrics.Registry.resharding_eta_seconds.store(120, .monotonic);
+    metrics.Registry.resharding_dual_write_enabled.store(1, .monotonic);
+    metrics.Registry.read_latency = metrics.latencyHistogram(
+        "archerdb_read_latency_seconds",
+        "Read operation latency histogram",
+        null,
+    );
+    metrics.Registry.read_latency.observe(0.1);
+    cluster_metrics.archerdb_shed_queue_depth.set(10000);
+    last_rebalance_ns = 0;
+    rebalance_active_moves = 0;
+
+    _ = try posix.write(fds[0], "GET /health/shards HTTP/1.1\r\n\r\n");
+    try MetricsServer.handleRequest(fds[1]);
+
+    var buffer: [4096]u8 = undefined;
+    const read_len = try posix.read(fds[0], &buffer);
+    const response = buffer[0..read_len];
+
+    try std.testing.expect(std.mem.indexOf(u8, response, "\"resharding_mode\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, response, "\"resharding_source_shards\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, response, "\"resharding_target_shards\":4") != null);
+    try std.testing.expect(std.mem.indexOf(u8, response, "\"resharding_eta_seconds\":120") != null);
+    try std.testing.expect(std.mem.indexOf(u8, response, "\"resharding_dual_write\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, response, "\"hot_shard_id\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, response, "\"hot_shard_score\":") != null);
+    try std.testing.expect(std.mem.indexOf(u8, response, "\"rebalance_needed\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, response, "\"rebalance_active_moves\":1") != null);
+}
 
 test "getUptimeSeconds calculates correctly" {
     // Save current state
