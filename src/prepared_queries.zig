@@ -969,3 +969,94 @@ test "PreparedQuery: param type sizes" {
     try std.testing.expectEqual(@as(u8, 8), ParamType.timestamp_max.size());
     try std.testing.expectEqual(@as(u8, 8), ParamType.group_id.size());
 }
+
+test "PreparedQuery: multiple executions track statistics" {
+    var session = SessionPreparedQueries.init();
+
+    const slot = try session.prepare("multi_exec", "UUID $1");
+
+    // Execute 10 times
+    var params: [16]u8 = undefined;
+    var output: [64]u8 = undefined;
+
+    for (0..10) |i| {
+        const entity_id: u128 = @intCast(i);
+        @memcpy(&params, mem.asBytes(&entity_id));
+        _ = try session.execute(slot, &params, &output);
+    }
+
+    // Verify execution count
+    const query = session.get(slot).?;
+    try std.testing.expectEqual(@as(u64, 10), query.execution_count);
+    // Total duration should be > 0 (timing recorded)
+    try std.testing.expect(query.total_duration_ns > 0);
+    // Average should be > 0
+    try std.testing.expect(query.averageExecutionNs() > 0);
+}
+
+test "PreparedQuery: latest query compilation" {
+    var session = SessionPreparedQueries.init();
+
+    const slot = try session.prepare("recent", "LATEST LIMIT $1 GROUP $2");
+
+    // Verify query type
+    const query = session.get(slot).?;
+    try std.testing.expectEqual(QueryType.latest, query.compiled.query_type);
+    try std.testing.expectEqual(@as(u8, 2), query.compiled.num_params);
+}
+
+test "PreparedQuery: case insensitive query type" {
+    // Test lowercase
+    const lower_uuid = try compileQuery("uuid $1");
+    try std.testing.expectEqual(QueryType.uuid, lower_uuid.query_type);
+
+    // Test mixed case
+    const mixed_radius = try compileQuery("Radius $1 $2 $3 limit $4");
+    try std.testing.expectEqual(QueryType.radius, mixed_radius.query_type);
+
+    // Test uppercase
+    const upper_latest = try compileQuery("LATEST LIMIT $1 GROUP $2");
+    try std.testing.expectEqual(QueryType.latest, upper_latest.query_type);
+}
+
+test "PreparedQuery: session isolation" {
+    // Two independent sessions
+    var session_a = SessionPreparedQueries.init();
+    var session_b = SessionPreparedQueries.init();
+
+    // Prepare query in session A
+    const slot_a = try session_a.prepare("my_query", "UUID $1");
+    try std.testing.expectEqual(@as(u32, 1), session_a.count);
+    try std.testing.expectEqual(@as(u32, 0), session_b.count);
+
+    // Session B has its own namespace
+    const slot_b = try session_b.prepare("my_query", "RADIUS $1 $2 $3 LIMIT $4");
+    try std.testing.expectEqual(@as(u32, 1), session_b.count);
+
+    // Verify queries are different types
+    const query_a = session_a.get(slot_a).?;
+    const query_b = session_b.get(slot_b).?;
+    try std.testing.expectEqual(QueryType.uuid, query_a.compiled.query_type);
+    try std.testing.expectEqual(QueryType.radius, query_b.compiled.query_type);
+}
+
+test "PreparedQuery: active queries gauge calculation" {
+    var session = SessionPreparedQueries.init();
+
+    // Initially 0 active
+    try std.testing.expectEqual(@as(u32, 0), session.count);
+
+    // Add 3 queries
+    _ = try session.prepare("q1", "UUID $1");
+    _ = try session.prepare("q2", "UUID $1");
+    _ = try session.prepare("q3", "UUID $1");
+    try std.testing.expectEqual(@as(u32, 3), session.count);
+
+    // Deallocate 1
+    _ = session.deallocate(hashName("q2"));
+    try std.testing.expectEqual(@as(u32, 2), session.count);
+
+    // Clear all
+    session.clear();
+    try std.testing.expectEqual(@as(u32, 0), session.count);
+}
