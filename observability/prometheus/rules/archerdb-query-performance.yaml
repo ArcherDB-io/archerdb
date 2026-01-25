@@ -1,0 +1,207 @@
+# ArcherDB Query Performance Alerting Rules
+# These alerts monitor query cache effectiveness, latency, and prepared query health.
+#
+# Alerts are designed to fire before critical degradation occurs, enabling
+# proactive response to performance issues.
+#
+# All alerts include:
+# - runbook_url: Link to troubleshooting documentation
+# - remediation: Brief fix suggestion
+# - severity: info (informational), warning (action needed), critical (immediate)
+
+groups:
+  - name: archerdb-query-cache
+    rules:
+      # Cache hit ratio alerts - primary performance indicator
+      - alert: QueryCacheHitRatioLow
+        expr: |
+          (sum(rate(archerdb_query_cache_hits_total[5m])) /
+           (sum(rate(archerdb_query_cache_hits_total[5m])) +
+            sum(rate(archerdb_query_cache_misses_total[5m])))) < 0.6
+        for: 10m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "Query cache hit ratio below 60%"
+          description: "Cache hit ratio {{ $value | humanizePercentage }} is below target. Check for query pattern changes or cache size."
+          runbook_url: "https://docs.archerdb.io/runbooks/cache-hit-ratio"
+          remediation: "Increase cache size, analyze query patterns, or check for high write invalidation rate"
+
+      - alert: QueryCacheHitRatioCritical
+        expr: |
+          (sum(rate(archerdb_query_cache_hits_total[5m])) /
+           (sum(rate(archerdb_query_cache_hits_total[5m])) +
+            sum(rate(archerdb_query_cache_misses_total[5m])))) < 0.4
+        for: 5m
+        labels:
+          severity: critical
+          team: database
+        annotations:
+          summary: "Query cache hit ratio critically low"
+          description: "Cache hit ratio {{ $value | humanizePercentage }} is critically low. Query performance significantly degraded."
+          runbook_url: "https://docs.archerdb.io/runbooks/cache-hit-ratio"
+          remediation: "Immediate investigation required - cache may be undersized or experiencing constant invalidation"
+
+      # S2 covering cache alerts
+      - alert: S2CoveringCacheHitRatioLow
+        expr: |
+          (sum(rate(archerdb_s2_covering_cache_hits_total[5m])) /
+           (sum(rate(archerdb_s2_covering_cache_hits_total[5m])) +
+            sum(rate(archerdb_s2_covering_cache_misses_total[5m])))) < 0.5
+        for: 15m
+        labels:
+          severity: info
+          team: database
+        annotations:
+          summary: "S2 covering cache hit ratio below 50%"
+          description: "Covering cache hit ratio {{ $value | humanizePercentage }}. Spatial queries may be using diverse geographic regions."
+          runbook_url: "https://docs.archerdb.io/runbooks/covering-cache"
+          remediation: "Consider increasing covering cache size if queries frequently target similar regions"
+
+  - name: archerdb-query-latency
+    rules:
+      # Query latency alerts
+      - alert: QueryLatencyHigh
+        expr: histogram_quantile(0.99, sum(rate(archerdb_query_total_seconds_bucket[5m])) by (le)) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "Query P99 latency exceeds 100ms"
+          description: "P99 query latency is {{ $value | humanizeDuration }}. Check cache effectiveness and index health."
+          runbook_url: "https://docs.archerdb.io/runbooks/query-latency"
+          remediation: "Check query cache hit ratio, RAM index load factor, and disk I/O"
+
+      - alert: QueryLatencyCritical
+        expr: histogram_quantile(0.99, sum(rate(archerdb_query_total_seconds_bucket[5m])) by (le)) > 0.5
+        for: 2m
+        labels:
+          severity: critical
+          team: database
+        annotations:
+          summary: "Query P99 latency exceeds 500ms"
+          description: "P99 query latency is {{ $value | humanizeDuration }}. Immediate investigation required."
+          runbook_url: "https://docs.archerdb.io/runbooks/query-latency"
+          remediation: "Immediate action needed - check for resource exhaustion, disk issues, or runaway queries"
+
+      # Per-phase latency alerts for bottleneck identification
+      - alert: QueryExecutePhaseLatencyHigh
+        expr: histogram_quantile(0.99, sum(rate(archerdb_query_execute_seconds_bucket[5m])) by (le)) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "Query execute phase P99 latency exceeds 50ms"
+          description: "Execute phase latency {{ $value | humanizeDuration }}. Index scan or filtering may be slow."
+          runbook_url: "https://docs.archerdb.io/runbooks/query-phases"
+          remediation: "Check RAM index health, S2 cell coverage, and result set sizes"
+
+      - alert: QueryPlanPhaseLatencyHigh
+        expr: histogram_quantile(0.99, sum(rate(archerdb_query_plan_seconds_bucket[5m])) by (le)) > 0.02
+        for: 5m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "Query plan phase P99 latency exceeds 20ms"
+          description: "Plan phase latency {{ $value | humanizeDuration }}. S2 covering computation may be expensive."
+          runbook_url: "https://docs.archerdb.io/runbooks/query-phases"
+          remediation: "Check S2 covering cache hit ratio and query region complexity"
+
+  - name: archerdb-prepared-queries
+    rules:
+      # Prepared query alerts
+      - alert: PreparedQueryCompileErrorsHigh
+        expr: sum(rate(archerdb_prepared_query_errors_total{error="parse"}[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "Prepared query parse errors elevated"
+          description: "{{ $value }} prepared query parse errors per second. Check application query syntax."
+          runbook_url: "https://docs.archerdb.io/runbooks/prepared-queries"
+          remediation: "Review application code for malformed query templates"
+
+      - alert: PreparedQueryParamErrorsHigh
+        expr: sum(rate(archerdb_prepared_query_errors_total{error="param"}[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "Prepared query parameter errors elevated"
+          description: "{{ $value }} parameter type errors per second. Applications may be passing incorrect parameter types."
+          runbook_url: "https://docs.archerdb.io/runbooks/prepared-queries"
+          remediation: "Review application parameter binding code for type mismatches"
+
+      - alert: PreparedQueryNotFoundErrorsHigh
+        expr: sum(rate(archerdb_prepared_query_errors_total{error="not_found"}[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "Prepared query not found errors elevated"
+          description: "{{ $value }} not found errors per second. Applications may be using deallocated queries."
+          runbook_url: "https://docs.archerdb.io/runbooks/prepared-queries"
+          remediation: "Check for session lifecycle issues or premature query deallocation"
+
+  - name: archerdb-batch-queries
+    rules:
+      # Batch query alerts
+      - alert: BatchQuerySuccessRateLow
+        expr: |
+          (sum(rate(archerdb_batch_query_success_total[5m])) /
+           sum(rate(archerdb_batch_query_size_total[5m]))) < 0.9
+        for: 5m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "Batch query success rate below 90%"
+          description: "Batch queries have {{ $value | humanizePercentage }} success rate. Check individual query errors."
+          runbook_url: "https://docs.archerdb.io/runbooks/batch-queries"
+          remediation: "Review batch query composition and individual query error reasons"
+
+      - alert: BatchQueryTruncationsHigh
+        expr: sum(rate(archerdb_batch_query_truncated_total[5m])) > 0.5
+        for: 5m
+        labels:
+          severity: info
+          team: database
+        annotations:
+          summary: "Batch query truncations occurring"
+          description: "{{ $value }} batch responses truncated per second. Result sets may exceed limits."
+          runbook_url: "https://docs.archerdb.io/runbooks/batch-queries"
+          remediation: "Consider reducing batch sizes or result limits per query"
+
+  - name: archerdb-ram-index
+    rules:
+      # RAM index alerts (from spatial stats)
+      - alert: RAMIndexLoadFactorHigh
+        expr: archerdb_ram_index_load_factor / 1000 > 0.7
+        for: 10m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "RAM index load factor above 70%"
+          description: "RAM index at {{ $value | humanizePercentage }} load. Insertion performance may degrade."
+          runbook_url: "https://docs.archerdb.io/runbooks/ram-index"
+          remediation: "Consider increasing RAM index capacity or scaling cluster"
+
+      - alert: RAMIndexLoadFactorCritical
+        expr: archerdb_ram_index_load_factor / 1000 > 0.85
+        for: 5m
+        labels:
+          severity: critical
+          team: database
+        annotations:
+          summary: "RAM index load factor critically high"
+          description: "RAM index at {{ $value | humanizePercentage }} load. Cuckoo hashing may fail insertions."
+          runbook_url: "https://docs.archerdb.io/runbooks/ram-index"
+          remediation: "Urgent capacity increase required - insertions may start failing"
