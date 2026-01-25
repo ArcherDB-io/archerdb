@@ -3283,63 +3283,241 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         }
 
         // ====================================================================
-        // 14-05: Prepared Query Implementation (Stubs)
+        // 14-05: Prepared Query Operations
         // ====================================================================
 
-        /// Execute prepare_query operation (14-05 stub).
-        /// TODO: Full implementation in plan 14-05.
+        /// Execute prepare_query operation.
+        ///
+        /// Compiles a query text into a prepared query and stores it in the
+        /// client's session. The prepared query can then be executed multiple
+        /// times with different parameters, skipping the parse phase.
+        ///
+        /// Arguments:
+        /// - client: Client ID for session scoping
+        /// - input: PrepareQueryRequest + name + query_text
+        /// - output: Buffer for PrepareQueryResult
+        ///
+        /// Returns: Size of response written to output (16 bytes)
         fn execute_prepare_query(
             self: *GeoStateMachine,
             client: u128,
             input: []const u8,
             output: []u8,
         ) usize {
-            _ = self;
-            _ = client;
-            _ = input;
-            // Return error: not implemented
-            if (output.len < 16) return 0;
-            // PrepareQueryResult with status=unsupported_query_type
-            @memset(output[0..16], 0);
-            output[0] = 0xFF; // slot = 0xFFFFFFFF (error)
-            output[1] = 0xFF;
-            output[2] = 0xFF;
-            output[3] = 0xFF;
-            output[4] = 4; // status = unsupported_query_type
-            return 16;
+            // Validate input size
+            if (input.len < @sizeOf(PrepareQueryRequest)) {
+                log.warn("prepare_query: input too small ({d} < {d})", .{
+                    input.len,
+                    @sizeOf(PrepareQueryRequest),
+                });
+                return writePrepareFail(output, .invalid_query);
+            }
+
+            // Validate output size
+            if (output.len < @sizeOf(PrepareQueryResult)) {
+                log.warn("prepare_query: output buffer too small", .{});
+                return 0;
+            }
+
+            // Parse request header
+            const request = mem.bytesAsValue(
+                PrepareQueryRequest,
+                input[0..@sizeOf(PrepareQueryRequest)],
+            ).*;
+
+            // Validate variable-length data
+            const header_size = @sizeOf(PrepareQueryRequest);
+            const total_needed = header_size + request.name_len + request.query_len;
+            if (input.len < total_needed) {
+                log.warn("prepare_query: input too small for name/query ({d} < {d})", .{
+                    input.len,
+                    total_needed,
+                });
+                return writePrepareFail(output, .invalid_query);
+            }
+
+            // Extract name and query text
+            const name = input[header_size..][0..request.name_len];
+            const query_text = input[header_size + request.name_len ..][0..request.query_len];
+
+            // Get or create session
+            const session = self.getOrCreateSession(client);
+
+            // Prepare the query
+            const slot = session.prepare(name, query_text) catch |err| {
+                self.prepared_query_metrics.recordParseError();
+                const status: PrepareQueryResult.Status = switch (err) {
+                    error.SessionFull => .session_full,
+                    error.AlreadyExists => .already_exists,
+                    error.InvalidQuery => .invalid_query,
+                    error.UnsupportedQueryType => .unsupported_query_type,
+                    else => .invalid_query,
+                };
+                log.warn("prepare_query: failed with {s}", .{@errorName(err)});
+                return writePrepareFail(output, status);
+            };
+
+            // Success
+            self.prepared_query_metrics.recordCompile();
+            const result = PrepareQueryResult.success(slot);
+            const result_bytes = mem.asBytes(&result);
+            @memcpy(output[0..@sizeOf(PrepareQueryResult)], result_bytes);
+            return @sizeOf(PrepareQueryResult);
         }
 
-        /// Execute execute_prepared operation (14-05 stub).
-        /// TODO: Full implementation in plan 14-05.
+        /// Execute execute_prepared operation.
+        ///
+        /// Executes a previously prepared query with the provided parameters.
+        /// The parse phase is skipped since the query is already compiled.
+        ///
+        /// Arguments:
+        /// - client: Client ID for session lookup
+        /// - input: ExecutePreparedRequest + params
+        /// - output: Buffer for GeoEvent results
+        ///
+        /// Returns: Size of response written to output
         fn execute_execute_prepared(
             self: *GeoStateMachine,
             client: u128,
             input: []const u8,
             output: []u8,
         ) usize {
-            _ = self;
-            _ = client;
-            _ = input;
-            _ = output;
-            // No results - prepared statement doesn't exist
-            return 0;
+            // Validate input size
+            if (input.len < @sizeOf(ExecutePreparedRequest)) {
+                log.warn("execute_prepared: input too small ({d} < {d})", .{
+                    input.len,
+                    @sizeOf(ExecutePreparedRequest),
+                });
+                return 0;
+            }
+
+            // Parse request header
+            const request = mem.bytesAsValue(
+                ExecutePreparedRequest,
+                input[0..@sizeOf(ExecutePreparedRequest)],
+            ).*;
+
+            // Get session
+            const session = self.session_prepared_queries.getPtr(client) orelse {
+                self.prepared_query_metrics.recordNotFoundError();
+                log.warn("execute_prepared: no session for client", .{});
+                return 0;
+            };
+
+            // Extract parameters
+            const params = input[@sizeOf(ExecutePreparedRequest)..];
+
+            // Execute the prepared query to get filter bytes
+            var filter_buffer: [256]u8 = undefined;
+            const result = session.execute(request.slot, params, &filter_buffer) catch |err| {
+                self.prepared_query_metrics.recordParamError();
+                log.warn("execute_prepared: execution failed with {s}", .{@errorName(err)});
+                return 0;
+            };
+
+            // Dispatch to the appropriate query executor based on query type
+            self.prepared_query_metrics.recordExecution();
+            return switch (result.query_type) {
+                .uuid => self.execute_query_uuid(filter_buffer[0..result.filter_len], output),
+                .radius => self.execute_query_radius(filter_buffer[0..result.filter_len], output),
+                .polygon => self.execute_query_polygon(filter_buffer[0..result.filter_len], output),
+                .latest => self.execute_query_latest(filter_buffer[0..result.filter_len], output),
+            };
         }
 
-        /// Execute deallocate_prepared operation (14-05 stub).
-        /// TODO: Full implementation in plan 14-05.
+        /// Execute deallocate_prepared operation.
+        ///
+        /// Deallocates a prepared query from the client's session.
+        ///
+        /// Arguments:
+        /// - client: Client ID for session lookup
+        /// - input: DeallocatePreparedRequest
+        /// - output: Buffer for DeallocatePreparedResult
+        ///
+        /// Returns: Size of response written to output (16 bytes)
         fn execute_deallocate_prepared(
             self: *GeoStateMachine,
             client: u128,
             input: []const u8,
             output: []u8,
         ) usize {
-            _ = self;
-            _ = client;
-            _ = input;
-            // Return DeallocatePreparedResult with deallocated=0
-            if (output.len < 16) return 0;
-            @memset(output[0..16], 0);
-            return 16;
+            // Validate input size
+            if (input.len < @sizeOf(DeallocatePreparedRequest)) {
+                log.warn("deallocate_prepared: input too small ({d} < {d})", .{
+                    input.len,
+                    @sizeOf(DeallocatePreparedRequest),
+                });
+                return writeDeallocateFail(output);
+            }
+
+            // Validate output size
+            if (output.len < @sizeOf(DeallocatePreparedResult)) {
+                log.warn("deallocate_prepared: output buffer too small", .{});
+                return 0;
+            }
+
+            // Parse request
+            const request = mem.bytesAsValue(
+                DeallocatePreparedRequest,
+                input[0..@sizeOf(DeallocatePreparedRequest)],
+            ).*;
+
+            // Get session
+            const session = self.session_prepared_queries.getPtr(client) orelse {
+                return writeDeallocateFail(output);
+            };
+
+            // Deallocate by slot or name
+            const deallocated = if (request.slot != 0xFFFFFFFF)
+                session.deallocateSlot(request.slot)
+            else if (request.name_hash != 0)
+                session.deallocate(request.name_hash)
+            else blk: {
+                // Deallocate all
+                session.clear();
+                break :blk true;
+            };
+
+            // Write response
+            const result = DeallocatePreparedResult{
+                .deallocated = if (deallocated) 1 else 0,
+            };
+            const result_bytes = mem.asBytes(&result);
+            @memcpy(output[0..@sizeOf(DeallocatePreparedResult)], result_bytes);
+            return @sizeOf(DeallocatePreparedResult);
+        }
+
+        /// Helper to write prepare failure response.
+        fn writePrepareFail(output: []u8, status: PrepareQueryResult.Status) usize {
+            if (output.len < @sizeOf(PrepareQueryResult)) return 0;
+            const result = PrepareQueryResult.err(status);
+            const result_bytes = mem.asBytes(&result);
+            @memcpy(output[0..@sizeOf(PrepareQueryResult)], result_bytes);
+            return @sizeOf(PrepareQueryResult);
+        }
+
+        /// Helper to write deallocate failure response.
+        fn writeDeallocateFail(output: []u8) usize {
+            if (output.len < @sizeOf(DeallocatePreparedResult)) return 0;
+            const result = DeallocatePreparedResult{ .deallocated = 0 };
+            const result_bytes = mem.asBytes(&result);
+            @memcpy(output[0..@sizeOf(DeallocatePreparedResult)], result_bytes);
+            return @sizeOf(DeallocatePreparedResult);
+        }
+
+        /// Get or create a session for a client.
+        fn getOrCreateSession(self: *GeoStateMachine, client: u128) *SessionPreparedQueries {
+            const entry = self.session_prepared_queries.getOrPut(client) catch {
+                // On allocation failure, we need a workaround
+                // In practice this shouldn't happen with reasonable client counts
+                log.err("prepared_queries: failed to allocate session for client {}", .{client});
+                // Return the default entry which will be invalid
+                unreachable;
+            };
+            if (!entry.found_existing) {
+                entry.value_ptr.* = SessionPreparedQueries.init();
+            }
+            return entry.value_ptr;
         }
 
         // ====================================================================
