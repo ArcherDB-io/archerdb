@@ -30,6 +30,7 @@ const Ratio = stdx.PRNG.Ratio;
 const ByteSize = stdx.ByteSize;
 const Operation = archerdb.Operation;
 const backup_config = vsr.backup_config;
+const timeout_profiles = @import("../vsr/timeout_profiles.zig");
 
 comptime {
     // Make sure we are running the GeoStateMachine.
@@ -189,6 +190,14 @@ const CLIArgs = union(enum) {
         // OTLP trace export options (Phase 7 Observability)
         trace_export: ?[]const u8 = null, // "otlp" or "none"
         otlp_endpoint: ?[]const u8 = null, // e.g., "http://localhost:4318/v1/traces"
+        // VSR timeout profile configuration
+        vsr_timeout_profile: ?[]const u8 = null, // cloud, datacenter, custom
+        vsr_timeout_jitter_pct: ?u8 = null, // +/- percent range
+        vsr_timeout_heartbeat_ms: ?u64 = null,
+        vsr_timeout_election_ms: ?u64 = null,
+        vsr_timeout_request_ms: ?u64 = null,
+        vsr_timeout_connection_ms: ?u64 = null,
+        vsr_timeout_view_change_ms: ?u64 = null,
         timeout_prepare_ms: ?u64 = null,
         timeout_grid_repair_message_ms: ?u64 = null,
         commit_stall_probability: ?Ratio = null,
@@ -1403,6 +1412,7 @@ pub const Command = union(enum) {
         lsm_forest_node_count: u32,
         timeout_prepare_ticks: ?u64,
         timeout_grid_repair_message_ticks: ?u64,
+        timeout_config: timeout_profiles.TimeoutConfig,
         commit_stall_probability: ?Ratio,
         trace: ?[]const u8,
         development: bool,
@@ -1965,8 +1975,12 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
         "backup_compress",         "backup_queue_soft_limit",
         "backup_queue_hard_limit", "backup_retention_days",
         "backup_primary_only",
+        "vsr_timeout_profile",        "vsr_timeout_jitter_pct",
+        "vsr_timeout_heartbeat_ms",   "vsr_timeout_election_ms",
+        "vsr_timeout_request_ms",     "vsr_timeout_connection_ms",
+        "vsr_timeout_view_change_ms",
     };
-    @setEvalBranchQuota(96_000);
+    @setEvalBranchQuota(120_000);
     inline for (std.meta.fields(@TypeOf(start))) |field| {
         // Positional arguments can't be experimental.
         comptime if (std.mem.eql(u8, field.name, "--")) break;
@@ -2141,6 +2155,26 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
     const lsm_forest_node_count: u32 =
         @intCast(@divExact(lsm_manifest_memory, constants.lsm_manifest_node_size));
 
+    const timeout_profile = parse_timeout_profile(start.vsr_timeout_profile);
+    const timeout_overrides = if (start.vsr_timeout_heartbeat_ms != null or
+        start.vsr_timeout_election_ms != null or
+        start.vsr_timeout_request_ms != null or
+        start.vsr_timeout_connection_ms != null or
+        start.vsr_timeout_view_change_ms != null)
+    timeout_profiles.TimeoutOverrides{
+        .heartbeat_interval_ms = start.vsr_timeout_heartbeat_ms,
+        .election_timeout_ms = start.vsr_timeout_election_ms,
+        .request_timeout_ms = start.vsr_timeout_request_ms,
+        .connection_timeout_ms = start.vsr_timeout_connection_ms,
+        .view_change_timeout_ms = start.vsr_timeout_view_change_ms,
+    } else null;
+    const timeout_config = timeout_profiles.TimeoutConfig{
+        .profile = timeout_profile,
+        .jitter_range_pct = start.vsr_timeout_jitter_pct orelse
+            (timeout_profiles.TimeoutConfig{}).jitter_range_pct,
+        .overrides = timeout_overrides,
+    };
+
     const aof_file: ?Command.Path = if (start.aof_file) |start_aof_file| blk: {
         if (!std.mem.endsWith(u8, start_aof_file, ".aof")) {
             vsr.fatal(.cli, "--aof-file must end with .aof: '{s}'", .{start_aof_file});
@@ -2187,6 +2221,7 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
             start.timeout_grid_repair_message_ms,
             "--timeout-grid-repair-message-ms",
         ),
+        .timeout_config = timeout_config,
         .commit_stall_probability = start.commit_stall_probability,
         .development = start.development,
         .experimental = start.experimental,
@@ -2986,6 +3021,19 @@ fn parse_timeout_to_ticks(timeout_ms: ?u64, cli_flag: []const u8) ?u64 {
     } else {
         return null;
     }
+}
+
+fn parse_timeout_profile(value: ?[]const u8) timeout_profiles.TimeoutProfile {
+    if (value == null) return .cloud;
+    const profile = value.?;
+    if (std.mem.eql(u8, profile, "cloud")) return .cloud;
+    if (std.mem.eql(u8, profile, "datacenter")) return .datacenter;
+    if (std.mem.eql(u8, profile, "custom")) return .custom;
+    vsr.fatal(
+        .cli,
+        "--vsr-timeout-profile: invalid '{s}' (cloud/datacenter/custom)",
+        .{profile},
+    );
 }
 
 // ============================================================================

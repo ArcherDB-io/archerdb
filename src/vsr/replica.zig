@@ -47,6 +47,7 @@ const ClientSessions = vsr.ClientSessions;
 const Tracer = vsr.trace.Tracer;
 const membership = @import("membership.zig");
 const MembershipConfig = membership.MembershipConfig;
+const timeout_profiles = @import("timeout_profiles.zig");
 const ReadReplicaRouter = read_replica_router.ReadReplicaRouter;
 const ReplicaHealth = read_replica_router.ReplicaHealth;
 const RoutingQueryType = read_replica_router.QueryType;
@@ -678,6 +679,7 @@ pub fn ReplicaType(
             test_context: ?*anyopaque = null,
             timeout_prepare_ticks: ?u64 = null,
             timeout_grid_repair_message_ticks: ?u64 = null,
+            timeout_config: timeout_profiles.TimeoutConfig,
             commit_stall_probability: ?Ratio,
             replicate_options: ReplicateOptions = .{},
         };
@@ -766,6 +768,7 @@ pub fn ReplicaType(
                     .multiversion = options.multiversion,
                     .timeout_prepare_ticks = options.timeout_prepare_ticks,
                     .timeout_grid_repair_message_ticks = options.timeout_grid_repair_message_ticks,
+                    .timeout_config = options.timeout_config,
                     .commit_stall_probability = options.commit_stall_probability,
                     .replicate_options = options.replicate_options,
                 },
@@ -1149,6 +1152,7 @@ pub fn ReplicaType(
             multiversion: Multiversion,
             timeout_prepare_ticks: ?u64,
             timeout_grid_repair_message_ticks: ?u64,
+            timeout_config: timeout_profiles.TimeoutConfig,
             commit_stall_probability: ?Ratio,
             replicate_options: ReplicateOptions,
         };
@@ -1267,6 +1271,44 @@ pub fn ReplicaType(
                 @sizeOf(Header) + options.state_machine_options.batch_size_limit;
             assert(request_size_limit <= constants.message_size_max);
             assert(request_size_limit > @sizeOf(Header));
+
+            const timeout_values = options.timeout_config.getEffectiveValues();
+            var timeout_prng = stdx.PRNG.from_seed(@truncate(options.nonce));
+            const timeout_ticks = struct {
+                fn fromMs(ms: u64) u64 {
+                    return @max(@as(u64, 1), stdx.div_ceil(ms, constants.tick_ms));
+                }
+            };
+            const heartbeat_ticks = timeout_ticks.fromMs(
+                options.timeout_config.applyJitter(
+                    timeout_values.heartbeat_interval_ms,
+                    &timeout_prng,
+                ),
+            );
+            const election_ticks = timeout_ticks.fromMs(
+                options.timeout_config.applyJitter(
+                    timeout_values.election_timeout_ms,
+                    &timeout_prng,
+                ),
+            );
+            const request_ticks = timeout_ticks.fromMs(
+                options.timeout_config.applyJitter(
+                    timeout_values.request_timeout_ms,
+                    &timeout_prng,
+                ),
+            );
+            const connection_ticks = timeout_ticks.fromMs(
+                options.timeout_config.applyJitter(
+                    timeout_values.connection_timeout_ms,
+                    &timeout_prng,
+                ),
+            );
+            const view_change_ticks = timeout_ticks.fromMs(
+                options.timeout_config.applyJitter(
+                    timeout_values.view_change_timeout_ms,
+                    &timeout_prng,
+                ),
+            );
 
             const leader_index: u8 = @intCast(@mod(
                 self.superblock.working.vsr_state.view,
@@ -1453,12 +1495,12 @@ pub fn ReplicaType(
                 .ping_timeout = Timeout{
                     .name = "ping_timeout",
                     .id = replica_index,
-                    .after = 1_000 / constants.tick_ms,
+                    .after = connection_ticks,
                 },
                 .prepare_timeout = Timeout{
                     .name = "prepare_timeout",
                     .id = replica_index,
-                    .after = options.timeout_prepare_ticks orelse (250 / constants.tick_ms),
+                    .after = options.timeout_prepare_ticks orelse request_ticks,
                 },
                 .primary_abdicate_timeout = Timeout{
                     .name = "primary_abdicate_timeout",
@@ -1468,37 +1510,37 @@ pub fn ReplicaType(
                 .commit_message_timeout = Timeout{
                     .name = "commit_message_timeout",
                     .id = replica_index,
-                    .after = 500 / constants.tick_ms,
+                    .after = heartbeat_ticks,
                 },
                 .normal_heartbeat_timeout = Timeout{
                     .name = "normal_heartbeat_timeout",
                     .id = replica_index,
-                    .after = 5_000 / constants.tick_ms,
+                    .after = election_ticks,
                 },
                 .start_view_change_window_timeout = Timeout{
                     .name = "start_view_change_window_timeout",
                     .id = replica_index,
-                    .after = 5_000 / constants.tick_ms,
+                    .after = election_ticks,
                 },
                 .start_view_change_message_timeout = Timeout{
                     .name = "start_view_change_message_timeout",
                     .id = replica_index,
-                    .after = 500 / constants.tick_ms,
+                    .after = heartbeat_ticks,
                 },
                 .view_change_status_timeout = Timeout{
                     .name = "view_change_status_timeout",
                     .id = replica_index,
-                    .after = 5_000 / constants.tick_ms,
+                    .after = view_change_ticks,
                 },
                 .do_view_change_message_timeout = Timeout{
                     .name = "do_view_change_message_timeout",
                     .id = replica_index,
-                    .after = 500 / constants.tick_ms,
+                    .after = heartbeat_ticks,
                 },
                 .request_start_view_message_timeout = Timeout{
                     .name = "request_start_view_message_timeout",
                     .id = replica_index,
-                    .after = 1_000 / constants.tick_ms,
+                    .after = view_change_ticks,
                 },
                 .journal_repair_budget_timeout = Timeout{
                     .name = "journal_repair_budget_timeout",
