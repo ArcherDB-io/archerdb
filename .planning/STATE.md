@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-24)
 ## Current Position
 
 Phase: 16 of 16 (Sharding & Scale-Out)
-Plan: 3 of 4 in current phase
-Status: In progress
-Last activity: 2026-01-25 - Completed 16-02-PLAN.md (Online resharding controller)
+Plan: 4 of 4 in current phase
+Status: Phase complete
+Last activity: 2026-01-25 - Completed 16-04-PLAN.md (OTel span links + coordinator tracing)
 
-Progress: [█████████░] 99% (plans: 80/81)
+Progress: [██████████] 100% (plans: 81/81)
 
 ## v1.0 Summary
 
@@ -29,12 +29,12 @@ See `.planning/milestones/v1.0-REQUIREMENTS.md` for archived requirements.
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 31 (v2.0)
+- Total plans completed: 32 (v2.0)
 - Average duration: ~6min
-- Total execution time: ~191min
+- Total execution time: ~201min
 
 **Recent Trend:**
-- Last 5 plans: 15-09, 15-10, 15-11, 16-01, 16-03
+- Last 5 plans: 15-10, 15-11, 16-01, 16-03, 16-04
 - Trend: ~6min per plan
 
 *Updated after each plan completion*
@@ -89,9 +89,9 @@ Phase 15 decisions:
 
 ## Session Continuity
 
-Last session: 2026-01-25 13:07 UTC
-Stopped at: Completed 16-02-PLAN.md
+Last session: 2026-01-25 13:22 UTC
+Stopped at: Completed 16-04-PLAN.md
 Resume file: None
 
 ---
-*Updated: 2026-01-25 — Completed 16-02 online resharding controller*
+*Updated: 2026-01-25 — Completed 16-04 OTel span links + coordinator tracing*
