@@ -1552,6 +1552,24 @@ pub const Registry = struct {
     }
 
     // ========================================================================
+    // S2 Covering Cache Metrics (14-02)
+    // ========================================================================
+
+    /// S2 covering cache hits total
+    pub var s2_covering_cache_hits_total: Counter = Counter.init(
+        "archerdb_s2_covering_cache_hits_total",
+        "Total S2 covering cache hits",
+        null,
+    );
+
+    /// S2 covering cache misses total
+    pub var s2_covering_cache_misses_total: Counter = Counter.init(
+        "archerdb_s2_covering_cache_misses_total",
+        "Total S2 covering cache misses",
+        null,
+    );
+
+    // ========================================================================
     // Extended Memory Metrics (MET-07)
     // ========================================================================
 
