@@ -99,12 +99,15 @@ Plans:
   3. S2 cell covering cache eliminates redundant computation for repeated spatial patterns
   4. Query latency breakdown shows parse/plan/execute/serialize times in metrics
   5. Prepared queries demonstrate measurable performance improvement for repeated patterns
-**Plans**: TBD
+**Plans**: 6 plans in 3 waves
 
 Plans:
-- [ ] 14-01: TBD
-- [ ] 14-02: TBD
-- [ ] 14-03: TBD
+- [ ] 14-01-PLAN.md — Query result cache with write-invalidation
+- [ ] 14-02-PLAN.md — S2 cell covering cache for spatial queries
+- [ ] 14-03-PLAN.md — Query latency breakdown metrics and spatial stats
+- [ ] 14-04-PLAN.md — Batch query API with partial success handling
+- [ ] 14-05-PLAN.md — Prepared query compilation (session-scoped)
+- [ ] 14-06-PLAN.md — Query performance dashboard and alerts
 
 ### Phase 15: Cluster & Consensus
 **Goal**: Harden cluster for enterprise scale with connection pooling, load shedding, and consensus tuning
@@ -150,7 +153,7 @@ Phases execute in numeric order: 11 -> 11.x -> 12 -> 12.x -> ... -> 16
 | 11. Measurement & Profiling | 5/5 | ✓ Complete | 2026-01-24 |
 | 12. Storage Optimization | 11/11 | ✓ Complete | 2026-01-24 |
 | 13. Memory & RAM Index | 5/5 | ✓ Complete | 2026-01-24 |
-| 14. Query Performance | 0/TBD | Not started | - |
+| 14. Query Performance | 0/6 | Planning complete | - |
 | 15. Cluster & Consensus | 0/TBD | Not started | - |
 | 16. Sharding & Scale-Out | 0/TBD | Not started | - |
 
