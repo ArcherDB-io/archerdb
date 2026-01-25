@@ -489,3 +489,70 @@ test "QueryType: toString returns correct labels" {
     try std.testing.expectEqualStrings("polygon", QueryType.polygon.toString());
     try std.testing.expectEqualStrings("latest", QueryType.latest.toString());
 }
+
+// ============================================================================
+// Dashboard Metrics Verification (14-06)
+// ============================================================================
+// This test documents all metrics used by the query performance dashboard
+// (observability/grafana/dashboards/archerdb-query-performance.json) and
+// verifies they are properly exported in Prometheus format.
+//
+// Metric sources:
+// - QueryLatencyBreakdown: per-phase histograms, per-type total histograms
+// - SpatialIndexStats: RAM index metrics, covering cell averages
+// - QueryMetrics (geo_state_machine.zig): cache hit/miss counters
+// - BatchQueryMetrics (batch_query.zig): batch operation counters
+// - PreparedQueryMetrics (prepared_queries.zig): prepared query counters
+// - metrics.zig global: s2_covering_cache_hits/misses_total
+
+test "Dashboard metrics: QueryLatencyBreakdown exports all phase metrics" {
+    var breakdown = QueryLatencyBreakdown.init();
+    breakdown.recordPhases(.{
+        .query_type = .radius,
+        .parse_ns = 100_000,
+        .plan_ns = 500_000,
+        .execute_ns = 5_000_000,
+        .serialize_ns = 200_000,
+    });
+
+    var buffer: [16384]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&buffer);
+    const writer = stream.writer();
+
+    try breakdown.toPrometheus(writer);
+    const output = stream.getWritten();
+
+    // Per-phase histograms (dashboard: "Latency by Phase" panel)
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_query_parse_seconds") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_query_plan_seconds") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_query_execute_seconds") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_query_serialize_seconds") != null);
+
+    // Per-type total histogram (dashboard: "Query Latency P99 by Type" panel)
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_query_total_seconds") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "type=\"radius\"") != null);
+}
+
+test "Dashboard metrics: SpatialIndexStats exports RAM index and covering metrics" {
+    var stats = SpatialIndexStats.init();
+    stats.updateFromIndex(5000, 10000);
+    stats.recordCoveringSize(.radius, 6);
+    stats.recordCoveringSize(.polygon, 12);
+
+    var buffer: [8192]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&buffer);
+    const writer = stream.writer();
+
+    try stats.toPrometheus(writer);
+    const output = stream.getWritten();
+
+    // RAM index metrics (dashboard: "RAM Index Load Factor" and "RAM Index Entries" panels)
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_ram_index_entries") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_ram_index_capacity") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_ram_index_load_factor") != null);
+
+    // S2 covering cell statistics (dashboard: "Average Covering Cells" panel)
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_query_covering_cells_avg") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "type=\"radius\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "type=\"polygon\"") != null);
+}
