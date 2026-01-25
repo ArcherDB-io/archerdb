@@ -1095,6 +1095,41 @@ pub const Registry = struct {
     /// Coldest shard ratio (coldest / average, scaled by 10000)
     pub var shard_coldest_ratio: std.atomic.Value(u32) = std.atomic.Value(u32).init(10000);
 
+    /// Hot shard id (-1 if none detected)
+    pub var shard_hot_id: Gauge = Gauge.init(
+        "archerdb_shard_hot_id",
+        "Shard id with the highest hot score (-1 if none)",
+        null,
+    );
+
+    /// Hot shard composite score (0-100)
+    pub var shard_hot_score: Gauge = Gauge.init(
+        "archerdb_shard_hot_score",
+        "Composite hot shard score (0-100)",
+        null,
+    );
+
+    /// Rebalance needed flag (1=rebalance recommended, 0=balanced)
+    pub var shard_rebalance_needed: Gauge = Gauge.init(
+        "archerdb_shard_rebalance_needed",
+        "Whether shard rebalancing is recommended (1=yes, 0=no)",
+        null,
+    );
+
+    /// Active shard migration slots in use
+    pub var shard_rebalance_active_moves: Gauge = Gauge.init(
+        "archerdb_shard_rebalance_active_moves",
+        "Active shard rebalance migration slots",
+        null,
+    );
+
+    /// Remaining rebalance cooldown time in seconds
+    pub var shard_rebalance_cooldown_seconds: Gauge = Gauge.init(
+        "archerdb_shard_rebalance_cooldown_seconds",
+        "Remaining rebalance cooldown time in seconds",
+        null,
+    );
+
     /// Resharding status (0=idle, 1=preparing, 2=migrating, 3=finalizing)
     pub var resharding_status: std.atomic.Value(u8) = std.atomic.Value(u8).init(0);
 
@@ -2396,6 +2431,39 @@ pub const Registry = struct {
             try writer.print("archerdb_shard_coldest_ratio {d:.4}\n", .{coldest});
             try writer.writeAll("\n");
         }
+
+        try writer.writeAll("# HELP archerdb_shard_hot_id Shard id with the highest hot score (-1 if none)\n");
+        try writer.writeAll("# TYPE archerdb_shard_hot_id gauge\n");
+        const hot_id = shard_hot_id.get();
+        try writer.print("archerdb_shard_hot_id {d}\n", .{hot_id});
+        try writer.writeAll("\n");
+
+        try writer.writeAll("# HELP archerdb_shard_hot_score Composite hot shard score (0-100)\n");
+        try writer.writeAll("# TYPE archerdb_shard_hot_score gauge\n");
+        const hot_score = @as(f64, @floatFromInt(shard_hot_score.get()));
+        try writer.print("archerdb_shard_hot_score {d:.2}\n", .{hot_score});
+        try writer.writeAll("\n");
+
+        try writer.writeAll("# HELP archerdb_shard_rebalance_needed " ++
+            "Whether shard rebalancing is recommended (1=yes, 0=no)\n");
+        try writer.writeAll("# TYPE archerdb_shard_rebalance_needed gauge\n");
+        const rebalance_needed = shard_rebalance_needed.get();
+        try writer.print("archerdb_shard_rebalance_needed {d}\n", .{rebalance_needed});
+        try writer.writeAll("\n");
+
+        try writer.writeAll("# HELP archerdb_shard_rebalance_active_moves " ++
+            "Active shard rebalance migration slots\n");
+        try writer.writeAll("# TYPE archerdb_shard_rebalance_active_moves gauge\n");
+        const active_moves = shard_rebalance_active_moves.get();
+        try writer.print("archerdb_shard_rebalance_active_moves {d}\n", .{active_moves});
+        try writer.writeAll("\n");
+
+        try writer.writeAll("# HELP archerdb_shard_rebalance_cooldown_seconds " ++
+            "Remaining rebalance cooldown time in seconds\n");
+        try writer.writeAll("# TYPE archerdb_shard_rebalance_cooldown_seconds gauge\n");
+        const cooldown_seconds = shard_rebalance_cooldown_seconds.get();
+        try writer.print("archerdb_shard_rebalance_cooldown_seconds {d}\n", .{cooldown_seconds});
+        try writer.writeAll("\n");
 
         try writer.writeAll("# HELP archerdb_resharding_status " ++
             "Resharding status (0=idle, 1=preparing, 2=migrating, 3=finalizing)\n");

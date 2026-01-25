@@ -12,7 +12,7 @@
 //! All metrics follow Prometheus naming conventions (archerdb_pool_*, archerdb_shed_*).
 
 const std = @import("std");
-const metrics = @import("metrics.zig");
+pub const metrics = @import("metrics.zig");
 const constants = @import("../constants.zig");
 
 const Gauge = metrics.Gauge;
@@ -390,6 +390,43 @@ pub const ClusterMetrics = struct {
         archerdb_pool_connections_active.set(@intCast(active));
         archerdb_pool_connections_idle.set(@intCast(idle));
         archerdb_pool_waiters.set(@intCast(waiters));
+    }
+
+    /// Read current shed threshold (0-100 scale).
+    pub fn shedThreshold(self: *const Self) i64 {
+        _ = self;
+        return archerdb_shed_threshold.get();
+    }
+
+    /// Read current shed score (0-100 scale).
+    pub fn shedScore(self: *const Self) i64 {
+        _ = self;
+        return archerdb_shed_score.get();
+    }
+
+    /// Read latest Retry-After value (milliseconds).
+    pub fn shedRetryAfterLastMs(self: *const Self) i64 {
+        _ = self;
+        return archerdb_shed_retry_after_last_ms.get();
+    }
+
+    /// Update shed decision signals for metrics.
+    pub fn updateShedSignals(
+        self: *Self,
+        score: f32,
+        queue_depth: u32,
+        latency_p99_ms: u64,
+        memory_pct: u8,
+        threshold: f32,
+    ) void {
+        _ = self;
+        updateShedMetrics(score, queue_depth, latency_p99_ms, memory_pct, threshold);
+    }
+
+    /// Record a Retry-After hint for shed requests.
+    pub fn recordShedRetryAfter(self: *Self, retry_after_ms: u64) void {
+        _ = self;
+        recordShedRequest(retry_after_ms);
     }
 
     /// Record a new connection creation.
