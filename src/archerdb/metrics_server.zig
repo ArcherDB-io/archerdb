@@ -22,9 +22,9 @@ const builtin = @import("builtin");
 const vsr = @import("vsr");
 const stdx = vsr.stdx;
 const metrics = vsr.archerdb_metrics;
-const cluster_metrics = @import("cluster_metrics.zig");
+const cluster_metrics = vsr.cluster_metrics;
 const load_shedding = @import("../load_shedding.zig");
-const correlation = @import("observability/correlation.zig");
+const correlation = vsr.observability.correlation;
 
 // =============================================================================
 // Process Metrics Collection
@@ -683,11 +683,11 @@ pub const MetricsServer = struct {
             return;
         };
 
-        const cluster_metrics = metrics.Registry.clusterMetrics();
-        const shed_threshold = cluster_metrics.shedThreshold();
-        const shed_score = cluster_metrics.shedScore();
+        const cluster_metrics_snapshot = metrics.Registry.clusterMetrics();
+        const shed_threshold = cluster_metrics_snapshot.shedThreshold();
+        const shed_score = cluster_metrics_snapshot.shedScore();
         if (shed_threshold > 0 and shed_score >= shed_threshold) {
-            const retry_after_last = cluster_metrics.shedRetryAfterLastMs();
+            const retry_after_last = cluster_metrics_snapshot.shedRetryAfterLastMs();
             const retry_after_ms: u64 = if (retry_after_last > 0) @intCast(retry_after_last) else 0;
             const retry_after_sec = @max(@as(u64, 1), (retry_after_ms + 999) / 1000);
             var header_buf: [64]u8 = undefined;
@@ -1532,9 +1532,9 @@ test "MetricsServer: overload response includes retry-after header" {
     defer posix.close(fds[0]);
     defer posix.close(fds[1]);
 
-    const cluster_metrics = metrics.Registry.clusterMetrics();
-    cluster_metrics.updateShedSignals(1.0, 0, 0, 0, 0.5);
-    cluster_metrics.recordShedRetryAfter(3000);
+    const cluster_metrics_snapshot = metrics.Registry.clusterMetrics();
+    cluster_metrics_snapshot.updateShedSignals(1.0, 0, 0, 0, 0.5);
+    cluster_metrics_snapshot.recordShedRetryAfter(3000);
 
     _ = try posix.write(fds[0], "GET /metrics HTTP/1.1\r\n\r\n");
     try MetricsServer.handleRequest(fds[1]);
@@ -1546,8 +1546,8 @@ test "MetricsServer: overload response includes retry-after header" {
     try std.testing.expect(std.mem.indexOf(u8, response, "429 Too Many Requests") != null);
     try std.testing.expect(std.mem.indexOf(u8, response, "Retry-After: 3") != null);
 
-    cluster_metrics.updateShedSignals(0.0, 0, 0, 0, 0.0);
-    cluster_metrics.recordShedRetryAfter(0);
+    cluster_metrics_snapshot.updateShedSignals(0.0, 0, 0, 0, 0.0);
+    cluster_metrics_snapshot.recordShedRetryAfter(0);
 }
 
 test "ReplicaState: isReady" {

@@ -1810,7 +1810,7 @@ pub const OnlineMigrationWorker = struct {
 
 /// Online resharding controller coordinating dual-write migration and cutover.
 pub const OnlineReshardingController = struct {
-    const TopologyManager = @import("topology.zig").TopologyManager;
+    pub const TopologyManager = @import("topology.zig").TopologyManager;
 
     const ReshardingStatus = enum(u8) {
         idle = 0,

@@ -14,7 +14,6 @@ const constants = vsr.constants;
 const config = constants.config;
 const archerdb_metrics = vsr.archerdb_metrics;
 const sharding = vsr.sharding;
-const topology = @import("topology.zig");
 
 const benchmark_driver = @import("benchmark_driver.zig");
 const cli = @import("cli.zig");
@@ -1450,17 +1449,20 @@ fn run_online_resharding(
     allocator: mem.Allocator,
     cluster_id: u128,
     target_shards: u32,
-    config: sharding.OnlineReshardingConfig,
+    online_config: sharding.OnlineReshardingConfig,
 ) !void {
     const current_shards: u32 = @as(u32, constants.shard_count);
-    const batch_size: u64 = @max(@as(u64, config.batch_size), 1);
+    const batch_size: u64 = @max(@as(u64, online_config.batch_size), 1);
     const total_entities: u64 = batch_size * 8;
 
-    var topology_manager = topology.TopologyManager.init(cluster_id, current_shards);
+    var topology_manager = sharding.OnlineReshardingController.TopologyManager.init(
+        cluster_id,
+        current_shards,
+    );
     var controller = sharding.OnlineReshardingController.init(
         allocator,
         current_shards,
-        config,
+        online_config,
         &topology_manager,
     );
     defer controller.deinit();
@@ -1499,8 +1501,8 @@ fn run_online_resharding(
                 "online resharding: batch {d} delayed by rate limit",
                 .{batch_index + 1},
             );
-            if (config.batch_delay_ms > 0) {
-                std.time.sleep(@as(u64, config.batch_delay_ms) * std.time.ns_per_ms);
+            if (online_config.batch_delay_ms > 0) {
+                std.time.sleep(@as(u64, online_config.batch_delay_ms) * std.time.ns_per_ms);
             }
             continue;
         }
@@ -1518,8 +1520,8 @@ fn run_online_resharding(
             return;
         }
 
-        if (config.batch_delay_ms > 0) {
-            std.time.sleep(@as(u64, config.batch_delay_ms) * std.time.ns_per_ms);
+        if (online_config.batch_delay_ms > 0) {
+            std.time.sleep(@as(u64, online_config.batch_delay_ms) * std.time.ns_per_ms);
         }
     }
 
@@ -1537,7 +1539,6 @@ fn command_shard(
     time: Time,
     args: *const cli.Command.Shard,
 ) !void {
-    _ = gpa;
     _ = io;
     _ = time;
 
@@ -1563,23 +1564,42 @@ fn command_shard(
             );
         },
         .reshard => |reshard| {
+            const mode_label = @tagName(reshard.mode);
             if (reshard.dry_run) {
                 try stderr.print(
-                    "Dry run: Would reshard cluster {d} to {d} shards\n",
-                    .{ reshard.cluster, reshard.to },
+                    "Dry run: Would reshard cluster {d} to {d} shards (mode: {s})\n",
+                    .{ reshard.cluster, reshard.to, mode_label },
                 );
+                try stderr_buffer.flush();
+                return;
             }
-            else {
-                try stderr.print(
-                    "Resharding cluster {d} to {d} shards (mode: {s}):\n",
-                    .{
+
+            try stderr.print(
+                "Resharding cluster {d} to {d} shards (mode: {s}):\n",
+                .{ reshard.cluster, reshard.to, mode_label },
+            );
+
+            switch (reshard.mode) {
+                .offline => {
+                    try stderr.print("  Enhancement: Offline resharding (Phase 8)\n", .{});
+                },
+                .online => {
+                    try stderr.print(
+                        "  Online resharding started (target shards: {d})\n",
+                        .{reshard.to},
+                    );
+                    try stderr_buffer.flush();
+
+                    try run_online_resharding(
+                        gpa,
                         reshard.cluster,
                         reshard.to,
-                        @tagName(reshard.mode),
-                    },
-                );
+                        sharding.OnlineReshardingConfig{},
+                    );
+
+                    try stderr.print("  Online resharding complete\n", .{});
+                },
             }
-            try stderr.print("  Enhancement: Online resharding (Phase 8)\n", .{});
         },
     }
     try stderr_buffer.flush();
