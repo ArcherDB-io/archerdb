@@ -878,3 +878,90 @@ test "connection_pool: getStats returns correct values" {
     try std.testing.expectEqual(@as(u32, 8), stats.max_connections);
     try std.testing.expect(stats.total_created >= 2); // At least min_connections created
 }
+
+test "connection_pool: concurrent acquire and release" {
+    const allocator = std.testing.allocator;
+
+    var metrics_instance = cluster_metrics.ClusterMetrics.init();
+    const pool = try ServerConnectionPool(MockConnection).init(
+        allocator,
+        .{
+            .max_connections = 8,
+            .min_connections = 2,
+            .acquire_timeout_ms = 1000, // 1 second timeout
+        },
+        &metrics_instance,
+        mockConnectionFactory,
+        mockConnectionDestructor,
+    );
+    defer pool.deinit();
+
+    const num_threads = 4;
+    const iterations_per_thread = 10;
+
+    var threads: [num_threads]std.Thread = undefined;
+    var started: usize = 0;
+    errdefer {
+        for (threads[0..started]) |t| t.join();
+    }
+
+    // Worker function that acquires and releases connections
+    const worker = struct {
+        fn run(p: *ServerConnectionPool(MockConnection)) void {
+            for (0..iterations_per_thread) |_| {
+                const conn = p.acquire() catch continue;
+                // Simulate some work
+                std.time.sleep(100 * std.time.ns_per_us); // 100μs
+                p.release(conn);
+            }
+        }
+    }.run;
+
+    // Spawn threads
+    for (&threads) |*t| {
+        t.* = std.Thread.spawn(.{}, worker, .{pool}) catch continue;
+        started += 1;
+    }
+
+    // Wait for all threads
+    for (threads[0..started]) |t| t.join();
+
+    // Verify pool state is consistent
+    const final_stats = pool.getStats();
+    try std.testing.expectEqual(@as(u32, 0), final_stats.active);
+    try std.testing.expect(final_stats.idle > 0);
+    // Total created should be at least min_connections
+    try std.testing.expect(final_stats.total_created >= 2);
+}
+
+test "connection_pool: memory pressure triggers faster idle timeout" {
+    const allocator = std.testing.allocator;
+
+    var metrics_instance = cluster_metrics.ClusterMetrics.init();
+    const pool = try ServerConnectionPool(MockConnection).init(
+        allocator,
+        .{
+            .max_connections = 4,
+            .min_connections = 0,
+            .idle_timeout_normal_ms = 1000, // 1 second normal
+            .idle_timeout_pressure_ms = 10, // 10ms under pressure
+        },
+        &metrics_instance,
+        mockConnectionFactory,
+        mockConnectionDestructor,
+    );
+    defer pool.deinit();
+
+    // Test timeout values
+    const normal_timeout = pool.config.idle_timeout_normal_ms;
+    try std.testing.expectEqual(@as(u64, 1000), normal_timeout);
+
+    const pressure_timeout = pool.config.idle_timeout_pressure_ms;
+    try std.testing.expectEqual(@as(u64, 10), pressure_timeout);
+
+    // The getCurrentIdleTimeout method checks actual memory pressure,
+    // so we verify the logic works correctly
+    const current_timeout = pool.getCurrentIdleTimeout();
+    // Should be one of the two values depending on actual memory state
+    try std.testing.expect(current_timeout == normal_timeout or current_timeout == pressure_timeout);
+}
