@@ -660,3 +660,286 @@ test "BatchQueryMetrics: toPrometheus produces valid output" {
     try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_batch_query_size_total") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_batch_query_success_total") != null);
 }
+
+// ============================================================================
+// BatchQueryExecutor Tests
+// ============================================================================
+
+/// Mock state machine for testing BatchQueryExecutor.
+const MockStateMachine = struct {
+    batch_query_metrics: BatchQueryMetrics = BatchQueryMetrics{},
+    query_results: std.ArrayList(u8) = undefined,
+    should_fail_uuid: bool = false,
+
+    pub fn init() MockStateMachine {
+        return .{
+            .query_results = std.ArrayList(u8).init(std.testing.allocator),
+        };
+    }
+
+    pub fn deinit(self: *MockStateMachine) void {
+        self.query_results.deinit();
+    }
+
+    /// Mock UUID query - returns 1 byte per query for testing
+    pub fn execute_query_uuid(
+        self: *MockStateMachine,
+        filter: []const u8,
+        output: []u8,
+    ) usize {
+        _ = filter;
+        if (self.should_fail_uuid) return 0;
+        if (output.len < 1) return 0;
+        output[0] = 0xAB; // Marker byte
+        return 1;
+    }
+
+    /// Mock radius query - returns 2 bytes for testing
+    pub fn execute_query_radius(
+        self: *MockStateMachine,
+        filter: []const u8,
+        output: []u8,
+    ) usize {
+        _ = self;
+        _ = filter;
+        if (output.len < 2) return 0;
+        output[0] = 0xCD;
+        output[1] = 0xEF;
+        return 2;
+    }
+
+    /// Mock polygon query - returns 3 bytes for testing
+    pub fn execute_query_polygon(
+        self: *MockStateMachine,
+        filter: []const u8,
+        output: []u8,
+    ) usize {
+        _ = self;
+        _ = filter;
+        if (output.len < 3) return 0;
+        output[0] = 0x11;
+        output[1] = 0x22;
+        output[2] = 0x33;
+        return 3;
+    }
+
+    /// Mock latest query - returns 4 bytes for testing
+    pub fn execute_query_latest(
+        self: *MockStateMachine,
+        filter: []const u8,
+        output: []u8,
+    ) usize {
+        _ = self;
+        _ = filter;
+        if (output.len < 4) return 0;
+        output[0] = 0x44;
+        output[1] = 0x55;
+        output[2] = 0x66;
+        output[3] = 0x77;
+        return 4;
+    }
+};
+
+test "batch_query: empty batch returns valid empty response" {
+    var state = MockStateMachine.init();
+    defer state.deinit();
+
+    // Empty batch request
+    var input: [8]u8 = undefined;
+    const request = BatchQueryRequest{ .query_count = 0 };
+    @memcpy(input[0..8], mem.asBytes(&request));
+
+    var output: [1024]u8 = undefined;
+    const Executor = BatchQueryExecutor(MockStateMachine);
+    const result_size = Executor.executeBatch(&state, &input, &output);
+
+    // Should return just the response header
+    try std.testing.expectEqual(@as(usize, @sizeOf(BatchQueryResponse)), result_size);
+
+    // Verify response header
+    const response = mem.bytesToValue(BatchQueryResponse, output[0..@sizeOf(BatchQueryResponse)]);
+    try std.testing.expectEqual(@as(u32, 0), response.total_count);
+    try std.testing.expectEqual(@as(u32, 0), response.success_count);
+    try std.testing.expectEqual(@as(u32, 0), response.error_count);
+    try std.testing.expectEqual(@as(u8, 0), response.has_more);
+}
+
+test "batch_query: verify filter sizes" {
+    // Verify expected filter sizes
+    try std.testing.expectEqual(@as(usize, 32), @sizeOf(QueryUuidFilter));
+    try std.testing.expectEqual(@as(usize, 128), @sizeOf(QueryRadiusFilter));
+    try std.testing.expectEqual(@as(usize, 128), @sizeOf(QueryPolygonFilter));
+    try std.testing.expectEqual(@as(usize, 128), @sizeOf(QueryLatestFilter));
+
+    // Verify filterSizeForType matches
+    try std.testing.expectEqual(@as(usize, 32), filterSizeForType(.uuid));
+    try std.testing.expectEqual(@as(usize, 128), filterSizeForType(.radius));
+    try std.testing.expectEqual(@as(usize, 128), filterSizeForType(.latest));
+}
+
+test "batch_query: query_id correlation preserved" {
+    var state = MockStateMachine.init();
+    defer state.deinit();
+
+    // Use latest query type which has fixed 128-byte filter (like radius)
+    const header_size = @sizeOf(BatchQueryRequest);
+    const entry_size = @sizeOf(BatchQueryEntry);
+    const latest_filter_size = @sizeOf(QueryLatestFilter);
+    const total_size = header_size + 2 * (entry_size + latest_filter_size);
+
+    // Build request with 2 queries with specific query_ids
+    var input: [total_size]u8 = @splat(0);
+
+    // Request header
+    var request = BatchQueryRequest{ .query_count = 2 };
+    @memcpy(input[0..header_size], mem.asBytes(&request));
+
+    // Entry 1: query_id = 100, latest query
+    var offset: usize = header_size;
+    var entry1 = BatchQueryEntry{ .query_type = .latest, .query_id = 100 };
+    @memcpy(input[offset..][0..entry_size], mem.asBytes(&entry1));
+    offset += entry_size + latest_filter_size;
+
+    // Entry 2: query_id = 200, latest query
+    var entry2 = BatchQueryEntry{ .query_type = .latest, .query_id = 200 };
+    @memcpy(input[offset..][0..entry_size], mem.asBytes(&entry2));
+
+    var output: [4096]u8 = @splat(0);
+    const Executor = BatchQueryExecutor(MockStateMachine);
+    const result_size = Executor.executeBatch(&state, &input, &output);
+
+    // Should have processed both queries
+    try std.testing.expect(result_size > @sizeOf(BatchQueryResponse));
+
+    // Verify response header
+    const response = mem.bytesToValue(BatchQueryResponse, output[0..@sizeOf(BatchQueryResponse)]);
+    try std.testing.expectEqual(@as(u32, 2), response.total_count);
+    try std.testing.expectEqual(@as(u32, 2), response.success_count);
+
+    // Verify query_ids are preserved
+    const result1 = mem.bytesToValue(BatchQueryResultEntry, output[@sizeOf(BatchQueryResponse)..][0..@sizeOf(BatchQueryResultEntry)]);
+    const result2 = mem.bytesToValue(BatchQueryResultEntry, output[@sizeOf(BatchQueryResponse) + @sizeOf(BatchQueryResultEntry) ..][0..@sizeOf(BatchQueryResultEntry)]);
+    try std.testing.expectEqual(@as(u32, 100), result1.query_id);
+    try std.testing.expectEqual(@as(u32, 200), result2.query_id);
+}
+
+test "batch_query: mixed query types execute correctly" {
+    var state = MockStateMachine.init();
+    defer state.deinit();
+
+    // Use latest (128 bytes) and radius (128 bytes) which both have fixed sizes
+    const header_size = @sizeOf(BatchQueryRequest);
+    const entry_size = @sizeOf(BatchQueryEntry);
+    const latest_filter_size = @sizeOf(QueryLatestFilter);
+    const radius_filter_size = @sizeOf(QueryRadiusFilter);
+    const total_size = header_size + entry_size + latest_filter_size + entry_size + radius_filter_size;
+
+    // Build request with 2 different query types
+    var input: [total_size]u8 = @splat(0);
+
+    // Request header
+    var request = BatchQueryRequest{ .query_count = 2 };
+    @memcpy(input[0..header_size], mem.asBytes(&request));
+
+    var offset: usize = header_size;
+
+    // Entry 1: Latest query
+    var entry1 = BatchQueryEntry{ .query_type = .latest, .query_id = 10 };
+    @memcpy(input[offset..][0..entry_size], mem.asBytes(&entry1));
+    offset += entry_size + latest_filter_size;
+
+    // Entry 2: Radius query
+    var entry2 = BatchQueryEntry{ .query_type = .radius, .query_id = 20 };
+    @memcpy(input[offset..][0..entry_size], mem.asBytes(&entry2));
+
+    var output: [4096]u8 = @splat(0);
+    const Executor = BatchQueryExecutor(MockStateMachine);
+    _ = Executor.executeBatch(&state, &input, &output);
+
+    // Verify response
+    const response = mem.bytesToValue(BatchQueryResponse, output[0..@sizeOf(BatchQueryResponse)]);
+    try std.testing.expectEqual(@as(u32, 2), response.total_count);
+    try std.testing.expectEqual(@as(u32, 2), response.success_count);
+
+    // Verify result entries
+    const result1 = mem.bytesToValue(BatchQueryResultEntry, output[@sizeOf(BatchQueryResponse)..][0..@sizeOf(BatchQueryResultEntry)]);
+    const result2 = mem.bytesToValue(BatchQueryResultEntry, output[@sizeOf(BatchQueryResponse) + @sizeOf(BatchQueryResultEntry) ..][0..@sizeOf(BatchQueryResultEntry)]);
+
+    // Latest returns 4 bytes, radius returns 2 bytes (from mock)
+    try std.testing.expectEqual(@as(u32, 4), result1.result_length);
+    try std.testing.expectEqual(@as(u32, 2), result2.result_length);
+
+    // Verify result offsets are sequential
+    try std.testing.expectEqual(@as(u32, 0), result1.result_offset);
+    try std.testing.expectEqual(@as(u32, 4), result2.result_offset);
+}
+
+test "batch_query: input too small for header" {
+    var state = MockStateMachine.init();
+    defer state.deinit();
+
+    var input: [4]u8 = undefined; // Too small
+    @memset(&input, 0);
+
+    var output: [1024]u8 = undefined;
+    const Executor = BatchQueryExecutor(MockStateMachine);
+    const result_size = Executor.executeBatch(&state, &input, &output);
+
+    // Should return empty response
+    try std.testing.expectEqual(@as(usize, @sizeOf(BatchQueryResponse)), result_size);
+
+    const response = mem.bytesToValue(BatchQueryResponse, output[0..@sizeOf(BatchQueryResponse)]);
+    try std.testing.expectEqual(@as(u32, 0), response.total_count);
+}
+
+test "batch_query: query count exceeds max" {
+    var state = MockStateMachine.init();
+    defer state.deinit();
+
+    var input: [8]u8 = undefined;
+    const request = BatchQueryRequest{ .query_count = BatchQueryRequest.max_queries_per_batch + 1 };
+    @memcpy(input[0..8], mem.asBytes(&request));
+
+    var output: [1024]u8 = undefined;
+    const Executor = BatchQueryExecutor(MockStateMachine);
+    const result_size = Executor.executeBatch(&state, &input, &output);
+
+    // Should return error response (all queries failed)
+    try std.testing.expectEqual(@as(usize, @sizeOf(BatchQueryResponse)), result_size);
+
+    const response = mem.bytesToValue(BatchQueryResponse, output[0..@sizeOf(BatchQueryResponse)]);
+    try std.testing.expectEqual(BatchQueryRequest.max_queries_per_batch + 1, response.total_count);
+    try std.testing.expectEqual(@as(u32, 0), response.success_count);
+    try std.testing.expectEqual(BatchQueryRequest.max_queries_per_batch + 1, response.error_count);
+}
+
+test "batch_query: metrics recorded correctly" {
+    var state = MockStateMachine.init();
+    defer state.deinit();
+
+    // Initial metrics should be zero
+    try std.testing.expectEqual(@as(u64, 0), state.batch_query_metrics.batch_queries_total);
+
+    // Use latest filter (128 bytes) for simplicity
+    const header_size = @sizeOf(BatchQueryRequest);
+    const entry_size = @sizeOf(BatchQueryEntry);
+    const latest_filter_size = @sizeOf(QueryLatestFilter);
+    const total_size = header_size + entry_size + latest_filter_size;
+
+    // Build simple request
+    var input: [total_size]u8 = @splat(0);
+    var request = BatchQueryRequest{ .query_count = 1 };
+    @memcpy(input[0..header_size], mem.asBytes(&request));
+    var entry = BatchQueryEntry{ .query_type = .latest, .query_id = 1 };
+    @memcpy(input[header_size..][0..entry_size], mem.asBytes(&entry));
+
+    var output: [4096]u8 = @splat(0);
+    const Executor = BatchQueryExecutor(MockStateMachine);
+    _ = Executor.executeBatch(&state, &input, &output);
+
+    // Metrics should be updated
+    try std.testing.expectEqual(@as(u64, 1), state.batch_query_metrics.batch_queries_total);
+    try std.testing.expectEqual(@as(u64, 1), state.batch_query_metrics.batch_query_size_total);
+    try std.testing.expectEqual(@as(u64, 1), state.batch_query_metrics.batch_query_success_total);
+    try std.testing.expectEqual(@as(u64, 0), state.batch_query_metrics.batch_query_error_total);
+}
