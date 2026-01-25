@@ -187,6 +187,14 @@ pub var archerdb_shed_retry_after_ms = ShedRetryHistogram.init(
     .{ 1000, 2000, 5000, 10000, 15000, 20000, 30000 },
 );
 
+/// Latest Retry-After value (milliseconds) sent to a client.
+/// Used by HTTP overload responses to provide the most recent retry hint.
+pub var archerdb_shed_retry_after_last_ms = Gauge.init(
+    "archerdb_shed_retry_after_last_ms",
+    "Latest Retry-After value sent to clients (milliseconds)",
+    null,
+);
+
 // ============================================================================
 // Read Replica Routing Metrics
 // ============================================================================
@@ -250,6 +258,7 @@ pub fn updateShedMetrics(
 /// Record a shed decision (request rejected).
 pub fn recordShedRequest(retry_after_ms: u64) void {
     archerdb_shed_requests_total.inc();
+    archerdb_shed_retry_after_last_ms.set(@intCast(retry_after_ms));
     // Convert to seconds for histogram observation
     const retry_sec: f64 = @as(f64, @floatFromInt(retry_after_ms)) / 1000.0;
     archerdb_shed_retry_after_ms.observe(retry_sec);
@@ -549,6 +558,7 @@ pub const ClusterMetrics = struct {
         try archerdb_shed_memory_pressure_pct.format(writer);
         try archerdb_shed_threshold.format(writer);
         try archerdb_shed_retry_after_ms.format(writer);
+        try archerdb_shed_retry_after_last_ms.format(writer);
         try writer.writeAll("\n");
 
         // Read replica routing metrics
@@ -847,6 +857,11 @@ test "recordShedRequest: increments counter and records histogram" {
         null,
         .{ 1000, 2000, 5000, 10000, 15000, 20000, 30000 },
     );
+    archerdb_shed_retry_after_last_ms = Gauge.init(
+        "archerdb_shed_retry_after_last_ms",
+        "Latest Retry-After value sent to clients (milliseconds)",
+        null,
+    );
 
     recordShedRequest(1500);
     recordShedRequest(5000);
@@ -854,6 +869,7 @@ test "recordShedRequest: increments counter and records histogram" {
 
     try std.testing.expectEqual(@as(u64, 3), archerdb_shed_requests_total.get());
     try std.testing.expectEqual(@as(u64, 3), archerdb_shed_retry_after_ms.getCount());
+    try std.testing.expectEqual(@as(i64, 25000), archerdb_shed_retry_after_last_ms.get());
 }
 
 test "ClusterMetrics: format includes shed metrics" {
@@ -868,8 +884,14 @@ test "ClusterMetrics: format includes shed metrics" {
         "Total requests shed due to overload",
         null,
     );
+    archerdb_shed_retry_after_last_ms = Gauge.init(
+        "archerdb_shed_retry_after_last_ms",
+        "Latest Retry-After value sent to clients (milliseconds)",
+        null,
+    );
 
     updateShedMetrics(0.5, 1000, 100, 50, 0.8);
+    recordShedRequest(2500);
 
     var cm = ClusterMetrics.init();
     var buffer: [16384]u8 = undefined;
@@ -886,4 +908,6 @@ test "ClusterMetrics: format includes shed metrics" {
     try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_shed_memory_pressure_pct") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_shed_threshold") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_shed_retry_after_ms") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_shed_retry_after_last_ms") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_shed_retry_after_last_ms 2500") != null);
 }
