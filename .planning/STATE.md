@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-24)
 ## Current Position
 
 Phase: 15 of 16 (Cluster & Consensus)
-Plan: 4 of 6 in current phase (15-01, 15-02, 15-03, 15-04 complete)
+Plan: 5 of 6 in current phase (15-01, 15-02, 15-03, 15-04, 15-05 complete)
 Status: In progress
-Last activity: 2026-01-25 - Completed 15-03-PLAN.md (Load Shedding)
+Last activity: 2026-01-25 - Completed 15-05-PLAN.md (Read Replica Routing)
 
-Progress: [████████░░] 83% (v2.0: 31/35 requirements)
+Progress: [█████████░] 99% (plans: 71/72)
 
 ## v1.0 Summary
 
@@ -160,11 +160,11 @@ None.
 ## Session Continuity
 
 Last session: 2026-01-25
-Stopped at: Completed 15-03-PLAN.md (Load Shedding)
+Stopped at: Completed 15-05-PLAN.md
 Resume file: None
 
 ---
-*Updated: 2026-01-25 — Completed 15-03 Load Shedding: composite signal overload detection with hard cutoff and Prometheus metrics*
+*Updated: 2026-01-25 — Completed 15-05 Read Replica Routing: automatic replica routing with metrics and tests*
 
 Phase 14 decisions (continued):
 - 4096 bytes per cache entry (power of 2 for SetAssociativeCacheType) (14-01)
@@ -205,3 +205,5 @@ Phase 15 decisions:
 - Threshold guardrails: min 0.5, max 0.95 to prevent disabling protection (15-03)
 - Retry-After exponential: base * (1 + overage * 10), capped at max_retry_ms (15-03)
 - Shed score scaled 0-100 for Prometheus integer gauges (15-03)
+- Replica health fields stored as atomics for thread-safe routing updates (15-05)
+- Per-replica routing metrics tracked within constants.replicas_max slots (15-05)
