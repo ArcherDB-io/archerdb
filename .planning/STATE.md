@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-01-24)
 
 **Core value:** Correctness, performance, and completeness with no compromises
-**Current focus:** v2.0 Performance & Scale - Phase 16 planning
+**Current focus:** v2.0 Performance & Scale - Phase 17 execution
 
 ## Current Position
 
-Phase: 16 of 16 (Sharding & Scale-Out)
-Plan: 7 of 7 in current phase
-Status: Phase complete
-Last activity: 2026-01-26 - Completed 16-07-PLAN.md
+Phase: 17 of 18 (Storage Validation & Adaptive Wiring)
+Plan: 1 of 3 in current phase
+Status: In progress
+Last activity: 2026-01-26 - Completed 17-01-PLAN.md
 
-Progress: [██████████] 100% (plans: 84/84)
+Progress: [█████████░] 98% (plans: 85/87)
 
 ## v1.0 Summary
 
@@ -29,12 +29,12 @@ See `.planning/milestones/v1.0-REQUIREMENTS.md` for archived requirements.
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 35 (v2.0)
+- Total plans completed: 36 (v2.0)
 - Average duration: ~6min
-- Total execution time: ~223min
+- Total execution time: ~224min
 
 **Recent Trend:**
-- Last 5 plans: 16-03, 16-04, 16-05, 16-06, 16-07
+- Last 5 plans: 16-04, 16-05, 16-06, 16-07, 17-01
 - Trend: ~6min per plan
 
 *Updated after each plan completion*
@@ -91,9 +91,9 @@ Phase 15 decisions:
 
 ## Session Continuity
 
-Last session: 2026-01-26 01:29 UTC
-Stopped at: Completed 16-07-PLAN.md
+Last session: 2026-01-26 05:45 UTC
+Stopped at: Completed 17-01-PLAN.md
 Resume file: None
 
 ---
-*Updated: 2026-01-26 — Completed 16-07 auto-reshard trigger wiring*
+*Updated: 2026-01-26 — Completed 17-01 adaptive compaction runtime wiring*
