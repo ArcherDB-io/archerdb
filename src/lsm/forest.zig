@@ -375,7 +375,7 @@ pub fn ForestType(comptime _Storage: type, comptime groove_cfg: anytype) type {
             try forest.scan_buffer_pool.init(allocator);
             errdefer forest.scan_buffer_pool.deinit(allocator);
 
-            forest.adaptive_state.current_l0_trigger = constants.lsm_growth_factor;
+            try forest.adaptive_load_from_constants();
             forest.adaptive_apply_l0_trigger_override();
             forest.adaptive_apply_compaction_thread_limit();
         }
@@ -411,11 +411,6 @@ pub fn ForestType(comptime _Storage: type, comptime groove_cfg: anytype) type {
             forest.scan_buffer_pool.reset();
             forest.compaction_schedule.reset();
 
-            // Preserve adaptive config and overrides during reset.
-            const adaptive_config_preserved = forest.adaptive_config;
-            const override_l0_preserved = forest.adaptive_override_l0_trigger;
-            const override_threads_preserved = forest.adaptive_override_compaction_threads;
-
             forest.* = .{
                 // Don't reset the grid – replica is responsible for grid cancellation.
                 .grid = forest.grid,
@@ -427,12 +422,11 @@ pub fn ForestType(comptime _Storage: type, comptime groove_cfg: anytype) type {
 
                 .scan_buffer_pool = forest.scan_buffer_pool,
                 .radix_buffer = forest.radix_buffer,
-
-                // Restore adaptive config but reset state to defaults.
-                .adaptive_config = adaptive_config_preserved,
-                .adaptive_override_l0_trigger = override_l0_preserved,
-                .adaptive_override_compaction_threads = override_threads_preserved,
             };
+
+            forest.adaptive_load_from_constants() catch @panic("Forest.reset: invalid adaptive config");
+            forest.adaptive_apply_l0_trigger_override();
+            forest.adaptive_apply_compaction_thread_limit();
         }
 
         pub fn open(forest: *Forest, callback: Callback) void {
@@ -935,6 +929,40 @@ pub fn ForestType(comptime _Storage: type, comptime groove_cfg: anytype) type {
         // =========================================================================
         // Adaptive Compaction Methods
         // =========================================================================
+
+        fn adaptive_load_from_constants(forest: *Forest) !void {
+            forest.adaptive_config = AdaptiveConfig{
+                .enabled = constants.lsm_adaptive_compaction_enabled,
+                .write_throughput_change_threshold =
+                    constants.lsm_adaptive_write_change_threshold,
+                .space_amp_threshold = constants.lsm_adaptive_space_amp_threshold,
+            };
+            try forest.adaptive_config.validate();
+
+            forest.adaptive_override_l0_trigger = constants.lsm_adaptive_override_l0_trigger;
+            forest.adaptive_override_compaction_threads =
+                constants.lsm_adaptive_override_compaction_threads;
+
+            if (forest.adaptive_override_l0_trigger) |override| {
+                assert(override >= forest.adaptive_config.min_l0_trigger);
+                assert(override <= forest.adaptive_config.max_l0_trigger);
+            }
+            if (forest.adaptive_override_compaction_threads) |override| {
+                assert(override >= forest.adaptive_config.min_compaction_threads);
+                assert(override <= forest.adaptive_config.max_compaction_threads);
+                assert(override <= constants.lsm_compaction_thread_slots_max);
+            }
+
+            forest.adaptive_state = AdaptiveState.init();
+            forest.adaptive_state.current_l0_trigger = constants.lsm_growth_factor;
+            forest.adaptive_state.current_compaction_threads =
+                constants.lsm_compaction_threads_default;
+
+            forest.adaptive_last_sample_ns = 0;
+            forest.adaptive_write_count = 0;
+            forest.adaptive_read_count = 0;
+            forest.adaptive_scan_count = 0;
+        }
 
         fn adaptive_apply_l0_trigger_override(forest: *Forest) void {
             const l0_trigger = forest.adaptive_get_l0_trigger();

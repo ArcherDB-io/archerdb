@@ -752,6 +752,18 @@ comptime {
     assert(lsm_tiered_max_sorted_runs >= 2);
 }
 
+// =========================================================================
+// Adaptive Compaction Settings (process config)
+// =========================================================================
+
+pub const lsm_adaptive_compaction_enabled = config.process.adaptive_compaction_enabled;
+pub const lsm_adaptive_write_change_threshold =
+    @as(f64, @floatFromInt(config.process.adaptive_write_change_threshold_permille)) / 1000.0;
+pub const lsm_adaptive_space_amp_threshold =
+    @as(f64, @floatFromInt(config.process.adaptive_space_amp_threshold_percent)) / 100.0;
+pub const lsm_adaptive_override_l0_trigger = config.process.override_l0_trigger;
+pub const lsm_adaptive_override_compaction_threads = config.process.override_compaction_threads;
+
 /// The number of milliseconds between each replica tick, the basic unit of time in ArcherDB.
 /// Used to regulate heartbeats, retries and timeouts, all specified as multiples of a tick.
 pub const tick_ms = config.process.tick_ms;
