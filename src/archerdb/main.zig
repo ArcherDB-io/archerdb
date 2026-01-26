@@ -1114,6 +1114,27 @@ fn command_start(
             index_stats.memory_bytes(),
         );
 
+        const shard_count_val = archerdb_metrics.Registry.shard_count.load(.monotonic);
+        var hot_shard_id: i64 = -1;
+        var hot_shard_score: f64 = 0.0;
+        const rebalance_decision = metrics_server.computeRebalanceDecision(
+            shard_count_val,
+            resharding_active,
+            &hot_shard_id,
+            &hot_shard_score,
+        );
+        if (!resharding_active and rebalance_decision.rebalance_needed == 1 and
+            rebalance_decision.target_shards > 0)
+        {
+            if (metrics_server.queueReshardingRequest(rebalance_decision.target_shards)) {
+                metrics_server.recordRebalanceTrigger();
+                log.info(
+                    "auto-reshard trigger: target_shards={d}",
+                    .{rebalance_decision.target_shards},
+                );
+            }
+        }
+
         if (!resharding_active) {
             if (metrics_server.takeReshardingRequest()) |target_shards| {
                 const batch_size: u64 = @max(@as(u64, online_config.batch_size), 1);
