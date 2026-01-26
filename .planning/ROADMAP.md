@@ -144,7 +144,7 @@ Plans:
   3. Distributed tracing shows full request path across all shards via OpenTelemetry
   4. Online resharding adds/removes shards without application downtime [BREAKING]
   5. Hot shard detection identifies imbalanced shards and triggers rebalancing alerts
-**Plans**: 6 plans in 2 waves
+**Plans**: 7 plans in 2 waves
 
 Plans:
 - [x] 16-01-PLAN.md — Shard rebalancing metrics + hot shard alerts
@@ -153,6 +153,7 @@ Plans:
 - [x] 16-04-PLAN.md — OTel span links + coordinator tracing
 - [x] 16-05-PLAN.md — Online resharding runtime wiring
 - [x] 16-06-PLAN.md — Coordinator fan-out execution + OTLP export
+- [x] 16-07-PLAN.md — [GAP CLOSURE] Auto-reshard trigger from hot shard detection
 
 ## Progress
 
@@ -166,7 +167,7 @@ Phases execute in numeric order: 11 -> 11.x -> 12 -> 12.x -> ... -> 16
 | 13. Memory & RAM Index | 5/5 | ✓ Complete | 2026-01-24 |
 | 14. Query Performance | 6/6 | ✓ Complete | 2026-01-25 |
 | 15. Cluster & Consensus | 11/11 | ✓ Complete | 2026-01-25 |
-| 16. Sharding & Scale-Out | 6/6 | ✓ Complete | 2026-01-25 |
+| 16. Sharding & Scale-Out | 7/7 | ✓ Complete | 2026-01-26 |
 
 ## Requirement Coverage
 
@@ -183,4 +184,4 @@ Phases execute in numeric order: 11 -> 11.x -> 12 -> 12.x -> ... -> 16
 
 ---
 *Roadmap created: 2026-01-24*
-*Last updated: 2026-01-25 — Phase 16 complete (6/6 plans complete)*
+*Last updated: 2026-01-26 — Phase 16 complete (7/7 plans complete)*
