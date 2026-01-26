@@ -185,12 +185,11 @@ Plans:
   1. Storage compaction metrics update at runtime and appear in Prometheus output
   2. Query performance metrics export via /metrics and populate dashboards
   3. RAM index gauges update at runtime and populate dashboards
-**Plans**: 3 plans in 2 waves
+**Plans**: 2 plans in 2 waves
 
 Plans:
 - [ ] 18-01-PLAN.md — Wire query metrics (QueryLatencyBreakdown, SpatialIndexStats) into Registry.format()
-- [ ] 18-02-PLAN.md — Add scrape-time update hooks for storage and RAM index metrics
-- [ ] 18-03-PLAN.md — Integration tests verifying E2E metrics export
+- [ ] 18-02-PLAN.md — Integration tests verifying E2E metrics export
 
 ## Progress
 
@@ -206,7 +205,7 @@ Phases execute in numeric order: 11 -> 11.x -> 12 -> 12.x -> ... -> 16
 | 15. Cluster & Consensus | 11/11 | ✓ Complete | 2026-01-25 |
 | 16. Sharding & Scale-Out | 7/7 | ✓ Complete | 2026-01-26 |
 | 17. Storage Validation & Adaptive Wiring | 6/6 | ✓ Complete | 2026-01-26 |
-| 18. Metrics Pipeline Wiring | 0/3 | ☐ Not Started | - |
+| 18. Metrics Pipeline Wiring | 0/2 | ☐ Not Started | - |
 
 ## Requirement Coverage
 
