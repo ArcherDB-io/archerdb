@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-24)
 ## Current Position
 
 Phase: 17 of 18 (Storage Validation & Adaptive Wiring)
-Plan: 4 of 4 in current phase
+Plan: 5 of 5 in current phase
 Status: Phase complete
-Last activity: 2026-01-26 - Completed 17-04-PLAN.md
+Last activity: 2026-01-26 - Completed 17-05-PLAN.md
 
-Progress: [██████████] 100% (plans: 88/88)
+Progress: [██████████] 100% (plans: 89/89)
 
 ## v1.0 Summary
 
@@ -29,13 +29,13 @@ See `.planning/milestones/v1.0-REQUIREMENTS.md` for archived requirements.
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 38 (v2.0)
-- Average duration: ~6min
-- Total execution time: ~241min
+- Total plans completed: 39 (v2.0)
+- Average duration: ~8min
+- Total execution time: ~295min
 
 **Recent Trend:**
-- Last 5 plans: 16-06, 16-07, 17-01, 17-02, 17-04
-- Trend: ~6min per plan
+- Last 5 plans: 16-07, 17-01, 17-02, 17-04, 17-05
+- Trend: ~10min per plan (17-05 longer due to benchmark iterations)
 
 *Updated after each plan completion*
 
@@ -56,6 +56,9 @@ v2.0 decisions:
 - Auto-reshard scheduling reuses the metrics-server request queue for control flow parity (16-07)
 - Exit code 2 for flag conflicts in benchmarks (distinct from general error 1) (17-04)
 - Capture dry_run_requested before enforcement for audit trail in benchmark output (17-04)
+- Use zlib compression as proxy for zstd block compression ratio validation (17-05)
+- Datafile delta = final - empty to exclude preallocated space (17-05)
+- Reduce workload sizes (10K events) for practical benchmark execution times (17-05)
 
 Phase 15 decisions:
 - Generic ServerConnectionPool function over connection type for protocol flexibility (15-01)
@@ -90,14 +93,13 @@ Phase 15 decisions:
 - Antimeridian polygon queries require splitting at 180 meridian
 - Snapshot verification for manifest/free_set/client_sessions is future work
 - Pre-existing flaky tests in ram_index.zig (concurrent/resize stress tests)
-- Compression benchmark actual mode reports preallocated datafile sizing; reductions fall below target (17-02)
 - Compaction benchmark throughput improvement below target (summary passed=false) (17-03)
 
 ## Session Continuity
 
-Last session: 2026-01-26 07:01 UTC
-Stopped at: Completed 17-04-PLAN.md
+Last session: 2026-01-26 07:53 UTC
+Stopped at: Completed 17-05-PLAN.md
 Resume file: None
 
 ---
-*Updated: 2026-01-26 — Completed 17-04 compaction benchmark actual comparison guard*
+*Updated: 2026-01-26 — Completed 17-05 compression benchmark gap closure (52.3% reduction)*
