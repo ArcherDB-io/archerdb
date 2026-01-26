@@ -649,6 +649,19 @@ pub const lsm_compaction_queue_write_max = 16;
 pub const lsm_compaction_iops_read_max = lsm_compaction_queue_read_max + 2; // + two index blocks.
 pub const lsm_compaction_iops_write_max = lsm_compaction_queue_write_max + 1; // + one index block.
 
+/// Maximum number of compaction CPU slots available to the pool.
+/// Adaptive compaction may throttle below this limit at runtime.
+pub const lsm_compaction_thread_slots_max: u32 = 4;
+
+/// Static default compaction thread limit before adaptive tuning.
+pub const lsm_compaction_threads_default: u32 = 1;
+
+comptime {
+    assert(lsm_compaction_thread_slots_max > 0);
+    assert(lsm_compaction_threads_default > 0);
+    assert(lsm_compaction_threads_default <= lsm_compaction_thread_slots_max);
+}
+
 pub const lsm_snapshots_max = config.cluster.lsm_snapshots_max;
 
 /// The maximum number of blocks that can possibly be referenced by any table index block.

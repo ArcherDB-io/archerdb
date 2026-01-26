@@ -92,7 +92,8 @@ pub fn ResourcePoolType(comptime Grid: type) type {
     return struct {
         reads: IOPSType(BlockRead, constants.lsm_compaction_iops_read_max) = .{},
         writes: IOPSType(BlockWrite, constants.lsm_compaction_iops_write_max) = .{},
-        cpus: IOPSType(CPU, 1) = .{},
+        cpus: IOPSType(CPU, constants.lsm_compaction_thread_slots_max) = .{},
+        cpu_limit: u32 = constants.lsm_compaction_threads_default,
         blocks: StackType(Block),
         blocks_backing_storage: []Block,
         grid_reservation: ?Grid.Reservation = null,
@@ -213,6 +214,7 @@ pub fn ResourcePoolType(comptime Grid: type) type {
         pub fn reset(pool: *ResourcePool) void {
             const throttle_config = pool.throttle_config;
             const throttle_enabled = pool.throttle_enabled;
+            const cpu_limit = pool.cpu_limit;
             pool.* = .{
                 .blocks = StackType(Block).init(.{
                     .capacity = pool.blocks.capacity(),
@@ -221,6 +223,7 @@ pub fn ResourcePoolType(comptime Grid: type) type {
                 .blocks_backing_storage = pool.blocks_backing_storage,
                 .throttle_config = throttle_config,
                 .throttle_enabled = throttle_enabled,
+                .cpu_limit = cpu_limit,
             };
             for (pool.blocks_backing_storage) |*block| {
                 block.* = .{
@@ -247,6 +250,27 @@ pub fn ResourcePoolType(comptime Grid: type) type {
 
         pub fn blocks_free(pool: *ResourcePool) u32 {
             return pool.blocks.count();
+        }
+
+        pub fn set_cpu_limit(pool: *ResourcePool, limit: u32) void {
+            assert(limit > 0);
+            assert(limit <= pool.cpus.total());
+            pool.cpu_limit = limit;
+        }
+
+        pub fn cpu_available(pool: *const ResourcePool) u32 {
+            const executing = pool.cpus.executing();
+            if (executing >= pool.cpu_limit) return 0;
+            return pool.cpu_limit - executing;
+        }
+
+        pub fn cpu_acquire(pool: *ResourcePool) ?*CPU {
+            if (pool.cpus.executing() >= pool.cpu_limit) return null;
+            return pool.cpus.acquire();
+        }
+
+        pub fn cpu_release(pool: *ResourcePool, cpu: *CPU) void {
+            pool.cpus.release(cpu);
         }
 
         fn block_acquire(pool: *@This()) ?*Block {
@@ -1206,7 +1230,7 @@ pub fn CompactionType(
             const safety_counter =
                 compaction.pool.?.reads.available() +
                 compaction.pool.?.writes.available() +
-                compaction.pool.?.cpus.available() + 1;
+                compaction.pool.?.cpu_available() + 1;
             for (0..safety_counter) |_| {
                 if (!progressed) break;
                 progressed = false;
@@ -1388,9 +1412,10 @@ pub fn CompactionType(
                         (level_b_exhausted or level_b_ready) and
                         !compaction.table_builder.value_block_full())
                     {
-                        const cpu = compaction.pool.?.cpus.acquire().?;
-                        compaction.merge(cpu);
-                        progressed = true;
+                        if (compaction.pool.?.cpu_acquire()) |cpu| {
+                            compaction.merge(cpu);
+                            progressed = true;
+                        }
                     }
 
                     // Write value and index blocks. It is important for correctness that both the
@@ -1748,7 +1773,7 @@ pub fn CompactionType(
         fn merge_callback(next_tick: *Grid.NextTick) void {
             const cpu: *ResourcePool.CPU = @fieldParentPtr("next_tick", next_tick);
             const compaction: *Compaction = cpu.parent(Compaction);
-            compaction.pool.?.cpus.release(cpu);
+            compaction.pool.?.cpu_release(cpu);
             assert(compaction.table_builder.state == .index_and_value_block);
 
             compaction.grid.trace.start(.{ .compact_beat_merge = .{

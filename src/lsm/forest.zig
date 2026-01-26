@@ -377,6 +377,7 @@ pub fn ForestType(comptime _Storage: type, comptime groove_cfg: anytype) type {
 
             forest.adaptive_state.current_l0_trigger = constants.lsm_growth_factor;
             forest.adaptive_apply_l0_trigger_override();
+            forest.adaptive_apply_compaction_thread_limit();
         }
 
         pub fn deinit(forest: *Forest, allocator: mem.Allocator) void {
@@ -943,6 +944,12 @@ pub fn ForestType(comptime _Storage: type, comptime groove_cfg: anytype) type {
             }
         }
 
+        fn adaptive_apply_compaction_thread_limit(forest: *Forest) void {
+            forest.compaction_schedule.pool.set_cpu_limit(
+                forest.adaptive_get_compaction_threads(),
+            );
+        }
+
         /// Sample workload metrics and check for adaptation.
         ///
         /// Called on each compact() to periodically:
@@ -1025,6 +1032,7 @@ pub fn ForestType(comptime _Storage: type, comptime groove_cfg: anytype) type {
             }
 
             forest.adaptive_apply_l0_trigger_override();
+            forest.adaptive_apply_compaction_thread_limit();
         }
 
         /// Estimate current space amplification.
