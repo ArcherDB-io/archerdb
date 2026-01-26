@@ -76,9 +76,7 @@ def check_archerdb_available() -> Optional[str]:
         if path and os.path.exists(path):
             try:
                 result = subprocess.run(
-                    [path, "--help"],
-                    capture_output=True,
-                    timeout=5
+                    [path, "--help"], capture_output=True, timeout=5
                 )
                 if result.returncode == 0:
                     return path
@@ -90,6 +88,7 @@ def check_archerdb_available() -> Optional[str]:
 @dataclass
 class CompactionResult:
     """Results from a compaction benchmark run."""
+
     strategy: str
     duration_sec: float
     total_events: int
@@ -143,10 +142,7 @@ def percentile(data: List[float], p: float) -> float:
     return sorted_data[int(f)] * (c - k) + sorted_data[int(c)] * (k - f)
 
 
-def generate_write_workload(
-    event_count: int,
-    seed: int = 42
-) -> List[Dict[str, Any]]:
+def generate_write_workload(event_count: int, seed: int = 42) -> List[Dict[str, Any]]:
     """
     Generate a write-heavy workload of geospatial events.
 
@@ -178,10 +174,7 @@ def generate_write_workload(
 
 
 def estimate_write_amplification(
-    strategy: str,
-    duration_sec: float,
-    event_count: int,
-    event_size_bytes: int = 72
+    strategy: str, duration_sec: float, event_count: int, event_size_bytes: int = 72
 ) -> CompactionResult:
     """
     Estimate compaction metrics based on theoretical models.
@@ -228,11 +221,7 @@ def estimate_write_amplification(
 
 
 def run_archerdb_benchmark(
-    archerdb_path: str,
-    strategy: str,
-    duration_sec: int,
-    target_rate: int,
-    workdir: str
+    archerdb_path: str, strategy: str, duration_sec: int, target_rate: int, workdir: str
 ) -> CompactionResult:
     """
     Run ArcherDB benchmark with specified compaction strategy.
@@ -301,15 +290,15 @@ def run_archerdb_benchmark(
         p50 = 0.5  # Default
         p99 = 5.0  # Default
 
-        for line in output.split('\n'):
-            if 'p50' in line.lower():
+        for line in output.split("\n"):
+            if "p50" in line.lower():
                 try:
-                    p50 = float(line.split('=')[1].strip().split()[0])
+                    p50 = float(line.split("=")[1].strip().split()[0])
                 except (IndexError, ValueError):
                     pass
-            if 'p99' in line.lower():
+            if "p99" in line.lower():
                 try:
-                    p99 = float(line.split('=')[1].strip().split()[0])
+                    p99 = float(line.split("=")[1].strip().split()[0])
                 except (IndexError, ValueError):
                     pass
 
@@ -338,7 +327,7 @@ def run_compaction_benchmark(
     archerdb_path: Optional[str],
     duration_sec: int,
     target_rate: int,
-    dry_run: bool = False
+    dry_run: bool = False,
 ) -> Dict[str, CompactionResult]:
     """
     Run compaction benchmark for all strategies.
@@ -356,30 +345,26 @@ def run_compaction_benchmark(
     event_count = duration_sec * target_rate
 
     for strategy_name, config in COMPACTION_STRATEGIES.items():
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Strategy: {strategy_name}")
         print(f"Description: {config['description']}")
-        print(f"Target: {event_count:,} events over {duration_sec}s ({target_rate:,}/sec)")
-        print('='*60)
+        print(
+            f"Target: {event_count:,} events over {duration_sec}s ({target_rate:,}/sec)"
+        )
+        print("=" * 60)
 
         if dry_run or not archerdb_path:
             # Use estimation mode
             print("\n[Estimation Mode - using theoretical model]")
             result = estimate_write_amplification(
-                strategy_name,
-                float(duration_sec),
-                event_count
+                strategy_name, float(duration_sec), event_count
             )
         else:
             # Run actual benchmark
             with tempfile.TemporaryDirectory() as workdir:
                 print(f"\nRunning ArcherDB benchmark...")
                 result = run_archerdb_benchmark(
-                    archerdb_path,
-                    strategy_name,
-                    duration_sec,
-                    target_rate,
-                    workdir
+                    archerdb_path, strategy_name, duration_sec, target_rate, workdir
                 )
 
         print(f"\nResults:")
@@ -395,7 +380,9 @@ def run_compaction_benchmark(
     return results
 
 
-def print_comparison(results: Dict[str, CompactionResult]) -> Tuple[bool, Dict[str, float]]:
+def print_comparison(
+    results: Dict[str, CompactionResult],
+) -> Tuple[bool, Dict[str, float]]:
     """
     Print side-by-side comparison of compaction strategies.
 
@@ -410,8 +397,12 @@ def print_comparison(results: Dict[str, CompactionResult]) -> Tuple[bool, Dict[s
         return False, {}
 
     # Calculate improvements
-    wa_improvement = leveled.write_amplification / max(0.001, tiered.write_amplification)
-    throughput_improvement = tiered.throughput_ops_sec / max(0.001, leveled.throughput_ops_sec)
+    wa_improvement = leveled.write_amplification / max(
+        0.001, tiered.write_amplification
+    )
+    throughput_improvement = tiered.throughput_ops_sec / max(
+        0.001, leveled.throughput_ops_sec
+    )
     p99_improvement = leveled.p99_latency_ms / max(0.001, tiered.p99_latency_ms)
 
     improvements = {
@@ -420,28 +411,38 @@ def print_comparison(results: Dict[str, CompactionResult]) -> Tuple[bool, Dict[s
         "p99_latency": p99_improvement,
     }
 
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("COMPACTION STRATEGY COMPARISON")
-    print("="*70)
+    print("=" * 70)
 
     # Table header
     print(f"\n{'Metric':<30} {'Leveled':>15} {'Tiered':>15} {'Improvement':>15}")
-    print("-"*75)
+    print("-" * 75)
 
     # Write amplification (lower is better)
-    print(f"{'Write Amplification':<30} {leveled.write_amplification:>15.2f}x {tiered.write_amplification:>15.2f}x {wa_improvement:>14.2f}x")
+    print(
+        f"{'Write Amplification':<30} {leveled.write_amplification:>15.2f}x {tiered.write_amplification:>15.2f}x {wa_improvement:>14.2f}x"
+    )
 
     # Throughput (higher is better)
-    print(f"{'Throughput (ops/sec)':<30} {leveled.throughput_ops_sec:>15,.0f} {tiered.throughput_ops_sec:>15,.0f} {throughput_improvement:>14.2f}x")
+    print(
+        f"{'Throughput (ops/sec)':<30} {leveled.throughput_ops_sec:>15,.0f} {tiered.throughput_ops_sec:>15,.0f} {throughput_improvement:>14.2f}x"
+    )
 
     # Latencies (lower is better)
-    print(f"{'P50 Latency (ms)':<30} {leveled.p50_latency_ms:>15.3f} {tiered.p50_latency_ms:>15.3f}")
-    print(f"{'P99 Latency (ms)':<30} {leveled.p99_latency_ms:>15.3f} {tiered.p99_latency_ms:>15.3f} {p99_improvement:>14.2f}x")
+    print(
+        f"{'P50 Latency (ms)':<30} {leveled.p50_latency_ms:>15.3f} {tiered.p50_latency_ms:>15.3f}"
+    )
+    print(
+        f"{'P99 Latency (ms)':<30} {leveled.p99_latency_ms:>15.3f} {tiered.p99_latency_ms:>15.3f} {p99_improvement:>14.2f}x"
+    )
 
     # Physical bytes
-    print(f"{'Physical Bytes Written':<30} {leveled.bytes_written_physical:>15,} {tiered.bytes_written_physical:>15,}")
+    print(
+        f"{'Physical Bytes Written':<30} {leveled.bytes_written_physical:>15,} {tiered.bytes_written_physical:>15,}"
+    )
 
-    print("-"*75)
+    print("-" * 75)
 
     # Evaluate against targets
     print(f"\nTarget: {TARGET_WRITE_AMP_IMPROVEMENT:.1f}x write amp improvement")
@@ -449,15 +450,23 @@ def print_comparison(results: Dict[str, CompactionResult]) -> Tuple[bool, Dict[s
     passed = True
 
     if wa_improvement >= TARGET_WRITE_AMP_IMPROVEMENT:
-        print(f"[PASS] Write amplification improved {wa_improvement:.1f}x (target: {TARGET_WRITE_AMP_IMPROVEMENT}x)")
+        print(
+            f"[PASS] Write amplification improved {wa_improvement:.1f}x (target: {TARGET_WRITE_AMP_IMPROVEMENT}x)"
+        )
     else:
-        print(f"[NEEDS REVIEW] Write amplification improved {wa_improvement:.1f}x (target: {TARGET_WRITE_AMP_IMPROVEMENT}x)")
+        print(
+            f"[NEEDS REVIEW] Write amplification improved {wa_improvement:.1f}x (target: {TARGET_WRITE_AMP_IMPROVEMENT}x)"
+        )
         passed = False
 
     if throughput_improvement >= TARGET_THROUGHPUT_IMPROVEMENT:
-        print(f"[PASS] Throughput improved {throughput_improvement:.1f}x (target: {TARGET_THROUGHPUT_IMPROVEMENT}x)")
+        print(
+            f"[PASS] Throughput improved {throughput_improvement:.1f}x (target: {TARGET_THROUGHPUT_IMPROVEMENT}x)"
+        )
     else:
-        print(f"[INFO] Throughput improved {throughput_improvement:.1f}x (target: {TARGET_THROUGHPUT_IMPROVEMENT}x)")
+        print(
+            f"[INFO] Throughput improved {throughput_improvement:.1f}x (target: {TARGET_THROUGHPUT_IMPROVEMENT}x)"
+        )
         # Throughput is informational, not a hard pass/fail
 
     return passed, improvements
@@ -468,38 +477,44 @@ def main():
         description="ArcherDB Compaction Strategy Benchmark - Phase 12 Validation"
     )
     parser.add_argument(
-        "--output", "-o",
+        "--output",
+        "-o",
         default="compaction-results.json",
-        help="Output JSON file for results (default: compaction-results.json)"
+        help="Output JSON file for results (default: compaction-results.json)",
     )
     parser.add_argument(
-        "--duration", "-d",
+        "--duration",
+        "-d",
         type=int,
         default=DEFAULT_DURATION_SEC,
-        help=f"Benchmark duration in seconds (default: {DEFAULT_DURATION_SEC})"
+        help=f"Benchmark duration in seconds (default: {DEFAULT_DURATION_SEC})",
     )
     parser.add_argument(
-        "--rate", "-r",
+        "--rate",
+        "-r",
         type=int,
         default=DEFAULT_WRITE_RATE,
-        help=f"Target write rate ops/sec (default: {DEFAULT_WRITE_RATE})"
+        help=f"Target write rate ops/sec (default: {DEFAULT_WRITE_RATE})",
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Estimate metrics without running ArcherDB"
+        help="Estimate metrics without running ArcherDB",
     )
     parser.add_argument(
-        "--verbose", "-v",
+        "--require-archerdb",
         action="store_true",
-        help="Enable verbose output"
+        help="Fail if ArcherDB binary is unavailable (no estimation fallback)",
+    )
+    parser.add_argument(
+        "--verbose", "-v", action="store_true", help="Enable verbose output"
     )
     args = parser.parse_args()
 
-    print("="*70)
+    print("=" * 70)
     print("ArcherDB Compaction Strategy Benchmark")
     print("Phase 12 Storage Optimization - Gap Closure")
-    print("="*70)
+    print("=" * 70)
     print(f"\nComparing: {', '.join(COMPACTION_STRATEGIES.keys())}")
     print(f"Duration: {args.duration}s per strategy")
     print(f"Target Rate: {args.rate:,} ops/sec")
@@ -511,6 +526,11 @@ def main():
     if archerdb_path:
         print(f"\nArcherDB binary: {archerdb_path}")
     else:
+        if args.require_archerdb:
+            print("\n[ERROR] ArcherDB binary not found but --require-archerdb was set")
+            print("Checked: ./zig-out/bin/archerdb, PATH")
+            print("Build with: ./zig/zig build")
+            return 1
         print("\n[WARNING] ArcherDB binary not found")
         print("Checked: ./zig-out/bin/archerdb, PATH")
         print("Build with: ./zig/zig build")
@@ -519,10 +539,7 @@ def main():
 
     # Run benchmarks
     results = run_compaction_benchmark(
-        archerdb_path,
-        args.duration,
-        args.rate,
-        args.dry_run
+        archerdb_path, args.duration, args.rate, args.dry_run
     )
 
     # Print comparison
@@ -547,8 +564,12 @@ def main():
         "improvements": {k: round(v, 3) for k, v in improvements.items()},
         "summary": {
             "passed": passed,
-            "write_amp_leveled": results["leveled"].write_amplification if "leveled" in results else 0,
-            "write_amp_tiered": results["tiered"].write_amplification if "tiered" in results else 0,
+            "write_amp_leveled": results["leveled"].write_amplification
+            if "leveled" in results
+            else 0,
+            "write_amp_tiered": results["tiered"].write_amplification
+            if "tiered" in results
+            else 0,
             "write_amp_improvement": improvements.get("write_amplification", 0),
             "throughput_improvement": improvements.get("throughput", 0),
         },
