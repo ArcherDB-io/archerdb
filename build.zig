@@ -297,6 +297,7 @@ pub fn build(b: *std.Build) !void {
     }, .{
         .stdx_module = stdx_module,
         .vsr_options = vsr_options,
+        .lz4_dep = lz4_dep,
         .target = target,
         .mode = mode,
         .print_exe = build_options.print_exe,
@@ -1153,6 +1154,10 @@ fn build_test_integration(
     integration_tests.root_module.addOptions("vsr_options", vsr_options);
     integration_tests.root_module.addOptions("test_options", integration_tests_options);
     integration_tests.addIncludePath(options.arch_client_header.dirname());
+
+    // Link LZ4 compression library for compression module tests
+    integration_tests.linkLibrary(options.lz4_dep.artifact("lz4"));
+
     steps.test_integration_build.dependOn(&b.addInstallArtifact(integration_tests, .{}).step);
 
     const run_integration_tests = b.addRunArtifact(integration_tests);
@@ -1273,6 +1278,7 @@ fn build_vopr(
     options: struct {
         stdx_module: *std.Build.Module,
         vsr_options: *std.Build.Step.Options,
+        lz4_dep: *std.Build.Dependency,
         target: std.Build.ResolvedTarget,
         mode: std.builtin.OptimizeMode,
         print_exe: bool,
@@ -1300,6 +1306,8 @@ fn build_vopr(
     vopr.root_module.addOptions("vsr_vopr_options", vopr_options);
     // Ensure that we get stack traces even in release builds.
     vopr.root_module.omit_frame_pointer = false;
+    // Link LZ4 compression library
+    vopr.linkLibrary(options.lz4_dep.artifact("lz4"));
     steps.vopr_build.dependOn(print_or_install(b, vopr, options.print_exe));
 
     const run_cmd = b.addRunArtifact(vopr);

@@ -404,6 +404,7 @@ class CGeoEvent(ctypes.Structure):
             accuracy_mm=obj.accuracy_mm,
             heading_cdeg=obj.heading_cdeg,
             flags=obj.flags,
+            reserved=(ctypes.c_uint8 * 12)(),
         )
 
 
