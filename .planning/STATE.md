@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-24)
 ## Current Position
 
 Phase: 17 of 18 (Storage Validation & Adaptive Wiring)
-Plan: 3 of 3 in current phase
+Plan: 4 of 4 in current phase
 Status: Phase complete
-Last activity: 2026-01-26 - Completed 17-03-PLAN.md
+Last activity: 2026-01-26 - Completed 17-04-PLAN.md
 
-Progress: [██████████] 100% (plans: 87/87)
+Progress: [██████████] 100% (plans: 88/88)
 
 ## v1.0 Summary
 
@@ -29,12 +29,12 @@ See `.planning/milestones/v1.0-REQUIREMENTS.md` for archived requirements.
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 37 (v2.0)
+- Total plans completed: 38 (v2.0)
 - Average duration: ~6min
-- Total execution time: ~239min
+- Total execution time: ~241min
 
 **Recent Trend:**
-- Last 5 plans: 16-05, 16-06, 16-07, 17-01, 17-02
+- Last 5 plans: 16-06, 16-07, 17-01, 17-02, 17-04
 - Trend: ~6min per plan
 
 *Updated after each plan completion*
@@ -54,6 +54,8 @@ v2.0 decisions:
 - Default fan-out policy uses all for uuid_batch and majority for radius/polygon/latest (16-03)
 - Online resharding control requests are routed through the metrics server to trigger runtime ticks (16-05)
 - Auto-reshard scheduling reuses the metrics-server request queue for control flow parity (16-07)
+- Exit code 2 for flag conflicts in benchmarks (distinct from general error 1) (17-04)
+- Capture dry_run_requested before enforcement for audit trail in benchmark output (17-04)
 
 Phase 15 decisions:
 - Generic ServerConnectionPool function over connection type for protocol flexibility (15-01)
@@ -93,9 +95,9 @@ Phase 15 decisions:
 
 ## Session Continuity
 
-Last session: 2026-01-26 06:21 UTC
-Stopped at: Completed 17-03-PLAN.md
+Last session: 2026-01-26 07:01 UTC
+Stopped at: Completed 17-04-PLAN.md
 Resume file: None
 
 ---
-*Updated: 2026-01-26 — Completed 17-02 compression benchmark baseline + actual mode*
+*Updated: 2026-01-26 — Completed 17-04 compaction benchmark actual comparison guard*
