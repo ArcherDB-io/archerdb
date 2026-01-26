@@ -23,7 +23,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 14: Query Performance** - Caching and batch operations for enterprise dashboards
 - [x] **Phase 15: Cluster & Consensus** - Connection pooling, load shedding, consensus tuning
 - [x] **Phase 16: Sharding & Scale-Out** - Read replicas, distributed tracing, online resharding
-- [ ] **Phase 17: Storage Validation & Adaptive Wiring** - Close storage optimization validation gaps
+- [x] **Phase 17: Storage Validation & Adaptive Wiring** - Close storage optimization validation gaps
 - [ ] **Phase 18: Metrics Pipeline Wiring** - Wire storage/query/RAM metrics into Prometheus
 
 ## Phase Details
@@ -166,12 +166,15 @@ Plans:
   1. Compression benchmarks show 40-60% storage reduction for realistic geospatial workloads
   2. Tiered compaction benchmarks show measurable write throughput gains vs leveled
   3. Adaptive compaction state machine is wired and auto-tunes parameters under workload shifts
-**Plans**: 3 plans (created by /gsd/plan-phase)
+**Plans**: 6 plans in 3 waves (3 core + 3 gap closure)
 
 Plans:
 - [x] 17-01-PLAN.md — Adaptive compaction runtime wiring
 - [x] 17-02-PLAN.md — Compression benchmark baseline + actual mode
 - [x] 17-03-PLAN.md — Compaction benchmark actual comparison guard
+- [x] 17-04-PLAN.md — [GAP CLOSURE] Require-archerdb flag enforcement
+- [x] 17-05-PLAN.md — [GAP CLOSURE] Compression benchmark datafile delta fix
+- [x] 17-06-PLAN.md — [GAP CLOSURE] Compaction benchmark actual throughput
 
 ### Phase 18: Metrics Pipeline Wiring
 **Goal**: Ensure storage, query, and RAM index metrics are updated and exported to Prometheus
@@ -200,7 +203,7 @@ Phases execute in numeric order: 11 -> 11.x -> 12 -> 12.x -> ... -> 16
 | 14. Query Performance | 6/6 | ✓ Complete | 2026-01-25 |
 | 15. Cluster & Consensus | 11/11 | ✓ Complete | 2026-01-25 |
 | 16. Sharding & Scale-Out | 7/7 | ✓ Complete | 2026-01-26 |
-| 17. Storage Validation & Adaptive Wiring | 3/3 | ✓ Complete | 2026-01-26 |
+| 17. Storage Validation & Adaptive Wiring | 6/6 | ✓ Complete | 2026-01-26 |
 | 18. Metrics Pipeline Wiring | 0/0 | ☐ Not Started | - |
 
 ## Requirement Coverage
@@ -218,4 +221,4 @@ Phases execute in numeric order: 11 -> 11.x -> 12 -> 12.x -> ... -> 16
 
 ---
 *Roadmap created: 2026-01-24*
-*Last updated: 2026-01-26 — Phase 17 plan 03 complete (3/3 plans complete)*
+*Last updated: 2026-01-26 — Phase 17 complete (6/6 plans, all gaps closed)*
