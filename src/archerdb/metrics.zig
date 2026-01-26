@@ -20,6 +20,10 @@ pub const storage = @import("storage_metrics.zig");
 pub const index = @import("index_metrics.zig");
 const cluster = @import("cluster_metrics.zig");
 
+/// Query latency breakdown metrics for performance diagnosis.
+/// Provides detailed latency breakdown by query phase and type.
+const query = @import("query_metrics.zig");
+
 /// A monotonically increasing counter metric.
 /// Thread-safe via atomic operations.
 pub const Counter = struct {
@@ -1607,6 +1611,18 @@ pub const Registry = struct {
         "Total S2 covering cache misses",
         null,
     );
+
+    // ========================================================================
+    // Query Performance Metrics (QUERY-04)
+    // ========================================================================
+
+    /// Query latency breakdown metrics (QUERY-04)
+    /// Provides per-phase latency histograms for performance diagnosis.
+    pub var query_latency_breakdown: query.QueryLatencyBreakdown = query.QueryLatencyBreakdown.init();
+
+    /// Spatial index statistics for query planning insights.
+    /// Provides RAM index metrics and S2 covering statistics.
+    pub var spatial_index_stats: query.SpatialIndexStats = query.SpatialIndexStats.init();
 
     // ========================================================================
     // Extended Memory Metrics (MET-07)
