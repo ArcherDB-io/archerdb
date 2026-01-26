@@ -2848,6 +2848,13 @@ pub const Registry = struct {
         try index.format_all(writer);
 
         // ====================================================================
+        // Query Performance Metrics (14-03)
+        // ====================================================================
+
+        try query_latency_breakdown.toPrometheus(writer);
+        try spatial_index_stats.toPrometheus(writer);
+
+        // ====================================================================
         // Checkpoint Metrics
         // ====================================================================
 
