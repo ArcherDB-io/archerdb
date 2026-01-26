@@ -23,6 +23,8 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 14: Query Performance** - Caching and batch operations for enterprise dashboards
 - [x] **Phase 15: Cluster & Consensus** - Connection pooling, load shedding, consensus tuning
 - [x] **Phase 16: Sharding & Scale-Out** - Read replicas, distributed tracing, online resharding
+- [ ] **Phase 17: Storage Validation & Adaptive Wiring** - Close storage optimization validation gaps
+- [ ] **Phase 18: Metrics Pipeline Wiring** - Wire storage/query/RAM metrics into Prometheus
 
 ## Phase Details
 
@@ -155,6 +157,34 @@ Plans:
 - [x] 16-06-PLAN.md — Coordinator fan-out execution + OTLP export
 - [x] 16-07-PLAN.md — [GAP CLOSURE] Auto-reshard trigger from hot shard detection
 
+### Phase 17: Storage Validation & Adaptive Wiring
+**Goal**: Validate storage optimization claims and ensure adaptive compaction auto-tunes at runtime
+**Depends on**: Phase 12 (storage optimization infrastructure)
+**Requirements**: STOR-02, STOR-05
+**Gap Closure**: Closes audit gaps for compression ratio validation and tiered/adaptive compaction behavior
+**Success Criteria** (what must be TRUE):
+  1. Compression benchmarks show 40-60% storage reduction for realistic geospatial workloads
+  2. Tiered compaction benchmarks show measurable write throughput gains vs leveled
+  3. Adaptive compaction state machine is wired and auto-tunes parameters under workload shifts
+**Plans**: 0 plans (created by /gsd/plan-phase)
+
+Plans:
+- [ ] 17-01-PLAN.md — TBD
+
+### Phase 18: Metrics Pipeline Wiring
+**Goal**: Ensure storage, query, and RAM index metrics are updated and exported to Prometheus
+**Depends on**: Phase 12, Phase 13, Phase 14 (metrics producers)
+**Requirements**: STOR-03, MEM-03, QUERY-04 (export wiring)
+**Gap Closure**: Closes integration and E2E observability flow gaps
+**Success Criteria** (what must be TRUE):
+  1. Storage compaction metrics update at runtime and appear in Prometheus output
+  2. Query performance metrics export via /metrics and populate dashboards
+  3. RAM index gauges update at runtime and populate dashboards
+**Plans**: 0 plans (created by /gsd/plan-phase)
+
+Plans:
+- [ ] 18-01-PLAN.md — TBD
+
 ## Progress
 
 **Execution Order:**
@@ -168,6 +198,8 @@ Phases execute in numeric order: 11 -> 11.x -> 12 -> 12.x -> ... -> 16
 | 14. Query Performance | 6/6 | ✓ Complete | 2026-01-25 |
 | 15. Cluster & Consensus | 11/11 | ✓ Complete | 2026-01-25 |
 | 16. Sharding & Scale-Out | 7/7 | ✓ Complete | 2026-01-26 |
+| 17. Storage Validation & Adaptive Wiring | 0/0 | ☐ Not Started | - |
+| 18. Metrics Pipeline Wiring | 0/0 | ☐ Not Started | - |
 
 ## Requirement Coverage
 
