@@ -447,9 +447,11 @@ def print_comparison(
     # Evaluate against targets
     print(f"\nTarget: {TARGET_WRITE_AMP_IMPROVEMENT:.1f}x write amp improvement")
 
-    passed = True
+    wa_passed = wa_improvement >= TARGET_WRITE_AMP_IMPROVEMENT
+    throughput_passed = throughput_improvement >= TARGET_THROUGHPUT_IMPROVEMENT
+    passed = wa_passed and throughput_passed
 
-    if wa_improvement >= TARGET_WRITE_AMP_IMPROVEMENT:
+    if wa_passed:
         print(
             f"[PASS] Write amplification improved {wa_improvement:.1f}x (target: {TARGET_WRITE_AMP_IMPROVEMENT}x)"
         )
@@ -457,17 +459,15 @@ def print_comparison(
         print(
             f"[NEEDS REVIEW] Write amplification improved {wa_improvement:.1f}x (target: {TARGET_WRITE_AMP_IMPROVEMENT}x)"
         )
-        passed = False
 
-    if throughput_improvement >= TARGET_THROUGHPUT_IMPROVEMENT:
+    if throughput_passed:
         print(
             f"[PASS] Throughput improved {throughput_improvement:.1f}x (target: {TARGET_THROUGHPUT_IMPROVEMENT}x)"
         )
     else:
         print(
-            f"[INFO] Throughput improved {throughput_improvement:.1f}x (target: {TARGET_THROUGHPUT_IMPROVEMENT}x)"
+            f"[NEEDS REVIEW] Throughput improved {throughput_improvement:.1f}x (target: {TARGET_THROUGHPUT_IMPROVEMENT}x)"
         )
-        # Throughput is informational, not a hard pass/fail
 
     return passed, improvements
 
@@ -544,6 +544,9 @@ def main():
 
     # Print comparison
     passed, improvements = print_comparison(results)
+    throughput_passed = (
+        improvements.get("throughput", 0) >= TARGET_THROUGHPUT_IMPROVEMENT
+    )
 
     # Write JSON output
     output_data = {
@@ -572,6 +575,7 @@ def main():
             else 0,
             "write_amp_improvement": improvements.get("write_amplification", 0),
             "throughput_improvement": improvements.get("throughput", 0),
+            "throughput_passed": throughput_passed,
         },
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
