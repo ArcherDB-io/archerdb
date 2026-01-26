@@ -702,8 +702,8 @@ pub const Operation = enum(u8) {
 comptime {
     const target = builtin.target;
 
-    if (target.os.tag != .linux and !target.os.tag.isDarwin() and target.os.tag != .windows) {
-        @compileError("linux, windows or macos is required for io");
+    if (target.os.tag != .linux and !target.os.tag.isDarwin()) {
+        @compileError("linux or macos is required for io");
     }
 
     // We require little-endian architectures everywhere for efficient network deserialization:

@@ -4,18 +4,6 @@
 
 ## Tech Debt
 
-**Replication S3 Upload Stub:**
-- Issue: S3 upload functionality is not implemented, only simulated with logging
-- Files: `src/replication.zig:828`
-- Impact: Cross-region replication S3RelayTransport cannot actually ship data to S3. Operations complete locally but data is never persisted to object storage, breaking disaster recovery.
-- Fix approach: Integrate AWS SDK or implement HTTP API calls to S3 PutObject. Need to handle authentication, retries, and multipart uploads for large entries.
-
-**Replication Disk Spillover Stub:**
-- Issue: Disk spillover for ShipQueue not implemented, uses placeholder
-- Files: `src/replication.zig:218`
-- Impact: When memory queue fills and spillover path is configured, system currently drops oldest entries instead of writing to disk. This violates the spec requirement for disk spillover and can cause data loss during high replication lag.
-- Fix approach: Implement file-based queue on disk with metadata tracking. Need to handle recovery from spillover files on restart (`recoverFromSpillover` exists but spillToDisk is TODO).
-
 **Deprecated Message Types:**
 - Issue: Four deprecated message commands retained for backwards compatibility
 - Files: `src/vsr/message_header.zig:102-105`, `src/vsr/replica.zig:1815-1818`, `src/vsr.zig:292-295`
@@ -78,11 +66,11 @@
 - Trigger: Using `os.windows.loadWinsockExtensionFunction` before fix lands in stdlib
 - Workaround: Custom implementation until Zig standard library updated
 
-**Darwin Fsync Safety Concern:**
-- Symptoms: Fallback to posix.fsync has dubious safety properties
-- Files: `src/io/darwin.zig:1071`
-- Trigger: When F_FULLFSYNC is not available
-- Workaround: Code notes this is "not safe" but uses as fallback
+**Darwin Fsync Error Handling:**
+- Status: RESOLVED (commit 08d770c)
+- Previous issue: Panicked on F_FULLFSYNC failure after startup validation
+- Current: Errors propagate gracefully with clear diagnostics
+- Files: `src/io/darwin.zig:1099`
 
 ## Security Considerations
 
@@ -176,11 +164,6 @@
 
 ## Scaling Limits
 
-**Memory Queue Overflow:**
-- Current capacity: Configurable `memory_max` per ShipQueue
-- Limit: When memory queue fills without disk spillover configured, oldest entries dropped
-- Scaling path: Implement disk spillover (currently TODO). Monitor `stats.memory_entries` and `stats.memory_bytes`. Increase memory_max or enable spillover path.
-
 **LSM Compaction Under Load:**
 - Current capacity: LSM tree handles writes via leveled compaction
 - Limit: `src/lsm/compaction.zig` (2,322 lines) manages compaction. Under extreme write load, compaction may fall behind.
@@ -205,16 +188,6 @@
 
 ## Missing Critical Features
 
-**S3 Replication Backend:**
-- Problem: Cross-region replication to S3 not implemented
-- Blocks: Disaster recovery to object storage, geographic data distribution
-- Priority: High - marked with TODO in replication.zig
-
-**Disk Spillover for ShipQueue:**
-- Problem: Queue cannot spill to disk when memory limit reached
-- Blocks: High-volume replication scenarios, prevents data loss during lag spikes
-- Priority: High - spec defines disk spillover behavior but implementation incomplete
-
 **Windows CI Testing:**
 - Problem: Windows tests not in CI matrix despite Windows support code
 - Blocks: Confidence in Windows platform stability
@@ -233,29 +206,17 @@
 - Risk: Windows-specific bugs may reach production
 - Priority: Medium - Windows support exists but not in CI matrix
 
-**Replication S3 Upload:**
-- What's not tested: Actual S3 upload flow, AWS SDK integration, multipart uploads
-- Files: `src/replication.zig:828`
-- Risk: Implementation incomplete, no tests for non-existent feature
-- Priority: High - should add integration tests when implementing S3 backend
-
-**Replication Disk Spillover:**
-- What's not tested: Spillover file creation, recovery from spillover, queue persistence
-- Files: `src/replication.zig:218`
-- Risk: Feature not implemented, cannot test
-- Priority: High - needs tests when implementing disk spillover
-
 **Error Recovery Paths:**
 - What's not tested: Specific error conditions in message bus marked with TODO
 - Files: `src/message_bus.zig:347,591,912`
 - Risk: Error handling strategy uncertain, may have untested code paths
 - Priority: Medium - errors may not be handled correctly
 
-**Darwin Fsync Fallback:**
-- What's not tested: Safety of posix.fsync fallback on macOS
-- Files: `src/io/darwin.zig:1071`
-- Risk: Durability guarantees may not hold if F_FULLFSYNC unavailable
-- Priority: Low - marked "dubious safety" but used as fallback
+**Darwin Fsync Error Handling:**
+- Status: RESOLVED (commit 08d770c)
+- What changed: F_FULLFSYNC failures now propagate as errors instead of panicking
+- Files: `src/io/darwin.zig:1099`
+- Current behavior: Startup validation ensures support, runtime errors handled gracefully
 
 **Multiversion Deprecated Architectures:**
 - What's not tested: What happens when Zig removes deprecated architecture support

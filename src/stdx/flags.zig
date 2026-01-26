@@ -698,8 +698,9 @@ test "flags" {
         flags_exe: []const u8,
 
         fn init(gpa: std.mem.Allocator) !T {
-            // TODO: Avoid std.posix.getenv() as it currently causes a linker error on windows.
-            // See: https://github.com/ziglang/zig/issues/8456
+            // Note: Using std.process.getEnvVarOwned() for cross-platform compatibility.
+            // Previous workaround for Windows linker error (ziglang/zig#8456) no longer needed
+            // as Windows support has been removed.
             const zig_exe = try std.process.getEnvVarOwned(gpa, "ZIG_EXE"); // Set by build.zig
             defer gpa.free(zig_exe);
 
