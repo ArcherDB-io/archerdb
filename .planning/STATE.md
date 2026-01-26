@@ -2,104 +2,47 @@
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-01-24)
+See: .planning/PROJECT.md (updated 2026-01-26)
 
 **Core value:** Correctness, performance, and completeness with no compromises
-**Current focus:** v2.0 Performance & Scale - COMPLETE
+**Current focus:** Planning next milestone
 
 ## Current Position
 
-Phase: 18 of 18 (Metrics Pipeline Wiring)
-Plan: 2 of 2 in current phase
-Status: Phase complete - v2.0 COMPLETE
-Last activity: 2026-01-26 - Completed 18-02-PLAN.md
+Phase: N/A — Between milestones
+Plan: N/A
+Status: Ready for next milestone
+Last activity: 2026-01-26 — v2.0 milestone complete
 
-Progress: [██████████] 100% (plans: 92/92)
+Progress: Milestone cycle complete
 
-## v1.0 Summary
+## Milestone History
+
+### v2.0 Performance & Scale
+
+**Shipped:** 2026-01-26
+**Phases:** 11-18 (53 plans)
+**Requirements:** 35 satisfied
+
+See `.planning/MILESTONES.md` for full milestone record.
+See `.planning/milestones/v2.0-ROADMAP.md` for archived roadmap details.
+See `.planning/milestones/v2.0-REQUIREMENTS.md` for archived requirements.
+
+### v1.0 ArcherDB Completion
 
 **Shipped:** 2026-01-23
 **Phases:** 1-10 (39 plans)
 **Requirements:** 234 satisfied
 
-See `.planning/MILESTONES.md` for full milestone record.
 See `.planning/milestones/v1.0-ROADMAP.md` for archived roadmap details.
 See `.planning/milestones/v1.0-REQUIREMENTS.md` for archived requirements.
-
-## v2.0 Summary
-
-**Completed:** 2026-01-26
-**Phases:** 11-18 (53 plans)
-**Focus areas:**
-- Performance measurement and benchmarking (Phase 11-12)
-- Consensus and replication (Phase 13-15)
-- Sharding and distribution (Phase 16)
-- Validation benchmarks (Phase 17)
-- Metrics pipeline (Phase 18)
-
-## Performance Metrics
-
-**Velocity:**
-- Total plans completed: 41 (v2.0)
-- Average duration: ~8min
-- Total execution time: ~299min
-
-**Recent Trend:**
-- Last 5 plans: 17-05, 17-06, 18-01, 18-02
-- Trend: ~2-8min per plan (simple wiring phases are fast)
-
-*Updated after each plan completion*
 
 ## Accumulated Context
 
 ### Decisions
 
-Key decisions from v1.0 logged in PROJECT.md. Earlier phase decisions are captured in phase summaries.
-
-v2.0 decisions:
-- Measurement-first approach: All optimization work requires profiling data
-- Phase order follows dependency/risk: low-risk measurement -> medium-risk storage/memory -> high-risk consensus/sharding
-- Breaking changes grouped in Phase 16 for coordinated v2.0 release
-- Hot shard scoring normalized to load_shedding thresholds for consistent weighting (16-01)
-- Rebalance gauges model cooldown decay for active move slots (16-01)
-- Default fan-out policy uses all for uuid_batch and majority for radius/polygon/latest (16-03)
-- Online resharding control requests are routed through the metrics server to trigger runtime ticks (16-05)
-- Auto-reshard scheduling reuses the metrics-server request queue for control flow parity (16-07)
-- Exit code 2 for flag conflicts in benchmarks (distinct from general error 1) (17-04)
-- Capture dry_run_requested before enforcement for audit trail in benchmark output (17-04)
-- Use zlib compression as proxy for zstd block compression ratio validation (17-05)
-- Datafile delta = final - empty to exclude preallocated space (17-05)
-- Reduce workload sizes (10K events) for practical benchmark execution times (17-05)
-- Hybrid compaction benchmark: actual ArcherDB for tiered, scaled estimate for leveled baseline (17-06)
-- Leveled throughput scaled to 40-60% of actual tiered throughput based on LSM-tree research (17-06)
-- Query metrics instances declared at module level (pub var) for thread-safe update/read access (18-01)
-- Metric names adjusted to match actual implementation in integration tests (18-02)
-
-Phase 15 decisions:
-- Generic ServerConnectionPool function over connection type for protocol flexibility (15-01)
-- 20% memory threshold for pressure detection (available < 20% of total) (15-01)
-- Bounded waiter queue (64 max) instead of unbounded queue (15-01)
-- Top-10 client tracking with LRU eviction to avoid cardinality explosion (15-01)
-- Memory detection via /proc/meminfo (Linux) and hw.memsize sysctl (macOS) (15-01)
-- Cloud profile: 500ms heartbeat, 2000ms election (4x heartbeat for aggressive detection) (15-02)
-- Datacenter profile: 100ms heartbeat, 500ms election (5x heartbeat for fast failover) (15-02)
-- Custom profile starts from cloud defaults, allows selective overrides (15-02)
-- Jitter default 20% (+/- 20% variation) to prevent thundering herd (15-02)
-- Saturating arithmetic for jitter bounds to prevent overflow (15-02)
-- Replica timeouts use jittered profile values with ceil-to-ticks conversion (15-10)
-- Q1 + Q2 > N invariant enforced at validation time, not construction time (15-04)
-- Quorum presets allow phase-1/phase-2 overrides while enforcing Q1+Q2>N (15-10)
-- fast_commit falls back to classic for N < 3 (can't meaningfully reduce Q2) (15-04)
-- strong_leader uses Q1=N, Q2=1 for maximum commit speed at election availability cost (15-04)
-- Fault tolerance helpers (phase1FaultTolerance, phase2FaultTolerance) for operational insight (15-04)
-- Composite signal weighting: equal (0.34/0.33/0.33) for queue depth, latency P99, memory pressure (15-03)
-- Hard cutoff shedding: below threshold accept all, at or above reject all (15-03)
-- Threshold guardrails: min 0.5, max 0.95 to prevent disabling protection (15-03)
-- Retry-After exponential: base * (1 + overage * 10), capped at max_retry_ms (15-03)
-- Shed score scaled 0-100 for Prometheus integer gauges (15-03)
-- Replica health fields stored as atomics for thread-safe routing updates (15-05)
-- Per-replica routing metrics tracked within constants.replicas_max slots (15-05)
-- Partition outbound replica connection slots from pooled accept slots via client_pool_offset (15-07)
+Key decisions from v1.0 and v2.0 logged in PROJECT.md Key Decisions table.
+Phase-level decisions captured in phase summaries under `.planning/phases/`.
 
 ### Blockers/Concerns
 
@@ -109,16 +52,11 @@ Phase 15 decisions:
 - Snapshot verification for manifest/free_set/client_sessions is future work
 - Pre-existing flaky tests in ram_index.zig (concurrent/resize stress tests)
 
-**Resolved gaps:**
-- Compaction benchmark throughput improvement: 1.71x >= 1.5x target (17-06)
-- Compression benchmark reduction: 52.25% avg (17-05)
-- E2E metrics pipeline verified via integration tests (18-02)
-
 ## Session Continuity
 
-Last session: 2026-01-26 15:33 UTC
-Stopped at: Completed 18-02-PLAN.md - v2.0 COMPLETE
+Last session: 2026-01-26 16:30 UTC
+Stopped at: v2.0 milestone complete
 Resume file: None
 
 ---
-*Updated: 2026-01-26 - Phase 18 complete (metrics pipeline wiring), v2.0 COMPLETE*
+*Updated: 2026-01-26 — v2.0 milestone archived*

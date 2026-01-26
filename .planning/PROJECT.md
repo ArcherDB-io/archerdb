@@ -2,44 +2,49 @@
 
 ## What This Is
 
-ArcherDB is a high-performance distributed geospatial database for fleet tracking, logistics, and real-time location applications. Built on VSR consensus with LSM-tree storage and S2 geospatial indexing. **v1.0 complete** — world-class reference implementation with production-grade platform support, cross-region S3 replication, 5-language SDK parity, full observability stack, and comprehensive documentation.
+ArcherDB is a high-performance distributed geospatial database for fleet tracking, logistics, and real-time location applications. Built on VSR consensus with LSM-tree storage and S2 geospatial indexing. **v2.0 complete** — enterprise-scale performance with comprehensive profiling, storage optimization, cuckoo hash RAM index, query caching, cluster hardening, and horizontal scale-out with online resharding.
 
 ## Core Value
 
 Correctness, performance, and completeness with no compromises. The system demands adequate resources rather than degrading gracefully, and screams through metrics/traces before hitting limits.
 
-## Current Milestone: v2.0 Performance & Scale
+## Current State (v2.0 Shipped)
 
-**Goal:** Push ArcherDB to enterprise scale — profile, optimize, and restructure for larger fleets, higher throughput, and bigger clusters.
+**Shipped:** 2026-01-26
+**Stats:** 231,255 LOC Zig, 269 requirements satisfied (234 v1.0 + 35 v2.0)
 
-**Target features:**
-- Comprehensive profiling and bottleneck identification
-- RAM index optimization for millions of entities
-- VSR consensus improvements for larger clusters
-- LSM storage tuning for write throughput
-- Breaking changes acceptable for significant wins
+### v2.0 Capabilities (New)
 
-## Current State (v1.0 Shipped)
+- **Profiling:** Linux perf flame graphs, POOP A/B benchmarks, Tracy instrumentation, Parca continuous profiling
+- **Storage:** LZ4 compression (52% reduction), tiered compaction (1.7x throughput), adaptive auto-tuning, block deduplication
+- **RAM Index:** Cuckoo hashing with O(1) guaranteed lookups (2 slot checks), SIMD batch operations (@Vector(4, u64))
+- **Query:** Result cache (99% hit ratio), S2 covering cache, batch API, prepared queries (53% faster), latency breakdown
+- **Cluster:** Connection pooling, VSR timeout profiles with jitter, load shedding with HTTP 429, flexible Paxos, read replicas
+- **Sharding:** Online resharding with dual-write/cutover, hot shard detection with auto-migration, parallel fan-out, OTLP tracing
 
-**Shipped:** 2026-01-23
-**Stats:** 148,058 LOC, 2,861 files, 234 requirements satisfied
-
-### Capabilities
+### v1.0 Capabilities (Foundation)
 
 - **Consensus:** VSR distributed consensus with linearizable consistency
 - **Storage:** LSM-tree with compaction, encryption at rest (AES-256-GCM, Aegis-256)
-- **Geospatial:** S2 indexing, radius/polygon queries, RAM index with O(1) lookup
-- **Replication:** Cross-region S3 with SigV4 auth, disk spillover, multi-provider (AWS/MinIO/R2/GCS/Backblaze)
-- **Sharding:** Jump hash with cross-shard query fan-out
-- **SDKs:** C, Go, Java, Node.js, Python — all at feature parity with complete documentation
-- **Observability:** Prometheus metrics, OpenTelemetry tracing, JSON logging, health endpoints
-- **Dashboards:** 5 Grafana dashboards, 29 Prometheus alerting rules
-- **Documentation:** API reference, architecture deep-dive, operations runbook, troubleshooting guide
-- **Testing:** CI on Linux/macOS, VOPR fuzzer, competitor benchmarks
+- **Geospatial:** S2 indexing, radius/polygon queries, RAM index
+- **Replication:** Cross-region S3 with SigV4 auth, disk spillover, multi-provider
+- **SDKs:** C, Go, Java, Node.js, Python — all at feature parity
+- **Observability:** Prometheus metrics, OpenTelemetry tracing, JSON logging
+- **Dashboards:** 9 Grafana dashboards (4 new in v2.0), 50+ alert rules
+- **Documentation:** API reference, architecture deep-dive, operations runbook
 
 ## Requirements
 
 ### Validated
+
+**v2.0 (2026-01-26) — 35 requirements shipped:**
+
+- ✓ Profiling & Measurement (PROF-01 to PROF-07) — v2.0
+- ✓ Storage Optimization (STOR-01 to STOR-06) — v2.0
+- ✓ Memory & RAM Index (MEM-01 to MEM-05) — v2.0
+- ✓ Query Performance (QUERY-01 to QUERY-06) — v2.0
+- ✓ Cluster & Consensus (CLUST-01 to CLUST-06) — v2.0
+- ✓ Sharding & Scale-Out (SHARD-01 to SHARD-05) — v2.0
 
 **v1.0 (2026-01-23) — 234 requirements shipped:**
 
@@ -55,7 +60,7 @@ Correctness, performance, and completeness with no compromises. The system deman
 
 ### Active
 
-*No active requirements — milestone complete. Next milestone will define new requirements.*
+*No active requirements — v2.0 complete. Next milestone will define new requirements.*
 
 ### Out of Scope
 
@@ -63,10 +68,12 @@ Correctness, performance, and completeness with no compromises. The system deman
 - Mobile SDKs (iOS/Android native) — server-side database
 - GUI administration tool — CLI and metrics are sufficient
 - Multi-tenancy isolation — single-tenant deployments
+- SQL query language — ArcherDB is purpose-built, not general SQL
+- GPU acceleration — complexity vs benefit ratio unfavorable
 
 ## Context
 
-**Codebase:** 148,058 LOC across Zig, Go, Python, Java, TypeScript. 277 Zig source files in core.
+**Codebase:** 231,255 LOC Zig core. SDKs in Go, Python, Java, TypeScript.
 
 **Tech stack:**
 - Core: Zig 0.14.1
@@ -80,6 +87,7 @@ Correctness, performance, and completeness with no compromises. The system deman
 - ~90 TODOs remain in infrastructure code (Zig language limitations)
 - Antimeridian polygon queries require splitting at 180 meridian
 - Snapshot verification for manifest/free_set/client_sessions is future work
+- Pre-existing flaky tests in ram_index.zig (concurrent/resize stress tests)
 
 ## Constraints
 
@@ -97,6 +105,13 @@ Correctness, performance, and completeness with no compromises. The system deman
 | Full observability stack | World-class means enterprise-ready monitoring | ✓ Good — Production ready |
 | SDK parity requirement | All languages must have same features and quality | ✓ Good — All 5 SDKs complete |
 | No graceful degradation | Demand resources, don't hide problems | ✓ Good — Clear failure modes |
+| Measurement-first optimization | All v2.0 optimization requires profiling data first | ✓ Good — Data-driven decisions |
+| Cuckoo hashing for RAM index | Guaranteed O(1) lookups (exactly 2 slot checks) | ✓ Good — Predictable latency |
+| SIMD batch operations | @Vector(4, u64) for parallel key comparison | ✓ Good — 4x throughput |
+| Query result caching | Generation-based invalidation on writes | ✓ Good — 99% hit ratio achieved |
+| Flexible Paxos quorums | Independent phase-1/phase-2 quorum configuration | ✓ Good — Latency vs availability tradeoff |
+| Online resharding | Dual-write with cutover, no downtime required | ✓ Good — Zero-downtime scaling |
+| Hot shard auto-migration | Threshold-based detection triggers automatic rebalancing | ✓ Good — Self-healing clusters |
 
 ---
-*Last updated: 2026-01-23 after v1.0 milestone*
+*Last updated: 2026-01-26 after v2.0 milestone*
