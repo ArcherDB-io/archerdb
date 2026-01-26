@@ -4230,3 +4230,41 @@ test "Registry: Build info truncation" {
     // Commit should be truncated to 64 chars
     try std.testing.expectEqual(@as(u8, 64), Registry.build_commit_len);
 }
+
+// ============================================================================
+// Query Performance Metrics Tests (18-01)
+// ============================================================================
+
+test "Registry: Query metrics format output" {
+    // Record some query latency data
+    Registry.query_latency_breakdown.recordPhases(.{
+        .query_type = .radius,
+        .parse_ns = 100_000,
+        .plan_ns = 500_000,
+        .execute_ns = 5_000_000,
+        .serialize_ns = 200_000,
+    });
+
+    Registry.spatial_index_stats.updateFromIndex(5000, 10000);
+    Registry.spatial_index_stats.recordCoveringSize(.radius, 6);
+
+    var buffer: [131072]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buffer);
+
+    try Registry.format(fbs.writer());
+
+    const output = fbs.getWritten();
+
+    // Query latency breakdown metrics (QUERY-04)
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_query_parse_seconds") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_query_plan_seconds") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_query_execute_seconds") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_query_serialize_seconds") != null);
+
+    // Per-type total latency (dashboard: "Query Latency P99 by Type")
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_query_total_seconds") != null);
+
+    // Spatial index stats
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_ram_index_entries") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_query_covering_cells_avg") != null);
+}
