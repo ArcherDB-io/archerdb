@@ -1718,7 +1718,11 @@ pub fn JournalType(comptime Replica: type, comptime Storage: type) type {
                 // since a reserved header may have been marked faulty for case @K, and
                 // since the caller expects the WAL to be truncated, with clean slots.
                 if (header.op >= op_min) {
-                    // TODO Explore scenarios where the data on disk may resurface after a crash.
+                    // Note: remove_entry() sets headers to "reserved" in memory but leaves
+                    // prepare data on disk untouched (see remove_entry comment for why).
+                    // If we crash before writing the reserved header, the old header/data
+                    // remains on disk. Recovery handles this via view filtering (recover_slots
+                    // lines ~1318-1333) which discards headers that don't belong to log_view.
                     const slot = journal.slot_for_op(header.op);
                     assert(slot.index == index);
                     journal.remove_entry(slot);
