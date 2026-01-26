@@ -254,18 +254,20 @@ pub fn ResourcePoolType(comptime Grid: type) type {
 
         pub fn set_cpu_limit(pool: *ResourcePool, limit: u32) void {
             assert(limit > 0);
-            assert(limit <= pool.cpus.total());
+            const total: u32 = @intCast(pool.cpus.total());
+            assert(limit <= total);
             pool.cpu_limit = limit;
         }
 
         pub fn cpu_available(pool: *const ResourcePool) u32 {
-            const executing = pool.cpus.executing();
+            const executing: u32 = @intCast(pool.cpus.executing());
             if (executing >= pool.cpu_limit) return 0;
             return pool.cpu_limit - executing;
         }
 
         pub fn cpu_acquire(pool: *ResourcePool) ?*CPU {
-            if (pool.cpus.executing() >= pool.cpu_limit) return null;
+            const executing: u32 = @intCast(pool.cpus.executing());
+            if (executing >= pool.cpu_limit) return null;
             return pool.cpus.acquire();
         }
 
