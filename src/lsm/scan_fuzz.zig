@@ -662,7 +662,7 @@ const Environment = struct {
             );
             assert(query_results_max > 0);
             const query_results = results: {
-                const scan = env.scan_from_condition(query_spec, timestamp_previous);
+                const scan = try env.scan_from_condition(query_spec, timestamp_previous);
                 env.scan_lookup = ScanLookup.init(&env.forest.grooves.things, scan);
 
                 const scan_lookup_buffer = env.scan_lookup_buffer[0..query_results_max];
@@ -716,7 +716,7 @@ const Environment = struct {
         env: *Environment,
         query_spec: *const QuerySpec,
         timestamp_last: u64, // exclusive
-    ) *Scan {
+    ) !*Scan {
         const scan_buffer_pool = &env.forest.scan_buffer_pool;
         const things_groove = &env.forest.grooves.things;
         const scan_builder: *ThingsGroove.ScanBuilder = &things_groove.scan_builder;
@@ -734,7 +734,7 @@ const Environment = struct {
                     assert(timestamp_range.min <= timestamp_range.max);
 
                     const scan = switch (field.index) {
-                        inline else => |comptime_index| scan_builder.scan_prefix(
+                        inline else => |comptime_index| try scan_builder.scan_prefix(
                             comptime_index,
                             scan_buffer_pool.acquire_assume_capacity(),
                             lsm.snapshot_latest,
@@ -751,8 +751,8 @@ const Environment = struct {
                     const scans_to_merge = stack.slice()[stack.count() - merge.operand_count ..];
 
                     const scan = switch (merge.operator) {
-                        .union_set => scan_builder.merge_union(scans_to_merge),
-                        .intersection_set => scan_builder.merge_intersection(scans_to_merge),
+                        .union_set => try scan_builder.merge_union(scans_to_merge),
+                        .intersection_set => try scan_builder.merge_intersection(scans_to_merge),
                     };
 
                     stack.truncate(stack.count() - merge.operand_count);

@@ -99,7 +99,7 @@ pub fn ScanBuilderType(
             prefix: CompositeKeyPrefixType(index),
             timestamp_range: TimestampRange,
             direction: Direction,
-        ) *Scan {
+        ) Error!*Scan {
             const field = comptime std.enums.nameCast(std.meta.FieldEnum(Scan.Dispatcher), index);
             const ScanImpl = ScanImplType(field);
             return self.scan_add(
@@ -112,7 +112,7 @@ pub fn ScanBuilderType(
                     key_from_value(index, prefix, timestamp_range.max),
                     direction,
                 ),
-            ) catch unreachable; //TODO: define error handling for the query API.
+            );
         }
 
         /// Initializes a Scan over the `id` searching for an exact match.
@@ -124,7 +124,7 @@ pub fn ScanBuilderType(
             snapshot: u64,
             id: u128,
             direction: Direction,
-        ) *Scan {
+        ) Error!*Scan {
             comptime assert(Groove.IdTree != void);
 
             const ScanImpl = ScanImplType(.id);
@@ -138,7 +138,7 @@ pub fn ScanBuilderType(
                     id,
                     direction,
                 ),
-            ) catch unreachable; //TODO: define error handling for the query API.
+            );
         }
 
         /// Initializes a Scan over a timestamp range.
@@ -150,7 +150,7 @@ pub fn ScanBuilderType(
             snapshot: u64,
             timestamp_range: TimestampRange,
             direction: Direction,
-        ) *Scan {
+        ) Error!*Scan {
             const ScanImpl = ScanImplType(.timestamp);
             return self.scan_add(
                 .timestamp,
@@ -162,7 +162,7 @@ pub fn ScanBuilderType(
                     timestamp_range.max,
                     direction,
                 ),
-            ) catch unreachable; //TODO: define error handling for the query API.
+            );
         }
 
         /// Initializes a Scan performing the union operation over multiple scans.
@@ -174,12 +174,12 @@ pub fn ScanBuilderType(
         pub fn merge_union(
             self: *ScanBuilder,
             scans: []const *Scan,
-        ) *Scan {
+        ) Error!*Scan {
             const Impl = ScanImplType(.merge_union);
             return self.merge_add(
                 .merge_union,
                 Impl.init(scans),
-            ) catch unreachable; //TODO: define error handling for the query API.;
+            );
         }
 
         /// Initializes a Scan performing the intersection operation over multiple scans.
@@ -191,12 +191,12 @@ pub fn ScanBuilderType(
         pub fn merge_intersection(
             self: *ScanBuilder,
             scans: []const *Scan,
-        ) *Scan {
+        ) Error!*Scan {
             const Impl = ScanImplType(.merge_intersection);
             return self.merge_add(
                 .merge_intersection,
                 Impl.init(scans),
-            ) catch unreachable; //TODO: define error handling for the query API.;
+            );
         }
 
         /// Initializes a Scan performing the difference (minus) of two scans.
@@ -209,12 +209,12 @@ pub fn ScanBuilderType(
             self: *ScanBuilder,
             scan_a: *Scan,
             scan_b: *Scan,
-        ) *Scan {
+        ) Error!*Scan {
             const Impl = ScanImplType(.merge_difference);
             return self.merge_add(
                 .merge_difference,
                 Impl.init(&.{ scan_a, scan_b }),
-            ) catch unreachable; //TODO: define error handling for the query API.
+            );
         }
 
         fn scan_add(
