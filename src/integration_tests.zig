@@ -1148,6 +1148,76 @@ test "vortex smoke" {
 //
 // To run: zig build test:integration -- --test-filter "primary-follower"
 
+// =============================================================================
+// Metrics Pipeline Integration Tests (Phase 18)
+// =============================================================================
+//
+// These tests verify E2E metrics flow:
+// 1. Storage metrics (STOR-03) - compaction write amplification, compression ratio
+// 2. RAM index metrics (MEM-03) - memory bytes, load factor, entry count
+// 3. Query metrics (QUERY-04) - latency breakdown (parse/plan/execute/serialize)
+//
+// Manual Dashboard Verification:
+// 1. Start ArcherDB: ./zig/zig build -j4 && ./zig-out/bin/archerdb start
+// 2. Access metrics: curl http://localhost:8081/metrics
+// 3. Verify in Grafana:
+//    - archerdb-storage.json: Write Amplification, Compression Ratio panels
+//    - archerdb-memory.json: RAM Index Load Factor, RAM Index Memory panels
+//    - archerdb-query-performance.json: Latency by Phase, Query Latency P99 panels
+//
+// Alert Verification:
+// Run workload and verify alerts fire in prometheus/rules/*.yaml when thresholds exceeded.
+// =============================================================================
+
+test "metrics: storage metrics exported" {
+    // Verify storage metrics (STOR-03) appear in /metrics output
+    const metrics_port = try pickFreePort();
+
+    var tmp_archerdb = try TmpArcherDB.init(std.testing.allocator, .{
+        .development = true,
+        .prebuilt = archerdb,
+        .metrics_port = metrics_port,
+        .metrics_bind = "127.0.0.1",
+    });
+    defer tmp_archerdb.deinit(std.testing.allocator);
+
+    const response = try fetchMetrics(std.testing.allocator, metrics_port);
+    defer std.testing.allocator.free(response);
+
+    // Storage metrics (STOR-03: Write amplification monitoring)
+    try expectContains(response, "archerdb_compaction_write_amplification");
+    try expectContains(response, "archerdb_storage_space_amplification");
+    try expectContains(response, "archerdb_compaction_level_bytes_total");
+    try expectContains(response, "archerdb_compression_ratio");
+}
+
+test "metrics: RAM index and query metrics exported" {
+    // Verify RAM index (MEM-03) and query (QUERY-04) metrics appear in /metrics output
+    const metrics_port = try pickFreePort();
+
+    var tmp_archerdb = try TmpArcherDB.init(std.testing.allocator, .{
+        .development = true,
+        .prebuilt = archerdb,
+        .metrics_port = metrics_port,
+        .metrics_bind = "127.0.0.1",
+    });
+    defer tmp_archerdb.deinit(std.testing.allocator);
+
+    const response = try fetchMetrics(std.testing.allocator, metrics_port);
+    defer std.testing.allocator.free(response);
+
+    // RAM index metrics (MEM-03)
+    try expectContains(response, "archerdb_index_memory_bytes");
+    try expectContains(response, "archerdb_index_entries_total");
+    try expectContains(response, "archerdb_index_load_factor");
+
+    // Query latency breakdown metrics (QUERY-04)
+    try expectContains(response, "archerdb_query_parse_seconds");
+    try expectContains(response, "archerdb_query_plan_seconds");
+    try expectContains(response, "archerdb_query_execute_seconds");
+    try expectContains(response, "archerdb_query_serialize_seconds");
+}
+
 const TmpCluster = struct {
     const replica_count = 3;
     // The test uses this hard-coded address, so only one instance can be running at a time.
