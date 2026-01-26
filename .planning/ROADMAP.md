@@ -7,7 +7,7 @@ ArcherDB v2.0 transforms the production-ready v1.0 into an enterprise-scale data
 ## Milestones
 
 - v1.0 Shipped (Phases 1-10) - See `.planning/milestones/v1.0-ROADMAP.md`
-- **v2.0 Performance & Scale** (Phases 11-16) - Complete (2026-01-25)
+- **v2.0 Performance & Scale** (Phases 11-18) - Complete (2026-01-26)
 
 ## Phases
 
@@ -24,7 +24,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 15: Cluster & Consensus** - Connection pooling, load shedding, consensus tuning
 - [x] **Phase 16: Sharding & Scale-Out** - Read replicas, distributed tracing, online resharding
 - [x] **Phase 17: Storage Validation & Adaptive Wiring** - Close storage optimization validation gaps
-- [ ] **Phase 18: Metrics Pipeline Wiring** - Wire storage/query/RAM metrics into Prometheus
+- [x] **Phase 18: Metrics Pipeline Wiring** - Wire storage/query/RAM metrics into Prometheus
 
 ## Phase Details
 
@@ -188,8 +188,8 @@ Plans:
 **Plans**: 2 plans in 2 waves
 
 Plans:
-- [ ] 18-01-PLAN.md — Wire query metrics (QueryLatencyBreakdown, SpatialIndexStats) into Registry.format()
-- [ ] 18-02-PLAN.md — Integration tests verifying E2E metrics export
+- [x] 18-01-PLAN.md — Wire query metrics (QueryLatencyBreakdown, SpatialIndexStats) into Registry.format()
+- [x] 18-02-PLAN.md — Integration tests verifying E2E metrics export
 
 ## Progress
 
@@ -205,7 +205,7 @@ Phases execute in numeric order: 11 -> 11.x -> 12 -> 12.x -> ... -> 16
 | 15. Cluster & Consensus | 11/11 | ✓ Complete | 2026-01-25 |
 | 16. Sharding & Scale-Out | 7/7 | ✓ Complete | 2026-01-26 |
 | 17. Storage Validation & Adaptive Wiring | 6/6 | ✓ Complete | 2026-01-26 |
-| 18. Metrics Pipeline Wiring | 0/2 | ☐ Not Started | - |
+| 18. Metrics Pipeline Wiring | 2/2 | ✓ Complete | 2026-01-26 |
 
 ## Requirement Coverage
 
@@ -222,4 +222,4 @@ Phases execute in numeric order: 11 -> 11.x -> 12 -> 12.x -> ... -> 16
 
 ---
 *Roadmap created: 2026-01-24*
-*Last updated: 2026-01-26 — Phase 17 complete (6/6 plans, all gaps closed)*
+*Last updated: 2026-01-26 — Phase 18 complete (2/2 plans), v2.0 milestone complete*
