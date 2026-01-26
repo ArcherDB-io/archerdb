@@ -750,6 +750,8 @@ pub fn ClusterType(comptime StateMachineType: anytype) type {
                     .multiversion = replica_multiversion(replica),
                     .test_context = cluster,
                     .tracer = &cluster.replica_tracers[replica_index],
+                    .timeout_config = vsr.timeout_profiles.TimeoutConfig{},
+                    .quorum_config = vsr.flexible_paxos.QuorumPreset.classic(cluster.options.replica_count),
                     .replicate_options = cluster.options.replicate_options,
                     .commit_stall_probability = null,
                 },

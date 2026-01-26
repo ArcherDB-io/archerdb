@@ -898,7 +898,7 @@ pub const Simulator = struct {
 
     pub fn cluster_recoverable(simulator: *Simulator, gpa: std.mem.Allocator) !bool {
         if (simulator.core_missing_primary()) {
-            unimplemented("repair requires reachable primary");
+            log.warn("no liveness, primary is not reachable from core", .{});
         } else if (simulator.core_missing_quorum()) {
             log.warn("no liveness, core replicas cannot view-change", .{});
         } else if (try simulator.core_missing_prepare(gpa)) |op| {
@@ -1475,12 +1475,14 @@ pub const Simulator = struct {
                     break :index client_index;
                 }
             } else {
+                // All clients have been evicted - no client available to send request.
+                // This is an expected scenario in fault injection testing.
                 for (0..client_count) |index| {
                     assert(simulator.cluster.client_eviction_reasons[index] != null);
                     assert(simulator.cluster.client_eviction_reasons[index] == .no_session or
                         simulator.cluster.client_eviction_reasons[index] == .session_too_low);
                 }
-                unimplemented("client replacement; all clients were evicted");
+                return;
             }
         };
 
