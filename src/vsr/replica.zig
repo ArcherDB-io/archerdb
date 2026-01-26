@@ -5196,6 +5196,15 @@ pub fn ReplicaType(
             const self: *Replica = @ptrCast(@alignCast(replica));
             assert(self.commit_stage == .checkpoint_data);
             self.trace.stop(.replica_aof_checkpoint);
+
+            // Check if AOF fsync failed - this is a critical durability error
+            if (self.aof) |aof| {
+                if (aof.check_fsync_error()) |err| {
+                    log.err("AOF fsync failed during checkpoint: {}", .{err});
+                    @panic("AOF fsync failure - cannot guarantee durability");
+                }
+            }
+
             self.commit_checkpoint_data_callback_join(.aof);
         }
 

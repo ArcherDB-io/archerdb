@@ -113,6 +113,7 @@ pub fn AOFType(comptime IO: type) type {
         io: *IO,
         file_descriptor: IO.fd_t,
         last_checksum: ?u128 = null,
+        last_fsync_error: ?IO.FsyncError = null,
 
         state: union(enum) {
             /// Store the number of unflushed entries - that is, calls to write() without
@@ -230,14 +231,31 @@ pub fn AOFType(comptime IO: type) type {
 
         fn on_fsync(self: *AOF, completion: *IO.Completion, result: IO.FsyncError!void) void {
             _ = completion;
-            _ = result catch @panic("aof fsync failure");
 
             assert(self.state == .checkpoint);
             const replica = self.state.checkpoint.replica;
             const replica_callback = self.state.checkpoint.replica_callback;
-            self.state = .{ .writing = .{ .unflushed = 0 } };
 
+            // Store any fsync error for replica to handle
+            if (result) |_| {
+                self.last_fsync_error = null;
+            } else |err| {
+                log.err("AOF fsync failed: {} (fd={})", .{ err, self.file_descriptor });
+                log.err("Durability cannot be guaranteed - replica will decide fail-fast or degradation", .{});
+                self.last_fsync_error = err;
+            }
+
+            self.state = .{ .writing = .{ .unflushed = 0 } };
             replica_callback(replica);
+        }
+
+        /// Check if the last fsync operation failed and clear the error.
+        /// Returns the error if one occurred, or null if successful.
+        /// This should be called after checkpoint callback to detect fsync failures.
+        pub fn check_fsync_error(self: *AOF) ?IO.FsyncError {
+            const err = self.last_fsync_error;
+            self.last_fsync_error = null;
+            return err;
         }
 
         pub fn validate(self: *AOF, allocator: std.mem.Allocator, last_checksum: ?u128) !void {
