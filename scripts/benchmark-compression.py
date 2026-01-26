@@ -16,6 +16,7 @@ Success criteria: Average compression reduction >= 40% across workload types.
 
 Usage:
     python3 scripts/benchmark-compression.py [--output results.json] [--dry-run]
+        [--require-archerdb]
 
 Requires:
     - ArcherDB binary (./zig-out/bin/archerdb or in PATH)
@@ -41,6 +42,7 @@ from typing import Dict, List, Optional, Tuple
 # Phase 12 target: 40-60% storage reduction
 TARGET_REDUCTION_MIN = 40.0
 TARGET_REDUCTION_MAX = 60.0
+BASELINE_MODE = "logical-bytes"
 
 # Workload configurations
 WORKLOADS = {
@@ -82,9 +84,7 @@ def check_archerdb_available() -> Optional[str]:
         if path and os.path.exists(path):
             try:
                 result = subprocess.run(
-                    [path, "--help"],
-                    capture_output=True,
-                    timeout=5
+                    [path, "--help"], capture_output=True, timeout=5
                 )
                 if result.returncode == 0:
                     return path
@@ -96,6 +96,7 @@ def check_archerdb_available() -> Optional[str]:
 @dataclass
 class GeoEvent:
     """A geospatial event for benchmark workloads."""
+
     entity_id: str
     timestamp_ns: int
     latitude: float
@@ -109,28 +110,29 @@ class GeoEvent:
 @dataclass
 class CompressionResult:
     """Results from a compression benchmark run."""
+
     workload: str
-    uncompressed_bytes: int
-    compressed_bytes: int
+    logical_bytes: int
+    physical_bytes: int
     event_count: int
     compression_ratio: float  # compressed/uncompressed (lower is better)
-    reduction_pct: float      # (1 - ratio) * 100 (higher is better)
+    reduction_pct: float  # (1 - ratio) * 100 (higher is better)
+    mode: str  # actual or estimation
 
     def to_dict(self) -> dict:
         return {
             "workload": self.workload,
-            "uncompressed_bytes": self.uncompressed_bytes,
-            "compressed_bytes": self.compressed_bytes,
+            "logical_bytes": self.logical_bytes,
+            "physical_bytes": self.physical_bytes,
             "event_count": self.event_count,
             "compression_ratio": round(self.compression_ratio, 4),
             "reduction_pct": round(self.reduction_pct, 2),
+            "mode": self.mode,
         }
 
 
 def generate_trajectory_events(
-    entity_count: int,
-    event_count: int,
-    seed: int = 42
+    entity_count: int, event_count: int, seed: int = 42
 ) -> List[GeoEvent]:
     """
     Generate trajectory data simulating vehicles following roads.
@@ -148,7 +150,7 @@ def generate_trajectory_events(
         entity_id = f"vehicle-{i:06d}"
         # Start near city centers (more realistic road patterns)
         entity_positions[entity_id] = {
-            "lat": random.uniform(37.7, 37.9),   # San Francisco area
+            "lat": random.uniform(37.7, 37.9),  # San Francisco area
             "lon": random.uniform(-122.5, -122.3),
             "heading": random.randint(0, 359),
         }
@@ -183,9 +185,7 @@ def generate_trajectory_events(
 
 
 def generate_random_bounded_events(
-    entity_count: int,
-    event_count: int,
-    seed: int = 42
+    entity_count: int, event_count: int, seed: int = 42
 ) -> List[GeoEvent]:
     """
     Generate random location updates within city bounds.
@@ -200,9 +200,9 @@ def generate_random_bounded_events(
     # City bounds (multiple cities for variety)
     cities = [
         {"lat_min": 37.7, "lat_max": 37.9, "lon_min": -122.5, "lon_max": -122.3},  # SF
-        {"lat_min": 40.7, "lat_max": 40.8, "lon_min": -74.0, "lon_max": -73.9},    # NYC
-        {"lat_min": 51.4, "lat_max": 51.6, "lon_min": -0.2, "lon_max": 0.1},       # London
-        {"lat_min": 35.6, "lat_max": 35.8, "lon_min": 139.6, "lon_max": 139.9},    # Tokyo
+        {"lat_min": 40.7, "lat_max": 40.8, "lon_min": -74.0, "lon_max": -73.9},  # NYC
+        {"lat_min": 51.4, "lat_max": 51.6, "lon_min": -0.2, "lon_max": 0.1},  # London
+        {"lat_min": 35.6, "lat_max": 35.8, "lon_min": 139.6, "lon_max": 139.9},  # Tokyo
     ]
 
     for i in range(event_count):
@@ -225,9 +225,7 @@ def generate_random_bounded_events(
 
 
 def generate_clustered_events(
-    entity_count: int,
-    event_count: int,
-    seed: int = 42
+    entity_count: int, event_count: int, seed: int = 42
 ) -> List[GeoEvent]:
     """
     Generate clustered positions simulating fleet vehicles near depots.
@@ -250,8 +248,7 @@ def generate_clustered_events(
 
     # Assign entities to depots
     entity_depots = {
-        f"truck-{i:06d}": depots[i % len(depots)]
-        for i in range(entity_count)
+        f"truck-{i:06d}": depots[i % len(depots)] for i in range(entity_count)
     }
 
     for i in range(event_count):
@@ -290,20 +287,20 @@ def events_to_bytes(events: List[GeoEvent]) -> bytes:
     #         alt (4), heading (4), speed (4), accuracy (4) = 72 bytes per event
     data = bytearray()
     for event in events:
-        entity_bytes = event.entity_id.encode('utf-8')[:32].ljust(32, b'\x00')
+        entity_bytes = event.entity_id.encode("utf-8")[:32].ljust(32, b"\x00")
         data.extend(entity_bytes)
-        data.extend(struct.pack('<Q', event.timestamp_ns))
-        data.extend(struct.pack('<d', event.latitude))
-        data.extend(struct.pack('<d', event.longitude))
-        data.extend(struct.pack('<i', event.altitude_mm))
-        data.extend(struct.pack('<i', event.heading_centideg))
-        data.extend(struct.pack('<i', event.speed_mm_s))
-        data.extend(struct.pack('<i', event.accuracy_mm))
+        data.extend(struct.pack("<Q", event.timestamp_ns))
+        data.extend(struct.pack("<d", event.latitude))
+        data.extend(struct.pack("<d", event.longitude))
+        data.extend(struct.pack("<i", event.altitude_mm))
+        data.extend(struct.pack("<i", event.heading_centideg))
+        data.extend(struct.pack("<i", event.speed_mm_s))
+        data.extend(struct.pack("<i", event.accuracy_mm))
 
     return bytes(data)
 
 
-def estimate_compression_ratio(events: List[GeoEvent]) -> Tuple[int, int]:
+def estimate_compression_bytes(events: List[GeoEvent]) -> Tuple[int, int]:
     """
     Estimate compression ratio using zstd (similar to ArcherDB's compression).
 
@@ -324,10 +321,7 @@ def estimate_compression_ratio(events: List[GeoEvent]) -> Tuple[int, int]:
 
 
 def run_archerdb_benchmark(
-    archerdb_path: str,
-    events: List[GeoEvent],
-    compression_enabled: bool,
-    workdir: str
+    archerdb_path: str, events: List[GeoEvent], workdir: str
 ) -> Tuple[int, Optional[Dict]]:
     """
     Run ArcherDB benchmark and measure data file size.
@@ -336,7 +330,7 @@ def run_archerdb_benchmark(
         Tuple of (data_file_size, metrics_dict or None)
     """
     # Create data file path
-    data_file = os.path.join(workdir, f"bench-{'comp' if compression_enabled else 'nocomp'}.archerdb")
+    data_file = os.path.join(workdir, "bench-comp.archerdb")
 
     # Format the data file
     format_cmd = [
@@ -376,9 +370,9 @@ def run_archerdb_benchmark(
         output = result.stdout.decode() + result.stderr.decode()
 
         # Parse datafile size from output
-        for line in output.split('\n'):
-            if 'datafile =' in line and 'bytes' in line:
-                parts = line.split('=')
+        for line in output.split("\n"):
+            if "datafile =" in line and "bytes" in line:
+                parts = line.split("=")
                 if len(parts) >= 2:
                     size_str = parts[1].strip().split()[0]
                     try:
@@ -399,8 +393,7 @@ def run_archerdb_benchmark(
 
 
 def run_compression_benchmark(
-    archerdb_path: Optional[str],
-    dry_run: bool = False
+    archerdb_path: Optional[str], dry_run: bool = False
 ) -> Dict[str, CompressionResult]:
     """
     Run compression benchmark for all workload types.
@@ -415,27 +408,26 @@ def run_compression_benchmark(
     results = {}
 
     for workload_name, config in WORKLOADS.items():
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Workload: {workload_name}")
         print(f"Description: {config['description']}")
-        print(f"Events: {config['event_count']:,}, Entities: {config['entity_count']:,}")
-        print('='*60)
+        print(
+            f"Events: {config['event_count']:,}, Entities: {config['entity_count']:,}"
+        )
+        print("=" * 60)
 
         # Generate events based on pattern
-        if config['pattern'] == 'sequential':
+        if config["pattern"] == "sequential":
             events = generate_trajectory_events(
-                config['entity_count'],
-                config['event_count']
+                config["entity_count"], config["event_count"]
             )
-        elif config['pattern'] == 'random_bounded':
+        elif config["pattern"] == "random_bounded":
             events = generate_random_bounded_events(
-                config['entity_count'],
-                config['event_count']
+                config["entity_count"], config["event_count"]
             )
-        elif config['pattern'] == 'clustered':
+        elif config["pattern"] == "clustered":
             events = generate_clustered_events(
-                config['entity_count'],
-                config['event_count']
+                config["entity_count"], config["event_count"]
             )
         else:
             print(f"Unknown pattern: {config['pattern']}")
@@ -445,112 +437,128 @@ def run_compression_benchmark(
 
         if dry_run or not archerdb_path:
             # Use estimation mode
-            uncompressed, compressed = estimate_compression_ratio(events)
-            ratio = compressed / uncompressed if uncompressed > 0 else 1.0
+            logical_bytes, compressed = estimate_compression_bytes(events)
+            ratio = compressed / logical_bytes if logical_bytes > 0 else 1.0
             reduction = (1 - ratio) * 100
 
             print(f"\n[Estimation Mode - using zlib compression]")
-            print(f"Uncompressed: {uncompressed:,} bytes ({uncompressed/1024/1024:.2f} MiB)")
-            print(f"Compressed:   {compressed:,} bytes ({compressed/1024/1024:.2f} MiB)")
+            print(
+                f"Logical:  {logical_bytes:,} bytes ({logical_bytes / 1024 / 1024:.2f} MiB)"
+            )
+            print(
+                f"Physical: {compressed:,} bytes ({compressed / 1024 / 1024:.2f} MiB)"
+            )
             print(f"Ratio: {ratio:.4f} ({reduction:.1f}% reduction)")
 
             results[workload_name] = CompressionResult(
                 workload=workload_name,
-                uncompressed_bytes=uncompressed,
-                compressed_bytes=compressed,
+                logical_bytes=logical_bytes,
+                physical_bytes=compressed,
                 event_count=len(events),
                 compression_ratio=ratio,
                 reduction_pct=reduction,
+                mode="estimation",
             )
         else:
             # Run actual archerdb benchmark
             with tempfile.TemporaryDirectory() as workdir:
-                print(f"\nRunning ArcherDB benchmark (compressed)...")
+                logical_bytes = len(events_to_bytes(events))
+                print(f"\nRunning ArcherDB benchmark (compressed datafile)...")
                 compressed_size, _ = run_archerdb_benchmark(
-                    archerdb_path, events, True, workdir
+                    archerdb_path, events, workdir
                 )
 
-                print(f"Running ArcherDB benchmark (uncompressed)...")
-                uncompressed_size, _ = run_archerdb_benchmark(
-                    archerdb_path, events, False, workdir
-                )
-
-                if uncompressed_size > 0 and compressed_size > 0:
-                    ratio = compressed_size / uncompressed_size
+                if logical_bytes > 0 and compressed_size > 0:
+                    ratio = compressed_size / logical_bytes
                     reduction = (1 - ratio) * 100
 
-                    print(f"\nUncompressed: {uncompressed_size:,} bytes")
-                    print(f"Compressed:   {compressed_size:,} bytes")
+                    print(f"\nLogical:  {logical_bytes:,} bytes")
+                    print(f"Physical: {compressed_size:,} bytes")
                     print(f"Ratio: {ratio:.4f} ({reduction:.1f}% reduction)")
 
                     results[workload_name] = CompressionResult(
                         workload=workload_name,
-                        uncompressed_bytes=uncompressed_size,
-                        compressed_bytes=compressed_size,
+                        logical_bytes=logical_bytes,
+                        physical_bytes=compressed_size,
                         event_count=len(events),
                         compression_ratio=ratio,
                         reduction_pct=reduction,
+                        mode="actual",
                     )
                 else:
                     # Fall back to estimation
                     print("\nArcherDB benchmark failed, using estimation...")
-                    uncompressed, compressed = estimate_compression_ratio(events)
-                    ratio = compressed / uncompressed if uncompressed > 0 else 1.0
+                    logical_bytes, compressed = estimate_compression_bytes(events)
+                    ratio = compressed / logical_bytes if logical_bytes > 0 else 1.0
                     reduction = (1 - ratio) * 100
 
                     results[workload_name] = CompressionResult(
                         workload=workload_name,
-                        uncompressed_bytes=uncompressed,
-                        compressed_bytes=compressed,
+                        logical_bytes=logical_bytes,
+                        physical_bytes=compressed,
                         event_count=len(events),
                         compression_ratio=ratio,
                         reduction_pct=reduction,
+                        mode="estimation",
                     )
 
     return results
 
 
-def print_summary(results: Dict[str, CompressionResult]) -> bool:
+def print_summary(results: Dict[str, CompressionResult], mode: str) -> bool:
     """
     Print summary of compression benchmark results.
 
     Returns:
         True if target compression reduction was achieved.
     """
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("COMPRESSION BENCHMARK SUMMARY")
-    print("="*70)
-    print(f"\n{'Workload':<20} {'Uncompressed':>15} {'Compressed':>15} {'Reduction':>12}")
-    print("-"*70)
+    print("=" * 70)
+    print(f"\nBaseline: {BASELINE_MODE} | Mode: {mode}")
+    print(f"\n{'Workload':<20} {'Logical':>15} {'Physical':>15} {'Reduction':>12}")
+    print("-" * 70)
 
-    total_uncompressed = 0
-    total_compressed = 0
+    total_logical = 0
+    total_physical = 0
 
     for name, result in results.items():
-        total_uncompressed += result.uncompressed_bytes
-        total_compressed += result.compressed_bytes
-        print(f"{name:<20} {result.uncompressed_bytes:>12,} B {result.compressed_bytes:>12,} B {result.reduction_pct:>10.1f}%")
+        total_logical += result.logical_bytes
+        total_physical += result.physical_bytes
+        print(
+            f"{name:<20} {result.logical_bytes:>12,} B {result.physical_bytes:>12,} B {result.reduction_pct:>10.1f}%"
+        )
 
-    print("-"*70)
+    print("-" * 70)
 
-    if total_uncompressed > 0:
-        avg_ratio = total_compressed / total_uncompressed
+    if total_logical > 0:
+        avg_ratio = total_physical / total_logical
         avg_reduction = (1 - avg_ratio) * 100
     else:
         avg_reduction = 0.0
 
-    print(f"{'TOTAL':<20} {total_uncompressed:>12,} B {total_compressed:>12,} B {avg_reduction:>10.1f}%")
+    print(
+        f"{'TOTAL':<20} {total_logical:>12,} B {total_physical:>12,} B {avg_reduction:>10.1f}%"
+    )
 
-    print(f"\nTarget: {TARGET_REDUCTION_MIN:.0f}-{TARGET_REDUCTION_MAX:.0f}% storage reduction")
+    print(
+        f"\nTarget: {TARGET_REDUCTION_MIN:.0f}-{TARGET_REDUCTION_MAX:.0f}% storage reduction"
+    )
 
     if avg_reduction >= TARGET_REDUCTION_MIN:
         if avg_reduction <= TARGET_REDUCTION_MAX:
-            print(f"\n[PASS] Average reduction {avg_reduction:.1f}% is within target range")
+            print(
+                f"\n[PASS] Average reduction {avg_reduction:.1f}% is within target range"
+            )
         else:
-            print(f"\n[PASS] Average reduction {avg_reduction:.1f}% exceeds target (even better!)")
+            print(
+                f"\n[PASS] Average reduction {avg_reduction:.1f}% exceeds target (even better!)"
+            )
         return True
     else:
-        print(f"\n[NEEDS REVIEW] Average reduction {avg_reduction:.1f}% is below {TARGET_REDUCTION_MIN}% target")
+        print(
+            f"\n[NEEDS REVIEW] Average reduction {avg_reduction:.1f}% is below {TARGET_REDUCTION_MIN}% target"
+        )
         return False
 
 
@@ -559,26 +567,30 @@ def main():
         description="ArcherDB Compression Ratio Benchmark - Phase 12 Validation"
     )
     parser.add_argument(
-        "--output", "-o",
+        "--output",
+        "-o",
         default="compression-results.json",
-        help="Output JSON file for results (default: compression-results.json)"
+        help="Output JSON file for results (default: compression-results.json)",
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Estimate compression without running ArcherDB"
+        help="Estimate compression without running ArcherDB",
     )
     parser.add_argument(
-        "--verbose", "-v",
+        "--require-archerdb",
         action="store_true",
-        help="Enable verbose output"
+        help="Fail if ArcherDB binary is unavailable (disallow estimation)",
+    )
+    parser.add_argument(
+        "--verbose", "-v", action="store_true", help="Enable verbose output"
     )
     args = parser.parse_args()
 
-    print("="*70)
+    print("=" * 70)
     print("ArcherDB Compression Ratio Benchmark")
     print("Phase 12 Storage Optimization - Gap Closure")
-    print("="*70)
+    print("=" * 70)
     print(f"\nTarget: {TARGET_REDUCTION_MIN}-{TARGET_REDUCTION_MAX}% storage reduction")
     print(f"Workloads: {', '.join(WORKLOADS.keys())}")
 
@@ -587,7 +599,19 @@ def main():
 
     if archerdb_path:
         print(f"\nArcherDB binary: {archerdb_path}")
+        if args.require_archerdb and args.dry_run:
+            print(
+                "\n[INFO] --require-archerdb overrides --dry-run; running actual benchmark"
+            )
+            args.dry_run = False
     else:
+        if args.require_archerdb:
+            print(
+                "\n[ERROR] ArcherDB binary not found; --require-archerdb forbids estimation"
+            )
+            print("Checked: ./zig-out/bin/archerdb, PATH")
+            print("Build with: ./zig/zig build")
+            return 2
         print("\n[WARNING] ArcherDB binary not found")
         print("Checked: ./zig-out/bin/archerdb, PATH")
         print("Build with: ./zig/zig build")
@@ -598,7 +622,13 @@ def main():
     results = run_compression_benchmark(archerdb_path, args.dry_run)
 
     # Print summary
-    passed = print_summary(results)
+    modes = {result.mode for result in results.values()}
+    if len(modes) == 1:
+        overall_mode = modes.pop()
+    else:
+        overall_mode = "mixed"
+
+    passed = print_summary(results, overall_mode)
 
     # Write JSON output
     output_data = {
@@ -608,16 +638,21 @@ def main():
             "min_reduction_pct": TARGET_REDUCTION_MIN,
             "max_reduction_pct": TARGET_REDUCTION_MAX,
         },
-        "mode": "estimation" if args.dry_run else "actual",
+        "mode": overall_mode,
+        "baseline": BASELINE_MODE,
         "archerdb_path": archerdb_path,
         "workloads": {name: result.to_dict() for name, result in results.items()},
         "summary": {
-            "total_uncompressed_bytes": sum(r.uncompressed_bytes for r in results.values()),
-            "total_compressed_bytes": sum(r.compressed_bytes for r in results.values()),
+            "total_logical_bytes": sum(r.logical_bytes for r in results.values()),
+            "total_physical_bytes": sum(r.physical_bytes for r in results.values()),
             "average_reduction_pct": round(
-                (1 - sum(r.compressed_bytes for r in results.values()) /
-                 max(1, sum(r.uncompressed_bytes for r in results.values()))) * 100,
-                2
+                (
+                    1
+                    - sum(r.physical_bytes for r in results.values())
+                    / max(1, sum(r.logical_bytes for r in results.values()))
+                )
+                * 100,
+                2,
             ),
             "passed": passed,
         },
