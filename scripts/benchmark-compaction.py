@@ -511,6 +511,10 @@ def main():
     )
     args = parser.parse_args()
 
+    # Capture original CLI args before enforcement for audit metadata
+    dry_run_requested = args.dry_run
+    require_archerdb = args.require_archerdb
+
     # Block conflicting require-archerdb + dry-run flags
     if args.require_archerdb and args.dry_run:
         print("[ERROR] --require-archerdb and --dry-run are incompatible")
@@ -571,6 +575,8 @@ def main():
             "total_events": args.duration * args.rate,
         },
         "mode": "estimation" if args.dry_run else "actual",
+        "require_archerdb": require_archerdb,
+        "dry_run_requested": dry_run_requested,
         "archerdb_path": archerdb_path,
         "strategies": {name: result.to_dict() for name, result in results.items()},
         "improvements": {k: round(v, 3) for k, v in improvements.items()},
