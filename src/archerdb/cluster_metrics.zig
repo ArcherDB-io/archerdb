@@ -561,8 +561,20 @@ pub const ClusterMetrics = struct {
         return slot;
     }
 
-    /// Format all cluster metrics in Prometheus text format.
-    pub fn format(self: *const Self, writer: anytype) !void {
+    /// Format for std.fmt (e.g., when used in error messages or testing).
+    pub fn format(
+        self: *const Self,
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        _ = fmt;
+        _ = options;
+        try self.formatPrometheus(writer);
+    }
+
+    /// Format all cluster metrics in Prometheus text format (for direct formatting).
+    pub fn formatPrometheus(self: *const Self, writer: anytype) !void {
         // Pool state gauges
         try archerdb_pool_connections_active.format(writer);
         try archerdb_pool_connections_idle.format(writer);
@@ -806,7 +818,7 @@ test "ClusterMetrics: format produces valid output" {
     var stream = std.io.fixedBufferStream(&buffer);
     const writer = stream.writer();
 
-    try cm.format(writer);
+    try cm.formatPrometheus(writer);
 
     const output = stream.getWritten();
     try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_pool_connections_active") != null);
@@ -935,7 +947,7 @@ test "ClusterMetrics: format includes shed metrics" {
     var stream = std.io.fixedBufferStream(&buffer);
     const writer = stream.writer();
 
-    try cm.format(writer);
+    try cm.formatPrometheus(writer);
 
     const output = stream.getWritten();
     try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_shed_requests_total") != null);

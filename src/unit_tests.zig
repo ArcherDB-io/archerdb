@@ -113,7 +113,8 @@ comptime {
     _ = @import("state_machine_fuzz.zig");
     _ = @import("state_machine_tests.zig");
     _ = @import("testing/allocator_tracking.zig");
-    _ = @import("testing/backup_restore_test.zig");
+    // backup_restore_test requires archerdb_exe option - see integration_tests.zig
+    // _ = @import("testing/backup_restore_test.zig");
     _ = @import("testing/bench.zig");
     _ = @import("testing/cluster/s2_determinism_checker.zig");
     _ = @import("testing/encryption_test.zig");

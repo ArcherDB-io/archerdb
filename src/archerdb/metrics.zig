@@ -1885,7 +1885,7 @@ pub const Registry = struct {
         }
 
         // Cluster metrics (pool, shedding, routing)
-        try cluster_metrics.format(writer);
+        try cluster_metrics.formatPrometheus(writer);
         try writer.writeAll("\n");
 
         // Resource metrics

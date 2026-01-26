@@ -44,6 +44,12 @@ const stdx = @import("stdx");
 // Query Types
 // ============================================================================
 
+/// Result type for query execution.
+pub const ExecuteResult = struct {
+    filter_len: usize,
+    query_type: QueryType,
+};
+
 /// Query type enumeration for compiled queries.
 pub const QueryType = enum(u8) {
     /// UUID lookup query (query_uuid)
@@ -517,7 +523,7 @@ pub const SessionPreparedQueries = struct {
         slot: u32,
         params: []const u8,
         output: []u8,
-    ) PreparedError!struct { filter_len: usize, query_type: QueryType } {
+    ) PreparedError!ExecuteResult {
         if (slot >= max_prepared_per_session) {
             return error.NotFound;
         }
@@ -553,7 +559,7 @@ pub const SessionPreparedQueries = struct {
         name_hash: u64,
         params: []const u8,
         output: []u8,
-    ) PreparedError!struct { filter_len: usize, query_type: QueryType } {
+    ) PreparedError!ExecuteResult {
         // Find query by name hash
         for (&self.queries, 0..) |*slot, i| {
             if (slot.*) |*query| {
