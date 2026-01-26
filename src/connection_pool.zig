@@ -195,10 +195,17 @@ pub fn ServerConnectionPool(comptime Connection: type) type {
                 .connection_destructor = connection_destructor,
             };
 
-            // Pre-create minimum connections
+            // Pre-create minimum connections (these start as IDLE)
             var created: u32 = 0;
             while (created < config.min_connections) : (created += 1) {
-                _ = self.createConnection() catch break;
+                if (self.createConnection()) |conn| {
+                    // Mark pre-created connections as idle (not active)
+                    conn.in_use.store(false, .release);
+                    _ = self.active_count.fetchSub(1, .monotonic);
+                    _ = self.idle_count.fetchAdd(1, .monotonic);
+                } else |_| {
+                    break;
+                }
             }
 
             return self;
