@@ -170,7 +170,7 @@ Plans:
 
 Plans:
 - [x] 17-01-PLAN.md — Adaptive compaction runtime wiring
-- [ ] 17-02-PLAN.md — Compression benchmark baseline + actual mode
+- [x] 17-02-PLAN.md — Compression benchmark baseline + actual mode
 - [ ] 17-03-PLAN.md — Compaction benchmark actual comparison guard
 
 ### Phase 18: Metrics Pipeline Wiring
@@ -200,7 +200,7 @@ Phases execute in numeric order: 11 -> 11.x -> 12 -> 12.x -> ... -> 16
 | 14. Query Performance | 6/6 | ✓ Complete | 2026-01-25 |
 | 15. Cluster & Consensus | 11/11 | ✓ Complete | 2026-01-25 |
 | 16. Sharding & Scale-Out | 7/7 | ✓ Complete | 2026-01-26 |
-| 17. Storage Validation & Adaptive Wiring | 1/3 | ◐ In progress | - |
+| 17. Storage Validation & Adaptive Wiring | 2/3 | ◐ In progress | - |
 | 18. Metrics Pipeline Wiring | 0/0 | ☐ Not Started | - |
 
 ## Requirement Coverage
@@ -218,4 +218,4 @@ Phases execute in numeric order: 11 -> 11.x -> 12 -> 12.x -> ... -> 16
 
 ---
 *Roadmap created: 2026-01-24*
-*Last updated: 2026-01-26 — Phase 16 complete (7/7 plans complete)*
+*Last updated: 2026-01-26 — Phase 17 plan 02 complete (2/3 plans complete)*
