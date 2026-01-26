@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-24)
 ## Current Position
 
 Phase: 16 of 16 (Sharding & Scale-Out)
-Plan: 6 of 6 in current phase
+Plan: 7 of 7 in current phase
 Status: Phase complete
-Last activity: 2026-01-25 - Completed 16-06-PLAN.md
+Last activity: 2026-01-26 - Completed 16-07-PLAN.md
 
-Progress: [██████████] 100% (plans: 83/83)
+Progress: [██████████] 100% (plans: 84/84)
 
 ## v1.0 Summary
 
@@ -29,12 +29,12 @@ See `.planning/milestones/v1.0-REQUIREMENTS.md` for archived requirements.
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 34 (v2.0)
+- Total plans completed: 35 (v2.0)
 - Average duration: ~6min
-- Total execution time: ~218min
+- Total execution time: ~223min
 
 **Recent Trend:**
-- Last 5 plans: 16-01, 16-03, 16-04, 16-05, 16-06
+- Last 5 plans: 16-03, 16-04, 16-05, 16-06, 16-07
 - Trend: ~6min per plan
 
 *Updated after each plan completion*
@@ -53,6 +53,7 @@ v2.0 decisions:
 - Rebalance gauges model cooldown decay for active move slots (16-01)
 - Default fan-out policy uses all for uuid_batch and majority for radius/polygon/latest (16-03)
 - Online resharding control requests are routed through the metrics server to trigger runtime ticks (16-05)
+- Auto-reshard scheduling reuses the metrics-server request queue for control flow parity (16-07)
 
 Phase 15 decisions:
 - Generic ServerConnectionPool function over connection type for protocol flexibility (15-01)
@@ -90,9 +91,9 @@ Phase 15 decisions:
 
 ## Session Continuity
 
-Last session: 2026-01-25 22:39 UTC
-Stopped at: Completed 16-06-PLAN.md
+Last session: 2026-01-26 01:29 UTC
+Stopped at: Completed 16-07-PLAN.md
 Resume file: None
 
 ---
-*Updated: 2026-01-25 — Completed 16-06 coordinator fan-out tracing activation*
+*Updated: 2026-01-26 — Completed 16-07 auto-reshard trigger wiring*
