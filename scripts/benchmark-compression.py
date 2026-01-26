@@ -128,6 +128,7 @@ class CompressionResult:
             "compression_ratio": round(self.compression_ratio, 4),
             "reduction_pct": round(self.reduction_pct, 2),
             "mode": self.mode,
+            "baseline": BASELINE_MODE,
         }
 
 
