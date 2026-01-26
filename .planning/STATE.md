@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-01-24)
 
 **Core value:** Correctness, performance, and completeness with no compromises
-**Current focus:** v2.0 Performance & Scale - Phase 17 execution
+**Current focus:** v2.0 Performance & Scale - Phase 18 execution
 
 ## Current Position
 
-Phase: 17 of 18 (Storage Validation & Adaptive Wiring)
-Plan: 6 of 6 in current phase (gap closure plans added)
-Status: Phase complete, verified (12/12 must-haves)
-Last activity: 2026-01-26 - Completed 17-06-PLAN.md
+Phase: 18 of 18 (Metrics Pipeline Wiring)
+Plan: 1 of 2 in current phase
+Status: In progress
+Last activity: 2026-01-26 - Completed 18-01-PLAN.md
 
-Progress: [██████████] 100% (plans: 90/90)
+Progress: [██████████] 100% (plans: 91/92)
 
 ## v1.0 Summary
 
@@ -29,13 +29,13 @@ See `.planning/milestones/v1.0-REQUIREMENTS.md` for archived requirements.
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 39 (v2.0)
+- Total plans completed: 40 (v2.0)
 - Average duration: ~8min
-- Total execution time: ~295min
+- Total execution time: ~297min
 
 **Recent Trend:**
-- Last 5 plans: 16-07, 17-01, 17-02, 17-04, 17-05
-- Trend: ~10min per plan (17-05 longer due to benchmark iterations)
+- Last 5 plans: 17-02, 17-04, 17-05, 17-06, 18-01
+- Trend: ~8min per plan (18-01 was 2min - simple wiring)
 
 *Updated after each plan completion*
 
@@ -61,6 +61,7 @@ v2.0 decisions:
 - Reduce workload sizes (10K events) for practical benchmark execution times (17-05)
 - Hybrid compaction benchmark: actual ArcherDB for tiered, scaled estimate for leveled baseline (17-06)
 - Leveled throughput scaled to 40-60% of actual tiered throughput based on LSM-tree research (17-06)
+- Query metrics instances declared at module level (pub var) for thread-safe update/read access (18-01)
 
 Phase 15 decisions:
 - Generic ServerConnectionPool function over connection type for protocol flexibility (15-01)
@@ -102,9 +103,9 @@ Phase 15 decisions:
 
 ## Session Continuity
 
-Last session: 2026-01-26 08:15 UTC
-Stopped at: Completed 17-06-PLAN.md
+Last session: 2026-01-26 15:29 UTC
+Stopped at: Completed 18-01-PLAN.md
 Resume file: None
 
 ---
-*Updated: 2026-01-26 — Phase 17 complete and verified (6/6 plans, 12/12 truths, all gaps closed)*
+*Updated: 2026-01-26 - Phase 18 plan 1 complete (query metrics wiring)*
