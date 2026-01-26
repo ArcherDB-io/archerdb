@@ -322,7 +322,10 @@ def estimate_compression_bytes(events: List[GeoEvent]) -> Tuple[int, int]:
 
 
 def run_archerdb_benchmark(
-    archerdb_path: str, events: List[GeoEvent], workdir: str
+    archerdb_path: str,
+    event_count: int,
+    entity_count: int,
+    workdir: str,
 ) -> Tuple[int, Optional[Dict]]:
     """
     Run ArcherDB benchmark and measure data file size.
@@ -333,32 +336,17 @@ def run_archerdb_benchmark(
     # Create data file path
     data_file = os.path.join(workdir, "bench-comp.archerdb")
 
-    # Format the data file
-    format_cmd = [
-        archerdb_path,
-        "format",
-        "--cluster=0",
-        "--replica=0",
-        "--replica-count=1",
-        data_file,
-    ]
-
-    try:
-        subprocess.run(format_cmd, capture_output=True, check=True, timeout=30)
-    except subprocess.CalledProcessError as e:
-        print(f"Format failed: {e.stderr.decode() if e.stderr else e}")
-        return 0, None
-    except subprocess.TimeoutExpired:
-        print("Format timed out")
-        return 0, None
-
-    # Start ArcherDB with benchmark load
-    # The benchmark command handles writing events and measuring
+    # Run ArcherDB benchmark with explicit workload sizes.
+    # The benchmark command formats and starts ArcherDB internally.
     bench_cmd = [
         archerdb_path,
         "benchmark",
-        f"--count={len(events)}",
-        data_file,
+        f"--event-count={event_count}",
+        f"--entity-count={entity_count}",
+        "--query-uuid-count=0",
+        "--query-radius-count=0",
+        "--query-polygon-count=0",
+        f"--file={data_file}",
     ]
 
     try:
@@ -367,23 +355,18 @@ def run_archerdb_benchmark(
             capture_output=True,
             timeout=300,  # 5 minute timeout
         )
-        # Benchmark outputs data file size
-        output = result.stdout.decode() + result.stderr.decode()
+        if result.returncode != 0:
+            stderr = result.stderr.decode() if result.stderr else ""
+            print(f"Benchmark failed: {stderr}")
+            return 0, None
 
-        # Parse datafile size from output
-        for line in output.split("\n"):
-            if "datafile =" in line and "bytes" in line:
-                parts = line.split("=")
-                if len(parts) >= 2:
-                    size_str = parts[1].strip().split()[0]
-                    try:
-                        return int(size_str), None
-                    except ValueError:
-                        pass
-
-        # Fallback: check file size directly
         if os.path.exists(data_file):
-            return os.path.getsize(data_file), None
+            stat = os.stat(data_file)
+            physical_bytes = (
+                stat.st_blocks * 512 if hasattr(stat, "st_blocks") else stat.st_size
+            )
+            os.remove(data_file)
+            return physical_bytes, None
 
     except subprocess.TimeoutExpired:
         print("Benchmark timed out")
@@ -466,7 +449,10 @@ def run_compression_benchmark(
                 logical_bytes = len(events_to_bytes(events))
                 print(f"\nRunning ArcherDB benchmark (compressed datafile)...")
                 compressed_size, _ = run_archerdb_benchmark(
-                    archerdb_path, events, workdir
+                    archerdb_path,
+                    len(events),
+                    config["entity_count"],
+                    workdir,
                 )
 
                 if logical_bytes > 0 and compressed_size > 0:
