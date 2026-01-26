@@ -184,6 +184,9 @@ pub fn ManifestType(comptime Table: type, comptime Storage: type) type {
 
         node_pool: *NodePool,
         config: TreeConfig,
+        /// Runtime override for the level-0 compaction trigger.
+        /// Defaults to lsm_growth_factor until updated by adaptive tuning.
+        l0_trigger_override: u32 = constants.lsm_growth_factor,
         /// manifest_log is lazily initialized rather than passed into init() because the Forest
         /// needs it for @fieldParentPtr().
         manifest_log: ?*ManifestLog = null,
@@ -232,6 +235,18 @@ pub fn ManifestType(comptime Table: type, comptime Storage: type) type {
                 .levels = manifest.levels,
                 .tracer = manifest.tracer,
             };
+        }
+
+        pub fn set_l0_trigger_override(manifest: *Manifest, trigger: u32) void {
+            assert(trigger > 0);
+            manifest.l0_trigger_override = trigger;
+        }
+
+        fn table_count_visible_max_for_level(manifest: *const Manifest, level: u8) u32 {
+            return if (level == 0)
+                manifest.l0_trigger_override
+            else
+                table_count_max_for_level(growth_factor, level);
         }
 
         pub fn open_commence(manifest: *Manifest, manifest_log: *ManifestLog) void {
@@ -450,7 +465,7 @@ pub fn ManifestType(comptime Table: type, comptime Storage: type) type {
             for (&manifest.levels, 0..) |*manifest_level, index| {
                 const level: u8 = @intCast(index);
                 const level_table_count_visible_max =
-                    table_count_max_for_level(growth_factor, level);
+                    manifest.table_count_visible_max_for_level(level);
                 assert(manifest_level.table_count_visible <= level_table_count_visible_max);
 
                 table_count_visible += manifest_level.table_count_visible;
@@ -515,7 +530,7 @@ pub fn ManifestType(comptime Table: type, comptime Storage: type) type {
             // The last level is not compacted into another.
             assert(level_a < constants.lsm_levels - 1);
 
-            const table_count_visible_max = table_count_max_for_level(growth_factor, level_a);
+            const table_count_visible_max = manifest.table_count_visible_max_for_level(level_a);
             assert(table_count_visible_max > 0);
 
             const manifest_level_a: *const Level = &manifest.levels[level_a];
@@ -557,7 +572,8 @@ pub fn ManifestType(comptime Table: type, comptime Storage: type) type {
 
             const level_b = 0;
             const manifest_level: *const Level = &manifest.levels[level_b];
-            assert(manifest_level.table_count_visible <= growth_factor);
+            assert(manifest_level.table_count_visible <=
+                manifest.table_count_visible_max_for_level(level_b));
 
             // We are guaranteed to get a non-null range because Level 0 has
             // lsm_growth_factor number of tables, so the number of tables that intersect

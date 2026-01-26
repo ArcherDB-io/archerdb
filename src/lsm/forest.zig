@@ -374,6 +374,9 @@ pub fn ForestType(comptime _Storage: type, comptime groove_cfg: anytype) type {
 
             try forest.scan_buffer_pool.init(allocator);
             errdefer forest.scan_buffer_pool.deinit(allocator);
+
+            forest.adaptive_state.current_l0_trigger = constants.lsm_growth_factor;
+            forest.adaptive_apply_l0_trigger_override();
         }
 
         pub fn deinit(forest: *Forest, allocator: mem.Allocator) void {
@@ -932,6 +935,14 @@ pub fn ForestType(comptime _Storage: type, comptime groove_cfg: anytype) type {
         // Adaptive Compaction Methods
         // =========================================================================
 
+        fn adaptive_apply_l0_trigger_override(forest: *Forest) void {
+            const l0_trigger = forest.adaptive_get_l0_trigger();
+            inline for (comptime std.enums.values(TreeID)) |tree_id| {
+                const tree = forest.tree_for_id(tree_id);
+                tree.manifest.set_l0_trigger_override(l0_trigger);
+            }
+        }
+
         /// Sample workload metrics and check for adaptation.
         ///
         /// Called on each compact() to periodically:
@@ -1012,6 +1023,8 @@ pub fn ForestType(comptime _Storage: type, comptime groove_cfg: anytype) type {
                     recommendations.compaction_threads,
                 });
             }
+
+            forest.adaptive_apply_l0_trigger_override();
         }
 
         /// Estimate current space amplification.
