@@ -1098,12 +1098,14 @@ pub const IO = struct {
     /// https://twitter.com/ArcherDBDB/status/1422491736224436225
     fn fs_sync(fd: fd_t) !void {
         // F_FULLFSYNC is required for durability on Darwin.
-        // Support was validated at startup - if we get here, it must work.
+        // Support was validated at startup - if this fails, it indicates a filesystem
+        // change (e.g., remount, switch to network filesystem) or transient error.
         assert(fullfsync_checked);
         assert(fullfsync_supported);
-        _ = posix.fcntl(fd, posix.F.FULLFSYNC, 1) catch |err| {
-            log.err("F_FULLFSYNC failed unexpectedly: {}", .{err});
-            @panic("F_FULLFSYNC failed after startup validation succeeded");
+        return posix.fcntl(fd, posix.F.FULLFSYNC, 1) catch |err| {
+            log.err("F_FULLFSYNC failed: {} (fd={})", .{ err, fd });
+            log.err("This may indicate filesystem was remounted or changed to unsupported type", .{});
+            return err;
         };
     }
 
