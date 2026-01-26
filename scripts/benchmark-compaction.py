@@ -511,6 +511,12 @@ def main():
     )
     args = parser.parse_args()
 
+    # Block conflicting require-archerdb + dry-run flags
+    if args.require_archerdb and args.dry_run:
+        print("[ERROR] --require-archerdb and --dry-run are incompatible")
+        print("--require-archerdb enforces actual mode execution, which conflicts with --dry-run")
+        return 2
+
     print("=" * 70)
     print("ArcherDB Compaction Strategy Benchmark")
     print("Phase 12 Storage Optimization - Gap Closure")
@@ -525,6 +531,9 @@ def main():
 
     if archerdb_path:
         print(f"\nArcherDB binary: {archerdb_path}")
+        # When require-archerdb is set and binary exists, force actual mode
+        if args.require_archerdb:
+            args.dry_run = False
     else:
         if args.require_archerdb:
             print("\n[ERROR] ArcherDB binary not found but --require-archerdb was set")
