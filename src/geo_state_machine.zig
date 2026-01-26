@@ -3771,7 +3771,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 
                 // F2.6: Record access in tiering manager for each returned entity
                 if (self.tiering_manager) |tm| {
-                    _ = tm.recordAccess(entry.entity_id, self.commit_timestamp) catch {};
+                    _ = tm.recordAccess(entry.entity_id, self.commit_timestamp) catch |err| {
+                        log.debug("tiering: failed to record access for entity {x}: {}", .{ entry.entity_id, err });
+                    };
                 }
 
                 // Build GeoEvent result
@@ -4349,7 +4351,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 
                 // F2.6: Record access in tiering manager for each returned entity
                 if (self.tiering_manager) |tm| {
-                    _ = tm.recordAccess(entry.entity_id, self.commit_timestamp) catch {};
+                    _ = tm.recordAccess(entry.entity_id, self.commit_timestamp) catch |err| {
+                        log.debug("tiering: failed to record access for entity {x}: {}", .{ entry.entity_id, err });
+                    };
                 }
 
                 // Build GeoEvent result
