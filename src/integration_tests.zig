@@ -1122,6 +1122,13 @@ test "vortex smoke" {
         return error.SkipZigTest;
     }
 
+    // Vortex requires Linux namespaces for proper process isolation and cleanup.
+    // Skip this test if namespaces aren't available (e.g., unprivileged container).
+    if (!canCreateUserNamespace()) {
+        log.warn("Skipping vortex smoke test: user namespaces not available", .{});
+        return error.SkipZigTest;
+    }
+
     const shell = try Shell.create(std.testing.allocator);
     defer shell.destroy();
 
@@ -1129,6 +1136,36 @@ test "vortex smoke" {
         "{vortex_exe} supervisor --test-duration=1s --replica-count=1",
         .{ .vortex_exe = vortex_exe },
     );
+}
+
+/// Check if we can create Linux namespaces (required for vortex process isolation).
+/// Vortex requires both user and PID namespaces for proper cleanup.
+fn canCreateUserNamespace() bool {
+    if (builtin.os.tag != .linux) return false;
+
+    // Fork a child process to test namespace creation without affecting this process.
+    // The child will attempt to create user + PID namespaces and exit with status indicating success.
+    const fork_result = std.posix.fork() catch return false;
+
+    if (fork_result == 0) {
+        // Child process: try to create namespaces
+        const user_result = std.os.linux.unshare(std.os.linux.CLONE.NEWUSER);
+        if (std.os.linux.E.init(user_result) != .SUCCESS) {
+            std.posix.exit(1);
+        }
+        const pid_result = std.os.linux.unshare(std.os.linux.CLONE.NEWPID);
+        if (std.os.linux.E.init(pid_result) != .SUCCESS) {
+            std.posix.exit(1);
+        }
+        std.posix.exit(0);
+    } else {
+        // Parent process: wait for child and check exit status
+        const wait_result = std.posix.waitpid(fork_result, 0);
+        if (std.posix.W.IFEXITED(wait_result.status)) {
+            return std.posix.W.EXITSTATUS(wait_result.status) == 0;
+        }
+        return false;
+    }
 }
 
 // ============================================================================
