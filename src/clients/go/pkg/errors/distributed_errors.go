@@ -1,6 +1,7 @@
 // Package errors provides error codes for ArcherDB distributed features.
 //
 // Error code ranges:
+//   - State errors: 200-210
 //   - Multi-region errors: 213-218
 //   - Sharding errors: 220-224
 //   - Encryption errors: 410-414
@@ -10,6 +11,15 @@ import "fmt"
 
 // ErrorCode represents an ArcherDB error code.
 type ErrorCode int
+
+// State error codes (200-210).
+const (
+	// EntityNotFound indicates the requested entity UUID was not found in the index.
+	EntityNotFound ErrorCode = 200
+
+	// EntityExpired indicates the entity has expired due to TTL.
+	EntityExpired ErrorCode = 210
+)
 
 // Multi-region error codes (213-218).
 const (
@@ -70,13 +80,17 @@ const (
 
 // Error messages for each error code.
 var errorMessages = map[ErrorCode]string{
+	// State errors
+	EntityNotFound: "Entity not found",
+	EntityExpired:  "Entity has expired due to TTL",
+
 	// Multi-region errors
-	FollowerReadOnly:     "Write operation rejected: follower regions are read-only",
-	StaleFollower:        "Follower data exceeds maximum staleness threshold",
-	PrimaryUnreachable:   "Cannot connect to primary region",
-	ReplicationTimeout:   "Cross-region replication timeout",
-	ConflictDetected: "Write conflict detected in active-active replication",
-	GeoShardMismatch: "Entity geo-shard does not match target region",
+	FollowerReadOnly:   "Write operation rejected: follower regions are read-only",
+	StaleFollower:      "Follower data exceeds maximum staleness threshold",
+	PrimaryUnreachable: "Cannot connect to primary region",
+	ReplicationTimeout: "Cross-region replication timeout",
+	ConflictDetected:   "Write conflict detected in active-active replication",
+	GeoShardMismatch:   "Entity geo-shard does not match target region",
 
 	// Sharding errors
 	NotShardLeader:       "This node is not the leader for target shard",
@@ -95,13 +109,17 @@ var errorMessages = map[ErrorCode]string{
 
 // Retryable indicates whether each error code is retryable.
 var retryable = map[ErrorCode]bool{
+	// State errors (not retryable - entity state is definitive)
+	EntityNotFound: false,
+	EntityExpired:  false,
+
 	// Multi-region errors
-	FollowerReadOnly:     false,
-	StaleFollower:        true,
-	PrimaryUnreachable:   true,
-	ReplicationTimeout:   true,
-	ConflictDetected: false,
-	GeoShardMismatch: false,
+	FollowerReadOnly:   false,
+	StaleFollower:      true,
+	PrimaryUnreachable: true,
+	ReplicationTimeout: true,
+	ConflictDetected:   false,
+	GeoShardMismatch:   false,
 
 	// Sharding errors
 	NotShardLeader:       true,
@@ -129,6 +147,108 @@ func (e *ArcherDBError) Error() string {
 	return fmt.Sprintf("[%d] %s", e.Code, e.Message)
 }
 
+// StateException is a typed error for state errors (entity not found, expired).
+// State errors are never retryable - the entity state is definitive.
+type StateException struct {
+	StateError ErrorCode // The specific state error enum value
+	Code       ErrorCode // Numeric error code (same as StateError, for convenience)
+	Message    string
+	Retryable  bool
+}
+
+func (e *StateException) Error() string {
+	return fmt.Sprintf("[%d] %s", e.Code, e.Message)
+}
+
+// NewStateException creates a StateException from a StateError code.
+func NewStateException(code ErrorCode) *StateException {
+	return &StateException{
+		StateError: code,
+		Code:       code,
+		Message:    errorMessages[code],
+		Retryable:  false, // State errors are never retryable
+	}
+}
+
+// MultiRegionException is a typed error for multi-region errors.
+type MultiRegionException struct {
+	MultiRegionError ErrorCode // The specific multi-region error enum value
+	Code             ErrorCode // Numeric error code
+	Message          string
+	Retryable        bool
+}
+
+func (e *MultiRegionException) Error() string {
+	return fmt.Sprintf("[%d] %s", e.Code, e.Message)
+}
+
+// NewMultiRegionException creates a MultiRegionException from an error code.
+func NewMultiRegionException(code ErrorCode) *MultiRegionException {
+	return &MultiRegionException{
+		MultiRegionError: code,
+		Code:             code,
+		Message:          errorMessages[code],
+		Retryable:        retryable[code],
+	}
+}
+
+// ShardingException is a typed error for sharding errors.
+type ShardingException struct {
+	ShardingError ErrorCode // The specific sharding error enum value
+	Code          ErrorCode // Numeric error code
+	Message       string
+	Retryable     bool
+	ShardID       int // Optional: the shard ID involved in the error (-1 if not set)
+}
+
+func (e *ShardingException) Error() string {
+	return fmt.Sprintf("[%d] %s", e.Code, e.Message)
+}
+
+// NewShardingException creates a ShardingException from an error code.
+func NewShardingException(code ErrorCode) *ShardingException {
+	return &ShardingException{
+		ShardingError: code,
+		Code:          code,
+		Message:       errorMessages[code],
+		Retryable:     retryable[code],
+		ShardID:       -1,
+	}
+}
+
+// NewShardingExceptionWithShard creates a ShardingException with shard ID context.
+func NewShardingExceptionWithShard(code ErrorCode, shardID int) *ShardingException {
+	return &ShardingException{
+		ShardingError: code,
+		Code:          code,
+		Message:       errorMessages[code],
+		Retryable:     retryable[code],
+		ShardID:       shardID,
+	}
+}
+
+// EncryptionException is a typed error for encryption errors.
+type EncryptionException struct {
+	EncryptionError ErrorCode // The specific encryption error enum value
+	Code            ErrorCode // Numeric error code
+	Message         string
+	Retryable       bool
+}
+
+func (e *EncryptionException) Error() string {
+	return fmt.Sprintf("[%d] %s", e.Code, e.Message)
+}
+
+// NewEncryptionException creates an EncryptionException from an error code.
+func NewEncryptionException(code ErrorCode) *EncryptionException {
+	return &EncryptionException{
+		EncryptionError: code,
+		Code:            code,
+		Message:         errorMessages[code],
+		Retryable:       retryable[code],
+	}
+}
+
 // NewError creates a new ArcherDBError from an error code.
 func NewError(code ErrorCode) *ArcherDBError {
 	return &ArcherDBError{
@@ -145,6 +265,11 @@ func NewErrorWithMessage(code ErrorCode, message string) *ArcherDBError {
 		Message:   message,
 		Retryable: retryable[code],
 	}
+}
+
+// IsStateError returns true if the code is a state error (200-210).
+func IsStateError(code int) bool {
+	return code >= 200 && code <= 210
 }
 
 // IsMultiRegionError returns true if the code is a multi-region error (213-218).
