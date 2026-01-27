@@ -9,6 +9,7 @@ comptime {
     _ = @import("archerdb/backup_state.zig");
     _ = @import("archerdb/breach_notification.zig");
     _ = @import("archerdb/bulk_export.zig");
+    _ = @import("archerdb/cluster_metrics.zig");
     _ = @import("archerdb/compliance_audit.zig");
     _ = @import("archerdb/consent_management.zig");
     _ = @import("archerdb/data_export.zig");
@@ -23,6 +24,7 @@ comptime {
     _ = @import("archerdb/etl_integration.zig");
     _ = @import("archerdb/export_control.zig");
     _ = @import("archerdb/incremental_load.zig");
+    _ = @import("archerdb/index_metrics.zig");
     _ = @import("archerdb/metrics.zig");
     _ = @import("archerdb/observability.zig");
     _ = @import("archerdb/observability/correlation.zig");
@@ -30,11 +32,13 @@ comptime {
     _ = @import("archerdb/observability/module_log_levels.zig");
     _ = @import("archerdb/observability/trace_export.zig");
     _ = @import("archerdb/parallel_export.zig");
+    _ = @import("archerdb/query_metrics.zig");
     _ = @import("archerdb/replica_tls.zig");
     _ = @import("archerdb/restore.zig");
     _ = @import("archerdb/signal_handler.zig");
     _ = @import("archerdb/storage_metrics.zig");
     _ = @import("archerdb/tls_config.zig");
+    _ = @import("batch_query.zig");
     _ = @import("c_client_tests.zig");
     _ = @import("cdc/amqp.zig");
     _ = @import("cdc/amqp/protocol.zig");
@@ -43,6 +47,7 @@ comptime {
     _ = @import("clients/c/arch_client/context.zig");
     _ = @import("clients/c/arch_client/signal.zig");
     _ = @import("clients/c/test.zig");
+    _ = @import("connection_pool.zig");
     _ = @import("coordinator.zig");
     _ = @import("copyhound.zig");
     _ = @import("encryption.zig");
@@ -56,12 +61,15 @@ comptime {
     _ = @import("io/test.zig");
     _ = @import("iops.zig");
     _ = @import("list.zig");
+    _ = @import("load_shedding.zig");
     _ = @import("lsm/binary_search.zig");
     _ = @import("lsm/binary_search_benchmark.zig");
     _ = @import("lsm/cache_map.zig");
     _ = @import("lsm/compaction.zig");
+    _ = @import("lsm/compaction_adaptive.zig");
     _ = @import("lsm/compaction_metrics.zig");
     _ = @import("lsm/compaction_throttle.zig");
+    _ = @import("lsm/compaction_tiered.zig");
     _ = @import("lsm/composite_key.zig");
     _ = @import("lsm/compression.zig");
     _ = @import("lsm/dedup.zig");
@@ -83,9 +91,12 @@ comptime {
     _ = @import("message_buffer.zig");
     _ = @import("multiversion.zig");
     _ = @import("post_filter.zig");
+    _ = @import("prepared_queries.zig");
+    _ = @import("query_cache.zig");
     _ = @import("queue.zig");
     _ = @import("ram_index.zig");
     _ = @import("ram_index_simd.zig");
+    _ = @import("read_replica_router.zig");
     _ = @import("repl.zig");
     _ = @import("repl/completion.zig");
     _ = @import("repl/parser.zig");
@@ -101,6 +112,7 @@ comptime {
     _ = @import("s2/math.zig");
     _ = @import("s2/region_coverer.zig");
     _ = @import("s2/s2.zig");
+    _ = @import("s2_covering_cache.zig");
     _ = @import("s2_index.zig");
     _ = @import("s2_scratch_pool.zig");
     _ = @import("scripts/cfo.zig");
@@ -112,14 +124,12 @@ comptime {
     _ = @import("state_machine.zig");
     _ = @import("state_machine_fuzz.zig");
     _ = @import("state_machine_tests.zig");
+    _ = @import("testing/adaptive_test.zig");
     _ = @import("testing/allocator_tracking.zig");
-    // backup_restore_test requires archerdb_exe option - see integration_tests.zig
-    // _ = @import("testing/backup_restore_test.zig");
     _ = @import("testing/bench.zig");
     _ = @import("testing/cluster/s2_determinism_checker.zig");
     _ = @import("testing/encryption_test.zig");
     _ = @import("testing/exhaustigen.zig");
-    _ = @import("testing/failover_test.zig");
     _ = @import("testing/geo_workload.zig");
     _ = @import("testing/id.zig");
     _ = @import("testing/marks.zig");
@@ -138,6 +148,7 @@ comptime {
     _ = @import("vsr.zig");
     _ = @import("vsr/checksum.zig");
     _ = @import("vsr/clock.zig");
+    _ = @import("vsr/flexible_paxos.zig");
     _ = @import("vsr/free_set.zig");
     _ = @import("vsr/grid_scrubber.zig");
     _ = @import("vsr/journal.zig");
@@ -150,6 +161,7 @@ comptime {
     _ = @import("vsr/routing.zig");
     _ = @import("vsr/superblock.zig");
     _ = @import("vsr/superblock_quorums.zig");
+    _ = @import("vsr/timeout_profiles.zig");
 }
 
 const quine =
@@ -255,6 +267,9 @@ const quine =
     \\        if (std.mem.eql(u8, entry_path, "archerdb/geo_benchmark_load.zig")) continue;
     \\        if (std.mem.eql(u8, entry_path, "archerdb/inspect.zig")) continue;
     \\        if (std.mem.eql(u8, entry_path, "archerdb/inspect_integrity.zig")) continue;
+    \\        // Integration tests that require archerdb_exe
+    \\        if (std.mem.eql(u8, entry_path, "testing/backup_restore_test.zig")) continue;
+    \\        if (std.mem.eql(u8, entry_path, "testing/failover_test.zig")) continue;
     \\
     \\        const contents = try src_dir.readFileAlloc(arena, entry_path, 1 * MiB);
     \\        var line_iterator = std.mem.splitScalar(u8, contents, '\n');
@@ -385,6 +400,9 @@ fn unit_test_files(arena: std.mem.Allocator, src_dir: std.fs.Dir) ![]const []con
         if (std.mem.eql(u8, entry_path, "archerdb/geo_benchmark_load.zig")) continue;
         if (std.mem.eql(u8, entry_path, "archerdb/inspect.zig")) continue;
         if (std.mem.eql(u8, entry_path, "archerdb/inspect_integrity.zig")) continue;
+        // Integration tests that require archerdb_exe
+        if (std.mem.eql(u8, entry_path, "testing/backup_restore_test.zig")) continue;
+        if (std.mem.eql(u8, entry_path, "testing/failover_test.zig")) continue;
 
         const contents = try src_dir.readFileAlloc(arena, entry_path, 1 * MiB);
         var line_iterator = std.mem.splitScalar(u8, contents, '\n');

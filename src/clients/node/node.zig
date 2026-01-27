@@ -31,6 +31,10 @@ const ShardInfo = tb.ShardInfo;
 const TtlSetRequest = tb.TtlSetRequest;
 const TtlExtendRequest = tb.TtlExtendRequest;
 const TtlClearRequest = tb.TtlClearRequest;
+const BatchQueryRequest = tb.BatchQueryRequest;
+const PrepareQueryRequest = tb.PrepareQueryRequest;
+const ExecutePreparedRequest = tb.ExecutePreparedRequest;
+const DeallocatePreparedRequest = tb.DeallocatePreparedRequest;
 
 const vsr = @import("vsr");
 const constants = vsr.constants;
@@ -1327,6 +1331,10 @@ fn decode_array(comptime Event: type, env: c.napi_env, array: c.napi_value, even
             TtlSetRequest,
             TtlExtendRequest,
             TtlClearRequest,
+            BatchQueryRequest,
+            PrepareQueryRequest,
+            ExecutePreparedRequest,
+            DeallocatePreparedRequest,
             => {
                 inline for (std.meta.fields(Event)) |field| {
                     const value: field.type = switch (@typeInfo(field.type)) {

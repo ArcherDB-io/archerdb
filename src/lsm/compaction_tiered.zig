@@ -369,6 +369,7 @@ test "should_compact_tiered: space amp trigger" {
     const config = TieredCompactionConfig{
         .min_merge_width = 2,
         .max_space_amplification_percent = 200,
+        .size_ratio = 100.0, // Disable size ratio trigger to isolate space amp test
     };
 
     // 3x space amp (300%) exceeds 200% threshold
@@ -376,6 +377,7 @@ test "should_compact_tiered: space amp trigger" {
     try std.testing.expect(should_compact_tiered(3, 3000, 1000, 1000, config));
 
     // 1.5x space amp (150%) does not exceed 200% threshold
+    // total_size=1500, logical_size=1000 -> 150%
     try std.testing.expect(!should_compact_tiered(3, 1500, 500, 1000, config));
 }
 
