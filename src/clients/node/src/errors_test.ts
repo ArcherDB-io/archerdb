@@ -1,10 +1,17 @@
 ///////////////////////////////////////////////////////
 // ArcherDB Node.js SDK - v2 Error Codes Tests       //
-// Tests for multi-region, sharding, encryption      //
+// Tests for state, multi-region, sharding, encryption //
 ///////////////////////////////////////////////////////
 
 import * as assert from 'assert'
 import {
+  // State
+  StateError,
+  StateException,
+  STATE_ERROR_MESSAGES,
+  STATE_ERROR_RETRYABLE,
+  isStateError,
+  stateErrorMessage,
   // Multi-region
   MultiRegionError,
   MultiRegionException,
@@ -50,6 +57,60 @@ function test(name: string, fn: () => void) {
 function section(name: string) {
   console.log(`\n=== ${name} ===\n`)
 }
+
+// ============================================================================
+// State Error Tests
+// ============================================================================
+
+section('State Error Tests')
+
+test('StateError code values', () => {
+  assert.strictEqual(StateError.ENTITY_NOT_FOUND, 200)
+  assert.strictEqual(StateError.ENTITY_EXPIRED, 210)
+})
+
+test('StateError retry semantics (all non-retryable)', () => {
+  assert.strictEqual(STATE_ERROR_RETRYABLE[StateError.ENTITY_NOT_FOUND], false)
+  assert.strictEqual(STATE_ERROR_RETRYABLE[StateError.ENTITY_EXPIRED], false)
+})
+
+test('isStateError', () => {
+  assert.strictEqual(isStateError(199), false)
+  assert.strictEqual(isStateError(200), true)
+  assert.strictEqual(isStateError(205), true)
+  assert.strictEqual(isStateError(210), true)
+  assert.strictEqual(isStateError(211), false)
+})
+
+test('StateError messages', () => {
+  assert.ok(STATE_ERROR_MESSAGES[StateError.ENTITY_NOT_FOUND].includes('not found'))
+  assert.ok(STATE_ERROR_MESSAGES[StateError.ENTITY_EXPIRED].includes('expired'))
+})
+
+test('stateErrorMessage', () => {
+  assert.ok(stateErrorMessage(200)?.includes('not found'))
+  assert.ok(stateErrorMessage(210)?.includes('expired'))
+  assert.strictEqual(stateErrorMessage(199), undefined)
+  assert.strictEqual(stateErrorMessage(211), undefined)
+})
+
+test('StateException creation', () => {
+  const exc = new StateException(StateError.ENTITY_NOT_FOUND)
+  assert.strictEqual(exc.code, 200)
+  assert.strictEqual(exc.retryable, false)
+  assert.strictEqual(exc.error, StateError.ENTITY_NOT_FOUND)
+  assert.ok(exc.message.includes('[200]'))
+  assert.strictEqual(exc.name, 'StateException')
+  assert.ok(exc instanceof Error)
+})
+
+test('StateException for ENTITY_EXPIRED', () => {
+  const exc = new StateException(StateError.ENTITY_EXPIRED)
+  assert.strictEqual(exc.code, 210)
+  assert.strictEqual(exc.retryable, false)
+  assert.strictEqual(exc.error, StateError.ENTITY_EXPIRED)
+  assert.ok(exc.message.includes('expired'))
+})
 
 // ============================================================================
 // Multi-Region Error Tests
@@ -223,6 +284,11 @@ test('EncryptionException creation', () => {
 
 section('Utility Function Tests')
 
+test('isRetryable state errors (all non-retryable)', () => {
+  assert.strictEqual(isRetryable(200), false) // ENTITY_NOT_FOUND
+  assert.strictEqual(isRetryable(210), false) // ENTITY_EXPIRED
+})
+
 test('isRetryable multi-region', () => {
   assert.strictEqual(isRetryable(213), false) // FOLLOWER_READ_ONLY
   assert.strictEqual(isRetryable(214), true)  // STALE_FOLLOWER
@@ -244,6 +310,11 @@ test('isRetryable encryption', () => {
 test('isRetryable unknown codes', () => {
   assert.strictEqual(isRetryable(999), false)
   assert.strictEqual(isRetryable(0), false)
+})
+
+test('errorMessage state errors', () => {
+  assert.ok(errorMessage(200)?.includes('not found'))
+  assert.ok(errorMessage(210)?.includes('expired'))
 })
 
 test('errorMessage multi-region', () => {

@@ -235,6 +235,9 @@ export function isRetryableError(error: unknown): boolean {
     return error.retryable
   }
   // Check for v2 exception types
+  if (error instanceof StateException) {
+    return error.retryable // Always false for state errors
+  }
   if (error instanceof MultiRegionException) {
     return error.retryable
   }
@@ -245,6 +248,50 @@ export function isRetryableError(error: unknown): boolean {
     return error.retryable
   }
   return false
+}
+
+// ============================================================================
+// State Error Codes (200-210)
+// ============================================================================
+
+/**
+ * State error codes (200-210) for entity state issues.
+ *
+ * These errors indicate definitive state about an entity (not found, expired).
+ * All state errors are non-retryable - the entity state is authoritative.
+ */
+export enum StateError {
+  /** Query UUID not found in index. */
+  ENTITY_NOT_FOUND = 200,
+
+  /** Entity has expired due to TTL. */
+  ENTITY_EXPIRED = 210,
+}
+
+/** Error messages for state errors. */
+export const STATE_ERROR_MESSAGES: Record<StateError, string> = {
+  [StateError.ENTITY_NOT_FOUND]: 'Entity not found',
+  [StateError.ENTITY_EXPIRED]: 'Entity has expired due to TTL',
+}
+
+/** Retryable status for state errors (all are non-retryable). */
+export const STATE_ERROR_RETRYABLE: Record<StateError, boolean> = {
+  [StateError.ENTITY_NOT_FOUND]: false,
+  [StateError.ENTITY_EXPIRED]: false,
+}
+
+/**
+ * Returns true if the given code is a state error (200-210).
+ */
+export function isStateError(code: number): boolean {
+  return code >= 200 && code <= 210
+}
+
+/**
+ * Returns the message for a state error code.
+ */
+export function stateErrorMessage(code: number): string | undefined {
+  return STATE_ERROR_MESSAGES[code as StateError]
 }
 
 // ============================================================================
@@ -425,6 +472,41 @@ export function encryptionErrorMessage(code: number): string | undefined {
 // ============================================================================
 
 /**
+ * Exception for state errors (entity not found, expired).
+ *
+ * State errors are never retryable - they represent definitive entity state.
+ *
+ * @example
+ * ```typescript
+ * try {
+ *   const event = await client.getLatestByUuid(entityId)
+ * } catch (error) {
+ *   if (error instanceof StateException) {
+ *     if (error.error === StateError.ENTITY_NOT_FOUND) {
+ *       console.log('Entity does not exist')
+ *     } else if (error.error === StateError.ENTITY_EXPIRED) {
+ *       console.log('Entity has expired')
+ *     }
+ *   }
+ * }
+ * ```
+ */
+export class StateException extends Error {
+  public readonly error: StateError
+  public readonly code: number
+  public readonly retryable: boolean
+
+  constructor(error: StateError) {
+    const message = STATE_ERROR_MESSAGES[error]
+    super(`[${error}] ${message}`)
+    this.name = 'StateException'
+    this.error = error
+    this.code = error
+    this.retryable = false // State errors are never retryable
+  }
+}
+
+/**
  * Exception for multi-region errors.
  */
 export class MultiRegionException extends Error {
@@ -501,6 +583,9 @@ export class EncryptionException extends Error {
  * ```
  */
 export function isRetryableCode(code: number): boolean {
+  if (isStateError(code)) {
+    return STATE_ERROR_RETRYABLE[code as StateError] ?? false
+  }
   if (isMultiRegionError(code)) {
     return MULTI_REGION_ERROR_RETRYABLE[code as MultiRegionError] ?? false
   }
@@ -522,6 +607,9 @@ export const isRetryable = isRetryableCode
  * Returns the message for any v2 error code.
  */
 export function errorMessage(code: number): string | undefined {
+  if (isStateError(code)) {
+    return stateErrorMessage(code)
+  }
   if (isMultiRegionError(code)) {
     return multiRegionErrorMessage(code)
   }
