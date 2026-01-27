@@ -1515,8 +1515,7 @@ const operation_schemas = list: {
     for (&[_]struct { vsr.Operation, type, type }{
         .{ .reserved, extern struct {}, extern struct {} },
         .{ .root, extern struct {}, extern struct {} },
-        // TODO vsr.RegisterRequest once that is merged.
-        .{ .register, extern struct {}, vsr.RegisterResult },
+        .{ .register, vsr.RegisterRequest, vsr.RegisterResult },
         .{ .reconfigure, vsr.ReconfigurationRequest, vsr.ReconfigurationResult },
         .{ .pulse, extern struct {}, extern struct {} },
         .{ .upgrade, vsr.UpgradeRequest, extern struct {} },

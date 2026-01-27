@@ -72,7 +72,7 @@
 //!
 //! Edge cases handled:
 //! - Self-intersecting: detected by `isPolygonSelfIntersecting()` - reject with error
-//! - Antimeridian crossing: S2 covering works correctly; ray-casting needs polygon split
+//! - Antimeridian crossing: handled via longitude normalization in `pointInPolygon()`
 //! - Polar regions: handled correctly despite longitude singularity
 //! - Complex polygons: 10,000+ vertices supported (tested up to 1000)
 //!
@@ -91,7 +91,7 @@
 //! - POLY-04: Polygon query handles concave polygons correctly
 //! - POLY-05: Polygon query handles polygons with holes correctly
 //! - POLY-06: Self-intersecting polygons rejected with error
-//! - POLY-07: Polygons crossing antimeridian work correctly (S2 covering)
+//! - POLY-07: Polygons crossing antimeridian work correctly (both S2 covering and ray-casting)
 //! - POLY-08: Polygon query efficiently uses S2 cell covering
 //!
 //! Benchmark requirements (POLY-09) are deferred to Phase 10.
@@ -421,6 +421,9 @@ pub const S2 = struct {
     /// (non-self-intersecting) and the vertices are in order (clockwise or
     /// counter-clockwise).
     ///
+    /// Handles antimeridian-crossing polygons by normalizing longitudes to
+    /// a continuous range before applying the ray-casting algorithm.
+    ///
     /// Arguments:
     /// - point: The point to test
     /// - polygon: Array of vertices defining the polygon
@@ -429,6 +432,13 @@ pub const S2 = struct {
     pub fn pointInPolygon(point: LatLon, polygon: []const LatLon) bool {
         if (polygon.len < 3) return false;
 
+        // Check if polygon crosses the antimeridian and normalize if needed
+        const crosses_antimeridian = doesCrossAntimeridian(polygon);
+        const point_lon = if (crosses_antimeridian)
+            normalizeLonForAntimeridian(point.lon_nano)
+        else
+            point.lon_nano;
+
         // Ray casting algorithm
         var inside = false;
         var j = polygon.len - 1;
@@ -436,12 +446,22 @@ pub const S2 = struct {
         for (polygon, 0..) |vi, i| {
             const vj = polygon[j];
 
+            // Normalize longitudes if polygon crosses antimeridian
+            const vi_lon = if (crosses_antimeridian)
+                normalizeLonForAntimeridian(vi.lon_nano)
+            else
+                vi.lon_nano;
+            const vj_lon = if (crosses_antimeridian)
+                normalizeLonForAntimeridian(vj.lon_nano)
+            else
+                vj.lon_nano;
+
             // Check if ray from point crosses edge vi-vj
-            if ((vi.lon_nano > point.lon_nano) != (vj.lon_nano > point.lon_nano)) {
+            if ((vi_lon > point_lon) != (vj_lon > point_lon)) {
                 // Compute x-intercept of edge with horizontal ray from point
                 const lat_diff = vj.lat_nano - vi.lat_nano;
-                const lon_diff = vj.lon_nano - vi.lon_nano;
-                const t = @as(f64, @floatFromInt(point.lon_nano - vi.lon_nano)) /
+                const lon_diff = vj_lon - vi_lon;
+                const t = @as(f64, @floatFromInt(point_lon - vi_lon)) /
                     @as(f64, @floatFromInt(lon_diff));
                 const lat_intersect = @as(f64, @floatFromInt(vi.lat_nano)) +
                     t * @as(f64, @floatFromInt(lat_diff));
@@ -597,6 +617,42 @@ pub const S2 = struct {
         }
 
         return false;
+    }
+
+    /// Check if a polygon crosses the antimeridian (±180° longitude)
+    ///
+    /// A polygon crosses the antimeridian if any edge has endpoints that require
+    /// traveling more than 180° to connect directly. For example, an edge from
+    /// 179°E to 179°W (or +179° to -179°) crosses the antimeridian.
+    ///
+    /// Detection heuristic: If |lon1 - lon2| > 180°, the edge crosses the antimeridian.
+    /// This is because the shortest path between those points goes through 180°.
+    ///
+    /// Returns: true if polygon crosses antimeridian, false otherwise
+    pub fn doesCrossAntimeridian(polygon: []const LatLon) bool {
+        if (polygon.len < 3) return false;
+
+        const threshold: i64 = 180_000_000_000; // 180 degrees in nanodegrees
+        var j = polygon.len - 1;
+
+        for (0..polygon.len) |i| {
+            const lon_diff = polygon[i].lon_nano - polygon[j].lon_nano;
+            if (@abs(lon_diff) > threshold) {
+                return true;
+            }
+            j = i;
+        }
+
+        return false;
+    }
+
+    /// Normalize a longitude value for antimeridian-crossing polygons
+    /// Shifts negative longitudes to [180°, 360°) range
+    fn normalizeLonForAntimeridian(lon_nano: i64) i64 {
+        if (lon_nano < 0) {
+            return lon_nano + 360_000_000_000; // Add 360 degrees
+        }
+        return lon_nano;
     }
 
     /// Check if a polygon spans more than 350 degrees longitude
@@ -1890,12 +1946,155 @@ test "polygon query: antimeridian crossing - distance verification" {
     // Should be approximately 222 km (2 degrees at equator)
     try std.testing.expect(dist_km > 200.0 and dist_km < 250.0);
 
-    // Note: For polygon queries crossing the antimeridian, the recommended
-    // approach is to split the polygon at the 180 meridian. This is a known
-    // limitation of simple planar ray-casting algorithms.
-    //
-    // S2 cell covering (used for coarse filtering) handles antimeridian
-    // correctly because it works on the sphere, not the plane.
+    // Antimeridian-crossing polygons are now handled by normalizing longitudes
+    // in pointInPolygon() before running the ray-casting algorithm.
+}
+
+test "polygon query: antimeridian crossing - Fiji/Tonga region" {
+    // POLY-07: Test polygon queries that span the antimeridian
+    // This polygon covers the Fiji/Tonga region which straddles ±180° longitude
+
+    // Polygon spanning the antimeridian: roughly Fiji to Tonga area
+    // Vertices go: SW (western hemisphere) -> NW -> NE (eastern hemisphere) -> SE -> back
+    const fiji_tonga_polygon = [_]LatLon{
+        .{ .lat_nano = -22_000_000_000, .lon_nano = 179_000_000_000 }, // 22S, 179E (Fiji side)
+        .{ .lat_nano = -15_000_000_000, .lon_nano = 179_000_000_000 }, // 15S, 179E
+        .{ .lat_nano = -15_000_000_000, .lon_nano = -175_000_000_000 }, // 15S, 175W (Tonga side)
+        .{ .lat_nano = -22_000_000_000, .lon_nano = -175_000_000_000 }, // 22S, 175W
+    };
+
+    // Verify polygon crosses the antimeridian
+    try std.testing.expect(S2.doesCrossAntimeridian(&fiji_tonga_polygon));
+
+    // Point in the middle of the polygon (should be inside)
+    // ~18S, 180E/W (right on antimeridian)
+    const inside_center = LatLon{
+        .lat_nano = -18_000_000_000,
+        .lon_nano = 180_000_000_000, // Right on the antimeridian (180E)
+    };
+    try std.testing.expect(S2.pointInPolygon(inside_center, &fiji_tonga_polygon));
+
+    // Point inside on eastern hemisphere side (Fiji)
+    const inside_fiji = LatLon{
+        .lat_nano = -18_000_000_000,
+        .lon_nano = 179_500_000_000, // 179.5E
+    };
+    try std.testing.expect(S2.pointInPolygon(inside_fiji, &fiji_tonga_polygon));
+
+    // Point inside on western hemisphere side (Tonga)
+    const inside_tonga = LatLon{
+        .lat_nano = -18_000_000_000,
+        .lon_nano = -176_000_000_000, // 176W
+    };
+    try std.testing.expect(S2.pointInPolygon(inside_tonga, &fiji_tonga_polygon));
+
+    // Point outside (north of the polygon)
+    const outside_north = LatLon{
+        .lat_nano = -10_000_000_000, // 10S
+        .lon_nano = 180_000_000_000,
+    };
+    try std.testing.expect(!S2.pointInPolygon(outside_north, &fiji_tonga_polygon));
+
+    // Point outside (well west of the polygon)
+    const outside_west = LatLon{
+        .lat_nano = -18_000_000_000,
+        .lon_nano = 170_000_000_000, // 170E - far from the polygon
+    };
+    try std.testing.expect(!S2.pointInPolygon(outside_west, &fiji_tonga_polygon));
+
+    // Point outside (well east of the polygon)
+    const outside_east = LatLon{
+        .lat_nano = -18_000_000_000,
+        .lon_nano = -160_000_000_000, // 160W - far from the polygon
+    };
+    try std.testing.expect(!S2.pointInPolygon(outside_east, &fiji_tonga_polygon));
+}
+
+test "polygon query: antimeridian crossing - detection" {
+    // Test the doesCrossAntimeridian detection function
+
+    // Polygon that clearly crosses: 170E to 170W
+    const crossing_polygon = [_]LatLon{
+        .{ .lat_nano = 0, .lon_nano = 170_000_000_000 },
+        .{ .lat_nano = 10_000_000_000, .lon_nano = 170_000_000_000 },
+        .{ .lat_nano = 10_000_000_000, .lon_nano = -170_000_000_000 },
+        .{ .lat_nano = 0, .lon_nano = -170_000_000_000 },
+    };
+    try std.testing.expect(S2.doesCrossAntimeridian(&crossing_polygon));
+
+    // Polygon that doesn't cross: all in western hemisphere
+    const western_polygon = [_]LatLon{
+        .{ .lat_nano = 0, .lon_nano = -120_000_000_000 },
+        .{ .lat_nano = 10_000_000_000, .lon_nano = -120_000_000_000 },
+        .{ .lat_nano = 10_000_000_000, .lon_nano = -100_000_000_000 },
+        .{ .lat_nano = 0, .lon_nano = -100_000_000_000 },
+    };
+    try std.testing.expect(!S2.doesCrossAntimeridian(&western_polygon));
+
+    // Polygon that doesn't cross: all in eastern hemisphere
+    const eastern_polygon = [_]LatLon{
+        .{ .lat_nano = 0, .lon_nano = 100_000_000_000 },
+        .{ .lat_nano = 10_000_000_000, .lon_nano = 100_000_000_000 },
+        .{ .lat_nano = 10_000_000_000, .lon_nano = 120_000_000_000 },
+        .{ .lat_nano = 0, .lon_nano = 120_000_000_000 },
+    };
+    try std.testing.expect(!S2.doesCrossAntimeridian(&eastern_polygon));
+
+    // Large polygon that spans a lot but doesn't cross antimeridian (stays < 180° span)
+    // From 80W to 80E = 160° span, doesn't cross antimeridian
+    const large_polygon = [_]LatLon{
+        .{ .lat_nano = 0, .lon_nano = -80_000_000_000 },
+        .{ .lat_nano = 50_000_000_000, .lon_nano = -80_000_000_000 },
+        .{ .lat_nano = 50_000_000_000, .lon_nano = 80_000_000_000 },
+        .{ .lat_nano = 0, .lon_nano = 80_000_000_000 },
+    };
+    try std.testing.expect(!S2.doesCrossAntimeridian(&large_polygon));
+
+    // Polygon spanning > 180° is detected as crossing (ambiguous case)
+    // This is expected: edges > 180° apart could go either way around the globe
+    const ambiguous_polygon = [_]LatLon{
+        .{ .lat_nano = 0, .lon_nano = -100_000_000_000 },
+        .{ .lat_nano = 50_000_000_000, .lon_nano = -100_000_000_000 },
+        .{ .lat_nano = 50_000_000_000, .lon_nano = 100_000_000_000 },
+        .{ .lat_nano = 0, .lon_nano = 100_000_000_000 },
+    };
+    // This WILL be detected as crossing because edges span > 180°
+    try std.testing.expect(S2.doesCrossAntimeridian(&ambiguous_polygon));
+}
+
+test "polygon query: antimeridian crossing - Russia/Alaska border region" {
+    // Another antimeridian-crossing test case: Bering Strait area
+    // This region between Russia and Alaska straddles the antimeridian
+
+    const bering_strait_polygon = [_]LatLon{
+        .{ .lat_nano = 64_000_000_000, .lon_nano = 168_000_000_000 }, // Russia side
+        .{ .lat_nano = 68_000_000_000, .lon_nano = 168_000_000_000 },
+        .{ .lat_nano = 68_000_000_000, .lon_nano = -168_000_000_000 }, // Alaska side
+        .{ .lat_nano = 64_000_000_000, .lon_nano = -168_000_000_000 },
+    };
+
+    try std.testing.expect(S2.doesCrossAntimeridian(&bering_strait_polygon));
+
+    // Point in the Bering Strait (inside polygon)
+    const inside_strait = LatLon{
+        .lat_nano = 66_000_000_000,
+        .lon_nano = 180_000_000_000,
+    };
+    try std.testing.expect(S2.pointInPolygon(inside_strait, &bering_strait_polygon));
+
+    // Point in Alaska (should be outside - too far east)
+    const outside_alaska = LatLon{
+        .lat_nano = 66_000_000_000,
+        .lon_nano = -150_000_000_000, // 150W
+    };
+    try std.testing.expect(!S2.pointInPolygon(outside_alaska, &bering_strait_polygon));
+
+    // Point in Russia (should be outside - too far west)
+    const outside_russia = LatLon{
+        .lat_nano = 66_000_000_000,
+        .lon_nano = 150_000_000_000, // 150E
+    };
+    try std.testing.expect(!S2.pointInPolygon(outside_russia, &bering_strait_polygon));
 }
 
 test "polygon query: polar regions - near North Pole" {

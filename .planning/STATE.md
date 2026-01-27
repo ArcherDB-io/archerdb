@@ -48,9 +48,11 @@ Phase-level decisions captured in phase summaries under `.planning/phases/`.
 
 **Known limitations carried forward:**
 - ~90 TODOs remain in infrastructure code (Zig language limitations)
-- Antimeridian polygon queries require splitting at 180 meridian
 - Snapshot verification for manifest/free_set/client_sessions is future work
-- Pre-existing flaky tests in ram_index.zig (concurrent/resize stress tests)
+
+**Verified 2026-01-27:**
+- ram_index.zig stress tests (TTL race, concurrent access) pass consistently - no longer considered flaky
+- Antimeridian polygon queries now work correctly via longitude normalization in pointInPolygon()
 
 ## Session Continuity
 

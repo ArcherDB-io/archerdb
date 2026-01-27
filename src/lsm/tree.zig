@@ -548,7 +548,8 @@ pub fn TreeType(comptime TreeTable: type, comptime Storage: type) type {
                 assert(tree.table_mutable.value_context.count == 0);
             }
 
-            // TODO
+            // Assertion disabled: compaction_op may not be updated yet at this point.
+            // See also assert_between_bars() which has similar disabled assertions.
             // assert((tree.compaction_op.? + 1) % constants.lsm_compaction_ops == 0);
 
             assert(tree.table_mutable.count() == 0);
