@@ -2015,26 +2015,24 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
     // Allowlist of stable flags. --development will disable automatic multiversion
     // upgrades too, but the flag itself is stable.
     const stable_args = .{
-        "addresses",               "cache_grid",
-        "development",             "experimental",
-        "log_level",               "log_format",
-        "log_module_levels",       "log_file",
-        "log_rotate_size",         "log_rotate_count",
-        "metrics_port",            "metrics_bind",
-        "metrics_auth_token",
-        "backup_enabled",          "backup_provider",
-        "backup_bucket",           "backup_region",
-        "backup_credentials",      "backup_mode",
-        "backup_encryption",       "backup_kms_key_id",
-        "backup_compress",         "backup_queue_soft_limit",
-        "backup_queue_hard_limit", "backup_retention_days",
-        "backup_primary_only",
+        "addresses",                  "cache_grid",
+        "development",                "experimental",
+        "log_level",                  "log_format",
+        "log_module_levels",          "log_file",
+        "log_rotate_size",            "log_rotate_count",
+        "metrics_port",               "metrics_bind",
+        "metrics_auth_token",         "backup_enabled",
+        "backup_provider",            "backup_bucket",
+        "backup_region",              "backup_credentials",
+        "backup_mode",                "backup_encryption",
+        "backup_kms_key_id",          "backup_compress",
+        "backup_queue_soft_limit",    "backup_queue_hard_limit",
+        "backup_retention_days",      "backup_primary_only",
         "vsr_timeout_profile",        "vsr_timeout_jitter_pct",
         "vsr_timeout_heartbeat_ms",   "vsr_timeout_election_ms",
         "vsr_timeout_request_ms",     "vsr_timeout_connection_ms",
-        "vsr_timeout_view_change_ms",
-        "vsr_quorum_preset",          "vsr_quorum_phase1",
-        "vsr_quorum_phase2",
+        "vsr_timeout_view_change_ms", "vsr_quorum_preset",
+        "vsr_quorum_phase1",          "vsr_quorum_phase2",
     };
     @setEvalBranchQuota(160_000);
     inline for (std.meta.fields(@TypeOf(start))) |field| {
@@ -2218,13 +2216,15 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
         start.vsr_timeout_request_ms != null or
         start.vsr_timeout_connection_ms != null or
         start.vsr_timeout_view_change_ms != null)
-    timeout_profiles.TimeoutOverrides{
-        .heartbeat_interval_ms = start.vsr_timeout_heartbeat_ms,
-        .election_timeout_ms = start.vsr_timeout_election_ms,
-        .request_timeout_ms = start.vsr_timeout_request_ms,
-        .connection_timeout_ms = start.vsr_timeout_connection_ms,
-        .view_change_timeout_ms = start.vsr_timeout_view_change_ms,
-    } else null;
+        timeout_profiles.TimeoutOverrides{
+            .heartbeat_interval_ms = start.vsr_timeout_heartbeat_ms,
+            .election_timeout_ms = start.vsr_timeout_election_ms,
+            .request_timeout_ms = start.vsr_timeout_request_ms,
+            .connection_timeout_ms = start.vsr_timeout_connection_ms,
+            .view_change_timeout_ms = start.vsr_timeout_view_change_ms,
+        }
+    else
+        null;
     const timeout_config = timeout_profiles.TimeoutConfig{
         .profile = timeout_profile,
         .jitter_range_pct = start.vsr_timeout_jitter_pct orelse

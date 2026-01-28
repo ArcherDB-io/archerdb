@@ -2567,7 +2567,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 
                 // Cache the result (14-01)
                 if (self.result_cache) |cache| {
-                    cache.put(query_hash, output[0..response_size + @sizeOf(GeoEvent)]);
+                    cache.put(query_hash, output[0 .. response_size + @sizeOf(GeoEvent)]);
                 }
                 return response_size + @sizeOf(GeoEvent);
             } else {

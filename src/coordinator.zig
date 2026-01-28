@@ -972,7 +972,6 @@ fn mockFanOutQuery(ctx: *anyopaque, shard: ShardInfo) anyerror![]GeoEvent {
     return data.events[0..];
 }
 
-
 test "Coordinator: initialization" {
     const allocator = std.testing.allocator;
 

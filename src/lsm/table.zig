@@ -426,7 +426,7 @@ pub fn TableType(
                             // Compression was effective - copy compressed data to body
                             @memcpy(block[body_start..][0..result.compressed_size], temp_buffer[0..result.compressed_size]);
                             // Zero out rest to avoid data leakage
-                            @memset(block[body_start + result.compressed_size..body_end], 0);
+                            @memset(block[body_start + result.compressed_size .. body_end], 0);
 
                             final_compression_type = .lz4;
                             final_body_size = @intCast(result.compressed_size);

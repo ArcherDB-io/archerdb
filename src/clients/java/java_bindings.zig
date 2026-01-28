@@ -135,7 +135,7 @@ const type_mappings = .{
     } },
     .{ tb.TtlSetResponse, TypeMapping{
         .name = "TtlSetResponse",
-        .private_fields = &.{"_padding", "reserved"},
+        .private_fields = &.{ "_padding", "reserved" },
     } },
     .{ tb.TtlExtendRequest, TypeMapping{
         .name = "TtlExtendRequest",
@@ -143,7 +143,7 @@ const type_mappings = .{
     } },
     .{ tb.TtlExtendResponse, TypeMapping{
         .name = "TtlExtendResponse",
-        .private_fields = &.{"_padding", "reserved"},
+        .private_fields = &.{ "_padding", "reserved" },
     } },
     .{ tb.TtlClearRequest, TypeMapping{
         .name = "TtlClearRequest",
@@ -151,7 +151,7 @@ const type_mappings = .{
     } },
     .{ tb.TtlClearResponse, TypeMapping{
         .name = "TtlClearResponse",
-        .private_fields = &.{"_padding", "reserved"},
+        .private_fields = &.{ "_padding", "reserved" },
     } },
     // Topology and status responses
     .{ tb.PingRequest, TypeMapping{
@@ -165,7 +165,7 @@ const type_mappings = .{
     } },
     .{ tb.StatusResponse, TypeMapping{
         .name = "StatusResponse",
-        .private_fields = &.{"_padding", "reserved"},
+        .private_fields = &.{ "_padding", "reserved" },
     } },
     .{ tb.TopologyRequest, TypeMapping{
         .name = "TopologyRequest",
@@ -938,5 +938,4 @@ pub fn main() !void {
             .data = buffer.items,
         });
     }
-
 }

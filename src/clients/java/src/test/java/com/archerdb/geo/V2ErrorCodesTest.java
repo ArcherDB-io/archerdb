@@ -165,9 +165,8 @@ class V2ErrorCodesTest {
 
     @Test
     void archerDBException_withContext() {
-        ArcherDBException exc = new ArcherDBException(
-            500, "Test error", true, "entity-123", 7, ArcherDBException.OperationType.INSERT
-        );
+        ArcherDBException exc = new ArcherDBException(500, "Test error", true, "entity-123", 7,
+                ArcherDBException.OperationType.INSERT);
         assertEquals("entity-123", exc.getEntityId());
         assertEquals(Integer.valueOf(7), exc.getShardId());
         assertEquals(ArcherDBException.OperationType.INSERT, exc.getOperationType());
@@ -185,9 +184,8 @@ class V2ErrorCodesTest {
 
     @Test
     void shardingError_toExceptionWithContext() {
-        ArcherDBException exc = ShardingError.NOT_SHARD_LEADER.toException(
-            "entity-abc", 42, ArcherDBException.OperationType.UPDATE
-        );
+        ArcherDBException exc = ShardingError.NOT_SHARD_LEADER.toException("entity-abc", 42,
+                ArcherDBException.OperationType.UPDATE);
         assertEquals(220, exc.getErrorCode());
         assertEquals("entity-abc", exc.getEntityId());
         assertEquals(Integer.valueOf(42), exc.getShardId());
@@ -197,9 +195,8 @@ class V2ErrorCodesTest {
 
     @Test
     void encryptionError_toExceptionWithContext() {
-        ArcherDBException exc = EncryptionError.DECRYPTION_FAILED.toException(
-            "entity-xyz", 3, ArcherDBException.OperationType.QUERY
-        );
+        ArcherDBException exc = EncryptionError.DECRYPTION_FAILED.toException("entity-xyz", 3,
+                ArcherDBException.OperationType.QUERY);
         assertEquals(411, exc.getErrorCode());
         assertEquals("entity-xyz", exc.getEntityId());
         assertEquals(Integer.valueOf(3), exc.getShardId());
@@ -209,9 +206,8 @@ class V2ErrorCodesTest {
 
     @Test
     void multiRegionError_toExceptionWithContext() {
-        ArcherDBException exc = MultiRegionError.GEO_SHARD_MISMATCH.toException(
-            "entity-def", 5, ArcherDBException.OperationType.INSERT
-        );
+        ArcherDBException exc = MultiRegionError.GEO_SHARD_MISMATCH.toException("entity-def", 5,
+                ArcherDBException.OperationType.INSERT);
         assertEquals(218, exc.getErrorCode());
         assertEquals("entity-def", exc.getEntityId());
         assertEquals(Integer.valueOf(5), exc.getShardId());
@@ -221,9 +217,8 @@ class V2ErrorCodesTest {
 
     @Test
     void archerDBException_toStringWithContext() {
-        ArcherDBException exc = new ArcherDBException(
-            220, "Test error", true, "entity-123", 7, ArcherDBException.OperationType.INSERT
-        );
+        ArcherDBException exc = new ArcherDBException(220, "Test error", true, "entity-123", 7,
+                ArcherDBException.OperationType.INSERT);
         String str = exc.toString();
         assertTrue(str.contains("entityId=entity-123"));
         assertTrue(str.contains("shardId=7"));

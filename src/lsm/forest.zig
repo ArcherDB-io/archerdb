@@ -933,8 +933,7 @@ pub fn ForestType(comptime _Storage: type, comptime groove_cfg: anytype) type {
         fn adaptive_load_from_constants(forest: *Forest) !void {
             forest.adaptive_config = AdaptiveConfig{
                 .enabled = constants.lsm_adaptive_compaction_enabled,
-                .write_throughput_change_threshold =
-                    constants.lsm_adaptive_write_change_threshold,
+                .write_throughput_change_threshold = constants.lsm_adaptive_write_change_threshold,
                 .space_amp_threshold = constants.lsm_adaptive_space_amp_threshold,
             };
             try forest.adaptive_config.validate();

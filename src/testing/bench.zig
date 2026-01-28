@@ -178,12 +178,11 @@ pub const StatisticalResult = struct {
             \\P50={d:.3}ms P99={d:.3}ms min={d:.3}ms max={d:.3}ms
             \\samples={d} (outliers removed: {d})
         , .{
-            self.mean_ns / 1e6, self.std_dev_ns / 1e6,
-            self.confidence_interval_95.lower_ns / 1e6,
-            self.confidence_interval_95.upper_ns / 1e6,
-            self.p50_ns / 1e6, self.p99_ns / 1e6,
-            self.min_ns / 1e6, self.max_ns / 1e6,
-            self.samples, self.outliers_removed,
+            self.mean_ns / 1e6,                         self.std_dev_ns / 1e6,
+            self.confidence_interval_95.lower_ns / 1e6, self.confidence_interval_95.upper_ns / 1e6,
+            self.p50_ns / 1e6,                          self.p99_ns / 1e6,
+            self.min_ns / 1e6,                          self.max_ns / 1e6,
+            self.samples,                               self.outliers_removed,
         });
     }
 

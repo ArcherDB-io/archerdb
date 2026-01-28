@@ -344,28 +344,33 @@ pub fn build(b: *std.Build) !void {
 
     // zig build clients:$lang
     build_go_client(b, build_steps.clients_go, .{
+        .stdx_module = stdx_module,
         .vsr_module = vsr_module,
         .vsr_options = vsr_options,
         .arch_client_header = arch_client_header.path,
         .mode = mode,
     });
     build_java_client(b, build_steps.clients_java, .{
+        .stdx_module = stdx_module,
         .vsr_module = vsr_module,
         .vsr_options = vsr_options,
         .mode = mode,
     });
     build_node_client(b, build_steps.clients_node, .{
+        .stdx_module = stdx_module,
         .vsr_module = vsr_module,
         .vsr_options = vsr_options,
         .mode = mode,
     });
     build_python_client(b, build_steps.clients_python, .{
+        .stdx_module = stdx_module,
         .vsr_module = vsr_module,
         .vsr_options = vsr_options,
         .arch_client_header = arch_client_header.path,
         .mode = mode,
     });
     build_c_client(b, build_steps.clients_c, .{
+        .stdx_module = stdx_module,
         .vsr_module = vsr_module,
         .vsr_options = vsr_options,
         .arch_client_header = arch_client_header,
@@ -444,18 +449,35 @@ fn build_vsr_module(b: *std.Build, options: struct {
     // Pass index_format as string for compile-time selection
     vsr_options.addOption([]const u8, "index_format", @tagName(options.index_format));
 
+    const vsr_module = create_vsr_module(b, .{
+        .stdx_module = options.stdx_module,
+        .vsr_options = vsr_options,
+        .lz4_dep = options.lz4_dep,
+    });
+
+    return .{ vsr_options, vsr_module };
+}
+
+fn create_vsr_module(
+    b: *std.Build,
+    options: struct {
+        stdx_module: *std.Build.Module,
+        vsr_options: *std.Build.Step.Options,
+        lz4_dep: *std.Build.Dependency,
+    },
+) *std.Build.Module {
     const vsr_module = b.createModule(.{
         .root_source_file = b.path("src/vsr.zig"),
     });
     vsr_module.addImport("stdx", options.stdx_module);
-    vsr_module.addOptions("vsr_options", vsr_options);
+    vsr_module.addOptions("vsr_options", options.vsr_options);
 
     // Add LZ4 include path for @cImport in compression.zig
     const lz4_artifact = options.lz4_dep.artifact("lz4");
     vsr_module.addIncludePath(lz4_artifact.getEmittedIncludeTree());
     vsr_module.linkLibrary(lz4_artifact);
 
-    return .{ vsr_options, vsr_module };
+    return vsr_module;
 }
 
 /// This is what is called by CI infrastructure, but you can also use it locally. In particular,
@@ -1495,6 +1517,7 @@ fn build_go_client(
     b: *std.Build,
     step_clients_go: *std.Build.Step,
     options: struct {
+        stdx_module: *std.Build.Module,
         vsr_module: *std.Build.Module,
         vsr_options: *std.Build.Step.Options,
         arch_client_header: std.Build.LazyPath,
@@ -1538,6 +1561,15 @@ fn build_go_client(
             .cpu_features = platform[2],
         }) catch unreachable;
         const resolved_target = b.resolveTargetQuery(query);
+        const lz4_dep = b.dependency("lz4", .{
+            .target = resolved_target,
+            .optimize = options.mode,
+        });
+        const vsr_module = create_vsr_module(b, .{
+            .stdx_module = options.stdx_module,
+            .vsr_options = options.vsr_options,
+            .lz4_dep = lz4_dep,
+        });
 
         const root_module = b.createModule(.{
             .root_source_file = b.path("src/archerdb/libarch_client.zig"),
@@ -1545,7 +1577,7 @@ fn build_go_client(
             .optimize = options.mode,
             .stack_protector = false,
         });
-        root_module.addImport("vsr", options.vsr_module);
+        root_module.addImport("vsr", vsr_module);
         root_module.addOptions("vsr_options", options.vsr_options);
         if (options.mode == .ReleaseSafe) strip_root_module(root_module);
 
@@ -1582,6 +1614,7 @@ fn build_java_client(
     b: *std.Build,
     step_clients_java: *std.Build.Step,
     options: struct {
+        stdx_module: *std.Build.Module,
         vsr_module: *std.Build.Module,
         vsr_options: *std.Build.Step.Options,
         mode: std.builtin.OptimizeMode,
@@ -1607,13 +1640,22 @@ fn build_java_client(
             .cpu_features = platform[2],
         }) catch unreachable;
         const resolved_target = b.resolveTargetQuery(query);
+        const lz4_dep = b.dependency("lz4", .{
+            .target = resolved_target,
+            .optimize = options.mode,
+        });
+        const vsr_module = create_vsr_module(b, .{
+            .stdx_module = options.stdx_module,
+            .vsr_options = options.vsr_options,
+            .lz4_dep = lz4_dep,
+        });
 
         const root_module = b.createModule(.{
             .root_source_file = b.path("src/clients/java/src/client.zig"),
             .target = resolved_target,
             .optimize = options.mode,
         });
-        root_module.addImport("vsr", options.vsr_module);
+        root_module.addImport("vsr", vsr_module);
         root_module.addOptions("vsr_options", options.vsr_options);
         if (options.mode == .ReleaseSafe) strip_root_module(root_module);
 
@@ -1638,6 +1680,7 @@ fn build_node_client(
     b: *std.Build,
     step_clients_node: *std.Build.Step,
     options: struct {
+        stdx_module: *std.Build.Module,
         vsr_module: *std.Build.Module,
         vsr_options: *std.Build.Step.Options,
         mode: std.builtin.OptimizeMode,
@@ -1667,13 +1710,22 @@ fn build_node_client(
             .cpu_features = platform[2],
         }) catch unreachable;
         const resolved_target = b.resolveTargetQuery(query);
+        const lz4_dep = b.dependency("lz4", .{
+            .target = resolved_target,
+            .optimize = options.mode,
+        });
+        const vsr_module = create_vsr_module(b, .{
+            .stdx_module = options.stdx_module,
+            .vsr_options = options.vsr_options,
+            .lz4_dep = lz4_dep,
+        });
 
         const root_module = b.createModule(.{
             .root_source_file = b.path("src/clients/node/node.zig"),
             .target = resolved_target,
             .optimize = options.mode,
         });
-        root_module.addImport("vsr", options.vsr_module);
+        root_module.addImport("vsr", vsr_module);
         root_module.addOptions("vsr_options", options.vsr_options);
         if (options.mode == .ReleaseSafe) strip_root_module(root_module);
 
@@ -1701,6 +1753,7 @@ fn build_python_client(
     b: *std.Build,
     step_clients_python: *std.Build.Step,
     options: struct {
+        stdx_module: *std.Build.Module,
         vsr_module: *std.Build.Module,
         vsr_options: *std.Build.Step.Options,
         arch_client_header: std.Build.LazyPath,
@@ -1727,13 +1780,22 @@ fn build_python_client(
             .cpu_features = platform[2],
         }) catch unreachable;
         const resolved_target = b.resolveTargetQuery(query);
+        const lz4_dep = b.dependency("lz4", .{
+            .target = resolved_target,
+            .optimize = options.mode,
+        });
+        const vsr_module = create_vsr_module(b, .{
+            .stdx_module = options.stdx_module,
+            .vsr_options = options.vsr_options,
+            .lz4_dep = lz4_dep,
+        });
 
         const root_module = b.createModule(.{
             .root_source_file = b.path("src/archerdb/libarch_client.zig"),
             .target = resolved_target,
             .optimize = options.mode,
         });
-        root_module.addImport("vsr", options.vsr_module);
+        root_module.addImport("vsr", vsr_module);
         root_module.addOptions("vsr_options", options.vsr_options);
         if (options.mode == .ReleaseSafe) strip_root_module(root_module);
 
@@ -1761,6 +1823,7 @@ fn build_c_client(
     b: *std.Build,
     step_clients_c: *std.Build.Step,
     options: struct {
+        stdx_module: *std.Build.Module,
         vsr_module: *std.Build.Module,
         vsr_options: *std.Build.Step.Options,
         arch_client_header: *Generated,
@@ -1775,13 +1838,22 @@ fn build_c_client(
             .cpu_features = platform[2],
         }) catch unreachable;
         const resolved_target = b.resolveTargetQuery(query);
+        const lz4_dep = b.dependency("lz4", .{
+            .target = resolved_target,
+            .optimize = options.mode,
+        });
+        const vsr_module = create_vsr_module(b, .{
+            .stdx_module = options.stdx_module,
+            .vsr_options = options.vsr_options,
+            .lz4_dep = lz4_dep,
+        });
 
         const root_module = b.createModule(.{
             .root_source_file = b.path("src/archerdb/libarch_client.zig"),
             .target = resolved_target,
             .optimize = options.mode,
         });
-        root_module.addImport("vsr", options.vsr_module);
+        root_module.addImport("vsr", vsr_module);
         root_module.addOptions("vsr_options", options.vsr_options);
         if (options.mode == .ReleaseSafe) strip_root_module(root_module);
 

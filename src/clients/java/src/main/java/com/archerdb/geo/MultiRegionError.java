@@ -112,7 +112,9 @@ public enum MultiRegionError {
      * @param shardId the shard ID involved in the error (may be null)
      * @param operationType the type of operation that caused the error (may be null)
      */
-    public ArcherDBException toException(String entityId, Integer shardId, ArcherDBException.OperationType operationType) {
-        return new ArcherDBException(code, message, isRetryable(), entityId, shardId, operationType);
+    public ArcherDBException toException(String entityId, Integer shardId,
+            ArcherDBException.OperationType operationType) {
+        return new ArcherDBException(code, message, isRetryable(), entityId, shardId,
+                operationType);
     }
 }

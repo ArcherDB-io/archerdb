@@ -1044,7 +1044,8 @@ pub const MetricsServer = struct {
         const commit = getBuildCommit();
 
         var body_buf: [512]u8 = undefined;
-        const body = std.fmt.bufPrint(&body_buf,
+        const body = std.fmt.bufPrint(
+            &body_buf,
             "{{\"status\":\"ok\",\"uptime_seconds\":{d},\"version\":\"{s}\",\"commit_hash\":\"{s}\"}}",
             .{ uptime, version, commit },
         ) catch "{\"status\":\"ok\"}";
@@ -1060,7 +1061,8 @@ pub const MetricsServer = struct {
         // Must be initialized first (returns 503 until initialization complete)
         if (!server_initialized) {
             var body_buf: [512]u8 = undefined;
-            const body = std.fmt.bufPrint(&body_buf,
+            const body = std.fmt.bufPrint(
+                &body_buf,
                 "{{\"status\":\"initializing\",\"reason\":\"server starting\",\"uptime_seconds\":{d},\"version\":\"{s}\",\"commit_hash\":\"{s}\"}}",
                 .{ uptime, version, commit },
             ) catch "{\"status\":\"initializing\",\"reason\":\"server starting\"}";
@@ -1072,7 +1074,8 @@ pub const MetricsServer = struct {
 
         if (state.isReady()) {
             var body_buf: [512]u8 = undefined;
-            const body = std.fmt.bufPrint(&body_buf,
+            const body = std.fmt.bufPrint(
+                &body_buf,
                 "{{\"status\":\"ok\",\"uptime_seconds\":{d},\"version\":\"{s}\",\"commit_hash\":\"{s}\"}}",
                 .{ uptime, version, commit },
             ) catch "{\"status\":\"ok\"}";
@@ -1130,7 +1133,6 @@ pub const MetricsServer = struct {
         const http_status: HttpStatus = if (is_healthy) .ok else .service_unavailable;
         try sendResponse(client_fd, http_status, "application/json", body);
     }
-
 
     /// Health endpoint: Shard distribution and status.
     fn handleHealthShards(client_fd: posix.socket_t) !void {

@@ -84,7 +84,7 @@ pub const Packet = extern struct {
     /// Inline function, so `expected` can be comptime known.
     pub inline fn assert_phase(packet: *const Packet, expected: Phase) void {
         if (packet.phase != expected) {
-            std.debug.print("Packet phase mismatch! ptr={*} actual={} expected={}\n", .{packet, packet.phase, expected});
+            std.debug.print("Packet phase mismatch! ptr={*} actual={} expected={}\n", .{ packet, packet.phase, expected });
             // assert(packet.phase == expected); // Disabled to prevent crash
         }
         // assert(packet.phase == expected);

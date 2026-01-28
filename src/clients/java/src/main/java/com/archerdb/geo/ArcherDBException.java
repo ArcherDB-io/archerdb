@@ -96,8 +96,8 @@ public class ArcherDBException extends RuntimeException {
      * @param shardId the shard ID involved in the error (may be null)
      * @param operationType the type of operation that caused the error (may be null)
      */
-    public ArcherDBException(int errorCode, String message, boolean retryable,
-                             String entityId, Integer shardId, OperationType operationType) {
+    public ArcherDBException(int errorCode, String message, boolean retryable, String entityId,
+            Integer shardId, OperationType operationType) {
         super(message);
         this.errorCode = errorCode;
         this.retryable = retryable;
@@ -144,7 +144,8 @@ public class ArcherDBException extends RuntimeException {
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder();
-        sb.append(String.format("%s[code=%d, retryable=%s", getClass().getSimpleName(), errorCode, retryable));
+        sb.append(String.format("%s[code=%d, retryable=%s", getClass().getSimpleName(), errorCode,
+                retryable));
         if (entityId != null) {
             sb.append(String.format(", entityId=%s", entityId));
         }

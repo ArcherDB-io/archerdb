@@ -145,9 +145,9 @@ pub const ExtendedStats = struct {
             \\P99={d:.3}ms P99.9={d:.3}ms P99.99={d:.3}ms max={d:.3}ms
             \\count={d} mean={d:.3}ms
         , .{
-            self.p50 * 1000, self.p75 * 1000, self.p90 * 1000, self.p95 * 1000,
+            self.p50 * 1000, self.p75 * 1000,  self.p90 * 1000,   self.p95 * 1000,
             self.p99 * 1000, self.p999 * 1000, self.p9999 * 1000, self.max * 1000,
-            self.count, self.mean * 1000,
+            self.count,      self.mean * 1000,
         });
     }
 

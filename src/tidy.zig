@@ -1114,11 +1114,11 @@ test "tidy unix permissions" {
 // Sanity check for "unexpected" files in the repository.
 test "tidy extensions" {
     const allowed_extensions = std.StaticStringMap(void).initComptime(.{
-        .{".c"},    .{".conf"}, .{".css"},     .{".go"},   .{".h"},    .{".hcl"},
-        .{".html"}, .{".java"}, .{".js"},      .{".json"}, .{".md"},
-        .{".mod"},  .{".py"},   .{".service"}, .{".sh"},   .{".sum"},
-        .{".svg"},  .{".toml"}, .{".ts"},      .{".tsv"},  .{".txt"},
-        .{".xml"},  .{".yaml"}, .{".yml"},     .{".zig"},  .{".zon"},
+        .{".c"},    .{".conf"},    .{".css"}, .{".go"},   .{".h"},    .{".hcl"},
+        .{".html"}, .{".java"},    .{".js"},  .{".json"}, .{".md"},   .{".mod"},
+        .{".py"},   .{".service"}, .{".sh"},  .{".sum"},  .{".svg"},  .{".toml"},
+        .{".ts"},   .{".tsv"},     .{".txt"}, .{".xml"},  .{".yaml"}, .{".yml"},
+        .{".zig"},  .{".zon"},
     });
 
     const exceptions = std.StaticStringMap(void).initComptime(.{

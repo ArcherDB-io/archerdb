@@ -67,14 +67,14 @@ pub const MinioTestContext = struct {
         const result = std.process.Child.run(.{
             .allocator = allocator,
             .argv = &[_][]const u8{
-                "docker",           "run",
-                "-d",               "--rm",
-                "-p",               "9000:9000",
-                "-p",               "9001:9001",
-                "-e",               "MINIO_ROOT_USER=" ++ default_access_key,
-                "-e",               "MINIO_ROOT_PASSWORD=" ++ default_secret_key,
-                "minio/minio",      "server",
-                "/data",            "--console-address",
+                "docker",      "run",
+                "-d",          "--rm",
+                "-p",          "9000:9000",
+                "-p",          "9001:9001",
+                "-e",          "MINIO_ROOT_USER=" ++ default_access_key,
+                "-e",          "MINIO_ROOT_PASSWORD=" ++ default_secret_key,
+                "minio/minio", "server",
+                "/data",       "--console-address",
                 ":9001",
             },
         }) catch |err| {
