@@ -251,6 +251,22 @@ export function isRetryableError(error: unknown): boolean {
 }
 
 // ============================================================================
+// Operation Types
+// ============================================================================
+
+/**
+ * Type of operation that caused an error.
+ */
+export enum OperationType {
+  UNKNOWN = '',
+  INSERT = 'insert',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  QUERY = 'query',
+  GET = 'get',
+}
+
+// ============================================================================
 // State Error Codes (200-210)
 // ============================================================================
 
@@ -495,14 +511,18 @@ export class StateException extends Error {
   public readonly error: StateError
   public readonly code: number
   public readonly retryable: boolean
+  public readonly entityId: string | undefined
+  public readonly operationType: OperationType | undefined
 
-  constructor(error: StateError) {
+  constructor(error: StateError, entityId?: string, operationType?: OperationType) {
     const message = STATE_ERROR_MESSAGES[error]
     super(`[${error}] ${message}`)
     this.name = 'StateException'
     this.error = error
     this.code = error
     this.retryable = false // State errors are never retryable
+    this.entityId = entityId
+    this.operationType = operationType
   }
 }
 
@@ -513,14 +533,20 @@ export class MultiRegionException extends Error {
   public readonly error: MultiRegionError
   public readonly code: number
   public readonly retryable: boolean
+  public readonly entityId: string | undefined
+  public readonly shardId: number | undefined
+  public readonly operationType: OperationType | undefined
 
-  constructor(error: MultiRegionError) {
+  constructor(error: MultiRegionError, entityId?: string, shardId?: number, operationType?: OperationType) {
     const message = MULTI_REGION_ERROR_MESSAGES[error]
     super(`[${error}] ${message}`)
     this.name = 'MultiRegionException'
     this.error = error
     this.code = error
     this.retryable = MULTI_REGION_ERROR_RETRYABLE[error]
+    this.entityId = entityId
+    this.shardId = shardId
+    this.operationType = operationType
   }
 }
 
@@ -530,15 +556,19 @@ export class MultiRegionException extends Error {
 export class ShardingException extends Error {
   public readonly error: ShardingError
   public readonly shardId: number | undefined
+  public readonly entityId: string | undefined
+  public readonly operationType: OperationType | undefined
   public readonly code: number
   public readonly retryable: boolean
 
-  constructor(error: ShardingError, shardId?: number) {
+  constructor(error: ShardingError, shardId?: number, entityId?: string, operationType?: OperationType) {
     const message = SHARDING_ERROR_MESSAGES[error]
     super(`[${error}] ${message}`)
     this.name = 'ShardingException'
     this.error = error
     this.shardId = shardId
+    this.entityId = entityId
+    this.operationType = operationType
     this.code = error
     this.retryable = SHARDING_ERROR_RETRYABLE[error]
   }
@@ -551,14 +581,20 @@ export class EncryptionException extends Error {
   public readonly error: EncryptionError
   public readonly code: number
   public readonly retryable: boolean
+  public readonly entityId: string | undefined
+  public readonly shardId: number | undefined
+  public readonly operationType: OperationType | undefined
 
-  constructor(error: EncryptionError) {
+  constructor(error: EncryptionError, entityId?: string, shardId?: number, operationType?: OperationType) {
     const message = ENCRYPTION_ERROR_MESSAGES[error]
     super(`[${error}] ${message}`)
     this.name = 'EncryptionException'
     this.error = error
     this.code = error
     this.retryable = ENCRYPTION_ERROR_RETRYABLE[error]
+    this.entityId = entityId
+    this.shardId = shardId
+    this.operationType = operationType
   }
 }
 

@@ -42,8 +42,18 @@ Example:
 
 from __future__ import annotations
 from dataclasses import dataclass
-from enum import IntEnum
+from enum import IntEnum, Enum
 from typing import Optional
+
+
+class OperationType(str, Enum):
+    """Type of operation that caused an error."""
+    UNKNOWN = ""
+    INSERT = "insert"
+    UPDATE = "update"
+    DELETE = "delete"
+    QUERY = "query"
+    GET = "get"
 
 
 class ArcherDBError(Exception):
@@ -58,17 +68,30 @@ class ArcherDBError(Exception):
         message: Human-readable error description.
         retryable: Whether the operation can be retried.
             True for transient errors, False for permanent errors.
+        entity_id: Optional entity ID involved in the error.
+        shard_id: Optional shard ID involved in the error.
+        operation_type: Optional type of operation that caused the error.
 
     Example:
         try:
             client.insert_events(events)
         except ArcherDBError as e:
             logger.error(f"Error {e.code}: {e.message}")
+            if e.entity_id:
+                logger.error(f"Entity: {e.entity_id}")
             if e.retryable:
                 retry_queue.put(events)
     """
 
-    def __init__(self, code: int, message: str, retryable: bool = False):
+    def __init__(
+        self,
+        code: int,
+        message: str,
+        retryable: bool = False,
+        entity_id: Optional[str] = None,
+        shard_id: Optional[int] = None,
+        operation_type: Optional[OperationType] = None,
+    ):
         """
         Create a new ArcherDBError.
 
@@ -76,10 +99,16 @@ class ArcherDBError(Exception):
             code: Numeric error code.
             message: Human-readable error description.
             retryable: Whether the operation can be retried. Default False.
+            entity_id: Optional entity ID involved in the error.
+            shard_id: Optional shard ID involved in the error.
+            operation_type: Optional type of operation that caused the error.
         """
         self.code = code
         self.message = message
         self.retryable = retryable
+        self.entity_id = entity_id
+        self.shard_id = shard_id
+        self.operation_type = operation_type
         super().__init__(f"[{code}] {message}")
 
 
@@ -151,6 +180,8 @@ class StateException(ArcherDBError):
         error: The specific StateError enum value.
         code: Numeric error code (inherited).
         retryable: Always False for state errors.
+        entity_id: Optional entity ID involved in the error.
+        operation_type: Optional type of operation that caused the error.
 
     Example:
         try:
@@ -162,17 +193,26 @@ class StateException(ArcherDBError):
                 print("Entity has expired")
     """
 
-    def __init__(self, error: StateError):
+    def __init__(
+        self,
+        error: StateError,
+        entity_id: Optional[str] = None,
+        operation_type: Optional[OperationType] = None,
+    ):
         """
         Create a StateException.
 
         Args:
             error: The StateError enum value.
+            entity_id: Optional entity ID involved in the error.
+            operation_type: Optional type of operation that caused the error.
         """
         super().__init__(
             code=error.value,
             message=STATE_ERROR_MESSAGES[error],
             retryable=False,
+            entity_id=entity_id,
+            operation_type=operation_type,
         )
         self.error = error
 
@@ -401,11 +441,20 @@ def encryption_error_message(code: int) -> Optional[str]:
 class MultiRegionException(ArcherDBError):
     """Exception for multi-region errors."""
 
-    def __init__(self, error: MultiRegionError):
+    def __init__(
+        self,
+        error: MultiRegionError,
+        entity_id: Optional[str] = None,
+        shard_id: Optional[int] = None,
+        operation_type: Optional[OperationType] = None,
+    ):
         super().__init__(
             code=error.value,
             message=MULTI_REGION_ERROR_MESSAGES[error],
             retryable=MULTI_REGION_ERROR_RETRYABLE[error],
+            entity_id=entity_id,
+            shard_id=shard_id,
+            operation_type=operation_type,
         )
         self.error = error
 
@@ -413,24 +462,41 @@ class MultiRegionException(ArcherDBError):
 class ShardingException(ArcherDBError):
     """Exception for sharding errors."""
 
-    def __init__(self, error: ShardingError, shard_id: Optional[int] = None):
+    def __init__(
+        self,
+        error: ShardingError,
+        shard_id: Optional[int] = None,
+        entity_id: Optional[str] = None,
+        operation_type: Optional[OperationType] = None,
+    ):
         super().__init__(
             code=error.value,
             message=SHARDING_ERROR_MESSAGES[error],
             retryable=SHARDING_ERROR_RETRYABLE[error],
+            entity_id=entity_id,
+            shard_id=shard_id,
+            operation_type=operation_type,
         )
         self.error = error
-        self.shard_id = shard_id
 
 
 class EncryptionException(ArcherDBError):
     """Exception for encryption errors."""
 
-    def __init__(self, error: EncryptionError):
+    def __init__(
+        self,
+        error: EncryptionError,
+        entity_id: Optional[str] = None,
+        shard_id: Optional[int] = None,
+        operation_type: Optional[OperationType] = None,
+    ):
         super().__init__(
             code=error.value,
             message=ENCRYPTION_ERROR_MESSAGES[error],
             retryable=ENCRYPTION_ERROR_RETRYABLE[error],
+            entity_id=entity_id,
+            shard_id=shard_id,
+            operation_type=operation_type,
         )
         self.error = error
 

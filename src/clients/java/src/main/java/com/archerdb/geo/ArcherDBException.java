@@ -9,6 +9,7 @@ package com.archerdb.geo;
  * <li>Error code (u16)</li>
  * <li>Human-readable message</li>
  * <li>Retryable flag</li>
+ * <li>Optional operation context (entity ID, shard ID, operation type)</li>
  * </ul>
  *
  * <p>
@@ -24,8 +25,33 @@ public class ArcherDBException extends RuntimeException {
 
     private static final long serialVersionUID = 1L;
 
+    /**
+     * Type of operation that caused an error.
+     */
+    public enum OperationType {
+        UNKNOWN(""),
+        INSERT("insert"),
+        UPDATE("update"),
+        DELETE("delete"),
+        QUERY("query"),
+        GET("get");
+
+        private final String value;
+
+        OperationType(String value) {
+            this.value = value;
+        }
+
+        public String getValue() {
+            return value;
+        }
+    }
+
     private final int errorCode;
     private final boolean retryable;
+    private final String entityId;
+    private final Integer shardId;
+    private final OperationType operationType;
 
     /**
      * Creates an ArcherDB exception.
@@ -38,6 +64,9 @@ public class ArcherDBException extends RuntimeException {
         super(message);
         this.errorCode = errorCode;
         this.retryable = retryable;
+        this.entityId = null;
+        this.shardId = null;
+        this.operationType = null;
     }
 
     /**
@@ -52,6 +81,29 @@ public class ArcherDBException extends RuntimeException {
         super(message, cause);
         this.errorCode = errorCode;
         this.retryable = retryable;
+        this.entityId = null;
+        this.shardId = null;
+        this.operationType = null;
+    }
+
+    /**
+     * Creates an ArcherDB exception with operation context.
+     *
+     * @param errorCode the numeric error code
+     * @param message human-readable error message
+     * @param retryable whether the operation can be retried
+     * @param entityId the entity ID involved in the error (may be null)
+     * @param shardId the shard ID involved in the error (may be null)
+     * @param operationType the type of operation that caused the error (may be null)
+     */
+    public ArcherDBException(int errorCode, String message, boolean retryable,
+                             String entityId, Integer shardId, OperationType operationType) {
+        super(message);
+        this.errorCode = errorCode;
+        this.retryable = retryable;
+        this.entityId = entityId;
+        this.shardId = shardId;
+        this.operationType = operationType;
     }
 
     /**
@@ -68,9 +120,41 @@ public class ArcherDBException extends RuntimeException {
         return retryable;
     }
 
+    /**
+     * Returns the entity ID involved in the error, or null if not available.
+     */
+    public String getEntityId() {
+        return entityId;
+    }
+
+    /**
+     * Returns the shard ID involved in the error, or null if not available.
+     */
+    public Integer getShardId() {
+        return shardId;
+    }
+
+    /**
+     * Returns the operation type that caused the error, or null if not available.
+     */
+    public OperationType getOperationType() {
+        return operationType;
+    }
+
     @Override
     public String toString() {
-        return String.format("%s[code=%d, retryable=%s]: %s", getClass().getSimpleName(), errorCode,
-                retryable, getMessage());
+        StringBuilder sb = new StringBuilder();
+        sb.append(String.format("%s[code=%d, retryable=%s", getClass().getSimpleName(), errorCode, retryable));
+        if (entityId != null) {
+            sb.append(String.format(", entityId=%s", entityId));
+        }
+        if (shardId != null) {
+            sb.append(String.format(", shardId=%d", shardId));
+        }
+        if (operationType != null) {
+            sb.append(String.format(", operationType=%s", operationType.getValue()));
+        }
+        sb.append(String.format("]: %s", getMessage()));
+        return sb.toString();
     }
 }

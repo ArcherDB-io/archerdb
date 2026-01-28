@@ -148,4 +148,85 @@ class V2ErrorCodesTest {
         assertTrue(MultiRegionError.isMultiRegionError(218));
         assertFalse(MultiRegionError.isMultiRegionError(219));
     }
+
+    // ============================================================================
+    // Operation Context Tests
+    // ============================================================================
+
+    @Test
+    void operationType_values() {
+        assertEquals("", ArcherDBException.OperationType.UNKNOWN.getValue());
+        assertEquals("insert", ArcherDBException.OperationType.INSERT.getValue());
+        assertEquals("update", ArcherDBException.OperationType.UPDATE.getValue());
+        assertEquals("delete", ArcherDBException.OperationType.DELETE.getValue());
+        assertEquals("query", ArcherDBException.OperationType.QUERY.getValue());
+        assertEquals("get", ArcherDBException.OperationType.GET.getValue());
+    }
+
+    @Test
+    void archerDBException_withContext() {
+        ArcherDBException exc = new ArcherDBException(
+            500, "Test error", true, "entity-123", 7, ArcherDBException.OperationType.INSERT
+        );
+        assertEquals("entity-123", exc.getEntityId());
+        assertEquals(Integer.valueOf(7), exc.getShardId());
+        assertEquals(ArcherDBException.OperationType.INSERT, exc.getOperationType());
+        assertEquals(500, exc.getErrorCode());
+        assertTrue(exc.isRetryable());
+    }
+
+    @Test
+    void archerDBException_defaultContextIsNull() {
+        ArcherDBException exc = new ArcherDBException(500, "Test error", true);
+        assertNull(exc.getEntityId());
+        assertNull(exc.getShardId());
+        assertNull(exc.getOperationType());
+    }
+
+    @Test
+    void shardingError_toExceptionWithContext() {
+        ArcherDBException exc = ShardingError.NOT_SHARD_LEADER.toException(
+            "entity-abc", 42, ArcherDBException.OperationType.UPDATE
+        );
+        assertEquals(220, exc.getErrorCode());
+        assertEquals("entity-abc", exc.getEntityId());
+        assertEquals(Integer.valueOf(42), exc.getShardId());
+        assertEquals(ArcherDBException.OperationType.UPDATE, exc.getOperationType());
+        assertTrue(exc.isRetryable());
+    }
+
+    @Test
+    void encryptionError_toExceptionWithContext() {
+        ArcherDBException exc = EncryptionError.DECRYPTION_FAILED.toException(
+            "entity-xyz", 3, ArcherDBException.OperationType.QUERY
+        );
+        assertEquals(411, exc.getErrorCode());
+        assertEquals("entity-xyz", exc.getEntityId());
+        assertEquals(Integer.valueOf(3), exc.getShardId());
+        assertEquals(ArcherDBException.OperationType.QUERY, exc.getOperationType());
+        assertFalse(exc.isRetryable());
+    }
+
+    @Test
+    void multiRegionError_toExceptionWithContext() {
+        ArcherDBException exc = MultiRegionError.GEO_SHARD_MISMATCH.toException(
+            "entity-def", 5, ArcherDBException.OperationType.INSERT
+        );
+        assertEquals(218, exc.getErrorCode());
+        assertEquals("entity-def", exc.getEntityId());
+        assertEquals(Integer.valueOf(5), exc.getShardId());
+        assertEquals(ArcherDBException.OperationType.INSERT, exc.getOperationType());
+        assertFalse(exc.isRetryable());
+    }
+
+    @Test
+    void archerDBException_toStringWithContext() {
+        ArcherDBException exc = new ArcherDBException(
+            220, "Test error", true, "entity-123", 7, ArcherDBException.OperationType.INSERT
+        );
+        String str = exc.toString();
+        assertTrue(str.contains("entityId=entity-123"));
+        assertTrue(str.contains("shardId=7"));
+        assertTrue(str.contains("operationType=insert"));
+    }
 }

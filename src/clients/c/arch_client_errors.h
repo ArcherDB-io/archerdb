@@ -45,6 +45,104 @@ extern "C" {
 
 #include <stdbool.h>
 #include <stddef.h>  /* For NULL */
+#include <string.h>  /* For strncpy */
+
+/* ============================================================================
+ * Operation Types
+ * ============================================================================ */
+
+/** @brief Type of operation that caused an error. */
+typedef enum {
+    ARCH_OP_UNKNOWN = 0,
+    ARCH_OP_INSERT = 1,
+    ARCH_OP_UPDATE = 2,
+    ARCH_OP_DELETE = 3,
+    ARCH_OP_QUERY = 4,
+    ARCH_OP_GET = 5,
+} arch_operation_type_t;
+
+/** @brief Maximum length for entity ID strings. */
+#define ARCH_MAX_ENTITY_ID_LEN 64
+
+/**
+ * @brief Operation context for error reporting.
+ *
+ * This struct holds optional context about the operation that caused an error.
+ * All fields are optional - check has_entity_id, has_shard_id, and has_operation_type
+ * before using the corresponding values.
+ */
+typedef struct {
+    char entity_id[ARCH_MAX_ENTITY_ID_LEN];  /**< Entity ID involved in error (null-terminated) */
+    int shard_id;                              /**< Shard ID involved in error (-1 if not set) */
+    arch_operation_type_t operation_type;      /**< Type of operation that caused error */
+    bool has_entity_id;                        /**< True if entity_id is set */
+    bool has_shard_id;                         /**< True if shard_id is set */
+    bool has_operation_type;                   /**< True if operation_type is set */
+} arch_error_context_t;
+
+/**
+ * @brief Initialize an error context to empty/default values.
+ * @param ctx Pointer to context to initialize.
+ */
+static inline void arch_error_context_init(arch_error_context_t* ctx) {
+    if (ctx == NULL) return;
+    ctx->entity_id[0] = '\0';
+    ctx->shard_id = -1;
+    ctx->operation_type = ARCH_OP_UNKNOWN;
+    ctx->has_entity_id = false;
+    ctx->has_shard_id = false;
+    ctx->has_operation_type = false;
+}
+
+/**
+ * @brief Set the entity ID in an error context.
+ * @param ctx Pointer to context.
+ * @param entity_id The entity ID (will be truncated if too long).
+ */
+static inline void arch_error_context_set_entity_id(arch_error_context_t* ctx, const char* entity_id) {
+    if (ctx == NULL || entity_id == NULL) return;
+    strncpy(ctx->entity_id, entity_id, ARCH_MAX_ENTITY_ID_LEN - 1);
+    ctx->entity_id[ARCH_MAX_ENTITY_ID_LEN - 1] = '\0';
+    ctx->has_entity_id = true;
+}
+
+/**
+ * @brief Set the shard ID in an error context.
+ * @param ctx Pointer to context.
+ * @param shard_id The shard ID.
+ */
+static inline void arch_error_context_set_shard_id(arch_error_context_t* ctx, int shard_id) {
+    if (ctx == NULL) return;
+    ctx->shard_id = shard_id;
+    ctx->has_shard_id = true;
+}
+
+/**
+ * @brief Set the operation type in an error context.
+ * @param ctx Pointer to context.
+ * @param op_type The operation type.
+ */
+static inline void arch_error_context_set_operation_type(arch_error_context_t* ctx, arch_operation_type_t op_type) {
+    if (ctx == NULL) return;
+    ctx->operation_type = op_type;
+    ctx->has_operation_type = true;
+}
+
+/**
+ * @brief Get human-readable name for an operation type.
+ * @param op_type The operation type.
+ * @return Constant string with the operation name.
+ */
+static inline const char* arch_operation_type_name(arch_operation_type_t op_type) {
+    switch (op_type) {
+        case ARCH_OP_INSERT: return "insert";
+        case ARCH_OP_UPDATE: return "update";
+        case ARCH_OP_DELETE: return "delete";
+        case ARCH_OP_QUERY: return "query";
+        case ARCH_OP_GET: return "get";
+        default: return "unknown";
+    }
+}
 
 /* ============================================================================
  * State Error Codes (200-210)

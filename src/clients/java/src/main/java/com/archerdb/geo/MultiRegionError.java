@@ -83,4 +83,36 @@ public enum MultiRegionError {
     public static boolean isMultiRegionError(int code) {
         return code >= 213 && code <= 218;
     }
+
+    /**
+     * Returns true if the operation can be retried.
+     */
+    public boolean isRetryable() {
+        switch (this) {
+            case STALE_FOLLOWER:
+            case PRIMARY_UNREACHABLE:
+            case REPLICATION_TIMEOUT:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /**
+     * Creates an ArcherDBException for this error.
+     */
+    public ArcherDBException toException() {
+        return new ArcherDBException(code, message, isRetryable());
+    }
+
+    /**
+     * Creates an ArcherDBException for this error with operation context.
+     *
+     * @param entityId the entity ID involved in the error (may be null)
+     * @param shardId the shard ID involved in the error (may be null)
+     * @param operationType the type of operation that caused the error (may be null)
+     */
+    public ArcherDBException toException(String entityId, Integer shardId, ArcherDBException.OperationType operationType) {
+        return new ArcherDBException(code, message, isRetryable(), entityId, shardId, operationType);
+    }
 }

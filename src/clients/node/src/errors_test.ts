@@ -36,6 +36,8 @@ import {
   // Utilities
   isRetryable,
   errorMessage,
+  // Operation context
+  OperationType,
 } from './errors'
 
 // Test runner
@@ -335,6 +337,59 @@ test('errorMessage encryption', () => {
 test('errorMessage unknown codes', () => {
   assert.strictEqual(errorMessage(999), undefined)
   assert.strictEqual(errorMessage(0), undefined)
+})
+
+// ============================================================================
+// Operation Context Tests
+// ============================================================================
+
+section('Operation Context Tests')
+
+test('OperationType enum values', () => {
+  assert.strictEqual(OperationType.UNKNOWN, '')
+  assert.strictEqual(OperationType.INSERT, 'insert')
+  assert.strictEqual(OperationType.UPDATE, 'update')
+  assert.strictEqual(OperationType.DELETE, 'delete')
+  assert.strictEqual(OperationType.QUERY, 'query')
+  assert.strictEqual(OperationType.GET, 'get')
+})
+
+test('StateException with context', () => {
+  const exc = new StateException(StateError.ENTITY_NOT_FOUND, 'entity-abc', OperationType.GET)
+  assert.strictEqual(exc.entityId, 'entity-abc')
+  assert.strictEqual(exc.operationType, OperationType.GET)
+  assert.strictEqual(exc.code, 200)
+  assert.strictEqual(exc.retryable, false)
+})
+
+test('MultiRegionException with context', () => {
+  const exc = new MultiRegionException(MultiRegionError.GEO_SHARD_MISMATCH, 'entity-xyz', 7, OperationType.INSERT)
+  assert.strictEqual(exc.entityId, 'entity-xyz')
+  assert.strictEqual(exc.shardId, 7)
+  assert.strictEqual(exc.operationType, OperationType.INSERT)
+  assert.strictEqual(exc.code, 218)
+})
+
+test('ShardingException with full context', () => {
+  const exc = new ShardingException(ShardingError.NOT_SHARD_LEADER, 42, 'entity-789', OperationType.UPDATE)
+  assert.strictEqual(exc.shardId, 42)
+  assert.strictEqual(exc.entityId, 'entity-789')
+  assert.strictEqual(exc.operationType, OperationType.UPDATE)
+  assert.strictEqual(exc.retryable, true)
+})
+
+test('EncryptionException with context', () => {
+  const exc = new EncryptionException(EncryptionError.DECRYPTION_FAILED, 'entity-def', 3, OperationType.QUERY)
+  assert.strictEqual(exc.entityId, 'entity-def')
+  assert.strictEqual(exc.shardId, 3)
+  assert.strictEqual(exc.operationType, OperationType.QUERY)
+  assert.strictEqual(exc.retryable, false)
+})
+
+test('Exception default context is undefined', () => {
+  const exc = new ShardingException(ShardingError.SHARD_UNAVAILABLE)
+  assert.strictEqual(exc.entityId, undefined)
+  assert.strictEqual(exc.operationType, undefined)
 })
 
 // ============================================================================

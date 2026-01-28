@@ -23,10 +23,14 @@ from archerdb.errors import (
     ENCRYPTION_ERROR_RETRYABLE,
     is_encryption_error,
     encryption_error_message,
+    # State
+    StateError,
+    StateException,
     # Utilities
     is_retryable,
     error_message,
     ArcherDBError,
+    OperationType,
 )
 
 
@@ -275,3 +279,98 @@ class TestArcherDBError:
         """Verify ArcherDBError is an Exception."""
         error = ArcherDBError(500, "Test error")
         assert isinstance(error, Exception)
+
+    def test_operation_context(self):
+        """Verify operation context fields."""
+        error = ArcherDBError(
+            500,
+            "Test error",
+            entity_id="entity-123",
+            shard_id=5,
+            operation_type=OperationType.INSERT,
+        )
+        assert error.entity_id == "entity-123"
+        assert error.shard_id == 5
+        assert error.operation_type == OperationType.INSERT
+
+    def test_default_context_is_none(self):
+        """Verify default context values are None."""
+        error = ArcherDBError(500, "Test error")
+        assert error.entity_id is None
+        assert error.shard_id is None
+        assert error.operation_type is None
+
+
+# ============================================================================
+# Operation Context Tests
+# ============================================================================
+
+class TestOperationContext:
+    """Tests for operation context on exceptions."""
+
+    def test_operation_type_enum(self):
+        """Verify OperationType enum values."""
+        assert OperationType.UNKNOWN.value == ""
+        assert OperationType.INSERT.value == "insert"
+        assert OperationType.UPDATE.value == "update"
+        assert OperationType.DELETE.value == "delete"
+        assert OperationType.QUERY.value == "query"
+        assert OperationType.GET.value == "get"
+
+    def test_state_exception_with_context(self):
+        """Verify StateException with operation context."""
+        exc = StateException(
+            StateError.ENTITY_NOT_FOUND,
+            entity_id="entity-abc",
+            operation_type=OperationType.GET,
+        )
+        assert exc.entity_id == "entity-abc"
+        assert exc.operation_type == OperationType.GET
+        assert exc.code == 200
+        assert exc.retryable is False
+
+    def test_multi_region_exception_with_context(self):
+        """Verify MultiRegionException with operation context."""
+        exc = MultiRegionException(
+            MultiRegionError.GEO_SHARD_MISMATCH,
+            entity_id="entity-xyz",
+            shard_id=7,
+            operation_type=OperationType.INSERT,
+        )
+        assert exc.entity_id == "entity-xyz"
+        assert exc.shard_id == 7
+        assert exc.operation_type == OperationType.INSERT
+        assert exc.code == 218
+
+    def test_sharding_exception_with_context(self):
+        """Verify ShardingException with full operation context."""
+        exc = ShardingException(
+            ShardingError.NOT_SHARD_LEADER,
+            shard_id=42,
+            entity_id="entity-789",
+            operation_type=OperationType.UPDATE,
+        )
+        assert exc.shard_id == 42
+        assert exc.entity_id == "entity-789"
+        assert exc.operation_type == OperationType.UPDATE
+        assert exc.retryable is True
+
+    def test_encryption_exception_with_context(self):
+        """Verify EncryptionException with operation context."""
+        exc = EncryptionException(
+            EncryptionError.DECRYPTION_FAILED,
+            entity_id="entity-def",
+            shard_id=3,
+            operation_type=OperationType.QUERY,
+        )
+        assert exc.entity_id == "entity-def"
+        assert exc.shard_id == 3
+        assert exc.operation_type == OperationType.QUERY
+        assert exc.retryable is False
+
+    def test_exception_default_context_is_none(self):
+        """Verify exceptions have None context by default."""
+        exc = ShardingException(ShardingError.SHARD_UNAVAILABLE)
+        assert exc.entity_id is None
+        assert exc.shard_id is None
+        assert exc.operation_type is None

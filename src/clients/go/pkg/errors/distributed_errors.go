@@ -136,11 +136,26 @@ var retryable = map[ErrorCode]bool{
 	UnsupportedEncryptionVersion: false,
 }
 
+// OperationType represents the type of operation that caused an error.
+type OperationType string
+
+const (
+	OpUnknown OperationType = ""
+	OpInsert  OperationType = "insert"
+	OpUpdate  OperationType = "update"
+	OpDelete  OperationType = "delete"
+	OpQuery   OperationType = "query"
+	OpGet     OperationType = "get"
+)
+
 // ArcherDBError represents an ArcherDB error with code, message, and retry semantics.
 type ArcherDBError struct {
-	Code      ErrorCode
-	Message   string
-	Retryable bool
+	Code          ErrorCode
+	Message       string
+	Retryable     bool
+	EntityID      string        // Optional: the entity ID involved in the error
+	ShardID       int           // Optional: the shard ID involved in the error (-1 if not set)
+	OperationType OperationType // Optional: the operation type that caused the error
 }
 
 func (e *ArcherDBError) Error() string {
@@ -150,10 +165,12 @@ func (e *ArcherDBError) Error() string {
 // StateException is a typed error for state errors (entity not found, expired).
 // State errors are never retryable - the entity state is definitive.
 type StateException struct {
-	StateError ErrorCode // The specific state error enum value
-	Code       ErrorCode // Numeric error code (same as StateError, for convenience)
-	Message    string
-	Retryable  bool
+	StateError    ErrorCode     // The specific state error enum value
+	Code          ErrorCode     // Numeric error code (same as StateError, for convenience)
+	Message       string
+	Retryable     bool
+	EntityID      string        // Optional: the entity ID involved in the error
+	OperationType OperationType // Optional: the operation type that caused the error
 }
 
 func (e *StateException) Error() string {
@@ -163,19 +180,36 @@ func (e *StateException) Error() string {
 // NewStateException creates a StateException from a StateError code.
 func NewStateException(code ErrorCode) *StateException {
 	return &StateException{
-		StateError: code,
-		Code:       code,
-		Message:    errorMessages[code],
-		Retryable:  false, // State errors are never retryable
+		StateError:    code,
+		Code:          code,
+		Message:       errorMessages[code],
+		Retryable:     false, // State errors are never retryable
+		EntityID:      "",
+		OperationType: OpUnknown,
+	}
+}
+
+// NewStateExceptionWithContext creates a StateException with operation context.
+func NewStateExceptionWithContext(code ErrorCode, entityID string, opType OperationType) *StateException {
+	return &StateException{
+		StateError:    code,
+		Code:          code,
+		Message:       errorMessages[code],
+		Retryable:     false,
+		EntityID:      entityID,
+		OperationType: opType,
 	}
 }
 
 // MultiRegionException is a typed error for multi-region errors.
 type MultiRegionException struct {
-	MultiRegionError ErrorCode // The specific multi-region error enum value
-	Code             ErrorCode // Numeric error code
+	MultiRegionError ErrorCode     // The specific multi-region error enum value
+	Code             ErrorCode     // Numeric error code
 	Message          string
 	Retryable        bool
+	EntityID         string        // Optional: the entity ID involved in the error
+	ShardID          int           // Optional: the shard ID involved in the error (-1 if not set)
+	OperationType    OperationType // Optional: the operation type that caused the error
 }
 
 func (e *MultiRegionException) Error() string {
@@ -189,16 +223,34 @@ func NewMultiRegionException(code ErrorCode) *MultiRegionException {
 		Code:             code,
 		Message:          errorMessages[code],
 		Retryable:        retryable[code],
+		EntityID:         "",
+		ShardID:          -1,
+		OperationType:    OpUnknown,
+	}
+}
+
+// NewMultiRegionExceptionWithContext creates a MultiRegionException with operation context.
+func NewMultiRegionExceptionWithContext(code ErrorCode, entityID string, shardID int, opType OperationType) *MultiRegionException {
+	return &MultiRegionException{
+		MultiRegionError: code,
+		Code:             code,
+		Message:          errorMessages[code],
+		Retryable:        retryable[code],
+		EntityID:         entityID,
+		ShardID:          shardID,
+		OperationType:    opType,
 	}
 }
 
 // ShardingException is a typed error for sharding errors.
 type ShardingException struct {
-	ShardingError ErrorCode // The specific sharding error enum value
-	Code          ErrorCode // Numeric error code
+	ShardingError ErrorCode     // The specific sharding error enum value
+	Code          ErrorCode     // Numeric error code
 	Message       string
 	Retryable     bool
-	ShardID       int // Optional: the shard ID involved in the error (-1 if not set)
+	ShardID       int           // Optional: the shard ID involved in the error (-1 if not set)
+	EntityID      string        // Optional: the entity ID involved in the error
+	OperationType OperationType // Optional: the operation type that caused the error
 }
 
 func (e *ShardingException) Error() string {
@@ -213,6 +265,8 @@ func NewShardingException(code ErrorCode) *ShardingException {
 		Message:       errorMessages[code],
 		Retryable:     retryable[code],
 		ShardID:       -1,
+		EntityID:      "",
+		OperationType: OpUnknown,
 	}
 }
 
@@ -224,15 +278,33 @@ func NewShardingExceptionWithShard(code ErrorCode, shardID int) *ShardingExcepti
 		Message:       errorMessages[code],
 		Retryable:     retryable[code],
 		ShardID:       shardID,
+		EntityID:      "",
+		OperationType: OpUnknown,
+	}
+}
+
+// NewShardingExceptionWithContext creates a ShardingException with full operation context.
+func NewShardingExceptionWithContext(code ErrorCode, shardID int, entityID string, opType OperationType) *ShardingException {
+	return &ShardingException{
+		ShardingError: code,
+		Code:          code,
+		Message:       errorMessages[code],
+		Retryable:     retryable[code],
+		ShardID:       shardID,
+		EntityID:      entityID,
+		OperationType: opType,
 	}
 }
 
 // EncryptionException is a typed error for encryption errors.
 type EncryptionException struct {
-	EncryptionError ErrorCode // The specific encryption error enum value
-	Code            ErrorCode // Numeric error code
+	EncryptionError ErrorCode     // The specific encryption error enum value
+	Code            ErrorCode     // Numeric error code
 	Message         string
 	Retryable       bool
+	EntityID        string        // Optional: the entity ID involved in the error
+	ShardID         int           // Optional: the shard ID involved in the error (-1 if not set)
+	OperationType   OperationType // Optional: the operation type that caused the error
 }
 
 func (e *EncryptionException) Error() string {
@@ -246,24 +318,58 @@ func NewEncryptionException(code ErrorCode) *EncryptionException {
 		Code:            code,
 		Message:         errorMessages[code],
 		Retryable:       retryable[code],
+		EntityID:        "",
+		ShardID:         -1,
+		OperationType:   OpUnknown,
+	}
+}
+
+// NewEncryptionExceptionWithContext creates an EncryptionException with operation context.
+func NewEncryptionExceptionWithContext(code ErrorCode, entityID string, shardID int, opType OperationType) *EncryptionException {
+	return &EncryptionException{
+		EncryptionError: code,
+		Code:            code,
+		Message:         errorMessages[code],
+		Retryable:       retryable[code],
+		EntityID:        entityID,
+		ShardID:         shardID,
+		OperationType:   opType,
 	}
 }
 
 // NewError creates a new ArcherDBError from an error code.
 func NewError(code ErrorCode) *ArcherDBError {
 	return &ArcherDBError{
-		Code:      code,
-		Message:   errorMessages[code],
-		Retryable: retryable[code],
+		Code:          code,
+		Message:       errorMessages[code],
+		Retryable:     retryable[code],
+		EntityID:      "",
+		ShardID:       -1,
+		OperationType: OpUnknown,
 	}
 }
 
 // NewErrorWithMessage creates a new ArcherDBError with a custom message.
 func NewErrorWithMessage(code ErrorCode, message string) *ArcherDBError {
 	return &ArcherDBError{
-		Code:      code,
-		Message:   message,
-		Retryable: retryable[code],
+		Code:          code,
+		Message:       message,
+		Retryable:     retryable[code],
+		EntityID:      "",
+		ShardID:       -1,
+		OperationType: OpUnknown,
+	}
+}
+
+// NewErrorWithContext creates a new ArcherDBError with operation context.
+func NewErrorWithContext(code ErrorCode, entityID string, shardID int, opType OperationType) *ArcherDBError {
+	return &ArcherDBError{
+		Code:          code,
+		Message:       errorMessages[code],
+		Retryable:     retryable[code],
+		EntityID:      entityID,
+		ShardID:       shardID,
+		OperationType: opType,
 	}
 }
 

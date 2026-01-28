@@ -89,4 +89,15 @@ public enum EncryptionError {
     public ArcherDBException toException() {
         return new ArcherDBException(code, message, retryable);
     }
+
+    /**
+     * Creates an ArcherDBException for this error with operation context.
+     *
+     * @param entityId the entity ID involved in the error (may be null)
+     * @param shardId the shard ID involved in the error (may be null)
+     * @param operationType the type of operation that caused the error (may be null)
+     */
+    public ArcherDBException toException(String entityId, Integer shardId, ArcherDBException.OperationType operationType) {
+        return new ArcherDBException(code, message, retryable, entityId, shardId, operationType);
+    }
 }

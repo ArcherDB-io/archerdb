@@ -359,3 +359,120 @@ func TestGetErrorMessage(t *testing.T) {
 		t.Error("Expected empty message for unknown code 999")
 	}
 }
+
+// ============================================================================
+// Operation Context Tests
+// ============================================================================
+
+// TestOperationType verifies OperationType constants.
+func TestOperationType(t *testing.T) {
+	if OpUnknown != "" {
+		t.Errorf("OpUnknown should be empty string, got %q", OpUnknown)
+	}
+	if OpInsert != "insert" {
+		t.Errorf("OpInsert should be 'insert', got %q", OpInsert)
+	}
+	if OpQuery != "query" {
+		t.Errorf("OpQuery should be 'query', got %q", OpQuery)
+	}
+}
+
+// TestStateExceptionWithContext verifies StateException with operation context.
+func TestStateExceptionWithContext(t *testing.T) {
+	exc := NewStateExceptionWithContext(EntityNotFound, "entity-123", OpGet)
+
+	if exc.EntityID != "entity-123" {
+		t.Errorf("Expected EntityID 'entity-123', got %q", exc.EntityID)
+	}
+	if exc.OperationType != OpGet {
+		t.Errorf("Expected OperationType OpGet, got %q", exc.OperationType)
+	}
+	if exc.Code != EntityNotFound {
+		t.Errorf("Expected code %d, got %d", EntityNotFound, exc.Code)
+	}
+}
+
+// TestMultiRegionExceptionWithContext verifies MultiRegionException with operation context.
+func TestMultiRegionExceptionWithContext(t *testing.T) {
+	exc := NewMultiRegionExceptionWithContext(GeoShardMismatch, "entity-456", 7, OpInsert)
+
+	if exc.EntityID != "entity-456" {
+		t.Errorf("Expected EntityID 'entity-456', got %q", exc.EntityID)
+	}
+	if exc.ShardID != 7 {
+		t.Errorf("Expected ShardID 7, got %d", exc.ShardID)
+	}
+	if exc.OperationType != OpInsert {
+		t.Errorf("Expected OperationType OpInsert, got %q", exc.OperationType)
+	}
+}
+
+// TestShardingExceptionWithContext verifies ShardingException with full context.
+func TestShardingExceptionWithContext(t *testing.T) {
+	exc := NewShardingExceptionWithContext(NotShardLeader, 42, "entity-789", OpUpdate)
+
+	if exc.ShardID != 42 {
+		t.Errorf("Expected ShardID 42, got %d", exc.ShardID)
+	}
+	if exc.EntityID != "entity-789" {
+		t.Errorf("Expected EntityID 'entity-789', got %q", exc.EntityID)
+	}
+	if exc.OperationType != OpUpdate {
+		t.Errorf("Expected OperationType OpUpdate, got %q", exc.OperationType)
+	}
+	if !exc.Retryable {
+		t.Error("NotShardLeader should be retryable")
+	}
+}
+
+// TestEncryptionExceptionWithContext verifies EncryptionException with operation context.
+func TestEncryptionExceptionWithContext(t *testing.T) {
+	exc := NewEncryptionExceptionWithContext(DecryptionFailed, "entity-abc", 3, OpQuery)
+
+	if exc.EntityID != "entity-abc" {
+		t.Errorf("Expected EntityID 'entity-abc', got %q", exc.EntityID)
+	}
+	if exc.ShardID != 3 {
+		t.Errorf("Expected ShardID 3, got %d", exc.ShardID)
+	}
+	if exc.OperationType != OpQuery {
+		t.Errorf("Expected OperationType OpQuery, got %q", exc.OperationType)
+	}
+	if exc.Retryable {
+		t.Error("DecryptionFailed should not be retryable")
+	}
+}
+
+// TestNewErrorWithContext verifies NewErrorWithContext.
+func TestNewErrorWithContext(t *testing.T) {
+	err := NewErrorWithContext(ShardUnavailable, "entity-xyz", 5, OpDelete)
+
+	if err.EntityID != "entity-xyz" {
+		t.Errorf("Expected EntityID 'entity-xyz', got %q", err.EntityID)
+	}
+	if err.ShardID != 5 {
+		t.Errorf("Expected ShardID 5, got %d", err.ShardID)
+	}
+	if err.OperationType != OpDelete {
+		t.Errorf("Expected OperationType OpDelete, got %q", err.OperationType)
+	}
+	if err.Code != ShardUnavailable {
+		t.Errorf("Expected code %d, got %d", ShardUnavailable, err.Code)
+	}
+}
+
+// TestDefaultContextValues verifies that context fields have proper defaults.
+func TestDefaultContextValues(t *testing.T) {
+	// Standard constructor should have default context values
+	exc := NewShardingException(NotShardLeader)
+
+	if exc.EntityID != "" {
+		t.Errorf("Expected empty EntityID, got %q", exc.EntityID)
+	}
+	if exc.ShardID != -1 {
+		t.Errorf("Expected ShardID -1, got %d", exc.ShardID)
+	}
+	if exc.OperationType != OpUnknown {
+		t.Errorf("Expected OperationType OpUnknown, got %q", exc.OperationType)
+	}
+}
