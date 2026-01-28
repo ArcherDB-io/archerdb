@@ -286,9 +286,10 @@ pub const GeoEvent = extern struct {
         tombstone.entity_id = entity_id;
         tombstone.group_id = group_id;
 
-        // For minimal tombstone, use timestamp in both id fields.
-        // S2 cell ID is 0 since we don't know the location.
-        tombstone.id = GeoEvent.pack_id(0, current_time_ns);
+        // For minimal tombstone, use timestamp plus a deterministic non-spatial cell id derived
+        // from entity_id to avoid collisions when multiple tombstones share a timestamp.
+        const tombstone_cell_id = stdx.hash_inline(entity_id);
+        tombstone.id = GeoEvent.pack_id(tombstone_cell_id, current_time_ns);
         tombstone.timestamp = current_time_ns;
 
         // Mark as tombstone.
@@ -557,7 +558,8 @@ test "GeoEvent: create_minimal_tombstone" {
     try std.testing.expectEqual(current_ts, tombstone.timestamp);
     const unpacked = GeoEvent.unpack_id(tombstone.id);
     try std.testing.expectEqual(current_ts, unpacked.timestamp_ns);
-    try std.testing.expectEqual(@as(u64, 0), unpacked.s2_cell_id);
+    const expected_cell_id = stdx.hash_inline(entity_id);
+    try std.testing.expectEqual(expected_cell_id, unpacked.s2_cell_id);
 
     // Tombstone flags.
     try std.testing.expect(tombstone.is_tombstone());

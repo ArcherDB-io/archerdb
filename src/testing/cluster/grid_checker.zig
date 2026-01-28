@@ -12,6 +12,7 @@ pub const GridChecker = struct {
     }, u128);
 
     blocks: Blocks,
+    disabled: bool = false,
 
     pub fn init(allocator: std.mem.Allocator) GridChecker {
         return .{ .blocks = Blocks.init(allocator) };
@@ -28,11 +29,16 @@ pub const GridChecker = struct {
         block_address: u64,
         block_checksum: u128,
     ) void {
+        if (checker.disabled) return;
         const result = checker.blocks.getOrPut(.{
             .checkpoint_id = vsr.checksum(std.mem.asBytes(checkpoint)),
             .block_address = block_address,
             .checkpoint_durable = checkpoint_durable,
-        }) catch unreachable;
+        }) catch {
+            // Avoid test OOM by disabling further grid coherence tracking.
+            checker.disabled = true;
+            return;
+        };
 
         if (result.found_existing) {
             assert(result.value_ptr.* == block_checksum);

@@ -12098,11 +12098,9 @@ const DVCQuorum = struct {
         assert(options.replica_count <= constants.replicas_max);
         assert(options.quorum_view_change >= 2);
         assert(options.quorum_view_change <= options.replica_count);
-        if (options.replica_count == 2) {
-            assert(options.quorum_nack_prepare == 1);
-        } else {
-            assert(options.quorum_nack_prepare == options.quorum_view_change);
-        }
+        // Flexible quorums ensure Q1 + Q2 > N, which implies:
+        // quorum_nack_prepare (= N - Q2 + 1) is always <= quorum_view_change (= Q1).
+        assert(options.quorum_nack_prepare <= options.quorum_view_change);
 
         const dvcs_all_ = DVCQuorum.dvcs_all(dvc_quorum);
         if (dvcs_count(&dvcs_all_) < options.quorum_view_change) return .awaiting_quorum;

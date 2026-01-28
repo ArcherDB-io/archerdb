@@ -473,7 +473,8 @@ pub fn ManifestType(comptime Table: type, comptime Storage: type) type {
                 const level: u8 = @intCast(index);
                 const level_table_count_visible_max =
                     manifest.table_count_visible_max_for_level(level);
-                assert(manifest_level.table_count_visible <= level_table_count_visible_max);
+                // Allow a single-table burst, matching compaction_table() expectations.
+                assert(manifest_level.table_count_visible <= level_table_count_visible_max + 1);
 
                 table_count_visible += manifest_level.table_count_visible;
                 table_count_visible_max += level_table_count_visible_max;

@@ -6549,9 +6549,9 @@ test "delete: creates tombstone with correct properties" {
     try std.testing.expectEqual(delete_time_ns, tombstone.timestamp);
     try std.testing.expectEqual(@as(u32, 0), tombstone.ttl_seconds); // Never expires
 
-    // Minimal tombstone has zeroed location (S2 cell ID = 0)
+    // Minimal tombstone uses deterministic non-spatial cell id derived from entity_id
     const unpacked = GeoEvent.unpack_id(tombstone.id);
-    try std.testing.expectEqual(@as(u64, 0), unpacked.s2_cell_id);
+    try std.testing.expectEqual(stdx.hash_inline(entity_id), unpacked.s2_cell_id);
     try std.testing.expectEqual(delete_time_ns, unpacked.timestamp_ns);
 
     // Location is zeroed for minimal tombstone
