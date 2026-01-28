@@ -4,7 +4,7 @@ This document provides complete API documentation for ArcherDB, covering all ope
 
 ## Overview
 
-ArcherDB provides a binary protocol over TCP for high-performance geospatial operations. For most use cases, we recommend using one of the official [SDKs](README.md#sdks) rather than implementing the protocol directly.
+ArcherDB provides a binary protocol over TCP for high-performance geospatial operations. For most use cases, we recommend using one of the official [SDKs](/#sdks) rather than implementing the protocol directly.
 
 ### Consistency Model
 
@@ -1241,4 +1241,4 @@ The SDKs implement this protocol correctly and handle edge cases like reconnecti
 - [Getting Started](getting-started.md) - Tutorial with complete examples
 - [Error Codes](error-codes.md) - Complete error reference
 - [SDK Retry Semantics](sdk-retry-semantics.md) - Retry configuration
-- [SDKs](README.md#sdks) - Language-specific documentation
+- [SDKs](/#sdks) - Language-specific documentation

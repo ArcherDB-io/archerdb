@@ -16,10 +16,12 @@ pub const vsr_options = .{
     .release = @import("vsr_options").release,
     .release_client_min = @import("vsr_options").release_client_min,
     .config_aof_recovery = @import("vsr_options").config_aof_recovery,
+    .config_base = @import("vsr_options").config_base,
+    .index_format = @import("vsr_options").index_format,
 };
 
 // NB: this changes values in `constants.zig`!
-pub const archerdb_config = @import("config.zig").configs.test_min;
+pub const archerdb_config = @import("config.zig").configs.lite;
 comptime {
     assert(constants.storage_size_limit_max == archerdb_config.process.storage_size_limit_max);
 }
@@ -124,6 +126,7 @@ fn main_smoke(gpa: std.mem.Allocator) !void {
 
             .lsm_cache_map => 20_000,
             .lsm_manifest_log => 2_000,
+            .lsm_segmented_array => 1_000,
             .lsm_scan => 100,
             .lsm_tree => 400,
             .state_machine => 10_000,
@@ -134,7 +137,6 @@ fn main_smoke(gpa: std.mem.Allocator) !void {
             .vsr_superblock => 3,
 
             inline .ewah,
-            .lsm_segmented_array,
             .lsm_manifest_level,
             .vsr_superblock_quorums,
             .signal,

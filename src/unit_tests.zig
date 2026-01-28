@@ -247,8 +247,6 @@ const quine =
     \\        if (entry.kind != .file) continue;
     \\
     \\        const entry_path = try arena.dupe(u8, entry.path);
-    \\
-    \\
     \\        if (!std.mem.endsWith(u8, entry_path, ".zig")) continue;
     \\
     \\        if (std.mem.eql(u8, entry_path, "unit_tests.zig")) continue;
@@ -380,8 +378,6 @@ fn unit_test_files(arena: std.mem.Allocator, src_dir: std.fs.Dir) ![]const []con
         if (entry.kind != .file) continue;
 
         const entry_path = try arena.dupe(u8, entry.path);
-
-
         if (!std.mem.endsWith(u8, entry_path, ".zig")) continue;
 
         if (std.mem.eql(u8, entry_path, "unit_tests.zig")) continue;

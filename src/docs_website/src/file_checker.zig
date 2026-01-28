@@ -254,7 +254,10 @@ fn check_link_fragment(
     target_path: []const u8,
     fragment: []const u8,
 ) !void {
-    assert(std.mem.endsWith(u8, target_path, ".html"));
+    if (!std.mem.endsWith(u8, target_path, ".html")) {
+        log.err("link target is not html: '{s}'", .{target_path});
+        return error.FragmentTargetNotHtml;
+    }
 
     const html = try read_file_cached(context.arena, context.dir, target_path);
     const needle = try std.mem.concat(context.arena, u8, &.{ "id=\"", fragment, "\"" });

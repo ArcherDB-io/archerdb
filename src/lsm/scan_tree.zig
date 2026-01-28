@@ -7,6 +7,13 @@ const assert = std.debug.assert;
 const stdx = @import("stdx");
 const maybe = stdx.maybe;
 const constants = @import("../constants.zig");
+const TraceEvent = @import("../trace/event.zig").Event;
+
+const TraceTree = @FieldType(@FieldType(TraceEvent, "scan_tree"), "tree");
+
+fn trace_tree_enum(id: u16) ?TraceTree {
+    return std.meta.intToEnum(TraceTree, id) catch null;
+}
 const snapshot_latest = @import("tree.zig").snapshot_latest;
 const schema = @import("schema.zig");
 const binary_search = @import("binary_search.zig");
@@ -223,12 +230,14 @@ pub fn ScanTreeType(
         pub fn read(self: *ScanTree, context: Context, callback: Callback) void {
             assert(self.state == .idle or self.state == .needs_data);
 
-            self.tree.grid.trace.start(
-                .{ .scan_tree = .{
-                    .index = self.buffer.index,
-                    .tree = @enumFromInt(self.tree.config.id),
-                } },
-            );
+            if (trace_tree_enum(self.tree.config.id)) |tree_enum| {
+                self.tree.grid.trace.start(
+                    .{ .scan_tree = .{
+                        .index = self.buffer.index,
+                        .tree = tree_enum,
+                    } },
+                );
+            }
 
             const state_before = self.state;
             self.state = .{
@@ -399,12 +408,14 @@ pub fn ScanTreeType(
                 );
             }
 
-            self.tree.grid.trace.stop(
-                .{ .scan_tree = .{
-                    .index = self.buffer.index,
-                    .tree = @enumFromInt(self.tree.config.id),
-                } },
-            );
+            if (trace_tree_enum(self.tree.config.id)) |tree_enum| {
+                self.tree.grid.trace.stop(
+                    .{ .scan_tree = .{
+                        .index = self.buffer.index,
+                        .tree = tree_enum,
+                    } },
+                );
+            }
 
             callback(context, self);
         }
@@ -605,13 +616,15 @@ fn ScanTreeLevelType(comptime ScanTree: type, comptime Storage: type) type {
         pub fn fetch(self: *ScanTreeLevel) void {
             assert(self.scan.state == .buffering);
 
-            self.scan.tree.grid.trace.start(
-                .{ .scan_tree_level = .{
-                    .index = self.scan.buffer.index,
-                    .level = self.level_index,
-                    .tree = @enumFromInt(self.scan.tree.config.id),
-                } },
-            );
+            if (trace_tree_enum(self.scan.tree.config.id)) |tree_enum| {
+                self.scan.tree.grid.trace.start(
+                    .{ .scan_tree_level = .{
+                        .index = self.scan.buffer.index,
+                        .level = self.level_index,
+                        .tree = tree_enum,
+                    } },
+                );
+            }
 
             switch (self.state) {
                 .loading_manifest => unreachable,
@@ -934,13 +947,15 @@ fn ScanTreeLevelType(comptime ScanTree: type, comptime Storage: type) type {
                 // fetching the next `table_info`.
                 self.move_next();
 
-                self.scan.tree.grid.trace.stop(
-                    .{ .scan_tree_level = .{
-                        .index = self.scan.buffer.index,
-                        .level = self.level_index,
-                        .tree = @enumFromInt(self.scan.tree.config.id),
-                    } },
-                );
+                if (trace_tree_enum(self.scan.tree.config.id)) |tree_enum| {
+                    self.scan.tree.grid.trace.stop(
+                        .{ .scan_tree_level = .{
+                            .index = self.scan.buffer.index,
+                            .level = self.level_index,
+                            .tree = tree_enum,
+                        } },
+                    );
+                }
 
                 self.fetch();
             }
@@ -999,13 +1014,15 @@ fn ScanTreeLevelType(comptime ScanTree: type, comptime Storage: type) type {
                 self.move_next();
             }
 
-            self.scan.tree.grid.trace.stop(
-                .{ .scan_tree_level = .{
-                    .index = self.scan.buffer.index,
-                    .level = self.level_index,
-                    .tree = @enumFromInt(self.scan.tree.config.id),
-                } },
-            );
+            if (trace_tree_enum(self.scan.tree.config.id)) |tree_enum| {
+                self.scan.tree.grid.trace.stop(
+                    .{ .scan_tree_level = .{
+                        .index = self.scan.buffer.index,
+                        .level = self.level_index,
+                        .tree = tree_enum,
+                    } },
+                );
+            }
 
             switch (self.values) {
                 .fetching => self.fetch(),
@@ -1025,13 +1042,15 @@ fn ScanTreeLevelType(comptime ScanTree: type, comptime Storage: type) type {
             assert(self.scan.state == .buffering);
             assert(self.scan.state.buffering.pending_count > 0);
 
-            self.scan.tree.grid.trace.stop(
-                .{ .scan_tree_level = .{
-                    .index = self.scan.buffer.index,
-                    .level = self.level_index,
-                    .tree = @enumFromInt(self.scan.tree.config.id),
-                } },
-            );
+            if (trace_tree_enum(self.scan.tree.config.id)) |tree_enum| {
+                self.scan.tree.grid.trace.stop(
+                    .{ .scan_tree_level = .{
+                        .index = self.scan.buffer.index,
+                        .level = self.level_index,
+                        .tree = tree_enum,
+                    } },
+                );
+            }
 
             self.scan.levels_read_complete();
         }

@@ -492,6 +492,19 @@ const IO = struct {
 
     pub fn deinit(io: *IO) void {
         // Servers were already cleaned up by io.close_socket().
+        if (io.servers.count() != 0 or io.fds_open != 0) {
+            std.debug.print(
+                "message_bus_fuzz: fds_open={}, servers={}, connections={}, events={}\n",
+                .{ io.fds_open, io.servers.count(), io.connections.count(), io.events.count() },
+            );
+            for (io.connections.keys()) |fd| {
+                const connection = io.connections.get(fd).?;
+                std.debug.print(
+                    "message_bus_fuzz: fd={} closed={} remote={?}\n",
+                    .{ fd, connection.closed, connection.remote },
+                );
+            }
+        }
         assert(io.servers.count() == 0);
         assert(io.fds_open == 0);
 

@@ -812,7 +812,8 @@ const Environment = struct {
         );
 
         env.change_state(.fuzzing, .forest_compact);
-        env.forest.compact(forest_compact_callback, env.op);
+        const compaction_timestamp_ns = env.op * env.time_sim.resolution;
+        env.forest.compact(forest_compact_callback, env.op, compaction_timestamp_ns);
         try env.tick_until_state_change(.forest_compact, .fuzzing);
 
         if (checkpoint) {

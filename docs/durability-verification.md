@@ -267,7 +267,7 @@ Before each release:
 
 ## References
 
-- [VOPR Source](../src/vopr.zig): Main VOPR implementation
-- [Storage Simulation](../src/testing/storage.zig): Fault injection
-- [Cluster Simulation](../src/testing/cluster.zig): Multi-replica testing
-- [VSR Protocol](../src/vsr/replica.zig): Consensus implementation
+- [VOPR Source](https://github.com/ArcherDB-io/archerdb/blob/main/src/vopr.zig): Main VOPR implementation
+- [Storage Simulation](https://github.com/ArcherDB-io/archerdb/blob/main/src/testing/storage.zig): Fault injection
+- [Cluster Simulation](https://github.com/ArcherDB-io/archerdb/blob/main/src/testing/cluster.zig): Multi-replica testing
+- [VSR Protocol](https://github.com/ArcherDB-io/archerdb/blob/main/src/vsr/replica.zig): Consensus implementation

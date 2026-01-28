@@ -312,6 +312,7 @@ pub fn build(b: *std.Build) !void {
     }, .{
         .stdx_module = stdx_module,
         .vsr_options = vsr_options,
+        .lz4_dep = lz4_dep,
         .target = target,
         .mode = mode,
         .print_exe = build_options.print_exe,
@@ -505,9 +506,7 @@ fn build_ci(
         aof, // Dedicated test for AOF, which is somewhat slow to run.
 
         clients, // Tests for all language clients below.
-        dotnet,
         go,
-        rust,
         java,
         node,
         python,
@@ -572,7 +571,7 @@ fn build_ci(
         hide_stderr(aof);
         step_ci.dependOn(&aof.step);
     }
-    inline for (&.{ CIMode.dotnet, .go, .rust, .java, .node, .python }) |language| {
+    inline for (&.{ CIMode.go, .java, .node, .python }) |language| {
         if (default or mode == .clients or mode == language) {
             // Client tests expect vortex to exist.
             build_ci_step(b, step_ci, .{"vortex:build"});
@@ -1346,6 +1345,7 @@ fn build_fuzz(
     options: struct {
         stdx_module: *std.Build.Module,
         vsr_options: *std.Build.Step.Options,
+        lz4_dep: *std.Build.Dependency,
         target: std.Build.ResolvedTarget,
         mode: std.builtin.OptimizeMode,
         print_exe: bool,
@@ -1363,6 +1363,12 @@ fn build_fuzz(
     fuzz_exe.root_module.addImport("stdx", options.stdx_module);
     fuzz_exe.root_module.addOptions("vsr_options", options.vsr_options);
     fuzz_exe.root_module.omit_frame_pointer = false;
+    fuzz_exe.linkLibC();
+    {
+        const lz4_artifact = options.lz4_dep.artifact("lz4");
+        fuzz_exe.root_module.addIncludePath(lz4_artifact.getEmittedIncludeTree());
+        fuzz_exe.linkLibrary(lz4_artifact);
+    }
     steps.fuzz_build.dependOn(print_or_install(b, fuzz_exe, options.print_exe));
 
     const fuzz_run = b.addRunArtifact(fuzz_exe);

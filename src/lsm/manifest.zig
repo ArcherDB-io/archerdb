@@ -9,6 +9,13 @@ const log = std.log.scoped(.manifest);
 const stdx = @import("stdx");
 const constants = @import("../constants.zig");
 const growth_factor = constants.lsm_growth_factor;
+const TraceMetric = @import("../trace/event.zig").EventMetric;
+
+const TraceTree = @FieldType(@FieldType(TraceMetric, "table_count_visible"), "tree");
+
+fn trace_tree_enum(id: u16) ?TraceTree {
+    return std.meta.intToEnum(TraceTree, id) catch null;
+}
 
 const vsr = @import("../vsr.zig");
 const table_count_max_tree = @import("tree.zig").table_count_max;
@@ -472,14 +479,16 @@ pub fn ManifestType(comptime Table: type, comptime Storage: type) type {
                 table_count_visible_max += level_table_count_visible_max;
             }
 
-            manifest.tracer.gauge(
-                .{ .table_count_visible = .{ .tree = @enumFromInt(manifest.config.id) } },
-                table_count_visible,
-            );
-            manifest.tracer.gauge(
-                .{ .table_count_visible_max = .{ .tree = @enumFromInt(manifest.config.id) } },
-                table_count_visible_max,
-            );
+            if (trace_tree_enum(manifest.config.id)) |tree_enum| {
+                manifest.tracer.gauge(
+                    .{ .table_count_visible = .{ .tree = tree_enum } },
+                    table_count_visible,
+                );
+                manifest.tracer.gauge(
+                    .{ .table_count_visible_max = .{ .tree = tree_enum } },
+                    table_count_visible_max,
+                );
+            }
         }
 
         pub fn assert_no_invisible_tables(manifest: *const Manifest, snapshots: []const u64) void {

@@ -18,6 +18,7 @@ const Allocator = std.mem.Allocator;
 
 const stdx = @import("stdx");
 const PRNG = stdx.PRNG;
+const fuzz = @import("./testing/fuzz.zig");
 
 const geo_event = @import("geo_event.zig");
 const GeoEvent = geo_event.GeoEvent;
@@ -26,6 +27,21 @@ const GeoEvent = geo_event.GeoEvent;
 const MAX_LAT_NANO: i64 = 90_000_000_000;
 /// Maximum longitude in nanodegrees (+180 degrees).
 const MAX_LON_NANO: i64 = 180_000_000_000;
+
+pub fn main(gpa: std.mem.Allocator, args: fuzz.FuzzArgs) !void {
+    const max_ops = @min(args.events_max orelse 1_000, std.math.maxInt(u32));
+    var prng = PRNG.from_seed(args.seed);
+
+    var state = FuzzState.init(gpa, &prng, .{ .max_operations = @intCast(max_ops) });
+    defer state.deinit();
+
+    var i: u32 = 0;
+    while (i < max_ops) : (i += 1) {
+        try state.executeRandomOperation();
+    }
+
+    if (state.hasViolations()) return error.Violations;
+}
 
 /// Fuzz test operations.
 pub const FuzzOperation = enum {

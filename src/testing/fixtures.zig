@@ -21,6 +21,7 @@
 const std = @import("std");
 const vsr = @import("../vsr.zig");
 const constants = @import("../constants.zig");
+const sharding = @import("../sharding.zig");
 const assert = std.debug.assert;
 
 const Time = @import("../time.zig").Time;
@@ -72,6 +73,7 @@ pub fn storage_format(
         replica: u8 = replica,
         replica_count: u8 = replica_count,
         release: vsr.Release = vsr.Release.minimum,
+        sharding_strategy: sharding.ShardingStrategy = sharding.ShardingStrategy.default(),
     },
 ) !void {
     assert(storage.reads.count() == 0);
@@ -96,6 +98,7 @@ pub fn storage_format(
         .replica = options.replica,
         .replica_count = options.replica_count,
         .release = options.release,
+        .sharding_strategy = options.sharding_strategy,
         .view = null,
     });
     for (0..10_000) |_| {

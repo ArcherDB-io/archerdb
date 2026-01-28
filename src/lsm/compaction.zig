@@ -38,8 +38,14 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
 const log = std.log.scoped(.compaction);
+const TraceEvent = @import("../trace/event.zig").Event;
 
 const constants = @import("../constants.zig");
+const TraceTree = @FieldType(@FieldType(TraceEvent, "compact_beat"), "tree");
+
+fn trace_tree_enum(id: u16) ?TraceTree {
+    return std.meta.intToEnum(TraceTree, id) catch null;
+}
 const compaction_throttle = @import("compaction_throttle.zig");
 
 const stdx = @import("stdx");
@@ -1116,10 +1122,12 @@ pub fn CompactionType(
 
             assert(!compaction.move_table);
 
-            compaction.grid.trace.start(.{ .compact_beat = .{
-                .tree = @enumFromInt(compaction.tree.config.id),
-                .level_b = compaction.level_b,
-            } });
+            if (trace_tree_enum(compaction.tree.config.id)) |tree_enum| {
+                compaction.grid.trace.start(.{ .compact_beat = .{
+                    .tree = tree_enum,
+                    .level_b = compaction.level_b,
+                } });
+            }
 
             assert(options.pool.idle());
             assert(options.pool.grid_reservation != null);
@@ -1551,10 +1559,12 @@ pub fn CompactionType(
                 assert(block.stage == .read_index_block_done);
             }
 
-            compaction.grid.trace.stop(.{ .compact_beat = .{
-                .tree = @enumFromInt(compaction.tree.config.id),
-                .level_b = compaction.level_b,
-            } });
+            if (trace_tree_enum(compaction.tree.config.id)) |tree_enum| {
+                compaction.grid.trace.stop(.{ .compact_beat = .{
+                    .tree = tree_enum,
+                    .level_b = compaction.level_b,
+                } });
+            }
             compaction.beat_complete();
         }
 
@@ -1778,10 +1788,12 @@ pub fn CompactionType(
             compaction.pool.?.cpu_release(cpu);
             assert(compaction.table_builder.state == .index_and_value_block);
 
-            compaction.grid.trace.start(.{ .compact_beat_merge = .{
-                .tree = @enumFromInt(compaction.tree.config.id),
-                .level_b = compaction.level_b,
-            } });
+            if (trace_tree_enum(compaction.tree.config.id)) |tree_enum| {
+                compaction.grid.trace.start(.{ .compact_beat_merge = .{
+                    .tree = tree_enum,
+                    .level_b = compaction.level_b,
+                } });
+            }
 
             const values_source_a, const values_source_b = compaction.merge_inputs();
             assert(values_source_a != null or values_source_b != null);
@@ -1878,10 +1890,12 @@ pub fn CompactionType(
 
             // NB: although all the work here is synchronous, we don't defer trace.stop precisely
             // to exclude compaction.dispatch call below.
-            compaction.grid.trace.stop(.{ .compact_beat_merge = .{
-                .tree = @enumFromInt(compaction.tree.config.id),
-                .level_b = compaction.level_b,
-            } });
+            if (trace_tree_enum(compaction.tree.config.id)) |tree_enum| {
+                compaction.grid.trace.stop(.{ .compact_beat_merge = .{
+                    .tree = tree_enum,
+                    .level_b = compaction.level_b,
+                } });
+            }
             compaction.compaction_dispatch();
         }
 

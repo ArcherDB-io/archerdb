@@ -9,6 +9,13 @@ const mem = std.mem;
 
 const stdx = @import("stdx");
 const constants = @import("../constants.zig");
+const TraceEvent = @import("../trace/event.zig").Event;
+
+const TraceTree = @FieldType(@FieldType(TraceEvent, "lookup"), "tree");
+
+fn trace_tree_enum(id: u16) ?TraceTree {
+    return std.meta.intToEnum(TraceTree, id) catch null;
+}
 
 const TableType = @import("table.zig").TableType;
 const TimestampRange = @import("timestamp_range.zig").TimestampRange;
@@ -1017,9 +1024,11 @@ pub fn GrooveType(
             fn start_workers(context: *PrefetchContext) void {
                 assert(context.workers_pending == 0);
 
-                context.groove.grid.trace.start(.{
-                    .lookup = .{ .tree = @enumFromInt(context.groove.objects.config.id) },
-                });
+                if (trace_tree_enum(context.groove.objects.config.id)) |tree_enum| {
+                    context.groove.grid.trace.start(.{
+                        .lookup = .{ .tree = tree_enum },
+                    });
+                }
 
                 // Track an extra "worker" that will finish after the loop.
                 // This allows the callback to be called asynchronously on `next_tick`
@@ -1034,12 +1043,14 @@ pub fn GrooveType(
                         .context = context,
                     };
 
-                    context.groove.grid.trace.start(
-                        .{ .lookup_worker = .{
-                            .index = worker.index,
-                            .tree = @enumFromInt(context.groove.objects.config.id),
-                        } },
-                    );
+                    if (trace_tree_enum(context.groove.objects.config.id)) |tree_enum| {
+                        context.groove.grid.trace.start(
+                            .{ .lookup_worker = .{
+                                .index = worker.index,
+                                .tree = tree_enum,
+                            } },
+                        );
+                    }
 
                     context.workers_pending += 1;
                     worker.lookup_start_next();
@@ -1079,9 +1090,11 @@ pub fn GrooveType(
                 context.groove.prefetch_keys.clearRetainingCapacity();
                 assert(context.groove.prefetch_keys.count() == 0);
 
-                context.groove.grid.trace.stop(.{
-                    .lookup = .{ .tree = @enumFromInt(context.groove.objects.config.id) },
-                });
+                if (trace_tree_enum(context.groove.objects.config.id)) |tree_enum| {
+                    context.groove.grid.trace.stop(.{
+                        .lookup = .{ .tree = tree_enum },
+                    });
+                }
 
                 context.callback(context);
             }
@@ -1125,12 +1138,14 @@ pub fn GrooveType(
             fn lookup_start_next(worker: *PrefetchWorker) void {
                 assert(worker.current == null);
                 const prefetch_entry = worker.context.key_iterator.next() orelse {
-                    worker.context.groove.grid.trace.stop(
-                        .{ .lookup_worker = .{
-                            .index = worker.index,
-                            .tree = @enumFromInt(worker.context.groove.objects.config.id),
-                        } },
-                    );
+                    if (trace_tree_enum(worker.context.groove.objects.config.id)) |tree_enum| {
+                        worker.context.groove.grid.trace.stop(
+                            .{ .lookup_worker = .{
+                                .index = worker.index,
+                                .tree = tree_enum,
+                            } },
+                        );
+                    }
 
                     worker.context.worker_finished();
                     return;

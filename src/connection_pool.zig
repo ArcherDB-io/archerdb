@@ -153,7 +153,9 @@ pub fn ServerConnectionPool(comptime Connection: type) type {
         /// Current memory pressure state
         under_memory_pressure: std.atomic.Value(bool),
         /// Connection factory function
-        connection_factory: *const fn (allocator: Allocator) anyerror!*Connection,
+        connection_factory: *const fn (context: ?*anyopaque, allocator: Allocator) anyerror!*Connection,
+        /// Optional context for the connection factory
+        factory_context: ?*anyopaque,
         /// Connection destructor function
         connection_destructor: *const fn (conn: *Connection, allocator: Allocator) void,
 
@@ -166,8 +168,9 @@ pub fn ServerConnectionPool(comptime Connection: type) type {
             allocator: Allocator,
             config: PoolConfig,
             metrics_instance: *cluster_metrics.ClusterMetrics,
-            connection_factory: *const fn (allocator: Allocator) anyerror!*Connection,
+            connection_factory: *const fn (context: ?*anyopaque, allocator: Allocator) anyerror!*Connection,
             connection_destructor: *const fn (conn: *Connection, allocator: Allocator) void,
+            factory_context: ?*anyopaque,
         ) !*Self {
             const self = try allocator.create(Self);
             errdefer allocator.destroy(self);
@@ -193,6 +196,7 @@ pub fn ServerConnectionPool(comptime Connection: type) type {
                 .under_memory_pressure = std.atomic.Value(bool).init(false),
                 .connection_factory = connection_factory,
                 .connection_destructor = connection_destructor,
+                .factory_context = factory_context,
             };
 
             // Pre-create minimum connections (these start as IDLE)
@@ -510,7 +514,7 @@ pub fn ServerConnectionPool(comptime Connection: type) type {
             for (self.connections, 0..) |*maybe_conn, slot_index| {
                 if (maybe_conn.* == null) {
                     // Create new connection
-                    const conn = try self.connection_factory(self.allocator);
+                    const conn = try self.connection_factory(self.factory_context, self.allocator);
                     errdefer self.connection_destructor(conn, self.allocator);
 
                     maybe_conn.* = PooledConn.init(conn, self, slot_index);
@@ -683,7 +687,7 @@ const MockConnection = struct {
 
 var mock_connection_counter: u32 = 0;
 
-fn mockConnectionFactory(allocator: Allocator) !*MockConnection {
+fn mockConnectionFactory(_: ?*anyopaque, allocator: Allocator) !*MockConnection {
     const conn = try allocator.create(MockConnection);
     mock_connection_counter += 1;
     conn.* = .{ .id = mock_connection_counter };
@@ -707,6 +711,7 @@ test "connection_pool: basic acquire and release" {
         &metrics_instance,
         mockConnectionFactory,
         mockConnectionDestructor,
+        null,
     );
     defer pool.deinit();
 
@@ -736,6 +741,7 @@ test "connection_pool: pool exhaustion with max connections" {
         &metrics_instance,
         mockConnectionFactory,
         mockConnectionDestructor,
+        null,
     );
     defer pool.deinit();
 
@@ -784,6 +790,7 @@ test "connection_pool: idle connection reaping" {
         &metrics_instance,
         mockConnectionFactory,
         mockConnectionDestructor,
+        null,
     );
     defer pool.deinit();
 
@@ -818,6 +825,7 @@ test "connection_pool: health check closes unhealthy connections" {
         &metrics_instance,
         mockConnectionFactory,
         mockConnectionDestructor,
+        null,
     );
     defer pool.deinit();
 
@@ -856,6 +864,7 @@ test "connection_pool: metrics are updated" {
         &metrics_instance,
         mockConnectionFactory,
         mockConnectionDestructor,
+        null,
     );
     defer pool.deinit();
 
@@ -879,6 +888,7 @@ test "connection_pool: getStats returns correct values" {
         &metrics_instance,
         mockConnectionFactory,
         mockConnectionDestructor,
+        null,
     );
     defer pool.deinit();
 
@@ -901,6 +911,7 @@ test "connection_pool: concurrent acquire and release" {
         &metrics_instance,
         mockConnectionFactory,
         mockConnectionDestructor,
+        null,
     );
     defer pool.deinit();
 
@@ -957,6 +968,7 @@ test "connection_pool: memory pressure triggers faster idle timeout" {
         &metrics_instance,
         mockConnectionFactory,
         mockConnectionDestructor,
+        null,
     );
     defer pool.deinit();
 

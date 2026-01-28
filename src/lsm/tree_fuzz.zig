@@ -283,6 +283,7 @@ fn EnvironmentType(comptime table_usage: TableUsage) type {
             const half_bar = @divExact(constants.lsm_compaction_ops, 2);
             if (op < half_bar) return;
             const compaction_beat = op % constants.lsm_compaction_ops;
+            const compaction_timestamp_ns = op * env.time_sim.resolution;
 
             const first_beat = compaction_beat == 0;
             const half_beat = compaction_beat == half_bar;
@@ -313,7 +314,7 @@ fn EnvironmentType(comptime table_usage: TableUsage) type {
             var beat_index_blocks_max: u64 = 1;
 
             for (compactions_slice) |compaction| {
-                if (first_beat or half_beat) _ = compaction.bar_commence(op);
+                if (first_beat or half_beat) _ = compaction.bar_commence(op, compaction_timestamp_ns);
 
                 const input_values_remaining_bar =
                     compaction.quotas.bar - compaction.quotas.bar_done;

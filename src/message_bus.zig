@@ -31,7 +31,9 @@ pub fn MessageBusType(comptime IO: type) type {
     return struct {
         const ServerConnectionPool = connection_pool.ServerConnectionPool(Connection);
         const PooledConnection = connection_pool.PooledConnection(Connection);
-        var pool_connections: ?[]Connection = null;
+        const PoolContext = struct {
+            connections: []Connection,
+        };
 
         pool: *MessagePool,
         io: *IO,
@@ -64,6 +66,7 @@ pub fn MessageBusType(comptime IO: type) type {
         connections_used: u32 = 0,
         /// Connection pool for inbound client/replica accepts (replica-only).
         client_pool: ?*ServerConnectionPool = null,
+        pool_context: ?*PoolContext = null,
         /// Map connection slots to pooled entries for release tracking.
         client_pool_entries: []?*PooledConnection = &[_]?*PooledConnection{},
         /// Offset separating outbound replica slots from pooled accept slots.
@@ -105,9 +108,11 @@ pub fn MessageBusType(comptime IO: type) type {
         const Address = std.net.Address;
         const MessageBus = @This();
 
-        fn poolConnectionFactory(allocator: mem.Allocator) !*Connection {
+        fn poolConnectionFactory(context: ?*anyopaque, allocator: mem.Allocator) !*Connection {
             _ = allocator;
-            const connections = pool_connections orelse return error.PoolContextMissing;
+            const ctx_ptr = context orelse return error.PoolContextMissing;
+            const ctx: *PoolContext = @ptrCast(@alignCast(ctx_ptr));
+            const connections = ctx.connections;
             for (connections) |*connection| {
                 if (connection.state == .free) {
                     // Mark as connected to prevent the same connection from being
@@ -229,7 +234,10 @@ pub fn MessageBusType(comptime IO: type) type {
                     try bus.clients.ensureTotalCapacity(allocator, connections_max);
                     errdefer bus.clients.deinit(allocator);
 
-                    pool_connections = connections[pool_offset..];
+                    const pool_context = try allocator.create(PoolContext);
+                    errdefer allocator.destroy(pool_context);
+                    pool_context.* = .{ .connections = connections[pool_offset..] };
+                    bus.pool_context = pool_context;
                     bus.client_pool_entries = try allocator.alloc(?*PooledConnection, connections.len);
                     @memset(bus.client_pool_entries, null);
                     errdefer allocator.free(bus.client_pool_entries);
@@ -240,6 +248,7 @@ pub fn MessageBusType(comptime IO: type) type {
                         metrics.Registry.clusterMetrics(),
                         poolConnectionFactory,
                         poolConnectionDestructor,
+                        pool_context,
                     );
 
                     return bus;
@@ -250,16 +259,6 @@ pub fn MessageBusType(comptime IO: type) type {
 
         pub fn deinit(bus: *MessageBus, allocator: std.mem.Allocator) void {
             bus.clients.deinit(allocator);
-
-            if (bus.client_pool) |pool| {
-                pool.deinit();
-                bus.client_pool = null;
-                pool_connections = null;
-            }
-            if (bus.client_pool_entries.len > 0) {
-                allocator.free(bus.client_pool_entries);
-                bus.client_pool_entries = &[_]?*PooledConnection{};
-            }
 
             if (bus.accept_fd) |fd| {
                 assert(bus.process == .replica);
@@ -291,6 +290,19 @@ pub fn MessageBusType(comptime IO: type) type {
             }
             assert(bus.send_queue_buffer.ptr + bus.send_queue_buffer.len ==
                 send_queue_buffer_previous.?.ptr + send_queue_buffer_previous.?.len);
+
+            if (bus.client_pool) |pool| {
+                pool.deinit();
+                bus.client_pool = null;
+            }
+            if (bus.pool_context) |pool_context| {
+                allocator.destroy(pool_context);
+                bus.pool_context = null;
+            }
+            if (bus.client_pool_entries.len > 0) {
+                allocator.free(bus.client_pool_entries);
+                bus.client_pool_entries = &[_]?*PooledConnection{};
+            }
 
             allocator.free(bus.replicas_connect_attempts);
             allocator.free(bus.replicas_addresses);

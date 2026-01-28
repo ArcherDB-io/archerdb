@@ -46,6 +46,8 @@ pub const Options = struct {
     /// Assert all invariants before/after every public function.
     /// Very expensive - only enable for debugging/fuzzing.
     verify: bool = false,
+    /// Reduce fuzz workload for smoke runs.
+    smoke: bool = false,
 };
 
 fn SegmentedArrayBaseType(
@@ -1450,28 +1452,38 @@ pub fn run_fuzz(allocator: std.mem.Allocator, seed: u64, comptime options: Optio
 
     // We want to explore not just the bottom boundary but also the surrounding area
     // as it may also have interesting edge cases.
-    inline for (.{
-        TestOptions{ .element_type = u32, .node_size = 8, .element_count_max = 3 },
-        TestOptions{ .element_type = u32, .node_size = 8, .element_count_max = 4 },
-        TestOptions{ .element_type = u32, .node_size = 8, .element_count_max = 5 },
-        TestOptions{ .element_type = u32, .node_size = 8, .element_count_max = 6 },
-        TestOptions{ .element_type = u32, .node_size = 8, .element_count_max = 1024 },
-        TestOptions{ .element_type = u32, .node_size = 16, .element_count_max = 1024 },
-        TestOptions{ .element_type = u32, .node_size = 32, .element_count_max = 1024 },
-        TestOptions{ .element_type = u32, .node_size = 64, .element_count_max = 1024 },
-        TestOptions{ .element_type = TableInfo, .node_size = 256, .element_count_max = 3 },
-        TestOptions{ .element_type = TableInfo, .node_size = 256, .element_count_max = 4 },
-        TestOptions{ .element_type = TableInfo, .node_size = 256, .element_count_max = 1024 },
-        TestOptions{ .element_type = TableInfo, .node_size = 512, .element_count_max = 1024 },
-        TestOptions{ .element_type = TableInfo, .node_size = 1024, .element_count_max = 1024 },
-    }) |test_options| {
+    const test_options = if (options.smoke)
+        .{
+            TestOptions{ .element_type = u32, .node_size = 8, .element_count_max = 6 },
+            TestOptions{ .element_type = u32, .node_size = 32, .element_count_max = 64 },
+            TestOptions{ .element_type = TableInfo, .node_size = 256, .element_count_max = 6 },
+            TestOptions{ .element_type = TableInfo, .node_size = 512, .element_count_max = 64 },
+        }
+    else
+        .{
+            TestOptions{ .element_type = u32, .node_size = 8, .element_count_max = 3 },
+            TestOptions{ .element_type = u32, .node_size = 8, .element_count_max = 4 },
+            TestOptions{ .element_type = u32, .node_size = 8, .element_count_max = 5 },
+            TestOptions{ .element_type = u32, .node_size = 8, .element_count_max = 6 },
+            TestOptions{ .element_type = u32, .node_size = 8, .element_count_max = 1024 },
+            TestOptions{ .element_type = u32, .node_size = 16, .element_count_max = 1024 },
+            TestOptions{ .element_type = u32, .node_size = 32, .element_count_max = 1024 },
+            TestOptions{ .element_type = u32, .node_size = 64, .element_count_max = 1024 },
+            TestOptions{ .element_type = TableInfo, .node_size = 256, .element_count_max = 3 },
+            TestOptions{ .element_type = TableInfo, .node_size = 256, .element_count_max = 4 },
+            TestOptions{ .element_type = TableInfo, .node_size = 256, .element_count_max = 1024 },
+            TestOptions{ .element_type = TableInfo, .node_size = 512, .element_count_max = 1024 },
+            TestOptions{ .element_type = TableInfo, .node_size = 1024, .element_count_max = 1024 },
+        };
+
+    inline for (test_options) |test_option| {
         inline for (.{ .sorted, .unsorted }) |order| {
             const FuzzContext = FuzzContextType(
-                test_options.element_type,
-                test_options.node_size,
-                test_options.element_count_max,
-                if (test_options.element_type == u32) u32 else u64,
-                if (test_options.element_type == u32)
+                test_option.element_type,
+                test_option.node_size,
+                test_option.element_count_max,
+                if (test_option.element_type == u32) u32 else u64,
+                if (test_option.element_type == u32)
                     CompareInt.key_from_value
                 else
                     CompareTable.key_from_value,
@@ -1485,7 +1497,7 @@ pub fn run_fuzz(allocator: std.mem.Allocator, seed: u64, comptime options: Optio
 
             try context.run();
 
-            if (test_options.node_size % @sizeOf(test_options.element_type) != 0) {
+            if (test_option.node_size % @sizeOf(test_option.element_type) != 0) {
                 tested_padding = true;
             }
             if (FuzzContext.TestArray.node_capacity == 2) tested_node_capacity_min = true;

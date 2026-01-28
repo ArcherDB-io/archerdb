@@ -5,5 +5,15 @@ const fuzz = @import("../testing/fuzz.zig");
 const segmented_array = @import("segmented_array.zig");
 
 pub fn main(gpa: std.mem.Allocator, fuzz_args: fuzz.FuzzArgs) !void {
-    try segmented_array.run_fuzz(gpa, fuzz_args.seed, .{ .verify = true });
+    if (fuzz_args.events_max != null) {
+        try segmented_array.run_fuzz(gpa, fuzz_args.seed, .{
+            .verify = true,
+            .smoke = true,
+        });
+    } else {
+        try segmented_array.run_fuzz(gpa, fuzz_args.seed, .{
+            .verify = true,
+            .smoke = false,
+        });
+    }
 }

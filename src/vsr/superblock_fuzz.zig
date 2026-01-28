@@ -16,6 +16,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 
 const constants = @import("../constants.zig");
+const sharding = @import("../sharding.zig");
 const vsr = @import("../vsr.zig");
 const Storage = @import("../testing/storage.zig").Storage;
 const StorageFaultAtlas = @import("../testing/storage.zig").ClusterFaultAtlas;
@@ -293,6 +294,7 @@ const Environment = struct {
             .release = vsr.Release.minimum,
             .replica = replica,
             .replica_count = replica_count,
+            .sharding_strategy = sharding.ShardingStrategy.default(),
             .view = null,
         });
 

@@ -477,7 +477,7 @@ There is no hot-reload capability for these parameters.
 
 ## References
 
-- [LSM Tree Design](docs/internals/lsm.md)
-- [ArcherDB Configuration](src/config.zig)
-- [Constants Documentation](src/constants.zig)
-- [Benchmark Script](scripts/benchmark_lsm.sh)
+- [LSM-Tree Storage](./architecture.md#lsm-tree-storage)
+- [ArcherDB Configuration](https://github.com/ArcherDB-io/archerdb/blob/main/src/config.zig)
+- [Constants Documentation](https://github.com/ArcherDB-io/archerdb/blob/main/src/constants.zig)
+- [Benchmark Script](https://github.com/ArcherDB-io/archerdb/blob/main/scripts/benchmark_lsm.sh)

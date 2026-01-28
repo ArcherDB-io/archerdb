@@ -4,6 +4,13 @@ const std = @import("std");
 const assert = std.debug.assert;
 
 const snapshot_latest = @import("tree.zig").snapshot_latest;
+const TraceEvent = @import("../trace/event.zig").Event;
+
+const TraceTree = @FieldType(@FieldType(TraceEvent, "lookup"), "tree");
+
+fn trace_tree_enum(id: u16) ?TraceTree {
+    return std.meta.intToEnum(TraceTree, id) catch null;
+}
 
 const GridType = @import("../vsr/grid.zig").GridType;
 
@@ -124,9 +131,11 @@ pub fn ScanLookupType(
                 }
             }
 
-            self.groove.grid.trace.start(.{
-                .lookup = .{ .tree = @enumFromInt(self.groove.objects.config.id) },
-            });
+            if (trace_tree_enum(self.groove.objects.config.id)) |tree_enum| {
+                self.groove.grid.trace.start(.{
+                    .lookup = .{ .tree = tree_enum },
+                });
+            }
 
             self.state = .lookup;
 
@@ -139,12 +148,14 @@ pub fn ScanLookupType(
                 };
                 self.workers_pending += 1;
 
-                self.groove.grid.trace.start(
-                    .{ .lookup_worker = .{
-                        .index = worker.index,
-                        .tree = @enumFromInt(self.groove.objects.config.id),
-                    } },
-                );
+                if (trace_tree_enum(self.groove.objects.config.id)) |tree_enum| {
+                    self.groove.grid.trace.start(
+                        .{ .lookup_worker = .{
+                            .index = worker.index,
+                            .tree = tree_enum,
+                        } },
+                    );
+                }
 
                 self.lookup_worker_next(worker);
 
@@ -259,12 +270,14 @@ pub fn ScanLookupType(
             assert(self.state != .idle);
             assert(self.workers_pending > 0);
 
-            self.groove.grid.trace.stop(
-                .{ .lookup_worker = .{
-                    .index = worker.index,
-                    .tree = @enumFromInt(self.groove.objects.config.id),
-                } },
-            );
+            if (trace_tree_enum(self.groove.objects.config.id)) |tree_enum| {
+                self.groove.grid.trace.stop(
+                    .{ .lookup_worker = .{
+                        .index = worker.index,
+                        .tree = tree_enum,
+                    } },
+                );
+            }
 
             self.workers_pending -= 1;
             if (self.workers_pending == 0) {
@@ -274,9 +287,11 @@ pub fn ScanLookupType(
 
         fn lookup_finished(self: *ScanLookup) void {
             assert(self.workers_pending == 0);
-            self.groove.grid.trace.stop(.{
-                .lookup = .{ .tree = @enumFromInt(self.groove.objects.config.id) },
-            });
+            if (trace_tree_enum(self.groove.objects.config.id)) |tree_enum| {
+                self.groove.grid.trace.stop(.{
+                    .lookup = .{ .tree = tree_enum },
+                });
+            }
 
             switch (self.state) {
                 .idle, .lookup => unreachable,

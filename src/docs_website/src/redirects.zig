@@ -9,10 +9,10 @@ const Redirect = struct {
     new: []const u8,
 
     const all: []const Redirect = &.{
-        .{ .old = "quick-start/", .new = "start/" },
-        .{ .old = "about/", .new = "concepts/" },
-        .{ .old = "about/vopr/", .new = "concepts/safety/" },
-        .{ .old = "about/oltp/", .new = "concepts/oltp/" },
+        .{ .old = "quick-start/", .new = "quickstart/" },
+        .{ .old = "about/", .new = "architecture/" },
+        .{ .old = "about/vopr/", .new = "durability-verification/" },
+        .{ .old = "about/oltp/", .new = "architecture/" },
     };
 };
 

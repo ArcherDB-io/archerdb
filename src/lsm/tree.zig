@@ -10,6 +10,13 @@ const maybe = stdx.maybe;
 const stdx = @import("stdx");
 const constants = @import("../constants.zig");
 const schema = @import("schema.zig");
+const TraceEvent = @import("../trace/event.zig").Event;
+
+const TraceTree = @FieldType(@FieldType(TraceEvent, "compact_mutable"), "tree");
+
+fn trace_tree_enum(id: u16) ?TraceTree {
+    return std.meta.intToEnum(TraceTree, id) catch null;
+}
 
 const NodePool = @import("node_pool.zig").NodePoolType(constants.lsm_manifest_node_size, 16);
 const GridType = @import("../vsr/grid.zig").GridType;
@@ -506,12 +513,14 @@ pub fn TreeType(comptime TreeTable: type, comptime Storage: type) type {
         pub fn compact(tree: *Tree) void {
             assert(tree.table_mutable.mutability == .mutable);
 
-            tree.grid.trace.start(.{ .compact_mutable_suffix = .{
-                .tree = @enumFromInt(tree.config.id),
-            } });
-            defer tree.grid.trace.stop(.{ .compact_mutable_suffix = .{
-                .tree = @enumFromInt(tree.config.id),
-            } });
+            if (trace_tree_enum(tree.config.id)) |tree_enum| {
+                tree.grid.trace.start(.{ .compact_mutable_suffix = .{
+                    .tree = tree_enum,
+                } });
+                defer tree.grid.trace.stop(.{ .compact_mutable_suffix = .{
+                    .tree = tree_enum,
+                } });
+            }
 
             // Spreads sort+deduplication work between beats, to avoid a latency spike at the end of
             // each bar (or immediately prior to scans).
@@ -525,12 +534,14 @@ pub fn TreeType(comptime TreeTable: type, comptime Storage: type) type {
             assert(snapshot_min > 0);
             assert(snapshot_min < snapshot_latest);
 
-            tree.grid.trace.start(.{ .compact_mutable = .{
-                .tree = @enumFromInt(tree.config.id),
-            } });
-            defer tree.grid.trace.stop(.{ .compact_mutable = .{
-                .tree = @enumFromInt(tree.config.id),
-            } });
+            if (trace_tree_enum(tree.config.id)) |tree_enum| {
+                tree.grid.trace.start(.{ .compact_mutable = .{
+                    .tree = tree_enum,
+                } });
+                defer tree.grid.trace.stop(.{ .compact_mutable = .{
+                    .tree = tree_enum,
+                } });
+            }
 
             if (tree.table_immutable.mutability.immutable.flushed) {
                 // The immutable table must be visible to the next bar.

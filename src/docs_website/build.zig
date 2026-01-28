@@ -31,6 +31,7 @@ pub fn build(b: *std.Build) !void {
     const md_files = b.run(&.{ "git", "ls-files", "../../**/*.md" });
     var md_files_iter = std.mem.tokenizeScalar(u8, md_files, '\n');
     while (md_files_iter.next()) |md_file| {
+        if (std.mem.indexOf(u8, md_file, ".planning/") != null) continue;
         check_spelling.addFileArg(b.path(md_file));
     }
 
