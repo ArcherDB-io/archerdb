@@ -341,4 +341,114 @@ class GeoEventBatchTest {
             assertTrue(future.get().isEmpty());
         }
     }
+
+    // ========================================================================
+    // Split Batch Tests (per sdk-retry/spec.md)
+    // ========================================================================
+
+    @Test
+    void testSplitBatchBasic() {
+        List<Integer> items = List.of(1, 2, 3, 4, 5, 6, 7, 8);
+        List<List<Integer>> chunks = GeoEventBatch.splitBatch(items, 3);
+
+        assertEquals(3, chunks.size());
+        assertEquals(List.of(1, 2, 3), chunks.get(0));
+        assertEquals(List.of(4, 5, 6), chunks.get(1));
+        assertEquals(List.of(7, 8), chunks.get(2));
+    }
+
+    @Test
+    void testSplitBatchExactDivision() {
+        List<Integer> items = List.of(1, 2, 3, 4, 5, 6);
+        List<List<Integer>> chunks = GeoEventBatch.splitBatch(items, 2);
+
+        assertEquals(3, chunks.size());
+        assertEquals(List.of(1, 2), chunks.get(0));
+        assertEquals(List.of(3, 4), chunks.get(1));
+        assertEquals(List.of(5, 6), chunks.get(2));
+    }
+
+    @Test
+    void testSplitBatchEmptyList() {
+        List<Integer> items = List.of();
+        List<List<Integer>> chunks = GeoEventBatch.splitBatch(items, 3);
+
+        assertTrue(chunks.isEmpty());
+    }
+
+    @Test
+    void testSplitBatchSingleChunk() {
+        List<Integer> items = List.of(1, 2, 3);
+        List<List<Integer>> chunks = GeoEventBatch.splitBatch(items, 10);
+
+        assertEquals(1, chunks.size());
+        assertEquals(List.of(1, 2, 3), chunks.get(0));
+    }
+
+    @Test
+    void testSplitBatchChunkSizeOne() {
+        List<Integer> items = List.of(1, 2, 3);
+        List<List<Integer>> chunks = GeoEventBatch.splitBatch(items, 1);
+
+        assertEquals(3, chunks.size());
+        assertEquals(List.of(1), chunks.get(0));
+        assertEquals(List.of(2), chunks.get(1));
+        assertEquals(List.of(3), chunks.get(2));
+    }
+
+    @Test
+    void testSplitBatchInvalidChunkSize() {
+        List<Integer> items = List.of(1, 2, 3);
+
+        assertThrows(IllegalArgumentException.class, () -> {
+            GeoEventBatch.splitBatch(items, 0);
+        });
+
+        assertThrows(IllegalArgumentException.class, () -> {
+            GeoEventBatch.splitBatch(items, -1);
+        });
+    }
+
+    @Test
+    void testSplitBatchDefaultChunkSize() {
+        // Create list with 2500 items
+        List<Integer> items = new ArrayList<>();
+        for (int i = 0; i < 2500; i++) {
+            items.add(i);
+        }
+
+        List<List<Integer>> chunks = GeoEventBatch.splitBatch(items);
+
+        // Default chunk size is 1000
+        assertEquals(3, chunks.size());
+        assertEquals(1000, chunks.get(0).size());
+        assertEquals(1000, chunks.get(1).size());
+        assertEquals(500, chunks.get(2).size());
+    }
+
+    @Test
+    void testSplitBatchWithGeoEvents() {
+        List<GeoEvent> events = new ArrayList<>();
+        for (int i = 0; i < 10; i++) {
+            events.add(createEvent());
+        }
+
+        List<List<GeoEvent>> chunks = GeoEventBatch.splitBatch(events, 3);
+
+        assertEquals(4, chunks.size());
+        assertEquals(3, chunks.get(0).size());
+        assertEquals(3, chunks.get(1).size());
+        assertEquals(3, chunks.get(2).size());
+        assertEquals(1, chunks.get(3).size());
+
+        // Verify events are preserved
+        int totalEvents = chunks.stream().mapToInt(List::size).sum();
+        assertEquals(10, totalEvents);
+    }
+
+    @Test
+    void testSplitBatchNullList() {
+        List<List<Integer>> chunks = GeoEventBatch.splitBatch(null, 3);
+        assertTrue(chunks.isEmpty());
+    }
 }

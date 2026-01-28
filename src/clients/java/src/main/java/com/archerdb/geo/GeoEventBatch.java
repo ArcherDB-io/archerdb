@@ -157,4 +157,67 @@ public final class GeoEventBatch {
             }
         });
     }
+
+    /**
+     * Splits a list into smaller chunks of the specified size.
+     *
+     * <p>
+     * This is useful for retry scenarios when a large batch times out and you need to split it into
+     * smaller chunks for retry per sdk-retry/spec.md:
+     *
+     * <pre>
+     * {
+     *     &#64;code
+     *     List<GeoEvent> events = generateLargeEventList();
+     *
+     *     try {
+     *         client.insertEvents(events);
+     *     } catch (OperationTimeoutException e) {
+     *         // Split into smaller chunks and retry
+     *         List<List<GeoEvent>> chunks = GeoEventBatch.splitBatch(events, 500);
+     *         for (List<GeoEvent> chunk : chunks) {
+     *             try {
+     *                 client.insertEvents(chunk);
+     *             } catch (OperationTimeoutException retryError) {
+     *                 // Retry with even smaller chunks
+     *                 List<List<GeoEvent>> smallerChunks = GeoEventBatch.splitBatch(chunk, 100);
+     *                 // ... continue
+     *             }
+     *         }
+     *     }
+     * }
+     * </pre>
+     *
+     * @param <T> the element type
+     * @param items the list to split
+     * @param chunkSize the maximum size of each chunk (must be positive)
+     * @return a list of chunks, each containing at most chunkSize elements
+     * @throws IllegalArgumentException if chunkSize is not positive
+     */
+    public static <T> List<List<T>> splitBatch(List<T> items, int chunkSize) {
+        if (chunkSize <= 0) {
+            throw new IllegalArgumentException("chunkSize must be positive, got: " + chunkSize);
+        }
+        if (items == null || items.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        List<List<T>> chunks = new ArrayList<>();
+        for (int i = 0; i < items.size(); i += chunkSize) {
+            int end = Math.min(i + chunkSize, items.size());
+            chunks.add(new ArrayList<>(items.subList(i, end)));
+        }
+        return chunks;
+    }
+
+    /**
+     * Splits a list into chunks of 1000 elements (default chunk size).
+     *
+     * @param <T> the element type
+     * @param items the list to split
+     * @return a list of chunks, each containing at most 1000 elements
+     */
+    public static <T> List<List<T>> splitBatch(List<T> items) {
+        return splitBatch(items, 1000);
+    }
 }
