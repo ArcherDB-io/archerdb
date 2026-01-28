@@ -34,14 +34,16 @@ These errors occur in multi-region deployments with async replication.
 | 214 | `STALE_FOLLOWER` | Follower data exceeds maximum staleness threshold | Yes |
 | 215 | `PRIMARY_UNREACHABLE` | Cannot connect to primary region | Yes |
 | 216 | `REPLICATION_TIMEOUT` | Cross-region replication timeout | Yes |
-| 217 | `REGION_CONFIG_MISMATCH` | Region configuration does not match cluster topology | No |
-| 218 | `UNKNOWN_REGION` | Unknown region specified in request | No |
+| 217 | `CONFLICT_DETECTED` | Write conflict detected in active-active replication | No |
+| 218 | `GEO_SHARD_MISMATCH` | Entity geo-shard does not match target region | No |
 
 **Usage Notes:**
 - Code 213: Writes must go to the primary region. SDKs automatically route writes to primary.
 - Code 214: The follower hasn't caught up with replication. Wait and retry, or use a fresher replica.
 - Code 215: The primary region is down. Wait for failover or recovery.
 - Code 216: Cross-region replication is slow. Retry with backoff.
+- Code 217: Concurrent writes to the same entity detected in active-active replication. Application needs conflict resolution.
+- Code 218: Entity's geo-shard doesn't match the region handling the request. Check shard routing configuration.
 
 ### Sharding Errors (220-224)
 
