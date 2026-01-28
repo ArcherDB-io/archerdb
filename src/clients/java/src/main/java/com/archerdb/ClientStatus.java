@@ -17,13 +17,10 @@ enum ClientStatus {
 
     public static ClientStatus fromValue(int value) {
         switch (value) {
-            case 0:
-                return Ok;
-            case 1:
-                return Invalid;
-            default:
-                throw new IllegalArgumentException(
-                        String.format("Invalid ClientStatus value=%d", value));
+            case 0: return Ok;
+            case 1: return Invalid;
+            default: throw new IllegalArgumentException(
+                String.format("Invalid ClientStatus value=%d", value));
         }
     }
 }

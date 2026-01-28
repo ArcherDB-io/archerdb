@@ -20,19 +20,13 @@ public enum TtlOperationResult {
 
     public static TtlOperationResult fromValue(byte value) {
         switch (value) {
-            case 0:
-                return Success;
-            case 1:
-                return EntityNotFound;
-            case 2:
-                return InvalidTtl;
-            case 3:
-                return NotPermitted;
-            case 4:
-                return EntityImmutable;
-            default:
-                throw new IllegalArgumentException(
-                        String.format("Invalid TtlOperationResult value=%d", value));
+            case 0: return Success;
+            case 1: return EntityNotFound;
+            case 2: return InvalidTtl;
+            case 3: return NotPermitted;
+            case 4: return EntityImmutable;
+            default: throw new IllegalArgumentException(
+                String.format("Invalid TtlOperationResult value=%d", value));
         }
     }
 }

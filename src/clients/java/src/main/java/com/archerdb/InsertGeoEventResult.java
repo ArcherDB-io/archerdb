@@ -13,74 +13,62 @@ public enum InsertGeoEventResult {
     Ok((int) 0),
 
     /**
-     * @see <a href=
-     *      "https://docs.archerdb.io/reference/requests/insert_events#linked_event_failed">linked_event_failed</a>
+     * @see <a href="https://docs.archerdb.io/reference/requests/insert_events#linked_event_failed">linked_event_failed</a>
      */
     LinkedEventFailed((int) 1),
 
     /**
-     * @see <a href=
-     *      "https://docs.archerdb.io/reference/requests/insert_events#linked_event_chain_open">linked_event_chain_open</a>
+     * @see <a href="https://docs.archerdb.io/reference/requests/insert_events#linked_event_chain_open">linked_event_chain_open</a>
      */
     LinkedEventChainOpen((int) 2),
 
     /**
-     * @see <a href=
-     *      "https://docs.archerdb.io/reference/requests/insert_events#timestamp_must_be_zero">timestamp_must_be_zero</a>
+     * @see <a href="https://docs.archerdb.io/reference/requests/insert_events#timestamp_must_be_zero">timestamp_must_be_zero</a>
      */
     TimestampMustBeZero((int) 3),
 
     /**
-     * @see <a href=
-     *      "https://docs.archerdb.io/reference/requests/insert_events#reserved_field">reserved_field</a>
+     * @see <a href="https://docs.archerdb.io/reference/requests/insert_events#reserved_field">reserved_field</a>
      */
     ReservedField((int) 4),
 
     /**
-     * @see <a href=
-     *      "https://docs.archerdb.io/reference/requests/insert_events#reserved_flag">reserved_flag</a>
+     * @see <a href="https://docs.archerdb.io/reference/requests/insert_events#reserved_flag">reserved_flag</a>
      */
     ReservedFlag((int) 5),
 
     /**
-     * @see <a href=
-     *      "https://docs.archerdb.io/reference/requests/insert_events#id_must_not_be_zero">id_must_not_be_zero</a>
+     * @see <a href="https://docs.archerdb.io/reference/requests/insert_events#id_must_not_be_zero">id_must_not_be_zero</a>
      */
     IdMustNotBeZero((int) 6),
 
     /**
-     * @see <a href=
-     *      "https://docs.archerdb.io/reference/requests/insert_events#entity_id_must_not_be_zero">entity_id_must_not_be_zero</a>
+     * @see <a href="https://docs.archerdb.io/reference/requests/insert_events#entity_id_must_not_be_zero">entity_id_must_not_be_zero</a>
      */
     EntityIdMustNotBeZero((int) 7),
 
     /**
-     * @see <a href=
-     *      "https://docs.archerdb.io/reference/requests/insert_events#invalid_coordinates">invalid_coordinates</a>
+     * @see <a href="https://docs.archerdb.io/reference/requests/insert_events#invalid_coordinates">invalid_coordinates</a>
      */
     InvalidCoordinates((int) 8),
 
     /**
-     * @see <a href=
-     *      "https://docs.archerdb.io/reference/requests/insert_events#lat_out_of_range">lat_out_of_range</a>
+     * @see <a href="https://docs.archerdb.io/reference/requests/insert_events#lat_out_of_range">lat_out_of_range</a>
      */
     LatOutOfRange((int) 9),
 
     /**
-     * @see <a href=
-     *      "https://docs.archerdb.io/reference/requests/insert_events#lon_out_of_range">lon_out_of_range</a>
+     * @see <a href="https://docs.archerdb.io/reference/requests/insert_events#lon_out_of_range">lon_out_of_range</a>
      */
     LonOutOfRange((int) 10),
 
     /**
-     * @see <a href=
-     *      "https://docs.archerdb.io/reference/requests/insert_events#exists_with_different_entity_id">exists_with_different_entity_id</a>
+     * @see <a href="https://docs.archerdb.io/reference/requests/insert_events#exists_with_different_entity_id">exists_with_different_entity_id</a>
      */
     ExistsWithDifferentEntityId((int) 11),
 
     /**
-     * @see <a href=
-     *      "https://docs.archerdb.io/reference/requests/insert_events#exists_with_different_coordinates">exists_with_different_coordinates</a>
+     * @see <a href="https://docs.archerdb.io/reference/requests/insert_events#exists_with_different_coordinates">exists_with_different_coordinates</a>
      */
     ExistsWithDifferentCoordinates((int) 12),
 
@@ -90,20 +78,17 @@ public enum InsertGeoEventResult {
     Exists((int) 13),
 
     /**
-     * @see <a href=
-     *      "https://docs.archerdb.io/reference/requests/insert_events#heading_out_of_range">heading_out_of_range</a>
+     * @see <a href="https://docs.archerdb.io/reference/requests/insert_events#heading_out_of_range">heading_out_of_range</a>
      */
     HeadingOutOfRange((int) 14),
 
     /**
-     * @see <a href=
-     *      "https://docs.archerdb.io/reference/requests/insert_events#ttl_invalid">ttl_invalid</a>
+     * @see <a href="https://docs.archerdb.io/reference/requests/insert_events#ttl_invalid">ttl_invalid</a>
      */
     TtlInvalid((int) 15),
 
     /**
-     * @see <a href=
-     *      "https://docs.archerdb.io/reference/requests/insert_events#entity_id_must_not_be_int_max">entity_id_must_not_be_int_max</a>
+     * @see <a href="https://docs.archerdb.io/reference/requests/insert_events#entity_id_must_not_be_int_max">entity_id_must_not_be_int_max</a>
      */
     EntityIdMustNotBeIntMax((int) 16);
 
@@ -115,43 +100,25 @@ public enum InsertGeoEventResult {
 
     public static InsertGeoEventResult fromValue(int value) {
         switch (value) {
-            case 0:
-                return Ok;
-            case 1:
-                return LinkedEventFailed;
-            case 2:
-                return LinkedEventChainOpen;
-            case 3:
-                return TimestampMustBeZero;
-            case 4:
-                return ReservedField;
-            case 5:
-                return ReservedFlag;
-            case 6:
-                return IdMustNotBeZero;
-            case 7:
-                return EntityIdMustNotBeZero;
-            case 8:
-                return InvalidCoordinates;
-            case 9:
-                return LatOutOfRange;
-            case 10:
-                return LonOutOfRange;
-            case 11:
-                return ExistsWithDifferentEntityId;
-            case 12:
-                return ExistsWithDifferentCoordinates;
-            case 13:
-                return Exists;
-            case 14:
-                return HeadingOutOfRange;
-            case 15:
-                return TtlInvalid;
-            case 16:
-                return EntityIdMustNotBeIntMax;
-            default:
-                throw new IllegalArgumentException(
-                        String.format("Invalid InsertGeoEventResult value=%d", value));
+            case 0: return Ok;
+            case 1: return LinkedEventFailed;
+            case 2: return LinkedEventChainOpen;
+            case 3: return TimestampMustBeZero;
+            case 4: return ReservedField;
+            case 5: return ReservedFlag;
+            case 6: return IdMustNotBeZero;
+            case 7: return EntityIdMustNotBeZero;
+            case 8: return InvalidCoordinates;
+            case 9: return LatOutOfRange;
+            case 10: return LonOutOfRange;
+            case 11: return ExistsWithDifferentEntityId;
+            case 12: return ExistsWithDifferentCoordinates;
+            case 13: return Exists;
+            case 14: return HeadingOutOfRange;
+            case 15: return TtlInvalid;
+            case 16: return EntityIdMustNotBeIntMax;
+            default: throw new IllegalArgumentException(
+                String.format("Invalid InsertGeoEventResult value=%d", value));
         }
     }
 }
