@@ -1,34 +1,24 @@
 ---
 phase: 08-observability-dashboards
-verified: 2026-01-23T05:40:00Z
-status: gaps_found
-score: 4/5 must-haves verified
-gaps:
-  - truth: "Dashboards and alerts documented with installation instructions"
-    status: partial
-    reason: "Installation instructions exist in SUMMARY files but not in dedicated documentation within observability/ directory"
-    artifacts:
-      - path: "observability/"
-        issue: "No top-level README.md with installation instructions for the complete stack"
-      - path: "observability/alertmanager/README.md"
-        status: "EXISTS - covers alertmanager setup"
-      - path: "observability/grafana/"
-        issue: "No README.md with dashboard installation instructions"
-      - path: "observability/prometheus/"
-        issue: "No README.md with rules installation instructions"
-    missing:
-      - "observability/README.md with complete setup guide covering Grafana, Prometheus, and Alertmanager"
-      - "observability/grafana/README.md with dashboard installation steps"
-      - "observability/prometheus/README.md with alerting rules installation steps"
+verified: 2026-01-28T07:30:00Z
+status: passed
+score: 5/5 must-haves verified
+re_verification:
+  previous_status: gaps_found
+  previous_score: 4/5
+  gaps_closed:
+    - "Dashboards and alerts documented with installation instructions"
+  gaps_remaining: []
+  regressions: []
 ---
 
 # Phase 8: Observability Dashboards Verification Report
 
 **Phase Goal:** Production-ready monitoring - Grafana dashboards showing everything operators need, alerting rules for proactive response
 
-**Verified:** 2026-01-23T05:40:00Z
-**Status:** gaps_found
-**Re-verification:** No — initial verification
+**Verified:** 2026-01-28T07:30:00Z
+**Status:** passed
+**Re-verification:** Yes — all documentation files now exist
 
 ## Goal Achievement
 
@@ -40,9 +30,9 @@ gaps:
 | 2 | Prometheus alerting rules configured for resource exhaustion (proactive) | ✓ VERIFIED | 29 total rules: ArcherDBHighMemoryUsageWarning (70%), ArcherDBHighMemoryUsageCritical (85%), ArcherDBHighDiskUsageWarning in archerdb-warnings.yaml and archerdb-critical.yaml |
 | 3 | Alerts configured for replication lag exceeding threshold | ✓ VERIFIED | Both time-based (30s warn, 2min critical) and ops-based (1000 ops warn, 10000 ops critical) in archerdb-warnings.yaml and archerdb-critical.yaml |
 | 4 | Alerts configured for error rate spikes | ✓ VERIFIED | ArcherDBErrorRateWarning (>0.1/sec) and ArcherDBErrorRateCritical (>1/sec) with 5m/2m for durations |
-| 5 | Dashboards and alerts documented with installation instructions | ⚠️ PARTIAL | Instructions exist in SUMMARY files (08-01, 08-03) and observability/alertmanager/README.md, but no top-level observability/README.md or grafana/prometheus subdirectory READMEs |
+| 5 | Dashboards and alerts documented with installation instructions | ✓ VERIFIED | Complete documentation: observability/README.md (main setup guide), observability/grafana/README.md (dashboard docs), observability/prometheus/README.md (alerting rules docs), observability/alertmanager/README.md (notification setup) |
 
-**Score:** 4/5 truths verified (1 partial)
+**Score:** 5/5 truths verified
 
 ### Required Artifacts
 
