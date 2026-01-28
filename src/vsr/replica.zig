@@ -11864,13 +11864,31 @@ pub fn ReplicaType(
 const DVCQuorum = struct {
     const DVCArray = stdx.BoundedArrayType(*const Message.DoViewChange, constants.replicas_max);
 
+    fn dvcs_count(dvcs: *const DVCArray) usize {
+        const count = dvcs.count_as(usize);
+        if (count > constants.replicas_max) {
+            log.err("DVCQuorum: dvcs_count overflow count={} max={}", .{
+                count,
+                constants.replicas_max,
+            });
+            return constants.replicas_max;
+        }
+        return count;
+    }
+
+    fn dvcs_slice(dvcs: *const DVCArray) []const *const Message.DoViewChange {
+        const count = dvcs_count(dvcs);
+        return dvcs.buffer[0..count];
+    }
+
     fn verify(dvc_quorum: DVCQuorumMessages) void {
         const dvcs = DVCQuorum.dvcs_all(dvc_quorum);
-        for (dvcs.const_slice()) |message| verify_message(message);
+        for (dvcs_slice(&dvcs)) |message| verify_message(message);
 
         // Verify that DVCs with the same log_view do not conflict.
-        for (dvcs.const_slice(), 0..) |dvc_a, i| {
-            for (dvcs.const_slice()[0..i]) |dvc_b| {
+        const dvcs_all_slice = dvcs_slice(&dvcs);
+        for (dvcs_all_slice, 0..) |dvc_a, i| {
+            for (dvcs_all_slice[0..i]) |dvc_b| {
                 if (dvc_a.header.log_view != dvc_b.header.log_view) continue;
 
                 const headers_a = message_body_as_view_headers(dvc_a.base_const());
@@ -11949,7 +11967,7 @@ const DVCQuorum = struct {
     fn dvcs_with_log_view(dvc_quorum: DVCQuorumMessages, log_view: u32) DVCArray {
         var array = DVCArray{};
         const dvcs = DVCQuorum.dvcs_all(dvc_quorum);
-        for (dvcs.const_slice()) |message| {
+        for (dvcs_slice(&dvcs)) |message| {
             if (message.header.log_view == log_view) {
                 array.push(message);
             }
@@ -11961,7 +11979,7 @@ const DVCQuorum = struct {
         const log_view_max_ = DVCQuorum.log_view_max(dvc_quorum);
         var array = DVCArray{};
         const dvcs = DVCQuorum.dvcs_all(dvc_quorum);
-        for (dvcs.const_slice()) |message| {
+        for (dvcs_slice(&dvcs)) |message| {
             assert(message.header.log_view <= log_view_max_);
 
             if (message.header.log_view < log_view_max_) {
@@ -11974,7 +11992,7 @@ const DVCQuorum = struct {
     fn op_checkpoint_max(dvc_quorum: DVCQuorumMessages) u64 {
         var checkpoint_max: ?u64 = null;
         const dvcs = dvcs_all(dvc_quorum);
-        for (dvcs.const_slice()) |dvc| {
+        for (dvcs_slice(&dvcs)) |dvc| {
             const dvc_checkpoint = dvc.header.checkpoint_op;
             if (checkpoint_max == null or checkpoint_max.? < dvc_checkpoint) {
                 checkpoint_max = dvc_checkpoint;
@@ -11990,7 +12008,7 @@ const DVCQuorum = struct {
     fn log_view_max(dvc_quorum: DVCQuorumMessages) u32 {
         var log_view_max_: ?u32 = null;
         const dvcs = DVCQuorum.dvcs_all(dvc_quorum);
-        for (dvcs.const_slice()) |message| {
+        for (dvcs_slice(&dvcs)) |message| {
             // `log_view` is the view when this replica was last in normal status, which:
             // * may be higher than the view in any of the prepare headers.
             // * must be lower than the view of this view change.
@@ -12005,10 +12023,10 @@ const DVCQuorum = struct {
 
     fn commit_max(dvc_quorum: DVCQuorumMessages) u64 {
         const dvcs = DVCQuorum.dvcs_all(dvc_quorum);
-        assert(dvcs.count() > 0);
+        assert(dvcs_count(&dvcs) > 0);
 
         var commit_max_: u64 = 0;
-        for (dvcs.const_slice()) |dvc| {
+        for (dvcs_slice(&dvcs)) |dvc| {
             const dvc_headers = message_body_as_view_headers(dvc.base_const());
             // DVC generation stops when a header with op ≤ commit_max is appended.
             const dvc_commit_max_tail = dvc_headers.slice[dvc_headers.slice.len - 1].op;
@@ -12030,7 +12048,7 @@ const DVCQuorum = struct {
     fn timestamp_max(dvc_quorum: DVCQuorumMessages) u64 {
         var timestamp_max_: ?u64 = null;
         const dvcs = DVCQuorum.dvcs_all(dvc_quorum);
-        for (dvcs.const_slice()) |dvc| {
+        for (dvcs_slice(&dvcs)) |dvc| {
             const dvc_headers = message_body_as_view_headers(dvc.base_const());
             const dvc_head = &dvc_headers.slice[0];
             if (timestamp_max_ == null or timestamp_max_.? < dvc_head.timestamp) {
@@ -12043,7 +12061,7 @@ const DVCQuorum = struct {
     fn op_max_canonical(dvc_quorum: DVCQuorumMessages) u64 {
         var op_max: ?u64 = null;
         const dvcs = DVCQuorum.dvcs_canonical(dvc_quorum);
-        for (dvcs.const_slice()) |message| {
+        for (dvcs_slice(&dvcs)) |message| {
             if (op_max == null or op_max.? < message.header.op) {
                 op_max = message.header.op;
             }
@@ -12087,12 +12105,12 @@ const DVCQuorum = struct {
         }
 
         const dvcs_all_ = DVCQuorum.dvcs_all(dvc_quorum);
-        if (dvcs_all_.count() < options.quorum_view_change) return .awaiting_quorum;
+        if (dvcs_count(&dvcs_all_) < options.quorum_view_change) return .awaiting_quorum;
 
         const log_view_canonical = DVCQuorum.log_view_max(dvc_quorum);
         const dvcs_canonical_ = DVCQuorum.dvcs_canonical(dvc_quorum);
-        assert(dvcs_canonical_.count() > 0);
-        assert(dvcs_canonical_.count() <= dvcs_all_.count());
+        assert(dvcs_count(&dvcs_canonical_) > 0);
+        assert(dvcs_count(&dvcs_canonical_) <= dvcs_count(&dvcs_all_));
 
         const op_head_max = DVCQuorum.op_max_canonical(dvc_quorum);
         const op_head_min = DVCQuorum.commit_max(dvc_quorum);
@@ -12100,7 +12118,7 @@ const DVCQuorum = struct {
         // Iterate the highest definitely committed op and all maybe-uncommitted ops.
         var op = op_head_min;
         const op_head = while (op <= op_head_max) : (op += 1) {
-            const header_canonical = for (dvcs_canonical_.const_slice()) |dvc| {
+            const header_canonical = for (dvcs_slice(&dvcs_canonical_)) |dvc| {
                 // This DVC is canonical, but lagging far behind.
                 if (dvc.header.op < op) continue;
 
@@ -12116,7 +12134,7 @@ const DVCQuorum = struct {
 
             var copies: usize = 0;
             var nacks: usize = 0;
-            for (dvcs_all_.const_slice()) |dvc| {
+            for (dvcs_slice(&dvcs_all_)) |dvc| {
                 if (dvc.header.op < op) {
                     nacks += 1;
                     continue;
@@ -12180,7 +12198,7 @@ const DVCQuorum = struct {
             if (header_canonical == null or
                 (header_canonical != null and copies == 0))
             {
-                if (dvcs_all_.count() < options.replica_count) {
+                if (dvcs_count(&dvcs_all_) < options.replica_count) {
                     return .awaiting_repair;
                 } else {
                     return .complete_invalid;
@@ -12209,7 +12227,7 @@ const DVCQuorum = struct {
         child_parent: ?u128 = null,
 
         fn next(iterator: *HeaderIterator) ?*const Header.Prepare {
-            assert(iterator.dvcs.count() > 0);
+            assert(dvcs_count(&iterator.dvcs) > 0);
             assert(iterator.op_min <= iterator.op_max);
             assert((iterator.child_op == null) == (iterator.child_parent == null));
 
@@ -12220,7 +12238,7 @@ const DVCQuorum = struct {
             var header: ?*const Header.Prepare = null;
 
             const log_view = iterator.dvcs.get(0).header.log_view;
-            for (iterator.dvcs.const_slice()) |dvc| {
+            for (dvcs_slice(&iterator.dvcs)) |dvc| {
                 assert(log_view == dvc.header.log_view);
 
                 if (op > dvc.header.op) continue;
