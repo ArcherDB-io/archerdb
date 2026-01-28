@@ -74,6 +74,7 @@ pub const testing = .{
 pub const ewah = @import("ewah.zig").ewah;
 pub const checkpoint_trailer = @import("vsr/checkpoint_trailer.zig");
 pub const encryption = @import("encryption.zig");
+pub const load_shedding = @import("load_shedding.zig");
 
 pub const multi_batch = @import("vsr/multi_batch.zig");
 

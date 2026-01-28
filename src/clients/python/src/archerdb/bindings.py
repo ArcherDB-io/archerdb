@@ -40,6 +40,10 @@ class Operation(enum.IntEnum):
     TTL_SET = 158
     TTL_EXTEND = 159
     TTL_CLEAR = 160
+    BATCH_QUERY = 161
+    PREPARE_QUERY = 162
+    EXECUTE_PREPARED = 163
+    DEALLOCATE_PREPARED = 164
 
 
 class PacketStatus(enum.IntEnum):
@@ -404,7 +408,6 @@ class CGeoEvent(ctypes.Structure):
             accuracy_mm=obj.accuracy_mm,
             heading_cdeg=obj.heading_cdeg,
             flags=obj.flags,
-            reserved=(ctypes.c_uint8 * 12)(),
         )
 
 

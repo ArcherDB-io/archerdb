@@ -30,15 +30,15 @@ func TestParseQueryUUIDBatchResponse(t *testing.T) {
 
 	events := []types.GeoEvent{
 		{
-			EntityID: types.BytesToUint128([16]byte{1}),
-			LatNano:  10,
-			LonNano:  20,
+			EntityID:  types.BytesToUint128([16]byte{1}),
+			LatNano:   10,
+			LonNano:   20,
 			Timestamp: 100,
 		},
 		{
-			EntityID: types.BytesToUint128([16]byte{2}),
-			LatNano:  30,
-			LonNano:  40,
+			EntityID:  types.BytesToUint128([16]byte{2}),
+			LatNano:   30,
+			LonNano:   40,
 			Timestamp: 200,
 		},
 	}

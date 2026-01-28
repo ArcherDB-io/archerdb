@@ -46,9 +46,9 @@ func TestGeoClientWiring(t *testing.T) {
 	// Test 1: Insert a GeoEvent
 	t.Run("InsertEvent", func(t *testing.T) {
 		event, err := types.NewGeoEvent(types.GeoEventOptions{
-			EntityID:  types.ID(),
-			Latitude:  37.7749,
-			Longitude: -122.4194,
+			EntityID:   types.ID(),
+			Latitude:   37.7749,
+			Longitude:  -122.4194,
 			TTLSeconds: 86400,
 		})
 		if err != nil {
@@ -77,9 +77,9 @@ func TestGeoClientWiring(t *testing.T) {
 		events := make([]types.GeoEvent, 0, 3)
 		for i := 0; i < 3; i++ {
 			event, err := types.NewGeoEvent(types.GeoEventOptions{
-				EntityID:  types.ID(),
-				Latitude:  37.7749 + float64(i)*0.0001,
-				Longitude: -122.4194 - float64(i)*0.0001,
+				EntityID:   types.ID(),
+				Latitude:   37.7749 + float64(i)*0.0001,
+				Longitude:  -122.4194 - float64(i)*0.0001,
 				TTLSeconds: 86400,
 			})
 			if err != nil {

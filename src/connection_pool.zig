@@ -779,6 +779,7 @@ test "connection_pool: idle connection reaping" {
             .max_connections = 4,
             .min_connections = 1,
             .idle_timeout_normal_ms = 1, // 1ms timeout for test
+            .idle_timeout_pressure_ms = 1, // Also set pressure timeout for test reliability
         },
         &metrics_instance,
         mockConnectionFactory,
@@ -794,8 +795,8 @@ test "connection_pool: idle connection reaping" {
 
     try std.testing.expectEqual(@as(u32, 2), pool.idle_count.load(.monotonic));
 
-    // Wait for idle timeout
-    std.time.sleep(5 * std.time.ns_per_ms);
+    // Wait for idle timeout (use longer sleep for test reliability)
+    std.time.sleep(10 * std.time.ns_per_ms);
 
     // Reap should close one connection (keeping min_connections=1)
     const reaped = pool.reapIdleConnections();

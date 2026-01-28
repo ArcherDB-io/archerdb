@@ -23,7 +23,7 @@ const vsr = @import("vsr");
 const stdx = vsr.stdx;
 const metrics = vsr.archerdb_metrics;
 const cluster_metrics = vsr.cluster_metrics;
-const load_shedding = @import("../load_shedding.zig");
+const load_shedding = vsr.load_shedding;
 const correlation = vsr.observability.correlation;
 
 // =============================================================================

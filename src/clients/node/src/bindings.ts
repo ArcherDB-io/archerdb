@@ -239,5 +239,9 @@ export enum Operation {
   ttl_set = 158,
   ttl_extend = 159,
   ttl_clear = 160,
+  batch_query = 161,
+  prepare_query = 162,
+  execute_prepared = 163,
+  deallocate_prepared = 164,
 }
 

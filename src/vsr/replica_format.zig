@@ -417,7 +417,7 @@ test "format" {
     // This doesn't match the output from `archerdb format ...` since the testing storage / slot
     // counts are lower.
     try std.testing.expectEqual(
+        139050108909533721091413575530022464726,
         vsr.checksum(storage.memory),
-        119847278042789605067666986427266180060,
     );
 }

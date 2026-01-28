@@ -1568,15 +1568,15 @@ func (c *geoClient) QueryPolygon(filter types.QueryPolygonFilter) (types.QueryRe
 	data := make([]byte, totalSize)
 
 	// Write header (little-endian)
-	binary.LittleEndian.PutUint32(data[0:4], uint32(len(filter.Vertices)))  // vertex_count
-	binary.LittleEndian.PutUint32(data[4:8], uint32(len(filter.Holes)))     // hole_count
-	binary.LittleEndian.PutUint32(data[8:12], filter.Limit)                  // limit
-	binary.LittleEndian.PutUint32(data[12:16], 0)                            // _reserved_align
-	binary.LittleEndian.PutUint64(data[16:24], filter.TimestampMin)          // timestamp_min
-	binary.LittleEndian.PutUint64(data[24:32], filter.TimestampMax)          // timestamp_max
+	binary.LittleEndian.PutUint32(data[0:4], uint32(len(filter.Vertices))) // vertex_count
+	binary.LittleEndian.PutUint32(data[4:8], uint32(len(filter.Holes)))    // hole_count
+	binary.LittleEndian.PutUint32(data[8:12], filter.Limit)                // limit
+	binary.LittleEndian.PutUint32(data[12:16], 0)                          // _reserved_align
+	binary.LittleEndian.PutUint64(data[16:24], filter.TimestampMin)        // timestamp_min
+	binary.LittleEndian.PutUint64(data[24:32], filter.TimestampMax)        // timestamp_max
 	// Extract group_id as u64 from Uint128 (lower 8 bytes in little-endian)
 	groupIDBytes := filter.GroupID.Bytes()
-	copy(data[32:40], groupIDBytes[:8])  // group_id (lower 64 bits)
+	copy(data[32:40], groupIDBytes[:8]) // group_id (lower 64 bits)
 	// bytes 40-128 are reserved (zeroed by make)
 
 	// Write outer vertices

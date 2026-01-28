@@ -297,11 +297,11 @@ func (g *Gauge) Reset() {
 
 // Histogram is a thread-safe histogram metric for request durations.
 type Histogram struct {
-	name        string
-	description string
-	count       int64
-	sum         int64 // stored as nanoseconds for precision
-	mu          sync.Mutex
+	name         string
+	description  string
+	count        int64
+	sum          int64 // stored as nanoseconds for precision
+	mu           sync.Mutex
 	observations map[string]*histogramData
 }
 
@@ -313,8 +313,8 @@ type histogramData struct {
 // NewHistogram creates a new Histogram.
 func NewHistogram(name, description string) *Histogram {
 	return &Histogram{
-		name:        name,
-		description: description,
+		name:         name,
+		description:  description,
 		observations: make(map[string]*histogramData),
 	}
 }
@@ -401,8 +401,8 @@ type SDKMetrics struct {
 	SessionRenewalsTotal *Counter
 
 	// Retry metrics (per client-retry/spec.md)
-	RetriesTotal           *Counter
-	RetryExhaustedTotal    *Counter
+	RetriesTotal            *Counter
+	RetryExhaustedTotal     *Counter
 	PrimaryDiscoveriesTotal *Counter
 }
 
@@ -707,11 +707,11 @@ func (h *HealthTracker) GetStatus() HealthStatus {
 func (h *HealthTracker) ToMap() map[string]interface{} {
 	status := h.GetStatus()
 	return map[string]interface{}{
-		"healthy":                    status.Healthy,
-		"state":                      string(status.State),
+		"healthy":                      status.Healthy,
+		"state":                        string(status.State),
 		"last_successful_operation_ns": status.LastSuccessfulOpNs,
-		"consecutive_failures":       status.ConsecutiveFailures,
-		"details":                    status.Details,
+		"consecutive_failures":         status.ConsecutiveFailures,
+		"details":                      status.Details,
 	}
 }
 

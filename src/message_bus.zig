@@ -109,7 +109,13 @@ pub fn MessageBusType(comptime IO: type) type {
             _ = allocator;
             const connections = pool_connections orelse return error.PoolContextMissing;
             for (connections) |*connection| {
-                if (connection.state == .free) return connection;
+                if (connection.state == .free) {
+                    // Mark as connected to prevent the same connection from being
+                    // returned multiple times during pool pre-creation. The actual
+                    // state (.accepting/.connecting) will be set by the caller.
+                    connection.state = .connected;
+                    return connection;
+                }
             }
             return error.PoolExhausted;
         }
