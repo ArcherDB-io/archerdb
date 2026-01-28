@@ -45,3 +45,15 @@ python.out
 python.err
 server.log
 tools/s2_golden_gen/s2_golden_gen
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# Go coverage
+coverage.out
+coverage_detail.out
+
+# Benchmark output
+benchmark-results/
