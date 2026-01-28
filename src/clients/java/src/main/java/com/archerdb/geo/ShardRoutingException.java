@@ -39,7 +39,8 @@ public class ShardRoutingException extends ArcherDBException {
     /**
      * Returns the shard ID that failed routing.
      */
-    public int getShardId() {
+    @Override
+    public Integer getShardId() {
         return shardId;
     }
 }
