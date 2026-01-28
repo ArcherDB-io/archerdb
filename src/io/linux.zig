@@ -19,6 +19,7 @@ const DirectIO = @import("../io.zig").DirectIO;
 const DoublyLinkedListType = @import("../list.zig").DoublyLinkedListType;
 const parse_dirty_semver = stdx.parse_dirty_semver;
 const maybe = stdx.maybe;
+const archerdb_metrics = @import("../archerdb/metrics.zig");
 
 pub const IO = struct {
     pub const TCPOptions = common.TCPOptions;
@@ -34,7 +35,7 @@ pub const IO = struct {
     /// Completions that are ready to have their callbacks run.
     completed: QueueType(Completion) = QueueType(Completion).init(.{ .name = "io_completed" }),
 
-    // TODO Track these as metrics:
+    // IO queue depth tracking (exposed via archerdb_io_queue_* metrics)
     ios_queued: u32 = 0,
     ios_in_kernel: u32 = 0,
 
@@ -113,6 +114,9 @@ pub const IO = struct {
             try self.flush_submissions(0, &timeouts, &etime);
             assert(etime == false);
         }
+
+        // Update IO queue metrics for observability (once per tick)
+        archerdb_metrics.Registry.updateIOQueueMetrics(self.ios_queued, self.ios_in_kernel);
     }
 
     /// Pass all queued submissions to the kernel and run for `nanoseconds`.
@@ -154,6 +158,9 @@ pub const IO = struct {
         // The busy loop here is required to avoid a potential deadlock, as the kernel determines
         // when the timeouts are pushed to the completion queue, not us.
         while (timeouts > 0) _ = try self.flush_completions(0, &timeouts, &etime);
+
+        // Update IO queue metrics for observability
+        archerdb_metrics.Registry.updateIOQueueMetrics(self.ios_queued, self.ios_in_kernel);
     }
 
     fn flush(self: *IO, wait_nr: u32, timeouts: *usize, etime: *bool) !void {

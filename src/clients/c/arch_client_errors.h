@@ -44,6 +44,7 @@ extern "C" {
 #endif
 
 #include <stdbool.h>
+#include <stddef.h>  /* For NULL */
 
 /* ============================================================================
  * State Error Codes (200-210)

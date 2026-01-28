@@ -644,6 +644,19 @@ pub const Registry = struct {
         null,
     );
 
+    // IO queue depth metrics (io_uring submission/kernel queue pressure)
+    pub var io_queue_submitted: Gauge = Gauge.init(
+        "archerdb_io_queue_submitted",
+        "IO operations submitted to io_uring but not yet in kernel",
+        null,
+    );
+
+    pub var io_queue_in_kernel: Gauge = Gauge.init(
+        "archerdb_io_queue_in_kernel",
+        "IO operations currently executing in kernel",
+        null,
+    );
+
     // Connection metrics
     pub var active_connections: Gauge = Gauge.init(
         "archerdb_active_connections",
@@ -1841,6 +1854,11 @@ pub const Registry = struct {
         try io_latency_exceeded_total.format(writer);
         try writer.writeAll("\n");
 
+        // IO queue depth metrics (io_uring pressure)
+        try io_queue_submitted.format(writer);
+        try io_queue_in_kernel.format(writer);
+        try writer.writeAll("\n");
+
         try active_connections.format(writer);
         try writer.writeAll("\n");
 
@@ -2896,6 +2914,17 @@ pub const Registry = struct {
         vsr_status.set(status);
         vsr_is_primary.set(if (is_primary) 1 else 0);
         vsr_op_number.set(@intCast(op_number));
+    }
+
+    /// Update IO queue metrics from io_uring.
+    /// Called when IO operations are queued or completed.
+    ///
+    /// Args:
+    ///   ios_queued: Operations submitted but not yet in kernel
+    ///   ios_in_kernel: Operations currently executing in kernel
+    pub fn updateIOQueueMetrics(ios_queued: u32, ios_in_kernel: u32) void {
+        io_queue_submitted.set(@intCast(ios_queued));
+        io_queue_in_kernel.set(@intCast(ios_in_kernel));
     }
 
     /// Record a view change event.
@@ -4267,4 +4296,31 @@ test "Registry: Query metrics format output" {
     // Spatial index stats
     try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_ram_index_entries") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_query_covering_cells_avg") != null);
+}
+
+// ============================================================================
+// IO Queue Metrics Tests
+// ============================================================================
+
+test "Registry: IO queue metrics update and format" {
+    // Update IO queue metrics
+    Registry.updateIOQueueMetrics(5, 3);
+
+    try std.testing.expectEqual(@as(i64, 5), Registry.io_queue_submitted.get());
+    try std.testing.expectEqual(@as(i64, 3), Registry.io_queue_in_kernel.get());
+
+    // Reset for other tests
+    Registry.updateIOQueueMetrics(0, 0);
+}
+
+test "Registry: IO queue metrics format output" {
+    var buf: [131072]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buf);
+
+    try Registry.format(fbs.writer());
+
+    const output = fbs.getWritten();
+
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_io_queue_submitted") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "archerdb_io_queue_in_kernel") != null);
 }
