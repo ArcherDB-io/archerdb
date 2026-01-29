@@ -1071,6 +1071,9 @@ fn command_start(
     // Track previous view for detecting view changes
     var prev_view: u32 = replica.view;
 
+    // Track whether we've marked the server as initialized for the readiness probe
+    var server_marked_initialized = false;
+
     while (true) {
         replica.tick();
 
@@ -1101,6 +1104,13 @@ fn command_start(
             .view_change => .view_change,
             .recovering, .recovering_head => .recovering,
         };
+
+        // Mark server as initialized once replica reaches normal status
+        // This enables the /health/ready endpoint to return 200 OK
+        if (!server_marked_initialized and replica.status == .normal) {
+            metrics_server.markInitialized();
+            server_marked_initialized = true;
+        }
 
         const index_stats = replica.state_machine.ram_index.get_stats();
 
