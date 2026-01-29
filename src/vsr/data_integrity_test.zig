@@ -510,6 +510,177 @@ test "DATA-02: checkpoint/restore cycle preserves all data (R=3)" {
 }
 
 // ============================================================================
+// DATA-03: Checksum Corruption Detection Tests
+// ============================================================================
+
+/// DATA-03: checksums detect WAL prepare corruption
+///
+/// This test validates that when a replica's WAL prepare is corrupted, the
+/// checksum mismatch is detected and the cluster repairs the corrupted replica
+/// from healthy replicas.
+///
+/// Scenario:
+/// 1. Create 3-node cluster and commit operations
+/// 2. Stop one replica
+/// 3. Corrupt a WAL prepare (zeros the sector, invalidating checksum)
+/// 4. Restart replica
+/// 5. Verify: corruption detected (enters recovering_head)
+/// 6. Verify: cluster repairs from healthy replicas
+/// 7. Verify: after repair, area is no longer faulty
+test "DATA-03: checksums detect WAL prepare corruption" {
+    const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
+    defer t.deinit();
+
+    var c = t.clients();
+
+    // Commit operations to populate WAL
+    try c.request(5, 5);
+    try expectEqual(t.replica(.R_).commit(), 5);
+    try expectEqual(t.replica(.R_).status(), .normal);
+
+    // Stop one replica
+    t.replica(.R0).stop();
+
+    // Corrupt a WAL prepare - this zeros the sector which invalidates checksum
+    t.replica(.R0).corrupt(.{ .wal_prepare = 3 });
+
+    // Restart corrupted replica - should detect corruption via checksum
+    try t.replica(.R0).open();
+    try expectEqual(t.replica(.R0).status(), .recovering_head);
+
+    // Let cluster repair corrupted replica from healthy replicas
+    t.run();
+
+    // Verify repair completed
+    try expectEqual(t.replica(.R0).status(), .normal);
+    try expectEqual(t.replica(.R0).commit(), 5);
+
+    // Verify the corrupted area was repaired - area_faulty should return false
+    const r0_storage = &t.cluster.storages[0];
+    try expect(!r0_storage.area_faulty(.{ .wal_prepares = .{ .slot = 3 } }));
+
+    // Cluster can continue accepting operations
+    try c.request(10, 10);
+    try expectEqual(t.replica(.R_).commit(), 10);
+}
+
+/// DATA-03: checksums detect grid block corruption
+///
+/// This test validates that corrupted grid blocks are detected via checksum
+/// and repaired from other replicas.
+///
+/// Scenario:
+/// 1. Create 3-node cluster and checkpoint to populate grid
+/// 2. Stop one replica
+/// 3. Corrupt grid blocks (zeros sectors, invalidating checksums)
+/// 4. Restart replica
+/// 5. Verify: cluster repairs corrupted grid blocks
+/// 6. Verify: repaired blocks are readable (no checksum errors)
+test "DATA-03: checksums detect grid block corruption" {
+    const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
+    defer t.deinit();
+
+    var c = t.clients();
+
+    // Checkpoint to populate grid with data
+    try c.request(checkpoint_1_trigger, checkpoint_1_trigger);
+    try expectEqual(t.replica(.R_).op_checkpoint(), checkpoint_1);
+
+    // Stop one replica
+    t.replica(.R0).stop();
+
+    // Corrupt some grid blocks on the stopped replica
+    // This zeros the sectors which invalidates the Aegis128 checksums
+    const address_max = t.block_address_max();
+    if (address_max >= 5) {
+        t.replica(.R0).corrupt(.{ .grid_block = 1 });
+        t.replica(.R0).corrupt(.{ .grid_block = 2 });
+        t.replica(.R0).corrupt(.{ .grid_block = 3 });
+    }
+
+    // Restart corrupted replica
+    try t.replica(.R0).open();
+
+    // Let cluster repair - checksum validation on reads will detect corruption
+    t.run();
+
+    // Verify replica recovered and is in normal state
+    try expectEqual(t.replica(.R0).status(), .normal);
+    try expectEqual(t.replica(.R0).commit(), checkpoint_1_trigger);
+
+    // Continue to next checkpoint to verify grid is usable
+    try c.request(checkpoint_2_trigger, checkpoint_2_trigger);
+    try expectEqual(t.replica(.R_).op_checkpoint(), checkpoint_2);
+}
+
+/// DATA-03: disjoint corruption across replicas recoverable
+///
+/// This test validates that when different replicas have different blocks
+/// corrupted, the cluster can recover all data through cross-replica repair,
+/// as long as each block exists intact on at least one replica.
+///
+/// Scenario:
+/// 1. Create 3-node cluster and checkpoint
+/// 2. Stop all replicas
+/// 3. Corrupt different blocks on different replicas (disjoint pattern)
+///    - Each block intact on exactly one replica
+/// 4. Restart cluster
+/// 5. Verify: cluster recovers all blocks through distributed repair
+test "DATA-03: disjoint corruption across replicas recoverable" {
+    const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
+    defer t.deinit();
+
+    var c = t.clients();
+
+    // Checkpoint to populate grid
+    try c.request(checkpoint_1_trigger, checkpoint_1_trigger);
+    try expectEqual(t.replica(.R_).op_checkpoint(), checkpoint_1);
+    try expectEqual(t.replica(.R_).commit(), checkpoint_1_trigger);
+
+    // Stop all replicas
+    t.replica(.R_).stop();
+
+    // Corrupt grid with disjoint pattern:
+    // Each block exists intact on exactly one replica
+    // R0: keeps addresses 1, 4, 7, ... (corrupts 2,3, 5,6, 8,9, ...)
+    // R1: keeps addresses 2, 5, 8, ... (corrupts 1,3, 4,6, 7,9, ...)
+    // R2: keeps addresses 3, 6, 9, ... (corrupts 1,2, 4,5, 7,8, ...)
+    const address_max = t.block_address_max();
+    for ([_]TestReplicas{
+        t.replica(.R0),
+        t.replica(.R1),
+        t.replica(.R2),
+    }, 0..) |replica_set, i| {
+        var address: u64 = 1 + i; // Addresses start at 1
+        while (address <= address_max) : (address += 3) {
+            // Leave every third address un-corrupt for this replica
+            // Corrupt the other two
+            if (address + 1 <= address_max) {
+                replica_set.corrupt(.{ .grid_block = address + 1 });
+            }
+            if (address + 2 <= address_max) {
+                replica_set.corrupt(.{ .grid_block = address + 2 });
+            }
+        }
+    }
+
+    // Restart all replicas
+    try t.replica(.R_).open();
+
+    // Let cluster repair - each replica will fetch missing blocks from others
+    t.run();
+
+    // Verify all replicas recovered
+    try expectEqual(t.replica(.R_).status(), .normal);
+    try expectEqual(t.replica(.R_).commit(), checkpoint_1_trigger);
+    try expectEqual(t.replica(.R_).op_checkpoint(), checkpoint_1);
+
+    // Continue to next checkpoint to verify full cycle works
+    try c.request(checkpoint_2_trigger, checkpoint_2_trigger);
+    try expectEqual(t.replica(.R_).op_checkpoint(), checkpoint_2);
+}
+
+// ============================================================================
 // DATA-06: Torn Write Tests
 // ============================================================================
 
