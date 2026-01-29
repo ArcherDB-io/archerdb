@@ -13,7 +13,7 @@ This roadmap transforms ArcherDB from a working prototype (7% validation coverag
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Critical Bug Fixes** - Fix blocking bugs that prevent production use
-- [ ] **Phase 2: Multi-Node Validation** - Validate consensus and replication across 3+ replicas
+- [x] **Phase 2: Multi-Node Validation** - Validate consensus and replication across 3+ replicas
 - [ ] **Phase 3: Data Integrity** - Verify durability, crash recovery, and backup/restore
 - [ ] **Phase 4: Fault Tolerance** - Test resilience to failures and adverse conditions
 - [ ] **Phase 5: Performance Optimization** - Achieve throughput and latency targets
@@ -54,10 +54,10 @@ Plans:
 **Plans**: 4 plans in 3 waves
 
 Plans:
-- [ ] 02-01-PLAN.md - Consensus, election, and recovery tests (MULTI-01, 02, 03) (Wave 1)
-- [ ] 02-02-PLAN.md - Quorum, partition, and fault tolerance tests (MULTI-04, 05, 06) (Wave 1)
-- [ ] 02-03-PLAN.md - Reconfiguration test and multi-seed validation (MULTI-07) (Wave 2)
-- [ ] 02-04-PLAN.md - Verification report and phase sign-off (Wave 3)
+- [x] 02-01-PLAN.md - Consensus, election, and recovery tests (MULTI-01, 02, 03) (Wave 1)
+- [x] 02-02-PLAN.md - Quorum, partition, and fault tolerance tests (MULTI-04, 05, 06) (Wave 1)
+- [x] 02-03-PLAN.md - Reconfiguration test and multi-seed validation (MULTI-07) (Wave 2)
+- [x] 02-04-PLAN.md - Verification report and phase sign-off (Wave 3)
 
 ### Phase 3: Data Integrity
 **Goal**: Data survives crashes, restores correctly, and maintains consistency
@@ -69,14 +69,14 @@ Plans:
   3. Checksums detect injected data corruption (bit flips caught)
   4. Concurrent writes from multiple clients don't corrupt data
   5. Backup creates restorable snapshot; restore recovers full state
-**Plans**: TBD
+**Plans**: 5 plans in 2 waves
 
 Plans:
-- [ ] 03-01: WAL replay and crash recovery
-- [ ] 03-02: Checkpoint/restore validation
-- [ ] 03-03: Checksum and corruption detection
-- [ ] 03-04: Concurrent write safety
-- [ ] 03-05: Backup and restore
+- [ ] 03-01-PLAN.md - WAL replay, checkpoint/restore, torn write tests (DATA-01, DATA-02, DATA-06) (Wave 1)
+- [ ] 03-02-PLAN.md - Checksum corruption detection tests (DATA-03) (Wave 1)
+- [ ] 03-03-PLAN.md - Consistency and concurrency tests (DATA-04, DATA-05) (Wave 1)
+- [ ] 03-04-PLAN.md - Backup/restore and PITR tests (DATA-07, DATA-08, DATA-09) (Wave 1)
+- [ ] 03-05-PLAN.md - Verification report and phase sign-off (Wave 2)
 
 ### Phase 4: Fault Tolerance
 **Goal**: System survives hardware and network failures without data loss
@@ -218,7 +218,7 @@ Note: Phases 5, 6, and 9 can partially parallelize with earlier phases after Pha
 |-------|----------------|--------|-----------|
 | 1. Critical Bug Fixes | 3/3 | Complete | 2026-01-29 |
 | 2. Multi-Node Validation | 4/4 | Complete | 2026-01-29 |
-| 3. Data Integrity | 0/5 | Not started | - |
+| 3. Data Integrity | 0/5 | Planned | - |
 | 4. Fault Tolerance | 0/4 | Not started | - |
 | 5. Performance Optimization | 0/4 | Not started | - |
 | 6. Security Hardening | 0/5 | Not started | - |
@@ -231,5 +231,6 @@ Note: Phases 5, 6, and 9 can partially parallelize with earlier phases after Pha
 *Roadmap created: 2026-01-29*
 *Phase 1 planned: 2026-01-29*
 *Phase 2 planned: 2026-01-29*
+*Phase 3 planned: 2026-01-29*
 *Total requirements: 82 v1 requirements mapped to 10 phases*
 *Depth: comprehensive*
