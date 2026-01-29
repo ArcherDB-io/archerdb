@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-01-29)
 ## Current Position
 
 Phase: 3 of 10 (Data Integrity)
-Plan: 2 of 5 in current phase (03-01, 03-04 complete)
+Plan: 3 of 5 in current phase (03-01, 03-02, 03-04 complete)
 Status: In progress
-Last activity: 2026-01-29 - Completed 03-01-PLAN.md (WAL/Checkpoint/Torn Write Tests)
+Last activity: 2026-01-29 - Completed 03-02-PLAN.md (Checksum Corruption Detection Tests)
 
-Progress: [█████████░] 30% (9/30 plans)
+Progress: [██████████░] 33% (10/30 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 9
-- Average duration: 15 min
-- Total execution time: 2.3 hours
+- Total plans completed: 10
+- Average duration: 14 min
+- Total execution time: 2.35 hours
 
 **By Phase:**
 
@@ -29,10 +29,10 @@ Progress: [█████████░] 30% (9/30 plans)
 |-------|-------|-------|----------|
 | 01-critical-bug-fixes | 3 | 99min | 33min |
 | 02-multi-node-validation | 4 | 18min | 4.5min |
-| 03-data-integrity | 2 | 11min | 5.5min |
+| 03-data-integrity | 3 | 14min | 4.7min |
 
 **Recent Trend:**
-- Last 5 plans: 02-03 (2min), 02-04 (6min), 03-04 (3min), 03-01 (8min)
+- Last 5 plans: 02-04 (6min), 03-04 (3min), 03-01 (8min), 03-02 (3min)
 - Trend: Test implementations continue fast
 
 *Updated after each plan completion*
@@ -67,6 +67,9 @@ Recent decisions affecting current work:
 - 03-01: Combined Tasks 1+2 into single commit (test infrastructure best created as whole)
 - 03-01: Fixed seed 42 for deterministic reproducibility
 - 03-01: Disjoint grid corruption pattern for checkpoint/restore testing
+- 03-02: corrupt() zeros sectors to invalidate Aegis128 checksum
+- 03-02: area_faulty() verification confirms repair completed
+- 03-02: Unit test for fast checksum validation without cluster overhead
 
 ### Pending Todos
 
@@ -111,17 +114,18 @@ Ongoing concerns:
 |------|----------|--------|
 | DATA-01 | data_integrity_test.zig | PASS (03-01) |
 | DATA-02 | data_integrity_test.zig | PASS (03-01) |
+| DATA-03 | data_integrity_test.zig | PASS (03-02) |
 | DATA-06 | data_integrity_test.zig | PASS (03-01) |
 | DATA-07 | backup_restore_test.zig | PASS (03-04) |
 | DATA-08 | backup_restore_test.zig | PASS (03-04) |
 | DATA-09 | backup_restore_test.zig | PASS (03-04) |
 
-Remaining: 03-02, 03-03, 03-05 plans (DATA-03, DATA-04, DATA-05)
+Remaining: 03-03, 03-05 plans (DATA-04, DATA-05)
 
 ## Session Continuity
 
-Last session: 2026-01-29T20:32:00Z
-Stopped at: Completed 03-01-PLAN.md (WAL/Checkpoint/Torn Write Tests)
+Last session: 2026-01-29T20:33:19Z
+Stopped at: Completed 03-02-PLAN.md (Checksum Corruption Detection Tests)
 Resume file: None
 
-Next: Continue Phase 3 (03-02, 03-03, or 03-05)
+Next: Continue Phase 3 (03-03 or 03-05 for DATA-04, DATA-05)
