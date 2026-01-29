@@ -12,7 +12,7 @@ This roadmap transforms ArcherDB from a working prototype (7% validation coverag
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Critical Bug Fixes** - Fix blocking bugs that prevent production use
+- [x] **Phase 1: Critical Bug Fixes** - Fix blocking bugs that prevent production use
 - [ ] **Phase 2: Multi-Node Validation** - Validate consensus and replication across 3+ replicas
 - [ ] **Phase 3: Data Integrity** - Verify durability, crash recovery, and backup/restore
 - [ ] **Phase 4: Fault Tolerance** - Test resilience to failures and adverse conditions
@@ -37,9 +37,9 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 3 plans in 2 waves
 
 Plans:
-- [ ] 01-01-PLAN.md - Fix readiness probe and data persistence (Wave 1)
-- [ ] 01-02-PLAN.md - Fix concurrent client handling (Wave 2)
-- [ ] 01-03-PLAN.md - Fix TTL cleanup (Wave 2)
+- [x] 01-01-PLAN.md - Fix readiness probe and data persistence (Wave 1)
+- [x] 01-02-PLAN.md - Fix concurrent client handling (Wave 2)
+- [x] 01-03-PLAN.md - Fix TTL cleanup (Wave 2)
 
 ### Phase 2: Multi-Node Validation
 **Goal**: 3-node cluster operates correctly with consensus, replication, and failover
@@ -217,7 +217,7 @@ Note: Phases 5, 6, and 9 can partially parallelize with earlier phases after Pha
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Critical Bug Fixes | 0/3 | Planned | - |
+| 1. Critical Bug Fixes | 3/3 | Complete | 2026-01-29 |
 | 2. Multi-Node Validation | 0/5 | Not started | - |
 | 3. Data Integrity | 0/5 | Not started | - |
 | 4. Fault Tolerance | 0/4 | Not started | - |

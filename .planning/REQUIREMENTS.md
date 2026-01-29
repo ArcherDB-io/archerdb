@@ -163,10 +163,10 @@ Requirement-to-phase mapping.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| CRIT-01 | Phase 1 | Pending |
-| CRIT-02 | Phase 1 | Pending |
-| CRIT-03 | Phase 1 | Pending |
-| CRIT-04 | Phase 1 | Pending |
+| CRIT-01 | Phase 1 | Complete |
+| CRIT-02 | Phase 1 | Complete |
+| CRIT-03 | Phase 1 | Complete |
+| CRIT-04 | Phase 1 | Complete |
 | MULTI-01 | Phase 2 | Pending |
 | MULTI-02 | Phase 2 | Pending |
 | MULTI-03 | Phase 2 | Pending |
