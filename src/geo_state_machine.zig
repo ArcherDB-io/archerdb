@@ -4819,12 +4819,31 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             else
                 batch_size;
 
+            // Log cleanup operation start (F2.4.8 - TTL cleanup debugging)
+            const stats = self.ram_index.get_stats();
+            log.debug(
+                "ttl_cleanup: start scan_position={d} batch_size={d} index_entries={d} capacity={d} timestamp_ns={d}",
+                .{
+                    self.cleanup_scanner.position,
+                    scan_batch_size,
+                    stats.entry_count,
+                    stats.capacity,
+                    timestamp,
+                },
+            );
+
             // Run the scan using the consensus timestamp.
             // This ensures all replicas remove the same entries.
             const result = self.ram_index.scan_expired_batch(
                 self.cleanup_scanner.position,
                 scan_batch_size,
                 timestamp,
+            );
+
+            // Log cleanup results
+            log.debug(
+                "ttl_cleanup: complete entries_scanned={d} entries_removed={d} next_position={d} wrapped={any}",
+                .{ result.entries_scanned, result.entries_removed, result.next_position, result.wrapped },
             );
 
             // Update scanner state.
@@ -4838,6 +4857,18 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             // Update TTL metrics.
             self.ttl_metrics.record_cleanup_expiration(result.entries_removed);
             self.ttl_metrics.record_cleanup_operation();
+
+            // Log cumulative stats if removals occurred
+            if (result.entries_removed > 0) {
+                log.info(
+                    "ttl_cleanup: removed {d} expired entries (total_scanned={d}, total_removed={d})",
+                    .{
+                        result.entries_removed,
+                        self.cleanup_scanner.total_scanned,
+                        self.cleanup_scanner.total_removed,
+                    },
+                );
+            }
 
             // Write response.
             if (output.len >= @sizeOf(CleanupResponse)) {
