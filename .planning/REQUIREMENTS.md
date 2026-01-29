@@ -17,13 +17,13 @@ Requirements for production-ready DBaaS offering. Mapped from validation checkli
 
 ### Multi-Node Operation (MULTI)
 
-- [ ] **MULTI-01**: 3-node cluster achieves consensus and replicates data
-- [ ] **MULTI-02**: Leader election completes within 5 seconds of primary failure
-- [ ] **MULTI-03**: Replica can rejoin cluster after crash and catch up
-- [ ] **MULTI-04**: Quorum voting works correctly (f+1 votes required)
-- [ ] **MULTI-05**: Network partition doesn't cause split-brain
-- [ ] **MULTI-06**: Cluster tolerates f replica failures (f = (N-1)/2)
-- [ ] **MULTI-07**: Cluster membership reconfiguration works (add/remove nodes)
+- [x] **MULTI-01**: 3-node cluster achieves consensus and replicates data
+- [x] **MULTI-02**: Leader election completes within 5 seconds of primary failure
+- [x] **MULTI-03**: Replica can rejoin cluster after crash and catch up
+- [x] **MULTI-04**: Quorum voting works correctly (f+1 votes required)
+- [x] **MULTI-05**: Network partition doesn't cause split-brain
+- [x] **MULTI-06**: Cluster tolerates f replica failures (f = (N-1)/2)
+- [x] **MULTI-07**: Cluster membership reconfiguration works (add/remove nodes)
 
 ### Data Integrity (DATA)
 
