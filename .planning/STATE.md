@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-01-29)
 ## Current Position
 
 Phase: 3 of 10 (Data Integrity)
-Plan: 4 of 5 in current phase
+Plan: 2 of 5 in current phase (03-01, 03-04 complete)
 Status: In progress
-Last activity: 2026-01-29 - Completed 03-04-PLAN.md (Backup/Restore Tests)
+Last activity: 2026-01-29 - Completed 03-01-PLAN.md (WAL/Checkpoint/Torn Write Tests)
 
-Progress: [████████░░] 27% (8/30 plans)
+Progress: [█████████░] 30% (9/30 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 8
-- Average duration: 16 min
-- Total execution time: 2.2 hours
+- Total plans completed: 9
+- Average duration: 15 min
+- Total execution time: 2.3 hours
 
 **By Phase:**
 
@@ -29,10 +29,10 @@ Progress: [████████░░] 27% (8/30 plans)
 |-------|-------|-------|----------|
 | 01-critical-bug-fixes | 3 | 99min | 33min |
 | 02-multi-node-validation | 4 | 18min | 4.5min |
-| 03-data-integrity | 1 | 3min | 3min |
+| 03-data-integrity | 2 | 11min | 5.5min |
 
 **Recent Trend:**
-- Last 5 plans: 02-02 (5min), 02-03 (2min), 02-04 (6min), 03-04 (3min)
+- Last 5 plans: 02-03 (2min), 02-04 (6min), 03-04 (3min), 03-01 (8min)
 - Trend: Test implementations continue fast
 
 *Updated after each plan completion*
@@ -64,6 +64,9 @@ Recent decisions affecting current work:
 - 02-04: MULTI-04/05/06 documented as CI-only due to lite config limitation
 - 03-04: DATA-07/08/09 tests use existing infrastructure rather than duplicating code
 - 03-04: PITR tests validate parsing and config acceptance (full E2E in separate integration tests)
+- 03-01: Combined Tasks 1+2 into single commit (test infrastructure best created as whole)
+- 03-01: Fixed seed 42 for deterministic reproducibility
+- 03-01: Disjoint grid corruption pattern for checkpoint/restore testing
 
 ### Pending Todos
 
@@ -106,16 +109,19 @@ Ongoing concerns:
 
 | Test | Location | Status |
 |------|----------|--------|
+| DATA-01 | data_integrity_test.zig | PASS (03-01) |
+| DATA-02 | data_integrity_test.zig | PASS (03-01) |
+| DATA-06 | data_integrity_test.zig | PASS (03-01) |
 | DATA-07 | backup_restore_test.zig | PASS (03-04) |
 | DATA-08 | backup_restore_test.zig | PASS (03-04) |
 | DATA-09 | backup_restore_test.zig | PASS (03-04) |
 
-Remaining: 03-01, 03-02, 03-03, 03-05 plans
+Remaining: 03-02, 03-03, 03-05 plans (DATA-03, DATA-04, DATA-05)
 
 ## Session Continuity
 
-Last session: 2026-01-29T20:26:25Z
-Stopped at: Completed 03-04-PLAN.md (Backup/Restore Tests)
+Last session: 2026-01-29T20:32:00Z
+Stopped at: Completed 03-01-PLAN.md (WAL/Checkpoint/Torn Write Tests)
 Resume file: None
 
-Next: Continue Phase 3 (03-01, 03-02, 03-03, or 03-05)
+Next: Continue Phase 3 (03-02, 03-03, or 03-05)
