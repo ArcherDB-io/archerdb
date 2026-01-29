@@ -416,8 +416,12 @@ test "format" {
     //
     // This doesn't match the output from `archerdb format ...` since the testing storage / slot
     // counts are lower.
+    //
+    // Note: This checksum changes when cluster config changes (clients_max, block_size, etc.).
+    // Updated 2026-01-29: New checksum after increasing lite config clients_max to 64 and
+    // block_size/message_size_max to 32KB.
     try std.testing.expectEqual(
-        139050108909533721091413575530022464726,
+        107808724781331489756946165266037143896,
         vsr.checksum(storage.memory),
     );
 }

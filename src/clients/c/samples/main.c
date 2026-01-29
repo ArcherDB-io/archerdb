@@ -265,14 +265,30 @@ int main(int argc, char **argv) {
     }
 
     if (ctx.size != 0) {
-        // Checking for errors inserting the events:
+        // Server returned explicit results for each event.
+        // Check if any event had an actual error (ret != 0).
         insert_geo_events_result_t *results = (insert_geo_events_result_t*)ctx.reply;
         int results_len = ctx.size / sizeof(insert_geo_events_result_t);
-        printf("insert_events results:\n");
+        bool has_errors = false;
         for(int i=0;i<results_len;i++) {
-            printf("index=%d, ret=%d\n", results[i].index, results[i].result);
+            if (results[i].result != INSERT_GEO_EVENT_OK) {
+                has_errors = true;
+                break;
+            }
         }
-        exit(-1);
+
+        if (has_errors) {
+            printf("insert_events errors:\n");
+            for(int i=0;i<results_len;i++) {
+                if (results[i].result != INSERT_GEO_EVENT_OK) {
+                    printf("index=%d, ret=%d: ", results[i].index, results[i].result);
+                    print_insert_error(results[i].result);
+                    printf("\n");
+                }
+            }
+            exit(-1);
+        }
+        // All results were OK (ret=0), continue
     }
 
     printf("Geo events inserted successfully\n");
@@ -329,14 +345,29 @@ int main(int argc, char **argv) {
         }
 
         if (ctx.size != 0) {
-            // Checking for errors inserting the events:
+            // Server returned explicit results - check for actual errors.
             insert_geo_events_result_t *results = (insert_geo_events_result_t*)ctx.reply;
             int results_len = ctx.size / sizeof(insert_geo_events_result_t);
-            printf("insert_events results:\n");
-            for(int i=0;i<results_len;i++) {
-                printf("index=%d, ret=%d\n", results[i].index, results[i].result);
+            bool has_errors = false;
+            for(int j=0;j<results_len;j++) {
+                if (results[j].result != INSERT_GEO_EVENT_OK) {
+                    has_errors = true;
+                    break;
+                }
             }
-            exit(-1);
+
+            if (has_errors) {
+                printf("insert_events errors in batch %d:\n", i);
+                for(int j=0;j<results_len;j++) {
+                    if (results[j].result != INSERT_GEO_EVENT_OK) {
+                        printf("index=%d, ret=%d: ", results[j].index, results[j].result);
+                        print_insert_error(results[j].result);
+                        printf("\n");
+                    }
+                }
+                exit(-1);
+            }
+            // All results were OK, continue
         }
     }
 
@@ -387,16 +418,29 @@ int main(int argc, char **argv) {
     }
 
     if (ctx.size != 0) {
-        // Check for validation errors
+        // Server returned explicit results - check for actual errors.
         insert_geo_events_result_t *results = (insert_geo_events_result_t*)ctx.reply;
         int results_len = ctx.size / sizeof(insert_geo_events_result_t);
-        printf("Upsert validation errors:\n");
+        bool has_errors = false;
         for (int i = 0; i < results_len; i++) {
-            printf("  index=%d: ", results[i].index);
-            print_insert_error(results[i].result);
-            printf("\n");
+            if (results[i].result != INSERT_GEO_EVENT_OK) {
+                has_errors = true;
+                break;
+            }
         }
-        exit(-1);
+
+        if (has_errors) {
+            printf("Upsert validation errors:\n");
+            for (int i = 0; i < results_len; i++) {
+                if (results[i].result != INSERT_GEO_EVENT_OK) {
+                    printf("  index=%d: ", results[i].index);
+                    print_insert_error(results[i].result);
+                    printf("\n");
+                }
+            }
+            exit(-1);
+        }
+        // All results were OK, continue
     }
 
     printf("Event upserted successfully\n");

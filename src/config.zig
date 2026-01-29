@@ -639,9 +639,13 @@ pub const configs = struct {
         },
     };
 
-    /// Lite configuration — minimal memory footprint (~130 MiB) for evaluation and testing.
+    /// Lite configuration — minimal memory footprint (~200 MiB) for evaluation and testing.
     /// Uses small WAL, small messages, and minimal caches. Great for trying out ArcherDB
-    /// without requiring 7+ GiB of RAM. Tradeoff: smaller batch sizes (~30 events max).
+    /// without requiring 7+ GiB of RAM. Tradeoff: smaller batch sizes.
+    ///
+    /// Note: clients_max increased from 7 to 64 to support concurrent client testing
+    /// without requiring production config's 7+ GiB RAM. This required increasing
+    /// block_size from 4KB to 32KB. Memory impact: ~70MB additional for larger blocks.
     pub const lite = Config{
         .process = .{
             .storage_size_limit_default = 1 * GiB,
@@ -659,13 +663,19 @@ pub const configs = struct {
             .verify = true,
         },
         .cluster = .{
-            .clients_max = 4 + 3,
+            // 64 clients (same as production) allows concurrent client testing without
+            // production RAM requirements. This requires message_size_max >= ~17KB to fit
+            // ClientSessions encoding (64 * (256 + 8) = ~17KB), plus block_size constraints.
+            .clients_max = 64,
             .pipeline_prepare_queue_max = 4,
             .view_change_headers_suffix_max = 4 + 1,
             .journal_slot_count = Config.Cluster.journal_slot_count_min,
-            .message_size_max = Config.Cluster.message_size_max_min(4),
+            // 32KB message_size_max (power of 2, >= message_size_max_min(64)=~20KB).
+            .message_size_max = 32 * KiB,
 
-            .block_size = sector_size,
+            // block_size must be a power of 2 and <= message_size_max.
+            // 32KB block_size fits ClientSessions for 64 clients (~17KB).
+            .block_size = 32 * KiB,
             .lsm_compaction_ops = 4,
             .lsm_growth_factor = 4,
             // (This is higher than the production default value because the block size is smaller.)
