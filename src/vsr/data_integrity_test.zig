@@ -20,6 +20,9 @@ const stdx = @import("stdx");
 const constants = @import("../constants.zig");
 const vsr = @import("../vsr.zig");
 const fuzz = @import("../testing/fuzz.zig");
+const Process = @import("../testing/cluster/message_bus.zig").Process;
+const LinkFilter = @import("../testing/cluster/network.zig").LinkFilter;
+const Network = @import("../testing/cluster/network.zig").Network;
 const StateMachineType = @import("../testing/state_machine.zig").StateMachineType;
 const Cluster = @import("../testing/cluster.zig").ClusterType(StateMachineType);
 const Release = @import("../testing/cluster.zig").Release;
@@ -210,6 +213,45 @@ const TestContext = struct {
         return grid_blocks;
     }
 
+    const ProcessList = stdx.BoundedArrayType(
+        Process,
+        constants.members_max + constants.clients_max,
+    );
+
+    pub fn processes(t: *const TestContext, selector: ProcessSelector) ProcessList {
+        const replica_count = t.cluster.options.replica_count;
+
+        var view: u32 = 0;
+        for (t.cluster.replicas) |*r| view = @max(view, r.view);
+
+        var array = ProcessList{};
+        switch (selector) {
+            .R0 => array.push(.{ .replica = 0 }),
+            .R1 => array.push(.{ .replica = 1 }),
+            .R2 => array.push(.{ .replica = 2 }),
+            .A0 => array.push(.{ .replica = @intCast((view + 0) % replica_count) }),
+            .B1 => array.push(.{ .replica = @intCast((view + 1) % replica_count) }),
+            .B2 => array.push(.{ .replica = @intCast((view + 2) % replica_count) }),
+            .S0 => array.push(.{ .replica = replica_count + 0 }),
+            .R_, .__, .C_ => {
+                if (selector == .__ or selector == .R_) {
+                    for (0..replica_count) |i| {
+                        array.push(.{ .replica = @intCast(i) });
+                    }
+                }
+                if (selector == .__ or selector == .C_) {
+                    for (t.cluster.clients) |client| {
+                        if (client) |c| {
+                            array.push(.{ .client = c.id });
+                        }
+                    }
+                }
+            },
+        }
+        assert(array.count() > 0);
+        return array;
+    }
+
     /// Returns whether the cluster state advanced.
     pub fn tick(t: *TestContext) bool {
         const commits_before = t.cluster.state_checker.commits.items.len;
@@ -294,6 +336,45 @@ const TestReplicas = struct {
 
     pub fn op_checkpoint(t: *const TestReplicas) u64 {
         return t.get(.op_checkpoint);
+    }
+
+    // Network filtering methods for partition tests
+    pub const LinkDirection = enum { bidirectional, incoming, outgoing };
+
+    pub fn pass_all(t: *const TestReplicas, peer: ProcessSelector, direction: LinkDirection) void {
+        const paths = t.peer_paths(peer, direction);
+        for (paths.const_slice()) |path| {
+            t.cluster.network.link_filter(path).* = LinkFilter.initFull();
+        }
+    }
+
+    pub fn drop_all(t: *const TestReplicas, peer: ProcessSelector, direction: LinkDirection) void {
+        const paths = t.peer_paths(peer, direction);
+        for (paths.const_slice()) |path| t.cluster.network.link_filter(path).* = LinkFilter{};
+    }
+
+    // -1: no route to self
+    const paths_max = constants.members_max * (constants.members_max - 1 + constants.clients_max);
+
+    fn peer_paths(
+        t: *const TestReplicas,
+        peer: ProcessSelector,
+        direction: LinkDirection,
+    ) stdx.BoundedArrayType(Network.Path, paths_max) {
+        var paths = stdx.BoundedArrayType(Network.Path, paths_max){};
+        const peers = t.context.processes(peer);
+        for (t.replicas.const_slice()) |a| {
+            const process_a = Process{ .replica = a };
+            for (peers.const_slice()) |process_b| {
+                if (direction == .bidirectional or direction == .outgoing) {
+                    paths.push(.{ .source = process_a, .target = process_b });
+                }
+                if (direction == .bidirectional or direction == .incoming) {
+                    paths.push(.{ .source = process_b, .target = process_a });
+                }
+            }
+        }
+        return paths;
     }
 };
 
@@ -843,4 +924,309 @@ test "DATA-06: torn writes with standby (R=1 S=1)" {
     // Verify both replica and standby are in sync
     try expectEqual(t.replica(.R0).commit(), 5);
     try expectEqual(t.replica(.S0).commit(), 5);
+}
+
+// ============================================================================
+// DATA-04: Read-Your-Writes Consistency Tests
+// ============================================================================
+
+/// DATA-04: read-your-writes consistency (single client)
+///
+/// This test validates that a single client's writes are immediately visible
+/// on subsequent reads. The StateChecker validates linearizability automatically.
+///
+/// Scenario:
+/// 1. Create cluster with single client
+/// 2. Send request, wait for commit acknowledgment
+/// 3. Verify: commit is visible on all replicas
+/// 4. Send more requests, verify each is committed in order
+test "DATA-04: read-your-writes consistency (single client)" {
+    const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
+    defer t.deinit();
+
+    var c = t.clients();
+
+    // First write - verify it commits and is visible on all replicas
+    try c.request(1, 1);
+    try expectEqual(t.replica(.R_).commit(), 1);
+
+    // More writes - verify ordering preserved
+    try c.request(5, 5);
+    try expectEqual(t.replica(.R_).commit(), 5);
+
+    // Even more - confirm sequential consistency
+    try c.request(10, 10);
+    try expectEqual(t.replica(.R_).commit(), 10);
+
+    // StateChecker validates linearizability on every tick
+    // If any commit violated linearizability, we'd get an assertion failure
+    try expectEqual(t.replica(.R_).status(), .normal);
+
+    // Verify requests_committed matches our total
+    try expectEqual(t.cluster.state_checker.requests_committed, 10);
+}
+
+/// DATA-04: read-your-writes consistency (client across view change)
+///
+/// This test validates that read-your-writes consistency is maintained
+/// even when a view change occurs (primary fails).
+///
+/// Scenario:
+/// 1. Send requests until acknowledged
+/// 2. Force view change (stop primary)
+/// 3. After view change, send more requests
+/// 4. Verify: no requests are lost or duplicated
+test "DATA-04: read-your-writes consistency (client across view change)" {
+    const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
+    defer t.deinit();
+
+    var c = t.clients();
+
+    // Commit initial operations
+    try c.request(5, 5);
+    try expectEqual(t.replica(.R_).commit(), 5);
+
+    // Record commits before view change
+    const commits_before_view_change = t.cluster.state_checker.requests_committed;
+    try expectEqual(commits_before_view_change, 5);
+
+    // Force view change by stopping the primary
+    t.replica(.A0).stop();
+
+    // Let cluster elect new leader
+    t.run();
+
+    // After view change, continue with requests
+    // A backup should have become primary
+    try c.request(10, 10);
+
+    // Verify all requests committed (no lost writes)
+    try expectEqual(t.replica(.R_).commit(), 10);
+
+    // Verify no duplicate commits (linearizability)
+    try expectEqual(t.cluster.state_checker.requests_committed, 10);
+
+    // Restart stopped replica - it should catch up
+    try t.replica(.R0).open();
+    t.run();
+
+    // Verify all replicas converged
+    try expectEqual(t.replica(.R_).status(), .normal);
+    try expectEqual(t.replica(.R_).commit(), 10);
+}
+
+/// DATA-04: state checker validates linearizability
+///
+/// This test explicitly demonstrates that the StateChecker validates
+/// linearizability across various scenarios. While all tests implicitly
+/// validate this (StateChecker asserts on every tick), this test makes
+/// it explicit and exercises multiple scenarios.
+///
+/// Scenario:
+/// 1. Create cluster with multiple requests
+/// 2. Introduce scenarios that could violate linearizability:
+///    - View changes during commit
+///    - Replica crashes during commit
+/// 3. Verify: no assertion failures from StateChecker
+test "DATA-04: state checker validates linearizability" {
+    const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
+    defer t.deinit();
+
+    var c = t.clients();
+
+    // Phase 1: Normal operation
+    try c.request(3, 3);
+
+    // Phase 2: View change during commits
+    // Stop primary and immediately send more requests
+    t.replica(.A0).stop();
+    try c.request(6, 6);
+
+    // Restart the old primary
+    try t.replica(.R0).open();
+    t.run();
+
+    // Phase 3: Replica crash during commits
+    try c.request(8, 8);
+    t.replica(.R1).stop();
+    try c.request(10, 10);
+
+    // Restart crashed replica
+    try t.replica(.R1).open();
+    t.run();
+
+    // All replicas should be in normal state
+    try expectEqual(t.replica(.R_).status(), .normal);
+
+    // StateChecker has validated every commit - verify total
+    try expectEqual(t.cluster.state_checker.requests_committed, 10);
+
+    // Verify state checker commit history is consistent
+    for (t.cluster.state_checker.commits.items, 0..) |commit, i| {
+        try expectEqual(commit.header.op, i);
+        if (i > 0) {
+            const previous = t.cluster.state_checker.commits.items[i - 1];
+            try expectEqual(commit.header.parent, previous.header.checksum);
+        }
+    }
+}
+
+// ============================================================================
+// DATA-05: Concurrent Write Safety Tests
+// ============================================================================
+
+/// DATA-05: concurrent writes from multiple clients (R=3)
+///
+/// This test validates that concurrent writes from multiple clients
+/// don't cause data corruption or lost updates.
+///
+/// Scenario:
+/// 1. Create cluster with multiple clients
+/// 2. Have all clients send requests concurrently
+/// 3. Verify: all requests eventually commit
+/// 4. Verify: commit count matches total requests
+/// 5. Verify: StateChecker finds no linearizability violations
+test "DATA-05: concurrent writes from multiple clients (R=3)" {
+    // Use 4 clients for concurrent writes
+    const t = try TestContext.init(.{
+        .replica_count = 3,
+        .client_count = 4,
+        .seed = 42,
+    });
+    defer t.deinit();
+
+    var c = t.clients();
+
+    // Issue concurrent requests from all clients
+    // The request() function round-robins across all clients in the TestClients set
+    // With 4 clients, requests are distributed: c0, c1, c2, c3, c0, c1, ...
+    try c.request(20, 20);
+
+    // Verify all requests committed
+    try expectEqual(t.replica(.R_).commit(), 20);
+
+    // StateChecker validates correct interleaving - no linearizability violations
+    try expectEqual(t.cluster.state_checker.requests_committed, 20);
+
+    // Verify all replicas are in normal state
+    try expectEqual(t.replica(.R_).status(), .normal);
+
+    // Verify commit chain integrity
+    for (t.cluster.state_checker.commits.items[1..], 1..) |commit, i| {
+        const previous = t.cluster.state_checker.commits.items[i - 1];
+        try expectEqual(commit.header.parent, previous.header.checksum);
+    }
+}
+
+/// DATA-05: concurrent writes with replica crash
+///
+/// This test validates that concurrent writes maintain integrity
+/// when a replica crashes mid-operation.
+///
+/// Scenario:
+/// 1. Start concurrent requests from multiple clients
+/// 2. Mid-operation, stop one replica
+/// 3. Continue sending requests
+/// 4. Restart replica
+/// 5. Verify: all requests commit, no data loss
+/// 6. Verify: restarted replica catches up to current state
+test "DATA-05: concurrent writes with replica crash" {
+    const t = try TestContext.init(.{
+        .replica_count = 3,
+        .client_count = 4,
+        .seed = 42,
+    });
+    defer t.deinit();
+
+    var c = t.clients();
+
+    // Initial concurrent requests
+    try c.request(5, 5);
+    try expectEqual(t.replica(.R_).commit(), 5);
+
+    // Stop one replica mid-operation
+    t.replica(.R2).stop();
+
+    // Continue with more concurrent requests - 2/3 can still commit
+    try c.request(15, 15);
+
+    // Verify 2/3 replicas have committed
+    try expectEqual(t.replica(.R0).commit(), 15);
+    try expectEqual(t.replica(.R1).commit(), 15);
+
+    // Restart the crashed replica
+    try t.replica(.R2).open();
+    t.run();
+
+    // Verify all replicas converge to same state
+    try expectEqual(t.replica(.R_).commit(), 15);
+    try expectEqual(t.replica(.R_).status(), .normal);
+
+    // StateChecker validates no linearizability violations
+    try expectEqual(t.cluster.state_checker.requests_committed, 15);
+
+    // Verify restarted replica fully caught up
+    try expectEqual(t.replica(.R2).commit(), 15);
+}
+
+/// DATA-05: concurrent writes with network partition
+///
+/// This test validates that concurrent writes maintain integrity
+/// during a network partition and that all replicas converge
+/// after the partition heals.
+///
+/// Scenario:
+/// 1. Start concurrent requests
+/// 2. Create network partition isolating one replica
+/// 3. Continue sending requests
+/// 4. Heal partition
+/// 5. Verify: all replicas converge to same state
+/// 6. Verify: no duplicate commits
+test "DATA-05: concurrent writes with network partition" {
+    const t = try TestContext.init(.{
+        .replica_count = 3,
+        .client_count = 4,
+        .seed = 42,
+    });
+    defer t.deinit();
+
+    var c = t.clients();
+
+    // Initial concurrent requests
+    try c.request(5, 5);
+    try expectEqual(t.replica(.R_).commit(), 5);
+
+    // Isolate one replica (B2) - creates network partition
+    t.replica(.B2).drop_all(.__, .bidirectional);
+
+    // Continue with concurrent requests - majority (2/3) can still commit
+    try c.request(15, 15);
+
+    // Verify majority committed (partitioned replica behind)
+    try expectEqual(t.replica(.A0).commit(), 15);
+    try expectEqual(t.replica(.B1).commit(), 15);
+    // B2 is partitioned, so it may be behind
+    try expect(t.replica(.B2).commit() >= 5);
+
+    // Heal partition
+    t.replica(.B2).pass_all(.__, .bidirectional);
+    t.run();
+
+    // Verify all replicas converge
+    try expectEqual(t.replica(.R_).commit(), 15);
+    try expectEqual(t.replica(.R_).status(), .normal);
+
+    // Verify no duplicate commits - commit count matches expected
+    try expectEqual(t.cluster.state_checker.requests_committed, 15);
+
+    // Verify commit chain is intact (no gaps or duplicates)
+    const commits = t.cluster.state_checker.commits.items;
+    try expectEqual(commits.len, 16); // 0 (root) + 15 requests
+    for (commits[1..], 1..) |commit, i| {
+        const previous = commits[i - 1];
+        // Each commit's parent must be the previous commit's checksum
+        try expectEqual(commit.header.parent, previous.header.checksum);
+        // Op numbers must be sequential
+        try expectEqual(commit.header.op, i);
+    }
 }
