@@ -34,12 +34,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. Data persists across server restarts in production config (not dev mode)
   3. Server handles 100 concurrent clients without failures
   4. TTL cleanup removes expired entries from storage (count > 0)
-**Plans**: TBD
+**Plans**: 3 plans in 2 waves
 
 Plans:
-- [ ] 01-01: Fix readiness probe and persistence
-- [ ] 01-02: Fix concurrent client handling
-- [ ] 01-03: Fix TTL cleanup
+- [ ] 01-01-PLAN.md - Fix readiness probe and data persistence (Wave 1)
+- [ ] 01-02-PLAN.md - Fix concurrent client handling (Wave 2)
+- [ ] 01-03-PLAN.md - Fix TTL cleanup (Wave 2)
 
 ### Phase 2: Multi-Node Validation
 **Goal**: 3-node cluster operates correctly with consensus, replication, and failover
@@ -217,7 +217,7 @@ Note: Phases 5, 6, and 9 can partially parallelize with earlier phases after Pha
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Critical Bug Fixes | 0/3 | Not started | - |
+| 1. Critical Bug Fixes | 0/3 | Planned | - |
 | 2. Multi-Node Validation | 0/5 | Not started | - |
 | 3. Data Integrity | 0/5 | Not started | - |
 | 4. Fault Tolerance | 0/4 | Not started | - |
@@ -230,5 +230,6 @@ Note: Phases 5, 6, and 9 can partially parallelize with earlier phases after Pha
 
 ---
 *Roadmap created: 2026-01-29*
+*Phase 1 planned: 2026-01-29*
 *Total requirements: 82 v1 requirements mapped to 10 phases*
 *Depth: comprehensive*
