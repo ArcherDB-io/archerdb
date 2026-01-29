@@ -252,6 +252,12 @@ const TestReplicas = struct {
         return value_all.?;
     }
 
+    pub fn open_reformat(t: *const TestReplicas) !void {
+        for (t.replicas.const_slice()) |r| {
+            try t.cluster.replica_reformat(r);
+        }
+    }
+
     fn get(
         t: *const TestReplicas,
         comptime field: std.meta.FieldEnum(Cluster.Replica),
@@ -478,4 +484,48 @@ test "MULTI-03: crashed replica rejoins and catches up" {
     // Verify it caught up
     try expectEqual(b2.status(), .normal);
     try expectEqual(b2.commit(), 10);
+}
+
+/// MULTI-07: Validates that a failed replica can be replaced via reformat.
+/// This simulates the cluster reconfiguration workflow where a completely failed
+/// node is replaced with a fresh one that rejoins and syncs.
+test "MULTI-07: replace failed replica via reformat" {
+    const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
+    defer t.deinit();
+
+    var c = t.clients();
+
+    // Establish initial consensus
+    try c.request(5, 5);
+    try expectEqual(t.replica(.R_).commit(), 5);
+
+    // Get a backup replica to simulate catastrophic failure
+    var b2 = t.replica(.B2);
+
+    // Simulate catastrophic failure (node needs full replacement)
+    b2.stop();
+    try expectEqual(b2.health(), .down);
+
+    // Cluster continues with 2/3 majority
+    try c.request(10, 10);
+    try expectEqual(t.replica(.A0).commit(), 10);
+    try expectEqual(t.replica(.B1).commit(), 10);
+
+    // Replace the failed replica via reformat (simulates adding replacement node)
+    try b2.open_reformat();
+
+    // Let the replacement node sync with the cluster
+    t.run();
+
+    // Verify the replacement node joined and synced
+    try expectEqual(b2.health(), .up);
+    try expectEqual(b2.status(), .normal);
+
+    // Verify cluster is fully operational with the replacement node
+    try c.request(15, 15);
+
+    // All nodes should agree on final state
+    try expectEqual(t.replica(.A0).commit(), 15);
+    try expectEqual(t.replica(.B1).commit(), 15);
+    try expectEqual(b2.commit(), 15);
 }
