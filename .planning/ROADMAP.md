@@ -1,0 +1,234 @@
+# Roadmap: ArcherDB DBaaS Production Readiness
+
+## Overview
+
+This roadmap transforms ArcherDB from a working prototype (7% validation coverage) into a production-ready Database-as-a-Service. The critical path starts with fixing blocking bugs, validating multi-node consensus (the core value proposition), then systematically building confidence through data integrity verification, fault tolerance testing, performance optimization, security hardening, and operational tooling. Each phase delivers observable, testable capabilities that compound toward customer-ready SLAs.
+
+## Phases
+
+**Phase Numbering:**
+- Integer phases (1, 2, 3...): Planned milestone work
+- Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
+
+Decimal phases appear between their surrounding integers in numeric order.
+
+- [ ] **Phase 1: Critical Bug Fixes** - Fix blocking bugs that prevent production use
+- [ ] **Phase 2: Multi-Node Validation** - Validate consensus and replication across 3+ replicas
+- [ ] **Phase 3: Data Integrity** - Verify durability, crash recovery, and backup/restore
+- [ ] **Phase 4: Fault Tolerance** - Test resilience to failures and adverse conditions
+- [ ] **Phase 5: Performance Optimization** - Achieve throughput and latency targets
+- [ ] **Phase 6: Security Hardening** - Implement and verify auth, encryption, and audit
+- [ ] **Phase 7: Observability** - Enable comprehensive monitoring and alerting
+- [ ] **Phase 8: Operations Tooling** - Production deployment and management capabilities
+- [ ] **Phase 9: Testing Infrastructure** - Comprehensive validation and regression testing
+- [ ] **Phase 10: Documentation** - Customer-facing guides and operational runbooks
+
+## Phase Details
+
+### Phase 1: Critical Bug Fixes
+**Goal**: All blocking bugs fixed; server operates correctly in production config
+**Depends on**: Nothing (first phase)
+**Requirements**: CRIT-01, CRIT-02, CRIT-03, CRIT-04
+**Success Criteria** (what must be TRUE):
+  1. Server /health/ready returns 200 within 30 seconds of startup
+  2. Data persists across server restarts in production config (not dev mode)
+  3. Server handles 100 concurrent clients without failures
+  4. TTL cleanup removes expired entries from storage (count > 0)
+**Plans**: TBD
+
+Plans:
+- [ ] 01-01: Fix readiness probe and persistence
+- [ ] 01-02: Fix concurrent client handling
+- [ ] 01-03: Fix TTL cleanup
+
+### Phase 2: Multi-Node Validation
+**Goal**: 3-node cluster operates correctly with consensus, replication, and failover
+**Depends on**: Phase 1
+**Requirements**: MULTI-01, MULTI-02, MULTI-03, MULTI-04, MULTI-05, MULTI-06, MULTI-07
+**Success Criteria** (what must be TRUE):
+  1. 3-node cluster starts, achieves consensus, and replicates writes to all nodes
+  2. Primary failure triggers leader election completing within 5 seconds
+  3. Failed replica rejoins cluster and catches up to current state
+  4. Network partition does not cause split-brain or data divergence
+  5. Cluster continues operating after losing f replicas (f = 1 for 3-node)
+**Plans**: TBD
+
+Plans:
+- [ ] 02-01: Basic cluster setup and consensus validation
+- [ ] 02-02: Leader election and failover testing
+- [ ] 02-03: Replica recovery and rejoin
+- [ ] 02-04: Network partition handling
+- [ ] 02-05: Cluster reconfiguration
+
+### Phase 3: Data Integrity
+**Goal**: Data survives crashes, restores correctly, and maintains consistency
+**Depends on**: Phase 2
+**Requirements**: DATA-01, DATA-02, DATA-03, DATA-04, DATA-05, DATA-06, DATA-07, DATA-08, DATA-09
+**Success Criteria** (what must be TRUE):
+  1. WAL replay after crash restores exact state (no lost or duplicate operations)
+  2. Checkpoint/restore cycle preserves all data with zero corruption
+  3. Checksums detect injected data corruption (bit flips caught)
+  4. Concurrent writes from multiple clients don't corrupt data
+  5. Backup creates restorable snapshot; restore recovers full state
+**Plans**: TBD
+
+Plans:
+- [ ] 03-01: WAL replay and crash recovery
+- [ ] 03-02: Checkpoint/restore validation
+- [ ] 03-03: Checksum and corruption detection
+- [ ] 03-04: Concurrent write safety
+- [ ] 03-05: Backup and restore
+
+### Phase 4: Fault Tolerance
+**Goal**: System survives hardware and network failures without data loss
+**Depends on**: Phase 2, Phase 3
+**Requirements**: FAULT-01, FAULT-02, FAULT-03, FAULT-04, FAULT-05, FAULT-06, FAULT-07, FAULT-08
+**Success Criteria** (what must be TRUE):
+  1. Process crash (SIGKILL) followed by restart loses no committed data
+  2. Disk read errors are handled gracefully (retry or failover)
+  3. Full disk rejects writes but remains available for reads
+  4. Network latency spikes and packet loss don't cause data corruption
+  5. Recovery from crash completes within 60 seconds
+**Plans**: TBD
+
+Plans:
+- [ ] 04-01: Process crash and power loss recovery
+- [ ] 04-02: Disk error handling
+- [ ] 04-03: Resource exhaustion handling
+- [ ] 04-04: Network fault injection
+
+### Phase 5: Performance Optimization
+**Goal**: Achieve performance targets for production workloads
+**Depends on**: Phase 1
+**Requirements**: PERF-01, PERF-02, PERF-03, PERF-04, PERF-05, PERF-06, PERF-07, PERF-08, PERF-09, PERF-10
+**Success Criteria** (what must be TRUE):
+  1. Write throughput >= 100,000 events/sec/node (interim target; 1M is final)
+  2. Read latency P99 < 10ms for point queries
+  3. Spatial query (radius) P99 < 50ms for typical workloads
+  4. System sustains load for 24 hours without degradation
+  5. Memory and CPU usage stay within configured limits under load
+**Plans**: TBD
+
+Plans:
+- [ ] 05-01: Profile bottlenecks and establish baseline
+- [ ] 05-02: Optimize write path (batching, async I/O)
+- [ ] 05-03: Optimize read path (caching, indexing)
+- [ ] 05-04: Stress testing and endurance validation
+
+### Phase 6: Security Hardening
+**Goal**: Production security controls implemented and verified
+**Depends on**: Phase 1
+**Requirements**: SEC-01, SEC-02, SEC-03, SEC-04, SEC-05, SEC-06, SEC-07, SEC-08, SEC-09, SEC-10
+**Success Criteria** (what must be TRUE):
+  1. Unauthenticated client connections are rejected
+  2. Authorization controls prevent unauthorized entity access
+  3. All client and inter-replica traffic is TLS-encrypted
+  4. Encryption-at-rest protects data (verified with test vectors)
+  5. Audit log records all access and modifications
+**Plans**: TBD
+
+Plans:
+- [ ] 06-01: Authentication implementation and testing
+- [ ] 06-02: Authorization and RBAC
+- [ ] 06-03: TLS for client and replica communication
+- [ ] 06-04: Encryption-at-rest verification
+- [ ] 06-05: Audit logging and security scanning
+
+### Phase 7: Observability
+**Goal**: Comprehensive monitoring, alerting, and debugging capabilities
+**Depends on**: Phase 2
+**Requirements**: OBS-01, OBS-02, OBS-03, OBS-04, OBS-05, OBS-06, OBS-07, OBS-08
+**Success Criteria** (what must be TRUE):
+  1. Prometheus metrics endpoint exports all key performance indicators
+  2. Grafana dashboard shows cluster health, throughput, and latency
+  3. Alerts fire for critical conditions (node down, high latency, low disk)
+  4. Structured logs include trace IDs for request correlation
+  5. Resource usage (CPU, memory, disk) is tracked and exportable
+**Plans**: TBD
+
+Plans:
+- [ ] 07-01: Prometheus metrics enhancement
+- [ ] 07-02: Grafana dashboards
+- [ ] 07-03: Alert rules
+- [ ] 07-04: Logging and tracing
+
+### Phase 8: Operations Tooling
+**Goal**: Production deployment, upgrade, and disaster recovery capabilities
+**Depends on**: Phase 2, Phase 7
+**Requirements**: OPS-01, OPS-02, OPS-03, OPS-04, OPS-05, OPS-06, OPS-07, OPS-08, OPS-09, OPS-10
+**Success Criteria** (what must be TRUE):
+  1. Kubernetes manifests deploy working 3-node cluster
+  2. Rolling updates complete without downtime or data loss
+  3. Online backup runs without impacting client traffic
+  4. Disaster recovery plan documented and tested
+  5. Upgrade from version N to N+1 tested and documented
+**Plans**: TBD
+
+Plans:
+- [ ] 08-01: Kubernetes deployment manifests
+- [ ] 08-02: Rolling update and health probe integration
+- [ ] 08-03: Online backup and incremental backup
+- [ ] 08-04: Disaster recovery procedures
+- [ ] 08-05: Upgrade and rollback procedures
+
+### Phase 9: Testing Infrastructure
+**Goal**: Comprehensive test coverage ensuring ongoing reliability
+**Depends on**: Phase 1
+**Requirements**: TEST-01, TEST-02, TEST-03, TEST-04, TEST-05, TEST-06, TEST-07, TEST-08
+**Success Criteria** (what must be TRUE):
+  1. Unit tests pass 100% with no flaky tests
+  2. VOPR fuzzing runs 10+ seeds clean (no assertion failures)
+  3. Chaos tests (kill nodes, partition network) pass consistently
+  4. Multi-node end-to-end tests cover all client operations
+  5. Performance regression tests detect throughput/latency degradation
+**Plans**: TBD
+
+Plans:
+- [ ] 09-01: Unit and integration test cleanup
+- [ ] 09-02: VOPR fuzzing validation
+- [ ] 09-03: Chaos and stress testing
+- [ ] 09-04: Multi-node end-to-end tests
+- [ ] 09-05: Performance regression tests
+
+### Phase 10: Documentation
+**Goal**: Customers and operators can successfully use and manage ArcherDB
+**Depends on**: Phase 5, Phase 6, Phase 8
+**Requirements**: DOCS-01, DOCS-02, DOCS-03, DOCS-04, DOCS-05, DOCS-06, DOCS-07, DOCS-08
+**Success Criteria** (what must be TRUE):
+  1. Getting started guide enables first query in under 10 minutes
+  2. API reference documents all operations with examples
+  3. Operations runbook covers deployment, backup, upgrade, and recovery
+  4. Troubleshooting guide addresses common issues with solutions
+  5. SDK documentation covers all supported languages
+**Plans**: TBD
+
+Plans:
+- [ ] 10-01: Getting started guide
+- [ ] 10-02: API reference
+- [ ] 10-03: Operations runbook
+- [ ] 10-04: Troubleshooting and architecture docs
+
+## Progress
+
+**Execution Order:**
+Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
+
+Note: Phases 5, 6, and 9 can partially parallelize with earlier phases after Phase 1 completes.
+
+| Phase | Plans Complete | Status | Completed |
+|-------|----------------|--------|-----------|
+| 1. Critical Bug Fixes | 0/3 | Not started | - |
+| 2. Multi-Node Validation | 0/5 | Not started | - |
+| 3. Data Integrity | 0/5 | Not started | - |
+| 4. Fault Tolerance | 0/4 | Not started | - |
+| 5. Performance Optimization | 0/4 | Not started | - |
+| 6. Security Hardening | 0/5 | Not started | - |
+| 7. Observability | 0/4 | Not started | - |
+| 8. Operations Tooling | 0/5 | Not started | - |
+| 9. Testing Infrastructure | 0/5 | Not started | - |
+| 10. Documentation | 0/4 | Not started | - |
+
+---
+*Roadmap created: 2026-01-29*
+*Total requirements: 82 v1 requirements mapped to 10 phases*
+*Depth: comprehensive*

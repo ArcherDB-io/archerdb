@@ -159,17 +159,98 @@ Deferred to future releases. Not blocking DBaaS launch.
 
 ## Traceability
 
-Requirement-to-phase mapping. Updated during roadmap creation.
+Requirement-to-phase mapping.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| (To be filled by roadmapper) | | |
+| CRIT-01 | Phase 1 | Pending |
+| CRIT-02 | Phase 1 | Pending |
+| CRIT-03 | Phase 1 | Pending |
+| CRIT-04 | Phase 1 | Pending |
+| MULTI-01 | Phase 2 | Pending |
+| MULTI-02 | Phase 2 | Pending |
+| MULTI-03 | Phase 2 | Pending |
+| MULTI-04 | Phase 2 | Pending |
+| MULTI-05 | Phase 2 | Pending |
+| MULTI-06 | Phase 2 | Pending |
+| MULTI-07 | Phase 2 | Pending |
+| DATA-01 | Phase 3 | Pending |
+| DATA-02 | Phase 3 | Pending |
+| DATA-03 | Phase 3 | Pending |
+| DATA-04 | Phase 3 | Pending |
+| DATA-05 | Phase 3 | Pending |
+| DATA-06 | Phase 3 | Pending |
+| DATA-07 | Phase 3 | Pending |
+| DATA-08 | Phase 3 | Pending |
+| DATA-09 | Phase 3 | Pending |
+| FAULT-01 | Phase 4 | Pending |
+| FAULT-02 | Phase 4 | Pending |
+| FAULT-03 | Phase 4 | Pending |
+| FAULT-04 | Phase 4 | Pending |
+| FAULT-05 | Phase 4 | Pending |
+| FAULT-06 | Phase 4 | Pending |
+| FAULT-07 | Phase 4 | Pending |
+| FAULT-08 | Phase 4 | Pending |
+| PERF-01 | Phase 5 | Pending |
+| PERF-02 | Phase 5 | Pending |
+| PERF-03 | Phase 5 | Pending |
+| PERF-04 | Phase 5 | Pending |
+| PERF-05 | Phase 5 | Pending |
+| PERF-06 | Phase 5 | Pending |
+| PERF-07 | Phase 5 | Pending |
+| PERF-08 | Phase 5 | Pending |
+| PERF-09 | Phase 5 | Pending |
+| PERF-10 | Phase 5 | Pending |
+| SEC-01 | Phase 6 | Pending |
+| SEC-02 | Phase 6 | Pending |
+| SEC-03 | Phase 6 | Pending |
+| SEC-04 | Phase 6 | Pending |
+| SEC-05 | Phase 6 | Pending |
+| SEC-06 | Phase 6 | Pending |
+| SEC-07 | Phase 6 | Pending |
+| SEC-08 | Phase 6 | Pending |
+| SEC-09 | Phase 6 | Pending |
+| SEC-10 | Phase 6 | Pending |
+| OBS-01 | Phase 7 | Pending |
+| OBS-02 | Phase 7 | Pending |
+| OBS-03 | Phase 7 | Pending |
+| OBS-04 | Phase 7 | Pending |
+| OBS-05 | Phase 7 | Pending |
+| OBS-06 | Phase 7 | Pending |
+| OBS-07 | Phase 7 | Pending |
+| OBS-08 | Phase 7 | Pending |
+| OPS-01 | Phase 8 | Pending |
+| OPS-02 | Phase 8 | Pending |
+| OPS-03 | Phase 8 | Pending |
+| OPS-04 | Phase 8 | Pending |
+| OPS-05 | Phase 8 | Pending |
+| OPS-06 | Phase 8 | Pending |
+| OPS-07 | Phase 8 | Pending |
+| OPS-08 | Phase 8 | Pending |
+| OPS-09 | Phase 8 | Pending |
+| OPS-10 | Phase 8 | Pending |
+| TEST-01 | Phase 9 | Pending |
+| TEST-02 | Phase 9 | Pending |
+| TEST-03 | Phase 9 | Pending |
+| TEST-04 | Phase 9 | Pending |
+| TEST-05 | Phase 9 | Pending |
+| TEST-06 | Phase 9 | Pending |
+| TEST-07 | Phase 9 | Pending |
+| TEST-08 | Phase 9 | Pending |
+| DOCS-01 | Phase 10 | Pending |
+| DOCS-02 | Phase 10 | Pending |
+| DOCS-03 | Phase 10 | Pending |
+| DOCS-04 | Phase 10 | Pending |
+| DOCS-05 | Phase 10 | Pending |
+| DOCS-06 | Phase 10 | Pending |
+| DOCS-07 | Phase 10 | Pending |
+| DOCS-08 | Phase 10 | Pending |
 
 **Coverage:**
-- v1 requirements: 68 total
-- Mapped to phases: (pending roadmap)
-- Unmapped: (pending roadmap)
+- v1 requirements: 82 total
+- Mapped to phases: 82/82
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-01-29*
-*Last updated: 2026-01-29 after validation analysis*
+*Last updated: 2026-01-29 - Traceability added during roadmap creation*
