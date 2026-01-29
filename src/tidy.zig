@@ -1076,6 +1076,8 @@ test "tidy unix permissions" {
         "scripts/run_integration_tests.sh",
         "scripts/sigkill_crash_test.sh",
         "scripts/test-constrained.sh",
+        "scripts/test-readiness-persistence.sh",
+        "scripts/validate-readiness-fix.sh",
         "src/clients/python/reproduce_crash_env.sh",
     };
 
