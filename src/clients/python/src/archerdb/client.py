@@ -2013,9 +2013,11 @@ class GeoClientSync:
             raise ValueError("batch_size must be non-negative")
 
         def do_cleanup() -> CleanupResult:
-            # NOTE: Skeleton implementation - in full impl would send CLEANUP_EXPIRED
-            # and deserialize the 16-byte response (2x u64)
-            return CleanupResult(entries_scanned=0, entries_removed=0)
+            entries_scanned, entries_removed = self._native.cleanup_expired(batch_size)
+            return CleanupResult(
+                entries_scanned=entries_scanned,
+                entries_removed=entries_removed,
+            )
 
         return _with_retry_sync(do_cleanup, self._retry_config)
 
@@ -2881,9 +2883,13 @@ class GeoClientAsync:
             raise ValueError("batch_size must be non-negative")
 
         async def do_cleanup() -> CleanupResult:
-            # NOTE: Skeleton implementation - in full impl would send CLEANUP_EXPIRED
-            # and deserialize the 16-byte response (2x u64)
-            return CleanupResult(entries_scanned=0, entries_removed=0)
+            entries_scanned, entries_removed = await asyncio.to_thread(
+                self._native.cleanup_expired, batch_size
+            )
+            return CleanupResult(
+                entries_scanned=entries_scanned,
+                entries_removed=entries_removed,
+            )
 
         return await _with_retry_async(do_cleanup, self._retry_config)
 

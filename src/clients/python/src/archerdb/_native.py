@@ -797,3 +797,35 @@ class NativeClient:
             raise ArcherDBError(code=-1, message="Invalid TTL clear response")
 
         return TtlClearResponse.from_bytes(result.data)
+
+    def cleanup_expired(self, batch_size: int = 0) -> Tuple[int, int]:
+        """
+        Trigger TTL cleanup to remove expired entries.
+
+        Args:
+            batch_size: Number of index entries to scan (0 = scan all).
+
+        Returns:
+            Tuple of (entries_scanned, entries_removed).
+
+        Per client-protocol/spec.md cleanup_expired (opcode 155):
+        - Request: CleanupRequest (64 bytes) with batch_size field
+        - Response: CleanupResponse (64 bytes) with entries_scanned, entries_removed
+        """
+        import struct
+
+        # Build CleanupRequest: batch_size (u32) + reserved (60 bytes)
+        request = struct.pack("<I60s", batch_size, b'\x00' * 60)
+
+        result = self.submit_bytes(GeoOperation.CLEANUP_EXPIRED.value, request)
+
+        if result.status < 0 or result.status != bindings.PacketStatus.OK.value:
+            return (0, 0)
+
+        # Parse CleanupResponse: entries_scanned (u64) + entries_removed (u64) + reserved (48 bytes)
+        if result.data_size >= 16 and result.data:
+            entries_scanned = struct.unpack("<Q", result.data[0:8])[0]
+            entries_removed = struct.unpack("<Q", result.data[8:16])[0]
+            return (entries_scanned, entries_removed)
+
+        return (0, 0)

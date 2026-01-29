@@ -1075,6 +1075,7 @@ test "tidy unix permissions" {
         "scripts/run-perf-benchmarks.sh",
         "scripts/run_integration_tests.sh",
         "scripts/sigkill_crash_test.sh",
+        "scripts/test-concurrent-clients.sh",
         "scripts/test-constrained.sh",
         "scripts/test-readiness-persistence.sh",
         "scripts/test-ttl-cleanup.sh",

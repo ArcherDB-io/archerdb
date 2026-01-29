@@ -4868,6 +4868,12 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                         self.cleanup_scanner.total_removed,
                     },
                 );
+
+                // Invalidate query result cache when entries are removed (F2.4.8)
+                // Cached query results may reference expired/removed entries
+                if (self.result_cache) |cache| {
+                    cache.invalidateAll();
+                }
             }
 
             // Write response.
