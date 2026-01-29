@@ -51,14 +51,13 @@ Plans:
   3. Failed replica rejoins cluster and catches up to current state
   4. Network partition does not cause split-brain or data divergence
   5. Cluster continues operating after losing f replicas (f = 1 for 3-node)
-**Plans**: TBD
+**Plans**: 4 plans in 3 waves
 
 Plans:
-- [ ] 02-01: Basic cluster setup and consensus validation
-- [ ] 02-02: Leader election and failover testing
-- [ ] 02-03: Replica recovery and rejoin
-- [ ] 02-04: Network partition handling
-- [ ] 02-05: Cluster reconfiguration
+- [ ] 02-01-PLAN.md - Consensus, election, and recovery tests (MULTI-01, 02, 03) (Wave 1)
+- [ ] 02-02-PLAN.md - Quorum, partition, and fault tolerance tests (MULTI-04, 05, 06) (Wave 1)
+- [ ] 02-03-PLAN.md - Reconfiguration test and multi-seed validation (MULTI-07) (Wave 2)
+- [ ] 02-04-PLAN.md - Verification report and phase sign-off (Wave 3)
 
 ### Phase 3: Data Integrity
 **Goal**: Data survives crashes, restores correctly, and maintains consistency
@@ -218,7 +217,7 @@ Note: Phases 5, 6, and 9 can partially parallelize with earlier phases after Pha
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Critical Bug Fixes | 3/3 | Complete | 2026-01-29 |
-| 2. Multi-Node Validation | 0/5 | Not started | - |
+| 2. Multi-Node Validation | 0/4 | Planned | - |
 | 3. Data Integrity | 0/5 | Not started | - |
 | 4. Fault Tolerance | 0/4 | Not started | - |
 | 5. Performance Optimization | 0/4 | Not started | - |
@@ -231,5 +230,6 @@ Note: Phases 5, 6, and 9 can partially parallelize with earlier phases after Pha
 ---
 *Roadmap created: 2026-01-29*
 *Phase 1 planned: 2026-01-29*
+*Phase 2 planned: 2026-01-29*
 *Total requirements: 82 v1 requirements mapped to 10 phases*
 *Depth: comprehensive*
