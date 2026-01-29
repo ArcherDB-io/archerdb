@@ -14,7 +14,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Critical Bug Fixes** - Fix blocking bugs that prevent production use
 - [x] **Phase 2: Multi-Node Validation** - Validate consensus and replication across 3+ replicas
-- [ ] **Phase 3: Data Integrity** - Verify durability, crash recovery, and backup/restore
+- [x] **Phase 3: Data Integrity** - Verify durability, crash recovery, and backup/restore
 - [ ] **Phase 4: Fault Tolerance** - Test resilience to failures and adverse conditions
 - [ ] **Phase 5: Performance Optimization** - Achieve throughput and latency targets
 - [ ] **Phase 6: Security Hardening** - Implement and verify auth, encryption, and audit
@@ -69,14 +69,14 @@ Plans:
   3. Checksums detect injected data corruption (bit flips caught)
   4. Concurrent writes from multiple clients don't corrupt data
   5. Backup creates restorable snapshot; restore recovers full state
-**Plans**: 5 plans in 2 waves
+**Plans**: 5 plans in 4 waves
 
 Plans:
-- [ ] 03-01-PLAN.md - WAL replay, checkpoint/restore, torn write tests (DATA-01, DATA-02, DATA-06) (Wave 1)
-- [ ] 03-02-PLAN.md - Checksum corruption detection tests (DATA-03) (Wave 1)
-- [ ] 03-03-PLAN.md - Consistency and concurrency tests (DATA-04, DATA-05) (Wave 1)
-- [ ] 03-04-PLAN.md - Backup/restore and PITR tests (DATA-07, DATA-08, DATA-09) (Wave 1)
-- [ ] 03-05-PLAN.md - Verification report and phase sign-off (Wave 2)
+- [x] 03-01-PLAN.md - WAL replay, checkpoint/restore, torn write tests (DATA-01, DATA-02, DATA-06) (Wave 1)
+- [x] 03-02-PLAN.md - Checksum corruption detection tests (DATA-03) (Wave 2)
+- [x] 03-03-PLAN.md - Consistency and concurrency tests (DATA-04, DATA-05) (Wave 3)
+- [x] 03-04-PLAN.md - Backup/restore and PITR tests (DATA-07, DATA-08, DATA-09) (Wave 1)
+- [x] 03-05-PLAN.md - Verification report and phase sign-off (Wave 4)
 
 ### Phase 4: Fault Tolerance
 **Goal**: System survives hardware and network failures without data loss
@@ -218,7 +218,7 @@ Note: Phases 5, 6, and 9 can partially parallelize with earlier phases after Pha
 |-------|----------------|--------|-----------|
 | 1. Critical Bug Fixes | 3/3 | Complete | 2026-01-29 |
 | 2. Multi-Node Validation | 4/4 | Complete | 2026-01-29 |
-| 3. Data Integrity | 0/5 | Planned | - |
+| 3. Data Integrity | 5/5 | Complete | 2026-01-29 |
 | 4. Fault Tolerance | 0/4 | Not started | - |
 | 5. Performance Optimization | 0/4 | Not started | - |
 | 6. Security Hardening | 0/5 | Not started | - |
