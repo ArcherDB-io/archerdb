@@ -680,6 +680,77 @@ test "DATA-03: disjoint corruption across replicas recoverable" {
     try expectEqual(t.replica(.R_).op_checkpoint(), checkpoint_2);
 }
 
+/// DATA-03: checksum detects single-bit flip (unit test)
+///
+/// This is a fast unit test (no cluster needed) that directly validates
+/// the fundamental property of Aegis128 MAC: any modification to data
+/// changes the checksum.
+///
+/// Scenario:
+/// 1. Create test buffer with known data
+/// 2. Compute checksum of original data
+/// 3. Flip a single bit in the data
+/// 4. Verify: checksum of modified data is different
+/// 5. Restore original bit
+/// 6. Verify: checksum matches original again
+test "DATA-03: checksum detects single-bit flip (unit test)" {
+    const checksum_mod = @import("checksum.zig");
+
+    // Create a test buffer with known data pattern
+    var data: [256]u8 = undefined;
+    for (&data, 0..) |*byte, i| {
+        byte.* = @truncate(i *% 17 +% 42); // Deterministic pattern
+    }
+
+    // Compute original checksum
+    const original_checksum = checksum_mod.checksum(&data);
+
+    // Verify checksum is non-trivial
+    try expect(original_checksum != 0);
+    try expect(original_checksum != std.math.maxInt(u128));
+
+    // Flip a single bit (bit 0 of byte 100)
+    const test_byte_index: usize = 100;
+    const test_bit_mask: u8 = 0x01;
+    const original_byte = data[test_byte_index];
+    data[test_byte_index] ^= test_bit_mask;
+
+    // Verify checksum changed
+    const modified_checksum = checksum_mod.checksum(&data);
+    try expect(modified_checksum != original_checksum);
+
+    // Restore original bit
+    data[test_byte_index] = original_byte;
+
+    // Verify checksum matches original
+    const restored_checksum = checksum_mod.checksum(&data);
+    try expectEqual(restored_checksum, original_checksum);
+
+    // Test multiple bit positions to validate robustness
+    var prng = stdx.PRNG.from_seed(42);
+    var i: usize = 0;
+    while (i < 10) : (i += 1) {
+        const byte_idx = prng.index(&data);
+        const bit_idx: u3 = @truncate(prng.int(u8));
+        const bit_mask = @as(u8, 1) << bit_idx;
+
+        // Save original
+        const saved_byte = data[byte_idx];
+        const saved_checksum = checksum_mod.checksum(&data);
+
+        // Flip bit
+        data[byte_idx] ^= bit_mask;
+        const flipped_checksum = checksum_mod.checksum(&data);
+
+        // Must be different
+        try expect(flipped_checksum != saved_checksum);
+
+        // Restore
+        data[byte_idx] = saved_byte;
+        try expectEqual(checksum_mod.checksum(&data), saved_checksum);
+    }
+}
+
 // ============================================================================
 // DATA-06: Torn Write Tests
 // ============================================================================
