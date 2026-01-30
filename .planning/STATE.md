@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-01-29)
 
 **Core value:** Customers can deploy mission-critical geospatial workloads with confidence that their data is safe, queries are fast, and the service stays available during failures.
-**Current focus:** Phase 4: Fault Tolerance - COMPLETE
+**Current focus:** Phase 5: Performance Optimization - IN PROGRESS
 
 ## Current Position
 
-Phase: 4 of 10 (Fault Tolerance) - COMPLETE
-Plan: 5 of 5 in current phase (all complete)
-Status: Phase complete
-Last activity: 2026-01-30 - Completed 04-05-PLAN.md (Phase Verification)
+Phase: 5 of 10 (Performance Optimization)
+Plan: 1 of 5 in current phase (just completed)
+Status: In progress
+Last activity: 2026-01-30 - Completed 05-01-PLAN.md (Baseline Profiling)
 
-Progress: [█████████████████] 57% (17/30 plans)
+Progress: [██████████████████] 60% (18/30 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 12
-- Average duration: 13 min
-- Total execution time: 2.5 hours
+- Total plans completed: 18
+- Average duration: 12 min
+- Total execution time: 3.6 hours
 
 **By Phase:**
 
@@ -31,10 +31,11 @@ Progress: [█████████████████] 57% (17/30 plans
 | 02-multi-node-validation | 4 | 18min | 4.5min |
 | 03-data-integrity | 5 | 26min | 5.2min |
 | 04-fault-tolerance | 5 | 24min | 4.8min |
+| 05-performance-optimization | 1 | 15min | 15min |
 
 **Recent Trend:**
-- Last 5 plans: 04-05 (3min), 04-04 (5min), 04-03 (5min), 04-02 (7min), 04-01 (7min)
-- Trend: Test and verification plans continue fast
+- Last 5 plans: 05-01 (15min), 04-05 (3min), 04-04 (5min), 04-03 (5min), 04-02 (7min)
+- Trend: Baseline profiling took longer due to multiple benchmark runs
 
 *Updated after each plan completion*
 
@@ -87,6 +88,10 @@ Recent decisions affecting current work:
 - 04-04: Recovery path classification tested via unit test calling classify_recovery_path directly
 - 04-04: Total FAULT test count: 28 tests across 8 requirements
 - 04-05: Phase 4 verified complete with 28 FAULT tests
+- 05-01: Use production config for benchmarks despite dev server limits
+- 05-01: Document scaling factor (2-4x) rather than targeting impossible throughput on dev server
+- 05-01: RAM index hash collision identified as #1 write bottleneck at scale
+- 05-01: LSM compaction stalls cause 100x P99 latency spikes (2-5 seconds)
 
 ### Pending Todos
 
@@ -99,13 +104,14 @@ From validation run (2026-01-29):
 - ~~CRIT: Data persistence fails after restart~~ VERIFIED WORKING - basic persistence confirmed
 - ~~CRIT: Concurrent clients fail at 10~~ VERIFIED FIXED - lite config now supports 64 clients
 - ~~CRIT: TTL cleanup removes 0 entries~~ VERIFIED FIXED - entries_scanned=10000, entries_removed=1
-- PERF: Write throughput 5,062 events/sec (target 1M) - may be dev mode limitation
+- ~~PERF: Write throughput 5,062 events/sec (target 1M)~~ BASELINED - 568K at medium scale, 32K at large scale
 
 Ongoing concerns:
 - Connection pool panics with 50+ simultaneous parallel connections (separate bug)
 - Test infrastructure (Cluster tests) assumes 4KB blocks (needs update for 32KB)
 - Node.js and Java SDKs may still have stubbed cleanup_expired implementations
 - Cluster-based tests fail locally with 32KB block_size (pre-existing infrastructure issue)
+- Linux perf not available - flame graphs require `sudo apt install linux-tools-$(uname -r)`
 
 ## Phase 2 Completion Status
 
@@ -160,10 +166,31 @@ Ongoing concerns:
 **Total Tests:** 28 FAULT-labeled tests
 **Verification Report:** `.planning/phases/04-fault-tolerance/04-VERIFICATION.md`
 
+## Phase 5 Progress
+
+**IN PROGRESS** - Baseline profiling complete, optimization plans ready:
+
+| Plan | Name | Status | Key Finding |
+|------|------|--------|-------------|
+| 05-01 | Baseline Profiling | COMPLETE | 568K/s peak, 32K/s at scale |
+| 05-02 | Write Path Optimization | PENDING | Target: RAM index, batching |
+| 05-03 | Compaction Tuning | PENDING | Target: P99 latency spikes |
+| 05-04 | Query Optimization | PENDING | Target: UUID <500us, Radius <50ms |
+| 05-05 | Sustained Load Validation | PENDING | Target: 24-hour stability |
+
+**Baseline Metrics:**
+- Peak throughput: 568K events/sec (medium scale, 50K events)
+- Scaled throughput: 32K events/sec (large scale, 200K events)
+- Insert P99: 0ms (medium), 2,400-5,000ms (large - compaction stalls)
+- UUID P99: 1-14ms (target: <500us)
+- Radius P99: 10-94ms (target: <50ms)
+
+**Summary Report:** `.planning/phases/05-performance-optimization/05-01-SUMMARY.md`
+
 ## Session Continuity
 
-Last session: 2026-01-30T17:04:00Z
-Stopped at: Completed 04-05-PLAN.md (Phase Verification)
+Last session: 2026-01-30T18:31:00Z
+Stopped at: Completed 05-01-PLAN.md (Baseline Profiling)
 Resume file: None
 
-Next: Phase 5 (Performance Optimization) ready for planning
+Next: Plan 05-02 (Write Path Optimization) ready for execution
