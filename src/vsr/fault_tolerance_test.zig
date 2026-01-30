@@ -10,8 +10,19 @@
 //! - FAULT-05: Network partitions don't cause data loss
 //! - FAULT-06: Packet loss and latency spikes don't cause data corruption
 //! - FAULT-07: Corrupted log entries cause clear error or cluster repair
+//! - FAULT-08: Recovery time < 60 seconds after crash
 //!
-//! Tests use the deterministic Cluster framework with fixed seeds for reproducibility.
+//! Total FAULT-labeled tests: 28
+//!   - FAULT-01: 3 tests (process crash, pending writes, multiple sequential)
+//!   - FAULT-02: 2 tests (torn writes, checkpoint)
+//!   - FAULT-03: 4 tests (cluster repair, multiple sectors, WAL read error, disjoint)
+//!   - FAULT-04: 3 tests (limit-storage, reads continue, no corruption)
+//!   - FAULT-05: 5 tests (minority isolation, primary partition, asymmetric x2, repeated)
+//!   - FAULT-06: 4 tests (packet loss, high latency, mixed faults, checkpoint faults)
+//!   - FAULT-07: 3 tests (checksum detection, R=1 clear error, disjoint corruption)
+//!   - FAULT-08: 4 tests (crash recovery, WAL corruption, grid corruption, path classification)
+//!
+//! Tests use the deterministic Cluster framework with fixed seeds (42) for reproducibility.
 //! They follow patterns from data_integrity_test.zig and replica_test.zig.
 
 const std = @import("std");
