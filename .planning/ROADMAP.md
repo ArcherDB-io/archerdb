@@ -88,13 +88,14 @@ Plans:
   3. Full disk rejects writes but remains available for reads
   4. Network latency spikes and packet loss don't cause data corruption
   5. Recovery from crash completes within 60 seconds
-**Plans**: TBD
+**Plans**: 5 plans in 3 waves
 
 Plans:
-- [ ] 04-01: Process crash and power loss recovery
-- [ ] 04-02: Disk error handling
-- [ ] 04-03: Resource exhaustion handling
-- [ ] 04-04: Network fault injection
+- [ ] 04-01-PLAN.md - Process crash and power loss tests (FAULT-01, FAULT-02, FAULT-07) (Wave 1)
+- [ ] 04-02-PLAN.md - Disk error handling tests (FAULT-03, FAULT-04) (Wave 1)
+- [ ] 04-03-PLAN.md - Network fault injection tests (FAULT-05, FAULT-06) (Wave 1)
+- [ ] 04-04-PLAN.md - Recovery timing validation (FAULT-08) (Wave 2)
+- [ ] 04-05-PLAN.md - Verification report and phase sign-off (Wave 3)
 
 ### Phase 5: Performance Optimization
 **Goal**: Achieve performance targets for production workloads
@@ -219,7 +220,7 @@ Note: Phases 5, 6, and 9 can partially parallelize with earlier phases after Pha
 | 1. Critical Bug Fixes | 3/3 | Complete | 2026-01-29 |
 | 2. Multi-Node Validation | 4/4 | Complete | 2026-01-29 |
 | 3. Data Integrity | 5/5 | Complete | 2026-01-29 |
-| 4. Fault Tolerance | 0/4 | Not started | - |
+| 4. Fault Tolerance | 0/5 | Planned | - |
 | 5. Performance Optimization | 0/4 | Not started | - |
 | 6. Security Hardening | 0/5 | Not started | - |
 | 7. Observability | 0/4 | Not started | - |
@@ -232,5 +233,6 @@ Note: Phases 5, 6, and 9 can partially parallelize with earlier phases after Pha
 *Phase 1 planned: 2026-01-29*
 *Phase 2 planned: 2026-01-29*
 *Phase 3 planned: 2026-01-29*
+*Phase 4 planned: 2026-01-30*
 *Total requirements: 82 v1 requirements mapped to 10 phases*
 *Depth: comprehensive*
