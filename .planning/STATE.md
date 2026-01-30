@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-01-29)
 ## Current Position
 
 Phase: 5 of 10 (Performance Optimization)
-Plan: 1 of 5 in current phase (just completed)
+Plan: 2 of 5 in current phase (just completed)
 Status: In progress
-Last activity: 2026-01-30 - Completed 05-01-PLAN.md (Baseline Profiling)
+Last activity: 2026-01-30 - Completed 05-02-PLAN.md (Write Path Optimization)
 
-Progress: [██████████████████] 60% (18/30 plans)
+Progress: [███████████████████] 63% (19/30 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 18
+- Total plans completed: 19
 - Average duration: 12 min
-- Total execution time: 3.6 hours
+- Total execution time: 3.8 hours
 
 **By Phase:**
 
@@ -31,11 +31,11 @@ Progress: [██████████████████] 60% (18/30 pl
 | 02-multi-node-validation | 4 | 18min | 4.5min |
 | 03-data-integrity | 5 | 26min | 5.2min |
 | 04-fault-tolerance | 5 | 24min | 4.8min |
-| 05-performance-optimization | 1 | 15min | 15min |
+| 05-performance-optimization | 2 | 29min | 14.5min |
 
 **Recent Trend:**
-- Last 5 plans: 05-01 (15min), 04-05 (3min), 04-04 (5min), 04-03 (5min), 04-02 (7min)
-- Trend: Baseline profiling took longer due to multiple benchmark runs
+- Last 5 plans: 05-02 (14min), 05-01 (15min), 04-05 (3min), 04-04 (5min), 04-03 (5min)
+- Trend: Performance optimization plans involve benchmark runs, slightly longer
 
 *Updated after each plan completion*
 
@@ -92,6 +92,10 @@ Recent decisions affecting current work:
 - 05-01: Document scaling factor (2-4x) rather than targeting impossible throughput on dev server
 - 05-01: RAM index hash collision identified as #1 write bottleneck at scale
 - 05-01: LSM compaction stalls cause 100x P99 latency spikes (2-5 seconds)
+- 05-02: RAM index capacity 500K (not 10K) to support 250K entities at 50% load factor
+- 05-02: L0 trigger 8 (not 4) for write-heavy default - delays compaction to reduce stalls
+- 05-02: Compaction threads 3 (not 2) for faster parallel compaction
+- 05-02: Partial compaction disabled for sustained write throughput
 
 ### Pending Todos
 
@@ -104,7 +108,7 @@ From validation run (2026-01-29):
 - ~~CRIT: Data persistence fails after restart~~ VERIFIED WORKING - basic persistence confirmed
 - ~~CRIT: Concurrent clients fail at 10~~ VERIFIED FIXED - lite config now supports 64 clients
 - ~~CRIT: TTL cleanup removes 0 entries~~ VERIFIED FIXED - entries_scanned=10000, entries_removed=1
-- ~~PERF: Write throughput 5,062 events/sec (target 1M)~~ BASELINED - 568K at medium scale, 32K at large scale
+- ~~PERF: Write throughput 5,062 events/sec (target 1M)~~ OPTIMIZED - 770K at large scale, 77% of target
 
 Ongoing concerns:
 - Connection pool panics with 50+ simultaneous parallel connections (separate bug)
@@ -112,6 +116,7 @@ Ongoing concerns:
 - Node.js and Java SDKs may still have stubbed cleanup_expired implementations
 - Cluster-based tests fail locally with 32KB block_size (pre-existing infrastructure issue)
 - Linux perf not available - flame graphs require `sudo apt install linux-tools-$(uname -r)`
+- Pre-existing quine test failure in unit_tests.zig (not related to optimizations)
 
 ## Phase 2 Completion Status
 
@@ -168,29 +173,30 @@ Ongoing concerns:
 
 ## Phase 5 Progress
 
-**IN PROGRESS** - Baseline profiling complete, optimization plans ready:
+**IN PROGRESS** - Write path optimization complete:
 
 | Plan | Name | Status | Key Finding |
 |------|------|--------|-------------|
 | 05-01 | Baseline Profiling | COMPLETE | 568K/s peak, 32K/s at scale |
-| 05-02 | Write Path Optimization | PENDING | Target: RAM index, batching |
-| 05-03 | Compaction Tuning | PENDING | Target: P99 latency spikes |
+| 05-02 | Write Path Optimization | COMPLETE | 770K/s at scale (23x improvement) |
+| 05-03 | Compaction Tuning | PENDING | Target: Further P99 improvement |
 | 05-04 | Query Optimization | PENDING | Target: UUID <500us, Radius <50ms |
 | 05-05 | Sustained Load Validation | PENDING | Target: 24-hour stability |
 
-**Baseline Metrics:**
-- Peak throughput: 568K events/sec (medium scale, 50K events)
-- Scaled throughput: 32K events/sec (large scale, 200K events)
-- Insert P99: 0ms (medium), 2,400-5,000ms (large - compaction stalls)
-- UUID P99: 1-14ms (target: <500us)
-- Radius P99: 10-94ms (target: <50ms)
+**Current Metrics (after 05-02):**
+- Peak throughput: 770K events/sec (large scale, 200K events, 10 clients)
+- Insert P99: 145-198ms (down from 2,400-4,500ms)
+- UUID P99: 1-10ms (target: <500us)
+- Radius P99: 11-79ms (target: <50ms)
 
-**Summary Report:** `.planning/phases/05-performance-optimization/05-01-SUMMARY.md`
+**Summary Reports:**
+- `.planning/phases/05-performance-optimization/05-01-SUMMARY.md`
+- `.planning/phases/05-performance-optimization/05-02-SUMMARY.md`
 
 ## Session Continuity
 
-Last session: 2026-01-30T18:31:00Z
-Stopped at: Completed 05-01-PLAN.md (Baseline Profiling)
+Last session: 2026-01-30T18:46:07Z
+Stopped at: Completed 05-02-PLAN.md (Write Path Optimization)
 Resume file: None
 
-Next: Plan 05-02 (Write Path Optimization) ready for execution
+Next: Plan 05-03 (Compaction Tuning) ready for execution
