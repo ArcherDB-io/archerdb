@@ -107,13 +107,14 @@ Plans:
   3. Spatial query (radius) P99 < 50ms for typical workloads
   4. System sustains load for 24 hours without degradation
   5. Memory and CPU usage stay within configured limits under load
-**Plans**: TBD
+**Plans**: 5 plans in 4 waves
 
 Plans:
-- [ ] 05-01: Profile bottlenecks and establish baseline
-- [ ] 05-02: Optimize write path (batching, async I/O)
-- [ ] 05-03: Optimize read path (caching, indexing)
-- [ ] 05-04: Stress testing and endurance validation
+- [ ] 05-01-PLAN.md — Baseline profiling and bottleneck identification (Wave 1)
+- [ ] 05-02-PLAN.md — Write path optimization (Wave 2)
+- [ ] 05-03-PLAN.md — Read path optimization (Wave 2)
+- [ ] 05-04-PLAN.md — Endurance validation and stability testing (Wave 3)
+- [ ] 05-05-PLAN.md — Phase verification and sign-off (Wave 4)
 
 ### Phase 6: Security Hardening
 **Goal**: Production security controls implemented and verified
