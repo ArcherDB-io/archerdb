@@ -10,10 +10,10 @@ Requirements for production-ready DBaaS offering. Mapped from validation checkli
 
 ### Critical Fixes (CRIT)
 
-- [ ] **CRIT-01**: Readiness probe returns 200 when server is ready (currently 503)
-- [ ] **CRIT-02**: Data persists after restart in production config
-- [ ] **CRIT-03**: Server handles 100+ concurrent clients without failures
-- [ ] **CRIT-04**: TTL cleanup removes expired entries from storage
+- [x] **CRIT-01**: Readiness probe returns 200 when server is ready (currently 503)
+- [x] **CRIT-02**: Data persists after restart in production config
+- [x] **CRIT-03**: Server handles 100+ concurrent clients without failures
+- [x] **CRIT-04**: TTL cleanup removes expired entries from storage
 
 ### Multi-Node Operation (MULTI)
 
@@ -27,15 +27,15 @@ Requirements for production-ready DBaaS offering. Mapped from validation checkli
 
 ### Data Integrity (DATA)
 
-- [ ] **DATA-01**: WAL replay restores correct state after crash
-- [ ] **DATA-02**: Checkpoint/restore cycle preserves all data
-- [ ] **DATA-03**: Checksums detect data corruption
-- [ ] **DATA-04**: Read-your-writes consistency guaranteed
-- [ ] **DATA-05**: Concurrent writes don't cause corruption
-- [ ] **DATA-06**: Torn writes detected and handled
-- [ ] **DATA-07**: Backup creates consistent snapshot
-- [ ] **DATA-08**: Restore from backup recovers full state
-- [ ] **DATA-09**: Point-in-time recovery available
+- [x] **DATA-01**: WAL replay restores correct state after crash
+- [x] **DATA-02**: Checkpoint/restore cycle preserves all data
+- [x] **DATA-03**: Checksums detect data corruption
+- [x] **DATA-04**: Read-your-writes consistency guaranteed
+- [x] **DATA-05**: Concurrent writes don't cause corruption
+- [x] **DATA-06**: Torn writes detected and handled
+- [x] **DATA-07**: Backup creates consistent snapshot
+- [x] **DATA-08**: Restore from backup recovers full state
+- [x] **DATA-09**: Point-in-time recovery available
 
 ### Performance (PERF)
 
@@ -52,14 +52,14 @@ Requirements for production-ready DBaaS offering. Mapped from validation checkli
 
 ### Fault Tolerance (FAULT)
 
-- [ ] **FAULT-01**: Survives process crash (SIGKILL) without data loss
-- [ ] **FAULT-02**: Survives power loss without data loss
-- [ ] **FAULT-03**: Recovers from disk read errors
-- [ ] **FAULT-04**: Handles full disk gracefully (reject writes, stay available for reads)
-- [ ] **FAULT-05**: Handles network partitions without data loss
-- [ ] **FAULT-06**: Handles packet loss and latency spikes
-- [ ] **FAULT-07**: Recovers from corrupted log entries
-- [ ] **FAULT-08**: Recovery time < 60 seconds after crash
+- [x] **FAULT-01**: Survives process crash (SIGKILL) without data loss
+- [x] **FAULT-02**: Survives power loss without data loss
+- [x] **FAULT-03**: Recovers from disk read errors
+- [x] **FAULT-04**: Handles full disk gracefully (reject writes, stay available for reads)
+- [x] **FAULT-05**: Handles network partitions without data loss
+- [x] **FAULT-06**: Handles packet loss and latency spikes
+- [x] **FAULT-07**: Recovers from corrupted log entries
+- [x] **FAULT-08**: Recovery time < 60 seconds after crash
 
 ### Security (SEC)
 
@@ -167,13 +167,13 @@ Requirement-to-phase mapping.
 | CRIT-02 | Phase 1 | Complete |
 | CRIT-03 | Phase 1 | Complete |
 | CRIT-04 | Phase 1 | Complete |
-| MULTI-01 | Phase 2 | Pending |
-| MULTI-02 | Phase 2 | Pending |
-| MULTI-03 | Phase 2 | Pending |
-| MULTI-04 | Phase 2 | Pending |
-| MULTI-05 | Phase 2 | Pending |
-| MULTI-06 | Phase 2 | Pending |
-| MULTI-07 | Phase 2 | Pending |
+| MULTI-01 | Phase 2 | Complete |
+| MULTI-02 | Phase 2 | Complete |
+| MULTI-03 | Phase 2 | Complete |
+| MULTI-04 | Phase 2 | Complete |
+| MULTI-05 | Phase 2 | Complete |
+| MULTI-06 | Phase 2 | Complete |
+| MULTI-07 | Phase 2 | Complete |
 | DATA-01 | Phase 3 | Complete |
 | DATA-02 | Phase 3 | Complete |
 | DATA-03 | Phase 3 | Complete |
@@ -183,14 +183,14 @@ Requirement-to-phase mapping.
 | DATA-07 | Phase 3 | Complete |
 | DATA-08 | Phase 3 | Complete |
 | DATA-09 | Phase 3 | Complete |
-| FAULT-01 | Phase 4 | Pending |
-| FAULT-02 | Phase 4 | Pending |
-| FAULT-03 | Phase 4 | Pending |
-| FAULT-04 | Phase 4 | Pending |
-| FAULT-05 | Phase 4 | Pending |
-| FAULT-06 | Phase 4 | Pending |
-| FAULT-07 | Phase 4 | Pending |
-| FAULT-08 | Phase 4 | Pending |
+| FAULT-01 | Phase 4 | Complete |
+| FAULT-02 | Phase 4 | Complete |
+| FAULT-03 | Phase 4 | Complete |
+| FAULT-04 | Phase 4 | Complete |
+| FAULT-05 | Phase 4 | Complete |
+| FAULT-06 | Phase 4 | Complete |
+| FAULT-07 | Phase 4 | Complete |
+| FAULT-08 | Phase 4 | Complete |
 | PERF-01 | Phase 5 | Pending |
 | PERF-02 | Phase 5 | Pending |
 | PERF-03 | Phase 5 | Pending |
@@ -253,4 +253,4 @@ Requirement-to-phase mapping.
 
 ---
 *Requirements defined: 2026-01-29*
-*Last updated: 2026-01-29 - Traceability added during roadmap creation*
+*Last updated: 2026-01-30 - Phase 4 (FAULT) requirements marked complete*
