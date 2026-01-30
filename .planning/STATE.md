@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-29)
 ## Current Position
 
 Phase: 4 of 10 (Fault Tolerance)
-Plan: 3 of 5 in current phase (04-03 complete, 04-01/04-02 parallel)
+Plan: 3 of 5 in current phase (04-01, 04-02, 04-03 complete)
 Status: In progress
-Last activity: 2026-01-30 - Completed 04-03-PLAN.md (Network Fault Tests)
+Last activity: 2026-01-30 - Completed 04-01-PLAN.md (Crash/Power Loss Tests)
 
-Progress: [█████████████░] 43% (13/30 plans)
+Progress: [██████████████░] 47% (14/30 plans)
 
 ## Performance Metrics
 
@@ -76,6 +76,9 @@ Recent decisions affecting current work:
 - 03-05: 26 DATA-labeled tests validate all 9 requirements
 - 04-03: Use existing TestContext without custom network options for simpler implementation
 - 04-03: Test asymmetric partitions with both .incoming and .outgoing per RESEARCH.md pitfall
+- 04-01: Tests executed in parallel with 04-02 and 04-03, committed together
+- 04-01: FAULT-07 R=1 validates clear error.WALCorrupt on unrecoverable corruption
+- 04-01: Disjoint corruption pattern used to test cross-replica repair
 
 ### Pending Todos
 
@@ -135,19 +138,22 @@ Ongoing concerns:
 
 | Plan | Description | Status |
 |------|-------------|--------|
-| 04-01 | Crash/Power Loss Tests | In progress (parallel) |
+| 04-01 | Crash/Power Loss Tests | COMPLETE |
 | 04-02 | Disk/Log Error Tests | In progress (parallel) |
 | 04-03 | Network Fault Tests | COMPLETE |
 | 04-04 | Recovery Time Tests | Pending |
 | 04-05 | Phase Verification | Pending |
 
+**FAULT-01:** Process crash tests (3 tests) - PASS
+**FAULT-02:** Power loss/torn write tests (2 tests) - PASS
 **FAULT-05:** Network partition tests (5 tests) - PASS
 **FAULT-06:** Packet loss/latency tests (4 tests) - PASS
+**FAULT-07:** Corrupted log entry tests (3 tests) - PASS
 
 ## Session Continuity
 
-Last session: 2026-01-30T16:52:44Z
-Stopped at: Completed 04-03-PLAN.md (Network Fault Tests)
+Last session: 2026-01-30T16:54:00Z
+Stopped at: Completed 04-01-PLAN.md (Crash/Power Loss Tests)
 Resume file: None
 
-Next: 04-04 Recovery Time Tests (after 04-01/04-02 complete)
+Next: 04-02 Disk/Log Error Tests, then 04-04 Recovery Time Tests
