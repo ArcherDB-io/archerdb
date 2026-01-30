@@ -236,13 +236,24 @@ pub const AdaptiveState = struct {
     // =========================================================================
 
     /// Current L0 compaction trigger (tables before flush).
-    current_l0_trigger: u32 = 4,
+    /// Default: 8 (write-heavy optimized) - ArcherDB is designed for IoT/telemetry
+    /// with 90%+ writes, so we start with write-heavy defaults rather than balanced.
+    /// Higher L0 trigger delays compaction, reducing write stalls.
+    /// Optimization note (05-02): Changed from 4 to 8 to reduce initial write stalls
+    /// during benchmark workloads before adaptive tuning kicks in.
+    current_l0_trigger: u32 = 8,
 
     /// Current compaction thread count.
-    current_compaction_threads: u32 = 2,
+    /// Default: 3 (write-heavy optimized) - allows parallel compaction to keep up
+    /// with high write rates while leaving headroom for query threads.
+    /// Optimization note (05-02): Changed from 2 to 3 for write-heavy workloads.
+    current_compaction_threads: u32 = 3,
 
     /// Current partial compaction preference.
-    prefer_partial_compaction: bool = true,
+    /// Default: false for write-heavy workloads - full compaction provides better
+    /// sustained write throughput even though tail latency is slightly higher.
+    /// Optimization note (05-02): Changed from true to false for write-heavy default.
+    prefer_partial_compaction: bool = false,
 
     /// Initialize adaptive state with default values.
     pub fn init() AdaptiveState {
@@ -627,10 +638,12 @@ test "AdaptiveState: recommendations vary by workload" {
 
 test "AdaptiveState: operator override takes precedence" {
     var state = AdaptiveState.init();
+    // Note: Default init values are write-heavy optimized (L0=8, threads=3)
+    // Set explicit values to test override behavior
     state.current_l0_trigger = 6;
     state.current_compaction_threads = 2;
 
-    // No override - use adaptive values
+    // No override - use current adaptive values (which we just set)
     try std.testing.expectEqual(@as(u32, 6), state.getL0Trigger(null));
     try std.testing.expectEqual(@as(u32, 2), state.getCompactionThreads(null));
 

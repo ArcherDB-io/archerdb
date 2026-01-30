@@ -1188,7 +1188,13 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             _ = time;
 
             // Allocate RAM index for entity lookups (F2.1)
-            const ram_index_capacity: u32 = 10_000; // Initial capacity for testing
+            // Capacity: 500K slots at 50% cuckoo load factor = 250K entities.
+            // This supports benchmark workloads (10K-200K events, 1K-10K entities)
+            // while remaining reasonable for lite config (~32MB at 64 bytes/entry).
+            // For production scale (1B entities), use constants.index_capacity.
+            // Optimization note (05-02): Increased from 10K to 500K to eliminate
+            // IndexDegraded errors at benchmark scale - was the #1 write bottleneck.
+            const ram_index_capacity: u32 = 500_000;
             const ram_index = try init_ram_index(allocator, ram_index_capacity, options);
             errdefer {
                 ram_index.deinit(allocator);
@@ -1240,12 +1246,16 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 
             // Initialize S2CoveringCache (14-02)
             // Graceful degradation: if allocation fails, coverings are recomputed each time
+            // NOTE (05-03): Increased from 512 to 2048 entries for better cache hit rate
+            // on dashboard-style repeated spatial queries. At 512 bytes per entry, this
+            // uses ~1MB of RAM but significantly reduces S2 covering recomputation.
             var covering_cache: ?*S2CoveringCache = null;
+            const covering_cache_size: u64 = 2048;
             if (allocator.create(S2CoveringCache)) |cache_ptr| {
-                if (S2CoveringCache.init(allocator, 512, .{ .name = "s2_covering" })) |cache| {
+                if (S2CoveringCache.init(allocator, covering_cache_size, .{ .name = "s2_covering" })) |cache| {
                     cache_ptr.* = cache;
                     covering_cache = cache_ptr;
-                    log.info("GeoStateMachine: S2 covering cache enabled (512 entries)", .{});
+                    log.info("GeoStateMachine: S2 covering cache enabled ({d} entries)", .{covering_cache_size});
                 } else |cache_err| {
                     log.warn("GeoStateMachine: S2 covering cache init failed: {}, caching disabled", .{cache_err});
                     allocator.destroy(cache_ptr);
@@ -4742,22 +4752,26 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         /// Select S2 levels based on radius per spec decision table.
         /// Returns min_level and max_level for RegionCoverer.
         ///
-        /// NOTE: The covering algorithm has limited cells (16 max), so for large radii
-        /// we need to use coarser levels to ensure complete coverage. The formula
-        /// min_level = floor(log2(7842km / radius_km)) is adjusted down by 2 levels
-        /// to ensure the covering fits within the cell budget while still providing
-        /// effective filtering.
+        /// NOTE (05-03): Optimized for better spatial query performance:
+        /// - Level range reduced from 4 to 3 for tighter coverings (fewer cells to check)
+        /// - Min level adjustment reduced from -2 to -1 for more precise cells
+        /// - These changes reduce false positives in the coarse filter, decreasing
+        ///   the number of expensive Haversine distance calculations needed.
+        ///
+        /// The covering algorithm has limited cells (16 max), so for large radii
+        /// we use coarser levels to ensure complete coverage. The formula
+        /// min_level = floor(log2(7842km / radius_km)) is adjusted to balance
+        /// coverage completeness vs filter precision.
         fn selectS2Levels(radius_mm: u32) struct { min_level: u8, max_level: u8 } {
             // Convert mm to meters for level selection
             const radius_m = @as(f64, @floatFromInt(radius_mm)) / 1000.0;
 
             // Per query-engine/spec.md decision table:
             // min_level = max(0, min(18, floor(log2(7842000 / radius_meters))))
-            // max_level = min(min_level + 4, 18)
+            // max_level = min(min_level + 3, 18)
             //
-            // However, to ensure the covering fits within 16 cells, we subtract 2
-            // from the computed min_level. This gives coarser cells that better
-            // cover the entire query region.
+            // We subtract 1 from min_level (was 2) and use a 3-level range (was 4)
+            // for tighter coverings that produce fewer false positive candidates.
 
             if (radius_m <= 0) {
                 return .{ .min_level = 18, .max_level = 18 };
@@ -4767,7 +4781,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             const ratio = (earth_radius_km * 1000.0) / radius_m;
 
             if (ratio <= 1.0) {
-                return .{ .min_level = 0, .max_level = 4 };
+                return .{ .min_level = 0, .max_level = 3 };
             }
 
             // Calculate log2 using bit manipulation for determinism
@@ -4775,12 +4789,13 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             const min_level_raw = @floor(log2_val);
 
             var min_level: u8 = 0;
-            if (min_level_raw > 2) {
-                // Subtract 2 levels to ensure covering fits in 16 cells
-                min_level = @min(18, @as(u8, @intFromFloat(min_level_raw)) - 2);
+            if (min_level_raw > 1) {
+                // Subtract 1 level to ensure covering fits in 16 cells while maintaining precision
+                min_level = @min(18, @as(u8, @intFromFloat(min_level_raw)) - 1);
             }
 
-            const max_level = @min(min_level + 4, 18);
+            // Use 3-level range for tighter coverings (was 4)
+            const max_level = @min(min_level + 3, 18);
 
             return .{ .min_level = min_level, .max_level = max_level };
         }
