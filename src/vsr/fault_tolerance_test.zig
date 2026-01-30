@@ -1613,3 +1613,212 @@ test "FAULT-04: write rejection is graceful (no corruption)" {
     try expectEqual(t.replica(.R_).commit(), checkpoint_1_trigger + 10);
     try expectEqual(t.replica(.R_).status(), .normal);
 }
+
+// ============================================================================
+// FAULT-08: Recovery Time Tests
+// Recovery from crash completes within 60 seconds
+// ============================================================================
+
+/// FAULT-08: Recovery from crash completes within tick limit (R=3)
+///
+/// Per CONTEXT.md: "Recovery time target: Under 60 seconds for replica to rejoin cluster after crash"
+///
+/// This test validates that when a replica crashes and restarts, it recovers to
+/// normal status within a reasonable tick count. The deterministic test environment
+/// uses tick-based timing rather than wall clock time.
+///
+/// Scenario:
+/// 1. Create 3-node cluster, commit operations past checkpoint
+/// 2. Stop one replica (crash)
+/// 3. Record tick count before restart
+/// 4. Restart replica and run until stable
+/// 5. Verify: replica enters .normal status within tick limit
+/// 6. Verify: replica has correct commit position (no data loss)
+test "FAULT-08: recovery from crash completes within tick limit (R=3)" {
+    const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
+    defer t.deinit();
+
+    var c = t.clients();
+
+    // Commit operations past checkpoint to create meaningful recovery scenario
+    try c.request(checkpoint_1_trigger, checkpoint_1_trigger);
+    try expectEqual(t.replica(.R_).op_checkpoint(), checkpoint_1);
+    try expectEqual(t.replica(.R_).commit(), checkpoint_1_trigger);
+    try expectEqual(t.replica(.R_).status(), .normal);
+
+    // Record commit position before crash
+    const commit_before = t.replica(.R0).commit();
+
+    // Stop one replica (simulates crash)
+    t.replica(.R0).stop();
+
+    // Restart the replica - recovery begins
+    try t.replica(.R0).open();
+
+    // Recovery phase: run until cluster stabilizes
+    // The TestContext.run() uses a tick limit of 4,100 ticks
+    // Recovery must complete within this limit for the test to pass
+    t.run();
+
+    // Verify: recovery completed - replica is in normal status
+    try expectEqual(t.replica(.R0).status(), .normal);
+
+    // Verify: no data loss - replica has correct commit position
+    try expectEqual(t.replica(.R0).commit(), commit_before);
+
+    // Verify: cluster can continue operating
+    try c.request(checkpoint_1_trigger + 5, checkpoint_1_trigger + 5);
+    try expectEqual(t.replica(.R_).commit(), checkpoint_1_trigger + 5);
+}
+
+/// FAULT-08: Recovery from WAL corruption completes within tick limit (R=3)
+///
+/// This test validates that recovery completes within the tick limit even when
+/// the recovering replica has WAL corruption that requires repair from the cluster.
+///
+/// Scenario:
+/// 1. Create cluster, commit operations
+/// 2. Stop one replica
+/// 3. Corrupt WAL prepare (requiring repair)
+/// 4. Restart replica and run until stable
+/// 5. Verify: recovery + repair complete within tick limit
+/// 6. Verify: replica is in normal status
+test "FAULT-08: recovery from WAL corruption within tick limit (R=3)" {
+    const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
+    defer t.deinit();
+
+    var c = t.clients();
+
+    // Commit operations to populate WAL
+    try c.request(10, 10);
+    try expectEqual(t.replica(.R_).commit(), 10);
+    try expectEqual(t.replica(.R_).status(), .normal);
+
+    // Stop one replica
+    t.replica(.R0).stop();
+
+    // Corrupt a WAL prepare entry (will require repair from cluster)
+    t.replica(.R0).corrupt(.{ .wal_prepare = 5 });
+
+    // Restart and let cluster recover + repair
+    try t.replica(.R0).open();
+
+    // Initially enters recovering_head due to corruption
+    try expectEqual(t.replica(.R0).status(), .recovering_head);
+
+    // Recovery + repair must complete within tick limit
+    t.run();
+
+    // Verify: recovery completed - replica is in normal status
+    try expectEqual(t.replica(.R0).status(), .normal);
+
+    // Verify: replica caught up to cluster
+    try expectEqual(t.replica(.R0).commit(), 10);
+
+    // Verify: WAL was repaired
+    const r0_storage = &t.cluster.storages[0];
+    try expect(!r0_storage.area_faulty(.{ .wal_prepares = .{ .slot = 5 } }));
+
+    // Verify: cluster can continue operating
+    try c.request(15, 15);
+    try expectEqual(t.replica(.R_).commit(), 15);
+}
+
+/// FAULT-08: Recovery from grid corruption completes within tick limit (R=3)
+///
+/// This test validates that recovery completes within the tick limit even when
+/// the recovering replica has grid block corruption requiring repair from the cluster.
+///
+/// Scenario:
+/// 1. Create cluster, checkpoint to populate grid
+/// 2. Stop one replica
+/// 3. Corrupt grid blocks (requiring repair from cluster)
+/// 4. Restart replica and run until stable
+/// 5. Verify: recovery + repair complete within tick limit
+/// 6. Verify: replica is in normal status
+test "FAULT-08: recovery from grid corruption within tick limit (R=3)" {
+    const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
+    defer t.deinit();
+
+    var c = t.clients();
+
+    // Trigger checkpoint to populate grid
+    try c.request(checkpoint_1_trigger, checkpoint_1_trigger);
+    try expectEqual(t.replica(.R_).op_checkpoint(), checkpoint_1);
+    try expectEqual(t.replica(.R_).commit(), checkpoint_1_trigger);
+
+    // Stop one replica
+    t.replica(.R0).stop();
+
+    // Corrupt some grid blocks (will require repair from cluster)
+    const address_max = t.block_address_max();
+    if (address_max >= 3) {
+        t.replica(.R0).corrupt(.{ .grid_block = 1 });
+        t.replica(.R0).corrupt(.{ .grid_block = 2 });
+        t.replica(.R0).corrupt(.{ .grid_block = 3 });
+    }
+
+    // Restart replica - recovery + repair begins
+    try t.replica(.R0).open();
+
+    // Recovery + grid repair must complete within tick limit
+    t.run();
+
+    // Verify: recovery completed - replica is in normal status
+    try expectEqual(t.replica(.R0).status(), .normal);
+    try expectEqual(t.replica(.R0).commit(), checkpoint_1_trigger);
+    try expectEqual(t.replica(.R0).op_checkpoint(), checkpoint_1);
+
+    // Verify: grid blocks were repaired
+    const r0_storage = &t.cluster.storages[0];
+    if (address_max >= 3) {
+        try expect(!r0_storage.area_faulty(.{ .grid = .{ .address = 1 } }));
+        try expect(!r0_storage.area_faulty(.{ .grid = .{ .address = 2 } }));
+        try expect(!r0_storage.area_faulty(.{ .grid = .{ .address = 3 } }));
+    }
+
+    // Verify: cluster can continue to next checkpoint
+    try c.request(checkpoint_2_trigger, checkpoint_2_trigger);
+    try expectEqual(t.replica(.R_).op_checkpoint(), checkpoint_2);
+}
+
+/// FAULT-08: Recovery path classification validates correctly
+///
+/// This test validates that the RecoveryPath classification logic correctly
+/// identifies different recovery scenarios based on checkpoint and op positions.
+///
+/// The classify_recovery_path function from src/index/checkpoint.zig determines:
+/// - clean_start: No checkpoint, first startup (op_checkpoint=0, op_max=0)
+/// - wal_replay: Gap <= journal_slot_count (fast path)
+/// - lsm_scan: Gap <= compaction_retention_ops (medium path)
+/// - full_rebuild: Gap > compaction_retention_ops (slow path)
+test "FAULT-08: recovery path classification validates correctly" {
+    // Import the checkpoint module to access classify_recovery_path
+    const index_checkpoint = @import("../index/checkpoint.zig");
+
+    // Test clean_start: op_checkpoint=0, op_max=0
+    try expectEqual(index_checkpoint.RecoveryPath.clean_start, index_checkpoint.classify_recovery_path(0, 0));
+
+    // Test wal_replay: small gap (op_max - op_checkpoint <= journal_slot_count)
+    // With op_checkpoint > 0 or op_max > 0, and gap within journal slot count
+    try expectEqual(index_checkpoint.RecoveryPath.wal_replay, index_checkpoint.classify_recovery_path(100, 0));
+    try expectEqual(index_checkpoint.RecoveryPath.wal_replay, index_checkpoint.classify_recovery_path(0, 100));
+    try expectEqual(index_checkpoint.RecoveryPath.wal_replay, index_checkpoint.classify_recovery_path(100, 200));
+
+    // Test lsm_scan: gap > journal_slot_count but <= compaction_retention_ops
+    // Default journal_slot_count = 8192, so gap > 8192 triggers lsm_scan
+    const config = index_checkpoint.RecoveryConfig{};
+    const lsm_gap = config.journal_slot_count + 1;
+    try expectEqual(index_checkpoint.RecoveryPath.lsm_scan, index_checkpoint.classify_recovery_path(0, lsm_gap));
+
+    // Test full_rebuild: gap > compaction_retention_ops
+    const rebuild_gap = config.compaction_retention_ops + 1;
+    try expectEqual(index_checkpoint.RecoveryPath.full_rebuild, index_checkpoint.classify_recovery_path(0, rebuild_gap));
+
+    // Verify RecoveryPath.to_label() produces correct strings for metrics
+    try expect(std.mem.eql(u8, "clean", index_checkpoint.RecoveryPath.clean_start.to_label()));
+    try expect(std.mem.eql(u8, "wal", index_checkpoint.RecoveryPath.wal_replay.to_label()));
+    try expect(std.mem.eql(u8, "lsm", index_checkpoint.RecoveryPath.lsm_scan.to_label()));
+    try expect(std.mem.eql(u8, "rebuild", index_checkpoint.RecoveryPath.full_rebuild.to_label()));
+    try expect(std.mem.eql(u8, "none", index_checkpoint.RecoveryPath.none.to_label()));
+}
