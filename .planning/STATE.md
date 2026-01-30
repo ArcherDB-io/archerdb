@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-01-29)
 
 **Core value:** Customers can deploy mission-critical geospatial workloads with confidence that their data is safe, queries are fast, and the service stays available during failures.
-**Current focus:** Phase 3: Data Integrity - COMPLETE
+**Current focus:** Phase 4: Fault Tolerance - IN PROGRESS
 
 ## Current Position
 
-Phase: 3 of 10 (Data Integrity)
-Plan: 5 of 5 in current phase (ALL COMPLETE)
-Status: Phase complete
-Last activity: 2026-01-29 - Completed 03-05-PLAN.md (Phase Verification)
+Phase: 4 of 10 (Fault Tolerance)
+Plan: 3 of 5 in current phase (04-03 complete, 04-01/04-02 parallel)
+Status: In progress
+Last activity: 2026-01-30 - Completed 04-03-PLAN.md (Network Fault Tests)
 
-Progress: [████████████░] 40% (12/30 plans)
+Progress: [█████████████░] 43% (13/30 plans)
 
 ## Performance Metrics
 
@@ -74,6 +74,8 @@ Recent decisions affecting current work:
 - 03-03: Combined Task 1+2 into single commit (DATA-04/DATA-05 are related consistency tests)
 - 03-03: Multi-client testing via client_count option (4 clients for concurrent write tests)
 - 03-05: 26 DATA-labeled tests validate all 9 requirements
+- 04-03: Use existing TestContext without custom network options for simpler implementation
+- 04-03: Test asymmetric partitions with both .incoming and .outgoing per RESEARCH.md pitfall
 
 ### Pending Todos
 
@@ -129,10 +131,23 @@ Ongoing concerns:
 **Total Tests:** 26 DATA-labeled tests
 **Verification Report:** `.planning/phases/03-data-integrity/03-VERIFICATION.md`
 
+## Phase 4 Progress
+
+| Plan | Description | Status |
+|------|-------------|--------|
+| 04-01 | Crash/Power Loss Tests | In progress (parallel) |
+| 04-02 | Disk/Log Error Tests | In progress (parallel) |
+| 04-03 | Network Fault Tests | COMPLETE |
+| 04-04 | Recovery Time Tests | Pending |
+| 04-05 | Phase Verification | Pending |
+
+**FAULT-05:** Network partition tests (5 tests) - PASS
+**FAULT-06:** Packet loss/latency tests (4 tests) - PASS
+
 ## Session Continuity
 
-Last session: 2026-01-29T20:50:33Z
-Stopped at: Completed 03-05-PLAN.md (Phase Verification)
+Last session: 2026-01-30T16:52:44Z
+Stopped at: Completed 04-03-PLAN.md (Network Fault Tests)
 Resume file: None
 
-Next: Phase 4 - Query Performance
+Next: 04-04 Recovery Time Tests (after 04-01/04-02 complete)
