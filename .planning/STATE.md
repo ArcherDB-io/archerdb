@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-01-29)
 ## Current Position
 
 Phase: 5 of 10 (Performance Optimization)
-Plan: 2 of 5 in current phase (just completed)
+Plan: 3 of 5 in current phase (just completed)
 Status: In progress
-Last activity: 2026-01-30 - Completed 05-02-PLAN.md (Write Path Optimization)
+Last activity: 2026-01-30 - Completed 05-03-PLAN.md (Read Path Optimization)
 
-Progress: [███████████████████] 63% (19/30 plans)
+Progress: [████████████████████] 67% (20/30 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 19
+- Total plans completed: 20
 - Average duration: 12 min
-- Total execution time: 3.8 hours
+- Total execution time: 4.0 hours
 
 **By Phase:**
 
@@ -31,10 +31,10 @@ Progress: [███████████████████] 63% (19/30
 | 02-multi-node-validation | 4 | 18min | 4.5min |
 | 03-data-integrity | 5 | 26min | 5.2min |
 | 04-fault-tolerance | 5 | 24min | 4.8min |
-| 05-performance-optimization | 2 | 29min | 14.5min |
+| 05-performance-optimization | 3 | 44min | 14.7min |
 
 **Recent Trend:**
-- Last 5 plans: 05-02 (14min), 05-01 (15min), 04-05 (3min), 04-04 (5min), 04-03 (5min)
+- Last 5 plans: 05-03 (15min), 05-02 (14min), 05-01 (15min), 04-05 (3min), 04-04 (5min)
 - Trend: Performance optimization plans involve benchmark runs, slightly longer
 
 *Updated after each plan completion*
@@ -96,6 +96,9 @@ Recent decisions affecting current work:
 - 05-02: L0 trigger 8 (not 4) for write-heavy default - delays compaction to reduce stalls
 - 05-02: Compaction threads 3 (not 2) for faster parallel compaction
 - 05-02: Partial compaction disabled for sustained write throughput
+- 05-03: S2 covering cache 2048 entries (not 512) for 4x better cache hit rate on spatial queries
+- 05-03: S2 level range reduced from 4 to 3 for tighter coverings
+- 05-03: S2 min_level adjustment reduced from -2 to -1 for more precise cell selection
 
 ### Pending Todos
 
@@ -173,30 +176,32 @@ Ongoing concerns:
 
 ## Phase 5 Progress
 
-**IN PROGRESS** - Write path optimization complete:
+**IN PROGRESS** - Read path optimization complete:
 
 | Plan | Name | Status | Key Finding |
 |------|------|--------|-------------|
 | 05-01 | Baseline Profiling | COMPLETE | 568K/s peak, 32K/s at scale |
 | 05-02 | Write Path Optimization | COMPLETE | 770K/s at scale (23x improvement) |
-| 05-03 | Compaction Tuning | PENDING | Target: Further P99 improvement |
-| 05-04 | Query Optimization | PENDING | Target: UUID <500us, Radius <50ms |
+| 05-03 | Read Path Optimization | COMPLETE | Radius P99 45ms (meets <50ms target) |
+| 05-04 | Query Optimization | PENDING | Target: UUID <500us |
 | 05-05 | Sustained Load Validation | PENDING | Target: 24-hour stability |
 
-**Current Metrics (after 05-02):**
-- Peak throughput: 770K events/sec (large scale, 200K events, 10 clients)
-- Insert P99: 145-198ms (down from 2,400-4,500ms)
-- UUID P99: 1-10ms (target: <500us)
-- Radius P99: 11-79ms (target: <50ms)
+**Current Metrics (after 05-03):**
+- Peak throughput: 823K events/sec (1M events, 100K entities)
+- Insert P99: 109ms (down from 2,400-4,500ms baseline)
+- UUID P99: 1ms (target: <500us) - 90% improvement from baseline 10ms
+- Radius P99: 45ms (target: <50ms) - MEETS TARGET, 45% improvement from baseline 82ms
+- Polygon P99: 10ms (target: <100ms) - MEETS TARGET
 
 **Summary Reports:**
 - `.planning/phases/05-performance-optimization/05-01-SUMMARY.md`
 - `.planning/phases/05-performance-optimization/05-02-SUMMARY.md`
+- `.planning/phases/05-performance-optimization/05-03-SUMMARY.md`
 
 ## Session Continuity
 
-Last session: 2026-01-30T18:46:07Z
-Stopped at: Completed 05-02-PLAN.md (Write Path Optimization)
+Last session: 2026-01-30T19:00:00Z
+Stopped at: Completed 05-03-PLAN.md (Read Path Optimization)
 Resume file: None
 
-Next: Plan 05-03 (Compaction Tuning) ready for execution
+Next: Plan 05-04 (Query Optimization) ready for execution - Target UUID P99 <500us
