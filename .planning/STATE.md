@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-29)
 ## Current Position
 
 Phase: 4 of 10 (Fault Tolerance)
-Plan: 3 of 5 in current phase (04-01, 04-02, 04-03 complete)
+Plan: 4 of 5 in current phase (04-01, 04-02, 04-03, 04-04 complete)
 Status: In progress
-Last activity: 2026-01-30 - Completed 04-02-PLAN.md (Disk/Log Error Tests)
+Last activity: 2026-01-30 - Completed 04-04-PLAN.md (Recovery Timing Tests)
 
-Progress: [██████████████░] 50% (15/30 plans)
+Progress: [███████████████░] 53% (16/30 plans)
 
 ## Performance Metrics
 
@@ -82,6 +82,9 @@ Recent decisions affecting current work:
 - 04-02: Combined FAULT-03 and FAULT-04 tests in single commit (related disk error handling)
 - 04-02: area_faulty() verification confirms repair completed (established pattern)
 - 04-02: --limit-storage documented as logical limit before physical exhaustion
+- 04-04: Tick-based timing for deterministic recovery verification (not wall-clock)
+- 04-04: Recovery path classification tested via unit test calling classify_recovery_path directly
+- 04-04: Total FAULT test count: 28 tests across 8 requirements
 
 ### Pending Todos
 
@@ -144,7 +147,7 @@ Ongoing concerns:
 | 04-01 | Crash/Power Loss Tests | COMPLETE |
 | 04-02 | Disk/Log Error Tests | COMPLETE |
 | 04-03 | Network Fault Tests | COMPLETE |
-| 04-04 | Recovery Time Tests | Pending |
+| 04-04 | Recovery Time Tests | COMPLETE |
 | 04-05 | Phase Verification | Pending |
 
 **FAULT-01:** Process crash tests (3 tests) - PASS
@@ -154,11 +157,14 @@ Ongoing concerns:
 **FAULT-05:** Network partition tests (5 tests) - PASS
 **FAULT-06:** Packet loss/latency tests (4 tests) - PASS
 **FAULT-07:** Corrupted log entry tests (3 tests) - PASS
+**FAULT-08:** Recovery timing tests (4 tests) - PASS
+
+**Total:** 28 FAULT-labeled tests covering all 8 requirements
 
 ## Session Continuity
 
-Last session: 2026-01-30T16:54:35Z
-Stopped at: Completed 04-02-PLAN.md (Disk/Log Error Tests)
+Last session: 2026-01-30T17:02:00Z
+Stopped at: Completed 04-04-PLAN.md (Recovery Timing Tests)
 Resume file: None
 
-Next: 04-04 Recovery Time Tests, then 04-05 Phase Verification
+Next: 04-05 Phase Verification (final phase 4 plan)
