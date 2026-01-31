@@ -1,29 +1,14 @@
-# Roadmap: ArcherDB DBaaS Production Readiness
+# Milestone v1: DBaaS Production Readiness
+
+**Status:** ✅ SHIPPED 2026-01-31
+**Phases:** 1-10
+**Total Plans:** 46
 
 ## Overview
 
 This roadmap transforms ArcherDB from a working prototype (7% validation coverage) into a production-ready Database-as-a-Service. The critical path starts with fixing blocking bugs, validating multi-node consensus (the core value proposition), then systematically building confidence through data integrity verification, fault tolerance testing, performance optimization, security hardening, and operational tooling. Each phase delivers observable, testable capabilities that compound toward customer-ready SLAs.
 
 ## Phases
-
-**Phase Numbering:**
-- Integer phases (1, 2, 3...): Planned milestone work
-- Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
-
-Decimal phases appear between their surrounding integers in numeric order.
-
-- [x] **Phase 1: Critical Bug Fixes** - Fix blocking bugs that prevent production use
-- [x] **Phase 2: Multi-Node Validation** - Validate consensus and replication across 3+ replicas
-- [x] **Phase 3: Data Integrity** - Verify durability, crash recovery, and backup/restore
-- [x] **Phase 4: Fault Tolerance** - Test resilience to failures and adverse conditions
-- [x] **Phase 5: Performance Optimization** - Achieve throughput and latency targets
-- [x] **Phase 6: Security Hardening** - Security skip decisions documented for local-only deployment
-- [x] **Phase 7: Observability** - Enable comprehensive monitoring and alerting
-- [x] **Phase 8: Operations Tooling** - Production deployment and management capabilities
-- [x] **Phase 9: Testing Infrastructure** - Comprehensive validation and regression testing
-- [x] **Phase 10: Documentation** - Customer-facing guides and operational runbooks
-
-## Phase Details
 
 ### Phase 1: Critical Bug Fixes
 **Goal**: All blocking bugs fixed; server operates correctly in production config
@@ -212,11 +197,6 @@ Plans:
 
 ## Progress
 
-**Execution Order:**
-Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
-
-Note: Phases 5, 6, and 9 can partially parallelize with earlier phases after Phase 1 completes.
-
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Critical Bug Fixes | 3/3 | Complete | 2026-01-29 |
@@ -231,14 +211,35 @@ Note: Phases 5, 6, and 9 can partially parallelize with earlier phases after Pha
 | 10. Documentation | 6/6 | Complete | 2026-01-31 |
 
 ---
-*Roadmap created: 2026-01-29*
-*Phase 1 planned: 2026-01-29*
-*Phase 2 planned: 2026-01-29*
-*Phase 3 planned: 2026-01-29*
-*Phase 4 planned: 2026-01-30*
-*Phase 7 planned: 2026-01-31*
-*Phase 8 planned: 2026-01-31*
-*Phase 9 planned: 2026-01-31*
-*Phase 10 planned: 2026-01-31*
-*Total requirements: 82 v1 requirements mapped to 10 phases*
-*Depth: comprehensive*
+
+## Milestone Summary
+
+**Key Decisions:**
+- Use existing validation checklist (644 items) as requirements source
+- Fix critical bugs before new features
+- Test with production config (not dev mode)
+- Security skipped for local-only deployment (infrastructure handles it)
+- lite config for dev server testing, production config for CI
+
+**Issues Resolved:**
+- Readiness probe returning 503 → fixed to return 200
+- Data persistence failing → verified working in production config
+- Concurrent client failures at 10 → increased to 64 clients
+- TTL cleanup removing 0 entries → now removes expired entries
+- Write throughput 5K/s → optimized to 770K/s
+
+**Issues Deferred:**
+- PERF-02: 1M events/sec target (77% achieved on dev server, expected on production hardware)
+- PERF-07: Linear scaling validation (requires multi-node deployment)
+- PERF-10: CPU balance validation (requires perf tools)
+
+**Technical Debt Incurred:**
+- Connection pool panic with 50+ simultaneous parallel connections
+- Test infrastructure assumes 4KB blocks (needs update for 32KB)
+- Some partition tests require CI with production config
+- 24-hour stress test needs self-hosted runner
+
+---
+
+*Archived: 2026-01-31 as part of v1 milestone completion*
+*For current project status, see .planning/ROADMAP.md*
