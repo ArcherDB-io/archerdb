@@ -4,6 +4,13 @@
 # Performance Benchmark Workflow
 # Runs benchmarks on PRs (quick mode) and main (full mode).
 # Posts comparison results as PR comments.
+#
+# REQUIRED STATUS CHECK: Add "benchmark" to branch protection rules
+# to block merges on performance regression.
+#
+# Regression Thresholds (per CONTEXT.md):
+#   - Throughput: 5% degradation triggers failure
+#   - Latency P99: 25% degradation triggers failure
 
 name: Performance Benchmarks
 
@@ -47,6 +54,7 @@ jobs:
           ./scripts/benchmark-ci.sh --mode "$MODE" --output benchmark-results.json
 
       - name: Compare with baseline
+        id: regression
         if: github.event_name == 'pull_request' && hashFiles('baseline/benchmark-results.json') != ''
         run: |
           REGRESSION=0
@@ -57,7 +65,11 @@ jobs:
 
           # Create PR comment content
           if [[ -f comparison.txt ]]; then
-            echo "## Performance Benchmark Results" > comment.md
+            if [[ "$REGRESSION" == "1" ]]; then
+              echo "## Performance Benchmark: FAIL" > comment.md
+            else
+              echo "## Performance Benchmark: PASS" > comment.md
+            fi
             echo "" >> comment.md
             echo '```' >> comment.md
             cat comparison.txt >> comment.md
@@ -65,19 +77,22 @@ jobs:
 
             if [[ "$REGRESSION" == "1" ]]; then
               echo "" >> comment.md
-              echo "**Warning: Performance regression detected!**" >> comment.md
+              echo "**Performance regression detected - merge blocked.**" >> comment.md
               echo "" >> comment.md
-              echo "The current changes show performance degradation exceeding 2 standard deviations from the baseline." >> comment.md
-              echo "Please review the benchmark results and consider optimizing the affected code paths." >> comment.md
+              echo "Thresholds exceeded:" >> comment.md
+              echo "- Throughput: >5% slower than baseline" >> comment.md
+              echo "- Latency P99: >25% higher than baseline" >> comment.md
+              echo "" >> comment.md
+              echo "Please fix the performance issue or [reset the baseline](docs/testing/performance-baselines.md) if this is intentional." >> comment.md
             else
               echo "" >> comment.md
-              echo "No performance regression detected." >> comment.md
+              echo "All metrics within acceptable thresholds." >> comment.md
             fi
           fi
 
-          # Exit with regression status for workflow
+          # Exit with regression status - this BLOCKS merge on regression
           exit $REGRESSION
-        continue-on-error: true  # Don't fail the workflow, just warn
+        # NO continue-on-error - regressions block merge
 
       - name: Upload results as baseline
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -88,7 +103,7 @@ jobs:
           retention-days: 90
 
       - name: Post PR comment
-        if: github.event_name == 'pull_request' && hashFiles('comment.md') != ''
+        if: always() && github.event_name == 'pull_request' && hashFiles('comment.md') != ''
         uses: actions/github-script@v7
         with:
           script: |
@@ -104,7 +119,7 @@ jobs:
 
             const botComment = comments.find(c =>
               c.user.type === 'Bot' &&
-              c.body.includes('Performance Benchmark Results')
+              c.body.includes('Performance Benchmark')
             );
 
             if (botComment) {
