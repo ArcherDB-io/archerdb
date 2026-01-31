@@ -57,3 +57,8 @@ coverage_detail.out
 
 # Benchmark output
 benchmark-results/
+
+# Generated artifacts
+tools/FlameGraph/
+validation-results/
+integration-check-report.md
