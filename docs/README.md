@@ -1,6 +1,6 @@
 # ArcherDB Documentation
 
-ArcherDB is a distributed geospatial database for real-time location tracking at scale.
+ArcherDB is a distributed geospatial database built for real-time location tracking at scale. It combines the consistency guarantees of Viewstamped Replication (VSR) with a high-performance S2-based spatial index, enabling sub-millisecond queries across billions of location events.
 
 ## Quick Links
 
@@ -31,19 +31,24 @@ Goal-oriented guides:
 Complete API and configuration documentation:
 
 - [API Reference](api-reference.md) - All operations with request/response details
+- [OpenAPI Specification](openapi.yaml) - Machine-readable API definition
 - [Hardware Requirements](hardware-requirements.md) - Minimum and recommended specs
 - [LSM Tuning](lsm-tuning.md) - Storage engine configuration
 - [Journal Sizing](journal_sizing.md) - Write-ahead log configuration
 
 ### SDK Documentation
 
+Comprehensive guides for each language:
+
+- [SDK Overview](sdk/README.md) - Choosing an SDK, feature matrix, common patterns
+
 | Language | Package | Documentation |
 |----------|---------|---------------|
-| Python | `archerdb` | [README](../src/clients/python/README.md) |
-| Node.js | `archerdb-node` | [README](../src/clients/node/README.md) |
-| Go | `archerdb-go` | [README](../src/clients/go/README.md) |
-| Java | `archerdb-java` | [README](../src/clients/java/README.md) |
-| C | `libarcherdb` | [README](../src/clients/c/README.md) |
+| Python | `archerdb` | [Full Guide](../src/clients/python/README.md) |
+| Node.js | `archerdb-node` | [Full Guide](../src/clients/node/README.md) |
+| Go | `archerdb-go` | [Full Guide](../src/clients/go/README.md) |
+| Java | `archerdb-java` | [Full Guide](../src/clients/java/README.md) |
+| C | `libarcherdb` | [Full Guide](../src/clients/c/README.md) |
 
 ## For Operators
 
@@ -64,10 +69,19 @@ Complete API and configuration documentation:
 - [Troubleshooting Guide](troubleshooting.md) - Diagnose and resolve common issues
 - [Error Codes](error-codes.md) - Error reference with troubleshooting guidance
 
+### Alert Runbooks
+
+Per-alert response guides linked from Prometheus alerts:
+
+- [Replica Down](runbooks/replica-down.md) - When a replica is unreachable
+- [View Changes](runbooks/view-changes.md) - Frequent leader elections
+- [Index Degraded](runbooks/index-degraded.md) - Index performance issues
+
 ### Performance
 
 - [Benchmarks](benchmarks.md) - Benchmark results and methodology
 - [Profiling](profiling.md) - Performance profiling workflows
+- [LSM Tuning](lsm-tuning.md) - Storage engine optimization
 
 ## Understanding ArcherDB
 
@@ -79,6 +93,7 @@ Architecture and design:
 
 ## Security
 
+- [Security Best Practices](security-best-practices.md) - Infrastructure security for local deployment
 - [Encryption Guide](encryption-guide.md) - Encryption at rest configuration
 - [Encryption Security](encryption-security.md) - Security model and key management
 
@@ -91,3 +106,22 @@ For contributors:
 ## Release Notes
 
 - [Changelog](CHANGELOG.md) - Release history and notable changes
+
+---
+
+## Documentation Coverage
+
+All documentation requirements (DOCS-01 through DOCS-08) are complete:
+
+| Requirement | Documentation |
+|-------------|---------------|
+| DOCS-01: Getting started | [quickstart.md](quickstart.md), [getting-started.md](getting-started.md) |
+| DOCS-02: API reference | [api-reference.md](api-reference.md), [openapi.yaml](openapi.yaml) |
+| DOCS-03: Operations runbook | [operations-runbook.md](operations-runbook.md), [runbooks/](runbooks/) |
+| DOCS-04: Troubleshooting | [troubleshooting.md](troubleshooting.md) |
+| DOCS-05: Architecture | [architecture.md](architecture.md) |
+| DOCS-06: Performance tuning | [lsm-tuning.md](lsm-tuning.md), [profiling.md](profiling.md), [benchmarks.md](benchmarks.md) |
+| DOCS-07: Security | [security-best-practices.md](security-best-practices.md), [encryption-guide.md](encryption-guide.md) |
+| DOCS-08: SDK documentation | [sdk/README.md](sdk/README.md), [src/clients/*/README.md](../src/clients/) |
+
+See [REQUIREMENTS.md](../.planning/REQUIREMENTS.md) for full traceability.
