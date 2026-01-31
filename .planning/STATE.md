@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-01-29)
 ## Current Position
 
 Phase: 8 of 10 (Operations Tooling)
-Plan: 3 of 6 in current phase
+Plan: 4 of 6 in current phase
 Status: In progress
-Last activity: 2026-01-31 - Completed 08-03-PLAN.md (Backup Infrastructure Enhancement)
+Last activity: 2026-01-31 - Completed 08-04-PLAN.md (Disaster Recovery Documentation and Testing)
 
-Progress: [█████████████████████████████░] 97% (30/31 plans)
+Progress: [█████████████████████████████░] 97% (31/32 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 30
+- Total plans completed: 31
 - Average duration: 10 min
-- Total execution time: 4.8 hours
+- Total execution time: 4.9 hours
 
 **By Phase:**
 
@@ -34,10 +34,10 @@ Progress: [███████████████████████
 | 05-performance-optimization | 5 | 65min | 13.0min |
 | 06-security-hardening | 1 | 2min | 2.0min |
 | 07-observability | 5 | 13min | 2.6min |
-| 08-operations-tooling | 3 | 21min | 7.0min |
+| 08-operations-tooling | 4 | 25min | 6.3min |
 
 **Recent Trend:**
-- Last 5 plans: 08-03 (6min), 08-02 (8min), 08-01 (7min), 07-05 (3min), 07-04 (4min)
+- Last 5 plans: 08-04 (4min), 08-03 (6min), 08-02 (8min), 08-01 (7min), 07-05 (3min)
 - Trend: Phase 8 operations tooling in progress
 
 *Updated after each plan completion*
@@ -136,6 +136,10 @@ Recent decisions affecting current work:
 - 08-03: follower_only takes precedence over primary_only if both set
 - 08-03: Single-replica clusters with follower_only never backup (always primary)
 - 08-03: Incremental backup via sequence comparison (needsBackup method)
+- 08-04: RTO = 0 for single replica failures (automatic VSR failover)
+- 08-04: RPO = 0 for all non-catastrophic failures (synchronous replication)
+- 08-04: DR test script supports both local and Kubernetes modes
+- 08-04: Helm DR test is opt-in (tests.dr.enabled: false default)
 
 ### Pending Todos
 
@@ -291,7 +295,7 @@ Ongoing concerns:
 | 08-01 | Helm Chart Creation | COMPLETE |
 | 08-02 | Kubernetes Operator Integration | COMPLETE |
 | 08-03 | Backup Infrastructure Enhancement | COMPLETE |
-| 08-04 | CLI Enhancement | Pending |
+| 08-04 | Disaster Recovery Documentation and Testing | COMPLETE |
 | 08-05 | CI/CD Pipeline | Pending |
 | 08-06 | Phase Verification | Pending |
 
@@ -304,11 +308,14 @@ Ongoing concerns:
 - Follower-only backup mode for zero-impact online backups
 - Incremental backup tracking via sequence numbers
 - Comprehensive backup operations documentation (487 lines)
+- DR documentation with explicit RTO/RPO targets (693 lines)
+- DR test automation script (scripts/dr-test.sh)
+- Helm DR test template (opt-in)
 
 ## Session Continuity
 
-Last session: 2026-01-31T06:02:00Z
-Stopped at: Completed 08-03-PLAN.md (Backup Infrastructure Enhancement)
+Last session: 2026-01-31T06:08:00Z
+Stopped at: Completed 08-04-PLAN.md (Disaster Recovery Documentation and Testing)
 Resume file: None
 
-Next: 08-04-PLAN.md (CLI Enhancement)
+Next: 08-05-PLAN.md (CI/CD Pipeline)
