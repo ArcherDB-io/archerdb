@@ -117,23 +117,19 @@ Plans:
 - [x] 05-05-PLAN.md — Phase verification and sign-off (Wave 4)
 
 ### Phase 6: Security Hardening
-**Goal**: Production security controls implemented and verified
+**Goal**: Security skip decisions documented with risk acknowledgment for local-only deployment
 **Depends on**: Phase 1
 **Requirements**: SEC-01, SEC-02, SEC-03, SEC-04, SEC-05, SEC-06, SEC-07, SEC-08, SEC-09, SEC-10
 **Success Criteria** (what must be TRUE):
-  1. Unauthenticated client connections are rejected
-  2. Authorization controls prevent unauthorized entity access
-  3. All client and inter-replica traffic is TLS-encrypted
-  4. Encryption-at-rest protects data (verified with test vectors)
-  5. Audit log records all access and modifications
-**Plans**: TBD
+  1. All SEC requirements marked SKIPPED with documented rationale
+  2. Assumptions for safe local-only deployment are recorded
+  3. Existing security infrastructure is inventoried (encryption, TLS, audit)
+  4. Risk acknowledgment documents implications of skipped security
+  5. Phase verification report confirms scope decision documentation complete
+**Plans**: 1 plan in 1 wave
 
 Plans:
-- [ ] 06-01: Authentication implementation and testing
-- [ ] 06-02: Authorization and RBAC
-- [ ] 06-03: TLS for client and replica communication
-- [ ] 06-04: Encryption-at-rest verification
-- [ ] 06-05: Audit logging and security scanning
+- [ ] 06-01-PLAN.md — Skip documentation and phase verification (Wave 1)
 
 ### Phase 7: Observability
 **Goal**: Comprehensive monitoring, alerting, and debugging capabilities
@@ -223,7 +219,7 @@ Note: Phases 5, 6, and 9 can partially parallelize with earlier phases after Pha
 | 3. Data Integrity | 5/5 | Complete | 2026-01-29 |
 | 4. Fault Tolerance | 5/5 | Complete | 2026-01-30 |
 | 5. Performance Optimization | 5/5 | Complete | 2026-01-30 |
-| 6. Security Hardening | 0/5 | Not started | - |
+| 6. Security Hardening | 0/1 | Planned | - |
 | 7. Observability | 0/4 | Not started | - |
 | 8. Operations Tooling | 0/5 | Not started | - |
 | 9. Testing Infrastructure | 0/5 | Not started | - |
