@@ -197,6 +197,35 @@ fn parseLevel(str: []const u8) ?std.log.Level {
 /// Set via setGlobalModuleLogLevels() during initialization.
 var global_module_log_levels: ?*ModuleLogLevels = null;
 
+/// Global log level for runtime toggle (without per-module config).
+/// Defaults to .info. Can be changed at runtime via HTTP endpoint.
+var global_log_level: std.log.Level = .info;
+
+/// Set the global log level for all modules.
+/// Called from HTTP endpoint /control/log-level.
+pub fn setGlobalLevel(level: std.log.Level) void {
+    global_log_level = level;
+    // Also update the module log levels default if configured
+    if (global_module_log_levels) |levels| {
+        // Cast away const to update the mutable instance
+        const mutable_levels = @as(*ModuleLogLevels, @constCast(levels));
+        mutable_levels.setDefault(level);
+    }
+}
+
+/// Get the current global log level.
+pub fn getGlobalLevel() std.log.Level {
+    if (global_module_log_levels) |levels| {
+        return levels.getDefault();
+    }
+    return global_log_level;
+}
+
+/// Parse a log level string to std.log.Level (public version for HTTP endpoint).
+pub fn parseLevelPublic(str: []const u8) ?std.log.Level {
+    return parseLevel(str);
+}
+
 /// Set the global module log levels instance.
 ///
 /// Call during startup with the parsed CLI configuration.
@@ -339,4 +368,54 @@ test "global module log levels" {
 
     try std.testing.expect(shouldLogGlobal(.vsr, .debug));
     try std.testing.expect(!shouldLogGlobal(.grid, .debug));
+}
+
+test "setGlobalLevel and getGlobalLevel" {
+    // Save initial state
+    const old_level = global_log_level;
+    const old_module_levels = global_module_log_levels;
+    defer {
+        global_log_level = old_level;
+        global_module_log_levels = old_module_levels;
+    }
+
+    // Reset state
+    global_module_log_levels = null;
+
+    // Test without module log levels configured
+    global_log_level = .info;
+    try std.testing.expectEqual(std.log.Level.info, getGlobalLevel());
+
+    setGlobalLevel(.debug);
+    try std.testing.expectEqual(std.log.Level.debug, getGlobalLevel());
+
+    setGlobalLevel(.warn);
+    try std.testing.expectEqual(std.log.Level.warn, getGlobalLevel());
+}
+
+test "setGlobalLevel updates module log levels default" {
+    var levels = ModuleLogLevels.init(std.testing.allocator);
+    defer levels.deinit();
+
+    // Save initial state
+    const old_module_levels = global_module_log_levels;
+    defer global_module_log_levels = old_module_levels;
+
+    try levels.parseOverrides("info,vsr:debug");
+    setGlobalModuleLogLevels(&levels);
+
+    try std.testing.expectEqual(std.log.Level.info, getGlobalLevel());
+
+    // Set global level should update the module levels default
+    setGlobalLevel(.warn);
+    try std.testing.expectEqual(std.log.Level.warn, getGlobalLevel());
+    try std.testing.expectEqual(std.log.Level.warn, levels.default);
+}
+
+test "parseLevelPublic" {
+    try std.testing.expectEqual(@as(?std.log.Level, .err), parseLevelPublic("err"));
+    try std.testing.expectEqual(@as(?std.log.Level, .warn), parseLevelPublic("warn"));
+    try std.testing.expectEqual(@as(?std.log.Level, .info), parseLevelPublic("info"));
+    try std.testing.expectEqual(@as(?std.log.Level, .debug), parseLevelPublic("debug"));
+    try std.testing.expectEqual(@as(?std.log.Level, null), parseLevelPublic("invalid"));
 }

@@ -893,6 +893,18 @@ pub const MetricsServer = struct {
             try handleHealthDetailed(client_fd);
         } else if (std.mem.eql(u8, path, "/regions")) {
             try handleRegions(client_fd);
+        } else if (std.mem.eql(u8, path, "/control/log-level")) {
+            // Authentication required for control endpoint
+            if (bearer_token) |expected_token| {
+                const auth_header = parseAuthHeader(request);
+                if (auth_header == null or !std.mem.eql(u8, auth_header.?, expected_token)) {
+                    try sendResponse(client_fd, .unauthorized, "text/plain", "Unauthorized");
+                    return;
+                }
+            }
+            const method = parseMethod(request) orelse "GET";
+            const body = parseBody(request);
+            try handleLogLevel(client_fd, method, body);
         } else if (std.mem.startsWith(u8, path, "/control/reshard/")) {
             if (bearer_token) |expected_token| {
                 const auth_header = parseAuthHeader(request);
@@ -1006,6 +1018,27 @@ pub const MetricsServer = struct {
             return path[0..query_start];
         }
         return path;
+    }
+
+    /// Parse HTTP method from request (GET, POST, etc.)
+    fn parseMethod(request: []const u8) ?[]const u8 {
+        const crlf = std.mem.indexOf(u8, request, "\r\n");
+        const lf = std.mem.indexOf(u8, request, "\n");
+        const line_end = crlf orelse lf orelse return null;
+        const first_line = request[0..line_end];
+
+        var parts = std.mem.splitScalar(u8, first_line, ' ');
+        return parts.next();
+    }
+
+    /// Extract HTTP body from request (content after \r\n\r\n)
+    fn parseBody(request: []const u8) ?[]const u8 {
+        const body_start_idx = std.mem.indexOf(u8, request, "\r\n\r\n");
+        if (body_start_idx) |idx| {
+            const body = request[idx + 4 ..];
+            if (body.len > 0) return body;
+        }
+        return null;
     }
 
     /// Parse Authorization header and extract bearer token.
@@ -1221,6 +1254,74 @@ pub const MetricsServer = struct {
 
         resharding_request_target.store(target, .release);
         try sendResponse(client_fd, .ok, "text/plain", "Resharding request accepted");
+    }
+
+    /// Control endpoint: Runtime log level toggle.
+    /// GET: Returns current log level as JSON {"level": "info"}
+    /// POST: Sets new log level from body {"level": "debug"}, returns {"level": "debug", "previous": "info"}
+    fn handleLogLevel(client_fd: posix.socket_t, method: []const u8, body: ?[]const u8) !void {
+        const module_log_levels = @import("observability/module_log_levels.zig");
+
+        if (std.mem.eql(u8, method, "GET")) {
+            // Return current level
+            const current_level = module_log_levels.getGlobalLevel();
+            const level_name = @tagName(current_level);
+
+            var body_buf: [256]u8 = undefined;
+            const response_body = std.fmt.bufPrint(&body_buf, "{{\"level\":\"{s}\"}}", .{level_name}) catch "{\"error\":\"format error\"}";
+
+            try sendResponse(client_fd, .ok, "application/json", response_body);
+        } else if (std.mem.eql(u8, method, "POST")) {
+            // Parse body for "level" field
+            const request_body = body orelse {
+                try sendResponse(client_fd, .bad_request, "application/json", "{\"error\":\"missing body\"}");
+                return;
+            };
+
+            // Simple JSON parsing: look for "level":"value"
+            const level_str = parseJsonStringField(request_body, "level") orelse {
+                try sendResponse(client_fd, .bad_request, "application/json", "{\"error\":\"missing level field\"}");
+                return;
+            };
+
+            const new_level = module_log_levels.parseLevelPublic(level_str) orelse {
+                try sendResponse(client_fd, .bad_request, "application/json", "{\"error\":\"invalid level\"}");
+                return;
+            };
+
+            // Get current level before changing
+            const previous_level = module_log_levels.getGlobalLevel();
+            const previous_name = @tagName(previous_level);
+
+            // Set new level
+            module_log_levels.setGlobalLevel(new_level);
+
+            const new_name = @tagName(new_level);
+            log.info("log level changed from {s} to {s}", .{ previous_name, new_name });
+
+            var body_buf: [256]u8 = undefined;
+            const response_body = std.fmt.bufPrint(&body_buf, "{{\"level\":\"{s}\",\"previous\":\"{s}\"}}", .{ new_name, previous_name }) catch "{\"error\":\"format error\"}";
+
+            try sendResponse(client_fd, .ok, "application/json", response_body);
+        } else {
+            try sendResponse(client_fd, .bad_request, "application/json", "{\"error\":\"method not allowed\"}");
+        }
+    }
+
+    /// Simple JSON string field parser. Looks for "field":"value" pattern.
+    fn parseJsonStringField(json: []const u8, field: []const u8) ?[]const u8 {
+        // Build search pattern: "field":"
+        var search_buf: [64]u8 = undefined;
+        const search_pattern = std.fmt.bufPrint(&search_buf, "\"{s}\":\"", .{field}) catch return null;
+
+        if (std.mem.indexOf(u8, json, search_pattern)) |pattern_start| {
+            const value_start = pattern_start + search_pattern.len;
+            // Find closing quote
+            if (std.mem.indexOfPos(u8, json, value_start, "\"")) |value_end| {
+                return json[value_start..value_end];
+            }
+        }
+        return null;
     }
 
     /// Health endpoint: Encryption at rest status.
