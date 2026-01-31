@@ -30,7 +30,9 @@ final class NativeQueryPolygonBatch extends Batch {
     private static final int HOLE_DESCRIPTOR_SIZE = 8;
 
     private NativeQueryPolygonBatch(ByteBuffer buffer) {
-        super(buffer, HEADER_SIZE);
+        // Use ELEMENT_SIZE = 1 for variable-size polygon buffers (header + variable vertices)
+        // This prevents assertion failure in Batch constructor (bufferLen % ELEMENT_SIZE must be 0)
+        super(buffer, 1);
     }
 
     /**
