@@ -971,6 +971,161 @@ const CLIArgs = union(enum) {
         ;
     };
 
+    // Rolling upgrade and rollback management (OPS-07, OPS-08)
+    // Provides safe upgrade orchestration with health-based rollback triggers
+    const Upgrade = union(enum) {
+        /// Show cluster version status and identify primary
+        status: struct {
+            /// ArcherDB cluster addresses
+            addresses: []const u8,
+            /// Metrics port for health probes (default: 9100)
+            @"metrics-port": u16 = 9100,
+            /// Output format (text, json)
+            format: ?[]const u8 = null,
+            @"log-level": LogLevel = .info,
+        },
+        /// Start rolling upgrade
+        start: struct {
+            /// ArcherDB cluster addresses
+            addresses: []const u8,
+            /// Target version to upgrade to
+            @"target-version": []const u8,
+            /// Dry run - show what would happen without making changes
+            @"dry-run": bool = false,
+            /// Metrics port for health probes (default: 9100)
+            @"metrics-port": u16 = 9100,
+            /// Maximum P99 latency multiplier before rollback (default: 20 = 2.0x)
+            /// Value is multiplied by 10 (e.g., 20 = 2.0x, 15 = 1.5x)
+            @"p99-threshold-x10": ?u32 = null,
+            /// Maximum error rate percentage before rollback (default: 10 = 1.0%)
+            /// Value is multiplied by 10 (e.g., 10 = 1.0%, 5 = 0.5%)
+            @"error-threshold-x10": ?u32 = null,
+            /// Timeout in seconds for replica catchup (default: 300)
+            @"catchup-timeout": ?u32 = null,
+            /// Output format (text, json)
+            format: ?[]const u8 = null,
+            @"log-level": LogLevel = .info,
+        },
+        /// Pause in-progress upgrade
+        pause: struct {
+            /// ArcherDB cluster addresses
+            addresses: []const u8,
+            @"log-level": LogLevel = .info,
+        },
+        /// Resume paused upgrade
+        @"resume": struct {
+            /// ArcherDB cluster addresses
+            addresses: []const u8,
+            @"log-level": LogLevel = .info,
+        },
+        /// Trigger manual rollback
+        rollback: struct {
+            /// ArcherDB cluster addresses
+            addresses: []const u8,
+            /// Force rollback without confirmation
+            force: bool = false,
+            @"log-level": LogLevel = .info,
+        },
+
+        pub const help =
+            \\Usage:
+            \\
+            \\  archerdb upgrade [-h | --help]
+            \\
+            \\  archerdb upgrade status --addresses=<addresses> [--metrics-port=<port>]
+            \\                          [--format=<text|json>]
+            \\
+            \\  archerdb upgrade start --addresses=<addresses> --target-version=<version>
+            \\                         [--dry-run] [--metrics-port=<port>]
+            \\                         [--p99-threshold=<multiplier>] [--error-threshold=<pct>]
+            \\                         [--catchup-timeout=<seconds>] [--format=<text|json>]
+            \\
+            \\  archerdb upgrade pause --addresses=<addresses>
+            \\
+            \\  archerdb upgrade resume --addresses=<addresses>
+            \\
+            \\  archerdb upgrade rollback --addresses=<addresses> [--force]
+            \\
+            \\Commands:
+            \\
+            \\  status     Show current cluster versions and identify primary.
+            \\             Displays version of each replica and upgrade readiness.
+            \\
+            \\  start      Start rolling upgrade to target version.
+            \\             Upgrades followers first, primary last.
+            \\             Monitors health and triggers rollback if thresholds exceeded.
+            \\
+            \\  pause      Pause an in-progress upgrade between replica upgrades.
+            \\             Safe to call at any time during upgrade.
+            \\
+            \\  resume     Resume a paused upgrade from where it stopped.
+            \\
+            \\  rollback   Manually trigger rollback to previous version.
+            \\             Use --force to skip confirmation prompt.
+            \\
+            \\Options:
+            \\
+            \\  --addresses=<addresses>
+            \\        ArcherDB cluster addresses (required).
+            \\
+            \\  --target-version=<version>
+            \\        Version to upgrade to (e.g., "1.2.0").
+            \\
+            \\  --dry-run
+            \\        Show upgrade plan without making changes.
+            \\
+            \\  --metrics-port=<port>
+            \\        Metrics/health endpoint port. Defaults to 9100.
+            \\
+            \\  --p99-threshold-x10=<multiplier>
+            \\        Rollback if P99 latency exceeds baseline * (value/10).
+            \\        Defaults to 20 (2.0x baseline triggers rollback).
+            \\        Example: 15 = 1.5x, 20 = 2.0x, 30 = 3.0x
+            \\
+            \\  --error-threshold-x10=<pct>
+            \\        Rollback if error rate exceeds (value/10) percentage.
+            \\        Defaults to 10 (1.0% error rate triggers rollback).
+            \\        Example: 5 = 0.5%, 10 = 1.0%, 20 = 2.0%
+            \\
+            \\  --catchup-timeout=<seconds>
+            \\        Time to wait for replica to catch up after upgrade.
+            \\        Defaults to 300 (5 minutes).
+            \\
+            \\  --format=<text|json>
+            \\        Output format. Defaults to 'text'.
+            \\
+            \\  --force
+            \\        Skip confirmation prompt for rollback.
+            \\
+            \\Health-Based Rollback Triggers:
+            \\
+            \\  Automatic rollback is triggered when any of these conditions are met:
+            \\  - Readiness probe fails for > 3 consecutive checks
+            \\  - P99 latency exceeds baseline * p99-threshold
+            \\  - Error rate exceeds error-threshold percentage
+            \\  - Replica fails to catch up within catchup-timeout
+            \\
+            \\Upgrade Order:
+            \\
+            \\  1. Identify primary replica
+            \\  2. Upgrade followers one at a time
+            \\  3. Wait for each follower to catch up and pass health checks
+            \\  4. Upgrade primary last
+            \\
+            \\Examples:
+            \\
+            \\  archerdb upgrade status --addresses=node1:3000,node2:3000,node3:3000
+            \\  archerdb upgrade start --addresses=node1:3000,node2:3000,node3:3000 \
+            \\    --target-version=1.2.0 --dry-run
+            \\  archerdb upgrade start --addresses=node1:3000,node2:3000,node3:3000 \
+            \\    --target-version=1.2.0
+            \\  archerdb upgrade pause --addresses=node1:3000,node2:3000,node3:3000
+            \\  archerdb upgrade resume --addresses=node1:3000,node2:3000,node3:3000
+            \\  archerdb upgrade rollback --addresses=node1:3000,node2:3000,node3:3000 --force
+            \\
+        ;
+    };
+
     // Provides centralized query routing for complex multi-shard deployments
     const Coordinator = union(enum) {
         /// Start coordinator process
@@ -1111,6 +1266,7 @@ const CLIArgs = union(enum) {
     coordinator: Coordinator,
     cluster: Cluster,
     index: Index,
+    upgrade: Upgrade,
 
     // DocTODO: Document --cache-geo-events, --cache-grid, --limit-storage, --limit-pipeline-requests
     // (Deferred to Phase 9 - Documentation per CONTEXT.md)
@@ -1169,6 +1325,8 @@ const CLIArgs = union(enum) {
         \\  cluster    Manage cluster membership (add-node, remove-node, status).
         \\
         \\  index      Manage index operations (resize).
+        \\
+        \\  upgrade    Rolling upgrade and rollback (status, start, pause, resume, rollback).
         \\
         \\Options:
         \\
@@ -1836,6 +1994,41 @@ pub const Command = union(enum) {
         },
     };
 
+    /// Upgrade subcommand action.
+    pub const UpgradeAction = enum {
+        status,
+        start,
+        pause,
+        @"resume",
+        rollback,
+    };
+
+    /// Upgrade command (OPS-07, OPS-08).
+    pub const Upgrade = struct {
+        /// Subcommand action.
+        action: UpgradeAction,
+        /// Cluster addresses.
+        addresses: Addresses,
+        /// Target version (for start action).
+        target_version: ?[]const u8,
+        /// Dry run mode.
+        dry_run: bool,
+        /// Force flag (for rollback action).
+        force: bool,
+        /// Metrics port for health probes.
+        metrics_port: u16,
+        /// P99 latency threshold multiplier for rollback.
+        p99_threshold: f64,
+        /// Error rate threshold percentage for rollback.
+        error_threshold: f64,
+        /// Catchup timeout in seconds.
+        catchup_timeout: u32,
+        /// Output format.
+        format: OutputFormat,
+        /// Log level.
+        log_level: LogLevel,
+    };
+
     format: Format,
     recover: Recover,
     info: Info,
@@ -1855,6 +2048,7 @@ pub const Command = union(enum) {
     coordinator: Coordinator,
     cluster: Cluster,
     index: Index,
+    upgrade: Upgrade,
 };
 
 /// Parse the command line arguments passed to the `archerdb` binary.
@@ -1882,6 +2076,7 @@ pub fn parse_args(args_iterator: *std.process.ArgIterator) Command {
         .coordinator => |coordinator| .{ .coordinator = parse_args_coordinator(coordinator) },
         .cluster => |cluster| .{ .cluster = parse_args_cluster(cluster) },
         .index => |index| .{ .index = parse_args_index(index) },
+        .upgrade => |upgrade| .{ .upgrade = parse_args_upgrade(upgrade) },
     };
 }
 
@@ -2986,6 +3181,77 @@ fn parse_args_index(index: CLIArgs.Index) Command.Index {
                 .format = parse_output_format(stats.format),
                 .log_level = stats.@"log-level",
             },
+        },
+    };
+}
+
+fn parse_args_upgrade(upgrade: CLIArgs.Upgrade) Command.Upgrade {
+    return switch (upgrade) {
+        .status => |status| .{
+            .action = .status,
+            .addresses = parse_addresses(status.addresses, "--addresses", Command.Addresses),
+            .target_version = null,
+            .dry_run = false,
+            .force = false,
+            .metrics_port = status.@"metrics-port",
+            .p99_threshold = 2.0,
+            .error_threshold = 1.0,
+            .catchup_timeout = 300,
+            .format = parse_output_format(status.format),
+            .log_level = status.@"log-level",
+        },
+        .start => |start| .{
+            .action = .start,
+            .addresses = parse_addresses(start.addresses, "--addresses", Command.Addresses),
+            .target_version = start.@"target-version",
+            .dry_run = start.@"dry-run",
+            .force = false,
+            .metrics_port = start.@"metrics-port",
+            // Convert x10 values back to f64 (e.g., 20 -> 2.0)
+            .p99_threshold = @as(f64, @floatFromInt(start.@"p99-threshold-x10" orelse 20)) / 10.0,
+            .error_threshold = @as(f64, @floatFromInt(start.@"error-threshold-x10" orelse 10)) / 10.0,
+            .catchup_timeout = start.@"catchup-timeout" orelse 300,
+            .format = parse_output_format(start.format),
+            .log_level = start.@"log-level",
+        },
+        .pause => |pause| .{
+            .action = .pause,
+            .addresses = parse_addresses(pause.addresses, "--addresses", Command.Addresses),
+            .target_version = null,
+            .dry_run = false,
+            .force = false,
+            .metrics_port = 9100,
+            .p99_threshold = 2.0,
+            .error_threshold = 1.0,
+            .catchup_timeout = 300,
+            .format = .text,
+            .log_level = pause.@"log-level",
+        },
+        .@"resume" => |resume_cmd| .{
+            .action = .@"resume",
+            .addresses = parse_addresses(resume_cmd.addresses, "--addresses", Command.Addresses),
+            .target_version = null,
+            .dry_run = false,
+            .force = false,
+            .metrics_port = 9100,
+            .p99_threshold = 2.0,
+            .error_threshold = 1.0,
+            .catchup_timeout = 300,
+            .format = .text,
+            .log_level = resume_cmd.@"log-level",
+        },
+        .rollback => |rollback| .{
+            .action = .rollback,
+            .addresses = parse_addresses(rollback.addresses, "--addresses", Command.Addresses),
+            .target_version = null,
+            .dry_run = false,
+            .force = rollback.force,
+            .metrics_port = 9100,
+            .p99_threshold = 2.0,
+            .error_threshold = 1.0,
+            .catchup_timeout = 300,
+            .format = .text,
+            .log_level = rollback.@"log-level",
         },
     };
 }

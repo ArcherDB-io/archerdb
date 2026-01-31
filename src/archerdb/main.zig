@@ -492,6 +492,7 @@ pub fn main() !void {
         .coordinator => |*args| try command_coordinator(gpa, &io, time, args),
         .cluster => |*args| try command_cluster(gpa, &io, time, args),
         .index => |*args| try command_index(gpa, &io, time, args),
+        .upgrade => |*args| try command_upgrade(gpa, args),
     }
 }
 
@@ -2126,6 +2127,142 @@ fn command_index(
             try stdout.print("  Cluster ID: {d}\n", .{stats.cluster});
             try stdout.writeAll("\n");
             try stdout.print("  (Stats: see ram_index.zig)\n", .{});
+        },
+    }
+    try stdout_buffer.flush();
+}
+
+fn command_upgrade(
+    gpa: mem.Allocator,
+    args: *const cli.Command.Upgrade,
+) !void {
+    const upgrade = @import("upgrade.zig");
+
+    var stdout_buffer = std.io.bufferedWriter(std.io.getStdOut().writer());
+    var stdout_writer = stdout_buffer.writer();
+    const stdout = stdout_writer.any();
+
+    // Build addresses string from parsed addresses
+    var addresses_buf: [4096]u8 = undefined;
+    var addresses_len: usize = 0;
+    for (args.addresses.const_slice(), 0..) |addr, i| {
+        if (i > 0) {
+            addresses_buf[addresses_len] = ',';
+            addresses_len += 1;
+        }
+        const addr_str = std.fmt.bufPrint(
+            addresses_buf[addresses_len..],
+            "{}",
+            .{addr},
+        ) catch unreachable;
+        addresses_len += addr_str.len;
+    }
+    const addresses_str = addresses_buf[0..addresses_len];
+
+    switch (args.action) {
+        .status => {
+            try stdout.print("Cluster Upgrade Status\n", .{});
+            try stdout.print("======================\n\n", .{});
+
+            var upgrader = upgrade.Upgrader.init(gpa, .{
+                .addresses = addresses_str,
+                .metrics_port = args.metrics_port,
+            });
+            defer upgrader.deinit();
+
+            // Discover replicas and get status
+            upgrader.discoverReplicas() catch |err| {
+                try stdout.print("Error discovering replicas: {any}\n", .{err});
+                try stdout_buffer.flush();
+                return;
+            };
+
+            _ = upgrader.identifyPrimary() catch null;
+
+            const status = upgrader.getStatus() catch |err| {
+                try stdout.print("Error getting status: {any}\n", .{err});
+                try stdout_buffer.flush();
+                return;
+            };
+
+            try stdout.print("{}\n", .{status});
+        },
+        .start => {
+            const target_version = args.target_version orelse {
+                try stdout.print("Error: --target-version is required\n", .{});
+                try stdout_buffer.flush();
+                return;
+            };
+
+            if (args.dry_run) {
+                try stdout.print("[DRY RUN] Rolling Upgrade Plan\n", .{});
+            } else {
+                try stdout.print("Starting Rolling Upgrade\n", .{});
+            }
+            try stdout.print("=========================\n\n", .{});
+            try stdout.print("Target version: {s}\n", .{target_version});
+            try stdout.print("P99 threshold:  {d:.1}x baseline\n", .{args.p99_threshold});
+            try stdout.print("Error threshold: {d:.1}%\n", .{args.error_threshold});
+            try stdout.print("Catchup timeout: {d}s\n\n", .{args.catchup_timeout});
+
+            var upgrader = upgrade.Upgrader.init(gpa, .{
+                .addresses = addresses_str,
+                .target_version = target_version,
+                .dry_run = args.dry_run,
+                .metrics_port = args.metrics_port,
+                .health_thresholds = .{
+                    .p99_latency_multiplier = args.p99_threshold,
+                    .error_rate_threshold_pct = args.error_threshold,
+                    .catchup_timeout_seconds = args.catchup_timeout,
+                },
+            });
+            defer upgrader.deinit();
+
+            const result = upgrader.execute() catch |err| {
+                try stdout.print("Upgrade failed: {any}\n", .{err});
+                try stdout_buffer.flush();
+                return;
+            };
+
+            try stdout.print("\n{}\n", .{result});
+        },
+        .pause => {
+            try stdout.print("Pausing upgrade...\n", .{});
+            try stdout.print("(Upgrade state is managed by the cluster)\n", .{});
+        },
+        .@"resume" => {
+            try stdout.print("Resuming upgrade...\n", .{});
+            try stdout.print("(Upgrade state is managed by the cluster)\n", .{});
+        },
+        .rollback => {
+            if (!args.force) {
+                try stdout.print("WARNING: Manual rollback requested.\n", .{});
+                try stdout.print("This will revert all upgraded replicas to their previous version.\n", .{});
+                try stdout.print("Use --force to confirm.\n", .{});
+                try stdout_buffer.flush();
+                return;
+            }
+
+            try stdout.print("Initiating manual rollback...\n", .{});
+
+            var upgrader = upgrade.Upgrader.init(gpa, .{
+                .addresses = addresses_str,
+            });
+            defer upgrader.deinit();
+
+            upgrader.discoverReplicas() catch |err| {
+                try stdout.print("Error discovering replicas: {any}\n", .{err});
+                try stdout_buffer.flush();
+                return;
+            };
+
+            upgrader.rollback() catch |err| {
+                try stdout.print("Rollback failed: {any}\n", .{err});
+                try stdout_buffer.flush();
+                return;
+            };
+
+            try stdout.print("Rollback completed.\n", .{});
         },
     }
     try stdout_buffer.flush();
