@@ -269,10 +269,13 @@ test "integration: backup coordinator view transitions" {
     const BackupCoordinator = backup_coordinator.BackupCoordinator;
 
     // 3-replica cluster with primary-only backup
+    // Note: Must set follower_only=false to test primary_only behavior
+    // (follower_only=true is the default and takes precedence)
     var coordinators: [3]BackupCoordinator = undefined;
     for (0..3) |i| {
         coordinators[i] = BackupCoordinator.init(.{
             .primary_only = true,
+            .follower_only = false, // Required to test primary_only mode
             .replica_count = 3,
             .replica_id = @intCast(i),
             .initial_view = 0,
