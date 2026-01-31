@@ -1,0 +1,836 @@
+openapi: 3.0.3
+info:
+  title: ArcherDB API
+  description: |
+    ArcherDB is a high-performance geospatial database built on Viewstamped Replication (VSR).
+
+    This API provides operations for storing and querying geospatial events (location updates
+    for vehicles, devices, users, etc.). The database uses a binary protocol over TCP for
+    maximum performance, but SDKs are available for Python, Node.js, Java, Go, and C.
+
+    ## Consistency Model
+
+    ArcherDB uses Viewstamped Replication to provide **linearizability**:
+    - All operations appear to execute atomically in a single, consistent order
+    - Once an operation returns success, the data is durably stored on a majority of replicas
+    - All subsequent reads will see the written data
+
+    ## SDKs
+
+    For most use cases, we recommend using one of the official SDKs:
+    - [Python](https://github.com/archerdb/archerdb-python)
+    - [Node.js](https://github.com/archerdb/archerdb-node)
+    - [Java](https://github.com/archerdb/archerdb-java)
+    - [Go](https://github.com/archerdb/archerdb-go)
+    - [C](https://github.com/archerdb/archerdb-c)
+  version: 1.0.0
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+  contact:
+    name: ArcherDB Support
+    url: https://github.com/archerdb/archerdb
+
+servers:
+  - url: http://localhost:3000
+    description: Local development server
+  - url: https://archerdb.example.com
+    description: Production server (example)
+
+tags:
+  - name: Write Operations
+    description: Operations for inserting and updating geospatial events
+  - name: Query Operations
+    description: Operations for querying geospatial events by location, entity, or time
+  - name: Administrative Operations
+    description: Operations for managing data lifecycle and cluster statistics
+
+paths:
+  /events:
+    post:
+      operationId: createBatch
+      summary: Insert or upsert a batch of GeoEvents
+      description: |
+        Insert or upsert a batch of GeoEvents atomically. All events in the batch
+        commit together or none do.
+
+        **Insert vs Upsert:**
+        - **Insert**: Fails if an event with the same entity_id + timestamp exists
+        - **Upsert**: Updates existing event or inserts if not present (idempotent, recommended)
+      tags:
+        - Write Operations
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateBatchRequest'
+            example:
+              events:
+                - entity_id: "550e8400-e29b-41d4-a716-446655440000"
+                  lat_nano: 37774900000
+                  lon_nano: -122419400000
+                  group_id: 1
+                  correlation_id: "123e4567-e89b-12d3-a456-426614174000"
+                  altitude_mm: 10000
+                  velocity_mms: 15000
+                  ttl_seconds: 86400
+                  accuracy_mm: 5000
+                  heading_cdeg: 9000
+                  flags: 0
+                - entity_id: "550e8400-e29b-41d4-a716-446655440001"
+                  lat_nano: 37784900000
+                  lon_nano: -122409400000
+                  group_id: 1
+              mode: "upsert"
+      responses:
+        '200':
+          description: Batch committed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateBatchResponse'
+              example:
+                results:
+                  - index: 0
+                    result: 0
+                  - index: 1
+                    result: 0
+                committed: true
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                InvalidLatitude:
+                  summary: Latitude out of range
+                  value:
+                    error_code: 100
+                    error_name: "INVALID_COORDINATES"
+                    message: "Latitude must be between -90 and +90 degrees (lat_nano: -90000000000 to +90000000000)"
+                InvalidEntityId:
+                  summary: Entity ID is zero
+                  value:
+                    error_code: 101
+                    error_name: "INVALID_ENTITY_ID"
+                    message: "Entity ID must be non-zero"
+                BatchTooLarge:
+                  summary: Batch exceeds limit
+                  value:
+                    error_code: 300
+                    error_name: "BATCH_TOO_LARGE"
+                    message: "Batch size exceeds maximum of 10,000 events"
+        '503':
+          description: Cluster unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error_code: 211
+                error_name: "CLUSTER_UNAVAILABLE"
+                message: "No quorum available. Retry with backoff."
+
+  /query/radius:
+    post:
+      operationId: queryRadius
+      summary: Find all entities within a radius of a center point
+      description: |
+        Query for all GeoEvents within a specified radius of a center point.
+        Results are returned in deterministic order based on S2 cell ID, enabling
+        consistent pagination.
+      tags:
+        - Query Operations
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueryRadiusRequest'
+            example:
+              center_lat: 37.7749
+              center_lon: -122.4194
+              radius_m: 1000
+              limit: 100
+      responses:
+        '200':
+          description: Query results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueryResult'
+              example:
+                events:
+                  - id: "550e8400-e29b-41d4-a716-446655440000:1706745600000"
+                    entity_id: "550e8400-e29b-41d4-a716-446655440000"
+                    lat_nano: 37774900000
+                    lon_nano: -122419400000
+                    group_id: 1
+                    correlation_id: "123e4567-e89b-12d3-a456-426614174000"
+                    altitude_mm: 10000
+                    velocity_mms: 15000
+                    ttl_seconds: 86400
+                    accuracy_mm: 5000
+                    heading_cdeg: 9000
+                    flags: 0
+                has_more: false
+                cursor: null
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                InvalidCoordinates:
+                  summary: Center coordinates out of range
+                  value:
+                    error_code: 100
+                    error_name: "INVALID_COORDINATES"
+                    message: "Center coordinates out of valid range"
+                InvalidRadius:
+                  summary: Radius outside valid range
+                  value:
+                    error_code: 101
+                    error_name: "INVALID_RADIUS"
+                    message: "Radius must be between 1 and 40,000,000 meters"
+
+  /query/polygon:
+    post:
+      operationId: queryPolygon
+      summary: Find all entities within a polygon boundary
+      description: |
+        Query for all GeoEvents within a polygon boundary, optionally excluding holes.
+
+        **Winding Order:**
+        - Outer boundary: Counter-clockwise (exterior ring)
+        - Holes: Clockwise (interior rings)
+
+        This follows the GeoJSON convention.
+      tags:
+        - Query Operations
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueryPolygonRequest'
+            example:
+              vertices:
+                - lat: 37.79
+                  lon: -122.42
+                - lat: 37.79
+                  lon: -122.39
+                - lat: 37.76
+                  lon: -122.39
+                - lat: 37.76
+                  lon: -122.42
+              limit: 1000
+      responses:
+        '200':
+          description: Query results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueryResult'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                InvalidCoordinates:
+                  summary: Vertex coordinates out of range
+                  value:
+                    error_code: 100
+                    error_name: "INVALID_COORDINATES"
+                    message: "Vertex coordinates out of valid range"
+                PolygonTooComplex:
+                  summary: Too many vertices or holes
+                  value:
+                    error_code: 102
+                    error_name: "POLYGON_TOO_COMPLEX"
+                    message: "Polygon exceeds maximum of 1,000 vertices or 100 holes"
+                InvalidPolygon:
+                  summary: Self-intersecting or degenerate polygon
+                  value:
+                    error_code: 103
+                    error_name: "INVALID_POLYGON"
+                    message: "Polygon is self-intersecting, degenerate, or has invalid hole layout"
+
+  /entity/{entity_id}:
+    get:
+      operationId: getLatest
+      summary: Get the most recent location for an entity
+      description: |
+        Retrieve the most recent GeoEvent for a single entity. Returns null
+        if the entity does not exist.
+      tags:
+        - Query Operations
+      parameters:
+        - name: entity_id
+          in: path
+          required: true
+          description: Entity ID (128-bit UUID as string)
+          schema:
+            type: string
+            format: uuid
+          example: "550e8400-e29b-41d4-a716-446655440000"
+      responses:
+        '200':
+          description: Entity found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetLatestResponse'
+              example:
+                event:
+                  id: "550e8400-e29b-41d4-a716-446655440000:1706745600000"
+                  entity_id: "550e8400-e29b-41d4-a716-446655440000"
+                  lat_nano: 37774900000
+                  lon_nano: -122419400000
+                  group_id: 1
+                  correlation_id: "123e4567-e89b-12d3-a456-426614174000"
+                  altitude_mm: 10000
+                  velocity_mms: 15000
+                  ttl_seconds: 86400
+                  accuracy_mm: 5000
+                  heading_cdeg: 9000
+                  flags: 0
+                found: true
+        '400':
+          description: Invalid entity ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error_code: 101
+                error_name: "INVALID_ENTITY_ID"
+                message: "Entity ID must be non-zero"
+        '404':
+          description: Entity not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetLatestResponse'
+              example:
+                event: null
+                found: false
+
+  /entities/batch:
+    post:
+      operationId: getLatestBatch
+      summary: Get the most recent location for multiple entities
+      description: |
+        Retrieve the most recent GeoEvent for multiple entities in a single request.
+        The response only includes events for entities that exist; missing entities
+        are silently omitted.
+      tags:
+        - Query Operations
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GetLatestBatchRequest'
+            example:
+              entity_ids:
+                - "550e8400-e29b-41d4-a716-446655440000"
+                - "550e8400-e29b-41d4-a716-446655440001"
+                - "550e8400-e29b-41d4-a716-446655440002"
+      responses:
+        '200':
+          description: Batch lookup results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetLatestBatchResponse'
+              example:
+                events:
+                  - id: "550e8400-e29b-41d4-a716-446655440000:1706745600000"
+                    entity_id: "550e8400-e29b-41d4-a716-446655440000"
+                    lat_nano: 37774900000
+                    lon_nano: -122419400000
+                    group_id: 1
+                  - id: "550e8400-e29b-41d4-a716-446655440001:1706745600000"
+                    entity_id: "550e8400-e29b-41d4-a716-446655440001"
+                    lat_nano: 37784900000
+                    lon_nano: -122409400000
+                    group_id: 1
+
+  /entities:
+    delete:
+      operationId: deleteEntities
+      summary: Permanently delete all data for specified entities
+      description: |
+        Permanently delete all GeoEvents for the specified entities. This operation
+        is intended for GDPR compliance (right to erasure).
+      tags:
+        - Write Operations
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteEntitiesRequest'
+            example:
+              entity_ids:
+                - "550e8400-e29b-41d4-a716-446655440000"
+                - "550e8400-e29b-41d4-a716-446655440001"
+      responses:
+        '200':
+          description: Deletion results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteEntitiesResponse'
+              example:
+                deleted_count: 2
+                not_found_count: 0
+        '400':
+          description: Invalid entity ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error_code: 101
+                error_name: "INVALID_ENTITY_ID"
+                message: "One or more entity IDs are zero"
+
+  /cleanup/expired:
+    post:
+      operationId: cleanupExpired
+      summary: Clean up expired events based on TTL
+      description: |
+        Trigger cleanup of events that have exceeded their TTL (time-to-live).
+        This operation is typically run on a schedule but can be triggered manually.
+      tags:
+        - Administrative Operations
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CleanupExpiredRequest'
+            example:
+              max_entries: 10000
+      responses:
+        '200':
+          description: Cleanup results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleanupExpiredResponse'
+              example:
+                entries_scanned: 10000
+                entries_removed: 1523
+
+  /stats:
+    get:
+      operationId: getStats
+      summary: Get cluster statistics
+      description: |
+        Retrieve statistics about the ArcherDB cluster including event counts,
+        storage usage, and replication status.
+      tags:
+        - Administrative Operations
+      responses:
+        '200':
+          description: Cluster statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClusterStats'
+              example:
+                event_count: 1523456
+                entity_count: 125000
+                storage_bytes: 2147483648
+                replica_count: 3
+                primary_replica: 0
+                replication_lag_ms: 5
+
+components:
+  schemas:
+    GeoEvent:
+      type: object
+      description: A single location update for an entity (vehicle, device, user, etc.)
+      required:
+        - entity_id
+        - lat_nano
+        - lon_nano
+      properties:
+        id:
+          type: string
+          description: Composite key (entity_id + timestamp). Auto-generated, do not set manually.
+          readOnly: true
+          example: "550e8400-e29b-41d4-a716-446655440000:1706745600000"
+        entity_id:
+          type: string
+          format: uuid
+          description: Unique identifier for the tracked entity (128-bit, non-zero)
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        correlation_id:
+          type: string
+          format: uuid
+          description: Trip, session, or job correlation ID (128-bit)
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        user_data:
+          type: string
+          format: uuid
+          description: Application-specific metadata (128-bit)
+          example: "00000000-0000-0000-0000-000000000000"
+        lat_nano:
+          type: integer
+          format: int64
+          description: Latitude in nanodegrees (-90e9 to +90e9)
+          minimum: -90000000000
+          maximum: 90000000000
+          example: 37774900000
+        lon_nano:
+          type: integer
+          format: int64
+          description: Longitude in nanodegrees (-180e9 to +180e9)
+          minimum: -180000000000
+          maximum: 180000000000
+          example: -122419400000
+        group_id:
+          type: integer
+          format: int64
+          description: Fleet, region, or tenant identifier (64-bit)
+          example: 1
+        altitude_mm:
+          type: integer
+          format: int32
+          description: Altitude in millimeters (-10km to +100km)
+          minimum: -10000000
+          maximum: 100000000
+          example: 10000
+        velocity_mms:
+          type: integer
+          format: int32
+          description: Speed in millimeters per second (0 to 1000 m/s)
+          minimum: 0
+          maximum: 1000000000
+          example: 15000
+        ttl_seconds:
+          type: integer
+          format: int32
+          description: Time-to-live in seconds (0 = never expire)
+          minimum: 0
+          maximum: 4294967295
+          example: 86400
+        accuracy_mm:
+          type: integer
+          format: int32
+          description: GPS accuracy radius in millimeters
+          minimum: 0
+          maximum: 4294967295
+          example: 5000
+        heading_cdeg:
+          type: integer
+          format: int16
+          description: Heading in centidegrees (0 = North, 9000 = East)
+          minimum: 0
+          maximum: 35999
+          example: 9000
+        flags:
+          type: integer
+          format: int16
+          description: Status flags (application-defined bitmask)
+          minimum: 0
+          maximum: 65535
+          example: 0
+
+    EventResult:
+      type: object
+      description: Per-event result for batch operations
+      properties:
+        index:
+          type: integer
+          format: int32
+          description: Index in the original batch
+          example: 0
+        result:
+          type: integer
+          format: int16
+          description: Result code (0 = success, see Error Codes)
+          example: 0
+
+    Coordinate:
+      type: object
+      description: A geographic coordinate in degrees
+      required:
+        - lat
+        - lon
+      properties:
+        lat:
+          type: number
+          format: double
+          description: Latitude in degrees (-90 to +90)
+          minimum: -90
+          maximum: 90
+          example: 37.7749
+        lon:
+          type: number
+          format: double
+          description: Longitude in degrees (-180 to +180)
+          minimum: -180
+          maximum: 180
+          example: -122.4194
+
+    CreateBatchRequest:
+      type: object
+      required:
+        - events
+      properties:
+        events:
+          type: array
+          description: Array of events to insert/upsert (1 to 10,000)
+          minItems: 1
+          maxItems: 10000
+          items:
+            $ref: '#/components/schemas/GeoEvent'
+        mode:
+          type: string
+          description: Insert mode
+          enum:
+            - insert
+            - upsert
+          default: insert
+
+    CreateBatchResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          description: Per-event results (same order as request)
+          items:
+            $ref: '#/components/schemas/EventResult'
+        committed:
+          type: boolean
+          description: True if the batch committed successfully
+
+    QueryRadiusRequest:
+      type: object
+      required:
+        - center_lat
+        - center_lon
+        - radius_m
+      properties:
+        center_lat:
+          type: number
+          format: double
+          description: Center latitude in degrees (-90 to +90)
+          minimum: -90
+          maximum: 90
+          example: 37.7749
+        center_lon:
+          type: number
+          format: double
+          description: Center longitude in degrees (-180 to +180)
+          minimum: -180
+          maximum: 180
+          example: -122.4194
+        radius_m:
+          type: integer
+          format: int32
+          description: Radius in meters (1 to 40,000,000)
+          minimum: 1
+          maximum: 40000000
+          example: 1000
+        limit:
+          type: integer
+          format: int32
+          description: Maximum results per page
+          minimum: 1
+          maximum: 10000
+          default: 1000
+        cursor:
+          type: string
+          format: byte
+          description: Pagination cursor from previous response
+        group_id:
+          type: integer
+          format: int64
+          description: Filter by group ID
+
+    QueryPolygonRequest:
+      type: object
+      required:
+        - vertices
+      properties:
+        vertices:
+          type: array
+          description: Outer boundary vertices (3 to 1,000 points, counter-clockwise)
+          minItems: 3
+          maxItems: 1000
+          items:
+            $ref: '#/components/schemas/Coordinate'
+        holes:
+          type: array
+          description: Interior holes to exclude (0 to 100 holes, clockwise winding)
+          maxItems: 100
+          items:
+            type: array
+            items:
+              $ref: '#/components/schemas/Coordinate'
+        limit:
+          type: integer
+          format: int32
+          description: Maximum results per page
+          minimum: 1
+          maximum: 10000
+          default: 1000
+        cursor:
+          type: string
+          format: byte
+          description: Pagination cursor from previous response
+        group_id:
+          type: integer
+          format: int64
+          description: Filter by group ID
+
+    QueryResult:
+      type: object
+      properties:
+        events:
+          type: array
+          description: Matching events
+          items:
+            $ref: '#/components/schemas/GeoEvent'
+        has_more:
+          type: boolean
+          description: True if more results available
+        cursor:
+          type: string
+          format: byte
+          description: Cursor for next page (present if has_more is true)
+
+    GetLatestResponse:
+      type: object
+      properties:
+        event:
+          $ref: '#/components/schemas/GeoEvent'
+          nullable: true
+          description: Most recent event (null if entity not found)
+        found:
+          type: boolean
+          description: True if entity exists
+
+    GetLatestBatchRequest:
+      type: object
+      required:
+        - entity_ids
+      properties:
+        entity_ids:
+          type: array
+          description: Entities to look up (1 to 10,000)
+          minItems: 1
+          maxItems: 10000
+          items:
+            type: string
+            format: uuid
+
+    GetLatestBatchResponse:
+      type: object
+      properties:
+        events:
+          type: array
+          description: Events for found entities (may be fewer than requested)
+          items:
+            $ref: '#/components/schemas/GeoEvent'
+
+    DeleteEntitiesRequest:
+      type: object
+      required:
+        - entity_ids
+      properties:
+        entity_ids:
+          type: array
+          description: Entities to delete (1 to 10,000)
+          minItems: 1
+          maxItems: 10000
+          items:
+            type: string
+            format: uuid
+
+    DeleteEntitiesResponse:
+      type: object
+      properties:
+        deleted_count:
+          type: integer
+          format: int32
+          description: Number of entities actually deleted
+        not_found_count:
+          type: integer
+          format: int32
+          description: Number of entities that didn't exist
+
+    CleanupExpiredRequest:
+      type: object
+      properties:
+        max_entries:
+          type: integer
+          format: int32
+          description: Maximum entries to scan per request
+          default: 10000
+
+    CleanupExpiredResponse:
+      type: object
+      properties:
+        entries_scanned:
+          type: integer
+          format: int32
+          description: Number of entries scanned
+        entries_removed:
+          type: integer
+          format: int32
+          description: Number of expired entries removed
+
+    ClusterStats:
+      type: object
+      properties:
+        event_count:
+          type: integer
+          format: int64
+          description: Total number of events stored
+        entity_count:
+          type: integer
+          format: int64
+          description: Total number of unique entities
+        storage_bytes:
+          type: integer
+          format: int64
+          description: Total storage used in bytes
+        replica_count:
+          type: integer
+          format: int32
+          description: Number of replicas in the cluster
+        primary_replica:
+          type: integer
+          format: int32
+          description: ID of the current primary replica
+        replication_lag_ms:
+          type: integer
+          format: int64
+          description: Maximum replication lag in milliseconds
+
+    ErrorResponse:
+      type: object
+      description: Error response for failed operations
+      properties:
+        error_code:
+          type: integer
+          format: int16
+          description: Numeric error code (see Error Codes reference)
+        error_name:
+          type: string
+          description: Error name identifier
+        message:
+          type: string
+          description: Human-readable error message
