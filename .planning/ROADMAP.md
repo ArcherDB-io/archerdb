@@ -20,7 +20,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 6: Security Hardening** - Security skip decisions documented for local-only deployment
 - [x] **Phase 7: Observability** - Enable comprehensive monitoring and alerting
 - [x] **Phase 8: Operations Tooling** - Production deployment and management capabilities
-- [ ] **Phase 9: Testing Infrastructure** - Comprehensive validation and regression testing
+- [x] **Phase 9: Testing Infrastructure** - Comprehensive validation and regression testing
 - [ ] **Phase 10: Documentation** - Customer-facing guides and operational runbooks
 
 ## Phase Details
@@ -200,13 +200,15 @@ Plans:
   3. Operations runbook covers deployment, backup, upgrade, and recovery
   4. Troubleshooting guide addresses common issues with solutions
   5. SDK documentation covers all supported languages
-**Plans**: TBD
+**Plans**: 6 plans in 3 waves
 
 Plans:
-- [ ] 10-01: Getting started guide
-- [ ] 10-02: API reference
-- [ ] 10-03: Operations runbook
-- [ ] 10-04: Troubleshooting and architecture docs
+- [ ] 10-01-PLAN.md — Getting started and quickstart enhancement (Wave 1)
+- [ ] 10-02-PLAN.md — API reference and OpenAPI spec (Wave 1)
+- [ ] 10-03-PLAN.md — Alert runbooks and operations documentation (Wave 1)
+- [ ] 10-04-PLAN.md — Architecture, troubleshooting, and performance tuning (Wave 2)
+- [ ] 10-05-PLAN.md — Security best practices and SDK documentation (Wave 2)
+- [ ] 10-06-PLAN.md — Phase verification and sign-off (Wave 3)
 
 ## Progress
 
@@ -226,7 +228,7 @@ Note: Phases 5, 6, and 9 can partially parallelize with earlier phases after Pha
 | 7. Observability | 5/5 | Complete | 2026-01-31 |
 | 8. Operations Tooling | 6/6 | Complete | 2026-01-31 |
 | 9. Testing Infrastructure | 6/6 | Complete | 2026-01-31 |
-| 10. Documentation | 0/4 | Not started | - |
+| 10. Documentation | 0/6 | Not started | - |
 
 ---
 *Roadmap created: 2026-01-29*
@@ -237,5 +239,6 @@ Note: Phases 5, 6, and 9 can partially parallelize with earlier phases after Pha
 *Phase 7 planned: 2026-01-31*
 *Phase 8 planned: 2026-01-31*
 *Phase 9 planned: 2026-01-31*
+*Phase 10 planned: 2026-01-31*
 *Total requirements: 82 v1 requirements mapped to 10 phases*
 *Depth: comprehensive*
