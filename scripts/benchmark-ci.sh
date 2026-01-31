@@ -269,49 +269,80 @@ if [[ "$COMPARE" == "true" && -n "$BASELINE" && -f "$BASELINE" ]]; then
     echo ""
     echo "Comparing with baseline..."
     echo "=========================="
+    echo ""
+    echo "Regression Thresholds:"
+    echo "  Throughput: 5% threshold (fails if current < baseline * 0.95)"
+    echo "  Latency P99: 25% threshold (fails if current > baseline * 1.25)"
+    echo ""
 
     REGRESSION_DETECTED=false
+    THROUGHPUT_FAILURES=0
+    LATENCY_FAILURES=0
 
     # Parse baseline and current results using jq or simple parsing
     if command -v jq &>/dev/null; then
         for metric in insert radius_query polygon_query range_scan; do
             baseline_mean=$(jq -r ".results.${metric}.mean_ns" "$BASELINE" 2>/dev/null || echo "0")
-            baseline_std=$(jq -r ".results.${metric}.std_dev_ns" "$BASELINE" 2>/dev/null || echo "0")
+            baseline_p99=$(jq -r ".results.${metric}.p99_ns" "$BASELINE" 2>/dev/null || echo "0")
             current_mean=$(jq -r ".results.${metric}.mean_ns" "$OUTPUT" 2>/dev/null || echo "0")
+            current_p99=$(jq -r ".results.${metric}.p99_ns" "$OUTPUT" 2>/dev/null || echo "0")
 
             # Skip if no valid data
             if [[ "$baseline_mean" == "null" || "$baseline_mean" == "0" ]]; then
-                echo "$metric: No baseline data"
+                echo "$metric: No baseline data (skipped)"
                 continue
             fi
 
-            # Calculate threshold: baseline_mean + 2 * baseline_std
-            threshold=$(echo "$baseline_mean + 2 * $baseline_std" | bc 2>/dev/null || echo "0")
+            echo "--- $metric ---"
+            echo "  Baseline: mean=${baseline_mean}ns, P99=${baseline_p99}ns"
+            echo "  Current:  mean=${current_mean}ns, P99=${current_p99}ns"
 
-            # Check for regression
-            if (( $(echo "$current_mean > $threshold" | bc -l 2>/dev/null || echo "0") )); then
+            # Throughput regression check (5% threshold)
+            # Higher mean = slower = worse throughput
+            # Threshold: current_mean > baseline_mean * 1.05 means > 5% slower
+            throughput_threshold=$(echo "scale=0; $baseline_mean * 1.05 / 1" | bc 2>/dev/null || echo "0")
+            if (( $(echo "$current_mean > $throughput_threshold" | bc -l 2>/dev/null || echo "0") )); then
                 delta_pct=$(echo "scale=1; (($current_mean - $baseline_mean) / $baseline_mean) * 100" | bc 2>/dev/null || echo "0")
-                echo "$metric: REGRESSION +${delta_pct}% (${baseline_mean}ns -> ${current_mean}ns)"
+                echo "  THROUGHPUT REGRESSION: +${delta_pct}% slower (threshold: 5%)"
                 REGRESSION_DETECTED=true
+                THROUGHPUT_FAILURES=$((THROUGHPUT_FAILURES + 1))
             else
                 delta_pct=$(echo "scale=1; (($current_mean - $baseline_mean) / $baseline_mean) * 100" | bc 2>/dev/null || echo "0")
-                if (( $(echo "$delta_pct < -5" | bc -l 2>/dev/null || echo "0") )); then
-                    echo "$metric: IMPROVEMENT ${delta_pct}% (${baseline_mean}ns -> ${current_mean}ns)"
+                echo "  Throughput: ${delta_pct}% (PASS - within 5% threshold)"
+            fi
+
+            # Latency P99 regression check (25% threshold)
+            # Threshold: current_p99 > baseline_p99 * 1.25 means > 25% higher latency
+            latency_threshold=$(echo "scale=0; $baseline_p99 * 1.25 / 1" | bc 2>/dev/null || echo "0")
+            if [[ "$baseline_p99" != "null" && "$baseline_p99" != "0" && "$current_p99" != "null" && "$current_p99" != "0" ]]; then
+                if (( $(echo "$current_p99 > $latency_threshold" | bc -l 2>/dev/null || echo "0") )); then
+                    delta_pct=$(echo "scale=1; (($current_p99 - $baseline_p99) / $baseline_p99) * 100" | bc 2>/dev/null || echo "0")
+                    echo "  LATENCY P99 REGRESSION: +${delta_pct}% higher (threshold: 25%)"
+                    REGRESSION_DETECTED=true
+                    LATENCY_FAILURES=$((LATENCY_FAILURES + 1))
                 else
-                    echo "$metric: NO CHANGE ${delta_pct}% (${baseline_mean}ns -> ${current_mean}ns)"
+                    delta_pct=$(echo "scale=1; (($current_p99 - $baseline_p99) / $baseline_p99) * 100" | bc 2>/dev/null || echo "0")
+                    echo "  Latency P99: ${delta_pct}% (PASS - within 25% threshold)"
                 fi
             fi
+            echo ""
         done
     else
         echo "Warning: jq not installed, skipping detailed comparison"
     fi
 
+    echo "=========================="
     echo ""
     if [[ "$REGRESSION_DETECTED" == "true" ]]; then
-        echo "RESULT: Performance regression detected!"
+        echo "RESULT: FAIL - Performance regression detected!"
+        echo "  Throughput regressions: $THROUGHPUT_FAILURES"
+        echo "  Latency P99 regressions: $LATENCY_FAILURES"
+        echo ""
+        echo "Regressions block merge. Fix the performance issue or update the baseline."
         exit 1
     else
-        echo "RESULT: No performance regression detected"
+        echo "RESULT: PASS - No performance regression detected"
+        echo "  All metrics within threshold (throughput <5%, latency P99 <25%)"
     fi
 fi
 
