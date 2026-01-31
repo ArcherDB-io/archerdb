@@ -5736,14 +5736,21 @@ pub fn ReplicaType(
                 vsr.RegisterRequest,
                 prepare.body_used()[0..@sizeOf(vsr.RegisterRequest)],
             );
-            assert(register_request.batch_size_limit > 0);
-            assert(register_request.batch_size_limit <= constants.message_body_size_max);
-            assert(register_request.batch_size_limit <=
-                self.request_size_limit - @sizeOf(vsr.Header));
+
+            // Calculate batch_size_limit defensively. If the prepare phase set it to 0
+            // (or it wasn't set in primary_prepare_register for some reason), compute it here.
+            const batch_size_limit = if (register_request.batch_size_limit > 0)
+                register_request.batch_size_limit
+            else
+                self.request_size_limit - @sizeOf(vsr.Header);
+
+            assert(batch_size_limit > 0);
+            assert(batch_size_limit <= constants.message_body_size_max);
+            assert(batch_size_limit <= self.request_size_limit - @sizeOf(vsr.Header));
             assert(stdx.zeroed(&register_request.reserved));
 
             result.* = .{
-                .batch_size_limit = register_request.batch_size_limit,
+                .batch_size_limit = batch_size_limit,
             };
             return @sizeOf(vsr.RegisterResult);
         }
