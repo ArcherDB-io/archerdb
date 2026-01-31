@@ -1,0 +1,71 @@
+# ArcherDB Latency Alerting Rules
+# Aggressive thresholds per CONTEXT.md: Warning at P99 > 25ms, Critical at P99 > 100ms
+# Phase 5 baseline showed P99 ~1ms, so these catch real regressions early.
+
+groups:
+  - name: archerdb-latency-aggressive
+    rules:
+      # Warning: P99 read latency >25ms for 2 minutes
+      - alert: ArcherDBReadLatencyP99Warning
+        expr: histogram_quantile(0.99, sum(rate(archerdb_read_latency_seconds_bucket[5m])) by (le, instance)) > 0.025
+        for: 2m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "Read P99 latency above 25ms on {{ $labels.instance }}"
+          description: "P99 read latency is {{ $value | humanizeDuration }} (threshold: 25ms). Baseline is ~1ms, this indicates degradation."
+          runbook_url: "https://docs.archerdb.io/runbooks/high-read-latency"
+          remediation: "Check cache hit ratio, compaction status, disk I/O. Recent compaction may cause temporary spike."
+
+      # Critical: P99 read latency >100ms for 2 minutes
+      - alert: ArcherDBReadLatencyP99Critical
+        expr: histogram_quantile(0.99, sum(rate(archerdb_read_latency_seconds_bucket[5m])) by (le, instance)) > 0.1
+        for: 2m
+        labels:
+          severity: critical
+          team: database
+        annotations:
+          summary: "CRITICAL: Read P99 latency above 100ms on {{ $labels.instance }}"
+          description: "P99 read latency is {{ $value | humanizeDuration }} (threshold: 100ms). This is 100x baseline - immediate investigation required."
+          runbook_url: "https://docs.archerdb.io/runbooks/high-read-latency"
+          remediation: "URGENT: Check for disk failure, memory pressure, or runaway compaction. May need to shed load."
+
+      # Warning: P99 write latency >25ms for 2 minutes
+      - alert: ArcherDBWriteLatencyP99Warning
+        expr: histogram_quantile(0.99, sum(rate(archerdb_write_latency_seconds_bucket[5m])) by (le, instance)) > 0.025
+        for: 2m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "Write P99 latency above 25ms on {{ $labels.instance }}"
+          description: "P99 write latency is {{ $value | humanizeDuration }} (threshold: 25ms). May indicate compaction backlog."
+          runbook_url: "https://docs.archerdb.io/runbooks/high-write-latency"
+          remediation: "Check compaction pending bytes and throttle status. L0 backlog causes write stalls."
+
+      # Critical: P99 write latency >100ms for 2 minutes
+      - alert: ArcherDBWriteLatencyP99Critical
+        expr: histogram_quantile(0.99, sum(rate(archerdb_write_latency_seconds_bucket[5m])) by (le, instance)) > 0.1
+        for: 2m
+        labels:
+          severity: critical
+          team: database
+        annotations:
+          summary: "CRITICAL: Write P99 latency above 100ms on {{ $labels.instance }}"
+          description: "P99 write latency is {{ $value | humanizeDuration }} (threshold: 100ms). Write path severely degraded."
+          runbook_url: "https://docs.archerdb.io/runbooks/high-write-latency"
+          remediation: "URGENT: Check for compaction stall, disk saturation, or memory exhaustion. Consider reducing write rate."
+
+      # P99.9 alerts for tail latency monitoring (OBS-07)
+      - alert: ArcherDBReadLatencyP999High
+        expr: histogram_quantile(0.999, sum(rate(archerdb_read_latency_seconds_bucket[5m])) by (le, instance)) > 0.25
+        for: 5m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "Read P99.9 latency above 250ms on {{ $labels.instance }}"
+          description: "P99.9 (999th percentile) read latency is {{ $value | humanizeDuration }}. Tail latency is elevated."
+          runbook_url: "https://docs.archerdb.io/runbooks/tail-latency"
+          remediation: "Check for outlier queries, GC pauses, or occasional disk stalls. May affect small percentage of users."
