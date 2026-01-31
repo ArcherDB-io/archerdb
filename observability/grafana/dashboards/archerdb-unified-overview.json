@@ -1,0 +1,688 @@
+{
+  "uid": "archerdb-unified-overview",
+  "title": "ArcherDB Unified Overview",
+  "description": "Consolidated single pane of glass for cluster health, throughput, latency, and resource usage. Designed for incident response and at-a-glance monitoring.",
+  "tags": ["archerdb", "overview", "unified"],
+  "timezone": "browser",
+  "editable": true,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "fiscalYearStartMonth": 0,
+  "liveNow": false,
+  "weekStart": "",
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "label": "Data Source",
+        "description": "Select the Prometheus data source",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "options": [],
+        "refresh": 1,
+        "regex": ""
+      },
+      {
+        "name": "instance",
+        "type": "query",
+        "label": "Node",
+        "description": "Filter by ArcherDB node instance",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "query": "label_values(archerdb_info, instance)",
+        "refresh": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {},
+        "hide": 0,
+        "options": [],
+        "regex": "",
+        "sort": 1
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "name": "Node Down",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "enable": true,
+        "expr": "archerdb_health_status{status=\"ready\"} == 0",
+        "iconColor": "red",
+        "tagKeys": "instance",
+        "textFormat": "Node down: {{ $labels.instance }}",
+        "titleFormat": "Node Down",
+        "useValueForTime": false
+      },
+      {
+        "name": "High Latency",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "enable": true,
+        "expr": "histogram_quantile(0.99, sum(rate(archerdb_read_latency_seconds_bucket[5m])) by (le, instance)) > 0.025",
+        "iconColor": "orange",
+        "tagKeys": "instance",
+        "textFormat": "High P99 latency on {{ $labels.instance }}",
+        "titleFormat": "High Latency",
+        "useValueForTime": false
+      },
+      {
+        "name": "Disk Warning",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "enable": true,
+        "expr": "(1 - (node_filesystem_avail_bytes{mountpoint=~\"/data|/var/lib/archerdb\"} / node_filesystem_size_bytes{mountpoint=~\"/data|/var/lib/archerdb\"})) > 0.8",
+        "iconColor": "yellow",
+        "tagKeys": "instance,mountpoint",
+        "textFormat": "Disk > 80% on {{ $labels.instance }}",
+        "titleFormat": "Disk Warning",
+        "useValueForTime": false
+      }
+    ]
+  },
+  "links": [
+    {
+      "title": "Storage Deep Dive",
+      "type": "link",
+      "url": "/d/archerdb-storage-deep/archerdb-storage-deep-dive?orgId=1&${__url_time_range}&${__all_variables}",
+      "icon": "external link",
+      "tooltip": "LSM levels, compaction stats, disk I/O details",
+      "keepTime": true,
+      "includeVars": true,
+      "targetBlank": false,
+      "asDropdown": false
+    },
+    {
+      "title": "Query Performance",
+      "type": "link",
+      "url": "/d/archerdb-query-performance/archerdb-query-performance?orgId=1&${__url_time_range}&${__all_variables}",
+      "icon": "external link",
+      "tooltip": "Detailed query latency by type, cache hits, errors",
+      "keepTime": true,
+      "includeVars": true,
+      "targetBlank": false,
+      "asDropdown": false
+    },
+    {
+      "title": "Replication Detail",
+      "type": "link",
+      "url": "/d/archerdb-replication/archerdb-replication?orgId=1&${__url_time_range}&${__all_variables}",
+      "icon": "external link",
+      "tooltip": "VSR replication status, lag metrics, view changes",
+      "keepTime": true,
+      "includeVars": true,
+      "targetBlank": false,
+      "asDropdown": false
+    },
+    {
+      "title": "Cluster Health",
+      "type": "link",
+      "url": "/d/archerdb-cluster-health/archerdb-cluster-health?orgId=1&${__url_time_range}&${__all_variables}",
+      "icon": "external link",
+      "tooltip": "Per-node health details, coordinator stats",
+      "keepTime": true,
+      "includeVars": true,
+      "targetBlank": false,
+      "asDropdown": false
+    }
+  ],
+  "panels": [
+    {
+      "type": "row",
+      "title": "Cluster Status",
+      "gridPos": {"x": 0, "y": 0, "w": 24, "h": 1},
+      "id": 100,
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Node 1 Status",
+      "description": "Health status for node 1. Green = healthy (1), Yellow = degraded (0.5), Red = down (0).",
+      "gridPos": {"x": 0, "y": 1, "w": 6, "h": 4},
+      "id": 1,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "archerdb_health_status{status=\"ready\", instance=~\"$instance\"} or on() vector(0)",
+          "legendFormat": "{{ instance }}",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {"type": "value", "options": {"1": {"text": "Healthy", "color": "green"}}},
+            {"type": "value", "options": {"0": {"text": "Down", "color": "red"}}},
+            {"type": "range", "options": {"from": 0.1, "to": 0.9, "result": {"text": "Degraded", "color": "yellow"}}}
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "yellow", "value": 0.5},
+              {"color": "green", "value": 1}
+            ]
+          },
+          "unit": "none",
+          "noValue": "No Data"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Total Healthy Nodes",
+      "description": "Count of nodes reporting healthy status. Compares healthy vs total nodes.",
+      "gridPos": {"x": 6, "y": 1, "w": 6, "h": 4},
+      "id": 2,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "count(archerdb_health_status{status=\"ready\", instance=~\"$instance\"} == 1) or vector(0)",
+          "legendFormat": "Healthy",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "yellow", "value": 1},
+              {"color": "green", "value": 3}
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Cluster Health",
+      "description": "Overall cluster health. Shows worst status across all nodes. Green = all healthy, Yellow = some degraded, Red = nodes down.",
+      "gridPos": {"x": 12, "y": 1, "w": 6, "h": 4},
+      "id": 3,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "min(archerdb_health_status{status=\"ready\", instance=~\"$instance\"}) or vector(0)",
+          "legendFormat": "Cluster Health",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {"type": "value", "options": {"1": {"text": "All Healthy", "color": "green"}}},
+            {"type": "value", "options": {"0": {"text": "Node(s) Down", "color": "red"}}},
+            {"type": "range", "options": {"from": 0.1, "to": 0.9, "result": {"text": "Degraded", "color": "yellow"}}}
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "yellow", "value": 0.5},
+              {"color": "green", "value": 1}
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Replication Lag",
+      "description": "Maximum replication lag across all replicas. Green < 5s, Yellow 5-30s, Red > 30s.",
+      "gridPos": {"x": 18, "y": 1, "w": 6, "h": 4},
+      "id": 4,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "max(archerdb_replication_lag_seconds{instance=~\"$instance\"}) or max(archerdb_vsr_replication_lag_seconds{instance=~\"$instance\"}) or vector(0)",
+          "legendFormat": "Max Lag",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 5},
+              {"color": "red", "value": 30}
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "type": "row",
+      "title": "Throughput & Latency",
+      "gridPos": {"x": 0, "y": 5, "w": 24, "h": 1},
+      "id": 101,
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Throughput & Latency (Dual Y-Axis)",
+      "description": "Combined view of throughput (ops/sec, left Y-axis as bars) and P99 latency (seconds, right Y-axis as lines). Correlation helps identify if latency increases with load.",
+      "gridPos": {"x": 0, "y": 6, "w": 24, "h": 10},
+      "id": 5,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "sum(rate(archerdb_read_operations_total{instance=~\"$instance\"}[5m])) + sum(rate(archerdb_write_operations_total{instance=~\"$instance\"}[5m]))",
+          "legendFormat": "Total Throughput (ops/s)",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(archerdb_read_latency_seconds_bucket{instance=~\"$instance\"}[5m])) by (le))",
+          "legendFormat": "Read P99 Latency",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(archerdb_write_latency_seconds_bucket{instance=~\"$instance\"}[5m])) by (le))",
+          "legendFormat": "Write P99 Latency",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null}
+            ]
+          },
+          "custom": {
+            "drawStyle": "bars",
+            "lineInterpolation": "linear",
+            "barAlignment": 0,
+            "lineWidth": 1,
+            "fillOpacity": 30,
+            "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "never",
+            "pointSize": 5,
+            "stacking": {"mode": "none", "group": "A"},
+            "axisPlacement": "left",
+            "axisLabel": "Throughput (ops/s)",
+            "axisColorMode": "text",
+            "scaleDistribution": {"type": "linear"},
+            "axisCenteredZero": false,
+            "hideFrom": {"tooltip": false, "viz": false, "legend": false},
+            "thresholdsStyle": {"mode": "off"}
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "Read P99 Latency"},
+            "properties": [
+              {"id": "custom.axisPlacement", "value": "right"},
+              {"id": "custom.drawStyle", "value": "line"},
+              {"id": "custom.lineWidth", "value": 2},
+              {"id": "custom.fillOpacity", "value": 0},
+              {"id": "unit", "value": "s"},
+              {"id": "color", "value": {"mode": "fixed", "fixedColor": "orange"}}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "Write P99 Latency"},
+            "properties": [
+              {"id": "custom.axisPlacement", "value": "right"},
+              {"id": "custom.drawStyle", "value": "line"},
+              {"id": "custom.lineWidth", "value": 2},
+              {"id": "custom.fillOpacity", "value": 0},
+              {"id": "unit", "value": "s"},
+              {"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "Total Throughput (ops/s)"},
+            "properties": [
+              {"id": "color", "value": {"mode": "fixed", "fixedColor": "blue"}}
+            ]
+          }
+        ]
+      },
+      "options": {
+        "tooltip": {"mode": "multi", "sort": "desc"},
+        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max", "last"]}
+      }
+    },
+    {
+      "type": "row",
+      "title": "Resource Usage",
+      "gridPos": {"x": 0, "y": 16, "w": 24, "h": 1},
+      "id": 102,
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "CPU Usage",
+      "description": "CPU utilization rate per ArcherDB node. Values represent CPU seconds used per second.",
+      "gridPos": {"x": 0, "y": 17, "w": 8, "h": 6},
+      "id": 6,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "rate(process_cpu_seconds_total{job=~\"archerdb.*\", instance=~\"$instance\"}[5m])",
+          "legendFormat": "{{ instance }}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 0.7},
+              {"color": "red", "value": 0.9}
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 1,
+            "fillOpacity": 20,
+            "gradientMode": "scheme",
+            "spanNulls": false,
+            "showPoints": "never",
+            "axisPlacement": "auto",
+            "thresholdsStyle": {"mode": "off"}
+          },
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {"mode": "multi", "sort": "desc"},
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Memory Usage",
+      "description": "Process resident memory (RSS) per ArcherDB node.",
+      "gridPos": {"x": 8, "y": 17, "w": 8, "h": 6},
+      "id": 7,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "process_resident_memory_bytes{job=~\"archerdb.*\", instance=~\"$instance\"}",
+          "legendFormat": "{{ instance }}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 8589934592},
+              {"color": "red", "value": 17179869184}
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 1,
+            "fillOpacity": 20,
+            "gradientMode": "scheme",
+            "spanNulls": false,
+            "showPoints": "never",
+            "axisPlacement": "auto",
+            "thresholdsStyle": {"mode": "off"}
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {"mode": "multi", "sort": "desc"},
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}
+      }
+    },
+    {
+      "type": "gauge",
+      "title": "Disk Usage",
+      "description": "Data directory disk usage percentage. Warning at 80%, critical at 90%.",
+      "gridPos": {"x": 16, "y": 17, "w": 8, "h": 6},
+      "id": 8,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "(1 - (node_filesystem_avail_bytes{mountpoint=~\"/data|/var/lib/archerdb\"} / node_filesystem_size_bytes{mountpoint=~\"/data|/var/lib/archerdb\"})) * 100",
+          "legendFormat": "{{ mountpoint }}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 80},
+              {"color": "red", "value": 90}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "type": "row",
+      "title": "Key Internals",
+      "gridPos": {"x": 0, "y": 23, "w": 24, "h": 1},
+      "id": 103,
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Replication Lag Over Time",
+      "description": "Replication lag trend for multi-node clusters. Shows lag in seconds across time.",
+      "gridPos": {"x": 0, "y": 24, "w": 8, "h": 6},
+      "id": 9,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "archerdb_replication_lag_seconds{instance=~\"$instance\"} or archerdb_vsr_replication_lag_seconds{instance=~\"$instance\"}",
+          "legendFormat": "{{ instance }}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 5},
+              {"color": "red", "value": 30}
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "spanNulls": false,
+            "showPoints": "never",
+            "axisPlacement": "auto",
+            "thresholdsStyle": {"mode": "line+area"}
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {"mode": "multi", "sort": "desc"},
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}
+      }
+    },
+    {
+      "type": "stat",
+      "title": "S2 Cache Hit Ratio",
+      "description": "S2 covering cache hit ratio. Higher is better - indicates spatial query cache effectiveness.",
+      "gridPos": {"x": 8, "y": 24, "w": 8, "h": 6},
+      "id": 10,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "avg(archerdb_cache_hit_ratio{cache_type=\"s2_covering\", instance=~\"$instance\"}) or vector(0)",
+          "legendFormat": "S2 Cache Hit Ratio",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "yellow", "value": 0.5},
+              {"color": "green", "value": 0.8}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Compaction Pending",
+      "description": "Bytes pending compaction. Large values may indicate write pressure or slow compaction.",
+      "gridPos": {"x": 16, "y": 24, "w": 8, "h": 6},
+      "id": 11,
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "expr": "sum(archerdb_compaction_pending_bytes{instance=~\"$instance\"}) or vector(0)",
+          "legendFormat": "Pending Bytes",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 104857600},
+              {"color": "red", "value": 1073741824}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      }
+    }
+  ]
+}
