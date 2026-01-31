@@ -3712,9 +3712,9 @@ test "Registry: replication lag metrics format" {
     Registry.updateReplicationLag(0, 0, 0);
     Registry.updateReplicationLag(1, 3, 3_000_000); // 3ms lag
 
-    // Use same buffer size as metrics_server.zig (65536)
-    // to accommodate all metrics including LSM per-level stats
-    var buf: [65536]u8 = undefined;
+    // Use same buffer size as metrics_server.zig (256 * 1024)
+    // to accommodate all metrics including LSM per-level stats and histograms
+    var buf: [256 * 1024]u8 = undefined;
     var fbs = std.io.fixedBufferStream(&buf);
 
     try Registry.format(fbs.writer());
@@ -3742,7 +3742,7 @@ test "Registry: sharding metrics format output" {
     Registry.shard_lookup_latency_jump_hash.observe(0.00005);
     Registry.query_shards_queried_radius.observe(@as(f64, 4));
 
-    var buf: [65536]u8 = undefined;
+    var buf: [256 * 1024]u8 = undefined;
     var fbs = std.io.fixedBufferStream(&buf);
 
     try Registry.format(fbs.writer());
@@ -3840,9 +3840,9 @@ test "Registry: backup metrics format output" {
     Registry.backup_blocks_abandoned_total.store(0, .monotonic);
     Registry.backup_mandatory_bypass_total.store(0, .monotonic);
 
-    // Use same buffer size as metrics_server.zig (65536)
-    // to accommodate all metrics including LSM per-level stats
-    var buf: [65536]u8 = undefined;
+    // Use same buffer size as metrics_server.zig (256 * 1024)
+    // to accommodate all metrics including LSM per-level stats and histograms
+    var buf: [256 * 1024]u8 = undefined;
     var fbs = std.io.fixedBufferStream(&buf);
 
     try Registry.format(fbs.writer());
@@ -4078,8 +4078,8 @@ test "Registry: Index resize metrics format output" {
     Registry.index_resize_source_size.set(1024);
     Registry.index_resize_target_size.set(2048);
 
-    // Use large buffer to accommodate all metrics
-    var buf: [65536]u8 = undefined;
+    // Use same buffer size as metrics_server.zig (256 * 1024)
+    var buf: [256 * 1024]u8 = undefined;
     var fbs = std.io.fixedBufferStream(&buf);
 
     try Registry.format(fbs.writer());
@@ -4129,8 +4129,8 @@ test "Registry: Membership metrics format output" {
     Registry.membership_transitions_in_progress.set(1);
     Registry.membership_transition_progress.set(7500); // 75%
 
-    // Use large buffer to accommodate all metrics
-    var buf: [65536]u8 = undefined;
+    // Use same buffer size as metrics_server.zig (256 * 1024)
+    var buf: [256 * 1024]u8 = undefined;
     var fbs = std.io.fixedBufferStream(&buf);
 
     try Registry.format(fbs.writer());
@@ -4189,7 +4189,7 @@ test "Registry: index health metrics update" {
 test "Registry: index health metrics format output" {
     Registry.updateResourceMetrics(1, 1, 1, 7, 11, 2048);
 
-    var buf: [65536]u8 = undefined;
+    var buf: [256 * 1024]u8 = undefined;
     var fbs = std.io.fixedBufferStream(&buf);
     try Registry.format(fbs.writer());
     const output = fbs.getWritten();

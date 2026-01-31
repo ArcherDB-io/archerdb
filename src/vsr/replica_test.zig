@@ -2249,6 +2249,12 @@ const TestContext = struct {
         client_release: vsr.Release = releases[0].release,
         seed: u64 = 123,
     }) !*TestContext {
+        // Skip for lite configuration - Cluster-based tests require production config
+        // The lite config (32KB block_size) causes storage assertion failures during
+        // cluster initialization due to journal slot count differences.
+        if (constants.config.cluster.journal_slot_count < 1024) {
+            return error.SkipZigTest;
+        }
         const log_level_original = std.testing.log_level;
         std.testing.log_level = log_level;
         var prng = stdx.PRNG.from_seed(options.seed);

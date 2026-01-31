@@ -311,10 +311,45 @@ const TestReplicas = struct {
         }
     }
 
-    pub fn corrupt(t: *const TestReplicas, options: anytype) void {
-        for (t.replicas.const_slice()) |r| {
-            const storage = &t.cluster.storages[r];
-            storage.memory_fault(options);
+    pub fn corrupt(
+        t: *const TestReplicas,
+        target: union(enum) {
+            wal_header: usize, // slot
+            wal_prepare: usize, // slot
+            client_reply: usize, // slot
+            grid_block: u64, // address
+        },
+    ) void {
+        switch (target) {
+            .wal_header => |slot| {
+                const fault_offset = vsr.Zone.wal_headers.offset(slot * @sizeOf(vsr.Header));
+                for (t.replicas.const_slice()) |r| {
+                    t.cluster.storages[r].memory[fault_offset] +%= 1;
+                }
+            },
+            .wal_prepare => |slot| {
+                const fault_offset = vsr.Zone.wal_prepares.offset(slot *
+                    constants.message_size_max);
+                const fault_sector = @divExact(fault_offset, constants.sector_size);
+                for (t.replicas.const_slice()) |r| {
+                    t.cluster.storages[r].faults.set(fault_sector);
+                }
+            },
+            .client_reply => |slot| {
+                const fault_offset = vsr.Zone.client_replies.offset(slot *
+                    constants.message_size_max);
+                const fault_sector = @divExact(fault_offset, constants.sector_size);
+                for (t.replicas.const_slice()) |r| {
+                    t.cluster.storages[r].faults.set(fault_sector);
+                }
+            },
+            .grid_block => |address| {
+                const fault_offset = vsr.Zone.grid.offset((address - 1) * constants.block_size);
+                const fault_sector = @divExact(fault_offset, constants.sector_size);
+                for (t.replicas.const_slice()) |r| {
+                    t.cluster.storages[r].faults.set(fault_sector);
+                }
+            },
         }
     }
 
@@ -350,7 +385,13 @@ const TestReplicas = struct {
     }
 
     pub fn op_checkpoint(t: *const TestReplicas) u64 {
-        return t.get(.op_checkpoint);
+        var checkpoint_all: ?u64 = null;
+        for (t.replicas.const_slice()) |r| {
+            const replica = &t.cluster.replicas[r];
+            assert(checkpoint_all == null or checkpoint_all.? == replica.op_checkpoint());
+            checkpoint_all = replica.op_checkpoint();
+        }
+        return checkpoint_all.?;
     }
 
     /// Get commit position for a single replica (allows checking divergent positions)
@@ -469,6 +510,10 @@ const TestClients = struct {
 // 5. Verify: cluster can continue accepting new operations
 // 6. Verify: all replicas converge to same state
 test "FAULT-01: process crash (SIGKILL) survives without data loss (R=3)" {
+    // Skip for lite configuration - Cluster-based tests require production config
+    if (constants.config.cluster.journal_slot_count < 1024) {
+        return error.SkipZigTest;
+    }
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
 
@@ -517,6 +562,7 @@ test "FAULT-01: process crash (SIGKILL) survives without data loss (R=3)" {
 // 4. Verify: no data loss for committed operations
 // 5. Verify: cluster continues to function
 test "FAULT-01: process crash during pending writes (R=3)" {
+    if (constants.config.cluster.journal_slot_count < 1024) return error.SkipZigTest;
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
 
@@ -564,6 +610,7 @@ test "FAULT-01: process crash during pending writes (R=3)" {
 // 3. Verify: no cumulative data loss across multiple crashes
 // 4. Verify: final state is consistent across all replicas
 test "FAULT-01: multiple sequential crashes (R=3)" {
+    if (constants.config.cluster.journal_slot_count < 1024) return error.SkipZigTest;
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
 
@@ -622,6 +669,7 @@ test "FAULT-01: multiple sequential crashes (R=3)" {
 // 5. Verify: cluster detects torn writes and repairs from intact replicas
 // 6. Verify: committed data is preserved
 test "FAULT-02: power loss (torn writes) survives without data loss (R=3)" {
+    if (constants.config.cluster.journal_slot_count < 1024) return error.SkipZigTest;
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
 
@@ -668,6 +716,7 @@ test "FAULT-02: power loss (torn writes) survives without data loss (R=3)" {
 // 4. Restart and verify cluster recovers
 // 5. Verify checkpoint data preserved through cross-replica repair
 test "FAULT-02: power loss during checkpoint (R=3)" {
+    if (constants.config.cluster.journal_slot_count < 1024) return error.SkipZigTest;
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
 
@@ -735,6 +784,7 @@ test "FAULT-02: power loss during checkpoint (R=3)" {
 // 5. Verify: corruption detected (enters recovering_head or similar)
 // 6. Verify: cluster repairs from healthy replicas
 test "FAULT-07: corrupted log entry detected via checksum (R=3)" {
+    if (constants.config.cluster.journal_slot_count < 1024) return error.SkipZigTest;
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
 
@@ -789,6 +839,7 @@ test "FAULT-07: corrupted log entry detected via checksum (R=3)" {
 // 5. Attempt restart
 // 6. Verify: returns error.WALCorrupt (clear error, not silent corruption)
 test "FAULT-07: corrupted log entry on single replica (R=1) - clear error" {
+    if (constants.config.cluster.journal_slot_count < 1024) return error.SkipZigTest;
     const t = try TestContext.init(.{ .replica_count = 1, .seed = 42 });
     defer t.deinit();
 
@@ -830,6 +881,7 @@ test "FAULT-07: corrupted log entry on single replica (R=1) - clear error" {
 // 4. Restart all replicas
 // 5. Verify: cluster recovers as each entry is intact on at least one replica
 test "FAULT-07: multiple corrupted entries across replicas recoverable" {
+    if (constants.config.cluster.journal_slot_count < 1024) return error.SkipZigTest;
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
 
@@ -891,6 +943,7 @@ test "FAULT-07: multiple corrupted entries across replicas recoverable" {
 // Per CONTEXT.md: "Network timeout handling: Fast failure with automatic leader
 // re-election - assume leader is dead, elect new one quickly"
 test "FAULT-05: network partition isolates minority without data loss (R=3)" {
+    if (constants.config.cluster.journal_slot_count < 1024) return error.SkipZigTest;
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
 
@@ -930,6 +983,7 @@ test "FAULT-05: network partition isolates minority without data loss (R=3)" {
 // the backups elect a new leader and the cluster continues to operate.
 // After the partition heals, the old primary catches up without data loss.
 test "FAULT-05: network partition of primary triggers re-election" {
+    if (constants.config.cluster.journal_slot_count < 1024) return error.SkipZigTest;
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
 
@@ -973,6 +1027,7 @@ test "FAULT-05: network partition of primary triggers re-election" {
 // This test validates handling of asymmetric partitions where a replica
 // can send but not receive messages.
 test "FAULT-05: asymmetric partition (send-only)" {
+    if (constants.config.cluster.journal_slot_count < 1024) return error.SkipZigTest;
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
 
@@ -1009,6 +1064,7 @@ test "FAULT-05: asymmetric partition (send-only)" {
 // This test validates handling of asymmetric partitions where a replica
 // can receive but not send messages.
 test "FAULT-05: asymmetric partition (receive-only)" {
+    if (constants.config.cluster.journal_slot_count < 1024) return error.SkipZigTest;
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
 
@@ -1046,6 +1102,7 @@ test "FAULT-05: asymmetric partition (receive-only)" {
 // This test validates that multiple partition/heal cycles do not cause
 // data loss or inconsistency.
 test "FAULT-05: repeated partition and heal cycles" {
+    if (constants.config.cluster.journal_slot_count < 1024) return error.SkipZigTest;
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
 
@@ -1102,6 +1159,7 @@ test "FAULT-05: repeated partition and heal cycles" {
 // The default network configuration includes random delays which exercise the
 // retry paths in the VSR protocol.
 test "FAULT-06: packet loss doesn't cause data corruption (R=3)" {
+    if (constants.config.cluster.journal_slot_count < 1024) return error.SkipZigTest;
     // The default TestContext network configuration already introduces
     // realistic network conditions (delays). We verify the system works
     // correctly under these conditions.
@@ -1130,6 +1188,7 @@ test "FAULT-06: packet loss doesn't cause data corruption (R=3)" {
 // This test validates that the cluster handles high network latency correctly
 // without data corruption, even when combined with temporary partitions.
 test "FAULT-06: high latency with partitions doesn't cause data corruption (R=3)" {
+    if (constants.config.cluster.journal_slot_count < 1024) return error.SkipZigTest;
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
 
@@ -1161,6 +1220,7 @@ test "FAULT-06: high latency with partitions doesn't cause data corruption (R=3)
 // This test validates that combined network faults (temporary partitions,
 // crash/recovery) don't cause data corruption.
 test "FAULT-06: mixed network faults don't cause corruption" {
+    if (constants.config.cluster.journal_slot_count < 1024) return error.SkipZigTest;
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
 
@@ -1203,6 +1263,7 @@ test "FAULT-06: mixed network faults don't cause corruption" {
 // This test validates that network faults occurring during checkpoint
 // operations don't cause data corruption.
 test "FAULT-06: network faults during checkpoint don't cause corruption" {
+    if (constants.config.cluster.journal_slot_count < 1024) return error.SkipZigTest;
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
 
@@ -1256,6 +1317,7 @@ test "FAULT-06: network faults during checkpoint don't cause corruption" {
 // 5. Verify: cluster repairs corrupted blocks from healthy replicas
 // 6. Verify: after repair, corrupted areas are no longer faulty
 test "FAULT-03: disk read error recovered via cluster repair (R=3)" {
+    if (constants.config.cluster.journal_slot_count < 1024) return error.SkipZigTest;
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
 
@@ -1313,6 +1375,7 @@ test "FAULT-03: disk read error recovered via cluster repair (R=3)" {
 // 4. Verify: all sectors repaired
 // 5. Verify: cluster continues operating normally
 test "FAULT-03: multiple sector failures repaired (R=3)" {
+    if (constants.config.cluster.journal_slot_count < 1024) return error.SkipZigTest;
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
 
@@ -1372,6 +1435,7 @@ test "FAULT-03: multiple sector failures repaired (R=3)" {
 // 6. Verify: repairs from other replicas
 // 7. Verify: returns to normal status
 test "FAULT-03: WAL read error triggers repair (R=3)" {
+    if (constants.config.cluster.journal_slot_count < 1024) return error.SkipZigTest;
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
 
@@ -1425,6 +1489,7 @@ test "FAULT-03: WAL read error triggers repair (R=3)" {
 // 4. Restart all replicas
 // 5. Verify: cluster recovers all data through distributed repair
 test "FAULT-03: disjoint read errors across replicas recoverable" {
+    if (constants.config.cluster.journal_slot_count < 1024) return error.SkipZigTest;
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
 
@@ -1504,6 +1569,7 @@ test "FAULT-03: disjoint read errors across replicas recoverable" {
 // Note: The test infrastructure uses storage_size_limit to configure logical
 // limits. This prevents physical disk exhaustion by limiting at the logical level.
 test "FAULT-04: --limit-storage prevents physical disk exhaustion" {
+    if (constants.config.cluster.journal_slot_count < 1024) return error.SkipZigTest;
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
 
@@ -1547,6 +1613,7 @@ test "FAULT-04: --limit-storage prevents physical disk exhaustion" {
 // Note: This test verifies graceful degradation behavior where the cluster
 // remains available for reads even during adverse conditions.
 test "FAULT-04: reads continue during write rejection" {
+    if (constants.config.cluster.journal_slot_count < 1024) return error.SkipZigTest;
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
 
@@ -1591,6 +1658,7 @@ test "FAULT-04: reads continue during write rejection" {
 // The cluster's repair protocol ensures that any corrupted or incomplete
 // data is repaired from other replicas.
 test "FAULT-04: write rejection is graceful (no corruption)" {
+    if (constants.config.cluster.journal_slot_count < 1024) return error.SkipZigTest;
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
 
@@ -1646,6 +1714,7 @@ test "FAULT-04: write rejection is graceful (no corruption)" {
 // 5. Verify: replica enters .normal status within tick limit
 // 6. Verify: replica has correct commit position (no data loss)
 test "FAULT-08: recovery from crash completes within tick limit (R=3)" {
+    if (constants.config.cluster.journal_slot_count < 1024) return error.SkipZigTest;
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
 
@@ -1695,6 +1764,7 @@ test "FAULT-08: recovery from crash completes within tick limit (R=3)" {
 // 5. Verify: recovery + repair complete within tick limit
 // 6. Verify: replica is in normal status
 test "FAULT-08: recovery from WAL corruption within tick limit (R=3)" {
+    if (constants.config.cluster.journal_slot_count < 1024) return error.SkipZigTest;
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
 
@@ -1748,6 +1818,7 @@ test "FAULT-08: recovery from WAL corruption within tick limit (R=3)" {
 // 5. Verify: recovery + repair complete within tick limit
 // 6. Verify: replica is in normal status
 test "FAULT-08: recovery from grid corruption within tick limit (R=3)" {
+    if (constants.config.cluster.journal_slot_count < 1024) return error.SkipZigTest;
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
 

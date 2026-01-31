@@ -38,6 +38,7 @@ comptime {
     _ = @import("archerdb/signal_handler.zig");
     _ = @import("archerdb/storage_metrics.zig");
     _ = @import("archerdb/tls_config.zig");
+    _ = @import("archerdb/upgrade.zig");
     _ = @import("batch_query.zig");
     _ = @import("c_client_tests.zig");
     _ = @import("cdc/amqp.zig");
@@ -148,6 +149,8 @@ comptime {
     _ = @import("vsr.zig");
     _ = @import("vsr/checksum.zig");
     _ = @import("vsr/clock.zig");
+    _ = @import("vsr/data_integrity_test.zig");
+    _ = @import("vsr/fault_tolerance_test.zig");
     _ = @import("vsr/flexible_paxos.zig");
     _ = @import("vsr/free_set.zig");
     _ = @import("vsr/grid_scrubber.zig");
@@ -156,6 +159,7 @@ comptime {
     _ = @import("vsr/membership.zig");
     _ = @import("vsr/message_header.zig");
     _ = @import("vsr/multi_batch.zig");
+    _ = @import("vsr/multi_node_validation_test.zig");
     _ = @import("vsr/replica_format.zig");
     _ = @import("vsr/replica_test.zig");
     _ = @import("vsr/routing.zig");

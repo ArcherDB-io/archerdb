@@ -351,8 +351,11 @@ test "Integration: RestoreStats throughput calculation" {
 
 test "Integration: Coordinator primary-only with view changes" {
     // 3-replica cluster
+    // Note: Must explicitly set follower_only=false to test primary_only behavior
+    // (follower_only=true is the default and takes precedence)
     var replica0 = BackupCoordinator.init(.{
         .primary_only = true,
+        .follower_only = false,
         .replica_count = 3,
         .replica_id = 0,
         .initial_view = 0,
@@ -360,6 +363,7 @@ test "Integration: Coordinator primary-only with view changes" {
 
     var replica1 = BackupCoordinator.init(.{
         .primary_only = true,
+        .follower_only = false,
         .replica_count = 3,
         .replica_id = 1,
         .initial_view = 0,
@@ -367,6 +371,7 @@ test "Integration: Coordinator primary-only with view changes" {
 
     var replica2 = BackupCoordinator.init(.{
         .primary_only = true,
+        .follower_only = false,
         .replica_count = 3,
         .replica_id = 2,
         .initial_view = 0,
@@ -403,8 +408,10 @@ test "Integration: Coordinator primary-only with view changes" {
 }
 
 test "Integration: Coordinator all-replicas mode ignores view changes" {
+    // All replicas mode requires follower_only=false (which is not the default)
     var replica0 = BackupCoordinator.init(.{
         .primary_only = false, // All replicas mode
+        .follower_only = false, // Required for all-replicas behavior
         .replica_count = 3,
         .replica_id = 0,
         .initial_view = 0,
@@ -412,6 +419,7 @@ test "Integration: Coordinator all-replicas mode ignores view changes" {
 
     var replica1 = BackupCoordinator.init(.{
         .primary_only = false,
+        .follower_only = false,
         .replica_count = 3,
         .replica_id = 1,
         .initial_view = 0,
@@ -453,9 +461,12 @@ test "Integration: Full backup workflow simulation" {
     });
     defer queue.deinit();
 
-    // 3. Create coordinator (simulating primary)
+    // 3. Create coordinator (simulating single-replica cluster)
+    // Note: For single-replica test, use all-replicas mode (follower_only=false)
+    // because single-replica clusters have no followers
     var coordinator = BackupCoordinator.init(.{
-        .primary_only = backup_cfg.options.primary_only,
+        .primary_only = false,
+        .follower_only = false, // Required for single-replica testing
         .replica_count = 1,
         .replica_id = 0,
     });
@@ -761,8 +772,10 @@ test "DATA-07: backup creates consistent snapshot - queue maintains order" {
 
 test "DATA-07: backup coordinator validates consistency" {
     // Create BackupCoordinator with test config (3-replica cluster)
+    // Note: Must set follower_only=false to test primary_only behavior
     var coordinator = BackupCoordinator.init(.{
         .primary_only = true,
+        .follower_only = false, // Required to test primary_only mode
         .replica_count = 3,
         .replica_id = 0,
         .initial_view = 0,

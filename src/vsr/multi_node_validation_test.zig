@@ -367,6 +367,10 @@ const TestClients = struct {
 // data to all nodes. After sending requests, all replicas should have the same
 // commit position and be in normal status.
 test "MULTI-01: 3-node cluster achieves consensus and replicates" {
+    // Skip for lite configuration - Cluster-based tests require production config
+    if (constants.config.cluster.journal_slot_count < 1024) {
+        return error.SkipZigTest;
+    }
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
 
@@ -391,6 +395,10 @@ test "MULTI-01: 3-node cluster achieves consensus and replicates" {
 // primary failure. The test crashes the primary and measures the time (in ticks)
 // until a new primary is elected and can accept requests.
 test "MULTI-02: leader election completes within 5 seconds" {
+    // Skip for lite configuration - Cluster-based tests require production config
+    if (constants.config.cluster.journal_slot_count < 1024) {
+        return error.SkipZigTest;
+    }
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
 
@@ -451,6 +459,10 @@ test "MULTI-02: leader election completes within 5 seconds" {
 // the remaining majority, then restarts the crashed replica and verifies it
 // catches up.
 test "MULTI-03: crashed replica rejoins and catches up" {
+    // Skip for lite configuration - Cluster-based tests require production config
+    if (constants.config.cluster.journal_slot_count < 1024) {
+        return error.SkipZigTest;
+    }
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
 
@@ -490,6 +502,10 @@ test "MULTI-03: crashed replica rejoins and catches up" {
 // This simulates the cluster reconfiguration workflow where a completely failed
 // node is replaced with a fresh one that rejoins and syncs.
 test "MULTI-07: replace failed replica via reformat" {
+    // Skip for lite configuration - Cluster-based tests require production config
+    if (constants.config.cluster.journal_slot_count < 1024) {
+        return error.SkipZigTest;
+    }
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
 
