@@ -534,6 +534,14 @@ pub const BackupOptions = struct {
     /// Only backup from primary replica (reduces S3 costs).
     primary_only: bool = false,
 
+    /// Only backup from follower replicas (zero-impact online backups).
+    /// When true, backups only run on follower replicas to avoid impacting
+    /// primary node performance. This is the recommended setting for production
+    /// workloads where backup I/O should not compete with client traffic.
+    /// Default: true (per CONTEXT.md requirement for zero-impact backups).
+    /// Note: Mutually exclusive with primary_only. If both are set, follower_only takes precedence.
+    follower_only: bool = true,
+
     // Scheduling
 
     /// Backup schedule specification.

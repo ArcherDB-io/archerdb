@@ -1,0 +1,171 @@
+# ArcherDB Helm Chart - Production Values
+# Use with: helm install archerdb ./deploy/helm/archerdb -f ./deploy/helm/archerdb/values-production.yaml
+#
+# This file overrides default values for production deployments.
+# Provides hardened settings for reliability, security, and performance.
+
+# -- Number of replicas (explicit for production)
+# VSR consensus requires 2f+1 replicas; 3 tolerates 1 failure
+replicaCount: 3
+
+# ArcherDB configuration
+config:
+  # -- IMPORTANT: Disable development mode for production
+  # Development mode disables safety checks and is NOT suitable for production
+  development: false
+  # -- Grid cache size for spatial index (increased for production workloads)
+  cacheGridSize: "1GiB"
+  # -- Connection timeout in milliseconds
+  connectTimeoutMs: 10000
+  # -- Request timeout in milliseconds (longer for complex queries)
+  requestTimeoutMs: 60000
+
+# Production resource configuration
+resources:
+  requests:
+    # -- CPU request (2 cores for production workloads)
+    cpu: "2000m"
+    # -- Memory request (4Gi minimum for stable production operation)
+    memory: "4Gi"
+  limits:
+    # -- CPU limit (8 cores for burst capacity)
+    cpu: "8000m"
+    # -- Memory limit (16Gi allows for large grid cache + working memory)
+    memory: "16Gi"
+
+# Production storage configuration
+storage:
+  # -- Storage size per replica (adjust based on expected data volume)
+  # Rule of thumb: 2x expected data size for compaction headroom
+  size: "100Gi"
+  # -- Storage class name (empty uses cluster default)
+  # For production, consider using a high-performance storage class:
+  # - AWS: gp3, io1
+  # - GCP: pd-ssd
+  # - Azure: premium-lrs
+  storageClassName: ""
+  # -- Access mode for PVCs
+  accessModes:
+    - ReadWriteOnce
+
+# Pod anti-affinity (required for production)
+podAntiAffinity:
+  # -- Enable pod anti-affinity to spread replicas across nodes
+  # CRITICAL: Must be enabled for fault tolerance
+  enabled: true
+  # -- Maximum weight for strong anti-affinity preference
+  weight: 100
+
+# Prometheus metrics (enabled for production observability)
+metrics:
+  # -- Enable Prometheus metrics endpoint
+  enabled: true
+  # ServiceMonitor configuration
+  serviceMonitor:
+    # -- Create ServiceMonitor for automatic Prometheus discovery
+    enabled: true
+    # -- Scrape interval
+    interval: "15s"
+    # -- Scrape timeout
+    scrapeTimeout: "10s"
+  # Alerting configuration
+  alerts:
+    # -- Enable PrometheusRule for production alerting
+    enabled: true
+    # -- P99 latency warning threshold (Phase 7 baseline: ~1ms)
+    latencyP99WarningMs: 25
+    # -- P99 latency critical threshold
+    latencyP99CriticalMs: 100
+    # -- Disk usage warning threshold percentage
+    diskWarningPercent: 80
+    # -- Disk usage critical threshold percentage
+    diskCriticalPercent: 90
+
+# Health probe configuration (adjusted for production)
+probes:
+  liveness:
+    # -- Initial delay (allow time for startup)
+    initialDelaySeconds: 120
+    # -- Period between probes
+    periodSeconds: 30
+    # -- Timeout for probe
+    timeoutSeconds: 10
+    # -- Failure threshold before restart
+    failureThreshold: 3
+  readiness:
+    # -- Initial delay for readiness
+    initialDelaySeconds: 60
+    # -- Period between probes
+    periodSeconds: 15
+    # -- Timeout for probe
+    timeoutSeconds: 10
+    # -- Failure threshold before marking not ready
+    failureThreshold: 3
+
+# -- Node selector for pod scheduling
+# Uncomment and configure based on your cluster topology:
+# nodeSelector:
+#   node-type: database
+#   tier: production
+nodeSelector: {}
+
+# -- Tolerations for pod scheduling
+# Uncomment to allow scheduling on dedicated database nodes:
+# tolerations:
+#   - key: "dedicated"
+#     operator: "Equal"
+#     value: "database"
+#     effect: "NoSchedule"
+tolerations: []
+
+# Pod security context for production
+podSecurityContext:
+  # Run as non-root user
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+
+# Container security context
+securityContext:
+  # Prevent privilege escalation
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop:
+      - ALL
+
+# Service account configuration
+serviceAccount:
+  create: true
+  annotations: {}
+
+# -- Pod annotations for production
+# Add annotations for backup tools, service mesh, etc.
+podAnnotations: {}
+
+# PodDisruptionBudget configuration
+pdb:
+  # -- Enable PodDisruptionBudget (required for production)
+  enabled: true
+  # -- Minimum available pods during voluntary disruptions
+  # For 3-node cluster: minAvailable=2 ensures quorum
+  minAvailable: 2
+
+# =============================================================================
+# BACKUP CONFIGURATION (Optional - requires external backup solution)
+# =============================================================================
+# ArcherDB supports point-in-time recovery (PITR) via its backup system.
+# Configure your backup solution to:
+# 1. Snapshot PVCs regularly (e.g., every 6 hours)
+# 2. Store snapshots in durable storage (S3, GCS, etc.)
+# 3. Test restore procedures regularly
+#
+# Example VolumeSnapshotClass for AWS:
+# apiVersion: snapshot.storage.k8s.io/v1
+# kind: VolumeSnapshotClass
+# metadata:
+#   name: archerdb-snapshots
+# driver: ebs.csi.aws.com
+# deletionPolicy: Retain
+# =============================================================================
