@@ -2,6 +2,10 @@
 
 This document provides complete API documentation for ArcherDB, covering all operations, data types, error handling, and protocol details.
 
+> **Machine-readable API spec available at [openapi.yaml](openapi.yaml)**
+>
+> For language-specific examples, see: [Python](../src/clients/python/README.md) | [Node.js](../src/clients/node/README.md) | [Go](../src/clients/go/README.md) | [Java](../src/clients/java/README.md) | [C](../src/clients/c/README.md)
+
 ## Overview
 
 ArcherDB provides a binary protocol over TCP for high-performance geospatial operations. For most use cases, we recommend using one of the official [SDKs](/#sdks) rather than implementing the protocol directly.
@@ -116,7 +120,34 @@ Insert or upsert a batch of GeoEvents atomically.
 
 For complete error codes, see [Error Codes Reference](error-codes.md).
 
-#### Examples
+#### curl Example
+
+```bash
+# Insert two events for vehicles in San Francisco
+curl -X POST http://localhost:3000/events \
+  -H "Content-Type: application/json" \
+  -d '{
+    "events": [
+      {
+        "entity_id": "550e8400-e29b-41d4-a716-446655440000",
+        "lat_nano": 37774900000,
+        "lon_nano": -122419400000,
+        "group_id": 1,
+        "ttl_seconds": 86400
+      },
+      {
+        "entity_id": "550e8400-e29b-41d4-a716-446655440001",
+        "lat_nano": 37784900000,
+        "lon_nano": -122409400000,
+        "group_id": 1,
+        "ttl_seconds": 86400
+      }
+    ],
+    "mode": "upsert"
+  }'
+```
+
+#### SDK Examples
 
 <details>
 <summary>Node.js</summary>
@@ -372,7 +403,32 @@ Find all entities within a radius of a center point.
 | 101 | `INVALID_RADIUS` | Radius outside valid range (1 to 40,000,000 meters) | No |
 | 300 | `QUERY_RESULT_TOO_LARGE` | Result set exceeds configured maximum | No |
 
-#### Examples
+#### curl Example
+
+```bash
+# Find all entities within 1km of downtown San Francisco
+curl -X POST http://localhost:3000/query/radius \
+  -H "Content-Type: application/json" \
+  -d '{
+    "center_lat": 37.7749,
+    "center_lon": -122.4194,
+    "radius_m": 1000,
+    "limit": 100
+  }'
+
+# With group filter (only fleet 1)
+curl -X POST http://localhost:3000/query/radius \
+  -H "Content-Type: application/json" \
+  -d '{
+    "center_lat": 37.7749,
+    "center_lon": -122.4194,
+    "radius_m": 5000,
+    "group_id": 1,
+    "limit": 100
+  }'
+```
+
+#### SDK Examples
 
 <details>
 <summary>Node.js</summary>
@@ -613,7 +669,24 @@ This follows the GeoJSON convention. SDKs provide validation helpers to check wi
 | 102 | `POLYGON_TOO_COMPLEX` | Too many vertices (max 1,000) or holes (max 100) | No |
 | 103 | `INVALID_POLYGON` | Self-intersecting, degenerate, or invalid hole layout | No |
 
-#### Examples
+#### curl Example
+
+```bash
+# Find all entities within a rectangular area of downtown San Francisco
+curl -X POST http://localhost:3000/query/polygon \
+  -H "Content-Type: application/json" \
+  -d '{
+    "vertices": [
+      {"lat": 37.79, "lon": -122.42},
+      {"lat": 37.79, "lon": -122.39},
+      {"lat": 37.76, "lon": -122.39},
+      {"lat": 37.76, "lon": -122.42}
+    ],
+    "limit": 1000
+  }'
+```
+
+#### SDK Examples
 
 <details>
 <summary>Node.js</summary>
@@ -804,7 +877,14 @@ Get the most recent location for a single entity.
 |------|------|-------------|-----------|
 | 101 | `INVALID_ENTITY_ID` | Entity ID is zero | No |
 
-#### Examples
+#### curl Example
+
+```bash
+# Get the latest location for an entity
+curl http://localhost:3000/entity/550e8400-e29b-41d4-a716-446655440000
+```
+
+#### SDK Examples
 
 <details>
 <summary>Node.js</summary>
@@ -908,7 +988,22 @@ Get the most recent location for multiple entities in a single request.
 
 **Note:** The response only includes events for entities that exist. Missing entities are silently omitted.
 
-#### Examples
+#### curl Example
+
+```bash
+# Get latest locations for multiple entities
+curl -X POST http://localhost:3000/entities/batch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "entity_ids": [
+      "550e8400-e29b-41d4-a716-446655440000",
+      "550e8400-e29b-41d4-a716-446655440001",
+      "550e8400-e29b-41d4-a716-446655440002"
+    ]
+  }'
+```
+
+#### SDK Examples
 
 <details>
 <summary>Node.js</summary>
@@ -1008,7 +1103,21 @@ Permanently delete all data for specified entities (GDPR compliance).
 |------|------|-------------|-----------|
 | 101 | `INVALID_ENTITY_ID` | One or more entity IDs are zero | No |
 
-#### Examples
+#### curl Example
+
+```bash
+# Delete all data for specified entities (GDPR erasure)
+curl -X DELETE http://localhost:3000/entities \
+  -H "Content-Type: application/json" \
+  -d '{
+    "entity_ids": [
+      "550e8400-e29b-41d4-a716-446655440000",
+      "550e8400-e29b-41d4-a716-446655440001"
+    ]
+  }'
+```
+
+#### SDK Examples
 
 <details>
 <summary>Node.js</summary>
@@ -1146,6 +1255,245 @@ SDKs automatically retry transient errors with exponential backoff. See [SDK Ret
 
 For the complete error reference, see [Error Codes](error-codes.md).
 
+### Error Examples
+
+This section shows example requests that trigger common errors and how to fix them.
+
+#### InvalidLatitude (100)
+
+**Request that triggers error:**
+```bash
+# Latitude 100 is out of range (valid: -90 to +90)
+curl -X POST http://localhost:3000/events \
+  -H "Content-Type: application/json" \
+  -d '{
+    "events": [{
+      "entity_id": "550e8400-e29b-41d4-a716-446655440000",
+      "lat_nano": 100000000000,
+      "lon_nano": -122419400000,
+      "group_id": 1
+    }]
+  }'
+```
+
+**Corrected request:**
+```bash
+# Use valid latitude in nanodegrees (-90e9 to +90e9)
+curl -X POST http://localhost:3000/events \
+  -H "Content-Type: application/json" \
+  -d '{
+    "events": [{
+      "entity_id": "550e8400-e29b-41d4-a716-446655440000",
+      "lat_nano": 37774900000,
+      "lon_nano": -122419400000,
+      "group_id": 1
+    }]
+  }'
+```
+
+#### InvalidLongitude (100)
+
+**Request that triggers error:**
+```bash
+# Longitude 200 is out of range (valid: -180 to +180)
+curl -X POST http://localhost:3000/events \
+  -H "Content-Type: application/json" \
+  -d '{
+    "events": [{
+      "entity_id": "550e8400-e29b-41d4-a716-446655440000",
+      "lat_nano": 37774900000,
+      "lon_nano": 200000000000,
+      "group_id": 1
+    }]
+  }'
+```
+
+**Corrected request:**
+```bash
+# Use valid longitude in nanodegrees (-180e9 to +180e9)
+curl -X POST http://localhost:3000/events \
+  -H "Content-Type: application/json" \
+  -d '{
+    "events": [{
+      "entity_id": "550e8400-e29b-41d4-a716-446655440000",
+      "lat_nano": 37774900000,
+      "lon_nano": -122419400000,
+      "group_id": 1
+    }]
+  }'
+```
+
+#### BatchTooLarge (300)
+
+**Request that triggers error:**
+```bash
+# Batch with more than 10,000 events
+# (simplified - actual error occurs with >10,000 events array)
+curl -X POST http://localhost:3000/events \
+  -H "Content-Type: application/json" \
+  -d '{
+    "events": [ /* 10,001+ events */ ]
+  }'
+```
+
+**Corrected approach:**
+```bash
+# Split into multiple batches of 10,000 or fewer
+# Batch 1
+curl -X POST http://localhost:3000/events \
+  -H "Content-Type: application/json" \
+  -d '{"events": [ /* first 10,000 events */ ]}'
+
+# Batch 2
+curl -X POST http://localhost:3000/events \
+  -H "Content-Type: application/json" \
+  -d '{"events": [ /* remaining events */ ]}'
+```
+
+#### EntityNotFound (getLatest returns null)
+
+**Request:**
+```bash
+# Query for non-existent entity
+curl http://localhost:3000/entity/00000000-0000-0000-0000-000000000001
+```
+
+**Response:**
+```json
+{
+  "event": null,
+  "found": false
+}
+```
+
+**Note:** This is not an error - the API returns `found: false` for non-existent entities. Check the `found` field to handle this case.
+
+## Common Patterns
+
+This section describes common usage patterns for the ArcherDB API.
+
+### Pagination
+
+All query operations support cursor-based pagination for handling large result sets.
+
+```bash
+# First page
+curl -X POST http://localhost:3000/query/radius \
+  -H "Content-Type: application/json" \
+  -d '{
+    "center_lat": 37.7749,
+    "center_lon": -122.4194,
+    "radius_m": 10000,
+    "limit": 1000
+  }'
+
+# Response includes cursor if has_more is true:
+# {"events": [...], "has_more": true, "cursor": "abc123..."}
+
+# Next page - use the cursor from previous response
+curl -X POST http://localhost:3000/query/radius \
+  -H "Content-Type: application/json" \
+  -d '{
+    "center_lat": 37.7749,
+    "center_lon": -122.4194,
+    "radius_m": 10000,
+    "limit": 1000,
+    "cursor": "abc123..."
+  }'
+```
+
+**Best practices:**
+- Use `limit` of 1,000 for most cases (good balance of latency vs. round trips)
+- Treat cursors as opaque - don't parse or modify them
+- Cursors may expire if underlying data changes significantly
+
+### Idempotent Upsert Pattern
+
+Use upsert mode for safe retries and idempotent operations:
+
+```bash
+# Upsert mode - safe to retry, won't create duplicates
+curl -X POST http://localhost:3000/events \
+  -H "Content-Type: application/json" \
+  -d '{
+    "events": [{
+      "entity_id": "550e8400-e29b-41d4-a716-446655440000",
+      "lat_nano": 37774900000,
+      "lon_nano": -122419400000,
+      "group_id": 1
+    }],
+    "mode": "upsert"
+  }'
+
+# Running the same request again updates rather than fails
+```
+
+**When to use insert vs. upsert:**
+- **insert**: When you want to detect duplicate submissions (fails if exists)
+- **upsert**: For idempotent operations, retry safety, last-writer-wins semantics (recommended)
+
+### Batch Insert Optimization
+
+Optimize throughput by batching events:
+
+| Batch Size | Typical Latency | Throughput | Use Case |
+|------------|-----------------|------------|----------|
+| 1-100 | 1-5 ms | Low | Real-time updates |
+| 100-1,000 | 5-20 ms | Medium | Periodic uploads |
+| 1,000-5,000 | 20-50 ms | High | Bulk imports |
+| 5,000-10,000 | 50-100 ms | Maximum | Initial data load |
+
+**Recommended approach for bulk imports:**
+
+```bash
+# Use batches of 1,000-5,000 events for optimal throughput
+# Send multiple batches in parallel from multiple clients for maximum speed
+
+# Client 1
+curl -X POST http://localhost:3000/events -d '{"events": [/* batch 1 */], "mode": "upsert"}'
+
+# Client 2 (in parallel)
+curl -X POST http://localhost:3000/events -d '{"events": [/* batch 2 */], "mode": "upsert"}'
+```
+
+### Error Retry Pattern
+
+Handle transient errors with exponential backoff:
+
+```python
+import time
+import random
+
+def insert_with_retry(client, events, max_retries=3):
+    """Insert events with exponential backoff for transient errors."""
+    for attempt in range(max_retries):
+        try:
+            return client.create_events(events, mode='upsert')
+        except ArcherDBError as e:
+            if not e.retryable:
+                raise  # Non-retryable error, fail immediately
+
+            if attempt == max_retries - 1:
+                raise  # Last attempt, give up
+
+            # Exponential backoff with jitter
+            delay = (2 ** attempt) + random.uniform(0, 1)
+            time.sleep(delay)
+
+    raise RuntimeError("Should not reach here")
+```
+
+**Retryable errors (safe to retry):**
+- `211` - Cluster unavailable (no quorum)
+- `220` - Not shard leader
+- `222` - Resharding in progress
+- Network timeouts
+
+**Non-retryable errors (fix request first):**
+- `100` - Invalid coordinates
+- `101` - Invalid entity ID
+- `300` - Batch too large
+
 ## Rate Limits and Quotas
 
 ArcherDB does not implement server-side rate limiting. Instead, limits are enforced through connection and batch constraints.
@@ -1241,4 +1589,12 @@ The SDKs implement this protocol correctly and handle edge cases like reconnecti
 - [Getting Started](getting-started.md) - Tutorial with complete examples
 - [Error Codes](error-codes.md) - Complete error reference
 - [SDK Retry Semantics](sdk-retry-semantics.md) - Retry configuration
-- [SDKs](/#sdks) - Language-specific documentation
+- [OpenAPI Specification](openapi.yaml) - Machine-readable API spec
+
+### SDK Documentation
+
+- [Python SDK](../src/clients/python/README.md) - Python client library
+- [Node.js SDK](../src/clients/node/README.md) - Node.js/TypeScript client library
+- [Go SDK](../src/clients/go/README.md) - Go client library
+- [Java SDK](../src/clients/java/README.md) - Java client library
+- [C SDK](../src/clients/c/README.md) - C client library
