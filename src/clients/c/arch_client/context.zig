@@ -163,6 +163,7 @@ pub fn ContextType(
             .upsert_events,
             .delete_entities,
             .query_uuid,
+            .query_uuid_batch,
             .query_latest,
             .query_radius,
             .query_polygon,

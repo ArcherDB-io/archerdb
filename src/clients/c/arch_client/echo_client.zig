@@ -207,6 +207,7 @@ pub const EchoOperation = enum(u8) {
     upsert_events = @intFromEnum(Operation.upsert_events),
     delete_entities = @intFromEnum(Operation.delete_entities),
     query_uuid = @intFromEnum(Operation.query_uuid),
+    query_uuid_batch = @intFromEnum(Operation.query_uuid_batch),
     query_latest = @intFromEnum(Operation.query_latest),
     query_radius = @intFromEnum(Operation.query_radius),
     query_polygon = @intFromEnum(Operation.query_polygon),
