@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-29)
 ## Current Position
 
 Phase: 10 of 10 (Documentation)
-Plan: 1 of 4 in current phase
+Plan: 2 of 4 in current phase
 Status: In progress
-Last activity: 2026-01-31 - Completed 10-01-PLAN.md (Getting Started Enhancement)
+Last activity: 2026-01-31 - Completed 10-02-PLAN.md (API Reference Documentation)
 
-Progress: [████████████████████████████████████████] 100% (40/43 plans)
+Progress: [████████████████████████████████████████] 100% (41/43 plans)
 
 ## Performance Metrics
 
@@ -36,11 +36,11 @@ Progress: [███████████████████████
 | 07-observability | 5 | 13min | 2.6min |
 | 08-operations-tooling | 6 | 37min | 6.2min |
 | 09-testing-infrastructure | 6 | 86min | 14.3min |
-| 10-documentation | 1 | 3min | 3.0min |
+| 10-documentation | 2 | 7min | 3.5min |
 
 **Recent Trend:**
-- Last 5 plans: 10-01 (3min), 09-06 (12min), 09-05 (8min), 09-04 (8min), 09-03 (8min)
-- Trend: Phase 10 started, 1/4 documentation plans complete
+- Last 5 plans: 10-02 (4min), 10-01 (3min), 09-06 (12min), 09-05 (8min), 09-04 (8min)
+- Trend: Phase 10 progressing, 2/4 documentation plans complete
 
 *Updated after each plan completion*
 
@@ -166,6 +166,11 @@ Recent decisions affecting current work:
 - 09-04: SDK tests remain informational in core check (may need server-dependent tests)
 - 09-06: All 8 TEST requirements verified PASS
 - 09-06: tidy.zig e2e-test.sh added to executable allowlist (blocked unit tests)
+- 10-01: Getting started path uses binary download (no container dependency)
+- 10-01: San Francisco coordinates (37.7749, -122.4194) standardized across all docs
+- 10-02: OpenAPI 3.0.3 format chosen for broad tooling support
+- 10-02: curl examples placed before SDK tabs for universal accessibility
+- 10-02: Error documentation includes triggering and corrected requests
 
 ### Pending Todos
 
@@ -376,8 +381,8 @@ Ongoing concerns:
 
 ## Session Continuity
 
-Last session: 2026-01-31T11:42:00Z
-Stopped at: Completed 10-01-PLAN.md (Getting Started Enhancement)
+Last session: 2026-01-31T11:43:26Z
+Stopped at: Completed 10-02-PLAN.md (API Reference Documentation)
 Resume file: None
 
-Next: 10-02-PLAN.md (API Reference) - 3 plans remaining in Phase 10
+Next: 10-03-PLAN.md (Operations Documentation) - 2 plans remaining in Phase 10
