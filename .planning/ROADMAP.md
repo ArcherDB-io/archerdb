@@ -180,14 +180,15 @@ Plans:
   3. Chaos tests (kill nodes, partition network) pass consistently
   4. Multi-node end-to-end tests cover all client operations
   5. Performance regression tests detect throughput/latency degradation
-**Plans**: TBD
+**Plans**: 6 plans in 3 waves
 
 Plans:
-- [ ] 09-01: Unit and integration test cleanup
-- [ ] 09-02: VOPR fuzzing validation
-- [ ] 09-03: Chaos and stress testing
-- [ ] 09-04: Multi-node end-to-end tests
-- [ ] 09-05: Performance regression tests
+- [ ] 09-01-PLAN.md — Unit and integration test cleanup (Wave 1)
+- [ ] 09-02-PLAN.md — VOPR multi-seed fuzzing (Wave 1)
+- [ ] 09-03-PLAN.md — Chaos and stress test runners (Wave 1)
+- [ ] 09-04-PLAN.md — Multi-node E2E and SDK tests (Wave 2)
+- [ ] 09-05-PLAN.md — Performance regression detection (Wave 2)
+- [ ] 09-06-PLAN.md — Phase verification and sign-off (Wave 3)
 
 ### Phase 10: Documentation
 **Goal**: Customers and operators can successfully use and manage ArcherDB
@@ -224,7 +225,7 @@ Note: Phases 5, 6, and 9 can partially parallelize with earlier phases after Pha
 | 6. Security Hardening | 1/1 | Complete | 2026-01-31 |
 | 7. Observability | 5/5 | Complete | 2026-01-31 |
 | 8. Operations Tooling | 6/6 | Complete | 2026-01-31 |
-| 9. Testing Infrastructure | 0/5 | Not started | - |
+| 9. Testing Infrastructure | 0/6 | Planned | - |
 | 10. Documentation | 0/4 | Not started | - |
 
 ---
@@ -235,5 +236,6 @@ Note: Phases 5, 6, and 9 can partially parallelize with earlier phases after Pha
 *Phase 4 planned: 2026-01-30*
 *Phase 7 planned: 2026-01-31*
 *Phase 8 planned: 2026-01-31*
+*Phase 9 planned: 2026-01-31*
 *Total requirements: 82 v1 requirements mapped to 10 phases*
 *Depth: comprehensive*
