@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-01-29)
 ## Current Position
 
 Phase: 8 of 10 (Operations Tooling)
-Plan: 2 of 6 in current phase
+Plan: 3 of 6 in current phase
 Status: In progress
-Last activity: 2026-01-31 - Completed 08-02-PLAN.md (Helm Kubernetes Operator Integration)
+Last activity: 2026-01-31 - Completed 08-03-PLAN.md (Backup Infrastructure Enhancement)
 
-Progress: [█████████████████████████████░] 97% (29/30 plans)
+Progress: [█████████████████████████████░] 97% (30/31 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 29
+- Total plans completed: 30
 - Average duration: 10 min
-- Total execution time: 4.7 hours
+- Total execution time: 4.8 hours
 
 **By Phase:**
 
@@ -34,10 +34,10 @@ Progress: [███████████████████████
 | 05-performance-optimization | 5 | 65min | 13.0min |
 | 06-security-hardening | 1 | 2min | 2.0min |
 | 07-observability | 5 | 13min | 2.6min |
-| 08-operations-tooling | 2 | 15min | 7.5min |
+| 08-operations-tooling | 3 | 21min | 7.0min |
 
 **Recent Trend:**
-- Last 5 plans: 08-02 (8min), 08-01 (7min), 07-05 (3min), 07-04 (4min), 07-03 (2min)
+- Last 5 plans: 08-03 (6min), 08-02 (8min), 08-01 (7min), 07-05 (3min), 07-04 (4min)
 - Trend: Phase 8 operations tooling in progress
 
 *Updated after each plan completion*
@@ -132,6 +132,10 @@ Recent decisions affecting current work:
 - 08-02: KEDA autoscaling opt-in (enabled: false) due to operator dependency
 - 08-02: Connection threshold 1000 for scale-up trigger
 - 08-02: Rolling update strategy with partition-based canary support
+- 08-03: follower_only default true for zero-impact production backups
+- 08-03: follower_only takes precedence over primary_only if both set
+- 08-03: Single-replica clusters with follower_only never backup (always primary)
+- 08-03: Incremental backup via sequence comparison (needsBackup method)
 
 ### Pending Todos
 
@@ -280,13 +284,13 @@ Ongoing concerns:
 
 ## Phase 8 Progress
 
-**IN PROGRESS** - 2 of 6 plans complete:
+**IN PROGRESS** - 3 of 6 plans complete:
 
 | Plan | Description | Status |
 |------|-------------|--------|
 | 08-01 | Helm Chart Creation | COMPLETE |
 | 08-02 | Kubernetes Operator Integration | COMPLETE |
-| 08-03 | Backup Automation | Pending |
+| 08-03 | Backup Infrastructure Enhancement | COMPLETE |
 | 08-04 | CLI Enhancement | Pending |
 | 08-05 | CI/CD Pipeline | Pending |
 | 08-06 | Phase Verification | Pending |
@@ -297,11 +301,14 @@ Ongoing concerns:
 - PodDisruptionBudget with minAvailable: 2 for quorum protection
 - KEDA ScaledObject template for read replica autoscaling (opt-in)
 - Rolling update strategy with partition-based canary support
+- Follower-only backup mode for zero-impact online backups
+- Incremental backup tracking via sequence numbers
+- Comprehensive backup operations documentation (487 lines)
 
 ## Session Continuity
 
-Last session: 2026-01-31T07:08:00Z
-Stopped at: Completed 08-02-PLAN.md (Helm Kubernetes Operator Integration)
+Last session: 2026-01-31T06:02:00Z
+Stopped at: Completed 08-03-PLAN.md (Backup Infrastructure Enhancement)
 Resume file: None
 
-Next: 08-03-PLAN.md (Backup Automation)
+Next: 08-04-PLAN.md (CLI Enhancement)
