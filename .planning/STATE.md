@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-29)
 ## Current Position
 
 Phase: 9 of 10 (Testing Infrastructure)
-Plan: 3 of 6 in current phase (09-03 complete)
+Plan: 4 of 6 in current phase (09-01, 09-02, 09-03 complete)
 Status: In progress
-Last activity: 2026-01-31 - Completed 09-03-PLAN.md (Chaos and Stress Test Runners)
+Last activity: 2026-01-31 - Completed 09-01-PLAN.md (Test Infrastructure Fix)
 
-Progress: [████████████████████████████░░] 90% (35/39 plans)
+Progress: [████████████████████████████░░] 92% (36/39 plans)
 
 ## Performance Metrics
 
@@ -37,8 +37,8 @@ Progress: [███████████████████████
 | 08-operations-tooling | 6 | 37min | 6.2min |
 
 **Recent Trend:**
-- Last 5 plans: 09-02 (8min), 08-06 (4min), 08-05 (8min), 08-04 (4min), 08-03 (6min)
-- Trend: Phase 9 in progress
+- Last 5 plans: 09-01 (54min), 09-03 (8min), 09-02 (8min), 08-06 (4min), 08-05 (8min)
+- Trend: Phase 9 in progress (test infrastructure fixes complete)
 
 *Updated after each plan completion*
 
@@ -151,6 +151,10 @@ Recent decisions affecting current work:
 - 09-03: chaos-quick non-blocking (FAULT tests have pre-existing compile issues)
 - 09-03: stress-quick required for merge (validates stability)
 - 09-03: Build check used as stress workload (exercises allocator/concurrency)
+- 09-01: Cluster-based tests skip in lite config (journal_slot_count < 1024)
+- 09-01: TestContext.init level skip eliminates redundant per-test skip logic
+- 09-01: 256KB metrics buffer matches metrics_server.zig production size
+- 09-01: follower_only=false explicit when testing primary_only mode
 
 ### Pending Todos
 
@@ -169,9 +173,8 @@ Ongoing concerns:
 - Connection pool panics with 50+ simultaneous parallel connections (separate bug)
 - Test infrastructure (Cluster tests) assumes 4KB blocks (needs update for 32KB)
 - Node.js and Java SDKs may still have stubbed cleanup_expired implementations
-- Cluster-based tests fail locally with 32KB block_size (pre-existing infrastructure issue)
+- Cluster-based tests skip in lite config (CI-only with production config)
 - Linux perf not available - flame graphs require `sudo apt install linux-tools-$(uname -r)`
-- Pre-existing quine test failure in unit_tests.zig (not related to optimizations)
 
 ## Phase 2 Completion Status
 
@@ -334,8 +337,8 @@ Ongoing concerns:
 
 ## Session Continuity
 
-Last session: 2026-01-31T07:43:00Z
-Stopped at: Completed 09-03-PLAN.md (Chaos and Stress Test Runners)
+Last session: 2026-01-31T08:25:31Z
+Stopped at: Completed 09-01-PLAN.md (Test Infrastructure Fix)
 Resume file: None
 
-Next: 09-01, 09-04, 09-05, 09-06 (remaining Phase 9 plans)
+Next: 09-04, 09-05, 09-06 (remaining Phase 9 plans)
