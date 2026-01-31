@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-01-29)
 ## Current Position
 
 Phase: 8 of 10 (Operations Tooling)
-Plan: 1 of 6 in current phase
+Plan: 2 of 6 in current phase
 Status: In progress
-Last activity: 2026-01-31 - Completed 08-01-PLAN.md (Helm Chart Creation)
+Last activity: 2026-01-31 - Completed 08-02-PLAN.md (Helm Kubernetes Operator Integration)
 
-Progress: [████████████████████████████░] 93% (28/30 plans)
+Progress: [█████████████████████████████░] 97% (29/30 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 28
+- Total plans completed: 29
 - Average duration: 10 min
-- Total execution time: 4.6 hours
+- Total execution time: 4.7 hours
 
 **By Phase:**
 
@@ -34,11 +34,11 @@ Progress: [███████████████████████
 | 05-performance-optimization | 5 | 65min | 13.0min |
 | 06-security-hardening | 1 | 2min | 2.0min |
 | 07-observability | 5 | 13min | 2.6min |
-| 08-operations-tooling | 1 | 7min | 7.0min |
+| 08-operations-tooling | 2 | 15min | 7.5min |
 
 **Recent Trend:**
-- Last 5 plans: 08-01 (7min), 07-05 (3min), 07-04 (4min), 07-03 (2min), 07-02 (2min)
-- Trend: Phase 8 started - Helm chart creation complete
+- Last 5 plans: 08-02 (8min), 08-01 (7min), 07-05 (3min), 07-04 (4min), 07-03 (2min)
+- Trend: Phase 8 operations tooling in progress
 
 *Updated after each plan completion*
 
@@ -128,6 +128,10 @@ Recent decisions affecting current work:
 - 08-01: HTTP health probes on /health/live and /health/ready (metrics port 9100)
 - 08-01: PVC resource-policy: keep to prevent data loss on helm uninstall
 - 08-01: podManagementPolicy: OrderedReady for VSR consensus startup order
+- 08-02: PDB minAvailable: 2 default for 3-node quorum protection
+- 08-02: KEDA autoscaling opt-in (enabled: false) due to operator dependency
+- 08-02: Connection threshold 1000 for scale-up trigger
+- 08-02: Rolling update strategy with partition-based canary support
 
 ### Pending Todos
 
@@ -276,26 +280,28 @@ Ongoing concerns:
 
 ## Phase 8 Progress
 
-**IN PROGRESS** - 1 of 6 plans complete:
+**IN PROGRESS** - 2 of 6 plans complete:
 
 | Plan | Description | Status |
 |------|-------------|--------|
 | 08-01 | Helm Chart Creation | COMPLETE |
-| 08-02 | Operator Scaffolding | Pending |
-| 08-03 | Backup/Restore Tooling | Pending |
+| 08-02 | Kubernetes Operator Integration | COMPLETE |
+| 08-03 | Backup Automation | Pending |
 | 08-04 | CLI Enhancement | Pending |
 | 08-05 | CI/CD Pipeline | Pending |
 | 08-06 | Phase Verification | Pending |
 
 **Key Deliverables:**
-- Helm chart in deploy/helm/archerdb/ with values.yaml (183 lines)
-- Production overlay values-production.yaml (100Gi storage, 16Gi memory)
-- PodDisruptionBudget and ServiceMonitor templates
+- Helm chart in deploy/helm/archerdb/ with values.yaml
+- ServiceMonitor and PrometheusRule for Prometheus Operator
+- PodDisruptionBudget with minAvailable: 2 for quorum protection
+- KEDA ScaledObject template for read replica autoscaling (opt-in)
+- Rolling update strategy with partition-based canary support
 
 ## Session Continuity
 
-Last session: 2026-01-31T06:00:00Z
-Stopped at: Completed 08-01-PLAN.md (Helm Chart Creation)
+Last session: 2026-01-31T07:08:00Z
+Stopped at: Completed 08-02-PLAN.md (Helm Kubernetes Operator Integration)
 Resume file: None
 
-Next: 08-02-PLAN.md (Operator Scaffolding)
+Next: 08-03-PLAN.md (Backup Automation)
