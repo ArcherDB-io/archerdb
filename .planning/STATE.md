@@ -173,6 +173,9 @@ Recent decisions affecting current work:
 - 10-02: Error documentation includes triggering and corrected requests
 - 10-05: Security docs focus on infrastructure-level controls (matching Phase 6 model)
 - 10-05: SDK index links to existing READMEs rather than duplicating content
+- 10-03: GitHub blob URLs for runbook_url annotations (works from AlertManager)
+- 10-03: ArcherDBHighLatency mapped to high-write-latency.md (no high-latency.md)
+- 10-03: Consistent runbook structure: Quick Reference, Immediate Actions, Investigation, Resolution, Prevention
 
 ### Pending Todos
 
