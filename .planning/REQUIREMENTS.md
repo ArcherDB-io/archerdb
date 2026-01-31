@@ -80,14 +80,14 @@ Existing security capabilities in codebase (encryption, TLS, audit logging) docu
 
 ### Observability (OBS)
 
-- [ ] **OBS-01**: Prometheus metrics export key performance indicators
-- [ ] **OBS-02**: Grafana dashboard shows cluster health
-- [ ] **OBS-03**: Prometheus alerts fire for critical conditions
-- [ ] **OBS-04**: Distributed tracing correlates requests across replicas
-- [ ] **OBS-05**: Structured JSON logs include trace IDs
-- [ ] **OBS-06**: Log aggregation configured (stdout/file)
-- [ ] **OBS-07**: Metrics include 99th/999th percentile latencies
-- [ ] **OBS-08**: Resource usage metrics (CPU, memory, disk) exported
+- [x] **OBS-01**: Prometheus metrics export key performance indicators
+- [x] **OBS-02**: Grafana dashboard shows cluster health
+- [x] **OBS-03**: Prometheus alerts fire for critical conditions
+- [x] **OBS-04**: Distributed tracing correlates requests across replicas
+- [x] **OBS-05**: Structured JSON logs include trace IDs
+- [x] **OBS-06**: Log aggregation configured (stdout/file)
+- [x] **OBS-07**: Metrics include 99th/999th percentile latencies
+- [x] **OBS-08**: Resource usage metrics (CPU, memory, disk) exported
 
 ### Operations (OPS)
 
@@ -215,14 +215,14 @@ Requirement-to-phase mapping.
 | SEC-08 | Phase 6 | SKIPPED (local-only) |
 | SEC-09 | Phase 6 | SKIPPED (local-only) |
 | SEC-10 | Phase 6 | SKIPPED (local-only) |
-| OBS-01 | Phase 7 | Pending |
-| OBS-02 | Phase 7 | Pending |
-| OBS-03 | Phase 7 | Pending |
-| OBS-04 | Phase 7 | Pending |
-| OBS-05 | Phase 7 | Pending |
-| OBS-06 | Phase 7 | Pending |
-| OBS-07 | Phase 7 | Pending |
-| OBS-08 | Phase 7 | Pending |
+| OBS-01 | Phase 7 | Complete |
+| OBS-02 | Phase 7 | Complete |
+| OBS-03 | Phase 7 | Complete |
+| OBS-04 | Phase 7 | Complete |
+| OBS-05 | Phase 7 | Complete |
+| OBS-06 | Phase 7 | Complete |
+| OBS-07 | Phase 7 | Complete |
+| OBS-08 | Phase 7 | Complete |
 | OPS-01 | Phase 8 | Pending |
 | OPS-02 | Phase 8 | Pending |
 | OPS-03 | Phase 8 | Pending |
@@ -257,4 +257,4 @@ Requirement-to-phase mapping.
 
 ---
 *Requirements defined: 2026-01-29*
-*Last updated: 2026-01-31 - Phase 6 (SEC) requirements marked SKIPPED (local-only)*
+*Last updated: 2026-01-31 - Phase 7 (OBS) requirements marked Complete*
