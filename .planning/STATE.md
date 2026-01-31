@@ -112,6 +112,9 @@ Recent decisions affecting current work:
 - 07-02: P99 > 25ms warning, P99 > 100ms critical thresholds (25x/100x baseline)
 - 07-02: predict_linear for disk fill prediction (24h warning, 6h critical)
 - 07-02: P99.9 at 250ms for tail latency monitoring per OBS-07
+- 07-01: 10-bucket histogram (1ms, 5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 5s)
+- 07-01: 12-char short trace ID for verbal incident communication
+- 07-01: 11 new internal metrics (compaction, WAL, replication, cache)
 - 07-03: Combined Task 1+2 into single commit (both modify same file)
 - 07-03: Status uses min() for cluster health (worst node determines display)
 - 07-03: Dual Y-axis: bars for throughput, lines for latency (visual distinction)
