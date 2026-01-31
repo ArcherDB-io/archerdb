@@ -1,0 +1,113 @@
+{{/*
+SPDX-License-Identifier: BSL-1.1
+Copyright (c) 2024-2025 ArcherDB. All rights reserved.
+
+Disaster Recovery Test for Helm
+Runs backup verification and cluster health checks
+*/}}
+{{- if .Values.tests.dr.enabled }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "archerdb.fullname" . }}-test-dr"
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "archerdb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    "helm.sh/hook-weight": "10"
+spec:
+  restartPolicy: Never
+  serviceAccountName: {{ include "archerdb.serviceAccountName" . }}
+  containers:
+    - name: dr-test
+      image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+      imagePullPolicy: {{ .Values.image.pullPolicy }}
+      command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          echo "=== ArcherDB DR Test ==="
+          echo ""
+
+          # Test 1: Check all replicas are healthy
+          echo "[Test 1] Checking replica health..."
+          HEALTHY=0
+          TOTAL={{ .Values.replicaCount }}
+
+          for i in $(seq 0 $((TOTAL - 1))); do
+            POD="{{ include "archerdb.fullname" . }}-$i"
+            HOST="$POD.{{ include "archerdb.fullname" . }}-headless.{{ .Release.Namespace }}.svc.cluster.local"
+
+            if curl -sf "http://$HOST:{{ .Values.ports.metrics }}/health/ready" > /dev/null 2>&1; then
+              echo "  $POD: healthy"
+              HEALTHY=$((HEALTHY + 1))
+            else
+              echo "  $POD: NOT HEALTHY"
+            fi
+          done
+
+          if [ "$HEALTHY" -lt "$TOTAL" ]; then
+            echo "[FAIL] Only $HEALTHY/$TOTAL replicas healthy"
+            exit 1
+          fi
+          echo "[PASS] All $TOTAL replicas healthy"
+          echo ""
+
+          # Test 2: Check quorum is maintained (at least majority)
+          echo "[Test 2] Checking quorum..."
+          QUORUM=$((TOTAL / 2 + 1))
+          if [ "$HEALTHY" -ge "$QUORUM" ]; then
+            echo "[PASS] Quorum maintained ($HEALTHY >= $QUORUM)"
+          else
+            echo "[FAIL] Quorum not maintained ($HEALTHY < $QUORUM)"
+            exit 1
+          fi
+          echo ""
+
+          # Test 3: Check metrics endpoint
+          echo "[Test 3] Checking metrics endpoint..."
+          PRIMARY_HOST="{{ include "archerdb.fullname" . }}-0.{{ include "archerdb.fullname" . }}-headless.{{ .Release.Namespace }}.svc.cluster.local"
+          if curl -sf "http://$PRIMARY_HOST:{{ .Values.ports.metrics }}/metrics" | grep -q "archerdb_"; then
+            echo "[PASS] Metrics endpoint responding"
+          else
+            echo "[FAIL] Metrics endpoint not responding or invalid"
+            exit 1
+          fi
+          echo ""
+
+          {{- if .Values.tests.dr.backupBucket }}
+          # Test 4: Backup verification (optional)
+          echo "[Test 4] Verifying backup..."
+          if ./archerdb backup verify \
+            --bucket="{{ .Values.tests.dr.backupBucket }}" \
+            --cluster-id="{{ .Values.config.clusterId }}"; then
+            echo "[PASS] Backup verification succeeded"
+          else
+            echo "[WARN] Backup verification failed - check backup configuration"
+            # Don't fail the test for backup issues, just warn
+          fi
+          echo ""
+          {{- end }}
+
+          echo "=== DR Test Complete ==="
+          echo "All critical tests passed."
+      resources:
+        limits:
+          cpu: "100m"
+          memory: "128Mi"
+        requests:
+          cpu: "50m"
+          memory: "64Mi"
+  {{- with .Values.nodeSelector }}
+  nodeSelector:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.tolerations }}
+  tolerations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

@@ -181,3 +181,13 @@ autoscaling:
   prometheusAddress: "http://prometheus:9090"
   # -- Connection threshold that triggers scale-up (total active connections)
   connectionThreshold: 1000
+
+# Helm test configuration
+tests:
+  # Disaster recovery test (runs via `helm test`)
+  dr:
+    # -- Enable DR test (opt-in)
+    enabled: false
+    # -- S3 bucket for backup verification (optional)
+    # If set, the test will also verify backup integrity
+    backupBucket: ""
