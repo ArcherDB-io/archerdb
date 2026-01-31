@@ -2,8 +2,32 @@
 
 This guide covers common issues encountered when operating ArcherDB and provides step-by-step resolution procedures.
 
+## Quick Diagnosis
+
+Use this table to quickly identify and resolve common issues:
+
+| Symptom | Likely Cause | Quick Fix |
+|---------|--------------|-----------|
+| 503 on /health/ready | Not yet synced after start | Wait 30s for replica to sync, check logs for progress |
+| 503 persists after 60s | Failed to join cluster | Check network connectivity between replicas |
+| High P99 latency (>100ms) | Compaction backlog | Increase `compaction_threads` to 3, check disk I/O |
+| Connection refused | Server not running or wrong port | Verify `systemctl status archerdb`, check port binding |
+| "cluster ID mismatch" | Client configured for wrong cluster | Update client cluster_id to match server |
+| "max clients reached" | Connection limit hit | Check `clients_max` config (default 64), close idle connections |
+| TTL cleanup removes 0 | TTL not configured on events | Events must have `ttl_seconds > 0` when inserted |
+| Replica lag growing | Follower disk too slow | Check `iostat` on lagging replica, upgrade to NVMe |
+| Memory usage growing | Entity count exceeds plan | Check entity count vs capacity, scale or archive data |
+| View changes frequent | Network instability | Check packet loss between replicas with `ping -c 100` |
+| IndexDegraded alert | RAM index at capacity | Increase `ram_index_capacity` or scale horizontally |
+| Disk fill prediction | Write rate exceeds capacity | Enable TTL, archive old data, or expand storage |
+
+**For alert-specific runbooks, see:**
+- [Replica Down Runbook](runbooks/replica-down.md) - Critical replica failure
+- [Alert Rules Reference](../deploy/prometheus/rules.yaml) - All alert definitions
+
 ## Table of Contents
 
+- [Quick Diagnosis](#quick-diagnosis)
 - [How to Use This Guide](#how-to-use-this-guide)
 - [Connection Issues](#connection-issues)
 - [Performance Issues](#performance-issues)
@@ -852,6 +876,71 @@ curl -s localhost:9090/metrics | grep archerdb_replica_role
 curl -s localhost:9090/metrics | grep archerdb_view_number
 ```
 
+## Getting Help
+
+When the troubleshooting steps above don't resolve your issue, follow these steps to get help.
+
+### Collecting Diagnostic Information
+
+Before reaching out, collect the following:
+
+```bash
+# 1. System information
+uname -a
+cat /etc/os-release
+
+# 2. ArcherDB version
+./archerdb --version
+
+# 3. Configuration (redact sensitive values)
+cat /etc/archerdb/config.yaml | grep -v password | grep -v key
+
+# 4. Recent logs (last 1000 lines)
+journalctl -u archerdb --since "30 minutes ago" | tail -1000 > archerdb-logs.txt
+
+# 5. Metrics snapshot
+curl -s localhost:9090/metrics > archerdb-metrics.txt
+
+# 6. Health check details
+curl -s localhost:9090/health/detailed | jq . > archerdb-health.json
+
+# 7. Cluster state (if multi-node)
+for i in 0 1 2; do
+  echo "=== Node $i ===" >> cluster-state.txt
+  curl -s node$i:9090/metrics | grep -E "archerdb_(view|replica|replication)" >> cluster-state.txt
+done
+```
+
+### What to Include in Bug Reports
+
+When opening a GitHub issue, include:
+
+1. **Environment**: OS, ArcherDB version, hardware specs (CPU, RAM, disk type)
+2. **Configuration**: Cluster size, relevant config settings
+3. **Reproduction steps**: Exact sequence to reproduce the issue
+4. **Expected behavior**: What should happen
+5. **Actual behavior**: What actually happens
+6. **Logs**: Relevant log snippets (redact sensitive data)
+7. **Metrics**: Relevant metric values at time of issue
+
+### Support Channels
+
+| Channel | Best For | Response Time |
+|---------|----------|---------------|
+| [GitHub Issues](https://github.com/ArcherDB-io/archerdb/issues) | Bug reports, feature requests | Community: 1-7 days |
+| [GitHub Discussions](https://github.com/ArcherDB-io/archerdb/discussions) | Questions, best practices | Community: 1-3 days |
+| Documentation | Self-service troubleshooting | Immediate |
+
+### Emergency Procedures
+
+For production emergencies:
+
+1. **Data loss suspected**: Stop writes, take backup, preserve logs
+2. **Cluster unavailable**: Check quorum (need 2/3 or 3/5 replicas)
+3. **Security incident**: Isolate affected nodes, preserve evidence, rotate credentials
+
+See [Disaster Recovery](disaster-recovery.md) for emergency procedures.
+
 ## Related Documentation
 
 - [Operations Runbook](operations-runbook.md) - Operational procedures
@@ -859,3 +948,4 @@ curl -s localhost:9090/metrics | grep archerdb_view_number
 - [Error Codes Reference](error-codes.md) - Complete error code list
 - [Capacity Planning](capacity-planning.md) - Sizing guidance
 - [LSM Tuning](lsm-tuning.md) - Storage performance tuning
+- [Performance Tuning](performance-tuning.md) - Optimization guide
