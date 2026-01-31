@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-29)
 ## Current Position
 
 Phase: 9 of 10 (Testing Infrastructure)
-Plan: 5 of 6 in current phase (09-01, 09-02, 09-03, 09-05 complete)
+Plan: 5 of 6 in current phase (09-01, 09-02, 09-03, 09-04, 09-05 complete)
 Status: In progress
-Last activity: 2026-01-31 - Completed 09-05-PLAN.md (Performance Regression Detection)
+Last activity: 2026-01-31 - Completed 09-04-PLAN.md (E2E and SDK Tests)
 
-Progress: [█████████████████████████████░] 95% (37/39 plans)
+Progress: [██████████████████████████████] 97% (38/39 plans)
 
 ## Performance Metrics
 
@@ -158,6 +158,10 @@ Recent decisions affecting current work:
 - 09-05: 5% throughput threshold per observed 5% CV in benchmarks
 - 09-05: 25% latency P99 threshold for tail variance tolerance
 - 09-05: Regression blocks merge (no continue-on-error)
+- 09-04: E2E uses 3-node cluster on ports 3100-3102 to avoid conflict
+- 09-04: E2E tests HTTP API endpoints (health, metrics) since native client requires SDK
+- 09-04: SDK jobs now need 'test' job (binary build) instead of 'smoke'
+- 09-04: SDK tests remain informational in core check (may need server-dependent tests)
 
 ### Pending Todos
 
@@ -340,8 +344,8 @@ Ongoing concerns:
 
 ## Session Continuity
 
-Last session: 2026-01-31T08:35:00Z
-Stopped at: Completed 09-05-PLAN.md (Performance Regression Detection)
+Last session: 2026-01-31T08:33:02Z
+Stopped at: Completed 09-04-PLAN.md (E2E and SDK Tests)
 Resume file: None
 
-Next: 09-04, 09-06 (remaining Phase 9 plans)
+Next: 09-06 (final Phase 9 plan - verification)
