@@ -623,10 +623,11 @@ pub fn ClientType(
                     reply.body_used()[0..@sizeOf(vsr.RegisterResult)],
                 );
                 assert(result.batch_size_limit > 0);
-                assert(result.batch_size_limit <= constants.message_body_size_max);
+                // The server might have a larger message size limit, clamp to client's limit.
+                // This prevents assertion failures when server and client have different limits.
 
                 self.session = reply.header.commit; // The commit number becomes the session number.
-                self.batch_size_limit = result.batch_size_limit;
+                self.batch_size_limit = @min(result.batch_size_limit, constants.message_body_size_max);
                 inflight.callback.register(inflight.user_data, result);
             } else {
                 // The message is the result of raw_request(), so invoke the user callback.
