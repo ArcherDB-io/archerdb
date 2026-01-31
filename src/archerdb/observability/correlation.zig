@@ -340,6 +340,17 @@ pub const CorrelationContext = struct {
         return result;
     }
 
+    /// Returns first 12 characters of trace ID hex for easier communication.
+    /// Full trace ID is preserved internally for W3C compatibility.
+    /// The short ID is sufficient for verbal communication during incidents
+    /// while keeping logs greppable.
+    pub fn shortTraceId(self: *const CorrelationContext) [12]u8 {
+        var result: [12]u8 = undefined;
+        const full_hex = self.traceIdHex();
+        @memcpy(&result, full_hex[0..12]);
+        return result;
+    }
+
     /// Check if sampled flag is set.
     pub fn isSampled(self: *const CorrelationContext) bool {
         return (self.flags & TraceFlags.sampled) != 0;
@@ -583,6 +594,16 @@ test "traceIdHex and spanIdHex" {
 
     const span_hex = ctx.spanIdHex();
     try std.testing.expectEqualStrings("b7ad6b7169203331", &span_hex);
+}
+
+test "shortTraceId returns first 12 chars" {
+    const header = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+    const ctx = CorrelationContext.fromTraceparent(header).?;
+
+    const short_id = ctx.shortTraceId();
+    // Should be first 12 characters of "0af7651916cd43dd8448eb211c80319c"
+    try std.testing.expectEqualStrings("0af7651916cd", &short_id);
+    try std.testing.expectEqual(@as(usize, 12), short_id.len);
 }
 
 test "thread-local context" {

@@ -13,12 +13,17 @@
 //!   "level": "info",          // err, warn, info, debug
 //!   "scope": "replica",       // Log scope
 //!   "msg": "the message",     // Log message
-//!   "trace_id": "abc123...",  // Optional, from correlation context
-//!   "span_id": "def456...",   // Optional
+//!   "trace_id": "0af7651916cd", // Optional, 12-char short ID for verbal communication
+//!   "span_id": "b7ad6b71...",   // Optional, full 16-char span ID
 //!   "request_id": "...",      // Optional (as hex string)
 //!   "replica_id": 0           // Optional
 //! }
 //! ```
+//!
+//! Note: trace_id uses a 12-character short form for easier copy/paste during
+//! incident response. The full 32-character W3C trace ID is available via the
+//! correlation context (CorrelationContext.traceIdHex()) when needed for
+//! external tracing system integration.
 //!
 //! Redaction:
 //! At info/warn levels, sensitive data (coordinates, content) is automatically
@@ -103,11 +108,13 @@ pub const JsonLogHandler = struct {
         writer.writeByte('"') catch return;
 
         // Add correlation context if available
+        // trace_id: 12-char short ID for verbal communication during incidents
+        // Full trace ID is available via correlation context if needed for W3C compatibility
         if (correlation.getCurrent()) |ctx| {
-            const trace_hex = ctx.traceIdHex();
+            const short_trace = ctx.shortTraceId();
             const span_hex = ctx.spanIdHex();
             writer.print(",\"trace_id\":\"{s}\",\"span_id\":\"{s}\"", .{
-                trace_hex,
+                short_trace,
                 span_hex,
             }) catch return;
 
