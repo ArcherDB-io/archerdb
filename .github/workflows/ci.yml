@@ -378,9 +378,44 @@ jobs:
         run: ./.github/ci/run-vopr.sh ${{ matrix.state_machine }} 300 5
         continue-on-error: true  # Non-blocking until validated stable
 
+  # Chaos tests (quick mode) - validates fault tolerance
+  chaos-quick:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    name: Chaos Tests (Quick)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Zig
+        run: ./zig/download.sh
+
+      - name: Run chaos tests
+        run: ./scripts/chaos-test.sh --quick
+        continue-on-error: true  # Non-blocking until FAULT tests compile
+
+  # Stress tests (5 min) - validates sustained load stability
+  stress-quick:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    name: Stress Tests (5m)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Zig
+        run: ./zig/download.sh
+
+      - name: Run stress test
+        run: ./scripts/stress-test.sh 5m
+
   # Core status check - aggregates required checks
   core:
-    needs: [smoke, test, test-alpine, reproducible-build, integration-tests, test-sdk-python, test-sdk-nodejs, test-sdk-java, test-sdk-go]
+    needs: [smoke, test, test-alpine, reproducible-build, integration-tests, test-sdk-python, test-sdk-nodejs, test-sdk-java, test-sdk-go, stress-quick]
     runs-on: ubuntu-latest
     if: always()
     steps:
