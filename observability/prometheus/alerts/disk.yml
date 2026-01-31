@@ -1,0 +1,72 @@
+# ArcherDB Disk Space Alerting Rules
+# Per CONTEXT.md: Both percentage-based (80%/90%) AND time-based projection (<24h to full)
+
+groups:
+  - name: archerdb-disk-space
+    rules:
+      # Warning: 80% disk usage
+      - alert: ArcherDBDiskUsage80Percent
+        expr: (1 - (node_filesystem_avail_bytes{mountpoint=~"/data|/var/lib/archerdb"} / node_filesystem_size_bytes{mountpoint=~"/data|/var/lib/archerdb"})) > 0.80
+        for: 5m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "Disk usage above 80% on {{ $labels.instance }}"
+          description: "Data disk is {{ $value | humanizePercentage }} full. Plan capacity expansion."
+          runbook_url: "https://docs.archerdb.io/runbooks/disk-capacity"
+          remediation: "Monitor growth rate. Consider cleanup, compaction, or storage expansion."
+
+      # Critical: 90% disk usage
+      - alert: ArcherDBDiskUsage90Percent
+        expr: (1 - (node_filesystem_avail_bytes{mountpoint=~"/data|/var/lib/archerdb"} / node_filesystem_size_bytes{mountpoint=~"/data|/var/lib/archerdb"})) > 0.90
+        for: 5m
+        labels:
+          severity: critical
+          team: database
+        annotations:
+          summary: "CRITICAL: Disk usage above 90% on {{ $labels.instance }}"
+          description: "Data disk is {{ $value | humanizePercentage }} full. Database may become read-only soon."
+          runbook_url: "https://docs.archerdb.io/runbooks/disk-capacity"
+          remediation: "URGENT: Free disk space immediately. Delete old backups, trigger compaction, or expand storage."
+
+      # Warning: Disk will fill in <24 hours based on growth rate
+      - alert: ArcherDBDiskFillPrediction24h
+        expr: predict_linear(node_filesystem_avail_bytes{mountpoint=~"/data|/var/lib/archerdb"}[6h], 24 * 3600) < 0
+        for: 30m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "Disk predicted to fill within 24 hours on {{ $labels.instance }}"
+          description: "Based on current growth rate, disk will be full in less than 24 hours. Current available: {{ $value | humanize1024 }}B."
+          runbook_url: "https://docs.archerdb.io/runbooks/disk-capacity"
+          remediation: "Investigate sudden disk growth. Check for backup retention, log accumulation, or write spike."
+
+      # Critical: Disk will fill in <6 hours based on growth rate
+      - alert: ArcherDBDiskFillPrediction6h
+        expr: predict_linear(node_filesystem_avail_bytes{mountpoint=~"/data|/var/lib/archerdb"}[2h], 6 * 3600) < 0
+        for: 10m
+        labels:
+          severity: critical
+          team: database
+        annotations:
+          summary: "CRITICAL: Disk predicted to fill within 6 hours on {{ $labels.instance }}"
+          description: "Disk is filling rapidly. Estimated time to full: less than 6 hours."
+          runbook_url: "https://docs.archerdb.io/runbooks/disk-capacity"
+          remediation: "IMMEDIATE: Stop non-essential writes. Identify and stop source of disk growth. Prepare emergency expansion."
+
+  - name: archerdb-disk-io
+    rules:
+      # Warning: High disk I/O wait (indicates disk bottleneck)
+      - alert: ArcherDBDiskIOHighLatency
+        expr: rate(node_disk_io_time_seconds_total{device=~"sd.*|nvme.*"}[5m]) > 0.9
+        for: 10m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "High disk I/O utilization on {{ $labels.instance }}"
+          description: "Disk I/O utilization is {{ $value | humanizePercentage }}. Disk may be bottleneck."
+          runbook_url: "https://docs.archerdb.io/runbooks/disk-io"
+          remediation: "Check for compaction storms, backup operations, or external disk pressure. Consider faster storage."
