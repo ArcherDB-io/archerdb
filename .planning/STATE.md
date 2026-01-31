@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-01-29)
 
 **Core value:** Customers can deploy mission-critical geospatial workloads with confidence that their data is safe, queries are fast, and the service stays available during failures.
-**Current focus:** Phase 7: Observability - COMPLETE
+**Current focus:** Phase 8: Operations Tooling - IN PROGRESS
 
 ## Current Position
 
-Phase: 7 of 10 (Observability) - COMPLETE
-Plan: 5 of 5 in current phase (complete)
-Status: Phase 7 complete
-Last activity: 2026-01-31 - Completed 07-05-PLAN.md (Phase Verification)
+Phase: 8 of 10 (Operations Tooling)
+Plan: 1 of 6 in current phase
+Status: In progress
+Last activity: 2026-01-31 - Completed 08-01-PLAN.md (Helm Chart Creation)
 
-Progress: [████████████████████████████] 90% (27/30 plans)
+Progress: [████████████████████████████░] 93% (28/30 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 27
+- Total plans completed: 28
 - Average duration: 10 min
-- Total execution time: 4.5 hours
+- Total execution time: 4.6 hours
 
 **By Phase:**
 
@@ -34,10 +34,11 @@ Progress: [███████████████████████
 | 05-performance-optimization | 5 | 65min | 13.0min |
 | 06-security-hardening | 1 | 2min | 2.0min |
 | 07-observability | 5 | 13min | 2.6min |
+| 08-operations-tooling | 1 | 7min | 7.0min |
 
 **Recent Trend:**
-- Last 5 plans: 07-05 (3min), 07-04 (4min), 07-03 (2min), 07-02 (2min), 07-01 (2min)
-- Trend: Phase 7 complete - all observability requirements verified
+- Last 5 plans: 08-01 (7min), 07-05 (3min), 07-04 (4min), 07-03 (2min), 07-02 (2min)
+- Trend: Phase 8 started - Helm chart creation complete
 
 *Updated after each plan completion*
 
@@ -123,6 +124,10 @@ Recent decisions affecting current work:
 - 07-04: Unknown client type operations not tracked to prevent unbounded metric growth
 - 07-05: All 8 OBS requirements verified PASS
 - 07-05: OBS-04 cross-replica trace propagation documented with W3C/B3 header evidence
+- 08-01: PodDisruptionBudget enabled by default (minAvailable=2 for 3-node quorum)
+- 08-01: HTTP health probes on /health/live and /health/ready (metrics port 9100)
+- 08-01: PVC resource-policy: keep to prevent data loss on helm uninstall
+- 08-01: podManagementPolicy: OrderedReady for VSR consensus startup order
 
 ### Pending Todos
 
@@ -269,10 +274,28 @@ Ongoing concerns:
 
 **Verification Report:** `.planning/phases/07-observability/07-VERIFICATION.md`
 
+## Phase 8 Progress
+
+**IN PROGRESS** - 1 of 6 plans complete:
+
+| Plan | Description | Status |
+|------|-------------|--------|
+| 08-01 | Helm Chart Creation | COMPLETE |
+| 08-02 | Operator Scaffolding | Pending |
+| 08-03 | Backup/Restore Tooling | Pending |
+| 08-04 | CLI Enhancement | Pending |
+| 08-05 | CI/CD Pipeline | Pending |
+| 08-06 | Phase Verification | Pending |
+
+**Key Deliverables:**
+- Helm chart in deploy/helm/archerdb/ with values.yaml (183 lines)
+- Production overlay values-production.yaml (100Gi storage, 16Gi memory)
+- PodDisruptionBudget and ServiceMonitor templates
+
 ## Session Continuity
 
-Last session: 2026-01-31T04:24:00Z
-Stopped at: Completed 07-05-PLAN.md (Phase Verification)
+Last session: 2026-01-31T06:00:00Z
+Stopped at: Completed 08-01-PLAN.md (Helm Chart Creation)
 Resume file: None
 
-Next: Phase 8 (Operations Tooling)
+Next: 08-02-PLAN.md (Operator Scaffolding)
