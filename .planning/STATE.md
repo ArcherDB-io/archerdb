@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-29)
 ## Current Position
 
 Phase: 9 of 10 (Testing Infrastructure)
-Plan: 1 of 6 in current phase (09-02 complete)
+Plan: 3 of 6 in current phase (09-03 complete)
 Status: In progress
-Last activity: 2026-01-31 - Completed 09-02-PLAN.md (VOPR Multi-Seed Fuzzing)
+Last activity: 2026-01-31 - Completed 09-03-PLAN.md (Chaos and Stress Test Runners)
 
-Progress: [████████████████████████████░░] 87% (34/39 plans)
+Progress: [████████████████████████████░░] 90% (35/39 plans)
 
 ## Performance Metrics
 
@@ -148,6 +148,9 @@ Recent decisions affecting current work:
 - 09-02: Base seed 42 with sequential increment (42, 43, ..., 51) for deterministic VOPR
 - 09-02: PR VOPR non-blocking initially (continue-on-error) until validated stable
 - 09-02: Upload logs always (not just failures) for pattern analysis
+- 09-03: chaos-quick non-blocking (FAULT tests have pre-existing compile issues)
+- 09-03: stress-quick required for merge (validates stability)
+- 09-03: Build check used as stress workload (exercises allocator/concurrency)
 
 ### Pending Todos
 
@@ -331,8 +334,8 @@ Ongoing concerns:
 
 ## Session Continuity
 
-Last session: 2026-01-31T07:34:00Z
-Stopped at: Completed 09-02-PLAN.md (VOPR Multi-Seed Fuzzing)
+Last session: 2026-01-31T07:43:00Z
+Stopped at: Completed 09-03-PLAN.md (Chaos and Stress Test Runners)
 Resume file: None
 
-Next: 09-01, 09-03, 09-04, 09-05, 09-06 (remaining Phase 9 plans)
+Next: 09-01, 09-04, 09-05, 09-06 (remaining Phase 9 plans)
