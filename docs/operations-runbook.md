@@ -7,12 +7,14 @@ This runbook provides operational procedures for running ArcherDB in production.
 - [Cluster Management](#cluster-management)
 - [Monitoring](#monitoring)
 - [Alerting](#alerting)
+- [Alert Response Guides](#alert-response-guides)
 - [Scaling](#scaling)
 - [Kubernetes Deployment](#kubernetes-deployment)
 - [Upgrade Procedures](#upgrade-procedures)
 - [Maintenance](#maintenance)
 - [Troubleshooting](#troubleshooting)
 - [Emergency Procedures](#emergency-procedures)
+- [Related Documentation](#related-documentation)
 
 ## Cluster Management
 
@@ -231,6 +233,51 @@ Import the recommended dashboards:
   annotations:
     summary: "Follower replication lag > 1s"
 ```
+
+## Alert Response Guides
+
+When Prometheus alerts fire, use these runbooks for investigation and resolution. Each runbook provides:
+- Quick reference (severity, metric, threshold)
+- Immediate action checklists
+- Investigation steps with diagnostic commands
+- Resolution procedures for common causes
+- Prevention guidelines
+
+### Alert to Runbook Mapping
+
+| Alert | Severity | Runbook |
+|-------|----------|---------|
+| ArcherDBReplicaDown | critical | [Replica Down](runbooks/replica-down.md) |
+| ArcherDBViewChangeFrequent | warning | [View Changes](runbooks/view-changes.md) |
+| ArcherDBIndexDegraded | critical | [Index Degraded](runbooks/index-degraded.md) |
+| ArcherDBReadLatencyP99Warning | warning | [High Read Latency](runbooks/high-read-latency.md) |
+| ArcherDBReadLatencyP99Critical | critical | [High Read Latency](runbooks/high-read-latency.md) |
+| ArcherDBWriteLatencyP99Warning | warning | [High Write Latency](runbooks/high-write-latency.md) |
+| ArcherDBWriteLatencyP99Critical | critical | [High Write Latency](runbooks/high-write-latency.md) |
+| ArcherDBHighLatency | warning | [High Write Latency](runbooks/high-write-latency.md) |
+| ArcherDBDiskSpaceWarning | warning | [Disk Capacity](runbooks/disk-capacity.md) |
+| ArcherDBDiskSpaceCritical | critical | [Disk Capacity](runbooks/disk-capacity.md) |
+| ArcherDBCompactionBacklog | warning | [Compaction Backlog](runbooks/compaction-backlog.md) |
+| ArcherDBDiskFillPrediction24h | warning | [Disk Capacity](runbooks/disk-capacity.md) |
+| ArcherDBDiskFillPrediction6h | critical | [Disk Capacity](runbooks/disk-capacity.md) |
+
+### Alert Severity Response Times
+
+| Severity | Response Time | Example Alerts |
+|----------|---------------|----------------|
+| critical | 15 minutes | ReplicaDown, DiskSpaceCritical, IndexDegraded |
+| warning | 1 hour | ViewChangeFrequent, LatencyWarning, CompactionBacklog |
+
+### Quick Triage
+
+When an alert fires:
+
+1. **Check alert severity** - Critical alerts need immediate attention
+2. **Open the runbook** - Click the runbook_url in the alert annotation
+3. **Follow Immediate Actions** - Complete the checklist in order
+4. **Investigate** - Use diagnostic commands to identify root cause
+5. **Resolve** - Follow resolution steps for the identified cause
+6. **Document** - Record what happened and any changes made
 
 ## Scaling
 
@@ -823,3 +870,33 @@ pkill -9 archerdb
 # Export metrics snapshot
 curl -s localhost:9090/metrics > metrics-$(date +%Y%m%d).prom
 ```
+
+## Related Documentation
+
+### Core Operations
+
+| Document | Description |
+|----------|-------------|
+| [Troubleshooting Guide](troubleshooting.md) | Comprehensive diagnosis and resolution procedures |
+| [Capacity Planning](capacity-planning.md) | Sizing guidelines for hardware and configuration |
+| [LSM Tuning](lsm-tuning.md) | Storage engine performance optimization |
+
+### Backup and Recovery
+
+| Document | Description |
+|----------|-------------|
+| [Backup Operations](backup-operations.md) | Online backup procedures, verification, retention |
+| [Disaster Recovery](disaster-recovery.md) | DR planning, RTO/RPO targets, recovery procedures |
+| [Upgrade Guide](upgrade-guide.md) | Rolling upgrade procedures, rollback, health checks |
+
+### Alert Runbooks
+
+| Runbook | Alerts Covered |
+|---------|----------------|
+| [Replica Down](runbooks/replica-down.md) | ArcherDBReplicaDown |
+| [View Changes](runbooks/view-changes.md) | ArcherDBViewChangeFrequent |
+| [Index Degraded](runbooks/index-degraded.md) | ArcherDBIndexDegraded |
+| [High Read Latency](runbooks/high-read-latency.md) | ArcherDBReadLatencyP99Warning/Critical |
+| [High Write Latency](runbooks/high-write-latency.md) | ArcherDBWriteLatencyP99Warning/Critical, ArcherDBHighLatency |
+| [Disk Capacity](runbooks/disk-capacity.md) | ArcherDBDiskSpaceWarning/Critical, ArcherDBDiskFillPrediction |
+| [Compaction Backlog](runbooks/compaction-backlog.md) | ArcherDBCompactionBacklog |
