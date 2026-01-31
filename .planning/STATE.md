@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-01-29)
 ## Current Position
 
 Phase: 7 of 10 (Observability)
-Plan: 3 of 5 in current phase
+Plan: 4 of 5 in current phase
 Status: In progress
-Last activity: 2026-01-31 - Completed 07-03-PLAN.md (Unified Overview Dashboard)
+Last activity: 2026-01-31 - Completed 07-04-PLAN.md (Runtime Control and Client Metrics)
 
-Progress: [██████████████████████████] 83% (25/30 plans)
+Progress: [███████████████████████████] 87% (26/30 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 25
+- Total plans completed: 26
 - Average duration: 10 min
-- Total execution time: 4.38 hours
+- Total execution time: 4.45 hours
 
 **By Phase:**
 
@@ -33,11 +33,11 @@ Progress: [███████████████████████
 | 04-fault-tolerance | 5 | 24min | 4.8min |
 | 05-performance-optimization | 5 | 65min | 13.0min |
 | 06-security-hardening | 1 | 2min | 2.0min |
-| 07-observability | 3 | 6min | 2.0min |
+| 07-observability | 4 | 10min | 2.5min |
 
 **Recent Trend:**
-- Last 5 plans: 07-03 (2min), 07-02 (2min), 07-01 (2min), 06-01 (2min), 05-05 (6min)
-- Trend: Observability config plans executing quickly (YAML/JSON configuration)
+- Last 5 plans: 07-04 (4min), 07-03 (2min), 07-02 (2min), 07-01 (2min), 06-01 (2min)
+- Trend: Observability plans executing quickly (runtime config + metrics)
 
 *Updated after each plan completion*
 
@@ -118,6 +118,9 @@ Recent decisions affecting current work:
 - 07-03: Combined Task 1+2 into single commit (both modify same file)
 - 07-03: Status uses min() for cluster health (worst node determines display)
 - 07-03: Dual Y-axis: bars for throughput, lines for latency (visual distinction)
+- 07-04: Log level toggle requires bearer auth when configured (same as /control/ endpoints)
+- 07-04: Client type uses fixed enum (sdk_java, sdk_node, http, unknown) to avoid cardinality explosion
+- 07-04: Unknown client type operations not tracked to prevent unbounded metric growth
 
 ### Pending Todos
 
@@ -240,8 +243,8 @@ Ongoing concerns:
 
 ## Session Continuity
 
-Last session: 2026-01-31T04:13:09Z
-Stopped at: Completed 07-03-PLAN.md (Unified Overview Dashboard)
+Last session: 2026-01-31T04:19:17Z
+Stopped at: Completed 07-04-PLAN.md (Runtime Control and Client Metrics)
 Resume file: None
 
-Next: Plan 07-04 (Structured Logging) or Plan 07-05 (Phase Verification)
+Next: Plan 07-05 (Phase Verification)
