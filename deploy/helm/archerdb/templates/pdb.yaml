@@ -1,0 +1,16 @@
+{{- if .Values.pdb.enabled }}
+# PodDisruptionBudget protects quorum during rolling updates and voluntary disruptions
+# For 3-node cluster: minAvailable=2 ensures quorum (majority)
+# For 5-node cluster: set minAvailable=3
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "archerdb.fullname" . }}
+  labels:
+    {{- include "archerdb.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "archerdb.selectorLabels" . | nindent 6 }}
+{{- end }}

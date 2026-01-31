@@ -8,6 +8,13 @@ spec:
   serviceName: {{ include "archerdb.headlessServiceName" . }}
   replicas: {{ .Values.replicaCount }}
   podManagementPolicy: OrderedReady
+  # Rolling update strategy for zero-downtime upgrades
+  # Combined with PDB (minAvailable: 2), ensures quorum during updates
+  # To perform canary upgrades, set updateStrategy.rollingUpdate.partition > 0
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      partition: 0
   selector:
     matchLabels:
       {{- include "archerdb.selectorLabels" . | nindent 6 }}
