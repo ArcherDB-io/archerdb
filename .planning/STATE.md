@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-01-29)
 
 **Core value:** Customers can deploy mission-critical geospatial workloads with confidence that their data is safe, queries are fast, and the service stays available during failures.
-**Current focus:** Phase 8: Operations Tooling - IN PROGRESS
+**Current focus:** Phase 8: Operations Tooling - COMPLETE
 
 ## Current Position
 
-Phase: 8 of 10 (Operations Tooling)
-Plan: 5 of 6 in current phase
-Status: In progress
-Last activity: 2026-01-31 - Completed 08-05-PLAN.md (Upgrade CLI and Rollback Tooling)
+Phase: 8 of 10 (Operations Tooling) - COMPLETE
+Plan: 6 of 6 in current phase (all complete)
+Status: Phase complete
+Last activity: 2026-01-31 - Completed 08-06-PLAN.md (Phase Verification)
 
-Progress: [██████████████████████████████] 97% (32/33 plans)
+Progress: [██████████████████████████████] 100% (33/33 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 32
+- Total plans completed: 33
 - Average duration: 10 min
-- Total execution time: 5.0 hours
+- Total execution time: 5.1 hours
 
 **By Phase:**
 
@@ -34,11 +34,11 @@ Progress: [███████████████████████
 | 05-performance-optimization | 5 | 65min | 13.0min |
 | 06-security-hardening | 1 | 2min | 2.0min |
 | 07-observability | 5 | 13min | 2.6min |
-| 08-operations-tooling | 5 | 33min | 6.6min |
+| 08-operations-tooling | 6 | 37min | 6.2min |
 
 **Recent Trend:**
-- Last 5 plans: 08-05 (8min), 08-04 (4min), 08-03 (6min), 08-02 (8min), 08-01 (7min)
-- Trend: Phase 8 operations tooling in progress
+- Last 5 plans: 08-06 (4min), 08-05 (8min), 08-04 (4min), 08-03 (6min), 08-02 (8min)
+- Trend: Phase 8 complete, ready for Phase 9
 
 *Updated after each plan completion*
 
@@ -143,6 +143,8 @@ Recent decisions affecting current work:
 - 08-05: Use integer thresholds (x10) for CLI compatibility with Zig flags parser
 - 08-05: Health rollback defaults: 2.0x P99, 1.0% error rate, 3 probe failures
 - 08-05: Upgrade order: followers first, primary last for quorum maintenance
+- 08-06: OPS-03 (KEDA autoscaling) marked PARTIAL - template ready but opt-in by design
+- 08-06: All verification commands automated (helm lint, build check, script syntax)
 
 ### Pending Todos
 
@@ -289,22 +291,26 @@ Ongoing concerns:
 
 **Verification Report:** `.planning/phases/07-observability/07-VERIFICATION.md`
 
-## Phase 8 Progress
+## Phase 8 Completion Status
 
-**IN PROGRESS** - 5 of 6 plans complete:
+**VERIFIED COMPLETE** - All 10 OPS validation requirements addressed (9 PASS, 1 PARTIAL):
 
-| Plan | Description | Status |
-|------|-------------|--------|
-| 08-01 | Helm Chart Creation | COMPLETE |
-| 08-02 | Kubernetes Operator Integration | COMPLETE |
-| 08-03 | Backup Infrastructure Enhancement | COMPLETE |
-| 08-04 | Disaster Recovery Documentation and Testing | COMPLETE |
-| 08-05 | Upgrade CLI and Rollback Tooling | COMPLETE |
-| 08-06 | Phase Verification | Pending |
+| Requirement | Description | Status |
+|-------------|-------------|--------|
+| OPS-01 | K8s manifests deploy 3-node cluster | PASS |
+| OPS-02 | Health probes enable zero-downtime rolling updates | PASS |
+| OPS-03 | HPA based on load | PARTIAL (opt-in KEDA) |
+| OPS-04 | Online backup without downtime | PASS |
+| OPS-05 | Incremental backup | PASS |
+| OPS-06 | DR plan documented and tested | PASS |
+| OPS-07 | Upgrade procedure documented | PASS |
+| OPS-08 | Rollback procedure documented | PASS |
+| OPS-09 | Capacity planning guidelines | PASS |
+| OPS-10 | Runbooks for failure scenarios | PASS |
 
 **Key Deliverables:**
-- Helm chart in deploy/helm/archerdb/ with values.yaml
-- ServiceMonitor and PrometheusRule for Prometheus Operator
+- Helm chart in deploy/helm/archerdb/ with values.yaml + production overlay
+- ServiceMonitor and PrometheusRule for Prometheus Operator (10 alert rules)
 - PodDisruptionBudget with minAvailable: 2 for quorum protection
 - KEDA ScaledObject template for read replica autoscaling (opt-in)
 - Rolling update strategy with partition-based canary support
@@ -318,10 +324,12 @@ Ongoing concerns:
 - Health-based rollback triggers (P99, error rate, probe failures)
 - Comprehensive upgrade guide documentation (505 lines)
 
+**Verification Report:** `.planning/phases/08-operations-tooling/08-VERIFICATION.md`
+
 ## Session Continuity
 
-Last session: 2026-01-31T06:13:00Z
-Stopped at: Completed 08-05-PLAN.md (Upgrade CLI and Rollback Tooling)
+Last session: 2026-01-31T06:17:00Z
+Stopped at: Completed 08-06-PLAN.md (Phase Verification)
 Resume file: None
 
-Next: 08-06-PLAN.md (Phase Verification)
+Next: Phase 9 (Production Hardening)
