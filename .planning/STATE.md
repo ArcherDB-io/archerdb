@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-29)
 ## Current Position
 
 Phase: 9 of 10 (Testing Infrastructure)
-Plan: 4 of 6 in current phase (09-01, 09-02, 09-03 complete)
+Plan: 5 of 6 in current phase (09-01, 09-02, 09-03, 09-05 complete)
 Status: In progress
-Last activity: 2026-01-31 - Completed 09-01-PLAN.md (Test Infrastructure Fix)
+Last activity: 2026-01-31 - Completed 09-05-PLAN.md (Performance Regression Detection)
 
-Progress: [████████████████████████████░░] 92% (36/39 plans)
+Progress: [█████████████████████████████░] 95% (37/39 plans)
 
 ## Performance Metrics
 
@@ -155,6 +155,9 @@ Recent decisions affecting current work:
 - 09-01: TestContext.init level skip eliminates redundant per-test skip logic
 - 09-01: 256KB metrics buffer matches metrics_server.zig production size
 - 09-01: follower_only=false explicit when testing primary_only mode
+- 09-05: 5% throughput threshold per observed 5% CV in benchmarks
+- 09-05: 25% latency P99 threshold for tail variance tolerance
+- 09-05: Regression blocks merge (no continue-on-error)
 
 ### Pending Todos
 
@@ -337,8 +340,8 @@ Ongoing concerns:
 
 ## Session Continuity
 
-Last session: 2026-01-31T08:25:31Z
-Stopped at: Completed 09-01-PLAN.md (Test Infrastructure Fix)
+Last session: 2026-01-31T08:35:00Z
+Stopped at: Completed 09-05-PLAN.md (Performance Regression Detection)
 Resume file: None
 
-Next: 09-04, 09-05, 09-06 (remaining Phase 9 plans)
+Next: 09-04, 09-06 (remaining Phase 9 plans)
