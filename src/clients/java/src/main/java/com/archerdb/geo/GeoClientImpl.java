@@ -953,43 +953,7 @@ final class GeoClientImpl implements GeoClient {
      * Creates a polygon batch from the filter.
      */
     private NativeQueryPolygonBatch createPolygonBatch(QueryPolygonFilter filter) {
-        List<QueryPolygonFilter.PolygonVertex> vertices = filter.getVertices();
-        List<QueryPolygonFilter.PolygonHole> holes = filter.getHoles();
-
-        // Calculate total vertex count including holes
-        int totalVertices = vertices.size();
-        if (holes != null) {
-            for (QueryPolygonFilter.PolygonHole hole : holes) {
-                totalVertices += hole.getVertices().size();
-            }
-        }
-
-        NativeQueryPolygonBatch batch =
-                new NativeQueryPolygonBatch(1, totalVertices, holes != null ? holes.size() : 0);
-        batch.add();
-        batch.setLimit(filter.getLimit());
-        batch.setVertexCount(vertices.size());
-        batch.setHoleCount(holes != null ? holes.size() : 0);
-        batch.setTimestampMin(filter.getTimestampMin());
-        batch.setTimestampMax(filter.getTimestampMax());
-        batch.setGroupId(filter.getGroupId());
-
-        // Add vertices
-        for (QueryPolygonFilter.PolygonVertex v : vertices) {
-            batch.addVertex(v.getLatNano(), v.getLonNano());
-        }
-
-        // Add holes
-        if (holes != null) {
-            for (QueryPolygonFilter.PolygonHole hole : holes) {
-                batch.startHole(hole.getVertices().size());
-                for (QueryPolygonFilter.PolygonVertex v : hole.getVertices()) {
-                    batch.addHoleVertex(v.getLatNano(), v.getLonNano());
-                }
-            }
-        }
-
-        return batch;
+        return NativeQueryPolygonBatch.create(filter);
     }
 
     // ========== Helper Methods for Wire Format Serialization ==========
