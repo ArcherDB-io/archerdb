@@ -520,6 +520,44 @@ pub const Registry = struct {
         null,
     );
 
+    // Client-type labeled operation metrics (per CONTEXT.md observability)
+    // Track by SDK type (sdk_java, sdk_node, http), not individual client_id to avoid cardinality explosion
+    pub var read_ops_by_client_java: Counter = Counter.init(
+        "archerdb_read_operations_total",
+        "Total read operations processed",
+        "client_type=\"sdk_java\"",
+    );
+
+    pub var read_ops_by_client_node: Counter = Counter.init(
+        "archerdb_read_operations_total",
+        "Total read operations processed",
+        "client_type=\"sdk_node\"",
+    );
+
+    pub var read_ops_by_client_http: Counter = Counter.init(
+        "archerdb_read_operations_total",
+        "Total read operations processed",
+        "client_type=\"http\"",
+    );
+
+    pub var write_ops_by_client_java: Counter = Counter.init(
+        "archerdb_write_operations_total",
+        "Total write operations processed",
+        "client_type=\"sdk_java\"",
+    );
+
+    pub var write_ops_by_client_node: Counter = Counter.init(
+        "archerdb_write_operations_total",
+        "Total write operations processed",
+        "client_type=\"sdk_node\"",
+    );
+
+    pub var write_ops_by_client_http: Counter = Counter.init(
+        "archerdb_write_operations_total",
+        "Total write operations processed",
+        "client_type=\"http\"",
+    );
+
     // Delete metrics (F2.5.5 - GDPR entity deletion)
     pub var delete_operations_total: Counter = Counter.init(
         "archerdb_delete_operations_total",
@@ -1927,6 +1965,36 @@ pub const Registry = struct {
         build_commit_len = @intCast(c_len);
     }
 
+    /// Client type enum for SDK-labeled metrics.
+    /// Per CONTEXT.md: track by SDK type (sdk_java, sdk_node, http) not individual client_id
+    /// to avoid cardinality explosion.
+    pub const ClientType = enum {
+        sdk_java,
+        sdk_node,
+        http,
+        unknown,
+    };
+
+    /// Increment read operations counter by client type.
+    pub fn incReadByClient(client_type: ClientType) void {
+        switch (client_type) {
+            .sdk_java => read_ops_by_client_java.inc(),
+            .sdk_node => read_ops_by_client_node.inc(),
+            .http => read_ops_by_client_http.inc(),
+            .unknown => {}, // Don't track unknown clients
+        }
+    }
+
+    /// Increment write operations counter by client type.
+    pub fn incWriteByClient(client_type: ClientType) void {
+        switch (client_type) {
+            .sdk_java => write_ops_by_client_java.inc(),
+            .sdk_node => write_ops_by_client_node.inc(),
+            .http => write_ops_by_client_http.inc(),
+            .unknown => {}, // Don't track unknown clients
+        }
+    }
+
     /// Format all metrics as Prometheus text format.
     pub fn format(writer: anytype) !void {
         // Set info gauge to 1 (it's always present)
@@ -1947,6 +2015,10 @@ pub const Registry = struct {
         try write_ops_upsert.format(writer);
         try write_ops_delete.format(writer);
         try write_errors_total.format(writer);
+        // Client-type labeled write metrics (per CONTEXT.md observability)
+        try write_ops_by_client_java.format(writer);
+        try write_ops_by_client_node.format(writer);
+        try write_ops_by_client_http.format(writer);
         try writer.writeAll("\n");
 
         // Delete metrics (GDPR entity deletion)
@@ -1964,6 +2036,10 @@ pub const Registry = struct {
         try read_ops_query_radius.format(writer);
         try read_ops_query_polygon.format(writer);
         try read_ops_query_latest.format(writer);
+        // Client-type labeled read metrics (per CONTEXT.md observability)
+        try read_ops_by_client_java.format(writer);
+        try read_ops_by_client_node.format(writer);
+        try read_ops_by_client_http.format(writer);
         try writer.writeAll("\n");
 
         try index_lookups_total.format(writer);
