@@ -2,6 +2,24 @@
 
 This document provides a comprehensive deep-dive into ArcherDB's architecture, explaining how the system works internally and why specific design decisions were made.
 
+## Key Concepts
+
+Before diving into details, here are the essential concepts that define ArcherDB's behavior:
+
+| Concept | What It Means for Users |
+|---------|------------------------|
+| **Linearizability** | All operations appear to execute atomically in a single global order. A read always returns the result of the most recent write - no stale data, no anomalies. |
+| **Quorum** | A majority of replicas (2 of 3, or 3 of 5) must agree before any write is committed. This guarantees durability even if minority replicas fail. |
+| **Leader Election** | When the primary fails, remaining replicas automatically elect a new leader within seconds. No manual intervention required. |
+| **S2 Cells** | Locations are indexed using Google's S2 geometry library. Nearby points have numerically close cell IDs, enabling efficient spatial queries. |
+| **LSM Tree** | Write-optimized storage that achieves high throughput by writing sequentially. Background compaction keeps read performance consistent. |
+
+**Quick Links:**
+- [VSR Consensus Protocol](#viewstamped-replication-vsr) - How data stays consistent
+- [LSM-Tree Storage](#lsm-tree-storage) - How data is persisted
+- [S2 Geospatial Indexing](#s2-geospatial-indexing) - How spatial queries work
+- [RAM Index](#ram-index) - How "where is entity X?" queries are fast
+
 ## Table of Contents
 
 1. [Introduction](#introduction)
@@ -795,5 +813,7 @@ ArcherDB makes explicit trade-offs:
 
 - [VSR Deep Dive](vsr_understanding.md) - Consensus protocol internals
 - [LSM Tuning Guide](lsm-tuning.md) - Storage layer configuration
+- [Performance Tuning](performance-tuning.md) - Optimizing for your workload
+- [API Reference](api-reference.md) - Operations and endpoints
 - [Durability Verification](durability-verification.md) - How we test correctness
 - [Operations Runbook](operations-runbook.md) - Running ArcherDB in production
