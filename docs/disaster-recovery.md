@@ -4,12 +4,43 @@ This document outlines procedures for recovering ArcherDB clusters from various 
 
 ## Table of Contents
 
+- [RTO/RPO Targets](#rtorpo-targets)
 - [Disaster Categories](#disaster-categories)
+- [Automatic Failover](#automatic-failover-single-node-failure)
+- [Kubernetes-Specific Procedures](#kubernetes-specific-procedures)
 - [Backup Strategy](#backup-strategy)
 - [Recovery Procedures](#recovery-procedures)
 - [Recovery Time Objectives](#recovery-time-objectives)
-- [Testing Procedures](#testing-procedures)
+- [Testing Schedule and Checklists](#testing-schedule-and-checklists)
 - [Runbook Checklists](#runbook-checklists)
+
+## RTO/RPO Targets
+
+### Recovery Time Objective (RTO)
+
+RTO defines the maximum acceptable time to restore service after a failure.
+
+| Scenario | RTO | Notes |
+|----------|-----|-------|
+| Single replica failure | **0** (automatic) | VSR consensus continues with remaining quorum |
+| Minority replica failure (< 50%) | **< 5 minutes** | Automatic failover, no manual intervention |
+| Majority replica failure (>= 50%) | **< 30 minutes** | Manual intervention required to restore quorum |
+| Total cluster loss | **< 4 hours** | Full restore from object storage backups |
+| Cross-region failover | **< 6 hours** | Includes DNS propagation and verification |
+
+### Recovery Point Objective (RPO)
+
+RPO defines the maximum acceptable data loss measured in time.
+
+| Scenario | RPO | Notes |
+|----------|-----|-------|
+| Single replica failure | **0** | Synchronous VSR replication ensures no data loss |
+| Minority replica failure | **0** | Quorum maintained, all committed writes safe |
+| Majority replica failure | **0** | Committed writes on surviving replicas are preserved |
+| Total cluster loss (with backup) | **Minutes** | Depends on backup frequency and last successful upload |
+| Total cluster loss (async backup only) | **Minutes to hours** | Based on backup schedule and upload lag |
+
+**Key Principle**: ArcherDB uses synchronous VSR consensus replication. Any write acknowledged to the client has been replicated to a quorum of replicas, achieving RPO = 0 for all non-catastrophic failures.
 
 ## Disaster Categories
 
@@ -37,6 +68,128 @@ This document outlines procedures for recovering ArcherDB clusters from various 
 
 **Impact**: Potential data integrity issues
 **Recovery**: Point-in-time restore from backups
+
+## Automatic Failover (Single Node Failure)
+
+For single replica failures, ArcherDB provides **automatic failover with RTO = 0** for client operations. No operator intervention is required.
+
+### VSR Consensus Automatic Recovery
+
+ArcherDB uses VSR (Viewstamped Replication) consensus, which automatically handles single node failures:
+
+```
+Automatic Failover Flow:
+
+1. Replica pod fails (crash, disk error, OOM kill)
+         ↓
+2. Liveness probe fails after 3 attempts (90 seconds max)
+         ↓
+3. Kubernetes restarts pod on same node (if possible)
+         ↓
+4. VSR consensus continues with remaining replicas (quorum maintained)
+         ↓
+5. New pod starts, passes health probe
+         ↓
+6. Replica rejoins cluster via state sync
+         ↓
+7. Replica catches up from surviving replicas
+         ↓
+8. Full redundancy restored
+
+Client Impact: NONE (quorum maintained throughout)
+RTO: 0 for client operations
+```
+
+### Why RTO = 0 for Single Failures
+
+1. **Quorum-based writes**: Client writes are acknowledged after replication to a quorum (2 of 3 replicas)
+2. **Automatic traffic routing**: Kubernetes readiness probe marks failed pod as not ready
+3. **Service continues**: Remaining healthy replicas handle all client traffic
+4. **No primary election needed**: VSR view change occurs automatically if primary fails
+
+### Automatic vs Manual Recovery
+
+| Failure Type | Recovery Mode | Operator Action Required |
+|--------------|---------------|-------------------------|
+| Single replica crash | Automatic | None |
+| Single disk failure | Automatic | None (pod restarts with new PVC if needed) |
+| Network partition (minority) | Automatic | None (VSR handles partition) |
+| OOM kill | Automatic | Monitor for recurrence |
+| Majority failure | **Manual** | Follow recovery procedures below |
+| Total cluster loss | **Manual** | Restore from backup |
+
+## Kubernetes-Specific Procedures
+
+### Pod Replacement via StatefulSet
+
+When a pod fails, Kubernetes StatefulSet automatically handles replacement:
+
+```bash
+# Force pod replacement (if automatic recovery stalls)
+kubectl delete pod archerdb-0 -n archerdb
+
+# StatefulSet will recreate the pod with the same identity
+# PVC remains bound, data is preserved
+```
+
+### PVC Recovery After Disk Failure
+
+If a PersistentVolumeClaim experiences disk failure:
+
+```bash
+# 1. Delete the failed pod (will be recreated)
+kubectl delete pod archerdb-1 -n archerdb
+
+# 2. If PVC is corrupted, delete it (data will be re-synced from replicas)
+kubectl delete pvc archerdb-data-archerdb-1 -n archerdb
+
+# 3. StatefulSet recreates pod with new PVC
+# 4. ArcherDB syncs data from surviving replicas automatically
+```
+
+**Note**: PVCs have `helm.sh/resource-policy: keep` by default to prevent accidental deletion during `helm uninstall`.
+
+### Cross-Zone Failover with Pod Anti-Affinity
+
+The Helm chart configures pod anti-affinity to spread replicas across zones:
+
+```yaml
+# Configured via values.yaml
+podAntiAffinity:
+  enabled: true
+  weight: 100
+```
+
+For zone failure, remaining pods in other zones maintain quorum automatically.
+
+### Helm Rollback for Configuration Issues
+
+If a configuration change causes issues:
+
+```bash
+# List release history
+helm history archerdb -n archerdb
+
+# Rollback to previous revision
+helm rollback archerdb 1 -n archerdb
+
+# Verify rollback
+helm status archerdb -n archerdb
+```
+
+### Kubernetes Cluster-Level Recovery
+
+For Kubernetes cluster failures:
+
+```bash
+# 1. Verify PVCs still exist (if storage survives)
+kubectl get pvc -n archerdb
+
+# 2. If PVCs exist, simply redeploy the chart
+helm install archerdb deploy/helm/archerdb -n archerdb
+
+# 3. If PVCs are lost, restore from backup (see Procedure 3 below)
+```
 
 ## Backup Strategy
 
@@ -281,18 +434,118 @@ aws s3api put-bucket-replication \
 
 ## Recovery Time Objectives
 
-| Scenario | RTO | RPO |
-|----------|-----|-----|
-| Single replica failure | 0 (automatic) | 0 |
-| Minority failure | < 1 hour | 0 |
-| Majority failure | 1-2 hours | Minutes |
-| Total loss (with backups) | 2-4 hours | Minutes-Hours |
-| Cross-region failover | 4-8 hours | Minutes-Hours |
+This section provides detailed RTO/RPO analysis for each scenario. See [RTO/RPO Targets](#rtorpo-targets) at the top of this document for the summary table.
 
-**RTO** = Recovery Time Objective (how long until service restored)
-**RPO** = Recovery Point Objective (how much data could be lost)
+| Scenario | RTO | RPO | Procedure | Automation |
+|----------|-----|-----|-----------|------------|
+| Single replica failure | **0** (automatic) | **0** | Automatic via VSR | Full |
+| Minority failure (1 of 3) | **< 5 minutes** | **0** | Automatic via VSR | Full |
+| Majority failure (2 of 3) | **< 30 minutes** | **0** | Procedure 2 | Manual |
+| Total loss (with backups) | **< 4 hours** | **Minutes** | Procedure 3 | Semi-auto |
+| Cross-region failover | **< 6 hours** | **Minutes** | Procedure 5 | Manual |
+| Point-in-time recovery | **1-4 hours** | **Configurable** | Procedure 4 | Semi-auto |
 
-## Testing Procedures
+**RTO** = Recovery Time Objective (maximum time until service restored)
+**RPO** = Recovery Point Objective (maximum acceptable data loss)
+
+### RTO Achievement Guide
+
+To achieve the stated RTO targets:
+
+1. **0 / < 5 minutes RTO (automatic failures)**
+   - Ensure PodDisruptionBudget is configured (`pdb.enabled: true`)
+   - Configure appropriate liveness/readiness probe timeouts
+   - Use pod anti-affinity to spread across failure domains
+
+2. **< 30 minutes RTO (majority failure)**
+   - Pre-provision replacement infrastructure
+   - Automate replica formatting and startup
+   - Practice Procedure 2 quarterly
+
+3. **< 4 hours RTO (total cluster loss)**
+   - Use regional object storage for backups
+   - Pre-stage recovery scripts
+   - Document exact steps with copy-paste commands
+   - Practice Procedure 3 bi-annually
+
+### Related Documentation
+
+For detailed backup configuration and monitoring, see [Backup Operations Guide](backup-operations.md).
+
+## Testing Schedule and Checklists
+
+### Testing Schedule
+
+| Frequency | Test Type | Environment | Estimated Duration |
+|-----------|-----------|-------------|-------------------|
+| **Monthly** | Backup restoration | Production (read-only) | 30 minutes |
+| **Monthly** | Backup verification | Production | 15 minutes |
+| **Quarterly** | Single replica failure | Staging | 1 hour |
+| **Quarterly** | Point-in-time recovery | Staging | 2 hours |
+| **Bi-annually** | Majority failure simulation | Staging | 4 hours |
+| **Bi-annually** | Cross-region failover | Staging/DR | 8 hours |
+| **Annually** | Full DR exercise | All environments | 1-2 days |
+
+### Pre-DR Test Checklist
+
+Complete before starting any DR test:
+
+- [ ] **Backup verified**: Run `./archerdb backup verify` successfully
+- [ ] **Backup recent**: Last backup < 1 hour old
+- [ ] **Monitoring active**: Prometheus/Grafana dashboards accessible
+- [ ] **Alerts configured**: Alert channels responding (test page)
+- [ ] **Runbooks reviewed**: Team has read relevant procedures
+- [ ] **Communication plan**: Stakeholders notified of test window
+- [ ] **Rollback plan**: Know how to abort if issues arise
+- [ ] **Staging environment ready**: (for destructive tests only)
+
+### Post-DR Test Report Template
+
+Complete after each DR test:
+
+```markdown
+## DR Test Report
+
+**Date**: YYYY-MM-DD
+**Test Type**: [Backup Restore / Replica Failure / Full DR Exercise]
+**Environment**: [Production / Staging / DR]
+**Participants**: [Names]
+
+### Summary
+
+**Result**: [PASS / PARTIAL / FAIL]
+**Actual RTO**: [time]
+**Expected RTO**: [time]
+**Actual RPO**: [time or "0"]
+**Expected RPO**: [time or "0"]
+
+### Timeline
+
+| Time | Action | Result |
+|------|--------|--------|
+| HH:MM | Started test | - |
+| HH:MM | [Action taken] | [Success/Failure] |
+| HH:MM | Service restored | - |
+| HH:MM | Verification complete | - |
+
+### Issues Encountered
+
+1. [Issue description and resolution]
+
+### Improvements Identified
+
+1. [Improvement recommendation]
+
+### Runbook Updates Required
+
+1. [Section to update]
+
+### Sign-off
+
+- [ ] DBA Lead
+- [ ] Infrastructure Lead
+- [ ] On-call Engineer
+```
 
 ### Monthly DR Tests
 
@@ -308,7 +561,22 @@ aws s3api put-bucket-replication \
    ./archerdb verify /tmp/test-restore.db
    ```
 
-2. **Single replica failure simulation**
+2. **Single replica failure simulation** (Kubernetes)
+   ```bash
+   # Delete one pod (StatefulSet recreates it)
+   kubectl delete pod archerdb-2 -n archerdb
+
+   # Verify cluster continues operating
+   kubectl exec archerdb-0 -n archerdb -- ./archerdb client ping
+
+   # Watch pod recovery
+   kubectl get pods -n archerdb -w
+
+   # Verify replica rejoins
+   kubectl logs archerdb-2 -n archerdb | grep "state sync complete"
+   ```
+
+3. **Single replica failure simulation** (Bare metal)
    ```bash
    # Stop one replica
    ssh node3 "systemctl stop archerdb"
@@ -322,15 +590,45 @@ aws s3api put-bucket-replication \
 
 ### Quarterly DR Tests
 
-1. **Majority failure simulation** (in staging environment)
+1. **Majority failure simulation** (in staging environment only)
+   - Stop 2 of 3 replicas
+   - Verify cluster becomes unavailable (expected)
+   - Restore quorum following Procedure 2
+   - Measure time to recovery
+
 2. **Cross-region failover drill**
+   - Simulate primary region unavailability
+   - Execute cross-region failover procedure
+   - Verify data integrity in DR region
+   - Measure total failover time
+
 3. **Point-in-time recovery test**
+   - Create test data with known timestamp
+   - Perform additional writes after timestamp
+   - Restore to timestamp, verify only expected data present
+
+### Bi-Annual DR Tests
+
+1. **Full majority failure exercise**
+   - Complete majority failure and recovery
+   - Include stakeholder communication
+   - Practice incident command procedures
+
+2. **Cross-region failover with client cutover**
+   - Execute full failover including DNS/load balancer changes
+   - Verify client applications reconnect successfully
 
 ### Annual DR Tests
 
 1. **Full disaster recovery exercise**
+   - Simulate total cluster loss
+   - Execute Procedure 3 (Total Cluster Recovery)
+   - Include all stakeholder communication
+   - Full post-mortem review
+
 2. **Update runbooks based on findings**
 3. **Review and update RTO/RPO targets**
+4. **Validate backup retention meets compliance requirements**
 
 ## Runbook Checklists
 
