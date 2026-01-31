@@ -353,6 +353,31 @@ jobs:
           fail-on-alert: true
           benchmark-data-dir-path: 'benchmark-data'
 
+  # Quick VOPR smoke test on PRs (5 min, 5 seeds)
+  vopr-quick:
+    needs: smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        state_machine: [geo, testing]
+    name: VOPR Quick (${{ matrix.state_machine }})
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Zig
+        run: ./zig/download.sh
+
+      - name: Verify Zig version
+        run: ./zig/zig version
+
+      - name: Run VOPR quick smoke
+        run: ./.github/ci/run-vopr.sh ${{ matrix.state_machine }} 300 5
+        continue-on-error: true  # Non-blocking until validated stable
+
   # Core status check - aggregates required checks
   core:
     needs: [smoke, test, test-alpine, reproducible-build, integration-tests, test-sdk-python, test-sdk-nodejs, test-sdk-java, test-sdk-go]
