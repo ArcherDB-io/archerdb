@@ -63,16 +63,20 @@ Requirements for production-ready DBaaS offering. Mapped from validation checkli
 
 ### Security (SEC)
 
-- [ ] **SEC-01**: Authentication required for all client connections
-- [ ] **SEC-02**: Authorization controls per-entity access
-- [ ] **SEC-03**: TLS encryption for all client connections
-- [ ] **SEC-04**: TLS encryption for inter-replica communication
-- [ ] **SEC-05**: Encryption-at-rest verified with test vectors
-- [ ] **SEC-06**: Key rotation works without downtime
-- [ ] **SEC-07**: Audit log tracks all access and modifications
-- [ ] **SEC-08**: Security audit completed by third party
-- [ ] **SEC-09**: Vulnerability scanning in CI/CD pipeline
-- [ ] **SEC-10**: No known CVEs in dependencies
+**Phase 6 Scope Decision:** All SEC requirements SKIPPED for local-only deployment.
+Security is handled at infrastructure level (OS firewall, disk encryption, physical security).
+Existing security capabilities in codebase (encryption, TLS, audit logging) documented but not deployed.
+
+- [~] **SEC-01**: Authentication required for all client connections — SKIPPED (local-only)
+- [~] **SEC-02**: Authorization controls per-entity access — SKIPPED (local-only)
+- [~] **SEC-03**: TLS encryption for all client connections — SKIPPED (local-only)
+- [~] **SEC-04**: TLS encryption for inter-replica communication — SKIPPED (local-only)
+- [~] **SEC-05**: Encryption-at-rest verified with test vectors — SKIPPED (local-only)
+- [~] **SEC-06**: Key rotation works without downtime — SKIPPED (local-only)
+- [~] **SEC-07**: Audit log tracks all access and modifications — SKIPPED (local-only)
+- [~] **SEC-08**: Security audit completed by third party — SKIPPED (local-only)
+- [~] **SEC-09**: Vulnerability scanning in CI/CD pipeline — SKIPPED (local-only)
+- [~] **SEC-10**: No known CVEs in dependencies — SKIPPED (local-only)
 
 ### Observability (OBS)
 
@@ -201,16 +205,16 @@ Requirement-to-phase mapping.
 | PERF-08 | Phase 5 | Complete |
 | PERF-09 | Phase 5 | Complete |
 | PERF-10 | Phase 5 | Not Tested |
-| SEC-01 | Phase 6 | Pending |
-| SEC-02 | Phase 6 | Pending |
-| SEC-03 | Phase 6 | Pending |
-| SEC-04 | Phase 6 | Pending |
-| SEC-05 | Phase 6 | Pending |
-| SEC-06 | Phase 6 | Pending |
-| SEC-07 | Phase 6 | Pending |
-| SEC-08 | Phase 6 | Pending |
-| SEC-09 | Phase 6 | Pending |
-| SEC-10 | Phase 6 | Pending |
+| SEC-01 | Phase 6 | SKIPPED (local-only) |
+| SEC-02 | Phase 6 | SKIPPED (local-only) |
+| SEC-03 | Phase 6 | SKIPPED (local-only) |
+| SEC-04 | Phase 6 | SKIPPED (local-only) |
+| SEC-05 | Phase 6 | SKIPPED (local-only) |
+| SEC-06 | Phase 6 | SKIPPED (local-only) |
+| SEC-07 | Phase 6 | SKIPPED (local-only) |
+| SEC-08 | Phase 6 | SKIPPED (local-only) |
+| SEC-09 | Phase 6 | SKIPPED (local-only) |
+| SEC-10 | Phase 6 | SKIPPED (local-only) |
 | OBS-01 | Phase 7 | Pending |
 | OBS-02 | Phase 7 | Pending |
 | OBS-03 | Phase 7 | Pending |
@@ -253,4 +257,4 @@ Requirement-to-phase mapping.
 
 ---
 *Requirements defined: 2026-01-29*
-*Last updated: 2026-01-30 - Phase 4 (FAULT) requirements marked complete*
+*Last updated: 2026-01-31 - Phase 6 (SEC) requirements marked SKIPPED (local-only)*
