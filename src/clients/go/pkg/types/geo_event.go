@@ -407,14 +407,16 @@ type DeleteResult struct {
 }
 
 // StatusResponse represents server status from archerdb_get_status operation.
-// Matches StatusResponse in geo_state_machine.zig (64 bytes).
+// Matches StatusResponse in archerdb.zig (64 bytes).
 type StatusResponse struct {
 	RAMIndexCount    uint64 // Number of entities in RAM index
 	RAMIndexCapacity uint64 // Total RAM index capacity
 	RAMIndexLoadPct  uint32 // Load factor as percentage * 100 (e.g., 7000 = 70%)
+	_padding         uint32 // Padding for alignment (matches Zig struct)
 	TombstoneCount   uint64 // Number of tombstone entries
 	TTLExpirations   uint64 // Total TTL expirations processed
 	DeletionCount    uint64 // Total deletions processed
+	Reserved         [16]byte // Reserved for future use
 }
 
 // PingRequest represents a ping request payload (8 bytes).

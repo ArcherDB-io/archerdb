@@ -94,7 +94,9 @@ func getResultSize(op C.ARCH_OPERATION) uintptr {
 	case C.ARCH_OPERATION_ARCHERDB_PING:
 		return unsafe.Sizeof(types.PingResponse{})
 	case C.ARCH_OPERATION_ARCHERDB_GET_STATUS:
-		return unsafe.Sizeof(types.StatusResponse{})
+		return 1 // Variable-size response (echo client may return short responses)
+	case C.ARCH_OPERATION_GET_TOPOLOGY:
+		return 1 // Variable-size response
 	default:
 		return 1 // Return 1 for unknown ops to avoid divide by zero
 	}
