@@ -563,9 +563,29 @@ jobs:
       - name: Run stress test
         run: ./scripts/stress-test.sh 5m
 
+  # E2E tests - multi-node cluster with client operations (TEST-06)
+  e2e-tests:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    name: E2E Tests
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Zig
+        run: ./zig/download.sh
+
+      - name: Build ArcherDB
+        run: ./zig/zig build -j4
+
+      - name: Run E2E tests
+        run: ./scripts/e2e-test.sh
+
   # Core status check - aggregates required checks
   core:
-    needs: [smoke, test, test-alpine, reproducible-build, integration-tests, test-sdk-python, test-sdk-nodejs, test-sdk-java, test-sdk-go, stress-quick]
+    needs: [smoke, test, test-alpine, reproducible-build, integration-tests, test-sdk-python, test-sdk-nodejs, test-sdk-java, test-sdk-go, stress-quick, e2e-tests]
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -589,6 +609,14 @@ jobs:
           fi
           if [[ "${{ needs.integration-tests.result }}" != "success" ]]; then
             echo "Integration tests failed"
+            exit 1
+          fi
+          if [[ "${{ needs.stress-quick.result }}" != "success" ]]; then
+            echo "Stress tests failed"
+            exit 1
+          fi
+          if [[ "${{ needs.e2e-tests.result }}" != "success" ]]; then
+            echo "E2E tests failed"
             exit 1
           fi
           # SDK tests are informational - don't fail core on them
