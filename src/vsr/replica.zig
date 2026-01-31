@@ -7699,15 +7699,22 @@ pub fn ReplicaType(
 
             assert(request.header.size == @sizeOf(vsr.Header) + @sizeOf(vsr.RegisterRequest));
 
-            const batch_size_limit = self.request_size_limit - @sizeOf(vsr.Header);
-            assert(batch_size_limit > 0);
-            assert(batch_size_limit <= constants.message_body_size_max);
+            const server_batch_size_limit = self.request_size_limit - @sizeOf(vsr.Header);
+            assert(server_batch_size_limit > 0);
+            assert(server_batch_size_limit <= constants.message_body_size_max);
 
             const register_request = std.mem.bytesAsValue(
                 vsr.RegisterRequest,
                 request.body_used()[0..@sizeOf(vsr.RegisterRequest)],
             );
-            assert(register_request.batch_size_limit == 0);
+
+            // Client can suggest a batch_size_limit (0 means "use server's limit").
+            // Use the minimum of client's request and server's capability.
+            const batch_size_limit = if (register_request.batch_size_limit == 0)
+                server_batch_size_limit
+            else
+                @min(register_request.batch_size_limit, server_batch_size_limit);
+
             assert(stdx.zeroed(&register_request.reserved));
 
             register_request.* = .{
