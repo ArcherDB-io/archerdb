@@ -400,18 +400,20 @@ pub fn HistogramType(comptime bucket_count: usize) type {
 }
 
 /// Standard latency histogram with common bucket boundaries.
-/// Buckets: 500μs, 1ms, 5ms, 10ms, 50ms, 100ms, 500ms, 1s, 5s
-pub const LatencyHistogram = HistogramType(9);
+/// Buckets: 1ms, 5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 5s
+/// (per observability CONTEXT.md decision)
+pub const LatencyHistogram = HistogramType(10);
 
 /// Create a standard latency histogram.
 pub fn latencyHistogram(name: []const u8, help: []const u8, labels: ?[]const u8) LatencyHistogram {
     return LatencyHistogram.init(name, help, labels, .{
-        0.0005, // 500μs
         0.001, // 1ms
         0.005, // 5ms
         0.01, // 10ms
+        0.025, // 25ms
         0.05, // 50ms
         0.1, // 100ms
+        0.25, // 250ms
         0.5, // 500ms
         1.0, // 1s
         5.0, // 5s
@@ -1731,6 +1733,135 @@ pub const Registry = struct {
     }
 
     // ========================================================================
+    // Internal Metrics (07-01 Observability)
+    // ========================================================================
+
+    // --- Compaction Internal Metrics ---
+
+    /// Bytes awaiting compaction (pending compaction work)
+    pub var compaction_pending_bytes: Gauge = Gauge.init(
+        "archerdb_compaction_pending_bytes",
+        "Bytes awaiting compaction",
+        null,
+    );
+
+    /// Compaction stall duration histogram (time spent waiting due to compaction)
+    pub var compaction_stall_duration_seconds: LatencyHistogram = latencyHistogram(
+        "archerdb_compaction_stall_duration_seconds",
+        "Duration of write stalls due to compaction",
+        null,
+    );
+
+    /// Bytes per LSM level (with level label) - per-level tracking
+    /// Use lsm_level_size_bytes for actual storage, this is an alias for the label format
+    pub var compaction_level_bytes_l0: Gauge = Gauge.init(
+        "archerdb_compaction_level_bytes",
+        "Bytes per LSM level",
+        "level=\"0\"",
+    );
+    pub var compaction_level_bytes_l1: Gauge = Gauge.init(
+        "archerdb_compaction_level_bytes",
+        "Bytes per LSM level",
+        "level=\"1\"",
+    );
+    pub var compaction_level_bytes_l2: Gauge = Gauge.init(
+        "archerdb_compaction_level_bytes",
+        "Bytes per LSM level",
+        "level=\"2\"",
+    );
+    pub var compaction_level_bytes_l3: Gauge = Gauge.init(
+        "archerdb_compaction_level_bytes",
+        "Bytes per LSM level",
+        "level=\"3\"",
+    );
+    pub var compaction_level_bytes_l4: Gauge = Gauge.init(
+        "archerdb_compaction_level_bytes",
+        "Bytes per LSM level",
+        "level=\"4\"",
+    );
+    pub var compaction_level_bytes_l5: Gauge = Gauge.init(
+        "archerdb_compaction_level_bytes",
+        "Bytes per LSM level",
+        "level=\"5\"",
+    );
+
+    // --- WAL Internal Metrics ---
+
+    /// WAL fsync latency histogram
+    pub var wal_sync_duration_seconds: LatencyHistogram = latencyHistogram(
+        "archerdb_wal_sync_duration_seconds",
+        "WAL fsync latency histogram",
+        null,
+    );
+
+    /// Total WAL entries written
+    pub var wal_entries_written_total: Counter = Counter.init(
+        "archerdb_wal_entries_written_total",
+        "Total WAL entries written",
+        null,
+    );
+
+    /// Current WAL buffer usage in bytes
+    pub var wal_buffer_usage_bytes: Gauge = Gauge.init(
+        "archerdb_wal_buffer_usage_bytes",
+        "Current WAL buffer usage in bytes",
+        null,
+    );
+
+    // --- Replication Internal Metrics ---
+
+    /// Replication lag from leader in seconds (follower perspective)
+    pub var replication_lag_seconds: Gauge = Gauge.init(
+        "archerdb_replication_lag_seconds",
+        "Replication lag from leader in seconds",
+        null,
+    );
+
+    /// WAL entries per second being applied (replication apply rate)
+    pub var replication_apply_rate_gauge: Gauge = Gauge.init(
+        "archerdb_replication_apply_rate",
+        "WAL entries per second being applied",
+        null,
+    );
+
+    /// Pending replication entries in queue
+    pub var replication_queue_depth: Gauge = Gauge.init(
+        "archerdb_replication_queue_depth",
+        "Pending replication entries in queue",
+        null,
+    );
+
+    // --- Cache Internal Metrics ---
+
+    /// Per-cache hit ratio (block cache)
+    pub var cache_hit_ratio_block: Gauge = Gauge.init(
+        "archerdb_cache_hit_ratio",
+        "Cache hit ratio (hits / total)",
+        "cache_type=\"block\"",
+    );
+
+    /// Per-cache hit ratio (index cache)
+    pub var cache_hit_ratio_index: Gauge = Gauge.init(
+        "archerdb_cache_hit_ratio",
+        "Cache hit ratio (hits / total)",
+        "cache_type=\"index\"",
+    );
+
+    /// Per-cache evictions (block cache)
+    pub var cache_evictions_total_block: Counter = Counter.init(
+        "archerdb_cache_evictions_total",
+        "Total cache evictions",
+        "cache_type=\"block\"",
+    );
+
+    /// Per-cache evictions (index cache)
+    pub var cache_evictions_total_index: Counter = Counter.init(
+        "archerdb_cache_evictions_total",
+        "Total cache evictions",
+        "cache_type=\"index\"",
+    );
+
+    // ========================================================================
     // Checkpoint Metrics
     // ========================================================================
 
@@ -2851,6 +2982,40 @@ pub const Registry = struct {
         try compaction_bytes_written_total.format(writer);
         try compaction_current_level.format(writer);
         try compaction_operations_total.format(writer);
+        try writer.writeAll("\n");
+
+        // ====================================================================
+        // Internal Metrics (07-01 Observability)
+        // ====================================================================
+
+        // Compaction internal metrics
+        try compaction_pending_bytes.format(writer);
+        try compaction_stall_duration_seconds.format(writer);
+        try compaction_level_bytes_l0.format(writer);
+        try compaction_level_bytes_l1.format(writer);
+        try compaction_level_bytes_l2.format(writer);
+        try compaction_level_bytes_l3.format(writer);
+        try compaction_level_bytes_l4.format(writer);
+        try compaction_level_bytes_l5.format(writer);
+        try writer.writeAll("\n");
+
+        // WAL internal metrics
+        try wal_sync_duration_seconds.format(writer);
+        try wal_entries_written_total.format(writer);
+        try wal_buffer_usage_bytes.format(writer);
+        try writer.writeAll("\n");
+
+        // Replication internal metrics
+        try replication_lag_seconds.format(writer);
+        try replication_apply_rate_gauge.format(writer);
+        try replication_queue_depth.format(writer);
+        try writer.writeAll("\n");
+
+        // Cache internal metrics
+        try cache_hit_ratio_block.format(writer);
+        try cache_hit_ratio_index.format(writer);
+        try cache_evictions_total_block.format(writer);
+        try cache_evictions_total_index.format(writer);
         try writer.writeAll("\n");
 
         // ====================================================================
