@@ -125,12 +125,38 @@ jobs:
 
   # SDK tests - Python
   test-sdk-python:
-    needs: smoke
-    timeout-minutes: 10  # Explicit timeout for SDK tests
+    needs: test
+    timeout-minutes: 15  # Extended timeout for server startup + tests
     runs-on: ubuntu-latest
     name: SDK Test (Python)
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Zig
+        run: ./zig/download.sh
+
+      - name: Build ArcherDB and Python client
+        run: |
+          ./zig/zig build -j4
+          ./zig/zig build -j4 clients:python
+
+      - name: Start ArcherDB server
+        run: |
+          TMPDIR=$(mktemp -d)
+          ./zig-out/bin/archerdb format --cluster=0 --replica=0 --replica-count=1 "$TMPDIR/test.archerdb"
+          ./zig-out/bin/archerdb start --addresses=127.0.0.1:3000 --metrics-port=9100 --metrics-bind=127.0.0.1 "$TMPDIR/test.archerdb" > server.log 2>&1 &
+          echo $! > server.pid
+          # Wait for server to be ready
+          for i in {1..60}; do
+            if curl -sf http://127.0.0.1:9100/health/ready > /dev/null 2>&1; then
+              echo "Server ready after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -139,18 +165,53 @@ jobs:
         run: pip install pytest
 
       - name: Run Python SDK tests
+        env:
+          ARCHERDB_HOST: 127.0.0.1
+          ARCHERDB_PORT: 3000
         run: |
           cd src/clients/python
-          python -m pytest tests/ -v || echo "Tests require ArcherDB server - skipping"
+          export PYTHONPATH=src
+          python -m pytest tests/ -v
+
+      - name: Stop server
+        if: always()
+        run: |
+          if [ -f server.pid ]; then
+            kill $(cat server.pid) 2>/dev/null || true
+          fi
 
   # SDK tests - Node.js
   test-sdk-nodejs:
-    needs: smoke
-    timeout-minutes: 10  # Explicit timeout for SDK tests
+    needs: test
+    timeout-minutes: 15  # Extended timeout for server startup + tests
     runs-on: ubuntu-latest
     name: SDK Test (Node.js)
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Zig
+        run: ./zig/download.sh
+
+      - name: Build ArcherDB
+        run: ./zig/zig build -j4
+
+      - name: Start ArcherDB server
+        run: |
+          TMPDIR=$(mktemp -d)
+          ./zig-out/bin/archerdb format --cluster=0 --replica=0 --replica-count=1 "$TMPDIR/test.archerdb"
+          ./zig-out/bin/archerdb start --addresses=127.0.0.1:3000 --metrics-port=9100 --metrics-bind=127.0.0.1 "$TMPDIR/test.archerdb" > server.log 2>&1 &
+          echo $! > server.pid
+          # Wait for server to be ready
+          for i in {1..60}; do
+            if curl -sf http://127.0.0.1:9100/health/ready > /dev/null 2>&1; then
+              echo "Server ready after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -161,44 +222,122 @@ jobs:
           npm install
 
       - name: Run Node.js SDK tests
+        env:
+          ARCHERDB_HOST: 127.0.0.1
+          ARCHERDB_PORT: 3000
         run: |
           cd src/clients/node
-          npm test || echo "Tests require ArcherDB server - skipping"
+          npm test
+
+      - name: Stop server
+        if: always()
+        run: |
+          if [ -f server.pid ]; then
+            kill $(cat server.pid) 2>/dev/null || true
+          fi
 
   # SDK tests - Java
   test-sdk-java:
-    needs: smoke
-    timeout-minutes: 10  # Explicit timeout for SDK tests
+    needs: test
+    timeout-minutes: 15  # Extended timeout for server startup + tests
     runs-on: ubuntu-latest
     name: SDK Test (Java)
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Zig
+        run: ./zig/download.sh
+
+      - name: Build ArcherDB
+        run: ./zig/zig build -j4
+
+      - name: Start ArcherDB server
+        run: |
+          TMPDIR=$(mktemp -d)
+          ./zig-out/bin/archerdb format --cluster=0 --replica=0 --replica-count=1 "$TMPDIR/test.archerdb"
+          ./zig-out/bin/archerdb start --addresses=127.0.0.1:3000 --metrics-port=9100 --metrics-bind=127.0.0.1 "$TMPDIR/test.archerdb" > server.log 2>&1 &
+          echo $! > server.pid
+          # Wait for server to be ready
+          for i in {1..60}; do
+            if curl -sf http://127.0.0.1:9100/health/ready > /dev/null 2>&1; then
+              echo "Server ready after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+
       - uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '21'
 
       - name: Run Java SDK tests
+        env:
+          ARCHERDB_HOST: 127.0.0.1
+          ARCHERDB_PORT: 3000
         run: |
           cd src/clients/java
-          mvn test -q || echo "Tests require ArcherDB server - skipping"
+          mvn test -q
+
+      - name: Stop server
+        if: always()
+        run: |
+          if [ -f server.pid ]; then
+            kill $(cat server.pid) 2>/dev/null || true
+          fi
 
   # SDK tests - Go
   test-sdk-go:
-    needs: smoke
-    timeout-minutes: 10  # Explicit timeout for SDK tests
+    needs: test
+    timeout-minutes: 15  # Extended timeout for server startup + tests
     runs-on: ubuntu-latest
     name: SDK Test (Go)
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Zig
+        run: ./zig/download.sh
+
+      - name: Build ArcherDB
+        run: ./zig/zig build -j4
+
+      - name: Start ArcherDB server
+        run: |
+          TMPDIR=$(mktemp -d)
+          ./zig-out/bin/archerdb format --cluster=0 --replica=0 --replica-count=1 "$TMPDIR/test.archerdb"
+          ./zig-out/bin/archerdb start --addresses=127.0.0.1:3000 --metrics-port=9100 --metrics-bind=127.0.0.1 "$TMPDIR/test.archerdb" > server.log 2>&1 &
+          echo $! > server.pid
+          # Wait for server to be ready
+          for i in {1..60}; do
+            if curl -sf http://127.0.0.1:9100/health/ready > /dev/null 2>&1; then
+              echo "Server ready after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+
       - uses: actions/setup-go@v5
         with:
           go-version: '1.21'
 
       - name: Run Go SDK tests
+        env:
+          ARCHERDB_HOST: 127.0.0.1
+          ARCHERDB_PORT: 3000
         run: |
           cd src/clients/go
-          go test ./... -v || echo "Tests require ArcherDB server - skipping"
+          go test ./... -v
+
+      - name: Stop server
+        if: always()
+        run: |
+          if [ -f server.pid ]; then
+            kill $(cat server.pid) 2>/dev/null || true
+          fi
 
   # Integration tests with external services
   integration-tests:
