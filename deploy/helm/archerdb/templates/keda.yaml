@@ -1,0 +1,32 @@
+{{- if .Values.autoscaling.enabled }}
+# KEDA ScaledObject for horizontal pod autoscaling based on custom metrics
+# Requires KEDA operator: https://keda.sh/docs/deploy/
+#
+# IMPORTANT: Only for read replicas. Write quorum is fixed at replicaCount.
+# KEDA scales based on Prometheus metrics (archerdb_connections_active by default).
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "archerdb.fullname" . }}-autoscaler
+  labels:
+    {{- include "archerdb.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: {{ include "archerdb.fullname" . }}
+  minReplicaCount: {{ .Values.autoscaling.minReplicas }}
+  maxReplicaCount: {{ .Values.autoscaling.maxReplicas }}
+  pollingInterval: {{ .Values.autoscaling.pollingInterval }}
+  cooldownPeriod: {{ .Values.autoscaling.cooldownPeriod }}
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: {{ .Values.autoscaling.prometheusAddress | quote }}
+        metricName: archerdb_connections_active
+        query: sum(archerdb_connections_active{job="{{ include "archerdb.fullname" . }}"})
+        threshold: {{ .Values.autoscaling.connectionThreshold | quote }}
+  fallback:
+    failureThreshold: 3
+    replicas: {{ .Values.autoscaling.minReplicas }}
+{{- end }}

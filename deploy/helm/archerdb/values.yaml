@@ -162,3 +162,22 @@ pdb:
   # For 3-node cluster: minAvailable=2 ensures quorum (majority)
   # For 5-node cluster: set minAvailable=3
   minAvailable: 2
+
+# KEDA-based horizontal pod autoscaling (OPS-03)
+# NOTE: Only for read replicas. Write quorum is fixed at replicaCount.
+# Requires KEDA operator installed in cluster: https://keda.sh/docs/deploy/
+autoscaling:
+  # -- Create KEDA ScaledObject resource (opt-in, requires KEDA operator)
+  enabled: false
+  # -- Minimum number of replicas
+  minReplicas: 3
+  # -- Maximum number of replicas
+  maxReplicas: 6
+  # -- Polling interval in seconds
+  pollingInterval: 30
+  # -- Cooldown period in seconds before scaling down
+  cooldownPeriod: 300
+  # -- Prometheus server address for metrics
+  prometheusAddress: "http://prometheus:9090"
+  # -- Connection threshold that triggers scale-up (total active connections)
+  connectionThreshold: 1000
