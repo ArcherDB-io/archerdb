@@ -1,0 +1,56 @@
+Thank you for installing ArcherDB!
+
+Release name: {{ .Release.Name }}
+Namespace:    {{ .Release.Namespace }}
+Replicas:     {{ .Values.replicaCount }}
+
+=== GETTING STARTED ===
+
+1. Check cluster status:
+
+   kubectl get pods -l "app.kubernetes.io/name={{ include "archerdb.name" . }},app.kubernetes.io/instance={{ .Release.Name }}"
+
+2. Wait for all pods to be ready:
+
+   kubectl wait --for=condition=ready pod -l "app.kubernetes.io/name={{ include "archerdb.name" . }},app.kubernetes.io/instance={{ .Release.Name }}" --timeout=300s
+
+3. Check cluster health (from within the cluster):
+
+   kubectl exec {{ include "archerdb.fullname" . }}-0 -- archerdb ping --addresses=localhost:{{ .Values.ports.client }}
+
+=== CLIENT CONNECTION ===
+
+Connect to ArcherDB from within the cluster:
+
+   Host: {{ include "archerdb.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local
+   Port: {{ .Values.ports.client }}
+
+For port-forwarding to local machine:
+
+   kubectl port-forward svc/{{ include "archerdb.fullname" . }} {{ .Values.ports.client }}:{{ .Values.ports.client }}
+
+=== METRICS & MONITORING ===
+
+{{- if .Values.metrics.enabled }}
+
+Prometheus metrics are available at:
+
+   http://{{ include "archerdb.fullname" . }}:{{ .Values.ports.metrics }}/metrics
+
+{{- if .Values.metrics.serviceMonitor.enabled }}
+ServiceMonitor has been created for automatic Prometheus discovery.
+{{- else }}
+To enable automatic Prometheus discovery, set metrics.serviceMonitor.enabled=true
+{{- end }}
+
+{{- else }}
+Metrics are disabled. Enable with metrics.enabled=true
+{{- end }}
+
+=== DOCUMENTATION ===
+
+For operational procedures, see:
+   https://github.com/archerdb/archerdb/blob/main/docs/operations-runbook.md
+
+For Helm chart configuration options:
+   https://github.com/archerdb/archerdb/blob/main/deploy/helm/archerdb/README.md

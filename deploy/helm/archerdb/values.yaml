@@ -1,0 +1,154 @@
+# ArcherDB Helm Chart Values
+# Default configuration for development/staging deployments
+# For production, use values-production.yaml overlay
+
+# -- Number of replicas in the ArcherDB cluster
+# Minimum 3 for production (VSR consensus requires 2f+1 replicas)
+replicaCount: 3
+
+image:
+  # -- Container image repository
+  repository: archerdb/archerdb
+  # -- Container image tag (defaults to Chart appVersion)
+  tag: ""
+  # -- Image pull policy
+  pullPolicy: IfNotPresent
+
+# -- Image pull secrets for private registries
+imagePullSecrets: []
+
+# -- Override the name of the chart
+nameOverride: ""
+# -- Override the full name of the chart
+fullnameOverride: ""
+
+# Resource configuration
+resources:
+  requests:
+    # -- CPU request (1 core minimum)
+    cpu: "1000m"
+    # -- Memory request (2Gi minimum for stable operation)
+    memory: "2Gi"
+  limits:
+    # -- CPU limit
+    cpu: "4000m"
+    # -- Memory limit (8Gi allows for grid cache + working memory)
+    memory: "8Gi"
+
+# Persistent storage configuration
+storage:
+  # -- Storage size per replica
+  size: "10Gi"
+  # -- Storage class name (empty string uses cluster default)
+  storageClassName: ""
+  # -- Access mode for PVCs
+  accessModes:
+    - ReadWriteOnce
+
+# Network ports
+ports:
+  # -- Client API port
+  client: 3000
+  # -- Prometheus metrics port
+  metrics: 9100
+
+# ArcherDB configuration
+config:
+  # -- Cluster ID (all replicas must share the same ID)
+  clusterId: 0
+  # -- Enable development mode (disables some production safety checks)
+  # Set to false for production deployments
+  development: true
+  # -- Grid cache size for spatial index
+  cacheGridSize: "256MiB"
+  # -- Connection timeout in milliseconds
+  connectTimeoutMs: 5000
+  # -- Request timeout in milliseconds
+  requestTimeoutMs: 30000
+
+# -- Termination grace period in seconds
+# Should be long enough for graceful VSR handoff
+terminationGracePeriodSeconds: 60
+
+# Pod anti-affinity configuration
+podAntiAffinity:
+  # -- Enable pod anti-affinity to spread replicas across nodes
+  enabled: true
+  # -- Anti-affinity weight (1-100, higher = stronger preference)
+  weight: 100
+
+# Prometheus metrics configuration
+metrics:
+  # -- Enable Prometheus metrics endpoint
+  enabled: true
+  # ServiceMonitor configuration (requires prometheus-operator)
+  serviceMonitor:
+    # -- Create ServiceMonitor resource
+    enabled: false
+    # -- Scrape interval
+    interval: "15s"
+    # -- Scrape timeout
+    scrapeTimeout: "10s"
+    # -- Additional labels for ServiceMonitor
+    labels: {}
+    # -- Namespace for ServiceMonitor (defaults to release namespace)
+    namespace: ""
+    # -- Prometheus release label (for operator discovery)
+    release: "prometheus"
+  # Alerting rules configuration (requires prometheus-operator)
+  alerts:
+    # -- Create PrometheusRule resource
+    enabled: false
+    # -- P99 latency warning threshold in milliseconds (Phase 7 baseline: ~1ms)
+    latencyP99WarningMs: 25
+    # -- P99 latency critical threshold in milliseconds
+    latencyP99CriticalMs: 100
+    # -- Disk usage warning threshold percentage
+    diskWarningPercent: 85
+    # -- Disk usage critical threshold percentage
+    diskCriticalPercent: 95
+
+# Health probe configuration
+probes:
+  liveness:
+    # -- Initial delay before liveness probe starts
+    initialDelaySeconds: 60
+    # -- Period between liveness probes
+    periodSeconds: 30
+    # -- Timeout for liveness probe
+    timeoutSeconds: 5
+    # -- Failure threshold before pod is restarted
+    failureThreshold: 3
+  readiness:
+    # -- Initial delay before readiness probe starts
+    initialDelaySeconds: 30
+    # -- Period between readiness probes
+    periodSeconds: 10
+    # -- Timeout for readiness probe
+    timeoutSeconds: 5
+    # -- Failure threshold before pod is marked not ready
+    failureThreshold: 3
+
+# -- Node selector for pod scheduling
+nodeSelector: {}
+
+# -- Tolerations for pod scheduling
+tolerations: []
+
+# -- Pod annotations
+podAnnotations: {}
+
+# -- Pod security context
+podSecurityContext: {}
+
+# -- Container security context
+securityContext: {}
+
+# Service account configuration
+serviceAccount:
+  # -- Create a service account
+  create: true
+  # -- Service account name (auto-generated if empty)
+  name: ""
+  # -- Annotations for the service account
+  annotations: {}

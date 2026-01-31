@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "archerdb.headlessServiceName" . }}
+  labels:
+    {{- include "archerdb.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "archerdb.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: client
+      port: {{ .Values.ports.client }}
+      targetPort: client
+    - name: metrics
+      port: {{ .Values.ports.metrics }}
+      targetPort: metrics
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "archerdb.fullname" . }}
+  labels:
+    {{- include "archerdb.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "archerdb.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: client
+      port: {{ .Values.ports.client }}
+      targetPort: client
+    - name: metrics
+      port: {{ .Values.ports.metrics }}
+      targetPort: metrics

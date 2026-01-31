@@ -1,0 +1,24 @@
+apiVersion: v2
+name: archerdb
+description: ArcherDB distributed geospatial database for real-time location tracking
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+
+keywords:
+  - database
+  - geospatial
+  - distributed
+  - real-time
+  - location
+
+maintainers:
+  - name: ArcherDB Team
+    email: ops@archerdb.io
+
+home: https://github.com/archerdb/archerdb
+sources:
+  - https://github.com/archerdb/archerdb
+
+annotations:
+  category: Database

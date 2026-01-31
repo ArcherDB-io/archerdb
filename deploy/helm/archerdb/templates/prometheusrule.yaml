@@ -1,0 +1,174 @@
+{{- if and .Values.metrics.enabled .Values.metrics.alerts.enabled }}
+# PrometheusRule for ArcherDB alerting
+# Consolidates alerts from Phase 7 observability work:
+# - Cluster health (replica down, view changes, index degraded)
+# - Latency (P99 read/write per Phase 7: warning 25ms, critical 100ms)
+# - Storage (disk usage, compaction backlog)
+# - Predictive (disk fill 24h warning, 6h critical)
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "archerdb.fullname" . }}-alerts
+  labels:
+    {{- include "archerdb.labels" . | nindent 4 }}
+    release: {{ .Values.metrics.serviceMonitor.release | quote }}
+spec:
+  groups:
+    # Cluster health alerts
+    - name: archerdb.health
+      rules:
+        - alert: ArcherDBReplicaDown
+          expr: up{job="{{ include "archerdb.fullname" . }}"} == 0
+          for: 1m
+          labels:
+            severity: critical
+            team: database
+          annotations:
+            summary: "ArcherDB replica {{ "{{" }} $labels.instance {{ "}}" }} is down"
+            description: "ArcherDB replica has been unreachable for more than 1 minute."
+            runbook_url: "https://docs.archerdb.io/runbooks/replica-down"
+
+        - alert: ArcherDBViewChangeFrequent
+          expr: increase(archerdb_view_changes_total{job="{{ include "archerdb.fullname" . }}"}[5m]) > 3
+          for: 5m
+          labels:
+            severity: warning
+            team: database
+          annotations:
+            summary: "Frequent view changes in ArcherDB cluster"
+            description: "More than 3 view changes in 5 minutes indicates potential instability."
+            runbook_url: "https://docs.archerdb.io/runbooks/view-changes"
+
+        - alert: ArcherDBIndexDegraded
+          expr: archerdb_index_probe_limit_hits_total{job="{{ include "archerdb.fullname" . }}"} > 0
+          for: 1m
+          labels:
+            severity: critical
+            team: database
+          annotations:
+            summary: "ArcherDB index is degraded on {{ "{{" }} $labels.instance {{ "}}" }}"
+            description: "Index probe limit hit - requires rebuild with larger capacity."
+            runbook_url: "https://docs.archerdb.io/runbooks/index-degraded"
+
+    # Latency alerts (per Phase 7: P99 warning 25ms, critical 100ms)
+    - name: archerdb.latency
+      rules:
+        # Read latency P99
+        - alert: ArcherDBReadLatencyP99Warning
+          expr: histogram_quantile(0.99, sum(rate(archerdb_read_latency_seconds_bucket{job="{{ include "archerdb.fullname" . }}"}[5m])) by (le, instance)) > {{ mulf .Values.metrics.alerts.latencyP99WarningMs 0.001 }}
+          for: 2m
+          labels:
+            severity: warning
+            team: database
+          annotations:
+            summary: "Read P99 latency above {{ .Values.metrics.alerts.latencyP99WarningMs }}ms on {{ "{{" }} $labels.instance {{ "}}" }}"
+            description: "P99 read latency is {{ "{{" }} $value | humanizeDuration {{ "}}" }} (threshold: {{ .Values.metrics.alerts.latencyP99WarningMs }}ms). Baseline is ~1ms."
+            runbook_url: "https://docs.archerdb.io/runbooks/high-read-latency"
+
+        - alert: ArcherDBReadLatencyP99Critical
+          expr: histogram_quantile(0.99, sum(rate(archerdb_read_latency_seconds_bucket{job="{{ include "archerdb.fullname" . }}"}[5m])) by (le, instance)) > {{ mulf .Values.metrics.alerts.latencyP99CriticalMs 0.001 }}
+          for: 2m
+          labels:
+            severity: critical
+            team: database
+          annotations:
+            summary: "CRITICAL: Read P99 latency above {{ .Values.metrics.alerts.latencyP99CriticalMs }}ms on {{ "{{" }} $labels.instance {{ "}}" }}"
+            description: "P99 read latency is {{ "{{" }} $value | humanizeDuration {{ "}}" }}. This is 100x baseline - immediate investigation required."
+            runbook_url: "https://docs.archerdb.io/runbooks/high-read-latency"
+
+        # Write latency P99
+        - alert: ArcherDBWriteLatencyP99Warning
+          expr: histogram_quantile(0.99, sum(rate(archerdb_write_latency_seconds_bucket{job="{{ include "archerdb.fullname" . }}"}[5m])) by (le, instance)) > {{ mulf .Values.metrics.alerts.latencyP99WarningMs 0.001 }}
+          for: 2m
+          labels:
+            severity: warning
+            team: database
+          annotations:
+            summary: "Write P99 latency above {{ .Values.metrics.alerts.latencyP99WarningMs }}ms on {{ "{{" }} $labels.instance {{ "}}" }}"
+            description: "P99 write latency is {{ "{{" }} $value | humanizeDuration {{ "}}" }}. May indicate compaction backlog."
+            runbook_url: "https://docs.archerdb.io/runbooks/high-write-latency"
+
+        - alert: ArcherDBWriteLatencyP99Critical
+          expr: histogram_quantile(0.99, sum(rate(archerdb_write_latency_seconds_bucket{job="{{ include "archerdb.fullname" . }}"}[5m])) by (le, instance)) > {{ mulf .Values.metrics.alerts.latencyP99CriticalMs 0.001 }}
+          for: 2m
+          labels:
+            severity: critical
+            team: database
+          annotations:
+            summary: "CRITICAL: Write P99 latency above {{ .Values.metrics.alerts.latencyP99CriticalMs }}ms on {{ "{{" }} $labels.instance {{ "}}" }}"
+            description: "P99 write latency is {{ "{{" }} $value | humanizeDuration {{ "}}" }}. Write path severely degraded."
+            runbook_url: "https://docs.archerdb.io/runbooks/high-write-latency"
+
+        # General request latency (fallback alert)
+        - alert: ArcherDBHighLatency
+          expr: histogram_quantile(0.99, rate(archerdb_request_duration_seconds_bucket{job="{{ include "archerdb.fullname" . }}"}[5m])) > 0.1
+          for: 5m
+          labels:
+            severity: warning
+            team: database
+          annotations:
+            summary: "High p99 latency in ArcherDB"
+            description: "p99 request latency is above 100ms for more than 5 minutes."
+            runbook_url: "https://docs.archerdb.io/runbooks/high-latency"
+
+    # Storage alerts
+    - name: archerdb.storage
+      rules:
+        - alert: ArcherDBDiskSpaceWarning
+          expr: (1 - (archerdb_storage_free_bytes{job="{{ include "archerdb.fullname" . }}"} / archerdb_storage_total_bytes{job="{{ include "archerdb.fullname" . }}"})) > {{ mulf .Values.metrics.alerts.diskWarningPercent 0.01 }}
+          for: 5m
+          labels:
+            severity: warning
+            team: database
+          annotations:
+            summary: "ArcherDB disk space above {{ .Values.metrics.alerts.diskWarningPercent }}% on {{ "{{" }} $labels.instance {{ "}}" }}"
+            description: "Data disk is {{ "{{" }} $value | humanizePercentage {{ "}}" }} full. Plan capacity expansion."
+            runbook_url: "https://docs.archerdb.io/runbooks/disk-capacity"
+
+        - alert: ArcherDBDiskSpaceCritical
+          expr: (1 - (archerdb_storage_free_bytes{job="{{ include "archerdb.fullname" . }}"} / archerdb_storage_total_bytes{job="{{ include "archerdb.fullname" . }}"})) > {{ mulf .Values.metrics.alerts.diskCriticalPercent 0.01 }}
+          for: 5m
+          labels:
+            severity: critical
+            team: database
+          annotations:
+            summary: "CRITICAL: ArcherDB disk space above {{ .Values.metrics.alerts.diskCriticalPercent }}% on {{ "{{" }} $labels.instance {{ "}}" }}"
+            description: "Data disk is {{ "{{" }} $value | humanizePercentage {{ "}}" }} full. Database may become read-only soon."
+            runbook_url: "https://docs.archerdb.io/runbooks/disk-capacity"
+
+        - alert: ArcherDBCompactionBacklog
+          expr: archerdb_compaction_pending_bytes{job="{{ include "archerdb.fullname" . }}"} > 1073741824
+          for: 10m
+          labels:
+            severity: warning
+            team: database
+          annotations:
+            summary: "ArcherDB compaction backlog exceeds 1GB on {{ "{{" }} $labels.instance {{ "}}" }}"
+            description: "Compaction is falling behind - may impact query performance."
+            runbook_url: "https://docs.archerdb.io/runbooks/compaction-backlog"
+
+    # Predictive alerts (disk fill prediction per Phase 7)
+    - name: archerdb.predictive
+      rules:
+        - alert: ArcherDBDiskFillPrediction24h
+          expr: predict_linear(archerdb_storage_free_bytes{job="{{ include "archerdb.fullname" . }}"}[6h], 24 * 3600) < 0
+          for: 30m
+          labels:
+            severity: warning
+            team: database
+          annotations:
+            summary: "Disk predicted to fill within 24 hours on {{ "{{" }} $labels.instance {{ "}}" }}"
+            description: "Based on current growth rate, disk will be full in less than 24 hours."
+            runbook_url: "https://docs.archerdb.io/runbooks/disk-capacity"
+
+        - alert: ArcherDBDiskFillPrediction6h
+          expr: predict_linear(archerdb_storage_free_bytes{job="{{ include "archerdb.fullname" . }}"}[2h], 6 * 3600) < 0
+          for: 10m
+          labels:
+            severity: critical
+            team: database
+          annotations:
+            summary: "CRITICAL: Disk predicted to fill within 6 hours on {{ "{{" }} $labels.instance {{ "}}" }}"
+            description: "Disk is filling rapidly. Estimated time to full: less than 6 hours."
+            runbook_url: "https://docs.archerdb.io/runbooks/disk-capacity"
+{{- end }}

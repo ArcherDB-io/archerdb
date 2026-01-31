@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "archerdb.fullname" . }}-config
+  labels:
+    {{- include "archerdb.labels" . | nindent 4 }}
+data:
+  # Cluster configuration
+  ARCHERDB_CLUSTER_ID: "{{ .Values.config.clusterId }}"
+  ARCHERDB_REPLICA_COUNT: "{{ .Values.replicaCount }}"
+
+  # Network configuration
+  ARCHERDB_CLIENT_PORT: "{{ .Values.ports.client }}"
+  ARCHERDB_METRICS_PORT: "{{ .Values.ports.metrics }}"
+
+  # Development mode flag
+  ARCHERDB_DEVELOPMENT: "{{ .Values.config.development }}"
+
+  # Cache configuration
+  ARCHERDB_CACHE_GRID_SIZE: "{{ .Values.config.cacheGridSize }}"
+
+  # Timeout configuration
+  ARCHERDB_CONNECT_TIMEOUT_MS: "{{ .Values.config.connectTimeoutMs }}"
+  ARCHERDB_REQUEST_TIMEOUT_MS: "{{ .Values.config.requestTimeoutMs }}"
