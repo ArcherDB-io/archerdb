@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-01-29)
 ## Current Position
 
 Phase: 8 of 10 (Operations Tooling)
-Plan: 4 of 6 in current phase
+Plan: 5 of 6 in current phase
 Status: In progress
-Last activity: 2026-01-31 - Completed 08-04-PLAN.md (Disaster Recovery Documentation and Testing)
+Last activity: 2026-01-31 - Completed 08-05-PLAN.md (Upgrade CLI and Rollback Tooling)
 
-Progress: [█████████████████████████████░] 97% (31/32 plans)
+Progress: [██████████████████████████████] 97% (32/33 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 31
+- Total plans completed: 32
 - Average duration: 10 min
-- Total execution time: 4.9 hours
+- Total execution time: 5.0 hours
 
 **By Phase:**
 
@@ -34,10 +34,10 @@ Progress: [███████████████████████
 | 05-performance-optimization | 5 | 65min | 13.0min |
 | 06-security-hardening | 1 | 2min | 2.0min |
 | 07-observability | 5 | 13min | 2.6min |
-| 08-operations-tooling | 4 | 25min | 6.3min |
+| 08-operations-tooling | 5 | 33min | 6.6min |
 
 **Recent Trend:**
-- Last 5 plans: 08-04 (4min), 08-03 (6min), 08-02 (8min), 08-01 (7min), 07-05 (3min)
+- Last 5 plans: 08-05 (8min), 08-04 (4min), 08-03 (6min), 08-02 (8min), 08-01 (7min)
 - Trend: Phase 8 operations tooling in progress
 
 *Updated after each plan completion*
@@ -140,6 +140,9 @@ Recent decisions affecting current work:
 - 08-04: RPO = 0 for all non-catastrophic failures (synchronous replication)
 - 08-04: DR test script supports both local and Kubernetes modes
 - 08-04: Helm DR test is opt-in (tests.dr.enabled: false default)
+- 08-05: Use integer thresholds (x10) for CLI compatibility with Zig flags parser
+- 08-05: Health rollback defaults: 2.0x P99, 1.0% error rate, 3 probe failures
+- 08-05: Upgrade order: followers first, primary last for quorum maintenance
 
 ### Pending Todos
 
@@ -288,7 +291,7 @@ Ongoing concerns:
 
 ## Phase 8 Progress
 
-**IN PROGRESS** - 3 of 6 plans complete:
+**IN PROGRESS** - 5 of 6 plans complete:
 
 | Plan | Description | Status |
 |------|-------------|--------|
@@ -296,7 +299,7 @@ Ongoing concerns:
 | 08-02 | Kubernetes Operator Integration | COMPLETE |
 | 08-03 | Backup Infrastructure Enhancement | COMPLETE |
 | 08-04 | Disaster Recovery Documentation and Testing | COMPLETE |
-| 08-05 | CI/CD Pipeline | Pending |
+| 08-05 | Upgrade CLI and Rollback Tooling | COMPLETE |
 | 08-06 | Phase Verification | Pending |
 
 **Key Deliverables:**
@@ -311,11 +314,14 @@ Ongoing concerns:
 - DR documentation with explicit RTO/RPO targets (693 lines)
 - DR test automation script (scripts/dr-test.sh)
 - Helm DR test template (opt-in)
+- Rolling upgrade CLI (status/start/pause/resume/rollback)
+- Health-based rollback triggers (P99, error rate, probe failures)
+- Comprehensive upgrade guide documentation (505 lines)
 
 ## Session Continuity
 
-Last session: 2026-01-31T06:08:00Z
-Stopped at: Completed 08-04-PLAN.md (Disaster Recovery Documentation and Testing)
+Last session: 2026-01-31T06:13:00Z
+Stopped at: Completed 08-05-PLAN.md (Upgrade CLI and Rollback Tooling)
 Resume file: None
 
-Next: 08-05-PLAN.md (CI/CD Pipeline)
+Next: 08-06-PLAN.md (Phase Verification)
