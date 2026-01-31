@@ -1070,6 +1070,7 @@ test "tidy unix permissions" {
         "scripts/competitor-benchmarks/setup-tile38.sh",
         "scripts/dm_flakey_test.sh",
         "scripts/dr-test.sh",
+        "scripts/e2e-test.sh",
         "scripts/flamegraph.sh",
         "scripts/key_rotation.sh",
         "scripts/parca-agent.sh",
