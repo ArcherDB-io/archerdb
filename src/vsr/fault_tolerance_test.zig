@@ -456,18 +456,18 @@ const TestClients = struct {
 // FAULT-01: Process Crash (SIGKILL) Tests
 // ============================================================================
 
-/// FAULT-01: Process crash (SIGKILL) survives without data loss (R=3)
-///
-/// This test validates that when a replica is abruptly stopped (simulating SIGKILL),
-/// it can restart and recover to the correct commit position without data loss.
-///
-/// Scenario:
-/// 1. Create 3-node cluster, commit 10+ operations
-/// 2. Stop one replica abruptly (simulating SIGKILL via stop())
-/// 3. Restart the replica
-/// 4. Verify: replica recovers to correct commit position
-/// 5. Verify: cluster can continue accepting new operations
-/// 6. Verify: all replicas converge to same state
+// FAULT-01: Process crash (SIGKILL) survives without data loss (R=3)
+//
+// This test validates that when a replica is abruptly stopped (simulating SIGKILL),
+// it can restart and recover to the correct commit position without data loss.
+//
+// Scenario:
+// 1. Create 3-node cluster, commit 10+ operations
+// 2. Stop one replica abruptly (simulating SIGKILL via stop())
+// 3. Restart the replica
+// 4. Verify: replica recovers to correct commit position
+// 5. Verify: cluster can continue accepting new operations
+// 6. Verify: all replicas converge to same state
 test "FAULT-01: process crash (SIGKILL) survives without data loss (R=3)" {
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
@@ -505,17 +505,17 @@ test "FAULT-01: process crash (SIGKILL) survives without data loss (R=3)" {
     try expectEqual(t.replica(.R2).commit(), 15);
 }
 
-/// FAULT-01: Process crash during pending writes (R=3)
-///
-/// This test validates that when a replica crashes while operations are in flight,
-/// committed operations are preserved and uncommitted operations are handled correctly.
-///
-/// Scenario:
-/// 1. Create cluster, commit some operations
-/// 2. Stop replica DURING operations (stop while requests in flight)
-/// 3. Restart replica
-/// 4. Verify: no data loss for committed operations
-/// 5. Verify: cluster continues to function
+// FAULT-01: Process crash during pending writes (R=3)
+//
+// This test validates that when a replica crashes while operations are in flight,
+// committed operations are preserved and uncommitted operations are handled correctly.
+//
+// Scenario:
+// 1. Create cluster, commit some operations
+// 2. Stop replica DURING operations (stop while requests in flight)
+// 3. Restart replica
+// 4. Verify: no data loss for committed operations
+// 5. Verify: cluster continues to function
 test "FAULT-01: process crash during pending writes (R=3)" {
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
@@ -553,16 +553,16 @@ test "FAULT-01: process crash during pending writes (R=3)" {
     try expectEqual(t.replica(.R_).commit(), 12);
 }
 
-/// FAULT-01: Multiple sequential crashes (R=3)
-///
-/// This test validates that the system handles multiple sequential crashes correctly,
-/// with no cumulative data loss across crash/restart cycles.
-///
-/// Scenario:
-/// 1. Crash and restart each replica in sequence
-/// 2. Between each crash/restart cycle, commit more operations
-/// 3. Verify: no cumulative data loss across multiple crashes
-/// 4. Verify: final state is consistent across all replicas
+// FAULT-01: Multiple sequential crashes (R=3)
+//
+// This test validates that the system handles multiple sequential crashes correctly,
+// with no cumulative data loss across crash/restart cycles.
+//
+// Scenario:
+// 1. Crash and restart each replica in sequence
+// 2. Between each crash/restart cycle, commit more operations
+// 3. Verify: no cumulative data loss across multiple crashes
+// 4. Verify: final state is consistent across all replicas
 test "FAULT-01: multiple sequential crashes (R=3)" {
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
@@ -608,19 +608,19 @@ test "FAULT-01: multiple sequential crashes (R=3)" {
 // FAULT-02: Power Loss (Torn Writes) Tests
 // ============================================================================
 
-/// FAULT-02: Power loss (torn writes) survives without data loss (R=3)
-///
-/// This test validates that the system recovers from torn writes caused by
-/// power loss simulation. Torn writes are simulated via WAL header corruption
-/// (representing a partially written header).
-///
-/// Scenario:
-/// 1. Commit operations
-/// 2. Stop all replicas (simulating power loss)
-/// 3. Corrupt one replica's WAL header (simulating torn write)
-/// 4. Restart all replicas
-/// 5. Verify: cluster detects torn writes and repairs from intact replicas
-/// 6. Verify: committed data is preserved
+// FAULT-02: Power loss (torn writes) survives without data loss (R=3)
+//
+// This test validates that the system recovers from torn writes caused by
+// power loss simulation. Torn writes are simulated via WAL header corruption
+// (representing a partially written header).
+//
+// Scenario:
+// 1. Commit operations
+// 2. Stop all replicas (simulating power loss)
+// 3. Corrupt one replica's WAL header (simulating torn write)
+// 4. Restart all replicas
+// 5. Verify: cluster detects torn writes and repairs from intact replicas
+// 6. Verify: committed data is preserved
 test "FAULT-02: power loss (torn writes) survives without data loss (R=3)" {
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
@@ -656,17 +656,17 @@ test "FAULT-02: power loss (torn writes) survives without data loss (R=3)" {
     try expectEqual(t.replica(.R_).commit(), 12);
 }
 
-/// FAULT-02: Power loss during checkpoint (R=3)
-///
-/// This test validates that the system recovers from power loss that occurs
-/// during or after a checkpoint, with potential torn writes in grid blocks.
-///
-/// Scenario:
-/// 1. Commit enough operations to trigger checkpoint
-/// 2. Stop replicas (simulating power loss during/after checkpoint)
-/// 3. Corrupt checkpoint-related grid blocks (simulating torn checkpoint write)
-/// 4. Restart and verify cluster recovers
-/// 5. Verify checkpoint data preserved through cross-replica repair
+// FAULT-02: Power loss during checkpoint (R=3)
+//
+// This test validates that the system recovers from power loss that occurs
+// during or after a checkpoint, with potential torn writes in grid blocks.
+//
+// Scenario:
+// 1. Commit enough operations to trigger checkpoint
+// 2. Stop replicas (simulating power loss during/after checkpoint)
+// 3. Corrupt checkpoint-related grid blocks (simulating torn checkpoint write)
+// 4. Restart and verify cluster recovers
+// 5. Verify checkpoint data preserved through cross-replica repair
 test "FAULT-02: power loss during checkpoint (R=3)" {
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
@@ -722,18 +722,18 @@ test "FAULT-02: power loss during checkpoint (R=3)" {
 // FAULT-07: Corrupted Log Entry Tests
 // ============================================================================
 
-/// FAULT-07: Corrupted log entry detected via checksum (R=3)
-///
-/// This test validates that corrupted WAL entries are detected via checksum
-/// validation and repaired from healthy replicas.
-///
-/// Scenario:
-/// 1. Commit operations
-/// 2. Stop one replica
-/// 3. Corrupt a WAL prepare entry (zeros the sector, invalidating checksum)
-/// 4. Restart replica
-/// 5. Verify: corruption detected (enters recovering_head or similar)
-/// 6. Verify: cluster repairs from healthy replicas
+// FAULT-07: Corrupted log entry detected via checksum (R=3)
+//
+// This test validates that corrupted WAL entries are detected via checksum
+// validation and repaired from healthy replicas.
+//
+// Scenario:
+// 1. Commit operations
+// 2. Stop one replica
+// 3. Corrupt a WAL prepare entry (zeros the sector, invalidating checksum)
+// 4. Restart replica
+// 5. Verify: corruption detected (enters recovering_head or similar)
+// 6. Verify: cluster repairs from healthy replicas
 test "FAULT-07: corrupted log entry detected via checksum (R=3)" {
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
@@ -773,21 +773,21 @@ test "FAULT-07: corrupted log entry detected via checksum (R=3)" {
     try expectEqual(t.replica(.R_).commit(), 12);
 }
 
-/// FAULT-07: Corrupted log entry on single replica (R=1) - clear error
-///
-/// Per CONTEXT.md decision: "Corrupted data handling: Fail startup with clear error -
-/// require operator intervention rather than risk serving bad data"
-///
-/// This test validates that R=1 (single replica) correctly fails with a clear error
-/// when a WAL prepare is corrupted between checkpoint and head.
-///
-/// Scenario:
-/// 1. Create R=1 cluster
-/// 2. Commit operations
-/// 3. Stop replica
-/// 4. Corrupt WAL entry between checkpoint and head
-/// 5. Attempt restart
-/// 6. Verify: returns error.WALCorrupt (clear error, not silent corruption)
+// FAULT-07: Corrupted log entry on single replica (R=1) - clear error
+//
+// Per CONTEXT.md decision: "Corrupted data handling: Fail startup with clear error -
+// require operator intervention rather than risk serving bad data"
+//
+// This test validates that R=1 (single replica) correctly fails with a clear error
+// when a WAL prepare is corrupted between checkpoint and head.
+//
+// Scenario:
+// 1. Create R=1 cluster
+// 2. Commit operations
+// 3. Stop replica
+// 4. Corrupt WAL entry between checkpoint and head
+// 5. Attempt restart
+// 6. Verify: returns error.WALCorrupt (clear error, not silent corruption)
 test "FAULT-07: corrupted log entry on single replica (R=1) - clear error" {
     const t = try TestContext.init(.{ .replica_count = 1, .seed = 42 });
     defer t.deinit();
@@ -817,18 +817,18 @@ test "FAULT-07: corrupted log entry on single replica (R=1) - clear error" {
     }
 }
 
-/// FAULT-07: Multiple corrupted entries across replicas recoverable
-///
-/// This test validates that when different replicas have different entries
-/// corrupted (disjoint corruption pattern), the cluster can recover all data
-/// as long as each entry exists intact on at least one replica.
-///
-/// Scenario:
-/// 1. Commit operations
-/// 2. Stop all replicas
-/// 3. Corrupt different WAL entries on different replicas (disjoint pattern)
-/// 4. Restart all replicas
-/// 5. Verify: cluster recovers as each entry is intact on at least one replica
+// FAULT-07: Multiple corrupted entries across replicas recoverable
+//
+// This test validates that when different replicas have different entries
+// corrupted (disjoint corruption pattern), the cluster can recover all data
+// as long as each entry exists intact on at least one replica.
+//
+// Scenario:
+// 1. Commit operations
+// 2. Stop all replicas
+// 3. Corrupt different WAL entries on different replicas (disjoint pattern)
+// 4. Restart all replicas
+// 5. Verify: cluster recovers as each entry is intact on at least one replica
 test "FAULT-07: multiple corrupted entries across replicas recoverable" {
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
@@ -882,14 +882,14 @@ test "FAULT-07: multiple corrupted entries across replicas recoverable" {
 // Network partitions don't cause data loss
 // ============================================================================
 
-/// FAULT-05: Network partition isolates minority without data loss (R=3)
-///
-/// This test validates that when a network partition isolates one replica (minority),
-/// the majority can continue committing, and after the partition heals, the isolated
-/// replica catches up without any data loss.
-///
-/// Per CONTEXT.md: "Network timeout handling: Fast failure with automatic leader
-/// re-election - assume leader is dead, elect new one quickly"
+// FAULT-05: Network partition isolates minority without data loss (R=3)
+//
+// This test validates that when a network partition isolates one replica (minority),
+// the majority can continue committing, and after the partition heals, the isolated
+// replica catches up without any data loss.
+//
+// Per CONTEXT.md: "Network timeout handling: Fast failure with automatic leader
+// re-election - assume leader is dead, elect new one quickly"
 test "FAULT-05: network partition isolates minority without data loss (R=3)" {
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
@@ -924,11 +924,11 @@ test "FAULT-05: network partition isolates minority without data loss (R=3)" {
     try expectEqual(t.replica(.R_).status(), .normal);
 }
 
-/// FAULT-05: Network partition of primary triggers re-election
-///
-/// This test validates that when the primary is partitioned from backups,
-/// the backups elect a new leader and the cluster continues to operate.
-/// After the partition heals, the old primary catches up without data loss.
+// FAULT-05: Network partition of primary triggers re-election
+//
+// This test validates that when the primary is partitioned from backups,
+// the backups elect a new leader and the cluster continues to operate.
+// After the partition heals, the old primary catches up without data loss.
 test "FAULT-05: network partition of primary triggers re-election" {
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
@@ -968,10 +968,10 @@ test "FAULT-05: network partition of primary triggers re-election" {
     try expectEqual(t.replica(.R_).status(), .normal);
 }
 
-/// FAULT-05: Asymmetric partition (send-only) handled correctly
-///
-/// This test validates handling of asymmetric partitions where a replica
-/// can send but not receive messages.
+// FAULT-05: Asymmetric partition (send-only) handled correctly
+//
+// This test validates handling of asymmetric partitions where a replica
+// can send but not receive messages.
 test "FAULT-05: asymmetric partition (send-only)" {
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
@@ -1004,10 +1004,10 @@ test "FAULT-05: asymmetric partition (send-only)" {
     try expectEqual(t.replica(.R_).commit(), 6);
 }
 
-/// FAULT-05: Asymmetric partition (receive-only) handled correctly
-///
-/// This test validates handling of asymmetric partitions where a replica
-/// can receive but not send messages.
+// FAULT-05: Asymmetric partition (receive-only) handled correctly
+//
+// This test validates handling of asymmetric partitions where a replica
+// can receive but not send messages.
 test "FAULT-05: asymmetric partition (receive-only)" {
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
@@ -1041,10 +1041,10 @@ test "FAULT-05: asymmetric partition (receive-only)" {
     try expectEqual(t.replica(.R_).commit(), 6);
 }
 
-/// FAULT-05: Repeated partition and heal cycles maintain data consistency
-///
-/// This test validates that multiple partition/heal cycles do not cause
-/// data loss or inconsistency.
+// FAULT-05: Repeated partition and heal cycles maintain data consistency
+//
+// This test validates that multiple partition/heal cycles do not cause
+// data loss or inconsistency.
 test "FAULT-05: repeated partition and heal cycles" {
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
@@ -1095,12 +1095,12 @@ test "FAULT-05: repeated partition and heal cycles" {
 // network conditions configured in TestContext.init. The StateChecker validates
 // linearizability throughout, ensuring no data corruption occurs.
 
-/// FAULT-06: Packet loss doesn't cause data corruption (R=3)
-///
-/// This test validates that the cluster handles packet loss correctly via retries,
-/// and that no data corruption occurs. The StateChecker validates linearizability.
-/// The default network configuration includes random delays which exercise the
-/// retry paths in the VSR protocol.
+// FAULT-06: Packet loss doesn't cause data corruption (R=3)
+//
+// This test validates that the cluster handles packet loss correctly via retries,
+// and that no data corruption occurs. The StateChecker validates linearizability.
+// The default network configuration includes random delays which exercise the
+// retry paths in the VSR protocol.
 test "FAULT-06: packet loss doesn't cause data corruption (R=3)" {
     // The default TestContext network configuration already introduces
     // realistic network conditions (delays). We verify the system works
@@ -1125,10 +1125,10 @@ test "FAULT-06: packet loss doesn't cause data corruption (R=3)" {
     try expectEqual(t.replica(.R_).commit(), 25);
 }
 
-/// FAULT-06: High latency with partitions doesn't cause data corruption (R=3)
-///
-/// This test validates that the cluster handles high network latency correctly
-/// without data corruption, even when combined with temporary partitions.
+// FAULT-06: High latency with partitions doesn't cause data corruption (R=3)
+//
+// This test validates that the cluster handles high network latency correctly
+// without data corruption, even when combined with temporary partitions.
 test "FAULT-06: high latency with partitions doesn't cause data corruption (R=3)" {
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
@@ -1156,10 +1156,10 @@ test "FAULT-06: high latency with partitions doesn't cause data corruption (R=3)
     // StateChecker validates no linearizability violations
 }
 
-/// FAULT-06: Mixed network faults (partitions + recovery) don't cause corruption
-///
-/// This test validates that combined network faults (temporary partitions,
-/// crash/recovery) don't cause data corruption.
+// FAULT-06: Mixed network faults (partitions + recovery) don't cause corruption
+//
+// This test validates that combined network faults (temporary partitions,
+// crash/recovery) don't cause data corruption.
 test "FAULT-06: mixed network faults don't cause corruption" {
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
@@ -1198,10 +1198,10 @@ test "FAULT-06: mixed network faults don't cause corruption" {
     try expectEqual(t.cluster.state_checker.requests_committed, 20);
 }
 
-/// FAULT-06: Network faults during checkpoint don't cause corruption
-///
-/// This test validates that network faults occurring during checkpoint
-/// operations don't cause data corruption.
+// FAULT-06: Network faults during checkpoint don't cause corruption
+//
+// This test validates that network faults occurring during checkpoint
+// operations don't cause data corruption.
 test "FAULT-06: network faults during checkpoint don't cause corruption" {
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
@@ -1237,24 +1237,24 @@ test "FAULT-06: network faults during checkpoint don't cause corruption" {
 // FAULT-03: Disk Read Error Tests
 // ============================================================================
 
-/// FAULT-03: disk read error recovered via cluster repair (R=3)
-///
-/// This test validates that when a replica experiences disk read errors
-/// (simulated by corrupting grid blocks), the cluster can recover via
-/// repair from other replicas.
-///
-/// The production storage (src/storage.zig) handles read errors via:
-/// 1. Binary search subdivision for multi-sector reads
-/// 2. Zeroing failed single sectors (allowing repair protocol)
-/// 3. Repair from other replicas
-///
-/// Scenario:
-/// 1. Create 3-node cluster, commit operations to checkpoint
-/// 2. Stop one replica
-/// 3. Corrupt grid blocks (simulating disk sectors with read errors)
-/// 4. Restart replica
-/// 5. Verify: cluster repairs corrupted blocks from healthy replicas
-/// 6. Verify: after repair, corrupted areas are no longer faulty
+// FAULT-03: disk read error recovered via cluster repair (R=3)
+//
+// This test validates that when a replica experiences disk read errors
+// (simulated by corrupting grid blocks), the cluster can recover via
+// repair from other replicas.
+//
+// The production storage (src/storage.zig) handles read errors via:
+// 1. Binary search subdivision for multi-sector reads
+// 2. Zeroing failed single sectors (allowing repair protocol)
+// 3. Repair from other replicas
+//
+// Scenario:
+// 1. Create 3-node cluster, commit operations to checkpoint
+// 2. Stop one replica
+// 3. Corrupt grid blocks (simulating disk sectors with read errors)
+// 4. Restart replica
+// 5. Verify: cluster repairs corrupted blocks from healthy replicas
+// 6. Verify: after repair, corrupted areas are no longer faulty
 test "FAULT-03: disk read error recovered via cluster repair (R=3)" {
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
@@ -1301,17 +1301,17 @@ test "FAULT-03: disk read error recovered via cluster repair (R=3)" {
     try expectEqual(t.replica(.R_).commit(), checkpoint_1_trigger + 5);
 }
 
-/// FAULT-03: multiple sector failures repaired (R=3)
-///
-/// This test validates that multiple non-adjacent sector failures on one
-/// replica can all be repaired from the cluster.
-///
-/// Scenario:
-/// 1. Create 3-node cluster, commit to checkpoint
-/// 2. Corrupt multiple non-adjacent sectors on one replica
-/// 3. Restart and let cluster repair
-/// 4. Verify: all sectors repaired
-/// 5. Verify: cluster continues operating normally
+// FAULT-03: multiple sector failures repaired (R=3)
+//
+// This test validates that multiple non-adjacent sector failures on one
+// replica can all be repaired from the cluster.
+//
+// Scenario:
+// 1. Create 3-node cluster, commit to checkpoint
+// 2. Corrupt multiple non-adjacent sectors on one replica
+// 3. Restart and let cluster repair
+// 4. Verify: all sectors repaired
+// 5. Verify: cluster continues operating normally
 test "FAULT-03: multiple sector failures repaired (R=3)" {
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
@@ -1358,19 +1358,19 @@ test "FAULT-03: multiple sector failures repaired (R=3)" {
     try expectEqual(t.replica(.R_).commit(), checkpoint_1_trigger + 5);
 }
 
-/// FAULT-03: WAL read error triggers repair (R=3)
-///
-/// This test validates that WAL read errors (corrupted WAL prepares)
-/// trigger the repair protocol from other replicas.
-///
-/// Scenario:
-/// 1. Create 3-node cluster, commit operations
-/// 2. Stop one replica
-/// 3. Corrupt WAL prepare on one replica (simulating read error)
-/// 4. Restart replica
-/// 5. Verify: enters recovering_head due to checksum failure
-/// 6. Verify: repairs from other replicas
-/// 7. Verify: returns to normal status
+// FAULT-03: WAL read error triggers repair (R=3)
+//
+// This test validates that WAL read errors (corrupted WAL prepares)
+// trigger the repair protocol from other replicas.
+//
+// Scenario:
+// 1. Create 3-node cluster, commit operations
+// 2. Stop one replica
+// 3. Corrupt WAL prepare on one replica (simulating read error)
+// 4. Restart replica
+// 5. Verify: enters recovering_head due to checksum failure
+// 6. Verify: repairs from other replicas
+// 7. Verify: returns to normal status
 test "FAULT-03: WAL read error triggers repair (R=3)" {
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
@@ -1410,20 +1410,20 @@ test "FAULT-03: WAL read error triggers repair (R=3)" {
     try expectEqual(t.replica(.R_).commit(), 15);
 }
 
-/// FAULT-03: disjoint read errors across replicas recoverable
-///
-/// This test validates that when different replicas have different sectors
-/// corrupted (simulating independent disk read errors), the cluster can
-/// recover all data through cross-replica repair as long as each sector
-/// exists intact on at least one replica.
-///
-/// Scenario:
-/// 1. Create 3-node cluster, commit to checkpoint
-/// 2. Stop all replicas
-/// 3. Corrupt different sectors on different replicas (disjoint pattern)
-///    - Each sector intact on exactly one replica
-/// 4. Restart all replicas
-/// 5. Verify: cluster recovers all data through distributed repair
+// FAULT-03: disjoint read errors across replicas recoverable
+//
+// This test validates that when different replicas have different sectors
+// corrupted (simulating independent disk read errors), the cluster can
+// recover all data through cross-replica repair as long as each sector
+// exists intact on at least one replica.
+//
+// Scenario:
+// 1. Create 3-node cluster, commit to checkpoint
+// 2. Stop all replicas
+// 3. Corrupt different sectors on different replicas (disjoint pattern)
+//    - Each sector intact on exactly one replica
+// 4. Restart all replicas
+// 5. Verify: cluster recovers all data through distributed repair
 test "FAULT-03: disjoint read errors across replicas recoverable" {
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
@@ -1482,27 +1482,27 @@ test "FAULT-03: disjoint read errors across replicas recoverable" {
 // FAULT-04: Full Disk Handling Tests
 // ============================================================================
 
-/// FAULT-04: --limit-storage prevents physical disk exhaustion
-///
-/// This test documents that the --limit-storage flag provides logical storage
-/// limiting before physical disk exhaustion. The cluster is configured with
-/// a storage_size_limit, which prevents writes beyond that limit.
-///
-/// Per CONTEXT.md: "Full disk behavior: Reject writes with clear error,
-/// stay available for reads - graceful degradation to read-only mode"
-///
-/// The current implementation (src/storage.zig) uses vsr.fatal() on NoSpaceLeft
-/// for physical exhaustion, but the --limit-storage flag provides logical
-/// limiting before that point is reached.
-///
-/// Scenario:
-/// 1. Create cluster with storage size limit (128 MiB in test)
-/// 2. Commit operations up to checkpoint
-/// 3. Verify: writes are accepted within limit
-/// 4. Verify: cluster operates normally
-///
-/// Note: The test infrastructure uses storage_size_limit to configure logical
-/// limits. This prevents physical disk exhaustion by limiting at the logical level.
+// FAULT-04: --limit-storage prevents physical disk exhaustion
+//
+// This test documents that the --limit-storage flag provides logical storage
+// limiting before physical disk exhaustion. The cluster is configured with
+// a storage_size_limit, which prevents writes beyond that limit.
+//
+// Per CONTEXT.md: "Full disk behavior: Reject writes with clear error,
+// stay available for reads - graceful degradation to read-only mode"
+//
+// The current implementation (src/storage.zig) uses vsr.fatal() on NoSpaceLeft
+// for physical exhaustion, but the --limit-storage flag provides logical
+// limiting before that point is reached.
+//
+// Scenario:
+// 1. Create cluster with storage size limit (128 MiB in test)
+// 2. Commit operations up to checkpoint
+// 3. Verify: writes are accepted within limit
+// 4. Verify: cluster operates normally
+//
+// Note: The test infrastructure uses storage_size_limit to configure logical
+// limits. This prevents physical disk exhaustion by limiting at the logical level.
 test "FAULT-04: --limit-storage prevents physical disk exhaustion" {
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
@@ -1533,19 +1533,19 @@ test "FAULT-04: --limit-storage prevents physical disk exhaustion" {
     // Production deployments should configure --limit-storage appropriately
 }
 
-/// FAULT-04: reads continue during write rejection
-///
-/// This test validates that when writes are rejected (due to storage limits
-/// or other reasons), previously committed data remains readable.
-///
-/// Scenario:
-/// 1. Create cluster and commit operations to checkpoint
-/// 2. Stop and restart a replica
-/// 3. Verify: existing committed data is still readable
-/// 4. Verify: cluster can continue accepting reads and new writes
-///
-/// Note: This test verifies graceful degradation behavior where the cluster
-/// remains available for reads even during adverse conditions.
+// FAULT-04: reads continue during write rejection
+//
+// This test validates that when writes are rejected (due to storage limits
+// or other reasons), previously committed data remains readable.
+//
+// Scenario:
+// 1. Create cluster and commit operations to checkpoint
+// 2. Stop and restart a replica
+// 3. Verify: existing committed data is still readable
+// 4. Verify: cluster can continue accepting reads and new writes
+//
+// Note: This test verifies graceful degradation behavior where the cluster
+// remains available for reads even during adverse conditions.
 test "FAULT-04: reads continue during write rejection" {
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
@@ -1576,20 +1576,20 @@ test "FAULT-04: reads continue during write rejection" {
     try expectEqual(t.replica(.R_).commit(), checkpoint_1_trigger + 5);
 }
 
-/// FAULT-04: write rejection is graceful (no corruption)
-///
-/// This test validates that when writes are rejected or a replica crashes,
-/// existing committed data remains intact and uncorrupted.
-///
-/// Scenario:
-/// 1. Commit operations to checkpoint
-/// 2. Stop a replica abruptly (simulating crash)
-/// 3. Restart replica
-/// 4. Verify: committed data checksums are valid (replica recovers)
-/// 5. Verify: no data corruption (cluster operates normally)
-///
-/// The cluster's repair protocol ensures that any corrupted or incomplete
-/// data is repaired from other replicas.
+// FAULT-04: write rejection is graceful (no corruption)
+//
+// This test validates that when writes are rejected or a replica crashes,
+// existing committed data remains intact and uncorrupted.
+//
+// Scenario:
+// 1. Commit operations to checkpoint
+// 2. Stop a replica abruptly (simulating crash)
+// 3. Restart replica
+// 4. Verify: committed data checksums are valid (replica recovers)
+// 5. Verify: no data corruption (cluster operates normally)
+//
+// The cluster's repair protocol ensures that any corrupted or incomplete
+// data is repaired from other replicas.
 test "FAULT-04: write rejection is graceful (no corruption)" {
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
@@ -1630,21 +1630,21 @@ test "FAULT-04: write rejection is graceful (no corruption)" {
 // Recovery from crash completes within 60 seconds
 // ============================================================================
 
-/// FAULT-08: Recovery from crash completes within tick limit (R=3)
-///
-/// Per CONTEXT.md: "Recovery time target: Under 60 seconds for replica to rejoin cluster after crash"
-///
-/// This test validates that when a replica crashes and restarts, it recovers to
-/// normal status within a reasonable tick count. The deterministic test environment
-/// uses tick-based timing rather than wall clock time.
-///
-/// Scenario:
-/// 1. Create 3-node cluster, commit operations past checkpoint
-/// 2. Stop one replica (crash)
-/// 3. Record tick count before restart
-/// 4. Restart replica and run until stable
-/// 5. Verify: replica enters .normal status within tick limit
-/// 6. Verify: replica has correct commit position (no data loss)
+// FAULT-08: Recovery from crash completes within tick limit (R=3)
+//
+// Per CONTEXT.md: "Recovery time target: Under 60 seconds for replica to rejoin cluster after crash"
+//
+// This test validates that when a replica crashes and restarts, it recovers to
+// normal status within a reasonable tick count. The deterministic test environment
+// uses tick-based timing rather than wall clock time.
+//
+// Scenario:
+// 1. Create 3-node cluster, commit operations past checkpoint
+// 2. Stop one replica (crash)
+// 3. Record tick count before restart
+// 4. Restart replica and run until stable
+// 5. Verify: replica enters .normal status within tick limit
+// 6. Verify: replica has correct commit position (no data loss)
 test "FAULT-08: recovery from crash completes within tick limit (R=3)" {
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
@@ -1682,18 +1682,18 @@ test "FAULT-08: recovery from crash completes within tick limit (R=3)" {
     try expectEqual(t.replica(.R_).commit(), checkpoint_1_trigger + 5);
 }
 
-/// FAULT-08: Recovery from WAL corruption completes within tick limit (R=3)
-///
-/// This test validates that recovery completes within the tick limit even when
-/// the recovering replica has WAL corruption that requires repair from the cluster.
-///
-/// Scenario:
-/// 1. Create cluster, commit operations
-/// 2. Stop one replica
-/// 3. Corrupt WAL prepare (requiring repair)
-/// 4. Restart replica and run until stable
-/// 5. Verify: recovery + repair complete within tick limit
-/// 6. Verify: replica is in normal status
+// FAULT-08: Recovery from WAL corruption completes within tick limit (R=3)
+//
+// This test validates that recovery completes within the tick limit even when
+// the recovering replica has WAL corruption that requires repair from the cluster.
+//
+// Scenario:
+// 1. Create cluster, commit operations
+// 2. Stop one replica
+// 3. Corrupt WAL prepare (requiring repair)
+// 4. Restart replica and run until stable
+// 5. Verify: recovery + repair complete within tick limit
+// 6. Verify: replica is in normal status
 test "FAULT-08: recovery from WAL corruption within tick limit (R=3)" {
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
@@ -1735,18 +1735,18 @@ test "FAULT-08: recovery from WAL corruption within tick limit (R=3)" {
     try expectEqual(t.replica(.R_).commit(), 15);
 }
 
-/// FAULT-08: Recovery from grid corruption completes within tick limit (R=3)
-///
-/// This test validates that recovery completes within the tick limit even when
-/// the recovering replica has grid block corruption requiring repair from the cluster.
-///
-/// Scenario:
-/// 1. Create cluster, checkpoint to populate grid
-/// 2. Stop one replica
-/// 3. Corrupt grid blocks (requiring repair from cluster)
-/// 4. Restart replica and run until stable
-/// 5. Verify: recovery + repair complete within tick limit
-/// 6. Verify: replica is in normal status
+// FAULT-08: Recovery from grid corruption completes within tick limit (R=3)
+//
+// This test validates that recovery completes within the tick limit even when
+// the recovering replica has grid block corruption requiring repair from the cluster.
+//
+// Scenario:
+// 1. Create cluster, checkpoint to populate grid
+// 2. Stop one replica
+// 3. Corrupt grid blocks (requiring repair from cluster)
+// 4. Restart replica and run until stable
+// 5. Verify: recovery + repair complete within tick limit
+// 6. Verify: replica is in normal status
 test "FAULT-08: recovery from grid corruption within tick limit (R=3)" {
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
@@ -1793,16 +1793,16 @@ test "FAULT-08: recovery from grid corruption within tick limit (R=3)" {
     try expectEqual(t.replica(.R_).op_checkpoint(), checkpoint_2);
 }
 
-/// FAULT-08: Recovery path classification validates correctly
-///
-/// This test validates that the RecoveryPath classification logic correctly
-/// identifies different recovery scenarios based on checkpoint and op positions.
-///
-/// The classify_recovery_path function from src/index/checkpoint.zig determines:
-/// - clean_start: No checkpoint, first startup (op_checkpoint=0, op_max=0)
-/// - wal_replay: Gap <= journal_slot_count (fast path)
-/// - lsm_scan: Gap <= compaction_retention_ops (medium path)
-/// - full_rebuild: Gap > compaction_retention_ops (slow path)
+// FAULT-08: Recovery path classification validates correctly
+//
+// This test validates that the RecoveryPath classification logic correctly
+// identifies different recovery scenarios based on checkpoint and op positions.
+//
+// The classify_recovery_path function from src/index/checkpoint.zig determines:
+// - clean_start: No checkpoint, first startup (op_checkpoint=0, op_max=0)
+// - wal_replay: Gap <= journal_slot_count (fast path)
+// - lsm_scan: Gap <= compaction_retention_ops (medium path)
+// - full_rebuild: Gap > compaction_retention_ops (slow path)
 test "FAULT-08: recovery path classification validates correctly" {
     // Import the checkpoint module to access classify_recovery_path
     const index_checkpoint = @import("../index/checkpoint.zig");

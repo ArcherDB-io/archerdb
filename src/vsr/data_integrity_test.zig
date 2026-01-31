@@ -434,17 +434,17 @@ const TestClients = struct {
 // DATA-01: WAL Replay Tests
 // ============================================================================
 
-/// DATA-01: WAL replay restores correct state after crash (R=3)
-///
-/// This test validates that when a replica's WAL is corrupted, the cluster can
-/// recover via repair from other replicas, ensuring WAL replay restores exact state.
-///
-/// Scenario:
-/// 1. Create 3-node cluster and commit 10+ operations
-/// 2. Stop all replicas (simulating crash)
-/// 3. Corrupt one replica's WAL at a specific slot
-/// 4. Restart all replicas
-/// 5. Verify: corrupted replica repairs from others and cluster reaches consensus
+// DATA-01: WAL replay restores correct state after crash (R=3)
+//
+// This test validates that when a replica's WAL is corrupted, the cluster can
+// recover via repair from other replicas, ensuring WAL replay restores exact state.
+//
+// Scenario:
+// 1. Create 3-node cluster and commit 10+ operations
+// 2. Stop all replicas (simulating crash)
+// 3. Corrupt one replica's WAL at a specific slot
+// 4. Restart all replicas
+// 5. Verify: corrupted replica repairs from others and cluster reaches consensus
 test "DATA-01: WAL replay restores correct state after crash (R=3)" {
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
@@ -484,16 +484,16 @@ test "DATA-01: WAL replay restores correct state after crash (R=3)" {
     try expectEqual(t.replica(.R_).commit(), 15);
 }
 
-/// DATA-01: WAL replay with root corruption (R=3)
-///
-/// This test validates that a replica can recover from corruption of the root
-/// prepare (slot 0), which is a critical edge case for WAL recovery.
-///
-/// Scenario:
-/// 1. Create 3-node cluster
-/// 2. Stop one replica
-/// 3. Corrupt its root prepare (slot 0)
-/// 4. Restart and verify recovery via cluster repair
+// DATA-01: WAL replay with root corruption (R=3)
+//
+// This test validates that a replica can recover from corruption of the root
+// prepare (slot 0), which is a critical edge case for WAL recovery.
+//
+// Scenario:
+// 1. Create 3-node cluster
+// 2. Stop one replica
+// 3. Corrupt its root prepare (slot 0)
+// 4. Restart and verify recovery via cluster repair
 test "DATA-01: WAL replay with root corruption (R=3)" {
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
@@ -529,18 +529,18 @@ test "DATA-01: WAL replay with root corruption (R=3)" {
 // DATA-02: Checkpoint/Restore Tests
 // ============================================================================
 
-/// DATA-02: Checkpoint/restore cycle preserves all data (R=3)
-///
-/// This test validates that after a checkpoint, corrupted grid blocks can be
-/// repaired from other replicas, ensuring checkpoint/restore preserves all data.
-///
-/// Scenario:
-/// 1. Create 3-node cluster
-/// 2. Commit enough operations to trigger checkpoint
-/// 3. Stop all replicas
-/// 4. Corrupt grid blocks on each replica (disjoint corruption pattern)
-/// 5. Restart and verify cluster recovers all data
-/// 6. Continue to next checkpoint to verify full cycle
+// DATA-02: Checkpoint/restore cycle preserves all data (R=3)
+//
+// This test validates that after a checkpoint, corrupted grid blocks can be
+// repaired from other replicas, ensuring checkpoint/restore preserves all data.
+//
+// Scenario:
+// 1. Create 3-node cluster
+// 2. Commit enough operations to trigger checkpoint
+// 3. Stop all replicas
+// 4. Corrupt grid blocks on each replica (disjoint corruption pattern)
+// 5. Restart and verify cluster recovers all data
+// 6. Continue to next checkpoint to verify full cycle
 test "DATA-02: checkpoint/restore cycle preserves all data (R=3)" {
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
@@ -594,20 +594,20 @@ test "DATA-02: checkpoint/restore cycle preserves all data (R=3)" {
 // DATA-03: Checksum Corruption Detection Tests
 // ============================================================================
 
-/// DATA-03: checksums detect WAL prepare corruption
-///
-/// This test validates that when a replica's WAL prepare is corrupted, the
-/// checksum mismatch is detected and the cluster repairs the corrupted replica
-/// from healthy replicas.
-///
-/// Scenario:
-/// 1. Create 3-node cluster and commit operations
-/// 2. Stop one replica
-/// 3. Corrupt a WAL prepare (zeros the sector, invalidating checksum)
-/// 4. Restart replica
-/// 5. Verify: corruption detected (enters recovering_head)
-/// 6. Verify: cluster repairs from healthy replicas
-/// 7. Verify: after repair, area is no longer faulty
+// DATA-03: checksums detect WAL prepare corruption
+//
+// This test validates that when a replica's WAL prepare is corrupted, the
+// checksum mismatch is detected and the cluster repairs the corrupted replica
+// from healthy replicas.
+//
+// Scenario:
+// 1. Create 3-node cluster and commit operations
+// 2. Stop one replica
+// 3. Corrupt a WAL prepare (zeros the sector, invalidating checksum)
+// 4. Restart replica
+// 5. Verify: corruption detected (enters recovering_head)
+// 6. Verify: cluster repairs from healthy replicas
+// 7. Verify: after repair, area is no longer faulty
 test "DATA-03: checksums detect WAL prepare corruption" {
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
@@ -645,18 +645,18 @@ test "DATA-03: checksums detect WAL prepare corruption" {
     try expectEqual(t.replica(.R_).commit(), 10);
 }
 
-/// DATA-03: checksums detect grid block corruption
-///
-/// This test validates that corrupted grid blocks are detected via checksum
-/// and repaired from other replicas.
-///
-/// Scenario:
-/// 1. Create 3-node cluster and checkpoint to populate grid
-/// 2. Stop one replica
-/// 3. Corrupt grid blocks (zeros sectors, invalidating checksums)
-/// 4. Restart replica
-/// 5. Verify: cluster repairs corrupted grid blocks
-/// 6. Verify: repaired blocks are readable (no checksum errors)
+// DATA-03: checksums detect grid block corruption
+//
+// This test validates that corrupted grid blocks are detected via checksum
+// and repaired from other replicas.
+//
+// Scenario:
+// 1. Create 3-node cluster and checkpoint to populate grid
+// 2. Stop one replica
+// 3. Corrupt grid blocks (zeros sectors, invalidating checksums)
+// 4. Restart replica
+// 5. Verify: cluster repairs corrupted grid blocks
+// 6. Verify: repaired blocks are readable (no checksum errors)
 test "DATA-03: checksums detect grid block corruption" {
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
@@ -694,19 +694,19 @@ test "DATA-03: checksums detect grid block corruption" {
     try expectEqual(t.replica(.R_).op_checkpoint(), checkpoint_2);
 }
 
-/// DATA-03: disjoint corruption across replicas recoverable
-///
-/// This test validates that when different replicas have different blocks
-/// corrupted, the cluster can recover all data through cross-replica repair,
-/// as long as each block exists intact on at least one replica.
-///
-/// Scenario:
-/// 1. Create 3-node cluster and checkpoint
-/// 2. Stop all replicas
-/// 3. Corrupt different blocks on different replicas (disjoint pattern)
-///    - Each block intact on exactly one replica
-/// 4. Restart cluster
-/// 5. Verify: cluster recovers all blocks through distributed repair
+// DATA-03: disjoint corruption across replicas recoverable
+//
+// This test validates that when different replicas have different blocks
+// corrupted, the cluster can recover all data through cross-replica repair,
+// as long as each block exists intact on at least one replica.
+//
+// Scenario:
+// 1. Create 3-node cluster and checkpoint
+// 2. Stop all replicas
+// 3. Corrupt different blocks on different replicas (disjoint pattern)
+//    - Each block intact on exactly one replica
+// 4. Restart cluster
+// 5. Verify: cluster recovers all blocks through distributed repair
 test "DATA-03: disjoint corruption across replicas recoverable" {
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
@@ -761,19 +761,19 @@ test "DATA-03: disjoint corruption across replicas recoverable" {
     try expectEqual(t.replica(.R_).op_checkpoint(), checkpoint_2);
 }
 
-/// DATA-03: checksum detects single-bit flip (unit test)
-///
-/// This is a fast unit test (no cluster needed) that directly validates
-/// the fundamental property of Aegis128 MAC: any modification to data
-/// changes the checksum.
-///
-/// Scenario:
-/// 1. Create test buffer with known data
-/// 2. Compute checksum of original data
-/// 3. Flip a single bit in the data
-/// 4. Verify: checksum of modified data is different
-/// 5. Restore original bit
-/// 6. Verify: checksum matches original again
+// DATA-03: checksum detects single-bit flip (unit test)
+//
+// This is a fast unit test (no cluster needed) that directly validates
+// the fundamental property of Aegis128 MAC: any modification to data
+// changes the checksum.
+//
+// Scenario:
+// 1. Create test buffer with known data
+// 2. Compute checksum of original data
+// 3. Flip a single bit in the data
+// 4. Verify: checksum of modified data is different
+// 5. Restore original bit
+// 6. Verify: checksum matches original again
 test "DATA-03: checksum detects single-bit flip (unit test)" {
     const checksum_mod = @import("checksum.zig");
 
@@ -836,17 +836,17 @@ test "DATA-03: checksum detects single-bit flip (unit test)" {
 // DATA-06: Torn Write Tests
 // ============================================================================
 
-/// DATA-06: Torn writes detected and handled (R=3)
-///
-/// This test validates that torn writes (simulated by WAL header corruption)
-/// are detected during recovery and the replica can repair from the cluster.
-///
-/// Scenario:
-/// 1. Commit operations
-/// 2. Stop one replica
-/// 3. Corrupt WAL header (not prepare) - simulating torn write
-/// 4. Restart replica
-/// 5. Verify it detects corruption and repairs from cluster
+// DATA-06: Torn writes detected and handled (R=3)
+//
+// This test validates that torn writes (simulated by WAL header corruption)
+// are detected during recovery and the replica can repair from the cluster.
+//
+// Scenario:
+// 1. Commit operations
+// 2. Stop one replica
+// 3. Corrupt WAL header (not prepare) - simulating torn write
+// 4. Restart replica
+// 5. Verify it detects corruption and repairs from cluster
 test "DATA-06: torn writes detected and handled (R=3)" {
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
@@ -879,19 +879,19 @@ test "DATA-06: torn writes detected and handled (R=3)" {
     try expectEqual(t.replica(.R_).commit(), 10);
 }
 
-/// DATA-06: Torn writes with standby (R=1 S=1)
-///
-/// This test validates that R=1 can recover from a torn write when a standby
-/// is present to provide the intact prepare.
-///
-/// Based on replica_test.zig pattern:
-/// "Cluster: recovery: WAL torn prepare, standby with intact prepare (R=1 S=1)"
-///
-/// Scenario:
-/// 1. R=1 with S=1 standby commits operations
-/// 2. R=1 stops, header corrupted (torn write)
-/// 3. R=1 restarts, truncates torn prepare, increments view
-/// 4. Standby can continue with cluster
+// DATA-06: Torn writes with standby (R=1 S=1)
+//
+// This test validates that R=1 can recover from a torn write when a standby
+// is present to provide the intact prepare.
+//
+// Based on replica_test.zig pattern:
+// "Cluster: recovery: WAL torn prepare, standby with intact prepare (R=1 S=1)"
+//
+// Scenario:
+// 1. R=1 with S=1 standby commits operations
+// 2. R=1 stops, header corrupted (torn write)
+// 3. R=1 restarts, truncates torn prepare, increments view
+// 4. Standby can continue with cluster
 test "DATA-06: torn writes with standby (R=1 S=1)" {
     const t = try TestContext.init(.{
         .replica_count = 1,
@@ -930,16 +930,16 @@ test "DATA-06: torn writes with standby (R=1 S=1)" {
 // DATA-04: Read-Your-Writes Consistency Tests
 // ============================================================================
 
-/// DATA-04: read-your-writes consistency (single client)
-///
-/// This test validates that a single client's writes are immediately visible
-/// on subsequent reads. The StateChecker validates linearizability automatically.
-///
-/// Scenario:
-/// 1. Create cluster with single client
-/// 2. Send request, wait for commit acknowledgment
-/// 3. Verify: commit is visible on all replicas
-/// 4. Send more requests, verify each is committed in order
+// DATA-04: read-your-writes consistency (single client)
+//
+// This test validates that a single client's writes are immediately visible
+// on subsequent reads. The StateChecker validates linearizability automatically.
+//
+// Scenario:
+// 1. Create cluster with single client
+// 2. Send request, wait for commit acknowledgment
+// 3. Verify: commit is visible on all replicas
+// 4. Send more requests, verify each is committed in order
 test "DATA-04: read-your-writes consistency (single client)" {
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
@@ -966,16 +966,16 @@ test "DATA-04: read-your-writes consistency (single client)" {
     try expectEqual(t.cluster.state_checker.requests_committed, 10);
 }
 
-/// DATA-04: read-your-writes consistency (client across view change)
-///
-/// This test validates that read-your-writes consistency is maintained
-/// even when a view change occurs (primary fails).
-///
-/// Scenario:
-/// 1. Send requests until acknowledged
-/// 2. Force view change (stop primary)
-/// 3. After view change, send more requests
-/// 4. Verify: no requests are lost or duplicated
+// DATA-04: read-your-writes consistency (client across view change)
+//
+// This test validates that read-your-writes consistency is maintained
+// even when a view change occurs (primary fails).
+//
+// Scenario:
+// 1. Send requests until acknowledged
+// 2. Force view change (stop primary)
+// 3. After view change, send more requests
+// 4. Verify: no requests are lost or duplicated
 test "DATA-04: read-your-writes consistency (client across view change)" {
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
@@ -1015,19 +1015,19 @@ test "DATA-04: read-your-writes consistency (client across view change)" {
     try expectEqual(t.replica(.R_).commit(), 10);
 }
 
-/// DATA-04: state checker validates linearizability
-///
-/// This test explicitly demonstrates that the StateChecker validates
-/// linearizability across various scenarios. While all tests implicitly
-/// validate this (StateChecker asserts on every tick), this test makes
-/// it explicit and exercises multiple scenarios.
-///
-/// Scenario:
-/// 1. Create cluster with multiple requests
-/// 2. Introduce scenarios that could violate linearizability:
-///    - View changes during commit
-///    - Replica crashes during commit
-/// 3. Verify: no assertion failures from StateChecker
+// DATA-04: state checker validates linearizability
+//
+// This test explicitly demonstrates that the StateChecker validates
+// linearizability across various scenarios. While all tests implicitly
+// validate this (StateChecker asserts on every tick), this test makes
+// it explicit and exercises multiple scenarios.
+//
+// Scenario:
+// 1. Create cluster with multiple requests
+// 2. Introduce scenarios that could violate linearizability:
+//    - View changes during commit
+//    - Replica crashes during commit
+// 3. Verify: no assertion failures from StateChecker
 test "DATA-04: state checker validates linearizability" {
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
@@ -1075,17 +1075,17 @@ test "DATA-04: state checker validates linearizability" {
 // DATA-05: Concurrent Write Safety Tests
 // ============================================================================
 
-/// DATA-05: concurrent writes from multiple clients (R=3)
-///
-/// This test validates that concurrent writes from multiple clients
-/// don't cause data corruption or lost updates.
-///
-/// Scenario:
-/// 1. Create cluster with multiple clients
-/// 2. Have all clients send requests concurrently
-/// 3. Verify: all requests eventually commit
-/// 4. Verify: commit count matches total requests
-/// 5. Verify: StateChecker finds no linearizability violations
+// DATA-05: concurrent writes from multiple clients (R=3)
+//
+// This test validates that concurrent writes from multiple clients
+// don't cause data corruption or lost updates.
+//
+// Scenario:
+// 1. Create cluster with multiple clients
+// 2. Have all clients send requests concurrently
+// 3. Verify: all requests eventually commit
+// 4. Verify: commit count matches total requests
+// 5. Verify: StateChecker finds no linearizability violations
 test "DATA-05: concurrent writes from multiple clients (R=3)" {
     // Use 4 clients for concurrent writes
     const t = try TestContext.init(.{
@@ -1118,18 +1118,18 @@ test "DATA-05: concurrent writes from multiple clients (R=3)" {
     }
 }
 
-/// DATA-05: concurrent writes with replica crash
-///
-/// This test validates that concurrent writes maintain integrity
-/// when a replica crashes mid-operation.
-///
-/// Scenario:
-/// 1. Start concurrent requests from multiple clients
-/// 2. Mid-operation, stop one replica
-/// 3. Continue sending requests
-/// 4. Restart replica
-/// 5. Verify: all requests commit, no data loss
-/// 6. Verify: restarted replica catches up to current state
+// DATA-05: concurrent writes with replica crash
+//
+// This test validates that concurrent writes maintain integrity
+// when a replica crashes mid-operation.
+//
+// Scenario:
+// 1. Start concurrent requests from multiple clients
+// 2. Mid-operation, stop one replica
+// 3. Continue sending requests
+// 4. Restart replica
+// 5. Verify: all requests commit, no data loss
+// 6. Verify: restarted replica catches up to current state
 test "DATA-05: concurrent writes with replica crash" {
     const t = try TestContext.init(.{
         .replica_count = 3,
@@ -1169,19 +1169,19 @@ test "DATA-05: concurrent writes with replica crash" {
     try expectEqual(t.replica(.R2).commit(), 15);
 }
 
-/// DATA-05: concurrent writes with network partition
-///
-/// This test validates that concurrent writes maintain integrity
-/// during a network partition and that all replicas converge
-/// after the partition heals.
-///
-/// Scenario:
-/// 1. Start concurrent requests
-/// 2. Create network partition isolating one replica
-/// 3. Continue sending requests
-/// 4. Heal partition
-/// 5. Verify: all replicas converge to same state
-/// 6. Verify: no duplicate commits
+// DATA-05: concurrent writes with network partition
+//
+// This test validates that concurrent writes maintain integrity
+// during a network partition and that all replicas converge
+// after the partition heals.
+//
+// Scenario:
+// 1. Start concurrent requests
+// 2. Create network partition isolating one replica
+// 3. Continue sending requests
+// 4. Heal partition
+// 5. Verify: all replicas converge to same state
+// 6. Verify: no duplicate commits
 test "DATA-05: concurrent writes with network partition" {
     const t = try TestContext.init(.{
         .replica_count = 3,

@@ -363,9 +363,9 @@ const TestClients = struct {
 // Multi-Node Validation Tests
 // ============================================================================
 
-/// MULTI-01: Validates that a 3-node cluster achieves consensus and replicates
-/// data to all nodes. After sending requests, all replicas should have the same
-/// commit position and be in normal status.
+// MULTI-01: Validates that a 3-node cluster achieves consensus and replicates
+// data to all nodes. After sending requests, all replicas should have the same
+// commit position and be in normal status.
 test "MULTI-01: 3-node cluster achieves consensus and replicates" {
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
@@ -387,9 +387,9 @@ test "MULTI-01: 3-node cluster achieves consensus and replicates" {
     try expectEqual(t.replica(.R_).status(), .normal);
 }
 
-/// MULTI-02: Validates that leader election completes within 5 seconds after
-/// primary failure. The test crashes the primary and measures the time (in ticks)
-/// until a new primary is elected and can accept requests.
+// MULTI-02: Validates that leader election completes within 5 seconds after
+// primary failure. The test crashes the primary and measures the time (in ticks)
+// until a new primary is elected and can accept requests.
 test "MULTI-02: leader election completes within 5 seconds" {
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
@@ -446,10 +446,10 @@ test "MULTI-02: leader election completes within 5 seconds" {
     try c.request(3, 3);
 }
 
-/// MULTI-03: Validates that a crashed replica can rejoin the cluster and catch up
-/// to the committed state. The test crashes a backup, continues committing with
-/// the remaining majority, then restarts the crashed replica and verifies it
-/// catches up.
+// MULTI-03: Validates that a crashed replica can rejoin the cluster and catch up
+// to the committed state. The test crashes a backup, continues committing with
+// the remaining majority, then restarts the crashed replica and verifies it
+// catches up.
 test "MULTI-03: crashed replica rejoins and catches up" {
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
@@ -486,9 +486,9 @@ test "MULTI-03: crashed replica rejoins and catches up" {
     try expectEqual(b2.commit(), 10);
 }
 
-/// MULTI-07: Validates that a failed replica can be replaced via reformat.
-/// This simulates the cluster reconfiguration workflow where a completely failed
-/// node is replaced with a fresh one that rejoins and syncs.
+// MULTI-07: Validates that a failed replica can be replaced via reformat.
+// This simulates the cluster reconfiguration workflow where a completely failed
+// node is replaced with a fresh one that rejoins and syncs.
 test "MULTI-07: replace failed replica via reformat" {
     const t = try TestContext.init(.{ .replica_count = 3, .seed = 42 });
     defer t.deinit();
