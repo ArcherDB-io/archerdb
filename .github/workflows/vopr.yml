@@ -9,9 +9,13 @@ on:
   workflow_dispatch:
     inputs:
       duration:
-        description: 'Duration in seconds (default: 7200 = 2 hours)'
+        description: 'Total duration in seconds (default: 7200 = 2 hours)'
         required: false
         default: '7200'
+      seeds:
+        description: 'Number of seeds to run (default: 10 for TEST-03)'
+        required: false
+        default: '10'
       state_machine:
         description: 'State machine to fuzz (geo, testing, or both)'
         required: false
@@ -40,10 +44,10 @@ jobs:
         run: ./zig/zig version
 
       - name: Run VOPR (geo state machine)
-        run: ./.github/ci/run-vopr.sh geo ${{ github.event.inputs.duration || '7200' }}
+        run: ./.github/ci/run-vopr.sh geo ${{ github.event.inputs.duration || '7200' }} ${{ github.event.inputs.seeds || '10' }}
 
       - name: Upload VOPR logs
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: vopr-geo-logs-${{ github.run_id }}
@@ -67,10 +71,10 @@ jobs:
         run: ./zig/zig version
 
       - name: Run VOPR (testing state machine)
-        run: ./.github/ci/run-vopr.sh testing ${{ github.event.inputs.duration || '7200' }}
+        run: ./.github/ci/run-vopr.sh testing ${{ github.event.inputs.duration || '7200' }} ${{ github.event.inputs.seeds || '10' }}
 
       - name: Upload VOPR logs
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: vopr-testing-logs-${{ github.run_id }}
