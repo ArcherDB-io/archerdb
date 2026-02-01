@@ -10,6 +10,7 @@ Fixtures:
     skip_if_not_integration: Skip tests if ARCHERDB_INTEGRATION not set
     single_node_cluster: 1-node cluster (function-scoped for isolation)
     edge_case_fixtures_dir: Path to edge case fixture files
+    api_client: HTTP client for API calls to cluster
 """
 
 import json
@@ -19,6 +20,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import pytest
+import requests
 
 from test_infrastructure.harness import ArcherDBCluster, ClusterConfig
 
@@ -232,3 +234,152 @@ class EdgeCaseCoordinates:
     SOUTH_POLE_DEG = -90.0
     ANTI_MERIDIAN_EAST_DEG = 180.0
     ANTI_MERIDIAN_WEST_DEG = -180.0
+
+
+class EdgeCaseAPIClient:
+    """HTTP client for edge case test API calls.
+
+    Wraps the ArcherDB HTTP API for insert, query-radius, query-uuid,
+    query-polygon, and delete operations.
+
+    Usage:
+        with ArcherDBCluster(config) as cluster:
+            client = EdgeCaseAPIClient(cluster)
+            response = client.insert([event])
+            client.close()
+    """
+
+    def __init__(self, cluster: ArcherDBCluster):
+        """Initialize client with cluster connection.
+
+        Args:
+            cluster: Running ArcherDB cluster.
+        """
+        self.cluster = cluster
+        self._session = requests.Session()
+        self._leader_port = cluster.wait_for_leader(timeout=30)
+        if self._leader_port is None:
+            raise RuntimeError("No leader found in cluster")
+        self._base_url = f"http://127.0.0.1:{self._leader_port}"
+
+    def insert(
+        self, events: List[Dict[str, Any]], timeout: float = 30.0
+    ) -> requests.Response:
+        """Insert events into the cluster.
+
+        Args:
+            events: List of event dicts with entity_id, latitude, longitude, etc.
+            timeout: Request timeout in seconds.
+
+        Returns:
+            HTTP response from insert endpoint.
+        """
+        return self._session.post(
+            f"{self._base_url}/insert",
+            json=events,
+            timeout=timeout,
+        )
+
+    def query_radius(
+        self,
+        lat: float,
+        lon: float,
+        radius_m: float,
+        limit: int = 1000,
+        timeout: float = 10.0,
+    ) -> requests.Response:
+        """Query events within radius of point.
+
+        Args:
+            lat: Center latitude in degrees.
+            lon: Center longitude in degrees.
+            radius_m: Radius in meters.
+            limit: Maximum results.
+            timeout: Request timeout.
+
+        Returns:
+            HTTP response with matching events.
+        """
+        query = {
+            "center_lat": lat,
+            "center_lon": lon,
+            "radius_m": radius_m,
+            "limit": limit,
+        }
+        return self._session.post(
+            f"{self._base_url}/query-radius",
+            json=query,
+            timeout=timeout,
+        )
+
+    def query_uuid(self, entity_id: str, timeout: float = 10.0) -> requests.Response:
+        """Query event by entity ID.
+
+        Args:
+            entity_id: Entity ID as hex string.
+            timeout: Request timeout.
+
+        Returns:
+            HTTP response with event or 404.
+        """
+        return self._session.get(
+            f"{self._base_url}/query-uuid/{entity_id}",
+            timeout=timeout,
+        )
+
+    def query_polygon(
+        self,
+        vertices: List[Dict[str, float]],
+        limit: int = 1000,
+        timeout: float = 10.0,
+    ) -> requests.Response:
+        """Query events within polygon.
+
+        Args:
+            vertices: List of {"lat": float, "lon": float} vertex dicts.
+            limit: Maximum results.
+            timeout: Request timeout.
+
+        Returns:
+            HTTP response with matching events.
+        """
+        query = {
+            "vertices": vertices,
+            "limit": limit,
+        }
+        return self._session.post(
+            f"{self._base_url}/query-polygon",
+            json=query,
+            timeout=timeout,
+        )
+
+    def delete(self, entity_id: str, timeout: float = 10.0) -> requests.Response:
+        """Delete event by entity ID.
+
+        Args:
+            entity_id: Entity ID to delete.
+            timeout: Request timeout.
+
+        Returns:
+            HTTP response (200 success, 404 not found).
+        """
+        return self._session.delete(
+            f"{self._base_url}/delete/{entity_id}",
+            timeout=timeout,
+        )
+
+    def close(self) -> None:
+        """Close HTTP session."""
+        self._session.close()
+
+
+@pytest.fixture
+def api_client(single_node_cluster) -> EdgeCaseAPIClient:
+    """API client for edge case tests.
+
+    Yields:
+        EdgeCaseAPIClient connected to cluster leader.
+    """
+    client = EdgeCaseAPIClient(single_node_cluster)
+    yield client
+    client.close()
