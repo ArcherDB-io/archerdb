@@ -5,30 +5,30 @@
 See: .planning/PROJECT.md (updated 2026-02-01)
 
 **Core value:** Customers can deploy mission-critical geospatial workloads with confidence that their data is safe, queries are fast, and the service stays available during failures.
-**Current focus:** Phase 17 - Edge Cases & Advanced Benchmarks (Plan 3 of 3 complete)
+**Current focus:** Phase 18 - CI Integration & Documentation (Plan 1 of 2 complete)
 
 ## Current Position
 
-Phase: 17 of 18 (Edge Cases & Advanced Benchmarks)
-Plan: 3 of 3 in current phase
-Status: Phase complete
-Last activity: 2026-02-01 - Completed 17-03-PLAN.md (edge case API integration)
+Phase: 18 of 18 (CI Integration & Documentation)
+Plan: 1 of 2 in current phase
+Status: In progress
+Last activity: 2026-02-01 - Completed 18-01-PLAN.md (CI workflow enhancement)
 
-Progress: [████████░░] 55%
+Progress: [█████████░] 57%
 
 ## Milestone History
 
 | Milestone | Phases | Plans | Status | Shipped |
 |-----------|--------|-------|--------|---------|
 | v1 DBaaS Production Readiness | 1-10 | 46 | Complete | 2026-01-31 |
-| v1.1 SDK Testing & Benchmarking | 11-18 | 17 | In progress | - |
+| v1.1 SDK Testing & Benchmarking | 11-18 | 18 | In progress | - |
 
 ## Performance Metrics
 
 **Velocity (v1.1):**
-- Total plans completed: 16
+- Total plans completed: 17
 - Average duration: 8 min
-- Total execution time: 126 min
+- Total execution time: 129 min
 
 **By Phase:**
 
@@ -41,9 +41,10 @@ Progress: [████████░░] 55%
 | 15 | 2/2 | 11 min | 6 min |
 | 16 | 2/2 | 7 min | 4 min |
 | 17 | 3/3 | 20 min | 7 min |
+| 18 | 1/2 | 3 min | 3 min |
 
 **Recent Trend:**
-- Last 5 plans: 16-02 (3 min), 17-01 (8 min), 17-02 (5 min), 17-03 (7 min)
+- Last 5 plans: 17-01 (8 min), 17-02 (5 min), 17-03 (7 min), 18-01 (3 min)
 - Trend: Consistent fast execution
 
 *Updated after each plan completion*
@@ -104,6 +105,10 @@ Recent decisions affecting current work:
 - [17-03]: EdgeCaseAPIClient wraps requests.Session for HTTP operations
 - [17-03]: api_client fixture yields client connected to cluster leader
 - [17-03]: Response parsing handles both list and dict JSON formats
+- [18-01]: fail-fast: true for all CI tiers per CONTEXT.md
+- [18-01]: Weekly benchmark schedule Sunday 2 AM UTC
+- [18-01]: Regression threshold 110% (10% degradation)
+- [18-01]: Larger runners: 4-cores (nightly), 8-cores (benchmark)
 
 ### Pending Todos
 
@@ -120,7 +125,7 @@ None.
 ## Session Continuity
 
 Last session: 2026-02-01
-Stopped at: Completed 17-03-PLAN.md (edge case API integration - Phase 17 complete)
+Stopped at: Completed 18-01-PLAN.md (CI workflow enhancement)
 Resume file: None
 
-**Next Action:** Execute `/gsd:execute-phase 18` for documentation phase
+**Next Action:** Execute 18-02-PLAN.md for documentation phase
