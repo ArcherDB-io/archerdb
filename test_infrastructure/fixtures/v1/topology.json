@@ -1,0 +1,115 @@
+{
+  "operation": "get_topology",
+  "version": "1.0.0",
+  "description": "Test cases for topology query operation (opcode 157)",
+  "cases": [
+    {
+      "name": "single_node_topology",
+      "description": "Get topology for 1-node cluster",
+      "tags": ["smoke"],
+      "input": {
+        "cluster_config": {
+          "node_count": 1
+        }
+      },
+      "expected_output": {
+        "node_count": 1,
+        "nodes": [
+          {
+            "role": "leader",
+            "status": "healthy"
+          }
+        ]
+      },
+      "expected_error": null
+    },
+    {
+      "name": "three_node_topology",
+      "description": "Get topology for 3-node cluster",
+      "tags": ["pr"],
+      "input": {
+        "cluster_config": {
+          "node_count": 3
+        }
+      },
+      "expected_output": {
+        "node_count": 3,
+        "leader_count": 1,
+        "follower_count": 2,
+        "all_healthy": true
+      },
+      "expected_error": null
+    },
+    {
+      "name": "five_node_topology",
+      "description": "Get topology for 5-node cluster",
+      "tags": ["nightly"],
+      "input": {
+        "cluster_config": {
+          "node_count": 5
+        }
+      },
+      "expected_output": {
+        "node_count": 5,
+        "leader_count": 1,
+        "follower_count": 4,
+        "all_healthy": true
+      },
+      "expected_error": null
+    },
+    {
+      "name": "topology_includes_addresses",
+      "description": "Topology response includes node addresses",
+      "tags": ["pr"],
+      "input": {
+        "cluster_config": {
+          "node_count": 3
+        }
+      },
+      "expected_output": {
+        "node_count": 3,
+        "all_have_address": true,
+        "address_format": "host:port"
+      },
+      "expected_error": null
+    },
+    {
+      "name": "topology_after_leader_change",
+      "description": "Topology reflects leader election after failover",
+      "tags": ["nightly"],
+      "input": {
+        "cluster_config": {
+          "node_count": 3
+        },
+        "setup": {
+          "trigger_leader_failover": true
+        }
+      },
+      "expected_output": {
+        "node_count": 3,
+        "leader_count": 1,
+        "new_leader_elected": true
+      },
+      "expected_error": null
+    },
+    {
+      "name": "topology_with_unhealthy_node",
+      "description": "Topology shows node health status when one is down",
+      "tags": ["nightly"],
+      "input": {
+        "cluster_config": {
+          "node_count": 3
+        },
+        "setup": {
+          "stop_node": 2
+        }
+      },
+      "expected_output": {
+        "node_count": 3,
+        "healthy_count": 2,
+        "unhealthy_count": 1
+      },
+      "expected_error": null
+    }
+  ]
+}

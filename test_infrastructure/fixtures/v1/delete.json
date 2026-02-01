@@ -1,0 +1,83 @@
+{
+  "operation": "delete",
+  "version": "1.0.0",
+  "description": "Test cases for delete operation (opcode 148)",
+  "cases": [
+    {
+      "name": "single_entity_exists",
+      "description": "Delete existing entity",
+      "tags": ["smoke"],
+      "input": {
+        "setup": {
+          "insert_first": {
+            "entity_id": 30001,
+            "latitude": 40.7128,
+            "longitude": -74.0060
+          }
+        },
+        "entity_ids": [30001]
+      },
+      "expected_output": {
+        "result_code": 0,
+        "results": [
+          {"status": "OK", "code": 0}
+        ]
+      },
+      "expected_error": null
+    },
+    {
+      "name": "single_entity_not_found",
+      "description": "Delete non-existent entity returns ENTITY_NOT_FOUND",
+      "tags": ["pr"],
+      "input": {
+        "entity_ids": [99999999]
+      },
+      "expected_output": {
+        "result_code": 0,
+        "results": [
+          {"status": "ENTITY_NOT_FOUND", "code": 3}
+        ]
+      },
+      "expected_error": null
+    },
+    {
+      "name": "batch_mixed",
+      "description": "Batch delete with mix of existing and non-existing entities",
+      "tags": ["nightly"],
+      "input": {
+        "setup": {
+          "insert_first": [
+            {"entity_id": 30101, "latitude": 40.7128, "longitude": -74.0060},
+            {"entity_id": 30103, "latitude": 34.0522, "longitude": -118.2437}
+          ]
+        },
+        "entity_ids": [30101, 30102, 30103, 30104]
+      },
+      "expected_output": {
+        "result_code": 0,
+        "results": [
+          {"status": "OK", "code": 0},
+          {"status": "ENTITY_NOT_FOUND", "code": 3},
+          {"status": "OK", "code": 0},
+          {"status": "ENTITY_NOT_FOUND", "code": 3}
+        ]
+      },
+      "expected_error": null
+    },
+    {
+      "name": "delete_entity_id_zero",
+      "description": "Delete with entity_id=0 should fail",
+      "tags": ["pr"],
+      "input": {
+        "entity_ids": [0]
+      },
+      "expected_output": {
+        "result_code": 0,
+        "results": [
+          {"status": "ENTITY_ID_MUST_NOT_BE_ZERO", "code": 2}
+        ]
+      },
+      "expected_error": null
+    }
+  ]
+}

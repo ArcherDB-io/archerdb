@@ -1,0 +1,248 @@
+{
+  "operation": "query_polygon",
+  "version": "1.0.0",
+  "description": "Test cases for polygon query operation (opcode 151)",
+  "cases": [
+    {
+      "name": "triangle_basic",
+      "description": "Basic 3-vertex polygon query",
+      "tags": ["smoke"],
+      "input": {
+        "setup": {
+          "insert_first": [
+            {"entity_id": 70001, "latitude": 40.75, "longitude": -74.00},
+            {"entity_id": 70002, "latitude": 40.76, "longitude": -73.99},
+            {"entity_id": 70003, "latitude": 40.80, "longitude": -73.95}
+          ]
+        },
+        "vertices": [
+          [40.74, -74.02],
+          [40.78, -74.02],
+          [40.76, -73.98]
+        ]
+      },
+      "expected_output": {
+        "count": 2,
+        "events_contain": [70001, 70002]
+      },
+      "expected_error": null
+    },
+    {
+      "name": "rectangle_basic",
+      "description": "Basic 4-vertex rectangle query",
+      "tags": ["pr"],
+      "input": {
+        "setup": {
+          "insert_first": [
+            {"entity_id": 70101, "latitude": 40.75, "longitude": -74.00},
+            {"entity_id": 70102, "latitude": 40.76, "longitude": -73.99},
+            {"entity_id": 70103, "latitude": 40.77, "longitude": -73.98},
+            {"entity_id": 70104, "latitude": 40.90, "longitude": -73.80}
+          ]
+        },
+        "vertices": [
+          [40.74, -74.01],
+          [40.74, -73.97],
+          [40.78, -73.97],
+          [40.78, -74.01]
+        ]
+      },
+      "expected_output": {
+        "count": 3,
+        "events_contain": [70101, 70102, 70103]
+      },
+      "expected_error": null
+    },
+    {
+      "name": "complex_polygon_10_vertices",
+      "description": "Complex 10-vertex polygon query",
+      "tags": ["nightly"],
+      "input": {
+        "setup": {
+          "insert_first_range": {
+            "start_entity_id": 70200,
+            "count": 100,
+            "base_latitude": 40.75,
+            "base_longitude": -74.00,
+            "spread_m": 2000
+          }
+        },
+        "vertices": [
+          [40.74, -74.02],
+          [40.75, -74.03],
+          [40.76, -74.02],
+          [40.77, -74.01],
+          [40.78, -74.00],
+          [40.77, -73.99],
+          [40.76, -73.98],
+          [40.75, -73.97],
+          [40.74, -73.98],
+          [40.73, -74.00]
+        ]
+      },
+      "expected_output": {
+        "count_min": 10,
+        "all_within_polygon": true
+      },
+      "expected_error": null
+    },
+    {
+      "name": "concave_polygon",
+      "description": "Non-convex (concave) polygon query",
+      "tags": ["nightly"],
+      "input": {
+        "setup": {
+          "insert_first": [
+            {"entity_id": 70301, "latitude": 40.75, "longitude": -74.00},
+            {"entity_id": 70302, "latitude": 40.755, "longitude": -73.995},
+            {"entity_id": 70303, "latitude": 40.76, "longitude": -74.00}
+          ]
+        },
+        "vertices": [
+          [40.74, -74.01],
+          [40.76, -74.01],
+          [40.755, -73.995],
+          [40.76, -73.99],
+          [40.74, -73.99]
+        ],
+        "_note": "L-shaped concave polygon"
+      },
+      "expected_output": {
+        "count": 2,
+        "events_contain": [70301, 70303],
+        "events_exclude": [70302]
+      },
+      "expected_error": null
+    },
+    {
+      "name": "polygon_crossing_antimeridian",
+      "description": "Polygon crossing the international dateline",
+      "tags": ["nightly"],
+      "input": {
+        "setup": {
+          "insert_first": [
+            {"entity_id": 70401, "latitude": 0.0, "longitude": 179.5},
+            {"entity_id": 70402, "latitude": 0.0, "longitude": -179.5},
+            {"entity_id": 70403, "latitude": 0.0, "longitude": 170.0}
+          ]
+        },
+        "vertices": [
+          [-1.0, 179.0],
+          [-1.0, -179.0],
+          [1.0, -179.0],
+          [1.0, 179.0]
+        ]
+      },
+      "expected_output": {
+        "count": 2,
+        "events_contain": [70401, 70402]
+      },
+      "expected_error": null
+    },
+    {
+      "name": "polygon_with_limit",
+      "description": "Polygon query with result limit",
+      "tags": ["pr"],
+      "input": {
+        "setup": {
+          "insert_first_range": {
+            "start_entity_id": 70500,
+            "count": 50,
+            "base_latitude": 40.75,
+            "base_longitude": -74.00,
+            "spread_m": 500
+          }
+        },
+        "vertices": [
+          [40.74, -74.01],
+          [40.74, -73.99],
+          [40.76, -73.99],
+          [40.76, -74.01]
+        ],
+        "limit": 10
+      },
+      "expected_output": {
+        "count": 10,
+        "limit_applied": true
+      },
+      "expected_error": null
+    },
+    {
+      "name": "polygon_empty_result",
+      "description": "Polygon query that matches no events",
+      "tags": ["pr"],
+      "input": {
+        "vertices": [
+          [0.0, 0.0],
+          [0.0, 0.01],
+          [0.01, 0.01],
+          [0.01, 0.0]
+        ]
+      },
+      "expected_output": {
+        "count": 0,
+        "events": []
+      },
+      "expected_error": null
+    },
+    {
+      "name": "polygon_with_group_filter",
+      "description": "Polygon query filtered by group_id",
+      "tags": ["nightly"],
+      "input": {
+        "setup": {
+          "insert_first": [
+            {"entity_id": 70601, "latitude": 40.75, "longitude": -74.00, "group_id": 100},
+            {"entity_id": 70602, "latitude": 40.76, "longitude": -73.99, "group_id": 200},
+            {"entity_id": 70603, "latitude": 40.755, "longitude": -73.995, "group_id": 100}
+          ]
+        },
+        "vertices": [
+          [40.74, -74.01],
+          [40.74, -73.98],
+          [40.77, -73.98],
+          [40.77, -74.01]
+        ],
+        "group_id": 100
+      },
+      "expected_output": {
+        "count": 2,
+        "events_contain": [70601, 70603]
+      },
+      "expected_error": null
+    },
+    {
+      "name": "hotspot_polygon_query",
+      "description": "Polygon containing hotspot area for stress test",
+      "tags": ["nightly"],
+      "input": {
+        "setup": {
+          "insert_hotspot": {
+            "center_latitude": 40.758896,
+            "center_longitude": -73.985130,
+            "count": 1000,
+            "concentration_percentage": 95,
+            "start_entity_id": 70700
+          },
+          "_metadata": {
+            "hotspot_location": "Times Square, NYC",
+            "purpose": "Stress test for polygon query with extreme point concentration"
+          }
+        },
+        "vertices": [
+          [40.755, -73.990],
+          [40.755, -73.980],
+          [40.763, -73.980],
+          [40.763, -73.990]
+        ],
+        "limit": 500
+      },
+      "expected_output": {
+        "count": 500,
+        "all_within_polygon": true,
+        "_note": "Tests polygon query performance with hotspot data distribution"
+      },
+      "expected_error": null
+    }
+  ]
+}

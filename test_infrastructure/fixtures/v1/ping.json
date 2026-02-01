@@ -1,0 +1,30 @@
+{
+  "operation": "ping",
+  "version": "1.0.0",
+  "description": "Test cases for ping operation (opcode 152)",
+  "cases": [
+    {
+      "name": "basic_ping",
+      "description": "Simple connectivity check - server responds to ping",
+      "tags": ["smoke"],
+      "input": {},
+      "expected_output": {
+        "status": "OK",
+        "response_received": true
+      },
+      "expected_error": null
+    },
+    {
+      "name": "ping_measures_latency",
+      "description": "Ping should return with measurable round-trip time",
+      "tags": ["pr"],
+      "input": {},
+      "expected_output": {
+        "status": "OK",
+        "latency_ms_max": 1000,
+        "_note": "Latency should be under 1 second for healthy server"
+      },
+      "expected_error": null
+    }
+  ]
+}

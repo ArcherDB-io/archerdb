@@ -1,0 +1,118 @@
+{
+  "operation": "upsert",
+  "version": "1.0.0",
+  "description": "Test cases for upsert operation (opcode 147)",
+  "cases": [
+    {
+      "name": "single_event_new",
+      "description": "Upsert creates new event when entity doesn't exist",
+      "tags": ["smoke"],
+      "input": {
+        "events": [
+          {
+            "entity_id": 20001,
+            "latitude": 51.5074,
+            "longitude": -0.1278
+          }
+        ]
+      },
+      "expected_output": {
+        "result_code": 0,
+        "results": [
+          {"status": "OK", "code": 0}
+        ]
+      },
+      "expected_error": null
+    },
+    {
+      "name": "single_event_update",
+      "description": "Upsert updates existing entity with new location",
+      "tags": ["pr"],
+      "input": {
+        "setup": {
+          "insert_first": {
+            "entity_id": 20002,
+            "latitude": 51.5074,
+            "longitude": -0.1278
+          }
+        },
+        "events": [
+          {
+            "entity_id": 20002,
+            "latitude": 48.8566,
+            "longitude": 2.3522
+          }
+        ]
+      },
+      "expected_output": {
+        "result_code": 0,
+        "results": [
+          {"status": "OK", "code": 0}
+        ]
+      },
+      "expected_error": null
+    },
+    {
+      "name": "batch_mixed",
+      "description": "Batch upsert with mix of new and existing entities",
+      "tags": ["nightly"],
+      "input": {
+        "setup": {
+          "insert_first": [
+            {"entity_id": 20101, "latitude": 40.7128, "longitude": -74.0060},
+            {"entity_id": 20103, "latitude": 34.0522, "longitude": -118.2437},
+            {"entity_id": 20105, "latitude": 41.8781, "longitude": -87.6298}
+          ]
+        },
+        "events": [
+          {"entity_id": 20101, "latitude": 40.7129, "longitude": -74.0061},
+          {"entity_id": 20102, "latitude": 37.7749, "longitude": -122.4194},
+          {"entity_id": 20103, "latitude": 34.0523, "longitude": -118.2438},
+          {"entity_id": 20104, "latitude": 29.7604, "longitude": -95.3698},
+          {"entity_id": 20105, "latitude": 41.8782, "longitude": -87.6299}
+        ]
+      },
+      "expected_output": {
+        "result_code": 0,
+        "results": [
+          {"status": "OK", "code": 0, "action": "update"},
+          {"status": "OK", "code": 0, "action": "insert"},
+          {"status": "OK", "code": 0, "action": "update"},
+          {"status": "OK", "code": 0, "action": "insert"},
+          {"status": "OK", "code": 0, "action": "update"}
+        ]
+      },
+      "expected_error": null
+    },
+    {
+      "name": "upsert_with_all_fields",
+      "description": "Upsert with all optional fields",
+      "tags": ["pr"],
+      "input": {
+        "events": [
+          {
+            "entity_id": 20201,
+            "latitude": 35.6762,
+            "longitude": 139.6503,
+            "correlation_id": 99999,
+            "user_data": 12345,
+            "group_id": 500,
+            "altitude_m": 50.0,
+            "velocity_mps": 10.0,
+            "ttl_seconds": 7200,
+            "accuracy_m": 10.0,
+            "heading": 180.0,
+            "flags": 1
+          }
+        ]
+      },
+      "expected_output": {
+        "result_code": 0,
+        "results": [
+          {"status": "OK", "code": 0}
+        ]
+      },
+      "expected_error": null
+    }
+  ]
+}

@@ -1,0 +1,88 @@
+{
+  "operation": "query_uuid",
+  "version": "1.0.0",
+  "description": "Test cases for query by UUID/entity_id operation (opcode 149)",
+  "cases": [
+    {
+      "name": "existing_entity",
+      "description": "Query known entity returns its data",
+      "tags": ["smoke"],
+      "input": {
+        "setup": {
+          "insert_first": {
+            "entity_id": 40001,
+            "latitude": 40.7128,
+            "longitude": -74.0060,
+            "user_data": 42
+          }
+        },
+        "entity_id": 40001
+      },
+      "expected_output": {
+        "found": true,
+        "event": {
+          "entity_id": 40001,
+          "latitude": 40.7128,
+          "longitude": -74.0060,
+          "user_data": 42
+        }
+      },
+      "expected_error": null
+    },
+    {
+      "name": "nonexistent_entity",
+      "description": "Query unknown entity returns null/not found",
+      "tags": ["pr"],
+      "input": {
+        "entity_id": 88888888
+      },
+      "expected_output": {
+        "found": false,
+        "event": null
+      },
+      "expected_error": null
+    },
+    {
+      "name": "query_after_update",
+      "description": "Query returns latest data after upsert",
+      "tags": ["pr"],
+      "input": {
+        "setup": {
+          "insert_first": {
+            "entity_id": 40002,
+            "latitude": 40.7128,
+            "longitude": -74.0060
+          },
+          "then_upsert": {
+            "entity_id": 40002,
+            "latitude": 37.7749,
+            "longitude": -122.4194
+          }
+        },
+        "entity_id": 40002
+      },
+      "expected_output": {
+        "found": true,
+        "event": {
+          "entity_id": 40002,
+          "latitude": 37.7749,
+          "longitude": -122.4194
+        }
+      },
+      "expected_error": null
+    },
+    {
+      "name": "query_entity_id_zero",
+      "description": "Query with entity_id=0 returns not found",
+      "tags": ["nightly"],
+      "input": {
+        "entity_id": 0
+      },
+      "expected_output": {
+        "found": false,
+        "event": null
+      },
+      "expected_error": null
+    }
+  ]
+}

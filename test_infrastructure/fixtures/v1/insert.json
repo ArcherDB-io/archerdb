@@ -1,0 +1,415 @@
+{
+  "operation": "insert",
+  "version": "1.0.0",
+  "description": "Test cases for insert operation (opcode 146)",
+  "cases": [
+    {
+      "name": "single_event_valid",
+      "description": "Basic insert with minimal required fields",
+      "tags": ["smoke"],
+      "input": {
+        "events": [
+          {
+            "entity_id": 1001,
+            "latitude": 40.7128,
+            "longitude": -74.0060
+          }
+        ]
+      },
+      "expected_output": {
+        "result_code": 0,
+        "results": [
+          {"status": "OK", "code": 0}
+        ]
+      },
+      "expected_error": null
+    },
+    {
+      "name": "single_event_all_fields",
+      "description": "Insert with all optional fields populated",
+      "tags": ["pr"],
+      "input": {
+        "events": [
+          {
+            "entity_id": 2001,
+            "latitude": 37.7749,
+            "longitude": -122.4194,
+            "correlation_id": 11111,
+            "user_data": 42,
+            "group_id": 1001,
+            "altitude_m": 100.5,
+            "velocity_mps": 15.0,
+            "ttl_seconds": 3600,
+            "accuracy_m": 5.0,
+            "heading": 90.0,
+            "flags": 4
+          }
+        ]
+      },
+      "expected_output": {
+        "result_code": 0,
+        "results": [
+          {"status": "OK", "code": 0}
+        ]
+      },
+      "expected_error": null
+    },
+    {
+      "name": "batch_10_events",
+      "description": "Batch insert of 10 events",
+      "tags": ["pr"],
+      "input": {
+        "events": [
+          {"entity_id": 3001, "latitude": 40.7128, "longitude": -74.0060},
+          {"entity_id": 3002, "latitude": 40.7129, "longitude": -74.0061},
+          {"entity_id": 3003, "latitude": 40.7130, "longitude": -74.0062},
+          {"entity_id": 3004, "latitude": 40.7131, "longitude": -74.0063},
+          {"entity_id": 3005, "latitude": 40.7132, "longitude": -74.0064},
+          {"entity_id": 3006, "latitude": 40.7133, "longitude": -74.0065},
+          {"entity_id": 3007, "latitude": 40.7134, "longitude": -74.0066},
+          {"entity_id": 3008, "latitude": 40.7135, "longitude": -74.0067},
+          {"entity_id": 3009, "latitude": 40.7136, "longitude": -74.0068},
+          {"entity_id": 3010, "latitude": 40.7137, "longitude": -74.0069}
+        ]
+      },
+      "expected_output": {
+        "result_code": 0,
+        "results_count": 10,
+        "all_ok": true
+      },
+      "expected_error": null
+    },
+    {
+      "name": "boundary_north_pole",
+      "description": "Insert at north pole (lat=90)",
+      "tags": ["nightly"],
+      "input": {
+        "events": [
+          {
+            "entity_id": 4001,
+            "latitude": 90.0,
+            "longitude": 0.0
+          }
+        ]
+      },
+      "expected_output": {
+        "result_code": 0,
+        "results": [
+          {"status": "OK", "code": 0}
+        ]
+      },
+      "expected_error": null
+    },
+    {
+      "name": "boundary_south_pole",
+      "description": "Insert at south pole (lat=-90)",
+      "tags": ["nightly"],
+      "input": {
+        "events": [
+          {
+            "entity_id": 4002,
+            "latitude": -90.0,
+            "longitude": 0.0
+          }
+        ]
+      },
+      "expected_output": {
+        "result_code": 0,
+        "results": [
+          {"status": "OK", "code": 0}
+        ]
+      },
+      "expected_error": null
+    },
+    {
+      "name": "boundary_antimeridian_east",
+      "description": "Insert at antimeridian east (lon=180)",
+      "tags": ["nightly"],
+      "input": {
+        "events": [
+          {
+            "entity_id": 4003,
+            "latitude": 0.0,
+            "longitude": 180.0
+          }
+        ]
+      },
+      "expected_output": {
+        "result_code": 0,
+        "results": [
+          {"status": "OK", "code": 0}
+        ]
+      },
+      "expected_error": null
+    },
+    {
+      "name": "boundary_antimeridian_west",
+      "description": "Insert at antimeridian west (lon=-180)",
+      "tags": ["nightly"],
+      "input": {
+        "events": [
+          {
+            "entity_id": 4004,
+            "latitude": 0.0,
+            "longitude": -180.0
+          }
+        ]
+      },
+      "expected_output": {
+        "result_code": 0,
+        "results": [
+          {"status": "OK", "code": 0}
+        ]
+      },
+      "expected_error": null
+    },
+    {
+      "name": "boundary_null_island",
+      "description": "Insert at null island (lat=0, lon=0)",
+      "tags": ["nightly"],
+      "input": {
+        "events": [
+          {
+            "entity_id": 4005,
+            "latitude": 0.0,
+            "longitude": 0.0
+          }
+        ]
+      },
+      "expected_output": {
+        "result_code": 0,
+        "results": [
+          {"status": "OK", "code": 0}
+        ]
+      },
+      "expected_error": null
+    },
+    {
+      "name": "invalid_lat_over_90",
+      "description": "Insert with invalid latitude >90 should fail",
+      "tags": ["pr"],
+      "input": {
+        "events": [
+          {
+            "entity_id": 5001,
+            "latitude": 91.0,
+            "longitude": 0.0
+          }
+        ]
+      },
+      "expected_output": {
+        "result_code": 0,
+        "results": [
+          {"status": "LAT_OUT_OF_RANGE", "code": 9}
+        ]
+      },
+      "expected_error": null
+    },
+    {
+      "name": "invalid_lon_over_180",
+      "description": "Insert with invalid longitude >180 should fail",
+      "tags": ["pr"],
+      "input": {
+        "events": [
+          {
+            "entity_id": 5002,
+            "latitude": 0.0,
+            "longitude": 181.0
+          }
+        ]
+      },
+      "expected_output": {
+        "result_code": 0,
+        "results": [
+          {"status": "LON_OUT_OF_RANGE", "code": 10}
+        ]
+      },
+      "expected_error": null
+    },
+    {
+      "name": "invalid_entity_id_zero",
+      "description": "Insert with entity_id=0 should fail",
+      "tags": ["pr"],
+      "input": {
+        "events": [
+          {
+            "entity_id": 0,
+            "latitude": 40.7128,
+            "longitude": -74.0060
+          }
+        ]
+      },
+      "expected_output": {
+        "result_code": 0,
+        "results": [
+          {"status": "ENTITY_ID_MUST_NOT_BE_ZERO", "code": 7}
+        ]
+      },
+      "expected_error": null
+    },
+    {
+      "name": "ttl_minimum",
+      "description": "Insert with minimum TTL (1 second)",
+      "tags": ["nightly"],
+      "input": {
+        "events": [
+          {
+            "entity_id": 6001,
+            "latitude": 40.7128,
+            "longitude": -74.0060,
+            "ttl_seconds": 1
+          }
+        ]
+      },
+      "expected_output": {
+        "result_code": 0,
+        "results": [
+          {"status": "OK", "code": 0}
+        ]
+      },
+      "expected_error": null
+    },
+    {
+      "name": "ttl_maximum",
+      "description": "Insert with maximum TTL (1 year = 31536000 seconds)",
+      "tags": ["nightly"],
+      "input": {
+        "events": [
+          {
+            "entity_id": 6002,
+            "latitude": 40.7128,
+            "longitude": -74.0060,
+            "ttl_seconds": 31536000
+          }
+        ]
+      },
+      "expected_output": {
+        "result_code": 0,
+        "results": [
+          {"status": "OK", "code": 0}
+        ]
+      },
+      "expected_error": null
+    },
+    {
+      "name": "hotspot_insert_batch",
+      "description": "Insert 100 events at hotspot location (95%+ same coords) for stress testing",
+      "tags": ["nightly"],
+      "input": {
+        "events": [
+          {"entity_id": 10001, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10002, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10003, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10004, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10005, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10006, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10007, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10008, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10009, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10010, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10011, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10012, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10013, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10014, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10015, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10016, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10017, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10018, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10019, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10020, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10021, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10022, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10023, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10024, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10025, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10026, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10027, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10028, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10029, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10030, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10031, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10032, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10033, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10034, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10035, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10036, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10037, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10038, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10039, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10040, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10041, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10042, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10043, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10044, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10045, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10046, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10047, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10048, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10049, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10050, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10051, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10052, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10053, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10054, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10055, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10056, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10057, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10058, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10059, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10060, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10061, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10062, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10063, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10064, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10065, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10066, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10067, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10068, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10069, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10070, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10071, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10072, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10073, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10074, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10075, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10076, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10077, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10078, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10079, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10080, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10081, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10082, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10083, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10084, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10085, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10086, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10087, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10088, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10089, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10090, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10091, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10092, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10093, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10094, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10095, "latitude": 40.758896, "longitude": -73.985130},
+          {"entity_id": 10096, "latitude": 40.758897, "longitude": -73.985131},
+          {"entity_id": 10097, "latitude": 40.758898, "longitude": -73.985132},
+          {"entity_id": 10098, "latitude": 40.758899, "longitude": -73.985133},
+          {"entity_id": 10099, "latitude": 40.758900, "longitude": -73.985134},
+          {"entity_id": 10100, "latitude": 40.758901, "longitude": -73.985135}
+        ],
+        "_metadata": {
+          "hotspot_location": "Times Square, NYC",
+          "concentration_percentage": 95,
+          "purpose": "Stress test for hotspot query patterns"
+        }
+      },
+      "expected_output": {
+        "result_code": 0,
+        "results_count": 100,
+        "all_ok": true
+      },
+      "expected_error": null
+    }
+  ]
+}

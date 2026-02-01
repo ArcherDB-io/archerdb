@@ -1,0 +1,105 @@
+{
+  "operation": "query_latest",
+  "version": "1.0.0",
+  "description": "Test cases for query latest events operation (opcode 154)",
+  "cases": [
+    {
+      "name": "latest_default_limit",
+      "description": "Query latest events with default limit",
+      "tags": ["smoke"],
+      "input": {
+        "setup": {
+          "insert_first": [
+            {"entity_id": 80001, "latitude": 40.7128, "longitude": -74.0060},
+            {"entity_id": 80002, "latitude": 37.7749, "longitude": -122.4194},
+            {"entity_id": 80003, "latitude": 51.5074, "longitude": -0.1278}
+          ]
+        }
+      },
+      "expected_output": {
+        "count_min": 3,
+        "events_ordered_by_timestamp": true
+      },
+      "expected_error": null
+    },
+    {
+      "name": "latest_limit_100",
+      "description": "Query latest events with explicit limit=100",
+      "tags": ["pr"],
+      "input": {
+        "setup": {
+          "insert_first_range": {
+            "start_entity_id": 80100,
+            "count": 200,
+            "base_latitude": 40.7128,
+            "base_longitude": -74.0060,
+            "spread_m": 1000
+          }
+        },
+        "limit": 100
+      },
+      "expected_output": {
+        "count": 100,
+        "limit_applied": true,
+        "events_ordered_by_timestamp": true
+      },
+      "expected_error": null
+    },
+    {
+      "name": "latest_with_group_filter",
+      "description": "Query latest events filtered by group_id",
+      "tags": ["nightly"],
+      "input": {
+        "setup": {
+          "insert_first": [
+            {"entity_id": 80201, "latitude": 40.7128, "longitude": -74.0060, "group_id": 100},
+            {"entity_id": 80202, "latitude": 37.7749, "longitude": -122.4194, "group_id": 200},
+            {"entity_id": 80203, "latitude": 51.5074, "longitude": -0.1278, "group_id": 100},
+            {"entity_id": 80204, "latitude": 35.6762, "longitude": 139.6503, "group_id": 200},
+            {"entity_id": 80205, "latitude": 48.8566, "longitude": 2.3522, "group_id": 100}
+          ]
+        },
+        "group_id": 100
+      },
+      "expected_output": {
+        "count": 3,
+        "events_contain": [80201, 80203, 80205],
+        "events_ordered_by_timestamp": true
+      },
+      "expected_error": null
+    },
+    {
+      "name": "latest_empty_database",
+      "description": "Query latest on empty database",
+      "tags": ["nightly"],
+      "input": {
+        "_note": "No setup - assumes fresh database"
+      },
+      "expected_output": {
+        "count": 0,
+        "events": []
+      },
+      "expected_error": null
+    },
+    {
+      "name": "latest_small_limit",
+      "description": "Query latest with very small limit=1",
+      "tags": ["pr"],
+      "input": {
+        "setup": {
+          "insert_first": [
+            {"entity_id": 80301, "latitude": 40.7128, "longitude": -74.0060},
+            {"entity_id": 80302, "latitude": 37.7749, "longitude": -122.4194},
+            {"entity_id": 80303, "latitude": 51.5074, "longitude": -0.1278}
+          ]
+        },
+        "limit": 1
+      },
+      "expected_output": {
+        "count": 1,
+        "is_most_recent": true
+      },
+      "expected_error": null
+    }
+  ]
+}

@@ -1,0 +1,107 @@
+{
+  "operation": "ttl_set",
+  "version": "1.0.0",
+  "description": "Test cases for TTL set operation (opcode 158)",
+  "cases": [
+    {
+      "name": "set_ttl_valid",
+      "description": "Set TTL on existing entity",
+      "tags": ["smoke"],
+      "input": {
+        "setup": {
+          "insert_first": {
+            "entity_id": 90001,
+            "latitude": 40.7128,
+            "longitude": -74.0060
+          }
+        },
+        "entity_id": 90001,
+        "ttl_seconds": 3600
+      },
+      "expected_output": {
+        "result_code": 0,
+        "status": "OK"
+      },
+      "expected_error": null
+    },
+    {
+      "name": "set_ttl_entity_not_found",
+      "description": "Set TTL on non-existent entity",
+      "tags": ["pr"],
+      "input": {
+        "entity_id": 99999999,
+        "ttl_seconds": 3600
+      },
+      "expected_output": {
+        "result_code": 3,
+        "status": "ENTITY_NOT_FOUND"
+      },
+      "expected_error": null
+    },
+    {
+      "name": "set_ttl_minimum",
+      "description": "Set minimum TTL (1 second)",
+      "tags": ["nightly"],
+      "input": {
+        "setup": {
+          "insert_first": {
+            "entity_id": 90002,
+            "latitude": 40.7128,
+            "longitude": -74.0060
+          }
+        },
+        "entity_id": 90002,
+        "ttl_seconds": 1
+      },
+      "expected_output": {
+        "result_code": 0,
+        "status": "OK"
+      },
+      "expected_error": null
+    },
+    {
+      "name": "set_ttl_maximum",
+      "description": "Set maximum TTL (1 year)",
+      "tags": ["nightly"],
+      "input": {
+        "setup": {
+          "insert_first": {
+            "entity_id": 90003,
+            "latitude": 40.7128,
+            "longitude": -74.0060
+          }
+        },
+        "entity_id": 90003,
+        "ttl_seconds": 31536000
+      },
+      "expected_output": {
+        "result_code": 0,
+        "status": "OK"
+      },
+      "expected_error": null
+    },
+    {
+      "name": "set_ttl_overwrite",
+      "description": "Set TTL overwrites existing TTL",
+      "tags": ["pr"],
+      "input": {
+        "setup": {
+          "insert_first": {
+            "entity_id": 90004,
+            "latitude": 40.7128,
+            "longitude": -74.0060,
+            "ttl_seconds": 1800
+          }
+        },
+        "entity_id": 90004,
+        "ttl_seconds": 7200
+      },
+      "expected_output": {
+        "result_code": 0,
+        "status": "OK",
+        "new_ttl_seconds": 7200
+      },
+      "expected_error": null
+    }
+  ]
+}

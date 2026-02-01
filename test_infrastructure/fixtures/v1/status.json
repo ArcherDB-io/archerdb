@@ -1,0 +1,49 @@
+{
+  "operation": "status",
+  "version": "1.0.0",
+  "description": "Test cases for status operation (opcode 153)",
+  "cases": [
+    {
+      "name": "get_status",
+      "description": "Get server status returns health and version info",
+      "tags": ["smoke"],
+      "input": {},
+      "expected_output": {
+        "healthy": true,
+        "has_version": true,
+        "has_uptime": true
+      },
+      "expected_error": null
+    },
+    {
+      "name": "status_includes_metrics",
+      "description": "Status includes key metrics",
+      "tags": ["pr"],
+      "input": {},
+      "expected_output": {
+        "healthy": true,
+        "metrics_include": ["event_count", "query_count", "memory_usage"]
+      },
+      "expected_error": null
+    },
+    {
+      "name": "status_after_operations",
+      "description": "Status reflects recent operations",
+      "tags": ["nightly"],
+      "input": {
+        "setup": {
+          "perform_operations": [
+            {"type": "insert", "count": 100},
+            {"type": "query_radius", "count": 10}
+          ]
+        }
+      },
+      "expected_output": {
+        "healthy": true,
+        "event_count_min": 100,
+        "query_count_min": 10
+      },
+      "expected_error": null
+    }
+  ]
+}
