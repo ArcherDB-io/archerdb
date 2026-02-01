@@ -72,21 +72,21 @@ Requirements for comprehensive SDK testing and benchmarking infrastructure.
 
 ### Benchmarking - Throughput (BENCH-T)
 
-- [ ] **BENCH-T-01**: Single-node insert throughput measured (events/sec)
-- [ ] **BENCH-T-02**: 3-node insert throughput measured (events/sec)
-- [ ] **BENCH-T-03**: 5-node insert throughput measured (events/sec)
-- [ ] **BENCH-T-04**: 6-node insert throughput measured (events/sec)
-- [ ] **BENCH-T-05**: Throughput meets baseline: >=770K events/sec (3-node)
-- [ ] **BENCH-T-06**: Throughput goal: >=1M events/sec (3-node, stretch)
+- [x] **BENCH-T-01**: Single-node insert throughput measured (events/sec)
+- [x] **BENCH-T-02**: 3-node insert throughput measured (events/sec)
+- [x] **BENCH-T-03**: 5-node insert throughput measured (events/sec)
+- [x] **BENCH-T-04**: 6-node insert throughput measured (events/sec)
+- [x] **BENCH-T-05**: Throughput meets baseline: >=770K events/sec (3-node)
+- [x] **BENCH-T-06**: Throughput goal: >=1M events/sec (3-node, stretch)
 
 ### Benchmarking - Latency (BENCH-L)
 
-- [ ] **BENCH-L-01**: Query latency P50/P95/P99 measured (single-node)
-- [ ] **BENCH-L-02**: Query latency P50/P95/P99 measured (3-node)
-- [ ] **BENCH-L-03**: Write latency P50/P95/P99 measured (single-node)
-- [ ] **BENCH-L-04**: Write latency P50/P95/P99 measured (3-node)
-- [ ] **BENCH-L-05**: Read latency meets target: P95 <1ms, P99 <10ms
-- [ ] **BENCH-L-06**: Write latency meets target: P95 <10ms, P99 <50ms
+- [x] **BENCH-L-01**: Query latency P50/P95/P99 measured (single-node)
+- [x] **BENCH-L-02**: Query latency P50/P95/P99 measured (3-node)
+- [x] **BENCH-L-03**: Write latency P50/P95/P99 measured (single-node)
+- [x] **BENCH-L-04**: Write latency P50/P95/P99 measured (3-node)
+- [x] **BENCH-L-05**: Read latency meets target: P95 <1ms, P99 <10ms
+- [x] **BENCH-L-06**: Write latency meets target: P95 <10ms, P99 <50ms
 
 ### Benchmarking - Advanced (BENCH-A)
 
