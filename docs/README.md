@@ -25,6 +25,8 @@ Goal-oriented guides:
 
 - [SDK Retry Semantics](sdk-retry-semantics.md) - Configure retry behavior and handle errors
 - [Error Codes](error-codes.md) - Understand and troubleshoot errors
+- [Testing Guide](testing/README.md) - Run tests locally for all 6 SDKs
+- [Benchmark Guide](benchmarks/README.md) - Run and interpret performance benchmarks
 
 ### Reference
 
@@ -41,6 +43,9 @@ Complete API and configuration documentation:
 Comprehensive guides for each language:
 
 - [SDK Overview](sdk/README.md) - Choosing an SDK, feature matrix, common patterns
+- [SDK Comparison Matrix](sdk/comparison-matrix.md) - Feature parity and code examples
+- [SDK Limitations](SDK_LIMITATIONS.md) - Known issues and workarounds
+- [Parity Matrix](PARITY.md) - Cross-SDK verification status
 
 | Language | Package | Documentation |
 |----------|---------|---------------|
@@ -79,9 +84,17 @@ Per-alert response guides linked from Prometheus alerts:
 
 ### Performance
 
-- [Benchmarks](benchmarks.md) - Benchmark results and methodology
+- [Benchmarks](BENCHMARKS.md) - Benchmark framework and results
+- [Benchmark Guide](benchmarks/README.md) - Running and interpreting benchmarks
 - [Profiling](profiling.md) - Performance profiling workflows
 - [LSM Tuning](lsm-tuning.md) - Storage engine optimization
+
+### Testing & CI
+
+- [Testing Guide](testing/README.md) - Run all tests locally
+- [CI Tiers](testing/ci-tiers.md) - Smoke, PR, nightly, weekly tiers
+- [curl Examples](curl-examples.md) - Raw HTTP examples for all operations
+- [Protocol Reference](protocol.md) - Wire format and data types
 
 ## Understanding ArcherDB
 
