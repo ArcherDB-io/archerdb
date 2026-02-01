@@ -140,9 +140,9 @@ class BenchmarkOrchestrator:
             histogram.record(sample.latency_ns // 1000)
 
         return {
-            "p50_ms": histogram.get_percentile(50) / 1000,  # us to ms
-            "p95_ms": histogram.get_percentile(95) / 1000,
-            "p99_ms": histogram.get_percentile(99) / 1000,
+            "p50_ms": histogram.percentile(50) / 1000,  # us to ms
+            "p95_ms": histogram.percentile(95) / 1000,
+            "p99_ms": histogram.percentile(99) / 1000,
         }
 
     def run_throughput_benchmark(
