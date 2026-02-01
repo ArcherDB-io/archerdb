@@ -121,8 +121,8 @@ for sdk in "${SDKS[@]}"; do
             fi
             ;;
         go)
-            if [[ -f "$PROJECT_ROOT/src/clients/go/all_operations_test.go" ]]; then
-                cd "$PROJECT_ROOT/src/clients/go"
+            if [[ -f "$PROJECT_ROOT/tests/sdk_tests/go/all_operations_test.go" ]]; then
+                cd "$PROJECT_ROOT/tests/sdk_tests/go"
                 export ARCHERDB_INTEGRATION=1
                 if go test -v ./... -run "TestAll"; then
                     print_result "$sdk" "PASSED"
@@ -134,8 +134,8 @@ for sdk in "${SDKS[@]}"; do
             fi
             ;;
         java)
-            if [[ -f "$PROJECT_ROOT/src/clients/java/src/test/java/AllOperationsTest.java" ]]; then
-                cd "$PROJECT_ROOT/src/clients/java"
+            if [[ -f "$PROJECT_ROOT/tests/sdk_tests/java/src/test/java/com/archerdb/sdktests/AllOperationsTest.java" ]]; then
+                cd "$PROJECT_ROOT/tests/sdk_tests/java"
                 export ARCHERDB_INTEGRATION=1
                 if mvn test -Dtest=AllOperationsTest -q; then
                     print_result "$sdk" "PASSED"
