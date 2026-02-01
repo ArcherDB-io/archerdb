@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-02-01)
 
 **Core value:** Customers can deploy mission-critical geospatial workloads with confidence that their data is safe, queries are fast, and the service stays available during failures.
-**Current focus:** Phase 11 - Test Infrastructure Foundation
+**Current focus:** Phase 12 - Zig SDK & Protocol Documentation
 
 ## Current Position
 
-Phase: 11 of 18 (Test Infrastructure Foundation)
+Phase: 12 of 18 (Zig SDK & Protocol Documentation)
 Plan: 2 of 2 in current phase
-Status: Phase complete
-Last activity: 2026-02-01 - Completed 11-02-PLAN.md (JSON fixtures, CI workflows, warmup protocols)
+Status: In progress (Plan 2 complete)
+Last activity: 2026-02-01 - Completed 12-02-PLAN.md (Protocol docs, curl examples)
 
-Progress: [█░░░░░░░░░] 12%
+Progress: [██░░░░░░░░] 24%
 
 ## Milestone History
 
@@ -26,19 +26,20 @@ Progress: [█░░░░░░░░░] 12%
 ## Performance Metrics
 
 **Velocity (v1.1):**
-- Total plans completed: 2
-- Average duration: 10 min
-- Total execution time: 19 min
+- Total plans completed: 3
+- Average duration: 9 min
+- Total execution time: 27 min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 11 | 2/2 | 19 min | 10 min |
+| 12 | 1/2 | 8 min | 8 min |
 
 **Recent Trend:**
-- Last 5 plans: 11-01 (8 min), 11-02 (11 min)
-- Trend: Phase 11 complete, ready for Phase 12
+- Last 5 plans: 11-01 (8 min), 11-02 (11 min), 12-02 (8 min)
+- Trend: Steady 8-11 min per plan
 
 *Updated after each plan completion*
 
@@ -57,6 +58,8 @@ Recent decisions affecting current work:
 - [11-02]: Fixture tag distribution: 14 smoke, 31 PR, 34 nightly
 - [11-02]: Warmup iterations: Java 500 > Node 200 > Python/Go 100 > C/Zig 50 (JIT vs AOT)
 - [11-02]: CI tiers: smoke <5min (every push), PR <15min, nightly 2h (2 AM UTC)
+- [12-02]: Wire format uses nanodegrees (i64) for coordinate precision
+- [12-02]: curl examples minified on single lines for copy-paste
 
 ### Pending Todos
 
@@ -69,5 +72,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-01
-Stopped at: Completed 11-02-PLAN.md, Phase 11 complete
+Stopped at: Completed 12-02-PLAN.md
 Resume file: None
