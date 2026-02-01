@@ -93,44 +93,38 @@ pub const ClientError = error{
 /// Retryable errors are typically transient network or cluster issues.
 pub fn isRetryable(err: ClientError) bool {
     return switch (err) {
-        .ConnectionFailed,
-        .ConnectionTimeout,
-        .ClusterUnavailable,
-        .OperationTimeout,
-        .NotShardLeader,
-        => true,
-
-        .InvalidCoordinates,
-        .BatchTooLarge,
-        .InvalidEntityId,
-        .EntityExpired,
-        .QueryResultTooLarge,
-        .ClientClosed,
-        .InvalidResponse,
-        .JsonParseError,
-        .OutOfMemory,
-        .InvalidUrl,
-        .PolygonTooComplex,
-        .InvalidPolygon,
-        => false,
-
-        // These depend on the specific situation
-        .HttpError => true, // Usually transient
-        .TlsError => false, // Usually configuration issue
+        error.ConnectionFailed => true,
+        error.ConnectionTimeout => true,
+        error.ClusterUnavailable => true,
+        error.OperationTimeout => true,
+        error.NotShardLeader => true,
+        error.HttpError => true, // Usually transient
+        error.InvalidCoordinates => false,
+        error.BatchTooLarge => false,
+        error.InvalidEntityId => false,
+        error.EntityExpired => false,
+        error.QueryResultTooLarge => false,
+        error.ClientClosed => false,
+        error.InvalidResponse => false,
+        error.JsonParseError => false,
+        error.OutOfMemory => false,
+        error.InvalidUrl => false,
+        error.TlsError => false, // Usually configuration issue
+        error.PolygonTooComplex => false,
+        error.InvalidPolygon => false,
     };
 }
 
 /// Check if an error is a network-related error.
 pub fn isNetworkError(err: ClientError) bool {
     return switch (err) {
-        .ConnectionFailed,
-        .ConnectionTimeout,
-        .ClusterUnavailable,
-        .OperationTimeout,
-        .HttpError,
-        .TlsError,
-        .NotShardLeader,
-        => true,
+        error.ConnectionFailed => true,
+        error.ConnectionTimeout => true,
+        error.ClusterUnavailable => true,
+        error.OperationTimeout => true,
+        error.HttpError => true,
+        error.TlsError => true,
+        error.NotShardLeader => true,
         else => false,
     };
 }
@@ -138,14 +132,13 @@ pub fn isNetworkError(err: ClientError) bool {
 /// Check if an error is a validation error (client-side issue).
 pub fn isValidationError(err: ClientError) bool {
     return switch (err) {
-        .InvalidCoordinates,
-        .BatchTooLarge,
-        .InvalidEntityId,
-        .QueryResultTooLarge,
-        .InvalidUrl,
-        .PolygonTooComplex,
-        .InvalidPolygon,
-        => true,
+        error.InvalidCoordinates => true,
+        error.BatchTooLarge => true,
+        error.InvalidEntityId => true,
+        error.QueryResultTooLarge => true,
+        error.InvalidUrl => true,
+        error.PolygonTooComplex => true,
+        error.InvalidPolygon => true,
         else => false,
     };
 }
@@ -153,50 +146,50 @@ pub fn isValidationError(err: ClientError) bool {
 /// Get a human-readable error message for a ClientError.
 pub fn errorMessage(err: ClientError) []const u8 {
     return switch (err) {
-        .ConnectionFailed => "Failed to establish connection to cluster",
-        .ConnectionTimeout => "Connection attempt timed out",
-        .ClusterUnavailable => "Cluster is unavailable (no quorum)",
-        .InvalidCoordinates => "Coordinates are outside valid ranges",
-        .BatchTooLarge => "Batch exceeds maximum size (10,000 events)",
-        .InvalidEntityId => "Entity ID is invalid (must not be zero)",
-        .EntityExpired => "Entity has expired due to TTL",
-        .OperationTimeout => "Operation timed out",
-        .QueryResultTooLarge => "Query limit exceeds maximum (81,000)",
-        .ClientClosed => "Client has been closed",
-        .InvalidResponse => "Server returned invalid response",
-        .JsonParseError => "Failed to parse JSON response",
-        .HttpError => "HTTP request failed",
-        .OutOfMemory => "Out of memory",
-        .InvalidUrl => "Invalid URL",
-        .TlsError => "TLS/SSL error",
-        .NotShardLeader => "Not shard leader (auto-retry in progress)",
-        .PolygonTooComplex => "Polygon has too many vertices or holes",
-        .InvalidPolygon => "Polygon is self-intersecting or invalid",
+        error.ConnectionFailed => "Failed to establish connection to cluster",
+        error.ConnectionTimeout => "Connection attempt timed out",
+        error.ClusterUnavailable => "Cluster is unavailable (no quorum)",
+        error.InvalidCoordinates => "Coordinates are outside valid ranges",
+        error.BatchTooLarge => "Batch exceeds maximum size (10,000 events)",
+        error.InvalidEntityId => "Entity ID is invalid (must not be zero)",
+        error.EntityExpired => "Entity has expired due to TTL",
+        error.OperationTimeout => "Operation timed out",
+        error.QueryResultTooLarge => "Query limit exceeds maximum (81,000)",
+        error.ClientClosed => "Client has been closed",
+        error.InvalidResponse => "Server returned invalid response",
+        error.JsonParseError => "Failed to parse JSON response",
+        error.HttpError => "HTTP request failed",
+        error.OutOfMemory => "Out of memory",
+        error.InvalidUrl => "Invalid URL",
+        error.TlsError => "TLS/SSL error",
+        error.NotShardLeader => "Not shard leader (auto-retry in progress)",
+        error.PolygonTooComplex => "Polygon has too many vertices or holes",
+        error.InvalidPolygon => "Polygon is self-intersecting or invalid",
     };
 }
 
 /// Error code for protocol compatibility.
 pub fn errorCode(err: ClientError) u16 {
     return switch (err) {
-        .ConnectionFailed => 1001,
-        .ConnectionTimeout => 1002,
-        .ClusterUnavailable => 2001,
-        .InvalidCoordinates => 3001,
-        .BatchTooLarge => 3003,
-        .InvalidEntityId => 3004,
-        .EntityExpired => 210,
-        .OperationTimeout => 4001,
-        .QueryResultTooLarge => 4002,
-        .ClientClosed => 5001,
-        .InvalidResponse => 5003,
-        .JsonParseError => 5004,
-        .HttpError => 5005,
-        .OutOfMemory => 5006,
-        .InvalidUrl => 5007,
-        .TlsError => 5008,
-        .NotShardLeader => 220,
-        .PolygonTooComplex => 102,
-        .InvalidPolygon => 103,
+        error.ConnectionFailed => 1001,
+        error.ConnectionTimeout => 1002,
+        error.ClusterUnavailable => 2001,
+        error.InvalidCoordinates => 3001,
+        error.BatchTooLarge => 3003,
+        error.InvalidEntityId => 3004,
+        error.EntityExpired => 210,
+        error.OperationTimeout => 4001,
+        error.QueryResultTooLarge => 4002,
+        error.ClientClosed => 5001,
+        error.InvalidResponse => 5003,
+        error.JsonParseError => 5004,
+        error.HttpError => 5005,
+        error.OutOfMemory => 5006,
+        error.InvalidUrl => 5007,
+        error.TlsError => 5008,
+        error.NotShardLeader => 220,
+        error.PolygonTooComplex => 102,
+        error.InvalidPolygon => 103,
     };
 }
 
@@ -205,41 +198,41 @@ pub fn errorCode(err: ClientError) u16 {
 // ============================================================================
 
 test "isRetryable" {
-    try std.testing.expect(isRetryable(.ConnectionFailed));
-    try std.testing.expect(isRetryable(.ConnectionTimeout));
-    try std.testing.expect(isRetryable(.ClusterUnavailable));
-    try std.testing.expect(isRetryable(.OperationTimeout));
+    try std.testing.expect(isRetryable(error.ConnectionFailed));
+    try std.testing.expect(isRetryable(error.ConnectionTimeout));
+    try std.testing.expect(isRetryable(error.ClusterUnavailable));
+    try std.testing.expect(isRetryable(error.OperationTimeout));
 
-    try std.testing.expect(!isRetryable(.InvalidCoordinates));
-    try std.testing.expect(!isRetryable(.BatchTooLarge));
-    try std.testing.expect(!isRetryable(.ClientClosed));
+    try std.testing.expect(!isRetryable(error.InvalidCoordinates));
+    try std.testing.expect(!isRetryable(error.BatchTooLarge));
+    try std.testing.expect(!isRetryable(error.ClientClosed));
 }
 
 test "isNetworkError" {
-    try std.testing.expect(isNetworkError(.ConnectionFailed));
-    try std.testing.expect(isNetworkError(.ConnectionTimeout));
-    try std.testing.expect(isNetworkError(.HttpError));
+    try std.testing.expect(isNetworkError(error.ConnectionFailed));
+    try std.testing.expect(isNetworkError(error.ConnectionTimeout));
+    try std.testing.expect(isNetworkError(error.HttpError));
 
-    try std.testing.expect(!isNetworkError(.InvalidCoordinates));
-    try std.testing.expect(!isNetworkError(.JsonParseError));
+    try std.testing.expect(!isNetworkError(error.InvalidCoordinates));
+    try std.testing.expect(!isNetworkError(error.JsonParseError));
 }
 
 test "isValidationError" {
-    try std.testing.expect(isValidationError(.InvalidCoordinates));
-    try std.testing.expect(isValidationError(.BatchTooLarge));
-    try std.testing.expect(isValidationError(.InvalidEntityId));
+    try std.testing.expect(isValidationError(error.InvalidCoordinates));
+    try std.testing.expect(isValidationError(error.BatchTooLarge));
+    try std.testing.expect(isValidationError(error.InvalidEntityId));
 
-    try std.testing.expect(!isValidationError(.ConnectionFailed));
-    try std.testing.expect(!isValidationError(.HttpError));
+    try std.testing.expect(!isValidationError(error.ConnectionFailed));
+    try std.testing.expect(!isValidationError(error.HttpError));
 }
 
 test "errorMessage" {
-    const msg = errorMessage(.ConnectionFailed);
+    const msg = errorMessage(error.ConnectionFailed);
     try std.testing.expect(msg.len > 0);
 }
 
 test "errorCode" {
-    try std.testing.expectEqual(@as(u16, 1001), errorCode(.ConnectionFailed));
-    try std.testing.expectEqual(@as(u16, 3001), errorCode(.InvalidCoordinates));
-    try std.testing.expectEqual(@as(u16, 210), errorCode(.EntityExpired));
+    try std.testing.expectEqual(@as(u16, 1001), errorCode(error.ConnectionFailed));
+    try std.testing.expectEqual(@as(u16, 3001), errorCode(error.InvalidCoordinates));
+    try std.testing.expectEqual(@as(u16, 210), errorCode(error.EntityExpired));
 }

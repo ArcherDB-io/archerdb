@@ -102,7 +102,7 @@ pub const HttpClient = struct {
         request.wait() catch return error.OperationTimeout;
 
         // Check status code
-        const status = request.status;
+        const status = request.response.status;
         if (status != .ok and status != .created and status != .no_content) {
             // Read error response body if available
             const error_body = request.reader().readAllAlloc(allocator, 1024 * 1024) catch {
@@ -144,14 +144,13 @@ pub fn buildUrl(allocator: std.mem.Allocator, base_url: []const u8, path: []cons
         base_url;
 
     // Ensure path starts with /
-    const adjusted_path = if (path.len > 0 and path[0] != '/') blk: {
+    if (path.len > 0 and path[0] != '/') {
         var result = allocator.alloc(u8, trimmed_base.len + 1 + path.len) catch return error.OutOfMemory;
         @memcpy(result[0..trimmed_base.len], trimmed_base);
         result[trimmed_base.len] = '/';
         @memcpy(result[trimmed_base.len + 1 ..], path);
         return result;
-    } else path;
-    _ = adjusted_path;
+    }
 
     var result = allocator.alloc(u8, trimmed_base.len + path.len) catch return error.OutOfMemory;
     @memcpy(result[0..trimmed_base.len], trimmed_base);
@@ -168,8 +167,7 @@ pub fn buildUrlWithParam(
 ) errors.ClientError![]u8 {
     // First build the parameter string
     var param_buf: [40]u8 = undefined;
-    const param_len = std.fmt.formatInt(param, 10, .lower, .{}, &param_buf) catch return error.OutOfMemory;
-    const param_str = param_buf[0..param_len];
+    const param_str = std.fmt.bufPrint(&param_buf, "{d}", .{param}) catch return error.OutOfMemory;
 
     // Find {} in template and replace
     const placeholder_start = std.mem.indexOf(u8, path_template, "{}") orelse {
@@ -186,7 +184,7 @@ pub fn buildUrlWithParam(
         base_url;
 
     const total_len = trimmed_base.len + before.len + param_str.len + after.len;
-    var result = allocator.alloc(u8, total_len) catch return error.OutOfMemory;
+    const result = allocator.alloc(u8, total_len) catch return error.OutOfMemory;
 
     var offset: usize = 0;
     @memcpy(result[offset .. offset + trimmed_base.len], trimmed_base);
