@@ -1,0 +1,120 @@
+{
+  "description": "Concave polygon definitions for edge case testing (EDGE-03)",
+  "notes": "Coordinates in degrees. Tests point-in-polygon algorithms with concave shapes.",
+  "polygons": {
+    "l_shape": {
+      "description": "L-shaped polygon with one concave corner",
+      "vertices": [
+        {"lat": 0.0, "lon": 0.0},
+        {"lat": 2.0, "lon": 0.0},
+        {"lat": 2.0, "lon": 1.0},
+        {"lat": 1.0, "lon": 1.0},
+        {"lat": 1.0, "lon": 2.0},
+        {"lat": 0.0, "lon": 2.0}
+      ],
+      "test_points": {
+        "interior": [
+          {"lat": 0.5, "lon": 0.5, "expected": true, "notes": "Inside lower-left"},
+          {"lat": 1.5, "lon": 0.5, "expected": true, "notes": "Inside upper-left arm"},
+          {"lat": 0.5, "lon": 1.5, "expected": true, "notes": "Inside lower-right arm"}
+        ],
+        "exterior": [
+          {"lat": 1.5, "lon": 1.5, "expected": false, "notes": "In concave region (exterior)"},
+          {"lat": 3.0, "lon": 1.0, "expected": false, "notes": "Outside polygon entirely"}
+        ],
+        "boundary": [
+          {"lat": 1.0, "lon": 1.0, "expected": true, "notes": "On concave corner vertex"}
+        ]
+      }
+    },
+    "star_5point": {
+      "description": "5-pointed star with alternating inner/outer vertices",
+      "vertices": [
+        {"lat": 0.0, "lon": 2.0},
+        {"lat": 0.6, "lon": 0.6},
+        {"lat": 2.0, "lon": 0.0},
+        {"lat": 0.8, "lon": -0.6},
+        {"lat": 1.2, "lon": -2.0},
+        {"lat": 0.0, "lon": -1.0},
+        {"lat": -1.2, "lon": -2.0},
+        {"lat": -0.8, "lon": -0.6},
+        {"lat": -2.0, "lon": 0.0},
+        {"lat": -0.6, "lon": 0.6}
+      ],
+      "test_points": {
+        "interior": [
+          {"lat": 0.0, "lon": 0.0, "expected": true, "notes": "Center of star"}
+        ],
+        "exterior": [
+          {"lat": 1.0, "lon": 1.0, "expected": false, "notes": "In concave bay between points"},
+          {"lat": -1.0, "lon": 1.0, "expected": false, "notes": "Another concave bay"}
+        ]
+      }
+    },
+    "complex_concave": {
+      "description": "Complex 12-vertex shape with multiple concave regions",
+      "vertices": [
+        {"lat": 0.0, "lon": 0.0},
+        {"lat": 1.0, "lon": 0.5},
+        {"lat": 2.0, "lon": 0.0},
+        {"lat": 2.5, "lon": 1.0},
+        {"lat": 2.0, "lon": 2.0},
+        {"lat": 1.0, "lon": 1.5},
+        {"lat": 0.0, "lon": 2.0},
+        {"lat": -0.5, "lon": 1.5},
+        {"lat": -1.0, "lon": 2.0},
+        {"lat": -1.0, "lon": 1.0},
+        {"lat": -1.0, "lon": 0.0},
+        {"lat": -0.5, "lon": 0.5}
+      ],
+      "test_points": {
+        "interior": [
+          {"lat": 0.5, "lon": 1.0, "expected": true, "notes": "Central region"}
+        ],
+        "exterior": [
+          {"lat": 1.5, "lon": 1.0, "expected": false, "notes": "Concave indent on right"}
+        ]
+      }
+    },
+    "triangle_minimum": {
+      "description": "Minimum valid polygon (3 vertices)",
+      "vertices": [
+        {"lat": 0.0, "lon": 0.0},
+        {"lat": 1.0, "lon": 0.0},
+        {"lat": 0.5, "lon": 1.0}
+      ],
+      "test_points": {
+        "interior": [
+          {"lat": 0.5, "lon": 0.3, "expected": true, "notes": "Inside triangle"}
+        ],
+        "exterior": [
+          {"lat": 1.5, "lon": 0.5, "expected": false, "notes": "Outside triangle"}
+        ]
+      }
+    },
+    "self_intersecting_invalid": {
+      "description": "Self-intersecting polygon (should be rejected)",
+      "invalid": true,
+      "vertices": [
+        {"lat": 0.0, "lon": 0.0},
+        {"lat": 1.0, "lon": 1.0},
+        {"lat": 1.0, "lon": 0.0},
+        {"lat": 0.0, "lon": 1.0}
+      ],
+      "notes": "Figure-8 shape - edges cross each other"
+    }
+  },
+  "nanodegree_examples": {
+    "l_shape_nano": {
+      "description": "L-shape in nanodegrees for wire format",
+      "vertices": [
+        {"lat_nano": 0, "lon_nano": 0},
+        {"lat_nano": 2000000000, "lon_nano": 0},
+        {"lat_nano": 2000000000, "lon_nano": 1000000000},
+        {"lat_nano": 1000000000, "lon_nano": 1000000000},
+        {"lat_nano": 1000000000, "lon_nano": 2000000000},
+        {"lat_nano": 0, "lon_nano": 2000000000}
+      ]
+    }
+  }
+}
