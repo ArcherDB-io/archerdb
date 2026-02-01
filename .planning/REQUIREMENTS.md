@@ -64,7 +64,7 @@ Requirements for comprehensive SDK testing and benchmarking infrastructure.
 
 ### Cross-SDK Parity (PARITY)
 
-- [ ] **PARITY-01**: Parity matrix created (14 ops × 6 SDKs = 84 cells)
+- [ ] **PARITY-01**: Parity matrix created (14 ops x 6 SDKs = 84 cells)
 - [ ] **PARITY-02**: All SDKs return identical results for identical queries
 - [ ] **PARITY-03**: All SDKs handle edge cases identically (poles, anti-meridian)
 - [ ] **PARITY-04**: All SDKs report errors with consistent codes and messages
@@ -76,8 +76,8 @@ Requirements for comprehensive SDK testing and benchmarking infrastructure.
 - [ ] **BENCH-T-02**: 3-node insert throughput measured (events/sec)
 - [ ] **BENCH-T-03**: 5-node insert throughput measured (events/sec)
 - [ ] **BENCH-T-04**: 6-node insert throughput measured (events/sec)
-- [ ] **BENCH-T-05**: Throughput meets baseline: ≥770K events/sec (3-node)
-- [ ] **BENCH-T-06**: Throughput goal: ≥1M events/sec (3-node, stretch)
+- [ ] **BENCH-T-05**: Throughput meets baseline: >=770K events/sec (3-node)
+- [ ] **BENCH-T-06**: Throughput goal: >=1M events/sec (3-node, stretch)
 
 ### Benchmarking - Latency (BENCH-L)
 
@@ -90,7 +90,7 @@ Requirements for comprehensive SDK testing and benchmarking infrastructure.
 
 ### Benchmarking - Advanced (BENCH-A)
 
-- [ ] **BENCH-A-01**: Scalability measured (1→3→5→6 nodes, linear goal)
+- [ ] **BENCH-A-01**: Scalability measured (1->3->5->6 nodes, linear goal)
 - [ ] **BENCH-A-02**: SDK parity measured (all SDKs within 20% of each other)
 - [ ] **BENCH-A-03**: Uniform workload pattern benchmarked
 - [ ] **BENCH-A-04**: City-concentrated workload pattern benchmarked
@@ -110,8 +110,8 @@ Requirements for comprehensive SDK testing and benchmarking infrastructure.
 
 ### Edge Cases & Validation (EDGE)
 
-- [ ] **EDGE-01**: Pole coordinates tested (lat = ±90 degrees)
-- [ ] **EDGE-02**: Anti-meridian crossing tested (lon = ±180 degrees)
+- [ ] **EDGE-01**: Pole coordinates tested (lat = +/-90 degrees)
+- [ ] **EDGE-02**: Anti-meridian crossing tested (lon = +/-180 degrees)
 - [ ] **EDGE-03**: Concave polygon queries tested
 - [ ] **EDGE-04**: Large batch tested (10K entities in single batch)
 - [ ] **EDGE-05**: High volume tested (100K+ events inserted)
@@ -153,13 +153,106 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| (To be filled during roadmap creation) | | |
+| INFRA-01 | Phase 11 | Pending |
+| INFRA-02 | Phase 11 | Pending |
+| INFRA-03 | Phase 11 | Pending |
+| INFRA-04 | Phase 11 | Pending |
+| INFRA-05 | Phase 11 | Pending |
+| INFRA-06 | Phase 11 | Pending |
+| INFRA-07 | Phase 11 | Pending |
+| INFRA-08 | Phase 11 | Pending |
+| INFRA-09 | Phase 11 | Pending |
+| INFRA-10 | Phase 11 | Pending |
+| SDK-01 | Phase 12 | Pending |
+| SDK-02 | Phase 12 | Pending |
+| SDK-03 | Phase 12 | Pending |
+| SDK-04 | Phase 12 | Pending |
+| SDK-05 | Phase 12 | Pending |
+| SDK-06 | Phase 12 | Pending |
+| OP-01 | Phase 13 | Pending |
+| OP-02 | Phase 13 | Pending |
+| OP-03 | Phase 13 | Pending |
+| OP-04 | Phase 13 | Pending |
+| OP-05 | Phase 13 | Pending |
+| OP-06 | Phase 13 | Pending |
+| OP-07 | Phase 13 | Pending |
+| OP-08 | Phase 13 | Pending |
+| OP-09 | Phase 13 | Pending |
+| OP-10 | Phase 13 | Pending |
+| OP-11 | Phase 13 | Pending |
+| OP-12 | Phase 13 | Pending |
+| OP-13 | Phase 13 | Pending |
+| OP-14 | Phase 13 | Pending |
+| OP-15 | Phase 13 | Pending |
+| OP-16 | Phase 13 | Pending |
+| OP-17 | Phase 13 | Pending |
+| OP-18 | Phase 13 | Pending |
+| OP-19 | Phase 13 | Pending |
+| OP-20 | Phase 13 | Pending |
+| ERR-01 | Phase 14 | Pending |
+| ERR-02 | Phase 14 | Pending |
+| ERR-03 | Phase 14 | Pending |
+| ERR-04 | Phase 14 | Pending |
+| ERR-05 | Phase 14 | Pending |
+| ERR-06 | Phase 14 | Pending |
+| ERR-07 | Phase 14 | Pending |
+| PARITY-01 | Phase 14 | Pending |
+| PARITY-02 | Phase 14 | Pending |
+| PARITY-03 | Phase 14 | Pending |
+| PARITY-04 | Phase 14 | Pending |
+| PARITY-05 | Phase 14 | Pending |
+| BENCH-T-01 | Phase 15 | Pending |
+| BENCH-T-02 | Phase 15 | Pending |
+| BENCH-T-03 | Phase 15 | Pending |
+| BENCH-T-04 | Phase 15 | Pending |
+| BENCH-T-05 | Phase 15 | Pending |
+| BENCH-T-06 | Phase 15 | Pending |
+| BENCH-L-01 | Phase 15 | Pending |
+| BENCH-L-02 | Phase 15 | Pending |
+| BENCH-L-03 | Phase 15 | Pending |
+| BENCH-L-04 | Phase 15 | Pending |
+| BENCH-L-05 | Phase 15 | Pending |
+| BENCH-L-06 | Phase 15 | Pending |
+| TOPO-01 | Phase 16 | Pending |
+| TOPO-02 | Phase 16 | Pending |
+| TOPO-03 | Phase 16 | Pending |
+| TOPO-04 | Phase 16 | Pending |
+| TOPO-05 | Phase 16 | Pending |
+| TOPO-06 | Phase 16 | Pending |
+| TOPO-07 | Phase 16 | Pending |
+| EDGE-01 | Phase 17 | Pending |
+| EDGE-02 | Phase 17 | Pending |
+| EDGE-03 | Phase 17 | Pending |
+| EDGE-04 | Phase 17 | Pending |
+| EDGE-05 | Phase 17 | Pending |
+| EDGE-06 | Phase 17 | Pending |
+| EDGE-07 | Phase 17 | Pending |
+| EDGE-08 | Phase 17 | Pending |
+| BENCH-A-01 | Phase 17 | Pending |
+| BENCH-A-02 | Phase 17 | Pending |
+| BENCH-A-03 | Phase 17 | Pending |
+| BENCH-A-04 | Phase 17 | Pending |
+| BENCH-A-05 | Phase 17 | Pending |
+| BENCH-A-06 | Phase 17 | Pending |
+| BENCH-A-07 | Phase 17 | Pending |
+| CI-01 | Phase 18 | Pending |
+| CI-02 | Phase 18 | Pending |
+| CI-03 | Phase 18 | Pending |
+| CI-04 | Phase 18 | Pending |
+| CI-05 | Phase 18 | Pending |
+| CI-06 | Phase 18 | Pending |
+| DOCS-01 | Phase 18 | Pending |
+| DOCS-02 | Phase 18 | Pending |
+| DOCS-03 | Phase 18 | Pending |
+| DOCS-04 | Phase 18 | Pending |
+| DOCS-05 | Phase 18 | Pending |
+| DOCS-06 | Phase 18 | Pending |
 
 **Coverage:**
-- v1.1 requirements: 76 total
-- Mapped to phases: (pending roadmap)
-- Unmapped: (pending roadmap)
+- v1.1 requirements: 94 total
+- Mapped to phases: 94/94
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-02-01*
-*Last updated: 2026-02-01 after initial definition*
+*Last updated: 2026-02-01 after roadmap creation*
