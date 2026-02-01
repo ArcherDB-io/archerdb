@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-02-01)
 
 **Core value:** Customers can deploy mission-critical geospatial workloads with confidence that their data is safe, queries are fast, and the service stays available during failures.
-**Current focus:** Phase 17 - Edge Cases & Advanced Benchmarks (Plan 2 of 2 complete)
+**Current focus:** Phase 17 - Edge Cases & Advanced Benchmarks (Plan 3 of 3 complete)
 
 ## Current Position
 
 Phase: 17 of 18 (Edge Cases & Advanced Benchmarks)
-Plan: 2 of 2 in current phase
+Plan: 3 of 3 in current phase
 Status: Phase complete
-Last activity: 2026-02-01 - Completed 17-02-PLAN.md (advanced benchmarks)
+Last activity: 2026-02-01 - Completed 17-03-PLAN.md (edge case API integration)
 
-Progress: [███████░░░] 53%
+Progress: [████████░░] 55%
 
 ## Milestone History
 
@@ -26,9 +26,9 @@ Progress: [███████░░░] 53%
 ## Performance Metrics
 
 **Velocity (v1.1):**
-- Total plans completed: 15
+- Total plans completed: 16
 - Average duration: 8 min
-- Total execution time: 119 min
+- Total execution time: 126 min
 
 **By Phase:**
 
@@ -40,10 +40,10 @@ Progress: [███████░░░] 53%
 | 14 | 2/2 | 27 min | 14 min |
 | 15 | 2/2 | 11 min | 6 min |
 | 16 | 2/2 | 7 min | 4 min |
-| 17 | 2/2 | 13 min | 7 min |
+| 17 | 3/3 | 20 min | 7 min |
 
 **Recent Trend:**
-- Last 5 plans: 16-01 (4 min), 16-02 (3 min), 17-01 (8 min), 17-02 (5 min)
+- Last 5 plans: 16-02 (3 min), 17-01 (8 min), 17-02 (5 min), 17-03 (7 min)
 - Trend: Consistent fast execution
 
 *Updated after each plan completion*
@@ -101,6 +101,9 @@ Recent decisions affecting current work:
 - [17-02]: Linear scaling defined as factor 0.8-1.2
 - [17-02]: SDK parity threshold 20% of mean latency
 - [17-02]: City-concentrated uses Gaussian with std_dev = radius/3
+- [17-03]: EdgeCaseAPIClient wraps requests.Session for HTTP operations
+- [17-03]: api_client fixture yields client connected to cluster leader
+- [17-03]: Response parsing handles both list and dict JSON formats
 
 ### Pending Todos
 
@@ -117,7 +120,7 @@ None.
 ## Session Continuity
 
 Last session: 2026-02-01
-Stopped at: Completed 17-02-PLAN.md (advanced benchmarks - Phase 17 complete)
+Stopped at: Completed 17-03-PLAN.md (edge case API integration - Phase 17 complete)
 Resume file: None
 
 **Next Action:** Execute `/gsd:execute-phase 18` for documentation phase
