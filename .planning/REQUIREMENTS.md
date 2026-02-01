@@ -121,21 +121,21 @@ Requirements for comprehensive SDK testing and benchmarking infrastructure.
 
 ### CI Integration (CI)
 
-- [ ] **CI-01**: SDK tests run automatically on PRs
-- [ ] **CI-02**: Smoke tests gate PR merges (<5 min)
-- [ ] **CI-03**: Nightly full suite runs (multi-node, all patterns)
-- [ ] **CI-04**: Benchmark suite runs weekly (dedicated hardware)
-- [ ] **CI-05**: Flaky test retry policy implemented
-- [ ] **CI-06**: Test results reported clearly (pass/fail, metrics)
+- [x] **CI-01**: SDK tests run automatically on PRs
+- [x] **CI-02**: Smoke tests gate PR merges (<5 min)
+- [x] **CI-03**: Nightly full suite runs (multi-node, all patterns)
+- [x] **CI-04**: Benchmark suite runs weekly (dedicated hardware)
+- [x] **CI-05**: Flaky test retry policy implemented
+- [x] **CI-06**: Test results reported clearly (pass/fail, metrics)
 
 ### Documentation (DOCS)
 
-- [ ] **DOCS-01**: Test suite README explains how to run tests
-- [ ] **DOCS-02**: Benchmark guide explains how to run benchmarks
-- [ ] **DOCS-03**: curl examples demonstrate all 14 operations
-- [ ] **DOCS-04**: Protocol documentation enables custom client development
-- [ ] **DOCS-05**: SDK comparison matrix shows feature parity
-- [ ] **DOCS-06**: Performance baselines documented (throughput, latency)
+- [x] **DOCS-01**: Test suite README explains how to run tests
+- [x] **DOCS-02**: Benchmark guide explains how to run benchmarks
+- [x] **DOCS-03**: curl examples demonstrate all 14 operations
+- [x] **DOCS-04**: Protocol documentation enables custom client development
+- [x] **DOCS-05**: SDK comparison matrix shows feature parity
+- [x] **DOCS-06**: Performance baselines documented (throughput, latency)
 
 ## Out of Scope
 
