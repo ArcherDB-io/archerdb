@@ -15,9 +15,19 @@
 //!    ARCHERDB_URL=http://localhost:3002 zig build test:integration
 
 const std = @import("std");
-const Client = @import("../../client.zig").Client;
-const types = @import("../../types.zig");
-const errors = @import("../../errors.zig");
+const sdk = @import("sdk");
+const Client = sdk.Client;
+
+// Re-exported types from SDK
+const types = struct {
+    pub const GeoEvent = sdk.GeoEvent;
+    pub const QueryRadiusFilter = sdk.QueryRadiusFilter;
+    pub const QueryPolygonFilter = sdk.QueryPolygonFilter;
+    pub const QueryLatestFilter = sdk.QueryLatestFilter;
+    pub const InsertResultCode = sdk.InsertResultCode;
+    pub const Vertex = sdk.Vertex;
+    pub const degreesToNano = sdk.degreesToNano;
+};
 
 /// Get server URL from environment or use default.
 fn getServerUrl() []const u8 {
@@ -33,7 +43,8 @@ fn generateTestEntityId(test_name: []const u8) u128 {
     const hash = hasher.final();
 
     // Combine hash with nanosecond timestamp for uniqueness
-    const timestamp = @as(u128, std.time.nanoTimestamp());
+    const ts_i128 = std.time.nanoTimestamp();
+    const timestamp: u128 = if (ts_i128 < 0) 0 else @intCast(ts_i128);
     return (@as(u128, hash) << 64) | @as(u128, @truncate(timestamp));
 }
 
