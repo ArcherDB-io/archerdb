@@ -32,8 +32,11 @@ const std = @import("std");
 
 const stdx = @import("stdx");
 
-/// Maximum number of shards supported.
+/// Maximum number of shards supported (full cluster).
 pub const max_shards: u32 = 256;
+
+/// Maximum number of shards in lite/compact response (fits in 32KB buffer).
+pub const max_shards_compact: u32 = 16;
 
 /// Maximum number of replicas per shard.
 pub const max_replicas_per_shard: u8 = 6;
@@ -205,6 +208,35 @@ pub const TopologyResponse = extern struct {
         const sharding = @import("sharding.zig");
         const shard_key = sharding.computeShardKey(entity_id);
         return sharding.computeShardBucket(shard_key, self.num_shards);
+    }
+};
+
+/// Compact topology response for small clusters (fits in lite config buffers).
+/// Used for single-node and small clusters where full 256-shard array is excessive.
+pub const TopologyResponseCompact = extern struct {
+    /// Topology version number (increments on changes).
+    version: u64,
+    /// Number of shards in the cluster.
+    num_shards: u32,
+    /// Cluster name/identifier.
+    cluster_id: u128,
+    /// Timestamp of last topology change (nanoseconds since epoch).
+    last_change_ns: i128,
+    /// Resharding status (0=idle, 1=preparing, 2=migrating, 3=finalizing).
+    resharding_status: u8,
+    /// Reserved for future flags.
+    flags: u8,
+    /// Padding for alignment.
+    _padding: [6]u8 = [_]u8{0} ** 6,
+    /// Shard information array (max 16 shards for compact response).
+    shards: [max_shards_compact]ShardInfo,
+
+    comptime {
+        // Verify compact response fits in lite config buffers (~32 KB)
+        // Header ~52 bytes + 16 shards × ~472 bytes = ~7.6 KB
+        if (@sizeOf(TopologyResponseCompact) >= 8192) {
+            @compileError("TopologyResponseCompact too large for lite config buffers");
+        }
     }
 };
 

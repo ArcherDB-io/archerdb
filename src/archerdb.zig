@@ -58,6 +58,7 @@ pub const TtlClearResponse = ttl.TtlClearResponse;
 // Topology types (Smart Client Discovery)
 pub const TopologyRequest = topology_mod.TopologyRequest;
 pub const TopologyResponse = topology_mod.TopologyResponse;
+pub const TopologyResponseCompact = topology_mod.TopologyResponseCompact;
 pub const ShardInfo = topology_mod.ShardInfo;
 pub const ShardStatus = topology_mod.ShardStatus;
 

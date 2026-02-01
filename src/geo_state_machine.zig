@@ -2960,42 +2960,52 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         ) usize {
             _ = self; // Topology is cluster-wide, not per-state-machine state
 
-            if (output.len < @sizeOf(TopologyResponse)) {
+            // Use compact response for small clusters (fits in lite config 32KB buffer)
+            const ResponseType = topology_mod.TopologyResponseCompact;
+
+            if (output.len < @sizeOf(ResponseType)) {
                 log.warn("get_topology: output buffer too small ({d} < {d})", .{
                     output.len,
-                    @sizeOf(TopologyResponse),
+                    @sizeOf(ResponseType),
                 });
                 return 0;
             }
 
-            // Build topology response
-            // Note: In production, this would query the actual cluster state from
-            // the TopologyManager. For now, we return a minimal valid response
-            // indicating a single-shard configuration.
-            var response = TopologyResponse.init();
-            response.version = 1;
-            response.num_shards = 1;
-            response.last_change_ns = std.time.nanoTimestamp();
-            response.resharding_status = 0; // Not resharding
+            // Build compact topology response (max 16 shards)
+            var response: ResponseType = .{
+                .version = 1,
+                .num_shards = 1,
+                .cluster_id = 0,
+                .last_change_ns = std.time.nanoTimestamp(),
+                .resharding_status = 0,
+                .flags = 0,
+                .shards = undefined,
+            };
+
+            // Initialize all shards to default
+            for (&response.shards) |*shard| {
+                shard.* = topology_mod.ShardInfo.init(0);
+            }
 
             // Set up shard 0 as active (single-shard mode)
             response.shards[0] = topology_mod.ShardInfo.init(0);
             response.shards[0].status = .active;
             response.shards[0].setPrimary("127.0.0.1:5000");
 
-            // Write response to output buffer
+            // Write compact response to output buffer
             const response_ptr = mem.bytesAsValue(
-                TopologyResponse,
-                output[0..@sizeOf(TopologyResponse)],
+                ResponseType,
+                output[0..@sizeOf(ResponseType)],
             );
             response_ptr.* = response;
 
-            log.debug("get_topology: returned topology v{d} with {d} shards", .{
+            log.debug("get_topology: returned topology v{d} with {d} shards (compact, size={d})", .{
                 response.version,
                 response.num_shards,
+                @sizeOf(ResponseType),
             });
 
-            return @sizeOf(TopologyResponse);
+            return @sizeOf(ResponseType);
         }
 
         // ====================================================================
