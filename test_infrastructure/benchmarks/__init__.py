@@ -14,6 +14,10 @@ This package provides performance benchmarking tools with statistical rigor:
 - orchestrator: Full suite benchmark coordination across topologies
 - regression: Baseline comparison and regression detection
 - workloads: Throughput, latency, and mixed workload implementations
+- scalability: Scalability measurement across node counts
+- sdk_benchmark: Cross-SDK performance comparison
+- history: Historical result storage and retrieval
+- dashboard: Performance trend visualization
 """
 
 from .config import BenchmarkConfig
@@ -23,9 +27,9 @@ from .histogram import LatencyHistogram
 from .reporter import BenchmarkReporter
 from .orchestrator import BenchmarkOrchestrator, PERFORMANCE_TARGETS
 from .regression import (
-    load_baseline,
-    save_baseline,
-    compare_to_baseline,
+    load_baseline as regression_load_baseline,
+    save_baseline as regression_save_baseline,
+    compare_to_baseline as regression_compare_to_baseline,
     RegressionReport,
     generate_regression_report,
 )
@@ -41,6 +45,26 @@ from .workloads import (
     LatencyReadWorkload,
     LatencyWriteWorkload,
     MixedWorkload,
+    UniformWorkload,
+    CityConcentratedWorkload,
+)
+from .scalability import ScalabilityBenchmark, ScalabilityResult
+from .sdk_benchmark import SDKBenchmark, SDKBenchmarkResult, ParityStatus
+from .history import (
+    save_result,
+    load_results,
+    save_baseline,
+    load_baseline,
+    compare_to_baseline,
+    detect_regression as history_detect_regression,
+    ComparisonResult,
+)
+from .dashboard import (
+    generate_dashboard,
+    plot_throughput_trend,
+    plot_latency_trend,
+    format_regression_status,
+    generate_summary_table,
 )
 
 __all__ = [
@@ -59,10 +83,10 @@ __all__ = [
     # Orchestrator
     "BenchmarkOrchestrator",
     "PERFORMANCE_TARGETS",
-    # Regression
-    "load_baseline",
-    "save_baseline",
-    "compare_to_baseline",
+    # Regression (legacy module)
+    "regression_load_baseline",
+    "regression_save_baseline",
+    "regression_compare_to_baseline",
     "RegressionReport",
     "generate_regression_report",
     # Stats functions
@@ -76,4 +100,26 @@ __all__ = [
     "LatencyReadWorkload",
     "LatencyWriteWorkload",
     "MixedWorkload",
+    "UniformWorkload",
+    "CityConcentratedWorkload",
+    # Scalability
+    "ScalabilityBenchmark",
+    "ScalabilityResult",
+    # SDK Benchmark
+    "SDKBenchmark",
+    "SDKBenchmarkResult",
+    "ParityStatus",
+    # History
+    "save_result",
+    "load_results",
+    "save_baseline",
+    "load_baseline",
+    "compare_to_baseline",
+    "ComparisonResult",
+    # Dashboard
+    "generate_dashboard",
+    "plot_throughput_trend",
+    "plot_latency_trend",
+    "format_regression_status",
+    "generate_summary_table",
 ]
