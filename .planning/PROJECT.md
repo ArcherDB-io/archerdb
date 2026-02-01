@@ -27,6 +27,19 @@ Customers can deploy mission-critical geospatial workloads with confidence that 
 
 See `.planning/MILESTONES.md` for full v1 details.
 
+## Current Milestone: v1.1 SDK Testing & Benchmarking
+
+**Goal:** Comprehensive SDK testing and benchmarking infrastructure to validate all functionality across all client libraries and establish performance baselines.
+
+**Target capabilities:**
+- Test all 6 SDKs (Python, Node.js, Go, Java, C, Zig) with 100% operation coverage
+- Create Zig SDK in `src/clients/zig/`
+- Raw protocol testing and documentation (curl examples)
+- Workload pattern testing (single, low, high volume, uniform, city-concentrated)
+- Multi-topology testing (1, 3, 5, 6-node clusters)
+- Performance benchmarking (throughput, latency, scalability, SDK parity)
+- CI integration for automated regression detection
+
 ## Requirements
 
 ### Validated (v1)
@@ -48,7 +61,7 @@ All v1 requirements shipped. See `.planning/milestones/v1-REQUIREMENTS.md` for f
 
 ### Active
 
-No active requirements. Define next milestone with `/gsd:new-milestone`.
+Requirements for v1.1 milestone will be defined through research and requirements process.
 
 ### Out of Scope
 
@@ -90,4 +103,4 @@ No active requirements. Define next milestone with `/gsd:new-milestone`.
 | 770K vs 1M throughput | 77% on dev server; production hardware expected to meet target | ✓ Acceptable |
 
 ---
-*Last updated: 2026-01-31 after v1 milestone completion*
+*Last updated: 2026-02-01 after starting v1.1 milestone*
