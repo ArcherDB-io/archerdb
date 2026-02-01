@@ -6,8 +6,8 @@ This milestone delivers comprehensive SDK testing and benchmarking infrastructur
 
 ## Milestones
 
-- ✅ **v1.0 DBaaS Production Readiness** - Phases 1-10 (shipped 2026-01-31)
-- 🚧 **v1.1 SDK Testing & Benchmarking** - Phases 11-18 (in progress)
+- **v1.0 DBaaS Production Readiness** - Phases 1-10 (shipped 2026-01-31)
+- **v1.1 SDK Testing & Benchmarking** - Phases 11-18 (in progress)
 
 ## Phases
 
@@ -90,11 +90,11 @@ Plans:
   3. All SDKs handle edge cases identically (poles, anti-meridian, empty results)
   4. Parity matrix (14 ops x 6 SDKs = 84 cells) shows 100% consistency
   5. SDK limitations documented with workarounds where applicable
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 14-01: Error handling tests across all SDKs
-- [ ] 14-02: Cross-SDK parity validation
+- [ ] 14-01-PLAN.md — Error handling tests (ERR-01 to ERR-07) for connection, timeout, validation, empty results, retry, batch limits
+- [ ] 14-02-PLAN.md — Cross-SDK parity verification with geographic edge cases, parity matrix, limitation documentation
 
 ### Phase 15: Benchmark Framework
 **Goal**: Performance benchmarking with statistical rigor and percentile reporting
@@ -169,7 +169,7 @@ Phases execute in numeric order: 11 -> 11.1 -> 11.2 -> 12 -> 12.1 -> 13 -> ...
 | 11. Test Infrastructure | v1.1 | 2/2 | Complete | 2026-02-01 |
 | 12. Zig SDK & Protocol | v1.1 | 2/2 | Complete | 2026-02-01 |
 | 13. SDK Operation Tests | v1.1 | 3/3 | Complete (needs UAT) | 2026-02-01 |
-| 14. Error Handling & Parity | v1.1 | 0/2 | Not started | - |
+| 14. Error Handling & Parity | v1.1 | 0/2 | Planned | - |
 | 15. Benchmark Framework | v1.1 | 0/2 | Not started | - |
 | 16. Multi-Topology Testing | v1.1 | 0/2 | Not started | - |
 | 17. Edge Cases & Advanced | v1.1 | 0/2 | Not started | - |
@@ -177,4 +177,4 @@ Phases execute in numeric order: 11 -> 11.1 -> 11.2 -> 12 -> 12.1 -> 13 -> ...
 
 ---
 *Roadmap created: 2026-02-01*
-*Last updated: 2026-02-01 (Phase 13 planned)*
+*Last updated: 2026-02-01 (Phase 14 planned)*
