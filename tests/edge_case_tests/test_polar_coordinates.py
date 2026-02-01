@@ -17,6 +17,7 @@ Test Cases:
 import pytest
 
 from .conftest import (
+    EdgeCaseAPIClient,
     EdgeCaseCoordinates,
     build_insert_event,
     build_radius_query,
@@ -29,14 +30,18 @@ from .conftest import (
 class TestPolarCoordinates:
     """Test polar coordinate handling (EDGE-01)."""
 
-    def test_north_pole_insert(self, single_node_cluster, edge_case_fixtures_dir):
+    def test_north_pole_insert(
+        self, single_node_cluster, edge_case_fixtures_dir, api_client
+    ):
         """Insert event at north pole (lat=90) and verify retrievable.
 
         At the north pole, all longitudes converge to a single point.
         The event should be inserted successfully regardless of longitude.
         """
         fixtures = load_fixture(edge_case_fixtures_dir / "polar_coordinates.json")
-        north_pole = next(tc for tc in fixtures["test_cases"] if tc["name"] == "north_pole")
+        north_pole = next(
+            tc for tc in fixtures["test_cases"] if tc["name"] == "north_pole"
+        )
 
         entity_id = generate_entity_id()
         event = build_insert_event(
@@ -45,21 +50,29 @@ class TestPolarCoordinates:
             lon=north_pole["input"]["longitude"],
         )
 
-        # Test should verify:
-        # 1. Insert succeeds without error
-        # 2. Event can be retrieved by entity_id
-        # 3. Coordinates are preserved correctly
-        assert event["latitude"] == 90.0
-        assert entity_id is not None
+        # Insert via API
+        response = api_client.insert([event])
+        assert response.status_code == 200, f"Insert failed: {response.text}"
 
-    def test_south_pole_insert(self, single_node_cluster, edge_case_fixtures_dir):
+        # Verify retrievable by UUID
+        query_response = api_client.query_uuid(entity_id)
+        assert query_response.status_code == 200, f"Query failed: {query_response.text}"
+
+        result = query_response.json()
+        assert result["latitude"] == 90.0 or abs(result["latitude"] - 90.0) < 1e-6
+
+    def test_south_pole_insert(
+        self, single_node_cluster, edge_case_fixtures_dir, api_client
+    ):
         """Insert event at south pole (lat=-90) and verify retrievable.
 
         At the south pole, all longitudes converge to a single point.
         The event should be inserted successfully regardless of longitude.
         """
         fixtures = load_fixture(edge_case_fixtures_dir / "polar_coordinates.json")
-        south_pole = next(tc for tc in fixtures["test_cases"] if tc["name"] == "south_pole")
+        south_pole = next(
+            tc for tc in fixtures["test_cases"] if tc["name"] == "south_pole"
+        )
 
         entity_id = generate_entity_id()
         event = build_insert_event(
@@ -68,10 +81,20 @@ class TestPolarCoordinates:
             lon=south_pole["input"]["longitude"],
         )
 
-        assert event["latitude"] == -90.0
-        assert entity_id is not None
+        # Insert via API
+        response = api_client.insert([event])
+        assert response.status_code == 200, f"Insert failed: {response.text}"
 
-    def test_pole_longitude_equivalence(self, single_node_cluster, edge_case_fixtures_dir):
+        # Verify retrievable by UUID
+        query_response = api_client.query_uuid(entity_id)
+        assert query_response.status_code == 200, f"Query failed: {query_response.text}"
+
+        result = query_response.json()
+        assert result["latitude"] == -90.0 or abs(result["latitude"] + 90.0) < 1e-6
+
+    def test_pole_longitude_equivalence(
+        self, single_node_cluster, edge_case_fixtures_dir, api_client
+    ):
         """Insert at pole with lon=0, query with lon=180, should find.
 
         At poles, longitude has no meaning - all longitudes refer to the
@@ -79,8 +102,12 @@ class TestPolarCoordinates:
         a different longitude should still find the event.
         """
         fixtures = load_fixture(edge_case_fixtures_dir / "polar_coordinates.json")
-        north_pole = next(tc for tc in fixtures["test_cases"] if tc["name"] == "north_pole")
-        north_pole_180 = next(tc for tc in fixtures["test_cases"] if tc["name"] == "north_pole_180")
+        north_pole = next(
+            tc for tc in fixtures["test_cases"] if tc["name"] == "north_pole"
+        )
+        north_pole_180 = next(
+            tc for tc in fixtures["test_cases"] if tc["name"] == "north_pole_180"
+        )
 
         # Both are at lat=90 but different longitudes
         assert north_pole["input"]["latitude"] == 90.0
@@ -95,61 +122,96 @@ class TestPolarCoordinates:
             lon=north_pole["input"]["longitude"],
         )
 
-        # Query at lon=180 should still find event
-        query = build_radius_query(
+        response = api_client.insert([event])
+        assert response.status_code == 200, f"Insert failed: {response.text}"
+
+        # Query at lon=180 should still find event (1km radius at pole)
+        query_response = api_client.query_radius(
             lat=north_pole_180["input"]["latitude"],
             lon=north_pole_180["input"]["longitude"],
-            radius_m=1000,  # 1km radius
+            radius_m=1000,
         )
+        assert query_response.status_code == 200, f"Query failed: {query_response.text}"
 
-        # Verify query structure is correct
-        assert query["center_lat"] == 90.0
-        assert query["radius_m"] == 1000
+        # Should find the event (pole longitude equivalence)
+        results = query_response.json()
+        # Results may be list or dict with events key
+        events = results if isinstance(results, list) else results.get("events", [])
+        found = any(e.get("entity_id") == entity_id for e in events)
+        assert found, "Event at pole should be found regardless of query longitude"
 
-    def test_radius_query_at_north_pole(self, single_node_cluster, edge_case_fixtures_dir):
+    def test_radius_query_at_north_pole(
+        self, single_node_cluster, edge_case_fixtures_dir, api_client
+    ):
         """Radius query centered at north pole (90,0) with 1km radius.
 
         A radius query at the pole should correctly compute the circular
         region and return any events within range.
         """
-        fixtures = load_fixture(edge_case_fixtures_dir / "polar_coordinates.json")
-        polar_query = next(
-            tc for tc in fixtures["test_cases"]
-            if tc.get("operation") == "query-radius" and "polar" in tc["name"]
+        # Insert event at north pole
+        entity_id = generate_entity_id()
+        event = build_insert_event(
+            entity_id=entity_id,
+            lat=90.0,
+            lon=0.0,
         )
+        response = api_client.insert([event])
+        assert response.status_code == 200, f"Insert failed: {response.text}"
 
-        query = build_radius_query(
-            lat=polar_query["input"]["latitude"],
-            lon=polar_query["input"]["longitude"],
-            radius_m=polar_query["input"]["radius_m"],
+        # Query at north pole
+        query_response = api_client.query_radius(
+            lat=90.0,
+            lon=0.0,
+            radius_m=1000,
         )
+        assert query_response.status_code == 200, f"Query failed: {query_response.text}"
 
-        assert query["center_lat"] == 90.0
-        assert query["radius_m"] == 1000
+        results = query_response.json()
+        events = results if isinstance(results, list) else results.get("events", [])
+        found = any(e.get("entity_id") == entity_id for e in events)
+        assert found, "Event at pole should be found in pole-centered query"
 
-    def test_radius_query_at_south_pole(self, single_node_cluster, edge_case_fixtures_dir):
+    def test_radius_query_at_south_pole(self, single_node_cluster, api_client):
         """Radius query centered at south pole (-90,0) with 1km radius.
 
         A radius query at the south pole should work identically to
         the north pole query.
         """
-        query = build_radius_query(
+        # Insert event at south pole
+        entity_id = generate_entity_id()
+        event = build_insert_event(
+            entity_id=entity_id,
             lat=EdgeCaseCoordinates.SOUTH_POLE_DEG,
+            lon=0.0,
+        )
+        response = api_client.insert([event])
+        assert response.status_code == 200, f"Insert failed: {response.text}"
+
+        # Query at south pole
+        query_response = api_client.query_radius(
+            lat=-90.0,
             lon=0.0,
             radius_m=1000,
         )
+        assert query_response.status_code == 200, f"Query failed: {query_response.text}"
 
-        assert query["center_lat"] == -90.0
-        assert query["radius_m"] == 1000
+        results = query_response.json()
+        events = results if isinstance(results, list) else results.get("events", [])
+        found = any(e.get("entity_id") == entity_id for e in events)
+        assert found, "Event at south pole should be found"
 
-    def test_near_pole_precision(self, single_node_cluster, edge_case_fixtures_dir):
+    def test_near_pole_precision(
+        self, single_node_cluster, edge_case_fixtures_dir, api_client
+    ):
         """Insert at 89.9999, verify distinct from 90.0.
 
         Points very close to (but not at) the pole should maintain
         their distinct coordinates and not be treated as pole points.
         """
         fixtures = load_fixture(edge_case_fixtures_dir / "polar_coordinates.json")
-        near_pole = next(tc for tc in fixtures["test_cases"] if tc["name"] == "near_north_pole")
+        near_pole = next(
+            tc for tc in fixtures["test_cases"] if tc["name"] == "near_north_pole"
+        )
 
         # Near pole is at 89.9999, not exactly 90
         assert near_pole["input"]["latitude"] == 89.9999
@@ -170,17 +232,35 @@ class TestPolarCoordinates:
             lon=near_pole["input"]["longitude"],
         )
 
-        # The two events should have different latitudes
-        assert event_at_pole["latitude"] != event_near_pole["latitude"]
+        # Insert both events
+        response = api_client.insert([event_at_pole, event_near_pole])
+        assert response.status_code == 200, f"Insert failed: {response.text}"
 
-    def test_arctic_circle(self, single_node_cluster, edge_case_fixtures_dir):
+        # Query both to verify distinct coordinates
+        pole_response = api_client.query_uuid(entity_id_at_pole)
+        near_response = api_client.query_uuid(entity_id_near_pole)
+
+        assert pole_response.status_code == 200
+        assert near_response.status_code == 200
+
+        pole_result = pole_response.json()
+        near_result = near_response.json()
+
+        # The two events should have different latitudes
+        assert pole_result["latitude"] != near_result["latitude"]
+
+    def test_arctic_circle(
+        self, single_node_cluster, edge_case_fixtures_dir, api_client
+    ):
         """Insert at Arctic Circle latitude (66.5).
 
         The Arctic Circle is a well-defined latitude boundary.
         Events here should work normally.
         """
         fixtures = load_fixture(edge_case_fixtures_dir / "polar_coordinates.json")
-        arctic = next(tc for tc in fixtures["test_cases"] if tc["name"] == "arctic_circle")
+        arctic = next(
+            tc for tc in fixtures["test_cases"] if tc["name"] == "arctic_circle"
+        )
 
         entity_id = generate_entity_id()
         event = build_insert_event(
@@ -189,16 +269,29 @@ class TestPolarCoordinates:
             lon=arctic["input"]["longitude"],
         )
 
-        assert event["latitude"] == 66.5
+        # Insert via API
+        response = api_client.insert([event])
+        assert response.status_code == 200, f"Insert failed: {response.text}"
 
-    def test_antarctic_circle(self, single_node_cluster, edge_case_fixtures_dir):
+        # Verify retrievable
+        query_response = api_client.query_uuid(entity_id)
+        assert query_response.status_code == 200, f"Query failed: {query_response.text}"
+
+        result = query_response.json()
+        assert abs(result["latitude"] - 66.5) < 1e-6
+
+    def test_antarctic_circle(
+        self, single_node_cluster, edge_case_fixtures_dir, api_client
+    ):
         """Insert at Antarctic Circle latitude (-66.5).
 
         The Antarctic Circle is a well-defined latitude boundary.
         Events here should work normally.
         """
         fixtures = load_fixture(edge_case_fixtures_dir / "polar_coordinates.json")
-        antarctic = next(tc for tc in fixtures["test_cases"] if tc["name"] == "antarctic_circle")
+        antarctic = next(
+            tc for tc in fixtures["test_cases"] if tc["name"] == "antarctic_circle"
+        )
 
         entity_id = generate_entity_id()
         event = build_insert_event(
@@ -207,15 +300,28 @@ class TestPolarCoordinates:
             lon=antarctic["input"]["longitude"],
         )
 
-        assert event["latitude"] == -66.5
+        # Insert via API
+        response = api_client.insert([event])
+        assert response.status_code == 200, f"Insert failed: {response.text}"
 
-    def test_pole_with_negative_longitude(self, single_node_cluster, edge_case_fixtures_dir):
+        # Verify retrievable
+        query_response = api_client.query_uuid(entity_id)
+        assert query_response.status_code == 200, f"Query failed: {query_response.text}"
+
+        result = query_response.json()
+        assert abs(result["latitude"] + 66.5) < 1e-6
+
+    def test_pole_with_negative_longitude(
+        self, single_node_cluster, edge_case_fixtures_dir, api_client
+    ):
         """Insert at pole with negative longitude.
 
         Even with negative longitude, the pole event should be valid.
         """
         fixtures = load_fixture(edge_case_fixtures_dir / "polar_coordinates.json")
-        pole_neg = next(tc for tc in fixtures["test_cases"] if tc["name"] == "north_pole_negative")
+        pole_neg = next(
+            tc for tc in fixtures["test_cases"] if tc["name"] == "north_pole_negative"
+        )
 
         entity_id = generate_entity_id()
         event = build_insert_event(
@@ -224,5 +330,14 @@ class TestPolarCoordinates:
             lon=pole_neg["input"]["longitude"],
         )
 
-        assert event["latitude"] == 90.0
-        assert event["longitude"] == -90.0
+        # Insert via API
+        response = api_client.insert([event])
+        assert response.status_code == 200, f"Insert failed: {response.text}"
+
+        # Verify retrievable
+        query_response = api_client.query_uuid(entity_id)
+        assert query_response.status_code == 200, f"Query failed: {query_response.text}"
+
+        result = query_response.json()
+        assert result["latitude"] == 90.0 or abs(result["latitude"] - 90.0) < 1e-6
+        assert result["longitude"] == -90.0 or abs(result["longitude"] + 90.0) < 1e-6

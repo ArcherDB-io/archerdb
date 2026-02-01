@@ -18,6 +18,7 @@ Test Cases:
 import pytest
 
 from .conftest import (
+    EdgeCaseAPIClient,
     EdgeCaseCoordinates,
     build_insert_event,
     build_radius_query,
@@ -30,13 +31,17 @@ from .conftest import (
 class TestAntimeridian:
     """Test anti-meridian (date line) handling (EDGE-02)."""
 
-    def test_positive_180_insert(self, single_node_cluster, edge_case_fixtures_dir):
+    def test_positive_180_insert(
+        self, single_node_cluster, edge_case_fixtures_dir, api_client
+    ):
         """Insert event at longitude +180.
 
         The positive anti-meridian should be a valid insertion point.
         """
         fixtures = load_fixture(edge_case_fixtures_dir / "antimeridian.json")
-        am_east = next(tc for tc in fixtures["test_cases"] if tc["name"] == "antimeridian_east")
+        am_east = next(
+            tc for tc in fixtures["test_cases"] if tc["name"] == "antimeridian_east"
+        )
 
         entity_id = generate_entity_id()
         event = build_insert_event(
@@ -45,16 +50,29 @@ class TestAntimeridian:
             lon=am_east["input"]["longitude"],
         )
 
-        assert event["longitude"] == 180.0
-        assert entity_id is not None
+        # Insert via API
+        response = api_client.insert([event])
+        assert response.status_code == 200, f"Insert failed: {response.text}"
 
-    def test_negative_180_insert(self, single_node_cluster, edge_case_fixtures_dir):
+        # Verify retrievable
+        query_response = api_client.query_uuid(entity_id)
+        assert query_response.status_code == 200, f"Query failed: {query_response.text}"
+
+        result = query_response.json()
+        # Longitude may be normalized to -180 or kept as 180
+        assert abs(abs(result["longitude"]) - 180.0) < 1e-6
+
+    def test_negative_180_insert(
+        self, single_node_cluster, edge_case_fixtures_dir, api_client
+    ):
         """Insert event at longitude -180.
 
         The negative anti-meridian should be a valid insertion point.
         """
         fixtures = load_fixture(edge_case_fixtures_dir / "antimeridian.json")
-        am_west = next(tc for tc in fixtures["test_cases"] if tc["name"] == "antimeridian_west")
+        am_west = next(
+            tc for tc in fixtures["test_cases"] if tc["name"] == "antimeridian_west"
+        )
 
         entity_id = generate_entity_id()
         event = build_insert_event(
@@ -63,18 +81,33 @@ class TestAntimeridian:
             lon=am_west["input"]["longitude"],
         )
 
-        assert event["longitude"] == -180.0
-        assert entity_id is not None
+        # Insert via API
+        response = api_client.insert([event])
+        assert response.status_code == 200, f"Insert failed: {response.text}"
 
-    def test_antimeridian_equivalence(self, single_node_cluster, edge_case_fixtures_dir):
+        # Verify retrievable
+        query_response = api_client.query_uuid(entity_id)
+        assert query_response.status_code == 200, f"Query failed: {query_response.text}"
+
+        result = query_response.json()
+        # Longitude may be normalized to +180 or kept as -180
+        assert abs(abs(result["longitude"]) - 180.0) < 1e-6
+
+    def test_antimeridian_equivalence(
+        self, single_node_cluster, edge_case_fixtures_dir, api_client
+    ):
         """Longitude +180 and -180 represent the same line.
 
         Events at +180 and -180 longitude with the same latitude
         should be at the same geographic location.
         """
         fixtures = load_fixture(edge_case_fixtures_dir / "antimeridian.json")
-        am_east = next(tc for tc in fixtures["test_cases"] if tc["name"] == "antimeridian_east")
-        am_west = next(tc for tc in fixtures["test_cases"] if tc["name"] == "antimeridian_west")
+        am_east = next(
+            tc for tc in fixtures["test_cases"] if tc["name"] == "antimeridian_east"
+        )
+        am_west = next(
+            tc for tc in fixtures["test_cases"] if tc["name"] == "antimeridian_west"
+        )
 
         # Both at same latitude (equator in this case)
         assert am_east["input"]["latitude"] == am_west["input"]["latitude"]
@@ -90,45 +123,79 @@ class TestAntimeridian:
             lon=am_east["input"]["longitude"],
         )
 
-        # Query at -180 should find it
-        query = build_radius_query(
+        response = api_client.insert([event])
+        assert response.status_code == 200, f"Insert failed: {response.text}"
+
+        # Query at -180 should find it (within 1km radius)
+        query_response = api_client.query_radius(
             lat=am_west["input"]["latitude"],
             lon=am_west["input"]["longitude"],
             radius_m=1000,
         )
+        assert query_response.status_code == 200, f"Query failed: {query_response.text}"
 
-        assert query["center_lon"] == -180.0
+        results = query_response.json()
+        events = results if isinstance(results, list) else results.get("events", [])
+        found = any(e.get("entity_id") == entity_id for e in events)
+        assert found, "Event at +180 should be found when querying at -180"
 
-    def test_radius_query_crossing(self, single_node_cluster, edge_case_fixtures_dir):
+    def test_radius_query_crossing(
+        self, single_node_cluster, edge_case_fixtures_dir, api_client
+    ):
         """Query at lon=179.9 with large radius spans both sides of date line.
 
         A radius query near the anti-meridian with a large enough radius
         should return events from both sides of the date line.
         """
-        fixtures = load_fixture(edge_case_fixtures_dir / "antimeridian.json")
-        crossing_query = next(
-            tc for tc in fixtures["test_cases"]
-            if tc.get("operation") == "query-radius" and "crossing" in tc["name"]
+        # Insert events on both sides
+        entity_id_east = generate_entity_id()
+        entity_id_west = generate_entity_id()
+
+        event_east = build_insert_event(
+            entity_id=entity_id_east,
+            lat=0.0,
+            lon=179.5,  # Just east of antimeridian
+        )
+        event_west = build_insert_event(
+            entity_id=entity_id_west,
+            lat=0.0,
+            lon=-179.5,  # Just west of antimeridian
         )
 
-        query = build_radius_query(
-            lat=crossing_query["input"]["latitude"],
-            lon=crossing_query["input"]["longitude"],
-            radius_m=crossing_query["input"]["radius_m"],
+        response = api_client.insert([event_east, event_west])
+        assert response.status_code == 200, f"Insert failed: {response.text}"
+
+        # Query with large radius crossing antimeridian
+        query_response = api_client.query_radius(
+            lat=0.0,
+            lon=179.9,
+            radius_m=200_000,  # 200km - should reach across
         )
+        assert query_response.status_code == 200, f"Query failed: {query_response.text}"
 
-        # Large radius to cross the date line
-        assert query["radius_m"] == 1000000  # 1000km
+        results = query_response.json()
+        events = results if isinstance(results, list) else results.get("events", [])
+        entity_ids = [e.get("entity_id") for e in events]
 
-    def test_fiji_spanning_dateline(self, single_node_cluster, edge_case_fixtures_dir):
+        # Should find both events
+        assert entity_id_east in entity_ids, "Should find east event"
+        assert entity_id_west in entity_ids, "Should find west event (across dateline)"
+
+    def test_fiji_spanning_dateline(
+        self, single_node_cluster, edge_case_fixtures_dir, api_client
+    ):
         """Insert on both sides of Fiji (spans date line), query should find both.
 
         Fiji straddles the anti-meridian, with some islands at positive
         longitude (~179) and others at negative longitude (~-179).
         """
         fixtures = load_fixture(edge_case_fixtures_dir / "antimeridian.json")
-        fiji_east = next(tc for tc in fixtures["test_cases"] if tc["name"] == "fiji_east_side")
-        fiji_west = next(tc for tc in fixtures["test_cases"] if tc["name"] == "fiji_west_side")
+        fiji_east = next(
+            tc for tc in fixtures["test_cases"] if tc["name"] == "fiji_east_side"
+        )
+        fiji_west = next(
+            tc for tc in fixtures["test_cases"] if tc["name"] == "fiji_west_side"
+        )
 
         # Fiji east side at ~179.5
         assert fiji_east["input"]["longitude"] == 179.5
@@ -150,19 +217,32 @@ class TestAntimeridian:
             lon=fiji_west["input"]["longitude"],
         )
 
-        # Both events valid
-        assert event_east["longitude"] == 179.5
-        assert event_west["longitude"] == -179.5
+        # Insert both events
+        response = api_client.insert([event_east, event_west])
+        assert response.status_code == 200, f"Insert failed: {response.text}"
 
-    def test_near_antimeridian(self, single_node_cluster, edge_case_fixtures_dir):
+        # Verify both retrievable
+        east_response = api_client.query_uuid(entity_id_east)
+        west_response = api_client.query_uuid(entity_id_west)
+
+        assert east_response.status_code == 200
+        assert west_response.status_code == 200
+
+    def test_near_antimeridian(
+        self, single_node_cluster, edge_case_fixtures_dir, api_client
+    ):
         """Insert at 179.9999 and -179.9999.
 
         Points very close to (but not at) the anti-meridian should
         maintain their distinct coordinates.
         """
         fixtures = load_fixture(edge_case_fixtures_dir / "antimeridian.json")
-        just_before = next(tc for tc in fixtures["test_cases"] if tc["name"] == "just_before_antimeridian")
-        just_after = next(tc for tc in fixtures["test_cases"] if tc["name"] == "just_after_antimeridian")
+        just_before = next(
+            tc for tc in fixtures["test_cases"] if tc["name"] == "just_before_antimeridian"
+        )
+        just_after = next(
+            tc for tc in fixtures["test_cases"] if tc["name"] == "just_after_antimeridian"
+        )
 
         assert just_before["input"]["longitude"] == 179.9999
         assert just_after["input"]["longitude"] == -179.9999
@@ -182,17 +262,35 @@ class TestAntimeridian:
             lon=just_after["input"]["longitude"],
         )
 
-        # Different longitudes, not collapsed to same value
-        assert event_before["longitude"] != event_after["longitude"]
+        # Insert both
+        response = api_client.insert([event_before, event_after])
+        assert response.status_code == 200, f"Insert failed: {response.text}"
 
-    def test_antimeridian_north_hemisphere(self, single_node_cluster, edge_case_fixtures_dir):
+        # Query both
+        before_response = api_client.query_uuid(entity_id_before)
+        after_response = api_client.query_uuid(entity_id_after)
+
+        assert before_response.status_code == 200
+        assert after_response.status_code == 200
+
+        before_result = before_response.json()
+        after_result = after_response.json()
+
+        # Different longitudes, not collapsed to same value
+        assert before_result["longitude"] != after_result["longitude"]
+
+    def test_antimeridian_north_hemisphere(
+        self, single_node_cluster, edge_case_fixtures_dir, api_client
+    ):
         """Anti-meridian in northern hemisphere.
 
         The anti-meridian extends through all latitudes. Test at
         non-equator location.
         """
         fixtures = load_fixture(edge_case_fixtures_dir / "antimeridian.json")
-        am_north = next(tc for tc in fixtures["test_cases"] if tc["name"] == "antimeridian_north")
+        am_north = next(
+            tc for tc in fixtures["test_cases"] if tc["name"] == "antimeridian_north"
+        )
 
         entity_id = generate_entity_id()
         event = build_insert_event(
@@ -201,17 +299,30 @@ class TestAntimeridian:
             lon=am_north["input"]["longitude"],
         )
 
-        assert event["latitude"] == 45.0
-        assert event["longitude"] == 180.0
+        # Insert via API
+        response = api_client.insert([event])
+        assert response.status_code == 200, f"Insert failed: {response.text}"
 
-    def test_antimeridian_south_hemisphere(self, single_node_cluster, edge_case_fixtures_dir):
+        # Verify retrievable
+        query_response = api_client.query_uuid(entity_id)
+        assert query_response.status_code == 200, f"Query failed: {query_response.text}"
+
+        result = query_response.json()
+        assert abs(result["latitude"] - 45.0) < 1e-6
+        assert abs(abs(result["longitude"]) - 180.0) < 1e-6
+
+    def test_antimeridian_south_hemisphere(
+        self, single_node_cluster, edge_case_fixtures_dir, api_client
+    ):
         """Anti-meridian in southern hemisphere.
 
         The anti-meridian extends through all latitudes. Test at
         southern location.
         """
         fixtures = load_fixture(edge_case_fixtures_dir / "antimeridian.json")
-        am_south = next(tc for tc in fixtures["test_cases"] if tc["name"] == "antimeridian_south")
+        am_south = next(
+            tc for tc in fixtures["test_cases"] if tc["name"] == "antimeridian_south"
+        )
 
         entity_id = generate_entity_id()
         event = build_insert_event(
@@ -220,26 +331,44 @@ class TestAntimeridian:
             lon=am_south["input"]["longitude"],
         )
 
-        assert event["latitude"] == -45.0
-        assert event["longitude"] == -180.0
+        # Insert via API
+        response = api_client.insert([event])
+        assert response.status_code == 200, f"Insert failed: {response.text}"
 
-    def test_radius_query_near_antimeridian(self, single_node_cluster, edge_case_fixtures_dir):
+        # Verify retrievable
+        query_response = api_client.query_uuid(entity_id)
+        assert query_response.status_code == 200, f"Query failed: {query_response.text}"
+
+        result = query_response.json()
+        assert abs(result["latitude"] + 45.0) < 1e-6
+        assert abs(abs(result["longitude"]) - 180.0) < 1e-6
+
+    def test_radius_query_near_antimeridian(
+        self, single_node_cluster, edge_case_fixtures_dir, api_client
+    ):
         """Query near antimeridian covering Fiji area.
 
         A moderate radius query near the date line in the Fiji region.
         """
-        fixtures = load_fixture(edge_case_fixtures_dir / "antimeridian.json")
-        fiji_query = next(
-            tc for tc in fixtures["test_cases"]
-            if tc.get("operation") == "query-radius" and "near_antimeridian" in tc["name"]
+        # Insert event near query area
+        entity_id = generate_entity_id()
+        event = build_insert_event(
+            entity_id=entity_id,
+            lat=-18.0,
+            lon=179.9,
         )
+        response = api_client.insert([event])
+        assert response.status_code == 200, f"Insert failed: {response.text}"
 
-        query = build_radius_query(
-            lat=fiji_query["input"]["latitude"],
-            lon=fiji_query["input"]["longitude"],
-            radius_m=fiji_query["input"]["radius_m"],
+        # Query near the event
+        query_response = api_client.query_radius(
+            lat=-18.0,
+            lon=179.9,
+            radius_m=50000,  # 50km
         )
+        assert query_response.status_code == 200, f"Query failed: {query_response.text}"
 
-        assert query["center_lat"] == -18.0
-        assert query["center_lon"] == 179.9
-        assert query["radius_m"] == 50000  # 50km
+        results = query_response.json()
+        events = results if isinstance(results, list) else results.get("events", [])
+        found = any(e.get("entity_id") == entity_id for e in events)
+        assert found, "Event should be found near antimeridian"
