@@ -2975,22 +2975,49 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             response.shards[0].status = .active;
             response.shards[0].setPrimary("127.0.0.1:5000");
 
-            // Note: Client-side size validation is now skipped for get_topology
-            // (see arch_client/context.zig), so we can safely return the full struct
-            // and rely on the response size to tell clients how much data is actually present.
-
-            // Write response to output buffer
-            const response_ptr = mem.bytesAsValue(
-                TopologyResponse,
-                output[0..@sizeOf(TopologyResponse)],
-            );
-            response_ptr.* = response;
-
-            // Calculate actual data size (header + only active shards)
-            // Clients use this size, not the full struct size
+            // Calculate actual response size (header + only active shards)
             const header_size = @offsetOf(TopologyResponse, "shards");
             const shard_size = @sizeOf(topology_mod.ShardInfo);
             const response_size = header_size + (response.num_shards * shard_size);
+
+            // Check if output buffer can fit the actual response
+            if (output.len < response_size) {
+                log.warn("get_topology: output buffer too small for response ({d} < {d})", .{
+                    output.len,
+                    response_size,
+                });
+                return 0;
+            }
+
+            // Write header fields manually (don't copy the full 256-shard array)
+            var offset: usize = 0;
+
+            // Write header fields
+            mem.writeInt(u64, output[offset..][0..8], response.version, .little);
+            offset += 8;
+            mem.writeInt(u32, output[offset..][0..4], response.num_shards, .little);
+            offset += 4;
+            mem.writeInt(u128, output[offset..][0..16], response.cluster_id, .little);
+            offset += 16;
+            mem.writeInt(i128, output[offset..][0..16], response.last_change_ns, .little);
+            offset += 16;
+            output[offset] = response.resharding_status;
+            offset += 1;
+            output[offset] = response.flags;
+            offset += 1;
+            // Skip padding (6 bytes)
+            offset += 6;
+
+            assert(offset == header_size);
+
+            // Write only the active shards (not all 256)
+            for (0..response.num_shards) |i| {
+                const shard_bytes = mem.asBytes(&response.shards[i]);
+                @memcpy(output[offset..][0..shard_size], shard_bytes);
+                offset += shard_size;
+            }
+
+            assert(offset == response_size);
 
             log.debug("get_topology: returned topology v{d} with {d} shards (size={d} bytes)", .{
                 response.version,

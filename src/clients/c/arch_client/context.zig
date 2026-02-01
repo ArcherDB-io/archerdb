@@ -499,24 +499,14 @@ pub fn ContextType(
                     1
                 else
                     @intCast(@divExact(slice.len, event_size));
-                // Skip size validation for get_topology since it returns variable-length
-                // responses (only active shards, not all 256 possible shards). The type system
-                // thinks the response is 120KB (full TopologyResponse with 256 shards), but the
-                // actual wire response is only ~500 bytes for a single-shard cluster.
-                // Server-side validation is sufficient.
-                if (operation != .get_topology) {
-                    const event_max: u32 = operation.event_max(self.batch_size_limit.?);
-                    if (event_count > event_max) {
-                        return self.notify_completion(packet, error.TooMuchData);
-                    }
+                const event_max: u32 = operation.event_max(self.batch_size_limit.?);
+                if (event_count > event_max) {
+                    return self.notify_completion(packet, error.TooMuchData);
                 }
-                // Calculate expected result count (needed for batch tracking below)
+                const result_max: u32 = operation.result_max(self.batch_size_limit.?);
                 const result_count_expected: u32 = operation.result_count_expected(slice);
-                if (operation != .get_topology) {
-                    const result_max: u32 = operation.result_max(self.batch_size_limit.?);
-                    if (result_count_expected > result_max) {
-                        return self.notify_completion(packet, error.TooMuchData);
-                    }
+                if (result_count_expected > result_max) {
+                    return self.notify_completion(packet, error.TooMuchData);
                 }
 
                 break :batch .{
