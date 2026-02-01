@@ -1,0 +1,36 @@
+{
+  "description": "Configuration for scale tests (EDGE-04, EDGE-05)",
+  "large_batch_size": 10000,
+  "high_volume_total": 100000,
+  "batch_size": 1000,
+  "timeout_seconds": 30,
+  "notes": {
+    "EDGE-04": "10K entity batch insert completes without error",
+    "EDGE-05": "100K+ events can be inserted and queried"
+  },
+  "test_parameters": {
+    "batch_10k": {
+      "count": 10000,
+      "timeout_s": 30,
+      "description": "Single batch of 10,000 entities"
+    },
+    "sequential_5k": {
+      "batches": 2,
+      "per_batch": 5000,
+      "total": 10000,
+      "description": "Two sequential 5K batches"
+    },
+    "high_volume_100k": {
+      "total": 100000,
+      "batch_size": 1000,
+      "batches": 100,
+      "description": "100K events in 100 batches of 1000"
+    }
+  },
+  "coordinate_distribution": {
+    "pattern": "uniform",
+    "lat_range": [-90, 90],
+    "lon_range": [-180, 180],
+    "seed": 42
+  }
+}
