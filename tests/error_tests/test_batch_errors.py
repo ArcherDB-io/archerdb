@@ -77,15 +77,17 @@ class TestSplitBatchHelper:
     """Tests for the split_batch helper function."""
 
     def test_split_batch_at_default_limit(self):
-        """split_batch uses BATCH_SIZE_MAX as default chunk size."""
+        """split_batch uses 1000 as default chunk size (per SDK spec)."""
         events = [
             create_geo_event(entity_id=i, latitude=0.0, longitude=0.0)
-            for i in range(1, 10_002)
+            for i in range(1, 2001)  # 2000 events
         ]
 
-        # Default should use BATCH_SIZE_MAX
+        # Default is 1000 per SDK split_batch implementation
         chunks = list(split_batch(events))
         assert len(chunks) == 2
+        assert len(chunks[0]) == 1000
+        assert len(chunks[1]) == 1000
 
     def test_split_batch_custom_size(self):
         """split_batch respects custom chunk_size."""

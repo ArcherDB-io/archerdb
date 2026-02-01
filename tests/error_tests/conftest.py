@@ -160,68 +160,33 @@ def timeout_server_config():
     )
 
 
-@pytest.fixture(autouse=True)
-def clean_database(request, cluster):
+@pytest.fixture
+def clean_database(client, cluster):
     """Delete all entities before each integration test for isolation.
 
-    Only runs for integration tests that use the cluster fixture.
+    Only used by integration tests that explicitly request it.
+    Not autouse to avoid triggering cluster fixture for non-integration tests.
     """
-    # Skip cleanup for non-integration tests or tests without cluster
-    if not RUN_INTEGRATION:
-        yield
-        return
-
-    # Only clean if this test uses the client fixture
-    if "client" not in request.fixturenames:
-        yield
-        return
-
-    # Get client from request
+    # Pre-test cleanup
     try:
-        from archerdb import GeoClientSync, GeoClientConfig
-
-        addresses = cluster.get_addresses()
-        address_list = [f"127.0.0.1:{port}" for port in addresses.split(",")]
-
-        config = GeoClientConfig(
-            cluster_id=0,
-            addresses=address_list,
-            connect_timeout_ms=5000,
-            request_timeout_ms=30000,
-        )
-
-        with GeoClientSync(config) as cleanup_client:
-            # Query and delete all existing entities
-            result = cleanup_client.query_latest(limit=10000)
-            if result.events:
-                entity_ids = [e.entity_id for e in result.events]
-                if entity_ids:
-                    cleanup_client.delete_entities(entity_ids)
+        # Query and delete all existing entities
+        result = client.query_latest(limit=10000)
+        if result.events:
+            entity_ids = [e.entity_id for e in result.events]
+            if entity_ids:
+                client.delete_entities(entity_ids)
     except Exception:
         # If cleanup fails, continue anyway
         pass
 
     yield
 
-    # Post-test cleanup is optional
+    # Post-test cleanup
     try:
-        from archerdb import GeoClientSync, GeoClientConfig
-
-        addresses = cluster.get_addresses()
-        address_list = [f"127.0.0.1:{port}" for port in addresses.split(",")]
-
-        config = GeoClientConfig(
-            cluster_id=0,
-            addresses=address_list,
-            connect_timeout_ms=5000,
-            request_timeout_ms=30000,
-        )
-
-        with GeoClientSync(config) as cleanup_client:
-            result = cleanup_client.query_latest(limit=10000)
-            if result.events:
-                entity_ids = [e.entity_id for e in result.events]
-                if entity_ids:
-                    cleanup_client.delete_entities(entity_ids)
+        result = client.query_latest(limit=10000)
+        if result.events:
+            entity_ids = [e.entity_id for e in result.events]
+            if entity_ids:
+                client.delete_entities(entity_ids)
     except Exception:
         pass
