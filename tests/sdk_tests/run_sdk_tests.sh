@@ -147,12 +147,19 @@ for sdk in "${SDKS[@]}"; do
             fi
             ;;
         c)
-            if [[ -f "$PROJECT_ROOT/src/clients/c/test_all_operations.c" ]]; then
-                cd "$PROJECT_ROOT/src/clients/c"
+            if [[ -f "$SCRIPT_DIR/c/test_all_operations.c" ]]; then
+                cd "$SCRIPT_DIR/c"
+                echo "Building C SDK tests..."
                 export ARCHERDB_INTEGRATION=1
-                if "$PROJECT_ROOT/zig/zig" build test; then
-                    print_result "$sdk" "PASSED"
+                if "$PROJECT_ROOT/zig/zig" build; then
+                    echo "Running C SDK tests..."
+                    if ./zig-out/bin/test_all_operations; then
+                        print_result "$sdk" "PASSED"
+                    else
+                        print_result "$sdk" "FAILED"
+                    fi
                 else
+                    echo "C SDK build failed"
                     print_result "$sdk" "FAILED"
                 fi
             else
@@ -160,10 +167,11 @@ for sdk in "${SDKS[@]}"; do
             fi
             ;;
         zig)
-            if [[ -f "$PROJECT_ROOT/src/clients/zig/tests/integration/roundtrip_test.zig" ]]; then
+            if [[ -f "$PROJECT_ROOT/src/clients/zig/tests/integration/all_operations_test.zig" ]]; then
                 cd "$PROJECT_ROOT/src/clients/zig"
                 export ARCHERDB_INTEGRATION=1
-                if "$PROJECT_ROOT/zig/zig" build test; then
+                echo "Running Zig SDK integration tests..."
+                if "$PROJECT_ROOT/zig/zig" build test:integration; then
                     print_result "$sdk" "PASSED"
                 else
                     print_result "$sdk" "FAILED"
