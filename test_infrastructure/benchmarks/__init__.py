@@ -16,11 +16,33 @@ This package provides performance benchmarking tools with statistical rigor:
 from .config import BenchmarkConfig
 from .executor import BenchmarkExecutor, BenchmarkResult, Sample
 from .progress import BenchmarkProgress
+from .histogram import LatencyHistogram
+from .reporter import BenchmarkReporter
+from .stats import (
+    confidence_interval,
+    coefficient_of_variation,
+    is_stable,
+    detect_regression,
+    summarize,
+)
 
 __all__ = [
+    # Config
     "BenchmarkConfig",
+    # Executor
     "BenchmarkExecutor",
     "BenchmarkResult",
     "Sample",
+    # Progress
     "BenchmarkProgress",
+    # Histogram
+    "LatencyHistogram",
+    # Reporter
+    "BenchmarkReporter",
+    # Stats functions
+    "confidence_interval",
+    "coefficient_of_variation",
+    "is_stable",
+    "detect_regression",
+    "summarize",
 ]
