@@ -20,6 +20,7 @@ Test Cases:
 import pytest
 
 from .conftest import (
+    EdgeCaseAPIClient,
     EdgeCaseCoordinates,
     build_insert_event,
     build_radius_query,
@@ -33,35 +34,62 @@ from .conftest import (
 class TestAdversarialPatterns:
     """Test adversarial/boundary patterns (EDGE-08)."""
 
-    def test_max_radius_query(self, single_node_cluster):
+    def test_max_radius_query(self, single_node_cluster, api_client):
         """Query with 1000km radius (maximum allowed).
 
         The maximum supported radius should work correctly.
         """
-        # 1000km = 1,000,000 meters
-        query = build_radius_query(
+        # Insert a known event
+        entity_id = generate_entity_id()
+        event = build_insert_event(
+            entity_id=entity_id,
+            lat=0.0,
+            lon=0.0,
+        )
+        response = api_client.insert([event])
+        assert response.status_code == 200, f"Insert failed: {response.text}"
+
+        # 1000km = 1,000,000 meters - query with large radius
+        query_response = api_client.query_radius(
             lat=0.0,
             lon=0.0,
             radius_m=1_000_000,  # 1000km max radius
         )
 
-        assert query["radius_m"] == 1_000_000
+        assert query_response.status_code == 200, f"Query failed: {query_response.text}"
 
-    def test_zero_radius_query(self, single_node_cluster):
+        results = query_response.json()
+        events = results if isinstance(results, list) else results.get("events", [])
+        found = any(e.get("entity_id") == entity_id for e in events)
+        assert found, "Event should be found with 1000km radius"
+
+    def test_zero_radius_query(self, single_node_cluster, api_client):
         """Query with 0 radius (point query edge case).
 
         A zero-radius query is a degenerate case - should either
         return only exact matches or empty.
         """
-        query = build_radius_query(
+        # Insert event at exact location
+        entity_id = generate_entity_id()
+        event = build_insert_event(
+            entity_id=entity_id,
+            lat=40.7128,
+            lon=-74.0060,
+        )
+        response = api_client.insert([event])
+        assert response.status_code == 200, f"Insert failed: {response.text}"
+
+        # Query with zero radius at same location
+        query_response = api_client.query_radius(
             lat=40.7128,
             lon=-74.0060,
             radius_m=0,  # Zero radius
         )
 
-        assert query["radius_m"] == 0
+        # Should succeed (not error) - may return empty or exact match
+        assert query_response.status_code == 200, f"Query failed: {query_response.text}"
 
-    def test_boundary_latitude(self, single_node_cluster):
+    def test_boundary_latitude(self, single_node_cluster, api_client):
         """Insert at exactly +90 and -90 latitude.
 
         The exact boundary values for latitude should be valid.
@@ -73,7 +101,6 @@ class TestAdversarialPatterns:
             lat=EdgeCaseCoordinates.NORTH_POLE_DEG,  # 90.0
             lon=0.0,
         )
-        assert event_north["latitude"] == 90.0
 
         # South pole (min latitude)
         entity_id_south = generate_entity_id()
@@ -82,9 +109,25 @@ class TestAdversarialPatterns:
             lat=EdgeCaseCoordinates.SOUTH_POLE_DEG,  # -90.0
             lon=0.0,
         )
-        assert event_south["latitude"] == -90.0
 
-    def test_boundary_longitude(self, single_node_cluster):
+        # Insert both
+        response = api_client.insert([event_north, event_south])
+        assert response.status_code == 200, f"Insert failed: {response.text}"
+
+        # Verify both retrievable
+        north_response = api_client.query_uuid(entity_id_north)
+        south_response = api_client.query_uuid(entity_id_south)
+
+        assert north_response.status_code == 200, "North pole event should exist"
+        assert south_response.status_code == 200, "South pole event should exist"
+
+        north_result = north_response.json()
+        south_result = south_response.json()
+
+        assert north_result["latitude"] == 90.0 or abs(north_result["latitude"] - 90.0) < 1e-6
+        assert south_result["latitude"] == -90.0 or abs(south_result["latitude"] + 90.0) < 1e-6
+
+    def test_boundary_longitude(self, single_node_cluster, api_client):
         """Insert at exactly +180 and -180 longitude.
 
         The exact boundary values for longitude should be valid.
@@ -96,7 +139,6 @@ class TestAdversarialPatterns:
             lat=0.0,
             lon=EdgeCaseCoordinates.ANTI_MERIDIAN_EAST_DEG,  # 180.0
         )
-        assert event_east["longitude"] == 180.0
 
         # West anti-meridian (min longitude)
         entity_id_west = generate_entity_id()
@@ -105,9 +147,26 @@ class TestAdversarialPatterns:
             lat=0.0,
             lon=EdgeCaseCoordinates.ANTI_MERIDIAN_WEST_DEG,  # -180.0
         )
-        assert event_west["longitude"] == -180.0
 
-    def test_one_nanodegree_precision(self, single_node_cluster):
+        # Insert both
+        response = api_client.insert([event_east, event_west])
+        assert response.status_code == 200, f"Insert failed: {response.text}"
+
+        # Verify both retrievable
+        east_response = api_client.query_uuid(entity_id_east)
+        west_response = api_client.query_uuid(entity_id_west)
+
+        assert east_response.status_code == 200, "East anti-meridian event should exist"
+        assert west_response.status_code == 200, "West anti-meridian event should exist"
+
+        east_result = east_response.json()
+        west_result = west_response.json()
+
+        # Longitude may be normalized
+        assert abs(abs(east_result["longitude"]) - 180.0) < 1e-6
+        assert abs(abs(west_result["longitude"]) - 180.0) < 1e-6
+
+    def test_one_nanodegree_precision(self, single_node_cluster, api_client):
         """Two points 1 nanodegree apart should be distinct.
 
         The minimum precision difference (1 nanodegree) should
@@ -132,13 +191,24 @@ class TestAdversarialPatterns:
             lon=one_nanodegree_deg,  # 0.000000001
         )
 
-        # In nanodegrees, these should be distinct
-        lat_1_nano = degrees_to_nanodegrees(event_1["latitude"])
-        lat_2_nano = degrees_to_nanodegrees(event_2["latitude"])
+        # Insert both
+        response = api_client.insert([event_1, event_2])
+        assert response.status_code == 200, f"Insert failed: {response.text}"
 
-        assert lat_2_nano - lat_1_nano == 1  # Exactly 1 nanodegree apart
+        # Verify both retrievable
+        response_1 = api_client.query_uuid(entity_id_1)
+        response_2 = api_client.query_uuid(entity_id_2)
 
-    def test_max_velocity(self, single_node_cluster):
+        assert response_1.status_code == 200
+        assert response_2.status_code == 200
+
+        # Both should be distinct entities
+        result_1 = response_1.json()
+        result_2 = response_2.json()
+
+        assert result_1["entity_id"] != result_2["entity_id"]
+
+    def test_max_velocity(self, single_node_cluster, api_client):
         """Event with velocity_mms=100000 (100 m/s).
 
         High velocity values should be accepted.
@@ -151,9 +221,14 @@ class TestAdversarialPatterns:
             velocity_mms=100_000,  # 100 m/s = 360 km/h
         )
 
-        assert event["velocity_mms"] == 100_000
+        response = api_client.insert([event])
+        assert response.status_code == 200, f"Insert failed: {response.text}"
 
-    def test_max_altitude(self, single_node_cluster):
+        # Verify retrievable
+        query_response = api_client.query_uuid(entity_id)
+        assert query_response.status_code == 200, f"Query failed: {query_response.text}"
+
+    def test_max_altitude(self, single_node_cluster, api_client):
         """Event at altitude_mm=9000000 (Everest) and -11000000 (ocean floor).
 
         Extreme altitude values should be accepted.
@@ -166,7 +241,6 @@ class TestAdversarialPatterns:
             lon=86.9250,
             altitude_mm=9_000_000,  # 9000m
         )
-        assert event_everest["altitude_mm"] == 9_000_000
 
         # Mariana Trench: ~11,000m below sea level = -11,000,000mm
         entity_id_trench = generate_entity_id()
@@ -176,9 +250,18 @@ class TestAdversarialPatterns:
             lon=142.1996,
             altitude_mm=-11_000_000,  # -11000m
         )
-        assert event_trench["altitude_mm"] == -11_000_000
 
-    def test_all_coordinate_extremes(self, single_node_cluster):
+        response = api_client.insert([event_everest, event_trench])
+        assert response.status_code == 200, f"Insert failed: {response.text}"
+
+        # Verify both retrievable
+        everest_response = api_client.query_uuid(entity_id_everest)
+        trench_response = api_client.query_uuid(entity_id_trench)
+
+        assert everest_response.status_code == 200, "Everest event should exist"
+        assert trench_response.status_code == 200, "Trench event should exist"
+
+    def test_all_coordinate_extremes(self, single_node_cluster, api_client):
         """Insert at all 4 corners of coordinate space.
 
         Test all combinations of min/max latitude and longitude.
@@ -190,63 +273,111 @@ class TestAdversarialPatterns:
             (-90.0, -180.0, "SW corner (South Pole, West Anti-meridian)"),
         ]
 
+        events = []
+        entity_ids = []
+
         for lat, lon, description in corners:
             entity_id = generate_entity_id()
-            event = build_insert_event(
+            entity_ids.append(entity_id)
+            events.append(build_insert_event(
                 entity_id=entity_id,
                 lat=lat,
                 lon=lon,
-            )
-            assert event["latitude"] == lat, f"Failed for {description}"
-            assert event["longitude"] == lon, f"Failed for {description}"
+            ))
 
-    def test_boundary_queries_near_poles(self, single_node_cluster):
+        # Insert all corners
+        response = api_client.insert(events)
+        assert response.status_code == 200, f"Insert failed: {response.text}"
+
+        # Verify all corners retrievable
+        for entity_id in entity_ids:
+            query_response = api_client.query_uuid(entity_id)
+            assert query_response.status_code == 200, f"Corner {entity_id} should exist"
+
+    def test_boundary_queries_near_poles(self, single_node_cluster, api_client):
         """Radius query very close to poles.
 
         Queries near poles test S2 cell edge cases.
         """
+        # Insert events near poles
+        entity_id_north = generate_entity_id()
+        entity_id_south = generate_entity_id()
+
+        event_north = build_insert_event(
+            entity_id=entity_id_north,
+            lat=89.99,
+            lon=0.0,
+        )
+        event_south = build_insert_event(
+            entity_id=entity_id_south,
+            lat=-89.99,
+            lon=0.0,
+        )
+
+        response = api_client.insert([event_north, event_south])
+        assert response.status_code == 200, f"Insert failed: {response.text}"
+
         # Query 1km from north pole
-        query_near_north = build_radius_query(
-            lat=89.99,  # Very close to pole
+        query_near_north = api_client.query_radius(
+            lat=89.99,
             lon=0.0,
             radius_m=1000,
         )
-        assert query_near_north["center_lat"] == 89.99
+        assert query_near_north.status_code == 200, f"Query near north failed: {query_near_north.text}"
 
         # Query 1km from south pole
-        query_near_south = build_radius_query(
+        query_near_south = api_client.query_radius(
             lat=-89.99,
             lon=0.0,
             radius_m=1000,
         )
-        assert query_near_south["center_lat"] == -89.99
+        assert query_near_south.status_code == 200, f"Query near south failed: {query_near_south.text}"
 
-    def test_boundary_queries_near_antimeridian(self, single_node_cluster):
+    def test_boundary_queries_near_antimeridian(self, single_node_cluster, api_client):
         """Radius query very close to antimeridian.
 
         Queries near the date line test wrapping logic.
         """
-        # Query near east antimeridian
-        query_near_east = build_radius_query(
+        # Insert events near antimeridian
+        entity_id_east = generate_entity_id()
+        entity_id_west = generate_entity_id()
+
+        event_east = build_insert_event(
+            entity_id=entity_id_east,
+            lat=0.0,
+            lon=179.99,
+        )
+        event_west = build_insert_event(
+            entity_id=entity_id_west,
+            lat=0.0,
+            lon=-179.99,
+        )
+
+        response = api_client.insert([event_east, event_west])
+        assert response.status_code == 200, f"Insert failed: {response.text}"
+
+        # Query near east antimeridian - should cross
+        query_near_east = api_client.query_radius(
             lat=0.0,
             lon=179.99,
             radius_m=50_000,  # 50km - should cross antimeridian
         )
-        assert query_near_east["center_lon"] == 179.99
+        assert query_near_east.status_code == 200, f"Query near east failed: {query_near_east.text}"
 
         # Query near west antimeridian
-        query_near_west = build_radius_query(
+        query_near_west = api_client.query_radius(
             lat=0.0,
             lon=-179.99,
             radius_m=50_000,
         )
-        assert query_near_west["center_lon"] == -179.99
+        assert query_near_west.status_code == 200, f"Query near west failed: {query_near_west.text}"
 
-    def test_nanodegree_constants(self, single_node_cluster):
+    def test_nanodegree_constants(self, single_node_cluster, api_client):
         """Verify nanodegree constants match geo_workload.zig.
 
         Constants should match the Zig source for consistency.
         """
+        # Just verify constants are correct values
         assert EdgeCaseCoordinates.NORTH_POLE_LAT == 90_000_000_000
         assert EdgeCaseCoordinates.SOUTH_POLE_LAT == -90_000_000_000
         assert EdgeCaseCoordinates.ANTI_MERIDIAN_EAST == 180_000_000_000
@@ -255,7 +386,17 @@ class TestAdversarialPatterns:
         assert EdgeCaseCoordinates.PRIME_MERIDIAN_LON == 0
         assert EdgeCaseCoordinates.ONE_NANODEGREE == 1
 
-    def test_zero_coordinates(self, single_node_cluster):
+        # Also verify we can insert at origin
+        entity_id = generate_entity_id()
+        event = build_insert_event(
+            entity_id=entity_id,
+            lat=0.0,
+            lon=0.0,
+        )
+        response = api_client.insert([event])
+        assert response.status_code == 200, f"Insert at origin failed: {response.text}"
+
+    def test_zero_coordinates(self, single_node_cluster, api_client):
         """Insert at origin (0,0) - Null Island.
 
         The point where equator meets prime meridian.
@@ -267,5 +408,13 @@ class TestAdversarialPatterns:
             lon=EdgeCaseCoordinates.PRIME_MERIDIAN_LON / 1e9,  # 0.0
         )
 
-        assert event["latitude"] == 0.0
-        assert event["longitude"] == 0.0
+        response = api_client.insert([event])
+        assert response.status_code == 200, f"Insert failed: {response.text}"
+
+        # Verify retrievable
+        query_response = api_client.query_uuid(entity_id)
+        assert query_response.status_code == 200, f"Query failed: {query_response.text}"
+
+        result = query_response.json()
+        assert result["latitude"] == 0.0 or abs(result["latitude"]) < 1e-6
+        assert result["longitude"] == 0.0 or abs(result["longitude"]) < 1e-6

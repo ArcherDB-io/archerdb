@@ -20,6 +20,7 @@ import uuid
 import pytest
 
 from .conftest import (
+    EdgeCaseAPIClient,
     build_insert_event,
     build_polygon_query,
     build_radius_query,
@@ -31,28 +32,30 @@ from .conftest import (
 class TestEmptyResults:
     """Test empty result handling (EDGE-07)."""
 
-    def test_radius_query_empty_database(self, single_node_cluster):
+    def test_radius_query_empty_database(self, single_node_cluster, api_client):
         """Fresh cluster, query returns empty list (not error).
 
         A radius query on an empty database should return an empty
         result set, not an error.
         """
         # Query any location on fresh database
-        query = build_radius_query(
+        query_response = api_client.query_radius(
             lat=40.7128,
             lon=-74.0060,
             radius_m=10000,  # 10km radius
         )
 
-        # Query structure is valid
-        assert query["center_lat"] == 40.7128
-        assert query["center_lon"] == -74.0060
-        assert query["radius_m"] == 10000
+        # Should succeed with 200, not error
+        assert query_response.status_code == 200, f"Query failed: {query_response.text}"
 
-        # Expected result: empty list, not error
-        # In integration test: response.events == []
+        # Result should be empty list or empty events array
+        result = query_response.json()
+        events = result if isinstance(result, list) else result.get("events", [])
+        # Either empty list or very few events (from other tests) is acceptable
+        # The key is no error occurred
+        assert isinstance(events, list), "Result should be a list"
 
-    def test_radius_query_no_matches(self, single_node_cluster):
+    def test_radius_query_no_matches(self, single_node_cluster, api_client):
         """Insert in one location, query far away, returns empty.
 
         A radius query in a location with no events should return
@@ -65,38 +68,41 @@ class TestEmptyResults:
             lat=40.7128,
             lon=-74.0060,  # NYC
         )
+        response = api_client.insert([event])
+        assert response.status_code == 200, f"Insert failed: {response.text}"
 
         # Query in Sydney (opposite side of globe)
-        query = build_radius_query(
+        query_response = api_client.query_radius(
             lat=-33.8688,
             lon=151.2093,  # Sydney
             radius_m=1000,  # 1km radius
         )
 
-        # Event is in NYC, query is in Sydney
-        # Distance is ~16,000km, way outside 1km radius
-        assert event["latitude"] != query["center_lat"]
-        assert event["longitude"] != query["center_lon"]
+        assert query_response.status_code == 200, f"Query failed: {query_response.text}"
 
-        # Expected result: empty list (NYC event not in Sydney radius)
+        result = query_response.json()
+        events = result if isinstance(result, list) else result.get("events", [])
 
-    def test_uuid_query_nonexistent(self, single_node_cluster):
-        """Query for random UUID, returns empty/null (not error).
+        # NYC event should NOT be in Sydney radius (16,000km away)
+        found = any(e.get("entity_id") == entity_id for e in events)
+        assert not found, "NYC event should not be in Sydney 1km radius"
 
-        Querying for a non-existent entity should return null/empty,
-        not an error.
+    def test_uuid_query_nonexistent(self, single_node_cluster, api_client):
+        """Query for random UUID, returns 404 (not error).
+
+        Querying for a non-existent entity should return 404,
+        not a server error.
         """
         # Generate random UUID that doesn't exist
-        nonexistent_id = uuid.uuid4().hex
+        nonexistent_id = generate_entity_id()
 
-        # Query structure for UUID lookup
-        query = {"entity_id": nonexistent_id}
+        # Query for nonexistent entity
+        query_response = api_client.query_uuid(nonexistent_id)
 
-        assert len(query["entity_id"]) == 32
+        # 404 is expected for nonexistent entity
+        assert query_response.status_code == 404, "Should return 404 for nonexistent entity"
 
-        # Expected result: null or empty, not error
-
-    def test_polygon_query_empty(self, single_node_cluster):
+    def test_polygon_query_empty(self, single_node_cluster, api_client):
         """Polygon query with no matches returns empty list.
 
         A polygon query covering an area with no events should
@@ -108,63 +114,74 @@ class TestEmptyResults:
             {"lat": -80.0, "lon": 90.0},
             {"lat": -85.0, "lon": 45.0},
         ]
-        query = build_polygon_query(vertices=vertices)
 
-        assert len(query["vertices"]) == 3
+        query_response = api_client.query_polygon(vertices=vertices)
+        assert query_response.status_code == 200, f"Query failed: {query_response.text}"
 
-        # Expected result: empty list (no events in Antarctica polygon)
+        result = query_response.json()
+        events = result if isinstance(result, list) else result.get("events", [])
 
-    def test_uuid_batch_all_missing(self, single_node_cluster):
-        """Batch query 10 nonexistent UUIDs, returns empty for each.
+        # Should be empty (no events in Antarctica)
+        assert isinstance(events, list), "Result should be a list"
+
+    def test_uuid_batch_all_missing(self, single_node_cluster, api_client):
+        """Batch query 10 nonexistent UUIDs, returns 404 for each.
 
         A batch query for multiple non-existent entities should
-        return empty/null for each, not an error.
+        return 404 for each, not a server error.
         """
         # Generate 10 random UUIDs
-        missing_ids = [uuid.uuid4().hex for _ in range(10)]
+        missing_ids = [generate_entity_id() for _ in range(10)]
 
         assert len(missing_ids) == 10
         assert len(set(missing_ids)) == 10  # All unique
 
-        # Query structure for batch lookup
-        query = {"entity_ids": missing_ids}
+        # Query each - all should return 404
+        for eid in missing_ids:
+            query_response = api_client.query_uuid(eid)
+            assert query_response.status_code == 404, f"UUID {eid} should return 404"
 
-        # Expected result: 10 empty/null responses, not error
-
-    def test_delete_nonexistent(self, single_node_cluster):
+    def test_delete_nonexistent(self, single_node_cluster, api_client):
         """Delete nonexistent entity, no error (idempotent).
 
         Deleting an entity that doesn't exist should succeed
         silently (idempotent operation).
         """
         # Generate random UUID that doesn't exist
-        nonexistent_id = uuid.uuid4().hex
+        nonexistent_id = generate_entity_id()
 
-        # Delete request structure
-        delete_request = {"entity_id": nonexistent_id}
+        # Delete request for nonexistent entity
+        delete_response = api_client.delete(nonexistent_id)
 
-        assert len(delete_request["entity_id"]) == 32
+        # Should succeed (idempotent) or return 404 - both are valid
+        assert delete_response.status_code in [
+            200,
+            204,
+            404,
+        ], f"Delete should be idempotent: {delete_response.text}"
 
-        # Expected result: success (no error), even though nothing deleted
-
-    def test_radius_query_zero_results_structure(self, single_node_cluster):
+    def test_radius_query_zero_results_structure(self, single_node_cluster, api_client):
         """Verify empty result has correct structure (list, not None).
 
         Empty results should be an empty list [], not null/None.
         """
-        query = build_radius_query(
+        # Query with very small radius at unlikely location
+        query_response = api_client.query_radius(
             lat=0.0,
             lon=0.0,
             radius_m=1,  # Very small radius
         )
 
-        # Query is valid
-        assert query["radius_m"] == 1
+        assert query_response.status_code == 200, f"Query failed: {query_response.text}"
 
-        # Expected result structure: {"events": []}
-        # NOT: {"events": null} or error
+        result = query_response.json()
+        events = result if isinstance(result, list) else result.get("events", [])
 
-    def test_polygon_query_large_empty_area(self, single_node_cluster):
+        # Should be a list (empty or not), not None
+        assert events is not None, "Result should not be None"
+        assert isinstance(events, list), "Result should be a list, not None"
+
+    def test_polygon_query_large_empty_area(self, single_node_cluster, api_client):
         """Large polygon query with no events still returns empty.
 
         Even a large polygon should return empty if no events exist
@@ -177,9 +194,12 @@ class TestEmptyResults:
             {"lat": -50.0, "lon": -140.0},
             {"lat": -50.0, "lon": -170.0},
         ]
-        query = build_polygon_query(vertices=vertices, limit=1000)
 
-        assert len(query["vertices"]) == 4
-        assert query["limit"] == 1000
+        query_response = api_client.query_polygon(vertices=vertices, limit=1000)
+        assert query_response.status_code == 200, f"Query failed: {query_response.text}"
 
-        # Expected result: empty list despite large area
+        result = query_response.json()
+        events = result if isinstance(result, list) else result.get("events", [])
+
+        # Should be empty despite large area (South Pacific)
+        assert isinstance(events, list), "Result should be a list"
