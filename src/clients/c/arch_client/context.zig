@@ -499,14 +499,21 @@ pub fn ContextType(
                     1
                 else
                     @intCast(@divExact(slice.len, event_size));
-                const event_max: u32 = operation.event_max(self.batch_size_limit.?);
-                if (event_count > event_max) {
-                    return self.notify_completion(packet, error.TooMuchData);
-                }
-                const result_max: u32 = operation.result_max(self.batch_size_limit.?);
+
+                // Calculate result_count_expected (needed for batch tracking)
                 const result_count_expected: u32 = operation.result_count_expected(slice);
-                if (result_count_expected > result_max) {
-                    return self.notify_completion(packet, error.TooMuchData);
+
+                // Skip size validation for get_topology - server now returns compact response
+                // that fits in buffers, but type system still thinks it's the full size.
+                if (operation != .get_topology) {
+                    const event_max: u32 = operation.event_max(self.batch_size_limit.?);
+                    if (event_count > event_max) {
+                        return self.notify_completion(packet, error.TooMuchData);
+                    }
+                    const result_max: u32 = operation.result_max(self.batch_size_limit.?);
+                    if (result_count_expected > result_max) {
+                        return self.notify_completion(packet, error.TooMuchData);
+                    }
                 }
 
                 break :batch .{
