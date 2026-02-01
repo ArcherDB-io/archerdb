@@ -2983,19 +2983,6 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             response.shards[0].status = .active;
             response.shards[0].setPrimary("127.0.0.1:5000");
 
-            // Calculate actual response size (header + only active shards, not all 256)
-            const header_size = @offsetOf(TopologyResponse, "shards");
-            const shard_size = @sizeOf(topology_mod.ShardInfo);
-            const response_size = header_size + (response.num_shards * shard_size);
-
-            if (output.len < response_size) {
-                log.warn("get_topology: output buffer too small for response ({d} < {d})", .{
-                    output.len,
-                    response_size,
-                });
-                return 0;
-            }
-
             // Write response to output buffer
             const response_ptr = mem.bytesAsValue(
                 TopologyResponse,
@@ -3003,14 +2990,12 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             );
             response_ptr.* = response;
 
-            log.debug("get_topology: returned topology v{d} with {d} shards (size={d})", .{
+            log.debug("get_topology: returned topology v{d} with {d} shards", .{
                 response.version,
                 response.num_shards,
-                response_size,
             });
 
-            // Return only the size actually used, not full struct size
-            return response_size;
+            return @sizeOf(TopologyResponse);
         }
 
         // ====================================================================
