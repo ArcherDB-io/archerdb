@@ -22,7 +22,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 13: SDK Operation Test Suite** - All 14 operations tested across all 6 SDKs
 - [x] **Phase 14: Error Handling & Cross-SDK Parity** - Error handling consistency, parity matrix
 - [x] **Phase 15: Benchmark Framework** - Throughput and latency benchmarking with percentiles
-- [ ] **Phase 16: Multi-Topology Testing** - Tests across 1/3/5/6 node clusters with failover
+- [x] **Phase 16: Multi-Topology Testing** - Tests across 1/3/5/6 node clusters with failover
 - [ ] **Phase 17: Edge Cases & Advanced Benchmarking** - Edge cases, regression detection, historical tracking
 - [ ] **Phase 18: CI Integration & Documentation** - Automated CI pipelines, comprehensive docs
 
@@ -140,11 +140,11 @@ Plans:
   3. Adversarial patterns from geo_workload.zig tested
   4. Scalability measured across node counts with regression detection automated
   5. Performance dashboard visualizes trends with historical tracking
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 17-01: Geometric and scale edge cases
-- [ ] 17-02: Advanced benchmarking and regression detection
+- [ ] 17-01-PLAN.md — Edge case test suite: polar coordinates, antimeridian, concave polygons, scale tests, TTL verification, adversarial patterns
+- [ ] 17-02-PLAN.md — Advanced benchmarking: scalability measurement, SDK parity, workload patterns, regression detection, historical tracking, dashboard
 
 ### Phase 18: CI Integration & Documentation
 **Goal**: Automated CI pipelines and comprehensive documentation enable ongoing quality
@@ -175,9 +175,9 @@ Phases execute in numeric order: 11 -> 11.1 -> 11.2 -> 12 -> 12.1 -> 13 -> ...
 | 14. Error Handling & Parity | v1.1 | 2/2 | Complete (needs UAT) | 2026-02-01 |
 | 15. Benchmark Framework | v1.1 | 2/2 | Complete (needs UAT) | 2026-02-01 |
 | 16. Multi-Topology Testing | v1.1 | 2/2 | Complete (needs UAT) | 2026-02-01 |
-| 17. Edge Cases & Advanced | v1.1 | 0/2 | Not started | - |
+| 17. Edge Cases & Advanced | v1.1 | 0/2 | Planned | - |
 | 18. CI & Documentation | v1.1 | 0/2 | Not started | - |
 
 ---
 *Roadmap created: 2026-02-01*
-*Last updated: 2026-02-01 (Phase 16 executed)*
+*Last updated: 2026-02-01 (Phase 17 planned)*
