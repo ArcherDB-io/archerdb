@@ -38,11 +38,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Test script can start 5-6 node clusters for topology testing
   4. Shared JSON test fixtures exist with canonical test data for all 14 operations
   5. Test data generators can produce both uniform and city-concentrated datasets
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 11-01: Server harness and cluster management
-- [ ] 11-02: CI tier configuration and test fixtures
+- [ ] 11-01-PLAN.md — Python cluster harness, port allocation, data generators
+- [ ] 11-02-PLAN.md — CI tier workflows, JSON fixtures for 14 operations, warmup protocols
 
 ### Phase 12: Zig SDK & Protocol Documentation
 **Goal**: Zig SDK and protocol documentation enable native client development and raw API access
@@ -163,7 +163,7 @@ Phases execute in numeric order: 11 -> 11.1 -> 11.2 -> 12 -> 12.1 -> 13 -> ...
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 11. Test Infrastructure | v1.1 | 0/2 | Not started | - |
+| 11. Test Infrastructure | v1.1 | 0/2 | Planned | - |
 | 12. Zig SDK & Protocol | v1.1 | 0/2 | Not started | - |
 | 13. SDK Operation Tests | v1.1 | 0/3 | Not started | - |
 | 14. Error Handling & Parity | v1.1 | 0/2 | Not started | - |
