@@ -107,11 +107,11 @@ Plans:
   3. 3-node throughput meets baseline: >=770K events/sec
   4. Read latency meets target: P95 <1ms, P99 <10ms
   5. Write latency meets target: P95 <10ms, P99 <50ms
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 15-01: Throughput benchmarking framework
-- [ ] 15-02: Latency benchmarking framework
+- [ ] 15-01-PLAN.md — Benchmark core framework: config, executor, stats, histogram, reporter, CLI
+- [ ] 15-02-PLAN.md — Throughput and latency workloads, orchestrator, regression detection, docs/BENCHMARKS.md
 
 ### Phase 16: Multi-Topology Testing
 **Goal**: All operations verified across cluster configurations with failover handling
@@ -171,11 +171,11 @@ Phases execute in numeric order: 11 -> 11.1 -> 11.2 -> 12 -> 12.1 -> 13 -> ...
 | 12. Zig SDK & Protocol | v1.1 | 2/2 | Complete | 2026-02-01 |
 | 13. SDK Operation Tests | v1.1 | 3/3 | Complete (needs UAT) | 2026-02-01 |
 | 14. Error Handling & Parity | v1.1 | 2/2 | Complete (needs UAT) | 2026-02-01 |
-| 15. Benchmark Framework | v1.1 | 0/2 | Not started | - |
+| 15. Benchmark Framework | v1.1 | 0/2 | Planned | - |
 | 16. Multi-Topology Testing | v1.1 | 0/2 | Not started | - |
 | 17. Edge Cases & Advanced | v1.1 | 0/2 | Not started | - |
 | 18. CI & Documentation | v1.1 | 0/2 | Not started | - |
 
 ---
 *Roadmap created: 2026-02-01*
-*Last updated: 2026-02-01 (Phase 14 executed)*
+*Last updated: 2026-02-01 (Phase 15 planned)*
