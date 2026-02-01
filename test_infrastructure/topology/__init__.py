@@ -11,15 +11,18 @@ Classes:
     FailoverResult: Result data from a failover operation.
     FailoverSimulator: Trigger leader failures and measure recovery.
     ConsistencyChecker: Verify data consistency across nodes.
+    TopologyTestRunner: Orchestrate full test suite across topologies.
 """
 
 from .consistency import ConsistencyChecker
 from .failover import FailoverResult, FailoverSimulator
 from .partition import NetworkPartitioner
+from .runner import TopologyTestRunner
 
 __all__ = [
     "NetworkPartitioner",
     "FailoverResult",
     "FailoverSimulator",
     "ConsistencyChecker",
+    "TopologyTestRunner",
 ]
