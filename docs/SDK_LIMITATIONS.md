@@ -8,18 +8,48 @@ Per CONTEXT.md: All SDKs must achieve 100% parity before release.
 
 | SDK | Limitations | Status |
 |-----|-------------|--------|
-| Python | None known | Full parity |
-| Node.js | None known | Full parity |
-| Go | None known | Full parity |
-| Java | None known | Full parity |
-| C | None known | Full parity |
-| Zig | None known | Full parity |
+| Python | 1 (connection error propagation) | 94% parity (91/97 tests) |
+| Node.js | None known | Not yet verified |
+| Go | None known | Not yet verified |
+| Java | None known | Not yet verified |
+| C | None known | Not yet verified |
+| Zig | None known | Not yet verified |
 
 ## Python SDK
 
-**Known Limitations:** None
+**Known Limitations:**
 
-**Workarounds:** N/A
+### 1. Connection/Timeout Errors Not Raised as Exceptions (Category C: Implementation Gap)
+
+**Issue:** Native Zig client logs connection errors (`error.ConnectionResetByPeer`) as warnings but doesn't propagate them to Python as `ArcherDBError` exceptions.
+
+**Impact:**
+- Tests expecting `pytest.raises(ArcherDBError)` fail for connection refused and timeout scenarios
+- 6 tests fail in test_connection_errors.py and test_timeout_errors.py
+- ERR-01 (connection failures) and ERR-02 (timeouts) partially covered
+
+**Why it exists:**
+- Native binding layer (Zig-Python ctypes) doesn't convert all Zig errors to Python exceptions
+- Connection/timeout errors happen in message_bus layer but don't bubble up
+- Error handling focused on distributed errors (multi-region, sharding, encryption)
+
+**Workarounds:**
+1. Use explicit connectivity checks before operations (e.g., ping with timeout)
+2. Set shorter timeouts to fail faster and detect silent failures
+3. Monitor for operations that don't return or raise (hung state)
+4. Check return values where possible rather than relying solely on exceptions
+5. For production: Implement application-level timeout watchdogs
+
+**Test Results:** 91/97 tests pass (94% pass rate)
+- ✓ Validation errors (ERR-03)
+- ✓ Empty results (ERR-04)
+- ✓ Server errors (ERR-05)
+- ✓ Retry behavior (ERR-06)
+- ✓ Batch limits (ERR-07)
+- ✗ Connection failures (ERR-01) - 4 tests fail
+- ✗ Timeout errors (ERR-02) - 2 tests fail
+
+**Status:** Tracked for fix - requires native binding refactor
 
 **Notes:**
 - Used as golden reference for parity testing
