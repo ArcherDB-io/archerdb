@@ -23,7 +23,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 14: Error Handling & Cross-SDK Parity** - Error handling consistency, parity matrix
 - [x] **Phase 15: Benchmark Framework** - Throughput and latency benchmarking with percentiles
 - [x] **Phase 16: Multi-Topology Testing** - Tests across 1/3/5/6 node clusters with failover
-- [ ] **Phase 17: Edge Cases & Advanced Benchmarking** - Edge cases, regression detection, historical tracking
+- [x] **Phase 17: Edge Cases & Advanced Benchmarking** - Edge cases, regression detection, historical tracking
 - [ ] **Phase 18: CI Integration & Documentation** - Automated CI pipelines, comprehensive docs
 
 ## Phase Details
@@ -158,11 +158,11 @@ Plans:
   3. Weekly benchmark suite runs on dedicated hardware with clear reporting
   4. Test suite README explains how to run tests locally
   5. Benchmark guide, curl examples, protocol docs, and SDK comparison matrix published
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 18-01: CI pipeline configuration
-- [ ] 18-02: Documentation suite
+- [ ] 18-01-PLAN.md — CI pipeline enhancement: JUnit XML reporting, all 6 SDKs in workflows, weekly benchmark automation
+- [ ] 18-02-PLAN.md — Documentation suite: testing guide, CI tiers, benchmark guide, SDK comparison matrix
 
 ## Progress
 
@@ -182,4 +182,4 @@ Phases execute in numeric order: 11 -> 11.1 -> 11.2 -> 12 -> 12.1 -> 13 -> ...
 
 ---
 *Roadmap created: 2026-02-01*
-*Last updated: 2026-02-01 (Phase 17 executed)*
+*Last updated: 2026-02-01 (Phase 18 planned)*
