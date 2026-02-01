@@ -19,7 +19,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 11: Test Infrastructure Foundation** - Server harness, CI tiers, shared fixtures, data generators
 - [x] **Phase 12: Zig SDK & Protocol Documentation** - Create Zig SDK, protocol docs, curl examples
-- [ ] **Phase 13: SDK Operation Test Suite** - All 14 operations tested across all 6 SDKs
+- [x] **Phase 13: SDK Operation Test Suite** - All 14 operations tested across all 6 SDKs
 - [ ] **Phase 14: Error Handling & Cross-SDK Parity** - Error handling consistency, parity matrix
 - [ ] **Phase 15: Benchmark Framework** - Throughput and latency benchmarking with percentiles
 - [ ] **Phase 16: Multi-Topology Testing** - Tests across 1/3/5/6 node clusters with failover
@@ -75,9 +75,10 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 13-01-PLAN.md — Test runner infrastructure, Python SDK tests, Node.js SDK tests
-- [ ] 13-02-PLAN.md — Go SDK tests, Java SDK tests
-- [ ] 13-03-PLAN.md — C SDK tests, Zig SDK tests
+- [x] 13-01-PLAN.md — Test runner infrastructure, Python SDK tests, Node.js SDK tests
+- [x] 13-02-PLAN.md — Go SDK tests, Java SDK tests
+- [x] 13-03-PLAN.md — C SDK tests, Zig SDK tests
+**Completed**: 2026-02-01
 
 ### Phase 14: Error Handling & Cross-SDK Parity
 **Goal**: All SDKs handle errors consistently and produce identical results
@@ -167,7 +168,7 @@ Phases execute in numeric order: 11 -> 11.1 -> 11.2 -> 12 -> 12.1 -> 13 -> ...
 |-------|-----------|----------------|--------|-----------|
 | 11. Test Infrastructure | v1.1 | 2/2 | Complete | 2026-02-01 |
 | 12. Zig SDK & Protocol | v1.1 | 2/2 | Complete | 2026-02-01 |
-| 13. SDK Operation Tests | v1.1 | 0/3 | Not started | - |
+| 13. SDK Operation Tests | v1.1 | 3/3 | Complete (needs UAT) | 2026-02-01 |
 | 14. Error Handling & Parity | v1.1 | 0/2 | Not started | - |
 | 15. Benchmark Framework | v1.1 | 0/2 | Not started | - |
 | 16. Multi-Topology Testing | v1.1 | 0/2 | Not started | - |
