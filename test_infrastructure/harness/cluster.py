@@ -369,6 +369,173 @@ class ArcherDBCluster:
             return ""
         return self._log_captures[replica].get_logs()
 
+    def stop_node(self, replica: int, graceful: bool = True) -> None:
+        """Stop a specific cluster node.
+
+        Args:
+            replica: Replica index (0-based).
+            graceful: If True, send SIGTERM and wait up to 10s before SIGKILL.
+                     If False, send SIGKILL immediately.
+
+        Raises:
+            ValueError: If replica index is invalid.
+        """
+        if replica not in self._processes:
+            raise ValueError(f"Replica {replica} not found")
+
+        proc = self._processes[replica]
+        if proc.poll() is not None:
+            return  # Already stopped
+
+        if graceful:
+            proc.terminate()  # SIGTERM
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()  # Escalate to SIGKILL
+                proc.wait()
+        else:
+            proc.kill()  # SIGKILL immediately
+            proc.wait()
+
+    def start_node(self, replica: int) -> None:
+        """Restart a previously stopped node.
+
+        Re-spawns the process with the same configuration. Does not format
+        the data file since it already exists from initial start.
+
+        Args:
+            replica: Replica index to restart.
+
+        Raises:
+            ValueError: If replica index is invalid.
+            RuntimeError: If data directory is not set or node fails to start.
+        """
+        if replica < 0 or replica >= self.config.node_count:
+            raise ValueError(f"Invalid replica index: {replica}")
+
+        if self._data_dir is None:
+            raise RuntimeError("Cluster data directory not set")
+
+        # Data file already exists - no format needed
+        data_file = self._data_dir / f"replica-{replica}.archerdb"
+        addresses = ",".join(str(p) for p in self._ports)
+
+        # Create fresh log capture
+        log_capture = LogCapture()
+        self._log_captures[replica] = log_capture
+
+        cmd = [
+            str(self._bin_path),
+            "start",
+            f"--addresses={addresses}",
+            f"--cache-grid={self.config.cache_grid}",
+            f"--metrics-port={self._metrics_ports[replica]}",
+            "--metrics-bind=127.0.0.1",
+            str(data_file),
+        ]
+
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,  # Line buffered
+        )
+        self._processes[replica] = process
+
+        # Start log capture thread
+        def capture_logs(proc: subprocess.Popen, capture: LogCapture) -> None:
+            try:
+                if proc.stdout:
+                    for line in proc.stdout:
+                        capture.write(line)
+            except Exception:
+                pass  # Process terminated
+
+        thread = threading.Thread(
+            target=capture_logs,
+            args=(process, log_capture),
+            daemon=True,
+        )
+        thread.start()
+        self._log_threads[replica] = thread
+
+        # Brief wait to check initial startup
+        time.sleep(0.5)
+        if process.poll() is not None:
+            logs = log_capture.get_logs(max_lines=50)
+            raise RuntimeError(f"Replica {replica} failed to restart:\n{logs}")
+
+    def kill_node(self, replica: int) -> None:
+        """Kill a specific cluster node immediately (SIGKILL).
+
+        Shorthand for stop_node(replica, graceful=False). Simulates crash scenario.
+
+        Args:
+            replica: Replica index (0-based).
+        """
+        self.stop_node(replica, graceful=False)
+
+    def is_node_running(self, replica: int) -> bool:
+        """Check if a specific node is running.
+
+        Args:
+            replica: Replica index (0-based).
+
+        Returns:
+            True if the process exists and poll() is None (still running).
+        """
+        if replica not in self._processes:
+            return False
+        return self._processes[replica].poll() is None
+
+    def get_leader_replica(self) -> Optional[int]:
+        """Get the index of the current leader replica.
+
+        Checks all running nodes' metrics for archerdb_region_info with role="primary".
+
+        Returns:
+            Replica index (0-based) of the leader, or None if no leader found.
+        """
+        if self.config.node_count == 1:
+            # Single node is always the leader if running
+            if self.is_node_running(0):
+                return 0
+            return None
+
+        for i in range(self.config.node_count):
+            if not self.is_node_running(i):
+                continue
+            try:
+                resp = requests.get(
+                    f"http://127.0.0.1:{self._metrics_ports[i]}/metrics",
+                    timeout=1,
+                )
+                if resp.status_code == 200:
+                    # Look for: archerdb_region_info{region_id="0",role="primary"} 1
+                    if re.search(r'archerdb_region_info\{[^}]*role="primary"[^}]*\}\s+1', resp.text):
+                        return i
+            except requests.RequestException:
+                pass
+        return None
+
+    def get_ports(self) -> List[int]:
+        """Get cluster node ports.
+
+        Returns:
+            Copy of the ports list for all cluster nodes.
+        """
+        return list(self._ports)
+
+    def get_metrics_ports(self) -> List[int]:
+        """Get cluster metrics ports.
+
+        Returns:
+            Copy of the metrics ports list for all cluster nodes.
+        """
+        return list(self._metrics_ports)
+
     def __enter__(self) -> "ArcherDBCluster":
         """Context manager entry."""
         self.start()
