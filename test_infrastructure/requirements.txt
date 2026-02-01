@@ -6,6 +6,9 @@
 # HTTP client for health checks and metrics scraping
 requests>=2.28.0
 
+# Retry with backoff for consistency verification
+tenacity>=8.2.0
+
 # No external dependencies for:
 # - Port allocation (uses stdlib socket)
 # - Log capture (uses stdlib threading, io)
