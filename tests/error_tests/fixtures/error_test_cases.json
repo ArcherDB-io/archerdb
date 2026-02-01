@@ -1,0 +1,163 @@
+{
+  "connection_errors": {
+    "refused": {
+      "address": "127.0.0.1:9999",
+      "expected_code": 1001,
+      "expected_retryable": true,
+      "description": "Connection refused - no server listening"
+    },
+    "timeout": {
+      "address": "10.255.255.1:9999",
+      "expected_code": 1002,
+      "expected_retryable": true,
+      "description": "Connection timeout - non-routable IP"
+    }
+  },
+  "validation_errors": {
+    "invalid_latitude_too_high": {
+      "latitude": 200.0,
+      "longitude": 0.0,
+      "expected_code": 3001,
+      "expected_retryable": false,
+      "description": "Latitude exceeds +90 degrees"
+    },
+    "invalid_latitude_too_low": {
+      "latitude": -200.0,
+      "longitude": 0.0,
+      "expected_code": 3001,
+      "expected_retryable": false,
+      "description": "Latitude below -90 degrees"
+    },
+    "invalid_longitude_too_high": {
+      "latitude": 0.0,
+      "longitude": 400.0,
+      "expected_code": 3001,
+      "expected_retryable": false,
+      "description": "Longitude exceeds +180 degrees"
+    },
+    "invalid_longitude_too_low": {
+      "latitude": 0.0,
+      "longitude": -400.0,
+      "expected_code": 3001,
+      "expected_retryable": false,
+      "description": "Longitude below -180 degrees"
+    },
+    "invalid_entity_id_zero": {
+      "entity_id": 0,
+      "expected_code": 3004,
+      "expected_retryable": false,
+      "description": "Entity ID cannot be zero"
+    }
+  },
+  "server_errors": {
+    "http_500": {
+      "expected_code": 2001,
+      "expected_retryable": true,
+      "description": "Internal server error - cluster unavailable"
+    },
+    "http_429": {
+      "expected_code": 2002,
+      "expected_retryable": true,
+      "description": "Rate limited (view change) - should retry with backoff"
+    },
+    "http_503": {
+      "expected_code": 2003,
+      "expected_retryable": true,
+      "description": "Service unavailable (not primary) - should retry"
+    }
+  },
+  "batch_errors": {
+    "batch_too_large": {
+      "batch_size": 10001,
+      "max_batch_size": 10000,
+      "expected_code": 3003,
+      "expected_retryable": false,
+      "description": "Batch exceeds 10,000 event limit"
+    }
+  },
+  "empty_results": {
+    "empty_radius_query": {
+      "latitude": 0.0,
+      "longitude": 0.0,
+      "radius_m": 1.0,
+      "expected_count": 0,
+      "expected_success": true,
+      "description": "Tiny radius in empty area - returns empty list, not error"
+    },
+    "empty_polygon_query": {
+      "coordinates": [
+        [0.001, 0.001],
+        [0.002, 0.001],
+        [0.002, 0.002],
+        [0.001, 0.002]
+      ],
+      "expected_count": 0,
+      "expected_success": true,
+      "description": "Small polygon in ocean - returns empty list, not error"
+    }
+  },
+  "state_errors": {
+    "entity_not_found": {
+      "entity_id": 99999999999,
+      "expected_code": 200,
+      "expected_retryable": false,
+      "description": "Query for non-existent entity UUID"
+    },
+    "entity_expired": {
+      "expected_code": 210,
+      "expected_retryable": false,
+      "description": "Entity has expired due to TTL"
+    }
+  },
+  "retry_config": {
+    "default_max_retries": 3,
+    "default_base_backoff_ms": 100,
+    "default_max_backoff_ms": 1600,
+    "default_total_timeout_ms": 30000,
+    "note": "Per CONTEXT.md: default 3 retries. SDK default is 5 - tests check configurability."
+  },
+  "geographic_edge_cases": {
+    "north_pole": {
+      "latitude": 90.0,
+      "longitude": 0.0,
+      "description": "North pole - longitude is ambiguous"
+    },
+    "south_pole": {
+      "latitude": -90.0,
+      "longitude": 0.0,
+      "description": "South pole - longitude is ambiguous"
+    },
+    "antimeridian_east": {
+      "latitude": 0.0,
+      "longitude": 180.0,
+      "description": "Antimeridian (date line) - east side"
+    },
+    "antimeridian_west": {
+      "latitude": 0.0,
+      "longitude": -180.0,
+      "description": "Antimeridian (date line) - west side"
+    },
+    "equator_prime": {
+      "latitude": 0.0,
+      "longitude": 0.0,
+      "description": "Null Island - equator/prime meridian intersection"
+    }
+  },
+  "error_code_reference": {
+    "1001": {"name": "ConnectionFailed", "retryable": true, "category": "connection"},
+    "1002": {"name": "ConnectionTimeout", "retryable": true, "category": "connection"},
+    "2001": {"name": "ClusterUnavailable", "retryable": true, "category": "cluster"},
+    "2002": {"name": "ViewChangeInProgress", "retryable": true, "category": "cluster"},
+    "2003": {"name": "NotPrimary", "retryable": true, "category": "cluster"},
+    "3001": {"name": "InvalidCoordinates", "retryable": false, "category": "validation"},
+    "3002": {"name": "PolygonTooComplex", "retryable": false, "category": "validation"},
+    "3003": {"name": "BatchTooLarge", "retryable": false, "category": "validation"},
+    "3004": {"name": "InvalidEntityId", "retryable": false, "category": "validation"},
+    "4001": {"name": "OperationTimeout", "retryable": true, "category": "operation"},
+    "4002": {"name": "QueryResultTooLarge", "retryable": false, "category": "operation"},
+    "4003": {"name": "OutOfSpace", "retryable": false, "category": "operation"},
+    "4004": {"name": "SessionExpired", "retryable": true, "category": "operation"},
+    "5001": {"name": "ClientClosedError", "retryable": false, "category": "client"},
+    "5002": {"name": "RetryExhausted", "retryable": false, "category": "retry"}
+  }
+}
