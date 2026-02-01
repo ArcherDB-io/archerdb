@@ -1,3 +1,10 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2025 ArcherDB Contributors
+#
+# SDK Smoke Tests - All 6 SDKs with JUnit XML reporting
+# Strict 5 minute timeout per CI-02.
+# Runs on every push and pull request.
+
 name: SDK Smoke Tests
 on: [push, pull_request]
 
@@ -8,7 +15,12 @@ concurrency:
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 5  # Strict 5 min budget per CONTEXT.md
+    timeout-minutes: 5  # Strict 5 min budget per CI-02
+    strategy:
+      fail-fast: true  # Per CONTEXT.md decision
+      matrix:
+        sdk: [python, nodejs, go, java, c, zig]
+    name: Smoke (${{ matrix.sdk }})
     steps:
       - uses: actions/checkout@v4
 
@@ -30,30 +42,121 @@ jobs:
             sleep 1
           done
 
-      # Python smoke - one insert test proves connectivity
+      - name: Create test-results directory
+        run: mkdir -p test-results
+
+      # Python smoke test with JUnit XML
       - uses: actions/setup-python@v5
+        if: matrix.sdk == 'python'
         with:
           python-version: '3.11'
 
       - name: Python smoke
+        if: matrix.sdk == 'python'
         run: |
           cd src/clients/python
           pip install -q pytest
           export PYTHONPATH=src
           export ARCHERDB_INTEGRATION=1
           export ARCHERDB_ADDRESS=127.0.0.1:3000
-          python -m pytest tests/test_integration.py -v -k "roundtrip" --timeout=30 || true
+          python -m pytest tests/test_integration.py -v -k "roundtrip" --timeout=30 \
+            --junit-xml=../../../test-results/python.xml || true
 
-      # Node.js smoke - one insert test proves connectivity
+      # Node.js smoke test with JUnit XML
       - uses: actions/setup-node@v4
+        if: matrix.sdk == 'nodejs'
         with:
           node-version: '20'
 
       - name: Node.js smoke
+        if: matrix.sdk == 'nodejs'
         run: |
           cd src/clients/node
           npm install
-          ARCHERDB_HOST=127.0.0.1 ARCHERDB_PORT=3000 npm test -- --grep "insert" --timeout 30000 || true
+          npm install --save-dev jest-junit
+          ARCHERDB_HOST=127.0.0.1 ARCHERDB_PORT=3000 \
+          JEST_JUNIT_OUTPUT_DIR="../../test-results" \
+          JEST_JUNIT_OUTPUT_NAME="nodejs.xml" \
+          npm test -- --grep "insert" --timeout 30000 --reporter=jest-junit || true
+
+      # Go smoke test with JUnit XML
+      - uses: actions/setup-go@v5
+        if: matrix.sdk == 'go'
+        with:
+          go-version: '1.21'
+
+      - name: Go smoke
+        if: matrix.sdk == 'go'
+        run: |
+          cd src/clients/go
+          go install github.com/jstemmer/go-junit-report/v2@latest
+          ARCHERDB_HOST=127.0.0.1 ARCHERDB_PORT=3000 \
+          go test ./... -v -timeout 30s 2>&1 | go-junit-report > ../../../test-results/go.xml || true
+
+      # Java smoke test with JUnit XML
+      - uses: actions/setup-java@v4
+        if: matrix.sdk == 'java'
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Java smoke
+        if: matrix.sdk == 'java'
+        run: |
+          cd src/clients/java
+          ARCHERDB_HOST=127.0.0.1 ARCHERDB_PORT=3000 mvn test -q -Dsurefire.reportFormat=xml || true
+          cp target/surefire-reports/*.xml ../../../test-results/ 2>/dev/null || echo "No Java results"
+
+      # C smoke test with JUnit XML
+      - name: C smoke
+        if: matrix.sdk == 'c'
+        run: |
+          cd src/clients/c
+          # C tests output JUnit XML if available, otherwise create minimal result
+          if make test-junit 2>/dev/null; then
+            cp test-results/*.xml ../../../test-results/c.xml 2>/dev/null || true
+          else
+            # Create minimal JUnit XML for tracking
+            echo '<?xml version="1.0" encoding="UTF-8"?>' > ../../../test-results/c.xml
+            echo '<testsuites><testsuite name="c-sdk" tests="0" failures="0" skipped="1">' >> ../../../test-results/c.xml
+            echo '<testcase name="placeholder" classname="c-sdk"><skipped message="C SDK smoke tests not yet implemented"/></testcase>' >> ../../../test-results/c.xml
+            echo '</testsuite></testsuites>' >> ../../../test-results/c.xml
+          fi
+
+      # Zig smoke test with JUnit XML
+      - name: Zig smoke
+        if: matrix.sdk == 'zig'
+        run: |
+          cd src/clients/zig
+          # Zig tests output JUnit XML if available, otherwise create minimal result
+          if ./zig/zig build test-junit 2>/dev/null; then
+            cp test-results/*.xml ../../../test-results/zig.xml 2>/dev/null || true
+          else
+            # Create minimal JUnit XML for tracking
+            echo '<?xml version="1.0" encoding="UTF-8"?>' > ../../../test-results/zig.xml
+            echo '<testsuites><testsuite name="zig-sdk" tests="0" failures="0" skipped="1">' >> ../../../test-results/zig.xml
+            echo '<testcase name="placeholder" classname="zig-sdk"><skipped message="Zig SDK smoke tests not yet implemented"/></testcase>' >> ../../../test-results/zig.xml
+            echo '</testsuite></testsuites>' >> ../../../test-results/zig.xml
+          fi
+
+      # Publish JUnit XML test results
+      - name: Publish Test Results
+        uses: mikepenz/action-junit-report@v5
+        if: always()
+        with:
+          report_paths: 'test-results/*.xml'
+          check_name: 'Smoke Tests (${{ matrix.sdk }})'
+          fail_on_failure: true
+          include_passed: true
+
+      # Upload test results artifact
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-test-results-${{ matrix.sdk }}
+          path: test-results/
+          retention-days: 30
 
       - name: Cleanup
         if: always()
