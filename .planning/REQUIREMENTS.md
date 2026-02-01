@@ -9,16 +9,16 @@ Requirements for comprehensive SDK testing and benchmarking infrastructure.
 
 ### Test Infrastructure (INFRA)
 
-- [ ] **INFRA-01**: Test harness can start/stop single-node ArcherDB clusters programmatically
-- [ ] **INFRA-02**: Test harness can start/stop 3-node ArcherDB clusters programmatically
-- [ ] **INFRA-03**: Test harness can start/stop 5-6 node ArcherDB clusters programmatically
-- [ ] **INFRA-04**: Per-SDK warmup protocols defined (iteration counts for stable benchmarks)
-- [ ] **INFRA-05**: CI smoke tests run in <5 minutes on every push
-- [ ] **INFRA-06**: CI PR tests run in <15 minutes with single-node validation
-- [ ] **INFRA-07**: CI nightly tests run full suite (multi-node, all patterns)
-- [ ] **INFRA-08**: Shared test fixtures exist in JSON format for all 14 operations
-- [ ] **INFRA-09**: Test data generator creates uniform distribution datasets
-- [ ] **INFRA-10**: Test data generator creates city-concentrated distribution datasets
+- [x] **INFRA-01**: Test harness can start/stop single-node ArcherDB clusters programmatically
+- [x] **INFRA-02**: Test harness can start/stop 3-node ArcherDB clusters programmatically
+- [x] **INFRA-03**: Test harness can start/stop 5-6 node ArcherDB clusters programmatically
+- [x] **INFRA-04**: Per-SDK warmup protocols defined (iteration counts for stable benchmarks)
+- [x] **INFRA-05**: CI smoke tests run in <5 minutes on every push
+- [x] **INFRA-06**: CI PR tests run in <15 minutes with single-node validation
+- [x] **INFRA-07**: CI nightly tests run full suite (multi-node, all patterns)
+- [x] **INFRA-08**: Shared test fixtures exist in JSON format for all 14 operations
+- [x] **INFRA-09**: Test data generator creates uniform distribution datasets
+- [x] **INFRA-10**: Test data generator creates city-concentrated distribution datasets
 
 ### SDK Development (SDK)
 
@@ -153,16 +153,16 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| INFRA-01 | Phase 11 | Pending |
-| INFRA-02 | Phase 11 | Pending |
-| INFRA-03 | Phase 11 | Pending |
-| INFRA-04 | Phase 11 | Pending |
-| INFRA-05 | Phase 11 | Pending |
-| INFRA-06 | Phase 11 | Pending |
-| INFRA-07 | Phase 11 | Pending |
-| INFRA-08 | Phase 11 | Pending |
-| INFRA-09 | Phase 11 | Pending |
-| INFRA-10 | Phase 11 | Pending |
+| INFRA-01 | Phase 11 | Complete |
+| INFRA-02 | Phase 11 | Complete |
+| INFRA-03 | Phase 11 | Complete |
+| INFRA-04 | Phase 11 | Complete |
+| INFRA-05 | Phase 11 | Complete |
+| INFRA-06 | Phase 11 | Complete |
+| INFRA-07 | Phase 11 | Complete |
+| INFRA-08 | Phase 11 | Complete |
+| INFRA-09 | Phase 11 | Complete |
+| INFRA-10 | Phase 11 | Complete |
 | SDK-01 | Phase 12 | Pending |
 | SDK-02 | Phase 12 | Pending |
 | SDK-03 | Phase 12 | Pending |
