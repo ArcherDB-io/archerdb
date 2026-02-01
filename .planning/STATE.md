@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-02-01)
 
 **Core value:** Customers can deploy mission-critical geospatial workloads with confidence that their data is safe, queries are fast, and the service stays available during failures.
-**Current focus:** Phase 14 - Error Handling & Cross-SDK Parity
+**Current focus:** Phase 15 - Benchmark Framework
 
 ## Current Position
 
-Phase: 14 of 18 (Error Handling & Cross-SDK Parity)
-Plan: 2 of 2 in current phase
-Status: Phase complete (needs UAT)
-Last activity: 2026-02-01 - Completed Phase 14 (error tests + parity verification)
+Phase: 15 of 18 (Benchmark Framework)
+Plan: 1 of 2 in current phase
+Status: In progress
+Last activity: 2026-02-01 - Completed 15-01-PLAN.md (benchmark framework core)
 
-Progress: [████░░░░░░] 33%
+Progress: [█████░░░░░] 38%
 
 ## Milestone History
 
@@ -26,9 +26,9 @@ Progress: [████░░░░░░] 33%
 ## Performance Metrics
 
 **Velocity (v1.1):**
-- Total plans completed: 9
-- Average duration: 10 min
-- Total execution time: 88 min
+- Total plans completed: 10
+- Average duration: 9 min
+- Total execution time: 93 min
 
 **By Phase:**
 
@@ -38,10 +38,11 @@ Progress: [████░░░░░░] 33%
 | 12 | 2/2 | 21 min | 11 min |
 | 13 | 3/3 | 21 min | 7 min |
 | 14 | 2/2 | 27 min | 14 min |
+| 15 | 1/2 | 5 min | 5 min |
 
 **Recent Trend:**
-- Last 5 plans: 13-02 (5 min), 13-03 (11 min), 14-01 (22 min), 14-02 (5 min)
-- Trend: Phase 14 complete, needs UAT for parity verification
+- Last 5 plans: 13-03 (11 min), 14-01 (22 min), 14-02 (5 min), 15-01 (5 min)
+- Trend: Fast execution on benchmark framework core
 
 *Updated after each plan completion*
 
@@ -78,6 +79,10 @@ Recent decisions affecting current work:
 - [14-02]: All 6 SDK runners created with run_operation interface
 - [14-02]: Edge case fixtures: 33 test cases for polar/antimeridian/equator
 - [14-02]: Parity documentation in 4 locations per CONTEXT.md
+- [15-01]: Use scipy.stats.t.interval for confidence intervals
+- [15-01]: Use Welch's t-test (equal_var=False) for regression detection
+- [15-01]: HDR histogram fallback to sorted-array when unavailable
+- [15-01]: Performance targets: 770K events/sec, read P95<1ms, write P95<10ms
 
 ### Pending Todos
 
@@ -91,7 +96,7 @@ None.
 ## Session Continuity
 
 Last session: 2026-02-01
-Stopped at: Completed Phase 14 execution, parity infrastructure ready for UAT
+Stopped at: Completed 15-01-PLAN.md (benchmark framework core)
 Resume file: None
 
-**Next Action:** Run `/gsd:verify-work 14` to execute parity tests, or proceed to `/gsd:discuss-phase 15` if accepting infrastructure verification
+**Next Action:** Execute `/gsd:execute-phase 15-02` for benchmark orchestrator
