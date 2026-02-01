@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-02-01)
 ## Current Position
 
 Phase: 11 of 18 (Test Infrastructure Foundation)
-Plan: 1 of 2 in current phase
-Status: In progress
-Last activity: 2026-02-01 - Completed 11-01-PLAN.md (Python cluster harness and data generators)
+Plan: 2 of 2 in current phase
+Status: Phase complete
+Last activity: 2026-02-01 - Completed 11-02-PLAN.md (JSON fixtures, CI workflows, warmup protocols)
 
-Progress: [█░░░░░░░░░] 6%
+Progress: [█░░░░░░░░░] 12%
 
 ## Milestone History
 
@@ -26,19 +26,19 @@ Progress: [█░░░░░░░░░] 6%
 ## Performance Metrics
 
 **Velocity (v1.1):**
-- Total plans completed: 1
-- Average duration: 8 min
-- Total execution time: 8 min
+- Total plans completed: 2
+- Average duration: 10 min
+- Total execution time: 19 min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 11 | 1/2 | 8 min | 8 min |
+| 11 | 2/2 | 19 min | 10 min |
 
 **Recent Trend:**
-- Last 5 plans: 11-01 (8 min)
-- Trend: Starting v1.1 milestone
+- Last 5 plans: 11-01 (8 min), 11-02 (11 min)
+- Trend: Phase 11 complete, ready for Phase 12
 
 *Updated after each plan completion*
 
@@ -54,6 +54,9 @@ Recent decisions affecting current work:
 - [11-01]: Auto-detect leader via region role metric (archerdb_region_info role=primary)
 - [11-01]: Use seeded RNG for entity_id generation (reproducibility)
 - [11-01]: Use underscore naming (test_infrastructure) for Python module compatibility
+- [11-02]: Fixture tag distribution: 14 smoke, 31 PR, 34 nightly
+- [11-02]: Warmup iterations: Java 500 > Node 200 > Python/Go 100 > C/Zig 50 (JIT vs AOT)
+- [11-02]: CI tiers: smoke <5min (every push), PR <15min, nightly 2h (2 AM UTC)
 
 ### Pending Todos
 
@@ -66,5 +69,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-01
-Stopped at: Completed 11-01-PLAN.md
+Stopped at: Completed 11-02-PLAN.md, Phase 11 complete
 Resume file: None
