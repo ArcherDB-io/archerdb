@@ -54,21 +54,21 @@ Requirements for comprehensive SDK testing and benchmarking infrastructure.
 
 ### Error Handling (ERR)
 
-- [ ] **ERR-01**: All SDKs handle connection failures gracefully
-- [ ] **ERR-02**: All SDKs handle timeout errors consistently
-- [ ] **ERR-03**: All SDKs handle invalid input validation errors
-- [ ] **ERR-04**: All SDKs handle empty result sets correctly
-- [ ] **ERR-05**: All SDKs handle server error codes (30+ codes) consistently
-- [ ] **ERR-06**: All SDKs retry on transient failures with backoff
-- [ ] **ERR-07**: All SDKs handle batch size limit errors
+- [x] **ERR-01**: All SDKs handle connection failures gracefully
+- [x] **ERR-02**: All SDKs handle timeout errors consistently
+- [x] **ERR-03**: All SDKs handle invalid input validation errors
+- [x] **ERR-04**: All SDKs handle empty result sets correctly
+- [x] **ERR-05**: All SDKs handle server error codes (30+ codes) consistently
+- [x] **ERR-06**: All SDKs retry on transient failures with backoff
+- [x] **ERR-07**: All SDKs handle batch size limit errors
 
 ### Cross-SDK Parity (PARITY)
 
-- [ ] **PARITY-01**: Parity matrix created (14 ops x 6 SDKs = 84 cells)
-- [ ] **PARITY-02**: All SDKs return identical results for identical queries
-- [ ] **PARITY-03**: All SDKs handle edge cases identically (poles, anti-meridian)
-- [ ] **PARITY-04**: All SDKs report errors with consistent codes and messages
-- [ ] **PARITY-05**: Known SDK limitations documented (workarounds, gaps)
+- [x] **PARITY-01**: Parity matrix created (14 ops x 6 SDKs = 84 cells)
+- [x] **PARITY-02**: All SDKs return identical results for identical queries
+- [x] **PARITY-03**: All SDKs handle edge cases identically (poles, anti-meridian)
+- [x] **PARITY-04**: All SDKs report errors with consistent codes and messages
+- [x] **PARITY-05**: Known SDK limitations documented (workarounds, gaps)
 
 ### Benchmarking - Throughput (BENCH-T)
 
