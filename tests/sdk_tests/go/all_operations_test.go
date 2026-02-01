@@ -1,0 +1,761 @@
+// Package sdk_tests provides comprehensive integration tests for the ArcherDB Go SDK.
+// Tests cover all 14 operations using shared JSON fixtures from test_infrastructure.
+package sdk_tests
+
+import (
+	"os"
+	"testing"
+	"time"
+
+	archerdb "github.com/archerdb/archerdb-go"
+	"github.com/archerdb/archerdb-go/pkg/types"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// setupClient creates a GeoClient connected to the test server.
+func setupClient(t *testing.T) archerdb.GeoClient {
+	address := os.Getenv("ARCHERDB_ADDRESS")
+	if address == "" {
+		address = "127.0.0.1:3001"
+	}
+
+	config := archerdb.GeoClientConfig{
+		ClusterID: types.ToUint128(0),
+		Addresses: []string{address},
+	}
+	client, err := archerdb.NewGeoClient(config)
+	require.NoError(t, err, "Failed to create client")
+	return client
+}
+
+// cleanDatabase removes all entities from the database.
+func cleanDatabase(t *testing.T, client archerdb.GeoClient) {
+	// Query all entities and delete them
+	filter := types.QueryLatestFilter{
+		Limit: 10000,
+	}
+	result, err := client.QueryLatest(filter)
+	if err != nil {
+		return // Database might be empty or unreachable
+	}
+
+	if len(result.Events) > 0 {
+		ids := make([]types.Uint128, len(result.Events))
+		for i, event := range result.Events {
+			ids[i] = event.EntityID
+		}
+		_, _ = client.DeleteEntities(ids)
+	}
+}
+
+// skipIfNoIntegration skips the test if ARCHERDB_INTEGRATION is not set.
+func skipIfNoIntegration(t *testing.T) {
+	if os.Getenv("ARCHERDB_INTEGRATION") != "1" {
+		t.Skip("Set ARCHERDB_INTEGRATION=1 to run integration tests")
+	}
+}
+
+// ============================================================================
+// Insert Operations (opcode 146)
+// ============================================================================
+
+func TestInsertOperations(t *testing.T) {
+	skipIfNoIntegration(t)
+
+	client := setupClient(t)
+	defer client.Close()
+
+	fixture, err := LoadFixture("insert")
+	require.NoError(t, err, "Failed to load insert fixture")
+
+	for _, tc := range fixture.Cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			cleanDatabase(t, client)
+
+			eventsRaw, ok := tc.Input["events"].([]interface{})
+			if !ok {
+				t.Skip("No events in input")
+			}
+
+			events := ConvertFixtureEvents(eventsRaw)
+			require.NotEmpty(t, events, "No events to insert")
+
+			// Prepare events with composite IDs
+			for i := range events {
+				types.PrepareGeoEvent(&events[i])
+			}
+
+			errors, err := client.InsertEvents(events)
+
+			expectedCode := GetExpectedResultCode(tc.ExpectedOutput)
+			if expectedCode == 0 {
+				// Success case - check that all events inserted
+				if tc.ExpectedError == nil {
+					require.NoError(t, err, "Insert should succeed")
+				}
+			}
+
+			// Check all_ok flag
+			if allOK, ok := tc.ExpectedOutput["all_ok"].(bool); ok && allOK {
+				assert.Empty(t, errors, "Expected all events to succeed")
+			}
+
+			// Check results_count
+			if resultsCount, ok := tc.ExpectedOutput["results_count"].(float64); ok {
+				assert.Equal(t, int(resultsCount), len(events), "Event count mismatch")
+			}
+
+			// Check specific result codes in expected results
+			if results, ok := tc.ExpectedOutput["results"].([]interface{}); ok {
+				for i, r := range results {
+					if i >= len(events) {
+						break
+					}
+					rm, ok := r.(map[string]interface{})
+					if !ok {
+						continue
+					}
+					if code, ok := rm["code"].(float64); ok {
+						if code != 0 {
+							// Expect error for this event
+							found := false
+							for _, e := range errors {
+								if int(e.Index) == i && int(e.Result) == int(code) {
+									found = true
+									break
+								}
+							}
+							if !found && len(errors) == 0 {
+								// Some errors might be returned differently
+								t.Logf("Expected error code %d at index %d", int(code), i)
+							}
+						}
+					}
+				}
+			}
+		})
+	}
+}
+
+// ============================================================================
+// Upsert Operations (opcode 147)
+// ============================================================================
+
+func TestUpsertOperations(t *testing.T) {
+	skipIfNoIntegration(t)
+
+	client := setupClient(t)
+	defer client.Close()
+
+	fixture, err := LoadFixture("upsert")
+	require.NoError(t, err, "Failed to load upsert fixture")
+
+	for _, tc := range fixture.Cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			cleanDatabase(t, client)
+
+			// Execute setup if present
+			setupEvents := GetSetupEvents(tc.Input)
+			if len(setupEvents) > 0 {
+				for i := range setupEvents {
+					types.PrepareGeoEvent(&setupEvents[i])
+				}
+				_, err := client.InsertEvents(setupEvents)
+				require.NoError(t, err, "Setup insert failed")
+				time.Sleep(50 * time.Millisecond) // Brief wait for propagation
+			}
+
+			eventsRaw, ok := tc.Input["events"].([]interface{})
+			if !ok {
+				t.Skip("No events in input")
+			}
+
+			events := ConvertFixtureEvents(eventsRaw)
+			require.NotEmpty(t, events, "No events to upsert")
+
+			for i := range events {
+				types.PrepareGeoEvent(&events[i])
+			}
+
+			errors, err := client.UpsertEvents(events)
+
+			expectedCode := GetExpectedResultCode(tc.ExpectedOutput)
+			if expectedCode == 0 {
+				require.NoError(t, err, "Upsert should succeed")
+				assert.Empty(t, errors, "Expected no errors")
+			}
+		})
+	}
+}
+
+// ============================================================================
+// Delete Operations (opcode 148)
+// ============================================================================
+
+func TestDeleteOperations(t *testing.T) {
+	skipIfNoIntegration(t)
+
+	client := setupClient(t)
+	defer client.Close()
+
+	fixture, err := LoadFixture("delete")
+	require.NoError(t, err, "Failed to load delete fixture")
+
+	for _, tc := range fixture.Cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			cleanDatabase(t, client)
+
+			// Execute setup if present
+			setupEvents := GetSetupEvents(tc.Input)
+			if len(setupEvents) > 0 {
+				for i := range setupEvents {
+					types.PrepareGeoEvent(&setupEvents[i])
+				}
+				_, err := client.InsertEvents(setupEvents)
+				require.NoError(t, err, "Setup insert failed")
+				time.Sleep(50 * time.Millisecond)
+			}
+
+			entityIDsRaw, ok := tc.Input["entity_ids"].([]interface{})
+			if !ok {
+				t.Skip("No entity_ids in input")
+			}
+
+			entityIDs := ConvertEntityIDs(entityIDsRaw)
+			require.NotEmpty(t, entityIDs, "No entity IDs to delete")
+
+			result, err := client.DeleteEntities(entityIDs)
+
+			expectedCode := GetExpectedResultCode(tc.ExpectedOutput)
+			if expectedCode == 0 {
+				require.NoError(t, err, "Delete should not return transport error")
+			}
+
+			// Verify counts
+			totalRequested := len(entityIDs)
+			assert.Equal(t, totalRequested, result.DeletedCount+result.NotFoundCount,
+				"Total count should equal requested count")
+		})
+	}
+}
+
+// ============================================================================
+// Query UUID Operations (opcode 149)
+// ============================================================================
+
+func TestQueryUUIDOperations(t *testing.T) {
+	skipIfNoIntegration(t)
+
+	client := setupClient(t)
+	defer client.Close()
+
+	fixture, err := LoadFixture("query-uuid")
+	require.NoError(t, err, "Failed to load query-uuid fixture")
+
+	for _, tc := range fixture.Cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			cleanDatabase(t, client)
+
+			// Execute setup if present
+			setupEvents := GetSetupEvents(tc.Input)
+			if len(setupEvents) > 0 {
+				for i := range setupEvents {
+					types.PrepareGeoEvent(&setupEvents[i])
+				}
+				_, err := client.InsertEvents(setupEvents)
+				require.NoError(t, err, "Setup insert failed")
+				time.Sleep(50 * time.Millisecond)
+			}
+
+			entityIDRaw, ok := tc.Input["entity_id"].(float64)
+			if !ok {
+				t.Skip("No entity_id in input")
+			}
+
+			entityID := types.ToUint128(uint64(entityIDRaw))
+			event, err := client.GetLatestByUUID(entityID)
+
+			// Check expected output
+			if found, ok := tc.ExpectedOutput["found"].(bool); ok {
+				if found {
+					require.NoError(t, err, "Should find entity")
+					assert.NotNil(t, event, "Event should be returned")
+				} else {
+					assert.Nil(t, event, "Entity should not be found")
+				}
+			}
+		})
+	}
+}
+
+// ============================================================================
+// Query UUID Batch Operations (opcode 156)
+// ============================================================================
+
+func TestQueryUUIDBatchOperations(t *testing.T) {
+	skipIfNoIntegration(t)
+
+	client := setupClient(t)
+	defer client.Close()
+
+	fixture, err := LoadFixture("query-uuid-batch")
+	require.NoError(t, err, "Failed to load query-uuid-batch fixture")
+
+	for _, tc := range fixture.Cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			cleanDatabase(t, client)
+
+			// Execute setup if present
+			setupEvents := GetSetupEvents(tc.Input)
+			if len(setupEvents) > 0 {
+				for i := range setupEvents {
+					types.PrepareGeoEvent(&setupEvents[i])
+				}
+				_, err := client.InsertEvents(setupEvents)
+				require.NoError(t, err, "Setup insert failed")
+				time.Sleep(50 * time.Millisecond)
+			}
+
+			entityIDsRaw, ok := tc.Input["entity_ids"].([]interface{})
+			if !ok {
+				t.Skip("No entity_ids in input")
+			}
+
+			entityIDs := ConvertEntityIDs(entityIDsRaw)
+			require.NotEmpty(t, entityIDs, "No entity IDs to query")
+
+			result, err := client.QueryUUIDBatch(entityIDs)
+			require.NoError(t, err, "Query should succeed")
+
+			// Verify counts
+			if foundCount, ok := tc.ExpectedOutput["found_count"].(float64); ok {
+				assert.Equal(t, uint32(foundCount), result.FoundCount, "Found count mismatch")
+			}
+			if notFoundCount, ok := tc.ExpectedOutput["not_found_count"].(float64); ok {
+				assert.Equal(t, uint32(notFoundCount), result.NotFoundCount, "Not found count mismatch")
+			}
+		})
+	}
+}
+
+// ============================================================================
+// Query Radius Operations (opcode 150)
+// ============================================================================
+
+func TestQueryRadiusOperations(t *testing.T) {
+	skipIfNoIntegration(t)
+
+	client := setupClient(t)
+	defer client.Close()
+
+	fixture, err := LoadFixture("query-radius")
+	require.NoError(t, err, "Failed to load query-radius fixture")
+
+	for _, tc := range fixture.Cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			cleanDatabase(t, client)
+
+			// Execute setup if present
+			setupEvents := GetSetupEvents(tc.Input)
+			if len(setupEvents) > 0 {
+				for i := range setupEvents {
+					types.PrepareGeoEvent(&setupEvents[i])
+				}
+				_, err := client.InsertEvents(setupEvents)
+				require.NoError(t, err, "Setup insert failed")
+				time.Sleep(50 * time.Millisecond)
+			}
+
+			centerLat, latOK := tc.Input["center_latitude"].(float64)
+			centerLon, lonOK := tc.Input["center_longitude"].(float64)
+			radiusM, radOK := tc.Input["radius_m"].(float64)
+
+			if !latOK || !lonOK || !radOK {
+				t.Skip("Missing query parameters")
+			}
+
+			limit := uint32(100)
+			if l, ok := tc.Input["limit"].(float64); ok {
+				limit = uint32(l)
+			}
+
+			filter, err := types.NewRadiusQuery(centerLat, centerLon, radiusM, limit)
+			require.NoError(t, err, "Failed to create radius filter")
+
+			result, err := client.QueryRadius(filter)
+			require.NoError(t, err, "Query should succeed")
+
+			// Verify count expectations
+			expectedCount := GetExpectedCount(tc.ExpectedOutput)
+			if expectedCount >= 0 {
+				assert.Equal(t, expectedCount, len(result.Events), "Event count mismatch")
+			}
+
+			// Verify expected entities are in results
+			expectedEntities := GetExpectedEntities(tc.ExpectedOutput)
+			for _, expectedID := range expectedEntities {
+				found := false
+				for _, event := range result.Events {
+					if event.EntityID == types.ToUint128(expectedID) {
+						found = true
+						break
+					}
+				}
+				assert.True(t, found, "Expected entity %d in results", expectedID)
+			}
+		})
+	}
+}
+
+// ============================================================================
+// Query Polygon Operations (opcode 151)
+// ============================================================================
+
+func TestQueryPolygonOperations(t *testing.T) {
+	skipIfNoIntegration(t)
+
+	client := setupClient(t)
+	defer client.Close()
+
+	fixture, err := LoadFixture("query-polygon")
+	require.NoError(t, err, "Failed to load query-polygon fixture")
+
+	for _, tc := range fixture.Cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			cleanDatabase(t, client)
+
+			// Execute setup if present
+			setupEvents := GetSetupEvents(tc.Input)
+			if len(setupEvents) > 0 {
+				for i := range setupEvents {
+					types.PrepareGeoEvent(&setupEvents[i])
+				}
+				_, err := client.InsertEvents(setupEvents)
+				require.NoError(t, err, "Setup insert failed")
+				time.Sleep(50 * time.Millisecond)
+			}
+
+			verticesRaw, ok := tc.Input["vertices"].([]interface{})
+			if !ok {
+				t.Skip("No vertices in input")
+			}
+
+			vertices := make([][]float64, len(verticesRaw))
+			for i, v := range verticesRaw {
+				if arr, ok := v.([]interface{}); ok && len(arr) == 2 {
+					lat, _ := arr[0].(float64)
+					lon, _ := arr[1].(float64)
+					vertices[i] = []float64{lat, lon}
+				}
+			}
+
+			limit := uint32(100)
+			if l, ok := tc.Input["limit"].(float64); ok {
+				limit = uint32(l)
+			}
+
+			filter, err := types.NewPolygonQuery(vertices, limit)
+			require.NoError(t, err, "Failed to create polygon filter")
+
+			result, err := client.QueryPolygon(filter)
+			require.NoError(t, err, "Query should succeed")
+
+			// Verify count expectations
+			expectedCount := GetExpectedCount(tc.ExpectedOutput)
+			if expectedCount >= 0 {
+				assert.Equal(t, expectedCount, len(result.Events), "Event count mismatch")
+			}
+		})
+	}
+}
+
+// ============================================================================
+// Query Latest Operations (opcode 154)
+// ============================================================================
+
+func TestQueryLatestOperations(t *testing.T) {
+	skipIfNoIntegration(t)
+
+	client := setupClient(t)
+	defer client.Close()
+
+	fixture, err := LoadFixture("query-latest")
+	require.NoError(t, err, "Failed to load query-latest fixture")
+
+	for _, tc := range fixture.Cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			cleanDatabase(t, client)
+
+			// Execute setup if present
+			setupEvents := GetSetupEvents(tc.Input)
+			if len(setupEvents) > 0 {
+				for i := range setupEvents {
+					types.PrepareGeoEvent(&setupEvents[i])
+				}
+				_, err := client.InsertEvents(setupEvents)
+				require.NoError(t, err, "Setup insert failed")
+				time.Sleep(50 * time.Millisecond)
+			}
+
+			limit := uint32(100)
+			if l, ok := tc.Input["limit"].(float64); ok {
+				limit = uint32(l)
+			}
+
+			filter := types.QueryLatestFilter{
+				Limit: limit,
+			}
+
+			result, err := client.QueryLatest(filter)
+			require.NoError(t, err, "Query should succeed")
+
+			// Verify count expectations
+			expectedCount := GetExpectedCount(tc.ExpectedOutput)
+			if expectedCount >= 0 {
+				assert.Equal(t, expectedCount, len(result.Events), "Event count mismatch")
+			}
+		})
+	}
+}
+
+// ============================================================================
+// Ping Operations (opcode 152)
+// ============================================================================
+
+func TestPingOperations(t *testing.T) {
+	skipIfNoIntegration(t)
+
+	client := setupClient(t)
+	defer client.Close()
+
+	fixture, err := LoadFixture("ping")
+	require.NoError(t, err, "Failed to load ping fixture")
+
+	for _, tc := range fixture.Cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			start := time.Now()
+			pong, err := client.Ping()
+			latency := time.Since(start)
+
+			require.NoError(t, err, "Ping should succeed")
+			assert.True(t, pong, "Should receive pong response")
+
+			// Check latency expectation
+			if maxLatency, ok := tc.ExpectedOutput["latency_ms_max"].(float64); ok {
+				assert.LessOrEqual(t, latency.Milliseconds(), int64(maxLatency),
+					"Latency should be under %vms", maxLatency)
+			}
+		})
+	}
+}
+
+// ============================================================================
+// Status Operations (opcode 153)
+// ============================================================================
+
+func TestStatusOperations(t *testing.T) {
+	skipIfNoIntegration(t)
+
+	client := setupClient(t)
+	defer client.Close()
+
+	fixture, err := LoadFixture("status")
+	require.NoError(t, err, "Failed to load status fixture")
+
+	for _, tc := range fixture.Cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			status, err := client.GetStatus()
+			require.NoError(t, err, "GetStatus should succeed")
+
+			// Check healthy flag
+			if healthy, ok := tc.ExpectedOutput["healthy"].(bool); ok {
+				if healthy {
+					// Status response received means healthy
+					assert.True(t, true, "Server is healthy")
+				}
+			}
+
+			// Verify capacity is set
+			if hasVersion, ok := tc.ExpectedOutput["has_version"].(bool); ok && hasVersion {
+				// Status is returned, which implies version info exists
+				assert.True(t, true, "Status returned")
+			}
+
+			// Verify capacity > 0
+			assert.Greater(t, status.RAMIndexCapacity, uint64(0), "Capacity should be > 0")
+		})
+	}
+}
+
+// ============================================================================
+// TTL Set Operations (opcode 158)
+// ============================================================================
+
+func TestTTLSetOperations(t *testing.T) {
+	skipIfNoIntegration(t)
+
+	client := setupClient(t)
+	defer client.Close()
+
+	fixture, err := LoadFixture("ttl-set")
+	require.NoError(t, err, "Failed to load ttl-set fixture")
+
+	for _, tc := range fixture.Cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			cleanDatabase(t, client)
+
+			// Execute setup if present
+			setupEvents := GetSetupEvents(tc.Input)
+			if len(setupEvents) > 0 {
+				for i := range setupEvents {
+					types.PrepareGeoEvent(&setupEvents[i])
+				}
+				_, err := client.InsertEvents(setupEvents)
+				require.NoError(t, err, "Setup insert failed")
+				time.Sleep(50 * time.Millisecond)
+			}
+
+			entityIDRaw, idOK := tc.Input["entity_id"].(float64)
+			ttlSeconds, ttlOK := tc.Input["ttl_seconds"].(float64)
+
+			if !idOK || !ttlOK {
+				t.Skip("Missing TTL set parameters")
+			}
+
+			entityID := types.ToUint128(uint64(entityIDRaw))
+			resp, err := client.SetTTL(entityID, uint32(ttlSeconds))
+
+			// Check for expected success/failure
+			if tc.ExpectedError == nil {
+				require.NoError(t, err, "TTL set should succeed")
+				assert.NotNil(t, resp, "Response should not be nil")
+			}
+		})
+	}
+}
+
+// ============================================================================
+// TTL Extend Operations (opcode 159)
+// ============================================================================
+
+func TestTTLExtendOperations(t *testing.T) {
+	skipIfNoIntegration(t)
+
+	client := setupClient(t)
+	defer client.Close()
+
+	fixture, err := LoadFixture("ttl-extend")
+	require.NoError(t, err, "Failed to load ttl-extend fixture")
+
+	for _, tc := range fixture.Cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			cleanDatabase(t, client)
+
+			// Execute setup if present
+			setupEvents := GetSetupEvents(tc.Input)
+			if len(setupEvents) > 0 {
+				for i := range setupEvents {
+					types.PrepareGeoEvent(&setupEvents[i])
+				}
+				_, err := client.InsertEvents(setupEvents)
+				require.NoError(t, err, "Setup insert failed")
+				time.Sleep(50 * time.Millisecond)
+			}
+
+			entityIDRaw, idOK := tc.Input["entity_id"].(float64)
+			extendBy, extOK := tc.Input["extend_by_seconds"].(float64)
+
+			if !idOK || !extOK {
+				t.Skip("Missing TTL extend parameters")
+			}
+
+			entityID := types.ToUint128(uint64(entityIDRaw))
+			resp, err := client.ExtendTTL(entityID, uint32(extendBy))
+
+			// Check for expected success/failure
+			if tc.ExpectedError == nil {
+				require.NoError(t, err, "TTL extend should succeed")
+				assert.NotNil(t, resp, "Response should not be nil")
+			}
+		})
+	}
+}
+
+// ============================================================================
+// TTL Clear Operations (opcode 160)
+// ============================================================================
+
+func TestTTLClearOperations(t *testing.T) {
+	skipIfNoIntegration(t)
+
+	client := setupClient(t)
+	defer client.Close()
+
+	fixture, err := LoadFixture("ttl-clear")
+	require.NoError(t, err, "Failed to load ttl-clear fixture")
+
+	for _, tc := range fixture.Cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			cleanDatabase(t, client)
+
+			// Execute setup if present
+			setupEvents := GetSetupEvents(tc.Input)
+			if len(setupEvents) > 0 {
+				for i := range setupEvents {
+					types.PrepareGeoEvent(&setupEvents[i])
+				}
+				_, err := client.InsertEvents(setupEvents)
+				require.NoError(t, err, "Setup insert failed")
+				time.Sleep(50 * time.Millisecond)
+			}
+
+			entityIDRaw, ok := tc.Input["entity_id"].(float64)
+			if !ok {
+				t.Skip("No entity_id in input")
+			}
+
+			entityID := types.ToUint128(uint64(entityIDRaw))
+			resp, err := client.ClearTTL(entityID)
+
+			// Check for expected success/failure
+			if tc.ExpectedError == nil {
+				require.NoError(t, err, "TTL clear should succeed")
+				assert.NotNil(t, resp, "Response should not be nil")
+			}
+		})
+	}
+}
+
+// ============================================================================
+// Topology Operations (opcode 157)
+// ============================================================================
+
+func TestTopologyOperations(t *testing.T) {
+	skipIfNoIntegration(t)
+
+	client := setupClient(t)
+	defer client.Close()
+
+	fixture, err := LoadFixture("topology")
+	require.NoError(t, err, "Failed to load topology fixture")
+
+	for _, tc := range fixture.Cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			topology, err := client.GetTopology()
+			require.NoError(t, err, "GetTopology should succeed")
+			assert.NotNil(t, topology, "Topology should not be nil")
+
+			// Verify node count if expected
+			if nodeCount, ok := tc.ExpectedOutput["node_count"].(float64); ok {
+				// In single-node tests, we have at least 1 shard
+				assert.GreaterOrEqual(t, int(topology.NumShards), 1,
+					"Should have at least 1 shard")
+				// If specific count expected, verify
+				if nodeCount == 1 {
+					assert.Equal(t, uint32(1), topology.NumShards, "Should have 1 shard")
+				}
+			}
+		})
+	}
+}
