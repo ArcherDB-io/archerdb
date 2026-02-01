@@ -1,0 +1,61 @@
+{
+  "description": "Polar region edge cases where longitude is ambiguous",
+  "priority": "high",
+  "test_cases": [
+    {
+      "name": "north_pole",
+      "input": {"entity_id": 1, "latitude": 90.0, "longitude": 0.0},
+      "notes": "At poles, all longitudes converge to same point"
+    },
+    {
+      "name": "north_pole_180",
+      "input": {"entity_id": 2, "latitude": 90.0, "longitude": 180.0},
+      "notes": "Same physical location as north_pole with lon=0"
+    },
+    {
+      "name": "north_pole_negative",
+      "input": {"entity_id": 3, "latitude": 90.0, "longitude": -90.0},
+      "notes": "North pole with negative longitude"
+    },
+    {
+      "name": "south_pole",
+      "input": {"entity_id": 4, "latitude": -90.0, "longitude": -45.0},
+      "notes": "South pole, arbitrary longitude"
+    },
+    {
+      "name": "south_pole_zero",
+      "input": {"entity_id": 5, "latitude": -90.0, "longitude": 0.0},
+      "notes": "South pole with zero longitude"
+    },
+    {
+      "name": "near_north_pole",
+      "input": {"entity_id": 6, "latitude": 89.9999, "longitude": 0.0},
+      "notes": "Very close to north pole but not at pole"
+    },
+    {
+      "name": "near_south_pole",
+      "input": {"entity_id": 7, "latitude": -89.9999, "longitude": 45.0},
+      "notes": "Very close to south pole"
+    },
+    {
+      "name": "arctic_circle",
+      "input": {"entity_id": 8, "latitude": 66.5, "longitude": 25.0},
+      "notes": "Arctic circle latitude"
+    },
+    {
+      "name": "antarctic_circle",
+      "input": {"entity_id": 9, "latitude": -66.5, "longitude": 140.0},
+      "notes": "Antarctic circle latitude"
+    },
+    {
+      "name": "polar_radius_query",
+      "operation": "query-radius",
+      "input": {
+        "latitude": 90.0,
+        "longitude": 0.0,
+        "radius_m": 1000
+      },
+      "notes": "Radius query centered at north pole"
+    }
+  ]
+}

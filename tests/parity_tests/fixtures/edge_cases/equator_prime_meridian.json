@@ -1,0 +1,81 @@
+{
+  "description": "Zero-crossing edge cases at equator and prime meridian",
+  "priority": "high",
+  "test_cases": [
+    {
+      "name": "equator_prime",
+      "input": {"entity_id": 1, "latitude": 0.0, "longitude": 0.0},
+      "notes": "Intersection of equator and prime meridian (Null Island)"
+    },
+    {
+      "name": "equator_180",
+      "input": {"entity_id": 2, "latitude": 0.0, "longitude": 180.0},
+      "notes": "Equator at antimeridian"
+    },
+    {
+      "name": "equator_negative_180",
+      "input": {"entity_id": 3, "latitude": 0.0, "longitude": -180.0},
+      "notes": "Equator at negative antimeridian"
+    },
+    {
+      "name": "prime_meridian_north",
+      "input": {"entity_id": 4, "latitude": 45.0, "longitude": 0.0},
+      "notes": "Prime meridian in northern hemisphere"
+    },
+    {
+      "name": "prime_meridian_south",
+      "input": {"entity_id": 5, "latitude": -45.0, "longitude": 0.0},
+      "notes": "Prime meridian in southern hemisphere"
+    },
+    {
+      "name": "equator_east",
+      "input": {"entity_id": 6, "latitude": 0.0, "longitude": 90.0},
+      "notes": "Equator at 90 degrees east"
+    },
+    {
+      "name": "equator_west",
+      "input": {"entity_id": 7, "latitude": 0.0, "longitude": -90.0},
+      "notes": "Equator at 90 degrees west"
+    },
+    {
+      "name": "just_north_equator",
+      "input": {"entity_id": 8, "latitude": 0.0001, "longitude": 0.0},
+      "notes": "Just north of equator"
+    },
+    {
+      "name": "just_south_equator",
+      "input": {"entity_id": 9, "latitude": -0.0001, "longitude": 0.0},
+      "notes": "Just south of equator"
+    },
+    {
+      "name": "just_east_prime",
+      "input": {"entity_id": 10, "latitude": 51.5, "longitude": 0.0001},
+      "notes": "Just east of prime meridian (London area)"
+    },
+    {
+      "name": "just_west_prime",
+      "input": {"entity_id": 11, "latitude": 51.5, "longitude": -0.0001},
+      "notes": "Just west of prime meridian (London area)"
+    },
+    {
+      "name": "radius_query_crossing_equator",
+      "operation": "query-radius",
+      "input": {
+        "latitude": 0.0,
+        "longitude": 0.0,
+        "radius_m": 500000
+      },
+      "notes": "Query spanning equator at prime meridian"
+    },
+    {
+      "name": "radius_query_crossing_prime",
+      "operation": "query-radius",
+      "input": {
+        "latitude": 51.5,
+        "longitude": 0.0,
+        "radius_m": 100000
+      },
+      "notes": "Query spanning prime meridian in London"
+    }
+  ]
+}

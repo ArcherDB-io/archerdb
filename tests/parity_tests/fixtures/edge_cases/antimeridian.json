@@ -1,0 +1,66 @@
+{
+  "description": "Antimeridian (date line) crossing edge cases",
+  "priority": "high",
+  "test_cases": [
+    {
+      "name": "antimeridian_east",
+      "input": {"entity_id": 1, "latitude": 0.0, "longitude": 180.0},
+      "notes": "Exact antimeridian on eastern approach"
+    },
+    {
+      "name": "antimeridian_west",
+      "input": {"entity_id": 2, "latitude": 0.0, "longitude": -180.0},
+      "notes": "Exact antimeridian on western approach"
+    },
+    {
+      "name": "just_before_antimeridian",
+      "input": {"entity_id": 3, "latitude": 0.0, "longitude": 179.9999},
+      "notes": "Just before crossing date line"
+    },
+    {
+      "name": "just_after_antimeridian",
+      "input": {"entity_id": 4, "latitude": 0.0, "longitude": -179.9999},
+      "notes": "Just after crossing date line"
+    },
+    {
+      "name": "antimeridian_north",
+      "input": {"entity_id": 5, "latitude": 45.0, "longitude": 180.0},
+      "notes": "Antimeridian in northern hemisphere"
+    },
+    {
+      "name": "antimeridian_south",
+      "input": {"entity_id": 6, "latitude": -45.0, "longitude": -180.0},
+      "notes": "Antimeridian in southern hemisphere"
+    },
+    {
+      "name": "fiji_east_side",
+      "input": {"entity_id": 7, "latitude": -18.0, "longitude": 179.5},
+      "notes": "Fiji east side (near antimeridian)"
+    },
+    {
+      "name": "fiji_west_side",
+      "input": {"entity_id": 8, "latitude": -18.0, "longitude": -179.5},
+      "notes": "Fiji west side (crosses antimeridian)"
+    },
+    {
+      "name": "radius_query_crossing_antimeridian",
+      "operation": "query-radius",
+      "input": {
+        "latitude": 0.0,
+        "longitude": 180.0,
+        "radius_m": 1000000
+      },
+      "notes": "Query spanning both sides of date line"
+    },
+    {
+      "name": "radius_query_near_antimeridian",
+      "operation": "query-radius",
+      "input": {
+        "latitude": -18.0,
+        "longitude": 179.9,
+        "radius_m": 50000
+      },
+      "notes": "Query near antimeridian covering Fiji"
+    }
+  ]
+}
