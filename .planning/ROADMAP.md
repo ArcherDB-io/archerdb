@@ -54,11 +54,11 @@ Plans:
   2. Zig SDK unit tests pass with same coverage as other SDKs
   3. curl examples demonstrate all 14 operations against running server
   4. Protocol documentation explains wire format enabling custom client implementation
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 12-01: Zig SDK implementation
-- [ ] 12-02: Protocol documentation and curl examples
+- [ ] 12-01-PLAN.md — Zig SDK core: types, errors, HTTP client, all 14 operations, unit tests, README
+- [ ] 12-02-PLAN.md — Protocol wire format docs, curl cookbook with all 14 operations
 
 ### Phase 13: SDK Operation Test Suite
 **Goal**: All 6 SDKs validated for correctness across all 14 operations
@@ -175,4 +175,4 @@ Phases execute in numeric order: 11 -> 11.1 -> 11.2 -> 12 -> 12.1 -> 13 -> ...
 
 ---
 *Roadmap created: 2026-02-01*
-*Last updated: 2026-02-01 (Phase 11 complete)*
+*Last updated: 2026-02-01 (Phase 12 planned)*
