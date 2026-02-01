@@ -140,11 +140,12 @@ Plans:
   3. Adversarial patterns from geo_workload.zig tested
   4. Scalability measured across node counts with regression detection automated
   5. Performance dashboard visualizes trends with historical tracking
-**Plans**: 2 plans
+**Plans**: 3 plans
 
 Plans:
-- [ ] 17-01-PLAN.md — Edge case test suite: polar coordinates, antimeridian, concave polygons, scale tests, TTL verification, adversarial patterns
-- [ ] 17-02-PLAN.md — Advanced benchmarking: scalability measurement, SDK parity, workload patterns, regression detection, historical tracking, dashboard
+- [x] 17-01-PLAN.md — Edge case test suite: polar coordinates, antimeridian, concave polygons, scale tests, TTL verification, adversarial patterns
+- [x] 17-02-PLAN.md — Advanced benchmarking: scalability measurement, SDK parity, workload patterns, regression detection, historical tracking, dashboard
+- [ ] 17-03-PLAN.md — Gap closure: Add API integration to edge case tests (EDGE-01 through EDGE-08)
 
 ### Phase 18: CI Integration & Documentation
 **Goal**: Automated CI pipelines and comprehensive documentation enable ongoing quality
@@ -175,9 +176,9 @@ Phases execute in numeric order: 11 -> 11.1 -> 11.2 -> 12 -> 12.1 -> 13 -> ...
 | 14. Error Handling & Parity | v1.1 | 2/2 | Complete (needs UAT) | 2026-02-01 |
 | 15. Benchmark Framework | v1.1 | 2/2 | Complete (needs UAT) | 2026-02-01 |
 | 16. Multi-Topology Testing | v1.1 | 2/2 | Complete (needs UAT) | 2026-02-01 |
-| 17. Edge Cases & Advanced | v1.1 | 0/2 | Planned | - |
+| 17. Edge Cases & Advanced | v1.1 | 2/3 | Gap closure needed | - |
 | 18. CI & Documentation | v1.1 | 0/2 | Not started | - |
 
 ---
 *Roadmap created: 2026-02-01*
-*Last updated: 2026-02-01 (Phase 17 planned)*
+*Last updated: 2026-02-01 (Phase 17 gap closure plan added)*
