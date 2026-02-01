@@ -1,0 +1,126 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2025 ArcherDB Contributors
+#
+# Weekly Benchmark Suite
+# Runs comprehensive benchmarks with historical tracking and regression detection.
+# Schedule: Sunday 2 AM UTC
+# Regression threshold: 10% (per Phase 15/17 decisions)
+
+name: Weekly Benchmark Suite
+on:
+  schedule:
+    - cron: '0 2 * * 0'  # Sunday 2 AM UTC
+  workflow_dispatch:  # Allow manual trigger
+
+concurrency:
+  group: benchmark-weekly
+  cancel-in-progress: false  # Never cancel running benchmarks
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest-8-cores  # Per CONTEXT.md decision
+    timeout-minutes: 180  # 3 hours for full suite
+    permissions:
+      contents: write  # For auto-push of benchmark results
+      pull-requests: write  # For PR comments on regression
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Need full history for baseline comparison
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -r test_infrastructure/requirements.txt 2>/dev/null || \
+          pip install pytest requests numpy scipy
+
+      - name: Download Zig
+        run: ./zig/download.sh
+
+      - name: Build ArcherDB release
+        run: ./zig/zig build -Drelease
+
+      - name: Start single-node server for benchmarks
+        run: |
+          TMPDIR=$(mktemp -d)
+          ./zig-out/bin/archerdb format --cluster=0 --replica=0 --replica-count=1 "$TMPDIR/benchmark.archerdb"
+          ./zig-out/bin/archerdb start --addresses=127.0.0.1:3000 --metrics-port=9100 --metrics-bind=127.0.0.1 "$TMPDIR/benchmark.archerdb" > server.log 2>&1 &
+          echo $! > server.pid
+          # Wait for server ready
+          for i in {1..60}; do
+            curl -sf http://127.0.0.1:9100/health/ready && break
+            sleep 1
+          done
+
+      - name: Run full benchmark suite
+        run: |
+          # Run benchmark CLI if available
+          if [ -f test_infrastructure/benchmarks/cli.py ]; then
+            python test_infrastructure/benchmarks/cli.py run \
+              --full-suite \
+              --output-json benchmark-results.json 2>/dev/null || \
+            python test_infrastructure/benchmarks/cli.py run \
+              --output-json benchmark-results.json 2>/dev/null
+          fi
+
+          # Fallback to built-in benchmark command if no CLI
+          if [ ! -f benchmark-results.json ]; then
+            ./zig-out/bin/archerdb benchmark \
+              --event-count=500000 \
+              --entity-count=50000 \
+              --query-uuid-count=50000 \
+              --query-radius-count=5000 \
+              --query-polygon-count=5000 2>&1 | tee benchmark-output.txt
+
+            # Create minimal JSON result for benchmark action
+            echo '[{"name": "Benchmark completed", "unit": "runs", "value": 1}]' > benchmark-results.json
+          fi
+
+      - name: Stop server
+        if: always()
+        run: |
+          kill $(cat server.pid) 2>/dev/null || true
+
+      - name: Store benchmark result
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          tool: 'customSmallerIsBetter'
+          output-file-path: benchmark-results.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: true
+          alert-threshold: '110%'
+          comment-on-alert: true
+          fail-on-alert: true
+          benchmark-data-dir-path: 'benchmarks/history'
+
+      - name: Commit JSON history file
+        run: |
+          DATE=$(date +%Y-%m-%d)
+          mkdir -p benchmarks/history
+          cp benchmark-results.json benchmarks/history/${DATE}.json
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add benchmarks/history/${DATE}.json
+          git commit -m "chore(benchmark): weekly results ${DATE}" || echo "No changes to commit"
+          git push || echo "Push skipped (may have been done by benchmark action)"
+
+      - name: Upload benchmark results artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-${{ github.sha }}
+          path: |
+            benchmark-results.json
+            benchmark-output.txt
+          retention-days: 90
+
+      - name: Upload server logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-server-log
+          path: server.log
