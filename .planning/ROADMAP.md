@@ -127,7 +127,8 @@ Plans:
 
 Plans:
 - [x] 16-01-PLAN.md — Topology infrastructure: cluster lifecycle methods, NetworkPartitioner, FailoverSimulator, ConsistencyChecker, TopologyTestRunner
-- [ ] 16-02-PLAN.md — Topology tests: operation tests across 4 topologies, failover tests, partition tests, topology query tests
+- [x] 16-02-PLAN.md — Topology tests: operation tests across 4 topologies, failover tests, partition tests, topology query tests
+**Completed**: 2026-02-01
 
 ### Phase 17: Edge Cases & Advanced Benchmarking
 **Goal**: Edge case coverage and automated regression detection with historical tracking
@@ -173,10 +174,10 @@ Phases execute in numeric order: 11 -> 11.1 -> 11.2 -> 12 -> 12.1 -> 13 -> ...
 | 13. SDK Operation Tests | v1.1 | 3/3 | Complete (needs UAT) | 2026-02-01 |
 | 14. Error Handling & Parity | v1.1 | 2/2 | Complete (needs UAT) | 2026-02-01 |
 | 15. Benchmark Framework | v1.1 | 2/2 | Complete (needs UAT) | 2026-02-01 |
-| 16. Multi-Topology Testing | v1.1 | 1/2 | In progress | - |
+| 16. Multi-Topology Testing | v1.1 | 2/2 | Complete (needs UAT) | 2026-02-01 |
 | 17. Edge Cases & Advanced | v1.1 | 0/2 | Not started | - |
 | 18. CI & Documentation | v1.1 | 0/2 | Not started | - |
 
 ---
 *Roadmap created: 2026-02-01*
-*Last updated: 2026-02-01 (Phase 16-01 complete)*
+*Last updated: 2026-02-01 (Phase 16 executed)*
