@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-02-01)
 
 **Core value:** Customers can deploy mission-critical geospatial workloads with confidence that their data is safe, queries are fast, and the service stays available during failures.
-**Current focus:** Phase 16 - Multi-Topology Testing (Complete)
+**Current focus:** Phase 17 - Edge Cases & Advanced Benchmarks (Plan 2 of 2 complete)
 
 ## Current Position
 
-Phase: 16 of 18 (Multi-Topology Testing)
+Phase: 17 of 18 (Edge Cases & Advanced Benchmarks)
 Plan: 2 of 2 in current phase
 Status: Phase complete
-Last activity: 2026-02-01 - Completed 16-02-PLAN.md (topology tests)
+Last activity: 2026-02-01 - Completed 17-02-PLAN.md (advanced benchmarks)
 
-Progress: [██████░░░░] 47%
+Progress: [███████░░░] 53%
 
 ## Milestone History
 
@@ -26,9 +26,9 @@ Progress: [██████░░░░] 47%
 ## Performance Metrics
 
 **Velocity (v1.1):**
-- Total plans completed: 13
+- Total plans completed: 15
 - Average duration: 8 min
-- Total execution time: 106 min
+- Total execution time: 119 min
 
 **By Phase:**
 
@@ -40,10 +40,11 @@ Progress: [██████░░░░] 47%
 | 14 | 2/2 | 27 min | 14 min |
 | 15 | 2/2 | 11 min | 6 min |
 | 16 | 2/2 | 7 min | 4 min |
+| 17 | 2/2 | 13 min | 7 min |
 
 **Recent Trend:**
-- Last 5 plans: 15-01 (5 min), 15-02 (6 min), 16-01 (4 min), 16-02 (3 min)
-- Trend: Fast execution on test infrastructure
+- Last 5 plans: 16-01 (4 min), 16-02 (3 min), 17-01 (8 min), 17-02 (5 min)
+- Trend: Consistent fast execution
 
 *Updated after each plan completion*
 
@@ -94,6 +95,12 @@ Recent decisions affecting current work:
 - [16-02]: Parametrize 14 operations x 4 topologies for comprehensive coverage
 - [16-02]: Auto-setup test data for operations that require existing entities
 - [16-02]: ARCHERDB_INTEGRATION=1 gates topology integration tests
+- [17-01]: Edge case fixtures: 33 cases for polar/antimeridian/equator
+- [17-01]: GeographicEdgeCaseGenerator uses boundary conditions systematically
+- [17-02]: Scaling factor = (throughput_N / throughput_1) / N
+- [17-02]: Linear scaling defined as factor 0.8-1.2
+- [17-02]: SDK parity threshold 20% of mean latency
+- [17-02]: City-concentrated uses Gaussian with std_dev = radius/3
 
 ### Pending Todos
 
@@ -101,6 +108,7 @@ Recent decisions affecting current work:
 - UAT: Run parity tests and verify 84 cells show 100% consistency (Phase 14)
 - UAT: Run benchmark suite and verify performance targets met (Phase 15)
 - UAT: Run topology tests on real cluster with `ARCHERDB_INTEGRATION=1` (Phase 16)
+- UAT: Verify edge case tests pass (Phase 17)
 
 ### Blockers/Concerns
 
@@ -109,7 +117,7 @@ None.
 ## Session Continuity
 
 Last session: 2026-02-01
-Stopped at: Completed 16-02-PLAN.md (topology tests - Phase 16 complete)
+Stopped at: Completed 17-02-PLAN.md (advanced benchmarks - Phase 17 complete)
 Resume file: None
 
-**Next Action:** Execute `/gsd:execute-phase 17` for documentation phase
+**Next Action:** Execute `/gsd:execute-phase 18` for documentation phase
