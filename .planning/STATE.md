@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-02-01)
 
 **Core value:** Customers can deploy mission-critical geospatial workloads with confidence that their data is safe, queries are fast, and the service stays available during failures.
-**Current focus:** Phase 15 - Benchmark Framework (Complete)
+**Current focus:** Phase 16 - Multi-Topology Testing (In progress)
 
 ## Current Position
 
-Phase: 15 of 18 (Benchmark Framework)
-Plan: 2 of 2 in current phase
-Status: Phase complete (needs UAT)
-Last activity: 2026-02-01 - Completed Phase 15 (benchmark framework + orchestrator bug fix)
+Phase: 16 of 18 (Multi-Topology Testing)
+Plan: 1 of 2 in current phase
+Status: In progress
+Last activity: 2026-02-01 - Completed 16-01-PLAN.md (topology testing infrastructure)
 
-Progress: [█████░░░░░] 39%
+Progress: [██████░░░░] 43%
 
 ## Milestone History
 
@@ -26,9 +26,9 @@ Progress: [█████░░░░░] 39%
 ## Performance Metrics
 
 **Velocity (v1.1):**
-- Total plans completed: 11
+- Total plans completed: 12
 - Average duration: 9 min
-- Total execution time: 99 min
+- Total execution time: 103 min
 
 **By Phase:**
 
@@ -39,10 +39,11 @@ Progress: [█████░░░░░] 39%
 | 13 | 3/3 | 21 min | 7 min |
 | 14 | 2/2 | 27 min | 14 min |
 | 15 | 2/2 | 11 min | 6 min |
+| 16 | 1/2 | 4 min | 4 min |
 
 **Recent Trend:**
-- Last 5 plans: 14-01 (22 min), 14-02 (5 min), 15-01 (5 min), 15-02 (6 min)
-- Trend: Consistent fast execution on benchmark framework
+- Last 5 plans: 14-02 (5 min), 15-01 (5 min), 15-02 (6 min), 16-01 (4 min)
+- Trend: Fast execution on infrastructure creation
 
 *Updated after each plan completion*
 
@@ -86,6 +87,10 @@ Recent decisions affecting current work:
 - [15-02]: Fresh cluster per benchmark run (isolated measurements)
 - [15-02]: MixedWorkload uses read_ratio (0.8 = 80% reads, 20% writes)
 - [15-02]: Regression threshold 10% for change detection
+- [16-01]: Use subprocess.terminate()/kill() for clean signal handling
+- [16-01]: NetworkPartitioner uses iptables INPUT chain DROP rules
+- [16-01]: ConsistencyChecker uses tenacity retry for eventual consistency
+- [16-01]: Recovery SLA targets: 3-node <10s, 5-node <15s, 6-node <20s
 
 ### Pending Todos
 
@@ -100,7 +105,7 @@ None.
 ## Session Continuity
 
 Last session: 2026-02-01
-Stopped at: Completed 15-02-PLAN.md (benchmark orchestrator)
+Stopped at: Completed 16-01-PLAN.md (topology testing infrastructure)
 Resume file: None
 
-**Next Action:** Execute `/gsd:execute-phase 16` for throughput benchmark runs
+**Next Action:** Execute `/gsd:execute-phase 16` for topology tests (16-02-PLAN.md)
