@@ -22,12 +22,12 @@ Requirements for comprehensive SDK testing and benchmarking infrastructure.
 
 ### SDK Development (SDK)
 
-- [ ] **SDK-01**: Zig SDK exists in src/clients/zig/ with clean API
-- [ ] **SDK-02**: Zig SDK implements all 14 operations
-- [ ] **SDK-03**: Zig SDK has unit tests matching other SDKs
-- [ ] **SDK-04**: Zig SDK documentation exists (README, examples)
-- [ ] **SDK-05**: curl examples documented for all 14 operations
-- [ ] **SDK-06**: Protocol documentation explains wire format for custom clients
+- [x] **SDK-01**: Zig SDK exists in src/clients/zig/ with clean API
+- [x] **SDK-02**: Zig SDK implements all 14 operations
+- [x] **SDK-03**: Zig SDK has unit tests matching other SDKs
+- [x] **SDK-04**: Zig SDK documentation exists (README, examples)
+- [x] **SDK-05**: curl examples documented for all 14 operations
+- [x] **SDK-06**: Protocol documentation explains wire format for custom clients
 
 ### Operation Correctness (OP)
 

@@ -57,8 +57,9 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 12-01-PLAN.md — Zig SDK core: types, errors, HTTP client, all 14 operations, unit tests, README
-- [ ] 12-02-PLAN.md — Protocol wire format docs, curl cookbook with all 14 operations
+- [x] 12-01-PLAN.md — Zig SDK core: types, errors, HTTP client, all 14 operations, unit tests, README
+- [x] 12-02-PLAN.md — Protocol wire format docs, curl cookbook with all 14 operations
+**Completed**: 2026-02-01
 
 ### Phase 13: SDK Operation Test Suite
 **Goal**: All 6 SDKs validated for correctness across all 14 operations
@@ -165,7 +166,7 @@ Phases execute in numeric order: 11 -> 11.1 -> 11.2 -> 12 -> 12.1 -> 13 -> ...
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 11. Test Infrastructure | v1.1 | 2/2 | Complete | 2026-02-01 |
-| 12. Zig SDK & Protocol | v1.1 | 0/2 | Not started | - |
+| 12. Zig SDK & Protocol | v1.1 | 2/2 | Complete | 2026-02-01 |
 | 13. SDK Operation Tests | v1.1 | 0/3 | Not started | - |
 | 14. Error Handling & Parity | v1.1 | 0/2 | Not started | - |
 | 15. Benchmark Framework | v1.1 | 0/2 | Not started | - |
@@ -175,4 +176,4 @@ Phases execute in numeric order: 11 -> 11.1 -> 11.2 -> 12 -> 12.1 -> 13 -> ...
 
 ---
 *Roadmap created: 2026-02-01*
-*Last updated: 2026-02-01 (Phase 12 planned)*
+*Last updated: 2026-02-01 (Phase 12 complete)*
