@@ -2960,6 +2960,14 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         ) usize {
             _ = self; // Topology is cluster-wide, not per-state-machine state
 
+            if (output.len < @sizeOf(TopologyResponse)) {
+                log.warn("get_topology: output buffer too small ({d} < {d})", .{
+                    output.len,
+                    @sizeOf(TopologyResponse),
+                });
+                return 0;
+            }
+
             // Build topology response
             // Note: In production, this would query the actual cluster state from
             // the TopologyManager. For now, we return a minimal valid response
@@ -2975,12 +2983,11 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             response.shards[0].status = .active;
             response.shards[0].setPrimary("127.0.0.1:5000");
 
-            // Calculate actual response size (header + only active shards)
+            // Calculate actual response size (header + only active shards, not all 256)
             const header_size = @offsetOf(TopologyResponse, "shards");
             const shard_size = @sizeOf(topology_mod.ShardInfo);
             const response_size = header_size + (response.num_shards * shard_size);
 
-            // Check if output buffer can fit the actual response
             if (output.len < response_size) {
                 log.warn("get_topology: output buffer too small for response ({d} < {d})", .{
                     output.len,
@@ -2989,42 +2996,20 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 return 0;
             }
 
-            // Write header fields manually (don't copy the full 256-shard array)
-            var offset: usize = 0;
+            // Write response to output buffer
+            const response_ptr = mem.bytesAsValue(
+                TopologyResponse,
+                output[0..@sizeOf(TopologyResponse)],
+            );
+            response_ptr.* = response;
 
-            // Write header fields
-            mem.writeInt(u64, output[offset..][0..8], response.version, .little);
-            offset += 8;
-            mem.writeInt(u32, output[offset..][0..4], response.num_shards, .little);
-            offset += 4;
-            mem.writeInt(u128, output[offset..][0..16], response.cluster_id, .little);
-            offset += 16;
-            mem.writeInt(i128, output[offset..][0..16], response.last_change_ns, .little);
-            offset += 16;
-            output[offset] = response.resharding_status;
-            offset += 1;
-            output[offset] = response.flags;
-            offset += 1;
-            // Skip padding (6 bytes)
-            offset += 6;
-
-            assert(offset == header_size);
-
-            // Write only the active shards (not all 256)
-            for (0..response.num_shards) |i| {
-                const shard_bytes = mem.asBytes(&response.shards[i]);
-                @memcpy(output[offset..][0..shard_size], shard_bytes);
-                offset += shard_size;
-            }
-
-            assert(offset == response_size);
-
-            log.debug("get_topology: returned topology v{d} with {d} shards (size={d} bytes)", .{
+            log.debug("get_topology: returned topology v{d} with {d} shards (size={d})", .{
                 response.version,
                 response.num_shards,
                 response_size,
             });
 
+            // Return only the size actually used, not full struct size
             return response_size;
         }
 
