@@ -18,7 +18,7 @@ This milestone delivers comprehensive SDK testing and benchmarking infrastructur
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 11: Test Infrastructure Foundation** - Server harness, CI tiers, shared fixtures, data generators
-- [ ] **Phase 12: Zig SDK & Protocol Documentation** - Create Zig SDK, protocol docs, curl examples
+- [x] **Phase 12: Zig SDK & Protocol Documentation** - Create Zig SDK, protocol docs, curl examples
 - [ ] **Phase 13: SDK Operation Test Suite** - All 14 operations tested across all 6 SDKs
 - [ ] **Phase 14: Error Handling & Cross-SDK Parity** - Error handling consistency, parity matrix
 - [ ] **Phase 15: Benchmark Framework** - Throughput and latency benchmarking with percentiles
@@ -72,12 +72,12 @@ Plans:
   4. Java SDK passes all 14 operation tests with 100% pass rate
   5. C SDK passes all 14 operation tests with 100% pass rate
   6. Zig SDK passes all 14 operation tests with 100% pass rate
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 13-01: Python and Node.js SDK tests
-- [ ] 13-02: Go and Java SDK tests
-- [ ] 13-03: C and Zig SDK tests
+- [ ] 13-01-PLAN.md — Test runner infrastructure, Python SDK tests, Node.js SDK tests
+- [ ] 13-02-PLAN.md — Go SDK tests, Java SDK tests
+- [ ] 13-03-PLAN.md — C SDK tests, Zig SDK tests
 
 ### Phase 14: Error Handling & Cross-SDK Parity
 **Goal**: All SDKs handle errors consistently and produce identical results
@@ -176,4 +176,4 @@ Phases execute in numeric order: 11 -> 11.1 -> 11.2 -> 12 -> 12.1 -> 13 -> ...
 
 ---
 *Roadmap created: 2026-02-01*
-*Last updated: 2026-02-01 (Phase 12 complete)*
+*Last updated: 2026-02-01 (Phase 13 planned)*
