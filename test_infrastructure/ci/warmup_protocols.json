@@ -1,0 +1,40 @@
+{
+  "description": "Per-SDK warmup iteration counts for stable benchmark results",
+  "version": "1.0.0",
+  "protocols": {
+    "python": {
+      "warmup_iterations": 100,
+      "measurement_iterations": 1000,
+      "notes": "CPython has minimal warmup needs"
+    },
+    "nodejs": {
+      "warmup_iterations": 200,
+      "measurement_iterations": 1000,
+      "notes": "V8 JIT needs warmup for optimization"
+    },
+    "java": {
+      "warmup_iterations": 500,
+      "measurement_iterations": 1000,
+      "notes": "JVM HotSpot needs significant warmup for tiered compilation"
+    },
+    "go": {
+      "warmup_iterations": 100,
+      "measurement_iterations": 1000,
+      "notes": "Go has minimal warmup needs (AOT compiled)"
+    },
+    "c": {
+      "warmup_iterations": 50,
+      "measurement_iterations": 1000,
+      "notes": "C has minimal warmup (native code), mostly cache warming"
+    },
+    "zig": {
+      "warmup_iterations": 50,
+      "measurement_iterations": 1000,
+      "notes": "Zig has minimal warmup (native code), mostly cache warming"
+    }
+  },
+  "variance_threshold": {
+    "acceptable_cv": 0.05,
+    "notes": "Coefficient of variation >5% indicates need for more warmup"
+  }
+}

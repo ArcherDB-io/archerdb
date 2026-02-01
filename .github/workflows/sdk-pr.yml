@@ -1,0 +1,102 @@
+name: SDK PR Tests
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: sdk-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  pr-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15  # Strict 15 min budget per CONTEXT.md
+    strategy:
+      fail-fast: true  # Fail fast per CONTEXT.md decision
+      matrix:
+        sdk: [python, nodejs, go, java]
+    name: SDK PR (${{ matrix.sdk }})
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Zig
+        run: ./zig/download.sh
+
+      - name: Build ArcherDB
+        run: ./zig/zig build -j4
+
+      - name: Start server
+        run: |
+          TMPDIR=$(mktemp -d)
+          ./zig-out/bin/archerdb format --cluster=0 --replica=0 --replica-count=1 "$TMPDIR/test.archerdb"
+          ./zig-out/bin/archerdb start --addresses=127.0.0.1:3000 --metrics-port=9100 --metrics-bind=127.0.0.1 "$TMPDIR/test.archerdb" > server.log 2>&1 &
+          echo $! > server.pid
+          for i in {1..60}; do
+            curl -sf http://127.0.0.1:9100/health/ready && break
+            sleep 1
+          done
+
+      # Python: Full suite (fastest SDK, most comprehensive)
+      - uses: actions/setup-python@v5
+        if: matrix.sdk == 'python'
+        with:
+          python-version: '3.11'
+
+      - name: Python full suite
+        if: matrix.sdk == 'python'
+        run: |
+          pip install pytest
+          cd src/clients/python
+          export PYTHONPATH=src
+          export ARCHERDB_INTEGRATION=1
+          export ARCHERDB_ADDRESS=127.0.0.1:3000
+          python -m pytest tests/ -v --timeout=60
+
+      # Node.js: Critical ops
+      - uses: actions/setup-node@v4
+        if: matrix.sdk == 'nodejs'
+        with:
+          node-version: '20'
+
+      - name: Node.js critical ops
+        if: matrix.sdk == 'nodejs'
+        run: |
+          cd src/clients/node
+          npm install
+          ARCHERDB_HOST=127.0.0.1 ARCHERDB_PORT=3000 npm test
+
+      # Go: Critical ops
+      - uses: actions/setup-go@v5
+        if: matrix.sdk == 'go'
+        with:
+          go-version: '1.21'
+
+      - name: Go critical ops
+        if: matrix.sdk == 'go'
+        run: |
+          cd src/clients/go
+          ARCHERDB_HOST=127.0.0.1 ARCHERDB_PORT=3000 go test ./... -v -timeout 60s
+
+      # Java: Critical ops
+      - uses: actions/setup-java@v4
+        if: matrix.sdk == 'java'
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Java critical ops
+        if: matrix.sdk == 'java'
+        run: |
+          cd src/clients/java
+          ARCHERDB_HOST=127.0.0.1 ARCHERDB_PORT=3000 mvn test -q
+
+      - name: Cleanup
+        if: always()
+        run: kill $(cat server.pid) 2>/dev/null || true
+
+      - name: Upload server logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-log-${{ matrix.sdk }}
+          path: server.log

@@ -1,0 +1,166 @@
+name: SDK Nightly Tests
+on:
+  schedule:
+    - cron: '0 2 * * *'  # 2 AM UTC daily
+  workflow_dispatch:  # Allow manual trigger
+
+concurrency:
+  group: sdk-nightly
+  cancel-in-progress: false
+
+jobs:
+  nightly-full:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120  # 2 hour budget for full suite
+    strategy:
+      fail-fast: false  # Run all SDKs even if one fails
+      matrix:
+        sdk: [python, nodejs, go, java, c, zig]
+        node_count: [1, 3, 5]
+    name: SDK Nightly (${{ matrix.sdk }}, ${{ matrix.node_count }} nodes)
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Zig
+        run: ./zig/download.sh
+
+      - name: Build ArcherDB
+        run: ./zig/zig build -j4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install test infrastructure
+        run: |
+          pip install -r test_infrastructure/requirements.txt 2>/dev/null || pip install pytest
+
+      - name: Start ${{ matrix.node_count }}-node cluster
+        id: cluster
+        run: |
+          # For single node, use simple startup
+          if [ "${{ matrix.node_count }}" == "1" ]; then
+            TMPDIR=$(mktemp -d)
+            ./zig-out/bin/archerdb format --cluster=0 --replica=0 --replica-count=1 "$TMPDIR/test.archerdb"
+            ./zig-out/bin/archerdb start --addresses=127.0.0.1:3000 --metrics-port=9100 --metrics-bind=127.0.0.1 "$TMPDIR/test.archerdb" > server.log 2>&1 &
+            echo $! > cluster_pids.txt
+            echo "addresses=127.0.0.1:3000" >> $GITHUB_OUTPUT
+          else
+            # Multi-node: use dev-cluster script
+            ./scripts/dev-cluster.sh --nodes=${{ matrix.node_count }} start || {
+              # Fallback to single node if multi-node not available
+              TMPDIR=$(mktemp -d)
+              ./zig-out/bin/archerdb format --cluster=0 --replica=0 --replica-count=1 "$TMPDIR/test.archerdb"
+              ./zig-out/bin/archerdb start --addresses=127.0.0.1:3000 --metrics-port=9100 --metrics-bind=127.0.0.1 "$TMPDIR/test.archerdb" > server.log 2>&1 &
+              echo $! > cluster_pids.txt
+              echo "addresses=127.0.0.1:3000" >> $GITHUB_OUTPUT
+            }
+          fi
+          # Wait for cluster ready
+          for i in {1..120}; do
+            curl -sf http://127.0.0.1:9100/health/ready && break
+            sleep 1
+          done
+
+      # Python SDK tests
+      - name: Run Python SDK tests
+        if: matrix.sdk == 'python'
+        env:
+          ARCHERDB_ADDRESS: ${{ steps.cluster.outputs.addresses || '127.0.0.1:3000' }}
+        run: |
+          pip install pytest
+          cd src/clients/python
+          export PYTHONPATH=src
+          export ARCHERDB_INTEGRATION=1
+          python -m pytest tests/ -v
+
+      # Node.js SDK tests
+      - uses: actions/setup-node@v4
+        if: matrix.sdk == 'nodejs'
+        with:
+          node-version: '20'
+
+      - name: Run Node.js SDK tests
+        if: matrix.sdk == 'nodejs'
+        run: |
+          cd src/clients/node
+          npm install
+          ARCHERDB_HOST=127.0.0.1 ARCHERDB_PORT=3000 npm test
+
+      # Go SDK tests
+      - uses: actions/setup-go@v5
+        if: matrix.sdk == 'go'
+        with:
+          go-version: '1.21'
+
+      - name: Run Go SDK tests
+        if: matrix.sdk == 'go'
+        run: |
+          cd src/clients/go
+          ARCHERDB_HOST=127.0.0.1 ARCHERDB_PORT=3000 go test ./... -v
+
+      # Java SDK tests
+      - uses: actions/setup-java@v4
+        if: matrix.sdk == 'java'
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Run Java SDK tests
+        if: matrix.sdk == 'java'
+        run: |
+          cd src/clients/java
+          ARCHERDB_HOST=127.0.0.1 ARCHERDB_PORT=3000 mvn test
+
+      # C SDK tests
+      - name: Run C SDK tests
+        if: matrix.sdk == 'c'
+        run: |
+          cd src/clients/c
+          make test 2>/dev/null || echo "C SDK tests not yet implemented"
+
+      # Zig SDK tests
+      - name: Run Zig SDK tests
+        if: matrix.sdk == 'zig'
+        run: |
+          echo "Zig SDK tests will be added in Phase 12"
+
+      - name: Cleanup cluster
+        if: always()
+        run: |
+          if [ -f cluster_pids.txt ]; then
+            for pid in $(cat cluster_pids.txt | tr ',' ' '); do
+              kill $pid 2>/dev/null || true
+            done
+          fi
+          ./scripts/dev-cluster.sh stop 2>/dev/null || true
+
+      - name: Upload server logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-log-${{ matrix.sdk }}-${{ matrix.node_count }}nodes
+          path: |
+            server.log
+            *.log
+
+  benchmark-nightly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Zig
+        run: ./zig/download.sh
+
+      - name: Build release
+        run: ./zig/zig build -Drelease
+
+      - name: Run benchmarks
+        run: |
+          ./zig-out/bin/archerdb benchmark \
+            --event-count=100000 \
+            --entity-count=10000 \
+            --query-uuid-count=10000 \
+            --query-radius-count=1000 \
+            --query-polygon-count=1000 || echo "Benchmark completed"

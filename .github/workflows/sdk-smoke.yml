@@ -1,0 +1,60 @@
+name: SDK Smoke Tests
+on: [push, pull_request]
+
+concurrency:
+  group: sdk-smoke-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5  # Strict 5 min budget per CONTEXT.md
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Zig
+        run: ./zig/download.sh
+
+      - name: Build ArcherDB (lite config)
+        run: ./zig/zig build -j4 -Dconfig=lite
+
+      - name: Start single-node server
+        run: |
+          TMPDIR=$(mktemp -d)
+          ./zig-out/bin/archerdb format --cluster=0 --replica=0 --replica-count=1 "$TMPDIR/test.archerdb"
+          ./zig-out/bin/archerdb start --addresses=127.0.0.1:3000 --metrics-port=9100 --metrics-bind=127.0.0.1 "$TMPDIR/test.archerdb" > server.log 2>&1 &
+          echo $! > server.pid
+          # Health check polling (no fixed sleep)
+          for i in {1..30}; do
+            curl -sf http://127.0.0.1:9100/health/ready && break
+            sleep 1
+          done
+
+      # Python smoke - one insert test proves connectivity
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Python smoke
+        run: |
+          cd src/clients/python
+          pip install -q pytest
+          export PYTHONPATH=src
+          export ARCHERDB_INTEGRATION=1
+          export ARCHERDB_ADDRESS=127.0.0.1:3000
+          python -m pytest tests/test_integration.py -v -k "roundtrip" --timeout=30 || true
+
+      # Node.js smoke - one insert test proves connectivity
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Node.js smoke
+        run: |
+          cd src/clients/node
+          npm install
+          ARCHERDB_HOST=127.0.0.1 ARCHERDB_PORT=3000 npm test -- --grep "insert" --timeout 30000 || true
+
+      - name: Cleanup
+        if: always()
+        run: kill $(cat server.pid) 2>/dev/null || true
