@@ -1,0 +1,13 @@
+// Helper to setup test data
+async function setupData(client: GeoClient, setup: any) {
+  if (!setup || !setup.insert_first || !Array.isArray(setup.insert_first)) return;
+  
+  const events = setup.insert_first.map((ev: any) =>
+    createGeoEvent({
+      entity_id: BigInt(ev.entity_id),
+      latitude: ev.latitude,
+      longitude: ev.longitude,
+    })
+  );
+  await client.insertEvents(events);
+}

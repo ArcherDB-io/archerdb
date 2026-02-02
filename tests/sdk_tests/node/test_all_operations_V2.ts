@@ -49,16 +49,18 @@ function shouldSkip(testCase: any): boolean {
 
 // Helper to setup test data
 async function setupData(client: GeoClient, setup: any) {
-  if (!setup || !setup.insert_first || !Array.isArray(setup.insert_first)) return;
-
-  const events = setup.insert_first.map((ev: any) =>
-    createGeoEvent({
-      entity_id: BigInt(ev.entity_id),
-      latitude: ev.latitude,
-      longitude: ev.longitude,
-    })
-  );
-  await client.insertEvents(events);
+  if (!setup) return;
+  
+  if (setup.insert_first) {
+    const events = setup.insert_first.map((ev: any) =>
+      createGeoEvent({
+        entity_id: BigInt(ev.entity_id),
+        latitude: ev.latitude,
+        longitude: ev.longitude,
+      })
+    );
+    await client.insertEvents(events);
+  }
 }
 
 let clusterProcess: ChildProcess | null = null;
@@ -132,7 +134,7 @@ while True: time.sleep(1)
       );
 
       const errors = await client!.insertEvents(events);
-      if (testCase.expected_output?.all_ok) {
+      if (testCase.expected_output.all_ok) {
         expect(errors).toEqual([]);
       }
     });
@@ -155,7 +157,7 @@ while True: time.sleep(1)
       );
 
       const errors = await client!.upsertEvents(events);
-      if (testCase.expected_output?.all_ok) {
+      if (testCase.expected_output.all_ok) {
         expect(errors).toEqual([]);
       }
     });
@@ -192,7 +194,7 @@ while True: time.sleep(1)
 
       const found = await client!.getLatestByUuid(entityId);
 
-      if (testCase.expected_output?.found) {
+      if (testCase.expected_output.found) {
         expect(found).not.toBeNull();
       } else {
         expect(found).toBeNull();
@@ -212,7 +214,7 @@ while True: time.sleep(1)
 
       const results = await client!.getLatestByUuidBatch(entityIds);
       
-      const foundCount = testCase.expected_output?.found_count || 0;
+      const foundCount = testCase.expected_output.found_count || 0;
       expect(results.size).toBeGreaterThanOrEqual(foundCount);
     });
   });
@@ -232,8 +234,8 @@ while True: time.sleep(1)
         group_id: testCase.input.group_id ? BigInt(testCase.input.group_id) : undefined,
       });
 
-      if (testCase.expected_output?.count_in_range !== undefined) {
-        expect(result.events.length).toBe(testCase.expected_output?.count_in_range);
+      if (testCase.expected_output.count_in_range !== undefined) {
+        expect(result.events.length).toBe(testCase.expected_output.count_in_range);
       }
     });
   });
@@ -256,7 +258,7 @@ while True: time.sleep(1)
         group_id: testCase.input.group_id ? BigInt(testCase.input.group_id) : undefined,
       });
 
-      if (testCase.expected_output?.count !== undefined) {
+      if (testCase.expected_output.count !== undefined) {
         expect(result.events.length).toBeGreaterThanOrEqual(0);
       }
     });
@@ -274,7 +276,7 @@ while True: time.sleep(1)
         group_id: testCase.input.group_id ? BigInt(testCase.input.group_id) : undefined,
       });
 
-      if (testCase.expected_output?.count_in_range !== undefined) {
+      if (testCase.expected_output.count_in_range !== undefined) {
         expect(result.events.length).toBeGreaterThanOrEqual(0);
       }
     });
