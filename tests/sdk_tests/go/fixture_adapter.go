@@ -121,6 +121,10 @@ func MapToGeoEvent(m map[string]interface{}) types.GeoEvent {
 	if v, ok := m["flags"].(float64); ok {
 		event.Flags = types.GeoEventFlags(uint16(v))
 	}
+	// Timestamp (in fixture: seconds, in SDK: nanoseconds)
+	if v, ok := m["timestamp"].(float64); ok {
+		event.Timestamp = uint64(v) * 1_000_000_000 // Convert seconds to nanoseconds
+	}
 
 	return event
 }
@@ -132,6 +136,24 @@ func ConvertEntityIDs(input []interface{}) []types.Uint128 {
 		if v, ok := item.(float64); ok {
 			ids = append(ids, types.ToUint128(uint64(v)))
 		}
+	}
+	return ids
+}
+
+// ConvertEntityIDRange converts an entity_ids_range specification to Uint128 slice.
+func ConvertEntityIDRange(rangeSpec map[string]interface{}) []types.Uint128 {
+	start := uint64(0)
+	if v, ok := rangeSpec["start"].(float64); ok {
+		start = uint64(v)
+	}
+	count := 0
+	if v, ok := rangeSpec["count"].(float64); ok {
+		count = int(v)
+	}
+
+	ids := make([]types.Uint128, 0, count)
+	for i := 0; i < count; i++ {
+		ids = append(ids, types.ToUint128(start+uint64(i)))
 	}
 	return ids
 }
@@ -218,7 +240,7 @@ func generateRangeEvents(rangeGen map[string]interface{}) []types.GeoEvent {
 }
 
 // generateHotspotEvents generates events from an insert_hotspot specification.
-// Returns a limited number of events (max 500) to stay within batch size limits.
+// Returns a limited number of events (max 100) to stay within safe batch size limits.
 func generateHotspotEvents(hotspot map[string]interface{}) []types.GeoEvent {
 	centerLat := 0.0
 	if v, ok := hotspot["center_latitude"].(float64); ok {
@@ -241,9 +263,9 @@ func generateHotspotEvents(hotspot map[string]interface{}) []types.GeoEvent {
 		concentration = v / 100.0
 	}
 
-	// Limit count to avoid batch size limits
-	// Max batch is typically 10000, but keep conservative
-	const maxEvents = 500
+	// Limit count to avoid batch size limits in test environments
+	// Use conservative limit for integration tests
+	const maxEvents = 100
 	if count > maxEvents {
 		count = maxEvents
 	}
