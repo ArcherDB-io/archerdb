@@ -76,7 +76,7 @@ async function main() {
 
     console.log('\nok')
   } finally {
-    await client.close()
+    client.destroy()
   }
 }
 
