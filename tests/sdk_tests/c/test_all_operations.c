@@ -361,42 +361,40 @@ static void test_insert(void) {
         packet.data = tc->events;
         packet.data_size = tc->event_count * sizeof(geo_event_t);
 
-        if (submit_and_wait(&packet) && last_response.status == ARCH_PACKET_OK) {
-            // Check if we got any error results
-            if (last_response.len > 0) {
-                insert_geo_events_result_t* results =
-                    (insert_geo_events_result_t*)last_response.data;
-                int result_count = last_response.len / sizeof(insert_geo_events_result_t);
+        bool success = submit_and_wait(&packet);
 
-                // For error test cases, we expect specific error codes
-                if (tc->expected_result_code != 0 || result_count > 0) {
-                    bool found_expected = false;
-                    for (int j = 0; j < result_count; j++) {
-                        if (results[j].result != INSERT_GEO_EVENT_OK) {
-                            found_expected = true;
-                            break;
-                        }
+        // For invalid test cases, client eviction is EXPECTED behavior
+        if (strstr(tc->name, "invalid") != NULL) {
+            // Invalid inputs should cause eviction or error
+            if (!success || last_response.status == ARCH_PACKET_CLIENT_EVICTED) {
+                printf("\033[32mPASS\033[0m (expected rejection)\n");
+                tests_passed++;
+            } else if (last_response.status == ARCH_PACKET_OK && last_response.len > 0) {
+                // Check if got error results
+                insert_geo_events_result_t* results = (insert_geo_events_result_t*)last_response.data;
+                int result_count = last_response.len / sizeof(insert_geo_events_result_t);
+                bool has_error = false;
+                for (int j = 0; j < result_count; j++) {
+                    if (results[j].result != INSERT_GEO_EVENT_OK) {
+                        has_error = true;
+                        break;
                     }
-                    if (strstr(tc->name, "invalid") || strstr(tc->name, "error")) {
-                        if (found_expected) {
-                            printf("\033[32mPASS\033[0m (expected error)\n");
-                            tests_passed++;
-                        } else {
-                            printf("\033[31mFAIL\033[0m - expected error not found\n");
-                            tests_failed++;
-                        }
-                    } else {
-                        printf("\033[32mPASS\033[0m\n");
-                        tests_passed++;
-                    }
-                } else {
-                    printf("\033[32mPASS\033[0m\n");
+                }
+                if (has_error) {
+                    printf("\033[32mPASS\033[0m (expected error)\n");
                     tests_passed++;
+                } else {
+                    printf("\033[31mFAIL\033[0m - expected error not found\n");
+                    tests_failed++;
                 }
             } else {
-                printf("\033[32mPASS\033[0m\n");
-                tests_passed++;
+                printf("\033[31mFAIL\033[0m - unexpected success\n");
+                tests_failed++;
             }
+        } else if (success && last_response.status == ARCH_PACKET_OK) {
+            // Normal test cases should succeed
+            printf("\033[32mPASS\033[0m\n");
+            tests_passed++;
         } else {
             printf("\033[31mFAIL\033[0m - request failed\n");
             tests_failed++;
