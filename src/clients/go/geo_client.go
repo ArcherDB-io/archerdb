@@ -1125,8 +1125,20 @@ func (c *geoClient) doGeoRequest(op types.GeoOperation, count int, eventSize uin
 		return nil, errors.ErrClientClosed{}
 	}
 
-	// Wait for completion
-	reply := <-req.ready
+	// Wait for completion with timeout
+	timeout := c.config.RequestTimeout
+	if timeout == 0 {
+		timeout = 10 * time.Second // Default timeout
+	}
+
+	var reply []uint8
+	select {
+	case reply = <-req.ready:
+		// Success - got response
+	case <-time.After(timeout):
+		return nil, fmt.Errorf("request timeout after %v", timeout)
+	}
+
 	packetStatus := C.ARCH_PACKET_STATUS(packet.status)
 
 	if packetStatus != C.ARCH_PACKET_OK {
@@ -1178,8 +1190,20 @@ func (c *geoClient) doGeoRequestBytes(op types.GeoOperation, data []byte) ([]uin
 		return nil, errors.ErrClientClosed{}
 	}
 
-	// Wait for completion
-	reply := <-req.ready
+	// Wait for completion with timeout
+	timeout := c.config.RequestTimeout
+	if timeout == 0 {
+		timeout = 10 * time.Second // Default timeout
+	}
+
+	var reply []uint8
+	select {
+	case reply = <-req.ready:
+		// Success - got response
+	case <-time.After(timeout):
+		return nil, fmt.Errorf("request timeout after %v", timeout)
+	}
+
 	packetStatus := C.ARCH_PACKET_STATUS(packet.status)
 
 	if packetStatus != C.ARCH_PACKET_OK {
