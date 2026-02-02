@@ -1,0 +1,4 @@
+-------------------------------------------------------------------------------
+Test set: com.archerdb.sdktests.AllOperationsTestComprehensive
+-------------------------------------------------------------------------------
+Tests run: 79, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.373 s -- in com.archerdb.sdktests.AllOperationsTestComprehensive
