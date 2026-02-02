@@ -782,8 +782,13 @@ void on_completion(
     // Signaling the main thread we received the reply:
     pthread_mutex_lock(&ctx->lock);
 
-    memcpy (ctx->reply, data, size);
-    ctx->size = size;
+    // Check for null data before copying
+    if (data != NULL && size > 0) {
+        memcpy (ctx->reply, data, size);
+        ctx->size = size;
+    } else {
+        ctx->size = 0;
+    }
     ctx->completed = true;
 
     pthread_cond_signal(&ctx->cv);
