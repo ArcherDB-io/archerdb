@@ -11,7 +11,7 @@ import os
 import time
 import random
 
-from archerdb import GeoClientSync, GeoClientConfig, GeoEvent
+from archerdb import GeoClientSync, GeoClientConfig, create_geo_event, nano_to_degrees
 
 
 def main():
@@ -39,16 +39,15 @@ def main():
             entity_id = random.randint(1, 2**63)
             entity_ids.append(entity_id)
 
-            event = GeoEvent(
+            event = create_geo_event(
                 entity_id=entity_id,
                 latitude=base_lat + (i * 0.001),  # ~111 meters apart
                 longitude=base_lon + (i * 0.001),
-                timestamp=int(time.time() * 1_000_000_000) + i,  # nanoseconds
                 group_id=1,
-                altitude_mm=0,
-                velocity_mms=0,
-                heading_cdeg=0,
-                accuracy_mm=10_000,  # 10m accuracy
+                altitude_m=0,
+                velocity_mps=0,
+                heading=0,
+                accuracy_m=10,  # 10m accuracy
             )
             batch.add(event)
 
@@ -68,14 +67,14 @@ def main():
 
         print(f"\nFound {len(result.events)} events within 1km of SF center:")
         for event in result.events:
-            print(f"  Entity {event.entity_id}: ({event.latitude:.4f}, {event.longitude:.4f})")
+            print(f"  Entity {event.entity_id}: ({nano_to_degrees(event.lat_nano):.4f}, {nano_to_degrees(event.lon_nano):.4f})")
 
         # Look up a specific entity
         if entity_ids:
             event = client.get_latest_by_uuid(entity_ids[0])
             if event:
                 print(f"\nLatest position for entity {entity_ids[0]}:")
-                print(f"  Location: ({event.latitude:.4f}, {event.longitude:.4f})")
+                print(f"  Location: ({nano_to_degrees(event.lat_nano):.4f}, {nano_to_degrees(event.lon_nano):.4f})")
                 print(f"  Timestamp: {event.timestamp}")
 
         print("\nok")
