@@ -42,7 +42,8 @@ pub fn build(b: *std.Build) void {
 
     // Link against the C SDK static library
     // The C SDK is built as part of the main ArcherDB build
-    exe.addLibraryPath(.{ .cwd_relative = "../../../zig-out/lib" });
+    // Library is in src/clients/c/lib/<target>/
+    exe.addLibraryPath(.{ .cwd_relative = "../../../src/clients/c/lib/x86_64-linux-gnu.2.27" });
     exe.linkSystemLibrary("arch_client");
 
     // Also need to link Zig runtime libraries

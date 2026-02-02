@@ -591,7 +591,7 @@ static void test_query_uuid_batch(void) {
 
         int id_count = tc->entity_id_count > 0 ? tc->entity_id_count : tc->setup_event_count;
         header->count = id_count;
-        header->reserved = 0;
+        memset(header->reserved, 0, sizeof(header->reserved));
 
         if (tc->entity_id_count > 0) {
             memcpy(ids, tc->entity_ids, id_count * sizeof(arch_uint128_t));

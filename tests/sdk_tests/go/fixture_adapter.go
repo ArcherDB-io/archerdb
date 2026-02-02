@@ -156,7 +156,123 @@ func GetSetupEvents(input map[string]interface{}) []types.GeoEvent {
 		}
 	}
 
+	// Check for insert_first_range (range generator)
+	if rangeGen, ok := setup["insert_first_range"].(map[string]interface{}); ok {
+		return generateRangeEvents(rangeGen)
+	}
+
+	// Check for insert_hotspot (hotspot generator)
+	if hotspot, ok := setup["insert_hotspot"].(map[string]interface{}); ok {
+		return generateHotspotEvents(hotspot)
+	}
+
+	// Check for insert_with_timestamps (events with explicit timestamps)
+	if timestampEvents, ok := setup["insert_with_timestamps"].([]interface{}); ok {
+		return ConvertFixtureEvents(timestampEvents)
+	}
+
 	return nil
+}
+
+// generateRangeEvents generates events from an insert_first_range specification.
+func generateRangeEvents(rangeGen map[string]interface{}) []types.GeoEvent {
+	startID := uint64(0)
+	if v, ok := rangeGen["start_entity_id"].(float64); ok {
+		startID = uint64(v)
+	}
+	count := 0
+	if v, ok := rangeGen["count"].(float64); ok {
+		count = int(v)
+	}
+	baseLat := 0.0
+	if v, ok := rangeGen["base_latitude"].(float64); ok {
+		baseLat = v
+	}
+	baseLon := 0.0
+	if v, ok := rangeGen["base_longitude"].(float64); ok {
+		baseLon = v
+	}
+	spreadM := 0.0
+	if v, ok := rangeGen["spread_m"].(float64); ok {
+		spreadM = v
+	}
+
+	events := make([]types.GeoEvent, 0, count)
+	// Spread in degrees (approximate: 1 degree ~= 111km)
+	spreadDeg := spreadM / 111000.0
+
+	for i := 0; i < count; i++ {
+		// Distribute points in a grid pattern within the spread area
+		offset := float64(i) / float64(count)
+		lat := baseLat + (offset-0.5)*spreadDeg
+		lon := baseLon + (offset-0.5)*spreadDeg
+
+		event := types.GeoEvent{
+			EntityID: types.ToUint128(startID + uint64(i)),
+			LatNano:  types.DegreesToNano(lat),
+			LonNano:  types.DegreesToNano(lon),
+		}
+		events = append(events, event)
+	}
+	return events
+}
+
+// generateHotspotEvents generates events from an insert_hotspot specification.
+// Returns a limited number of events (max 500) to stay within batch size limits.
+func generateHotspotEvents(hotspot map[string]interface{}) []types.GeoEvent {
+	centerLat := 0.0
+	if v, ok := hotspot["center_latitude"].(float64); ok {
+		centerLat = v
+	}
+	centerLon := 0.0
+	if v, ok := hotspot["center_longitude"].(float64); ok {
+		centerLon = v
+	}
+	count := 0
+	if v, ok := hotspot["count"].(float64); ok {
+		count = int(v)
+	}
+	startID := uint64(0)
+	if v, ok := hotspot["start_entity_id"].(float64); ok {
+		startID = uint64(v)
+	}
+	concentration := 0.95 // default 95%
+	if v, ok := hotspot["concentration_percentage"].(float64); ok {
+		concentration = v / 100.0
+	}
+
+	// Limit count to avoid batch size limits
+	// Max batch is typically 10000, but keep conservative
+	const maxEvents = 500
+	if count > maxEvents {
+		count = maxEvents
+	}
+
+	events := make([]types.GeoEvent, 0, count)
+	// Most events (concentration%) within ~500m, rest spread further
+	nearSpreadDeg := 0.005  // ~500m
+	farSpreadDeg := 0.05    // ~5km
+
+	for i := 0; i < count; i++ {
+		isNear := float64(i) / float64(count) < concentration
+		spread := farSpreadDeg
+		if isNear {
+			spread = nearSpreadDeg
+		}
+
+		// Simple deterministic distribution
+		factor := float64(i) / float64(count)
+		lat := centerLat + (factor-0.5)*spread
+		lon := centerLon + (factor-0.5)*spread
+
+		event := types.GeoEvent{
+			EntityID: types.ToUint128(startID + uint64(i)),
+			LatNano:  types.DegreesToNano(lat),
+			LonNano:  types.DegreesToNano(lon),
+		}
+		events = append(events, event)
+	}
+	return events
 }
 
 // GetExpectedResultCode extracts expected result_code from expected_output.
