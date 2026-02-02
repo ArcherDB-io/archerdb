@@ -49,13 +49,18 @@ function shouldSkip(testCase: any): boolean {
 
 // Helper to setup test data
 async function setupData(client: GeoClient, setup: any) {
-  if (!setup || !setup.insert_first || !Array.isArray(setup.insert_first)) return;
+  if (!setup || !setup.insert_first) return;
 
-  const events = setup.insert_first.map((ev: any) =>
+  // Handle both array and single object
+  const insertFirst = Array.isArray(setup.insert_first) ? setup.insert_first : [setup.insert_first];
+
+  const events = insertFirst.map((ev: any) =>
     createGeoEvent({
       entity_id: BigInt(ev.entity_id),
       latitude: ev.latitude,
       longitude: ev.longitude,
+      user_data: ev.user_data ? BigInt(ev.user_data) : undefined,
+      group_id: ev.group_id ? BigInt(ev.group_id) : undefined,
     })
   );
   await client.insertEvents(events);
@@ -225,10 +230,10 @@ while True: time.sleep(1)
       await setupData(client!, testCase.input.setup);
 
       const result = await client!.queryRadius({
-        latitude: testCase.input.center_latitude || testCase.input.latitude,
-        longitude: testCase.input.center_longitude || testCase.input.longitude,
-        radius_m: testCase.input.radius_m,
-        limit: testCase.input.limit || 1000,
+        latitude: testCase.input.center_latitude ?? testCase.input.latitude ?? 0,
+        longitude: testCase.input.center_longitude ?? testCase.input.longitude ?? 0,
+        radius_m: testCase.input.radius_m ?? 1000,
+        limit: testCase.input.limit ?? 1000,
         group_id: testCase.input.group_id ? BigInt(testCase.input.group_id) : undefined,
       });
 
@@ -245,13 +250,9 @@ while True: time.sleep(1)
 
       await setupData(client!, testCase.input.setup);
 
-      const vertices = testCase.input.vertices.map((v: number[]) => ({
-        latitude: v[0],
-        longitude: v[1],
-      }));
-
+      // Vertices are already in correct format: [[lat, lon], ...]
       const result = await client!.queryPolygon({
-        vertices,
+        vertices: testCase.input.vertices,
         limit: testCase.input.limit || 1000,
         group_id: testCase.input.group_id ? BigInt(testCase.input.group_id) : undefined,
       });
