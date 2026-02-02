@@ -54,6 +54,10 @@ static int tests_passed = 0;
 static int tests_failed = 0;
 static int tests_skipped = 0;
 
+// Forward declarations
+static bool setup(void);
+static void teardown(void);
+
 // Client and synchronization
 static arch_client_t client;
 static bool client_initialized = false;
@@ -129,7 +133,24 @@ static bool submit_and_wait(arch_packet_t* packet) {
         return false;
     }
 
-    return wait_for_completion(30000);  // 30 second timeout
+    bool completed = wait_for_completion(30000);  // 30 second timeout
+
+    // Check for client eviction and reconnect automatically
+    if (completed && last_response.status == ARCH_PACKET_CLIENT_EVICTED) {
+        // Client was evicted (likely due to invalid request)
+        // Reconnect silently so subsequent tests can continue
+        teardown();
+        if (setup()) {
+            // Reconnection successful - treat this request as failed but continue testing
+            return false;
+        } else {
+            // Reconnection failed - this is a fatal error
+            fprintf(stderr, "FATAL: Failed to reconnect after client eviction\n");
+            exit(1);
+        }
+    }
+
+    return completed;
 }
 
 // Initialize the client
@@ -163,6 +184,20 @@ static void teardown(void) {
         arch_client_deinit(&client);
         client_initialized = false;
     }
+}
+
+// Check for eviction and reconnect if needed
+static bool handle_eviction(void) {
+    if (last_response.status == ARCH_PACKET_CLIENT_EVICTED) {
+        fprintf(stderr, "error(client): session evicted, reconnecting...\n");
+        teardown();
+        if (!setup()) {
+            fprintf(stderr, "error(client): failed to reconnect after eviction\n");
+            return false;
+        }
+        return true;
+    }
+    return false;
 }
 
 // Helper: Insert events for setup
