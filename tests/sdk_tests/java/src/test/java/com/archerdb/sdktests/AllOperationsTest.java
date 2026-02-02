@@ -470,9 +470,11 @@ class AllOperationsTest {
 /**
  * Mock client for compilation verification.
  * Real integration tests require native library.
+ * This mock tracks inserted events and returns them for queries.
  */
 class MockGeoClient {
     private final String address;
+    private final List<GeoEventData> storedEvents = new ArrayList<>();
 
     MockGeoClient(String address) {
         this.address = address;
@@ -483,12 +485,13 @@ class MockGeoClient {
     }
 
     void cleanDatabase() {
-        // No-op for mock
+        storedEvents.clear();
     }
 
     List<InsertResult> insertEvents(List<GeoEventData> events) {
         List<InsertResult> results = new ArrayList<>();
         for (GeoEventData event : events) {
+            storedEvents.add(event);
             results.add(new InsertResult(0, "OK"));
         }
         return results;
@@ -499,26 +502,39 @@ class MockGeoClient {
     }
 
     DeleteResult deleteEntities(List<Long> entityIds) {
-        return new DeleteResult(entityIds.size(), 0);
+        int deleted = 0;
+        for (Long id : entityIds) {
+            if (storedEvents.removeIf(e -> e.entityId == id)) {
+                deleted++;
+            }
+        }
+        return new DeleteResult(deleted, entityIds.size() - deleted);
     }
 
     GeoEventData getLatestByUuid(long entityId) {
-        GeoEventData event = new GeoEventData();
-        event.entityId = entityId;
-        event.latitude = 40.7128;
-        event.longitude = -74.0060;
-        return event;
+        return storedEvents.stream()
+                .filter(e -> e.entityId == entityId)
+                .findFirst()
+                .orElse(null);
     }
 
     QueryUUIDBatchResult queryUuidBatch(List<Long> entityIds) {
         QueryUUIDBatchResult result = new QueryUUIDBatchResult();
-        result.foundCount = entityIds.size();
-        result.notFoundCount = 0;
         result.events = new ArrayList<>();
+        result.foundCount = 0;
+        result.notFoundCount = 0;
+
         for (Long id : entityIds) {
-            GeoEventData event = new GeoEventData();
-            event.entityId = id;
-            result.events.add(event);
+            GeoEventData found = storedEvents.stream()
+                    .filter(e -> e.entityId == id)
+                    .findFirst()
+                    .orElse(null);
+            if (found != null) {
+                result.events.add(found);
+                result.foundCount++;
+            } else {
+                result.notFoundCount++;
+            }
         }
         return result;
     }
@@ -527,6 +543,17 @@ class MockGeoClient {
         QueryResult result = new QueryResult();
         result.events = new ArrayList<>();
         result.hasMore = false;
+
+        // Simple mock: return events within approximate radius
+        double radiusDeg = radiusM / 111000.0; // Rough conversion
+        for (GeoEventData event : storedEvents) {
+            double latDiff = Math.abs(event.latitude - centerLat);
+            double lonDiff = Math.abs(event.longitude - centerLon);
+            if (latDiff <= radiusDeg && lonDiff <= radiusDeg) {
+                result.events.add(event);
+                if (result.events.size() >= limit) break;
+            }
+        }
         return result;
     }
 
@@ -534,13 +561,31 @@ class MockGeoClient {
         QueryResult result = new QueryResult();
         result.events = new ArrayList<>();
         result.hasMore = false;
+
+        // Simple mock: check if event is within bounding box of polygon
+        double minLat = Double.MAX_VALUE, maxLat = -Double.MAX_VALUE;
+        double minLon = Double.MAX_VALUE, maxLon = -Double.MAX_VALUE;
+        for (double[] v : vertices) {
+            minLat = Math.min(minLat, v[0]);
+            maxLat = Math.max(maxLat, v[0]);
+            minLon = Math.min(minLon, v[1]);
+            maxLon = Math.max(maxLon, v[1]);
+        }
+
+        for (GeoEventData event : storedEvents) {
+            if (event.latitude >= minLat && event.latitude <= maxLat &&
+                event.longitude >= minLon && event.longitude <= maxLon) {
+                result.events.add(event);
+                if (result.events.size() >= limit) break;
+            }
+        }
         return result;
     }
 
     QueryResult queryLatest(int limit) {
         QueryResult result = new QueryResult();
-        result.events = new ArrayList<>();
-        result.hasMore = false;
+        result.events = new ArrayList<>(storedEvents.subList(0, Math.min(limit, storedEvents.size())));
+        result.hasMore = storedEvents.size() > limit;
         return result;
     }
 
@@ -551,7 +596,7 @@ class MockGeoClient {
     StatusResponse getStatus() {
         StatusResponse status = new StatusResponse();
         status.healthy = true;
-        status.ramIndexCount = 0;
+        status.ramIndexCount = storedEvents.size();
         status.ramIndexCapacity = 1000000;
         return status;
     }
