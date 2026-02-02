@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://maven.apache.org/surefire/maven-surefire-plugin/xsd/surefire-test-report-3.0.xsd" version="3.0" name="com.archerdb.sdktests.AllOperationsTest" time="0.713" tests="17" errors="0" skipped="0" failures="0">
+<testsuite xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://maven.apache.org/surefire/maven-surefire-plugin/xsd/surefire-test-report-3.0.xsd" version="3.0" name="com.archerdb.sdktests.AllOperationsTest" time="0.722" tests="17" errors="0" skipped="0" failures="0">
   <properties>
     <property name="java.specification.version" value="25"/>
     <property name="sun.jnu.encoding" value="UTF-8"/>
@@ -12,9 +12,8 @@
     <property name="sun.java.launcher" value="SUN_STANDARD"/>
     <property name="user.country" value="US"/>
     <property name="sun.boot.library.path" value="/home/g/.sdkman/candidates/java/25.0.1-tem/lib"/>
-    <property name="sun.java.command" value="/home/g/archerdb/tests/sdk_tests/java/target/surefire/surefirebooter-20260202064001522_3.jar /home/g/archerdb/tests/sdk_tests/java/target/surefire 2026-02-02T06-40-01_405-jvmRun1 surefire-20260202064001522_1tmp surefire_0-20260202064001522_2tmp"/>
+    <property name="sun.java.command" value="/home/g/archerdb/tests/sdk_tests/java/target/surefire/surefirebooter-20260202075509223_3.jar /home/g/archerdb/tests/sdk_tests/java/target/surefire 2026-02-02T07-55-09_113-jvmRun1 surefire-20260202075509223_1tmp surefire_0-20260202075509223_2tmp"/>
     <property name="jdk.debug" value="release"/>
-    <property name="test" value="AllOperationsTest"/>
     <property name="surefire.test.class.path" value="/home/g/archerdb/tests/sdk_tests/java/target/test-classes:/home/g/archerdb/tests/sdk_tests/java/target/classes:/home/g/.m2/repository/org/junit/jupiter/junit-jupiter/5.10.0/junit-jupiter-5.10.0.jar:/home/g/.m2/repository/org/junit/jupiter/junit-jupiter-params/5.10.0/junit-jupiter-params-5.10.0.jar:/home/g/.m2/repository/org/junit/jupiter/junit-jupiter-api/5.10.0/junit-jupiter-api-5.10.0.jar:/home/g/.m2/repository/org/opentest4j/opentest4j/1.3.0/opentest4j-1.3.0.jar:/home/g/.m2/repository/org/junit/platform/junit-platform-commons/1.10.0/junit-platform-commons-1.10.0.jar:/home/g/.m2/repository/org/apiguardian/apiguardian-api/1.1.2/apiguardian-api-1.1.2.jar:/home/g/.m2/repository/org/junit/jupiter/junit-jupiter-engine/5.10.0/junit-jupiter-engine-5.10.0.jar:/home/g/.m2/repository/org/junit/platform/junit-platform-engine/1.10.0/junit-platform-engine-1.10.0.jar:/home/g/.m2/repository/org/assertj/assertj-core/3.25.0/assertj-core-3.25.0.jar:/home/g/.m2/repository/net/bytebuddy/byte-buddy/1.14.11/byte-buddy-1.14.11.jar:/home/g/.m2/repository/com/google/code/gson/gson/2.10.1/gson-2.10.1.jar:"/>
     <property name="sun.cpu.endian" value="little"/>
     <property name="user.home" value="/home/g"/>
@@ -28,7 +27,7 @@
     <property name="line.separator" value="&#10;"/>
     <property name="java.specification.name" value="Java Platform API Specification"/>
     <property name="java.vm.specification.vendor" value="Oracle Corporation"/>
-    <property name="surefire.real.class.path" value="/home/g/archerdb/tests/sdk_tests/java/target/surefire/surefirebooter-20260202064001522_3.jar"/>
+    <property name="surefire.real.class.path" value="/home/g/archerdb/tests/sdk_tests/java/target/surefire/surefirebooter-20260202075509223_3.jar"/>
     <property name="sun.management.compiler" value="HotSpot 64-Bit Tiered Compilers"/>
     <property name="java.runtime.version" value="25.0.1+8-LTS"/>
     <property name="user.name" value="g"/>
@@ -56,21 +55,21 @@
     <property name="sun.io.unicode.encoding" value="UnicodeLittle"/>
     <property name="java.class.version" value="69.0"/>
   </properties>
-  <testcase name="testPingReturnsPong" classname="com.archerdb.sdktests.AllOperationsTest" time="0.102"/>
-  <testcase name="testInsertSingleEventValid" classname="com.archerdb.sdktests.AllOperationsTest" time="0.015"/>
-  <testcase name="testQueryLatestReturnsRecent" classname="com.archerdb.sdktests.AllOperationsTest" time="0.054"/>
-  <testcase name="testDeleteNonExistent" classname="com.archerdb.sdktests.AllOperationsTest" time="0.005"/>
-  <testcase name="testQueryPolygonFindsInside" classname="com.archerdb.sdktests.AllOperationsTest" time="0.054"/>
-  <testcase name="testTTLSetAppliesTTL" classname="com.archerdb.sdktests.AllOperationsTest" time="0.054"/>
-  <testcase name="testStatusReturnsInfo" classname="com.archerdb.sdktests.AllOperationsTest" time="0.002"/>
+  <testcase name="testPingReturnsPong" classname="com.archerdb.sdktests.AllOperationsTest" time="0.105"/>
+  <testcase name="testInsertSingleEventValid" classname="com.archerdb.sdktests.AllOperationsTest" time="0.016"/>
+  <testcase name="testQueryLatestReturnsRecent" classname="com.archerdb.sdktests.AllOperationsTest" time="0.055"/>
+  <testcase name="testDeleteNonExistent" classname="com.archerdb.sdktests.AllOperationsTest" time="0.006"/>
+  <testcase name="testQueryPolygonFindsInside" classname="com.archerdb.sdktests.AllOperationsTest" time="0.053"/>
+  <testcase name="testTTLSetAppliesTTL" classname="com.archerdb.sdktests.AllOperationsTest" time="0.053"/>
+  <testcase name="testStatusReturnsInfo" classname="com.archerdb.sdktests.AllOperationsTest" time="0.003"/>
   <testcase name="testUpsertUpdatesExisting" classname="com.archerdb.sdktests.AllOperationsTest" time="0.053"/>
-  <testcase name="testInsertBatchEvents" classname="com.archerdb.sdktests.AllOperationsTest" time="0.006"/>
-  <testcase name="testTTLClearRemovesTTL" classname="com.archerdb.sdktests.AllOperationsTest" time="0.053"/>
+  <testcase name="testInsertBatchEvents" classname="com.archerdb.sdktests.AllOperationsTest" time="0.005"/>
+  <testcase name="testTTLClearRemovesTTL" classname="com.archerdb.sdktests.AllOperationsTest" time="0.054"/>
   <testcase name="testQueryRadiusFindsNearby" classname="com.archerdb.sdktests.AllOperationsTest" time="0.053"/>
-  <testcase name="testTTLExtendAddsTime" classname="com.archerdb.sdktests.AllOperationsTest" time="0.052"/>
-  <testcase name="testDeleteExistingEntity" classname="com.archerdb.sdktests.AllOperationsTest" time="0.051"/>
-  <testcase name="testQueryUUIDBatchAllFound" classname="com.archerdb.sdktests.AllOperationsTest" time="0.054"/>
+  <testcase name="testTTLExtendAddsTime" classname="com.archerdb.sdktests.AllOperationsTest" time="0.053"/>
+  <testcase name="testDeleteExistingEntity" classname="com.archerdb.sdktests.AllOperationsTest" time="0.052"/>
+  <testcase name="testQueryUUIDBatchAllFound" classname="com.archerdb.sdktests.AllOperationsTest" time="0.053"/>
   <testcase name="testUpsertCreatesNew" classname="com.archerdb.sdktests.AllOperationsTest" time="0.001"/>
   <testcase name="testTopologyReturnsClusterInfo" classname="com.archerdb.sdktests.AllOperationsTest" time="0.001"/>
-  <testcase name="testQueryUUIDFound" classname="com.archerdb.sdktests.AllOperationsTest" time="0.053"/>
+  <testcase name="testQueryUUIDFound" classname="com.archerdb.sdktests.AllOperationsTest" time="0.054"/>
 </testsuite>

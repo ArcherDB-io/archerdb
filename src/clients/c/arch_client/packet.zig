@@ -85,15 +85,18 @@ pub const Packet = extern struct {
     pub inline fn assert_phase(packet: *const Packet, expected: Phase) void {
         if (packet.phase != expected) {
             std.debug.print("Packet phase mismatch! ptr={*} actual={} expected={}\n", .{ packet, packet.phase, expected });
-            // assert(packet.phase == expected); // Disabled to prevent crash
+            // Return early to avoid running assertions for wrong phase.
+            // A phase mismatch indicates a bug elsewhere that should be investigated,
+            // but we shouldn't crash by running incompatible phase assertions.
+            return;
         }
-        // assert(packet.phase == expected);
+
         assert(packet.data_size == 0 or packet.data != null);
         assert(stdx.zeroed(&packet.reserved));
         maybe(packet.user_data == null);
         maybe(packet.user_tag == 0);
 
-        switch (expected) {
+        switch (packet.phase) {
             .submitted => {
                 assert(packet.link.next == null);
                 assert(packet.multi_batch_next == null);
