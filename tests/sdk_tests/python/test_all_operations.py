@@ -294,10 +294,11 @@ class TestQueryUuidBatchOperation:
         client.insert_events(events)
 
         # Batch query
-        results = client.get_latest_by_uuid_batch(entity_ids)
+        results = client.get_latest_batch(entity_ids)
         assert len(results) == 3
         for eid in entity_ids:
             assert eid in results
+            assert results[eid] is not None
 
     def test_query_uuid_batch_partial(self, client: GeoClientSync):
         """pr: Batch UUID lookup with some not found."""
@@ -311,9 +312,11 @@ class TestQueryUuidBatchOperation:
         )
         client.insert_events([event])
 
-        results = client.get_latest_by_uuid_batch([existing_id, missing_id])
+        results = client.get_latest_batch([existing_id, missing_id])
         assert existing_id in results
-        assert missing_id not in results
+        assert results[existing_id] is not None
+        assert missing_id in results
+        assert results[missing_id] is None
 
 
 # =============================================================================
