@@ -6923,8 +6923,9 @@ test "UUID batch query: QueryUuidBatchFilter structure" {
     // Max count is 10,000
     try std.testing.expectEqual(@as(u32, 10_000), QueryUuidBatchFilter.max_count);
 
-    // Size is 8 bytes (count: u32 + reserved: u32)
-    try std.testing.expectEqual(@as(usize, 8), @sizeOf(QueryUuidBatchFilter));
+    // Size is 16 bytes (count: u32 + reserved: [12]u8)
+    // 16-byte alignment ensures entity_ids array is properly aligned for u128 access
+    try std.testing.expectEqual(@as(usize, 16), @sizeOf(QueryUuidBatchFilter));
 }
 
 test "UUID batch query: QueryUuidBatchResult structure" {
