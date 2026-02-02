@@ -605,8 +605,9 @@ test "fixture: query-polygon operations" {
         if (input.get("vertices")) |verts_json| {
             for (verts_json.array.items) |v| {
                 if (vertex_count >= vertices_buf.len) break;
-                const lat = if (v.object.get("latitude")) |lat_v| jsonToNano(lat_v) else 0;
-                const lon = if (v.object.get("longitude")) |lon_v| jsonToNano(lon_v) else 0;
+                // Vertices are array format: [lat, lon]
+                const lat = if (v.array.items.len > 0) jsonToNano(v.array.items[0]) else 0;
+                const lon = if (v.array.items.len > 1) jsonToNano(v.array.items[1]) else 0;
                 vertices_buf[vertex_count] = .{ .lat_nano = lat, .lon_nano = lon };
                 vertex_count += 1;
             }
