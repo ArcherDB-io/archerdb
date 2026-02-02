@@ -327,7 +327,8 @@ pub const Operation = enum(u8) {
             .cleanup_expired => CleanupResponse,
 
             // ArcherDB topology discovery (Smart Client)
-            .get_topology => TopologyResponse,
+            // Note: Server returns compact response (max 16 shards) to fit in lite config buffers
+            .get_topology => TopologyResponseCompact,
 
             // ArcherDB Manual TTL Operations
             .ttl_set => TtlSetResponse,
@@ -645,7 +646,7 @@ pub const Operation = enum(u8) {
                 comptime assert(Operation.query_uuid_batch.is_variable_length());
 
                 const Filter = QueryUuidBatchFilter;
-                comptime assert(@sizeOf(Filter) == 8);
+                comptime assert(@sizeOf(Filter) == 16);
 
                 // Must have at least the header
                 if (batch.len < @sizeOf(Filter)) {

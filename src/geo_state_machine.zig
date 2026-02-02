@@ -667,18 +667,19 @@ pub const QueryUuidResponse = extern struct {
 /// Filter for batch UUID lookup queries (F1.3.4).
 /// Wire format:
 /// ```
-/// [QueryUuidBatchFilter: 8 bytes header]
+/// [QueryUuidBatchFilter: 16 bytes header]
 /// [entity_ids[0..count]: 16 bytes each (u128)]
 /// ```
 /// Max 10,000 UUIDs per request.
+/// Header is 16 bytes to ensure entity_ids array is 16-byte aligned for u128 access.
 pub const QueryUuidBatchFilter = extern struct {
     /// Number of UUIDs to look up (max 10,000)
     count: u32,
     /// Reserved for future use (must be zero)
-    reserved: u32 = 0,
+    reserved: [12]u8 = @splat(0),
 
     comptime {
-        assert(@sizeOf(QueryUuidBatchFilter) == 8);
+        assert(@sizeOf(QueryUuidBatchFilter) == 16);
         assert(stdx.no_padding(QueryUuidBatchFilter));
     }
 
@@ -2069,8 +2070,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 }
 
                 // Use consensus timestamp if event timestamp is zero
+                // Add index offset to ensure uniqueness within batch for events at same location
                 const event_timestamp =
-                    if (event.timestamp == 0) timestamp else event.timestamp;
+                    if (event.timestamp == 0) timestamp + @as(u64, @intCast(index)) else event.timestamp;
 
                 // Per ttl-retention/spec.md: Apply global default TTL
                 // when client sets ttl_seconds = 0

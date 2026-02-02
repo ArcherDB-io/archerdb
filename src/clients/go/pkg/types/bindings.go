@@ -189,7 +189,7 @@ type QueryUuidResponseRaw struct {
 
 type QueryUuidBatchFilterRaw struct {
 	Count    uint32
-	Reserved uint32
+	Reserved [12]uint8
 }
 
 type QueryUuidBatchResultRaw struct {

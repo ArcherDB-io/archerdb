@@ -58,15 +58,17 @@ CQueryLatestFilter = bindings.CQueryLatestFilter
 # So we define them here matching client-protocol/spec.md
 
 class CQueryUuidBatchFilter(ctypes.Structure):
-    """8-byte QueryUuidBatchFilter header (F1.3.4).
+    """16-byte QueryUuidBatchFilter header (F1.3.4).
 
     Wire format:
-      [CQueryUuidBatchFilter: 8 bytes]
+      [CQueryUuidBatchFilter: 16 bytes]
       [entity_ids[0..count]: 16 bytes each (u128)]
+
+    Header is 16 bytes to ensure entity_ids array is 16-byte aligned for u128 access.
     """
     _fields_ = [
         ("count", ctypes.c_uint32),        # u32, 4 bytes
-        ("reserved", ctypes.c_uint32),     # u32, 4 bytes (must be zero)
+        ("reserved", ctypes.c_uint8 * 12), # 12 bytes padding (must be zero)
     ]
 
 
@@ -259,6 +261,10 @@ class NativeClient:
         self._callback_result: List[Any] = [None, None, None]
         self._lock = threading.Lock()
         self._connected = False
+        # Keep packet alive until callback completes to prevent use-after-free
+        # The C client stores internal pointers to the packet memory
+        self._current_packet: Optional[bindings.CPacket] = None
+        self._current_data: Optional[ctypes.Array] = None
 
     def connect(self) -> bool:
         """Connect to the cluster. Returns True on success."""
@@ -320,7 +326,13 @@ class NativeClient:
             if not self._connected or not self._client:
                 raise RuntimeError("Client not connected")
 
-            packet = bindings.CPacket()
+            # Store packet and data in instance to prevent garbage collection
+            # The C client stores internal pointers that would become dangling
+            # if we allowed Python to free this memory before the callback
+            self._current_packet = bindings.CPacket()
+            self._current_data = data
+            packet = self._current_packet
+
             # Zero the opaque field explicitly (maps to internal packet fields)
             ctypes.memset(ctypes.addressof(packet.opaque), 0, 64)
             packet.user_data = 1
@@ -341,11 +353,20 @@ class NativeClient:
             )
 
             if client_status != bindings.ClientStatus.OK:
+                self._current_packet = None
+                self._current_data = None
                 return NativeClientResult(status=-1, data_size=0, data=None)
 
         # Wait outside lock to allow other threads
         if not self._callback_received.wait(timeout=timeout):
+            # Timeout - packet may still be in flight, keep references
             return NativeClientResult(status=-2, data_size=0, data=None)
+
+        # Callback received - C client is done with the packet
+        # Clear references to allow garbage collection
+        with self._lock:
+            self._current_packet = None
+            self._current_data = None
 
         return NativeClientResult(
             status=self._callback_result[0] if self._callback_result[0] is not None else -3,
@@ -364,10 +385,14 @@ class NativeClient:
             if not self._connected or not self._client:
                 raise RuntimeError("Client not connected")
 
-            # Create a ctypes buffer from bytes
+            # Create a ctypes buffer from bytes and store in instance
+            # to prevent garbage collection while C client holds pointers
             c_data = (ctypes.c_uint8 * len(data)).from_buffer_copy(data)
+            self._current_data = c_data
 
-            packet = bindings.CPacket()
+            self._current_packet = bindings.CPacket()
+            packet = self._current_packet
+
             # Zero the opaque field explicitly (maps to internal packet fields)
             ctypes.memset(ctypes.addressof(packet.opaque), 0, 64)
             packet.user_data = 1
@@ -388,11 +413,19 @@ class NativeClient:
             )
 
             if client_status != bindings.ClientStatus.OK:
+                self._current_packet = None
+                self._current_data = None
                 return NativeClientResult(status=-1, data_size=0, data=None)
 
         # Wait outside lock to allow other threads
         if not self._callback_received.wait(timeout=timeout):
+            # Timeout - packet may still be in flight, keep references
             return NativeClientResult(status=-2, data_size=0, data=None)
+
+        # Callback received - C client is done with the packet
+        with self._lock:
+            self._current_packet = None
+            self._current_data = None
 
         return NativeClientResult(
             status=self._callback_result[0] if self._callback_result[0] is not None else -3,
@@ -553,9 +586,9 @@ class NativeClient:
                 events=[],
             )
 
-        # Build wire format: 8-byte header + entity_ids array
-        # Header: count(u32) + reserved(u32)
-        header = CQueryUuidBatchFilter(count=count, reserved=0)
+        # Build wire format: 16-byte header + entity_ids array
+        # Header: count(u32) + reserved(12 bytes)
+        header = CQueryUuidBatchFilter(count=count, reserved=(ctypes.c_uint8 * 12)())
         header_bytes = bytes(header)
 
         # Entity IDs: each is 16 bytes (u128)
@@ -611,7 +644,11 @@ class NativeClient:
                 offset += 2
 
         # Calculate events offset (aligned to 16 bytes)
-        events_offset_unaligned = HEADER_SIZE + not_found_size
+        # Note: Server allocates space for max_not_found_count (= total requested count),
+        # not actual not_found_count, so we need to match that calculation
+        total_count = found_count + not_found_count
+        max_not_found_size = total_count * 2  # Space reserved for all possible not_found indices
+        events_offset_unaligned = HEADER_SIZE + max_not_found_size
         events_offset = (events_offset_unaligned + 15) & ~15
 
         # Parse events

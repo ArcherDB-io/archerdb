@@ -24,7 +24,8 @@ public interface GeoEventFlags {
     int STATIONARY = (int) (1 << 2);
 
     /**
-     * @see <a href="https://docs.archerdb.io/reference/geo-event#flagslow_accuracy">low_accuracy</a>
+     * @see <a href=
+     *      "https://docs.archerdb.io/reference/geo-event#flagslow_accuracy">low_accuracy</a>
      */
     int LOW_ACCURACY = (int) (1 << 3);
 

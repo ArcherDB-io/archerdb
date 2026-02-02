@@ -27,6 +27,7 @@ const StatusRequest = tb.StatusRequest;
 const CleanupRequest = tb.CleanupRequest;
 const TopologyRequest = tb.TopologyRequest;
 const TopologyResponse = tb.TopologyResponse;
+const TopologyResponseCompact = tb.TopologyResponseCompact;
 const ShardInfo = tb.ShardInfo;
 const TtlSetRequest = tb.TtlSetRequest;
 const TtlExtendRequest = tb.TtlExtendRequest;
@@ -1083,13 +1084,14 @@ fn encode_query_response(env: c.napi_env, buffer: []const u8) !c.napi_value {
 }
 
 fn encode_topology_response(env: c.napi_env, buffer: []const u8) !c.napi_value {
-    if (buffer.len < @sizeOf(TopologyResponse)) {
+    // Use compact response (max 16 shards) which the server returns for lite config
+    if (buffer.len < @sizeOf(TopologyResponseCompact)) {
         return translate.throw(env, "Topology response too short.");
     }
 
     const response = std.mem.bytesAsValue(
-        TopologyResponse,
-        buffer[0..@sizeOf(TopologyResponse)],
+        TopologyResponseCompact,
+        buffer[0..@sizeOf(TopologyResponseCompact)],
     ).*;
 
     const obj = try translate.create_object(

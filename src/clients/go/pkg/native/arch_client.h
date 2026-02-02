@@ -182,7 +182,7 @@ typedef struct query_uuid_response_t {
  */
 typedef struct query_uuid_batch_filter_t {
     uint32_t count;
-    uint32_t reserved;
+    uint8_t reserved[12];
 } query_uuid_batch_filter_t;
 
 /**

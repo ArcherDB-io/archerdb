@@ -1463,10 +1463,14 @@ func (c *geoClient) QueryUUIDBatch(entityIDs []types.Uint128) (types.QueryUUIDBa
 		}, nil
 	}
 
-	headerSize := 8
+	// QueryUuidBatchFilter wire format: 16-byte header + entity_ids array
+	// Header: count (u32) + reserved (12 bytes)
+	// The 16-byte header ensures entity_ids array is 16-byte aligned for u128 access
+	headerSize := 16
 	totalSize := headerSize + len(entityIDs)*16
 	data := make([]byte, totalSize)
 	binary.LittleEndian.PutUint32(data[0:4], uint32(len(entityIDs)))
+	// Reserved bytes 4-15 are already zero-initialized by make()
 
 	offset := headerSize
 	for _, id := range entityIDs {
@@ -2020,9 +2024,12 @@ func parseQueryUUIDBatchResponse(reply []uint8) (types.QueryUUIDBatchResult, err
 	foundCount := binary.LittleEndian.Uint32(reply[0:4])
 	notFoundCount := binary.LittleEndian.Uint32(reply[4:8])
 
-	indicesSize := int(notFoundCount) * 2
-	indicesEnd := headerSize + indicesSize
-	eventsOffset := indicesEnd
+	// Server allocates space for max_not_found_count (= total requested count),
+	// not actual not_found_count. We need to match that calculation.
+	totalCount := foundCount + notFoundCount
+	maxNotFoundSize := int(totalCount) * 2 // Space reserved for all possible not_found indices
+	eventsOffsetUnaligned := headerSize + maxNotFoundSize
+	eventsOffset := eventsOffsetUnaligned
 	if rem := eventsOffset % 16; rem != 0 {
 		eventsOffset += 16 - rem
 	}

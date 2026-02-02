@@ -548,7 +548,7 @@ class CQueryUuidBatchFilter(ctypes.Structure):
 
 CQueryUuidBatchFilter._fields_ = [ # noqa: SLF001
     ("count", ctypes.c_uint32),
-    ("reserved", ctypes.c_uint32),
+    ("reserved", ctypes.c_uint8 * 12),  # 12 bytes padding to reach 16-byte header
 ]
 
 

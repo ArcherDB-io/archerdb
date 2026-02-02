@@ -135,7 +135,11 @@ func onGoPacketCompletion(
 			op != C.ARCH_OPERATION_QUERY_RADIUS &&
 			op != C.ARCH_OPERATION_QUERY_POLYGON &&
 			op != C.ARCH_OPERATION_ARCHERDB_PING &&
-			op != C.ARCH_OPERATION_ARCHERDB_GET_STATUS {
+			op != C.ARCH_OPERATION_ARCHERDB_GET_STATUS &&
+			op != C.ARCH_OPERATION_GET_TOPOLOGY &&
+			op != C.ARCH_OPERATION_TTL_SET &&
+			op != C.ARCH_OPERATION_TTL_EXTEND &&
+			op != C.ARCH_OPERATION_TTL_CLEAR {
 			// Make sure the amount of results at least matches the amount of requests.
 			count := packet.data_size / C.uint32_t(getEventSize(op))
 			if count*resultSize < result_len {
