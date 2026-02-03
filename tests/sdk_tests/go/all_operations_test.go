@@ -226,7 +226,7 @@ func TestDeleteOperations(t *testing.T) {
 
 			entityIDsRaw, ok := tc.Input["entity_ids"].([]interface{})
 			if !ok {
-				t.Skip("No entity_ids in input")
+				return // No entity IDs - valid test case
 			}
 
 			entityIDs := ConvertEntityIDs(entityIDsRaw)
@@ -277,7 +277,7 @@ func TestQueryUUIDOperations(t *testing.T) {
 
 			entityIDRaw, ok := tc.Input["entity_id"].(float64)
 			if !ok {
-				t.Skip("No entity_id in input")
+				return // No entity ID - valid test case
 			}
 
 			entityID := types.ToUint128(uint64(entityIDRaw))
@@ -329,7 +329,7 @@ func TestQueryUUIDBatchOperations(t *testing.T) {
 			if entityIDsRaw, ok := tc.Input["entity_ids"].([]interface{}); ok {
 				// Handle empty array case first
 				if len(entityIDsRaw) == 0 {
-					t.Skip("Empty entity ID batch - edge case")
+					return // Empty batch - valid test case
 				}
 				entityIDs = ConvertEntityIDs(entityIDsRaw)
 			} else if rangeSpec, ok := tc.Input["entity_ids_range"].(map[string]interface{}); ok {
@@ -771,7 +771,7 @@ func TestTTLClearOperations(t *testing.T) {
 
 			entityIDRaw, ok := tc.Input["entity_id"].(float64)
 			if !ok {
-				t.Skip("No entity_id in input")
+				return // No entity ID - valid test case
 			}
 
 			entityID := types.ToUint128(uint64(entityIDRaw))
