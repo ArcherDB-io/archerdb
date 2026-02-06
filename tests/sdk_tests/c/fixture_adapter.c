@@ -311,6 +311,10 @@ static bool parse_event(JsonParser* p, geo_event_t* event) {
             int64_t ttl;
             if (!parse_int(p, &ttl)) return false;
             event->ttl_seconds = (uint32_t)ttl;
+        } else if (strcmp(key, "timestamp") == 0) {
+            int64_t ts;
+            if (!parse_int(p, &ts)) return false;
+            event->timestamp = (uint64_t)ts * 1000000000ULL;
         } else if (strcmp(key, "accuracy_m") == 0) {
             double acc;
             if (!parse_number(p, &acc)) return false;
@@ -348,6 +352,181 @@ static bool parse_events_array(JsonParser* p, geo_event_t* events, int* count) {
     while (*count < MAX_EVENTS_PER_CASE) {
         if (!parse_event(p, &events[*count])) return false;
         (*count)++;
+
+        skip_whitespace(p);
+        if (p->pos >= p->len) return false;
+        if (p->json[p->pos] == ']') {
+            p->pos++;
+            return true;
+        }
+        if (p->json[p->pos] != ',') return false;
+        p->pos++;
+    }
+    return true;
+}
+
+// Parse events array and append to existing list
+static bool parse_events_array_append(JsonParser* p, geo_event_t* events, int* count) {
+    if (!expect_char(p, '[')) return false;
+
+    skip_whitespace(p);
+    if (p->pos < p->len && p->json[p->pos] == ']') {
+        p->pos++;
+        return true;
+    }
+
+    while (*count < MAX_EVENTS_PER_CASE) {
+        if (!parse_event(p, &events[*count])) return false;
+        (*count)++;
+
+        skip_whitespace(p);
+        if (p->pos >= p->len) return false;
+        if (p->json[p->pos] == ']') {
+            p->pos++;
+            return true;
+        }
+        if (p->json[p->pos] != ',') return false;
+        p->pos++;
+    }
+    return true;
+}
+
+static bool parse_vertices_array(JsonParser* p, TestCase* tc) {
+    tc->polygon_vertex_count = 0;
+    if (!expect_char(p, '[')) return false;
+
+    skip_whitespace(p);
+    if (p->pos < p->len && p->json[p->pos] == ']') {
+        p->pos++;
+        return true;
+    }
+
+    while (tc->polygon_vertex_count < MAX_EVENTS_PER_CASE) {
+        if (!expect_char(p, '[')) return false;
+        double lat = 0.0;
+        double lon = 0.0;
+        if (!parse_number(p, &lat)) return false;
+        if (!expect_char(p, ',')) return false;
+        if (!parse_number(p, &lon)) return false;
+        if (!expect_char(p, ']')) return false;
+
+        tc->polygon_vertices[tc->polygon_vertex_count][0] = lat;
+        tc->polygon_vertices[tc->polygon_vertex_count][1] = lon;
+        tc->polygon_vertex_count++;
+
+        skip_whitespace(p);
+        if (p->pos >= p->len) return false;
+        if (p->json[p->pos] == ']') {
+            p->pos++;
+            return true;
+        }
+        if (p->json[p->pos] != ',') return false;
+        p->pos++;
+    }
+    return true;
+}
+
+static bool parse_results_array(JsonParser* p, TestCase* tc) {
+    tc->expected_result_code_count = 0;
+    if (!expect_char(p, '[')) return false;
+
+    skip_whitespace(p);
+    if (p->pos < p->len && p->json[p->pos] == ']') {
+        p->pos++;
+        return true;
+    }
+
+    while (tc->expected_result_code_count < MAX_EVENTS_PER_CASE) {
+        int64_t code = 0;
+        skip_whitespace(p);
+        if (p->pos >= p->len) return false;
+
+        if (p->json[p->pos] == '{') {
+            if (!expect_char(p, '{')) return false;
+            while (true) {
+                skip_whitespace(p);
+                if (p->pos < p->len && p->json[p->pos] == '}') {
+                    p->pos++;
+                    break;
+                }
+                char key[64];
+                if (!parse_string(p, key, sizeof(key))) return false;
+                if (!expect_char(p, ':')) return false;
+                if (strcmp(key, "code") == 0) {
+                    if (!parse_int(p, &code)) return false;
+                } else {
+                    if (!skip_value(p)) return false;
+                }
+                skip_whitespace(p);
+                if (p->pos < p->len && p->json[p->pos] == ',') {
+                    p->pos++;
+                }
+            }
+        } else {
+            if (!skip_value(p)) return false;
+        }
+
+        tc->expected_result_codes[tc->expected_result_code_count++] = (uint32_t)code;
+
+        skip_whitespace(p);
+        if (p->pos >= p->len) return false;
+        if (p->json[p->pos] == ']') {
+            p->pos++;
+            return true;
+        }
+        if (p->json[p->pos] != ',') return false;
+        p->pos++;
+    }
+    return true;
+}
+
+static bool parse_setup_operations(JsonParser* p, TestCase* tc) {
+    if (!expect_char(p, '[')) return false;
+    skip_whitespace(p);
+    if (p->pos < p->len && p->json[p->pos] == ']') {
+        p->pos++;
+        return true;
+    }
+
+    while (tc->setup_operation_count < MAX_SETUP_OPERATIONS) {
+        if (!expect_char(p, '{')) return false;
+        char type[64] = "";
+        int64_t count = 0;
+        while (true) {
+            skip_whitespace(p);
+            if (p->pos < p->len && p->json[p->pos] == '}') {
+                p->pos++;
+                break;
+            }
+            char key[64];
+            if (!parse_string(p, key, sizeof(key))) return false;
+            if (!expect_char(p, ':')) return false;
+            if (strcmp(key, "type") == 0) {
+                if (!parse_string(p, type, sizeof(type))) return false;
+            } else if (strcmp(key, "count") == 0) {
+                if (!parse_int(p, &count)) return false;
+            } else {
+                if (!skip_value(p)) return false;
+            }
+            skip_whitespace(p);
+            if (p->pos < p->len && p->json[p->pos] == ',') {
+                p->pos++;
+            }
+        }
+
+        if (type[0] != '\0' && count > 0) {
+            setup_operation_type_t op_type = 0;
+            if (strcmp(type, "insert") == 0) {
+                op_type = SETUP_OP_INSERT;
+            } else if (strcmp(type, "query_radius") == 0) {
+                op_type = SETUP_OP_QUERY_RADIUS;
+            }
+            if (op_type != 0) {
+                tc->setup_operations[tc->setup_operation_count].type = op_type;
+                tc->setup_operations[tc->setup_operation_count].count = (int)count;
+                tc->setup_operation_count++;
+            }
+        }
 
         skip_whitespace(p);
         if (p->pos >= p->len) return false;
@@ -417,6 +596,22 @@ static bool parse_tags_array(JsonParser* p, char tags[][32], int* count) {
     return true;
 }
 
+static void append_setup_event(TestCase* tc, const geo_event_t* event) {
+    if (tc->setup_event_count < MAX_EVENTS_PER_CASE) {
+        tc->setup_events[tc->setup_event_count++] = *event;
+    }
+}
+
+static void init_event_basic(geo_event_t* event, arch_uint128_t entity_id,
+                             double lat, double lon, uint64_t group_id) {
+    memset(event, 0, sizeof(*event));
+    event->entity_id = entity_id;
+    event->id = entity_id;
+    event->lat_nano = degrees_to_nano(lat);
+    event->lon_nano = degrees_to_nano(lon);
+    event->group_id = group_id;
+}
+
 // Parse setup section (insert_first)
 static bool parse_setup(JsonParser* p, TestCase* tc) {
     if (!expect_char(p, '{')) return false;
@@ -436,15 +631,170 @@ static bool parse_setup(JsonParser* p, TestCase* tc) {
             skip_whitespace(p);
             // Could be a single object or an array
             if (p->json[p->pos] == '[') {
-                if (!parse_events_array(p, tc->setup_events, &tc->setup_event_count)) {
+                if (!parse_events_array_append(p, tc->setup_events, &tc->setup_event_count)) {
                     return false;
                 }
             } else if (p->json[p->pos] == '{') {
-                if (!parse_event(p, &tc->setup_events[0])) return false;
-                tc->setup_event_count = 1;
+                geo_event_t ev;
+                if (!parse_event(p, &ev)) return false;
+                append_setup_event(tc, &ev);
             } else {
                 if (!skip_value(p)) return false;
             }
+        } else if (strcmp(key, "insert_first_range") == 0) {
+            if (!expect_char(p, '{')) return false;
+            int64_t start_id = 0;
+            int64_t count = 0;
+            double base_lat = 0.0;
+            double base_lon = 0.0;
+            double spread_m = 0.0;
+            uint64_t group_id = 0;
+            while (true) {
+                skip_whitespace(p);
+                if (p->pos < p->len && p->json[p->pos] == '}') {
+                    p->pos++;
+                    break;
+                }
+                char range_key[64];
+                if (!parse_string(p, range_key, sizeof(range_key))) return false;
+                if (!expect_char(p, ':')) return false;
+                if (strcmp(range_key, "start_entity_id") == 0) {
+                    if (!parse_int(p, &start_id)) return false;
+                } else if (strcmp(range_key, "count") == 0) {
+                    if (!parse_int(p, &count)) return false;
+                } else if (strcmp(range_key, "base_latitude") == 0) {
+                    if (!parse_number(p, &base_lat)) return false;
+                } else if (strcmp(range_key, "base_longitude") == 0) {
+                    if (!parse_number(p, &base_lon)) return false;
+                } else if (strcmp(range_key, "spread_m") == 0) {
+                    if (!parse_number(p, &spread_m)) return false;
+                } else if (strcmp(range_key, "group_id") == 0) {
+                    int64_t gid;
+                    if (!parse_int(p, &gid)) return false;
+                    group_id = (uint64_t)gid;
+                } else {
+                    if (!skip_value(p)) return false;
+                }
+                skip_whitespace(p);
+                if (p->pos < p->len && p->json[p->pos] == ',') {
+                    p->pos++;
+                }
+            }
+
+            if (count > 0) {
+                double spread_deg = spread_m / 111000.0;
+                int cols = (count < 10) ? (int)count : 10;
+                if (cols <= 0) cols = 1;
+                int rows = ((int)count + cols - 1) / cols;
+                for (int i = 0; i < count; i++) {
+                    if (tc->setup_event_count >= MAX_EVENTS_PER_CASE) break;
+                    int row = i / cols;
+                    int col = i % cols;
+                    double row_frac = rows <= 1 ? 0.5 : (double)row / (double)(rows - 1);
+                    double col_frac = cols <= 1 ? 0.5 : (double)col / (double)(cols - 1);
+                    double lat = base_lat + (row_frac - 0.5) * spread_deg;
+                    double lon = base_lon + (col_frac - 0.5) * spread_deg;
+                    geo_event_t ev;
+                    init_event_basic(&ev, (arch_uint128_t)(start_id + i), lat, lon, group_id);
+                    append_setup_event(tc, &ev);
+                }
+            }
+        } else if (strcmp(key, "insert_hotspot") == 0) {
+            if (!expect_char(p, '{')) return false;
+            int64_t count = 0;
+            int64_t start_id = 1;
+            double center_lat = 0.0;
+            double center_lon = 0.0;
+            double concentration = 100.0;
+            uint64_t group_id = 0;
+            while (true) {
+                skip_whitespace(p);
+                if (p->pos < p->len && p->json[p->pos] == '}') {
+                    p->pos++;
+                    break;
+                }
+                char hot_key[64];
+                if (!parse_string(p, hot_key, sizeof(hot_key))) return false;
+                if (!expect_char(p, ':')) return false;
+                if (strcmp(hot_key, "count") == 0) {
+                    if (!parse_int(p, &count)) return false;
+                } else if (strcmp(hot_key, "start_entity_id") == 0) {
+                    if (!parse_int(p, &start_id)) return false;
+                } else if (strcmp(hot_key, "center_latitude") == 0) {
+                    if (!parse_number(p, &center_lat)) return false;
+                } else if (strcmp(hot_key, "center_longitude") == 0) {
+                    if (!parse_number(p, &center_lon)) return false;
+                } else if (strcmp(hot_key, "concentration_percentage") == 0) {
+                    if (!parse_number(p, &concentration)) return false;
+                } else if (strcmp(hot_key, "group_id") == 0) {
+                    int64_t gid;
+                    if (!parse_int(p, &gid)) return false;
+                    group_id = (uint64_t)gid;
+                } else {
+                    if (!skip_value(p)) return false;
+                }
+                skip_whitespace(p);
+                if (p->pos < p->len && p->json[p->pos] == ',') {
+                    p->pos++;
+                }
+            }
+
+            if (count > 0) {
+                int hotspot_count = (int)round((double)count * (concentration / 100.0));
+                if (hotspot_count > count) hotspot_count = (int)count;
+                int spread_count = (int)count - hotspot_count;
+                for (int i = 0; i < count; i++) {
+                    if (tc->setup_event_count >= MAX_EVENTS_PER_CASE) break;
+                    bool in_hotspot = i < hotspot_count;
+                    int total = in_hotspot ? hotspot_count : spread_count;
+                    int idx = in_hotspot ? i : (i - hotspot_count);
+                    double spread_deg = in_hotspot ? 0.005 : 0.05;
+                    if (total <= 0) total = 1;
+                    int cols = total < 10 ? total : 10;
+                    if (cols <= 0) cols = 1;
+                    int rows = (total + cols - 1) / cols;
+                    int row = idx / cols;
+                    int col = idx % cols;
+                    double row_frac = rows <= 1 ? 0.5 : (double)row / (double)(rows - 1);
+                    double col_frac = cols <= 1 ? 0.5 : (double)col / (double)(cols - 1);
+                    double lat = center_lat + (row_frac - 0.5) * spread_deg;
+                    double lon = center_lon + (col_frac - 0.5) * spread_deg;
+                    geo_event_t ev;
+                    init_event_basic(&ev, (arch_uint128_t)(start_id + i), lat, lon, group_id);
+                    append_setup_event(tc, &ev);
+                }
+            }
+        } else if (strcmp(key, "insert_with_timestamps") == 0) {
+            if (!parse_events_array_append(p, tc->setup_events, &tc->setup_event_count)) {
+                return false;
+            }
+        } else if (strcmp(key, "then_upsert") == 0) {
+            skip_whitespace(p);
+            if (p->json[p->pos] == '[') {
+                if (!parse_events_array(p, tc->setup_upsert_events, &tc->setup_upsert_event_count)) {
+                    return false;
+                }
+            } else if (p->json[p->pos] == '{') {
+                geo_event_t ev;
+                if (!parse_event(p, &ev)) return false;
+                if (tc->setup_upsert_event_count < MAX_EVENTS_PER_CASE) {
+                    tc->setup_upsert_events[tc->setup_upsert_event_count++] = ev;
+                }
+            } else {
+                if (!skip_value(p)) return false;
+            }
+        } else if (strcmp(key, "then_clear_ttl") == 0) {
+            int64_t id;
+            if (!parse_int(p, &id)) return false;
+            tc->setup_clear_ttl_id = (arch_uint128_t)id;
+            tc->has_setup_clear_ttl = true;
+        } else if (strcmp(key, "then_wait_seconds") == 0) {
+            double seconds;
+            if (!parse_number(p, &seconds)) return false;
+            tc->setup_wait_seconds = (uint32_t)seconds;
+            tc->has_setup_wait_seconds = true;
+        } else if (strcmp(key, "perform_operations") == 0) {
+            if (!parse_setup_operations(p, tc)) return false;
         } else {
             if (!skip_value(p)) return false;
         }
@@ -473,8 +823,42 @@ static bool parse_input(JsonParser* p, TestCase* tc) {
 
         if (strcmp(key, "events") == 0) {
             if (!parse_events_array(p, tc->events, &tc->event_count)) return false;
+        } else if (strcmp(key, "entity_id") == 0) {
+            int64_t id;
+            if (!parse_int(p, &id)) return false;
+            tc->entity_ids[0] = (arch_uint128_t)id;
+            tc->entity_id_count = 1;
         } else if (strcmp(key, "entity_ids") == 0) {
             if (!parse_entity_ids_array(p, tc->entity_ids, &tc->entity_id_count)) return false;
+        } else if (strcmp(key, "entity_ids_range") == 0) {
+            if (!expect_char(p, '{')) return false;
+            int64_t start_id = 0;
+            int64_t count = 0;
+            while (true) {
+                skip_whitespace(p);
+                if (p->pos < p->len && p->json[p->pos] == '}') {
+                    p->pos++;
+                    break;
+                }
+                char range_key[64];
+                if (!parse_string(p, range_key, sizeof(range_key))) return false;
+                if (!expect_char(p, ':')) return false;
+                if (strcmp(range_key, "start") == 0) {
+                    if (!parse_int(p, &start_id)) return false;
+                } else if (strcmp(range_key, "count") == 0) {
+                    if (!parse_int(p, &count)) return false;
+                } else {
+                    if (!skip_value(p)) return false;
+                }
+                skip_whitespace(p);
+                if (p->pos < p->len && p->json[p->pos] == ',') {
+                    p->pos++;
+                }
+            }
+            tc->entity_id_count = 0;
+            for (int i = 0; i < count && i < MAX_EVENTS_PER_CASE; i++) {
+                tc->entity_ids[tc->entity_id_count++] = (arch_uint128_t)(start_id + i);
+            }
         } else if (strcmp(key, "setup") == 0) {
             if (!parse_setup(p, tc)) return false;
         } else if (strcmp(key, "center_latitude") == 0) {
@@ -493,6 +877,21 @@ static bool parse_input(JsonParser* p, TestCase* tc) {
             int64_t gid;
             if (!parse_int(p, &gid)) return false;
             tc->group_id = (uint64_t)gid;
+        } else if (strcmp(key, "vertices") == 0) {
+            if (!parse_vertices_array(p, tc)) return false;
+        } else if (strcmp(key, "timestamp_min") == 0) {
+            int64_t ts;
+            if (!parse_int(p, &ts)) return false;
+            tc->timestamp_min = (uint64_t)ts * 1000000000ULL;
+        } else if (strcmp(key, "timestamp_max") == 0) {
+            int64_t ts;
+            if (!parse_int(p, &ts)) return false;
+            tc->timestamp_max = (uint64_t)ts * 1000000000ULL;
+        } else if (strcmp(key, "query_entity_id") == 0) {
+            int64_t id;
+            if (!parse_int(p, &id)) return false;
+            tc->query_entity_id = (arch_uint128_t)id;
+            tc->has_query_entity_id = true;
         } else if (strcmp(key, "ttl_seconds") == 0 || strcmp(key, "extend_by_seconds") == 0) {
             int64_t ttl;
             if (!parse_int(p, &ttl)) return false;
@@ -527,14 +926,54 @@ static bool parse_expected_output(JsonParser* p, TestCase* tc) {
             int64_t code;
             if (!parse_int(p, &code)) return false;
             tc->expected_result_code = (int)code;
-        } else if (strcmp(key, "count") == 0 || strcmp(key, "count_in_range") == 0) {
+        } else if (strcmp(key, "results") == 0) {
+            if (!parse_results_array(p, tc)) return false;
+        } else if (strcmp(key, "count") == 0) {
             int64_t count;
             if (!parse_int(p, &count)) return false;
             tc->expected_count = (int)count;
+            tc->expected_count_is_min = false;
+            tc->has_expected_count = true;
+        } else if (strcmp(key, "count_in_range") == 0) {
+            int64_t count;
+            if (!parse_int(p, &count)) return false;
+            tc->expected_count = (int)count;
+            tc->expected_count_is_min = true;
+            tc->has_expected_count = true;
+        } else if (strcmp(key, "count_in_range_min") == 0 || strcmp(key, "count_min") == 0) {
+            int64_t count;
+            if (!parse_int(p, &count)) return false;
+            tc->expected_count = (int)count;
+            tc->expected_count_is_min = true;
+            tc->has_expected_count = true;
         } else if (strcmp(key, "events_contain") == 0) {
             if (!parse_entity_ids_array(p, tc->expected_entity_ids, &tc->expected_entity_id_count)) {
                 return false;
             }
+        } else if (strcmp(key, "events_exclude") == 0) {
+            if (!parse_entity_ids_array(p, tc->expected_excluded_ids, &tc->expected_excluded_id_count)) {
+                return false;
+            }
+        } else if (strcmp(key, "found_count") == 0) {
+            int64_t count;
+            if (!parse_int(p, &count)) return false;
+            tc->expected_found_count = (int)count;
+            tc->has_expected_found_count = true;
+        } else if (strcmp(key, "found") == 0) {
+            bool val;
+            if (!parse_bool(p, &val)) return false;
+            tc->expected_found = val;
+            tc->has_expected_found = true;
+        } else if (strcmp(key, "new_ttl_min_seconds") == 0) {
+            int64_t ttl;
+            if (!parse_int(p, &ttl)) return false;
+            tc->expected_new_ttl_min_seconds = (uint32_t)ttl;
+            tc->has_expected_new_ttl_min_seconds = true;
+        } else if (strcmp(key, "entity_still_exists") == 0) {
+            bool val;
+            if (!parse_bool(p, &val)) return false;
+            tc->expected_entity_still_exists = val;
+            tc->has_expected_entity_still_exists = true;
         } else if (strcmp(key, "status") == 0) {
             char status[64];
             if (!parse_string(p, status, sizeof(status))) return false;

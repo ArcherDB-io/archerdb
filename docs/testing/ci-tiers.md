@@ -43,7 +43,6 @@ ArcherDB uses a tiered CI approach to balance fast feedback with comprehensive t
 | go-smoke | 3 tests | 30s |
 | java-smoke | 3 tests | 90s |
 | c-smoke | 3 tests | 20s |
-| zig-smoke | 3 tests | 20s |
 
 All SDK jobs run in parallel using GitHub Actions matrix strategy.
 
@@ -54,7 +53,7 @@ All SDK jobs run in parallel using GitHub Actions matrix strategy.
 **Duration:** <15 minutes
 
 **Scope:**
-- Full SDK test suite for all 6 SDKs
+- Full SDK test suite for all 5 SDKs
 - Single-node topology
 - All 14 operations tested
 - Error handling verification

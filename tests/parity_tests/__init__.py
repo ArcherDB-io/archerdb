@@ -3,8 +3,8 @@
 
 """Cross-SDK parity test infrastructure.
 
-This package provides tools for verifying all 6 SDKs (Python, Node.js, Go,
-Java, C, Zig) produce identical results for identical operations.
+This package provides tools for verifying all 5 SDKs (Python, Node.js, Go,
+Java, C) produce identical results for identical operations.
 
 Per Phase 14 CONTEXT.md:
 - Python SDK as golden reference for tie-breaking

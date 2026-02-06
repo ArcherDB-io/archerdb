@@ -62,12 +62,10 @@ Recent decisions affecting current work:
 - [11-01]: Use seeded RNG for entity_id generation (reproducibility)
 - [11-01]: Use underscore naming (test_infrastructure) for Python module compatibility
 - [11-02]: Fixture tag distribution: 14 smoke, 31 PR, 34 nightly
-- [11-02]: Warmup iterations: Java 500 > Node 200 > Python/Go 100 > C/Zig 50 (JIT vs AOT)
+- [11-02]: Warmup iterations: Java 500 > Node 200 > Python/Go 100 > C 50 (JIT vs AOT)
 - [11-02]: CI tiers: smoke <5min (every push), PR <15min, nightly 2h (2 AM UTC)
 - [12-02]: Wire format uses nanodegrees (i64) for coordinate precision
 - [12-02]: curl examples minified on single lines for copy-paste
-- [12-01]: Zig SDK uses error.X syntax for switch matching
-- [12-01]: Zig SDK uses request.response.status for HTTP status
 - [13-01]: Wrap Phase 11 fixture_loader rather than duplicate in SDK tests
 - [13-01]: Node.js tests spawn Python subprocess for cluster management
 - [13-01]: One test class per operation with multiple test cases
@@ -75,11 +73,10 @@ Recent decisions affecting current work:
 - [13-02]: Mock client for Java compilation verification
 - [13-02]: Fixture-based tests load from test_infrastructure/fixtures/v1/
 - [13-03]: C tests use absolute path for fixtures (binary runs from build dir)
-- [13-03]: Zig tests use sdk module import (Zig 0.14+ requirement)
 - [14-01]: Verify error CODES, not message text (per CONTEXT.md)
 - [14-01]: SDK default is 5 retries; tests verify configurability to 3
 - [14-01]: is_retryable() only covers distributed errors (2xx, 4xx)
-- [14-02]: All 6 SDK runners created with run_operation interface
+- [14-02]: All 5 SDK runners created with run_operation interface
 - [14-02]: Edge case fixtures: 33 test cases for polar/antimeridian/equator
 - [14-02]: Parity documentation in 4 locations per CONTEXT.md
 - [15-01]: Use scipy.stats.t.interval for confidence intervals
@@ -109,15 +106,15 @@ Recent decisions affecting current work:
 - [18-01]: Weekly benchmark schedule Sunday 2 AM UTC
 - [18-01]: Regression threshold 110% (10% degradation)
 - [18-01]: Larger runners: 4-cores (nightly), 8-cores (benchmark)
-- [18-02]: Testing guide covers all 6 SDKs with unified structure
+- [18-02]: Testing guide covers all 5 SDKs with unified structure
 - [18-02]: CI tier documentation matches Phase 11 definitions
 - [18-02]: Benchmark guide links to docs/BENCHMARKS.md for methodology
 - [18-02]: SDK comparison shows code examples in all languages
 
 ### Pending Todos
 
-- UAT: Verify all 6 SDKs pass 100% of operation tests (Phase 13)
-- UAT: Run parity tests and verify 84 cells show 100% consistency (Phase 14)
+- UAT: Verify all 5 SDKs pass 100% of operation tests (Phase 13)
+- UAT: Run parity tests and verify 70 cells show 100% consistency (Phase 14)
 - UAT: Run benchmark suite and verify performance targets met (Phase 15)
 - UAT: Run topology tests on real cluster with `ARCHERDB_INTEGRATION=1` (Phase 16)
 - UAT: Verify edge case tests pass (Phase 17)

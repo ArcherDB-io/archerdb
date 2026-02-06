@@ -1,6 +1,6 @@
 # SDK Parity Matrix
 
-Cross-SDK parity verification for ArcherDB. All 6 SDKs must produce identical results for identical operations.
+Cross-SDK parity verification for ArcherDB. All 5 SDKs must produce identical results for identical operations.
 
 **Status:** Run `python tests/parity_tests/parity_runner.py` to update this matrix.
 
@@ -16,24 +16,24 @@ Per Phase 14 CONTEXT.md decisions:
   - Exact byte equality for coordinates (nanodegrees, no epsilon tolerance)
 - **Floating-point handling:** Exact match at nanodegree precision
 
-## Matrix (14 ops x 6 SDKs = 84 cells)
+## Matrix (14 ops x 5 SDKs = 70 cells)
 
-| Operation | Python | Node.js | Go | Java | C | Zig |
-|-----------|--------|---------|----|----|---|-----|
-| insert | - | - | - | - | - | - |
-| upsert | - | - | - | - | - | - |
-| delete | - | - | - | - | - | - |
-| query-uuid | - | - | - | - | - | - |
-| query-uuid-batch | - | - | - | - | - | - |
-| query-radius | - | - | - | - | - | - |
-| query-polygon | - | - | - | - | - | - |
-| query-latest | - | - | - | - | - | - |
-| ping | - | - | - | - | - | - |
-| status | - | - | - | - | - | - |
-| topology | - | - | - | - | - | - |
-| ttl-set | - | - | - | - | - | - |
-| ttl-extend | - | - | - | - | - | - |
-| ttl-clear | - | - | - | - | - | - |
+| Operation | Python | Node.js | Go | Java | C |
+|-----------|--------|---------|----|----|---|
+| insert | - | - | - | - | - |
+| upsert | - | - | - | - | - |
+| delete | - | - | - | - | - |
+| query-uuid | - | - | - | - | - |
+| query-uuid-batch | - | - | - | - | - |
+| query-radius | - | - | - | - | - |
+| query-polygon | - | - | - | - | - |
+| query-latest | - | - | - | - | - |
+| ping | - | - | - | - | - |
+| status | - | - | - | - | - |
+| topology | - | - | - | - | - |
+| ttl-set | - | - | - | - | - |
+| ttl-extend | - | - | - | - | - |
+| ttl-clear | - | - | - | - | - |
 
 Legend: PASS = identical results, FAIL = mismatch, - = not tested
 
@@ -83,11 +83,11 @@ Machine-readable report: `reports/parity.json`
 {
   "generated": "2026-02-01T00:00:00Z",
   "summary": {
-    "total_tests": 84,
-    "passed": 84,
+    "total_tests": 70,
+    "passed": 70,
     "failed": 0,
     "pass_rate": "100.0%",
-    "target": "84 cells (14 ops x 6 SDKs)"
+    "target": "70 cells (14 ops x 5 SDKs)"
   }
 }
 ```

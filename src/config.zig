@@ -648,8 +648,8 @@ pub const configs = struct {
     /// block_size from 4KB to 32KB. Memory impact: ~70MB additional for larger blocks.
     pub const lite = Config{
         .process = .{
-            .storage_size_limit_default = 1 * GiB,
-            .storage_size_limit_max = 1 * GiB,
+            .storage_size_limit_default = 16 * GiB,
+            .storage_size_limit_max = 16 * GiB,
             .direct_io = false,
             .cache_geo_events_size_default = @sizeOf(vsr.archerdb.GeoEvent) * 256,
             .journal_iops_read_max = 3,

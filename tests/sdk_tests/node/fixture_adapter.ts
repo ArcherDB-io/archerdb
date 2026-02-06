@@ -138,10 +138,20 @@ export function generateEntityId(testName: string): bigint {
  */
 export async function cleanDatabase(client: any): Promise<void> {
   try {
-    const result = await client.queryLatest({ limit: 10000 });
-    if (result.events && result.events.length > 0) {
+    let cursor = 0n;
+    while (true) {
+      const result = await client.queryLatest({ limit: 10000, cursor_timestamp: cursor });
+      if (!result.events || result.events.length === 0) {
+        break;
+      }
       const entityIds = result.events.map((e: any) => e.entity_id);
       await client.deleteEntities(entityIds);
+      const last = result.events[result.events.length - 1];
+      const nextCursor = (last && last.timestamp !== undefined) ? BigInt(last.timestamp) : 0n;
+      if (nextCursor === cursor) {
+        break;
+      }
+      cursor = nextCursor;
     }
   } catch {
     // If query fails (empty database), that's fine

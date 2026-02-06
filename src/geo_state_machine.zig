@@ -2421,7 +2421,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             ).*;
             const end_parse = std.time.nanoTimestamp();
 
-            // Validate entity_id
+            // Validate entity_id (treat zero as not found, no eviction)
             if (filter.entity_id == 0) {
                 log.warn("query_uuid: entity_id must not be zero", .{});
                 return 0;
@@ -3065,17 +3065,17 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 response.new_ttl_seconds = request.ttl_seconds;
                 response.result = .success;
 
-                // Update TTL in index using upsert
-                _ = self.ram_index.upsert(
+                const update_result = self.ram_index.update_ttl_if_id_matches(
                     request.entity_id,
                     entry.latest_id,
                     request.ttl_seconds,
-                ) catch |err| {
-                    log.warn("ttl_set: upsert failed: {}", .{err});
+                );
+                if (!update_result.updated) {
+                    log.warn("ttl_set: ttl update failed (race={})", .{update_result.race_detected});
                     response.result = .not_permitted;
-                };
+                }
 
-                // Update TTL tracking metrics (only if upsert succeeded)
+                // Update TTL tracking metrics (only if update succeeded)
                 if (response.result == .success) {
                     if (entry.ttl_seconds == 0 and request.ttl_seconds > 0) {
                         self.entries_with_ttl += 1;
@@ -3164,17 +3164,17 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 
                 response.result = .success;
 
-                // Update TTL in index using upsert
-                _ = self.ram_index.upsert(
+                const update_result = self.ram_index.update_ttl_if_id_matches(
                     request.entity_id,
                     entry.latest_id,
                     response.new_ttl_seconds,
-                ) catch |err| {
-                    log.warn("ttl_extend: upsert failed: {}", .{err});
+                );
+                if (!update_result.updated) {
+                    log.warn("ttl_extend: ttl update failed (race={})", .{update_result.race_detected});
                     response.result = .not_permitted;
-                };
+                }
 
-                // Update TTL tracking metrics (only if upsert succeeded)
+                // Update TTL tracking metrics (only if update succeeded)
                 if (response.result == .success and entry.ttl_seconds == 0 and
                     response.new_ttl_seconds > 0)
                 {
@@ -3248,15 +3248,15 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 response.previous_ttl_seconds = entry.ttl_seconds;
                 response.result = .success;
 
-                // Clear TTL (set to 0 = never expires) using upsert
-                _ = self.ram_index.upsert(
+                const update_result = self.ram_index.update_ttl_if_id_matches(
                     request.entity_id,
                     entry.latest_id,
                     0, // TTL = 0 means never expires
-                ) catch |err| {
-                    log.warn("ttl_clear: upsert failed: {}", .{err});
+                );
+                if (!update_result.updated) {
+                    log.warn("ttl_clear: ttl update failed (race={})", .{update_result.race_detected});
                     response.result = .not_permitted;
-                };
+                }
 
                 // Update TTL tracking metrics (only if upsert succeeded)
                 if (response.result == .success and entry.ttl_seconds > 0) {
@@ -5226,11 +5226,8 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             // F1.1.3: Operation-specific validation
             switch (operation) {
                 .insert_events, .upsert_events => {
-                    // Validate each GeoEvent in the batch
-                    const events = mem.bytesAsSlice(GeoEvent, message_body_used);
-                    for (events) |event| {
-                        if (!validateGeoEvent(event)) return false;
-                    }
+                    // Allow field-level validation to happen during execution so
+                    // invalid events return per-event error codes instead of eviction.
                     return true;
                 },
                 .delete_entities => {
@@ -5240,13 +5237,12 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     return true;
                 },
                 .query_uuid => {
-                    // QueryUuidFilter validation - entity_id must be non-zero
+                    // QueryUuidFilter validation (entity_id checked at execution)
                     if (message_body_used.len != @sizeOf(QueryUuidFilter)) return false;
                     const filter = mem.bytesAsValue(
                         QueryUuidFilter,
                         message_body_used[0..@sizeOf(QueryUuidFilter)],
                     ).*;
-                    if (filter.entity_id == 0) return false;
                     for (filter.reserved) |byte| {
                         if (byte != 0) return false;
                     }

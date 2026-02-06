@@ -9,7 +9,7 @@ The ArcherDB benchmark framework provides:
 - **Throughput benchmarks**: Measure insert events/second
 - **Latency benchmarks**: Measure read/write P50/P95/P99 latency
 - **Scalability benchmarks**: Measure throughput scaling across node counts
-- **SDK benchmarks**: Compare performance across all 6 SDKs
+- **SDK benchmarks**: Compare performance across all 5 SDKs
 - **Regression detection**: Compare results against baselines
 
 ## Running Benchmarks
@@ -34,7 +34,7 @@ print(benchmark.generate_report(result))
 
 ### SDK Benchmark
 
-Compare performance across Python, Node.js, Go, Java, C, and Zig SDKs:
+Compare performance across Python, Node.js, Go, Java, and C SDKs:
 
 ```bash
 python -c "

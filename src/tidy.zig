@@ -41,6 +41,12 @@ test "tidy" {
     for (paths) |file_path| {
         // Skip binary library files (too large for buffer)
         if (std.mem.startsWith(u8, file_path, "src/clients/c/lib/")) continue;
+        // Skip checked-in Node.js dependencies
+        if (std.mem.startsWith(u8, file_path, "tests/sdk_tests/node/node_modules/")) continue;
+        // Skip Java build artifacts
+        if (std.mem.startsWith(u8, file_path, "tests/sdk_tests/java/target/")) continue;
+        // Skip large binary sample
+        if (std.mem.eql(u8, file_path, "src/clients/c/samples/sample")) continue;
         // Skip planning documentation and build config
         if (std.mem.startsWith(u8, file_path, ".planning/")) continue;
         // Skip large test data files (> 1 MiB buffer limit)
@@ -300,6 +306,7 @@ fn tidy_control_characters(file: SourceFile, errors: *Errors) void {
         // TSV (Tab-Separated Values) files require tabs.
         .@"\t" = file.has_extension(".sln") or
             file.has_extension(".tsv") or
+            file.has_extension(".mod") or
             (file.has_extension(".go") or
                 (file.has_extension(".md") and mem.indexOf(u8, file.text, "```go") != null)),
     };
@@ -958,6 +965,7 @@ const DeadFilesDetector = struct {
             "service_worker_writer.zig",
             "rust_bindings.zig",
             "single_page_writer.zig",
+            "test_sizes.zig",
             "arch_client_header.zig",
             "scan_range.zig",
             "unit_tests.zig",
@@ -1031,6 +1039,9 @@ test "tidy no large blobs" {
         if (std.mem.eql(u8, path, "src/state_machine.zig")) continue; // :-|
         if (std.mem.eql(u8, path, "src/docs_website/package-lock.json")) continue; // :-(
         if (std.mem.startsWith(u8, path, "src/clients/c/lib/")) continue;
+        if (std.mem.startsWith(u8, path, "tests/sdk_tests/node/node_modules/")) continue;
+        if (std.mem.startsWith(u8, path, "tests/sdk_tests/java/target/")) continue;
+        if (std.mem.eql(u8, path, "src/clients/c/samples/sample")) continue;
         // Historical blobs (binary artifacts in git history before removal)
         if (std.mem.eql(u8, path, "archerdb")) continue;
         if (std.mem.eql(u8, path, "testdata/s2/golden_vectors_v1.tsv")) continue;
@@ -1085,6 +1096,8 @@ test "tidy unix permissions" {
         "scripts/test-ttl-cleanup.sh",
         "scripts/validate-readiness-fix.sh",
         "src/clients/python/reproduce_crash_env.sh",
+        "src/clients/c/samples/sample",
+        "tests/sdk_tests/run_sdk_tests.sh",
     };
 
     const allocator = std.testing.allocator;
@@ -1102,6 +1115,7 @@ test "tidy unix permissions" {
 
         // Skip client library directories (binary files may have executable bit)
         if (std.mem.startsWith(u8, path, "src/clients/c/lib/")) continue;
+        if (std.mem.startsWith(u8, path, "tests/sdk_tests/node/node_modules/")) continue;
 
         if (std.mem.eql(u8, mode, "100644")) {
             // Expected for most files.
@@ -1132,6 +1146,7 @@ test "tidy extensions" {
     const exceptions = std.StaticStringMap(void).initComptime(.{
         .{".editorconfig"},
         .{".gitignore"},
+        .{".gitkeep"},
         .{".nojekyll"},
         .{"CNAME"},
         .{"exclude-pmd.properties"},
@@ -1185,6 +1200,9 @@ test "tidy extensions" {
         // Skip vendored/generated client library directories
         if (std.mem.startsWith(u8, path, "src/clients/c/lib/")) continue;
         if (std.mem.startsWith(u8, path, "src/clients/python/src/archerdb/")) continue;
+        if (std.mem.startsWith(u8, path, "tests/sdk_tests/node/node_modules/")) continue;
+        if (std.mem.startsWith(u8, path, "tests/sdk_tests/java/target/")) continue;
+        if (std.mem.eql(u8, path, "src/clients/c/samples/sample")) continue;
         // Skip deployment and observability configuration files
         if (std.mem.startsWith(u8, path, "deploy/")) continue;
         if (std.mem.startsWith(u8, path, "observability/")) continue;

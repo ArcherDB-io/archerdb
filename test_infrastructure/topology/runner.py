@@ -9,7 +9,7 @@ test suites across all cluster topologies (1/3/5/6 nodes).
 Per CONTEXT.md:
 - Sequential execution: 1-node -> 3-node -> 5-node -> 6-node
 - Continue through failures to collect full scope
-- Full test suite (14 ops x 6 SDKs) per topology
+    - Full test suite (14 ops x 5 SDKs) per topology
 """
 
 import json
@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional
 class TopologyTestRunner:
     """Runs full test suite across all topologies.
 
-    Orchestrates testing of all 14 operations across 6 SDKs for each
+    Orchestrates testing of all 14 operations across 5 SDKs for each
     cluster topology (1, 3, 5, 6 nodes).
 
     Usage:
@@ -57,7 +57,7 @@ class TopologyTestRunner:
         "ttl-clear",
     ]
 
-    SDKS = ["python", "node", "go", "java", "c", "zig"]
+    SDKS = ["python", "node", "go", "java", "c"]
 
     def __init__(self, output_dir: str = "reports/topology") -> None:
         """Initialize topology test runner.
@@ -78,7 +78,7 @@ class TopologyTestRunner:
 
         Args:
             topology: Number of nodes in the cluster.
-            sdks: List of SDK names to test (default: all 6).
+            sdks: List of SDK names to test (default: all 5).
 
         Returns:
             Dict with test results per operation per SDK.
@@ -245,7 +245,6 @@ class TopologyTestRunner:
             "go": sdk_runners.go_runner,
             "java": sdk_runners.java_runner,
             "c": sdk_runners.c_runner,
-            "zig": sdk_runners.zig_runner,
         }
 
         if sdk not in runner_map:

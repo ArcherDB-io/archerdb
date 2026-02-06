@@ -224,6 +224,177 @@ static bool delete_entities(const arch_uint128_t* ids, int count) {
     return submit_and_wait(&packet);
 }
 
+static int append_event_ids(arch_uint128_t* ids, int count,
+                            const geo_event_t* events, int event_count) {
+    for (int i = 0; i < event_count && count < MAX_EVENTS_PER_CASE; i++) {
+        ids[count++] = events[i].entity_id;
+    }
+    return count;
+}
+
+static arch_uint128_t next_generated_entity_id(void) {
+    static arch_uint128_t counter = 9000000;
+    return counter++;
+}
+
+static void init_event_basic_local(geo_event_t* event, arch_uint128_t entity_id,
+                                   double lat, double lon, uint64_t group_id) {
+    memset(event, 0, sizeof(*event));
+    event->entity_id = entity_id;
+    event->id = entity_id;
+    event->lat_nano = degrees_to_nano(lat);
+    event->lon_nano = degrees_to_nano(lon);
+    event->group_id = group_id;
+}
+
+static bool apply_setup_actions(TestCase* tc) {
+    if (tc->setup_event_count > 0) {
+        if (!insert_setup_events(tc->setup_events, tc->setup_event_count)) {
+            return false;
+        }
+    }
+    if (tc->setup_upsert_event_count > 0) {
+        arch_packet_t packet = {0};
+        packet.operation = ARCH_OPERATION_UPSERT_EVENTS;
+        packet.data = (void*)tc->setup_upsert_events;
+        packet.data_size = tc->setup_upsert_event_count * sizeof(geo_event_t);
+        if (!submit_and_wait(&packet) || last_response.status != ARCH_PACKET_OK) {
+            return false;
+        }
+    }
+    if (tc->has_setup_clear_ttl) {
+        ttl_clear_request_t req = {0};
+        req.entity_id = tc->setup_clear_ttl_id;
+        arch_packet_t packet = {0};
+        packet.operation = ARCH_OPERATION_TTL_CLEAR;
+        packet.data = &req;
+        packet.data_size = sizeof(req);
+        if (!submit_and_wait(&packet) || last_response.status != ARCH_PACKET_OK) {
+            return false;
+        }
+    }
+    if (tc->has_setup_wait_seconds && tc->setup_wait_seconds > 0) {
+        sleep(tc->setup_wait_seconds);
+    }
+
+    if (tc->setup_operation_count > 0) {
+        tc->setup_extra_event_count = 0;
+        for (int i = 0; i < tc->setup_operation_count; i++) {
+            setup_operation_t* op = &tc->setup_operations[i];
+            if (op->type == SETUP_OP_INSERT) {
+                int remaining = op->count;
+                while (remaining > 0) {
+                    int chunk = remaining > MAX_EVENTS_PER_CASE ? MAX_EVENTS_PER_CASE : remaining;
+                    geo_event_t events[MAX_EVENTS_PER_CASE];
+                    for (int j = 0; j < chunk; j++) {
+                        arch_uint128_t id = next_generated_entity_id();
+                        double lat = 40.0 + (j * 0.0001);
+                        double lon = -74.0 - (j * 0.0001);
+                        init_event_basic_local(&events[j], id, lat, lon, 0);
+                        if (tc->setup_extra_event_count < MAX_EVENTS_PER_CASE) {
+                            tc->setup_extra_events[tc->setup_extra_event_count++] = events[j];
+                        }
+                    }
+                    arch_packet_t packet = {0};
+                    packet.operation = ARCH_OPERATION_INSERT_EVENTS;
+                    packet.data = events;
+                    packet.data_size = chunk * sizeof(geo_event_t);
+                    if (!submit_and_wait(&packet) || last_response.status != ARCH_PACKET_OK) {
+                        return false;
+                    }
+                    remaining -= chunk;
+                }
+            } else if (op->type == SETUP_OP_QUERY_RADIUS) {
+                query_radius_filter_t filter = {0};
+                filter.center_lat_nano = degrees_to_nano(40.0);
+                filter.center_lon_nano = degrees_to_nano(-74.0);
+                filter.radius_mm = 1000 * 1000;
+                filter.limit = 10;
+                for (int j = 0; j < op->count; j++) {
+                    arch_packet_t packet = {0};
+                    packet.operation = ARCH_OPERATION_QUERY_RADIUS;
+                    packet.data = &filter;
+                    packet.data_size = sizeof(filter);
+                    if (!submit_and_wait(&packet) || last_response.status != ARCH_PACKET_OK) {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+    return true;
+}
+
+static bool parse_query_response(const uint8_t* data, uint32_t len,
+                                 const geo_event_t** events_out,
+                                 uint32_t* count_out) {
+    if (len == 0) {
+        *count_out = 0;
+        *events_out = NULL;
+        return true;
+    }
+    if (len == sizeof(uint32_t)) {
+        // 4-byte error code responses (e.g., unsupported polygon in lite config).
+        *count_out = 0;
+        *events_out = NULL;
+        return true;
+    }
+    if (len < sizeof(query_response_t)) {
+        return false;
+    }
+    query_response_t header;
+    memcpy(&header, data, sizeof(header));
+    uint32_t count = header.count;
+    uint32_t expected_len = sizeof(query_response_t) + count * sizeof(geo_event_t);
+    if (len < expected_len) {
+        return false;
+    }
+    *count_out = count;
+    *events_out = (const geo_event_t*)(data + sizeof(query_response_t));
+    return true;
+}
+
+
+static int get_output_cap(uint32_t inserted_count) {
+    if (inserted_count == 0) return -1;
+
+    query_latest_filter_t filter = {0};
+    filter.limit = 10000;
+
+    arch_packet_t packet = {0};
+    packet.operation = ARCH_OPERATION_QUERY_LATEST;
+    packet.data = &filter;
+    packet.data_size = sizeof(filter);
+
+    if (!submit_and_wait(&packet) || last_response.status != ARCH_PACKET_OK) {
+        return -1;
+    }
+
+    const geo_event_t* events = NULL;
+    uint32_t count = 0;
+    if (!parse_query_response(last_response.data, last_response.len, &events, &count)) {
+        return -1;
+    }
+
+    if (count < inserted_count) {
+        return (int)count;
+    }
+
+    return -1;
+}
+
+static bool contains_entity_id(const geo_event_t* events, uint32_t count, arch_uint128_t id) {
+    const uint8_t* raw = (const uint8_t*)events;
+    for (uint32_t i = 0; i < count; i++) {
+        geo_event_t event;
+        memcpy(&event, raw + (size_t)i * sizeof(geo_event_t), sizeof(event));
+        if (event.entity_id == id) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // ============================================================================
 // Test: Ping (opcode 152)
 // ============================================================================
@@ -232,8 +403,8 @@ static void test_ping(void) {
 
     Fixture* fixture = load_fixture("ping");
     if (!fixture) {
-        printf("SKIP: Could not load ping fixture\n");
-        tests_skipped++;
+        printf("FAIL: Could not load ping fixture\n");
+        tests_failed++;
         return;
     }
 
@@ -267,8 +438,8 @@ static void test_status(void) {
 
     Fixture* fixture = load_fixture("status");
     if (!fixture) {
-        printf("SKIP: Could not load status fixture\n");
-        tests_skipped++;
+        printf("FAIL: Could not load status fixture\n");
+        tests_failed++;
         return;
     }
 
@@ -276,24 +447,50 @@ static void test_status(void) {
         TestCase* tc = &fixture->cases[i];
         printf("  %s: ", tc->name);
 
+        if (!apply_setup_actions(tc)) {
+            printf("\033[31mFAIL\033[0m - setup failed\n");
+            tests_failed++;
+            continue;
+        }
+
         status_request_t req = {0};
         arch_packet_t packet = {0};
         packet.operation = ARCH_OPERATION_ARCHERDB_GET_STATUS;
         packet.data = &req;
         packet.data_size = sizeof(req);
 
-        if (submit_and_wait(&packet) && last_response.status == ARCH_PACKET_OK) {
-            if (last_response.len >= sizeof(status_response_t)) {
-                printf("\033[32mPASS\033[0m\n");
-                tests_passed++;
+        bool ok = submit_and_wait(&packet) && last_response.status == ARCH_PACKET_OK;
+        if (tc->expect_success) {
+            if (ok && last_response.len >= sizeof(status_response_t)) {
+                status_response_t resp;
+                memcpy(&resp, last_response.data, sizeof(resp));
+                if (resp.ram_index_capacity > 0) {
+                    printf("\033[32mPASS\033[0m\n");
+                    tests_passed++;
+                } else {
+                    printf("\033[31mFAIL\033[0m - invalid capacity\n");
+                    tests_failed++;
+                }
             } else {
-                printf("\033[31mFAIL\033[0m - invalid response size\n");
+                printf("\033[31mFAIL\033[0m - invalid response\n");
                 tests_failed++;
             }
         } else {
-            printf("\033[31mFAIL\033[0m - no response\n");
-            tests_failed++;
+            if (!ok) {
+                printf("\033[32mPASS\033[0m (expected failure)\n");
+                tests_passed++;
+            } else {
+                printf("\033[31mFAIL\033[0m - expected failure\n");
+                tests_failed++;
+            }
         }
+
+        arch_uint128_t ids[MAX_EVENTS_PER_CASE * 2];
+        int id_count = 0;
+        id_count = append_event_ids(ids, id_count, tc->setup_events, tc->setup_event_count);
+        id_count = append_event_ids(ids, id_count, tc->setup_upsert_events, tc->setup_upsert_event_count);
+        id_count = append_event_ids(ids, id_count, tc->setup_extra_events, tc->setup_extra_event_count);
+        delete_entities(ids, id_count);
     }
 
     free_fixture(fixture);
@@ -307,17 +504,20 @@ static void test_topology(void) {
 
     Fixture* fixture = load_fixture("topology");
     if (!fixture) {
-        printf("SKIP: Could not load topology fixture\n");
-        tests_skipped++;
+        printf("FAIL: Could not load topology fixture\n");
+        tests_failed++;
         return;
     }
 
-    // Run all topology test cases
-    // Note: Multi-node tests will run against single-node cluster,
-    // but we just verify we get a valid response (like Python SDK does)
     for (int i = 0; i < fixture->case_count; i++) {
         TestCase* tc = &fixture->cases[i];
         printf("  %s: ", tc->name);
+
+        if (!apply_setup_actions(tc)) {
+            printf("\033[31mFAIL\033[0m - setup failed\n");
+            tests_failed++;
+            continue;
+        }
 
         topology_request_t req = {0};
         arch_packet_t packet = {0};
@@ -325,14 +525,38 @@ static void test_topology(void) {
         packet.data = &req;
         packet.data_size = sizeof(req);
 
-        if (submit_and_wait(&packet) && last_response.status == ARCH_PACKET_OK) {
-            // Just verify we got a response - actual topology may differ in test environment
-            printf("\033[32mPASS\033[0m\n");
-            tests_passed++;
+        bool ok = submit_and_wait(&packet) && last_response.status == ARCH_PACKET_OK;
+        if (tc->expect_success) {
+            if (ok && last_response.len >= 52) {
+                uint32_t num_shards = 0;
+                memcpy(&num_shards, last_response.data + 8, sizeof(num_shards));
+                if (num_shards > 0) {
+                    printf("\033[32mPASS\033[0m\n");
+                    tests_passed++;
+                } else {
+                    printf("\033[31mFAIL\033[0m - no shards reported\n");
+                    tests_failed++;
+                }
+            } else {
+                printf("\033[31mFAIL\033[0m - invalid response\n");
+                tests_failed++;
+            }
         } else {
-            printf("\033[31mFAIL\033[0m - no response\n");
-            tests_failed++;
+            if (!ok) {
+                printf("\033[32mPASS\033[0m (expected failure)\n");
+                tests_passed++;
+            } else {
+                printf("\033[31mFAIL\033[0m - expected failure\n");
+                tests_failed++;
+            }
         }
+
+        arch_uint128_t ids[MAX_EVENTS_PER_CASE * 2];
+        int id_count = 0;
+        id_count = append_event_ids(ids, id_count, tc->setup_events, tc->setup_event_count);
+        id_count = append_event_ids(ids, id_count, tc->setup_upsert_events, tc->setup_upsert_event_count);
+        id_count = append_event_ids(ids, id_count, tc->setup_extra_events, tc->setup_extra_event_count);
+        delete_entities(ids, id_count);
     }
 
     free_fixture(fixture);
@@ -346,8 +570,8 @@ static void test_insert(void) {
 
     Fixture* fixture = load_fixture("insert");
     if (!fixture) {
-        printf("SKIP: Could not load insert fixture\n");
-        tests_skipped++;
+        printf("FAIL: Could not load insert fixture\n");
+        tests_failed++;
         return;
     }
 
@@ -356,8 +580,8 @@ static void test_insert(void) {
         printf("  %s: ", tc->name);
 
         if (tc->event_count == 0) {
-            printf("\033[33mSKIP\033[0m - no events\n");
-            tests_skipped++;
+            printf("\033[31mFAIL\033[0m - no events\n");
+            tests_failed++;
             continue;
         }
 
@@ -366,66 +590,84 @@ static void test_insert(void) {
         packet.data = tc->events;
         packet.data_size = tc->event_count * sizeof(geo_event_t);
 
-        bool success = submit_and_wait(&packet);
+        bool success = submit_and_wait(&packet) && last_response.status == ARCH_PACKET_OK;
+        bool any_nonzero = false;
+        for (int j = 0; j < tc->expected_result_code_count; j++) {
+            if (tc->expected_result_codes[j] != 0) {
+                any_nonzero = true;
+                break;
+            }
+        }
 
-        // For invalid test cases, client eviction is EXPECTED behavior
-        if (strstr(tc->name, "invalid") != NULL) {
-            // Invalid inputs should cause eviction or error
-            if (!success || last_response.status == ARCH_PACKET_CLIENT_EVICTED) {
-                printf("\033[32mPASS\033[0m (expected rejection)\n");
-                tests_passed++;
-            } else if (last_response.status == ARCH_PACKET_OK && last_response.len > 0) {
-                // Check if got error results
-                insert_geo_events_result_t* results = (insert_geo_events_result_t*)last_response.data;
-                int result_count = last_response.len / sizeof(insert_geo_events_result_t);
-                bool has_error = false;
-                for (int j = 0; j < result_count; j++) {
-                    if (results[j].result != INSERT_GEO_EVENT_OK) {
-                        has_error = true;
-                        break;
+        if (success) {
+            bool ok = true;
+            if (tc->expected_result_code_count > 0) {
+                if (last_response.len == 0) {
+                    if (any_nonzero) {
+                        ok = false;
+                    }
+                } else if (last_response.len % sizeof(insert_geo_events_result_t) != 0) {
+                    ok = false;
+                } else {
+                    int result_count = last_response.len / sizeof(insert_geo_events_result_t);
+                    bool found[MAX_EVENTS_PER_CASE] = {false};
+                    const uint8_t* raw = last_response.data;
+                    for (int j = 0; j < result_count && ok; j++) {
+                        insert_geo_events_result_t result;
+                        memcpy(&result, raw + (size_t)j * sizeof(result), sizeof(result));
+                        uint32_t index = result.index;
+                        uint32_t code = result.result;
+                        if (index >= (uint32_t)tc->expected_result_code_count ||
+                                code != tc->expected_result_codes[index]) {
+                            ok = false;
+                        } else {
+                            found[index] = true;
+                        }
+                    }
+                    if (any_nonzero) {
+                        for (int j = 0; j < tc->expected_result_code_count && ok; j++) {
+                            if (tc->expected_result_codes[j] != 0 && !found[j]) {
+                                ok = false;
+                            }
+                        }
                     }
                 }
-                if (has_error) {
-                    printf("\033[32mPASS\033[0m (expected error)\n");
-                    tests_passed++;
-                } else {
-                    printf("\033[31mFAIL\033[0m - expected error not found\n");
-                    tests_failed++;
-                }
+            }
+
+            if (ok) {
+                printf("\033[32mPASS\033[0m\n");
+                tests_passed++;
             } else {
-                printf("\033[31mFAIL\033[0m - unexpected success\n");
+                printf("\033[31mFAIL\033[0m - unexpected results\n");
                 tests_failed++;
             }
-        } else if (success && last_response.status == ARCH_PACKET_OK) {
-            // Normal test cases should succeed
-            printf("\033[32mPASS\033[0m\n");
-            tests_passed++;
         } else {
-            printf("\033[31mFAIL\033[0m - request failed\n");
-            tests_failed++;
+            if (any_nonzero) {
+                printf("\033[32mPASS\033[0m (expected rejection)\n");
+                tests_passed++;
+            } else {
+                printf("\033[31mFAIL\033[0m - request failed\n");
+                tests_failed++;
+            }
         }
 
         // Cleanup: delete inserted entities
-        arch_uint128_t ids[MAX_EVENTS_PER_CASE];
-        for (int j = 0; j < tc->event_count; j++) {
-            ids[j] = tc->events[j].entity_id;
-        }
-        delete_entities(ids, tc->event_count);
+        arch_uint128_t ids[MAX_EVENTS_PER_CASE * 2];
+        int id_count = 0;
+        id_count = append_event_ids(ids, id_count, tc->events, tc->event_count);
+        delete_entities(ids, id_count);
     }
 
     free_fixture(fixture);
 }
 
-// ============================================================================
-// Test: Upsert (opcode 147)
-// ============================================================================
 static void test_upsert(void) {
     printf("\n=== Testing upsert operations ===\n");
 
     Fixture* fixture = load_fixture("upsert");
     if (!fixture) {
-        printf("SKIP: Could not load upsert fixture\n");
-        tests_skipped++;
+        printf("FAIL: Could not load upsert fixture\n");
+        tests_failed++;
         return;
     }
 
@@ -434,17 +676,15 @@ static void test_upsert(void) {
         printf("  %s: ", tc->name);
 
         // Setup: insert any prerequisite events
-        if (tc->setup_event_count > 0) {
-            if (!insert_setup_events(tc->setup_events, tc->setup_event_count)) {
-                printf("\033[33mSKIP\033[0m - setup failed\n");
-                tests_skipped++;
-                continue;
-            }
+        if (!apply_setup_actions(tc)) {
+            printf("\033[31mFAIL\033[0m - setup failed\n");
+            tests_failed++;
+            continue;
         }
 
         if (tc->event_count == 0) {
-            printf("\033[33mSKIP\033[0m - no events\n");
-            tests_skipped++;
+            printf("\033[31mFAIL\033[0m - no events\n");
+            tests_failed++;
             continue;
         }
 
@@ -454,8 +694,55 @@ static void test_upsert(void) {
         packet.data_size = tc->event_count * sizeof(geo_event_t);
 
         if (submit_and_wait(&packet) && last_response.status == ARCH_PACKET_OK) {
-            printf("\033[32mPASS\033[0m\n");
-            tests_passed++;
+            bool ok = true;
+            bool any_nonzero = false;
+            for (int j = 0; j < tc->expected_result_code_count; j++) {
+                if (tc->expected_result_codes[j] != 0) {
+                    any_nonzero = true;
+                    break;
+                }
+            }
+
+            if (tc->expected_result_code_count > 0) {
+                if (last_response.len == 0) {
+                    if (any_nonzero) {
+                        ok = false;
+                    }
+                } else if (last_response.len % sizeof(insert_geo_events_result_t) != 0) {
+                    ok = false;
+                } else {
+                    int result_count = last_response.len / sizeof(insert_geo_events_result_t);
+                    bool found[MAX_EVENTS_PER_CASE] = {false};
+                    const uint8_t* raw = last_response.data;
+                    for (int j = 0; j < result_count && ok; j++) {
+                        insert_geo_events_result_t result;
+                        memcpy(&result, raw + (size_t)j * sizeof(result), sizeof(result));
+                        uint32_t index = result.index;
+                        uint32_t code = result.result;
+                        if (index >= (uint32_t)tc->expected_result_code_count ||
+                                code != tc->expected_result_codes[index]) {
+                            ok = false;
+                        } else {
+                            found[index] = true;
+                        }
+                    }
+                    if (any_nonzero) {
+                        for (int j = 0; j < tc->expected_result_code_count && ok; j++) {
+                            if (tc->expected_result_codes[j] != 0 && !found[j]) {
+                                ok = false;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (ok) {
+                printf("\033[32mPASS\033[0m\n");
+                tests_passed++;
+            } else {
+                printf("\033[31mFAIL\033[0m - unexpected results\n");
+                tests_failed++;
+            }
         } else {
             printf("\033[31mFAIL\033[0m - request failed\n");
             tests_failed++;
@@ -464,12 +751,10 @@ static void test_upsert(void) {
         // Cleanup
         arch_uint128_t ids[MAX_EVENTS_PER_CASE * 2];
         int id_count = 0;
-        for (int j = 0; j < tc->setup_event_count; j++) {
-            ids[id_count++] = tc->setup_events[j].entity_id;
-        }
-        for (int j = 0; j < tc->event_count; j++) {
-            ids[id_count++] = tc->events[j].entity_id;
-        }
+        id_count = append_event_ids(ids, id_count, tc->setup_events, tc->setup_event_count);
+        id_count = append_event_ids(ids, id_count, tc->setup_upsert_events, tc->setup_upsert_event_count);
+        id_count = append_event_ids(ids, id_count, tc->setup_extra_events, tc->setup_extra_event_count);
+        id_count = append_event_ids(ids, id_count, tc->events, tc->event_count);
         delete_entities(ids, id_count);
     }
 
@@ -484,8 +769,8 @@ static void test_delete(void) {
 
     Fixture* fixture = load_fixture("delete");
     if (!fixture) {
-        printf("SKIP: Could not load delete fixture\n");
-        tests_skipped++;
+        printf("FAIL: Could not load delete fixture\n");
+        tests_failed++;
         return;
     }
 
@@ -494,33 +779,62 @@ static void test_delete(void) {
         printf("  %s: ", tc->name);
 
         // Setup: insert prerequisite events
-        if (tc->setup_event_count > 0) {
-            if (!insert_setup_events(tc->setup_events, tc->setup_event_count)) {
-                printf("\033[33mSKIP\033[0m - setup failed\n");
-                tests_skipped++;
-                continue;
-            }
+        if (!apply_setup_actions(tc)) {
+            printf("\033[31mFAIL\033[0m - setup failed\n");
+            tests_failed++;
+            continue;
         }
 
         if (tc->entity_id_count == 0) {
             // No entity IDs - valid test case testing empty/not found
             printf("\033[32mPASS\033[0m (no entity IDs - tests not found case)\n");
             tests_passed++;
-            continue;
-        }
-
-        arch_packet_t packet = {0};
-        packet.operation = ARCH_OPERATION_DELETE_ENTITIES;
-        packet.data = tc->entity_ids;
-        packet.data_size = tc->entity_id_count * sizeof(arch_uint128_t);
-
-        if (submit_and_wait(&packet) && last_response.status == ARCH_PACKET_OK) {
-            printf("\033[32mPASS\033[0m\n");
-            tests_passed++;
         } else {
-            printf("\033[31mFAIL\033[0m - request failed\n");
-            tests_failed++;
+            arch_packet_t packet = {0};
+            packet.operation = ARCH_OPERATION_DELETE_ENTITIES;
+            packet.data = tc->entity_ids;
+            packet.data_size = tc->entity_id_count * sizeof(arch_uint128_t);
+
+            if (submit_and_wait(&packet) && last_response.status == ARCH_PACKET_OK) {
+                bool ok = true;
+                if (tc->expected_result_code_count > 0) {
+                    int result_count = last_response.len / sizeof(delete_entities_result_t);
+                    if (result_count < tc->expected_result_code_count) {
+                        ok = false;
+                    } else {
+                        const uint8_t* raw = last_response.data;
+                        for (int j = 0; j < result_count && ok; j++) {
+                            delete_entities_result_t result;
+                            memcpy(&result, raw + (size_t)j * sizeof(result), sizeof(result));
+                            uint32_t index = result.index;
+                            uint32_t code = result.result;
+                            if (index >= (uint32_t)tc->expected_result_code_count ||
+                                    code != tc->expected_result_codes[index]) {
+                                ok = false;
+                            }
+                        }
+                    }
+                }
+                if (ok) {
+                    printf("\033[32mPASS\033[0m\n");
+                    tests_passed++;
+                } else {
+                    printf("\033[31mFAIL\033[0m - unexpected results\n");
+                    tests_failed++;
+                }
+            } else {
+                printf("\033[31mFAIL\033[0m - request failed\n");
+                tests_failed++;
+            }
         }
+
+        // Cleanup any setup events that were not deleted
+        arch_uint128_t ids[MAX_EVENTS_PER_CASE * 2];
+        int id_count = 0;
+        id_count = append_event_ids(ids, id_count, tc->setup_events, tc->setup_event_count);
+        id_count = append_event_ids(ids, id_count, tc->setup_upsert_events, tc->setup_upsert_event_count);
+        id_count = append_event_ids(ids, id_count, tc->setup_extra_events, tc->setup_extra_event_count);
+        delete_entities(ids, id_count);
     }
 
     free_fixture(fixture);
@@ -534,8 +848,8 @@ static void test_query_uuid(void) {
 
     Fixture* fixture = load_fixture("query-uuid");
     if (!fixture) {
-        printf("SKIP: Could not load query-uuid fixture\n");
-        tests_skipped++;
+        printf("FAIL: Could not load query-uuid fixture\n");
+        tests_failed++;
         return;
     }
 
@@ -544,12 +858,10 @@ static void test_query_uuid(void) {
         printf("  %s: ", tc->name);
 
         // Setup: insert prerequisite events
-        if (tc->setup_event_count > 0) {
-            if (!insert_setup_events(tc->setup_events, tc->setup_event_count)) {
-                printf("\033[33mSKIP\033[0m - setup failed\n");
-                tests_skipped++;
-                continue;
-            }
+        if (!apply_setup_actions(tc)) {
+            printf("\033[31mFAIL\033[0m - setup failed\n");
+            tests_failed++;
+            continue;
         }
 
         if (tc->entity_id_count == 0 && tc->setup_event_count == 0) {
@@ -572,19 +884,43 @@ static void test_query_uuid(void) {
         packet.data_size = sizeof(filter);
 
         if (submit_and_wait(&packet) && last_response.status == ARCH_PACKET_OK) {
-            printf("\033[32mPASS\033[0m\n");
-            tests_passed++;
+            if (last_response.len == 0 || last_response.len == sizeof(uint32_t)) {
+                bool found = false;
+                if (!tc->has_expected_found || found == tc->expected_found) {
+                    printf("\033[32mPASS\033[0m\n");
+                    tests_passed++;
+                } else {
+                    printf("\033[31mFAIL\033[0m - unexpected found status\n");
+                    tests_failed++;
+                }
+            } else if (last_response.len >= sizeof(query_uuid_response_t)) {
+                query_uuid_response_t result;
+                memcpy(&result, last_response.data, sizeof(result));
+                bool found = result.status == 0 &&
+                             last_response.len >= sizeof(query_uuid_response_t) + sizeof(geo_event_t);
+                if (!tc->has_expected_found || found == tc->expected_found) {
+                    printf("\033[32mPASS\033[0m\n");
+                    tests_passed++;
+                } else {
+                    printf("\033[31mFAIL\033[0m - unexpected found status\n");
+                    tests_failed++;
+                }
+            } else {
+                printf("\033[31mFAIL\033[0m - invalid response size\n");
+                tests_failed++;
+            }
         } else {
             printf("\033[31mFAIL\033[0m - request failed\n");
             tests_failed++;
         }
 
         // Cleanup
-        arch_uint128_t ids[MAX_EVENTS_PER_CASE];
-        for (int j = 0; j < tc->setup_event_count; j++) {
-            ids[j] = tc->setup_events[j].entity_id;
-        }
-        delete_entities(ids, tc->setup_event_count);
+        arch_uint128_t ids[MAX_EVENTS_PER_CASE * 2];
+        int id_count = 0;
+        id_count = append_event_ids(ids, id_count, tc->setup_events, tc->setup_event_count);
+        id_count = append_event_ids(ids, id_count, tc->setup_upsert_events, tc->setup_upsert_event_count);
+        id_count = append_event_ids(ids, id_count, tc->setup_extra_events, tc->setup_extra_event_count);
+        delete_entities(ids, id_count);
     }
 
     free_fixture(fixture);
@@ -598,8 +934,8 @@ static void test_query_uuid_batch(void) {
 
     Fixture* fixture = load_fixture("query-uuid-batch");
     if (!fixture) {
-        printf("SKIP: Could not load query-uuid-batch fixture\n");
-        tests_skipped++;
+        printf("FAIL: Could not load query-uuid-batch fixture\n");
+        tests_failed++;
         return;
     }
 
@@ -608,12 +944,10 @@ static void test_query_uuid_batch(void) {
         printf("  %s: ", tc->name);
 
         // Setup: insert prerequisite events
-        if (tc->setup_event_count > 0) {
-            if (!insert_setup_events(tc->setup_events, tc->setup_event_count)) {
-                printf("\033[33mSKIP\033[0m - setup failed\n");
-                tests_skipped++;
-                continue;
-            }
+        if (!apply_setup_actions(tc)) {
+            printf("\033[31mFAIL\033[0m - setup failed\n");
+            tests_failed++;
+            continue;
         }
 
         if (tc->entity_id_count == 0 && tc->setup_event_count == 0) {
@@ -648,19 +982,34 @@ static void test_query_uuid_batch(void) {
         packet.data_size = sizeof(*header) + id_count * sizeof(arch_uint128_t);
 
         if (submit_and_wait(&packet) && last_response.status == ARCH_PACKET_OK) {
-            printf("\033[32mPASS\033[0m\n");
-            tests_passed++;
+            if (last_response.len >= sizeof(query_uuid_response_t)) {
+                query_uuid_response_t resp;
+                memcpy(&resp, last_response.data, sizeof(resp));
+                bool found = resp.status == 0 &&
+                             last_response.len >= sizeof(query_uuid_response_t) + sizeof(geo_event_t);
+                if (!tc->has_expected_found || found == tc->expected_found) {
+                    printf("\033[32mPASS\033[0m\n");
+                    tests_passed++;
+                } else {
+                    printf("\033[31mFAIL\033[0m - unexpected found status\n");
+                    tests_failed++;
+                }
+            } else {
+                printf("\033[31mFAIL\033[0m - invalid response size\n");
+                tests_failed++;
+            }
         } else {
             printf("\033[31mFAIL\033[0m - request failed\n");
             tests_failed++;
         }
 
         // Cleanup
-        arch_uint128_t cleanup_ids[MAX_EVENTS_PER_CASE];
-        for (int j = 0; j < tc->setup_event_count; j++) {
-            cleanup_ids[j] = tc->setup_events[j].entity_id;
-        }
-        delete_entities(cleanup_ids, tc->setup_event_count);
+        arch_uint128_t cleanup_ids[MAX_EVENTS_PER_CASE * 2];
+        int cleanup_count = 0;
+        cleanup_count = append_event_ids(cleanup_ids, cleanup_count, tc->setup_events, tc->setup_event_count);
+        cleanup_count = append_event_ids(cleanup_ids, cleanup_count, tc->setup_upsert_events, tc->setup_upsert_event_count);
+        cleanup_count = append_event_ids(cleanup_ids, cleanup_count, tc->setup_extra_events, tc->setup_extra_event_count);
+        delete_entities(cleanup_ids, cleanup_count);
     }
 
     free_fixture(fixture);
@@ -674,8 +1023,8 @@ static void test_query_radius(void) {
 
     Fixture* fixture = load_fixture("query-radius");
     if (!fixture) {
-        printf("SKIP: Could not load query-radius fixture\n");
-        tests_skipped++;
+        printf("FAIL: Could not load query-radius fixture\n");
+        tests_failed++;
         return;
     }
 
@@ -684,12 +1033,16 @@ static void test_query_radius(void) {
         printf("  %s: ", tc->name);
 
         // Setup: insert prerequisite events
-        if (tc->setup_event_count > 0) {
-            if (!insert_setup_events(tc->setup_events, tc->setup_event_count)) {
-                printf("\033[33mSKIP\033[0m - setup failed\n");
-                tests_skipped++;
-                continue;
-            }
+        if (!apply_setup_actions(tc)) {
+            printf("\033[31mFAIL\033[0m - setup failed\n");
+            tests_failed++;
+            continue;
+        }
+
+        uint32_t inserted_count = (uint32_t)(tc->setup_event_count + tc->setup_extra_event_count);
+        int max_results = -1;
+        if (tc->has_expected_count && inserted_count > 0) {
+            max_results = get_output_cap(inserted_count);
         }
 
         query_radius_filter_t filter = {0};
@@ -697,6 +1050,8 @@ static void test_query_radius(void) {
         filter.center_lon_nano = degrees_to_nano(tc->center_longitude);
         filter.radius_mm = tc->radius_m * 1000;  // Convert to mm
         filter.limit = tc->limit > 0 ? tc->limit : 1000;
+        filter.timestamp_min = tc->timestamp_min;
+        filter.timestamp_max = tc->timestamp_max;
         filter.group_id = tc->group_id;
 
         arch_packet_t packet = {0};
@@ -705,19 +1060,57 @@ static void test_query_radius(void) {
         packet.data_size = sizeof(filter);
 
         if (submit_and_wait(&packet) && last_response.status == ARCH_PACKET_OK) {
-            printf("\033[32mPASS\033[0m\n");
-            tests_passed++;
+            const geo_event_t* events = NULL;
+            uint32_t count = 0;
+            if (!parse_query_response(last_response.data, last_response.len, &events, &count)) {
+                printf("\033[31mFAIL\033[0m - invalid response\n");
+                tests_failed++;
+            } else {
+                bool ok = true;
+                if (tc->has_expected_count) {
+                    uint32_t expected_count = (uint32_t)tc->expected_count;
+                    if (inserted_count > 0 && expected_count > inserted_count) {
+                        expected_count = inserted_count;
+                    }
+                    if (max_results >= 0 && expected_count > (uint32_t)max_results) {
+                        expected_count = (uint32_t)max_results;
+                    }
+                    if (tc->expected_count_is_min) {
+                        ok = count >= expected_count;
+                    } else {
+                        ok = count == expected_count;
+                    }
+                }
+                for (int j = 0; j < tc->expected_entity_id_count && ok; j++) {
+                    if (!contains_entity_id(events, count, tc->expected_entity_ids[j])) {
+                        ok = false;
+                    }
+                }
+                for (int j = 0; j < tc->expected_excluded_id_count && ok; j++) {
+                    if (contains_entity_id(events, count, tc->expected_excluded_ids[j])) {
+                        ok = false;
+                    }
+                }
+                if (ok) {
+                    printf("\033[32mPASS\033[0m\n");
+                    tests_passed++;
+                } else {
+                    printf("\033[31mFAIL\033[0m - unexpected results\n");
+                    tests_failed++;
+                }
+            }
         } else {
             printf("\033[31mFAIL\033[0m - request failed\n");
             tests_failed++;
         }
 
         // Cleanup
-        arch_uint128_t ids[MAX_EVENTS_PER_CASE];
-        for (int j = 0; j < tc->setup_event_count; j++) {
-            ids[j] = tc->setup_events[j].entity_id;
-        }
-        delete_entities(ids, tc->setup_event_count);
+        arch_uint128_t ids[MAX_EVENTS_PER_CASE * 2];
+        int id_count = 0;
+        id_count = append_event_ids(ids, id_count, tc->setup_events, tc->setup_event_count);
+        id_count = append_event_ids(ids, id_count, tc->setup_upsert_events, tc->setup_upsert_event_count);
+        id_count = append_event_ids(ids, id_count, tc->setup_extra_events, tc->setup_extra_event_count);
+        delete_entities(ids, id_count);
     }
 
     free_fixture(fixture);
@@ -731,8 +1124,8 @@ static void test_query_polygon(void) {
 
     Fixture* fixture = load_fixture("query-polygon");
     if (!fixture) {
-        printf("SKIP: Could not load query-polygon fixture\n");
-        tests_skipped++;
+        printf("FAIL: Could not load query-polygon fixture\n");
+        tests_failed++;
         return;
     }
 
@@ -741,58 +1134,98 @@ static void test_query_polygon(void) {
         printf("  %s: ", tc->name);
 
         // Setup: insert prerequisite events
-        if (tc->setup_event_count > 0) {
-            if (!insert_setup_events(tc->setup_events, tc->setup_event_count)) {
-                printf("\033[33mSKIP\033[0m - setup failed\n");
-                tests_skipped++;
-                continue;
-            }
+        if (!apply_setup_actions(tc)) {
+            printf("\033[31mFAIL\033[0m - setup failed\n");
+            tests_failed++;
+            continue;
         }
 
-        // Create a simple square polygon around the center
-        uint8_t request_data[sizeof(query_polygon_filter_t) + 4 * sizeof(polygon_vertex_t)];
+        uint32_t inserted_count = (uint32_t)(tc->setup_event_count + tc->setup_extra_event_count);
+        int max_results = -1;
+        if (tc->has_expected_count && inserted_count > 0) {
+            max_results = get_output_cap(inserted_count);
+        }
+
+        if (tc->polygon_vertex_count == 0) {
+            printf("\033[31mFAIL\033[0m - no polygon vertices\n");
+            tests_failed++;
+            continue;
+        }
+
+        uint8_t request_data[sizeof(query_polygon_filter_t) + MAX_EVENTS_PER_CASE * sizeof(polygon_vertex_t)];
         query_polygon_filter_t* filter = (query_polygon_filter_t*)request_data;
         polygon_vertex_t* vertices = (polygon_vertex_t*)(request_data + sizeof(*filter));
 
         memset(filter, 0, sizeof(*filter));
-        filter->vertex_count = 4;
+        filter->vertex_count = (uint32_t)tc->polygon_vertex_count;
         filter->hole_count = 0;
         filter->limit = tc->limit > 0 ? tc->limit : 1000;
+        filter->timestamp_min = tc->timestamp_min;
+        filter->timestamp_max = tc->timestamp_max;
         filter->group_id = tc->group_id;
 
-        // Create a 1km square around center (approximately)
-        double lat = tc->center_latitude;
-        double lon = tc->center_longitude;
-        double delta = 0.01;  // ~1km
-
-        vertices[0].lat_nano = degrees_to_nano(lat + delta);
-        vertices[0].lon_nano = degrees_to_nano(lon - delta);
-        vertices[1].lat_nano = degrees_to_nano(lat + delta);
-        vertices[1].lon_nano = degrees_to_nano(lon + delta);
-        vertices[2].lat_nano = degrees_to_nano(lat - delta);
-        vertices[2].lon_nano = degrees_to_nano(lon + delta);
-        vertices[3].lat_nano = degrees_to_nano(lat - delta);
-        vertices[3].lon_nano = degrees_to_nano(lon - delta);
+        for (int v = 0; v < tc->polygon_vertex_count; v++) {
+            vertices[v].lat_nano = degrees_to_nano(tc->polygon_vertices[v][0]);
+            vertices[v].lon_nano = degrees_to_nano(tc->polygon_vertices[v][1]);
+        }
 
         arch_packet_t packet = {0};
         packet.operation = ARCH_OPERATION_QUERY_POLYGON;
         packet.data = request_data;
-        packet.data_size = sizeof(*filter) + 4 * sizeof(polygon_vertex_t);
+        packet.data_size = sizeof(*filter) + (uint32_t)tc->polygon_vertex_count * sizeof(polygon_vertex_t);
 
         if (submit_and_wait(&packet) && last_response.status == ARCH_PACKET_OK) {
-            printf("\033[32mPASS\033[0m\n");
-            tests_passed++;
+            const geo_event_t* events = NULL;
+            uint32_t count = 0;
+            if (!parse_query_response(last_response.data, last_response.len, &events, &count)) {
+                printf("\033[31mFAIL\033[0m - invalid response\n");
+                tests_failed++;
+            } else {
+                bool ok = true;
+                if (tc->has_expected_count) {
+                    uint32_t expected_count = (uint32_t)tc->expected_count;
+                    if (inserted_count > 0 && expected_count > inserted_count) {
+                        expected_count = inserted_count;
+                    }
+                    if (max_results >= 0 && expected_count > (uint32_t)max_results) {
+                        expected_count = (uint32_t)max_results;
+                    }
+                    if (tc->expected_count_is_min) {
+                        ok = count >= expected_count;
+                    } else {
+                        ok = count == expected_count;
+                    }
+                }
+                for (int j = 0; j < tc->expected_entity_id_count && ok; j++) {
+                    if (!contains_entity_id(events, count, tc->expected_entity_ids[j])) {
+                        ok = false;
+                    }
+                }
+                for (int j = 0; j < tc->expected_excluded_id_count && ok; j++) {
+                    if (contains_entity_id(events, count, tc->expected_excluded_ids[j])) {
+                        ok = false;
+                    }
+                }
+                if (ok) {
+                    printf("\033[32mPASS\033[0m\n");
+                    tests_passed++;
+                } else {
+                    printf("\033[31mFAIL\033[0m - unexpected results\n");
+                    tests_failed++;
+                }
+            }
         } else {
             printf("\033[31mFAIL\033[0m - request failed\n");
             tests_failed++;
         }
 
         // Cleanup
-        arch_uint128_t ids[MAX_EVENTS_PER_CASE];
-        for (int j = 0; j < tc->setup_event_count; j++) {
-            ids[j] = tc->setup_events[j].entity_id;
-        }
-        delete_entities(ids, tc->setup_event_count);
+        arch_uint128_t ids[MAX_EVENTS_PER_CASE * 2];
+        int id_count = 0;
+        id_count = append_event_ids(ids, id_count, tc->setup_events, tc->setup_event_count);
+        id_count = append_event_ids(ids, id_count, tc->setup_upsert_events, tc->setup_upsert_event_count);
+        id_count = append_event_ids(ids, id_count, tc->setup_extra_events, tc->setup_extra_event_count);
+        delete_entities(ids, id_count);
     }
 
     free_fixture(fixture);
@@ -806,8 +1239,8 @@ static void test_query_latest(void) {
 
     Fixture* fixture = load_fixture("query-latest");
     if (!fixture) {
-        printf("SKIP: Could not load query-latest fixture\n");
-        tests_skipped++;
+        printf("FAIL: Could not load query-latest fixture\n");
+        tests_failed++;
         return;
     }
 
@@ -816,12 +1249,16 @@ static void test_query_latest(void) {
         printf("  %s: ", tc->name);
 
         // Setup: insert prerequisite events
-        if (tc->setup_event_count > 0) {
-            if (!insert_setup_events(tc->setup_events, tc->setup_event_count)) {
-                printf("\033[33mSKIP\033[0m - setup failed\n");
-                tests_skipped++;
-                continue;
-            }
+        if (!apply_setup_actions(tc)) {
+            printf("\033[31mFAIL\033[0m - setup failed\n");
+            tests_failed++;
+            continue;
+        }
+
+        uint32_t inserted_count = (uint32_t)(tc->setup_event_count + tc->setup_extra_event_count);
+        int max_results = -1;
+        if (tc->has_expected_count && inserted_count > 0) {
+            max_results = get_output_cap(inserted_count);
         }
 
         query_latest_filter_t filter = {0};
@@ -834,19 +1271,57 @@ static void test_query_latest(void) {
         packet.data_size = sizeof(filter);
 
         if (submit_and_wait(&packet) && last_response.status == ARCH_PACKET_OK) {
-            printf("\033[32mPASS\033[0m\n");
-            tests_passed++;
+            const geo_event_t* events = NULL;
+            uint32_t count = 0;
+            if (!parse_query_response(last_response.data, last_response.len, &events, &count)) {
+                printf("\033[31mFAIL\033[0m - invalid response\n");
+                tests_failed++;
+            } else {
+                bool ok = true;
+                if (tc->has_expected_count) {
+                    uint32_t expected_count = (uint32_t)tc->expected_count;
+                    if (inserted_count > 0 && expected_count > inserted_count) {
+                        expected_count = inserted_count;
+                    }
+                    if (max_results >= 0 && expected_count > (uint32_t)max_results) {
+                        expected_count = (uint32_t)max_results;
+                    }
+                    if (tc->expected_count_is_min) {
+                        ok = count >= expected_count;
+                    } else {
+                        ok = count == expected_count;
+                    }
+                }
+                for (int j = 0; j < tc->expected_entity_id_count && ok; j++) {
+                    if (!contains_entity_id(events, count, tc->expected_entity_ids[j])) {
+                        ok = false;
+                    }
+                }
+                for (int j = 0; j < tc->expected_excluded_id_count && ok; j++) {
+                    if (contains_entity_id(events, count, tc->expected_excluded_ids[j])) {
+                        ok = false;
+                    }
+                }
+                if (ok) {
+                    printf("\033[32mPASS\033[0m\n");
+                    tests_passed++;
+                } else {
+                    printf("\033[31mFAIL\033[0m - unexpected results\n");
+                    tests_failed++;
+                }
+            }
         } else {
             printf("\033[31mFAIL\033[0m - request failed\n");
             tests_failed++;
         }
 
         // Cleanup
-        arch_uint128_t ids[MAX_EVENTS_PER_CASE];
-        for (int j = 0; j < tc->setup_event_count; j++) {
-            ids[j] = tc->setup_events[j].entity_id;
-        }
-        delete_entities(ids, tc->setup_event_count);
+        arch_uint128_t ids[MAX_EVENTS_PER_CASE * 2];
+        int id_count = 0;
+        id_count = append_event_ids(ids, id_count, tc->setup_events, tc->setup_event_count);
+        id_count = append_event_ids(ids, id_count, tc->setup_upsert_events, tc->setup_upsert_event_count);
+        id_count = append_event_ids(ids, id_count, tc->setup_extra_events, tc->setup_extra_event_count);
+        delete_entities(ids, id_count);
     }
 
     free_fixture(fixture);
@@ -860,8 +1335,8 @@ static void test_ttl_set(void) {
 
     Fixture* fixture = load_fixture("ttl-set");
     if (!fixture) {
-        printf("SKIP: Could not load ttl-set fixture\n");
-        tests_skipped++;
+        printf("FAIL: Could not load ttl-set fixture\n");
+        tests_failed++;
         return;
     }
 
@@ -870,12 +1345,10 @@ static void test_ttl_set(void) {
         printf("  %s: ", tc->name);
 
         // Setup: insert prerequisite events
-        if (tc->setup_event_count > 0) {
-            if (!insert_setup_events(tc->setup_events, tc->setup_event_count)) {
-                printf("\033[33mSKIP\033[0m - setup failed\n");
-                tests_skipped++;
-                continue;
-            }
+        if (!apply_setup_actions(tc)) {
+            printf("\033[31mFAIL\033[0m - setup failed\n");
+            tests_failed++;
+            continue;
         }
 
         arch_uint128_t entity_id = tc->entity_id_count > 0 ?
@@ -886,6 +1359,12 @@ static void test_ttl_set(void) {
             // No entity ID - valid test case testing not found
             printf("\033[32mPASS\033[0m (no entity ID - tests not found case)\n");
             tests_passed++;
+            arch_uint128_t ids[MAX_EVENTS_PER_CASE * 2];
+            int id_count = 0;
+            id_count = append_event_ids(ids, id_count, tc->setup_events, tc->setup_event_count);
+            id_count = append_event_ids(ids, id_count, tc->setup_upsert_events, tc->setup_upsert_event_count);
+            id_count = append_event_ids(ids, id_count, tc->setup_extra_events, tc->setup_extra_event_count);
+            delete_entities(ids, id_count);
             continue;
         }
 
@@ -899,19 +1378,32 @@ static void test_ttl_set(void) {
         packet.data_size = sizeof(req);
 
         if (submit_and_wait(&packet) && last_response.status == ARCH_PACKET_OK) {
-            printf("\033[32mPASS\033[0m\n");
-            tests_passed++;
+            if (last_response.len >= sizeof(ttl_set_response_t)) {
+                ttl_set_response_t resp;
+                memcpy(&resp, last_response.data, sizeof(resp));
+                if (resp.result == (uint8_t)tc->expected_result_code) {
+                    printf("\033[32mPASS\033[0m\n");
+                    tests_passed++;
+                } else {
+                    printf("\033[31mFAIL\033[0m - unexpected result code\n");
+                    tests_failed++;
+                }
+            } else {
+                printf("\033[31mFAIL\033[0m - invalid response size\n");
+                tests_failed++;
+            }
         } else {
             printf("\033[31mFAIL\033[0m - request failed\n");
             tests_failed++;
         }
 
         // Cleanup
-        arch_uint128_t ids[MAX_EVENTS_PER_CASE];
-        for (int j = 0; j < tc->setup_event_count; j++) {
-            ids[j] = tc->setup_events[j].entity_id;
-        }
-        delete_entities(ids, tc->setup_event_count);
+        arch_uint128_t ids[MAX_EVENTS_PER_CASE * 2];
+        int id_count = 0;
+        id_count = append_event_ids(ids, id_count, tc->setup_events, tc->setup_event_count);
+        id_count = append_event_ids(ids, id_count, tc->setup_upsert_events, tc->setup_upsert_event_count);
+        id_count = append_event_ids(ids, id_count, tc->setup_extra_events, tc->setup_extra_event_count);
+        delete_entities(ids, id_count);
     }
 
     free_fixture(fixture);
@@ -925,8 +1417,8 @@ static void test_ttl_extend(void) {
 
     Fixture* fixture = load_fixture("ttl-extend");
     if (!fixture) {
-        printf("SKIP: Could not load ttl-extend fixture\n");
-        tests_skipped++;
+        printf("FAIL: Could not load ttl-extend fixture\n");
+        tests_failed++;
         return;
     }
 
@@ -935,12 +1427,10 @@ static void test_ttl_extend(void) {
         printf("  %s: ", tc->name);
 
         // Setup: insert prerequisite events
-        if (tc->setup_event_count > 0) {
-            if (!insert_setup_events(tc->setup_events, tc->setup_event_count)) {
-                printf("\033[33mSKIP\033[0m - setup failed\n");
-                tests_skipped++;
-                continue;
-            }
+        if (!apply_setup_actions(tc)) {
+            printf("\033[31mFAIL\033[0m - setup failed\n");
+            tests_failed++;
+            continue;
         }
 
         arch_uint128_t entity_id = tc->entity_id_count > 0 ?
@@ -951,6 +1441,12 @@ static void test_ttl_extend(void) {
             // No entity ID - valid test case testing not found
             printf("\033[32mPASS\033[0m (no entity ID - tests not found case)\n");
             tests_passed++;
+            arch_uint128_t ids[MAX_EVENTS_PER_CASE * 2];
+            int id_count = 0;
+            id_count = append_event_ids(ids, id_count, tc->setup_events, tc->setup_event_count);
+            id_count = append_event_ids(ids, id_count, tc->setup_upsert_events, tc->setup_upsert_event_count);
+            id_count = append_event_ids(ids, id_count, tc->setup_extra_events, tc->setup_extra_event_count);
+            delete_entities(ids, id_count);
             continue;
         }
 
@@ -964,19 +1460,36 @@ static void test_ttl_extend(void) {
         packet.data_size = sizeof(req);
 
         if (submit_and_wait(&packet) && last_response.status == ARCH_PACKET_OK) {
-            printf("\033[32mPASS\033[0m\n");
-            tests_passed++;
+            if (last_response.len >= sizeof(ttl_extend_response_t)) {
+                ttl_extend_response_t resp;
+                memcpy(&resp, last_response.data, sizeof(resp));
+                bool ok = resp.result == (uint8_t)tc->expected_result_code;
+                if (ok && tc->has_expected_new_ttl_min_seconds) {
+                    ok = resp.new_ttl_seconds >= tc->expected_new_ttl_min_seconds;
+                }
+                if (ok) {
+                    printf("\033[32mPASS\033[0m\n");
+                    tests_passed++;
+                } else {
+                    printf("\033[31mFAIL\033[0m - unexpected result code\n");
+                    tests_failed++;
+                }
+            } else {
+                printf("\033[31mFAIL\033[0m - invalid response size\n");
+                tests_failed++;
+            }
         } else {
             printf("\033[31mFAIL\033[0m - request failed\n");
             tests_failed++;
         }
 
         // Cleanup
-        arch_uint128_t ids[MAX_EVENTS_PER_CASE];
-        for (int j = 0; j < tc->setup_event_count; j++) {
-            ids[j] = tc->setup_events[j].entity_id;
-        }
-        delete_entities(ids, tc->setup_event_count);
+        arch_uint128_t ids[MAX_EVENTS_PER_CASE * 2];
+        int id_count = 0;
+        id_count = append_event_ids(ids, id_count, tc->setup_events, tc->setup_event_count);
+        id_count = append_event_ids(ids, id_count, tc->setup_upsert_events, tc->setup_upsert_event_count);
+        id_count = append_event_ids(ids, id_count, tc->setup_extra_events, tc->setup_extra_event_count);
+        delete_entities(ids, id_count);
     }
 
     free_fixture(fixture);
@@ -990,8 +1503,8 @@ static void test_ttl_clear(void) {
 
     Fixture* fixture = load_fixture("ttl-clear");
     if (!fixture) {
-        printf("SKIP: Could not load ttl-clear fixture\n");
-        tests_skipped++;
+        printf("FAIL: Could not load ttl-clear fixture\n");
+        tests_failed++;
         return;
     }
 
@@ -1000,12 +1513,42 @@ static void test_ttl_clear(void) {
         printf("  %s: ", tc->name);
 
         // Setup: insert prerequisite events
-        if (tc->setup_event_count > 0) {
-            if (!insert_setup_events(tc->setup_events, tc->setup_event_count)) {
-                printf("\033[33mSKIP\033[0m - setup failed\n");
-                tests_skipped++;
-                continue;
+        if (!apply_setup_actions(tc)) {
+            printf("\033[31mFAIL\033[0m - setup failed\n");
+            tests_failed++;
+            continue;
+        }
+
+        if (tc->has_query_entity_id) {
+            query_uuid_filter_t filter = {0};
+            filter.entity_id = tc->query_entity_id;
+
+            arch_packet_t packet = {0};
+            packet.operation = ARCH_OPERATION_QUERY_UUID;
+            packet.data = &filter;
+            packet.data_size = sizeof(filter);
+
+            if (submit_and_wait(&packet) && last_response.status == ARCH_PACKET_OK) {
+                bool found = last_response.len >= sizeof(geo_event_t);
+                if (!tc->has_expected_entity_still_exists || found == tc->expected_entity_still_exists) {
+                    printf("\033[32mPASS\033[0m\n");
+                    tests_passed++;
+                } else {
+                    printf("\033[31mFAIL\033[0m - unexpected query result\n");
+                    tests_failed++;
+                }
+            } else {
+                printf("\033[31mFAIL\033[0m - query failed\n");
+                tests_failed++;
             }
+
+            arch_uint128_t ids[MAX_EVENTS_PER_CASE * 2];
+            int id_count = 0;
+            id_count = append_event_ids(ids, id_count, tc->setup_events, tc->setup_event_count);
+            id_count = append_event_ids(ids, id_count, tc->setup_upsert_events, tc->setup_upsert_event_count);
+            id_count = append_event_ids(ids, id_count, tc->setup_extra_events, tc->setup_extra_event_count);
+            delete_entities(ids, id_count);
+            continue;
         }
 
         arch_uint128_t entity_id = tc->entity_id_count > 0 ?
@@ -1016,6 +1559,12 @@ static void test_ttl_clear(void) {
             // No entity ID - valid test case testing not found
             printf("\033[32mPASS\033[0m (no entity ID - tests not found case)\n");
             tests_passed++;
+            arch_uint128_t ids[MAX_EVENTS_PER_CASE * 2];
+            int id_count = 0;
+            id_count = append_event_ids(ids, id_count, tc->setup_events, tc->setup_event_count);
+            id_count = append_event_ids(ids, id_count, tc->setup_upsert_events, tc->setup_upsert_event_count);
+            id_count = append_event_ids(ids, id_count, tc->setup_extra_events, tc->setup_extra_event_count);
+            delete_entities(ids, id_count);
             continue;
         }
 
@@ -1028,19 +1577,32 @@ static void test_ttl_clear(void) {
         packet.data_size = sizeof(req);
 
         if (submit_and_wait(&packet) && last_response.status == ARCH_PACKET_OK) {
-            printf("\033[32mPASS\033[0m\n");
-            tests_passed++;
+            if (last_response.len >= sizeof(ttl_clear_response_t)) {
+                ttl_clear_response_t resp;
+                memcpy(&resp, last_response.data, sizeof(resp));
+                if (resp.result == (uint8_t)tc->expected_result_code) {
+                    printf("\033[32mPASS\033[0m\n");
+                    tests_passed++;
+                } else {
+                    printf("\033[31mFAIL\033[0m - unexpected result code\n");
+                    tests_failed++;
+                }
+            } else {
+                printf("\033[31mFAIL\033[0m - invalid response size\n");
+                tests_failed++;
+            }
         } else {
             printf("\033[31mFAIL\033[0m - request failed\n");
             tests_failed++;
         }
 
         // Cleanup
-        arch_uint128_t ids[MAX_EVENTS_PER_CASE];
-        for (int j = 0; j < tc->setup_event_count; j++) {
-            ids[j] = tc->setup_events[j].entity_id;
-        }
-        delete_entities(ids, tc->setup_event_count);
+        arch_uint128_t ids[MAX_EVENTS_PER_CASE * 2];
+        int id_count = 0;
+        id_count = append_event_ids(ids, id_count, tc->setup_events, tc->setup_event_count);
+        id_count = append_event_ids(ids, id_count, tc->setup_upsert_events, tc->setup_upsert_event_count);
+        id_count = append_event_ids(ids, id_count, tc->setup_extra_events, tc->setup_extra_event_count);
+        delete_entities(ids, id_count);
     }
 
     free_fixture(fixture);

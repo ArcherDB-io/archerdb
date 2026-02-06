@@ -764,6 +764,14 @@ pub const lsm_adaptive_space_amp_threshold =
 pub const lsm_adaptive_override_l0_trigger = config.process.override_l0_trigger;
 pub const lsm_adaptive_override_compaction_threads = config.process.override_compaction_threads;
 
+/// Upper bound on the L0 compaction trigger (adaptive tuning guardrail).
+/// Keep in sync with lsm/compaction_adaptive.zig validation (max_l0_trigger <= 100).
+pub const lsm_l0_trigger_max: u32 = 100;
+
+comptime {
+    assert(lsm_l0_trigger_max >= lsm_growth_factor);
+}
+
 /// The number of milliseconds between each replica tick, the basic unit of time in ArcherDB.
 /// Used to regulate heartbeats, retries and timeouts, all specified as multiples of a tick.
 pub const tick_ms = config.process.tick_ms;

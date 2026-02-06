@@ -26,11 +26,6 @@
       "warmup_iterations": 50,
       "measurement_iterations": 1000,
       "notes": "C has minimal warmup (native code), mostly cache warming"
-    },
-    "zig": {
-      "warmup_iterations": 50,
-      "measurement_iterations": 1000,
-      "notes": "Zig has minimal warmup (native code), mostly cache warming"
     }
   },
   "variance_threshold": {

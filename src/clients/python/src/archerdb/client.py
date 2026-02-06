@@ -1872,8 +1872,6 @@ class GeoClientSync:
         options: Optional["OperationOptions"] = None,
     ) -> List[Any]:
         """Submit a batch operation to the cluster with automatic retry."""
-        self._ensure_connected()
-
         retry_config = (
             options.merge_with(self._retry_config)
             if options is not None
@@ -1881,6 +1879,9 @@ class GeoClientSync:
         )
 
         def do_submit() -> List[Any]:
+            self._ensure_connected()
+            if not self._native.is_connected():
+                self._native.connect()
             if operation == GeoOperation.INSERT_EVENTS:
                 errors = self._native.insert_events(batch)
                 return [
@@ -1911,8 +1912,6 @@ class GeoClientSync:
         options: Optional["OperationOptions"] = None,
     ) -> List[GeoEvent]:
         """Submit a query operation to the cluster with automatic retry."""
-        self._ensure_connected()
-
         # Merge per-operation options with base config
         retry_config = (
             options.merge_with(self._retry_config)
@@ -1921,6 +1920,9 @@ class GeoClientSync:
         )
 
         def do_query() -> List[GeoEvent]:
+            self._ensure_connected()
+            if not self._native.is_connected():
+                self._native.connect()
             if operation == GeoOperation.QUERY_UUID:
                 return self._native.query_uuid(filter.entity_id)
             elif operation == GeoOperation.QUERY_RADIUS:
@@ -1938,9 +1940,10 @@ class GeoClientSync:
         """Submit a batch UUID query operation to the cluster with automatic retry."""
         from .types import QueryUuidBatchResult
 
-        self._ensure_connected()
-
         def do_query() -> QueryUuidBatchResult:
+            self._ensure_connected()
+            if not self._native.is_connected():
+                self._native.connect()
             return self._native.query_uuid_batch(filter.entity_ids)
 
         return _with_retry_sync(do_query, self._retry_config)

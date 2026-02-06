@@ -42,7 +42,7 @@ def load_warmup_protocol(sdk: str) -> WarmupProtocol:
     """Load warmup protocol for specified SDK.
 
     Args:
-        sdk: SDK name (python, nodejs, java, go, c, zig)
+        sdk: SDK name (python, nodejs, java, go, c)
 
     Returns:
         WarmupProtocol with iteration counts for the SDK
@@ -110,13 +110,13 @@ if __name__ == "__main__":
     print("Testing warmup protocol loader...")
 
     # Test loading individual protocols
-    for sdk in ["python", "nodejs", "java", "go", "c", "zig"]:
+    for sdk in ["python", "nodejs", "java", "go", "c"]:
         proto = load_warmup_protocol(sdk)
         print(f"  {sdk}: warmup={proto.warmup_iterations}, measure={proto.measurement_iterations}")
 
     # Test loading all at once
     all_protos = load_all_protocols()
-    assert len(all_protos) == 6, f"Expected 6 protocols, got {len(all_protos)}"
+    assert len(all_protos) == 5, f"Expected 5 protocols, got {len(all_protos)}"
 
     # Test variance threshold
     cv = get_variance_threshold()

@@ -2,7 +2,7 @@
 
 ## Overview
 
-This milestone delivers comprehensive SDK testing and benchmarking infrastructure for ArcherDB. Starting from the v1.0 production-ready foundation, we build test infrastructure, create the Zig SDK, validate all 6 SDKs across all 14 operations, establish cross-SDK parity, formalize benchmarking with statistical rigor, test multi-node topologies, and integrate everything into CI with proper documentation.
+This milestone delivers comprehensive SDK testing and benchmarking infrastructure for ArcherDB. Starting from the v1.0 production-ready foundation, we build test infrastructure, validate all 5 SDKs across all 14 operations, establish cross-SDK parity, formalize benchmarking with statistical rigor, test multi-node topologies, and integrate everything into CI with proper documentation.
 
 ## Milestones
 
@@ -18,8 +18,8 @@ This milestone delivers comprehensive SDK testing and benchmarking infrastructur
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 11: Test Infrastructure Foundation** - Server harness, CI tiers, shared fixtures, data generators
-- [x] **Phase 12: Zig SDK & Protocol Documentation** - Create Zig SDK, protocol docs, curl examples
-- [x] **Phase 13: SDK Operation Test Suite** - All 14 operations tested across all 6 SDKs
+- [x] **Phase 12: Protocol Documentation** - Protocol docs, curl examples
+- [x] **Phase 13: SDK Operation Test Suite** - All 14 operations tested across all 5 SDKs
 - [x] **Phase 14: Error Handling & Cross-SDK Parity** - Error handling consistency, parity matrix
 - [x] **Phase 15: Benchmark Framework** - Throughput and latency benchmarking with percentiles
 - [x] **Phase 16: Multi-Topology Testing** - Tests across 1/3/5/6 node clusters with failover
@@ -45,25 +45,22 @@ Plans:
 - [x] 11-02-PLAN.md — CI tier workflows, JSON fixtures for 14 operations, warmup protocols
 **Completed**: 2026-02-01
 
-### Phase 12: Zig SDK & Protocol Documentation
-**Goal**: Zig SDK and protocol documentation enable native client development and raw API access
+### Phase 12: Protocol Documentation
+**Goal**: Protocol documentation enables custom client development and raw API access
 **Depends on**: Phase 11 (test infrastructure needed for SDK validation)
 **Requirements**: SDK-01, SDK-02, SDK-03, SDK-04, SDK-05, SDK-06
 **Success Criteria** (what must be TRUE):
-  1. Zig SDK in src/clients/zig/ compiles and provides clean API for all 14 operations
-  2. Zig SDK unit tests pass with same coverage as other SDKs
-  3. curl examples demonstrate all 14 operations against running server
-  4. Protocol documentation explains wire format enabling custom client implementation
+  1. curl examples demonstrate all 14 operations against running server
+  2. Protocol documentation explains wire format enabling custom client implementation
 **Plans**: 2 plans
 
 Plans:
-- [x] 12-01-PLAN.md — Zig SDK core: types, errors, HTTP client, all 14 operations, unit tests, README
-- [x] 12-02-PLAN.md — Protocol wire format docs, curl cookbook with all 14 operations
+- [x] Protocol documentation and curl examples (archived)
 **Completed**: 2026-02-01
 
 ### Phase 13: SDK Operation Test Suite
-**Goal**: All 6 SDKs validated for correctness across all 14 operations
-**Depends on**: Phase 12 (Zig SDK must exist to test it)
+**Goal**: All 5 SDKs validated for correctness across all 14 operations
+**Depends on**: Phase 12 (protocol docs needed for validation)
 **Requirements**: OP-01, OP-02, OP-03, OP-04, OP-05, OP-06, OP-07, OP-08, OP-09, OP-10, OP-11, OP-12, OP-13, OP-14, OP-15, OP-16, OP-17, OP-18, OP-19, OP-20
 **Success Criteria** (what must be TRUE):
   1. Python SDK passes all 14 operation tests with 100% pass rate
@@ -71,13 +68,12 @@ Plans:
   3. Go SDK passes all 14 operation tests with 100% pass rate
   4. Java SDK passes all 14 operation tests with 100% pass rate
   5. C SDK passes all 14 operation tests with 100% pass rate
-  6. Zig SDK passes all 14 operation tests with 100% pass rate
 **Plans**: 3 plans
 
 Plans:
 - [x] 13-01-PLAN.md — Test runner infrastructure, Python SDK tests, Node.js SDK tests
 - [x] 13-02-PLAN.md — Go SDK tests, Java SDK tests
-- [x] 13-03-PLAN.md — C SDK tests, Zig SDK tests
+- [x] 13-03-PLAN.md — C SDK tests
 **Completed**: 2026-02-01
 
 ### Phase 14: Error Handling & Cross-SDK Parity
@@ -88,7 +84,7 @@ Plans:
   1. All SDKs handle connection failures, timeouts, and server errors gracefully
   2. All SDKs return identical results for identical queries (parity verified)
   3. All SDKs handle edge cases identically (poles, anti-meridian, empty results)
-  4. Parity matrix (14 ops x 6 SDKs = 84 cells) shows 100% consistency
+  4. Parity matrix (14 ops x 5 SDKs = 70 cells) shows 100% consistency
   5. SDK limitations documented with workarounds where applicable
 **Plans**: 2 plans
 
@@ -161,7 +157,7 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [x] 18-01-PLAN.md — CI pipeline enhancement: JUnit XML reporting, all 6 SDKs in workflows, weekly benchmark automation
+- [x] 18-01-PLAN.md — CI pipeline enhancement: JUnit XML reporting, all 5 SDKs in workflows, weekly benchmark automation
 - [x] 18-02-PLAN.md — Documentation suite: testing guide, CI tiers, benchmark guide, SDK comparison matrix
 **Completed**: 2026-02-01
 
@@ -173,7 +169,7 @@ Phases execute in numeric order: 11 -> 11.1 -> 11.2 -> 12 -> 12.1 -> 13 -> ...
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 11. Test Infrastructure | v1.1 | 2/2 | Complete | 2026-02-01 |
-| 12. Zig SDK & Protocol | v1.1 | 2/2 | Complete | 2026-02-01 |
+| 12. Protocol Documentation | v1.1 | 1/1 | Complete | 2026-02-01 |
 | 13. SDK Operation Tests | v1.1 | 3/3 | Complete (needs UAT) | 2026-02-01 |
 | 14. Error Handling & Parity | v1.1 | 2/2 | Complete (needs UAT) | 2026-02-01 |
 | 15. Benchmark Framework | v1.1 | 2/2 | Complete (needs UAT) | 2026-02-01 |

@@ -78,13 +78,13 @@ pub const MinioTestContext = struct {
                 ":9001",
             },
         }) catch |err| {
-            log.err("Failed to start MinIO container: {}", .{err});
+            log.warn("Failed to start MinIO container: {}", .{err});
             return error.MinioStartFailed;
         };
         defer allocator.free(result.stderr);
 
         if (result.term.Exited != 0) {
-            log.err("Docker run failed with exit code {}", .{result.term.Exited});
+            log.warn("Docker run failed with exit code {}", .{result.term.Exited});
             allocator.free(result.stdout);
             return error.MinioStartFailed;
         }
@@ -109,7 +109,7 @@ pub const MinioTestContext = struct {
 
         if (!ready) {
             // Cleanup on failure
-            log.err("MinIO failed to become ready in 30 seconds", .{});
+            log.warn("MinIO failed to become ready in 30 seconds", .{});
             const stop_result = std.process.Child.run(.{
                 .allocator = allocator,
                 .argv = &[_][]const u8{ "docker", "stop", id_copy },

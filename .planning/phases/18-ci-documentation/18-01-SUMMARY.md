@@ -51,7 +51,7 @@ Enhanced GitHub Actions CI workflows with JUnit XML reporting and weekly benchma
 ### Task 1: SDK Smoke and PR Workflows (commit cd5a09f)
 
 **sdk-smoke.yml enhancements:**
-- Added all 6 SDKs (python, nodejs, go, java, c, zig) to matrix strategy
+- Added all 5 SDKs (python, nodejs, go, java, c) to matrix strategy
 - Added JUnit XML output for each SDK test framework
 - Integrated mikepenz/action-junit-report@v5 for PR annotations
 - Added actions/upload-artifact@v4 with 30-day retention
@@ -59,7 +59,7 @@ Enhanced GitHub Actions CI workflows with JUnit XML reporting and weekly benchma
 - Maintained strict 5-minute timeout per CI-02
 
 **sdk-pr.yml enhancements:**
-- Added C and Zig SDKs to matrix (previously only python, nodejs, go, java)
+- Added C SDK to matrix (previously only python, nodejs, go, java)
 - Added JUnit XML output for all SDKs
 - Integrated mikepenz/action-junit-report@v5 with detailed_summary
 - Added test-results artifact upload per SDK
@@ -89,7 +89,7 @@ Enhanced GitHub Actions CI workflows with JUnit XML reporting and weekly benchma
 
 | Requirement | Implementation | File |
 |-------------|----------------|------|
-| CI-01: SDK tests on every PR | pull_request trigger, 6 SDKs | sdk-pr.yml |
+| CI-01: SDK tests on every PR | pull_request trigger, 5 SDKs | sdk-pr.yml |
 | CI-02: Smoke <5 min | timeout-minutes: 5, lite config | sdk-smoke.yml |
 | CI-03: Nightly multi-node | node_count: [1, 3, 5] matrix | sdk-nightly.yml |
 | CI-04: Weekly benchmark | cron: '0 2 * * 0' | benchmark-weekly.yml |
@@ -104,8 +104,8 @@ None - plan executed exactly as written.
 
 | File | Change Type | Key Changes |
 |------|-------------|-------------|
-| .github/workflows/sdk-smoke.yml | Modified | 6 SDKs, JUnit XML, artifact upload |
-| .github/workflows/sdk-pr.yml | Modified | +C/Zig SDKs, JUnit XML, artifacts |
+| .github/workflows/sdk-smoke.yml | Modified | 5 SDKs, JUnit XML, artifact upload |
+| .github/workflows/sdk-pr.yml | Modified | +C SDK, JUnit XML, artifacts |
 | .github/workflows/sdk-nightly.yml | Modified | JUnit XML, fail-fast, 4-core runner |
 | .github/workflows/benchmark-weekly.yml | Created | Weekly benchmark automation |
 
@@ -114,6 +114,6 @@ None - plan executed exactly as written.
 **Ready to proceed with 18-02:** Documentation enhancement.
 
 **Notes for future:**
-- C and Zig SDK tests create placeholder JUnit XML until actual tests implemented
+- C SDK tests create placeholder JUnit XML until actual tests implemented
 - Larger runner availability (4-core, 8-core) requires organization configuration
 - Benchmark CLI integration depends on test_infrastructure/benchmarks/cli.py

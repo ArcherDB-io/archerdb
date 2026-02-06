@@ -14,7 +14,7 @@ provides:
   - Per-SDK warmup protocols for stable benchmarks
   - Fixture loader utility for SDK tests
   - CI workflow validation script
-affects: [12-python-sdk, 13-node-sdk, 14-go-sdk, 15-java-sdk, 16-c-sdk, 17-zig-sdk, benchmark-harness]
+affects: [12-python-sdk, 13-node-sdk, 14-go-sdk, 15-java-sdk, 16-c-sdk, benchmark-harness]
 
 # Tech tracking
 tech-stack:
@@ -36,7 +36,7 @@ key-files:
 key-decisions:
   - "Used underscore directory (test_infrastructure/) to match 11-01 existing structure"
   - "14 fixtures organized by operation with smoke/pr/nightly tags per CONTEXT.md"
-  - "Warmup iterations: Java 500 > Node 200 > Python/Go 100 > C/Zig 50 (JIT characteristics)"
+  - "Warmup iterations: Java 500 > Node 200 > Python/Go 100 > C 50 (JIT characteristics)"
   - "Nightly runs at 2 AM UTC with 1/3/5 node matrix"
 
 patterns-established:
@@ -111,7 +111,7 @@ Each task was committed atomically:
 
 1. **Directory naming**: Used `test_infrastructure/` (underscore) to maintain consistency with 11-01 existing structure, even though plan specified hyphenated path
 2. **Fixture tag distribution**: 14 smoke, 31 PR, 34 nightly - smoke tests basic connectivity, PR covers error handling, nightly handles stress/boundary
-3. **Warmup iteration scaling**: Java 500 > Node 200 > Python/Go 100 > C/Zig 50 based on JIT vs AOT compilation characteristics
+3. **Warmup iteration scaling**: Java 500 > Node 200 > Python/Go 100 > C 50 based on JIT vs AOT compilation characteristics
 4. **Hotspot stress tests**: Added to insert, query-radius, query-polygon fixtures (95%+ concentration at Times Square coordinates)
 
 ## Deviations from Plan
@@ -141,7 +141,7 @@ None - no external service configuration required.
 - Fixtures ready for SDK integration tests (Phase 12-17)
 - CI workflows ready for SDK test matrices
 - Warmup protocols ready for benchmark harness integration
-- Fixture loader provides consistent API for all 6 SDKs
+- Fixture loader provides consistent API for all 5 SDKs
 
 ---
 *Phase: 11-test-infrastructure-foundation*

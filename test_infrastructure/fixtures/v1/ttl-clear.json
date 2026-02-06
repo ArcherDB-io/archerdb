@@ -6,13 +6,15 @@
     {
       "name": "clear_ttl_valid",
       "description": "Clear TTL on existing entity (make permanent)",
-      "tags": ["smoke"],
+      "tags": [
+        "smoke"
+      ],
       "input": {
         "setup": {
           "insert_first": {
             "entity_id": 92001,
             "latitude": 40.7128,
-            "longitude": -74.0060,
+            "longitude": -74.006,
             "ttl_seconds": 3600
           }
         },
@@ -29,12 +31,14 @@
     {
       "name": "clear_ttl_entity_not_found",
       "description": "Clear TTL on non-existent entity",
-      "tags": ["pr"],
+      "tags": [
+        "pr"
+      ],
       "input": {
         "entity_id": 99999999
       },
       "expected_output": {
-        "result_code": 3,
+        "result_code": 1,
         "status": "ENTITY_NOT_FOUND"
       },
       "expected_error": null
@@ -42,13 +46,15 @@
     {
       "name": "clear_ttl_already_permanent",
       "description": "Clear TTL on entity that already has no TTL",
-      "tags": ["pr"],
+      "tags": [
+        "pr"
+      ],
       "input": {
         "setup": {
           "insert_first": {
             "entity_id": 92002,
             "latitude": 40.7128,
-            "longitude": -74.0060
+            "longitude": -74.006
           }
         },
         "entity_id": 92002
@@ -63,17 +69,19 @@
     {
       "name": "clear_ttl_verify_permanent",
       "description": "Verify entity persists after TTL cleared",
-      "tags": ["nightly"],
+      "tags": [
+        "nightly"
+      ],
       "input": {
         "setup": {
           "insert_first": {
             "entity_id": 92003,
             "latitude": 40.7128,
-            "longitude": -74.0060,
-            "ttl_seconds": 1
+            "longitude": -74.006,
+            "ttl_seconds": 3
           },
           "then_clear_ttl": 92003,
-          "then_wait_seconds": 2
+          "then_wait_seconds": 5
         },
         "query_entity_id": 92003
       },

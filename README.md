@@ -73,20 +73,20 @@ ArcherDB provides specialized geospatial capabilities on a battle-tested distrib
 ### SDK Feature Matrix
 All SDK features listed below are supported across each language.
 
-| Feature | Zig | C | Go | Java | Node.js | Python |
-| --- | --- | --- | --- | --- | --- | --- |
-| TTL expiration/retention | yes | yes | yes | yes | yes | yes |
-| batch query by UUID | yes | yes | yes | yes | yes | yes |
-| cluster ping/status | yes | yes | yes | yes | yes | yes |
-| delete entities (GDPR erasure) | yes | yes | yes | yes | yes | yes |
-| insert location events | yes | yes | yes | yes | yes | yes |
-| latest events query | yes | yes | yes | yes | yes | yes |
-| manual TTL operations | yes | yes | yes | yes | yes | yes |
-| polygon geospatial query | yes | yes | yes | yes | yes | yes |
-| query by UUID | yes | yes | yes | yes | yes | yes |
-| radius geospatial query | yes | yes | yes | yes | yes | yes |
-| topology discovery | yes | yes | yes | yes | yes | yes |
-| upsert location events | yes | yes | yes | yes | yes | yes |
+| Feature | C | Go | Java | Node.js | Python |
+| --- | --- | --- | --- | --- | --- |
+| TTL expiration/retention | yes | yes | yes | yes | yes |
+| batch query by UUID | yes | yes | yes | yes | yes |
+| cluster ping/status | yes | yes | yes | yes | yes |
+| delete entities (GDPR erasure) | yes | yes | yes | yes | yes |
+| insert location events | yes | yes | yes | yes | yes |
+| latest events query | yes | yes | yes | yes | yes |
+| manual TTL operations | yes | yes | yes | yes | yes |
+| polygon geospatial query | yes | yes | yes | yes | yes |
+| query by UUID | yes | yes | yes | yes | yes |
+| radius geospatial query | yes | yes | yes | yes | yes |
+| topology discovery | yes | yes | yes | yes | yes |
+| upsert location events | yes | yes | yes | yes | yes |
 
 ### Tooling & testing
 - Benchmarking

@@ -6,13 +6,15 @@
     {
       "name": "extend_ttl_valid",
       "description": "Extend TTL on existing entity with TTL",
-      "tags": ["smoke"],
+      "tags": [
+        "smoke"
+      ],
       "input": {
         "setup": {
           "insert_first": {
             "entity_id": 91001,
             "latitude": 40.7128,
-            "longitude": -74.0060,
+            "longitude": -74.006,
             "ttl_seconds": 1800
           }
         },
@@ -29,13 +31,15 @@
     {
       "name": "extend_ttl_entity_not_found",
       "description": "Extend TTL on non-existent entity",
-      "tags": ["pr"],
+      "tags": [
+        "pr"
+      ],
       "input": {
         "entity_id": 99999999,
         "extend_by_seconds": 1800
       },
       "expected_output": {
-        "result_code": 3,
+        "result_code": 1,
         "status": "ENTITY_NOT_FOUND"
       },
       "expected_error": null
@@ -43,13 +47,15 @@
     {
       "name": "extend_ttl_no_existing_ttl",
       "description": "Extend TTL on entity without existing TTL",
-      "tags": ["pr"],
+      "tags": [
+        "pr"
+      ],
       "input": {
         "setup": {
           "insert_first": {
             "entity_id": 91002,
             "latitude": 40.7128,
-            "longitude": -74.0060
+            "longitude": -74.006
           }
         },
         "entity_id": 91002,
@@ -65,13 +71,15 @@
     {
       "name": "extend_ttl_near_max",
       "description": "Extend TTL near maximum value",
-      "tags": ["nightly"],
+      "tags": [
+        "nightly"
+      ],
       "input": {
         "setup": {
           "insert_first": {
             "entity_id": 91003,
             "latitude": 40.7128,
-            "longitude": -74.0060,
+            "longitude": -74.006,
             "ttl_seconds": 31000000
           }
         },

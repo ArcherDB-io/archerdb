@@ -21,7 +21,7 @@ pub const JavaDocs = Docs{
     ,
 
     .prerequisites =
-    \\* Java >= 11
+    \\* Java >= 11 (Java 21+: pass `--enable-native-access=ALL-UNNAMED` to the JVM to silence native access warnings)
     \\* Maven >= 3.6 (not strictly necessary but it's what our guides assume)
     ,
 

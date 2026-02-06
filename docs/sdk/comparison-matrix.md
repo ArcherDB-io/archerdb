@@ -1,10 +1,10 @@
 # SDK Comparison Matrix
 
-Feature comparison and code examples across all 6 ArcherDB SDKs.
+Feature comparison and code examples across all 5 ArcherDB SDKs.
 
 ## Overview
 
-ArcherDB provides official SDKs for 6 languages:
+ArcherDB provides official SDKs for 5 languages:
 
 | SDK | Package | Min Version | Install |
 |-----|---------|-------------|---------|
@@ -13,7 +13,6 @@ ArcherDB provides official SDKs for 6 languages:
 | Go | `archerdb-go` | Go 1.21+ | `go get github.com/archerdb/archerdb-go` |
 | Java | `archerdb-java` | Java 21+ | Maven/Gradle |
 | C | `libarcherdb` | C11+ | Header-only or static lib |
-| Zig | `archerdb-zig` | Zig 0.14+ | Import module |
 
 ## Feature Parity Matrix
 
@@ -21,44 +20,44 @@ All SDKs implement the complete ArcherDB API with 100% feature parity.
 
 ### Operations (14 total)
 
-| Operation | Python | Node.js | Go | Java | C | Zig |
-|-----------|--------|---------|----|----|---|-----|
-| insert | Yes | Yes | Yes | Yes | Yes | Yes |
-| upsert | Yes | Yes | Yes | Yes | Yes | Yes |
-| delete | Yes | Yes | Yes | Yes | Yes | Yes |
-| query-uuid | Yes | Yes | Yes | Yes | Yes | Yes |
-| query-uuid-batch | Yes | Yes | Yes | Yes | Yes | Yes |
-| query-radius | Yes | Yes | Yes | Yes | Yes | Yes |
-| query-polygon | Yes | Yes | Yes | Yes | Yes | Yes |
-| query-latest | Yes | Yes | Yes | Yes | Yes | Yes |
-| ping | Yes | Yes | Yes | Yes | Yes | Yes |
-| status | Yes | Yes | Yes | Yes | Yes | Yes |
-| topology | Yes | Yes | Yes | Yes | Yes | Yes |
-| ttl-set | Yes | Yes | Yes | Yes | Yes | Yes |
-| ttl-extend | Yes | Yes | Yes | Yes | Yes | Yes |
-| ttl-clear | Yes | Yes | Yes | Yes | Yes | Yes |
+| Operation | Python | Node.js | Go | Java | C |
+|-----------|--------|---------|----|----|---|
+| insert | Yes | Yes | Yes | Yes | Yes |
+| upsert | Yes | Yes | Yes | Yes | Yes |
+| delete | Yes | Yes | Yes | Yes | Yes |
+| query-uuid | Yes | Yes | Yes | Yes | Yes |
+| query-uuid-batch | Yes | Yes | Yes | Yes | Yes |
+| query-radius | Yes | Yes | Yes | Yes | Yes |
+| query-polygon | Yes | Yes | Yes | Yes | Yes |
+| query-latest | Yes | Yes | Yes | Yes | Yes |
+| ping | Yes | Yes | Yes | Yes | Yes |
+| status | Yes | Yes | Yes | Yes | Yes |
+| topology | Yes | Yes | Yes | Yes | Yes |
+| ttl-set | Yes | Yes | Yes | Yes | Yes |
+| ttl-extend | Yes | Yes | Yes | Yes | Yes |
+| ttl-clear | Yes | Yes | Yes | Yes | Yes |
 
 ### Features
 
-| Feature | Python | Node.js | Go | Java | C | Zig |
-|---------|--------|---------|----|----|---|-----|
-| Sync client | Yes | - | Yes | Yes | Yes | Yes |
-| Async client | Yes | Yes | Yes | Yes | Callback | Yes |
-| Connection pooling | Yes | Yes | Yes | Yes | Manual | Yes |
-| Automatic retry | Yes | Yes | Yes | Yes | Yes | Yes |
-| Configurable retries | Yes | Yes | Yes | Yes | Yes | Yes |
-| Type safety | Hints | TypeScript | Yes | Yes | Headers | Yes |
-| Pagination support | Yes | Yes | Yes | Yes | Yes | Yes |
-| Error categories | Yes | Yes | Yes | Yes | Yes | Yes |
+| Feature | Python | Node.js | Go | Java | C |
+|---------|--------|---------|----|----|---|
+| Sync client | Yes | - | Yes | Yes | Yes |
+| Async client | Yes | Yes | Yes | Yes | Callback |
+| Connection pooling | Yes | Yes | Yes | Yes | Manual |
+| Automatic retry | Yes | Yes | Yes | Yes | Yes |
+| Configurable retries | Yes | Yes | Yes | Yes | Yes |
+| Type safety | Hints | TypeScript | Yes | Yes | Headers |
+| Pagination support | Yes | Yes | Yes | Yes | Yes |
+| Error categories | Yes | Yes | Yes | Yes | Yes |
 
 ### Error Handling
 
-| Error Type | Python | Node.js | Go | Java | C | Zig |
-|------------|--------|---------|----|----|---|-----|
-| Validation errors | Exception | Error | error | Exception | Return code | error |
-| Network errors | Exception | Error | error | Exception | Return code | error |
-| Server errors | Exception | Error | error | Exception | Return code | error |
-| Retryable detection | is_retryable() | isRetryable() | IsRetryable() | isRetryable() | is_retryable() | isRetryable() |
+| Error Type | Python | Node.js | Go | Java | C |
+|------------|--------|---------|----|----|---|
+| Validation errors | Exception | Error | error | Exception | Return code |
+| Network errors | Exception | Error | error | Exception | Return code |
+| Server errors | Exception | Error | error | Exception | Return code |
+| Retryable detection | is_retryable() | isRetryable() | IsRetryable() | isRetryable() | is_retryable() |
 
 ## Code Examples
 
@@ -155,25 +154,6 @@ archerdb_event_t event = {
 int result = archerdb_insert_events(client, &event, 1);
 ```
 
-**Zig:**
-```zig
-const archerdb = @import("archerdb");
-
-var client = try archerdb.Client.init(.{
-    .cluster_id = 0,
-    .addresses = &[_][]const u8{"127.0.0.1:3001"},
-}, allocator);
-defer client.deinit();
-
-const event = archerdb.GeoEvent{
-    .entity_id = 1001,
-    .latitude = 37.7749,
-    .longitude = -122.4194,
-    .ttl_seconds = 3600,
-};
-const errors = try client.insertEvents(&[_]archerdb.GeoEvent{event});
-```
-
 ### Query Radius
 
 **Python:**
@@ -240,19 +220,6 @@ for (int i = 0; i < count; i++) {
     printf("%llu: %dm away\n", results[i].entity_id, results[i].distance_meters);
 }
 archerdb_free_results(results);
-```
-
-**Zig:**
-```zig
-const results = try client.queryRadius(.{
-    .center_lat = 37.7749,
-    .center_lon = -122.4194,
-    .radius_meters = 1000,
-    .limit = 100,
-});
-for (results.events) |event| {
-    std.debug.print("{d}: {d}m away\n", .{ event.entity_id, event.distance_meters });
-}
 ```
 
 ### Error Handling
@@ -325,27 +292,13 @@ if (result != ARCHERDB_OK) {
 }
 ```
 
-**Zig:**
-```zig
-client.insertEvents(events) catch |err| {
-    switch (err) {
-        error.ClusterUnavailable, error.NotShardLeader => {
-            // Retry with backoff
-        },
-        else => {
-            std.debug.print("Error: {}\n", .{err});
-        },
-    }
-};
-```
-
 ## Language-Specific Notes
 
 ### Python
 
 - **Sync and async clients**: Use `GeoClientSync` for blocking operations, `GeoClientAsync` for async/await
 - **Type hints**: Full type annotations for IDE support
-- **Native Zig binding**: Performance-critical code runs in native Zig
+- **Native binding**: Performance-critical code runs in the native client library
 
 ### Node.js
 
@@ -371,12 +324,6 @@ client.insertEvents(events) catch |err| {
 - **Memory management**: Caller responsible for memory (malloc/free patterns)
 - **Callbacks**: Async operations use callback functions
 
-### Zig
-
-- **Comptime safety**: Type errors caught at compile time
-- **Allocator-aware**: All allocations use provided allocator
-- **Error unions**: Comprehensive error handling via error unions
-
 ## Known Limitations
 
 See [SDK_LIMITATIONS.md](../SDK_LIMITATIONS.md) for detailed workarounds.
@@ -390,13 +337,12 @@ Current status:
 | Go | Not yet verified | - |
 | Java | Not yet verified | - |
 | C | Not yet verified | - |
-| Zig | Not yet verified | - |
 
 ## Parity Testing
 
 All SDKs are verified against each other to ensure identical behavior:
 
-- 14 operations x 6 SDKs = 84 test cells
+- 14 operations x 5 SDKs = 70 test cells
 - Target: 100% parity before release
 - See [PARITY.md](../PARITY.md) for methodology and current matrix
 
@@ -412,10 +358,10 @@ python tests/parity_tests/parity_runner.py
 |----------|-----------------|-----|
 | Web backend | Python, Node.js, Go | Ecosystem integration |
 | Mobile backend | Go, Java | Performance, JVM ecosystem |
-| Embedded systems | C, Zig | Low-level control, no runtime |
+| Embedded systems | C | Low-level control, no runtime |
 | Data pipelines | Python, Go | Async support, concurrency |
 | Enterprise Java | Java | Spring/Jakarta integration |
-| Systems programming | Zig, C | Zero-overhead, allocator control |
+| Systems programming | C | Zero-overhead, allocator control |
 
 ## See Also
 

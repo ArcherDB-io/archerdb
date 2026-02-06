@@ -9,11 +9,11 @@ package types
 //
 // Parameters:
 //   - events: Slice of GeoEvents to split
-//   - chunkSize: Maximum size of each chunk (must be > 0)
+//   - chunkSize: Maximum size of each chunk (must be > 0; returns nil otherwise)
 //
 // Returns:
 //   - A slice of slices, each containing at most chunkSize items
-//   - Returns nil for empty input
+//   - Returns nil for empty input or invalid chunkSize
 //
 // Example:
 //
@@ -33,7 +33,7 @@ package types
 //	}
 func SplitGeoEventBatch(events []GeoEvent, chunkSize int) [][]GeoEvent {
 	if chunkSize <= 0 {
-		panic("chunkSize must be greater than 0")
+		return nil
 	}
 
 	if len(events) == 0 {
@@ -56,10 +56,11 @@ func SplitGeoEventBatch(events []GeoEvent, chunkSize int) [][]GeoEvent {
 
 // SplitUint128Batch splits a slice of Uint128 into smaller chunks.
 // This is useful for splitting batches of entity IDs (e.g., for batch lookups or deletes).
+// Returns nil for empty input or invalid chunkSize.
 // See SplitGeoEventBatch for full documentation.
 func SplitUint128Batch(ids []Uint128, chunkSize int) [][]Uint128 {
 	if chunkSize <= 0 {
-		panic("chunkSize must be greater than 0")
+		return nil
 	}
 
 	if len(ids) == 0 {

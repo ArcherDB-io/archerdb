@@ -6,17 +6,17 @@
 
 ## Summary
 
-This phase ensures all 6 ArcherDB SDKs (Python, Node.js, Go, Java, C, Zig) handle errors consistently and produce identical results for identical operations. Research focused on three areas: (1) existing error handling patterns across all SDKs, (2) cross-SDK parity verification strategies, and (3) edge case coverage for geographic extremes.
+This phase ensures all 5 ArcherDB SDKs (Python, Node.js, Go, Java, C) handle errors consistently and produce identical results for identical operations. Research focused on three areas: (1) existing error handling patterns across all SDKs, (2) cross-SDK parity verification strategies, and (3) edge case coverage for geographic extremes.
 
 The foundation is solid:
-- **All 6 SDKs have error types** with consistent error codes and retryability flags
+- **All 5 SDKs have error types** with consistent error codes and retryability flags
 - **Wire format test cases** exist in `src/clients/test-data/wire-format-test-cases.json`
 - **Retry policies** are standardized: 5 max retries, 100ms base backoff, exponential with jitter
 - **Error code ranges** are consistent: 200-210 (state), 213-218 (multi-region), 220-224 (sharding), 410-414 (encryption)
 
 Key insight: Error handling infrastructure exists but needs verification testing. The SDKs implement similar patterns but have not been systematically tested for cross-SDK parity. Per CONTEXT.md, tests should verify error types/codes only, not exact message wording.
 
-**Primary recommendation:** Create error injection tests using server responses, build a parity verification runner that executes identical operations across all 6 SDKs, and document any SDK limitations with workarounds. Target 100% parity before release.
+**Primary recommendation:** Create error injection tests using server responses, build a parity verification runner that executes identical operations across all 5 SDKs, and document any SDK limitations with workarounds. Target 100% parity before release.
 
 ## Standard Stack
 
@@ -38,7 +38,6 @@ Key insight: Error handling infrastructure exists but needs verification testing
 | Go | `pkg/errors/` | `GeoError` interface | `pkg/retry/retry.go` |
 | Java | `com.archerdb.geo` | `ArcherDBException` | `RetryPolicy.java` |
 | C | `arch_client_errors.h` | Integer codes | Manual retry |
-| Zig | `errors.zig` | `ClientError` enum | Manual retry |
 
 ### Supporting Infrastructure
 
@@ -118,9 +117,9 @@ import subprocess
 import json
 
 class ParityVerifier:
-    """Verify SDK results match across all 6 SDKs."""
+    """Verify SDK results match across all 5 SDKs."""
 
-    SDK_ORDER = ["python", "node", "go", "java", "c", "zig"]
+    SDK_ORDER = ["python", "node", "go", "java", "c"]
 
     def __init__(self, server_url: str):
         self.server_url = server_url
@@ -223,16 +222,6 @@ int arch_error_is_retryable(int code);
 const char* arch_error_name(int code);
 ```
 
-```zig
-// Zig: Use error union with error set
-pub const ClientError = error{
-    ConnectionFailed,
-    InvalidCoordinates,
-    // ...
-};
-pub fn isRetryable(err: ClientError) bool { ... }
-```
-
 ### Pattern 4: Configurable Retry with Exponential Backoff (per CONTEXT.md)
 
 **What:** Default 3 attempts, exponential backoff, user-configurable via client options
@@ -293,8 +282,8 @@ def generate_parity_report(results: List[ParityResult]) -> tuple[str, dict]:
         "",
         f"Generated: {datetime.utcnow().isoformat()}",
         "",
-        "| Operation | Python | Node.js | Go | Java | C | Zig |",
-        "|-----------|--------|---------|----|----|---|-----|"
+        "| Operation | Python | Node.js | Go | Java | C |",
+        "|-----------|--------|---------|----|----|---|"
     ]
 
     operations = defaultdict(dict)
@@ -305,7 +294,7 @@ def generate_parity_report(results: List[ParityResult]) -> tuple[str, dict]:
         row = f"| {op_name} |"
         json_report["operations"][op_name] = {}
 
-        for sdk in ["python", "node", "go", "java", "c", "zig"]:
+        for sdk in ["python", "node", "go", "java", "c"]:
             if sdk in sdk_results:
                 result = sdk_results[sdk]
                 symbol = "\u2713" if result.passed else "\u2717"  # checkmark or X
@@ -587,7 +576,7 @@ def test_retry_with_exponential_backoff():
 ```python
 # Source: CONTEXT.md - all SDKs return identical results
 def test_insert_parity_across_sdks():
-    """All 6 SDKs return identical results for identical insert."""
+    """All 5 SDKs return identical results for identical insert."""
     input_data = {
         "events": [{
             "entity_id": 12345,
@@ -688,7 +677,6 @@ def test_edge_case_parity(edge_case):
 - Go: Interface-based errors, error wrapping, retry package
 - Java: Exception hierarchy, RetryPolicy builder pattern
 - C: Integer codes with inline helper functions
-- Zig: Error union with error set, helper functions
 
 ## Open Questions
 
@@ -717,7 +705,6 @@ def test_edge_case_parity(edge_case):
 - `src/clients/node/src/errors.ts` - Node.js error types and type guards
 - `src/clients/java/src/main/java/com/archerdb/geo/RetryPolicy.java` - Java retry
 - `src/clients/java/src/main/java/com/archerdb/geo/OperationException.java` - Java errors
-- `src/clients/zig/errors.zig` - Zig error types
 - `src/clients/c/arch_client_errors.h` - C error codes and helpers
 - `src/clients/python/src/archerdb/client.py` - Python error classes (first 200 lines)
 - `src/clients/test-data/wire-format-test-cases.json` - Canonical error codes
@@ -726,7 +713,6 @@ def test_edge_case_parity(edge_case):
 
 - `.planning/phases/13-sdk-operation-test-suite/13-RESEARCH.md` - SDK test patterns
 - `test_infrastructure/fixtures/v1/*.json` - Operation fixture structure
-- `src/clients/zig/tests/integration/all_operations_test.zig` - Cross-operation test pattern
 
 ### Tertiary (LOW confidence)
 
@@ -736,7 +722,7 @@ def test_edge_case_parity(edge_case):
 ## Metadata
 
 **Confidence breakdown:**
-- Error code standardization: HIGH - Verified in all 6 SDK source files
+- Error code standardization: HIGH - Verified in all 5 SDK source files
 - Retry policy consistency: HIGH - All SDKs implement same backoff schedule
 - Parity testing patterns: MEDIUM - Based on CONTEXT.md decisions + standard practices
 - Edge case coverage: MEDIUM - Curated list from CONTEXT.md, may need expansion
@@ -755,9 +741,8 @@ def test_edge_case_parity(edge_case):
 | Go | `GeoError` | `.Code()` | `.Retryable()` | `.Error()` | `IsRetryableError()` etc |
 | Java | `ArcherDBException` | `.getErrorCode()` | `.isRetryable()` | `.getMessage()` | `instanceof` |
 | C | `int` | Direct | `arch_error_is_retryable()` | `arch_error_message()` | `arch_error_is_*()` |
-| Zig | `ClientError` | `errorCode()` | `isRetryable()` | `errorMessage()` | `isNetworkError()` etc |
 
 **Parity Verification Matrix Dimensions:**
-- 14 operations x 6 SDKs = 84 cells
+- 14 operations x 5 SDKs = 70 cells
 - Error categories: Connection (2), Validation (4), State (2), Resource (10+), Sharding (5), Encryption (5)
 - Geographic edge cases: Polar (2), Antimeridian (2), Zero crossings (2) = 6 minimum

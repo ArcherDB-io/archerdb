@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2025 ArcherDB Contributors
 #
-# SDK PR Tests - All 6 SDKs with JUnit XML reporting
+# SDK PR Tests - All 5 SDKs with JUnit XML reporting
 # Strict 15 minute timeout per CI tier spec.
 # Runs on pull requests to main.
 
@@ -21,7 +21,7 @@ jobs:
     strategy:
       fail-fast: true  # Fail fast per CONTEXT.md decision
       matrix:
-        sdk: [python, nodejs, go, java, c, zig]
+        sdk: [python, nodejs, go, java, c]
     name: SDK PR (${{ matrix.sdk }})
     steps:
       - uses: actions/checkout@v4
@@ -130,28 +130,6 @@ jobs:
             echo '<testsuites><testsuite name="c-sdk" tests="0" failures="0" skipped="1">' >> ../../../test-results/c.xml
             echo '<testcase name="placeholder" classname="c-sdk"><skipped message="C SDK tests not yet implemented"/></testcase>' >> ../../../test-results/c.xml
             echo '</testsuite></testsuites>' >> ../../../test-results/c.xml
-          fi
-
-      # Zig: Full suite with JUnit XML
-      - name: Zig full suite
-        if: matrix.sdk == 'zig'
-        run: |
-          cd src/clients/zig
-          # Zig tests output JUnit XML if available
-          if ../../../zig/zig build test-junit 2>/dev/null; then
-            cp test-results/*.xml ../../../test-results/zig.xml 2>/dev/null || true
-          elif ../../../zig/zig build test 2>/dev/null; then
-            # Create minimal JUnit XML from test output
-            echo '<?xml version="1.0" encoding="UTF-8"?>' > ../../../test-results/zig.xml
-            echo '<testsuites><testsuite name="zig-sdk" tests="1" failures="0">' >> ../../../test-results/zig.xml
-            echo '<testcase name="zig-sdk-tests" classname="zig-sdk"/>' >> ../../../test-results/zig.xml
-            echo '</testsuite></testsuites>' >> ../../../test-results/zig.xml
-          else
-            # Create placeholder for tracking
-            echo '<?xml version="1.0" encoding="UTF-8"?>' > ../../../test-results/zig.xml
-            echo '<testsuites><testsuite name="zig-sdk" tests="0" failures="0" skipped="1">' >> ../../../test-results/zig.xml
-            echo '<testcase name="placeholder" classname="zig-sdk"><skipped message="Zig SDK tests not yet implemented"/></testcase>' >> ../../../test-results/zig.xml
-            echo '</testsuite></testsuites>' >> ../../../test-results/zig.xml
           fi
 
       # Publish JUnit XML test results

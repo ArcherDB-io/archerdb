@@ -352,7 +352,6 @@ SDKs with JIT compilation (Java, Node.js) need warm-up:
 | Python | 100 iterations |
 | Go | 100 iterations |
 | C | 50 iterations |
-| Zig | 50 iterations |
 
 ### Sample Size
 

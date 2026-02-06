@@ -12,7 +12,7 @@ import java.util.List;
  */
 final class NativeQueryUuidBatchRequest extends Batch {
 
-    private static final int HEADER_SIZE = 8;
+    private static final int HEADER_SIZE = 16;
     private static final int ENTITY_ID_SIZE = 16;
 
     NativeQueryUuidBatchRequest(List<UInt128> entityIds) {
@@ -25,6 +25,7 @@ final class NativeQueryUuidBatchRequest extends Batch {
         ByteBuffer buffer = ByteBuffer.allocateDirect(size).order(ByteOrder.LITTLE_ENDIAN);
         buffer.putInt(count);
         buffer.putInt(0);
+        buffer.putLong(0);
         for (UInt128 entityId : entityIds) {
             buffer.putLong(entityId.getLo());
             buffer.putLong(entityId.getHi());

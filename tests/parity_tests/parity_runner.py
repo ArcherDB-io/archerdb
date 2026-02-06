@@ -3,7 +3,7 @@
 
 """Cross-SDK parity test runner.
 
-Runs identical operations across all 6 SDKs and verifies results match.
+Runs identical operations across all 5 SDKs and verifies results match.
 Per CONTEXT.md: Python SDK as golden reference, server as ultimate truth.
 """
 
@@ -27,7 +27,6 @@ from tests.parity_tests.sdk_runners import (
     go_runner,
     java_runner,
     c_runner,
-    zig_runner,
 )
 
 # All SDK runners with consistent interface
@@ -37,10 +36,9 @@ SDK_RUNNERS: Dict[str, Any] = {
     "go": go_runner,
     "java": java_runner,
     "c": c_runner,
-    "zig": zig_runner,
 }
 
-# All 14 operations per CONTEXT.md (14 ops x 6 SDKs = 84 cells)
+# All 14 operations per CONTEXT.md (14 ops x 5 SDKs = 70 cells)
 OPERATIONS = [
     "insert",
     "upsert",
@@ -112,7 +110,7 @@ def run_parity_tests(
     Args:
         server_url: ArcherDB server URL (e.g., 'http://127.0.0.1:7000')
         operations: List of operations to test (default: all 14)
-        sdks: List of SDKs to test (default: all 6)
+        sdks: List of SDKs to test (default: all 5)
         verbose: Print progress information
 
     Returns:
@@ -168,7 +166,7 @@ def main() -> int:
         Exit code (0 for success, 1 for failures)
     """
     parser = argparse.ArgumentParser(
-        description="Run SDK parity tests across all 6 SDKs",
+        description="Run SDK parity tests across all 5 SDKs",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -191,6 +189,17 @@ Examples:
         help="ArcherDB server URL (default: http://127.0.0.1:7000)",
     )
     parser.add_argument(
+        "--start-cluster",
+        action="store_true",
+        help="Start a local single-node cluster for parity tests",
+    )
+    parser.add_argument(
+        "--cluster-port",
+        type=int,
+        default=0,
+        help="Base port for local cluster (0 = auto-allocate)",
+    )
+    parser.add_argument(
         "--ops",
         nargs="*",
         help="Operations to test (default: all 14)",
@@ -198,7 +207,7 @@ Examples:
     parser.add_argument(
         "--sdks",
         nargs="*",
-        help="SDKs to test (default: all 6)",
+        help="SDKs to test (default: all 5)",
     )
     parser.add_argument(
         "--output",
@@ -233,16 +242,36 @@ Examples:
                 print(f"Error: Unknown operation '{op}'. Valid operations: {OPERATIONS}")
                 return 1
 
-    # Run tests
-    results = run_parity_tests(
-        args.url,
-        args.ops,
-        args.sdks,
-        verbose=args.verbose,
-    )
+    cluster = None
+    server_url = args.url
+    if args.start_cluster:
+        from test_infrastructure.harness.cluster import ArcherDBCluster, ClusterConfig
+
+        cluster = ArcherDBCluster(ClusterConfig(node_count=1, base_port=args.cluster_port))
+        cluster.start()
+        if not cluster.wait_for_ready(timeout=60):
+            cluster.stop()
+            raise SystemExit("Cluster failed to become ready")
+        leader_port = cluster.wait_for_leader(timeout=30)
+        if not leader_port:
+            cluster.stop()
+            raise SystemExit("Cluster leader not available")
+        server_url = f"http://127.0.0.1:{leader_port}"
+
+    try:
+        # Run tests
+        results = run_parity_tests(
+            server_url,
+            args.ops,
+            args.sdks,
+            verbose=args.verbose,
+        )
+    finally:
+        if cluster:
+            cluster.stop()
 
     # Write reports
-    verifier = ParityVerifier(args.url)
+    verifier = ParityVerifier(server_url)
     verifier.write_reports(results, args.output, args.markdown)
 
     # Summary

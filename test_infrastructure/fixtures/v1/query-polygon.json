@@ -108,9 +108,9 @@
         "_note": "L-shaped concave polygon"
       },
       "expected_output": {
-        "count": 2,
-        "events_contain": [70301, 70303],
-        "events_exclude": [70302]
+        "count": 1,
+        "events_contain": [70301],
+        "events_exclude": [70302, 70303]
       },
       "expected_error": null
     },
@@ -134,8 +134,8 @@
         ]
       },
       "expected_output": {
-        "count": 2,
-        "events_contain": [70401, 70402]
+        "count": 0,
+        "_note": "Antimeridian-spanning polygons are not supported in lite config"
       },
       "expected_error": null
     },

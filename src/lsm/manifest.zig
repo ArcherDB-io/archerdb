@@ -186,7 +186,7 @@ pub fn ManifestType(comptime Table: type, comptime Storage: type) type {
             /// The maximum key across both levels.
             key_max: Key,
             // References to tables in level B that intersect with the chosen table in level A.
-            tables: stdx.BoundedArrayType(TableInfoReference, constants.lsm_growth_factor),
+            tables: stdx.BoundedArrayType(TableInfoReference, constants.lsm_l0_trigger_max),
         };
 
         node_pool: *NodePool,
@@ -585,14 +585,13 @@ pub fn ManifestType(comptime Table: type, comptime Storage: type) type {
             assert(manifest_level.table_count_visible <=
                 manifest.table_count_visible_max_for_level(level_b));
 
-            // We are guaranteed to get a non-null range because Level 0 has
-            // lsm_growth_factor number of tables, so the number of tables that intersect
-            // with the immutable table can be no more than lsm_growth_factor.
+            // Level 0 may exceed lsm_growth_factor when adaptive tuning raises the trigger.
+            // Use the level's configured max table count to avoid overflow in overlap selection.
             const range_overlap = manifest_level.tables_overlapping_with_key_range(
                 key_min,
                 key_max,
                 snapshot_latest,
-                growth_factor,
+                @intCast(manifest.table_count_visible_max_for_level(level_b)),
             ).?;
 
             // Attempt to coalesce with adjacent tables in level 0.

@@ -291,7 +291,7 @@ final class GeoClientImpl implements GeoClient {
                 response.position(response.position() + 3); // skip padding
 
                 // Result code 1 typically means entity not found
-                if (result == 1) {
+                if (result == 1 || result == 3) {
                     notFoundCount++;
                     deletedCount--;
                 } else if (result != 0) {
@@ -927,26 +927,32 @@ final class GeoClientImpl implements GeoClient {
 
         ByteBuffer eventsBuffer = response.slice().order(ByteOrder.LITTLE_ENDIAN);
         eventsBuffer.limit(eventsBytes);
+        ByteBuffer trimmed = eventsBuffer.slice().order(ByteOrder.LITTLE_ENDIAN);
 
-        List<GeoEvent> events = new ArrayList<>(foundCount);
-        NativeGeoEventBatch batch = new NativeGeoEventBatch(eventsBuffer);
-        while (batch.next()) {
-            events.add(batch.toGeoEvent());
-        }
-
-        int eventIdx = 0;
+        NativeGeoEventBatch batch = new NativeGeoEventBatch(trimmed);
         for (int i = 0; i < entityIds.size(); i++) {
             if (notFound[i]) {
                 continue;
             }
-            if (eventIdx >= events.size()) {
+            if (!batch.next()) {
                 break;
             }
-            results.put(entityIds.get(i), events.get(eventIdx));
-            eventIdx += 1;
+            results.put(entityIds.get(i), buildEventFromBatch(batch, entityIds.get(i)));
         }
 
         return results;
+    }
+
+    private GeoEvent buildEventFromBatch(NativeGeoEventBatch batch, UInt128 entityId) {
+        return new GeoEvent.Builder().setId(UInt128.fromBytes(batch.getId()))
+                .entityId(entityId.getLo(), entityId.getHi())
+                .setCorrelationId(UInt128.fromBytes(batch.getCorrelationId()))
+                .setUserData(UInt128.fromBytes(batch.getUserData())).setLatNano(batch.getLatNano())
+                .setLonNano(batch.getLonNano()).setGroupId(batch.getGroupId())
+                .setTimestamp(batch.getTimestamp()).setAltitudeMm(batch.getAltitudeMm())
+                .setVelocityMms(batch.getVelocityMms()).setTtlSeconds(batch.getTtlSeconds())
+                .setAccuracyMm(batch.getAccuracyMm()).setHeadingCdeg((short) batch.getHeadingCdeg())
+                .setFlags((short) batch.getFlags()).build();
     }
 
     /**

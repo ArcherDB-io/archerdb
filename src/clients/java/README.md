@@ -6,7 +6,7 @@ The ArcherDB Java client for high-performance geospatial data storage and querie
 
 Linux >= 5.6 is the only production environment we support. For development, macOS and Windows are also supported.
 
-* Java >= 11
+* Java >= 11 (Java 21+: pass `--enable-native-access=ALL-UNNAMED` to the JVM to silence native access warnings)
 * Maven >= 3.6 (recommended)
 
 ## Installation

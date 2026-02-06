@@ -6,15 +6,14 @@
 
 ## Summary
 
-This phase creates comprehensive operation tests for all 6 ArcherDB SDKs (Python, Node.js, Go, Java, C, Zig) across all 14 operations. Research focused on three areas: (1) existing SDK test patterns already established in the codebase, (2) the test infrastructure from Phase 11 (cluster harness, fixtures), and (3) cross-language test orchestration strategies.
+This phase creates comprehensive operation tests for all 5 ArcherDB SDKs (Python, Node.js, Go, Java, C) across all 14 operations. Research focused on three areas: (1) existing SDK test patterns already established in the codebase, (2) the test infrastructure from Phase 11 (cluster harness, fixtures), and (3) cross-language test orchestration strategies.
 
 The foundation is solid:
-- **6 SDKs exist** in `src/clients/{python,node,go,java,c,zig}/` with varying test coverage
+- **5 SDKs exist** in `src/clients/{python,node,go,java,c}/` with varying test coverage
 - **Test harness** from Phase 11 provides `ArcherDBCluster` for programmatic server lifecycle
 - **14 JSON fixtures** exist in `test_infrastructure/fixtures/v1/` covering all operations
 - **Fixture loader** exists in Python (`test_infrastructure/fixtures/fixture_loader.py`)
 
-Key insight: The Zig SDK (`src/clients/zig/tests/integration/roundtrip_test.zig`) represents the most recent test pattern and covers all 14 operations. This pattern should be replicated across all SDKs.
 
 **Primary recommendation:** Create a unified test runner script that sequentially executes each SDK's tests against shared fixtures, with server-per-SDK isolation and fail-fast semantics per CONTEXT.md decisions.
 
@@ -29,7 +28,6 @@ Key insight: The Zig SDK (`src/clients/zig/tests/integration/roundtrip_test.zig`
 | Jest | 29.x | Node.js SDK test runner | Standard for Node testing |
 | go test | 1.21+ | Go SDK test runner | Standard Go testing |
 | JUnit 5 | 5.10+ | Java SDK test runner | Industry standard for Java |
-| Zig test | 0.15+ | Zig SDK test runner | Built-in Zig testing |
 | bash | 5.x | Test orchestration script | Shell glue for unified runner |
 
 ### Supporting Libraries
@@ -52,7 +50,6 @@ Based on codebase analysis:
 | Go | `integration_test.go`, `geo_test.go` | go test | Partial (5-6 operations) |
 | Java | Not found | JUnit (in pom.xml) | Minimal |
 | C | `test.zig` | Zig test runner | Wiring tests only |
-| Zig | `tests/integration/roundtrip_test.zig` | Zig test | **All 14 operations** |
 
 ## Architecture Patterns
 
@@ -78,8 +75,6 @@ tests/
       AllOperationsTest.java    # JUnit tests for all 14 ops
     c/
       test_all_operations.c     # C tests via Zig runner
-    zig/
-      # Use existing: src/clients/zig/tests/integration/roundtrip_test.zig
 ```
 
 ### Pattern 1: Server-Per-SDK Lifecycle (CONTEXT.md Decision)
@@ -214,8 +209,8 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 echo "Building ArcherDB..."
 "$PROJECT_ROOT/zig/zig" build -j4 -Dconfig=lite
 
-# SDK test order: Python, Node, Go, Java, C, Zig (CONTEXT.md decision)
-SDKS=("python" "node" "go" "java" "c" "zig")
+# SDK test order: Python, Node, Go, Java, C (CONTEXT.md decision)
+SDKS=("python" "node" "go" "java" "c")
 
 for sdk in "${SDKS[@]}"; do
     echo "========================================"
@@ -241,10 +236,6 @@ for sdk in "${SDKS[@]}"; do
             ;;
         c)
             cd "$PROJECT_ROOT/src/clients/c"
-            "$PROJECT_ROOT/zig/zig" build test
-            ;;
-        zig)
-            cd "$PROJECT_ROOT/src/clients/zig"
             "$PROJECT_ROOT/zig/zig" build test
             ;;
     esac
@@ -461,60 +452,6 @@ func TestInsertOperations(t *testing.T) {
 }
 ```
 
-### Zig SDK Test (Already Exists - Reference Pattern)
-
-```zig
-// Source: src/clients/zig/tests/integration/roundtrip_test.zig
-// This is the model for all other SDKs
-
-test "integration: insert and query roundtrip" {
-    var client = Client.init(std.testing.allocator, getServerUrl()) catch {
-        std.debug.print("Skipping integration test (server not available)\n", .{});
-        return;
-    };
-    defer client.deinit();
-
-    const entity_id = generateTestEntityId("insert_query_roundtrip");
-
-    // Insert event
-    const events = [_]types.GeoEvent{
-        .{
-            .entity_id = entity_id,
-            .lat_nano = types.degreesToNano(37.7749),
-            .lon_nano = types.degreesToNano(-122.4194),
-            .group_id = 1,
-        },
-    };
-
-    var insert_results = client.insertEvents(std.testing.allocator, &events) catch |err| {
-        std.debug.print("Insert failed: {}\n", .{err});
-        return;
-    };
-    defer insert_results.deinit();
-
-    // Verify insert succeeded
-    if (insert_results.items.len > 0) {
-        try std.testing.expectEqual(types.InsertResultCode.ok, insert_results.items[0].code);
-    }
-
-    // Query back by UUID
-    const queried = client.getLatestByUUID(std.testing.allocator, entity_id) catch |err| {
-        std.debug.print("Query failed: {}\n", .{err});
-        return;
-    };
-
-    if (queried) |event| {
-        try std.testing.expectEqual(events[0].entity_id, event.entity_id);
-        try std.testing.expectEqual(events[0].lat_nano, event.lat_nano);
-        try std.testing.expectEqual(events[0].lon_nano, event.lon_nano);
-    }
-
-    // Clean up
-    const delete_ids = [_]u128{entity_id};
-    _ = client.deleteEntities(std.testing.allocator, &delete_ids) catch {};
-}
-```
-
 ### Verbose Diff Output Format
 
 ```python
@@ -556,7 +493,7 @@ def assert_json_match(expected, actual, operation_name):
 | 14 | topology | 157 | 1 | 2 | 3 |
 
 **Total per SDK:** 14 operations x (smoke average 1) = ~14 smoke tests
-**Total matrix:** 6 SDKs x 14 operations = 84 core tests
+**Total matrix:** 5 SDKs x 14 operations = 70 core tests
 
 Per CONTEXT.md: All tests are smoke tier (run on every commit).
 
@@ -569,7 +506,6 @@ Per CONTEXT.md: All tests are smoke tier (run on every commit).
 | Per-SDK server setup | Test harness library | Phase 11 | Unified server lifecycle |
 | Skip on SDK limitation | Fix SDK immediately | Phase 13 (CONTEXT.md) | No partial implementations |
 
-**Zig SDK sets the standard:** `src/clients/zig/tests/integration/roundtrip_test.zig` covers all 14 operations and should be the reference implementation for other SDKs.
 
 ## Open Questions
 
@@ -592,7 +528,6 @@ Per CONTEXT.md: All tests are smoke tier (run on every commit).
 
 ### Primary (HIGH confidence)
 
-- `src/clients/zig/tests/integration/roundtrip_test.zig` - Reference implementation covering all 14 ops
 - `test_infrastructure/fixtures/v1/*.json` - 14 operation fixtures
 - `test_infrastructure/harness/cluster.py` - Server lifecycle management
 - `test_infrastructure/fixtures/fixture_loader.py` - Fixture loading utilities
@@ -632,6 +567,4 @@ Based on codebase analysis, current SDK test coverage:
 | Go | `src/clients/go/*.go` | go test | ~5-6 | Needs expansion |
 | Java | `src/clients/java/` | JUnit | 0-1 | Needs creation |
 | C | `src/clients/c/test.zig` | Zig test | ~2-3 | Needs expansion |
-| Zig | `src/clients/zig/tests/integration/` | Zig test | **All 14** | Reference model |
 
-**Action:** Use Zig SDK tests as the template for all other SDKs.

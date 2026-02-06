@@ -12,7 +12,7 @@ public final class QueryUuidBatchFilter extends Batch {
 
 
     interface Struct {
-        int SIZE = 8;
+        int SIZE = 16;
 
         int Count = 0;
         int Reserved = 4;
@@ -55,9 +55,8 @@ public final class QueryUuidBatchFilter extends Batch {
     /**
      * @throws IllegalStateException if not at a {@link #isValidPosition valid position}.
      */
-    int getReserved() {
-        final var value = getUInt32(at(Struct.Reserved));
-        return value;
+    byte[] getReserved() {
+        return getArray(at(Struct.Reserved), 12);
     }
 
     /**
@@ -65,8 +64,12 @@ public final class QueryUuidBatchFilter extends Batch {
      * @throws IllegalStateException if not at a {@link #isValidPosition valid position}.
      * @throws IllegalStateException if a {@link #isReadOnly() read-only} batch.
      */
-    void setReserved(final int reserved) {
-        putUInt32(at(Struct.Reserved), reserved);
+    void setReserved(byte[] reserved) {
+        if (reserved == null)
+            reserved = new byte[12];
+        if (reserved.length != 12)
+            throw new IllegalArgumentException("Reserved must be 12 bytes long");
+        putArray(at(Struct.Reserved), reserved);
     }
 
 }

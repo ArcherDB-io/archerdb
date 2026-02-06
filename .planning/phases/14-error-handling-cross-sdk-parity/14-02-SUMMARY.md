@@ -47,13 +47,13 @@ metrics:
 
 # Phase 14 Plan 02: Cross-SDK Parity Verification Summary
 
-Cross-SDK parity test infrastructure with all 6 SDK runners and geographic edge case fixtures, enabling verification of identical results across Python, Node.js, Go, Java, C, and Zig SDKs.
+Cross-SDK parity test infrastructure with all 5 SDK runners and geographic edge case fixtures, enabling verification of identical results across Python, Node.js, Go, Java, and C SDKs.
 
 ## Commits
 
 | Commit | Type | Description |
 |--------|------|-------------|
-| c1311d7 | feat | Create parity test infrastructure with all 6 SDK runners |
+| c1311d7 | feat | Create parity test infrastructure with all 5 SDK runners |
 | 23ad7a1 | feat | Add geographic edge case fixtures for parity testing |
 | c9ef5fa | docs | Add parity matrix template and SDK limitations tracking |
 
@@ -63,7 +63,7 @@ Cross-SDK parity test infrastructure with all 6 SDK runners and geographic edge 
 
 **tests/parity_tests/parity_runner.py**
 - Main orchestration for cross-SDK parity testing
-- Supports all 14 operations (84 total cells)
+- Supports all 14 operations (70 total cells)
 - CLI with --ops, --sdks, --verbose options
 - JSON and Markdown report generation
 
@@ -73,7 +73,7 @@ Cross-SDK parity test infrastructure with all 6 SDK runners and geographic edge 
 - Detailed mismatch reporting with diffs
 - No epsilon tolerance per CONTEXT.md
 
-### SDK Runners (6 total)
+### SDK Runners (5 total)
 
 All runners implement the same interface:
 ```python
@@ -87,7 +87,6 @@ def run_operation(server_url: str, operation: str, input_data: dict) -> dict
 | go_runner.py | Compiled binary | Falls back to go run |
 | java_runner.py | Maven subprocess | Falls back to javac |
 | c_runner.py | Zig-built binary | Requires build.zig |
-| zig_runner.py | Zig-built binary | Requires build.zig |
 
 ### Geographic Edge Case Fixtures
 
@@ -100,7 +99,7 @@ def run_operation(server_url: str, operation: str, input_data: dict) -> dict
 ### Documentation
 
 **docs/PARITY.md**
-- 14x6 matrix template (84 cells)
+- 14x5 matrix template (70 cells)
 - Methodology documentation
 - Running instructions
 - CI integration guide
@@ -116,7 +115,7 @@ def run_operation(server_url: str, operation: str, input_data: dict) -> dict
 | Check | Result |
 |-------|--------|
 | Import parity_runner | PASS |
-| SDK runners count (7 files) | PASS |
+| SDK runners count (5 files) | PASS |
 | run_operation interface (6 runners) | PASS |
 | Edge case fixtures (3 files) | PASS |
 | PARITY.md exists | PASS |

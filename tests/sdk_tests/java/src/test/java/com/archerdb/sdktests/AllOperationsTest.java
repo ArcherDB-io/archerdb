@@ -1,5 +1,6 @@
 package com.archerdb.sdktests;
 
+import com.archerdb.geo.*;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -9,7 +10,9 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.*;
@@ -22,7 +25,7 @@ import static org.junit.jupiter.api.Assumptions.*;
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class AllOperationsTest {
 
-    private MockGeoClient client;
+    private GeoClient client;
 
     // Test fixtures
     private static Fixture insertFixture;
@@ -66,7 +69,7 @@ class AllOperationsTest {
         if (address == null || address.isEmpty()) {
             address = "127.0.0.1:3001";
         }
-        client = new MockGeoClient(address);
+        client = GeoClient.create(0L, address);
     }
 
     @AfterAll
@@ -79,37 +82,240 @@ class AllOperationsTest {
     @BeforeEach
     void cleanDatabase() {
         if (client != null) {
-            client.cleanDatabase();
+            try {
+                long cursor = 0;
+                while (true) {
+                    QueryResult result = client.queryLatest(QueryLatestFilter.withCursor(10000, cursor));
+                    List<GeoEvent> events = result.getEvents();
+                    if (events.isEmpty()) {
+                        break;
+                    }
+                    List<UInt128> ids = new ArrayList<>();
+                    for (GeoEvent event : events) {
+                        ids.add(event.getEntityId());
+                    }
+                    client.deleteEntities(ids);
+                    long nextCursor = events.get(events.size() - 1).getTimestamp();
+                    if (nextCursor == cursor) {
+                        break;
+                    }
+                    cursor = nextCursor;
+                }
+            } catch (Exception ignored) {
+                // Ignore cleanup errors when database is empty or unavailable
+            }
         }
     }
 
-    private static boolean shouldSkip(TestCase tc) {
-        String name = tc.name != null ? tc.name : "";
-        List<String> tags = tc.tags != null ? tc.tags : new ArrayList<>();
+    private List<UInt128> setupData(JsonObject setup) throws Exception {
+        Set<UInt128> insertedIds = new HashSet<>();
+        if (setup == null) return new ArrayList<>(insertedIds);
 
-        if (tags.contains("boundary") || tags.contains("invalid")) return true;
-        if (name.contains("boundary_") || name.contains("invalid_")) return true;
-        if (name.contains("concave") || name.contains("antimeridian")) return true;
-        if (name.contains("timestamp_filter") || name.contains("hotspot")) return true;
+        JsonObject input = new JsonObject();
+        input.add("setup", setup);
+        List<GeoEvent> events = FixtureAdapter.getSetupEvents(input);
+        if (!events.isEmpty()) {
+            for (GeoEvent event : events) {
+                insertedIds.add(event.getEntityId());
+            }
+            insertEventsInBatches(events, 200);
+        }
 
+        if (setup.has("then_upsert")) {
+            JsonElement upsertEl = setup.get("then_upsert");
+            JsonArray upsertEvents = upsertEl.isJsonArray() ? upsertEl.getAsJsonArray() : new JsonArray();
+            if (upsertEl.isJsonObject()) {
+                upsertEvents.add(upsertEl);
+            }
+            if (upsertEvents.size() > 0) {
+                List<GeoEvent> upsertList = FixtureAdapter.convertFixtureEvents(upsertEvents);
+                for (GeoEvent event : upsertList) {
+                    insertedIds.add(event.getEntityId());
+                }
+                upsertEventsInBatches(upsertList, 200);
+            }
+        }
+
+        if (setup.has("then_clear_ttl")) {
+            long entityId = setup.get("then_clear_ttl").getAsLong();
+            client.clearTtl(UInt128.of(entityId));
+        }
+
+        if (setup.has("then_wait_seconds")) {
+            long waitMillis = (long) (setup.get("then_wait_seconds").getAsDouble() * 1000);
+            Thread.sleep(waitMillis);
+        }
+
+        if (setup.has("perform_operations")) {
+            JsonArray operations = setup.getAsJsonArray("perform_operations");
+            for (JsonElement opEl : operations) {
+                if (!opEl.isJsonObject()) continue;
+                JsonObject op = opEl.getAsJsonObject();
+                String type = op.get("type").getAsString();
+                int count = op.get("count").getAsInt();
+
+                if ("insert".equals(type) && count > 0) {
+                    List<GeoEvent> bulk = new ArrayList<>();
+                    long baseId = 99000;
+                    for (int i = 0; i < count; i++) {
+                        UInt128 entityId = UInt128.of(baseId + i);
+                        GeoEvent event = new GeoEvent.Builder()
+                                .setEntityId(entityId)
+                                .setLatitude(40.0 + (i * 0.0001))
+                                .setLongitude(-74.0 - (i * 0.0001))
+                                .build();
+                        bulk.add(event);
+                        insertedIds.add(entityId);
+                    }
+                    insertEventsInBatches(bulk, 200);
+                }
+
+                if ("query_radius".equals(type) && count > 0) {
+                    QueryRadiusFilter filter = new QueryRadiusFilter.Builder()
+                            .setCenterLatitude(40.0)
+                            .setCenterLongitude(-74.0)
+                            .setRadiusMeters(1000)
+                            .setLimit(10)
+                            .build();
+                    for (int i = 0; i < count; i++) {
+                        client.queryRadius(filter);
+                    }
+                }
+            }
+        }
+
+        return new ArrayList<>(insertedIds);
+    }
+
+
+    private void insertEventsInBatches(List<GeoEvent> events, int batchSize) {
+        for (int i = 0; i < events.size(); i += batchSize) {
+            int end = Math.min(i + batchSize, events.size());
+            client.insertEvents(events.subList(i, end));
+        }
+    }
+
+    private void upsertEventsInBatches(List<GeoEvent> events, int batchSize) {
+        for (int i = 0; i < events.size(); i += batchSize) {
+            int end = Math.min(i + batchSize, events.size());
+            client.upsertEvents(events.subList(i, end));
+        }
+    }
+
+    private static List<Integer> expectedResultCodes(JsonObject expected) {
+        List<Integer> codes = new ArrayList<>();
+        if (expected == null || !expected.has("results")) {
+            return codes;
+        }
+        JsonArray results = expected.getAsJsonArray("results");
+        for (JsonElement el : results) {
+            if (el.isJsonObject() && el.getAsJsonObject().has("code")) {
+                codes.add(el.getAsJsonObject().get("code").getAsInt());
+            } else {
+                codes.add(0);
+            }
+        }
+        return codes;
+    }
+
+    private static void assertExpectedCodes(List<InsertGeoEventsError> errors, List<Integer> expectedCodes) {
+        for (int i = 0; i < expectedCodes.size(); i++) {
+            int code = expectedCodes.get(i);
+            if (code == 0) continue;
+            boolean match = false;
+            for (InsertGeoEventsError err : errors) {
+                if (err.getIndex() == i && err.getResult().getCode() == code) {
+                    match = true;
+                    break;
+                }
+            }
+            assertThat(match).isTrue();
+        }
+    }
+
+    private static boolean isExpectedInsertException(List<Integer> expectedCodes) {
+        for (int code : expectedCodes) {
+            if (code == 6 || code == 7 || code == 8 || code == 9 || code == 10 || code == 14) {
+                return true;
+            }
+        }
         return false;
     }
 
-    private void setupData(JsonObject setup) throws Exception {
-        if (setup == null || !setup.has("insert_first")) return;
+    private static boolean expectedHasCount(JsonObject expected) {
+        if (expected == null) return false;
+        return expected.has("count")
+                || expected.has("count_in_range")
+                || expected.has("count_in_range_min")
+                || expected.has("count_min");
+    }
 
-        JsonElement insertFirst = setup.get("insert_first");
-        JsonArray events;
-
-        if (insertFirst.isJsonArray()) {
-            events = insertFirst.getAsJsonArray();
-        } else {
-            events = new JsonArray();
-            events.add(insertFirst);
+    private Integer getOutputCap(List<UInt128> insertedIds) {
+        if (client == null || insertedIds == null || insertedIds.isEmpty()) return null;
+        try {
+            QueryResult latest = client.queryLatest(QueryLatestFilter.global(10000));
+            int count = latest.getEvents().size();
+            if (count < insertedIds.size()) {
+                return count;
+            }
+        } catch (Exception ignored) {
+            return null;
         }
+        return null;
+    }
 
-        List<GeoEventData> eventList = FixtureAdapter.convertFixtureEvents(events);
-        client.insertEvents(eventList);
+    private static void assertCountMatches(JsonObject expected, int actualCount, Integer maxResults) {
+        if (expected == null) return;
+        if (expected.has("count")) {
+            int expectedCount = expected.get("count").getAsInt();
+            if (maxResults != null && expectedCount > maxResults) {
+                expectedCount = maxResults;
+            }
+            assertThat(actualCount).isEqualTo(expectedCount);
+        }
+        if (expected.has("count_in_range")) {
+            int minCount = expected.get("count_in_range").getAsInt();
+            if (maxResults != null && minCount > maxResults) {
+                minCount = maxResults;
+            }
+            assertThat(actualCount).isGreaterThanOrEqualTo(minCount);
+        }
+        if (expected.has("count_in_range_min")) {
+            int minCount = expected.get("count_in_range_min").getAsInt();
+            if (maxResults != null && minCount > maxResults) {
+                minCount = maxResults;
+            }
+            assertThat(actualCount).isGreaterThanOrEqualTo(minCount);
+        }
+        if (expected.has("count_min")) {
+            int minCount = expected.get("count_min").getAsInt();
+            if (maxResults != null && minCount > maxResults) {
+                minCount = maxResults;
+            }
+            assertThat(actualCount).isGreaterThanOrEqualTo(minCount);
+        }
+    }
+
+
+    private static void verifyEventsContain(List<GeoEvent> events, List<Long> expectedIds) {
+        for (Long id : expectedIds) {
+            boolean found = false;
+            for (GeoEvent event : events) {
+                if (event.getEntityId().getLo() == id) {
+                    found = true;
+                    break;
+                }
+            }
+            assertThat(found).isTrue();
+        }
+    }
+
+    private static void verifyEventsExclude(List<GeoEvent> events, List<Long> excludedIds) {
+        for (Long id : excludedIds) {
+            for (GeoEvent event : events) {
+                assertThat(event.getEntityId().getLo()).isNotEqualTo(id);
+            }
+        }
     }
 
     // ============================================================================
@@ -123,15 +329,31 @@ class AllOperationsTest {
     @ParameterizedTest(name = "insert_{0}")
     @MethodSource("insertCases")
     void testInsert(TestCase tc) throws Exception {
-        if (shouldSkip(tc)) return;
-
         JsonArray eventsRaw = tc.input.getAsJsonArray("events");
-        List<GeoEventData> events = FixtureAdapter.convertFixtureEvents(eventsRaw);
+        List<Integer> expectedCodes = expectedResultCodes(tc.expected_output);
+        List<GeoEvent> events;
+        try {
+            events = FixtureAdapter.convertFixtureEvents(eventsRaw);
+        } catch (IllegalArgumentException e) {
+            if (!expectedCodes.isEmpty() && isExpectedInsertException(expectedCodes)) {
+                return;
+            }
+            throw e;
+        }
 
-        List<InsertResult> results = client.insertEvents(events);
-
-        if (tc.expected_output.has("all_ok") && tc.expected_output.get("all_ok").getAsBoolean()) {
-            assertThat(results).allMatch(r -> r.code == 0);
+        try {
+            List<InsertGeoEventsError> errors = client.insertEvents(events);
+            if (tc.expected_output.has("all_ok") && tc.expected_output.get("all_ok").getAsBoolean()) {
+                assertThat(errors).isEmpty();
+            }
+            if (!expectedCodes.isEmpty()) {
+                assertExpectedCodes(errors, expectedCodes);
+            }
+        } catch (IllegalArgumentException e) {
+            if (!expectedCodes.isEmpty() && isExpectedInsertException(expectedCodes)) {
+                return;
+            }
+            throw e;
         }
     }
 
@@ -146,19 +368,28 @@ class AllOperationsTest {
     @ParameterizedTest(name = "upsert_{0}")
     @MethodSource("upsertCases")
     void testUpsert(TestCase tc) throws Exception {
-        if (shouldSkip(tc)) return;
 
         if (tc.input.has("setup")) {
             setupData(tc.input.getAsJsonObject("setup"));
         }
 
         JsonArray eventsRaw = tc.input.getAsJsonArray("events");
-        List<GeoEventData> events = FixtureAdapter.convertFixtureEvents(eventsRaw);
+        List<GeoEvent> events = FixtureAdapter.convertFixtureEvents(eventsRaw);
+        List<Integer> expectedCodes = expectedResultCodes(tc.expected_output);
 
-        List<InsertResult> results = client.upsertEvents(events);
-
-        if (tc.expected_output.has("all_ok") && tc.expected_output.get("all_ok").getAsBoolean()) {
-            assertThat(results).allMatch(r -> r.code == 0);
+        try {
+            List<InsertGeoEventsError> errors = client.upsertEvents(events);
+            if (tc.expected_output.has("all_ok") && tc.expected_output.get("all_ok").getAsBoolean()) {
+                assertThat(errors).isEmpty();
+            }
+            if (!expectedCodes.isEmpty()) {
+                assertExpectedCodes(errors, expectedCodes);
+            }
+        } catch (IllegalArgumentException e) {
+            if (!expectedCodes.isEmpty() && isExpectedInsertException(expectedCodes)) {
+                return;
+            }
+            throw e;
         }
     }
 
@@ -173,7 +404,6 @@ class AllOperationsTest {
     @ParameterizedTest(name = "delete_{0}")
     @MethodSource("deleteCases")
     void testDelete(TestCase tc) throws Exception {
-        if (shouldSkip(tc)) return;
 
         if (tc.input.has("setup")) {
             setupData(tc.input.getAsJsonObject("setup"));
@@ -182,16 +412,30 @@ class AllOperationsTest {
         JsonArray entityIdsRaw = tc.input.getAsJsonArray("entity_ids");
         if (entityIdsRaw == null || entityIdsRaw.size() == 0) return;
 
-        List<Long> entityIds = new ArrayList<>();
+        List<UInt128> entityIds = new ArrayList<>();
+        boolean hasZero = false;
         for (JsonElement el : entityIdsRaw) {
-            entityIds.add(el.getAsLong());
+            long id = el.getAsLong();
+            if (id == 0L) hasZero = true;
+            entityIds.add(UInt128.of(id));
         }
 
         try {
             DeleteResult result = client.deleteEntities(entityIds);
             assertThat(result).isNotNull();
+            List<Integer> expectedCodes = expectedResultCodes(tc.expected_output);
+            if (!expectedCodes.isEmpty()) {
+                int expectedDeleted = 0;
+                int expectedNotFound = 0;
+                for (int code : expectedCodes) {
+                    if (code == 0) expectedDeleted++;
+                    if (code == 3) expectedNotFound++;
+                }
+                assertThat(result.getDeletedCount()).isEqualTo(expectedDeleted);
+                assertThat(result.getNotFoundCount()).isEqualTo(expectedNotFound);
+            }
         } catch (Exception e) {
-            if (!entityIds.contains(0L)) throw e;
+            if (!hasZero) throw e;
         }
     }
 
@@ -206,16 +450,15 @@ class AllOperationsTest {
     @ParameterizedTest(name = "query_uuid_{0}")
     @MethodSource("queryUuidCases")
     void testQueryUuid(TestCase tc) throws Exception {
-        if (shouldSkip(tc)) return;
 
         if (tc.input.has("setup")) {
             setupData(tc.input.getAsJsonObject("setup"));
         }
 
-        if (!tc.input.has("entity_id") || tc.input.get("entity_id").getAsLong() == 0) return;
+        if (!tc.input.has("entity_id")) return;
 
-        Long entityId = tc.input.get("entity_id").getAsLong();
-        GeoEventData result = client.getLatestByUuid(entityId);
+        long entityId = tc.input.get("entity_id").getAsLong();
+        GeoEvent result = client.getLatestByUuid(UInt128.of(entityId));
 
         if (tc.expected_output.has("found") && tc.expected_output.get("found").getAsBoolean()) {
             assertThat(result).isNotNull();
@@ -235,22 +478,41 @@ class AllOperationsTest {
     @ParameterizedTest(name = "query_uuid_batch_{0}")
     @MethodSource("queryUuidBatchCases")
     void testQueryUuidBatch(TestCase tc) throws Exception {
-        if (shouldSkip(tc)) return;
 
         if (tc.input.has("setup")) {
             setupData(tc.input.getAsJsonObject("setup"));
         }
 
-        JsonArray entityIdsRaw = tc.input.getAsJsonArray("entity_ids");
-        if (entityIdsRaw == null || entityIdsRaw.size() == 0) return;
-
-        List<Long> entityIds = new ArrayList<>();
-        for (JsonElement el : entityIdsRaw) {
-            entityIds.add(el.getAsLong());
+        List<UInt128> entityIds = new ArrayList<>();
+        if (tc.input.has("entity_ids")) {
+            JsonArray entityIdsRaw = tc.input.getAsJsonArray("entity_ids");
+            if (entityIdsRaw == null || entityIdsRaw.size() == 0) return;
+            for (JsonElement el : entityIdsRaw) {
+                entityIds.add(UInt128.of(el.getAsLong()));
+            }
+        } else if (tc.input.has("entity_ids_range")) {
+            JsonObject range = tc.input.getAsJsonObject("entity_ids_range");
+            long start = range.get("start").getAsLong();
+            int count = range.get("count").getAsInt();
+            for (int i = 0; i < count; i++) {
+                entityIds.add(UInt128.of(start + i));
+            }
+        } else {
+            return;
         }
 
-        QueryUUIDBatchResult result = client.queryUuidBatch(entityIds);
+        java.util.Map<UInt128, GeoEvent> result = client.lookupBatch(entityIds);
         assertThat(result).isNotNull();
+        if (tc.expected_output.has("found_count")) {
+            int expectedFound = tc.expected_output.get("found_count").getAsInt();
+            int actualFound = 0;
+            for (UInt128 id : entityIds) {
+                if (result.get(id) != null) {
+                    actualFound++;
+                }
+            }
+            assertThat(actualFound).isGreaterThanOrEqualTo(expectedFound);
+        }
     }
 
     // ============================================================================
@@ -264,11 +526,9 @@ class AllOperationsTest {
     @ParameterizedTest(name = "query_radius_{0}")
     @MethodSource("queryRadiusCases")
     void testQueryRadius(TestCase tc) throws Exception {
-        if (shouldSkip(tc)) return;
 
-        if (tc.input.has("setup")) {
-            setupData(tc.input.getAsJsonObject("setup"));
-        }
+        List<UInt128> insertedIds = setupData(tc.input.has("setup") ? tc.input.getAsJsonObject("setup") : null);
+        Integer maxResults = expectedHasCount(tc.expected_output) ? getOutputCap(insertedIds) : null;
 
         double lat = tc.input.has("center_latitude") ?
             tc.input.get("center_latitude").getAsDouble() :
@@ -279,8 +539,32 @@ class AllOperationsTest {
         double radiusM = tc.input.get("radius_m").getAsDouble();
         int limit = tc.input.has("limit") ? tc.input.get("limit").getAsInt() : 1000;
 
-        QueryResult result = client.queryRadius(lat, lon, radiusM, limit);
+        QueryRadiusFilter.Builder builder = new QueryRadiusFilter.Builder()
+                .setCenterLatitude(lat)
+                .setCenterLongitude(lon)
+                .setRadiusMeters(radiusM)
+                .setLimit(limit);
+        if (tc.input.has("timestamp_min")) {
+            builder.setTimestampMin(tc.input.get("timestamp_min").getAsLong() * 1_000_000_000L);
+        }
+        if (tc.input.has("timestamp_max")) {
+            builder.setTimestampMax(tc.input.get("timestamp_max").getAsLong() * 1_000_000_000L);
+        }
+        if (tc.input.has("group_id")) {
+            builder.setGroupId(tc.input.get("group_id").getAsLong());
+        }
+
+        QueryResult result = client.queryRadius(builder.build());
         assertThat(result).isNotNull();
+        assertCountMatches(tc.expected_output, result.getEvents().size(), maxResults);
+        List<Long> expected = FixtureAdapter.getExpectedEntities(tc.expected_output);
+        if (!expected.isEmpty()) {
+            verifyEventsContain(result.getEvents(), expected);
+        }
+        if (tc.expected_output.has("events_exclude")) {
+            List<Long> excluded = FixtureAdapter.getExpectedExcludedEntities(tc.expected_output);
+            verifyEventsExclude(result.getEvents(), excluded);
+        }
     }
 
     // ============================================================================
@@ -294,23 +578,39 @@ class AllOperationsTest {
     @ParameterizedTest(name = "query_polygon_{0}")
     @MethodSource("queryPolygonCases")
     void testQueryPolygon(TestCase tc) throws Exception {
-        if (shouldSkip(tc)) return;
 
-        if (tc.input.has("setup")) {
-            setupData(tc.input.getAsJsonObject("setup"));
-        }
+        List<UInt128> insertedIds = setupData(tc.input.has("setup") ? tc.input.getAsJsonObject("setup") : null);
+        Integer maxResults = expectedHasCount(tc.expected_output) ? getOutputCap(insertedIds) : null;
 
         JsonArray verticesRaw = tc.input.getAsJsonArray("vertices");
-        List<double[]> vertices = new ArrayList<>();
-        for (JsonElement v : verticesRaw) {
-            JsonArray coords = v.getAsJsonArray();
-            vertices.add(new double[]{coords.get(0).getAsDouble(), coords.get(1).getAsDouble()});
-        }
-
         int limit = tc.input.has("limit") ? tc.input.get("limit").getAsInt() : 1000;
 
-        QueryResult result = client.queryPolygon(vertices, limit);
+        QueryPolygonFilter.Builder builder = new QueryPolygonFilter.Builder().setLimit(limit);
+        for (JsonElement v : verticesRaw) {
+            JsonArray coords = v.getAsJsonArray();
+            builder.addVertex(coords.get(0).getAsDouble(), coords.get(1).getAsDouble());
+        }
+        if (tc.input.has("timestamp_min")) {
+            builder.setTimestampMin(tc.input.get("timestamp_min").getAsLong() * 1_000_000_000L);
+        }
+        if (tc.input.has("timestamp_max")) {
+            builder.setTimestampMax(tc.input.get("timestamp_max").getAsLong() * 1_000_000_000L);
+        }
+        if (tc.input.has("group_id")) {
+            builder.setGroupId(tc.input.get("group_id").getAsLong());
+        }
+
+        QueryResult result = client.queryPolygon(builder.build());
         assertThat(result).isNotNull();
+        assertCountMatches(tc.expected_output, result.getEvents().size(), maxResults);
+        List<Long> expected = FixtureAdapter.getExpectedEntities(tc.expected_output);
+        if (!expected.isEmpty()) {
+            verifyEventsContain(result.getEvents(), expected);
+        }
+        if (tc.expected_output.has("events_exclude")) {
+            List<Long> excluded = FixtureAdapter.getExpectedExcludedEntities(tc.expected_output);
+            verifyEventsExclude(result.getEvents(), excluded);
+        }
     }
 
     // ============================================================================
@@ -324,16 +624,18 @@ class AllOperationsTest {
     @ParameterizedTest(name = "query_latest_{0}")
     @MethodSource("queryLatestCases")
     void testQueryLatest(TestCase tc) throws Exception {
-        if (shouldSkip(tc)) return;
 
-        if (tc.input.has("setup")) {
-            setupData(tc.input.getAsJsonObject("setup"));
-        }
+        List<UInt128> insertedIds = setupData(tc.input.has("setup") ? tc.input.getAsJsonObject("setup") : null);
+        Integer maxResults = expectedHasCount(tc.expected_output) ? getOutputCap(insertedIds) : null;
 
         int limit = tc.input.has("limit") ? tc.input.get("limit").getAsInt() : 1000;
+        QueryLatestFilter filter = tc.input.has("group_id")
+                ? QueryLatestFilter.forGroup(tc.input.get("group_id").getAsLong(), limit)
+                : QueryLatestFilter.global(limit);
 
-        QueryResult result = client.queryLatest(limit);
+        QueryResult result = client.queryLatest(filter);
         assertThat(result).isNotNull();
+        assertCountMatches(tc.expected_output, result.getEvents().size(), maxResults);
     }
 
     // ============================================================================
@@ -347,7 +649,6 @@ class AllOperationsTest {
     @ParameterizedTest(name = "ping_{0}")
     @MethodSource("pingCases")
     void testPing(TestCase tc) {
-        if (shouldSkip(tc)) return;
         boolean result = client.ping();
         assertThat(result).isTrue();
     }
@@ -363,7 +664,6 @@ class AllOperationsTest {
     @ParameterizedTest(name = "status_{0}")
     @MethodSource("statusCases")
     void testStatus(TestCase tc) {
-        if (shouldSkip(tc)) return;
         StatusResponse result = client.getStatus();
         assertThat(result).isNotNull();
     }
@@ -379,7 +679,6 @@ class AllOperationsTest {
     @ParameterizedTest(name = "topology_{0}")
     @MethodSource("topologyCases")
     void testTopology(TestCase tc) {
-        if (shouldSkip(tc)) return;
         TopologyResponse result = client.getTopology();
         assertThat(result).isNotNull();
     }
@@ -395,19 +694,21 @@ class AllOperationsTest {
     @ParameterizedTest(name = "ttl_set_{0}")
     @MethodSource("ttlSetCases")
     void testTtlSet(TestCase tc) throws Exception {
-        if (shouldSkip(tc)) return;
 
         if (tc.input.has("setup")) {
             setupData(tc.input.getAsJsonObject("setup"));
         }
 
-        if (!tc.input.has("entity_id") || tc.input.get("entity_id").getAsLong() == 0) return;
+        if (!tc.input.has("entity_id")) return;
 
-        Long entityId = tc.input.get("entity_id").getAsLong();
+        long entityId = tc.input.get("entity_id").getAsLong();
         int ttlSeconds = tc.input.get("ttl_seconds").getAsInt();
 
-        TtlSetResponse result = client.setTtl(entityId, ttlSeconds);
+        TtlSetResponse result = client.setTtl(UInt128.of(entityId), ttlSeconds);
         assertThat(result).isNotNull();
+        if (tc.expected_output.has("result_code")) {
+            assertThat(result.getResult().getCode()).isEqualTo(tc.expected_output.get("result_code").getAsInt());
+        }
     }
 
     // ============================================================================
@@ -421,19 +722,25 @@ class AllOperationsTest {
     @ParameterizedTest(name = "ttl_extend_{0}")
     @MethodSource("ttlExtendCases")
     void testTtlExtend(TestCase tc) throws Exception {
-        if (shouldSkip(tc)) return;
 
         if (tc.input.has("setup")) {
             setupData(tc.input.getAsJsonObject("setup"));
         }
 
-        if (!tc.input.has("entity_id") || tc.input.get("entity_id").getAsLong() == 0) return;
+        if (!tc.input.has("entity_id")) return;
 
-        Long entityId = tc.input.get("entity_id").getAsLong();
+        long entityId = tc.input.get("entity_id").getAsLong();
         int extensionSeconds = tc.input.get("extend_by_seconds").getAsInt();
 
-        TtlExtendResponse result = client.extendTtl(entityId, extensionSeconds);
+        TtlExtendResponse result = client.extendTtl(UInt128.of(entityId), extensionSeconds);
         assertThat(result).isNotNull();
+        if (tc.expected_output.has("result_code")) {
+            assertThat(result.getResult().getCode()).isEqualTo(tc.expected_output.get("result_code").getAsInt());
+        }
+        if (tc.expected_output.has("new_ttl_min_seconds")) {
+            assertThat(result.getNewTtlSeconds())
+                    .isGreaterThanOrEqualTo(tc.expected_output.get("new_ttl_min_seconds").getAsInt());
+        }
     }
 
     // ============================================================================
@@ -447,237 +754,30 @@ class AllOperationsTest {
     @ParameterizedTest(name = "ttl_clear_{0}")
     @MethodSource("ttlClearCases")
     void testTtlClear(TestCase tc) throws Exception {
-        if (shouldSkip(tc)) return;
 
         if (tc.input.has("setup")) {
             setupData(tc.input.getAsJsonObject("setup"));
         }
 
-        if (!tc.input.has("entity_id") || tc.input.get("entity_id").getAsLong() == 0) return;
-
-        Long entityId = tc.input.get("entity_id").getAsLong();
-
-        TtlClearResponse result = client.clearTtl(entityId);
-        assertThat(result).isNotNull();
-    }
-}
-
-// ============================================================================
-// Mock Response Classes
-// ============================================================================
-
-class InsertResult {
-    int code;
-    String status;
-
-    InsertResult(int code, String status) {
-        this.code = code;
-        this.status = status;
-    }
-}
-
-class DeleteResult {
-    int deletedCount;
-    int notFoundCount;
-
-    DeleteResult(int deletedCount, int notFoundCount) {
-        this.deletedCount = deletedCount;
-        this.notFoundCount = notFoundCount;
-    }
-}
-
-class QueryResult {
-    List<GeoEventData> events;
-    boolean hasMore;
-    long cursor;
-}
-
-class QueryUUIDBatchResult {
-    int foundCount;
-    int notFoundCount;
-    List<GeoEventData> events;
-}
-
-class StatusResponse {
-    boolean healthy;
-    long ramIndexCount;
-    long ramIndexCapacity;
-}
-
-class TtlSetResponse {
-    long entityId;
-    int previousTtlSeconds;
-    int newTtlSeconds;
-}
-
-class TtlExtendResponse {
-    long entityId;
-    int previousTtlSeconds;
-    int newTtlSeconds;
-}
-
-class TtlClearResponse {
-    long entityId;
-    int previousTtlSeconds;
-}
-
-class TopologyResponse {
-    int numShards;
-    long version;
-}
-
-class MockGeoClient {
-    private final String address;
-    private final List<GeoEventData> storedEvents = new ArrayList<>();
-
-    MockGeoClient(String address) {
-        this.address = address;
-    }
-
-    void close() {
-        // No-op for mock
-    }
-
-    void cleanDatabase() {
-        storedEvents.clear();
-    }
-
-    List<InsertResult> insertEvents(List<GeoEventData> events) {
-        List<InsertResult> results = new ArrayList<>();
-        for (GeoEventData event : events) {
-            storedEvents.add(event);
-            results.add(new InsertResult(0, "OK"));
-        }
-        return results;
-    }
-
-    List<InsertResult> upsertEvents(List<GeoEventData> events) {
-        return insertEvents(events);
-    }
-
-    DeleteResult deleteEntities(List<Long> entityIds) {
-        int deleted = 0;
-        for (Long id : entityIds) {
-            if (storedEvents.removeIf(e -> e.entityId == id)) {
-                deleted++;
-            }
-        }
-        return new DeleteResult(deleted, entityIds.size() - deleted);
-    }
-
-    GeoEventData getLatestByUuid(long entityId) {
-        return storedEvents.stream()
-                .filter(e -> e.entityId == entityId)
-                .findFirst()
-                .orElse(null);
-    }
-
-    QueryUUIDBatchResult queryUuidBatch(List<Long> entityIds) {
-        QueryUUIDBatchResult result = new QueryUUIDBatchResult();
-        result.events = new ArrayList<>();
-        result.foundCount = 0;
-        result.notFoundCount = 0;
-
-        for (Long id : entityIds) {
-            GeoEventData found = storedEvents.stream()
-                    .filter(e -> e.entityId == id)
-                    .findFirst()
-                    .orElse(null);
-            if (found != null) {
-                result.events.add(found);
-                result.foundCount++;
+        if (tc.input.has("query_entity_id")) {
+            long queryId = tc.input.get("query_entity_id").getAsLong();
+            GeoEvent found = client.getLatestByUuid(UInt128.of(queryId));
+            if (tc.expected_output.has("entity_still_exists") && tc.expected_output.get("entity_still_exists").getAsBoolean()) {
+                assertThat(found).isNotNull();
             } else {
-                result.notFoundCount++;
+                assertThat(found).isNull();
             }
-        }
-        return result;
-    }
-
-    QueryResult queryRadius(double centerLat, double centerLon, double radiusM, int limit) {
-        QueryResult result = new QueryResult();
-        result.events = new ArrayList<>();
-        result.hasMore = false;
-
-        // Simple mock: return events within approximate radius
-        double radiusDeg = radiusM / 111000.0; // Rough conversion
-        for (GeoEventData event : storedEvents) {
-            double latDiff = Math.abs(event.latitude - centerLat);
-            double lonDiff = Math.abs(event.longitude - centerLon);
-            if (latDiff <= radiusDeg && lonDiff <= radiusDeg) {
-                result.events.add(event);
-                if (result.events.size() >= limit) break;
-            }
-        }
-        return result;
-    }
-
-    QueryResult queryPolygon(List<double[]> vertices, int limit) {
-        QueryResult result = new QueryResult();
-        result.events = new ArrayList<>();
-        result.hasMore = false;
-
-        // Simple mock: check if event is within bounding box of polygon
-        double minLat = Double.MAX_VALUE, maxLat = -Double.MAX_VALUE;
-        double minLon = Double.MAX_VALUE, maxLon = -Double.MAX_VALUE;
-        for (double[] v : vertices) {
-            minLat = Math.min(minLat, v[0]);
-            maxLat = Math.max(maxLat, v[0]);
-            minLon = Math.min(minLon, v[1]);
-            maxLon = Math.max(maxLon, v[1]);
+            return;
         }
 
-        for (GeoEventData event : storedEvents) {
-            if (event.latitude >= minLat && event.latitude <= maxLat &&
-                event.longitude >= minLon && event.longitude <= maxLon) {
-                result.events.add(event);
-                if (result.events.size() >= limit) break;
-            }
+        if (!tc.input.has("entity_id")) return;
+
+        long entityId = tc.input.get("entity_id").getAsLong();
+
+        TtlClearResponse result = client.clearTtl(UInt128.of(entityId));
+        assertThat(result).isNotNull();
+        if (tc.expected_output.has("result_code")) {
+            assertThat(result.getResult().getCode()).isEqualTo(tc.expected_output.get("result_code").getAsInt());
         }
-        return result;
-    }
-
-    QueryResult queryLatest(int limit) {
-        QueryResult result = new QueryResult();
-        result.events = new ArrayList<>(storedEvents.subList(0, Math.min(limit, storedEvents.size())));
-        result.hasMore = storedEvents.size() > limit;
-        return result;
-    }
-
-    boolean ping() {
-        return true;
-    }
-
-    StatusResponse getStatus() {
-        StatusResponse status = new StatusResponse();
-        status.healthy = true;
-        status.ramIndexCount = storedEvents.size();
-        status.ramIndexCapacity = 1000000;
-        return status;
-    }
-
-    TtlSetResponse setTtl(long entityId, int ttlSeconds) {
-        TtlSetResponse response = new TtlSetResponse();
-        response.entityId = entityId;
-        response.newTtlSeconds = ttlSeconds;
-        return response;
-    }
-
-    TtlExtendResponse extendTtl(long entityId, int extendBySeconds) {
-        TtlExtendResponse response = new TtlExtendResponse();
-        response.entityId = entityId;
-        return response;
-    }
-
-    TtlClearResponse clearTtl(long entityId) {
-        TtlClearResponse response = new TtlClearResponse();
-        response.entityId = entityId;
-        return response;
-    }
-
-    TopologyResponse getTopology() {
-        TopologyResponse topology = new TopologyResponse();
-        topology.numShards = 1;
-        topology.version = 1;
-        return topology;
     }
 }

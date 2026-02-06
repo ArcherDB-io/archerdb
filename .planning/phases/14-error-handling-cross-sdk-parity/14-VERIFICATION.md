@@ -4,17 +4,17 @@ verified: 2026-02-01T10:00:00Z
 status: gaps_found
 score: 3/5 must-haves verified
 gaps:
-  - truth: "Parity matrix (14 ops x 6 SDKs = 84 cells) shows 100% consistency"
+  - truth: "Parity matrix (14 ops x 5 SDKs = 70 cells) shows 100% consistency"
     status: failed
     reason: "Parity tests infrastructure exists but has NOT been run - matrix shows all '-' (not tested)"
     artifacts:
       - path: "docs/PARITY.md"
-        issue: "Matrix template exists but shows 'not tested' for all 84 cells"
+        issue: "Matrix template exists but shows 'not tested' for all 70 cells"
       - path: "reports/parity.json"
         issue: "File not generated - parity tests have not been executed"
     missing:
       - "Execute parity_runner.py against running server to generate actual results"
-      - "Verify all 84 cells pass (14 operations x 6 SDKs)"
+      - "Verify all 70 cells pass (14 operations x 5 SDKs)"
       - "Generate reports/parity.json with pass/fail data"
   - truth: "All SDKs return identical results for identical queries (parity verified)"
     status: failed
@@ -42,10 +42,10 @@ gaps:
 | # | Truth | Status | Evidence |
 |---|-------|--------|----------|
 | 1 | All SDKs handle connection failures, timeouts, and server errors gracefully | ✓ VERIFIED | Error test suite with 99 tests covering ERR-01 through ERR-07. Tests verify error codes (1001, 1002, 2001-2003, 3001-3004) and retryability flags. |
-| 2 | All SDKs return identical results for identical queries (parity verified) | ✗ FAILED | Parity infrastructure exists (6 SDK runners, verifier, fixtures) but tests NOT RUN. Cannot verify parity without execution. |
+| 2 | All SDKs return identical results for identical queries (parity verified) | ✗ FAILED | Parity infrastructure exists (5 SDK runners, verifier, fixtures) but tests NOT RUN. Cannot verify parity without execution. |
 | 3 | All SDKs handle edge cases identically (poles, anti-meridian, empty results) | ✓ VERIFIED | Edge case fixtures exist (polar_coordinates.json, antimeridian.json, equator_prime_meridian.json) with 33 test cases. Empty results tests verify count=0 structure. |
-| 4 | Parity matrix (14 ops x 6 SDKs = 84 cells) shows 100% consistency | ✗ FAILED | Matrix template in docs/PARITY.md exists but all 84 cells show "-" (not tested). reports/parity.json not generated. |
-| 5 | SDK limitations documented with workarounds where applicable | ✓ VERIFIED | docs/SDK_LIMITATIONS.md documents all 6 SDKs with centralized tracking, release policy (100% parity required), and limitation categories. |
+| 4 | Parity matrix (14 ops x 5 SDKs = 70 cells) shows 100% consistency | ✗ FAILED | Matrix template in docs/PARITY.md exists but all 70 cells show "-" (not tested). reports/parity.json not generated. |
+| 5 | SDK limitations documented with workarounds where applicable | ✓ VERIFIED | docs/SDK_LIMITATIONS.md documents all 5 SDKs with centralized tracking, release policy (100% parity required), and limitation categories. |
 
 **Score:** 3/5 truths verified
 
@@ -63,7 +63,7 @@ gaps:
 | `tests/parity_tests/parity_verifier.py` | Result comparison with nanodegree precision | ✓ VERIFIED | 418 lines, exact matching (no epsilon), Python as golden reference |
 | `docs/PARITY.md` | Human-readable parity matrix | ⚠️ TEMPLATE ONLY | 136 lines, contains 14x6 matrix structure but all cells show "-" (not tested) |
 | `reports/parity.json` | Machine-readable parity report for CI | ✗ MISSING | File not generated - requires running parity_runner.py |
-| `docs/SDK_LIMITATIONS.md` | Centralized limitation documentation | ✓ VERIFIED | 155 lines, documents all 6 SDKs, release policy, limitation tracking |
+| `docs/SDK_LIMITATIONS.md` | Centralized limitation documentation | ✓ VERIFIED | 155 lines, documents all 5 SDKs, release policy, limitation tracking |
 
 ### Key Link Verification
 
@@ -113,8 +113,8 @@ All requirements appear to be addressed by artifacts created, but parity require
 # Run parity tests
 python tests/parity_tests/parity_runner.py --verbose
 ```
-**Expected:** All 84 cells (14 operations x 6 SDKs) should show PASS, generating reports/parity.json and updating docs/PARITY.md with actual results  
-**Why human:** Requires live server and all SDK implementations to be functional. Must verify Python, Node.js, Go, Java, C, and Zig SDKs return identical results.
+**Expected:** All 70 cells (14 operations x 5 SDKs) should show PASS, generating reports/parity.json and updating docs/PARITY.md with actual results  
+**Why human:** Requires live server and all SDK implementations to be functional. Must verify Python, Node.js, Go, Java, and C SDKs return identical results.
 
 #### 3. Verify Geographic Edge Cases
 
@@ -144,9 +144,6 @@ python -c "from tests.parity_tests.sdk_runners.python_runner import run_operatio
 
 # C (Zig-built binary)
 # Requires C SDK and Zig compiler
-
-# Zig (Zig-built binary)
-# Requires Zig SDK and Zig compiler
 ```
 **Expected:** All runners execute without errors  
 **Why human:** SDK runners depend on external tools (Node.js, Go, Java, Maven, Zig compiler) which may not be available in automated environment
@@ -155,13 +152,13 @@ python -c "from tests.parity_tests.sdk_runners.python_runner import run_operatio
 
 **2 critical gaps block goal achievement:**
 
-1. **Parity tests not executed:** Infrastructure is complete (6 SDK runners, verifier, fixtures, documentation templates) but tests have not been run against a live server. The parity matrix in docs/PARITY.md shows all 84 cells as "-" (not tested), and reports/parity.json has not been generated. Without execution, cannot verify the core goal that "all SDKs return identical results."
+1. **Parity tests not executed:** Infrastructure is complete (5 SDK runners, verifier, fixtures, documentation templates) but tests have not been run against a live server. The parity matrix in docs/PARITY.md shows all 70 cells as "-" (not tested), and reports/parity.json has not been generated. Without execution, cannot verify the core goal that "all SDKs return identical results."
 
-2. **Parity verification not confirmed:** While error handling tests exist and can verify individual SDK behavior, cross-SDK parity (the phase's primary goal) requires running all 6 SDKs against the same inputs and comparing results. This has not been done.
+2. **Parity verification not confirmed:** While error handling tests exist and can verify individual SDK behavior, cross-SDK parity (the phase's primary goal) requires running all 5 SDKs against the same inputs and comparing results. This has not been done.
 
 **What exists and works:**
 - Error handling test suite (99 tests) covering ERR-01 through ERR-07
-- All 6 SDK runners with consistent run_operation interface
+- All 5 SDK runners with consistent run_operation interface
 - Parity verifier with exact nanodegree matching
 - Geographic edge case fixtures (33 test cases)
 - Documentation templates and SDK limitations tracking
@@ -171,7 +168,7 @@ python -c "from tests.parity_tests.sdk_runners.python_runner import run_operatio
 - Execution of parity tests against live server
 - Generated parity.json report with actual pass/fail data
 - Updated PARITY.md matrix with real results (not template)
-- Verification that all 84 cells show PASS
+- Verification that all 70 cells show PASS
 
 ---
 

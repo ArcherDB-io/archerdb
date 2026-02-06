@@ -26,7 +26,6 @@ const PingRequest = tb.PingRequest;
 const StatusRequest = tb.StatusRequest;
 const CleanupRequest = tb.CleanupRequest;
 const TopologyRequest = tb.TopologyRequest;
-const TopologyResponse = tb.TopologyResponse;
 const TopologyResponseCompact = tb.TopologyResponseCompact;
 const ShardInfo = tb.ShardInfo;
 const TtlSetRequest = tb.TtlSetRequest;
@@ -50,6 +49,43 @@ pub const std_options: std.Options = .{
 
 // Cached value for JS (null).
 var napi_null: c.napi_value = undefined;
+
+const InternalError = enum(u16) {
+    none = 0,
+    result_ptr_null = 1,
+    allocation_failed = 2,
+    tsfn_queue_full = 3,
+    tsfn_closing = 4,
+    tsfn_failed = 5,
+};
+
+fn internal_error_from_tag(tag: u16) InternalError {
+    return std.meta.intToEnum(InternalError, tag) catch .none;
+}
+
+fn set_internal_error(packet_extern: *arch_client.Packet, err: InternalError) void {
+    packet_extern.user_tag = @intFromEnum(err);
+}
+
+fn internal_error_throw(env: c.napi_env, err: InternalError) !c.napi_value {
+    return switch (err) {
+        .none => translate.throw(env, "No internal error."),
+        .result_ptr_null => translate.throw(env, "Native completion returned a null result pointer."),
+        .allocation_failed => translate.throw(env, "Failed to allocate native response buffer."),
+        .tsfn_queue_full => translate.throw(env, "Native completion queue is full."),
+        .tsfn_closing => translate.throw(env, "Native completion queue is closing."),
+        .tsfn_failed => translate.throw(env, "Failed to queue native completion callback."),
+    };
+}
+
+fn cleanup_packet_on_failed_queue(packet_extern: *arch_client.Packet) void {
+    const packet = packet_extern.cast();
+    if (packet.data_size > 0 and packet.data != null) {
+        const data: [*]u8 = @ptrCast(packet.data.?);
+        global_allocator.free(data[0..@intCast(packet.data_size)]);
+    }
+    global_allocator.destroy(packet);
+}
 
 /// N-API will call this constructor automatically to register the module.
 export fn napi_register_module_v1(env: c.napi_env, exports: c.napi_value) c.napi_value {
@@ -561,70 +597,86 @@ fn on_completion(
 ) callconv(.c) void {
     _ = timestamp;
 
+    var internal_error: InternalError = .none;
     switch (packet_extern.status) {
         .ok => {
-            const operation: Operation = @enumFromInt(packet_extern.operation);
-            switch (operation) {
-                .query_uuid,
-                .query_uuid_batch,
-                .query_radius,
-                .query_polygon,
-                .query_latest,
-                => {
-                    // Query operations return a header + payload buffer, not a flat Result[].
-                    const packet = packet_extern.cast();
-                    const req_buf = @constCast(packet.slice());
-                    const reply_buffer = global_allocator.realloc(req_buf, result_len) catch {
-                        // We can't throw Js exceptions from the native callback.
-                        @panic("Failed to allocated the request buffer.");
-                    };
-                    if (result_len > 0) {
-                        stdx.copy_disjoint(.exact, u8, reply_buffer, result_ptr.?[0..result_len]);
-                    }
-                    packet.data = reply_buffer.ptr;
-                    packet.data_size = @intCast(reply_buffer.len);
-                },
-                inline else => |operation_comptime| {
-                    const Event = operation_comptime.EventType();
-                    const Result = operation_comptime.ResultType();
-
-                    const packet = packet_extern.cast();
-                    const request_buffer: []align(@alignOf(Event)) u8 =
-                        @alignCast(@constCast(packet.slice()));
-                    // Trying to reallocate the request buffer instead of allocating a new one.
-                    // This is optimal for create_* operations.
-                    const req_buf = @as([]u8, @alignCast(request_buffer));
-                    const reply_buffer: []align(@alignOf(Result)) u8 = @alignCast(
-                        global_allocator.realloc(req_buf, result_len) catch {
+            if (result_len > 0 and result_ptr == null) {
+                internal_error = .result_ptr_null;
+            } else {
+                const operation: Operation = @enumFromInt(packet_extern.operation);
+                op_switch: switch (operation) {
+                    .query_uuid,
+                    .query_uuid_batch,
+                    .query_radius,
+                    .query_polygon,
+                    .query_latest,
+                    => {
+                        // Query operations return a header + payload buffer, not a flat Result[].
+                        const packet = packet_extern.cast();
+                        const req_buf = @constCast(packet.slice());
+                        const reply_buffer = global_allocator.realloc(req_buf, result_len) catch {
                             // We can't throw Js exceptions from the native callback.
-                            @panic("Failed to allocated the request buffer.");
-                        },
-                    );
+                            internal_error = .allocation_failed;
+                            break :op_switch;
+                        };
+                        if (result_len > 0) {
+                            stdx.copy_disjoint(
+                                .exact,
+                                u8,
+                                reply_buffer,
+                                result_ptr.?[0..result_len],
+                            );
+                        }
+                        packet.data = if (reply_buffer.len == 0) null else reply_buffer.ptr;
+                        packet.data_size = @intCast(reply_buffer.len);
+                    },
+                    inline else => |operation_comptime| {
+                        const Event = operation_comptime.EventType();
+                        const Result = operation_comptime.ResultType();
 
-                    const source = stdx.bytes_as_slice(
-                        .exact,
-                        Result,
-                        result_ptr.?[0..result_len],
-                    );
-                    const target = stdx.bytes_as_slice(
-                        .exact,
-                        Result,
-                        reply_buffer,
-                    );
+                        const packet = packet_extern.cast();
+                        const request_buffer: []align(@alignOf(Event)) u8 =
+                            @alignCast(@constCast(packet.slice()));
+                        // Trying to reallocate the request buffer instead of allocating a new one.
+                        // This is optimal for create_* operations.
+                        const req_buf = @as([]u8, @alignCast(request_buffer));
+                        const reply_buffer: []align(@alignOf(Result)) u8 = @alignCast(
+                            global_allocator.realloc(req_buf, result_len) catch {
+                                // We can't throw Js exceptions from the native callback.
+                                internal_error = .allocation_failed;
+                                break :op_switch;
+                            },
+                        );
 
-                    stdx.copy_disjoint(
-                        .exact,
-                        Result,
-                        target,
-                        source,
-                    );
+                        const source_bytes: []const u8 = if (result_len == 0)
+                            &[_]u8{}
+                        else
+                            result_ptr.?[0..result_len];
+                        const source = stdx.bytes_as_slice(
+                            .exact,
+                            Result,
+                            source_bytes,
+                        );
+                        const target = stdx.bytes_as_slice(
+                            .exact,
+                            Result,
+                            reply_buffer,
+                        );
 
-                    // Store the size of the results in the `tag` field, so we can access it back
-                    // during `on_completion_js`.
-                    packet.data = reply_buffer.ptr;
-                    packet.data_size = @intCast(reply_buffer.len);
-                },
-                .pulse => unreachable,
+                        stdx.copy_disjoint(
+                            .exact,
+                            Result,
+                            target,
+                            source,
+                        );
+
+                        // Store the size of the results in the `tag` field.
+                        // This is read during `on_completion_js`.
+                        packet.data = if (reply_buffer.len == 0) null else reply_buffer.ptr;
+                        packet.data_size = @intCast(reply_buffer.len);
+                    },
+                    .pulse => unreachable,
+                }
             }
         },
         .client_evicted,
@@ -637,19 +689,38 @@ fn on_completion(
         .invalid_data_size => unreachable, // We set correct data size during request().
     }
 
+    if (internal_error != .none) {
+        set_internal_error(packet_extern, internal_error);
+    }
+
     // Queue the packet to be processed on the JS thread to invoke its JS callback.
     const completion_tsfn: c.napi_threadsafe_function = @ptrFromInt(completion_ctx);
-    switch (c.napi_call_threadsafe_function(
+    const call_result = c.napi_call_threadsafe_function(
         completion_tsfn,
         packet_extern,
         c.napi_tsfn_nonblocking,
-    )) {
-        c.napi_ok => {},
-        c.napi_queue_full => @panic(
-            "ThreadSafe Function queue is full when created with no limit.",
-        ),
-        else => unreachable,
+    );
+    if (call_result == c.napi_ok) {
+        return;
     }
+
+    if (call_result == c.napi_queue_full) {
+        set_internal_error(packet_extern, .tsfn_queue_full);
+        const retry = c.napi_call_threadsafe_function(
+            completion_tsfn,
+            packet_extern,
+            c.napi_tsfn_blocking,
+        );
+        if (retry == c.napi_ok) return;
+    } else {
+        set_internal_error(packet_extern, .tsfn_failed);
+    }
+
+    std.log.err(
+        "Failed to queue completion callback (napi status={d}); dropping packet.",
+        .{call_result},
+    );
+    cleanup_packet_on_failed_queue(packet_extern);
 }
 
 fn on_completion_js(
@@ -666,153 +737,166 @@ fn on_completion_js(
     const callback_ref: c.napi_ref = @ptrCast(@alignCast(packet_extern.user_data.?));
 
     // Decode the packet's Buffer results into an array then free the packet/Buffer.
-    const operation: Operation = @enumFromInt(packet_extern.operation);
-    const array_or_error = switch (operation) {
-        .query_uuid => blk: {
+    const array_or_error = result: {
+        const internal_error = internal_error_from_tag(packet_extern.user_tag);
+        if (internal_error != .none) {
             const packet = packet_extern.cast();
             defer global_allocator.destroy(packet);
 
             const buffer: []const u8 = packet.slice();
             defer global_allocator.free(buffer);
 
-            switch (packet.status) {
-                .ok => break :blk encode_query_uuid_response(env, buffer),
-                .client_shutdown => {
-                    break :blk translate.throw(env, "Client was shutdown.");
-                },
-                .client_evicted => {
-                    break :blk translate.throw(env, "Client was evicted.");
-                },
-                .client_release_too_low => {
-                    break :blk translate.throw(env, "Client was evicted: release too old.");
-                },
-                .client_release_too_high => {
-                    break :blk translate.throw(env, "Client was evicted: release too new.");
-                },
-                .too_much_data => {
-                    break :blk translate.throw(env, "Too much data provided on this batch.");
-                },
-                else => unreachable, // all other packet status' handled in previous callback.
-            }
-        },
-        .query_uuid_batch => blk: {
-            const packet = packet_extern.cast();
-            defer global_allocator.destroy(packet);
+            break :result internal_error_throw(env, internal_error);
+        }
 
-            const buffer: []const u8 = packet.slice();
-            defer global_allocator.free(buffer);
+        const operation: Operation = @enumFromInt(packet_extern.operation);
+        break :result switch (operation) {
+            .query_uuid => blk: {
+                const packet = packet_extern.cast();
+                defer global_allocator.destroy(packet);
 
-            switch (packet.status) {
-                .ok => break :blk encode_query_uuid_batch_response(env, buffer),
-                .client_shutdown => {
-                    break :blk translate.throw(env, "Client was shutdown.");
-                },
-                .client_evicted => {
-                    break :blk translate.throw(env, "Client was evicted.");
-                },
-                .client_release_too_low => {
-                    break :blk translate.throw(env, "Client was evicted: release too old.");
-                },
-                .client_release_too_high => {
-                    break :blk translate.throw(env, "Client was evicted: release too new.");
-                },
-                .too_much_data => {
-                    break :blk translate.throw(env, "Too much data provided on this batch.");
-                },
-                else => unreachable, // all other packet status' handled in previous callback.
-            }
-        },
-        .query_radius, .query_polygon, .query_latest => blk: {
-            const packet = packet_extern.cast();
-            defer global_allocator.destroy(packet);
+                const buffer: []const u8 = packet.slice();
+                defer global_allocator.free(buffer);
 
-            const buffer: []const u8 = packet.slice();
-            defer global_allocator.free(buffer);
+                switch (packet.status) {
+                    .ok => break :blk encode_query_uuid_response(env, buffer),
+                    .client_shutdown => {
+                        break :blk translate.throw(env, "Client was shutdown.");
+                    },
+                    .client_evicted => {
+                        break :blk translate.throw(env, "Client was evicted.");
+                    },
+                    .client_release_too_low => {
+                        break :blk translate.throw(env, "Client was evicted: release too old.");
+                    },
+                    .client_release_too_high => {
+                        break :blk translate.throw(env, "Client was evicted: release too new.");
+                    },
+                    .too_much_data => {
+                        break :blk translate.throw(env, "Too much data provided on this batch.");
+                    },
+                    else => unreachable, // all other packet status' handled in previous callback.
+                }
+            },
+            .query_uuid_batch => blk: {
+                const packet = packet_extern.cast();
+                defer global_allocator.destroy(packet);
 
-            switch (packet.status) {
-                .ok => break :blk encode_query_response(env, buffer),
-                .client_shutdown => {
-                    break :blk translate.throw(env, "Client was shutdown.");
-                },
-                .client_evicted => {
-                    break :blk translate.throw(env, "Client was evicted.");
-                },
-                .client_release_too_low => {
-                    break :blk translate.throw(env, "Client was evicted: release too old.");
-                },
-                .client_release_too_high => {
-                    break :blk translate.throw(env, "Client was evicted: release too new.");
-                },
-                .too_much_data => {
-                    break :blk translate.throw(env, "Too much data provided on this batch.");
-                },
-                else => unreachable, // all other packet status' handled in previous callback.
-            }
-        },
-        .get_topology => blk: {
-            const packet = packet_extern.cast();
-            defer global_allocator.destroy(packet);
+                const buffer: []const u8 = packet.slice();
+                defer global_allocator.free(buffer);
 
-            const buffer: []const u8 = packet.slice();
-            defer global_allocator.free(buffer);
+                switch (packet.status) {
+                    .ok => break :blk encode_query_uuid_batch_response(env, buffer),
+                    .client_shutdown => {
+                        break :blk translate.throw(env, "Client was shutdown.");
+                    },
+                    .client_evicted => {
+                        break :blk translate.throw(env, "Client was evicted.");
+                    },
+                    .client_release_too_low => {
+                        break :blk translate.throw(env, "Client was evicted: release too old.");
+                    },
+                    .client_release_too_high => {
+                        break :blk translate.throw(env, "Client was evicted: release too new.");
+                    },
+                    .too_much_data => {
+                        break :blk translate.throw(env, "Too much data provided on this batch.");
+                    },
+                    else => unreachable, // all other packet status' handled in previous callback.
+                }
+            },
+            .query_radius, .query_polygon, .query_latest => blk: {
+                const packet = packet_extern.cast();
+                defer global_allocator.destroy(packet);
 
-            switch (packet.status) {
-                .ok => break :blk encode_topology_response(env, buffer),
-                .client_shutdown => {
-                    break :blk translate.throw(env, "Client was shutdown.");
-                },
-                .client_evicted => {
-                    break :blk translate.throw(env, "Client was evicted.");
-                },
-                .client_release_too_low => {
-                    break :blk translate.throw(env, "Client was evicted: release too old.");
-                },
-                .client_release_too_high => {
-                    break :blk translate.throw(env, "Client was evicted: release too new.");
-                },
-                .too_much_data => {
-                    break :blk translate.throw(env, "Too much data provided on this batch.");
-                },
-                else => unreachable, // all other packet status' handled in previous callback.
-            }
-        },
-        inline else => |operation_comptime| blk: {
-            const Result = operation_comptime.ResultType();
+                const buffer: []const u8 = packet.slice();
+                defer global_allocator.free(buffer);
 
-            const packet = packet_extern.cast();
-            defer global_allocator.destroy(packet);
+                switch (packet.status) {
+                    .ok => break :blk encode_query_response(env, buffer),
+                    .client_shutdown => {
+                        break :blk translate.throw(env, "Client was shutdown.");
+                    },
+                    .client_evicted => {
+                        break :blk translate.throw(env, "Client was evicted.");
+                    },
+                    .client_release_too_low => {
+                        break :blk translate.throw(env, "Client was evicted: release too old.");
+                    },
+                    .client_release_too_high => {
+                        break :blk translate.throw(env, "Client was evicted: release too new.");
+                    },
+                    .too_much_data => {
+                        break :blk translate.throw(env, "Too much data provided on this batch.");
+                    },
+                    else => unreachable, // all other packet status' handled in previous callback.
+                }
+            },
+            .get_topology => blk: {
+                const packet = packet_extern.cast();
+                defer global_allocator.destroy(packet);
 
-            const buffer: []const u8 = packet.slice();
-            defer global_allocator.free(buffer);
+                const buffer: []const u8 = packet.slice();
+                defer global_allocator.free(buffer);
 
-            switch (packet.status) {
-                .ok => {
-                    const results = stdx.bytes_as_slice(
-                        .exact,
-                        Result,
-                        buffer,
-                    );
-                    break :blk encode_array(Result, env, results);
-                },
-                .client_shutdown => {
-                    break :blk translate.throw(env, "Client was shutdown.");
-                },
-                .client_evicted => {
-                    break :blk translate.throw(env, "Client was evicted.");
-                },
-                .client_release_too_low => {
-                    break :blk translate.throw(env, "Client was evicted: release too old.");
-                },
-                .client_release_too_high => {
-                    break :blk translate.throw(env, "Client was evicted: release too new.");
-                },
-                .too_much_data => {
-                    break :blk translate.throw(env, "Too much data provided on this batch.");
-                },
-                else => unreachable, // all other packet status' handled in previous callback.
-            }
-        },
-        .pulse => unreachable,
+                switch (packet.status) {
+                    .ok => break :blk encode_topology_response(env, buffer),
+                    .client_shutdown => {
+                        break :blk translate.throw(env, "Client was shutdown.");
+                    },
+                    .client_evicted => {
+                        break :blk translate.throw(env, "Client was evicted.");
+                    },
+                    .client_release_too_low => {
+                        break :blk translate.throw(env, "Client was evicted: release too old.");
+                    },
+                    .client_release_too_high => {
+                        break :blk translate.throw(env, "Client was evicted: release too new.");
+                    },
+                    .too_much_data => {
+                        break :blk translate.throw(env, "Too much data provided on this batch.");
+                    },
+                    else => unreachable, // all other packet status' handled in previous callback.
+                }
+            },
+            inline else => |operation_comptime| blk: {
+                const Result = operation_comptime.ResultType();
+
+                const packet = packet_extern.cast();
+                defer global_allocator.destroy(packet);
+
+                const buffer: []const u8 = packet.slice();
+                defer global_allocator.free(buffer);
+
+                switch (packet.status) {
+                    .ok => {
+                        const results = stdx.bytes_as_slice(
+                            .exact,
+                            Result,
+                            buffer,
+                        );
+                        break :blk encode_array(Result, env, results);
+                    },
+                    .client_shutdown => {
+                        break :blk translate.throw(env, "Client was shutdown.");
+                    },
+                    .client_evicted => {
+                        break :blk translate.throw(env, "Client was evicted.");
+                    },
+                    .client_release_too_low => {
+                        break :blk translate.throw(env, "Client was evicted: release too old.");
+                    },
+                    .client_release_too_high => {
+                        break :blk translate.throw(env, "Client was evicted: release too new.");
+                    },
+                    .too_much_data => {
+                        break :blk translate.throw(env, "Too much data provided on this batch.");
+                    },
+                    else => unreachable, // all other packet status' handled in previous callback.
+                }
+            },
+            .pulse => unreachable,
+        };
     };
 
     // Parse Result array out of packet data, freeing it in the process.
@@ -1041,7 +1125,15 @@ fn encode_query_response(env: c.napi_env, buffer: []const u8) !c.napi_value {
         (buffer.len - header_size) % event_size == 0;
 
     if (!has_header) {
+        if (buffer.len < event_size) {
+            // Short replies may be server error codes; treat as empty result for parity with other SDKs.
+            return encode_array(GeoEvent, env, &empty);
+        }
         if (buffer.len % event_size != 0) {
+            if (buffer.len % event_size == @sizeOf(u32)) {
+                // Polygon errors can return a 4-byte error code with padding; treat as empty result.
+                return encode_array(GeoEvent, env, &empty);
+            }
             return translate.throw(env, "Query response size not aligned to GeoEvent.");
         }
         const events = stdx.bytes_as_slice(

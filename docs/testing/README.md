@@ -1,6 +1,6 @@
 # ArcherDB Testing Guide
 
-Comprehensive guide for running ArcherDB tests locally across all 6 SDKs.
+Comprehensive guide for running ArcherDB tests locally across all 5 SDKs.
 
 ## Overview
 
@@ -23,7 +23,7 @@ ArcherDB's test suite covers:
 | Go | 1.21+ | Go SDK tests |
 | Java | 21+ | Java SDK tests (Maven included) |
 | GCC/Clang | Recent | C SDK tests |
-| Zig | Bundled | Core tests, Zig SDK tests |
+| Zig | Bundled | Core build and server tests |
 
 ### Installation
 
@@ -41,7 +41,7 @@ cd src/clients/go && go mod download
 cd src/clients/java && mvn dependency:resolve
 
 # C SDK - no external dependencies (header-only)
-# Zig - bundled in repo at ./zig/zig
+# Zig - bundled in repo at ./zig/zig (for server build/tests)
 ```
 
 ## Quick Start
@@ -102,7 +102,7 @@ cd src/clients/c
 make test
 ```
 
-**Zig (unit tests):**
+**Server (Zig unit tests):**
 ```bash
 ./zig/zig build -j4 -Dconfig=lite test:unit
 ```
@@ -118,7 +118,7 @@ pytest tests/ -v -k "insert"
 # Go
 go test ./... -v -run TestInsert
 
-# Zig
+# Server (Zig)
 ./zig/zig build -j4 -Dconfig=lite test:unit -- --test-filter "insert"
 ```
 

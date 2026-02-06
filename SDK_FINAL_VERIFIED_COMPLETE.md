@@ -63,11 +63,6 @@ Each SDK tests all 14 operations with all 79 fixture cases:
 4. Go - Cloud-Native, Microservices
 5. C - Embedded, Systems, FFI
 
-**Not Supported:**
-- Zig SDK (HTTP endpoint issues, not maintained)
-
----
-
 ## Quality Metrics
 
 - **Pass Rate:** 100% (395/395)

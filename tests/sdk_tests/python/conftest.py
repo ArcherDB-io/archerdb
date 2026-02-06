@@ -121,24 +121,21 @@ def clean_database(client, cluster):
     database per test.
     """
     try:
-        # Query and delete all existing entities
-        result = client.query_latest(limit=10000)
-        if result.events:
+        # Query and delete all existing entities using cursor pagination
+        cursor = 0
+        while True:
+            result = client.query_latest(limit=10000, cursor_timestamp=cursor)
+            if not result.events:
+                break
             entity_ids = [e.entity_id for e in result.events]
             if entity_ids:
                 client.delete_entities(entity_ids)
+            next_cursor = result.events[-1].timestamp
+            if next_cursor == cursor:
+                break
+            cursor = next_cursor
     except Exception:
         # If query fails (empty database), that's fine
         pass
 
     yield
-
-    # Post-test cleanup is optional but good practice
-    try:
-        result = client.query_latest(limit=10000)
-        if result.events:
-            entity_ids = [e.entity_id for e in result.events]
-            if entity_ids:
-                client.delete_entities(entity_ids)
-    except Exception:
-        pass

@@ -86,7 +86,7 @@ pub fn ManifestLevelType(
             /// The maximum key across both levels.
             key_max: Key,
             // References to tables in level B that intersect with the chosen table in level A.
-            tables: stdx.BoundedArrayType(TableInfoReference, constants.lsm_growth_factor),
+            tables: stdx.BoundedArrayType(TableInfoReference, constants.lsm_l0_trigger_max),
         };
 
         pub const LevelKeyRange = struct {
@@ -592,7 +592,7 @@ pub fn ManifestLevelType(
             snapshot: u64,
             max_overlapping_tables: usize,
         ) ?LeastOverlapTable {
-            assert(max_overlapping_tables <= constants.lsm_growth_factor);
+            assert(max_overlapping_tables <= @as(usize, constants.lsm_l0_trigger_max));
 
             var optimal: ?LeastOverlapTable = null;
             const snapshots = [1]u64{snapshot};
@@ -724,11 +724,9 @@ pub fn ManifestLevelType(
         ///
         /// This last invariant is critical to ensuring that tombstones are dropped correctly.
         ///
-        /// * Assumption: Currently, we only support a maximum of lsm_growth_factor
-        ///   overlapping tables. This is because OverlapRange.tables is a
-        ///   BoundedArray of size lsm_growth_factor. This works with our current
-        ///   compaction strategy that is guaranteed to choose a table with that
-        ///   intersects with <= lsm_growth_factor tables in the next level.
+        /// * Assumption: Currently, we only support a bounded maximum number of
+        ///   overlapping tables. OverlapRange.tables is sized to lsm_l0_trigger_max
+        ///   to accommodate adaptive L0 trigger tuning.
         pub fn tables_overlapping_with_key_range(
             level: *const ManifestLevel,
             key_min: Key,
@@ -736,7 +734,7 @@ pub fn ManifestLevelType(
             snapshot: u64,
             max_overlapping_tables: usize,
         ) ?OverlapRange {
-            assert(max_overlapping_tables <= constants.lsm_growth_factor);
+            assert(max_overlapping_tables <= @as(usize, constants.lsm_l0_trigger_max));
 
             var range = OverlapRange{
                 .key_min = key_min,

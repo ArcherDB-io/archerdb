@@ -44,7 +44,7 @@ re_verification: false
 | `test_infrastructure/fixtures/v1/insert.json` | Insert operation test cases including hotspot data | ✓ VERIFIED | 14 test cases including hotspot_insert_batch |
 | `test_infrastructure/fixtures/v1/query-radius.json` | Radius query test cases including hotspot | ✓ VERIFIED | 10 test cases including hotspot_radius_query |
 | `test_infrastructure/fixtures/v1/topology.json` | Topology query test cases | ✓ VERIFIED | 6 test cases covering 1/3/5 node clusters |
-| `test_infrastructure/ci/warmup_protocols.json` | Per-SDK warmup iteration counts | ✓ VERIFIED | Defines warmup_iterations for all 6 SDKs (java:500, nodejs:200, python/go:100, c/zig:50) |
+| `test_infrastructure/ci/warmup_protocols.json` | Per-SDK warmup iteration counts | ✓ VERIFIED | Defines warmup_iterations for all 5 SDKs (java:500, nodejs:200, python/go:100, c:50) |
 | `test_infrastructure/ci/warmup_loader.py` | Utility to load and apply warmup protocols | ✓ VERIFIED | 125 lines, exports load_warmup_protocol, self-test passes |
 | `.github/workflows/sdk-smoke.yml` | Smoke test workflow (<5 min) | ✓ VERIFIED | 60 lines, timeout-minutes: 5, runs on push/PR |
 | `.github/workflows/sdk-pr.yml` | PR test workflow (<15 min) | ✓ VERIFIED | 102 lines, timeout-minutes: 15, SDK matrix |
@@ -73,7 +73,7 @@ Phase 11 requirements from REQUIREMENTS.md:
 | INFRA-01: Single-node cluster start/stop | ✓ SATISFIED | ArcherDBCluster tested with node_count=1, start/stop/ready verified |
 | INFRA-02: 3-node cluster start/stop | ✓ SATISFIED | ClusterConfig supports node_count=3, wait_for_leader() implemented |
 | INFRA-03: 5-6 node cluster start/stop | ✓ SATISFIED | ClusterConfig accepts any node_count, nightly workflow tests 5-node |
-| INFRA-04: Per-SDK warmup protocols | ✓ SATISFIED | warmup_protocols.json defines iterations for all 6 SDKs, loader tested |
+| INFRA-04: Per-SDK warmup protocols | ✓ SATISFIED | warmup_protocols.json defines iterations for all 5 SDKs, loader tested |
 | INFRA-05: CI smoke <5 min | ✓ SATISFIED | sdk-smoke.yml timeout-minutes: 5 |
 | INFRA-06: CI PR <15 min | ✓ SATISFIED | sdk-pr.yml timeout-minutes: 15 |
 | INFRA-07: CI nightly full suite | ✓ SATISFIED | sdk-nightly.yml runs on schedule with multi-node matrix |
@@ -124,7 +124,7 @@ All modules are wired and functional:
 - Imports tested: All test_infrastructure imports successful
 - Cluster harness tested: Single-node start/stop verified
 - Data generators tested: All 3 patterns (uniform, city-concentrated, hotspot) verified
-- Warmup loader tested: Self-test passed for all 6 SDKs
+- Warmup loader tested: Self-test passed for all 5 SDKs
 - Fixture loader tested: Self-test passed, loaded 14 operations
 - CI workflows reference test_infrastructure
 
@@ -158,7 +158,6 @@ Testing warmup protocol loader...
   java: warmup=500, measure=1000
   go: warmup=100, measure=1000
   c: warmup=50, measure=1000
-  zig: warmup=50, measure=1000
 All warmup protocol tests passed!
 ```
 
@@ -190,7 +189,7 @@ Phase 11 goal **ACHIEVED**. Reliable test infrastructure now enables consistent 
 - Comprehensive documentation in README files
 
 **Ready for:**
-- Phase 12: Zig SDK development (harness ready for validation)
+- Phase 12: Protocol documentation (harness ready for validation)
 - Phase 13: SDK operation test suite (fixtures ready)
 - Phase 15: Benchmark framework (warmup protocols ready)
 - Phase 16: Multi-topology testing (cluster harness supports multi-node)

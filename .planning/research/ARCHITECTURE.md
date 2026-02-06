@@ -104,11 +104,6 @@ archerdb/
 │   │   ├── test.zig                # Zig test harness (existing)
 │   │   └── tests/                  # C test files (new)
 │   │
-│   ├── zig/                        # New Zig SDK (future)
-│   │   ├── src/                    # SDK source
-│   │   ├── tests/                  # Unit tests
-│   │   └── build.zig
-│   │
 │   └── test-data/
 │       ├── wire-format-test-cases.json  # Cross-SDK protocol tests
 │       ├── canonical-events.json        # Shared test fixtures
@@ -702,26 +697,6 @@ Based on this architecture, the recommended implementation phases:
 2. Failure injection tests
 3. Long-running stability tests
 4. Competitor comparison automation
-
-## New Zig SDK Placement
-
-When the new Zig SDK is added, it should follow this pattern:
-
-```
-src/clients/zig/
-├── src/
-│   ├── client.zig           # Main client implementation
-│   ├── protocol.zig         # Wire protocol
-│   └── types.zig            # Type definitions
-├── tests/
-│   ├── unit_tests.zig       # Pure unit tests
-│   └── integration_tests.zig # Server-required tests
-├── benchmark.zig            # SDK-specific benchmarks
-├── build.zig                # Build configuration
-└── README.md
-```
-
-The Zig SDK tests integrate naturally with the existing Zig test infrastructure (`./zig/zig build test`), while following the same patterns as other SDKs for integration tests.
 
 ## Sources
 

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2025 ArcherDB Contributors
 #
-# SDK Smoke Tests - All 6 SDKs with JUnit XML reporting
+# SDK Smoke Tests - All 5 SDKs with JUnit XML reporting
 # Strict 5 minute timeout per CI-02.
 # Runs on every push and pull request.
 
@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: true  # Per CONTEXT.md decision
       matrix:
-        sdk: [python, nodejs, go, java, c, zig]
+        sdk: [python, nodejs, go, java, c]
     name: Smoke (${{ matrix.sdk }})
     steps:
       - uses: actions/checkout@v4
@@ -121,22 +121,6 @@ jobs:
             echo '<testsuites><testsuite name="c-sdk" tests="0" failures="0" skipped="1">' >> ../../../test-results/c.xml
             echo '<testcase name="placeholder" classname="c-sdk"><skipped message="C SDK smoke tests not yet implemented"/></testcase>' >> ../../../test-results/c.xml
             echo '</testsuite></testsuites>' >> ../../../test-results/c.xml
-          fi
-
-      # Zig smoke test with JUnit XML
-      - name: Zig smoke
-        if: matrix.sdk == 'zig'
-        run: |
-          cd src/clients/zig
-          # Zig tests output JUnit XML if available, otherwise create minimal result
-          if ./zig/zig build test-junit 2>/dev/null; then
-            cp test-results/*.xml ../../../test-results/zig.xml 2>/dev/null || true
-          else
-            # Create minimal JUnit XML for tracking
-            echo '<?xml version="1.0" encoding="UTF-8"?>' > ../../../test-results/zig.xml
-            echo '<testsuites><testsuite name="zig-sdk" tests="0" failures="0" skipped="1">' >> ../../../test-results/zig.xml
-            echo '<testcase name="placeholder" classname="zig-sdk"><skipped message="Zig SDK smoke tests not yet implemented"/></testcase>' >> ../../../test-results/zig.xml
-            echo '</testsuite></testsuites>' >> ../../../test-results/zig.xml
           fi
 
       # Publish JUnit XML test results

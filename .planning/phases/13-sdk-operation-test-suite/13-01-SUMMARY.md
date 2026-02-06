@@ -72,9 +72,9 @@ Unified test runner with fixture adapter plus 48 tests (24 Python, 24 Node.js) c
 ### 1. Test Infrastructure (Task 1)
 
 **Unified Test Runner (`tests/sdk_tests/run_sdk_tests.sh`):**
-- Executable bash script orchestrating tests for all 6 SDKs
+- Executable bash script orchestrating tests for all 5 SDKs
 - Builds ArcherDB with `-j4 -Dconfig=lite` before tests
-- Sequential SDK execution (Python, Node, Go, Java, C, Zig)
+- Sequential SDK execution (Python, Node, Go, Java, C)
 - Color-coded output with pass/fail/skip counts
 - Fail-fast behavior per CONTEXT.md decision
 - Supports `--filter=sdk1,sdk2` for selective testing
@@ -194,7 +194,7 @@ None - plan executed exactly as written.
 
 - 13-02: Apply same pattern to Go SDK tests
 - 13-03: Apply same pattern to Java SDK tests
-- 13-04: Apply same pattern to C and Zig SDK tests
+- 13-04: Apply same pattern to C SDK tests
 - Run full integration test once server is running:
   ```bash
   ARCHERDB_INTEGRATION=1 ./tests/sdk_tests/run_sdk_tests.sh --filter=python,node

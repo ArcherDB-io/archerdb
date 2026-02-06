@@ -23,7 +23,6 @@ from tests.parity_tests.sdk_runners import (
     go_runner,
     java_runner,
     c_runner,
-    zig_runner,
 )
 
 
@@ -56,7 +55,7 @@ class ParityVerifier:
     """
 
     # Ordered list of SDKs for consistent matrix display
-    SDK_ORDER = ["python", "node", "go", "java", "c", "zig"]
+    SDK_ORDER = ["python", "node", "go", "java", "c"]
 
     def __init__(self, server_url: str):
         """Initialize verifier with server URL.
@@ -71,7 +70,6 @@ class ParityVerifier:
             "go": go_runner,
             "java": java_runner,
             "c": c_runner,
-            "zig": zig_runner,
         }
 
     def verify_parity(
@@ -266,7 +264,7 @@ class ParityVerifier:
                 "passed": passed,
                 "failed": failed,
                 "pass_rate": f"{100 * passed / max(len(results), 1):.1f}%",
-                "target": "84 cells (14 ops x 6 SDKs)",
+                "target": "70 cells (14 ops x 5 SDKs)",
             },
             "results": [
                 {
@@ -297,7 +295,7 @@ class ParityVerifier:
         lines = [
             "# SDK Parity Matrix",
             "",
-            "Cross-SDK parity verification for ArcherDB. All 6 SDKs must produce "
+            "Cross-SDK parity verification for ArcherDB. All 5 SDKs must produce "
             "identical results for identical operations.",
             "",
             f"**Generated:** {datetime.utcnow().isoformat()}Z",
@@ -319,10 +317,10 @@ class ParityVerifier:
             "  - Structural equality (same fields, types, values)",
             "  - Exact byte equality for coordinates (nanodegrees, no epsilon tolerance)",
             "",
-            "## Matrix (14 ops x 6 SDKs = 84 cells)",
+            "## Matrix (14 ops x 5 SDKs = 70 cells)",
             "",
-            "| Operation | Python | Node.js | Go | Java | C | Zig |",
-            "|-----------|--------|---------|----|----|---|-----|",
+            "| Operation | Python | Node.js | Go | Java | C |",
+            "|-----------|--------|---------|----|----|---|",
         ]
 
         # Group results by operation

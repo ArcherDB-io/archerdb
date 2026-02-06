@@ -68,10 +68,9 @@ const RingBufferType = stdx.RingBufferType;
 /// The upper-bound count of input tables to a single tree's compaction.
 ///
 /// - +1 from level A.
-/// - +lsm_growth_factor from level B. The A-input table cannot overlap with an extra B-input table
-///   because input table selection is least-overlap. If the input table overlaps on one or both
-///   edges, there must be another table with less overlap to select.
-pub const compaction_tables_input_max = 1 + constants.lsm_growth_factor;
+/// - +lsm_l0_trigger_max from level B. Adaptive L0 tuning can increase overlap beyond
+///   lsm_growth_factor, so size arrays for the worst-case L0 trigger.
+pub const compaction_tables_input_max = 1 + constants.lsm_l0_trigger_max;
 
 /// The upper-bound count of output tables from a single tree's compaction.
 /// In the "worst" case, no keys are overwritten/merged, and no tombstones are dropped.

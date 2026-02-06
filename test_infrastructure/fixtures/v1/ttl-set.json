@@ -6,13 +6,15 @@
     {
       "name": "set_ttl_valid",
       "description": "Set TTL on existing entity",
-      "tags": ["smoke"],
+      "tags": [
+        "smoke"
+      ],
       "input": {
         "setup": {
           "insert_first": {
             "entity_id": 90001,
             "latitude": 40.7128,
-            "longitude": -74.0060
+            "longitude": -74.006
           }
         },
         "entity_id": 90001,
@@ -27,13 +29,15 @@
     {
       "name": "set_ttl_entity_not_found",
       "description": "Set TTL on non-existent entity",
-      "tags": ["pr"],
+      "tags": [
+        "pr"
+      ],
       "input": {
         "entity_id": 99999999,
         "ttl_seconds": 3600
       },
       "expected_output": {
-        "result_code": 3,
+        "result_code": 1,
         "status": "ENTITY_NOT_FOUND"
       },
       "expected_error": null
@@ -41,13 +45,15 @@
     {
       "name": "set_ttl_minimum",
       "description": "Set minimum TTL (1 second)",
-      "tags": ["nightly"],
+      "tags": [
+        "nightly"
+      ],
       "input": {
         "setup": {
           "insert_first": {
             "entity_id": 90002,
             "latitude": 40.7128,
-            "longitude": -74.0060
+            "longitude": -74.006
           }
         },
         "entity_id": 90002,
@@ -62,13 +68,15 @@
     {
       "name": "set_ttl_maximum",
       "description": "Set maximum TTL (1 year)",
-      "tags": ["nightly"],
+      "tags": [
+        "nightly"
+      ],
       "input": {
         "setup": {
           "insert_first": {
             "entity_id": 90003,
             "latitude": 40.7128,
-            "longitude": -74.0060
+            "longitude": -74.006
           }
         },
         "entity_id": 90003,
@@ -83,13 +91,15 @@
     {
       "name": "set_ttl_overwrite",
       "description": "Set TTL overwrites existing TTL",
-      "tags": ["pr"],
+      "tags": [
+        "pr"
+      ],
       "input": {
         "setup": {
           "insert_first": {
             "entity_id": 90004,
             "latitude": 40.7128,
-            "longitude": -74.0060,
+            "longitude": -74.006,
             "ttl_seconds": 1800
           }
         },

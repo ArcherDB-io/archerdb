@@ -116,13 +116,21 @@ func onGoPacketCompletion(
 	// Get the request from the packet user data.
 	req := (*request)(unsafe.Pointer(packet.user_data))
 	var reply []uint8 = nil
+	if result_len > 0 && result_ptr == nil {
+		packet.status = C.ARCH_PACKET_INVALID_DATA_SIZE
+		req.ready <- reply
+		return
+	}
+
 	if result_len > 0 && result_ptr != nil {
 		op := C.ARCH_OPERATION(packet.operation)
 
 		// Make sure the completion handler is giving us valid data.
 		resultSize := C.uint32_t(getResultSize(op))
 		if result_len%resultSize != 0 {
-			panic("invalid result_len:  misaligned for the event")
+			packet.status = C.ARCH_PACKET_INVALID_DATA_SIZE
+			req.ready <- reply
+			return
 		}
 
 		// GeoClient operations with variable-size responses skip the asymmetric check
@@ -143,7 +151,9 @@ func onGoPacketCompletion(
 			// Make sure the amount of results at least matches the amount of requests.
 			count := packet.data_size / C.uint32_t(getEventSize(op))
 			if count*resultSize < result_len {
-				panic("invalid result_len: implied multiple results per event")
+				packet.status = C.ARCH_PACKET_INVALID_DATA_SIZE
+				req.ready <- reply
+				return
 			}
 		}
 

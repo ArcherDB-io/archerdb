@@ -32,8 +32,7 @@ See `.planning/MILESTONES.md` for full v1 details.
 **Goal:** Comprehensive SDK testing and benchmarking infrastructure to validate all functionality across all client libraries and establish performance baselines.
 
 **Target capabilities:**
-- Test all 6 SDKs (Python, Node.js, Go, Java, C, Zig) with 100% operation coverage
-- Create Zig SDK in `src/clients/zig/`
+- Test all 5 SDKs (Python, Node.js, Go, Java, C) with 100% operation coverage
 - Raw protocol testing and documentation (curl examples)
 - Workload pattern testing (single, low, high volume, uniform, city-concentrated)
 - Multi-topology testing (1, 3, 5, 6-node clusters)

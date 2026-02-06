@@ -18,8 +18,6 @@
 | Java | JUnit 5 (Jupiter) | 5.10.x | Unit testing | Already in use, parameterized tests, modern assertions |
 | Java | JMH | 1.37+ | Microbenchmarking | OpenJDK standard, handles JVM warmup/JIT correctly |
 | C | Custom + assertions | N/A | Unit testing | Minimal framework needed; existing `arch_client_errors_test.c` pattern |
-| Zig | std.testing | 0.13+ | Unit testing | Built-in, already used for core ArcherDB tests |
-| Zig | zBench | latest | Benchmarking | Zig-native, p75/p99/p995 percentiles, warmup support |
 
 ### Benchmarking Infrastructure
 
@@ -108,19 +106,6 @@ go get github.com/stretchr/testify
 </dependency>
 ```
 
-### Zig SDK Testing
-
-```zig
-// build.zig additions
-const zbench_dep = b.dependency("zbench", .{
-    .target = target,
-    .optimize = optimize,
-});
-
-// In test step
-exe.root_module.addImport("zbench", zbench_dep.module("zbench"));
-```
-
 ### Cross-Language Load Testing
 
 ```bash
@@ -193,7 +178,6 @@ k6 run benchmark-load-test.js
 | JUnit 5.10.x | Java 11+ | Project uses Java 11 |
 | Go testing | Go 1.21+ | Project uses Go 1.21 |
 | Node test runner | Node 20+ | Built-in since Node 18, stable in 20 |
-| zBench | Zig 0.13+ | Follow branch for Zig version compatibility |
 
 ## Benchmark Reliability Practices
 
@@ -206,7 +190,6 @@ All benchmark frameworks must implement warmup:
 2. Go: built-in with b.ResetTimer() after warmup loop
 3. Java: JMH @Warmup annotation
 4. Node: kelonio automatic warmup (100 iterations default)
-5. Zig: zBench warmup parameter
 ```
 
 ### Statistical Stability
@@ -270,7 +253,6 @@ Extend existing `wire-format-test-cases.json` for:
 - [Go testing package](https://pkg.go.dev/testing) - Official docs
 - [JMH OpenJDK](https://openjdk.org/projects/code-tools/jmh/) - Official docs
 - [github-action-benchmark](https://github.com/benchmark-action/github-action-benchmark) - Verified in ci.yml
-- [zBench GitHub](https://github.com/hendriknielaender/zBench) - Zig benchmarking
 - [kelonio GitHub](https://github.com/mtkennerly/kelonio) - Node.js TypeScript benchmarking
 - [k6 Grafana documentation](https://grafana.com/docs/k6/latest/) - Load testing
 - [Bencher documentation](https://bencher.dev/docs/how-to/github-actions/) - CI benchmarking

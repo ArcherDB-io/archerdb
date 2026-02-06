@@ -220,7 +220,7 @@ This validates:
 
 These fixtures enable **golden file testing**:
 
-> Same input should produce same output across all 6 SDKs
+> Same input should produce same output across all 5 SDKs
 
 This ensures:
 - Wire format compatibility

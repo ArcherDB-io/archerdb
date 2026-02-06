@@ -60,7 +60,7 @@ Already available via GitHub Actions marketplace - no npm/pip install needed for
 ```
 
 ### Pattern 1: Matrix Strategy for SDK Testing
-**What:** Run same tests across all 6 SDKs in parallel
+**What:** Run same tests across all 5 SDKs in parallel
 **When to use:** All SDK test tiers (smoke, PR, nightly)
 **Example:**
 ```yaml
@@ -70,7 +70,7 @@ jobs:
     strategy:
       fail-fast: true  # Per CONTEXT.md decision
       matrix:
-        sdk: [python, nodejs, go, java, c, zig]
+        sdk: [python, nodejs, go, java, c]
     steps:
       - name: Run ${{ matrix.sdk }} tests
         # SDK-specific setup and test execution
@@ -357,9 +357,9 @@ jobs:
 
 | File | Status | Needed Changes |
 |------|--------|----------------|
-| `.github/workflows/sdk-smoke.yml` | Exists | Add JUnit XML, C/Zig SDKs, artifact upload |
-| `.github/workflows/sdk-pr.yml` | Exists | Add JUnit XML, C/Zig SDKs, artifact upload |
-| `.github/workflows/sdk-nightly.yml` | Exists | Enhance multi-node, add C/Zig properly |
+| `.github/workflows/sdk-smoke.yml` | Exists | Add JUnit XML, C SDK, artifact upload |
+| `.github/workflows/sdk-pr.yml` | Exists | Add JUnit XML, C SDK, artifact upload |
+| `.github/workflows/sdk-nightly.yml` | Exists | Enhance multi-node, add C properly |
 | `.github/workflows/benchmark.yml` | Exists | Works for PR; need separate weekly workflow |
 | `.github/workflows/ci.yml` | Exists | Good, uses benchmark-action already |
 
@@ -379,7 +379,7 @@ jobs:
 | Doc | Required By | Content |
 |-----|-------------|---------|
 | Testing Guide | DOCS-01, DOCS-02 | How to run all tests locally, interpret results |
-| SDK Comparison Matrix | DOCS-05 | Feature parity across 6 SDKs |
+| SDK Comparison Matrix | DOCS-05 | Feature parity across 5 SDKs |
 | Consolidated Benchmark Guide | DOCS-02 | Running, interpreting, tracking benchmarks |
 
 ## Documentation Structure Recommendation
@@ -414,9 +414,9 @@ Things that couldn't be fully resolved:
    - What's unclear: Whether it's enabled for this repo/organization
    - Recommendation: Test with smaller runners first, add fallback logic
 
-2. **C/Zig SDK Test Implementation**
+2. **C SDK Test Implementation**
    - What we know: Workflow stubs exist, actual tests may not
-   - What's unclear: Test completeness for C and Zig SDKs
+   - What's unclear: Test completeness for C SDK
    - Recommendation: Verify test implementation before wiring into CI
 
 3. **Benchmark Result Format Compatibility**

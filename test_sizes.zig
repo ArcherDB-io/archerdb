@@ -9,7 +9,8 @@ pub fn main() !void {
     try stdout.print("ShardInfo size: {} bytes\n", .{@sizeOf(topology.ShardInfo)});
     try stdout.print("TopologyResponse size: {} bytes\n", .{@sizeOf(topology.TopologyResponse)});
     try stdout.print("max_shards: {}\n", .{topology.max_shards});
-    try stdout.print("message_body_size_max: {} bytes\n", .{@import("src/vsr.zig").constants.message_body_size_max});
+    const message_body_size_max = @import("src/vsr.zig").constants.message_body_size_max;
+    try stdout.print("message_body_size_max: {} bytes\n", .{message_body_size_max});
 
     const op = archerdb.Operation.get_topology;
     try stdout.print("\nget_topology operation:\n", .{});

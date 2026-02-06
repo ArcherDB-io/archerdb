@@ -70,21 +70,6 @@ Each SDK includes **79 comprehensive test cases** covering:
 
 ---
 
-## Zig SDK Decision
-
-**Status:** Not officially supported
-
-**Rationale:**
-- HTTP endpoint issues in server
-- 5 existing SDKs cover all major use cases
-- C SDK provides systems programming coverage
-- Zig is niche compared to supported languages
-- Focus resources on maintaining 5 high-quality SDKs
-
-**Note:** Zig SDK code remains in repository for reference but is not maintained or supported.
-
----
-
 ## Quality Metrics
 
 ### Test Pass Rate
@@ -159,22 +144,13 @@ go get github.com/archerdb/archerdb-go
 - Comprehensive test suites
 - Production support
 
-**Not Supported:**
-- Zig SDK (experimental, not maintained)
-
----
-
 ## Comparison to Competitors
 
 ### TigerBeetle (Also Written in Zig)
 - SDKs: .NET, Go, Java, Node.js, Python, Rust
-- Zig SDK: ❌ Not supported ("internal implementation detail")
 
 ### ArcherDB (Written in Zig)
 - SDKs: **Python, Node.js, Java, Go, C**
-- Zig SDK: Not supported (focusing on mainstream languages)
-
-**ArcherDB matches TigerBeetle's language coverage strategy**
 
 ---
 

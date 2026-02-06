@@ -3,7 +3,7 @@
 
 """SDK benchmark for cross-SDK performance comparison.
 
-Benchmarks all 6 SDKs (Python, Node, Go, Java, C, Zig) performing identical
+Benchmarks all 5 SDKs (Python, Node, Go, Java, C) performing identical
 operations and verifies performance parity within acceptable threshold.
 """
 
@@ -21,7 +21,6 @@ from tests.parity_tests.sdk_runners import (
     go_runner,
     java_runner,
     c_runner,
-    zig_runner,
 )
 
 
@@ -72,7 +71,6 @@ SDK_RUNNERS: Dict[str, Any] = {
     "go": go_runner,
     "java": java_runner,
     "c": c_runner,
-    "zig": zig_runner,
 }
 
 # Default operations to benchmark
@@ -82,7 +80,7 @@ DEFAULT_OPERATIONS = ["insert", "query-uuid", "query-radius"]
 class SDKBenchmark:
     """Benchmarks SDKs and verifies performance parity.
 
-    Runs identical operations through all 6 SDKs and measures latency.
+    Runs identical operations through all 5 SDKs and measures latency.
     Parity check verifies all SDKs are within 20% of the mean latency.
 
     Usage:

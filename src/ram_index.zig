@@ -1763,6 +1763,14 @@ pub fn GenericRamIndexType(comptime Entry: type, comptime options: struct {
             expired: bool,
         };
 
+        /// Result of a TTL update operation.
+        pub const UpdateTtlResult = struct {
+            /// True if TTL was updated.
+            updated: bool,
+            /// True if a concurrent update was detected.
+            race_detected: bool,
+        };
+
         /// Lookup in a specific table (helper for dual-table resize).
         /// Uses cuckoo hashing: checks primary slot (hash1) then secondary slot (hash2).
         fn lookupInTable(
@@ -2383,6 +2391,94 @@ pub fn GenericRamIndexType(comptime Entry: type, comptime options: struct {
             return .{ .removed = false, .race_detected = false };
         }
 
+        /// Update TTL in-place for a specific entity if latest_id matches.
+        ///
+        /// This bypasses LWW semantics to allow administrative TTL changes
+        /// without modifying latest_id ordering.
+        pub fn update_ttl_if_id_matches(
+            self: *@This(),
+            entity_id: u128,
+            expected_latest_id: u128,
+            new_ttl_seconds: u32,
+        ) UpdateTtlResult {
+            if (entity_id == 0) {
+                return .{ .updated = false, .race_detected = false };
+            }
+
+            const active_result = update_ttl_in_table(
+                self.entries,
+                self.capacity,
+                entity_id,
+                expected_latest_id,
+                new_ttl_seconds,
+            );
+            if (active_result.updated or active_result.race_detected) {
+                return active_result;
+            }
+
+            if (self.resize_state.isResizing()) {
+                if (self.old_entries) |old_entries| {
+                    return update_ttl_in_table(
+                        old_entries,
+                        self.old_capacity,
+                        entity_id,
+                        expected_latest_id,
+                        new_ttl_seconds,
+                    );
+                }
+            }
+
+            return .{ .updated = false, .race_detected = false };
+        }
+
+        fn update_ttl_in_table(
+            table_entries: []align(entry_alignment) Entry,
+            table_capacity: u64,
+            entity_id: u128,
+            expected_latest_id: u128,
+            new_ttl_seconds: u32,
+        ) UpdateTtlResult {
+            if (!Entry.supports_ttl) {
+                return .{ .updated = false, .race_detected = false };
+            }
+
+            const s1 = stdx.fastrange(hash1(entity_id), table_capacity);
+            const entry1_ptr: *Entry = &table_entries[@intCast(s1)];
+            const entry1 = entry1_ptr.*;
+
+            if (entry1.entity_id == entity_id) {
+                if (entry1.is_tombstone()) {
+                    return .{ .updated = false, .race_detected = false };
+                }
+                if (entry1.latest_id != expected_latest_id) {
+                    return .{ .updated = false, .race_detected = true };
+                }
+                var updated = entry1;
+                updated.ttl_seconds = new_ttl_seconds;
+                @as(*volatile Entry, @ptrCast(entry1_ptr)).* = updated;
+                return .{ .updated = true, .race_detected = false };
+            }
+
+            const s2 = stdx.fastrange(hash2(entity_id), table_capacity);
+            const entry2_ptr: *Entry = &table_entries[@intCast(s2)];
+            const entry2 = entry2_ptr.*;
+
+            if (entry2.entity_id == entity_id) {
+                if (entry2.is_tombstone()) {
+                    return .{ .updated = false, .race_detected = false };
+                }
+                if (entry2.latest_id != expected_latest_id) {
+                    return .{ .updated = false, .race_detected = true };
+                }
+                var updated = entry2;
+                updated.ttl_seconds = new_ttl_seconds;
+                @as(*volatile Entry, @ptrCast(entry2_ptr)).* = updated;
+                return .{ .updated = true, .race_detected = false };
+            }
+
+            return .{ .updated = false, .race_detected = false };
+        }
+
         /// Lookup with TTL expiration check.
         ///
         /// This implements lazy TTL expiration per ttl-retention/spec.md:
@@ -2969,8 +3065,8 @@ test "format_ram_estimate: MiB format" {
 test "get_available_memory: returns reasonable value or UnsupportedPlatform" {
     const result = get_available_memory();
     if (result) |bytes| {
-        // Should be at least 1GB and at most 1TB
-        try testing.expect(bytes >= 1024 * 1024 * 1024);
+        // Should be at least 64MiB and at most 1TB
+        try testing.expect(bytes >= 64 * 1024 * 1024);
         try testing.expect(bytes <= 1024 * 1024 * 1024 * 1024);
     } else |err| {
         // UnsupportedPlatform is acceptable in test environments

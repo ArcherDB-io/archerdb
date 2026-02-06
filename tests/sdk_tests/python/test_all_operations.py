@@ -30,15 +30,12 @@ from __future__ import annotations
 import pytest
 
 import archerdb
-from archerdb import (
-    GeoClientSync,
-    create_geo_event,
-    id as archerdb_id,
-)
+from archerdb import GeoClientSync
 
 from tests.sdk_tests.common.fixture_adapter import (
     load_operation_fixture,
     setup_test_data,
+    build_geo_event_from_fixture,
     verify_events_contain,
     verify_count_in_range,
 )
@@ -61,44 +58,56 @@ _ttl_extend_fixture = load_operation_fixture("ttl-extend")
 _ttl_clear_fixture = load_operation_fixture("ttl-clear")
 
 
-def _should_skip_case(case) -> tuple[bool, str]:
-    """Determine if a test case should be skipped (like Go SDK)."""
-    tags = case.tags if hasattr(case, "tags") else []
-    name = case.name if hasattr(case, "name") else ""
-
-    # Skip boundary/invalid tests - they cause session eviction (protocol validation)
-    if "boundary" in tags or "invalid" in tags:
-        return True, "Boundary/invalid test - causes session eviction"
-    if "boundary_" in name or "invalid_" in name:
-        return True, "Boundary/invalid test - causes session eviction"
-
-    # Skip geometry edge cases not yet fully supported (S2 limitations)
-    if "concave" in name:
-        return True, "S2 geometry limitation - concave polygons"
-    if "antimeridian" in name:
-        return True, "S2 geometry limitation - antimeridian crossing"
-    if "timestamp_filter" in name:
-        return True, "Timestamp filtering not yet implemented"
-
-    return False, ""
-
-
 def _create_event_from_fixture(ev: dict) -> archerdb.GeoEvent:
     """Convert fixture event dict to SDK GeoEvent."""
-    return create_geo_event(
-        entity_id=ev["entity_id"],
-        latitude=ev["latitude"],
-        longitude=ev["longitude"],
-        correlation_id=ev.get("correlation_id", 0),
-        user_data=ev.get("user_data", 0),
-        group_id=ev.get("group_id", 0),
-        altitude_m=ev.get("altitude_m", 0.0),
-        velocity_mps=ev.get("velocity_mps", 0.0),
-        ttl_seconds=ev.get("ttl_seconds", 0),
-        accuracy_m=ev.get("accuracy_m", 0.0),
-        heading=ev.get("heading", 0.0),
-        flags=ev.get("flags", 0),
-    )
+    return build_geo_event_from_fixture(ev)
+
+
+def _expected_result_codes(expected_output: dict) -> list[int]:
+    results = expected_output.get("results") if expected_output else None
+    if not results:
+        return []
+    return [r.get("code", 0) for r in results]
+
+
+def _assert_expected_codes(errors, expected_codes: list[int], operation: str) -> None:
+    for idx, code in enumerate(expected_codes):
+        if code == 0:
+            continue
+        matched = any(err.index == idx and int(err.result) == code for err in errors)
+        assert matched, (
+            f"{operation}: expected code {code} at index {idx}, "
+            f"got {[{'index': e.index, 'code': int(e.result)} for e in errors]}"
+        )
+
+
+def _is_expected_insert_exception(exc: Exception, expected_codes: list[int]) -> bool:
+    if isinstance(exc, archerdb.InvalidCoordinates):
+        return any(code in {8, 9, 10, 14} for code in expected_codes)
+    if isinstance(exc, archerdb.InvalidEntityId):
+        return any(code in {6, 7} for code in expected_codes)
+    return False
+
+
+def _verify_events_exclude(events, excluded_ids: list[int], operation: str) -> None:
+    actual_ids = set()
+    for event in events:
+        if hasattr(event, "entity_id"):
+            actual_ids.add(event.entity_id)
+        elif isinstance(event, dict):
+            actual_ids.add(event.get("entity_id"))
+    excluded = set(excluded_ids)
+    overlap = actual_ids & excluded
+    assert not overlap, f"{operation}: Unexpected entity IDs present: {overlap}"
+
+
+def _get_output_cap(client: GeoClientSync, inserted_ids: list[int]) -> int | None:
+    if not inserted_ids:
+        return None
+    latest = client.query_latest(limit=10000)
+    if len(latest.events) < len(inserted_ids):
+        return len(latest.events)
+    return None
 
 
 # =============================================================================
@@ -112,20 +121,29 @@ class TestInsertOperation:
                              ids=[c.name for c in _insert_fixture.cases])
     def test_insert(self, client: GeoClientSync, case):
         """Test insert with all 14 fixture cases."""
-        skip, reason = _should_skip_case(case)
-        if skip:
-            return  # Early return counts as pass (like Node.js/C)
-
         events = [_create_event_from_fixture(ev) for ev in case.input["events"]]
-        errors = client.insert_events(events)
+        expected = case.expected_output or {}
+        expected_codes = _expected_result_codes(expected)
 
-        expected = case.expected_output
+        try:
+            errors = client.insert_events(events)
+        except Exception as exc:
+            if expected_codes and _is_expected_insert_exception(exc, expected_codes):
+                return
+            raise
+
         if expected.get("all_ok"):
             assert errors == [], f"Insert failed: {errors}"
             # Verify insertion
             if events:
                 found = client.get_latest_by_uuid(events[0].entity_id)
                 assert found is not None, "Inserted event not found"
+
+        if "results_count" in expected:
+            assert len(events) == expected["results_count"], "Unexpected results_count"
+
+        if expected_codes:
+            _assert_expected_codes(errors, expected_codes, "insert")
 
 
 # =============================================================================
@@ -139,10 +157,6 @@ class TestUpsertOperation:
                              ids=[c.name for c in _upsert_fixture.cases])
     def test_upsert(self, client: GeoClientSync, case):
         """Test upsert with all fixture cases."""
-        skip, reason = _should_skip_case(case)
-        if skip:
-            return  # Early return counts as pass (like Node.js/C)
-
         # Setup test data using helper
         inp = case.input
         if "setup" in inp:
@@ -150,11 +164,22 @@ class TestUpsertOperation:
 
         # Execute upsert
         events = [_create_event_from_fixture(ev) for ev in inp.get("events", [])]
-        errors = client.upsert_events(events)
+        expected = case.expected_output or {}
+        expected_codes = _expected_result_codes(expected)
+
+        try:
+            errors = client.upsert_events(events)
+        except Exception as exc:
+            if expected_codes and _is_expected_insert_exception(exc, expected_codes):
+                return
+            raise
 
         # Verify result
-        if case.expected_output.get("all_ok"):
+        if expected.get("all_ok"):
             assert errors == [], f"Upsert failed: {errors}"
+
+        if expected_codes:
+            _assert_expected_codes(errors, expected_codes, "upsert")
 
 
 # =============================================================================
@@ -168,10 +193,6 @@ class TestDeleteOperation:
                              ids=[c.name for c in _delete_fixture.cases])
     def test_delete(self, client: GeoClientSync, case):
         """Test delete with all fixture cases."""
-        skip, reason = _should_skip_case(case)
-        if skip:
-            return  # Early return counts as pass (like Node.js/C)
-
         # Setup test data using helper
         inp = case.input
         if "setup" in inp:
@@ -182,21 +203,27 @@ class TestDeleteOperation:
         if not entity_ids:
             return  # No entity IDs - valid test case
 
+        expected = case.expected_output or {}
+        expected_codes = _expected_result_codes(expected)
+
         # Execute delete - may raise exception for invalid input
         try:
-            errors = client.delete_entities(entity_ids)
-            # Verify result for success cases
-            if case.expected_output.get("all_ok"):
-                assert not any(errors), f"Delete failed: {errors}"
-        except Exception as e:
-            # Expected error case (e.g., entity_id=0)
-            if case.expected_output.get("results"):
-                # Check if error was expected
-                expected_codes = [r.get("code") for r in case.expected_output["results"]]
-                if 2 in expected_codes:  # ENTITY_ID_MUST_NOT_BE_ZERO
-                    pass  # Expected error
-                else:
-                    raise
+            result = client.delete_entities(entity_ids)
+        except Exception as exc:
+            if expected_codes and 2 in expected_codes:
+                return
+            raise
+
+        # Verify result counts when expected results are provided
+        if expected_codes:
+            expected_deleted = sum(1 for code in expected_codes if code == 0)
+            expected_not_found = sum(1 for code in expected_codes if code == 3)
+            assert result.deleted_count == expected_deleted, (
+                f"delete: expected deleted_count {expected_deleted}, got {result.deleted_count}"
+            )
+            assert result.not_found_count == expected_not_found, (
+                f"delete: expected not_found_count {expected_not_found}, got {result.not_found_count}"
+            )
 
 
 # =============================================================================
@@ -210,10 +237,6 @@ class TestQueryUuidOperation:
                              ids=[c.name for c in _query_uuid_fixture.cases])
     def test_query_uuid(self, client: GeoClientSync, case):
         """Test query UUID with all fixture cases."""
-        skip, reason = _should_skip_case(case)
-        if skip:
-            return  # Early return counts as pass (like Node.js/C)
-
         # Setup test data using helper
         inp = case.input
         if "setup" in inp:
@@ -221,9 +244,8 @@ class TestQueryUuidOperation:
 
         # Get entity ID to query
         entity_id = inp.get("entity_id")
-        if entity_id is None or entity_id == 0:
-            # No entity ID - this tests the "not found" case, which is valid
-            return  # Early return counts as pass
+        if entity_id is None:
+            return  # No entity ID - valid test case
 
         # Execute query
         result = client.get_latest_by_uuid(entity_id)
@@ -247,10 +269,6 @@ class TestQueryUuidBatchOperation:
                              ids=[c.name for c in _query_uuid_batch_fixture.cases])
     def test_query_uuid_batch(self, client: GeoClientSync, case):
         """Test query UUID batch with all fixture cases."""
-        skip, reason = _should_skip_case(case)
-        if skip:
-            return  # Early return counts as pass (like Node.js/C)
-
         # Setup test data using helper
         inp = case.input
         if "setup" in inp:
@@ -281,30 +299,37 @@ class TestQueryRadiusOperation:
                              ids=[c.name for c in _query_radius_fixture.cases])
     def test_query_radius(self, client: GeoClientSync, case):
         """Test query radius with all fixture cases."""
-        skip, reason = _should_skip_case(case)
-        if skip:
-            return  # Early return counts as pass (like Node.js/C)
-
         # Setup test data using helper
         inp = case.input
+        inserted_ids = []
         if "setup" in inp:
-            setup_test_data(client, inp["setup"])
+            inserted_ids = setup_test_data(client, inp["setup"])
 
         # Execute query
+        timestamp_min = inp.get("timestamp_min", 0) or 0
+        timestamp_max = inp.get("timestamp_max", 0) or 0
+        timestamp_min_ns = int(timestamp_min) * 1_000_000_000 if timestamp_min else 0
+        timestamp_max_ns = int(timestamp_max) * 1_000_000_000 if timestamp_max else 0
+
         result = client.query_radius(
             latitude=inp.get("center_latitude", inp.get("latitude", 0)),
             longitude=inp.get("center_longitude", inp.get("longitude", 0)),
             radius_m=inp.get("radius_m", 1000),
             limit=inp.get("limit", 1000),
+            timestamp_min=timestamp_min_ns,
+            timestamp_max=timestamp_max_ns,
             group_id=inp.get("group_id", 0),
         )
 
         # Verify expected output using helpers
-        expected = case.expected_output
+        expected = case.expected_output or {}
+        max_results = _get_output_cap(client, inserted_ids)
         if "events_contain" in expected:
             verify_events_contain(result.events, expected["events_contain"], "query_radius")
-        if "count_in_range" in expected:
-            verify_count_in_range(len(result.events), expected, "query_radius")
+        if "events_exclude" in expected:
+            _verify_events_exclude(result.events, expected["events_exclude"], "query_radius")
+        if any(key in expected for key in ("count", "count_in_range", "count_in_range_min", "count_min")):
+            verify_count_in_range(len(result.events), expected, "query_radius", max_results=max_results)
 
 
 # =============================================================================
@@ -318,31 +343,38 @@ class TestQueryPolygonOperation:
                              ids=[c.name for c in _query_polygon_fixture.cases])
     def test_query_polygon(self, client: GeoClientSync, case):
         """Test query polygon with all fixture cases."""
-        skip, reason = _should_skip_case(case)
-        if skip:
-            return  # Early return counts as pass (like Node.js/C)
-
         # Setup test data using helper
         inp = case.input
+        inserted_ids = []
         if "setup" in inp:
-            setup_test_data(client, inp["setup"])
+            inserted_ids = setup_test_data(client, inp["setup"])
 
         # Parse vertices (array of [lat, lon] pairs)
         vertices = [(v[0], v[1]) for v in inp.get("vertices", [])]
 
         # Execute query
+        timestamp_min = inp.get("timestamp_min", 0) or 0
+        timestamp_max = inp.get("timestamp_max", 0) or 0
+        timestamp_min_ns = int(timestamp_min) * 1_000_000_000 if timestamp_min else 0
+        timestamp_max_ns = int(timestamp_max) * 1_000_000_000 if timestamp_max else 0
+
         result = client.query_polygon(
             vertices=vertices,
             limit=inp.get("limit", 1000),
+            timestamp_min=timestamp_min_ns,
+            timestamp_max=timestamp_max_ns,
             group_id=inp.get("group_id", 0),
         )
 
         # Verify expected output using helpers
-        expected = case.expected_output
+        expected = case.expected_output or {}
+        max_results = _get_output_cap(client, inserted_ids)
         if "events_contain" in expected:
             verify_events_contain(result.events, expected["events_contain"], "query_polygon")
-        if "count_in_range" in expected:
-            verify_count_in_range(len(result.events), expected, "query_polygon")
+        if "events_exclude" in expected:
+            _verify_events_exclude(result.events, expected["events_exclude"], "query_polygon")
+        if any(key in expected for key in ("count", "count_in_range", "count_in_range_min", "count_min")):
+            verify_count_in_range(len(result.events), expected, "query_polygon", max_results=max_results)
 
 
 # =============================================================================
@@ -356,14 +388,11 @@ class TestQueryLatestOperation:
                              ids=[c.name for c in _query_latest_fixture.cases])
     def test_query_latest(self, client: GeoClientSync, case):
         """Test query latest with all fixture cases."""
-        skip, reason = _should_skip_case(case)
-        if skip:
-            return  # Early return counts as pass (like Node.js/C)
-
         # Setup test data using helper
         inp = case.input
+        inserted_ids = []
         if "setup" in inp:
-            setup_test_data(client, inp["setup"])
+            inserted_ids = setup_test_data(client, inp["setup"])
 
         # Execute query
         result = client.query_latest(
@@ -372,9 +401,10 @@ class TestQueryLatestOperation:
         )
 
         # Verify expected output using helpers
-        expected = case.expected_output
-        if "count_in_range" in expected:
-            verify_count_in_range(len(result.events), expected, "query_latest")
+        expected = case.expected_output or {}
+        max_results = _get_output_cap(client, inserted_ids)
+        if any(key in expected for key in ("count", "count_in_range", "count_in_range_min", "count_min")):
+            verify_count_in_range(len(result.events), expected, "query_latest", max_results=max_results)
 
 
 # =============================================================================
@@ -388,10 +418,6 @@ class TestPingOperation:
                              ids=[c.name for c in _ping_fixture.cases])
     def test_ping(self, client: GeoClientSync, case):
         """Test ping with all fixture cases."""
-        skip, reason = _should_skip_case(case)
-        if skip:
-            return  # Early return counts as pass (like Node.js/C)
-
         result = client.ping()
         assert result is not None, "Ping should return a result"
 
@@ -407,10 +433,6 @@ class TestStatusOperation:
                              ids=[c.name for c in _status_fixture.cases])
     def test_status(self, client: GeoClientSync, case):
         """Test status with all fixture cases."""
-        skip, reason = _should_skip_case(case)
-        if skip:
-            return  # Early return counts as pass (like Node.js/C)
-
         # Execute status query
         result = client.get_status()
 
@@ -429,10 +451,6 @@ class TestTtlSetOperation:
                              ids=[c.name for c in _ttl_set_fixture.cases])
     def test_ttl_set(self, client: GeoClientSync, case):
         """Test TTL set with all fixture cases."""
-        skip, reason = _should_skip_case(case)
-        if skip:
-            return  # Early return counts as pass (like Node.js/C)
-
         # Setup test data using helper
         inp = case.input
         if "setup" in inp:
@@ -448,8 +466,13 @@ class TestTtlSetOperation:
         # Execute TTL set
         result = client.set_ttl(entity_id, ttl_seconds)
 
-        # Verify operation completed
-        assert result is not None or True  # Operation completed
+        expected = case.expected_output or {}
+        if "result_code" in expected:
+            assert int(result.result) == expected["result_code"], (
+                f"ttl_set: expected result_code {expected['result_code']}, got {int(result.result)}"
+            )
+        if "new_ttl_seconds" in expected:
+            assert result.new_ttl_seconds == expected["new_ttl_seconds"]
 
 
 # =============================================================================
@@ -463,10 +486,6 @@ class TestTtlExtendOperation:
                              ids=[c.name for c in _ttl_extend_fixture.cases])
     def test_ttl_extend(self, client: GeoClientSync, case):
         """Test TTL extend with all fixture cases."""
-        skip, reason = _should_skip_case(case)
-        if skip:
-            return  # Early return counts as pass (like Node.js/C)
-
         # Setup test data using helper
         inp = case.input
         if "setup" in inp:
@@ -474,7 +493,7 @@ class TestTtlExtendOperation:
 
         # Get TTL parameters
         entity_id = inp.get("entity_id")
-        extension_seconds = inp.get("extension_seconds", 0)
+        extension_seconds = inp.get("extend_by_seconds", inp.get("extension_seconds", 0))
 
         if entity_id is None or entity_id == 0:
             return  # No entity ID - valid test case
@@ -482,8 +501,13 @@ class TestTtlExtendOperation:
         # Execute TTL extend
         result = client.extend_ttl(entity_id, extension_seconds)
 
-        # Verify operation completed
-        assert result is not None or True  # Operation completed
+        expected = case.expected_output or {}
+        if "result_code" in expected:
+            assert int(result.result) == expected["result_code"], (
+                f"ttl_extend: expected result_code {expected['result_code']}, got {int(result.result)}"
+            )
+        if "new_ttl_min_seconds" in expected:
+            assert result.new_ttl_seconds >= expected["new_ttl_min_seconds"]
 
 
 # =============================================================================
@@ -497,14 +521,20 @@ class TestTtlClearOperation:
                              ids=[c.name for c in _ttl_clear_fixture.cases])
     def test_ttl_clear(self, client: GeoClientSync, case):
         """Test TTL clear with all fixture cases."""
-        skip, reason = _should_skip_case(case)
-        if skip:
-            return  # Early return counts as pass (like Node.js/C)
-
         # Setup test data using helper
         inp = case.input
         if "setup" in inp:
             setup_test_data(client, inp["setup"])
+
+        if "query_entity_id" in inp:
+            entity_id = inp.get("query_entity_id")
+            result = client.get_latest_by_uuid(entity_id)
+            expected = case.expected_output or {}
+            if expected.get("entity_still_exists"):
+                assert result is not None, "Expected entity to still exist after TTL clear"
+            else:
+                assert result is None, "Expected entity to be removed"
+            return
 
         # Get entity ID
         entity_id = inp.get("entity_id")
@@ -515,8 +545,11 @@ class TestTtlClearOperation:
         # Execute TTL clear
         result = client.clear_ttl(entity_id)
 
-        # Verify operation completed
-        assert result is not None or True  # Operation completed
+        expected = case.expected_output or {}
+        if "result_code" in expected:
+            assert int(result.result) == expected["result_code"], (
+                f"ttl_clear: expected result_code {expected['result_code']}, got {int(result.result)}"
+            )
 
 
 # =============================================================================
@@ -530,17 +563,13 @@ class TestTopologyOperation:
                              ids=[c.name for c in _topology_fixture.cases])
     def test_topology(self, client: GeoClientSync, case):
         """Test topology with all fixture cases."""
-        skip, reason = _should_skip_case(case)
-        if skip:
-            return  # Early return counts as pass (like Node.js/C)
-
         # Execute topology query
         result = client.get_topology()
         assert result is not None, "Topology should return result"
 
         # Single-node test cluster may not match multi-node fixtures
         # Just verify we got a valid topology response
-        expected = case.expected_output
+        expected = case.expected_output or {}
         if "replica_count" in expected and result:
             # Verify structure exists (actual count may differ in test environment)
             assert hasattr(result, "shards") or isinstance(result, dict)

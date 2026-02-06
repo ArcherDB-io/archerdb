@@ -15,7 +15,6 @@
 | C | 64 tests | 64 tests | 79 | ⚠️ **81% - Needs verification** |
 | Node.js | 20 tests | 20 tests* | 79 | 🔧 **25% - Pattern ready** |
 | Java | 17 tests | 17 tests | 79 | 🔧 **22% - Pattern documented** |
-| Zig | 0 tests | 0 tests | 79 | ❌ **Blocked - No HTTP server** |
 
 *Node.js: Insert/Upsert updated in branch, needs completion
 

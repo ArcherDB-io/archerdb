@@ -8,9 +8,8 @@
 
 ## User's Critical Feedback
 
-**User identified two gaps**:
-1. "What about the Zig SDK?" → Found 6th SDK (HTTP-based, non-functional)
-2. "Different levels of thoroughness is unacceptable" → Found 3 SDKs with only 22-30% coverage
+**User identified one gap**:
+1. "Different levels of thoroughness is unacceptable" → Found 3 SDKs with only 22-30% coverage
 
 **Response**: Systematic update to achieve 100% fixture parity across all SDKs.
 
@@ -42,9 +41,7 @@
 
 ## Architecture Discovery
 
-### Why Zig SDK Needs HTTP
-
-**All other SDKs use the SAME C library core**:
+**All SDKs use the SAME C library core**:
 | SDK | Binding Type | Native Library |
 |-----|--------------|----------------|
 | C | Direct source | `arch_client` |
@@ -52,13 +49,6 @@
 | Node.js | N-API addon | `arch_client` native |
 | Java | JNI | `libarch_client.jnilib` |
 | Go | CGO | `libarch_client.a` |
-| **Zig** | **Pure Zig** | **None (HTTP client)** |
-
-**Zig is fundamentally different**:
-- No FFI, no C dependencies
-- Pure Zig HTTP REST client
-- Requires HTTP server (doesn't exist)
-- Standalone implementation
 
 ---
 
@@ -83,20 +73,12 @@ All SDKs have access to the SAME 79 fixture test cases, but:
 | C | 64/79 | 81% | ⚠️ Verify completeness |
 | Node.js | 20/79 | 25% | 🔧 Update in progress |
 | Java | 17/79 | 22% | 🔧 Update pending |
-| Zig | 0/79 | 0% | ❌ Blocked (no HTTP server) |
 
 ---
 
 ## Bugs Fixed This Iteration
 
-**Bug #5: Zig SDK JSON Polygon Parsing**
-- Location: `all_operations_test.zig:608`
-- Issue: Accessed array as object
-- Fix: Changed to array access
-- Commit: `d89b5fa2`
-- Status: ✅ FIXED
-
-**Total Bugs Fixed**: 5 across all iterations
+**Total Bugs Fixed**: 4 across all iterations
 
 ---
 

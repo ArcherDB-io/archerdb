@@ -7,7 +7,7 @@
 
 ## Executive Summary
 
-ArcherDB has 6 SDKs (Python, Node.js, Go, Java, C, future Zig) that require comprehensive testing and benchmarking infrastructure. Recent testing revealed significant gaps: operation coverage ranges from 50% (C) to 93% (Python/Go), cross-SDK behavioral inconsistencies exist, and benchmarking lacks statistical rigor. Industry best practices for SDK testing emphasize three critical pillars: (1) cross-SDK contract testing with shared test specifications, (2) multi-tier test execution balancing fast feedback with comprehensive coverage, and (3) statistically sound benchmarking with proper warmup, percentile reporting, and regression detection.
+ArcherDB has 5 SDKs (Python, Node.js, Go, Java, C) that require comprehensive testing and benchmarking infrastructure. Recent testing revealed significant gaps: operation coverage ranges from 50% (C) to 93% (Python/Go), cross-SDK behavioral inconsistencies exist, and benchmarking lacks statistical rigor. Industry best practices for SDK testing emphasize three critical pillars: (1) cross-SDK contract testing with shared test specifications, (2) multi-tier test execution balancing fast feedback with comprehensive coverage, and (3) statistically sound benchmarking with proper warmup, percentile reporting, and regression detection.
 
 The recommended approach builds on ArcherDB's existing infrastructure (pytest for Python, JUnit for Java, GitHub Actions for CI) while adding centralized integration tests in `tests/sdk/` for cross-SDK scenarios and a dedicated `benchmarks/` directory for performance regression tracking. The architecture uses matrix-based parallel execution to test all SDKs simultaneously, shared JSON test fixtures to ensure behavioral consistency, and tiered test execution (smoke tests on every push, SDK tests on PRs, multi-node tests nightly) to balance speed with coverage.
 
@@ -28,7 +28,6 @@ Industry-standard testing frameworks are already in use and appropriate for the 
 - **Shared JSON test fixtures:** For cross-SDK contract testing, ensuring all SDKs exhibit identical behavior on same inputs
 
 **Critical additions needed:**
-- **zBench (Zig):** For future Zig SDK, provides p75/p99/p995 percentiles with warmup support
 - **JMH (Java benchmarking):** Currently missing, essential for proper JVM warmup (10K+ iterations required)
 - **k6 (load testing):** Language-agnostic load testing with Grafana integration for system-level benchmarks
 
@@ -37,7 +36,7 @@ Industry-standard testing frameworks are already in use and appropriate for the 
 Research identified 9 table stakes features (minimum for a trustworthy SDK test suite), 10 competitive differentiators (demonstrate maturity), and 7 anti-features to avoid (commonly requested but problematic).
 
 **Must have (table stakes):**
-- Operation correctness tests for all 14 operations across 6 SDKs (84 test cases minimum)
+- Operation correctness tests for all 14 operations across 5 SDKs (70 test cases minimum)
 - Cross-SDK parity matrix ensuring identical behavior across all SDKs
 - Error handling tests for all 30+ error codes per docs/error-codes.md
 - Empty results handling (queries returning zero results must not crash)
@@ -118,7 +117,7 @@ Based on research, the project naturally decomposes into 5 phases following depe
 
 ### Phase 2: SDK Test Suite Development
 **Rationale:** Builds on infrastructure; focuses on correctness before performance; enables cross-SDK parity detection early
-**Delivers:** Operation correctness tests (14 ops x 6 SDKs), error handling tests (30+ error codes), shared JSON test fixtures, cross-SDK parity matrix
+**Delivers:** Operation correctness tests (14 ops x 5 SDKs), error handling tests (30+ error codes), shared JSON test fixtures, cross-SDK parity matrix
 **Addresses:** Operation correctness, cross-SDK parity, error handling, input validation (4 table stakes features)
 **Uses:** pytest, JUnit 5, Go testing, Node test runner, shared canonical-events.json
 **Implements:** SDK-specific test layer + centralized integration tests
@@ -129,7 +128,7 @@ Based on research, the project naturally decomposes into 5 phases following depe
 **Rationale:** Correctness proven by Phase 2; now measure performance with statistical rigor
 **Delivers:** Benchmark runners per SDK, percentile reporting (P50/P95/P99/P99.9), warmup validation, regression detection automation, baseline management
 **Addresses:** Basic latency metrics, basic throughput metrics, performance regression detection (2 table stakes + 1 differentiator)
-**Uses:** pytest-benchmark, JMH, go test -bench, zBench (Zig)
+**Uses:** pytest-benchmark, JMH, go test -bench
 **Implements:** Benchmark suite in `benchmarks/` with standardized result collection
 **Avoids:** Insufficient warmup (Pitfall #1), ignoring tail latencies (Pitfall #7), coordinated omission (Pitfall #8), benchmark noise (Pitfall #4), missing baselines (Pitfall #10)
 **Research flag:** Standard patterns — benchmarking methodology well-established in docs/benchmarks.md
@@ -175,14 +174,14 @@ Phases with standard patterns (skip research-phase):
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | All technologies verified in use or official docs; pytest/JUnit/Go testing already working; JMH/zBench well-documented |
+| Stack | HIGH | All technologies verified in use or official docs; pytest/JUnit/Go testing already working; JMH well-documented |
 | Features | HIGH | Table stakes derived from SDK-TESTING-FINAL-REPORT.md real testing experience; differentiators from industry best practices |
 | Architecture | HIGH | Builds on existing monorepo structure; patterns verified in CockroachDB/Aerospike testing; matrix builds already in ci.yml |
 | Pitfalls | HIGH | 10 pitfalls sourced from academic research (USENIX, ACM), industry case studies, and ArcherDB's own discovered issues |
 
 **Overall confidence:** HIGH
 
-All research validated against ArcherDB's existing codebase, official documentation, and recent search results. Recommended technologies are either already in use (pytest, JUnit, Go testing, github-action-benchmark) or industry-standard for their language (JMH for Java, zBench for Zig). Architecture patterns match existing infrastructure (monorepo, GitHub Actions, matrix builds). Pitfalls include several already observed in ArcherDB testing (cross-SDK inconsistency, single-node limitations).
+All research validated against ArcherDB's existing codebase, official documentation, and recent search results. Recommended technologies are either already in use (pytest, JUnit, Go testing, github-action-benchmark) or industry-standard for their language (JMH for Java). Architecture patterns match existing infrastructure (monorepo, GitHub Actions, matrix builds). Pitfalls include several already observed in ArcherDB testing (cross-SDK inconsistency, single-node limitations).
 
 ### Gaps to Address
 
@@ -197,7 +196,7 @@ Research is comprehensive for the intended scope. Minor gaps to validate during 
 
 ### Primary (HIGH confidence)
 - `/home/g/archerdb/docs/SDK-TESTING-FINAL-REPORT.md` — Recent comprehensive testing results showing 50-93% pass rates across SDKs
-- `/home/g/archerdb/docs/SDK-COMPLETENESS-FINAL.md` — Complete SDK operation matrix (14 operations x 6 SDKs)
+- `/home/g/archerdb/docs/SDK-COMPLETENESS-FINAL.md` — Complete SDK operation matrix (14 operations x 5 SDKs)
 - `/home/g/archerdb/docs/benchmarks.md` — Established benchmark methodology and target metrics
 - `/home/g/archerdb/docs/testing/performance-baselines.md` — Regression detection framework with 5% throughput / 25% P99 thresholds
 - `/home/g/archerdb/docs/error-codes.md` — 30+ error codes requiring test coverage

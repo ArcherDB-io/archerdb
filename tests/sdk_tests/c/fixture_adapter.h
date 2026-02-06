@@ -38,6 +38,21 @@
 #define MAX_TAGS 8
 
 /**
+ * @brief Maximum number of setup operations per case.
+ */
+#define MAX_SETUP_OPERATIONS 8
+
+typedef enum {
+    SETUP_OP_INSERT = 1,
+    SETUP_OP_QUERY_RADIUS = 2,
+} setup_operation_type_t;
+
+typedef struct {
+    setup_operation_type_t type;
+    int count;
+} setup_operation_t;
+
+/**
  * @brief A single test case from a fixture file
  */
 typedef struct {
@@ -60,6 +75,16 @@ typedef struct {
     uint32_t radius_m;
     uint32_t limit;
     uint64_t group_id;
+    uint64_t timestamp_min;
+    uint64_t timestamp_max;
+
+    // Polygon parameters
+    double polygon_vertices[MAX_EVENTS_PER_CASE][2];
+    int polygon_vertex_count;
+
+    // Query-entity checks (e.g. TTL clear follow-up)
+    arch_uint128_t query_entity_id;
+    bool has_query_entity_id;
 
     // TTL parameters
     uint32_t ttl_seconds;
@@ -68,12 +93,43 @@ typedef struct {
     int expected_result_code;
     bool expect_success;
     int expected_count;
+    bool expected_count_is_min;
+    bool has_expected_count;
+    uint32_t expected_result_codes[MAX_EVENTS_PER_CASE];
+    int expected_result_code_count;
+    uint32_t expected_new_ttl_min_seconds;
+    bool has_expected_new_ttl_min_seconds;
+    bool expected_entity_still_exists;
+    bool has_expected_entity_still_exists;
+    int expected_found_count;
+    bool has_expected_found_count;
+    bool expected_found;
+    bool has_expected_found;
     arch_uint128_t expected_entity_ids[MAX_EVENTS_PER_CASE];
     int expected_entity_id_count;
+    arch_uint128_t expected_excluded_ids[MAX_EVENTS_PER_CASE];
+    int expected_excluded_id_count;
 
     // Setup data (events to insert before test)
     geo_event_t setup_events[MAX_EVENTS_PER_CASE];
     int setup_event_count;
+
+    // Setup data (events to upsert after insert_first)
+    geo_event_t setup_upsert_events[MAX_EVENTS_PER_CASE];
+    int setup_upsert_event_count;
+
+    // Setup data (events from perform_operations insert)
+    geo_event_t setup_extra_events[MAX_EVENTS_PER_CASE];
+    int setup_extra_event_count;
+
+    setup_operation_t setup_operations[MAX_SETUP_OPERATIONS];
+    int setup_operation_count;
+
+    // Setup actions
+    arch_uint128_t setup_clear_ttl_id;
+    bool has_setup_clear_ttl;
+    uint32_t setup_wait_seconds;
+    bool has_setup_wait_seconds;
 } TestCase;
 
 /**

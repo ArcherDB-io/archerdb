@@ -25,7 +25,7 @@ Goal-oriented guides:
 
 - [SDK Retry Semantics](sdk-retry-semantics.md) - Configure retry behavior and handle errors
 - [Error Codes](error-codes.md) - Understand and troubleshoot errors
-- [Testing Guide](testing/README.md) - Run tests locally for all 6 SDKs
+- [Testing Guide](testing/README.md) - Run tests locally for all 5 SDKs
 - [Benchmark Guide](benchmarks/README.md) - Run and interpret performance benchmarks
 
 ### Reference

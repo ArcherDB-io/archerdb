@@ -18,15 +18,15 @@ score: 10/10 must-haves verified
 
 | # | Truth | Status | Evidence |
 |---|-------|--------|----------|
-| 1 | SDK tests run automatically on every PR | ✓ VERIFIED | sdk-pr.yml triggers on pull_request, tests all 6 SDKs |
+| 1 | SDK tests run automatically on every PR | ✓ VERIFIED | sdk-pr.yml triggers on pull_request, tests all 5 SDKs |
 | 2 | Smoke tests complete in <5 minutes and gate PR merges | ✓ VERIFIED | sdk-smoke.yml has timeout-minutes: 5, fail_on_failure: true |
-| 3 | Nightly suite runs all 6 SDKs across multiple topologies | ✓ VERIFIED | sdk-nightly.yml has matrix with [1, 3, 5] nodes, all 6 SDKs |
+| 3 | Nightly suite runs all 5 SDKs across multiple topologies | ✓ VERIFIED | sdk-nightly.yml has matrix with [1, 3, 5] nodes, all 5 SDKs |
 | 4 | Weekly benchmark suite runs with historical tracking | ✓ VERIFIED | benchmark-weekly.yml scheduled cron '0 2 * * 0', uses github-action-benchmark |
 | 5 | Benchmark regressions >10% trigger alerts and fail workflow | ✓ VERIFIED | alert-threshold: '110%', fail-on-alert: true |
-| 6 | Developers can run all tests locally following documentation | ✓ VERIFIED | testing/README.md provides instructions for all 6 SDKs |
+| 6 | Developers can run all tests locally following documentation | ✓ VERIFIED | testing/README.md provides instructions for all 5 SDKs |
 | 7 | CI tier structure (smoke/PR/nightly) is clearly documented | ✓ VERIFIED | testing/ci-tiers.md documents all 4 tiers with durations |
 | 8 | Benchmark guide explains running, interpreting, and tracking results | ✓ VERIFIED | benchmarks/README.md covers running, percentiles, regression detection |
-| 9 | SDK comparison matrix shows feature parity across all 6 SDKs | ✓ VERIFIED | sdk/comparison-matrix.md has 14 operations x 6 SDKs with code examples |
+| 9 | SDK comparison matrix shows feature parity across all 5 SDKs | ✓ VERIFIED | sdk/comparison-matrix.md has 14 operations x 5 SDKs with code examples |
 | 10 | Protocol and curl docs exist (already complete from Phase 12) | ✓ VERIFIED | curl-examples.md and protocol.md exist with substantive content |
 
 **Score:** 10/10 truths verified
@@ -35,14 +35,14 @@ score: 10/10 must-haves verified
 
 | Artifact | Expected | Status | Details |
 |----------|----------|--------|---------|
-| `.github/workflows/sdk-smoke.yml` | Smoke tests on every push | ✓ VERIFIED | 163 lines, all 6 SDKs, JUnit XML, 5-min timeout |
-| `.github/workflows/sdk-pr.yml` | Full PR test suite | ✓ VERIFIED | 186 lines, all 6 SDKs including C/Zig, JUnit XML, 15-min timeout |
+| `.github/workflows/sdk-smoke.yml` | Smoke tests on every push | ✓ VERIFIED | 163 lines, all 5 SDKs, JUnit XML, 5-min timeout |
+| `.github/workflows/sdk-pr.yml` | Full PR test suite | ✓ VERIFIED | 186 lines, all 5 SDKs including C, JUnit XML, 15-min timeout |
 | `.github/workflows/sdk-nightly.yml` | Nightly multi-node tests | ✓ VERIFIED | 229 lines, matrix with node_count [1,3,5], JUnit XML, 2h timeout |
 | `.github/workflows/benchmark-weekly.yml` | Weekly benchmark automation | ✓ VERIFIED | 126 lines, Sunday 2 AM cron, benchmark-action integration |
-| `docs/testing/README.md` | Local test running guide | ✓ VERIFIED | 338 lines, all 6 SDKs, pytest/npm/go/maven instructions |
+| `docs/testing/README.md` | Local test running guide | ✓ VERIFIED | 338 lines, all 5 SDKs, pytest/npm/go/maven instructions |
 | `docs/testing/ci-tiers.md` | CI tier documentation | ✓ VERIFIED | 255 lines, smoke/PR/nightly/weekly structure |
 | `docs/benchmarks/README.md` | Benchmark guide | ✓ VERIFIED | 397 lines, performance targets, regression detection |
-| `docs/sdk/comparison-matrix.md` | SDK feature parity | ✓ VERIFIED | 430 lines, 14 ops x 6 SDKs, code examples |
+| `docs/sdk/comparison-matrix.md` | SDK feature parity | ✓ VERIFIED | 430 lines, 14 ops x 5 SDKs, code examples |
 | `docs/curl-examples.md` | curl operation examples | ✓ VERIFIED | Exists with 13+ curl commands for operations |
 | `docs/protocol.md` | Wire format documentation | ✓ VERIFIED | Exists with nanodegrees format (8 mentions) |
 | `docs/SDK_LIMITATIONS.md` | Known issues and workarounds | ✓ VERIFIED | Exists from Phase 14 |
@@ -80,11 +80,11 @@ All CI and DOCS requirements from REQUIREMENTS.md are satisfied:
 
 | File | Line | Pattern | Severity | Impact |
 |------|------|---------|----------|--------|
-| sdk-smoke.yml | 122, 138 | "not yet implemented" | ℹ️ Info | Intentional placeholder for C/Zig SDK tests |
-| sdk-pr.yml | 131, 153 | "not yet implemented" | ℹ️ Info | Intentional placeholder for C/Zig SDK tests |
-| sdk-nightly.yml | 148, 167 | "not yet implemented" | ℹ️ Info | Intentional placeholder for C/Zig SDK tests |
+| sdk-smoke.yml | 122 | "not yet implemented" | ℹ️ Info | Intentional placeholder for C SDK tests |
+| sdk-pr.yml | 131 | "not yet implemented" | ℹ️ Info | Intentional placeholder for C SDK tests |
+| sdk-nightly.yml | 148 | "not yet implemented" | ℹ️ Info | Intentional placeholder for C SDK tests |
 
-**No blockers.** All "not yet implemented" patterns are intentional placeholders for C and Zig SDK tests that don't exist yet. These create skipped test results in JUnit XML for tracking purposes, as documented in 18-01-SUMMARY.md.
+**No blockers.** All "not yet implemented" patterns are intentional placeholders for C SDK tests that don't exist yet. These create skipped test results in JUnit XML for tracking purposes, as documented in 18-01-SUMMARY.md.
 
 ### Human Verification Required
 
@@ -98,9 +98,9 @@ None. All success criteria can be verified programmatically.
 
 **Truth 1: SDK tests run automatically on every PR**
 - ✓ Artifact: `.github/workflows/sdk-pr.yml` exists (186 lines)
-- ✓ Substantive: Triggers on `pull_request`, tests all 6 SDKs (matrix: [python, nodejs, go, java, c, zig])
+- ✓ Substantive: Triggers on `pull_request`, tests all 5 SDKs (matrix: [python, nodejs, go, java, c])
 - ✓ Wired: mikepenz/action-junit-report@v5 integrated for test reporting
-- ✓ All 6 SDKs in matrix (verified by grep)
+- ✓ All 5 SDKs in matrix (verified by grep)
 
 **Truth 2: Smoke tests complete in <5 minutes and gate PR merges**
 - ✓ Artifact: `.github/workflows/sdk-smoke.yml` exists (163 lines)
@@ -108,9 +108,9 @@ None. All success criteria can be verified programmatically.
 - ✓ Wired: fail_on_failure: true gates merges
 - ✓ JUnit XML output for all SDKs with mikepenz/action-junit-report
 
-**Truth 3: Nightly suite runs all 6 SDKs across multiple topologies**
+**Truth 3: Nightly suite runs all 5 SDKs across multiple topologies**
 - ✓ Artifact: `.github/workflows/sdk-nightly.yml` exists (229 lines)
-- ✓ Substantive: Matrix strategy with sdk: [python, nodejs, go, java, c, zig], node_count: [1, 3, 5]
+- ✓ Substantive: Matrix strategy with sdk: [python, nodejs, go, java, c], node_count: [1, 3, 5]
 - ✓ Wired: Scheduled cron '0 2 * * *' (2 AM UTC daily)
 - ✓ JUnit XML output per SDK per topology
 
@@ -129,7 +129,7 @@ None. All success criteria can be verified programmatically.
 
 **Truth 6: Developers can run all tests locally following documentation**
 - ✓ Artifact: `docs/testing/README.md` exists (338 lines)
-- ✓ Substantive: Instructions for all 6 SDKs (pytest 8 mentions, npm, go, maven, make, zig)
+- ✓ Substantive: Instructions for all 5 SDKs (pytest 8 mentions, npm, go, maven, make)
 - ✓ Wired: Links to test_infrastructure/README.md for cluster harness
 - ✓ Quick start section with build and run instructions
 
@@ -145,9 +145,9 @@ None. All success criteria can be verified programmatically.
 - ✓ Wired: Links to docs/BENCHMARKS.md for detailed methodology
 - ✓ Historical tracking and CI integration explained
 
-**Truth 9: SDK comparison matrix shows feature parity across all 6 SDKs**
+**Truth 9: SDK comparison matrix shows feature parity across all 5 SDKs**
 - ✓ Artifact: `docs/sdk/comparison-matrix.md` exists (430 lines)
-- ✓ Substantive: 14 operations x 6 SDKs parity table, code examples for insert and query-radius
+- ✓ Substantive: 14 operations x 5 SDKs parity table, code examples for insert and query-radius
 - ✓ Wired: Linked from docs/README.md and docs/PARITY.md
 - ✓ Python mentioned 11 times with all other SDKs
 

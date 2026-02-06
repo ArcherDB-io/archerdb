@@ -6,12 +6,13 @@ wrapping the ctypes bindings with Python-friendly types.
 """
 
 import ctypes
+import logging
 import os
 import sys
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Callable, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 # Add archerdb bindings to path
 _sdk_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -39,6 +40,8 @@ from .types import (
     TopologyResponse,
     degrees_to_nano,
 )
+
+_LOG = logging.getLogger(__name__)
 from .errors import ArcherDBError, StateError, StateException
 
 
@@ -245,6 +248,15 @@ class NativeClientResult:
     data: Optional[bytes]
 
 
+@dataclass
+class _NativeRequestContext:
+    """Tracks inflight native requests to keep memory alive safely."""
+    event: threading.Event
+    result: Optional[NativeClientResult]
+    packet: bindings.CPacket
+    data: Optional[ctypes.Array]
+
+
 class NativeClient:
     """
     Low-level native client for ArcherDB.
@@ -257,14 +269,12 @@ class NativeClient:
         self._addresses = addresses
         self._client: Optional[bindings.CClient] = None
         self._on_completion: Optional[Callable] = None
-        self._callback_received = threading.Event()
-        self._callback_result: List[Any] = [None, None, None]
         self._lock = threading.Lock()
         self._connected = False
-        # Keep packet alive until callback completes to prevent use-after-free
-        # The C client stores internal pointers to the packet memory
-        self._current_packet: Optional[bindings.CPacket] = None
-        self._current_data: Optional[ctypes.Array] = None
+        # Keep inflight packets/data alive until completion callbacks fire.
+        self._inflight: Dict[int, _NativeRequestContext] = {}
+        self._inflight_lock = threading.Lock()
+        self._next_tag = 1
 
     def connect(self) -> bool:
         """Connect to the cluster. Returns True on success."""
@@ -273,16 +283,33 @@ class NativeClient:
                 return True
 
             @bindings.OnCompletion
-            def on_completion(ctx, packet, timestamp, data_ptr, data_size):
-                self._callback_result[0] = packet.contents.status
-                self._callback_result[1] = data_size
+            def on_completion(completion_ctx, packet, timestamp, data_ptr, data_size):
+                packet_tag = int(packet.contents.user_tag)
+                with self._inflight_lock:
+                    req_ctx = self._inflight.pop(packet_tag, None)
+                    if req_ctx is None:
+                        packet_addr = ctypes.addressof(packet.contents)
+                        for tag, ctx in list(self._inflight.items()):
+                            if ctypes.addressof(ctx.packet) == packet_addr:
+                                req_ctx = ctx
+                                del self._inflight[tag]
+                                break
+                if req_ctx is None:
+                    _LOG.warning("Completion for unknown packet tag %s", packet_tag)
+                    return
+
                 if data_size > 0 and data_ptr:
-                    self._callback_result[2] = bytes(
+                    payload = bytes(
                         ctypes.cast(data_ptr, ctypes.POINTER(ctypes.c_ubyte * data_size)).contents
                     )
                 else:
-                    self._callback_result[2] = None
-                self._callback_received.set()
+                    payload = None
+                req_ctx.result = NativeClientResult(
+                    status=packet.contents.status,
+                    data_size=data_size,
+                    data=payload,
+                )
+                req_ctx.event.set()
 
             self._on_completion = on_completion
             self._client = bindings.CClient()
@@ -305,11 +332,33 @@ class NativeClient:
 
     def disconnect(self) -> None:
         """Disconnect from the cluster."""
+        pending_events: List[threading.Event] = []
         with self._lock:
-            if self._client and self._connected:
-                bindings.arch_client_deinit(ctypes.byref(self._client))
+            if not self._client or not self._connected:
+                return
+        with self._inflight_lock:
+            pending_events = [
+                ctx.event for ctx in self._inflight.values() if not ctx.event.is_set()
+            ]
+
+        # Wait briefly for any inflight requests to complete to avoid native aborts.
+        for event in pending_events:
+            event.wait(timeout=30.0)
+
+        with self._lock:
+            if not self._client or not self._connected:
+                return
+            if any(not event.is_set() for event in pending_events):
+                _LOG.warning("Client disconnect while request still inflight; skipping deinit.")
                 self._connected = False
                 self._client = None
+                return
+
+            bindings.arch_client_deinit(ctypes.byref(self._client))
+            self._connected = False
+            self._client = None
+        with self._inflight_lock:
+            self._inflight.clear()
 
     def is_connected(self) -> bool:
         """Return True if connected."""
@@ -322,30 +371,43 @@ class NativeClient:
         timeout: float = 30.0
     ) -> NativeClientResult:
         """Submit an operation and wait for result."""
+        ctx: Optional[_NativeRequestContext] = None
         with self._lock:
             if not self._connected or not self._client:
                 raise RuntimeError("Client not connected")
 
-            # Store packet and data in instance to prevent garbage collection
-            # The C client stores internal pointers that would become dangling
-            # if we allowed Python to free this memory before the callback
-            self._current_packet = bindings.CPacket()
-            self._current_data = data
-            packet = self._current_packet
+            # Keep packet + data alive via inflight map.
+            packet = bindings.CPacket()
 
             # Zero the opaque field explicitly (maps to internal packet fields)
             ctypes.memset(ctypes.addressof(packet.opaque), 0, 64)
+            # Zero padding to keep extern packet clean
+            if hasattr(packet, "_padding"):
+                ctypes.memset(ctypes.addressof(packet._padding), 0, 8)
             packet.user_data = 1
-            packet.user_tag = 0
             packet.operation = operation
             packet.status = bindings.PacketStatus.OK
             packet.data = ctypes.cast(data, ctypes.c_void_p)
             packet.data_size = ctypes.sizeof(data)
 
-            self._callback_received.clear()
-            self._callback_result[0] = None
-            self._callback_result[1] = None
-            self._callback_result[2] = None
+            ctx = _NativeRequestContext(
+                event=threading.Event(),
+                result=None,
+                packet=packet,
+                data=data,
+            )
+            # Assign a unique tag to correlate callbacks to inflight requests.
+            with self._inflight_lock:
+                tag = self._next_tag & 0xFFFF
+                if tag == 0:
+                    tag = 1
+                while tag in self._inflight:
+                    tag = (tag + 1) & 0xFFFF
+                    if tag == 0:
+                        tag = 1
+                self._next_tag = (tag + 1) & 0xFFFF
+                packet.user_tag = tag
+                self._inflight[tag] = ctx
 
             client_status = bindings.arch_client_submit(
                 ctypes.byref(self._client),
@@ -353,26 +415,25 @@ class NativeClient:
             )
 
             if client_status != bindings.ClientStatus.OK:
-                self._current_packet = None
-                self._current_data = None
+                with self._inflight_lock:
+                    self._inflight.pop(tag, None)
                 return NativeClientResult(status=-1, data_size=0, data=None)
 
         # Wait outside lock to allow other threads
-        if not self._callback_received.wait(timeout=timeout):
+        if ctx is None or not ctx.event.wait(timeout=timeout):
             # Timeout - packet may still be in flight, keep references
+            _LOG.warning("Native request timed out (op=%s, tag=%s)", operation, tag)
             return NativeClientResult(status=-2, data_size=0, data=None)
 
-        # Callback received - C client is done with the packet
-        # Clear references to allow garbage collection
-        with self._lock:
-            self._current_packet = None
-            self._current_data = None
+        # If the server evicted the client, mark it disconnected to avoid
+        # use-after-free on subsequent submits.
+        result = ctx.result or NativeClientResult(status=-3, data_size=0, data=None)
+        if result.status == bindings.PacketStatus.CLIENT_EVICTED:
+            with self._lock:
+                self._connected = False
+                self._client = None
 
-        return NativeClientResult(
-            status=self._callback_result[0] if self._callback_result[0] is not None else -3,
-            data_size=self._callback_result[1] or 0,
-            data=self._callback_result[2],
-        )
+        return result
 
     def submit_bytes(
         self,
@@ -381,6 +442,7 @@ class NativeClient:
         timeout: float = 30.0
     ) -> NativeClientResult:
         """Submit an operation with raw bytes data and wait for result."""
+        ctx: Optional[_NativeRequestContext] = None
         with self._lock:
             if not self._connected or not self._client:
                 raise RuntimeError("Client not connected")
@@ -388,24 +450,36 @@ class NativeClient:
             # Create a ctypes buffer from bytes and store in instance
             # to prevent garbage collection while C client holds pointers
             c_data = (ctypes.c_uint8 * len(data)).from_buffer_copy(data)
-            self._current_data = c_data
-
-            self._current_packet = bindings.CPacket()
-            packet = self._current_packet
+            packet = bindings.CPacket()
 
             # Zero the opaque field explicitly (maps to internal packet fields)
             ctypes.memset(ctypes.addressof(packet.opaque), 0, 64)
+            # Zero padding to keep extern packet clean
+            if hasattr(packet, "_padding"):
+                ctypes.memset(ctypes.addressof(packet._padding), 0, 8)
             packet.user_data = 1
-            packet.user_tag = 0
             packet.operation = operation
             packet.status = bindings.PacketStatus.OK
             packet.data = ctypes.cast(c_data, ctypes.c_void_p)
             packet.data_size = len(data)
 
-            self._callback_received.clear()
-            self._callback_result[0] = None
-            self._callback_result[1] = None
-            self._callback_result[2] = None
+            ctx = _NativeRequestContext(
+                event=threading.Event(),
+                result=None,
+                packet=packet,
+                data=c_data,
+            )
+            with self._inflight_lock:
+                tag = self._next_tag & 0xFFFF
+                if tag == 0:
+                    tag = 1
+                while tag in self._inflight:
+                    tag = (tag + 1) & 0xFFFF
+                    if tag == 0:
+                        tag = 1
+                self._next_tag = (tag + 1) & 0xFFFF
+                packet.user_tag = tag
+                self._inflight[tag] = ctx
 
             client_status = bindings.arch_client_submit(
                 ctypes.byref(self._client),
@@ -413,25 +487,23 @@ class NativeClient:
             )
 
             if client_status != bindings.ClientStatus.OK:
-                self._current_packet = None
-                self._current_data = None
+                with self._inflight_lock:
+                    self._inflight.pop(tag, None)
                 return NativeClientResult(status=-1, data_size=0, data=None)
 
         # Wait outside lock to allow other threads
-        if not self._callback_received.wait(timeout=timeout):
+        if ctx is None or not ctx.event.wait(timeout=timeout):
             # Timeout - packet may still be in flight, keep references
+            _LOG.warning("Native request timed out (op=%s, tag=%s)", operation, tag)
             return NativeClientResult(status=-2, data_size=0, data=None)
 
-        # Callback received - C client is done with the packet
-        with self._lock:
-            self._current_packet = None
-            self._current_data = None
+        result = ctx.result or NativeClientResult(status=-3, data_size=0, data=None)
+        if result.status == bindings.PacketStatus.CLIENT_EVICTED:
+            with self._lock:
+                self._connected = False
+                self._client = None
 
-        return NativeClientResult(
-            status=self._callback_result[0] if self._callback_result[0] is not None else -3,
-            data_size=self._callback_result[1] or 0,
-            data=self._callback_result[2],
-        )
+        return result
 
     # ========== High-level Operations ==========
 

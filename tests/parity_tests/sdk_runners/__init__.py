@@ -15,7 +15,6 @@ from . import node_runner
 from . import go_runner
 from . import java_runner
 from . import c_runner
-from . import zig_runner
 
 __all__ = [
     "python_runner",
@@ -23,5 +22,4 @@ __all__ = [
     "go_runner",
     "java_runner",
     "c_runner",
-    "zig_runner",
 ]

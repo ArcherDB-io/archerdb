@@ -13,7 +13,6 @@ Per CONTEXT.md: All SDKs must achieve 100% parity before release.
 | Go | None known | Not yet verified |
 | Java | None known | Not yet verified |
 | C | None known | Not yet verified |
-| Zig | None known | Not yet verified |
 
 ## Python SDK
 
@@ -21,7 +20,7 @@ Per CONTEXT.md: All SDKs must achieve 100% parity before release.
 
 ### 1. Connection/Timeout Errors Not Raised as Exceptions (Category C: Implementation Gap)
 
-**Issue:** Native Zig client logs connection errors (`error.ConnectionResetByPeer`) as warnings but doesn't propagate them to Python as `ArcherDBError` exceptions.
+**Issue:** Native client library logs connection errors (`error.ConnectionResetByPeer`) as warnings but doesn't propagate them to Python as `ArcherDBError` exceptions.
 
 **Impact:**
 - Tests expecting `pytest.raises(ArcherDBError)` fail for connection refused and timeout scenarios
@@ -29,7 +28,7 @@ Per CONTEXT.md: All SDKs must achieve 100% parity before release.
 - ERR-01 (connection failures) and ERR-02 (timeouts) partially covered
 
 **Why it exists:**
-- Native binding layer (Zig-Python ctypes) doesn't convert all Zig errors to Python exceptions
+- Native binding layer (ctypes) doesn't convert all native errors to Python exceptions
 - Connection/timeout errors happen in message_bus layer but don't bubble up
 - Error handling focused on distributed errors (multi-region, sharding, encryption)
 
@@ -99,17 +98,6 @@ Per CONTEXT.md: All SDKs must achieve 100% parity before release.
 - Header-only library option
 - Memory management is caller's responsibility
 - Callbacks for async operations
-
-## Zig SDK
-
-**Known Limitations:** None
-
-**Workarounds:** N/A
-
-**Notes:**
-- Comptime type safety
-- Error unions for comprehensive error handling
-- Allocator-aware design
 
 ## Limitation Tracking
 

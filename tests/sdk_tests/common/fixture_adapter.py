@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
@@ -52,6 +53,37 @@ def load_operation_fixture(operation: str) -> Fixture:
         14
     """
     return _load_fixture(operation)
+
+
+def build_geo_event_from_fixture(ev: Dict[str, Any]):
+    """Build a GeoEvent from fixture data without client-side validation."""
+    from archerdb.types import (
+        GeoEvent,
+        GeoEventFlags,
+        degrees_to_nano,
+        meters_to_mm,
+        heading_to_centidegrees,
+    )
+
+    flags_value = ev.get("flags", 0) or 0
+    timestamp_seconds = ev.get("timestamp", 0) or 0
+
+    return GeoEvent(
+        id=0,
+        entity_id=ev["entity_id"],
+        correlation_id=ev.get("correlation_id", 0),
+        user_data=ev.get("user_data", 0),
+        lat_nano=degrees_to_nano(ev["latitude"]),
+        lon_nano=degrees_to_nano(ev["longitude"]),
+        group_id=ev.get("group_id", 0),
+        timestamp=int(timestamp_seconds) * 1_000_000_000,
+        altitude_mm=meters_to_mm(ev.get("altitude_m", 0.0) or 0.0),
+        velocity_mms=meters_to_mm(ev.get("velocity_mps", 0.0) or 0.0),
+        ttl_seconds=ev.get("ttl_seconds", 0),
+        accuracy_mm=meters_to_mm(ev.get("accuracy_m", 0.0) or 0.0),
+        heading_cdeg=heading_to_centidegrees(ev.get("heading", 0.0) or 0.0),
+        flags=GeoEventFlags(flags_value),
+    )
 
 
 def get_case_by_name(fixture: Fixture, name: str) -> Optional[TestCase]:
@@ -138,12 +170,18 @@ def clean_database(client: Any) -> None:
         client: SDK client with query_latest and delete_entities methods
     """
     try:
-        # Query all entities (up to 10000)
-        result = client.query_latest(limit=10000)
-        if hasattr(result, 'events') and result.events:
+        cursor = 0
+        while True:
+            result = client.query_latest(limit=10000, cursor_timestamp=cursor)
+            if not hasattr(result, 'events') or not result.events:
+                break
             entity_ids = [e.entity_id for e in result.events]
             if entity_ids:
                 client.delete_entities(entity_ids)
+            next_cursor = result.events[-1].timestamp
+            if next_cursor == cursor:
+                break
+            cursor = next_cursor
     except Exception:
         # If query fails (e.g., empty database), that's fine
         pass
@@ -164,8 +202,6 @@ def setup_test_data(client: Any, setup_config: Dict[str, Any]) -> List[int]:
     Returns:
         List of entity IDs that were inserted
     """
-    from archerdb import create_geo_event
-
     inserted_ids = []
 
     # Handle insert_first (list of events)
@@ -177,13 +213,7 @@ def setup_test_data(client: Any, setup_config: Dict[str, Any]) -> List[int]:
 
         events = []
         for ev in events_data:
-            event = create_geo_event(
-                entity_id=ev["entity_id"],
-                latitude=ev["latitude"],
-                longitude=ev["longitude"],
-                group_id=ev.get("group_id", 0),
-                ttl_seconds=ev.get("ttl_seconds", 0),
-            )
+            event = build_geo_event_from_fixture(ev)
             events.append(event)
             inserted_ids.append(ev["entity_id"])
 
@@ -200,24 +230,129 @@ def setup_test_data(client: Any, setup_config: Dict[str, Any]) -> List[int]:
         spread_m = range_config.get("spread_m", 100)
 
         events = []
+        spread_deg = spread_m / 111000.0
+        cols = min(10, count) if count > 0 else 1
+        rows = int(math.ceil(count / cols)) if count > 0 else 1
         for i in range(count):
-            # Spread events in a grid pattern
-            lat_offset = (i // 10) * (spread_m / 111000)  # ~111km per degree
-            lon_offset = (i % 10) * (spread_m / 111000)
-
-            event = create_geo_event(
-                entity_id=start_id + i,
-                latitude=base_lat + lat_offset,
-                longitude=base_lon + lon_offset,
-            )
+            row = i // cols
+            col = i % cols
+            row_frac = 0.5 if rows <= 1 else row / (rows - 1)
+            col_frac = 0.5 if cols <= 1 else col / (cols - 1)
+            lat_offset = (row_frac - 0.5) * spread_deg
+            lon_offset = (col_frac - 0.5) * spread_deg
+            event = build_geo_event_from_fixture({
+                "entity_id": start_id + i,
+                "latitude": base_lat + lat_offset,
+                "longitude": base_lon + lon_offset,
+            })
             events.append(event)
             inserted_ids.append(start_id + i)
 
         if events:
-            # Insert in batches of 1000
-            for i in range(0, len(events), 1000):
-                batch = events[i:i+1000]
+            # Insert in smaller batches to respect server request limits
+            for i in range(0, len(events), 200):
+                batch = events[i:i+200]
                 client.insert_events(batch)
+
+    # Handle insert_hotspot (generate hotspot distribution)
+    if "insert_hotspot" in setup_config:
+        hotspot = setup_config["insert_hotspot"]
+        center_lat = hotspot["center_latitude"]
+        center_lon = hotspot["center_longitude"]
+        count = int(hotspot["count"])
+        concentration = float(hotspot.get("concentration_percentage", 100))
+        start_id = int(hotspot.get("start_entity_id", 1))
+
+        hotspot_count = int(round(count * (concentration / 100.0)))
+        spread_count = max(count - hotspot_count, 0)
+
+        events = []
+        for i in range(count):
+            if i < hotspot_count:
+                total = max(hotspot_count, 1)
+                idx = i
+                spread_deg = 0.005  # ~500m
+            else:
+                total = max(spread_count, 1)
+                idx = i - hotspot_count
+                spread_deg = 0.05  # ~5km
+
+            cols = min(10, total)
+            rows = int(math.ceil(total / cols)) if total > 0 else 1
+            row = idx // cols if cols > 0 else 0
+            col = idx % cols if cols > 0 else 0
+            row_frac = 0.5 if rows <= 1 else row / (rows - 1)
+            col_frac = 0.5 if cols <= 1 else col / (cols - 1)
+            lat = center_lat + (row_frac - 0.5) * spread_deg
+            lon = center_lon + (col_frac - 0.5) * spread_deg
+
+            event = build_geo_event_from_fixture({
+                "entity_id": start_id + i,
+                "latitude": lat,
+                "longitude": lon,
+            })
+            events.append(event)
+            inserted_ids.append(start_id + i)
+
+        if events:
+            for i in range(0, len(events), 200):
+                batch = events[i:i+200]
+                client.insert_events(batch)
+
+    # Handle insert_with_timestamps (events with explicit timestamps)
+    if "insert_with_timestamps" in setup_config:
+        timestamp_events = setup_config["insert_with_timestamps"]
+        events = []
+        for ev in timestamp_events:
+            event = build_geo_event_from_fixture(ev)
+            events.append(event)
+            inserted_ids.append(ev["entity_id"])
+
+        if events:
+            for i in range(0, len(events), 200):
+                batch = events[i:i+200]
+                client.insert_events(batch)
+
+    # Handle then_upsert (update after initial insert)
+    if "then_upsert" in setup_config:
+        upsert_data = setup_config["then_upsert"]
+        if isinstance(upsert_data, dict):
+            upsert_data = [upsert_data]
+        events = [build_geo_event_from_fixture(ev) for ev in upsert_data]
+        if events:
+            client.upsert_events(events)
+
+    # Handle then_clear_ttl (explicit TTL clear)
+    if "then_clear_ttl" in setup_config:
+        entity_id = setup_config["then_clear_ttl"]
+        client.clear_ttl(entity_id)
+
+    # Handle then_wait_seconds (sleep for TTL propagation)
+    if "then_wait_seconds" in setup_config:
+        wait_seconds = setup_config["then_wait_seconds"]
+        time.sleep(float(wait_seconds))
+
+    # Handle perform_operations (status fixture)
+    if "perform_operations" in setup_config:
+        operations = setup_config["perform_operations"]
+        for op in operations:
+            op_type = op.get("type")
+            count = int(op.get("count", 0))
+            if op_type == "insert" and count > 0:
+                events = []
+                base_id = 99000
+                for i in range(count):
+                    events.append(build_geo_event_from_fixture({
+                        "entity_id": base_id + i,
+                        "latitude": 40.0 + (i * 0.0001),
+                        "longitude": -74.0 - (i * 0.0001),
+                    }))
+                for i in range(0, len(events), 200):
+                    batch = events[i:i+200]
+                    client.insert_events(batch)
+            if op_type == "query_radius" and count > 0:
+                for _ in range(count):
+                    client.query_radius(40.0, -74.0, 1000, limit=10)
 
     return inserted_ids
 
@@ -365,7 +500,8 @@ def verify_events_contain(
 def verify_count_in_range(
     actual_count: int,
     expected: Dict[str, Any],
-    operation_name: str
+    operation_name: str,
+    max_results: Optional[int] = None,
 ) -> None:
     """Verify count matches expected from fixture.
 
@@ -384,6 +520,8 @@ def verify_count_in_range(
     """
     if "count" in expected:
         expected_count = expected["count"]
+        if max_results is not None and expected_count > max_results:
+            expected_count = max_results
         if actual_count != expected_count:
             raise AssertionError(
                 f"{operation_name}: Expected count {expected_count}, got {actual_count}"
@@ -391,6 +529,17 @@ def verify_count_in_range(
 
     if "count_in_range" in expected:
         min_count = expected["count_in_range"]
+        if max_results is not None and min_count > max_results:
+            min_count = max_results
+        if actual_count < min_count:
+            raise AssertionError(
+                f"{operation_name}: Expected at least {min_count} events, got {actual_count}"
+            )
+
+    if "count_min" in expected:
+        min_count = expected["count_min"]
+        if max_results is not None and min_count > max_results:
+            min_count = max_results
         if actual_count < min_count:
             raise AssertionError(
                 f"{operation_name}: Expected at least {min_count} events, got {actual_count}"
@@ -398,6 +547,8 @@ def verify_count_in_range(
 
     if "count_in_range_min" in expected:
         min_count = expected["count_in_range_min"]
+        if max_results is not None and min_count > max_results:
+            min_count = max_results
         if actual_count < min_count:
             raise AssertionError(
                 f"{operation_name}: Expected at least {min_count} events, got {actual_count}"

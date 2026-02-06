@@ -222,12 +222,28 @@ func generateRangeEvents(rangeGen map[string]interface{}) []types.GeoEvent {
 	events := make([]types.GeoEvent, 0, count)
 	// Spread in degrees (approximate: 1 degree ~= 111km)
 	spreadDeg := spreadM / 111000.0
+	cols := 10
+	if count < cols {
+		cols = count
+	}
+	if cols <= 0 {
+		cols = 1
+	}
+	rows := (count + cols - 1) / cols
 
 	for i := 0; i < count; i++ {
-		// Distribute points in a grid pattern within the spread area
-		offset := float64(i) / float64(count)
-		lat := baseLat + (offset-0.5)*spreadDeg
-		lon := baseLon + (offset-0.5)*spreadDeg
+		row := i / cols
+		col := i % cols
+		rowFrac := 0.5
+		colFrac := 0.5
+		if rows > 1 {
+			rowFrac = float64(row) / float64(rows-1)
+		}
+		if cols > 1 {
+			colFrac = float64(col) / float64(cols-1)
+		}
+		lat := baseLat + (rowFrac-0.5)*spreadDeg
+		lon := baseLon + (colFrac-0.5)*spreadDeg
 
 		event := types.GeoEvent{
 			EntityID: types.ToUint128(startID + uint64(i)),
@@ -263,29 +279,52 @@ func generateHotspotEvents(hotspot map[string]interface{}) []types.GeoEvent {
 		concentration = v / 100.0
 	}
 
-	// Limit count to avoid batch size limits in test environments
-	// Use conservative limit for integration tests
-	const maxEvents = 100
-	if count > maxEvents {
-		count = maxEvents
-	}
+	// Use full fixture count; batching handles large inserts in tests.
 
 	events := make([]types.GeoEvent, 0, count)
 	// Most events (concentration%) within ~500m, rest spread further
-	nearSpreadDeg := 0.005  // ~500m
-	farSpreadDeg := 0.05    // ~5km
+	nearSpreadDeg := 0.005 // ~500m
+	farSpreadDeg := 0.05   // ~5km
+
+	hotspotCount := int(float64(count) * concentration)
+	if hotspotCount > count {
+		hotspotCount = count
+	}
+	spreadCount := count - hotspotCount
 
 	for i := 0; i < count; i++ {
-		isNear := float64(i) / float64(count) < concentration
+		isNear := i < hotspotCount
+		total := spreadCount
+		idx := i - hotspotCount
 		spread := farSpreadDeg
 		if isNear {
+			total = hotspotCount
+			idx = i
 			spread = nearSpreadDeg
 		}
-
-		// Simple deterministic distribution
-		factor := float64(i) / float64(count)
-		lat := centerLat + (factor-0.5)*spread
-		lon := centerLon + (factor-0.5)*spread
+		if total <= 0 {
+			total = 1
+		}
+		cols := 10
+		if total < cols {
+			cols = total
+		}
+		if cols <= 0 {
+			cols = 1
+		}
+		rows := (total + cols - 1) / cols
+		row := idx / cols
+		col := idx % cols
+		rowFrac := 0.5
+		colFrac := 0.5
+		if rows > 1 {
+			rowFrac = float64(row) / float64(rows-1)
+		}
+		if cols > 1 {
+			colFrac = float64(col) / float64(cols-1)
+		}
+		lat := centerLat + (rowFrac-0.5)*spread
+		lon := centerLon + (colFrac-0.5)*spread
 
 		event := types.GeoEvent{
 			EntityID: types.ToUint128(startID + uint64(i)),

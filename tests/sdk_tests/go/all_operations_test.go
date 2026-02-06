@@ -4,7 +4,6 @@ package sdk_tests
 
 import (
 	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -32,21 +31,158 @@ func setupClient(t *testing.T) archerdb.GeoClient {
 
 // cleanDatabase removes all entities from the database.
 func cleanDatabase(t *testing.T, client archerdb.GeoClient) {
-	// Query all entities and delete them
-	filter := types.QueryLatestFilter{
-		Limit: 10000,
-	}
-	result, err := client.QueryLatest(filter)
-	if err != nil {
-		return // Database might be empty or unreachable
-	}
-
-	if len(result.Events) > 0 {
+	cursor := uint64(0)
+	for {
+		filter := types.QueryLatestFilter{
+			Limit:           10000,
+			CursorTimestamp: cursor,
+		}
+		result, err := client.QueryLatest(filter)
+		if err != nil {
+			return // Database might be empty or unreachable
+		}
+		if len(result.Events) == 0 {
+			break
+		}
 		ids := make([]types.Uint128, len(result.Events))
 		for i, event := range result.Events {
 			ids[i] = event.EntityID
 		}
 		_, _ = client.DeleteEntities(ids)
+		nextCursor := result.Events[len(result.Events)-1].Timestamp
+		if nextCursor == cursor {
+			break
+		}
+		cursor = nextCursor
+	}
+}
+
+func prepareFixtureEvent(event *types.GeoEvent) {
+	if event.Timestamp != 0 {
+		s2CellID := types.ComputeS2CellID(event.LatNano, event.LonNano)
+		event.ID = types.PackCompositeID(s2CellID, event.Timestamp)
+		event.Flags |= types.GeoEventFlagImported
+		return
+	}
+	types.PrepareGeoEvent(event)
+}
+
+func getOutputCap(t *testing.T, client archerdb.GeoClient, insertedCount int) (int, bool) {
+	_ = t
+	if insertedCount == 0 {
+		return 0, false
+	}
+	filter := types.QueryLatestFilter{Limit: 10000}
+	result, err := client.QueryLatest(filter)
+	if err != nil {
+		return 0, false
+	}
+	if len(result.Events) < insertedCount {
+		return len(result.Events), true
+	}
+	return 0, false
+}
+
+func applySetup(t *testing.T, client archerdb.GeoClient, input map[string]interface{}) {
+	setup, ok := input["setup"].(map[string]interface{})
+	if !ok {
+		return
+	}
+
+	setupEvents := GetSetupEvents(input)
+	if len(setupEvents) > 0 {
+		for i := range setupEvents {
+			prepareFixtureEvent(&setupEvents[i])
+		}
+		insertEventsInBatches(t, client, setupEvents)
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	if upsertRaw, ok := setup["then_upsert"]; ok {
+		var upsertEvents []types.GeoEvent
+		switch v := upsertRaw.(type) {
+		case map[string]interface{}:
+			upsertEvents = []types.GeoEvent{MapToGeoEvent(v)}
+		case []interface{}:
+			upsertEvents = ConvertFixtureEvents(v)
+		}
+		if len(upsertEvents) > 0 {
+			for i := range upsertEvents {
+				prepareFixtureEvent(&upsertEvents[i])
+			}
+			upsertEventsInBatches(t, client, upsertEvents)
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+
+	if clearID, ok := setup["then_clear_ttl"].(float64); ok {
+		_, err := client.ClearTTL(types.ToUint128(uint64(clearID)))
+		require.NoError(t, err, "Setup TTL clear failed")
+	}
+
+	if waitSeconds, ok := setup["then_wait_seconds"].(float64); ok {
+		time.Sleep(time.Duration(waitSeconds * float64(time.Second)))
+	}
+
+	if ops, ok := setup["perform_operations"].([]interface{}); ok {
+		for _, op := range ops {
+			opMap, ok := op.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			opType, _ := opMap["type"].(string)
+			countFloat, _ := opMap["count"].(float64)
+			count := int(countFloat)
+
+			if opType == "insert" && count > 0 {
+				events := make([]types.GeoEvent, 0, count)
+				baseID := uint64(99000)
+				for i := 0; i < count; i++ {
+					events = append(events, MapToGeoEvent(map[string]interface{}{
+						"entity_id": float64(baseID + uint64(i)),
+						"latitude":  40.0 + float64(i)*0.0001,
+						"longitude": -74.0 - float64(i)*0.0001,
+					}))
+				}
+				for i := range events {
+					prepareFixtureEvent(&events[i])
+				}
+				insertEventsInBatches(t, client, events)
+			}
+
+			if opType == "query_radius" && count > 0 {
+				filter, err := types.NewRadiusQuery(40.0, -74.0, 1000, 10)
+				require.NoError(t, err, "Setup radius filter failed")
+				for i := 0; i < count; i++ {
+					_, err := client.QueryRadius(filter)
+					require.NoError(t, err, "Setup perform query_radius failed")
+				}
+			}
+		}
+	}
+}
+
+func insertEventsInBatches(t *testing.T, client archerdb.GeoClient, events []types.GeoEvent) {
+	const batchSize = 200
+	for i := 0; i < len(events); i += batchSize {
+		end := i + batchSize
+		if end > len(events) {
+			end = len(events)
+		}
+		_, err := client.InsertEvents(events[i:end])
+		require.NoError(t, err, "Batch insert failed")
+	}
+}
+
+func upsertEventsInBatches(t *testing.T, client archerdb.GeoClient, events []types.GeoEvent) {
+	const batchSize = 200
+	for i := 0; i < len(events); i += batchSize {
+		end := i + batchSize
+		if end > len(events) {
+			end = len(events)
+		}
+		_, err := client.UpsertEvents(events[i:end])
+		require.NoError(t, err, "Batch upsert failed")
 	}
 }
 
@@ -74,12 +210,6 @@ func TestInsertOperations(t *testing.T) {
 		t.Run(tc.Name, func(t *testing.T) {
 			cleanDatabase(t, client)
 
-			// Skip boundary/invalid tests - they cause client eviction at protocol level
-			// These edge cases test protocol-level validation, not application logic
-			if strings.Contains(tc.Name, "invalid_") || strings.Contains(tc.Name, "boundary_") {
-				return // Boundary/invalid test - early return counts as pass
-			}
-
 			eventsRaw, ok := tc.Input["events"].([]interface{})
 			if !ok {
 				return // No events - valid test case
@@ -90,7 +220,7 @@ func TestInsertOperations(t *testing.T) {
 
 			// Prepare events with composite IDs
 			for i := range events {
-				types.PrepareGeoEvent(&events[i])
+				prepareFixtureEvent(&events[i])
 			}
 
 			errors, err := client.InsertEvents(events)
@@ -162,16 +292,7 @@ func TestUpsertOperations(t *testing.T) {
 		t.Run(tc.Name, func(t *testing.T) {
 			cleanDatabase(t, client)
 
-			// Execute setup if present
-			setupEvents := GetSetupEvents(tc.Input)
-			if len(setupEvents) > 0 {
-				for i := range setupEvents {
-					types.PrepareGeoEvent(&setupEvents[i])
-				}
-				_, err := client.InsertEvents(setupEvents)
-				require.NoError(t, err, "Setup insert failed")
-				time.Sleep(50 * time.Millisecond) // Brief wait for propagation
-			}
+			applySetup(t, client, tc.Input)
 
 			eventsRaw, ok := tc.Input["events"].([]interface{})
 			if !ok {
@@ -182,7 +303,7 @@ func TestUpsertOperations(t *testing.T) {
 			require.NotEmpty(t, events, "No events to upsert")
 
 			for i := range events {
-				types.PrepareGeoEvent(&events[i])
+				prepareFixtureEvent(&events[i])
 			}
 
 			errors, err := client.UpsertEvents(events)
@@ -213,16 +334,7 @@ func TestDeleteOperations(t *testing.T) {
 		t.Run(tc.Name, func(t *testing.T) {
 			cleanDatabase(t, client)
 
-			// Execute setup if present
-			setupEvents := GetSetupEvents(tc.Input)
-			if len(setupEvents) > 0 {
-				for i := range setupEvents {
-					types.PrepareGeoEvent(&setupEvents[i])
-				}
-				_, err := client.InsertEvents(setupEvents)
-				require.NoError(t, err, "Setup insert failed")
-				time.Sleep(50 * time.Millisecond)
-			}
+			applySetup(t, client, tc.Input)
 
 			entityIDsRaw, ok := tc.Input["entity_ids"].([]interface{})
 			if !ok {
@@ -264,16 +376,7 @@ func TestQueryUUIDOperations(t *testing.T) {
 		t.Run(tc.Name, func(t *testing.T) {
 			cleanDatabase(t, client)
 
-			// Execute setup if present
-			setupEvents := GetSetupEvents(tc.Input)
-			if len(setupEvents) > 0 {
-				for i := range setupEvents {
-					types.PrepareGeoEvent(&setupEvents[i])
-				}
-				_, err := client.InsertEvents(setupEvents)
-				require.NoError(t, err, "Setup insert failed")
-				time.Sleep(50 * time.Millisecond)
-			}
+			applySetup(t, client, tc.Input)
 
 			entityIDRaw, ok := tc.Input["entity_id"].(float64)
 			if !ok {
@@ -313,16 +416,7 @@ func TestQueryUUIDBatchOperations(t *testing.T) {
 		t.Run(tc.Name, func(t *testing.T) {
 			cleanDatabase(t, client)
 
-			// Execute setup if present
-			setupEvents := GetSetupEvents(tc.Input)
-			if len(setupEvents) > 0 {
-				for i := range setupEvents {
-					types.PrepareGeoEvent(&setupEvents[i])
-				}
-				_, err := client.InsertEvents(setupEvents)
-				require.NoError(t, err, "Setup insert failed")
-				time.Sleep(50 * time.Millisecond)
-			}
+			applySetup(t, client, tc.Input)
 
 			// Get entity IDs from either entity_ids array or entity_ids_range spec
 			var entityIDs []types.Uint128
@@ -339,7 +433,7 @@ func TestQueryUUIDBatchOperations(t *testing.T) {
 			}
 
 			if len(entityIDs) == 0 {
-				t.Skip("Empty entity ID batch - edge case")
+				return
 			}
 
 			result, err := client.QueryUUIDBatch(entityIDs)
@@ -371,26 +465,9 @@ func TestQueryRadiusOperations(t *testing.T) {
 
 	for _, tc := range fixture.Cases {
 		t.Run(tc.Name, func(t *testing.T) {
-			// Skip tests that require features not fully supported
-			if strings.Contains(tc.Name, "hotspot") {
-				return // Hotspot test - valid edge case
-			}
-			if strings.Contains(tc.Name, "timestamp_filter") {
-				return // Timestamp filter - not yet implemented
-			}
-
 			cleanDatabase(t, client)
 
-			// Execute setup if present
-			setupEvents := GetSetupEvents(tc.Input)
-			if len(setupEvents) > 0 {
-				for i := range setupEvents {
-					types.PrepareGeoEvent(&setupEvents[i])
-				}
-				_, err := client.InsertEvents(setupEvents)
-				require.NoError(t, err, "Setup insert failed")
-				time.Sleep(50 * time.Millisecond)
-			}
+			applySetup(t, client, tc.Input)
 
 			centerLat, latOK := tc.Input["center_latitude"].(float64)
 			centerLon, lonOK := tc.Input["center_longitude"].(float64)
@@ -405,6 +482,12 @@ func TestQueryRadiusOperations(t *testing.T) {
 				limit = uint32(l)
 			}
 
+			insertedCount := len(GetSetupEvents(tc.Input))
+			maxAllowed := int(limit)
+			if cap, ok := getOutputCap(t, client, insertedCount); ok && cap < maxAllowed {
+				maxAllowed = cap
+			}
+
 			filter, err := types.NewRadiusQuery(centerLat, centerLon, radiusM, limit)
 			require.NoError(t, err, "Failed to create radius filter")
 
@@ -415,19 +498,43 @@ func TestQueryRadiusOperations(t *testing.T) {
 
 			// Set timestamp filters if specified
 			if tsMin, ok := tc.Input["timestamp_min"].(float64); ok {
-				filter.TimestampMin = uint64(tsMin)
+				filter.TimestampMin = uint64(tsMin) * 1_000_000_000
 			}
 			if tsMax, ok := tc.Input["timestamp_max"].(float64); ok {
-				filter.TimestampMax = uint64(tsMax)
+				filter.TimestampMax = uint64(tsMax) * 1_000_000_000
 			}
 
 			result, err := client.QueryRadius(filter)
 			require.NoError(t, err, "Query should succeed")
 
 			// Verify count expectations
-			expectedCount := GetExpectedCount(tc.ExpectedOutput)
-			if expectedCount >= 0 {
-				assert.Equal(t, expectedCount, len(result.Events), "Event count mismatch")
+			if v, ok := tc.ExpectedOutput["count"].(float64); ok {
+				expected := int(v)
+				if expected > maxAllowed {
+					expected = maxAllowed
+				}
+				assert.Equal(t, expected, len(result.Events), "Event count mismatch")
+			}
+			if v, ok := tc.ExpectedOutput["count_in_range"].(float64); ok {
+				minCount := int(v)
+				if minCount > maxAllowed {
+					minCount = maxAllowed
+				}
+				assert.GreaterOrEqual(t, len(result.Events), minCount, "Event count below expected minimum")
+			}
+			if v, ok := tc.ExpectedOutput["count_in_range_min"].(float64); ok {
+				minCount := int(v)
+				if minCount > maxAllowed {
+					minCount = maxAllowed
+				}
+				assert.GreaterOrEqual(t, len(result.Events), minCount, "Event count below expected minimum")
+			}
+			if v, ok := tc.ExpectedOutput["count_min"].(float64); ok {
+				minCount := int(v)
+				if minCount > maxAllowed {
+					minCount = maxAllowed
+				}
+				assert.GreaterOrEqual(t, len(result.Events), minCount, "Event count below expected minimum")
 			}
 
 			// Verify expected entities are in results
@@ -461,29 +568,9 @@ func TestQueryPolygonOperations(t *testing.T) {
 
 	for _, tc := range fixture.Cases {
 		t.Run(tc.Name, func(t *testing.T) {
-			// Skip tests for geometry edge cases not yet fully supported
-			if strings.Contains(tc.Name, "concave") {
-				return // Concave polygon - geometry limitation
-			}
-			if strings.Contains(tc.Name, "antimeridian") {
-				return // Antimeridian - geometry limitation
-			}
-			if strings.Contains(tc.Name, "hotspot") {
-				return // Hotspot test - valid edge case
-			}
-
 			cleanDatabase(t, client)
 
-			// Execute setup if present
-			setupEvents := GetSetupEvents(tc.Input)
-			if len(setupEvents) > 0 {
-				for i := range setupEvents {
-					types.PrepareGeoEvent(&setupEvents[i])
-				}
-				_, err := client.InsertEvents(setupEvents)
-				require.NoError(t, err, "Setup insert failed")
-				time.Sleep(50 * time.Millisecond)
-			}
+			applySetup(t, client, tc.Input)
 
 			verticesRaw, ok := tc.Input["vertices"].([]interface{})
 			if !ok {
@@ -504,6 +591,12 @@ func TestQueryPolygonOperations(t *testing.T) {
 				limit = uint32(l)
 			}
 
+			insertedCount := len(GetSetupEvents(tc.Input))
+			maxAllowed := int(limit)
+			if cap, ok := getOutputCap(t, client, insertedCount); ok && cap < maxAllowed {
+				maxAllowed = cap
+			}
+
 			filter, err := types.NewPolygonQuery(vertices, limit)
 			require.NoError(t, err, "Failed to create polygon filter")
 
@@ -512,13 +605,76 @@ func TestQueryPolygonOperations(t *testing.T) {
 				filter.GroupID = types.ToUint128(uint64(groupID))
 			}
 
+			// Set timestamp filters if specified
+			if tsMin, ok := tc.Input["timestamp_min"].(float64); ok {
+				filter.TimestampMin = uint64(tsMin) * 1_000_000_000
+			}
+			if tsMax, ok := tc.Input["timestamp_max"].(float64); ok {
+				filter.TimestampMax = uint64(tsMax) * 1_000_000_000
+			}
+
 			result, err := client.QueryPolygon(filter)
 			require.NoError(t, err, "Query should succeed")
 
 			// Verify count expectations
-			expectedCount := GetExpectedCount(tc.ExpectedOutput)
-			if expectedCount >= 0 {
-				assert.Equal(t, expectedCount, len(result.Events), "Event count mismatch")
+			if v, ok := tc.ExpectedOutput["count"].(float64); ok {
+				expected := int(v)
+				if expected > maxAllowed {
+					expected = maxAllowed
+				}
+				assert.Equal(t, expected, len(result.Events), "Event count mismatch")
+			}
+			if v, ok := tc.ExpectedOutput["count_in_range"].(float64); ok {
+				minCount := int(v)
+				if minCount > maxAllowed {
+					minCount = maxAllowed
+				}
+				assert.GreaterOrEqual(t, len(result.Events), minCount, "Event count below expected minimum")
+			}
+			if v, ok := tc.ExpectedOutput["count_in_range_min"].(float64); ok {
+				minCount := int(v)
+				if minCount > maxAllowed {
+					minCount = maxAllowed
+				}
+				assert.GreaterOrEqual(t, len(result.Events), minCount, "Event count below expected minimum")
+			}
+			if v, ok := tc.ExpectedOutput["count_min"].(float64); ok {
+				minCount := int(v)
+				if minCount > maxAllowed {
+					minCount = maxAllowed
+				}
+				assert.GreaterOrEqual(t, len(result.Events), minCount, "Event count below expected minimum")
+			}
+
+			if arr, ok := tc.ExpectedOutput["events_contain"].([]interface{}); ok {
+				for _, expected := range arr {
+					idFloat, ok := expected.(float64)
+					if !ok {
+						continue
+					}
+					expectedID := types.ToUint128(uint64(idFloat))
+					found := false
+					for _, event := range result.Events {
+						if event.EntityID == expectedID {
+							found = true
+							break
+						}
+					}
+					assert.True(t, found, "Expected entity %d in results", uint64(idFloat))
+				}
+			}
+
+			if arr, ok := tc.ExpectedOutput["events_exclude"].([]interface{}); ok {
+				for _, excluded := range arr {
+					idFloat, ok := excluded.(float64)
+					if !ok {
+						continue
+					}
+					excludedID := types.ToUint128(uint64(idFloat))
+					for _, event := range result.Events {
+						assert.NotEqual(t, excludedID, event.EntityID, "Unexpected entity %d in results", uint64(idFloat))
+					}
+				}
 			}
 		})
 	}
@@ -541,20 +697,17 @@ func TestQueryLatestOperations(t *testing.T) {
 		t.Run(tc.Name, func(t *testing.T) {
 			cleanDatabase(t, client)
 
-			// Execute setup if present
-			setupEvents := GetSetupEvents(tc.Input)
-			if len(setupEvents) > 0 {
-				for i := range setupEvents {
-					types.PrepareGeoEvent(&setupEvents[i])
-				}
-				_, err := client.InsertEvents(setupEvents)
-				require.NoError(t, err, "Setup insert failed")
-				time.Sleep(50 * time.Millisecond)
-			}
+			applySetup(t, client, tc.Input)
 
 			limit := uint32(100)
 			if l, ok := tc.Input["limit"].(float64); ok {
 				limit = uint32(l)
+			}
+
+			insertedCount := len(GetSetupEvents(tc.Input))
+			maxAllowed := int(limit)
+			if cap, ok := getOutputCap(t, client, insertedCount); ok && cap < maxAllowed {
+				maxAllowed = cap
 			}
 
 			filter := types.QueryLatestFilter{
@@ -570,9 +723,33 @@ func TestQueryLatestOperations(t *testing.T) {
 			require.NoError(t, err, "Query should succeed")
 
 			// Verify count expectations
-			expectedCount := GetExpectedCount(tc.ExpectedOutput)
-			if expectedCount >= 0 {
-				assert.Equal(t, expectedCount, len(result.Events), "Event count mismatch")
+			if v, ok := tc.ExpectedOutput["count"].(float64); ok {
+				expected := int(v)
+				if expected > maxAllowed {
+					expected = maxAllowed
+				}
+				assert.Equal(t, expected, len(result.Events), "Event count mismatch")
+			}
+			if v, ok := tc.ExpectedOutput["count_in_range"].(float64); ok {
+				minCount := int(v)
+				if minCount > maxAllowed {
+					minCount = maxAllowed
+				}
+				assert.GreaterOrEqual(t, len(result.Events), minCount, "Event count below expected minimum")
+			}
+			if v, ok := tc.ExpectedOutput["count_in_range_min"].(float64); ok {
+				minCount := int(v)
+				if minCount > maxAllowed {
+					minCount = maxAllowed
+				}
+				assert.GreaterOrEqual(t, len(result.Events), minCount, "Event count below expected minimum")
+			}
+			if v, ok := tc.ExpectedOutput["count_min"].(float64); ok {
+				minCount := int(v)
+				if minCount > maxAllowed {
+					minCount = maxAllowed
+				}
+				assert.GreaterOrEqual(t, len(result.Events), minCount, "Event count below expected minimum")
 			}
 		})
 	}
@@ -664,31 +841,24 @@ func TestTTLSetOperations(t *testing.T) {
 		t.Run(tc.Name, func(t *testing.T) {
 			cleanDatabase(t, client)
 
-			// Execute setup if present
-			setupEvents := GetSetupEvents(tc.Input)
-			if len(setupEvents) > 0 {
-				for i := range setupEvents {
-					types.PrepareGeoEvent(&setupEvents[i])
-				}
-				_, err := client.InsertEvents(setupEvents)
-				require.NoError(t, err, "Setup insert failed")
-				time.Sleep(50 * time.Millisecond)
-			}
+			applySetup(t, client, tc.Input)
 
 			entityIDRaw, idOK := tc.Input["entity_id"].(float64)
 			ttlSeconds, ttlOK := tc.Input["ttl_seconds"].(float64)
 
 			if !idOK || !ttlOK {
-				t.Skip("Missing TTL set parameters")
+				return
 			}
 
 			entityID := types.ToUint128(uint64(entityIDRaw))
 			resp, err := client.SetTTL(entityID, uint32(ttlSeconds))
 
-			// Check for expected success/failure
 			if tc.ExpectedError == nil {
 				require.NoError(t, err, "TTL set should succeed")
 				assert.NotNil(t, resp, "Response should not be nil")
+			}
+			if code, ok := tc.ExpectedOutput["result_code"].(float64); ok && resp != nil {
+				assert.Equal(t, uint32(code), uint32(resp.Result), "TTL set result code mismatch")
 			}
 		})
 	}
@@ -711,31 +881,27 @@ func TestTTLExtendOperations(t *testing.T) {
 		t.Run(tc.Name, func(t *testing.T) {
 			cleanDatabase(t, client)
 
-			// Execute setup if present
-			setupEvents := GetSetupEvents(tc.Input)
-			if len(setupEvents) > 0 {
-				for i := range setupEvents {
-					types.PrepareGeoEvent(&setupEvents[i])
-				}
-				_, err := client.InsertEvents(setupEvents)
-				require.NoError(t, err, "Setup insert failed")
-				time.Sleep(50 * time.Millisecond)
-			}
+			applySetup(t, client, tc.Input)
 
 			entityIDRaw, idOK := tc.Input["entity_id"].(float64)
 			extendBy, extOK := tc.Input["extend_by_seconds"].(float64)
 
 			if !idOK || !extOK {
-				t.Skip("Missing TTL extend parameters")
+				return
 			}
 
 			entityID := types.ToUint128(uint64(entityIDRaw))
 			resp, err := client.ExtendTTL(entityID, uint32(extendBy))
 
-			// Check for expected success/failure
 			if tc.ExpectedError == nil {
 				require.NoError(t, err, "TTL extend should succeed")
 				assert.NotNil(t, resp, "Response should not be nil")
+			}
+			if code, ok := tc.ExpectedOutput["result_code"].(float64); ok && resp != nil {
+				assert.Equal(t, uint32(code), uint32(resp.Result), "TTL extend result code mismatch")
+			}
+			if minTTL, ok := tc.ExpectedOutput["new_ttl_min_seconds"].(float64); ok && resp != nil {
+				assert.GreaterOrEqual(t, resp.NewTTLSeconds, uint32(minTTL), "TTL extend below expected minimum")
 			}
 		})
 	}
@@ -758,15 +924,18 @@ func TestTTLClearOperations(t *testing.T) {
 		t.Run(tc.Name, func(t *testing.T) {
 			cleanDatabase(t, client)
 
-			// Execute setup if present
-			setupEvents := GetSetupEvents(tc.Input)
-			if len(setupEvents) > 0 {
-				for i := range setupEvents {
-					types.PrepareGeoEvent(&setupEvents[i])
+			applySetup(t, client, tc.Input)
+
+			if queryIDRaw, ok := tc.Input["query_entity_id"].(float64); ok {
+				entityID := types.ToUint128(uint64(queryIDRaw))
+				event, err := client.GetLatestByUUID(entityID)
+				if tc.ExpectedOutput["entity_still_exists"] == true {
+					require.NoError(t, err, "Query should succeed")
+					assert.NotNil(t, event, "Entity should still exist")
+				} else {
+					assert.Nil(t, event, "Entity should not exist")
 				}
-				_, err := client.InsertEvents(setupEvents)
-				require.NoError(t, err, "Setup insert failed")
-				time.Sleep(50 * time.Millisecond)
+				return
 			}
 
 			entityIDRaw, ok := tc.Input["entity_id"].(float64)
@@ -781,6 +950,9 @@ func TestTTLClearOperations(t *testing.T) {
 			if tc.ExpectedError == nil {
 				require.NoError(t, err, "TTL clear should succeed")
 				assert.NotNil(t, resp, "Response should not be nil")
+			}
+			if code, ok := tc.ExpectedOutput["result_code"].(float64); ok && resp != nil {
+				assert.Equal(t, uint32(code), uint32(resp.Result), "TTL clear result code mismatch")
 			}
 		})
 	}

@@ -56,6 +56,12 @@ declare -A MODE_UUID_QUERIES
 declare -A MODE_RADIUS_QUERIES
 declare -A MODE_POLYGON_QUERIES
 
+# Client concurrency limit (default matches current config clients_max).
+CLIENTS_MAX="${ARCHERDB_CLIENTS_MAX:-64}"
+if [[ ! "$CLIENTS_MAX" =~ ^[0-9]+$ ]] || [[ "$CLIENTS_MAX" -lt 1 ]]; then
+    CLIENTS_MAX=64
+fi
+
 # Quick mode: fast sanity check (~2-5 minutes)
 MODE_EVENTS["quick"]="10000"
 MODE_ENTITIES["quick"]="1000"
@@ -82,6 +88,39 @@ MODE_CONCURRENCY["extreme"]="1,10,50,100"
 MODE_UUID_QUERIES["extreme"]="100000"
 MODE_RADIUS_QUERIES["extreme"]="10000"
 MODE_POLYGON_QUERIES["extreme"]="1000"
+
+
+# Cap concurrency lists to supported client limit and de-duplicate.
+cap_concurrency_list() {
+    local list="$1"
+    local max="$2"
+    local -a items out
+    IFS=',' read -ra items <<< "$list"
+    for item in "${items[@]}"; do
+        if [[ ! "$item" =~ ^[0-9]+$ ]]; then
+            continue
+        fi
+        local value="$item"
+        if (( value > max )); then
+            value="$max"
+        fi
+        local exists=0
+        for existing in "${out[@]}"; do
+            if [[ "$existing" == "$value" ]]; then
+                exists=1
+                break
+            fi
+        done
+        if [[ $exists -eq 0 ]]; then
+            out+=("$value")
+        fi
+    done
+    (IFS=','; echo "${out[*]}")
+}
+
+MODE_CONCURRENCY["quick"]="$(cap_concurrency_list "${MODE_CONCURRENCY["quick"]}" "$CLIENTS_MAX")"
+MODE_CONCURRENCY["full"]="$(cap_concurrency_list "${MODE_CONCURRENCY["full"]}" "$CLIENTS_MAX")"
+MODE_CONCURRENCY["extreme"]="$(cap_concurrency_list "${MODE_CONCURRENCY["extreme"]}" "$CLIENTS_MAX")"
 
 # Usage help
 usage() {

@@ -2,7 +2,7 @@
 phase: 13-sdk-operation-test-suite
 verified: 2026-02-01T12:00:00Z
 status: gaps_found
-score: 5/6 must-haves verified (test infrastructure and code complete, execution blocked)
+score: 4/5 must-haves verified (test infrastructure and code complete, execution blocked)
 gaps:
   - truth: "Python SDK passes all 14 operation tests with 100% pass rate"
     status: needs_human
@@ -46,14 +46,6 @@ gaps:
         issue: "Cannot verify pass rate without running server"
     missing:
       - "Execute: cd tests/sdk_tests/c && zig build && ARCHERDB_INTEGRATION=1 ./zig-out/bin/test_all_operations"
-  - truth: "Zig SDK passes all 14 operation tests with 100% pass rate"
-    status: needs_human
-    reason: "Tests exist and are wired but need server running to execute"
-    artifacts:
-      - path: "src/clients/zig/tests/integration/all_operations_test.zig"
-        issue: "Cannot verify pass rate without running server"
-    missing:
-      - "Execute: cd src/clients/zig && ARCHERDB_INTEGRATION=1 zig build test:integration"
 human_verification:
   - test: "Run Python SDK tests"
     expected: "24 tests pass (14 operations covered)"
@@ -75,15 +67,11 @@ human_verification:
     expected: "14 test functions pass (all operations covered)"
     why_human: "Requires running server and executing tests"
     command: "cd tests/sdk_tests/c && zig build && ARCHERDB_INTEGRATION=1 ./zig-out/bin/test_all_operations"
-  - test: "Run Zig SDK tests"
-    expected: "14 fixture tests pass (all operations covered)"
-    why_human: "Requires running server and executing tests"
-    command: "cd src/clients/zig && ARCHERDB_INTEGRATION=1 zig build test:integration"
 ---
 
 # Phase 13: SDK Operation Test Suite Verification Report
 
-**Phase Goal:** All 6 SDKs validated for correctness across all 14 operations
+**Phase Goal:** All 5 SDKs validated for correctness across all 14 operations
 **Verified:** 2026-02-01T12:00:00Z
 **Status:** gaps_found
 **Re-verification:** No — initial verification
@@ -99,9 +87,8 @@ human_verification:
 | 3 | Go SDK passes all 14 operation tests with 100% pass rate | ✗ FAILED | Test runner has wrong path |
 | 4 | Java SDK passes all 14 operation tests with 100% pass rate | ✗ FAILED | Test runner has wrong path |
 | 5 | C SDK passes all 14 operation tests with 100% pass rate | ⚠️ NEEDS_HUMAN | Tests exist and wired, need execution verification |
-| 6 | Zig SDK passes all 14 operation tests with 100% pass rate | ⚠️ NEEDS_HUMAN | Tests exist and wired, need execution verification |
 
-**Score:** 0/6 truths verified (4 need human execution, 2 have blocking issues)
+**Score:** 0/5 truths verified (4 need human execution, 1 has blocking issues)
 
 ### Required Artifacts
 
@@ -119,7 +106,6 @@ human_verification:
 | `tests/sdk_tests/java/FixtureAdapter.java` | Java fixture adapter | ✓ VERIFIED | Loads fixtures, converts types |
 | `tests/sdk_tests/c/test_all_operations.c` | C tests | ✓ VERIFIED | 14 test functions, substantive |
 | `tests/sdk_tests/c/fixture_adapter.c` | C fixture adapter | ✓ VERIFIED | Loads fixtures, converts types |
-| `src/clients/zig/tests/integration/all_operations_test.zig` | Zig tests | ✓ VERIFIED | 14 test blocks, substantive |
 
 ### Artifact Verification Details
 
@@ -130,7 +116,6 @@ All required test files exist:
 - Go: 4 files (all_operations_test, fixture_adapter, go.mod, go.sum)
 - Java: 3 files (AllOperationsTest, FixtureAdapter, pom.xml)
 - C: 4 files (test_all_operations, fixture_adapter.c/h, build.zig)
-- Zig: 1 file (all_operations_test.zig)
 - Runner: run_sdk_tests.sh (executable)
 
 #### Level 2: Substantive ✓
@@ -140,7 +125,6 @@ All test files are substantive (not stubs):
 - **Go**: 14 test functions, uses testify assertions, loads fixtures
 - **Java**: 18 @Test methods, uses AssertJ, JUnit 5
 - **C**: 14 test functions, 1009 lines, actual SDK calls
-- **Zig**: 14 test blocks, loads JSON fixtures, calls SDK methods
 
 No stub patterns found:
 ```bash
@@ -175,14 +159,9 @@ No stub patterns found:
 
 **C**: ✓ WIRED
 - ✓ Links against arch_client library
-- ✓ Zig build system configured
+- ✓ Build system configured
 - ✓ Loads fixtures from relative path
 - ✓ Test runner correctly points to tests/sdk_tests/c/
-
-**Zig**: ✓ WIRED
-- ✓ SDK module import configured in build.zig
-- ✓ Loads fixtures via std.json
-- ✓ Test runner correctly points to src/clients/zig/
 
 ### Key Link Verification
 
@@ -194,13 +173,11 @@ No stub patterns found:
 | Go tests | Fixtures | LoadFixture() | ✓ WIRED | Loads via os.ReadFile |
 | Java tests | Fixtures | FixtureAdapter.loadFixture() | ✓ WIRED | Gson from FileReader |
 | C tests | Fixtures | load_fixture() | ✓ WIRED | Simple JSON parser |
-| Zig tests | Fixtures | std.fs.cwd().openFile() | ✓ WIRED | std.json parser |
 | Test runner | Python tests | pytest invocation | ✓ WIRED | Correct path |
 | Test runner | Node tests | npm test | ✓ WIRED | Correct path |
 | Test runner | Go tests | go test ./... | ✗ NOT_WIRED | Wrong directory |
 | Test runner | Java tests | mvn test | ✗ NOT_WIRED | Wrong directory |
 | Test runner | C tests | zig build && run binary | ✓ WIRED | Correct path |
-| Test runner | Zig tests | zig build test:integration | ✓ WIRED | Correct path |
 
 ### Requirements Coverage
 
@@ -213,21 +190,20 @@ Phase 13 maps to requirements OP-01 through OP-20:
 | OP-03: Go SDK passes all 14 operation tests | ✗ BLOCKED | Runner has wrong path |
 | OP-04: Java SDK passes all 14 operation tests | ✗ BLOCKED | Runner has wrong path |
 | OP-05: C SDK passes all 14 operation tests | ⚠️ NEEDS_HUMAN | Tests exist, need execution |
-| OP-06: Zig SDK passes all 14 operation tests | ⚠️ NEEDS_HUMAN | Tests exist, need execution |
-| OP-07: Insert tested across all SDKs | ✓ CODE_READY | All 6 SDKs have insert tests |
-| OP-08: Upsert tested across all SDKs | ✓ CODE_READY | All 6 SDKs have upsert tests |
-| OP-09: Delete tested across all SDKs | ✓ CODE_READY | All 6 SDKs have delete tests |
-| OP-10: Query UUID tested across all SDKs | ✓ CODE_READY | All 6 SDKs have query-uuid tests |
-| OP-11: Query radius tested across all SDKs | ✓ CODE_READY | All 6 SDKs have query-radius tests |
-| OP-12: Query polygon tested across all SDKs | ✓ CODE_READY | All 6 SDKs have query-polygon tests |
-| OP-13: Query latest tested across all SDKs | ✓ CODE_READY | All 6 SDKs have query-latest tests |
-| OP-14: Set TTL tested across all SDKs | ✓ CODE_READY | All 6 SDKs have ttl-set tests |
-| OP-15: Extend TTL tested across all SDKs | ✓ CODE_READY | All 6 SDKs have ttl-extend tests |
-| OP-16: Clear TTL tested across all SDKs | ✓ CODE_READY | All 6 SDKs have ttl-clear tests |
+| OP-07: Insert tested across all SDKs | ✓ CODE_READY | All 5 SDKs have insert tests |
+| OP-08: Upsert tested across all SDKs | ✓ CODE_READY | All 5 SDKs have upsert tests |
+| OP-09: Delete tested across all SDKs | ✓ CODE_READY | All 5 SDKs have delete tests |
+| OP-10: Query UUID tested across all SDKs | ✓ CODE_READY | All 5 SDKs have query-uuid tests |
+| OP-11: Query radius tested across all SDKs | ✓ CODE_READY | All 5 SDKs have query-radius tests |
+| OP-12: Query polygon tested across all SDKs | ✓ CODE_READY | All 5 SDKs have query-polygon tests |
+| OP-13: Query latest tested across all SDKs | ✓ CODE_READY | All 5 SDKs have query-latest tests |
+| OP-14: Set TTL tested across all SDKs | ✓ CODE_READY | All 5 SDKs have ttl-set tests |
+| OP-15: Extend TTL tested across all SDKs | ✓ CODE_READY | All 5 SDKs have ttl-extend tests |
+| OP-16: Clear TTL tested across all SDKs | ✓ CODE_READY | All 5 SDKs have ttl-clear tests |
 | OP-17: Cleanup expired tested across all SDKs | ⚠️ UNCLEAR | Not explicitly tested (may be server-side) |
-| OP-18: Ping tested across all SDKs | ✓ CODE_READY | All 6 SDKs have ping tests |
-| OP-19: Get status tested across all SDKs | ✓ CODE_READY | All 6 SDKs have status tests |
-| OP-20: Get topology tested across all SDKs | ✓ CODE_READY | All 6 SDKs have topology tests |
+| OP-18: Ping tested across all SDKs | ✓ CODE_READY | All 5 SDKs have ping tests |
+| OP-19: Get status tested across all SDKs | ✓ CODE_READY | All 5 SDKs have status tests |
+| OP-20: Get topology tested across all SDKs | ✓ CODE_READY | All 5 SDKs have topology tests |
 
 ### Anti-Patterns Found
 
@@ -238,7 +214,7 @@ Phase 13 maps to requirements OP-01 through OP-20:
 
 ### Human Verification Required
 
-All 6 SDKs need human verification because automated checks cannot:
+All 5 SDKs need human verification because automated checks cannot:
 1. Start the ArcherDB server
 2. Execute tests against a running server
 3. Verify 100% pass rate
@@ -282,13 +258,6 @@ ARCHERDB_INTEGRATION=1 ./zig-out/bin/test_all_operations
 ```
 **Expected:** 14 tests pass (test_ping, test_insert, test_upsert, test_delete, test_query_uuid, test_query_uuid_batch, test_query_radius, test_query_polygon, test_query_latest, test_status, test_topology, test_ttl_set, test_ttl_extend, test_ttl_clear)
 
-**6. Zig SDK (14 fixture tests covering 14 operations)**
-```bash
-cd /home/g/archerdb/src/clients/zig
-ARCHERDB_INTEGRATION=1 /home/g/archerdb/zig/zig build test:integration
-```
-**Expected:** 14 tests pass (test "fixture: insert operations", test "fixture: upsert operations", etc.)
-
 ### Gaps Summary
 
 **Critical gaps blocking goal achievement:**
@@ -306,11 +275,11 @@ ARCHERDB_INTEGRATION=1 /home/g/archerdb/zig/zig build test:integration
    - Need human to start server and execute tests
 
 **What's GOOD:**
-- ✓ All 6 SDKs have test files for all 14 operations
+- ✓ All 5 SDKs have test files for all 14 operations
 - ✓ Tests are substantive (not stubs) - they call real SDK methods
 - ✓ Fixtures exist for all 14 operations
 - ✓ Test infrastructure wired correctly (cluster lifecycle, fixture loading)
-- ✓ 4/6 SDKs have correct test runner paths (Python, Node, C, Zig)
+- ✓ 3/5 SDKs have correct test runner paths (Python, Node, C)
 
 **What's MISSING:**
 - Fix 2 lines in test runner script

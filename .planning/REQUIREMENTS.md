@@ -22,10 +22,10 @@ Requirements for comprehensive SDK testing and benchmarking infrastructure.
 
 ### SDK Development (SDK)
 
-- [x] **SDK-01**: Zig SDK exists in src/clients/zig/ with clean API
-- [x] **SDK-02**: Zig SDK implements all 14 operations
-- [x] **SDK-03**: Zig SDK has unit tests matching other SDKs
-- [x] **SDK-04**: Zig SDK documentation exists (README, examples)
+- [x] **SDK-01**: SDKs exist in src/clients/{python,node,go,java,c} with clean APIs
+- [x] **SDK-02**: All SDKs implement all 14 operations
+- [x] **SDK-03**: All SDKs have unit tests matching other SDKs
+- [x] **SDK-04**: SDK documentation exists (README, examples)
 - [x] **SDK-05**: curl examples documented for all 14 operations
 - [x] **SDK-06**: Protocol documentation explains wire format for custom clients
 
@@ -36,7 +36,6 @@ Requirements for comprehensive SDK testing and benchmarking infrastructure.
 - [ ] **OP-03**: Go SDK passes all 14 operation tests
 - [ ] **OP-04**: Java SDK passes all 14 operation tests
 - [ ] **OP-05**: C SDK passes all 14 operation tests
-- [ ] **OP-06**: Zig SDK passes all 14 operation tests
 - [ ] **OP-07**: Insert (single + batch) tested across all SDKs
 - [ ] **OP-08**: Upsert (single + batch) tested across all SDKs
 - [ ] **OP-09**: Delete entities tested across all SDKs
@@ -64,7 +63,7 @@ Requirements for comprehensive SDK testing and benchmarking infrastructure.
 
 ### Cross-SDK Parity (PARITY)
 
-- [x] **PARITY-01**: Parity matrix created (14 ops x 6 SDKs = 84 cells)
+- [x] **PARITY-01**: Parity matrix created (14 ops x 5 SDKs = 70 cells)
 - [x] **PARITY-02**: All SDKs return identical results for identical queries
 - [x] **PARITY-03**: All SDKs handle edge cases identically (poles, anti-meridian)
 - [x] **PARITY-04**: All SDKs report errors with consistent codes and messages
@@ -174,7 +173,6 @@ Which phases cover which requirements. Updated during roadmap creation.
 | OP-03 | Phase 13 | Pending |
 | OP-04 | Phase 13 | Pending |
 | OP-05 | Phase 13 | Pending |
-| OP-06 | Phase 13 | Pending |
 | OP-07 | Phase 13 | Pending |
 | OP-08 | Phase 13 | Pending |
 | OP-09 | Phase 13 | Pending |
