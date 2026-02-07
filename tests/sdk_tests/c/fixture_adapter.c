@@ -1041,17 +1041,26 @@ Fixture* load_fixture(const char* operation) {
              "%s/../../../test_infrastructure/fixtures/v1/%s.json",
              __FILE__, operation);
 
-    // Try relative path from tests/sdk_tests/c directory
-    char alt_path[512];
-    snprintf(alt_path, sizeof(alt_path),
-             "../../../test_infrastructure/fixtures/v1/%s.json", operation);
+    // Try multiple paths to find fixtures
+    const char* search_paths[] = {
+        // From tests/sdk_tests/c directory
+        "../../../test_infrastructure/fixtures/v1/%s.json",
+        // From project root
+        "test_infrastructure/fixtures/v1/%s.json",
+        // Absolute path (user-specific, update if needed)
+        "/Users/g/.cursor/worktrees/archerdb/ear/test_infrastructure/fixtures/v1/%s.json",
+        NULL
+    };
 
-    FILE* f = fopen(alt_path, "r");
-    if (!f) {
-        // Try absolute path
-        snprintf(path, sizeof(path),
-                 "/home/g/archerdb/test_infrastructure/fixtures/v1/%s.json", operation);
-        f = fopen(path, "r");
+    FILE* f = NULL;
+    for (int i = 0; search_paths[i] != NULL; i++) {
+        char try_path[512];
+        snprintf(try_path, sizeof(try_path), search_paths[i], operation);
+        f = fopen(try_path, "r");
+        if (f) {
+            snprintf(path, sizeof(path), "%s", try_path);
+            break;
+        }
     }
 
     if (!f) {

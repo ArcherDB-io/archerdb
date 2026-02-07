@@ -10,6 +10,7 @@ module.exports = {
   transform: {
     '^.+\\.ts$': ['ts-jest', {
       useESM: false,
+      isolatedModules: true,
     }],
   },
   // Increase timeout for integration tests
@@ -21,4 +22,6 @@ module.exports = {
   // Global setup/teardown for cluster lifecycle
   globalSetup: undefined,
   globalTeardown: undefined,
+  // Suppress console output during tests
+  silent: false,
 };
