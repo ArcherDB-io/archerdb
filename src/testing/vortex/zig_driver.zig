@@ -134,17 +134,50 @@ fn write_results(
     operation: Operation,
     result: []const u8,
 ) !void {
+    const tb = vsr.archerdb;
     switch (operation) {
+        // Spatial queries return a QueryResponse header (16 bytes)
+        // followed by GeoEvent results. Strip the header and use
+        // header.count so the workload receives a flat GeoEvent
+        // array.
+        .query_latest,
+        .query_radius,
+        .query_polygon,
+        => {
+            const hdr_size = @sizeOf(tb.QueryResponse);
+            if (result.len < hdr_size) {
+                try writer.writeInt(u32, 0, .little);
+                return;
+            }
+            const hdr = std.mem.bytesAsValue(
+                tb.QueryResponse,
+                result[0..hdr_size],
+            );
+            try writer.writeInt(u32, hdr.count, .little);
+            if (hdr.count > 0) {
+                try writer.writeAll(result[hdr_size..]);
+            }
+        },
         inline else => |operation_comptime| {
             const result_size = operation_comptime.result_size();
             if (result_size > 0) {
-                const count = @divExact(result.len, result_size);
-                try writer.writeInt(u32, @intCast(count), .little);
+                const count = @divExact(
+                    result.len,
+                    result_size,
+                );
+                try writer.writeInt(
+                    u32,
+                    @intCast(count),
+                    .little,
+                );
                 try writer.writeAll(result);
             } else {
                 log.err(
                     "unexpected size {d} for op: {s}",
-                    .{ result_size, @tagName(operation_comptime) },
+                    .{
+                        result_size,
+                        @tagName(operation_comptime),
+                    },
                 );
                 unreachable;
             }

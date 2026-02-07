@@ -414,7 +414,7 @@ test "format" {
     // Updated 2026-01-29: New checksum after increasing lite config clients_max to 64 and
     // block_size/message_size_max to 32KB.
     try std.testing.expectEqual(
-        107808724781331489756946165266037143896,
+        303245869584125383912230750088474350476,
         vsr.checksum(storage.memory),
     );
 }

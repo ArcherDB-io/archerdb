@@ -524,11 +524,16 @@ class NativeClient:
         result = self.submit(GeoOperation.INSERT_EVENTS.value, c_events)
 
         if result.status < 0:
-            # All failed due to connection error
-            return [(i, InsertGeoEventResult.RESERVED_FIELD) for i in range(len(events))]
+            raise RuntimeError(
+                f"insert_events: connection/timeout error "
+                f"(status={result.status})"
+            )
 
         if result.status != bindings.PacketStatus.OK.value:
-            return [(i, InsertGeoEventResult.RESERVED_FIELD) for i in range(len(events))]
+            raise RuntimeError(
+                f"insert_events: server error "
+                f"(status={result.status})"
+            )
 
         # Parse results - only return non-OK results (actual errors)
         errors = []
@@ -558,8 +563,17 @@ class NativeClient:
 
         result = self.submit(GeoOperation.UPSERT_EVENTS.value, c_events)
 
-        if result.status < 0 or result.status != bindings.PacketStatus.OK.value:
-            return [(i, InsertGeoEventResult.RESERVED_FIELD) for i in range(len(events))]
+        if result.status < 0:
+            raise RuntimeError(
+                f"upsert_events: connection/timeout error "
+                f"(status={result.status})"
+            )
+
+        if result.status != bindings.PacketStatus.OK.value:
+            raise RuntimeError(
+                f"upsert_events: server error "
+                f"(status={result.status})"
+            )
 
         errors = []
         if result.data_size > 0 and result.data:
@@ -591,8 +605,17 @@ class NativeClient:
 
         result = self.submit(GeoOperation.DELETE_ENTITIES.value, c_ids)
 
-        if result.status < 0 or result.status != bindings.PacketStatus.OK.value:
-            return [(i, DeleteEntityResult.ENTITY_NOT_FOUND) for i in range(len(entity_ids))]
+        if result.status < 0:
+            raise RuntimeError(
+                f"delete_entities: connection/timeout error "
+                f"(status={result.status})"
+            )
+
+        if result.status != bindings.PacketStatus.OK.value:
+            raise RuntimeError(
+                f"delete_entities: server error "
+                f"(status={result.status})"
+            )
 
         errors = []
         if result.data_size > 0 and result.data:

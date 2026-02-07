@@ -1725,14 +1725,14 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 timestamp,
             );
 
-            // Update scanner state
-            const end_time = std.time.nanoTimestamp();
-            const run_time_ns: u64 = @intCast(@max(0, end_time - timestamp));
+            // Update scanner state.
+            // Pass the VSR consensus timestamp so is_due() can
+            // correctly schedule the next cleanup interval.
             self.cleanup_scanner.record_batch(
                 result.entries_scanned,
                 result.entries_removed,
                 result.next_position,
-                run_time_ns,
+                timestamp,
             );
 
             // Update entries_with_ttl count (approximate, will be recalculated on full scan)

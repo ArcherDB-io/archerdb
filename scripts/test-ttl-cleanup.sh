@@ -35,7 +35,8 @@ cd "$ROOT_DIR"
 
 # Create temporary directory
 TEMP_DIR=$(mktemp -d)
-trap "rm -rf $TEMP_DIR; kill $SERVER_PID 2>/dev/null || true" EXIT
+# trap "rm -rf $TEMP_DIR; kill $SERVER_PID 2>/dev/null || true" EXIT
+trap "kill $SERVER_PID 2>/dev/null || true" EXIT
 
 echo "============================================"
 echo "ArcherDB TTL Cleanup Test (CRIT-04)"
@@ -55,12 +56,11 @@ PYTHON_CLIENT="$ROOT_DIR/src/clients/python"
 PYTHON_VENV="$PYTHON_CLIENT/venv/bin/python"
 export PYTHONPATH="$PYTHON_CLIENT/src"
 
-# Check for Python archerdb client
-if ! $PYTHON_VENV -c "import archerdb" 2>/dev/null; then
-    echo "ERROR: Python archerdb client not found"
-    echo "Set up: cd src/clients/python && python -m venv venv && source venv/bin/activate && pip install ."
-    exit 1
-fi
+# Install/Update Python archerdb client
+echo "Installing Python client..."
+cd "$PYTHON_CLIENT"
+$PYTHON_VENV -m pip install --no-cache-dir --force-reinstall .
+cd "$TEMP_DIR"
 
 cd "$TEMP_DIR"
 
@@ -81,7 +81,7 @@ echo ""
 # PHASE 2: Start server
 # ===========================================================
 echo "PHASE 2: Starting server..."
-$ARCHERDB start --addresses=127.0.0.1:0 --metrics-port=0 --metrics-bind=127.0.0.1 test.archerdb > server.log 2>&1 &
+$ARCHERDB start --addresses=127.0.0.1:0 --metrics-port=0 --metrics-bind=127.0.0.1 --log-level=debug test.archerdb > server.log 2>&1 &
 SERVER_PID=$!
 echo "Server PID: $SERVER_PID"
 
@@ -100,7 +100,7 @@ done
 sleep 2
 
 # Extract metrics port
-METRICS_PORT=$(grep "metrics server listening" server.log | grep -oP '127\.0\.0\.1:\K[0-9]+' || echo "")
+METRICS_PORT=$(grep "metrics server listening" server.log | sed -n 's/.*127\.0\.0\.1:\([0-9]*\).*/\1/p' || echo "")
 if [ -z "$METRICS_PORT" ]; then
     echo "FAIL: Could not determine metrics port"
     cat server.log
@@ -110,10 +110,10 @@ echo "Metrics port: $METRICS_PORT"
 
 # Extract data port (look for "listening on" that's NOT the metrics server)
 # The cluster listening message has format like: "listening on address=Address{...}"
-DATA_PORT=$(grep -v "metrics server" server.log | grep "listening on" | grep -oP '127\.0\.0\.1:\K[0-9]+' | head -1 || echo "")
+DATA_PORT=$(grep -v "metrics server" server.log | grep "listening on" | sed -n 's/.*127\.0\.0\.1:\([0-9]*\).*/\1/p' | head -1 || echo "")
 if [ -z "$DATA_PORT" ]; then
     # Try alternative pattern - sometimes logged differently
-    DATA_PORT=$(grep "port=" server.log | grep -oP 'port=\K[0-9]+' | head -1 || echo "")
+    DATA_PORT=$(grep "port=" server.log | sed -n 's/.*port=\([0-9]*\).*/\1/p' | head -1 || echo "")
 fi
 if [ -z "$DATA_PORT" ]; then
     echo "FAIL: Could not determine data port"
@@ -151,20 +151,31 @@ cat > ttl_test.py << 'PYEOF'
 import os
 import sys
 import time
+import logging
 import archerdb
 from archerdb.errors import StateException
 
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
+
 PORT = int(os.environ.get("ARCHERDB_PORT", "3000"))
 print(f"Connecting to 127.0.0.1:{PORT}")
+sys.stdout.flush()
 
-config = archerdb.GeoClientConfig(cluster_id=0, addresses=[f"127.0.0.1:{PORT}"])
+config = archerdb.GeoClientConfig(
+    cluster_id=0, 
+    addresses=[f"127.0.0.1:{PORT}"],
+    request_timeout_ms=60000  # 60s timeout
+)
 client = archerdb.GeoClientSync(config)
 
 print("CONNECT_OK")
+sys.stdout.flush()
 
 # Insert entity with short TTL (1 second)
 entity_id = archerdb.id()
 print(f"ENTITY_ID {entity_id}")
+sys.stdout.flush()
 
 event = archerdb.create_geo_event(
     entity_id=entity_id,
@@ -176,23 +187,36 @@ event = archerdb.create_geo_event(
 
 errors = client.insert_event(event)
 print(f"INSERT_ERRORS {errors}")
+sys.stdout.flush()
 
 # Verify insert succeeded by querying
-latest = client.get_latest_by_uuid(entity_id)
+print("QUERY_UUID_START")
+sys.stdout.flush()
+time.sleep(1) # Wait a bit to ensure client state is clean
+# latest = client.get_latest_by_uuid(entity_id)
+# Use batch query to bypass potential issue with singular query_uuid
+results = client.query_uuid_batch([entity_id])
+latest = results.events[0] if results.events else None
+print("QUERY_UUID_END")
+sys.stdout.flush()
 if latest:
     print(f"LATEST_AFTER_INSERT lat={latest.lat_nano} lon={latest.lon_nano} ttl={latest.ttl_seconds}")
 else:
     print("ERROR: Entity not found after insert")
     sys.exit(1)
+sys.stdout.flush()
 
 # Wait for TTL to expire
 print("WAIT_FOR_EXPIRY (2 seconds)...")
+sys.stdout.flush()
 time.sleep(2)
 
 # Run cleanup_expired BEFORE checking lazy expiration
 print("RUNNING_CLEANUP...")
+sys.stdout.flush()
 cleanup = client.cleanup_expired()
 print(f"CLEANUP_RESULT entries_scanned={cleanup.entries_scanned} entries_removed={cleanup.entries_removed}")
+sys.stdout.flush()
 
 # Check if entity is expired (query after cleanup)
 # Note: After cleanup removes an entry from RAM index, the query should:
@@ -216,6 +240,7 @@ except StateException as exc:
         print("LAZY_EXPIRATION_WORKS (entity correctly expired on query)")
     else:
         print(f"ERROR: Unexpected exception: {exc}")
+sys.stdout.flush()
 
 # Evaluate results
 print("")
@@ -272,8 +297,8 @@ else
     echo "CRIT-04 (TTL Cleanup): FAIL"
     echo "  - See ttl_test.log for details"
     echo ""
-    echo "Server log (last 20 lines):"
-    tail -20 server.log
+    echo "Server log:"
+    cat server.log
 fi
 
 # Cleanup

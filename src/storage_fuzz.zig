@@ -21,14 +21,42 @@ pub fn main(gpa: std.mem.Allocator, args: fuzz.FuzzArgs) !void {
     };
 
     const sector_size = constants.sector_size;
-    const sector_count = 64;
-    const storage_size = sector_count * sector_size;
+
+    // Compute required storage size from the zone layout so that the buffer
+    // covers all zones we test against (up to and including client_replies).
+    // Add one extra sector: the IO mock's bounds check uses >= (not >).
+    const storage_size = comptime blk: {
+        const zones_end = vsr.Zone.client_replies.start() +
+            vsr.Zone.client_replies.size().?;
+        break :blk zones_end + sector_size;
+    };
+    const sector_count = comptime @divExact(storage_size, sector_size);
+
+    // Compute maximum sectors in any single zone for read_details buffer sizing.
+    const max_zone_sectors = comptime max_zone_sectors: {
+        var max: u64 = 0;
+        for ([_]vsr.Zone{ .superblock, .wal_headers, .wal_prepares, .client_replies }) |zone| {
+            const count = @divExact(zone.size().?, sector_size);
+            if (count > max) max = count;
+        }
+        break :max_zone_sectors max;
+    };
+
     const iterations = args.events_max orelse 10_000;
 
     var time_os: vsr.time.TimeOS = .{};
     const time = time_os.time();
 
     var prng = stdx.PRNG.from_seed(args.seed);
+
+    // Heap-allocate storage buffers since the zone layout may be too large for the stack.
+    const storage_data_written = try gpa.alignedAlloc(u8, sector_size, storage_size);
+    defer gpa.free(storage_data_written);
+    const storage_data_stored = try gpa.alignedAlloc(u8, sector_size, storage_size);
+    defer gpa.free(storage_data_stored);
+    const storage_data_read = try gpa.alignedAlloc(u8, sector_size, storage_size);
+    defer gpa.free(storage_data_read);
+
     for (0..iterations) |_| {
         var fault_map = std.bit_set.ArrayBitSet(u8, sector_count).initEmpty();
 
@@ -52,8 +80,7 @@ pub fn main(gpa: std.mem.Allocator, args: fuzz.FuzzArgs) !void {
             fault_map.setRangeValue(.{ .start = start, .end = @min(end, sector_count) }, true);
         }
 
-        var storage_data_written: [storage_size]u8 align(sector_size) = undefined;
-        @memset(&storage_data_written, 0);
+        @memset(storage_data_written, 0);
 
         for (0..sector_count) |sector| {
             if (!fault_map.isSet(sector)) {
@@ -63,14 +90,12 @@ pub fn main(gpa: std.mem.Allocator, args: fuzz.FuzzArgs) !void {
             }
         }
 
-        var storage_data_stored: [storage_size]u8 align(sector_size) = undefined;
-        @memset(&storage_data_stored, 0);
-        var storage_data_read: [storage_size]u8 align(sector_size) = undefined;
-        @memset(&storage_data_read, 0);
+        @memset(storage_data_stored, 0);
+        @memset(storage_data_read, 0);
 
         var files: [1]IO.File = .{
             .{
-                .buffer = &storage_data_stored,
+                .buffer = storage_data_stored,
                 .fault_map = &fault_map.masks,
             },
         };
@@ -115,7 +140,7 @@ pub fn main(gpa: std.mem.Allocator, args: fuzz.FuzzArgs) !void {
                 read_length: u64,
             };
 
-            var read_details: [32]ReadDetail = undefined;
+            var read_details: [max_zone_sectors]ReadDetail = undefined;
 
             const zone_sector_count: u64 = @divExact(zone.size().?, sector_size);
             assert(zone_sector_count <= read_details.len);

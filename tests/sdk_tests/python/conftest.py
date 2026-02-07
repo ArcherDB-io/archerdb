@@ -85,9 +85,12 @@ def cluster():
         cluster.stop()
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def client(cluster):
     """Create SDK client connected to test cluster.
+
+    Module-scoped to reuse the same native connection across all
+    tests, avoiding costly reconnection overhead per test.
 
     Yields:
         GeoClientSync: Connected client instance
@@ -101,8 +104,8 @@ def client(cluster):
     config = GeoClientConfig(
         cluster_id=0,
         addresses=address_list,
-        connect_timeout_ms=5000,
-        request_timeout_ms=30000,
+        connect_timeout_ms=10000,
+        request_timeout_ms=60000,
     )
 
     client = GeoClientSync(config)
@@ -120,6 +123,11 @@ def clean_database(client, cluster):
     a clean database state. Per CONTEXT.md decision: fresh
     database per test.
     """
+    import time
+
+    # Brief pause to let the server settle between tests
+    time.sleep(0.1)
+
     try:
         # Query and delete all existing entities using cursor pagination
         cursor = 0

@@ -267,6 +267,38 @@ static bool delete_entities(const arch_uint128_t* ids, int count) {
     return submit_and_wait(&packet);
 }
 
+// Helper: Clean all entities from the database (full cleanup between test groups)
+static void clean_database_all(void) {
+    for (int pass = 0; pass < 3; pass++) {
+        query_latest_filter_t filter = {0};
+        filter.limit = 10000;
+
+        arch_packet_t packet = {0};
+        packet.operation = ARCH_OPERATION_QUERY_LATEST;
+        packet.data = &filter;
+        packet.data_size = sizeof(filter);
+
+        if (!submit_and_wait(&packet) || last_response.status != ARCH_PACKET_OK) return;
+
+        // Parse response: first 16 bytes is header, then events
+        size_t header_size = 16; // QueryResponse header
+        size_t event_size = 128; // GeoEvent size
+        if (last_response.len <= header_size) return; // No events
+
+        int event_count = (int)((last_response.len - header_size) / event_size);
+        if (event_count == 0) return;
+
+        const char* event_data = (const char*)last_response.data + header_size;
+        arch_uint128_t ids[10000];
+        int id_count = 0;
+        for (int i = 0; i < event_count && i < 10000; i++) {
+            const geo_event_t* ev = (const geo_event_t*)(event_data + i * event_size);
+            ids[id_count++] = ev->entity_id;
+        }
+        delete_entities(ids, id_count);
+    }
+}
+
 static int append_event_ids(arch_uint128_t* ids, int count,
                             const geo_event_t* events, int event_count) {
     for (int i = 0; i < event_count && count < MAX_EVENTS_PER_CASE; i++) {
@@ -1076,6 +1108,7 @@ static void test_query_uuid_batch(void) {
 // ============================================================================
 static void test_query_radius(void) {
     printf("\n=== Testing query-radius operations ===\n");
+    clean_database_all();
 
     Fixture* fixture = load_fixture("query-radius");
     if (!fixture) {
@@ -1177,6 +1210,7 @@ static void test_query_radius(void) {
 // ============================================================================
 static void test_query_polygon(void) {
     printf("\n=== Testing query-polygon operations ===\n");
+    clean_database_all();
 
     Fixture* fixture = load_fixture("query-polygon");
     if (!fixture) {
@@ -1292,6 +1326,7 @@ static void test_query_polygon(void) {
 // ============================================================================
 static void test_query_latest(void) {
     printf("\n=== Testing query-latest operations ===\n");
+    clean_database_all();
 
     Fixture* fixture = load_fixture("query-latest");
     if (!fixture) {

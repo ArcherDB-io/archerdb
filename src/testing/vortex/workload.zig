@@ -137,7 +137,11 @@ fn execute(command: Command, driver: *const DriverStdio) !?Result {
             const operation = Operation.query_uuid;
             try send(driver, operation, filters);
 
-            const raw_results = receive(driver, operation, query_uuid_raw_buffer[0..]) catch |err| {
+            const raw_results = receive(
+                driver,
+                operation,
+                query_uuid_raw_buffer[0..],
+            ) catch |err| {
                 switch (err) {
                     error.EndOfStream => return null,
                     else => return err,
@@ -145,12 +149,43 @@ fn execute(command: Command, driver: *const DriverStdio) !?Result {
             };
             return .{ .query_uuid = query_uuid_events(raw_results) };
         },
+        // query_latest sends 1 filter but can return many
+        // GeoEvents (up to filter.limit).  Size the receive
+        // buffer to fit the maximum response.
+        .query_latest => |filters| {
+            const operation = Operation.query_latest;
+            try send(driver, operation, filters);
+
+            const max = @min(
+                @as(usize, filters[0].limit),
+                events_count_max,
+            );
+            const buffer = result_buffers.query_latest[0..max];
+            const results = receive(
+                driver,
+                operation,
+                buffer,
+            ) catch |err| {
+                switch (err) {
+                    error.EndOfStream => return null,
+                    else => return err,
+                }
+            };
+            return .{ .query_latest = results };
+        },
         inline else => |events, tag| {
             const operation = comptime operation_from_command(tag);
             try send(driver, operation, events);
 
-            const buffer = @field(result_buffers, @tagName(tag))[0..events.len];
-            const results = receive(driver, operation, buffer) catch |err| {
+            const buffer = @field(
+                result_buffers,
+                @tagName(tag),
+            )[0..events.len];
+            const results = receive(
+                driver,
+                operation,
+                buffer,
+            ) catch |err| {
                 switch (err) {
                     error.EndOfStream => return null,
                     else => return err,
@@ -195,16 +230,32 @@ fn reconcile(result: Result, command: *const Command, model: *Model) !void {
                     // Track unique entity IDs
                     if (!model.entity_exists(event.entity_id)) {
                         if (model.entities.items.len < entities_count_max) {
-                            model.entities.appendAssumeCapacity(event.entity_id);
+                            model.entities.appendAssumeCapacity(
+                                event.entity_id,
+                            );
                         }
                     }
                     model.events_inserted += 1;
+                } else if (event_result == .exists) {
+                    // LWW rejected an older event for this entity.
+                    // This is expected when the workload re-inserts
+                    // an entity whose existing event has an equal or
+                    // newer composite id.
+                    log.debug(
+                        "insert ignored (exists) event {d}: " ++
+                            "entity_id={d}",
+                        .{ index, event.entity_id },
+                    );
                 } else {
-                    log.err("got result {s} for event {d}: entity_id={d}", .{
-                        @tagName(event_result),
-                        index,
-                        event.entity_id,
-                    });
+                    log.err(
+                        "got result {s} for event {d}: " ++
+                            "entity_id={d}",
+                        .{
+                            @tagName(event_result),
+                            index,
+                            event.entity_id,
+                        },
+                    );
                     return error.TestFailed;
                 }
             }
@@ -225,18 +276,24 @@ fn reconcile(result: Result, command: *const Command, model: *Model) !void {
             }
         },
         .query_latest => |events_found| {
-            // Check that timestamps are monotonically increasing within results.
-            var timestamp_max: u64 = 0;
+            // Server returns newest-first (descending timestamp).
+            // Allow equal timestamps: events in the same batch may
+            // share a nanoTimestamp value.
+            var prev_ts: u64 = std.math.maxInt(u64);
             for (events_found) |event| {
-                if (event.timestamp <= timestamp_max) {
+                if (event.timestamp > prev_ts) {
                     log.err(
-                        "event entity_id={d} timestamp {d} is not greater than " ++
-                            "previous timestamp {d}",
-                        .{ event.entity_id, event.timestamp, timestamp_max },
+                        "query_latest: entity_id={d} ts {d}" ++
+                            " greater than previous {d}",
+                        .{
+                            event.entity_id,
+                            event.timestamp,
+                            prev_ts,
+                        },
                     );
                     return error.TestFailed;
                 }
-                timestamp_max = event.timestamp;
+                prev_ts = event.timestamp;
             }
         },
     }
