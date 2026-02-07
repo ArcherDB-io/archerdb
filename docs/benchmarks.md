@@ -1,437 +1,227 @@
-# ArcherDB Performance Benchmarks
+# ArcherDB Benchmark Results
 
-This document presents comprehensive benchmark results for ArcherDB, covering insert throughput, query latency, and system resource utilization across various configurations.
-
-## Table of Contents
-
-- [Methodology](#methodology)
-- [Performance Targets](#performance-targets)
-- [Benchmark Results](#benchmark-results)
-- [Scalability Analysis](#scalability-analysis)
-- [Comparison with Alternatives](#comparison-with-alternatives)
-- [Reproducing Results](#reproducing-results)
-
-## Methodology
-
-### Test Environment
-
-Benchmarks are conducted on standardized hardware to ensure reproducibility:
-
-| Component | Specification |
-|-----------|---------------|
-| CPU | AMD EPYC 7763 (16 cores / 32 threads) |
-| RAM | 64 GB DDR4-3200 ECC |
-| Storage | NVMe SSD (Samsung 980 PRO, 3.5 GB/s seq read) |
-| OS | Ubuntu 22.04 LTS, kernel 5.15 |
-| Network | 10 Gbps (for cluster tests) |
-
-### Statistical Rigor
-
-To ensure statistically significant results:
-
-1. **Warmup Phase**: Run benchmark until latency variance stabilizes (<5%)
-2. **Sample Size**: Minimum 30 runs per configuration
-3. **Percentiles**: Report p50, p95, p99, p99.9 (not just averages)
-4. **Cold/Warm Cache**: Measure both scenarios
-5. **Outlier Handling**: Report full distribution, don't discard outliers
-
-### Benchmark Modes
-
-The benchmark suite supports three modes:
-
-| Mode | Events | Entities | Runs | Duration | Use Case |
-|------|--------|----------|------|----------|----------|
-| Quick | 10K | 1K | 3 | ~2-5 min | CI/CD validation |
-| Full | 1M | 100K | 10 | ~30-60 min | Release benchmarks |
-| Extreme | 10M | 1M | 30 | ~2+ hours | Performance analysis |
-
-### Workload Characteristics
-
-The benchmark workload simulates a realistic geospatial tracking application:
-
-- **Entity Distribution**: Entities are uniformly distributed globally
-- **Event Generation**: Each entity generates multiple events over time
-- **Query Mix**: UUID lookups, radius queries, polygon queries
-- **Batch Size**: Default 1000 events per batch (configurable)
+This document describes the ArcherDB benchmark framework, performance targets,
+methodology, and how to run benchmarks.
 
 ## Performance Targets
 
-ArcherDB is designed to meet these performance requirements:
+The following targets must be met for production readiness:
 
-| Metric | Target | Rationale |
-|--------|--------|-----------|
-| Insert Throughput | 1M events/sec/node | Support high-volume IoT/fleet workloads |
-| UUID Lookup (p99) | <500us | Real-time entity tracking |
-| Radius Query (p99) | <50ms | Interactive map queries |
-| Polygon Query (p99) | <100ms | Geofence evaluation |
-| Batch Insert (p99) | <10ms | Low-latency data ingestion |
+| Metric | Target | Requirement ID |
+|--------|--------|----------------|
+| 3-node throughput (baseline) | >=770K events/sec | BENCH-T-05 |
+| 3-node throughput (stretch) | >=1M events/sec | BENCH-T-06 |
+| Read latency P95 | <1ms | BENCH-L-05 |
+| Read latency P99 | <10ms | BENCH-L-05 |
+| Write latency P95 | <10ms | BENCH-L-06 |
+| Write latency P99 | <50ms | BENCH-L-06 |
 
-## Benchmark Results
+## Benchmark Types
 
-### Insert Throughput (PERF-01)
+### Throughput Benchmark
 
-Measured by inserting batches of GeoEvents and calculating events per second.
+Measures insert throughput in events per second by batch-inserting events and
+measuring the time per batch.
 
-**Single Client (Sequential)**
+- Batch size: 1000 events per insert
+- Calculation: `total_events / duration_seconds`
+- Tests: 1-node, 3-node, 5-node, 6-node topologies
 
-| Dataset Size | Throughput | p50 | p95 | p99 | p99.9 |
-|--------------|------------|-----|-----|-----|-------|
-| 100K events | 850K/s | 1ms | 2ms | 3ms | 5ms |
-| 1M events | 920K/s | 1ms | 2ms | 3ms | 4ms |
-| 10M events | 890K/s | 1ms | 2ms | 3ms | 5ms |
+### Read Latency Benchmark
 
-**Multiple Clients (Concurrent)**
+Measures query latency by looking up entities by UUID after pre-loading data.
 
-| Clients | Throughput | p50 | p95 | p99 | p99.9 |
-|---------|------------|-----|-----|-----|-------|
-| 1 | 920K/s | 1ms | 2ms | 3ms | 4ms |
-| 10 | 1.2M/s | 1ms | 2ms | 4ms | 6ms |
-| 100 | 1.1M/s | 2ms | 4ms | 8ms | 15ms |
+- Pre-loads test dataset before measurement
+- Queries random entity IDs from the loaded set
+- Measures: P50, P95, P99 percentiles
+- Tests: 1-node, 3-node, 5-node, 6-node topologies
 
-**Key Observations:**
-- Throughput scales well up to 10 clients
-- Beyond 10 clients, contention begins to limit throughput
-- p99.9 latency increases more significantly at high concurrency
-- Batch size of 1000 provides optimal throughput
+### Write Latency Benchmark
 
-### UUID Lookup Latency (PERF-02)
+Measures single-event insert latency (not batch).
 
-Point lookups by entity UUID, measuring index performance.
+- Inserts one event at a time
+- Measures per-operation write time
+- Measures: P50, P95, P99 percentiles
+- Tests: 1-node, 3-node, 5-node, 6-node topologies
 
-| Concurrency | p50 | p95 | p99 | p99.9 |
-|-------------|-----|-----|-----|-------|
-| 1 | 0.1ms | 0.2ms | 0.3ms | 0.5ms |
-| 10 | 0.1ms | 0.2ms | 0.4ms | 0.8ms |
-| 100 | 0.2ms | 0.4ms | 0.6ms | 1.2ms |
+### Mixed Workload Benchmark
 
-**Target Achievement:** p99 consistently <500us at all concurrency levels.
+Combines reads and writes in realistic production ratios to simulate actual
+workloads.
 
-### Radius Query Latency (PERF-03)
+**How read_write_ratio works:**
 
-Spatial queries returning entities within a specified radius.
+- `read_write_ratio=0.8` means 80% reads, 20% writes (default)
+- `read_write_ratio=1.0` means 100% reads (read-only)
+- `read_write_ratio=0.0` means 100% writes (write-only)
+- `read_write_ratio=0.5` means 50% reads, 50% writes
 
-| Radius | Result Count | p50 | p95 | p99 | p99.9 |
-|--------|--------------|-----|-----|-----|-------|
-| 1km | ~10 | 2ms | 5ms | 8ms | 15ms |
-| 10km | ~100 | 5ms | 15ms | 25ms | 40ms |
-| 100km | ~1000 | 15ms | 35ms | 45ms | 70ms |
+**Why mixed workloads matter:**
 
-**Target Achievement:** p99 <50ms for typical radius queries (1-10km).
+Production systems rarely perform only reads or only writes. Mixed workload
+benchmarks capture realistic performance characteristics including:
 
-### Polygon Query Latency (PERF-04)
+- Read-write interference patterns
+- Lock contention under mixed load
+- Cache behavior with concurrent modifications
+- Replication overhead during reads
 
-Complex spatial queries using polygon boundaries.
+## Running Benchmarks
 
-| Polygon Complexity | Area | p50 | p95 | p99 | p99.9 |
-|-------------------|------|-----|-----|-----|-------|
-| Rectangle (4 vertices) | 100km^2 | 3ms | 8ms | 15ms | 25ms |
-| Hexagon (6 vertices) | 100km^2 | 5ms | 12ms | 20ms | 35ms |
-| Complex (20 vertices) | 100km^2 | 10ms | 25ms | 40ms | 65ms |
-
-**Target Achievement:** p99 <100ms for typical polygon queries.
-
-### Batch Query Performance (PERF-05)
-
-Measuring latency for different batch sizes.
-
-| Batch Size | Throughput | p50 | p99 |
-|------------|------------|-----|-----|
-| 1 | 50K/s | 0.02ms | 0.1ms |
-| 100 | 400K/s | 0.2ms | 1ms |
-| 1000 | 900K/s | 1ms | 3ms |
-| 10000 | 950K/s | 10ms | 20ms |
-
-**Optimal Batch Size:** 1000 events provides best balance of throughput and latency.
-
-### Compaction Impact (PERF-06)
-
-Measuring query latency during and after compaction.
-
-| Scenario | Query p99 | Insert p99 |
-|----------|-----------|------------|
-| No compaction | 8ms | 3ms |
-| During compaction | 12ms (+50%) | 4ms (+33%) |
-| After compaction | 7ms (-12%) | 2ms (-33%) |
-
-**Key Finding:** Compaction causes temporary latency increase but improves post-compaction performance.
-
-## Scalability Analysis
-
-### Horizontal Scaling
-
-Measured across cluster sizes with the same total workload.
-
-| Nodes | Total Throughput | Per-Node Throughput | Efficiency |
-|-------|-----------------|---------------------|------------|
-| 1 | 920K/s | 920K/s | 100% |
-| 3 | 2.5M/s | 830K/s | 90% |
-| 5 | 4.0M/s | 800K/s | 87% |
-
-**Observation:** Near-linear scaling with 87-90% efficiency at typical cluster sizes.
-
-### Memory Scaling
-
-Throughput at different memory configurations.
-
-| RAM | Max Entities | Throughput |
-|-----|--------------|------------|
-| 8 GB | 70M | 850K/s |
-| 32 GB | 300M | 920K/s |
-| 128 GB | 1.2B | 900K/s |
-
-**Observation:** Throughput remains stable across memory configurations. Memory primarily limits entity count.
-
-### Storage Impact
-
-Performance across different storage types.
-
-| Storage | Seq Read | Insert p99 | Query p99 |
-|---------|----------|------------|-----------|
-| SATA SSD | 500 MB/s | 8ms | 20ms |
-| NVMe Gen3 | 3 GB/s | 3ms | 8ms |
-| NVMe Gen4 | 7 GB/s | 2ms | 5ms |
-
-**Recommendation:** NVMe Gen3+ recommended for production workloads.
-
-## Comparison with Alternatives
-
-This section presents benchmark comparisons against major geospatial database alternatives.
-All comparisons use identical workloads, hardware, and methodology for fairness.
-
-### Comparison Methodology (BENCH-07)
-
-**Fair comparison principles:**
-
-1. **Same Hardware**: All databases run on identical hardware (8GB memory limit)
-2. **Same Workload**: Identical event generation, query patterns, and parameters
-3. **Both Configurations**: Test default AND tuned configurations for each competitor
-4. **Reproducible**: All benchmarks can be reproduced via provided scripts
-
-**Workload parameters:**
-
-| Parameter | Value |
-|-----------|-------|
-| Entity count | 10,000 |
-| Event count | 100,000 |
-| Query count | 10,000 |
-| Batch size | 1,000 |
-| Radius | 10 km |
-
-### vs. PostGIS (BENCH-03)
-
-PostgreSQL with PostGIS extension for geospatial workloads.
-
-**Configuration tested:**
-- Default: PostgreSQL defaults
-- Tuned: shared_buffers=2GB, effective_cache_size=6GB, work_mem=256MB
-
-| Operation | ArcherDB | PostGIS (tuned) | PostGIS (default) | ArcherDB Advantage |
-|-----------|----------|-----------------|-------------------|-------------------|
-| Insert (ops/s) | 920,000 | 50,000 | 35,000 | 18x faster |
-| UUID Lookup p99 | 0.3ms | 2ms | 4ms | 6-13x faster |
-| Radius Query p99 | 25ms | 100ms | 150ms | 4-6x faster |
-| Polygon Query p99 | 40ms | 200ms | 300ms | 5-7x faster |
-
-**Key Findings:**
-- ArcherDB achieves 18x higher insert throughput than tuned PostGIS
-- Latency improvements across all query types
-- PostGIS tuning provides ~30-40% improvement but doesn't close the gap
-- Replication: ArcherDB <100ms lag vs PostGIS seconds to minutes
-
-**When to choose PostGIS:**
-- Need SQL query flexibility
-- Existing PostgreSQL infrastructure
-- Complex join operations across tables
-
-### vs. Tile38 (BENCH-04)
-
-Dedicated geospatial database with Redis protocol.
-
-**Configuration tested:**
-- Default (Tile38 is optimized by default)
-
-| Operation | ArcherDB | Tile38 | ArcherDB Advantage |
-|-----------|----------|--------|-------------------|
-| Insert (ops/s) | 920,000 | 100,000 | 9x faster |
-| UUID Lookup p99 | 0.3ms | 0.5ms | 1.7x faster |
-| Radius Query p99 | 25ms | 50ms | 2x faster |
-| Polygon Query p99 | 40ms | 80ms | 2x faster |
-
-**Key Findings:**
-- ArcherDB achieves 9x higher insert throughput
-- Tile38 has competitive lookup latency (both in-memory)
-- Tile38 lacks native clustering (standalone only)
-- ArcherDB provides AES-256-GCM encryption; Tile38 has none
-
-**When to choose Tile38:**
-- Simple Redis-protocol integration
-- Single-node deployments only
-- Lower operational complexity acceptable
-
-### vs. Elasticsearch Geo (BENCH-05)
-
-Elasticsearch with geo_point and geo_shape support.
-
-**Configuration tested:**
-- Default: 1GB heap
-- Tuned: 4GB heap, memory lock enabled
-
-| Operation | ArcherDB | Elasticsearch (tuned) | Elasticsearch (default) | ArcherDB Advantage |
-|-----------|----------|----------------------|------------------------|-------------------|
-| Insert (ops/s) | 920,000 | 80,000 | 40,000 | 11-23x faster |
-| UUID Lookup p99 | 0.3ms | 5ms | 10ms | 16-33x faster |
-| Radius Query p99 | 25ms | 80ms | 150ms | 3-6x faster |
-| Polygon Query p99 | 40ms | 120ms | 200ms | 3-5x faster |
-
-**Key Findings:**
-- ArcherDB achieves 11x higher insert throughput than tuned Elasticsearch
-- Elasticsearch optimized for full-text search, not geospatial primary workloads
-- Refresh interval significantly impacts insert throughput
-- Near-real-time search adds latency overhead
-
-**When to choose Elasticsearch:**
-- Need combined full-text and geo search
-- Existing ELK stack infrastructure
-- Complex aggregation queries
-
-### vs. Aerospike (BENCH-06)
-
-High-performance key-value store with geospatial support.
-
-**Configuration tested:**
-- Default with 4GB memory namespace and GEO2DSPHERE index
-
-| Operation | ArcherDB | Aerospike | ArcherDB Advantage |
-|-----------|----------|-----------|-------------------|
-| Insert (ops/s) | 920,000 | 150,000 | 6x faster |
-| UUID Lookup p99 | 0.3ms | 0.4ms | 1.3x faster |
-| Radius Query p99 | 25ms | 45ms | 1.8x faster |
-| Polygon Query p99 | 40ms | 70ms | 1.75x faster |
-
-**Key Findings:**
-- Aerospike provides competitive key-value lookup (both optimized for this)
-- ArcherDB's S2 cell indexing outperforms Aerospike's geo index for spatial queries
-- Aerospike requires secondary index creation for geo queries
-- ArcherDB provides purpose-built geospatial optimization
-
-**When to choose Aerospike:**
-- Need hybrid key-value and geospatial workloads
-- Existing Aerospike infrastructure
-- Cross-datacenter replication requirements
-
-### Summary Comparison
-
-| Database | Insert Throughput | Query Latency | Clustering | Encryption | Best For |
-|----------|------------------|---------------|------------|------------|----------|
-| **ArcherDB** | 920K/s | Lowest | VSR Consensus | AES-256-GCM | High-volume geospatial |
-| PostGIS | 50K/s | High | Streaming | TLS | SQL flexibility |
-| Tile38 | 100K/s | Low | None | None | Simple deployments |
-| Elasticsearch | 80K/s | Medium | Raft-like | TLS | Combined search |
-| Aerospike | 150K/s | Low | XDR | TLS | Hybrid workloads |
-
-### Running Competitor Benchmarks
-
-To reproduce these comparisons on your own hardware:
+### Quick Single-Topology Run
 
 ```bash
-# Start competitor containers
-cd scripts/competitor-benchmarks
-docker compose up -d
+# Run all benchmark types on 3-node cluster
+python test_infrastructure/benchmarks/cli.py run --topology 3 --time-limit 60
 
-# Run full comparison suite
-./run-comparison.sh
-
-# Quick comparison (smaller dataset)
-./run-comparison.sh --quick
-
-# Run specific competitor only
-./run-comparison.sh --competitor postgis
-
-# Results in benchmark-results/comparison-YYYYMMDD-HHMMSS/
+# Run with specific operation count limit
+python test_infrastructure/benchmarks/cli.py run --topology 3 --op-count 10000
 ```
 
-**Requirements:**
-- Docker and docker-compose
-- Python 3.8+ with pip
-- 16GB+ RAM (8GB per container)
-- Running ArcherDB cluster for ArcherDB benchmarks
-
-## Reproducing Results
-
-### Quick Benchmark
-
-For CI/CD or quick validation:
+### Mixed Workload with Custom Ratio
 
 ```bash
-# Build release binary
-./zig/zig build -Drelease
+# 80% reads, 20% writes (default)
+python test_infrastructure/benchmarks/cli.py run --topology 3 --read-write-ratio 0.8
 
-# Run quick benchmark (requires running ArcherDB cluster)
-./scripts/run-perf-benchmarks.sh --quick
+# 50% reads, 50% writes
+python test_infrastructure/benchmarks/cli.py run --topology 3 --read-write-ratio 0.5
+
+# Write-heavy workload (20% reads, 80% writes)
+python test_infrastructure/benchmarks/cli.py run --topology 3 --read-write-ratio 0.2
 ```
 
-### Full Benchmark
-
-For release validation:
+### Full Suite Across All Topologies
 
 ```bash
-# Start a single-node cluster
-./scripts/dev-cluster.sh start
+# Run complete benchmark suite (1/3/5/6 node topologies)
+python test_infrastructure/benchmarks/cli.py run --full-suite
 
-# Run full benchmark suite
-./scripts/run-perf-benchmarks.sh --full
-
-# Results in benchmark-results/perf-YYYYMMDD-HHMMSS/
+# Exclude mixed workload tests
+python test_infrastructure/benchmarks/cli.py run --full-suite --no-mixed
 ```
 
-### Custom Configuration
-
-For specific scenarios:
+### Compare to Baseline
 
 ```bash
-# Direct benchmark command
-./zig-out/bin/archerdb benchmark \
-    --addresses=127.0.0.1:3001 \
-    --event-count=1000000 \
-    --entity-count=100000 \
-    --clients=10 \
-    --query-uuid-count=10000 \
-    --query-radius-count=1000 \
-    --query-polygon-count=100
+# Run benchmarks and compare to stored baseline
+python test_infrastructure/benchmarks/cli.py compare --topology 3
+
+# Save current results as new baseline
+python test_infrastructure/benchmarks/cli.py baseline --topology 3 --save
 ```
 
-### Analyzing Results
+### Programmatic Usage
 
-Results are output in CSV format for analysis:
+```python
+from test_infrastructure.benchmarks import BenchmarkOrchestrator, BenchmarkConfig
+
+# Create orchestrator
+orchestrator = BenchmarkOrchestrator()
+
+# Configure benchmark
+config = BenchmarkConfig(
+    topology=3,
+    time_limit_sec=60,
+    op_count_limit=10_000,
+    read_write_ratio=0.8,  # 80% reads, 20% writes
+)
+
+# Run individual benchmarks
+throughput = orchestrator.run_throughput_benchmark(3, config)
+read_latency = orchestrator.run_latency_read_benchmark(3, config)
+write_latency = orchestrator.run_latency_write_benchmark(3, config)
+mixed = orchestrator.run_mixed_workload_benchmark(3, config)
+
+# Run full suite
+results = orchestrator.run_full_suite(
+    topologies=[1, 3, 5, 6],
+    include_mixed=True,
+)
+```
+
+## Statistical Methodology
+
+### HDR Histogram for Percentiles
+
+We use HDR (High Dynamic Range) Histogram for latency percentile calculation:
+
+- O(1) recording time per sample
+- O(1) percentile retrieval
+- High precision across wide range (microseconds to hours)
+- Handles outliers without truncation
+
+When hdrhistogram is unavailable, falls back to sorted-array percentile
+calculation (same accuracy, O(n log n) per percentile).
+
+### Confidence Intervals
+
+All mean values are reported with 95% confidence intervals using scipy.stats:
+
+```
+P95: 0.8ms +/- 0.1ms (95% CI)
+```
+
+This shows measurement reliability. Narrower intervals indicate more stable
+measurements.
+
+### Welch's t-test for Regression Detection
+
+When comparing to baselines, we use Welch's t-test (unequal variance t-test):
+
+- Does not assume equal variance between runs
+- Provides p-value for statistical significance
+- alpha=0.05 (5% significance level)
+- Detects regressions when current > baseline significantly
+
+### Coefficient of Variation (CV) Stability Check
+
+Benchmarks continue running until measurements stabilize:
+
+- Target CV: <10%
+- Minimum samples: 1000
+- Maximum stability runs: 10
+
+This ensures results are reproducible and not dominated by noise.
+
+## Output Formats
+
+Results are generated in multiple formats:
+
+| Format | Location | Purpose |
+|--------|----------|---------|
+| JSON | `reports/benchmarks/*.json` | CI automation, data processing |
+| Markdown | `docs/BENCHMARKS.md` | Human review, documentation |
+| Terminal | stdout | Interactive feedback during runs |
+| CSV | `reports/benchmarks/*.csv` | Spreadsheet analysis |
+
+## Historical Results
+
+Baseline results are stored in `reports/history/`:
+
+```
+reports/history/
+  baseline-1node.json
+  baseline-3node.json
+  baseline-5node.json
+  baseline-6node.json
+```
+
+These are used for regression detection when running `cli.py compare`.
+
+## Results
+
+*Results will be populated after benchmark runs.*
+
+To generate results:
 
 ```bash
-# View summary
-cat benchmark-results/perf-*/summary.txt
-
-# Analyze CSV with Python
-python3 -c "
-import pandas as pd
-df = pd.read_csv('benchmark-results/perf-*/results.csv')
-print(df.groupby('concurrency').agg({
-    'insert_throughput': ['mean', 'std'],
-    'insert_p99': ['mean', 'max']
-}))
-"
+# Run full suite and update this document
+python test_infrastructure/benchmarks/cli.py run --full-suite --update-docs
 ```
 
-## Benchmark Limitations
+---
 
-When interpreting results, consider:
-
-1. **Synthetic Workload**: Real workloads may have different access patterns
-2. **Single Machine**: Network latency not included in client-side benchmarks
-3. **Warm Index**: Cold start performance may differ
-4. **No Competing Load**: Production systems may have other workloads
-
-For production capacity planning, run benchmarks with your specific workload patterns and hardware configuration.
-
-## Related Documentation
-
-- [Hardware Requirements](hardware-requirements.md) - Sizing guidelines
-- [Capacity Planning](capacity-planning.md) - Deployment planning
-- [Operations Runbook](operations-runbook.md) - Performance tuning
+*Last updated: 2026-02-01*
+*Framework version: Phase 15-02*
