@@ -1096,16 +1096,19 @@ pub const IO = struct {
     /// Darwin's fsync() syscall does not flush past the disk cache. We must use F_FULLFSYNC
     /// instead.
     /// https://twitter.com/ArcherDBDB/status/1422491736224436225
-    fn fs_sync(fd: fd_t) !void {
-        // F_FULLFSYNC is required for durability on Darwin.
-        // Support was validated at startup - if this fails, it indicates a filesystem
-        // change (e.g., remount, switch to network filesystem) or transient error.
-        assert(fullfsync_checked);
-        assert(fullfsync_supported);
-        return posix.fcntl(fd, posix.F.FULLFSYNC, 1) catch |err| {
+    fn fs_sync(fd: fd_t) posix.SyncError!void {
+        // F_FULLFSYNC is required for durability on Darwin - fsync() does NOT flush
+        // the disk write cache. Support is validated at startup via validate_fullfsync_support().
+        // If F_FULLFSYNC fails here, it indicates a runtime issue (e.g., filesystem remount).
+        // We do NOT fall back to fsync() as it provides weaker guarantees that could
+        // lead to data loss on power failure.
+        _ = posix.fcntl(fd, posix.F.FULLFSYNC, 1) catch |err| {
             log.err("F_FULLFSYNC failed: {} (fd={})", .{ err, fd });
-            log.err("This may indicate filesystem was remounted or changed to unsupported type", .{});
-            return err;
+            return switch (err) {
+                error.PermissionDenied => error.AccessDenied,
+                error.FileBusy, error.Locked, error.DeadLock, error.LockedRegionLimitExceeded, error.ProcessFdQuotaExceeded => error.InputOutput,
+                error.Unexpected => |e| e,
+            };
         };
     }
 
