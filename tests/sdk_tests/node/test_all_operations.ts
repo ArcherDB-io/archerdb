@@ -283,7 +283,10 @@ describeIntegration('ArcherDB Node.js SDK Operation Tests', () => {
   beforeAll(async () => {
     const projectRoot = path.resolve(__dirname, '../../..');
     
-    const proc = spawn('python3', ['-c', `
+    // Use venv Python if available (has required deps like requests)
+    const venvPython = path.join(projectRoot, '.venv', 'bin', 'python3');
+    const pythonCmd = require('fs').existsSync(venvPython) ? venvPython : 'python3';
+    const proc = spawn(pythonCmd, ['-c', `
 import sys, time
 sys.path.insert(0, '${projectRoot}')
 sys.path.insert(0, '${projectRoot}/src/clients/python/src')

@@ -88,7 +88,12 @@ print_result() {
 
 run_with_cluster() {
     local cmd="$1"
-    CMD="$cmd" python3 - <<'PY'
+    local python_cmd="python3"
+    # Use venv Python if available (has required deps like requests)
+    if [[ -f "$PROJECT_ROOT/.venv/bin/python3" ]]; then
+        python_cmd="$PROJECT_ROOT/.venv/bin/python3"
+    fi
+    CMD="$cmd" "$python_cmd" - <<'PY'
 import os
 import subprocess
 import sys
@@ -147,7 +152,11 @@ for sdk in "${SDKS[@]}"; do
                 fi
                 export ARCHERDB_INTEGRATION=1
                 export PYTHONPATH="$PROJECT_ROOT:$PROJECT_ROOT/src/clients/python/src:$PYTHONPATH"
-                if pytest "tests/sdk_tests/python/test_all_operations.py" $VERBOSE --tb=short; then
+                PYTEST_CMD="pytest"
+                if [[ -f "$PROJECT_ROOT/.venv/bin/pytest" ]]; then
+                    PYTEST_CMD="$PROJECT_ROOT/.venv/bin/pytest"
+                fi
+                if $PYTEST_CMD "tests/sdk_tests/python/test_all_operations.py" $VERBOSE --tb=short; then
                     print_result "$sdk" "PASSED"
                 else
                     print_result "$sdk" "FAILED"
@@ -168,6 +177,8 @@ for sdk in "${SDKS[@]}"; do
                     npm install --silent
                 fi
                 export ARCHERDB_INTEGRATION=1
+                # Node 25+ needs localstorage-file for Jest 29 compat
+                export NODE_OPTIONS="--localstorage-file=/tmp/jest-localstorage.db"
                 if npm test; then
                     print_result "$sdk" "PASSED"
                 else

@@ -43,7 +43,24 @@ pub fn build(b: *std.Build) void {
     // Link against the C SDK static library
     // The C SDK is built as part of the main ArcherDB build
     // Library is in src/clients/c/lib/<target>/
-    exe.addLibraryPath(.{ .cwd_relative = "../../../src/clients/c/lib/x86_64-linux-gnu.2.27" });
+    const lib_subdir: []const u8 = switch (target.result.cpu.arch) {
+        .aarch64 => switch (target.result.os.tag) {
+            .macos => "aarch64-macos",
+            .linux => "aarch64-linux-gnu.2.27",
+            else => "aarch64-linux-gnu.2.27",
+        },
+        .x86_64 => switch (target.result.os.tag) {
+            .macos => "x86_64-macos",
+            .linux => "x86_64-linux-gnu.2.27",
+            else => "x86_64-linux-gnu.2.27",
+        },
+        else => "x86_64-linux-gnu.2.27",
+    };
+    const lib_path = b.fmt(
+        "../../../src/clients/c/lib/{s}",
+        .{lib_subdir},
+    );
+    exe.addLibraryPath(.{ .cwd_relative = lib_path });
     exe.linkSystemLibrary("arch_client");
 
     // Also need to link Zig runtime libraries
