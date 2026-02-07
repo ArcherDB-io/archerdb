@@ -70,7 +70,10 @@ fn set_internal_error(packet_extern: *arch_client.Packet, err: InternalError) vo
 fn internal_error_throw(env: c.napi_env, err: InternalError) !c.napi_value {
     return switch (err) {
         .none => translate.throw(env, "No internal error."),
-        .result_ptr_null => translate.throw(env, "Native completion returned a null result pointer."),
+        .result_ptr_null => translate.throw(
+            env,
+            "Native completion returned a null result pointer.",
+        ),
         .allocation_failed => translate.throw(env, "Failed to allocate native response buffer."),
         .tsfn_queue_full => translate.throw(env, "Native completion queue is full."),
         .tsfn_closing => translate.throw(env, "Native completion queue is closing."),
@@ -1126,12 +1129,14 @@ fn encode_query_response(env: c.napi_env, buffer: []const u8) !c.napi_value {
 
     if (!has_header) {
         if (buffer.len < event_size) {
-            // Short replies may be server error codes; treat as empty result for parity with other SDKs.
+            // Short replies may be server error codes; treat as
+            // empty result for parity with other SDKs.
             return encode_array(GeoEvent, env, &empty);
         }
         if (buffer.len % event_size != 0) {
             if (buffer.len % event_size == @sizeOf(u32)) {
-                // Polygon errors can return a 4-byte error code with padding; treat as empty result.
+                // Polygon errors can return a 4-byte error code
+                // with padding; treat as empty result.
                 return encode_array(GeoEvent, env, &empty);
             }
             return translate.throw(env, "Query response size not aligned to GeoEvent.");
