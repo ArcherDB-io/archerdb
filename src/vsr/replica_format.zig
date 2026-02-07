@@ -95,16 +95,20 @@ fn ReplicaFormatType(comptime Storage: type) type {
             // first. This allows the test Storage to check the invariant "never write the redundant
             // header before the prepare".
             for (0..constants.journal_slot_count) |slot| {
-                // Direct I/O requires the buffer to be sector-aligned. Allocate a buffer for each
-                // sector in the arena, so they can be written concurrently.
+                // Direct I/O requires the buffer to be sector-aligned. Allocate a full
+                // message_size_max buffer per slot so that recovery (which reads the full
+                // slot) finds all sectors marked as written in the test storage.
                 const header_buffer = try arena.alignedAlloc(
                     u8,
                     constants.sector_size,
-                    constants.sector_size,
+                    constants.message_size_max,
                 );
+                // Zero the entire buffer first, then write the header at the start.
+                @memset(header_buffer, 0);
+
                 const header: *Header.Prepare = std.mem.bytesAsValue(
                     Header.Prepare,
-                    header_buffer,
+                    header_buffer[0..@sizeOf(Header.Prepare)],
                 );
                 header.* = slot_header(cluster, slot);
                 assert(header.valid_checksum());
@@ -113,12 +117,6 @@ fn ReplicaFormatType(comptime Storage: type) type {
                 assert(prepare_offset <= constants.journal_size_prepares);
                 assert(prepare_offset % @sizeOf(Header) == 0);
                 assert(prepare_offset % constants.sector_size == 0);
-
-                // Zero padding to produce identical checksums of an empty datafile, not because
-                // it's required for correctness.
-                const header_padding = header_buffer[@sizeOf(Header.Prepare)..];
-                @memset(header_padding, 0);
-                assert(stdx.zeroed(header_padding));
 
                 if (header.op == 0) {
                     assert(header.operation == .root);
@@ -253,7 +251,7 @@ fn ReplicaFormatType(comptime Storage: type) type {
 
             // Expect that:
             // * every sector in the wal_headers zone has been written,
-            // * the first sector in every constants.message_size_max has been written,
+            // * every sector in the wal_prepares zone has been written,
             // * nothing else has been written.
             //
             // This might seem to miss the superblock zone, but that's handled entirely by
@@ -271,14 +269,9 @@ fn ReplicaFormatType(comptime Storage: type) type {
                     // Every sector in the wal_headers zone has been written:
                     .wal_headers => assert(self.sectors_written.isSet(sector)),
 
-                    // The first sector in every constants.message_size_max has been written:
-                    .wal_prepares => {
-                        if ((sector_start - zone.start()) % constants.message_size_max == 0) {
-                            assert(self.sectors_written.isSet(sector));
-                        } else {
-                            assert(!self.sectors_written.isSet(sector));
-                        }
-                    },
+                    // Every sector in the wal_prepares zone has been written
+                    // (full message_size_max per slot, so recovery can read them):
+                    .wal_prepares => assert(self.sectors_written.isSet(sector)),
 
                     // Nothing else has been written:
                     else => assert(!self.sectors_written.isSet(sector)),
