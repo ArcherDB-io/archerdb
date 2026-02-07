@@ -133,7 +133,7 @@ static bool submit_and_wait(arch_packet_t* packet) {
         return false;
     }
 
-    bool completed = wait_for_completion(30000);  // 30 second timeout
+    bool completed = wait_for_completion(2000);  // 2 second timeout for faster debugging
 
     // Check for client eviction and reconnect automatically
     if (completed && last_response.status == ARCH_PACKET_CLIENT_EVICTED) {
@@ -155,11 +155,20 @@ static bool submit_and_wait(arch_packet_t* packet) {
 
 // Initialize the client
 static bool setup(void) {
+    fprintf(stderr, "[DEBUG] setup: starting\n");
+    fflush(stderr);
+    
     const char* addr = getenv("ARCHERDB_ADDRESS");
     if (!addr) addr = "127.0.0.1:3001";
 
+    fprintf(stderr, "[DEBUG] setup: using address: %s\n", addr);
+    fflush(stderr);
+
     uint8_t cluster_id[16] = {0};
 
+    fprintf(stderr, "[DEBUG] setup: calling arch_client_init\n");
+    fflush(stderr);
+    
     ARCH_INIT_STATUS status = arch_client_init(
         &client,
         cluster_id,
@@ -169,12 +178,46 @@ static bool setup(void) {
         on_complete
     );
 
+    fprintf(stderr, "[DEBUG] setup: arch_client_init returned: %d\n", status);
+    fflush(stderr);
+
     if (status != ARCH_INIT_SUCCESS) {
         fprintf(stderr, "Failed to initialize client: %d\n", status);
         return false;
     }
 
     client_initialized = true;
+    
+    fprintf(stderr, "[DEBUG] setup: waiting for registration to complete\n");
+    fflush(stderr);
+    
+    // Poll for registration completion by checking init_parameters
+    // Registration is complete when batch_size_limit becomes available
+    arch_init_parameters_t params;
+    int retries = 0;
+    const int max_retries = 40;  // 40 * 250ms = 10 seconds max
+    
+    while (retries < max_retries) {
+        usleep(250000);  // 250ms
+        
+        ARCH_CLIENT_STATUS param_status = arch_client_init_parameters(&client, &params);
+        if (param_status == ARCH_CLIENT_OK) {
+            fprintf(stderr, "[DEBUG] setup: registration complete after %d retries (%.2fs)\n", 
+                    retries, retries * 0.25);
+            fflush(stderr);
+            break;
+        }
+        retries++;
+    }
+    
+    if (retries >= max_retries) {
+        fprintf(stderr, "Failed: registration did not complete after %.1fs\n", max_retries * 0.25);
+        return false;
+    }
+    
+    fprintf(stderr, "[DEBUG] setup: complete\n");
+    fflush(stderr);
+    
     return true;
 }
 
@@ -399,8 +442,15 @@ static bool contains_entity_id(const geo_event_t* events, uint32_t count, arch_u
 // Test: Ping (opcode 152)
 // ============================================================================
 static void test_ping(void) {
+    fprintf(stderr, "[DEBUG] test_ping: starting\n");
+    fflush(stderr);
+    
     printf("\n=== Testing ping operations ===\n");
+    fflush(stdout);
 
+    fprintf(stderr, "[DEBUG] test_ping: loading fixture\n");
+    fflush(stderr);
+    
     Fixture* fixture = load_fixture("ping");
     if (!fixture) {
         printf("FAIL: Could not load ping fixture\n");
@@ -408,9 +458,15 @@ static void test_ping(void) {
         return;
     }
 
+    fprintf(stderr, "[DEBUG] test_ping: fixture loaded, case_count=%d\n", fixture->case_count);
+    fflush(stderr);
+
     for (int i = 0; i < fixture->case_count; i++) {
         TestCase* tc = &fixture->cases[i];
+        fprintf(stderr, "[DEBUG] test_ping: running case %d: %s\n", i, tc->name);
+        fflush(stderr);
         printf("  %s: ", tc->name);
+        fflush(stdout);
 
         ping_request_t req = {0};
         arch_packet_t packet = {0};
@@ -1641,8 +1697,16 @@ int main(int argc, char** argv) {
     // Run all test suites (all 14 operations)
 
     // Metadata operations (quick connectivity tests)
+    fprintf(stderr, "[DEBUG] Running test_ping\n");
+    fflush(stderr);
     test_ping();
+    
+    fprintf(stderr, "[DEBUG] Running test_status\n");
+    fflush(stderr);
     test_status();
+    
+    fprintf(stderr, "[DEBUG] Running test_topology\n");
+    fflush(stderr);
     test_topology();
 
     // Data operations
