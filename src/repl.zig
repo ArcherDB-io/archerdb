@@ -891,7 +891,7 @@ pub fn ReplType(comptime MessageBus: type) type {
                 \\lon_nano         i64         Longitude in nanodegrees
                 \\altitude_cm      i32         Altitude in centimeters
                 \\speed_cmps       u16         Speed in cm/s
-                \\heading_cdeg     u16         Heading in centidegrees (0-35999)
+                \\heading_cdeg     u16         Heading in centidegrees (0-36000)
                 \\accuracy_mm      u16         GPS accuracy in millimeters
                 \\ttl_seconds      u32         Time-to-live (0 = no expiration)
                 \\user_data        [64]u8      Custom user data

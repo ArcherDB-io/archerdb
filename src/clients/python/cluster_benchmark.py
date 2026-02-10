@@ -112,7 +112,7 @@ def create_random_event(entity_id: int) -> CGeoEvent:
 
     # Random other fields
     event.velocity_mms = random.randint(0, 30000)
-    event.heading_cdeg = random.randint(0, 35999)
+    event.heading_cdeg = random.randint(0, 36000)
     event.accuracy_mm = random.randint(1000, 10000)
     event.ttl_seconds = 86400
     event.altitude_mm = random.randint(-100, 1000)

@@ -2039,8 +2039,8 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     continue;
                 }
 
-                // Validate heading if present (0-35999 centidegrees)
-                if (event.heading_cdeg > 35999) {
+                // Validate heading if present (0-36000 centidegrees)
+                if (event.heading_cdeg > 36000) {
                     results[results_count] = InsertGeoEventsResult{
                         .index = @intCast(index),
                         .result = .heading_out_of_range,

@@ -199,6 +199,11 @@ pub fn ServerConnectionPool(comptime Connection: type) type {
                 .factory_context = factory_context,
             };
 
+            // Preallocate waiter capacity during init to avoid allocations at runtime.
+            if (config.max_waiters > 0) {
+                try self.waiters.ensureTotalCapacity(@intCast(config.max_waiters));
+            }
+
             // Pre-create minimum connections (these start as IDLE)
             var created: u32 = 0;
             while (created < config.min_connections) : (created += 1) {
@@ -269,15 +274,13 @@ pub fn ServerConnectionPool(comptime Connection: type) type {
                 self.mutex.lock();
                 defer self.mutex.unlock();
 
-                if (self.waiters.items.len >= self.config.max_waiters) {
+                if (self.waiters.items.len >= self.config.max_waiters or
+                    self.waiters.items.len >= self.waiters.capacity)
+                {
                     self.metrics.recordAcquireTimeout();
                     return error.WaiterQueueFull;
                 }
-
-                self.waiters.append(&waiter) catch {
-                    self.metrics.recordAcquireTimeout();
-                    return error.OutOfMemory;
-                };
+                self.waiters.appendAssumeCapacity(&waiter);
 
                 // Update waiter gauge
                 self.metrics.updatePoolState(

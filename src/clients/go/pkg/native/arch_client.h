@@ -92,7 +92,7 @@ typedef enum GEO_EVENT_FLAGS {
  * - velocity_mms: Speed in millimeters per second
  * - ttl_seconds: Time-to-live in seconds (0 = no expiration)
  * - accuracy_mm: Location accuracy in millimeters
- * - heading_cdeg: Heading in centidegrees (0-35999, where 0=North, 9000=East)
+ * - heading_cdeg: Heading in centidegrees (0-36000, where 0=North, 9000=East)
  * - flags: Combination of GEO_EVENT_FLAGS values
  * - reserved: Must be zero (reserved for future use)
  */

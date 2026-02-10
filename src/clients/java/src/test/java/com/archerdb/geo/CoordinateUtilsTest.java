@@ -73,7 +73,7 @@ class CoordinateUtilsTest {
             "180, 18000", // South
             "270, 27000" // West
     // Note: 360 degrees maps to 36000 which exceeds short max (32767)
-    // Valid heading range is 0-359.99 degrees (0-35999 centidegrees)
+    // Wire format allows 0-36000 centidegrees; Java short APIs cannot represent 36000.
     })
     void testHeadingToCentidegrees(double degrees, short expectedCdeg) {
         assertEquals(expectedCdeg, CoordinateUtils.headingToCentidegrees(degrees));

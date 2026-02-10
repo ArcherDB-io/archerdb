@@ -147,7 +147,7 @@ pub const InsertArgs = struct {
     /// Speed in centimeters per second.
     speed_cmps: u16 = 0,
 
-    /// Heading in centidegrees (0-35999).
+    /// Heading in centidegrees (0-36000).
     heading_cdeg: u16 = 0,
 
     /// Accuracy in millimeters.

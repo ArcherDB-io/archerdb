@@ -29,7 +29,7 @@
  * - altitude_mm: millimeters above sea level
  * - velocity_mms: millimeters per second
  * - accuracy_mm: location accuracy in millimeters
- * - heading_cdeg: centidegrees (0-35999, where 0=North, 9000=East)
+ * - heading_cdeg: centidegrees (0-36000, where 0=North, 9000=East)
  * - radius_mm: query radius in millimeters
  * - timestamp: server-assigned nanoseconds since epoch (set to 0 on insert)
  */
@@ -165,7 +165,7 @@ static void print_insert_error(uint32_t result) {
             printf("Event already exists");
             break;
         case INSERT_GEO_EVENT_HEADING_OUT_OF_RANGE:
-            printf("Heading out of range [0, 35999]");
+            printf("Heading out of range [0, 36000]");
             break;
         case INSERT_GEO_EVENT_TTL_INVALID:
             printf("Invalid TTL value");

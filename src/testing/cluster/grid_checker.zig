@@ -41,7 +41,18 @@ pub const GridChecker = struct {
         };
 
         if (result.found_existing) {
-            assert(result.value_ptr.* == block_checksum);
+            if (result.value_ptr.* != block_checksum) {
+                std.log.err("grid_checker: COHERENCE VIOLATION! " ++
+                    "checkpoint_id={x:0>32} address={} durable={} " ++
+                    "expected_checksum={x:0>32} actual_checksum={x:0>32}", .{
+                    vsr.checksum(std.mem.asBytes(checkpoint)),
+                    block_address,
+                    checkpoint_durable,
+                    result.value_ptr.*,
+                    block_checksum,
+                });
+                assert(result.value_ptr.* == block_checksum);
+            }
         } else {
             result.value_ptr.* = block_checksum;
         }
