@@ -500,22 +500,10 @@ pub fn ForestType(comptime _Storage: type, comptime groove_cfg: anytype) type {
             assert(@as(usize, @intFromBool(first_beat)) + @intFromBool(last_half_beat) +
                 @intFromBool(half_beat) + @intFromBool(last_beat) <= 1);
 
-            // Reset adaptive state at bar boundaries to ensure determinism after crash
-            // recovery. Adaptive compaction's in-memory state (L0 trigger, thread count) is
-            // not persisted in checkpoints. Without this reset, a recovered replica would
-            // start with default parameters while a continuously-running replica would have
-            // evolved parameters from the previous bar, causing different compaction decisions
-            // and ultimately a grid coherence violation.
-            if (first_beat) {
-                forest.adaptive_load_from_constants() catch
-                    @panic("Forest.compact: invalid adaptive config");
-                forest.adaptive_apply_l0_trigger_override();
-                forest.adaptive_apply_compaction_thread_limit();
-            }
-
-            // Adaptive compaction: periodic sampling and adaptation check.
-            // Uses compaction_timestamp_ns as the time source for deterministic behavior.
-            forest.adaptive_sample_and_adapt(compaction_timestamp_ns);
+            // Note: All adaptive compaction code (bar boundary reset AND
+            // adaptive_sample_and_adapt) has been removed from the compaction
+            // hot path. The adaptive state is initialized during forest.init()
+            // and forest.reset() from constants, which is sufficient.
 
             log.debug("entering forest.compact() op={} constants.lsm_compaction_ops={} " ++
                 "first_beat={} last_half_beat={} half_beat={} last_beat={}", .{

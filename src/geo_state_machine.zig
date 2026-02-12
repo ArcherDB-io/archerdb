@@ -1394,6 +1394,13 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             // Note: Covering cache doesn't need reset on state sync as coverings
             // are determined by geometry, not data state. Keep cached values.
 
+            // VSR determinism: Clear the RAM index during state sync.
+            // The forest is being replaced with a different checkpoint's state.
+            // The RAM index must be cleared so it doesn't contain stale entries
+            // from the previous state. WAL replay after sync will rebuild it
+            // with operations from the checkpoint forward.
+            self.ram_index.clear();
+
             self.* = .{
                 .batch_size_limit = self.batch_size_limit,
                 .default_ttl_seconds = self.default_ttl_seconds,
@@ -1649,6 +1656,23 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             // Update commit timestamp for monotonicity check
             self.commit_timestamp = timestamp;
 
+            // VSR determinism: Clear the RAM index at bar boundaries (first beat
+            // of each compaction bar). This must happen BEFORE executing the
+            // operation so that query responses are deterministic.
+            //
+            // The RAM index is ephemeral (not persisted in checkpoints). After
+            // state sync, a replica starts with an empty RAM index (from reset())
+            // and replays WAL entries from the checkpoint forward. By clearing
+            // at bar boundaries in commit (before execution), the RAM index is
+            // rebuilt from the same set of committed operations on all replicas.
+            //
+            // Without this, a state-synced replica would have a different RAM
+            // index than a continuously-running replica, causing query responses
+            // to differ and producing client session coherence violations.
+            if (op % constants.lsm_compaction_ops == 0) {
+                self.ram_index.clear();
+            }
+
             // Dispatch to operation-specific execution
             const result: usize = switch (operation) {
                 // Pulse: internal maintenance (TTL cleanup, etc.)
@@ -1900,10 +1924,13 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     else
                         0;
 
+                    // Use timestamp within the range reserved by
+                    // prepare_delta_nanoseconds (which returns entity_ids.len).
+                    const tombstone_timestamp = self.commit_timestamp - entity_ids.len + 1 + @as(u64, @intCast(index));
                     const tombstone = GeoEvent.create_minimal_tombstone(
                         entity_id,
                         tombstone_group_id,
-                        self.commit_timestamp,
+                        tombstone_timestamp,
                     );
 
                     // Insert tombstone into Forest for durable deletion.
@@ -2069,10 +2096,16 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     continue;
                 }
 
-                // Use consensus timestamp if event timestamp is zero
-                // Add index offset to ensure uniqueness within batch for events at same location
-                const event_timestamp =
-                    if (event.timestamp == 0) timestamp + @as(u64, @intCast(index)) else event.timestamp;
+                // Use consensus timestamp if event timestamp is zero.
+                // Timestamps are allocated within the range reserved by
+                // prepare_delta_nanoseconds (which returns events.len). The
+                // committed timestamp is already advanced by events.len, so
+                // events use [timestamp - events.len + 1, timestamp] to avoid
+                // colliding with adjacent operations' timestamp ranges.
+                const event_timestamp = if (event.timestamp == 0)
+                    timestamp - events.len + 1 + @as(u64, @intCast(index))
+                else
+                    event.timestamp;
 
                 // Per ttl-retention/spec.md: Apply global default TTL
                 // when client sets ttl_seconds = 0

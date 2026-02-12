@@ -1706,6 +1706,18 @@ pub fn GenericRamIndexType(comptime Entry: type, comptime options: struct {
             self.* = undefined;
         }
 
+        /// Clear all entries from the index, resetting it to empty state.
+        /// Used at checkpoint boundaries to ensure deterministic index state
+        /// across replicas (VSR invariant: ephemeral state must be reset at
+        /// bar boundaries so that state-synced replicas converge).
+        pub fn clear(self: *@This()) void {
+            @memset(self.entries, Entry.empty);
+            self.count = std.atomic.Value(u64).init(0);
+            if (self.old_entries) |old| {
+                @memset(old, Entry.empty);
+            }
+        }
+
         /// Maximum displacement chain length for cuckoo hashing.
         /// Prevents infinite loops during insertion when table is too full.
         /// Value of 10000 handles pathological cases at high load factors (~70%).
