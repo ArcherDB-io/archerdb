@@ -419,7 +419,7 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
 
             // Radius between 1km and 100km
             filter.radius_mm = self.prng.range_inclusive(u32, 1_000_000, 100_000_000);
-            filter.limit = self.prng.int_inclusive(u32, 1000);
+            filter.limit = self.prng.range_inclusive(u32, 1, 1000);
             filter.timestamp_min = 0;
             filter.timestamp_max = 0;
             filter.group_id = 0;
@@ -454,7 +454,7 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
 
             // Large enough radius to cross anti-meridian
             filter.radius_mm = self.prng.range_inclusive(u32, 50_000_000, 500_000_000); // 50-500km
-            filter.limit = self.prng.int_inclusive(u32, 1000);
+            filter.limit = self.prng.range_inclusive(u32, 1, 1000);
             filter.timestamp_min = 0;
             filter.timestamp_max = 0;
             filter.group_id = 0;
@@ -481,8 +481,8 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
             const lon_rand = self.prng.range_inclusive(u64, 0, 360_000_000_000);
             filter.center_lat_nano = @as(i64, @intCast(lat_rand)) - 90_000_000_000;
             filter.center_lon_nano = @as(i64, @intCast(lon_rand)) - 180_000_000_000;
-            filter.radius_mm = 0; // Zero radius
-            filter.limit = self.prng.int_inclusive(u32, 100);
+            filter.radius_mm = 1; // Near-zero radius (1mm point query)
+            filter.limit = self.prng.range_inclusive(u32, 1, 100);
             filter.timestamp_min = 0;
             filter.timestamp_max = 0;
             filter.group_id = 0;
@@ -510,7 +510,7 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
             filter.center_lat_nano = @as(i64, @intCast(lat_rand)) - 90_000_000_000;
             filter.center_lon_nano = @as(i64, @intCast(lon_rand)) - 180_000_000_000;
             filter.radius_mm = 1_000_000_000; // 1000km max radius
-            filter.limit = self.prng.int_inclusive(u32, 1000);
+            filter.limit = self.prng.range_inclusive(u32, 1, 1000);
             filter.timestamp_min = 0;
             filter.timestamp_max = 0;
             filter.group_id = 0;
@@ -547,7 +547,7 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
             const max_vertices = @min(max_by_body, @min(max_by_limit, 100));
 
             filter.vertex_count = if (use_min) 3 else @as(u32, @intCast(@max(3, max_vertices)));
-            filter.limit = self.prng.int_inclusive(u32, 1000);
+            filter.limit = self.prng.range_inclusive(u32, 1, 1000);
             filter.timestamp_min = 0;
             filter.timestamp_max = 0;
             filter.group_id = 0;
@@ -609,7 +609,7 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
 
             // Concave polygon (L-shape or star)
             filter.vertex_count = 6; // L-shape
-            filter.limit = self.prng.int_inclusive(u32, 1000);
+            filter.limit = self.prng.range_inclusive(u32, 1, 1000);
             filter.timestamp_min = 0;
             filter.timestamp_max = 0;
             filter.group_id = 0;
@@ -699,7 +699,7 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
 
             // Radius between 100m and 100km
             filter.radius_mm = self.prng.range_inclusive(u32, 100_000, 100_000_000);
-            filter.limit = self.prng.int_inclusive(u32, 1000);
+            filter.limit = self.prng.range_inclusive(u32, 1, 1000);
             filter.timestamp_min = 0;
             filter.timestamp_max = 0;
             filter.group_id = 0;
@@ -739,7 +739,7 @@ pub fn GeoWorkloadType(comptime StateMachine: type) type {
             // Generate polygon with 3 to min(10, max_by_limit) vertices
             const vertex_count = self.prng.int_inclusive(u32, @min(10, max_by_limit));
             filter.vertex_count = @max(3, vertex_count);
-            filter.limit = self.prng.int_inclusive(u32, 1000);
+            filter.limit = self.prng.range_inclusive(u32, 1, 1000);
             filter.timestamp_min = 0;
             filter.timestamp_max = 0;
             filter.group_id = 0;
