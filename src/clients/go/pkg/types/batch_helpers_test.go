@@ -109,26 +109,20 @@ func TestSplitGeoEventBatch_ChunkSizeOne(t *testing.T) {
 	}
 }
 
-func TestSplitGeoEventBatch_ZeroChunkSize_Panics(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Errorf("SplitGeoEventBatch() should panic for chunkSize <= 0")
-		}
-	}()
-
+func TestSplitGeoEventBatch_ZeroChunkSize_ReturnsNil(t *testing.T) {
 	events := []GeoEvent{{EntityID: Uint128{1, 0}}}
-	SplitGeoEventBatch(events, 0)
+	result := SplitGeoEventBatch(events, 0)
+	if result != nil {
+		t.Errorf("SplitGeoEventBatch() should return nil for chunkSize 0, got %v", result)
+	}
 }
 
-func TestSplitGeoEventBatch_NegativeChunkSize_Panics(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Errorf("SplitGeoEventBatch() should panic for negative chunkSize")
-		}
-	}()
-
+func TestSplitGeoEventBatch_NegativeChunkSize_ReturnsNil(t *testing.T) {
 	events := []GeoEvent{{EntityID: Uint128{1, 0}}}
-	SplitGeoEventBatch(events, -1)
+	result := SplitGeoEventBatch(events, -1)
+	if result != nil {
+		t.Errorf("SplitGeoEventBatch() should return nil for negative chunkSize, got %v", result)
+	}
 }
 
 func TestSplitUint128Batch(t *testing.T) {
