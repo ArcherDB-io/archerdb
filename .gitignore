@@ -45,6 +45,8 @@ python.out
 python.err
 server.log
 tools/s2_golden_gen/s2_golden_gen
+tests/sdk_tests/go/bin/
+tests/sdk_tests/go/.tmp/
 
 # Python bytecode
 __pycache__/

@@ -1045,6 +1045,7 @@ test "tidy no large blobs" {
         // Historical blobs (binary artifacts in git history before removal)
         if (std.mem.eql(u8, path, "archerdb")) continue;
         if (std.mem.eql(u8, path, "testdata/s2/golden_vectors_v1.tsv")) continue;
+        if (std.mem.eql(u8, path, "tests/sdk_tests/go/bin/parity_runner")) continue;
         // Large state machine and test data files
         if (std.mem.eql(u8, path, "src/geo_state_machine.zig")) continue;
         if (std.mem.eql(u8, path, "src/s2/testdata/covering_golden.tsv")) continue;

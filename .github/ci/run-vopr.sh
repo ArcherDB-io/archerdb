@@ -56,6 +56,51 @@ fi
 # Base seed for deterministic reproducibility
 BASE_SEED=42
 
+# Prefer GNU timeout; on macOS, Homebrew provides gtimeout.
+TIMEOUT_BIN=""
+if command -v timeout >/dev/null 2>&1; then
+    TIMEOUT_BIN="timeout"
+elif command -v gtimeout >/dev/null 2>&1; then
+    TIMEOUT_BIN="gtimeout"
+fi
+
+run_with_timeout() {
+    local duration="$1"
+    shift
+
+    if [[ -n "$TIMEOUT_BIN" ]]; then
+        "$TIMEOUT_BIN" --signal=SIGINT "$duration" "$@"
+        return $?
+    fi
+
+    # Portable fallback when timeout/gtimeout is unavailable.
+    python3 - "$duration" "$@" <<'PY'
+import signal
+import subprocess
+import sys
+
+if len(sys.argv) < 3:
+    sys.exit(2)
+
+duration = float(sys.argv[1])
+cmd = sys.argv[2:]
+proc = subprocess.Popen(cmd)
+try:
+    sys.exit(proc.wait(timeout=duration))
+except subprocess.TimeoutExpired:
+    try:
+        proc.send_signal(signal.SIGINT)
+    except Exception:
+        pass
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+    sys.exit(124)
+PY
+}
+
 echo "=========================================="
 echo "VOPR Fuzzer Run"
 echo "=========================================="
@@ -70,10 +115,16 @@ echo "=========================================="
 
 # Build VOPR with release optimizations
 echo "Building VOPR..."
-if ! ./zig/zig build vopr \
+if ! ./zig/zig build vopr:build \
     -Dvopr-state-machine="$STATE_MACHINE" \
     -Drelease; then
     echo "Error: VOPR build failed"
+    exit 2
+fi
+
+VOPR_BIN="./zig-out/bin/vopr"
+if [[ ! -x "$VOPR_BIN" ]]; then
+    echo "Error: VOPR binary not found at $VOPR_BIN"
     exit 2
 fi
 
@@ -103,9 +154,8 @@ run_single_seed() {
     # - SIGINT allows graceful shutdown
     # - Exit code 124 means timeout reached (expected behavior)
     # - Tee output to both console and log file
-    timeout --signal=SIGINT "$DURATION" \
-        ./zig-out/bin/vopr "$SEED" \
-        --ticks-max-requests=100000000 \
+    run_with_timeout "$DURATION" \
+        "$VOPR_BIN" "$SEED" \
         2>&1 | tee "$LOG_FILE" || {
             local EXIT_CODE=$?
             if [ $EXIT_CODE -eq 124 ]; then
@@ -119,7 +169,7 @@ run_single_seed() {
             echo "=========================================="
             echo "Seed $SEED: FAILED with exit code $EXIT_CODE"
             echo "Log: $LOG_FILE"
-            echo "To reproduce: ./zig-out/bin/vopr $SEED"
+            echo "To reproduce: $VOPR_BIN $SEED"
             echo "=========================================="
             FAILED_SEEDS+=("$SEED")
             return 1
@@ -158,7 +208,7 @@ if [[ ${#FAILED_SEEDS[@]} -gt 0 ]]; then
     echo "VOPR FAILED: ${#FAILED_SEEDS[@]} seed(s) found issues"
     echo "To reproduce failures, run:"
     for SEED in "${FAILED_SEEDS[@]}"; do
-        echo "  ./zig-out/bin/vopr $SEED"
+        echo "  $VOPR_BIN $SEED"
     done
     exit 1
 fi

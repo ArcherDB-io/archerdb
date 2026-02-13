@@ -96,7 +96,7 @@ TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 # Build with release optimizations
 echo "Building with release optimizations..."
-./zig/zig build -Doptimize=ReleaseFast -j4 2>&1
+./zig/zig build -Drelease -j4 2>&1
 
 # Check if benchmark binary exists
 BENCH_BIN="./zig-out/bin/archerdb"
@@ -187,7 +187,7 @@ run_harness_benchmark() {
     local samples=()
     for ((i=0; i<runs; i++)); do
         local start_ns=$(($(date +%s%N)))
-        ./zig/zig build -Doptimize=ReleaseFast test:unit -- --test-filter "$filter" 2>/dev/null || true
+        ./zig/zig build -Drelease test:unit -- --test-filter "$filter" 2>/dev/null || true
         local end_ns=$(($(date +%s%N)))
         samples+=($((end_ns - start_ns)))
     done
@@ -220,7 +220,7 @@ if [[ -z "$INSERT_MEAN" || "$INSERT_MEAN" == "0" ]]; then
     # Fallback: use build time as proxy metric
     echo "  Using build-time proxy metrics..."
     start_ns=$(($(date +%s%N)))
-    ./zig/zig build -Doptimize=ReleaseFast -j4 2>/dev/null
+    ./zig/zig build -Drelease -j4 2>/dev/null
     end_ns=$(($(date +%s%N)))
     BUILD_TIME=$((end_ns - start_ns))
 

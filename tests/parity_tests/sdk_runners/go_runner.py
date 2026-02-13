@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 TEST_DIR = Path(__file__).parent.parent.parent / "sdk_tests" / "go"
-PARITY_BINARY = TEST_DIR / "bin" / "parity_runner"
+PARITY_BINARY = TEST_DIR / ".tmp" / "parity_runner"
 PARITY_SRC = TEST_DIR / "cmd" / "parity_runner"
 
 
