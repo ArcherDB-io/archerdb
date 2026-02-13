@@ -53,11 +53,14 @@ def load_fixture(operation: str) -> dict:
     Returns:
         Dict with fixture data, or empty dict if no fixture exists.
     """
-    # Convert operation name to fixture filename
-    fixture_name = operation.replace("-", "_")
-    fixture_file = FIXTURES_DIR / f"{fixture_name}.json"
+    fixture_file = None
+    for fixture_name in (operation.replace("-", "_"), operation):
+        candidate = FIXTURES_DIR / f"{fixture_name}.json"
+        if candidate.exists():
+            fixture_file = candidate
+            break
 
-    if not fixture_file.exists():
+    if fixture_file is None:
         # Return minimal fixture for operations without fixture files
         return {}
 
@@ -65,7 +68,7 @@ def load_fixture(operation: str) -> dict:
         data = json.load(f)
 
     # Extract the test case input (use first smoke test case if available)
-    test_cases = data.get("test_cases", [])
+    test_cases = data.get("test_cases", data.get("cases", []))
     if test_cases:
         # Prefer smoke-tagged test cases for quick verification
         for tc in test_cases:

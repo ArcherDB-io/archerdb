@@ -1656,23 +1656,6 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             // Update commit timestamp for monotonicity check
             self.commit_timestamp = timestamp;
 
-            // VSR determinism: Clear the RAM index at bar boundaries (first beat
-            // of each compaction bar). This must happen BEFORE executing the
-            // operation so that query responses are deterministic.
-            //
-            // The RAM index is ephemeral (not persisted in checkpoints). After
-            // state sync, a replica starts with an empty RAM index (from reset())
-            // and replays WAL entries from the checkpoint forward. By clearing
-            // at bar boundaries in commit (before execution), the RAM index is
-            // rebuilt from the same set of committed operations on all replicas.
-            //
-            // Without this, a state-synced replica would have a different RAM
-            // index than a continuously-running replica, causing query responses
-            // to differ and producing client session coherence violations.
-            if (op % constants.lsm_compaction_ops == 0) {
-                self.ram_index.clear();
-            }
-
             // Dispatch to operation-specific execution
             const result: usize = switch (operation) {
                 // Pulse: internal maintenance (TTL cleanup, etc.)

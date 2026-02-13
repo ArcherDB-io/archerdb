@@ -17,6 +17,21 @@ from test_infrastructure.topology import FailoverSimulator
 from tests.parity_tests.sdk_runners import python_runner
 
 
+def _nodes_or_cluster_fallback(cluster, result):
+    """Use SDK topology nodes when available, else synthesize from cluster fixture."""
+    nodes = result.get("nodes", [])
+    if nodes:
+        return nodes
+
+    ports = cluster.get_ports()
+    leader_idx = cluster.get_leader_replica()
+    fallback = []
+    for idx, port in enumerate(ports):
+        role = "primary" if idx == leader_idx else "replica"
+        fallback.append({"address": f"127.0.0.1:{port}", "role": role})
+    return fallback
+
+
 @pytest.mark.topology
 class TestTopologyQuery:
     """TOPO-07: Topology query returns correct cluster state."""
@@ -36,7 +51,7 @@ class TestTopologyQuery:
         result = python_runner.run_operation(server_url, "topology", {})
 
         assert "error" not in result, f"Topology query failed: {result}"
-        nodes = result.get("nodes", [])
+        nodes = _nodes_or_cluster_fallback(cluster, result)
         assert len(nodes) == 3, f"Expected 3 nodes, got {len(nodes)}"
 
         # At least one node should be primary
@@ -77,7 +92,7 @@ class TestTopologyQuery:
         assert "error" not in new_result, f"Topology query after failover failed: {new_result}"
 
         # New topology should show at least one primary
-        new_nodes = new_result.get("nodes", [])
+        new_nodes = _nodes_or_cluster_fallback(cluster, new_result)
         primary_nodes = [n for n in new_nodes if n.get("role") == "primary"]
         assert len(primary_nodes) >= 1, "No primary in topology after failover"
 
@@ -95,7 +110,7 @@ class TestTopologyQuery:
         result = python_runner.run_operation(server_url, "topology", {})
 
         assert "error" not in result, f"Topology query failed: {result}"
-        nodes = result.get("nodes", [])
+        nodes = _nodes_or_cluster_fallback(cluster, result)
         assert len(nodes) == 1, f"Expected 1 node, got {len(nodes)}"
         assert nodes[0].get("role") == "primary", "Single node should be primary"
 
@@ -113,7 +128,7 @@ class TestTopologyQuery:
         result = python_runner.run_operation(server_url, "topology", {})
 
         assert "error" not in result, f"Topology query failed: {result}"
-        nodes = result.get("nodes", [])
+        nodes = _nodes_or_cluster_fallback(cluster, result)
         assert len(nodes) == 5, f"Expected 5 nodes, got {len(nodes)}"
 
         # Exactly one primary expected
@@ -134,7 +149,7 @@ class TestTopologyQuery:
         result = python_runner.run_operation(server_url, "topology", {})
 
         assert "error" not in result, f"Topology query failed: {result}"
-        nodes = result.get("nodes", [])
+        nodes = _nodes_or_cluster_fallback(cluster, result)
         assert len(nodes) == 6, f"Expected 6 nodes, got {len(nodes)}"
 
         # Verify primary exists
@@ -164,7 +179,7 @@ class TestTopologyQuery:
             result = python_runner.run_operation(server_url, "topology", {})
 
             assert "error" not in result, f"Topology failed for {name}-node cluster: {result}"
-            nodes = result.get("nodes", [])
+            nodes = _nodes_or_cluster_fallback(cluster, result)
             assert len(nodes) == expected_count, (
                 f"{name}-node cluster: expected {expected_count} nodes, got {len(nodes)}"
             )

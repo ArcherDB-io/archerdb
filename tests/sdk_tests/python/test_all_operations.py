@@ -573,3 +573,38 @@ class TestTopologyOperation:
         if "replica_count" in expected and result:
             # Verify structure exists (actual count may differ in test environment)
             assert hasattr(result, "shards") or isinstance(result, dict)
+
+
+# =============================================================================
+# 15. Regression - RAM Index Visibility Across Compaction Bars
+# =============================================================================
+
+class TestCompactionBarRegression:
+    """Regression coverage for UUID visibility across many committed ops."""
+
+    def test_uuid_lookup_survives_many_commits(self, client: GeoClientSync):
+        """An existing entity stays queryable after many subsequent commits."""
+        anchor_id = 99000001
+        anchor_event = build_geo_event_from_fixture(
+            {
+                "entity_id": anchor_id,
+                "latitude": 37.7749,
+                "longitude": -122.4194,
+            }
+        )
+        assert client.insert_events([anchor_event]) == []
+
+        # Drive enough commits to cross multiple compaction bars.
+        for i in range(128):
+            event = build_geo_event_from_fixture(
+                {
+                    "entity_id": 99010000 + i,
+                    "latitude": 37.7750 + (i * 0.00001),
+                    "longitude": -122.4195 - (i * 0.00001),
+                }
+            )
+            assert client.insert_events([event]) == []
+
+        found = client.get_latest_by_uuid(anchor_id)
+        assert found is not None, "Anchor entity disappeared after compaction-bar commits"
+        assert found.entity_id == anchor_id

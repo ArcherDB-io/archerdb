@@ -69,11 +69,17 @@ def load_fixture(operation: str) -> Optional[Dict[str, Any]]:
     Returns:
         Fixture dict with test_cases, or None if not found
     """
-    # Convert kebab-case to snake_case for file name
-    fixture_name = operation.replace("-", "_")
-    fixture_path = PROJECT_ROOT / "test_infrastructure" / "fixtures" / "v1" / f"{fixture_name}.json"
+    fixture_dir = PROJECT_ROOT / "test_infrastructure" / "fixtures" / "v1"
+    # Support both kebab-case and snake_case fixture file names.
+    candidate_names = [f"{operation}.json", f"{operation.replace('-', '_')}.json"]
+    fixture_path = None
+    for candidate in candidate_names:
+        path = fixture_dir / candidate
+        if path.exists():
+            fixture_path = path
+            break
 
-    if not fixture_path.exists():
+    if fixture_path is None:
         # Try edge case fixtures
         edge_case_dir = Path(__file__).parent / "fixtures" / "edge_cases"
         for edge_file in edge_case_dir.glob("*.json"):
@@ -81,8 +87,11 @@ def load_fixture(operation: str) -> Optional[Dict[str, Any]]:
                 with open(edge_file) as f:
                     data = json.load(f)
                     # Check if this fixture has test cases for our operation
-                    for case in data.get("test_cases", []):
+                    test_cases = data.get("test_cases", data.get("cases", []))
+                    for case in test_cases:
                         if case.get("operation") == operation:
+                            if "cases" in data and "test_cases" not in data:
+                                data["test_cases"] = data["cases"]
                             return data
             except (json.JSONDecodeError, OSError):
                 continue

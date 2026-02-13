@@ -193,10 +193,7 @@ sys.stdout.flush()
 print("QUERY_UUID_START")
 sys.stdout.flush()
 time.sleep(1) # Wait a bit to ensure client state is clean
-# latest = client.get_latest_by_uuid(entity_id)
-# Use batch query to bypass potential issue with singular query_uuid
-results = client.query_uuid_batch([entity_id])
-latest = results.events[0] if results.events else None
+latest = client.get_latest_by_uuid(entity_id)
 print("QUERY_UUID_END")
 sys.stdout.flush()
 if latest:

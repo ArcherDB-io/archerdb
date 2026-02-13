@@ -89,4 +89,34 @@ pub fn build(b: *std.Build) void {
     // Check step (compile only)
     const check_step = b.step("check", "Check if C code compiles");
     check_step.dependOn(&exe.step);
+
+    // Parity runner executable (JSON stdin/stdout bridge used by parity tests)
+    const parity_exe = b.addExecutable(.{
+        .name = "parity_runner",
+        .target = target,
+        .optimize = optimize,
+    });
+    parity_exe.addCSourceFiles(.{
+        .files = &.{
+            "parity_runner.c",
+        },
+        .flags = &.{
+            "-std=c11",
+            "-Wall",
+            "-Wextra",
+            "-Wpedantic",
+            "-D_GNU_SOURCE",
+        },
+    });
+    parity_exe.addLibraryPath(.{ .cwd_relative = lib_path });
+    parity_exe.linkSystemLibrary("arch_client");
+    parity_exe.linkLibC();
+    parity_exe.addIncludePath(.{ .cwd_relative = "../../../src/clients/c" });
+    if (target.result.os.tag == .linux) {
+        parity_exe.linkSystemLibrary("pthread");
+    }
+
+    const install_parity = b.addInstallArtifact(parity_exe, .{});
+    const parity_step = b.step("parity_runner", "Build C SDK parity runner");
+    parity_step.dependOn(&install_parity.step);
 }

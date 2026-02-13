@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import subprocess
 from pathlib import Path
 from typing import Any, Dict
@@ -19,6 +20,18 @@ SDK_DIR = Path(__file__).parent.parent.parent.parent / "src" / "clients" / "c"
 TEST_DIR = Path(__file__).parent.parent.parent / "sdk_tests" / "c"
 PARITY_BINARY = TEST_DIR / "zig-out" / "bin" / "parity_runner"
 ZIG_BINARY = Path(__file__).parent.parent.parent.parent / "zig" / "zig"
+LIB_ROOT = Path(__file__).parent.parent.parent.parent / "src" / "clients" / "c" / "lib"
+
+
+def _c_sdk_lib_dir() -> Path | None:
+    """Resolve platform-specific C SDK library directory."""
+    system = platform.system()
+    machine = platform.machine().lower()
+    if system == "Darwin":
+        return LIB_ROOT / ("aarch64-macos" if machine in {"arm64", "aarch64"} else "x86_64-macos")
+    if system == "Linux":
+        return LIB_ROOT / ("aarch64-linux-gnu.2.27" if machine in {"arm64", "aarch64"} else "x86_64-linux-gnu.2.27")
+    return None
 
 
 def run_operation(server_url: str, operation: str, input_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -41,6 +54,18 @@ def run_operation(server_url: str, operation: str, input_data: Dict[str, Any]) -
     """
     env = os.environ.copy()
     env["ARCHERDB_URL"] = server_url
+    lib_dir = _c_sdk_lib_dir()
+    if lib_dir and lib_dir.exists():
+        if platform.system() == "Darwin":
+            existing = env.get("DYLD_LIBRARY_PATH", "")
+            env["DYLD_LIBRARY_PATH"] = (
+                f"{lib_dir}:{existing}" if existing else str(lib_dir)
+            )
+        elif platform.system() == "Linux":
+            existing = env.get("LD_LIBRARY_PATH", "")
+            env["LD_LIBRARY_PATH"] = (
+                f"{lib_dir}:{existing}" if existing else str(lib_dir)
+            )
 
     # Build binary if needed
     binary_path = str(PARITY_BINARY)
@@ -105,7 +130,7 @@ def _build_binary(env: Dict[str, str]) -> Dict[str, Any] | None:
 
     try:
         result = subprocess.run(
-            [zig_path, "build", "-Dconfig=lite", "parity_runner"],
+            [zig_path, "build", "parity_runner"],
             cwd=str(TEST_DIR),
             capture_output=True,
             text=True,

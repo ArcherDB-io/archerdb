@@ -1707,9 +1707,8 @@ pub fn GenericRamIndexType(comptime Entry: type, comptime options: struct {
         }
 
         /// Clear all entries from the index, resetting it to empty state.
-        /// Used at checkpoint boundaries to ensure deterministic index state
-        /// across replicas (VSR invariant: ephemeral state must be reset at
-        /// bar boundaries so that state-synced replicas converge).
+        /// Used during state sync reset so the index can be deterministically
+        /// rebuilt from replayed operations.
         pub fn clear(self: *@This()) void {
             @memset(self.entries, Entry.empty);
             self.count = std.atomic.Value(u64).init(0);

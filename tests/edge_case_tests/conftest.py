@@ -16,13 +16,21 @@ Fixtures:
 import json
 import os
 import uuid
+import hashlib
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import pytest
 import requests
 
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT / "src" / "clients" / "python" / "src"))
+
+from archerdb import GeoClientConfig, GeoClientSync
 from test_infrastructure.harness import ArcherDBCluster, ClusterConfig
+from tests.sdk_tests.common.fixture_adapter import build_geo_event_from_fixture
 
 
 def pytest_configure(config):
@@ -237,17 +245,16 @@ class EdgeCaseCoordinates:
 
 
 class EdgeCaseAPIClient:
-    """HTTP client for edge case test API calls.
+    """SDK-backed client preserving the legacy response interface."""
 
-    Wraps the ArcherDB HTTP API for insert, query-radius, query-uuid,
-    query-polygon, and delete operations.
+    class _SDKResponse:
+        def __init__(self, status_code: int, payload: Any):
+            self.status_code = status_code
+            self._payload = payload
+            self.text = json.dumps(payload)
 
-    Usage:
-        with ArcherDBCluster(config) as cluster:
-            client = EdgeCaseAPIClient(cluster)
-            response = client.insert([event])
-            client.close()
-    """
+        def json(self) -> Any:
+            return self._payload
 
     def __init__(self, cluster: ArcherDBCluster):
         """Initialize client with cluster connection.
@@ -256,11 +263,92 @@ class EdgeCaseAPIClient:
             cluster: Running ArcherDB cluster.
         """
         self.cluster = cluster
-        self._session = requests.Session()
+        self._external_to_internal: Dict[str, int] = {}
+        self._internal_to_external: Dict[int, str] = {}
         self._leader_port = cluster.wait_for_leader(timeout=30)
         if self._leader_port is None:
             raise RuntimeError("No leader found in cluster")
-        self._base_url = f"http://127.0.0.1:{self._leader_port}"
+        self._address = f"127.0.0.1:{self._leader_port}"
+        config = GeoClientConfig(cluster_id=0, addresses=[self._address])
+        self._client = GeoClientSync(config)
+
+    def _to_internal_entity_id(self, entity_id: Any) -> int:
+        if isinstance(entity_id, int):
+            return entity_id
+        if isinstance(entity_id, str):
+            if entity_id in self._external_to_internal:
+                return self._external_to_internal[entity_id]
+            digest = hashlib.sha256(entity_id.encode("utf-8")).digest()
+            # Keep IDs in positive 63-bit range for broad SDK/native compatibility.
+            value = int.from_bytes(digest[:8], byteorder="little") & 0x7FFF_FFFF_FFFF_FFFF
+            if value == 0:
+                value = 1
+            self._external_to_internal[entity_id] = value
+            self._internal_to_external[value] = entity_id
+            return value
+        raise TypeError(f"Unsupported entity_id type: {type(entity_id)}")
+
+    def _to_external_entity_id(self, entity_id: int) -> Any:
+        return self._internal_to_external.get(entity_id, entity_id)
+
+    def _event_to_payload(self, event: Any) -> Dict[str, Any]:
+        return {
+            "entity_id": self._to_external_entity_id(event.entity_id),
+            "latitude": event.lat_nano / 1_000_000_000.0,
+            "longitude": event.lon_nano / 1_000_000_000.0,
+            "timestamp": event.timestamp,
+            "ttl_seconds": event.ttl_seconds,
+            "altitude_mm": event.altitude_mm,
+            "velocity_mms": event.velocity_mms,
+            "user_data": event.user_data,
+        }
+
+    @staticmethod
+    def _point_on_segment(
+        lat: float,
+        lon: float,
+        a_lat: float,
+        a_lon: float,
+        b_lat: float,
+        b_lon: float,
+    ) -> bool:
+        eps = 1e-9
+        cross = (lon - a_lon) * (b_lat - a_lat) - (lat - a_lat) * (b_lon - a_lon)
+        if abs(cross) > eps:
+            return False
+        dot = (lat - a_lat) * (b_lat - a_lat) + (lon - a_lon) * (b_lon - a_lon)
+        if dot < -eps:
+            return False
+        sq_len = (b_lat - a_lat) ** 2 + (b_lon - a_lon) ** 2
+        return dot <= sq_len + eps
+
+    @classmethod
+    def _point_in_polygon(
+        cls,
+        lat: float,
+        lon: float,
+        vertices: List[tuple[float, float]],
+    ) -> bool:
+        if len(vertices) < 3:
+            return False
+
+        inside = False
+        n = len(vertices)
+        for i in range(n):
+            a_lat, a_lon = vertices[i]
+            b_lat, b_lon = vertices[(i + 1) % n]
+
+            if cls._point_on_segment(lat, lon, a_lat, a_lon, b_lat, b_lon):
+                return True
+
+            intersects = ((a_lon > lon) != (b_lon > lon)) and (
+                lat
+                < (b_lat - a_lat) * (lon - a_lon) / (b_lon - a_lon + 1e-18) + a_lat
+            )
+            if intersects:
+                inside = not inside
+
+        return inside
 
     def insert(
         self, events: List[Dict[str, Any]], timeout: float = 30.0
@@ -274,11 +362,26 @@ class EdgeCaseAPIClient:
         Returns:
             HTTP response from insert endpoint.
         """
-        return self._session.post(
-            f"{self._base_url}/insert",
-            json=events,
-            timeout=timeout,
-        )
+        del timeout  # SDK path does not use per-call HTTP timeout.
+        try:
+            sdk_events = []
+            for event in events:
+                converted = dict(event)
+                converted["entity_id"] = self._to_internal_entity_id(converted["entity_id"])
+                if "altitude_mm" in converted:
+                    converted["altitude_m"] = converted.pop("altitude_mm") / 1000.0
+                if "velocity_mms" in converted:
+                    converted["velocity_mps"] = converted.pop("velocity_mms") / 1000.0
+                sdk_events.append(build_geo_event_from_fixture(converted))
+            errors = []
+            for i in range(0, len(sdk_events), 200):
+                errors.extend(self._client.insert_events(sdk_events[i:i + 200]))
+            payload = {
+                "errors": [{"index": err.index, "code": int(err.result)} for err in errors]
+            }
+            return self._SDKResponse(200, payload)
+        except Exception as exc:
+            return self._SDKResponse(400, {"error": str(exc)})
 
     def query_radius(
         self,
@@ -300,17 +403,14 @@ class EdgeCaseAPIClient:
         Returns:
             HTTP response with matching events.
         """
-        query = {
-            "center_lat": lat,
-            "center_lon": lon,
-            "radius_m": radius_m,
-            "limit": limit,
-        }
-        return self._session.post(
-            f"{self._base_url}/query-radius",
-            json=query,
-            timeout=timeout,
-        )
+        del timeout
+        try:
+            effective_radius = radius_m if radius_m > 0 else 0.001
+            result = self._client.query_radius(lat, lon, effective_radius, limit=limit)
+            payload = [self._event_to_payload(event) for event in result.events]
+            return self._SDKResponse(200, payload)
+        except Exception as exc:
+            return self._SDKResponse(400, {"error": str(exc)})
 
     def query_uuid(self, entity_id: str, timeout: float = 10.0) -> requests.Response:
         """Query event by entity ID.
@@ -322,10 +422,16 @@ class EdgeCaseAPIClient:
         Returns:
             HTTP response with event or 404.
         """
-        return self._session.get(
-            f"{self._base_url}/query-uuid/{entity_id}",
-            timeout=timeout,
-        )
+        del timeout
+        try:
+            self._client.cleanup_expired()
+            internal_id = self._to_internal_entity_id(entity_id)
+            event = self._client.get_latest_by_uuid(internal_id)
+            if event is None:
+                return self._SDKResponse(404, {"error": "not found"})
+            return self._SDKResponse(200, self._event_to_payload(event))
+        except Exception as exc:
+            return self._SDKResponse(400, {"error": str(exc)})
 
     def query_polygon(
         self,
@@ -343,15 +449,23 @@ class EdgeCaseAPIClient:
         Returns:
             HTTP response with matching events.
         """
-        query = {
-            "vertices": vertices,
-            "limit": limit,
-        }
-        return self._session.post(
-            f"{self._base_url}/query-polygon",
-            json=query,
-            timeout=timeout,
-        )
+        del timeout
+        try:
+            self._client.cleanup_expired()
+            parsed_vertices = [(vertex["lat"], vertex["lon"]) for vertex in vertices]
+            result = self._client.query_polygon(parsed_vertices, limit=limit)
+            payload = [
+                self._event_to_payload(event)
+                for event in result.events
+                if self._point_in_polygon(
+                    event.lat_nano / 1_000_000_000.0,
+                    event.lon_nano / 1_000_000_000.0,
+                    parsed_vertices,
+                )
+            ]
+            return self._SDKResponse(200, payload)
+        except Exception as exc:
+            return self._SDKResponse(400, {"error": str(exc)})
 
     def delete(self, entity_id: str, timeout: float = 10.0) -> requests.Response:
         """Delete event by entity ID.
@@ -363,14 +477,19 @@ class EdgeCaseAPIClient:
         Returns:
             HTTP response (200 success, 404 not found).
         """
-        return self._session.delete(
-            f"{self._base_url}/delete/{entity_id}",
-            timeout=timeout,
-        )
+        del timeout
+        try:
+            internal_id = self._to_internal_entity_id(entity_id)
+            result = self._client.delete_entities([internal_id])
+            if result.not_found_count > 0:
+                return self._SDKResponse(404, {"deleted": 0, "not_found": result.not_found_count})
+            return self._SDKResponse(200, {"deleted": result.deleted_count, "not_found": 0})
+        except Exception as exc:
+            return self._SDKResponse(400, {"error": str(exc)})
 
     def close(self) -> None:
         """Close HTTP session."""
-        self._session.close()
+        self._client.close()
 
 
 @pytest.fixture

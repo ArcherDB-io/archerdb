@@ -26,6 +26,15 @@ if ! command -v timeout &>/dev/null; then
     }
 fi
 
+file_size_bytes() {
+    local file_path=$1
+    if stat -f%z "$file_path" >/dev/null 2>&1; then
+        stat -f%z "$file_path"
+    else
+        stat -c%s "$file_path"
+    fi
+}
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 ARCHERDB="$ROOT_DIR/zig-out/bin/archerdb"
@@ -91,7 +100,7 @@ echo "Server PID: $SERVER_PID"
 sleep 2
 
 # Extract metrics port from log (metrics server listening line)
-METRICS_PORT=$(grep "metrics server listening" server1.log | sed 's/.*127\.0\.0\.1:\([0-9]*\).*/\1/' || echo "")
+METRICS_PORT=$(grep "metrics server listening" server1.log | sed -n 's/.*127\.0\.0\.1:\([0-9]*\).*/\1/p' || echo "")
 if [ -z "$METRICS_PORT" ]; then
     echo "FAIL: Could not determine metrics port"
     cat server1.log
@@ -101,7 +110,7 @@ fi
 echo "Metrics port: $METRICS_PORT"
 
 # Extract data port from log (cluster listening line - has "cluster=" prefix)
-DATA_PORT=$(grep "cluster=.*listening on" server1.log | sed 's/.*127\.0\.0\.1:\([0-9]*\).*/\1/' || echo "")
+DATA_PORT=$(grep "cluster=.*listening on" server1.log | sed -n 's/.*127\.0\.0\.1:\([0-9]*\).*/\1/p' || echo "")
 if [ -z "$DATA_PORT" ]; then
     echo "FAIL: Could not determine data port"
     cat server1.log
@@ -175,7 +184,7 @@ else
 fi
 
 # Record data file size before shutdown
-DATA_SIZE_BEFORE=$(stat -c%s test.archerdb 2>/dev/null || echo "0")
+DATA_SIZE_BEFORE=$(file_size_bytes test.archerdb 2>/dev/null || echo "0")
 echo "Data file size before shutdown: $DATA_SIZE_BEFORE bytes"
 echo ""
 
@@ -206,7 +215,7 @@ fi
 wait $SERVER_PID 2>/dev/null || true
 
 # Check data file size after shutdown
-DATA_SIZE_AFTER=$(stat -c%s test.archerdb 2>/dev/null || echo "0")
+DATA_SIZE_AFTER=$(file_size_bytes test.archerdb 2>/dev/null || echo "0")
 echo "Data file size after shutdown: $DATA_SIZE_AFTER bytes"
 
 if [ "$DATA_SIZE_AFTER" -gt 0 ]; then
@@ -230,8 +239,8 @@ echo "Server PID: $SERVER_PID"
 sleep 3
 
 # Extract new ports
-METRICS_PORT2=$(grep "metrics server listening" server2.log | sed 's/.*127\.0\.0\.1:\([0-9]*\).*/\1/' || echo "")
-DATA_PORT2=$(grep "cluster=.*listening on" server2.log | sed 's/.*127\.0\.0\.1:\([0-9]*\).*/\1/' || echo "")
+METRICS_PORT2=$(grep "metrics server listening" server2.log | sed -n 's/.*127\.0\.0\.1:\([0-9]*\).*/\1/p' || echo "")
+DATA_PORT2=$(grep "cluster=.*listening on" server2.log | sed -n 's/.*127\.0\.0\.1:\([0-9]*\).*/\1/p' || echo "")
 
 if [ -z "$METRICS_PORT2" ] || [ -z "$DATA_PORT2" ]; then
     echo "FAIL: Could not determine ports after restart"

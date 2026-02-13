@@ -1,10 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 ArcherDB Contributors
 
-"""Java SDK runner for parity tests.
-
-Runs Java SDK operations via Maven subprocess.
-"""
+"""Java SDK runner for parity tests."""
 
 from __future__ import annotations
 
@@ -20,28 +17,9 @@ TEST_DIR = Path(__file__).parent.parent.parent / "sdk_tests" / "java"
 
 
 def run_operation(server_url: str, operation: str, input_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Run Java SDK operation via Maven test runner.
-
-    The Java runner accepts:
-    - ARCHERDB_URL env var for server address
-    - OPERATION env var for operation name
-    - INPUT_DATA env var for JSON input
-
-    It outputs the result as JSON on stdout.
-
-    Args:
-        server_url: ArcherDB server URL
-        operation: Operation name
-        input_data: Operation input data
-
-    Returns:
-        Dict with operation result
-    """
-    # Pass input as environment variables (avoiding shell escaping issues)
+    """Run one Java SDK parity operation."""
     env = os.environ.copy()
     env["ARCHERDB_URL"] = server_url
-    env["OPERATION"] = operation
-    env["INPUT_DATA"] = json.dumps(input_data)
 
     # Check if Maven project exists
     pom_path = TEST_DIR / "pom.xml"
@@ -53,19 +31,26 @@ def run_operation(server_url: str, operation: str, input_data: Dict[str, Any]) -
             [
                 "mvn",
                 "-q",
-                "exec:java",
+                "test-compile",
+                "org.codehaus.mojo:exec-maven-plugin:3.1.0:java",
                 "-Dexec.mainClass=com.archerdb.sdktests.ParityRunner",
+                "-Dexec.classpathScope=test",
                 f"-Dexec.args={operation}",
             ],
+            input=json.dumps(input_data),
             capture_output=True,
             text=True,
             cwd=str(TEST_DIR),
             env=env,
-            timeout=60,
+            timeout=120,
         )
 
         if result.returncode != 0:
-            error_msg = result.stderr.strip() if result.stderr else "Java runner failed"
+            error_msg = (
+                result.stderr.strip()
+                or result.stdout.strip()
+                or "Java runner failed"
+            )
             return {"error": error_msg}
 
         stdout = result.stdout.strip()

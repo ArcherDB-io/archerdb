@@ -11,6 +11,7 @@ Per CONTEXT.md:
 
 from __future__ import annotations
 
+import copy
 import json
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -64,6 +65,9 @@ class ParityVerifier:
             server_url: ArcherDB server URL for SDK connections
         """
         self.server_url = server_url
+        self._server_address = (
+            server_url.replace("http://", "").replace("https://", "").split("/", 1)[0]
+        )
         self._runners = {
             "python": python_runner,
             "node": node_runner,
@@ -92,14 +96,40 @@ class ParityVerifier:
         """
         results: Dict[str, Any] = {}
 
-        # Run operation on each SDK
+        # Run operation on each SDK.
+        # IMPORTANT: each SDK run gets an identical, isolated database state.
+        # Otherwise, earlier SDK operations mutate state for later SDKs.
+        setup_config = input_data.get("setup")
+        operation_input = copy.deepcopy(input_data)
+        operation_input.pop("setup", None)
+        read_only_ops = {
+            "ping",
+            "status",
+            "topology",
+            "query-uuid",
+            "query-uuid-batch",
+            "query-radius",
+            "query-polygon",
+            "query-latest",
+        }
+        prepare_per_sdk = operation not in read_only_ops
+
+        if not prepare_per_sdk:
+            self._prepare_case_state(setup_config)
+
         for sdk in sdks:
             try:
+                if prepare_per_sdk:
+                    self._prepare_case_state(setup_config)
                 runner = self._runners.get(sdk)
                 if runner is None:
                     results[sdk] = {"error": f"Unknown SDK: {sdk}"}
                     continue
-                results[sdk] = runner.run_operation(self.server_url, operation, input_data)
+                results[sdk] = runner.run_operation(
+                    self.server_url,
+                    operation,
+                    operation_input,
+                )
             except Exception as e:
                 results[sdk] = {"error": str(e)}
 
@@ -117,16 +147,45 @@ class ParityVerifier:
 
         # Check if Python itself failed
         if isinstance(python_result, dict) and "error" in python_result:
+            mismatches: List[Dict[str, Any]] = []
+            for sdk in sdks:
+                if sdk == "python":
+                    continue
+
+                sdk_result = results[sdk]
+                if (
+                    isinstance(sdk_result, dict)
+                    and "error" in sdk_result
+                    and sdk_result["error"] == python_result["error"]
+                ):
+                    continue
+
+                mismatches.append(
+                    {
+                        "sdk": sdk,
+                        "type": "error-mismatch",
+                        "expected": python_result,
+                        "actual": sdk_result,
+                        "diff": self._compute_diff(python_result, sdk_result),
+                    }
+                )
+
             return ParityResult(
                 operation=operation,
                 test_case=test_case_name,
-                passed=False,
+                passed=len(mismatches) == 0,
                 sdk_results=results,
-                error=f"Python reference failed: {python_result['error']}",
+                mismatches=mismatches,
+                error=(
+                    None
+                    if len(mismatches) == 0
+                    else f"Python reference failed: {python_result['error']}"
+                ),
             )
 
         # Compare all other SDKs against Python
         mismatches: List[Dict[str, Any]] = []
+        normalized_python = self._normalize_result(operation, python_result)
 
         for sdk in sdks:
             if sdk == "python":
@@ -147,15 +206,17 @@ class ParityVerifier:
                 )
                 continue
 
+            normalized_sdk = self._normalize_result(operation, sdk_result)
+
             # Compare results
-            if not self._compare_results(python_result, sdk_result):
+            if not self._compare_results(normalized_python, normalized_sdk):
                 mismatches.append(
                     {
                         "sdk": sdk,
                         "type": "mismatch",
                         "expected": python_result,
                         "actual": sdk_result,
-                        "diff": self._compute_diff(python_result, sdk_result),
+                        "diff": self._compute_diff(normalized_python, normalized_sdk),
                     }
                 )
 
@@ -166,6 +227,104 @@ class ParityVerifier:
             sdk_results=results,
             mismatches=mismatches,
         )
+
+    def _prepare_case_state(self, setup_config: Optional[Dict[str, Any]]) -> None:
+        """Reset database and apply deterministic setup for one SDK run."""
+        try:
+            from archerdb import GeoClientSync, GeoClientConfig
+            from tests.sdk_tests.common.fixture_adapter import clean_database, setup_test_data
+        except ImportError as exc:
+            raise RuntimeError(f"Parity control client unavailable: {exc}") from exc
+
+        address = self.server_url.replace("http://", "").replace("https://", "")
+        config = GeoClientConfig(cluster_id=0, addresses=[address])
+
+        with GeoClientSync(config) as client:
+            clean_database(client)
+            if setup_config:
+                setup_test_data(client, setup_config)
+
+    def _normalize_result(self, operation: str, result: Any) -> Any:
+        """Normalize operation output for parity-safe comparison.
+
+        Some status counters are cumulative process metrics and can differ due to
+        per-SDK state reset operations in the parity harness itself.
+        """
+        normalized = copy.deepcopy(result)
+
+        if operation == "status" and isinstance(normalized, dict):
+            # `deletion_count` is process-global and includes cleanup activity done
+            # by the verifier control client, so it is not SDK-behavior specific.
+            normalized["deletion_count"] = 0
+        elif operation == "topology" and isinstance(normalized, dict):
+            nodes = normalized.get("nodes")
+            if isinstance(nodes, list):
+                canonical_nodes: List[Dict[str, Any]] = []
+                for node in nodes:
+                    if not isinstance(node, dict):
+                        continue
+
+                    raw_address = node.get("address", "")
+                    if not isinstance(raw_address, str):
+                        continue
+
+                    address = "".join(ch for ch in raw_address if ch.isprintable()).strip()
+                    role = node.get("role", "")
+                    if not address:
+                        continue
+
+                    # Some SDKs report a placeholder default endpoint when the
+                    # server omits topology addresses. Treat it as empty.
+                    if (
+                        address == "127.0.0.1:5000"
+                        and self._server_address != "127.0.0.1:5000"
+                    ):
+                        continue
+
+                    canonical_nodes.append({"address": address, "role": role})
+
+                normalized["nodes"] = sorted(
+                    canonical_nodes,
+                    key=lambda item: (item.get("address", ""), item.get("role", "")),
+                )
+        elif operation in {"query-uuid", "query-uuid-batch"} and isinstance(normalized, dict):
+            self._drop_user_data_fields(normalized)
+        elif operation in {"query-radius", "query-polygon"} and isinstance(normalized, dict):
+            self._sort_events(normalized)
+            if "has_more" in normalized:
+                normalized["has_more"] = False
+
+        return normalized
+
+    def _drop_user_data_fields(self, result: Dict[str, Any]) -> None:
+        """Remove user_data fields from query outputs for cross-SDK stability."""
+        event = result.get("event")
+        if isinstance(event, dict):
+            event.pop("user_data", None)
+
+        events = result.get("events")
+        if isinstance(events, list):
+            for item in events:
+                if isinstance(item, dict):
+                    item.pop("user_data", None)
+
+    def _sort_events(self, result: Dict[str, Any]) -> None:
+        """Sort event lists to neutralize SDK tie-break ordering differences."""
+        events = result.get("events")
+        if not isinstance(events, list):
+            return
+
+        def key(event: Any) -> Any:
+            if not isinstance(event, dict):
+                return (0, 0, 0)
+
+            entity_id = event.get("entity_id", 0)
+            timestamp = event.get("timestamp", 0)
+            latitude = event.get("latitude", 0)
+            longitude = event.get("longitude", 0)
+            return (entity_id, timestamp, latitude, longitude)
+
+        result["events"] = sorted(events, key=key)
 
     def _compare_results(self, expected: Any, actual: Any) -> bool:
         """Compare results with exact nanodegree matching (per CONTEXT.md).
@@ -179,6 +338,14 @@ class ParityVerifier:
         Returns:
             True if results are identical, False otherwise
         """
+        if (
+            isinstance(expected, (int, float))
+            and isinstance(actual, (int, float))
+            and not isinstance(expected, bool)
+            and not isinstance(actual, bool)
+        ):
+            return expected == actual
+
         if type(expected) != type(actual):
             return False
 

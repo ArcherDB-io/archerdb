@@ -263,7 +263,7 @@ class TestHighVolume:
         config = DatasetConfig(
             size=1000,  # Sample size for unit test
             pattern="city_concentrated",
-            cities=["New York", "London", "Tokyo", "Sydney"],
+            cities=["new_york", "london", "tokyo", "sydney"],
             seed=42,
         )
         events = generate_events(config)
