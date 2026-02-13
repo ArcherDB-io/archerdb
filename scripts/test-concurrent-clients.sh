@@ -133,8 +133,8 @@ echo "Server PID: $SERVER_PID"
 sleep 3
 
 # Extract ports from log
-METRICS_PORT=$(grep "metrics server listening" server.log | grep -oP '127\.0\.0\.1:\K[0-9]+' || echo "")
-DATA_PORT=$(grep "cluster=.*listening on" server.log | grep -oP '127\.0\.0\.1:\K[0-9]+' || echo "")
+METRICS_PORT=$(grep "metrics server listening" server.log | sed 's/.*127\.0\.0\.1:\([0-9]*\).*/\1/' || echo "")
+DATA_PORT=$(grep "cluster=.*listening on" server.log | sed 's/.*127\.0\.0\.1:\([0-9]*\).*/\1/' || echo "")
 
 if [ -z "$METRICS_PORT" ] || [ -z "$DATA_PORT" ]; then
     echo "FAIL: Could not determine server ports"

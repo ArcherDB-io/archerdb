@@ -1237,3 +1237,275 @@ test "result to JSON" {
     try testing.expect(std.mem.indexOf(u8, json, "coordinate_range") != null);
     try testing.expect(std.mem.indexOf(u8, json, "lat_nano") != null);
 }
+
+test "validate coordinate boundaries - exact min/max are valid" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var validator = DataValidator.init(allocator, .{});
+    defer validator.deinit();
+
+    // Exactly at +90° latitude (North Pole)
+    var event = GeoEvent.zero();
+    event.entity_id = 1;
+    event.timestamp = 1700000000000000000;
+    event.lat_nano = GeoEvent.lat_nano_max; // +90°
+    event.lon_nano = 0;
+    event.id = GeoEvent.pack_id(12345, event.timestamp);
+
+    const result1 = validator.validateEvent(&event);
+    try testing.expect(result1.is_valid);
+
+    // Exactly at -90° latitude (South Pole)
+    event.lat_nano = GeoEvent.lat_nano_min; // -90°
+    event.id = GeoEvent.pack_id(12346, event.timestamp);
+    const result2 = validator.validateEvent(&event);
+    try testing.expect(result2.is_valid);
+
+    // Exactly at +180° longitude (antimeridian)
+    event.lat_nano = 0;
+    event.lon_nano = GeoEvent.lon_nano_max; // +180°
+    event.id = GeoEvent.pack_id(12347, event.timestamp);
+    const result3 = validator.validateEvent(&event);
+    try testing.expect(result3.is_valid);
+
+    // Exactly at -180° longitude (antimeridian)
+    event.lon_nano = GeoEvent.lon_nano_min; // -180°
+    event.id = GeoEvent.pack_id(12348, event.timestamp);
+    const result4 = validator.validateEvent(&event);
+    try testing.expect(result4.is_valid);
+}
+
+test "validate coordinate boundaries - just outside are invalid" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var validator = DataValidator.init(allocator, .{});
+    defer validator.deinit();
+
+    var event = GeoEvent.zero();
+    event.entity_id = 1;
+    event.timestamp = 1700000000000000000;
+    event.id = GeoEvent.pack_id(12345, event.timestamp);
+
+    // One nanodegree beyond +90° latitude
+    event.lat_nano = GeoEvent.lat_nano_max + 1;
+    event.lon_nano = 0;
+    const result1 = validator.validateEvent(&event);
+    try testing.expect(!result1.is_valid);
+
+    // One nanodegree beyond -90° latitude
+    event.lat_nano = GeoEvent.lat_nano_min - 1;
+    const result2 = validator.validateEvent(&event);
+    try testing.expect(!result2.is_valid);
+
+    // One nanodegree beyond +180° longitude
+    event.lat_nano = 0;
+    event.lon_nano = GeoEvent.lon_nano_max + 1;
+    const result3 = validator.validateEvent(&event);
+    try testing.expect(!result3.is_valid);
+
+    // One nanodegree beyond -180° longitude
+    event.lon_nano = GeoEvent.lon_nano_min - 1;
+    const result4 = validator.validateEvent(&event);
+    try testing.expect(!result4.is_valid);
+}
+
+test "validate heading boundary - max valid and just over" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var validator = DataValidator.init(allocator, .{ .check_heading = true });
+    defer validator.deinit();
+
+    var event = GeoEvent.zero();
+    event.entity_id = 1;
+    event.timestamp = 1700000000000000000;
+    event.lat_nano = 37_774929000;
+    event.lon_nano = -122_419418000;
+    event.id = GeoEvent.pack_id(12345, event.timestamp);
+
+    // heading_max (36000 = 360.00°) should be valid
+    event.heading_cdeg = GeoEvent.heading_max;
+    const result1 = validator.validateEvent(&event);
+    try testing.expect(result1.is_valid);
+
+    // One centidegree over max should be invalid
+    event.heading_cdeg = GeoEvent.heading_max + 1;
+    const result2 = validator.validateEvent(&event);
+    try testing.expect(!result2.is_valid);
+
+    // Zero heading (North) should be valid
+    event.heading_cdeg = 0;
+    const result3 = validator.validateEvent(&event);
+    try testing.expect(result3.is_valid);
+}
+
+test "validate timestamp ordering across entities" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var validator = DataValidator.init(allocator, .{
+        .check_timestamp_ordering = true,
+    });
+    defer validator.deinit();
+
+    // Entity 1: timestamp 100 -> 200 (chronological order - OK)
+    var event1 = GeoEvent.zero();
+    event1.entity_id = 1;
+    event1.timestamp = 1700000000000000000;
+    event1.lat_nano = 37_774929000;
+    event1.lon_nano = -122_419418000;
+    event1.id = GeoEvent.pack_id(12345, event1.timestamp);
+    const r1 = validator.validateEvent(&event1);
+    try testing.expect(r1.is_valid);
+
+    // Entity 1: later timestamp (OK)
+    var event2 = GeoEvent.zero();
+    event2.entity_id = 1;
+    event2.timestamp = 1700000001000000000;
+    event2.lat_nano = 37_774929000;
+    event2.lon_nano = -122_419418000;
+    event2.id = GeoEvent.pack_id(12346, event2.timestamp);
+    const r2 = validator.validateEvent(&event2);
+    try testing.expect(r2.is_valid);
+
+    // Entity 1: earlier timestamp (out of order - warning)
+    var event3 = GeoEvent.zero();
+    event3.entity_id = 1;
+    event3.timestamp = 1700000000500000000;
+    event3.lat_nano = 37_774929000;
+    event3.lon_nano = -122_419418000;
+    event3.id = GeoEvent.pack_id(12347, event3.timestamp);
+    const r3 = validator.validateEvent(&event3);
+    // Out-of-order timestamp is a warning, not an error - event is still "valid"
+    // but profile tracks the ordering violation
+    try testing.expect(validator.profile.timestamp_errors > 0);
+
+    // Entity 2: independent ordering (should be fine)
+    var event4 = GeoEvent.zero();
+    event4.entity_id = 2;
+    event4.timestamp = 1700000000000000000;
+    event4.lat_nano = 37_774929000;
+    event4.lon_nano = -122_419418000;
+    event4.id = GeoEvent.pack_id(12348, event4.timestamp);
+    const r4 = validator.validateEvent(&event4);
+    try testing.expect(r4.is_valid);
+    _ = r3;
+}
+
+test "validate entity uniqueness - duplicate detection" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var validator = DataValidator.init(allocator, .{
+        .check_entity_uniqueness = true,
+        .check_timestamp_ordering = true,
+    });
+    defer validator.deinit();
+
+    // First event for entity 1
+    var event1 = GeoEvent.zero();
+    event1.entity_id = 1;
+    event1.timestamp = 1700000000000000000;
+    event1.lat_nano = 37_774929000;
+    event1.lon_nano = -122_419418000;
+    event1.id = GeoEvent.pack_id(12345, event1.timestamp);
+    _ = validator.validateEvent(&event1);
+    try testing.expectEqual(@as(u64, 1), validator.profile.unique_entity_count);
+    try testing.expectEqual(@as(u64, 0), validator.profile.duplicate_entity_count);
+
+    // Same entity, different timestamp (tracked as duplicate entity appearance)
+    var event2 = GeoEvent.zero();
+    event2.entity_id = 1;
+    event2.timestamp = 1700000001000000000;
+    event2.lat_nano = 37_774929000;
+    event2.lon_nano = -122_419418000;
+    event2.id = GeoEvent.pack_id(12346, event2.timestamp);
+    _ = validator.validateEvent(&event2);
+    try testing.expectEqual(@as(u64, 1), validator.profile.unique_entity_count);
+    try testing.expectEqual(@as(u64, 1), validator.profile.duplicate_entity_count);
+
+    // Different entity (new unique)
+    var event3 = GeoEvent.zero();
+    event3.entity_id = 2;
+    event3.timestamp = 1700000000000000000;
+    event3.lat_nano = 40_712776000;
+    event3.lon_nano = -74_005974000;
+    event3.id = GeoEvent.pack_id(12347, event3.timestamp);
+    _ = validator.validateEvent(&event3);
+    try testing.expectEqual(@as(u64, 2), validator.profile.unique_entity_count);
+}
+
+test "validate TTL - zero and max boundary" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var validator = DataValidator.init(allocator, .{
+        .check_ttl = true,
+        .max_ttl_seconds = 86400, // 1 day
+    });
+    defer validator.deinit();
+
+    var event = GeoEvent.zero();
+    event.entity_id = 1;
+    event.timestamp = 1700000000000000000;
+    event.lat_nano = 37_774929000;
+    event.lon_nano = -122_419418000;
+    event.id = GeoEvent.pack_id(12345, event.timestamp);
+
+    // Zero TTL (no expiry) is valid
+    event.ttl_seconds = 0;
+    const r1 = validator.validateEvent(&event);
+    try testing.expect(r1.is_valid);
+
+    // Exactly at max is valid
+    event.ttl_seconds = 86400;
+    const r2 = validator.validateEvent(&event);
+    try testing.expect(r2.is_valid);
+
+    // One second over max triggers warning
+    event.ttl_seconds = 86401;
+    const r3 = validator.validateEvent(&event);
+    try testing.expect(r3.error_count > 0);
+}
+
+test "data profile statistics" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var validator = DataValidator.init(allocator, .{});
+    defer validator.deinit();
+
+    // Validate several events to build profile
+    var event1 = GeoEvent.zero();
+    event1.entity_id = 1;
+    event1.timestamp = 1700000000000000000;
+    event1.lat_nano = 37_774929000;
+    event1.lon_nano = -122_419418000;
+    event1.id = GeoEvent.pack_id(12345, event1.timestamp);
+    _ = validator.validateEvent(&event1);
+
+    var event2 = GeoEvent.zero();
+    event2.entity_id = 2;
+    event2.timestamp = 1700000001000000000;
+    event2.lat_nano = -33_868820000; // Sydney
+    event2.lon_nano = 151_209296000;
+    event2.id = GeoEvent.pack_id(12346, event2.timestamp);
+    _ = validator.validateEvent(&event2);
+
+    // Check profile accumulated correctly
+    try testing.expectEqual(@as(u64, 2), validator.profile.total_events);
+    try testing.expectEqual(@as(u64, 2), validator.profile.valid_events);
+    try testing.expectEqual(@as(u64, 0), validator.profile.invalid_events);
+
+    // Check bounding box spans both cities
+    const bbox = validator.profile.getBoundingBox();
+    try testing.expect(bbox.min_lat < 0); // Sydney is south of equator
+    try testing.expect(bbox.max_lat > 0); // SF is north of equator
+    try testing.expect(bbox.min_lon < 0); // SF is west of Greenwich
+    try testing.expect(bbox.max_lon > 0); // Sydney is east of Greenwich
+
+    // Validation success rate should be 100%
+    try testing.expect(validator.profile.validationSuccessRate() == 100.0);
+}

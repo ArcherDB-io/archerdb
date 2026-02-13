@@ -963,3 +963,177 @@ test "backup: BackupConfig with schedule" {
     try std.testing.expect(next != null);
     try std.testing.expectEqual(now + 3600, next.?);
 }
+
+test "EncryptionMode fromString and toString roundtrip" {
+    const modes = [_]struct { str: []const u8, mode: EncryptionMode }{
+        .{ .str = "none", .mode = .none },
+        .{ .str = "sse", .mode = .sse },
+        .{ .str = "sse-kms", .mode = .sse_kms },
+    };
+
+    for (modes) |m| {
+        const parsed = EncryptionMode.fromString(m.str);
+        try std.testing.expect(parsed != null);
+        try std.testing.expectEqual(m.mode, parsed.?);
+        try std.testing.expectEqualStrings(m.str, parsed.?.toString());
+    }
+
+    // Invalid string returns null
+    try std.testing.expect(EncryptionMode.fromString("invalid") == null);
+    try std.testing.expect(EncryptionMode.fromString("SSE") == null);
+    try std.testing.expect(EncryptionMode.fromString("") == null);
+}
+
+test "CompressionMode fromString and toString roundtrip" {
+    const modes = [_]struct { str: []const u8, mode: CompressionMode }{
+        .{ .str = "none", .mode = .none },
+        .{ .str = "zstd", .mode = .zstd },
+    };
+
+    for (modes) |m| {
+        const parsed = CompressionMode.fromString(m.str);
+        try std.testing.expect(parsed != null);
+        try std.testing.expectEqual(m.mode, parsed.?);
+        try std.testing.expectEqualStrings(m.str, parsed.?.toString());
+    }
+
+    try std.testing.expect(CompressionMode.fromString("gzip") == null);
+    try std.testing.expect(CompressionMode.fromString("lz4") == null);
+}
+
+test "TimeUnit toNanoseconds" {
+    // 1 second = 1_000_000_000 ns
+    try std.testing.expectEqual(@as(u64, 1_000_000_000), TimeUnit.seconds.toNanoseconds(1));
+
+    // 1 minute = 60_000_000_000 ns
+    try std.testing.expectEqual(@as(u64, 60_000_000_000), TimeUnit.minutes.toNanoseconds(1));
+
+    // 1 hour = 3_600_000_000_000 ns
+    try std.testing.expectEqual(@as(u64, 3_600_000_000_000), TimeUnit.hours.toNanoseconds(1));
+
+    // 1 day = 86_400_000_000_000 ns
+    try std.testing.expectEqual(@as(u64, 86_400_000_000_000), TimeUnit.days.toNanoseconds(1));
+
+    // Verify toSeconds consistency: toNanoseconds(n) == toSeconds(n) * 1e9
+    try std.testing.expectEqual(
+        TimeUnit.hours.toSeconds(3) * std.time.ns_per_s,
+        TimeUnit.hours.toNanoseconds(3),
+    );
+}
+
+test "TimeUnit toSeconds" {
+    try std.testing.expectEqual(@as(u64, 1), TimeUnit.seconds.toSeconds(1));
+    try std.testing.expectEqual(@as(u64, 60), TimeUnit.minutes.toSeconds(1));
+    try std.testing.expectEqual(@as(u64, 3600), TimeUnit.hours.toSeconds(1));
+    try std.testing.expectEqual(@as(u64, 86400), TimeUnit.days.toSeconds(1));
+
+    // Multi-value
+    try std.testing.expectEqual(@as(u64, 7200), TimeUnit.hours.toSeconds(2));
+    try std.testing.expectEqual(@as(u64, 259200), TimeUnit.days.toSeconds(3));
+}
+
+test "FieldSpec.parse: invalid cron fields" {
+    // Step of zero is invalid
+    try std.testing.expectError(error.InvalidCronField, FieldSpec.parse("*/0", 0, 59));
+
+    // Value out of range
+    try std.testing.expectError(error.InvalidCronField, FieldSpec.parse("60", 0, 59));
+    try std.testing.expectError(error.InvalidCronField, FieldSpec.parse("25", 0, 23));
+
+    // Range start > end
+    try std.testing.expectError(error.InvalidCronField, FieldSpec.parse("10-5", 0, 59));
+
+    // Range exceeds max
+    try std.testing.expectError(error.InvalidCronField, FieldSpec.parse("0-60", 0, 59));
+
+    // Non-numeric
+    try std.testing.expectError(error.InvalidCronField, FieldSpec.parse("abc", 0, 59));
+
+    // List with out-of-range value
+    try std.testing.expectError(error.InvalidCronField, FieldSpec.parse("1,2,60", 0, 59));
+}
+
+test "FieldSpec.nextMatch" {
+    // Any: always matches from any starting point
+    const any = FieldSpec{ .any = {} };
+    try std.testing.expectEqual(@as(?u8, 0), any.nextMatch(0, 59));
+    try std.testing.expectEqual(@as(?u8, 30), any.nextMatch(30, 59));
+
+    // Value: only matches exact value
+    const val5 = FieldSpec{ .value = 5 };
+    try std.testing.expectEqual(@as(?u8, 5), val5.nextMatch(0, 59));
+    try std.testing.expectEqual(@as(?u8, 5), val5.nextMatch(5, 59));
+    try std.testing.expectEqual(@as(?u8, null), val5.nextMatch(6, 59));
+
+    // Step: matches multiples
+    const step15 = FieldSpec{ .step = .{ .base = 0, .step = 15 } };
+    try std.testing.expectEqual(@as(?u8, 0), step15.nextMatch(0, 59));
+    try std.testing.expectEqual(@as(?u8, 15), step15.nextMatch(1, 59));
+    try std.testing.expectEqual(@as(?u8, 30), step15.nextMatch(16, 59));
+    try std.testing.expectEqual(@as(?u8, 45), step15.nextMatch(31, 59));
+    try std.testing.expectEqual(@as(?u8, null), step15.nextMatch(46, 59));
+
+    // Range: matches within range
+    const range = FieldSpec{ .range = .{ .start = 9, .end = 17 } };
+    try std.testing.expectEqual(@as(?u8, 9), range.nextMatch(0, 23));
+    try std.testing.expectEqual(@as(?u8, 12), range.nextMatch(12, 23));
+    try std.testing.expectEqual(@as(?u8, null), range.nextMatch(18, 23));
+}
+
+test "CronExpression.parse: invalid formats" {
+    // Too few fields
+    try std.testing.expectError(error.InvalidCronFormat, CronExpression.parse("0 2 *"));
+    try std.testing.expectError(error.InvalidCronFormat, CronExpression.parse("0 2 * *"));
+
+    // Too many fields
+    try std.testing.expectError(error.InvalidCronFormat, CronExpression.parse("0 2 * * * *"));
+
+    // Invalid field value
+    try std.testing.expectError(error.InvalidCronField, CronExpression.parse("60 2 * * *")); // minute > 59
+    try std.testing.expectError(error.InvalidCronField, CronExpression.parse("0 24 * * *")); // hour > 23
+    try std.testing.expectError(error.InvalidCronField, CronExpression.parse("0 2 32 * *")); // day > 31
+    try std.testing.expectError(error.InvalidCronField, CronExpression.parse("0 2 * 13 *")); // month > 12
+    try std.testing.expectError(error.InvalidCronField, CronExpression.parse("0 2 * * 7")); // dow > 6
+}
+
+test "CronExpression.nextTime: specific schedule" {
+    // "0 2 * * *" = daily at 2:00 AM
+    const daily_2am = try CronExpression.parse("0 2 * * *");
+
+    // From midnight Jan 1 2024 (Monday)
+    const jan1_midnight: i64 = 1704067200; // 2024-01-01T00:00:00Z
+    const next = daily_2am.nextTime(jan1_midnight);
+
+    // Should be Jan 1 at 2:00 AM = midnight + 2 hours
+    try std.testing.expectEqual(jan1_midnight + 7200, next);
+
+    // From 3:00 AM Jan 1, should be next day at 2:00 AM
+    const jan1_3am = jan1_midnight + 10800;
+    const next2 = daily_2am.nextTime(jan1_3am);
+    try std.testing.expectEqual(jan1_midnight + 86400 + 7200, next2);
+}
+
+test "epochToComponents basic" {
+    // Jan 1, 1970 00:00:00 UTC (epoch start, Thursday)
+    const dt = epochToComponents(0);
+    try std.testing.expectEqual(@as(u16, 1970), dt.year);
+    try std.testing.expectEqual(@as(u8, 1), dt.month);
+    try std.testing.expectEqual(@as(u8, 1), dt.day);
+    try std.testing.expectEqual(@as(u8, 0), dt.hour);
+    try std.testing.expectEqual(@as(u8, 0), dt.minute);
+    try std.testing.expectEqual(@as(u8, 4), dt.weekday); // Thursday = 4
+
+    // Feb 29, 2024 (leap year) - 2024-02-29 00:00:00 UTC
+    const leap = epochToComponents(1709164800);
+    try std.testing.expectEqual(@as(u16, 2024), leap.year);
+    try std.testing.expectEqual(@as(u8, 2), leap.month);
+    try std.testing.expectEqual(@as(u8, 29), leap.day);
+}
+
+test "isLeapYear" {
+    try std.testing.expect(isLeapYear(2000)); // divisible by 400
+    try std.testing.expect(isLeapYear(2024)); // divisible by 4, not 100
+    try std.testing.expect(!isLeapYear(1900)); // divisible by 100, not 400
+    try std.testing.expect(!isLeapYear(2023)); // not divisible by 4
+    try std.testing.expect(isLeapYear(2400)); // divisible by 400
+}

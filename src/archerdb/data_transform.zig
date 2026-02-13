@@ -1021,3 +1021,246 @@ test "coordinate transform - China coordinates" {
     try testing.expect(lat_diff < 0.001);
     try testing.expect(lon_diff < 0.001);
 }
+
+test "unit conversion round-trip: meters <-> feet" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    // Convert meters to feet
+    var pipeline_fwd = TransformPipeline.init(allocator);
+    defer pipeline_fwd.deinit();
+    try pipeline_fwd.addTransform(.{
+        .transform_type = .unit_conversion,
+        .unit_conversion = .meters_to_feet,
+        .field = .altitude,
+    });
+
+    var event = GeoEvent.zero();
+    event.altitude_mm = 10000; // 10 meters in mm
+    _ = try pipeline_fwd.transformEvent(&event);
+
+    // Convert feet back to meters
+    var pipeline_rev = TransformPipeline.init(allocator);
+    defer pipeline_rev.deinit();
+    try pipeline_rev.addTransform(.{
+        .transform_type = .unit_conversion,
+        .unit_conversion = .feet_to_meters,
+        .field = .altitude,
+    });
+
+    _ = try pipeline_rev.transformEvent(&event);
+
+    // Should be close to original (10000mm) after round-trip
+    const diff: i64 = @as(i64, event.altitude_mm) - 10000;
+    try testing.expect(@abs(diff) < 10); // within 10mm tolerance
+}
+
+test "unit conversion: velocity m/s <-> km/h" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var pipeline = TransformPipeline.init(allocator);
+    defer pipeline.deinit();
+    try pipeline.addTransform(.{
+        .transform_type = .unit_conversion,
+        .unit_conversion = .mps_to_kmh,
+        .field = .velocity,
+    });
+
+    var event = GeoEvent.zero();
+    event.velocity_mms = 1000; // 1 m/s in mm/s
+    _ = try pipeline.transformEvent(&event);
+
+    // 1 m/s * 3.6 = 3.6 km/h -> 3600 mm/s
+    try testing.expect(event.velocity_mms > 3500 and event.velocity_mms < 3700);
+}
+
+test "filter operators - comparison" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    // Test gt filter (keep altitude > 5m)
+    var pipeline_gt = TransformPipeline.init(allocator);
+    defer pipeline_gt.deinit();
+    try pipeline_gt.addTransform(.{
+        .transform_type = .filter,
+        .filter_op = .gt,
+        .field = .altitude,
+        .value = 5.0, // > 5 meters
+        .skip_on_failure = true,
+    });
+
+    var event_high = GeoEvent.zero();
+    event_high.altitude_mm = 10000; // 10m
+    try testing.expect(try pipeline_gt.transformEvent(&event_high));
+
+    var pipeline_gt2 = TransformPipeline.init(allocator);
+    defer pipeline_gt2.deinit();
+    try pipeline_gt2.addTransform(.{
+        .transform_type = .filter,
+        .filter_op = .gt,
+        .field = .altitude,
+        .value = 5.0,
+        .skip_on_failure = true,
+    });
+
+    var event_low = GeoEvent.zero();
+    event_low.altitude_mm = 3000; // 3m
+    try testing.expect(!try pipeline_gt2.transformEvent(&event_low));
+}
+
+test "filter operators - range" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    // Test in_range filter (keep heading between 90-180 degrees)
+    var pipeline = TransformPipeline.init(allocator);
+    defer pipeline.deinit();
+    try pipeline.addTransform(.{
+        .transform_type = .filter,
+        .filter_op = .in_range,
+        .field = .heading,
+        .value = 90.0,
+        .value2 = 180.0,
+        .skip_on_failure = true,
+    });
+
+    var event_in = GeoEvent.zero();
+    event_in.heading_cdeg = 13500; // 135 degrees
+    try testing.expect(try pipeline.transformEvent(&event_in));
+
+    var pipeline2 = TransformPipeline.init(allocator);
+    defer pipeline2.deinit();
+    try pipeline2.addTransform(.{
+        .transform_type = .filter,
+        .filter_op = .in_range,
+        .field = .heading,
+        .value = 90.0,
+        .value2 = 180.0,
+        .skip_on_failure = true,
+    });
+
+    var event_out = GeoEvent.zero();
+    event_out.heading_cdeg = 27000; // 270 degrees (west)
+    try testing.expect(!try pipeline2.transformEvent(&event_out));
+}
+
+test "math operation - multiply and divide" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    // Multiply altitude by 2
+    var pipeline = TransformPipeline.init(allocator);
+    defer pipeline.deinit();
+    try pipeline.addTransform(.{
+        .transform_type = .math_op,
+        .math_op = .multiply,
+        .field = .altitude,
+        .value = 2.0,
+    });
+
+    var event = GeoEvent.zero();
+    event.altitude_mm = 5000;
+    _ = try pipeline.transformEvent(&event);
+    try testing.expectEqual(@as(i32, 10000), event.altitude_mm);
+
+    // Divide by 2 to restore
+    var pipeline2 = TransformPipeline.init(allocator);
+    defer pipeline2.deinit();
+    try pipeline2.addTransform(.{
+        .transform_type = .math_op,
+        .math_op = .divide,
+        .field = .altitude,
+        .value = 2.0,
+    });
+
+    _ = try pipeline2.transformEvent(&event);
+    try testing.expectEqual(@as(i32, 5000), event.altitude_mm);
+}
+
+test "math operation - subtract and abs" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    // Subtract to get negative
+    var pipeline = TransformPipeline.init(allocator);
+    defer pipeline.deinit();
+    try pipeline.addTransform(.{
+        .transform_type = .math_op,
+        .math_op = .subtract,
+        .field = .altitude,
+        .value = 10000.0,
+    });
+
+    var event = GeoEvent.zero();
+    event.altitude_mm = 5000;
+    _ = try pipeline.transformEvent(&event);
+    try testing.expectEqual(@as(i32, -5000), event.altitude_mm);
+
+    // Absolute value
+    var pipeline2 = TransformPipeline.init(allocator);
+    defer pipeline2.deinit();
+    try pipeline2.addTransform(.{
+        .transform_type = .math_op,
+        .math_op = .abs,
+        .field = .altitude,
+        .value = 0,
+    });
+
+    _ = try pipeline2.transformEvent(&event);
+    try testing.expectEqual(@as(i32, 5000), event.altitude_mm);
+}
+
+test "coordinate transform - GCJ-02 <-> BD-09 round-trip" {
+    const testing = std.testing;
+
+    // Beijing in GCJ-02
+    const gcj_lat: f64 = 39.9087;
+    const gcj_lon: f64 = 116.3975;
+
+    // GCJ-02 -> BD-09
+    const bd09 = gcj02ToBd09(gcj_lat, gcj_lon);
+    try testing.expect(bd09.lat != gcj_lat);
+    try testing.expect(bd09.lon != gcj_lon);
+
+    // BD-09 -> GCJ-02
+    const gcj_back = bd09ToGcj02(bd09.lat, bd09.lon);
+
+    // Round-trip accuracy
+    const lat_diff = @abs(gcj_back.lat - gcj_lat);
+    const lon_diff = @abs(gcj_back.lon - gcj_lon);
+    try testing.expect(lat_diff < 0.0001);
+    try testing.expect(lon_diff < 0.0001);
+}
+
+test "default value assignment - altitude" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var pipeline = TransformPipeline.init(allocator);
+    defer pipeline.deinit();
+    try pipeline.addTransform(.{
+        .transform_type = .default_value,
+        .field = .altitude,
+        .value = 100000.0, // 100m default
+    });
+
+    // Event with zero altitude gets default
+    var event1 = GeoEvent.zero();
+    _ = try pipeline.transformEvent(&event1);
+    try testing.expectEqual(@as(i32, 100000), event1.altitude_mm);
+
+    var pipeline2 = TransformPipeline.init(allocator);
+    defer pipeline2.deinit();
+    try pipeline2.addTransform(.{
+        .transform_type = .default_value,
+        .field = .altitude,
+        .value = 100000.0,
+    });
+
+    // Event with non-zero altitude keeps its value
+    var event2 = GeoEvent.zero();
+    event2.altitude_mm = 50000;
+    _ = try pipeline2.transformEvent(&event2);
+    try testing.expectEqual(@as(i32, 50000), event2.altitude_mm);
+}

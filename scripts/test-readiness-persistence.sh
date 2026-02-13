@@ -18,6 +18,14 @@
 
 set -e
 
+# macOS-compatible timeout function (GNU timeout not available by default)
+if ! command -v timeout &>/dev/null; then
+    timeout() {
+        local duration=$1; shift
+        perl -e 'alarm shift; exec @ARGV' "$duration" "$@"
+    }
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 ARCHERDB="$ROOT_DIR/zig-out/bin/archerdb"
@@ -83,7 +91,7 @@ echo "Server PID: $SERVER_PID"
 sleep 2
 
 # Extract metrics port from log (metrics server listening line)
-METRICS_PORT=$(grep "metrics server listening" server1.log | grep -oP '127\.0\.0\.1:\K[0-9]+' || echo "")
+METRICS_PORT=$(grep "metrics server listening" server1.log | sed 's/.*127\.0\.0\.1:\([0-9]*\).*/\1/' || echo "")
 if [ -z "$METRICS_PORT" ]; then
     echo "FAIL: Could not determine metrics port"
     cat server1.log
@@ -93,7 +101,7 @@ fi
 echo "Metrics port: $METRICS_PORT"
 
 # Extract data port from log (cluster listening line - has "cluster=" prefix)
-DATA_PORT=$(grep "cluster=.*listening on" server1.log | grep -oP '127\.0\.0\.1:\K[0-9]+' || echo "")
+DATA_PORT=$(grep "cluster=.*listening on" server1.log | sed 's/.*127\.0\.0\.1:\([0-9]*\).*/\1/' || echo "")
 if [ -z "$DATA_PORT" ]; then
     echo "FAIL: Could not determine data port"
     cat server1.log
@@ -222,8 +230,8 @@ echo "Server PID: $SERVER_PID"
 sleep 3
 
 # Extract new ports
-METRICS_PORT2=$(grep "metrics server listening" server2.log | grep -oP '127\.0\.0\.1:\K[0-9]+' || echo "")
-DATA_PORT2=$(grep "cluster=.*listening on" server2.log | grep -oP '127\.0\.0\.1:\K[0-9]+' || echo "")
+METRICS_PORT2=$(grep "metrics server listening" server2.log | sed 's/.*127\.0\.0\.1:\([0-9]*\).*/\1/' || echo "")
+DATA_PORT2=$(grep "cluster=.*listening on" server2.log | sed 's/.*127\.0\.0\.1:\([0-9]*\).*/\1/' || echo "")
 
 if [ -z "$METRICS_PORT2" ] || [ -z "$DATA_PORT2" ]; then
     echo "FAIL: Could not determine ports after restart"
