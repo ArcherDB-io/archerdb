@@ -55,9 +55,32 @@ format_duration() {
     else echo "${s}s"; fi
 }
 
-# Get memory usage
+# Portable timeout wrapper (macOS lacks coreutils timeout)
+portable_timeout() {
+    local duration=$1; shift
+    if command -v timeout >/dev/null 2>&1; then
+        timeout "$duration" "$@"
+    else
+        # Use perl alarm on macOS
+        perl -e 'alarm shift; exec @ARGV' "$duration" "$@"
+    fi
+}
+
+# Get memory usage (portable: Linux /proc/meminfo, macOS vm_stat)
 get_mem() {
-    awk '/MemTotal/{t=$2}/MemAvailable/{a=$2}END{print t-a}' /proc/meminfo 2>/dev/null || echo 0
+    if [[ -f /proc/meminfo ]]; then
+        awk '/MemTotal/{t=$2}/MemAvailable/{a=$2}END{print t-a}' /proc/meminfo
+    elif command -v vm_stat >/dev/null 2>&1; then
+        local page_size
+        page_size=$(pagesize 2>/dev/null || sysctl -n hw.pagesize 2>/dev/null || echo 4096)
+        local used
+        used=$(vm_stat | awk -v ps="$page_size" '
+            /Pages active/{a=$NF} /Pages wired/{w=$NF}
+            END{gsub(/\./,"",a); gsub(/\./,"",w); print int((a+w)*ps/1024)}')
+        echo "${used:-0}"
+    else
+        echo 0
+    fi
 }
 
 echo "=============================================="
@@ -94,7 +117,7 @@ while (( ELAPSED < DURATION_SECS )); do
     ITER_MEM=$(get_mem)
 
     # Run a build check as stress workload
-    if timeout 120 "$PROJECT_ROOT/zig/zig" build -j4 -Dconfig=lite check >/dev/null 2>&1; then
+    if portable_timeout 120 "$PROJECT_ROOT/zig/zig" build -j4 -Dconfig=lite check >/dev/null 2>&1; then
         ((TOTAL_OPS += 100)) || true
     else
         ((ERRORS++)) || true

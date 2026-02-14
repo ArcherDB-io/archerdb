@@ -122,14 +122,14 @@ if [[ -n "$REPLAY_SEED" ]]; then
   fi
   # Note: Use -Dvopr-log=full for maximum debug output
   "$ZIG_BIN" build vopr -Dvopr-state-machine="$STATE_MACHINE" -Dvopr-log=full -- \
-    "${LITE_ARGS[@]}" --requests-max="$REQUESTS_MAX" "${REPLAY_ARGS[@]}" "${EXTRA_ARGS[@]}" "$REPLAY_SEED"
+    ${LITE_ARGS[@]+"${LITE_ARGS[@]}"} --requests-max="$REQUESTS_MAX" "${REPLAY_ARGS[@]}" ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} "$REPLAY_SEED"
   exit $?
 fi
 
 echo "Running VOPR simulations (state_machine=$STATE_MACHINE, requests_max=$REQUESTS_MAX)"
 for seed in $SEEDS; do
   echo "--- Seed $seed ---"
-  "$ZIG_BIN" build vopr -Dvopr-state-machine="$STATE_MACHINE" -- "${LITE_ARGS[@]}" --requests-max="$REQUESTS_MAX" "${EXTRA_ARGS[@]}" "$seed"
+  "$ZIG_BIN" build vopr -Dvopr-state-machine="$STATE_MACHINE" -- ${LITE_ARGS[@]+"${LITE_ARGS[@]}"} --requests-max="$REQUESTS_MAX" ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} "$seed"
   echo ""
 done
 
