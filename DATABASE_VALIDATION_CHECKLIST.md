@@ -290,6 +290,14 @@
 - [ ] What's the restore time for typical dataset?
 - [ ] Are backups verified/checksummed?
 
+#### 7.7 RTO/RPO Validation
+- [ ] Are RTO targets defined per deployment tier? (dev/staging/prod/enterprise)
+- [ ] Are RPO targets defined per deployment tier?
+- [ ] Are restore drills scheduled with clear cadence? (monthly/quarterly)
+- [ ] Are restore drills executed and tracked against targets?
+- [ ] Do measured restore times meet RTO targets?
+- [ ] Do recovered data points meet RPO targets?
+
 ---
 
 ### 8. Connection Management
@@ -1046,6 +1054,178 @@
 
 ---
 
+### 30. Workload Profiles & SLO Gates
+
+#### 30.1 Workload Catalog
+- [ ] Are production workload profiles defined? (read-heavy, write-heavy, spatial-heavy, mixed)
+- [ ] Is traffic shape specified for each profile? (QPS, burst factor, concurrency, payload size)
+- [ ] Are critical customer journeys mapped to workload profiles?
+- [ ] Is each profile mapped to deployment tier? (dev/staging/prod/enterprise)
+
+#### 30.2 SLO Definition
+- [ ] Are latency SLOs defined per profile and operation? (P50/P95/P99)
+- [ ] Are throughput SLOs defined per profile?
+- [ ] Is availability/error-rate SLO defined for each profile?
+- [ ] Are freshness/replication-lag SLOs defined where applicable?
+- [ ] Are headroom targets defined at peak load? (for example >= 30% spare capacity)
+
+#### 30.3 Pass/Fail Release Gates
+- [ ] Are release gates tied to explicit SLO thresholds?
+- [ ] Are fail conditions objective and automatable?
+- [ ] Are burn-rate/error-budget alerts configured?
+- [ ] Are temporary SLO exceptions time-boxed with owner approval?
+- [ ] Are SLO regressions blocked from release without formal waiver?
+
+#### 30.4 SLO Validation Execution
+- [ ] Are SLOs validated using representative datasets?
+- [ ] Are tests run at baseline load, peak load, and overload?
+- [ ] Are results trended against previous release?
+- [ ] Are percentile and tail latencies reported by operation?
+- [ ] Are SLO validation results attached to release artifacts?
+
+---
+
+### 31. Canonical Test Data & Reproducibility
+
+#### 31.1 Dataset Versioning
+- [ ] Are canonical validation datasets versioned?
+- [ ] Are dataset checksums recorded and verified?
+- [ ] Are dataset generation scripts source-controlled?
+- [ ] Is each test run linked to dataset version and seed?
+
+#### 31.2 Golden Test Vectors
+- [ ] Are golden input/output vectors defined for CRUD, geospatial, replication, and recovery paths?
+- [ ] Are edge-case vectors included? (antimeridian, max sizes, nulls, overflow)
+- [ ] Are expected results machine-verifiable? (exact output or bounded tolerance)
+- [ ] Are regressions detected when golden outputs change?
+
+#### 31.3 Determinism & Replayability
+- [ ] Are randomized tests seedable with seed persisted per run?
+- [ ] Can failing tests be replayed locally and in CI with the same inputs?
+- [ ] Are time-dependent tests stabilized? (fixed clock or bounded windows)
+- [ ] Are flaky or non-deterministic tests quarantined with owner and remediation SLA?
+
+#### 31.4 Validation Data Lifecycle
+- [ ] Are small, medium, and large reference datasets maintained?
+- [ ] Is PII excluded or anonymized in validation datasets?
+- [ ] Is dataset refresh cadence defined and audited?
+- [ ] Are backward-compat datasets maintained for N-1 and N-2 versions?
+
+---
+
+### 32. Platform, Dependency & Compatibility Matrix
+
+#### 32.1 Runtime Platform Matrix
+- [ ] Are supported OS and architecture combinations explicitly listed and tested?
+- [ ] Are kernel, filesystem, and container runtime constraints documented?
+- [ ] Are minimum and recommended resource profiles tested per platform?
+- [ ] Are unsupported combinations explicitly blocked or warned?
+
+#### 32.2 Client/Server Version Compatibility
+- [ ] Is compatibility policy defined? (N, N-1, N-2)
+- [ ] Are old clients tested against new server versions?
+- [ ] Are new clients tested against old server versions?
+- [ ] Are protocol downgrade and upgrade paths validated?
+- [ ] Are incompatible combinations detected with clear error messages?
+
+#### 32.3 Dependency & Toolchain Compatibility
+- [ ] Are compiler/runtime/library version floors and ceilings defined?
+- [ ] Are dependency upgrade smoke tests automated?
+- [ ] Are TLS/cipher compatibility matrices validated for supported clients?
+- [ ] Are package-manager and SDK language-version matrices tested?
+
+#### 32.4 Upgrade & Rollback Compatibility
+- [ ] Are rolling upgrades validated for each supported topology?
+- [ ] Are mixed-version clusters validated during upgrade windows?
+- [ ] Are rollback paths validated without data loss?
+- [ ] Are compatibility test results required for release sign-off?
+
+---
+
+### 33. Evidence Automation & Audit Trail
+
+#### 33.1 Control-to-Evidence Mapping
+- [ ] Does every checklist control map to at least one evidence artifact?
+- [ ] Are artifact requirements defined? (logs, metrics snapshot, test report, config dump)
+- [ ] Are pass/fail decisions traceable to artifact IDs?
+- [ ] Is artifact generation automated where possible?
+
+#### 33.2 Evidence Integrity & Retention
+- [ ] Are artifacts timestamped and immutable after collection?
+- [ ] Are checksums/signatures used for artifact integrity?
+- [ ] Is retention policy defined by environment and compliance needs?
+- [ ] Can historical evidence be retrieved for audit windows?
+
+#### 33.3 CI/CD Evidence Pipeline
+- [ ] Does CI publish evidence bundles per run/release candidate?
+- [ ] Are bundles linked to commit SHA, build ID, and environment?
+- [ ] Are failed controls highlighted with direct artifact links?
+- [ ] Are approval workflows recorded? (engineering, QA, security, ops)
+
+#### 33.4 Audit Readiness
+- [ ] Can you produce a complete evidence pack within agreed SLA?
+- [ ] Are periodic mock audits performed?
+- [ ] Are audit findings tracked to closure with owners and due dates?
+- [ ] Is external auditor access process documented and tested?
+
+---
+
+### 34. Governance, Waivers & Remediation
+
+#### 34.1 Control Catalog & Criticality
+- [ ] Does each checklist control have a stable control ID? (for example `SEC-23.4-02`)
+- [ ] Is each control tagged as mandatory or advisory by assessment tier?
+- [ ] Is a control owner assigned for every mandatory control?
+- [ ] Is control-to-requirement traceability maintained?
+- [ ] Are control definition changes versioned with change history?
+
+#### 34.2 Go/No-Go Decision Criteria
+- [ ] Are release go/no-go criteria documented and approved?
+- [ ] Do blocker rules explicitly include critical findings and mandatory-control failures?
+- [ ] Are unresolved high-severity findings evaluated against a documented risk policy?
+- [ ] Is a final decision owner identified for each assessment run?
+- [ ] Is the final go/no-go decision recorded with rationale and evidence links?
+
+#### 34.3 Waiver & Exception Management
+- [ ] Is there a standard waiver template with risk statement and scope?
+- [ ] Does each waiver include owner, approver, creation date, and expiry date?
+- [ ] Are compensating controls required and verified for approved waivers?
+- [ ] Are expired waivers automatically treated as blockers?
+- [ ] Are open waivers reviewed at every release decision?
+
+#### 34.4 Remediation Tracking
+- [ ] Is each fail/partial mapped to a remediation ticket?
+- [ ] Does each remediation item include owner, priority, due date, and status?
+- [ ] Is verification run ID captured when a remediation is validated?
+- [ ] Are closure criteria defined per remediation item?
+- [ ] Are overdue remediation items escalated automatically?
+
+---
+
+### 35. Automation Coverage & Final Attestation
+
+#### 35.1 Automation Coverage
+- [ ] Is each control tagged as auto-validated, manual, or hybrid?
+- [ ] Is automation coverage percentage calculated for the run and tier?
+- [ ] Are mandatory manual controls explicitly listed with required evidence?
+- [ ] Are automation job failures surfaced as validation failures?
+- [ ] Is checklist-to-automation drift detected and reported?
+
+#### 35.2 Evidence Quality Gates
+- [ ] Are required evidence artifacts validated for completeness before sign-off?
+- [ ] Are evidence bundle links and artifact checksums validated automatically?
+- [ ] Are evidence freshness windows enforced? (no stale artifacts)
+- [ ] Do broken or missing evidence references block release decisions?
+
+#### 35.3 Final Attestation & Sign-off
+- [ ] Are engineering, QA, security, and operations sign-offs recorded?
+- [ ] Does each sign-off reference the exact assessment run and evidence bundle?
+- [ ] Are signer identity and timestamp captured for each approval?
+- [ ] Are unresolved blockers and approved waivers acknowledged in attestation text?
+- [ ] Is the final attestation immutable and archived for audit retrieval?
+
+---
+
 ## 📊 Validation Summary Template
 
 Use this section to record results from periodic validation runs:
@@ -1053,10 +1233,27 @@ Use this section to record results from periodic validation runs:
 **Date:**
 **Tester:**
 **Version:**
+**Assessment Tier:**
+**Control Baseline Version:**
 **Environment:**
+**Workload Profile(s):**
+**SLO Definition Reference:**
+**Dataset Version + Checksum:**
+**Compatibility Matrix Scope:**
+**Mandatory Controls in Scope:**
+**Mandatory Controls Passed:**
+**Automation Coverage (%):**
+**Evidence Bundle ID/Link:**
+**Waiver Register Link (open/expired):**
+**Remediation Tracker Link:**
+**RTO/RPO Drill Date (if applicable):**
+**Go/No-Go Decision:**
+**Blocking Criteria Triggered:**
+**Sign-off Status (Eng/QA/Sec/Ops):**
+**Final Approval Timestamp:**
 
 **Results:**
-- Total Questions: 386
+- Total Questions: 752
 - Answered:
 - Pass:
 - Fail:
@@ -1096,6 +1293,12 @@ Use this section to record results from periodic validation runs:
 | 27. Ecosystem Integration | | | | |
 | 28. Competitive | | | | |
 | 29. Requirements | | | | |
+| 30. Workload & SLO Gates | | | | |
+| 31. Test Data & Reproducibility | | | | |
+| 32. Compatibility Matrix | | | | |
+| 33. Evidence & Audit Trail | | | | |
+| 34. Governance, Waivers & Remediation | | | | |
+| 35. Automation Coverage & Final Attestation | | | | |
 
 **Critical Issues Found:**
 
@@ -1107,6 +1310,206 @@ Use this section to record results from periodic validation runs:
 
 **Next Assessment Date:**
 
+### Example Filled Assessment Run (Copy/Paste Starter)
+
+Use this as a ready-to-copy baseline for a Tier 2 release validation report.
+Replace dates, links, metrics, and issue details for your actual run.
+
+```markdown
+**Date:** 2026-02-14
+**Tester:** release-eng@archerdb
+**Version:** v2.1.0-rc3
+**Assessment Tier:** Tier 2 (Release Validation)
+**Control Baseline Version:** checklist-v2.2
+**Environment:** staging-us-east-1 (3 node cluster, lite config)
+**Workload Profile(s):** mixed-api-v1, spatial-heavy-v1
+**SLO Definition Reference:** docs/slo/release-tier2-slo.md#v2-1
+**Dataset Version + Checksum:** datasets/validation/v2026.02.10 (sha256: 9e2f8a5d...41c2)
+**Compatibility Matrix Scope:** linux-amd64 + macos-arm64 clients, SDKs (Go/Node/Python), N and N-1
+**Mandatory Controls in Scope:** 72
+**Mandatory Controls Passed:** 70
+**Automation Coverage (%):** 68%
+**Evidence Bundle ID/Link:** evidence://release/v2.1.0-rc3/tier2/2026-02-14-1830z
+**Waiver Register Link (open/expired):** evidence://release/v2.1.0-rc3/waivers
+**Remediation Tracker Link:** evidence://release/v2.1.0-rc3/remediation
+**RTO/RPO Drill Date (if applicable):** N/A (Tier 2 scope)
+**Go/No-Go Decision:** NO-GO (pending high-priority fixes)
+**Blocking Criteria Triggered:** 1 mandatory control failed, 2 open high issues
+**Sign-off Status (Eng/QA/Sec/Ops):** Eng=Pending, QA=Conditional, Sec=Approved, Ops=Approved
+**Final Approval Timestamp:** Pending
+
+**Results:**
+- Total Questions: 752
+- Scope: Tier 2 (Release Validation)
+- In-Scope Questions: 211
+- Answered: 211
+- Pass: 191
+- Fail: 5
+- Partial: 12
+- N/A: 2
+
+**Category Breakdown:**
+
+| Category | Pass | Fail | Partial | N/A |
+|----------|------|------|---------|-----|
+| 1. Basic Operational Health | 21 | 0 | 0 | 0 |
+| 2. Core Data Operations | 31 | 1 | 2 | 0 |
+| 3. Domain-Specific (Geospatial) | 25 | 1 | 1 | 0 |
+| 4. Data Integrity | 20 | 0 | 1 | 1 |
+| 5. Performance & Scale | 13 | 1 | 2 | 0 |
+| 6. Distributed Systems | - | - | - | - |
+| 7. Fault Tolerance | - | - | - | - |
+| 8. Connection Management | - | - | - | - |
+| 9. Client SDK | 21 | 1 | 2 | 0 |
+| 10. Edge Cases | - | - | - | - |
+| 11. Schema Evolution | - | - | - | - |
+| 12. Import/Export | - | - | - | - |
+| 13. Maintenance | - | - | - | - |
+| 14. Configuration | - | - | - | - |
+| 15. Resource Management | - | - | - | - |
+| 16. Time & Clock | - | - | - | - |
+| 17. API & Protocol | - | - | - | - |
+| 18. Error Handling | - | - | - | - |
+| 19. Observability | - | - | - | - |
+| 20. Test Coverage | 15 | 0 | 0 | 0 |
+| 21. Known Issues | - | - | - | - |
+| 22. Production Readiness | - | - | - | - |
+| 23. Security & Compliance | - | - | - | - |
+| 24. Capacity Planning | - | - | - | - |
+| 25. Multi-Tenancy | - | - | - | - |
+| 26. Developer Experience | - | - | - | - |
+| 27. Ecosystem Integration | - | - | - | - |
+| 28. Competitive | - | - | - | - |
+| 29. Requirements | - | - | - | - |
+| 30. Workload & SLO Gates | 14 | 0 | 1 | 0 |
+| 31. Test Data & Reproducibility | 11 | 0 | 0 | 1 |
+| 32. Compatibility Matrix | - | - | - | - |
+| 33. Evidence & Audit Trail | - | - | - | - |
+| 34. Governance, Waivers & Remediation | 12 | 1 | 2 | 0 |
+| 35. Automation Coverage & Final Attestation | 8 | 0 | 1 | 0 |
+
+**Critical Issues Found:**
+- None.
+
+**High Priority Issues:**
+- Section 5.2 / 30.3: `GET /query/radius` P99 latency exceeded target (220ms vs 180ms) at 1.5x expected peak.
+- Section 9.3: Node.js SDK reconnect path retries too aggressively after `ECONNRESET` under burst disconnects.
+
+**Medium Priority Issues:**
+- Section 3.5: Antimeridian boundary point handling shows false negatives for one polygon fixture.
+- Section 2.4: Batch update rollback is correct but emits ambiguous client error message on partial failure.
+- Section 31.2: One geospatial golden vector currently uses loose tolerance and needs tightening.
+
+**Recommendations:**
+- Block release promotion until P99 `radius` query is within SLO for 3 consecutive benchmark runs.
+- Patch Node.js SDK retry backoff for reconnect path and rerun Section 9.3 resilience tests.
+- Fix antimeridian polygon boundary logic and add regression vector to `datasets/validation/v2026.02.x`.
+- Tighten golden vector tolerances and require evidence bundle publishing from CI as release gate.
+
+**Next Assessment Date:** 2026-02-21 (post-fix revalidation)
+```
+
+### Example Filled Assessment Run (Tier 3 Production Readiness)
+
+Use this when validating full production readiness (Tier 3).
+Keep all metadata fields populated so the run can be audited and replayed.
+
+```markdown
+**Date:** 2026-02-28
+**Tester:** sre-oncall@archerdb
+**Version:** v2.1.0
+**Assessment Tier:** Tier 3 (Production Readiness)
+**Control Baseline Version:** checklist-v2.2
+**Environment:** pre-prod-eu-west-1 (5 node cluster, production config)
+**Workload Profile(s):** prod-mixed-v2, prod-spatial-burst-v1
+**SLO Definition Reference:** docs/slo/production-tier3-slo.md#v2-1
+**Dataset Version + Checksum:** datasets/validation/v2026.02.20 (sha256: 4b7d11e3...aa9f)
+**Compatibility Matrix Scope:** linux-amd64 + linux-arm64 nodes, SDKs (Go/Node/Python/Java), N and N-1 protocol
+**Mandatory Controls in Scope:** 121
+**Mandatory Controls Passed:** 117
+**Automation Coverage (%):** 76%
+**Evidence Bundle ID/Link:** evidence://release/v2.1.0/tier3/2026-02-28-2215z
+**Waiver Register Link (open/expired):** evidence://release/v2.1.0/waivers
+**Remediation Tracker Link:** evidence://release/v2.1.0/remediation
+**RTO/RPO Drill Date (if applicable):** 2026-02-27 (RTO target 15m, observed 11m; RPO target 60s, observed 22s)
+**Go/No-Go Decision:** CONDITIONAL-GO (canary only)
+**Blocking Criteria Triggered:** 0 critical, 3 open high issues (waiver required for canary)
+**Sign-off Status (Eng/QA/Sec/Ops):** Eng=Approved, QA=Approved, Sec=Conditional, Ops=Approved
+**Final Approval Timestamp:** 2026-02-28T22:47:00Z
+
+**Results:**
+- Total Questions: 752
+- Scope: Tier 3 (Production Readiness)
+- In-Scope Questions: 341
+- Answered: 341
+- Pass: 315
+- Fail: 8
+- Partial: 15
+- N/A: 3
+
+**Category Breakdown:**
+
+| Category | Pass | Fail | Partial | N/A |
+|----------|------|------|---------|-----|
+| 1. Basic Operational Health | 21 | 0 | 0 | 0 |
+| 2. Core Data Operations | 33 | 1 | 0 | 0 |
+| 3. Domain-Specific (Geospatial) | 26 | 1 | 0 | 0 |
+| 4. Data Integrity | 23 | 0 | 1 | 0 |
+| 5. Performance & Scale | 32 | 2 | 2 | 0 |
+| 6. Distributed Systems | 20 | 1 | 3 | 0 |
+| 7. Fault Tolerance | 30 | 1 | 2 | 1 |
+| 8. Connection Management | - | - | - | - |
+| 9. Client SDK | 27 | 0 | 2 | 0 |
+| 10. Edge Cases | - | - | - | - |
+| 11. Schema Evolution | - | - | - | - |
+| 12. Import/Export | - | - | - | - |
+| 13. Maintenance | - | - | - | - |
+| 14. Configuration | 13 | 0 | 3 | 0 |
+| 15. Resource Management | 23 | 0 | 2 | 0 |
+| 16. Time & Clock | - | - | - | - |
+| 17. API & Protocol | - | - | - | - |
+| 18. Error Handling | - | - | - | - |
+| 19. Observability | 24 | 0 | 2 | 1 |
+| 20. Test Coverage | 22 | 0 | 1 | 0 |
+| 21. Known Issues | - | - | - | - |
+| 22. Production Readiness | 17 | 0 | 1 | 0 |
+| 23. Security & Compliance | 26 | 0 | 2 | 1 |
+| 24. Capacity Planning | - | - | - | - |
+| 25. Multi-Tenancy | - | - | - | - |
+| 26. Developer Experience | - | - | - | - |
+| 27. Ecosystem Integration | - | - | - | - |
+| 28. Competitive | - | - | - | - |
+| 29. Requirements | - | - | - | - |
+| 30. Workload & SLO Gates | 15 | 0 | 0 | 0 |
+| 31. Test Data & Reproducibility | 14 | 0 | 1 | 1 |
+| 32. Compatibility Matrix | 13 | 1 | 2 | 0 |
+| 33. Evidence & Audit Trail | - | - | - | - |
+| 34. Governance, Waivers & Remediation | 14 | 1 | 2 | 0 |
+| 35. Automation Coverage & Final Attestation | 9 | 0 | 1 | 1 |
+
+**Critical Issues Found:**
+- None.
+
+**High Priority Issues:**
+- Section 5.2 / 30.3: P99 write latency exceeded SLO during 10-minute overload window (240ms vs 200ms target).
+- Section 6.2: Leader failover completed in 18s (target <= 12s) under injected network jitter.
+- Section 32.2: Java SDK N-1 client fails protocol downgrade handshake on one endpoint.
+
+**Medium Priority Issues:**
+- Section 7.6: Point-in-time restore succeeds but exceeds preferred operational window by 3 minutes.
+- Section 14.2: One runtime config change requires restart but is not currently documented in runbook.
+- Section 19.5: Alert runbook exists but missing remediation step for disk saturation alert.
+- Section 31.3: One long-running fuzz test shows non-determinism unless seed is pinned manually.
+
+**Recommendations:**
+- Keep production rollout at 10% canary until write P99 overload behavior meets SLO for 3 consecutive nightly runs.
+- Optimize leader election timeout tuning and rerun failover test suite under packet jitter profile.
+- Patch Java SDK downgrade handshake for N-1 and add compatibility regression test in CI matrix.
+- Update operations runbook for restart-required runtime flags and complete alert remediation playbooks.
+
+**Next Assessment Date:** 2026-03-03 (targeted Tier 3 revalidation after fixes)
+```
+
 ---
 
 ## 🎯 Assessment Tiers
@@ -1116,6 +1519,8 @@ Minimum viability check - run before any release:
 - Sections 1.1, 1.2, 1.3 (Basic Health)
 - Section 2.1 (Basic CRUD)
 - Section 4.1 (Data Consistency)
+- Section 30.1 (select workload profile for the run)
+- Section 34.1 (identify mandatory controls in scope)
 
 **Estimated Time:** 15-30 minutes
 
@@ -1126,8 +1531,12 @@ Standard release validation:
 - Section 5.1-5.3 (Core Performance)
 - Section 9 (SDK Functionality)
 - Section 20.1-20.3 (Test Suite)
+- Sections 30.2-30.4 (SLO definitions and release gates)
+- Sections 31.1-31.2 (dataset and golden vectors)
+- Sections 34.1-34.2 and 34.4 (control governance, decision criteria, remediation tracker)
+- Section 35.1 (automation coverage accounting)
 
-**Estimated Time:** 2-4 hours
+**Estimated Time:** 4-8 hours
 
 ### Tier 3: Production Readiness
 Full production deployment validation:
@@ -1137,12 +1546,18 @@ Full production deployment validation:
 - Section 19 (Observability)
 - Section 22 (Production Readiness)
 - Section 23 (Security)
+- Section 31 (full reproducibility controls)
+- Section 32 (compatibility matrix for target environments)
+- Section 34 (full governance, waivers, remediation)
+- Sections 35.1-35.2 (automation coverage and evidence quality gates)
 
-**Estimated Time:** 1-2 days
+**Estimated Time:** 2-4 days
 
 ### Tier 4: Enterprise Certification
 Complete enterprise readiness assessment:
 - All sections
+- Section 33 evidence package complete and audit-ready
+- Section 35.3 final attestation complete with named approvers
 - Independent security audit
 - Performance certification
 - Compliance verification
@@ -1163,6 +1578,14 @@ Use this checklist to systematically validate database readiness:
 4. **Post-incident:** After major issues, run relevant sections + root cause areas
 5. **Pre-release:** Run Tier 2-3 before any release
 6. **Enterprise sales:** Run Tier 4 for enterprise certification
+7. **Define workload gate:** Select workload profile and SLO targets before running tests
+8. **Pin datasets:** Record dataset version, checksum, and random seed for replayability
+9. **Run compatibility checks:** Execute the required Section 32 matrix for the release scope
+10. **Publish evidence bundle:** Attach artifacts, approvals, and run metadata to the assessment
+11. **Classify control criticality:** Mark mandatory vs advisory controls for the selected tier
+12. **Review waivers:** Validate waiver owners, expiry dates, and compensating controls
+13. **Track remediations:** Link every fail/partial to a ticket and record verification run IDs
+14. **Record decision:** Capture go/no-go outcome, blocker trigger status, and final attestation
 
 ### Test Commands
 
@@ -1266,6 +1689,6 @@ For quantitative assessment:
 
 ---
 
-**Last Updated:** 2026-01-27
-**Version:** 2.0
-**Questions:** 386
+**Last Updated:** 2026-02-14
+**Version:** 2.2
+**Questions:** 752
