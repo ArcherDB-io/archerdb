@@ -2739,6 +2739,8 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                         self.prefetch_found_timestamp,
                     )) {
                         .found_object => |event| {
+                            // Skip tombstones (deleted entities)
+                            if (event.is_tombstone()) break :forest_fallback null;
                             // Check TTL from the event data
                             if (event.ttl_seconds > 0) {
                                 const now_seconds = self.commit_timestamp / 1_000_000_000;
