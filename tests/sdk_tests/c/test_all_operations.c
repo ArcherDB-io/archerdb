@@ -1700,6 +1700,75 @@ static void test_ttl_clear(void) {
 }
 
 // ============================================================================
+// Regression: RAM Index Visibility Across Compaction Bars
+// ============================================================================
+static void test_compaction_bar_regression(void) {
+    printf("\n=== Testing compaction bar regression ===\n");
+    printf("  uuid_lookup_survives_many_commits: ");
+
+    // Clean database first
+    clean_database_all();
+
+    // Insert anchor entity
+    arch_uint128_t anchor_id = 99000001;
+    geo_event_t anchor = {0};
+    anchor.entity_id = anchor_id;
+    anchor.id = anchor_id;
+    anchor.lat_nano = degrees_to_nano(37.7749);
+    anchor.lon_nano = degrees_to_nano(-122.4194);
+
+    if (!insert_setup_events(&anchor, 1)) {
+        printf("\033[31mFAIL\033[0m - anchor insert failed\n");
+        tests_failed++;
+        return;
+    }
+
+    // Drive enough commits to cross multiple compaction bars.
+    for (int i = 0; i < 128; i++) {
+        geo_event_t event = {0};
+        event.entity_id = (arch_uint128_t)(99010000 + i);
+        event.id = event.entity_id;
+        event.lat_nano = degrees_to_nano(37.7750 + (i * 0.00001));
+        event.lon_nano = degrees_to_nano(-122.4195 - (i * 0.00001));
+
+        if (!insert_setup_events(&event, 1)) {
+            printf("\033[31mFAIL\033[0m - commit %d insert failed\n", i);
+            tests_failed++;
+            return;
+        }
+    }
+
+    // Query for the anchor entity
+    query_uuid_filter_t filter = {0};
+    filter.entity_id = anchor_id;
+
+    arch_packet_t packet = {0};
+    packet.operation = ARCH_OPERATION_QUERY_UUID;
+    packet.data = &filter;
+    packet.data_size = sizeof(filter);
+
+    if (submit_and_wait(&packet) && last_response.status == ARCH_PACKET_OK) {
+        if (last_response.len >= sizeof(query_uuid_response_t) + sizeof(geo_event_t)) {
+            geo_event_t found;
+            memcpy(&found, last_response.data + sizeof(query_uuid_response_t), sizeof(found));
+            if (found.entity_id == anchor_id) {
+                printf("\033[32mPASS\033[0m\n");
+                tests_passed++;
+            } else {
+                printf("\033[31mFAIL\033[0m - wrong entity_id returned\n");
+                tests_failed++;
+            }
+        } else {
+            printf("\033[31mFAIL\033[0m - anchor entity disappeared after compaction-bar commits\n");
+            tests_failed++;
+        }
+    } else {
+        printf("\033[31mFAIL\033[0m - query request failed\n");
+        tests_failed++;
+    }
+}
+
+// ============================================================================
 // Main
 // ============================================================================
 int main(int argc, char** argv) {
@@ -1760,6 +1829,9 @@ int main(int argc, char** argv) {
     test_ttl_set();
     test_ttl_extend();
     test_ttl_clear();
+
+    // Regression tests
+    test_compaction_bar_regression();
 
     // Cleanup
     teardown();

@@ -631,4 +631,33 @@ while True: time.sleep(1)
       }
     });
   });
+
+  // Regression - RAM Index Visibility Across Compaction Bars
+  describe('Compaction Bar Regression', () => {
+    test('uuid_lookup_survives_many_commits', async () => {
+      const anchorId = 99000001n;
+      const anchorEvent = buildEventFromFixture({
+        entity_id: Number(anchorId),
+        latitude: 37.7749,
+        longitude: -122.4194,
+      });
+      const insertErrors = await client!.insertEvents([anchorEvent]);
+      expect(insertErrors).toEqual([]);
+
+      // Drive enough commits to cross multiple compaction bars.
+      for (let i = 0; i < 128; i++) {
+        const event = buildEventFromFixture({
+          entity_id: 99010000 + i,
+          latitude: 37.7750 + (i * 0.00001),
+          longitude: -122.4195 - (i * 0.00001),
+        });
+        const errors = await client!.insertEvents([event]);
+        expect(errors).toEqual([]);
+      }
+
+      const found = await client!.getLatestByUuid(anchorId);
+      expect(found).not.toBeNull();
+      expect(found!.entity_id).toBe(anchorId);
+    });
+  });
 });

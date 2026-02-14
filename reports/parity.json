@@ -1,0 +1,565 @@
+{
+  "generated": "2026-02-14T01:29:31.286155Z",
+  "summary": {
+    "total_tests": 79,
+    "passed": 79,
+    "failed": 0,
+    "pass_rate": "100.0%",
+    "target": "70 cells (14 ops x 5 SDKs)"
+  },
+  "results": [
+    {
+      "operation": "insert",
+      "test_case": "single_event_valid",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "insert",
+      "test_case": "single_event_all_fields",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "insert",
+      "test_case": "batch_10_events",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "insert",
+      "test_case": "boundary_north_pole",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "insert",
+      "test_case": "boundary_south_pole",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "insert",
+      "test_case": "boundary_antimeridian_east",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "insert",
+      "test_case": "boundary_antimeridian_west",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "insert",
+      "test_case": "boundary_null_island",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "insert",
+      "test_case": "invalid_lat_over_90",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "insert",
+      "test_case": "invalid_lon_over_180",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "insert",
+      "test_case": "invalid_entity_id_zero",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "insert",
+      "test_case": "ttl_minimum",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "insert",
+      "test_case": "ttl_maximum",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "insert",
+      "test_case": "hotspot_insert_batch",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "upsert",
+      "test_case": "single_event_new",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "upsert",
+      "test_case": "single_event_update",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "upsert",
+      "test_case": "batch_mixed",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "upsert",
+      "test_case": "upsert_with_all_fields",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "delete",
+      "test_case": "single_entity_exists",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "delete",
+      "test_case": "single_entity_not_found",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "delete",
+      "test_case": "batch_mixed",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "delete",
+      "test_case": "delete_entity_id_zero",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "query-uuid",
+      "test_case": "existing_entity",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "query-uuid",
+      "test_case": "nonexistent_entity",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "query-uuid",
+      "test_case": "query_after_update",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "query-uuid",
+      "test_case": "query_entity_id_zero",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "query-uuid-batch",
+      "test_case": "batch_all_exist",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "query-uuid-batch",
+      "test_case": "batch_partial",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "query-uuid-batch",
+      "test_case": "batch_none_exist",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "query-uuid-batch",
+      "test_case": "batch_empty",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "query-uuid-batch",
+      "test_case": "batch_large",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "query-radius",
+      "test_case": "basic_radius_1km",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "query-radius",
+      "test_case": "radius_with_limit",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "query-radius",
+      "test_case": "radius_empty_result",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "query-radius",
+      "test_case": "large_radius_100km",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "query-radius",
+      "test_case": "small_radius_1m",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "query-radius",
+      "test_case": "radius_at_pole",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "query-radius",
+      "test_case": "radius_crossing_antimeridian",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "query-radius",
+      "test_case": "radius_with_group_filter",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "query-radius",
+      "test_case": "hotspot_radius_query",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "query-radius",
+      "test_case": "radius_with_timestamp_filter",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "query-polygon",
+      "test_case": "triangle_basic",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "query-polygon",
+      "test_case": "rectangle_basic",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "query-polygon",
+      "test_case": "complex_polygon_10_vertices",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "query-polygon",
+      "test_case": "concave_polygon",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "query-polygon",
+      "test_case": "polygon_crossing_antimeridian",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "query-polygon",
+      "test_case": "polygon_with_limit",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "query-polygon",
+      "test_case": "polygon_empty_result",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "query-polygon",
+      "test_case": "polygon_with_group_filter",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "query-polygon",
+      "test_case": "hotspot_polygon_query",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "query-latest",
+      "test_case": "latest_default_limit",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "query-latest",
+      "test_case": "latest_limit_100",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "query-latest",
+      "test_case": "latest_with_group_filter",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "query-latest",
+      "test_case": "latest_empty_database",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "query-latest",
+      "test_case": "latest_small_limit",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "ping",
+      "test_case": "basic_ping",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "ping",
+      "test_case": "ping_measures_latency",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "status",
+      "test_case": "get_status",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "status",
+      "test_case": "status_includes_metrics",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "status",
+      "test_case": "status_after_operations",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "topology",
+      "test_case": "single_node_topology",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "topology",
+      "test_case": "three_node_topology",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "topology",
+      "test_case": "five_node_topology",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "topology",
+      "test_case": "topology_includes_addresses",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "topology",
+      "test_case": "topology_after_leader_change",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "topology",
+      "test_case": "topology_with_unhealthy_node",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "ttl-set",
+      "test_case": "set_ttl_valid",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "ttl-set",
+      "test_case": "set_ttl_entity_not_found",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "ttl-set",
+      "test_case": "set_ttl_minimum",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "ttl-set",
+      "test_case": "set_ttl_maximum",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "ttl-set",
+      "test_case": "set_ttl_overwrite",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "ttl-extend",
+      "test_case": "extend_ttl_valid",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "ttl-extend",
+      "test_case": "extend_ttl_entity_not_found",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "ttl-extend",
+      "test_case": "extend_ttl_no_existing_ttl",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "ttl-extend",
+      "test_case": "extend_ttl_near_max",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "ttl-clear",
+      "test_case": "clear_ttl_valid",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "ttl-clear",
+      "test_case": "clear_ttl_entity_not_found",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "ttl-clear",
+      "test_case": "clear_ttl_already_permanent",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    },
+    {
+      "operation": "ttl-clear",
+      "test_case": "clear_ttl_verify_permanent",
+      "passed": true,
+      "error": null,
+      "mismatches": []
+    }
+  ]
+}

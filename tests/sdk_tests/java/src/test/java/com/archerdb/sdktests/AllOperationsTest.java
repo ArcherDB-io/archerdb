@@ -780,4 +780,36 @@ class AllOperationsTest {
             assertThat(result.getResult().getCode()).isEqualTo(tc.expected_output.get("result_code").getAsInt());
         }
     }
+
+    // ============================================================================
+    // Compaction Bar Regression
+    // ============================================================================
+
+    @Test
+    void testUuidLookupSurvivesManyCommits() throws Exception {
+        cleanDatabase();
+
+        long anchorId = 99000001L;
+        GeoEvent anchorEvent = new GeoEvent.Builder()
+                .setEntityId(UInt128.of(anchorId))
+                .setLatitude(37.7749)
+                .setLongitude(-122.4194)
+                .build();
+        List<InsertGeoEventsError> errors = client.insertEvents(List.of(anchorEvent));
+        assertThat(errors).isEmpty();
+
+        // Drive enough commits to cross multiple compaction bars.
+        for (int i = 0; i < 128; i++) {
+            GeoEvent event = new GeoEvent.Builder()
+                    .setEntityId(UInt128.of(99010000L + i))
+                    .setLatitude(37.7750 + (i * 0.00001))
+                    .setLongitude(-122.4195 - (i * 0.00001))
+                    .build();
+            client.insertEvents(List.of(event));
+        }
+
+        GeoEvent found = client.getLatestByUuid(UInt128.of(anchorId));
+        assertThat(found).as("Anchor entity disappeared after compaction-bar commits").isNotNull();
+        assertThat(found.getEntityId()).isEqualTo(UInt128.of(anchorId));
+    }
 }

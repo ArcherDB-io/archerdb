@@ -4,7 +4,7 @@
 //! Build configuration for C SDK operation tests
 //!
 //! This uses the Zig build system to compile C code and link against
-//! the ArcherDB C SDK library.
+//! the ArcherDB C SDK library (statically).
 //!
 //! Build:
 //!   cd tests/sdk_tests/c && ../../../zig/zig build
@@ -40,7 +40,7 @@ pub fn build(b: *std.Build) void {
         },
     });
 
-    // Link against the C SDK static library
+    // Statically link against the C SDK library
     // The C SDK is built as part of the main ArcherDB build
     // Library is in src/clients/c/lib/<target>/
     const lib_subdir: []const u8 = switch (target.result.cpu.arch) {
@@ -56,14 +56,15 @@ pub fn build(b: *std.Build) void {
         },
         else => "x86_64-linux-gnu.2.27",
     };
-    const lib_path = b.fmt(
-        "../../../src/clients/c/lib/{s}",
+
+    // Use static library (.a) to avoid dylib rpath issues
+    const static_lib = b.fmt(
+        "../../../src/clients/c/lib/{s}/libarch_client.a",
         .{lib_subdir},
     );
-    exe.addLibraryPath(.{ .cwd_relative = lib_path });
-    exe.linkSystemLibrary("arch_client");
+    exe.addObjectFile(.{ .cwd_relative = static_lib });
 
-    // Also need to link Zig runtime libraries
+    // Also need to link C runtime
     exe.linkLibC();
 
     // Add include paths
@@ -108,8 +109,7 @@ pub fn build(b: *std.Build) void {
             "-D_GNU_SOURCE",
         },
     });
-    parity_exe.addLibraryPath(.{ .cwd_relative = lib_path });
-    parity_exe.linkSystemLibrary("arch_client");
+    parity_exe.addObjectFile(.{ .cwd_relative = static_lib });
     parity_exe.linkLibC();
     parity_exe.addIncludePath(.{ .cwd_relative = "../../../src/clients/c" });
     if (target.result.os.tag == .linux) {

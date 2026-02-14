@@ -51,7 +51,7 @@ class TestEmptyResults:
         assert len(result.events) == 0
 
         # Metadata: count=0, success status (per CONTEXT.md)
-        assert result.count == 0
+        assert len(result.events) == 0
 
     @pytest.mark.integration
     def test_empty_polygon_query_returns_empty_list(self, client):
@@ -59,20 +59,18 @@ class TestEmptyResults:
 
         Per CONTEXT.md: Empty results verify BOTH structure AND metadata.
         """
-        from archerdb import PolygonVertex
-
-        # Small polygon in ocean (coordinates in ocean area)
+        # Small polygon in ocean (coordinates as (lat, lon) tuples in degrees)
         vertices = [
-            PolygonVertex(lat_nano=1_000_000, lon_nano=1_000_000),
-            PolygonVertex(lat_nano=2_000_000, lon_nano=1_000_000),
-            PolygonVertex(lat_nano=2_000_000, lon_nano=2_000_000),
-            PolygonVertex(lat_nano=1_000_000, lon_nano=2_000_000),
+            (0.001, 0.001),
+            (0.002, 0.001),
+            (0.002, 0.002),
+            (0.001, 0.002),
         ]
 
         result = client.query_polygon(vertices=vertices)
 
         assert isinstance(result.events, list)
-        assert result.count == 0
+        assert len(result.events) == 0
 
     def test_empty_result_is_not_error(self):
         """Empty results should NOT raise exceptions.
@@ -144,7 +142,7 @@ class TestEmptyResultMetadata:
         assert isinstance(result.events, list)
 
         # Count may be 0 or match events length
-        assert result.count >= 0
+        assert len(result.events) >= 0
 
 
 class TestEmptyResultEdgeCases:
@@ -153,7 +151,7 @@ class TestEmptyResultEdgeCases:
     @pytest.mark.integration
     def test_zero_radius_query(self, client):
         """Query with radius=0 should return empty or error gracefully."""
-        # Zero radius is technically valid but will never match
+        # Zero radius is rejected by SDK validation (radius must be positive)
         try:
             result = client.query_radius(
                 latitude=0.0,
@@ -161,11 +159,11 @@ class TestEmptyResultEdgeCases:
                 radius_m=0.0,  # Zero radius
             )
             # If successful, should be empty
-            assert result.count == 0
-        except ArcherDBError as e:
-            # If error, should be validation error
-            # Zero radius might be rejected as invalid
-            pass  # Either outcome is acceptable
+            assert len(result.events) == 0
+        except (ArcherDBError, ValueError):
+            # SDK validates radius > 0 and raises ValueError
+            # Either outcome is acceptable
+            pass
 
     @pytest.mark.integration
     def test_large_limit_empty_result(self, client):

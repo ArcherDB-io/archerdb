@@ -983,10 +983,51 @@ func TestTopologyOperations(t *testing.T) {
 				assert.GreaterOrEqual(t, int(topology.NumShards), 1,
 					"Should have at least 1 shard")
 				// If specific count expected, verify
-				if nodeCount == 1 {
-					assert.Equal(t, uint32(1), topology.NumShards, "Should have 1 shard")
+			if nodeCount == 1 {
+				assert.Equal(t, uint32(1), topology.NumShards, "Should have 1 shard")
 				}
 			}
 		})
 	}
+}
+
+// ============================================================================
+// Compaction Bar Regression
+// ============================================================================
+
+func TestCompactionBarRegression(t *testing.T) {
+	skipIfNoIntegration(t)
+
+	client := setupClient(t)
+	defer client.Close()
+
+	cleanDatabase(t, client)
+
+	// Insert anchor entity
+	anchorID := types.ToUint128(99000001)
+	anchorEvent := types.GeoEvent{
+		EntityID: anchorID,
+		LatNano:  types.DegreesToNano(37.7749),
+		LonNano:  types.DegreesToNano(-122.4194),
+	}
+	prepareFixtureEvent(&anchorEvent)
+	_, err := client.InsertEvents([]types.GeoEvent{anchorEvent})
+	require.NoError(t, err, "Anchor insert should succeed")
+
+	// Drive enough commits to cross multiple compaction bars.
+	for i := 0; i < 128; i++ {
+		event := types.GeoEvent{
+			EntityID: types.ToUint128(uint64(99010000 + i)),
+			LatNano:  types.DegreesToNano(37.7750 + float64(i)*0.00001),
+			LonNano:  types.DegreesToNano(-122.4195 - float64(i)*0.00001),
+		}
+		prepareFixtureEvent(&event)
+		_, err := client.InsertEvents([]types.GeoEvent{event})
+		require.NoError(t, err, "Insert should succeed")
+	}
+
+	found, err := client.GetLatestByUUID(anchorID)
+	require.NoError(t, err, "UUID query should succeed")
+	assert.NotNil(t, found, "Anchor entity disappeared after compaction-bar commits")
+	assert.Equal(t, anchorID, found.EntityID)
 }
