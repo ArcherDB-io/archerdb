@@ -113,6 +113,8 @@ const GeoEventFlags = @import("geo_event.zig").GeoEventFlags;
 const vsr = @import("vsr.zig");
 const ForestType = @import("lsm/forest.zig").ForestType;
 const GrooveType = @import("lsm/groove.zig").GrooveType;
+const lsm_tree = @import("lsm/tree.zig");
+const TimestampRange = @import("lsm/timestamp_range.zig").TimestampRange;
 
 // Prometheus metrics integration (F5.2.2)
 const archerdb_metrics = vsr.archerdb_metrics;
@@ -994,6 +996,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             .geo_events = GeoEventsGroove,
         });
 
+        /// Scan type alias for entity_id index lookup during prefetch.
+        const Scan = GeoEventsGroove.ScanBuilder.Scan;
+
         /// Configuration options for state machine initialization.
         pub const Options = struct {
             /// Maximum batch size for operations.
@@ -1141,6 +1146,15 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 
         /// Flag indicating if session_prepared_queries is initialized.
         session_queries_initialized: bool = false,
+
+        /// Forest prefetch context for async I/O (testing state_machine pattern).
+        prefetch_context: GeoEventsGroove.PrefetchContext = undefined,
+
+        /// Scan read context for async entity_id scan during prefetch.
+        scan_context: Scan.Context = .{ .callback = scan_read_callback },
+
+        /// Timestamp found by entity_id scan (0 = not found / not scanned).
+        prefetch_found_timestamp: u64 = 0,
 
         // ====================================================================
         // Initialization
@@ -1582,15 +1596,99 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             // For production, use the unified StateMachine in state_machine.zig which
             // has full Forest LSM prefetch integration.
 
+            // Reset prefetch state from previous operation.
+            self.prefetch_found_timestamp = 0;
+
             switch (operation) {
-                // All ArcherDB operations use optimistic/immediate execution
-                // GeoEvent operations rely on RAM index for fast access
+                .query_uuid => {
+                    // Parse entity_id and prefetch from forest for cache hit in commit.
+                    if (message_body_used.len == @sizeOf(QueryUuidFilter)) {
+                        const filter = mem.bytesAsValue(
+                            QueryUuidFilter,
+                            message_body_used[0..@sizeOf(QueryUuidFilter)],
+                        ).*;
+                        if (filter.entity_id != 0) {
+                            const lookup_result = self.ram_index.lookup(filter.entity_id);
+                            if (lookup_result.entry) |entry| {
+                                // RAM index hit — prefetch composite ID from forest
+                                self.forest.grooves.geo_events.prefetch_setup(null);
+                                self.forest.grooves.geo_events.prefetch_enqueue(entry.latest_id);
+                                self.forest.grooves.geo_events.prefetch(
+                                    prefetch_forest_callback,
+                                    &self.prefetch_context,
+                                );
+                                return;
+                            } else {
+                                // RAM index miss — scan entity_id index for forest fallback.
+                                // This handles post-crash recovery where RAM index is empty
+                                // but the forest has persisted data.
+                                const buffer = self.forest.scan_buffer_pool.acquire() catch {
+                                    self.prefetch_finish();
+                                    return;
+                                };
+                                const scan = self.forest.grooves.geo_events.scan_builder.scan_prefix(
+                                    .entity_id,
+                                    buffer,
+                                    lsm_tree.snapshot_latest,
+                                    filter.entity_id,
+                                    TimestampRange.all(),
+                                    .descending,
+                                ) catch {
+                                    self.prefetch_finish();
+                                    return;
+                                };
+                                self.drive_prefetch_scan(scan);
+                                return;
+                            }
+                        }
+                    }
+                    self.prefetch_finish();
+                },
+                .query_uuid_batch => {
+                    // Prefetch known entries from forest for cache hits in commit.
+                    // Entities missing from RAM index still return not_found (batch
+                    // scan fallback is deferred to a follow-up).
+                    if (message_body_used.len >= @sizeOf(QueryUuidBatchFilter)) {
+                        const filter = mem.bytesAsValue(
+                            QueryUuidBatchFilter,
+                            message_body_used[0..@sizeOf(QueryUuidBatchFilter)],
+                        ).*;
+                        if (filter.count > 0 and filter.count <= QueryUuidBatchFilter.max_count) {
+                            const entity_ids_size = filter.count * @sizeOf(u128);
+                            if (message_body_used.len >= @sizeOf(QueryUuidBatchFilter) + entity_ids_size) {
+                                const entity_ids = @as(
+                                    [*]const u128,
+                                    @ptrCast(@alignCast(message_body_used[@sizeOf(QueryUuidBatchFilter)..].ptr)),
+                                )[0..filter.count];
+
+                                self.forest.grooves.geo_events.prefetch_setup(null);
+                                var enqueued: u32 = 0;
+                                for (entity_ids) |entity_id| {
+                                    if (entity_id == 0) continue;
+                                    const lookup_result = self.ram_index.lookup(entity_id);
+                                    if (lookup_result.entry) |entry| {
+                                        self.forest.grooves.geo_events.prefetch_enqueue(entry.latest_id);
+                                        enqueued += 1;
+                                    }
+                                }
+                                if (enqueued > 0) {
+                                    self.forest.grooves.geo_events.prefetch(
+                                        prefetch_forest_callback,
+                                        &self.prefetch_context,
+                                    );
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    self.prefetch_finish();
+                },
+                // All other operations use optimistic/immediate execution.
+                // RAM index provides fast access without forest prefetch.
                 .insert_events,
                 .upsert_events,
                 .delete_entities,
                 .cleanup_expired,
-                .query_uuid,
-                .query_uuid_batch,
                 .query_radius,
                 .query_polygon,
                 .query_latest,
@@ -1598,18 +1696,14 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .archerdb_get_status,
                 .get_topology,
                 .pulse,
-                // Manual TTL operations
                 .ttl_set,
                 .ttl_extend,
                 .ttl_clear,
-                // Batch query (14-04)
                 .batch_query,
-                // Prepared query operations (14-05)
                 .prepare_query,
                 .execute_prepared,
                 .deallocate_prepared,
                 => {
-                    // Optimistic execution - RAM index provides fast access
                     self.prefetch_finish();
                 },
             }
@@ -1620,6 +1714,43 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             const callback = self.prefetch_callback.?;
             self.prefetch_callback = null;
             callback(self);
+        }
+
+        /// Callback when forest groove prefetch completes (async I/O done).
+        fn prefetch_forest_callback(completion: *GeoEventsGroove.PrefetchContext) void {
+            const self: *GeoStateMachine = @fieldParentPtr("prefetch_context", completion);
+            self.prefetch_finish();
+        }
+
+        /// Callback when scan read I/O completes during entity_id index scan.
+        fn scan_read_callback(context: *Scan.Context, scan_ptr: *Scan) void {
+            const self: *GeoStateMachine = @alignCast(@fieldParentPtr("scan_context", context));
+            self.drive_prefetch_scan(scan_ptr);
+        }
+
+        /// Drive the entity_id index scan to find the latest timestamp for an entity.
+        /// Called initially from prefetch() and re-entered from scan_read_callback
+        /// after async I/O completes.
+        fn drive_prefetch_scan(self: *GeoStateMachine, scan: *Scan) void {
+            const timestamp = scan.next() catch {
+                // Pending — need I/O, scan will call back when ready
+                scan.read(&self.scan_context);
+                return;
+            };
+            if (timestamp) |ts| {
+                // Found latest timestamp for entity — chain into forest prefetch
+                self.prefetch_found_timestamp = ts;
+                self.forest.grooves.geo_events.prefetch_setup(null);
+                self.forest.grooves.geo_events.prefetch_enqueue_by_timestamp(ts);
+                self.forest.grooves.geo_events.prefetch(
+                    prefetch_forest_callback,
+                    &self.prefetch_context,
+                );
+            } else {
+                // Scan complete — entity not in forest
+                self.prefetch_found_timestamp = 0;
+                self.prefetch_finish();
+            }
         }
 
         /// Commit phase - execute operation deterministically.
@@ -2599,6 +2730,79 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 }
                 return response_size + @sizeOf(GeoEvent);
             } else {
+                // RAM index miss — try forest fallback (post-crash recovery path).
+                // During prefetch, we scanned the entity_id index tree to find the
+                // latest timestamp for this entity. If found, the data is now cached.
+                const forest_event: ?GeoEvent = forest_fallback: {
+                    if (self.prefetch_found_timestamp == 0) break :forest_fallback null;
+                    switch (self.forest.grooves.geo_events.get_by_timestamp(
+                        self.prefetch_found_timestamp,
+                    )) {
+                        .found_object => |event| {
+                            // Check TTL from the event data
+                            if (event.ttl_seconds > 0) {
+                                const now_seconds = self.commit_timestamp / 1_000_000_000;
+                                const creation_seconds = event.timestamp / 1_000_000_000;
+                                const expiry_seconds = creation_seconds + @as(u64, event.ttl_seconds);
+                                if (now_seconds > expiry_seconds) {
+                                    self.ttl_metrics.record_lookup_expiration();
+                                    break :forest_fallback null;
+                                }
+                            }
+                            break :forest_fallback event;
+                        },
+                        else => break :forest_fallback null,
+                    }
+                };
+
+                if (forest_event) |result_event| {
+                    // Found in forest — build response (same format as RAM index hit)
+                    if (output.len < response_size + @sizeOf(GeoEvent)) {
+                        log.warn("query_uuid: output buffer too small", .{});
+                        return 0;
+                    }
+
+                    const end_execute = std.time.nanoTimestamp();
+                    const fheader = mem.bytesAsValue(
+                        QueryUuidResponse,
+                        output[0..response_size],
+                    );
+                    fheader.* = QueryUuidResponse{ .status = 0 };
+                    const result_ptr = mem.bytesAsValue(
+                        GeoEvent,
+                        output[response_size..][0..@sizeOf(GeoEvent)],
+                    );
+                    result_ptr.* = result_event;
+
+                    const end_time = std.time.nanoTimestamp();
+                    const duration_ns: u64 = if (end_time > start_time)
+                        @intCast(end_time - start_time)
+                    else
+                        0;
+                    self.query_metrics.recordUuidQuery(true, duration_ns);
+                    archerdb_metrics.Registry.read_ops_query_uuid.inc();
+                    archerdb_metrics.Registry.read_operations_total.inc();
+                    archerdb_metrics.Registry.read_events_returned_total.add(1);
+                    archerdb_metrics.Registry.read_latency.observeNs(duration_ns);
+                    archerdb_metrics.Registry.query_result_size.observe(1.0);
+
+                    self.latency_breakdown.recordPhases(.{
+                        .query_type = .uuid,
+                        .parse_ns = @intCast(@max(0, end_parse - start_time)),
+                        .plan_ns = 0,
+                        .execute_ns = @intCast(@max(0, end_execute - end_plan)),
+                        .serialize_ns = @intCast(@max(0, end_time - end_execute)),
+                    });
+
+                    self.forest.adaptive_record_read(1);
+                    log.debug("query_uuid: found entity {x} via forest fallback", .{filter.entity_id});
+
+                    if (self.result_cache) |cache| {
+                        cache.put(query_hash, output[0 .. response_size + @sizeOf(GeoEvent)]);
+                    }
+                    return response_size + @sizeOf(GeoEvent);
+                }
+
                 // Not found - record metrics
                 const end_time = std.time.nanoTimestamp();
                 const duration_ns: u64 = if (end_time > start_time)
