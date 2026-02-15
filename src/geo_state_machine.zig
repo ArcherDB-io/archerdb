@@ -1156,6 +1156,15 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         /// Timestamp found by entity_id scan (0 = not found / not scanned).
         prefetch_found_timestamp: u64 = 0,
 
+        /// Scan context for RAM index rebuild during open().
+        rebuild_scan_context: Scan.Context = .{ .callback = rebuild_scan_read_callback },
+
+        /// Active scan pointer during rebuild (null when not rebuilding).
+        rebuild_scan_ptr: ?*Scan = null,
+
+        /// Count of entries rebuilt (for logging).
+        rebuild_count: u64 = 0,
+
         // ====================================================================
         // Initialization
         // ====================================================================
@@ -1432,6 +1441,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .covering_cache = self.covering_cache,
                 .session_prepared_queries = self.session_prepared_queries,
                 .session_queries_initialized = self.session_queries_initialized,
+                .rebuild_scan_context = .{ .callback = rebuild_scan_read_callback },
+                .rebuild_scan_ptr = null,
+                .rebuild_count = 0,
             };
         }
 
@@ -1459,9 +1471,128 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         }
 
         /// Internal callback when forest open completes.
+        /// Starts RAM index rebuild from forest data before signaling open complete.
         fn forest_open_callback(forest: *Forest) void {
             const self: *GeoStateMachine = @fieldParentPtr("forest", forest);
             assert(self.open_callback != null);
+            self.rebuild_ram_index_start();
+        }
+
+        /// Rebuild the RAM index from forest data during open().
+        /// Scans all GeoEvents in the forest by timestamp (ascending) and
+        /// upserts each into the RAM index. This ensures the RAM index matches
+        /// the checkpoint state before any WAL replay or new operations execute.
+        fn rebuild_ram_index_start(self: *GeoStateMachine) void {
+            self.rebuild_count = 0;
+
+            const buffer = self.forest.scan_buffer_pool.acquire() catch {
+                log.warn("RAM index rebuild: cannot acquire scan buffer, skipping", .{});
+                self.rebuild_ram_index_finish();
+                return;
+            };
+
+            const scan = self.forest.grooves.geo_events.scan_builder.scan_timestamp(
+                buffer,
+                lsm_tree.snapshot_latest,
+                TimestampRange.all(),
+                .ascending,
+            ) catch {
+                log.warn("RAM index rebuild: cannot create scan, skipping", .{});
+                self.rebuild_ram_index_finish();
+                return;
+            };
+
+            self.rebuild_scan_ptr = scan;
+            self.rebuild_drive_scan();
+        }
+
+        /// Drive the timestamp scan for RAM index rebuild.
+        /// Pulls timestamps one at a time; for each, prefetches the full
+        /// GeoEvent from forest to upsert into the RAM index.
+        fn rebuild_drive_scan(self: *GeoStateMachine) void {
+            const scan = self.rebuild_scan_ptr.?;
+
+            const timestamp = scan.next() catch {
+                // Pending — need async I/O, callback will re-enter.
+                scan.read(&self.rebuild_scan_context);
+                return;
+            };
+
+            if (timestamp) |ts| {
+                // Got a timestamp — prefetch the full object from forest.
+                self.prefetch_found_timestamp = ts;
+                self.forest.grooves.geo_events.prefetch_setup(null);
+                self.forest.grooves.geo_events.prefetch_enqueue_by_timestamp(ts);
+                self.forest.grooves.geo_events.prefetch(
+                    rebuild_prefetch_callback,
+                    &self.prefetch_context,
+                );
+            } else {
+                // Scan exhausted — rebuild complete.
+                self.rebuild_ram_index_finish();
+            }
+        }
+
+        /// Callback when prefetch for one rebuild entry completes.
+        /// Gets the full GeoEvent from cache, upserts into RAM index,
+        /// then continues scanning.
+        fn rebuild_prefetch_callback(completion: *GeoEventsGroove.PrefetchContext) void {
+            const self: *GeoStateMachine = @fieldParentPtr("prefetch_context", completion);
+            const ts = self.prefetch_found_timestamp;
+
+            switch (self.forest.grooves.geo_events.get_by_timestamp(ts)) {
+                .found_object => |event| {
+                    if (event.is_tombstone()) {
+                        // Entity was deleted — remove from RAM index if present.
+                        _ = self.ram_index.remove(event.entity_id);
+                    } else {
+                        // Upsert into RAM index with LWW semantics.
+                        _ = self.ram_index.upsertWithMetadata(
+                            event.entity_id,
+                            event.id,
+                            event.ttl_seconds,
+                            .{
+                                .lat_nano = event.lat_nano,
+                                .lon_nano = event.lon_nano,
+                                .group_id = event.group_id,
+                            },
+                        ) catch |err| {
+                            log.warn("RAM index rebuild: upsert error: {}", .{err});
+                        };
+                        // Track TTL entries so pulse_needed() triggers cleanup.
+                        if (event.ttl_seconds > 0) {
+                            self.entries_with_ttl += 1;
+                        }
+                        self.rebuild_count += 1;
+                    }
+                },
+                else => {
+                    // Not found (possibly removed during compaction) — skip.
+                },
+            }
+
+            // Clear the objects_cache stash to prevent overflow.
+            // The stash has bounded capacity and accumulates entries from
+            // prefetch_enqueue_by_timestamp. Since get_by_timestamp returns
+            // a copy, the stash entry is no longer needed. Safe during open()
+            // because no scopes are active.
+            self.forest.grooves.geo_events.objects_cache.compact();
+
+            // Continue scanning.
+            self.rebuild_drive_scan();
+        }
+
+        /// Callback when scan read I/O completes during rebuild.
+        fn rebuild_scan_read_callback(context: *Scan.Context, scan_ptr: *Scan) void {
+            const self: *GeoStateMachine = @alignCast(@fieldParentPtr("rebuild_scan_context", context));
+            _ = scan_ptr;
+            self.rebuild_drive_scan();
+        }
+
+        /// Complete the RAM index rebuild and invoke the open callback.
+        fn rebuild_ram_index_finish(self: *GeoStateMachine) void {
+            self.rebuild_scan_ptr = null;
+            log.info("RAM index rebuild complete: {d} entries", .{self.rebuild_count});
 
             const callback = self.open_callback.?;
             self.open_callback = null;
