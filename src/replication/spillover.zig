@@ -126,6 +126,15 @@ pub const SpilloverSegment = extern struct {
 pub const SpillEntry = struct {
     header: ShipEntry,
     body: []const u8,
+
+    /// Free body memory allocated during recovery iteration.
+    /// Only call this for entries returned by EntryIterator (not for entries
+    /// constructed with string literal bodies for spillEntries).
+    pub fn deinitBody(self: SpillEntry, allocator: Allocator) void {
+        if (self.body.len > 0) {
+            allocator.free(self.body);
+        }
+    }
 };
 
 /// Ship entry header (imported from replication module)
@@ -257,17 +266,29 @@ pub const EntryIterator = struct {
             return null;
         }
 
-        // Skip past the body data to position for next entry
-        // (body is not returned in iteration - caller must re-read if needed)
-        if (header.body_size > 0) {
-            file.seekBy(@intCast(header.body_size)) catch return null;
-        }
+        // Read body data
+        const body = if (header.body_size > 0) blk: {
+            const buf = self.allocator.alloc(u8, header.body_size) catch |err| {
+                log.warn("Failed to allocate body buffer for spillover entry: {s}", .{@errorName(err)});
+                file.seekBy(@intCast(header.body_size)) catch return null;
+                break :blk &[_]u8{};
+            };
+            const body_read = file.read(buf) catch {
+                self.allocator.free(buf);
+                return null;
+            };
+            if (body_read < header.body_size) {
+                self.allocator.free(buf);
+                return null;
+            }
+            break :blk buf;
+        } else &[_]u8{};
 
         self.entries_remaining -= 1;
 
         return SpillEntry{
             .header = header,
-            .body = &[_]u8{}, // Body must be read separately by caller
+            .body = body,
         };
     }
 };
@@ -655,10 +676,12 @@ test "SpilloverManager spill and recover" {
         const entry1 = iter.next();
         try std.testing.expect(entry1 != null);
         try std.testing.expectEqual(@as(u64, 1), entry1.?.header.op);
+        entry1.?.deinitBody(allocator);
 
         const entry2 = iter.next();
         try std.testing.expect(entry2 != null);
         try std.testing.expectEqual(@as(u64, 2), entry2.?.header.op);
+        entry2.?.deinitBody(allocator);
 
         const entry3 = iter.next();
         try std.testing.expect(entry3 == null);

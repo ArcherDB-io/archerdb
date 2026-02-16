@@ -36,7 +36,9 @@ from tests.sdk_tests.common.fixture_adapter import build_geo_event_from_fixture
 def pytest_configure(config):
     """Register edge case markers."""
     config.addinivalue_line("markers", "edge_case: mark test as edge case test")
-    config.addinivalue_line("markers", "slow: mark test as slow (TTL waits, scale tests)")
+    config.addinivalue_line(
+        "markers", "slow: mark test as slow (TTL waits, scale tests)"
+    )
 
 
 @pytest.fixture(scope="module")
@@ -196,6 +198,45 @@ def build_polygon_query(
     }
 
 
+def advance_commit_timestamp(api_client: EdgeCaseAPIClient) -> None:
+    """Advance VSR commit_timestamp with a dummy write operation.
+
+    CRITICAL for TTL testing: ArcherDB uses VSR consensus timestamps
+    for TTL checking, not wall-clock time. This means:
+
+    1. TTL is checked against `commit_timestamp`, which only advances on writes.
+    2. Query-only workloads will NOT cause TTL expiration.
+    3. Tests must call this function after waiting for TTL duration.
+
+    Usage in tests:
+        # Insert entity with 2s TTL
+        api_client.insert([event])
+
+        # Wait for TTL duration (wall-clock)
+        time.sleep(3)
+
+        # CRITICAL: Advance commit_timestamp
+        advance_commit_timestamp(api_client)
+
+        # Now TTL will be checked against advanced timestamp
+        response = api_client.query_uuid(entity_id)
+        assert response.status_code == 404  # Expired!
+
+    Args:
+        api_client: EdgeCaseAPIClient instance to perform dummy write.
+    """
+    dummy_id = generate_entity_id()
+    dummy_event = build_insert_event(
+        entity_id=dummy_id,
+        lat=0.0,
+        lon=0.0,
+        ttl_seconds=0,
+    )
+    response = api_client.insert([dummy_event])
+    if response.status_code != 200:
+        raise RuntimeError(f"Failed to advance commit_timestamp: {response.text}")
+
+
 def load_fixture(fixture_path: Path) -> Dict[str, Any]:
     """Load a JSON fixture file.
 
@@ -280,7 +321,9 @@ class EdgeCaseAPIClient:
                 return self._external_to_internal[entity_id]
             digest = hashlib.sha256(entity_id.encode("utf-8")).digest()
             # Keep IDs in positive 63-bit range for broad SDK/native compatibility.
-            value = int.from_bytes(digest[:8], byteorder="little") & 0x7FFF_FFFF_FFFF_FFFF
+            value = (
+                int.from_bytes(digest[:8], byteorder="little") & 0x7FFF_FFFF_FFFF_FFFF
+            )
             if value == 0:
                 value = 1
             self._external_to_internal[entity_id] = value
@@ -342,8 +385,7 @@ class EdgeCaseAPIClient:
                 return True
 
             intersects = ((a_lon > lon) != (b_lon > lon)) and (
-                lat
-                < (b_lat - a_lat) * (lon - a_lon) / (b_lon - a_lon + 1e-18) + a_lat
+                lat < (b_lat - a_lat) * (lon - a_lon) / (b_lon - a_lon + 1e-18) + a_lat
             )
             if intersects:
                 inside = not inside
@@ -367,7 +409,9 @@ class EdgeCaseAPIClient:
             sdk_events = []
             for event in events:
                 converted = dict(event)
-                converted["entity_id"] = self._to_internal_entity_id(converted["entity_id"])
+                converted["entity_id"] = self._to_internal_entity_id(
+                    converted["entity_id"]
+                )
                 if "altitude_mm" in converted:
                     converted["altitude_m"] = converted.pop("altitude_mm") / 1000.0
                 if "velocity_mms" in converted:
@@ -375,9 +419,11 @@ class EdgeCaseAPIClient:
                 sdk_events.append(build_geo_event_from_fixture(converted))
             errors = []
             for i in range(0, len(sdk_events), 200):
-                errors.extend(self._client.insert_events(sdk_events[i:i + 200]))
+                errors.extend(self._client.insert_events(sdk_events[i : i + 200]))
             payload = {
-                "errors": [{"index": err.index, "code": int(err.result)} for err in errors]
+                "errors": [
+                    {"index": err.index, "code": int(err.result)} for err in errors
+                ]
             }
             return self._SDKResponse(200, payload)
         except Exception as exc:
@@ -482,8 +528,12 @@ class EdgeCaseAPIClient:
             internal_id = self._to_internal_entity_id(entity_id)
             result = self._client.delete_entities([internal_id])
             if result.not_found_count > 0:
-                return self._SDKResponse(404, {"deleted": 0, "not_found": result.not_found_count})
-            return self._SDKResponse(200, {"deleted": result.deleted_count, "not_found": 0})
+                return self._SDKResponse(
+                    404, {"deleted": 0, "not_found": result.not_found_count}
+                )
+            return self._SDKResponse(
+                200, {"deleted": result.deleted_count, "not_found": 0}
+            )
         except Exception as exc:
             return self._SDKResponse(400, {"error": str(exc)})
 

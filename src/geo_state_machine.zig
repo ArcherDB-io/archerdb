@@ -1430,6 +1430,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .prefetch_timestamp = 0,
                 .prepare_timestamp = 0,
                 .commit_timestamp = 0,
+                .entries_with_ttl = 0,
                 .forest = self.forest,
                 .grid = self.grid,
                 .ram_index = self.ram_index,
@@ -5379,6 +5380,12 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             assert(self.checkpoint_callback == null);
 
             self.checkpoint_callback = callback;
+
+            // Reset cleanup scanner at checkpoint boundaries for determinism.
+            // The scanner position is not persisted, so after crash recovery
+            // it starts at 0. By resetting at each checkpoint for ALL replicas,
+            // we ensure the scanner state is identical when WAL replay begins.
+            self.cleanup_scanner.reset();
 
             // F2.2.3: Extract VSR checkpoint state for index checkpoint coordination
             if (self.index_checkpoint_enabled) {

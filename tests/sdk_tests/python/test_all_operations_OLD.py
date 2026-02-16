@@ -55,22 +55,22 @@ from tests.sdk_tests.common.fixture_adapter import (
 
 # Load all insert test cases from fixture
 _insert_fixture = load_operation_fixture("insert")
-_insert_cases = _insert_fixture["cases"]
+_insert_cases = _insert_fixture.cases
 
 
 class TestInsertOperation:
     """Tests for insert operation using ALL cases from insert.json fixture."""
 
-    @pytest.mark.parametrize("case", _insert_cases, ids=[c["name"] for c in _insert_cases])
+    @pytest.mark.parametrize("case", _insert_cases, ids=[c.name for c in _insert_cases])
     def test_insert_all_cases(self, client: GeoClientSync, case):
         """Run ALL insert test cases from fixture for comprehensive coverage."""
         # Skip boundary/invalid tests - they cause session eviction (protocol validation)
-        if any(tag in case.get("tags", []) for tag in ["boundary", "invalid"]):
+        if any(tag in case.tags for tag in ["boundary", "invalid"]):
             pytest.skip("Boundary/invalid test - causes session eviction")
 
         # Convert fixture events to SDK format
         events = []
-        for ev in case["input"]["events"]:
+        for ev in case.input["events"]:
             event = create_geo_event(
                 entity_id=ev["entity_id"],
                 latitude=ev["latitude"],
@@ -91,8 +91,8 @@ class TestInsertOperation:
         errors = client.insert_events(events)
 
         # Verify based on expected output
-        expected = case["expected_output"]
-        if expected.get("all_ok"):
+        expected = case.expected_output
+        if expected and expected.get("all_ok"):
             assert errors == [], f"Insert failed with errors: {errors}"
             # Verify data was inserted
             if events:
@@ -104,6 +104,7 @@ class TestInsertOperation:
 # =============================================================================
 # 2. Upsert Operation (opcode 147)
 # =============================================================================
+
 
 class TestUpsertOperation:
     """Tests for upsert operation using fixtures from upsert.json."""
@@ -170,6 +171,7 @@ class TestUpsertOperation:
 # 3. Delete Operation (opcode 148)
 # =============================================================================
 
+
 class TestDeleteOperation:
     """Tests for delete operation using fixtures from delete.json."""
 
@@ -211,6 +213,7 @@ class TestDeleteOperation:
 # 4. Query UUID Operation (opcode 149)
 # =============================================================================
 
+
 class TestQueryUuidOperation:
     """Tests for query_uuid operation using fixtures from query-uuid.json."""
 
@@ -240,6 +243,7 @@ class TestQueryUuidOperation:
 # =============================================================================
 # 5. Query UUID Batch Operation (opcode 156)
 # =============================================================================
+
 
 class TestQueryUuidBatchOperation:
     """Tests for query_uuid_batch operation."""
@@ -289,6 +293,7 @@ class TestQueryUuidBatchOperation:
 # 6. Query Radius Operation (opcode 150)
 # =============================================================================
 
+
 class TestQueryRadiusOperation:
     """Tests for query_radius operation using fixtures from query-radius.json."""
 
@@ -314,16 +319,10 @@ class TestQueryRadiusOperation:
         expected = case.expected_output
         if "events_contain" in expected:
             verify_events_contain(
-                result.events,
-                expected["events_contain"],
-                "query_radius"
+                result.events, expected["events_contain"], "query_radius"
             )
         if "count_in_range" in expected:
-            verify_count_in_range(
-                len(result.events),
-                expected,
-                "query_radius"
-            )
+            verify_count_in_range(len(result.events), expected, "query_radius")
 
     def test_query_radius_with_limit(self, client: GeoClientSync):
         """pr: Radius query respects limit parameter."""
@@ -363,6 +362,7 @@ class TestQueryRadiusOperation:
 # =============================================================================
 # 7. Query Polygon Operation (opcode 151)
 # =============================================================================
+
 
 class TestQueryPolygonOperation:
     """Tests for query_polygon operation."""
@@ -413,6 +413,7 @@ class TestQueryPolygonOperation:
 # 8. Query Latest Operation (opcode 154)
 # =============================================================================
 
+
 class TestQueryLatestOperation:
     """Tests for query_latest operation."""
 
@@ -452,6 +453,7 @@ class TestQueryLatestOperation:
 # 9. Ping Operation (opcode 152)
 # =============================================================================
 
+
 class TestPingOperation:
     """Tests for ping operation."""
 
@@ -465,6 +467,7 @@ class TestPingOperation:
 # 10. Status Operation (opcode 153)
 # =============================================================================
 
+
 class TestStatusOperation:
     """Tests for status operation."""
 
@@ -473,12 +476,13 @@ class TestStatusOperation:
         result = client.get_status()
 
         # Status should have ram_index fields
-        assert hasattr(result, 'ram_index_count') or isinstance(result, dict)
+        assert hasattr(result, "ram_index_count") or isinstance(result, dict)
 
 
 # =============================================================================
 # 11. TTL Set Operation (opcode 158)
 # =============================================================================
+
 
 class TestTtlSetOperation:
     """Tests for ttl_set operation."""
@@ -506,6 +510,7 @@ class TestTtlSetOperation:
 # 12. TTL Extend Operation (opcode 159)
 # =============================================================================
 
+
 class TestTtlExtendOperation:
     """Tests for ttl_extend operation."""
 
@@ -530,6 +535,7 @@ class TestTtlExtendOperation:
 # =============================================================================
 # 13. TTL Clear Operation (opcode 160)
 # =============================================================================
+
 
 class TestTtlClearOperation:
     """Tests for ttl_clear operation."""
@@ -556,6 +562,7 @@ class TestTtlClearOperation:
 # 14. Topology Operation (opcode 157)
 # =============================================================================
 
+
 class TestTopologyOperation:
     """Tests for topology operation."""
 
@@ -566,5 +573,5 @@ class TestTopologyOperation:
         # Should return topology information
         assert result is not None
         # Single node cluster
-        if hasattr(result, 'shards'):
+        if hasattr(result, "shards"):
             assert len(result.shards) >= 1

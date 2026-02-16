@@ -6,8 +6,31 @@
 Tests for time-to-live (TTL) functionality where events automatically
 expire and become unavailable after their TTL period.
 
+IMPORTANT: TTL Expiration Semantics
+===================================
+
+ArcherDB uses VSR consensus timestamps for TTL checking, NOT wall-clock time.
+This ensures deterministic TTL behavior across all replicas in a cluster.
+
+Key implications:
+1. TTL is checked against `commit_timestamp`, which only advances on WRITE operations.
+2. A query-only workload will NOT cause TTL expiration until a write occurs.
+3. Background cleanup (scan_expired_batch) runs every 5 minutes by default and uses
+   wall-clock time for its own scheduling, but still checks TTL against commit_timestamp.
+
+For testing TTL expiration:
+- Insert entity with TTL
+- Wait for TTL duration
+- Perform ANY write operation (e.g., insert a dummy entity) to advance commit_timestamp
+- Query the original entity - it should now be expired
+
+This design ensures:
+- All replicas see the same logical time
+- TTL is deterministic across the cluster
+- No clock synchronization issues between nodes
+
 Test Cases:
-    - Event expires after TTL period
+    - Event expires after TTL period (with commit_timestamp advancement)
     - Event visible before TTL expires
     - TTL=0 means permanent (no expiration)
     - Batch with mixed TTLs
@@ -21,6 +44,7 @@ import pytest
 
 from .conftest import (
     EdgeCaseAPIClient,
+    advance_commit_timestamp,
     build_insert_event,
     build_radius_query,
     generate_entity_id,
@@ -33,19 +57,20 @@ class TestTTLExpiration:
     """Test TTL expiration handling (EDGE-06)."""
 
     def test_event_expires_after_ttl(self, single_node_cluster, api_client):
-        """Insert with ttl_seconds=5, wait 6s, query should not find.
+        """Insert with ttl_seconds=2, wait 3s, advance commit_timestamp, query should not find.
 
-        After the TTL expires, the event should no longer be queryable.
+        IMPORTANT: TTL uses VSR consensus timestamps, not wall-clock time.
+        We must advance commit_timestamp with a write operation after the TTL period.
         """
         entity_id = generate_entity_id()
         event = build_insert_event(
             entity_id=entity_id,
             lat=40.7128,
             lon=-74.0060,
-            ttl_seconds=5,  # 5 second TTL
+            ttl_seconds=2,  # 2 second TTL
         )
 
-        # Insert event with 5s TTL
+        # Insert event with 2s TTL
         response = api_client.insert([event])
         assert response.status_code == 200, f"Insert failed: {response.text}"
 
@@ -53,12 +78,18 @@ class TestTTLExpiration:
         query_response = api_client.query_uuid(entity_id)
         assert query_response.status_code == 200, "Event should exist before TTL"
 
-        # Wait for TTL to expire
-        time.sleep(6)
+        # Wait for TTL duration (wall-clock)
+        time.sleep(3)
 
-        # Verify NOT found after TTL
+        # CRITICAL: Advance commit_timestamp with a write operation.
+        # TTL checking uses commit_timestamp, not wall-clock time.
+        advance_commit_timestamp(api_client)
+
+        # Verify NOT found after TTL (commit_timestamp now advanced)
         query_response = api_client.query_uuid(entity_id)
-        assert query_response.status_code == 404, "Event should be gone after TTL expires"
+        assert query_response.status_code == 404, (
+            "Event should be gone after TTL expires"
+        )
 
     def test_event_visible_before_ttl(self, single_node_cluster, api_client):
         """Insert with ttl_seconds=30, query immediately, should find.
@@ -128,33 +159,37 @@ class TestTTLExpiration:
         """Insert batch with mixed TTLs, verify after wait.
 
         A batch can contain events with different TTLs.
-        After waiting, only some events should remain.
+        After waiting and advancing commit_timestamp, only some events should remain.
         """
         events = []
         short_ttl_ids = []
         permanent_ids = []
 
-        # Events with short TTL (3s)
+        # Events with short TTL (2s)
         for i in range(3):
             eid = generate_entity_id()
             short_ttl_ids.append(eid)
-            events.append(build_insert_event(
-                entity_id=eid,
-                lat=40.0 + i * 0.01,
-                lon=-74.0,
-                ttl_seconds=3,
-            ))
+            events.append(
+                build_insert_event(
+                    entity_id=eid,
+                    lat=40.0 + i * 0.01,
+                    lon=-74.0,
+                    ttl_seconds=2,
+                )
+            )
 
         # Events with permanent TTL (0)
         for i in range(3):
             eid = generate_entity_id()
             permanent_ids.append(eid)
-            events.append(build_insert_event(
-                entity_id=eid,
-                lat=41.0 + i * 0.01,
-                lon=-74.0,
-                ttl_seconds=0,
-            ))
+            events.append(
+                build_insert_event(
+                    entity_id=eid,
+                    lat=41.0 + i * 0.01,
+                    lon=-74.0,
+                    ttl_seconds=0,
+                )
+            )
 
         assert len(events) == 6
 
@@ -167,8 +202,11 @@ class TestTTLExpiration:
             resp = api_client.query_uuid(eid)
             assert resp.status_code == 200, f"Event {eid} should exist initially"
 
-        # Wait for short TTL to expire
-        time.sleep(4)
+        # Wait for short TTL duration (wall-clock)
+        time.sleep(3)
+
+        # CRITICAL: Advance commit_timestamp with a write operation
+        advance_commit_timestamp(api_client)
 
         # Short TTL events should be gone
         for eid in short_ttl_ids:
@@ -214,7 +252,9 @@ class TestTTLExpiration:
 
         # Event should still exist (extended TTL)
         query_response = api_client.query_uuid(entity_id)
-        assert query_response.status_code == 200, "Event should still exist after TTL extension"
+        assert query_response.status_code == 200, (
+            "Event should still exist after TTL extension"
+        )
 
     def test_ttl_clear(self, single_node_cluster, api_client):
         """Insert with 5s TTL, clear TTL (set to 0), should persist forever.
@@ -250,12 +290,14 @@ class TestTTLExpiration:
 
         # Event should still exist (TTL cleared to permanent)
         query_response = api_client.query_uuid(entity_id)
-        assert query_response.status_code == 200, "Event should persist after TTL cleared"
+        assert query_response.status_code == 200, (
+            "Event should persist after TTL cleared"
+        )
 
     def test_ttl_very_short(self, single_node_cluster, api_client):
         """Insert with very short TTL (1 second).
 
-        Even very short TTLs should work correctly.
+        Even very short TTLs should work correctly when commit_timestamp advances.
         """
         entity_id = generate_entity_id()
         event = build_insert_event(
@@ -271,10 +313,15 @@ class TestTTLExpiration:
 
         # Verify exists immediately
         query_response = api_client.query_uuid(entity_id)
-        assert query_response.status_code == 200, "Should exist immediately after insert"
+        assert query_response.status_code == 200, (
+            "Should exist immediately after insert"
+        )
 
-        # Wait for TTL
+        # Wait for TTL duration (wall-clock)
         time.sleep(2)
+
+        # CRITICAL: Advance commit_timestamp with a write operation
+        advance_commit_timestamp(api_client)
 
         # Should be gone
         query_response = api_client.query_uuid(entity_id)

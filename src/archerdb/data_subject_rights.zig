@@ -23,6 +23,7 @@
 
 const std = @import("std");
 const stdx = @import("stdx");
+const log = std.log.scoped(.data_subject_rights);
 const mem = std.mem;
 const Allocator = mem.Allocator;
 const AutoHashMap = std.AutoHashMap;
@@ -751,7 +752,9 @@ pub const DataSubjectRightsHandler = struct {
         stored_request.status = .completed;
         stored_request.completed_at = getCurrentTimestamp();
         stored_request.events_affected = 0; // Would be actual count
-        self.requests.put(request.request_id, stored_request) catch {};
+        self.requests.put(request.request_id, stored_request) catch |err| {
+            log.warn("Failed to update access request {d} status: {s}", .{ request.request_id, @errorName(err) });
+        };
 
         self.stats.by_status[@intFromEnum(RequestStatus.pending)] -|= 1;
         self.stats.by_status[@intFromEnum(RequestStatus.completed)] += 1;
@@ -811,7 +814,9 @@ pub const DataSubjectRightsHandler = struct {
         stored_request.status = .completed;
         stored_request.completed_at = getCurrentTimestamp();
         stored_request.events_affected = 0;
-        self.requests.put(request.request_id, stored_request) catch {};
+        self.requests.put(request.request_id, stored_request) catch |err| {
+            log.warn("Failed to update erasure request {d} status: {s}", .{ request.request_id, @errorName(err) });
+        };
 
         self.stats.by_status[@intFromEnum(RequestStatus.pending)] -|= 1;
         self.stats.by_status[@intFromEnum(RequestStatus.completed)] += 1;
@@ -871,7 +876,9 @@ pub const DataSubjectRightsHandler = struct {
         stored_request.status = .completed;
         stored_request.completed_at = getCurrentTimestamp();
         stored_request.events_affected = 0;
-        self.requests.put(request.request_id, stored_request) catch {};
+        self.requests.put(request.request_id, stored_request) catch |err| {
+            log.warn("Failed to update rectification request {d} status: {s}", .{ request.request_id, @errorName(err) });
+        };
 
         self.stats.by_status[@intFromEnum(RequestStatus.pending)] -|= 1;
         self.stats.by_status[@intFromEnum(RequestStatus.completed)] += 1;
@@ -925,7 +932,9 @@ pub const DataSubjectRightsHandler = struct {
         };
         stored_request.status = .completed;
         stored_request.completed_at = getCurrentTimestamp();
-        self.requests.put(request.request_id, stored_request) catch {};
+        self.requests.put(request.request_id, stored_request) catch |err| {
+            log.warn("Failed to update portability request {d} status: {s}", .{ request.request_id, @errorName(err) });
+        };
 
         self.stats.by_status[@intFromEnum(RequestStatus.pending)] -|= 1;
         self.stats.by_status[@intFromEnum(RequestStatus.completed)] += 1;

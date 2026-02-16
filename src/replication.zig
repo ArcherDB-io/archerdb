@@ -397,9 +397,14 @@ pub const ShipQueue = struct {
                 .checksum = entry.header.checksum,
             };
 
-            // Allocate body for the entry (iterator doesn't return body data)
-            const body_copy = try self.allocator.alloc(u8, entry.header.body_size);
-            @memset(body_copy, 0); // Will be filled from actual disk read
+            // Use body data read by the iterator, or allocate if unavailable
+            const body_copy: []u8 = if (entry.body.len > 0)
+                @constCast(entry.body)
+            else blk: {
+                const buf = try self.allocator.alloc(u8, entry.header.body_size);
+                @memset(buf, 0);
+                break :blk buf;
+            };
 
             try self.memory_queue.append(.{
                 .header = header,

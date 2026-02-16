@@ -65,6 +65,7 @@ benchmark-results/
 tools/FlameGraph/
 validation-results/
 integration-check-report.md
+reports/
 
 # Java Maven build artifacts
 tests/sdk_tests/java/target/

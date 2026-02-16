@@ -434,7 +434,8 @@ test "spillover: write and recover entries" {
     defer iter.deinit();
 
     var count: u32 = 0;
-    while (iter.next()) |_| {
+    while (iter.next()) |entry| {
+        entry.deinitBody(allocator);
         count += 1;
     }
     try std.testing.expectEqual(@as(u32, 3), count);
