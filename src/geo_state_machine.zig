@@ -7477,3 +7477,53 @@ test "TTL metrics: retention ratio" {
 /// Alias for compatibility with vsr.state_machine.StateMachineType interface.
 /// ArcherDB uses GeoStateMachineType as its primary state machine.
 pub const StateMachineType = GeoStateMachineType;
+
+test "GeoStateMachine: edge cases - antimeridian and poles" {
+    // 1. Antimeridian Polygon Query
+    // Polygon spanning 179E to 179W (crossing 180)
+    // 10S to 10N
+    const polygon_vertices = [_]PolygonVertex{
+        .{ .lat_nano = -10_000_000_000, .lon_nano = 179_000_000_000 }, // SW
+        .{ .lat_nano = -10_000_000_000, .lon_nano = -179_000_000_000 }, // SE (wrapped)
+        .{ .lat_nano = 10_000_000_000, .lon_nano = -179_000_000_000 }, // NE (wrapped)
+        .{ .lat_nano = 10_000_000_000, .lon_nano = 179_000_000_000 }, // NW
+    };
+
+    // Insert a point right on the antimeridian (180.0)
+    var event = GeoEvent.zero();
+    event.id = 1; // Dummy ID
+    event.entity_id = 100;
+    event.timestamp = 1000;
+    event.lat_nano = 0;
+    event.lon_nano = 180_000_000_000; // 180.0 degrees
+    
+    const point = s2_index.LatLon{
+        .lat_nano = event.lat_nano,
+        .lon_nano = event.lon_nano,
+    };
+    
+    // Convert PolygonVertex to LatLon
+    var s2_vertices: [4]s2_index.LatLon = undefined;
+    for (polygon_vertices, 0..) |v, i| {
+        s2_vertices[i] = .{ .lat_nano = v.lat_nano, .lon_nano = v.lon_nano };
+    }
+    
+    // Verify point in polygon logic handles antimeridian
+    try std.testing.expect(s2_index.S2.pointInPolygon(point, &s2_vertices));
+
+    // 2. Polar Radius Query
+    // Center at North Pole
+    const center_lat = 90_000_000_000;
+    const center_lon = 0;
+    const radius_mm = 100_000_000; // 100km
+
+    // Point 50km away from pole
+    const point_lat = 89_500_000_000; // ~55km from pole
+    const point_lon = 45_000_000_000; // Longitude shouldn't matter much at pole
+
+    try std.testing.expect(s2_index.S2.isWithinDistance(
+        center_lat, center_lon,
+        point_lat, point_lon,
+        radius_mm
+    ));
+}
