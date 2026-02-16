@@ -44,8 +44,21 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 MODE="quick"
 ARCHERDB_ADDRESS="${ARCHERDB_ADDRESS:-127.0.0.1:3001}"
 ARCHERDB_BINARY="${ARCHERDB_BINARY:-}"
+AUTO_START_LOCAL="${ARCHERDB_BENCHMARK_AUTO_START:-false}"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 RESULTS_DIR="${PROJECT_ROOT}/benchmark-results/perf-${TIMESTAMP}"
+
+case "$AUTO_START_LOCAL" in
+    1|true|TRUE|yes|YES|on|ON)
+        AUTO_START_LOCAL="true"
+        ;;
+    *)
+        AUTO_START_LOCAL="false"
+        ;;
+esac
+
+AUTO_STARTED_SERVER_PID=""
+AUTO_STARTED_WORK_DIR=""
 
 # Benchmark parameters by mode (Bash 3 compatible scalars)
 QUICK_EVENTS="10000"
@@ -167,12 +180,17 @@ OPTIONS:
     --extreme       Extreme benchmark (~2+ hours, 10M events, 30 runs)
     --address ADDR  Cluster address (default: \$ARCHERDB_ADDRESS or 127.0.0.1:3001)
     --binary PATH   Path to archerdb binary (default: auto-detect)
+    --auto-start-local
+                    If target is unreachable and address is local, auto-start
+                    a temporary single-node ArcherDB for benchmarking
     --output DIR    Output directory (default: benchmark-results/perf-TIMESTAMP)
     --help          Show this help message
 
 ENVIRONMENT:
     ARCHERDB_ADDRESS  Cluster address
     ARCHERDB_BINARY   Path to archerdb binary
+    ARCHERDB_BENCHMARK_AUTO_START=1
+                      Same as --auto-start-local
 
 EXAMPLES:
     # Quick benchmark against local cluster
@@ -198,6 +216,10 @@ METRICS COLLECTED:
     - Memory usage (RSS)
 
 See docs/benchmarks.md for methodology and interpretation.
+
+BEHAVIOR:
+    The script is strict by default: it fails if no benchmark target is reachable.
+    It prints actionable remediation steps.
 EOF
     exit 0
 }
@@ -225,6 +247,14 @@ parse_args() {
             --binary)
                 ARCHERDB_BINARY="$2"
                 shift 2
+                ;;
+            --auto-start-local)
+                AUTO_START_LOCAL="true"
+                shift
+                ;;
+            --no-auto-start-local)
+                AUTO_START_LOCAL="false"
+                shift
                 ;;
             --output)
                 RESULTS_DIR="$2"
@@ -272,12 +302,52 @@ find_binary() {
     exit 1
 }
 
-check_server_reachable() {
+address_host() {
     local address="$1"
-    local host="${address%:*}"
-    local port="${address##*:}"
+    echo "${address%:*}"
+}
+
+address_port() {
+    local address="$1"
+    echo "${address##*:}"
+}
+
+address_is_valid() {
+    local address="$1"
+    local host
+    local port
+    host="$(address_host "$address")"
+    port="$(address_port "$address")"
 
     if [[ -z "$host" || -z "$port" || "$host" == "$port" ]]; then
+        return 1
+    fi
+    if [[ ! "$port" =~ ^[0-9]+$ ]] || (( port < 1 || port > 65535 )); then
+        return 1
+    fi
+    return 0
+}
+
+is_local_host() {
+    local host="$1"
+    case "$host" in
+        localhost|127.0.0.1|::1|\[::1\])
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+check_server_reachable() {
+    local address="$1"
+    local host
+    local port
+    host="$(address_host "$address")"
+    port="$(address_port "$address")"
+
+    if ! address_is_valid "$address"; then
         return 1
     fi
 
@@ -303,7 +373,14 @@ PYEOF
     (echo > "/dev/tcp/${host}/${port}") >/dev/null 2>&1
 }
 
-write_skip_summary() {
+cleanup_auto_started_server() {
+    if [[ -n "$AUTO_STARTED_SERVER_PID" ]]; then
+        kill "$AUTO_STARTED_SERVER_PID" 2>/dev/null || true
+        wait "$AUTO_STARTED_SERVER_PID" 2>/dev/null || true
+    fi
+}
+
+write_unreachable_summary() {
     mkdir -p "$RESULTS_DIR"
     {
         echo "============================================================"
@@ -315,12 +392,69 @@ write_skip_summary() {
         echo "Address:  $ARCHERDB_ADDRESS"
         echo "Binary:   $ARCHERDB_BINARY"
         echo ""
-        echo "Status:   SKIPPED"
+        echo "Status:   FAILED"
         echo "Reason:   Cluster address is not reachable"
         echo ""
-        echo "To run benchmarks, start ArcherDB and ensure it listens on:"
-        echo "  $ARCHERDB_ADDRESS"
+        echo "Remediation:"
+        echo "  1) Start ArcherDB and ensure it listens on: $ARCHERDB_ADDRESS"
+        echo "  2) Re-run this script"
+        echo "  3) Or use --auto-start-local for local addresses"
+        if [[ -n "$AUTO_STARTED_WORK_DIR" ]]; then
+            echo ""
+            echo "Auto-start diagnostics:"
+            echo "  $AUTO_STARTED_WORK_DIR"
+        fi
     } | tee "$RESULTS_DIR/summary.txt"
+}
+
+auto_start_local_server() {
+    local address="$1"
+    local host
+    local port
+    host="$(address_host "$address")"
+    port="$(address_port "$address")"
+
+    if ! address_is_valid "$address"; then
+        echo -e "${RED}Error: Invalid --address format '${address}'. Expected host:port.${NC}" >&2
+        return 1
+    fi
+    if ! is_local_host "$host"; then
+        echo -e "${RED}Error: --auto-start-local only supports localhost/127.0.0.1/::1 addresses (got: $host).${NC}" >&2
+        return 1
+    fi
+
+    AUTO_STARTED_WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/archerdb-bench-auto-XXXXXX")"
+    local data_file="${AUTO_STARTED_WORK_DIR}/benchmark.archerdb"
+    local format_log="${AUTO_STARTED_WORK_DIR}/format.log"
+    local server_log="${AUTO_STARTED_WORK_DIR}/server.log"
+
+    echo -e "${BLUE}Info: Target unreachable; auto-starting temporary ArcherDB at ${address}.${NC}"
+    echo -e "${BLUE}Info: Auto-start logs: ${AUTO_STARTED_WORK_DIR}${NC}"
+
+    if ! "$ARCHERDB_BINARY" format --cluster=0 --replica=0 --replica-count=1 "$data_file" >"$format_log" 2>&1; then
+        echo -e "${RED}Error: Failed to format temporary benchmark data file.${NC}" >&2
+        return 1
+    fi
+
+    "$ARCHERDB_BINARY" start --addresses="$address" "$data_file" >"$server_log" 2>&1 &
+    AUTO_STARTED_SERVER_PID=$!
+
+    local attempts=60
+    while (( attempts > 0 )); do
+        if ! kill -0 "$AUTO_STARTED_SERVER_PID" 2>/dev/null; then
+            echo -e "${RED}Error: Auto-started ArcherDB exited before becoming reachable.${NC}" >&2
+            return 1
+        fi
+        if check_server_reachable "$address"; then
+            echo -e "${GREEN}Info: Auto-started ArcherDB is reachable at ${address}.${NC}"
+            return 0
+        fi
+        sleep 0.5
+        attempts=$((attempts - 1))
+    done
+
+    echo -e "${RED}Error: Auto-started ArcherDB did not become reachable at ${address}.${NC}" >&2
+    return 1
 }
 
 # Run a single benchmark configuration
@@ -586,10 +720,23 @@ generate_summary() {
 main() {
     parse_args "$@"
     find_binary
+    trap cleanup_auto_started_server EXIT
     if ! check_server_reachable "$ARCHERDB_ADDRESS"; then
-        echo -e "${YELLOW}Warning: ArcherDB is not reachable at $ARCHERDB_ADDRESS. Skipping benchmarks.${NC}"
-        write_skip_summary
-        exit 0
+        if [[ "$AUTO_START_LOCAL" == "true" ]]; then
+            if ! auto_start_local_server "$ARCHERDB_ADDRESS"; then
+                echo -e "${RED}Error: Benchmark target is unreachable and auto-start failed.${NC}" >&2
+                echo -e "${YELLOW}Hint: Start ArcherDB manually and ensure it listens on $ARCHERDB_ADDRESS${NC}" >&2
+                write_unreachable_summary
+                exit 2
+            fi
+        else
+            echo -e "${RED}Error: Benchmark target is unreachable at $ARCHERDB_ADDRESS.${NC}" >&2
+            echo -e "${YELLOW}Fix:${NC}" >&2
+            echo "  - Start ArcherDB manually on $ARCHERDB_ADDRESS, or" >&2
+            echo "  - Re-run with --auto-start-local for a temporary local node" >&2
+            write_unreachable_summary
+            exit 2
+        fi
     fi
     run_benchmarks
     generate_summary
