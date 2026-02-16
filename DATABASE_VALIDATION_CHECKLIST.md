@@ -243,6 +243,14 @@
 - [ ] Is there region-aware routing?
 - [ ] Can you configure read preferences by region?
 
+#### 6.7 Formal Safety & Linearizability
+- [ ] Are operation histories captured under normal and fault-injected workloads?
+- [ ] Are histories checked with an automated linearizability/invariant checker?
+- [ ] Do checks verify no conflicting commits for the same op/view across replicas?
+- [ ] Are quorum-intersection and single-primary invariants validated for all supported cluster sizes?
+- [ ] Are committed operations guaranteed not to roll back across view changes/restarts?
+- [ ] Are safety-check failures release blockers unless formally waived?
+
 ---
 
 ### 7. Fault Tolerance & Recovery
@@ -297,6 +305,14 @@
 - [ ] Are restore drills executed and tracked against targets?
 - [ ] Do measured restore times meet RTO targets?
 - [ ] Do recovered data points meet RPO targets?
+
+#### 7.8 Crypto & Key Management Failure Drills
+- [ ] Is behavior validated when KMS/HSM/key provider is unavailable?
+- [ ] Is expired/invalid TLS certificate behavior fail-safe and alerting?
+- [ ] Are key-rotation failure/rollback procedures tested end-to-end?
+- [ ] Can mixed-key rollout mismatches be detected and recovered without data loss?
+- [ ] Is lost-key disaster handling documented with expected recoverability outcomes?
+- [ ] Are crypto failure drills exercised on a defined cadence and archived as evidence?
 
 ---
 
@@ -737,6 +753,14 @@
 - [ ] Can you get thread dumps?
 - [ ] Can you inspect internal state?
 
+#### 19.8 Incident Response Performance
+- [ ] Are MTTD and MTTR targets defined per severity level?
+- [ ] Are MTTD/MTTR measured from incident timeline data and trended by release?
+- [ ] Are game-day/tabletop exercises run on a fixed cadence with scored outcomes?
+- [ ] Is alert fatigue tracked? (pages per on-call, actionable-alert ratio, duplicate alerts)
+- [ ] Are postmortems completed with owners, due dates, and verified closure?
+- [ ] Are repeat incidents tracked and explicitly blocked from re-regressing?
+
 ---
 
 ### 20. Test Suite Coverage
@@ -896,6 +920,14 @@
 - [ ] Is HIPAA compliance achievable?
 - [ ] Is PCI-DSS compliance achievable?
 - [ ] Has security audit been performed?
+
+#### 23.8 Supply Chain & Build Integrity
+- [ ] Is an SBOM generated for each release artifact and retained with evidence bundles?
+- [ ] Are release artifacts signed and signature verification enforced before deployment?
+- [ ] Is build provenance captured? (commit SHA, builder identity, toolchain versions)
+- [ ] Are dependency sources pinned and integrity-checked during build?
+- [ ] Are critical dependency vulnerabilities tracked with SLA, owner, and waiver expiry?
+- [ ] Are reproducible-build checks run for release candidates and monitored for drift?
 
 ---
 
@@ -1224,6 +1256,14 @@
 - [ ] Are unresolved blockers and approved waivers acknowledged in attestation text?
 - [ ] Is the final attestation immutable and archived for audit retrieval?
 
+#### 35.4 Control-to-Test Traceability
+- [ ] Does every mandatory control map to at least one executable command or test ID?
+- [ ] Are mappings versioned with owner and last-verified timestamp?
+- [ ] Does CI execute mapped mandatory controls and publish pass/fail by control ID?
+- [ ] Are unmapped mandatory controls treated as release blockers?
+- [ ] Are stale mappings detected when commands/scripts are renamed or removed?
+- [ ] Can auditors navigate control -> command/test -> evidence artifact without manual lookup?
+
 ---
 
 ## 📊 Validation Summary Template
@@ -1253,7 +1293,7 @@ Use this section to record results from periodic validation runs:
 **Final Approval Timestamp:**
 
 **Results:**
-- Total Questions: 752
+- Total Questions: 782
 - Answered:
 - Pass:
 - Fail:
@@ -1320,10 +1360,10 @@ Replace dates, links, metrics, and issue details for your actual run.
 **Tester:** release-eng@archerdb
 **Version:** v2.1.0-rc3
 **Assessment Tier:** Tier 2 (Release Validation)
-**Control Baseline Version:** checklist-v2.2
+**Control Baseline Version:** checklist-v2.3
 **Environment:** staging-us-east-1 (3 node cluster, lite config)
 **Workload Profile(s):** mixed-api-v1, spatial-heavy-v1
-**SLO Definition Reference:** docs/slo/release-tier2-slo.md#v2-1
+**SLO Definition Reference:** docs/testing/performance-baselines.md
 **Dataset Version + Checksum:** datasets/validation/v2026.02.10 (sha256: 9e2f8a5d...41c2)
 **Compatibility Matrix Scope:** linux-amd64 + macos-arm64 clients, SDKs (Go/Node/Python), N and N-1
 **Mandatory Controls in Scope:** 72
@@ -1339,7 +1379,7 @@ Replace dates, links, metrics, and issue details for your actual run.
 **Final Approval Timestamp:** Pending
 
 **Results:**
-- Total Questions: 752
+- Total Questions: 782
 - Scope: Tier 2 (Release Validation)
 - In-Scope Questions: 211
 - Answered: 211
@@ -1419,10 +1459,10 @@ Keep all metadata fields populated so the run can be audited and replayed.
 **Tester:** sre-oncall@archerdb
 **Version:** v2.1.0
 **Assessment Tier:** Tier 3 (Production Readiness)
-**Control Baseline Version:** checklist-v2.2
+**Control Baseline Version:** checklist-v2.3
 **Environment:** pre-prod-eu-west-1 (5 node cluster, production config)
 **Workload Profile(s):** prod-mixed-v2, prod-spatial-burst-v1
-**SLO Definition Reference:** docs/slo/production-tier3-slo.md#v2-1
+**SLO Definition Reference:** docs/testing/performance-baselines.md
 **Dataset Version + Checksum:** datasets/validation/v2026.02.20 (sha256: 4b7d11e3...aa9f)
 **Compatibility Matrix Scope:** linux-amd64 + linux-arm64 nodes, SDKs (Go/Node/Python/Java), N and N-1 protocol
 **Mandatory Controls in Scope:** 121
@@ -1438,7 +1478,7 @@ Keep all metadata fields populated so the run can be audited and replayed.
 **Final Approval Timestamp:** 2026-02-28T22:47:00Z
 
 **Results:**
-- Total Questions: 752
+- Total Questions: 782
 - Scope: Tier 3 (Production Readiness)
 - In-Scope Questions: 341
 - Answered: 341
@@ -1533,8 +1573,9 @@ Standard release validation:
 - Section 20.1-20.3 (Test Suite)
 - Sections 30.2-30.4 (SLO definitions and release gates)
 - Sections 31.1-31.2 (dataset and golden vectors)
+- Section 6.7 (formal safety and linearizability checks)
 - Sections 34.1-34.2 and 34.4 (control governance, decision criteria, remediation tracker)
-- Section 35.1 (automation coverage accounting)
+- Sections 35.1 and 35.4 (automation coverage + control-to-command traceability)
 
 **Estimated Time:** 4-8 hours
 
@@ -1543,13 +1584,13 @@ Full production deployment validation:
 - All of Tier 2
 - Sections 5, 6, 7 (Performance, Distributed, Fault Tolerance)
 - Sections 14, 15 (Configuration, Resources)
-- Section 19 (Observability)
+- Sections 19 and 19.8 (observability + incident-response performance)
 - Section 22 (Production Readiness)
-- Section 23 (Security)
+- Sections 23 and 23.8 (security + supply chain integrity)
 - Section 31 (full reproducibility controls)
 - Section 32 (compatibility matrix for target environments)
 - Section 34 (full governance, waivers, remediation)
-- Sections 35.1-35.2 (automation coverage and evidence quality gates)
+- Sections 35.1-35.4 (automation coverage, evidence quality gates, and traceability)
 
 **Estimated Time:** 2-4 days
 
@@ -1586,6 +1627,9 @@ Use this checklist to systematically validate database readiness:
 12. **Review waivers:** Validate waiver owners, expiry dates, and compensating controls
 13. **Track remediations:** Link every fail/partial to a ticket and record verification run IDs
 14. **Record decision:** Capture go/no-go outcome, blocker trigger status, and final attestation
+15. **Run formal safety checks:** Execute linearizability/invariant validation for in-scope tiers
+16. **Verify supply chain controls:** Generate/attach SBOM, provenance, and artifact signature evidence
+17. **Validate traceability:** Confirm every mandatory control has a runnable command/test mapping
 
 ### Test Commands
 
@@ -1594,23 +1638,26 @@ Use this checklist to systematically validate database readiness:
 # Build check
 ./zig/zig build -j4 -Dconfig=lite check
 
-# Quick unit tests
-./zig/zig build -j4 -Dconfig=lite test:unit -- --test-filter "smoke"
+# Quick constrained unit tests
+./scripts/test-constrained.sh --minimal unit
 
-# Basic connectivity test
-./scripts/test-connectivity.sh
+# Basic readiness + persistence validation
+./scripts/test-readiness-persistence.sh
 ```
 
 **Standard validation (Tier 2):**
 ```bash
 # Full unit tests
-./zig/zig build -j4 -Dconfig=lite test:unit
+./scripts/test-constrained.sh unit
 
 # Integration tests
-./zig/zig build -j4 -Dconfig=lite test:integration
+./scripts/run_integration_tests.sh
 
 # SDK tests
-./scripts/test-all-sdks.sh
+./scripts/test_clients.sh
+
+# End-to-end validation
+./scripts/e2e-test.sh
 ```
 
 **Full validation (Tier 3):**
@@ -1619,31 +1666,34 @@ Use this checklist to systematically validate database readiness:
 ./zig/zig build test
 
 # VOPR fault injection
-./zig-out/bin/vopr <seed>
+./scripts/run_vopr.sh
 
 # Stress tests
-./scripts/run-stress-tests.sh
+./scripts/stress-test.sh
 
 # Benchmarks
 ./scripts/run-perf-benchmarks.sh
 
+# Disaster recovery drill
+./scripts/dr-test.sh
+
 # Multi-node cluster tests
-./scripts/dev-cluster.sh
+./scripts/dev-cluster.sh start
 ```
 
 **Enterprise validation (Tier 4):**
 ```bash
-# Longevity tests (run for 24+ hours)
-./scripts/longevity-test.sh
+# Long-duration validation (repeat/soak for >=24h)
+./scripts/stress-test.sh
 
 # Chaos engineering
 ./scripts/chaos-test.sh
 
-# Security scan
-./scripts/security-scan.sh
+# Cryptographic key-rotation drill
+./scripts/key_rotation.sh
 
-# Compliance check
-./scripts/compliance-check.sh
+# Supply-chain and compliance scanning should be run with organization tooling
+# (for example: syft/grype/trivy/osv-scanner/cosign, per your policy).
 ```
 
 ### Documentation References
@@ -1653,8 +1703,8 @@ Use this checklist to systematically validate database readiness:
 - **Operations:** docs/operations-runbook.md
 - **Disaster Recovery:** docs/disaster-recovery.md
 - **Architecture:** docs/architecture.md
-- **Benchmarks:** docs/benchmarks.md
-- **Security:** docs/security.md
+- **Benchmarks:** docs/benchmarks/README.md
+- **Security:** docs/security-best-practices.md, docs/encryption-security.md
 - **Troubleshooting:** docs/troubleshooting.md
 
 ### Severity Definitions
@@ -1689,6 +1739,6 @@ For quantitative assessment:
 
 ---
 
-**Last Updated:** 2026-02-14
-**Version:** 2.2
-**Questions:** 752
+**Last Updated:** 2026-02-16
+**Version:** 2.3
+**Questions:** 782
