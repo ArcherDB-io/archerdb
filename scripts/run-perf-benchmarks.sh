@@ -47,14 +47,38 @@ ARCHERDB_BINARY="${ARCHERDB_BINARY:-}"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 RESULTS_DIR="${PROJECT_ROOT}/benchmark-results/perf-${TIMESTAMP}"
 
-# Benchmark parameters by mode
-declare -A MODE_EVENTS
-declare -A MODE_ENTITIES
-declare -A MODE_RUNS
-declare -A MODE_CONCURRENCY
-declare -A MODE_UUID_QUERIES
-declare -A MODE_RADIUS_QUERIES
-declare -A MODE_POLYGON_QUERIES
+# Benchmark parameters by mode (Bash 3 compatible scalars)
+QUICK_EVENTS="10000"
+QUICK_ENTITIES="1000"
+QUICK_RUNS="3"
+QUICK_CONCURRENCY="1,10"
+QUICK_UUID_QUERIES="100"
+QUICK_RADIUS_QUERIES="10"
+QUICK_POLYGON_QUERIES="10"
+
+FULL_EVENTS="1000000"
+FULL_ENTITIES="100000"
+FULL_RUNS="10"
+FULL_CONCURRENCY="1,10,100"
+FULL_UUID_QUERIES="10000"
+FULL_RADIUS_QUERIES="1000"
+FULL_POLYGON_QUERIES="100"
+
+EXTREME_EVENTS="10000000"
+EXTREME_ENTITIES="1000000"
+EXTREME_RUNS="30"
+EXTREME_CONCURRENCY="1,10,50,100"
+EXTREME_UUID_QUERIES="100000"
+EXTREME_RADIUS_QUERIES="10000"
+EXTREME_POLYGON_QUERIES="1000"
+
+MODE_EVENTS=""
+MODE_ENTITIES=""
+MODE_RUNS=""
+MODE_CONCURRENCY=""
+MODE_UUID_QUERIES=""
+MODE_RADIUS_QUERIES=""
+MODE_POLYGON_QUERIES=""
 
 # Client concurrency limit (default matches current config clients_max).
 CLIENTS_MAX="${ARCHERDB_CLIENTS_MAX:-64}"
@@ -62,41 +86,13 @@ if [[ ! "$CLIENTS_MAX" =~ ^[0-9]+$ ]] || [[ "$CLIENTS_MAX" -lt 1 ]]; then
     CLIENTS_MAX=64
 fi
 
-# Quick mode: fast sanity check (~2-5 minutes)
-MODE_EVENTS["quick"]="10000"
-MODE_ENTITIES["quick"]="1000"
-MODE_RUNS["quick"]="3"
-MODE_CONCURRENCY["quick"]="1,10"
-MODE_UUID_QUERIES["quick"]="100"
-MODE_RADIUS_QUERIES["quick"]="10"
-MODE_POLYGON_QUERIES["quick"]="10"
-
-# Full mode: comprehensive benchmark (~30-60 minutes)
-MODE_EVENTS["full"]="1000000"
-MODE_ENTITIES["full"]="100000"
-MODE_RUNS["full"]="10"
-MODE_CONCURRENCY["full"]="1,10,100"
-MODE_UUID_QUERIES["full"]="10000"
-MODE_RADIUS_QUERIES["full"]="1000"
-MODE_POLYGON_QUERIES["full"]="100"
-
-# Extreme mode: stress test (~2+ hours)
-MODE_EVENTS["extreme"]="10000000"
-MODE_ENTITIES["extreme"]="1000000"
-MODE_RUNS["extreme"]="30"
-MODE_CONCURRENCY["extreme"]="1,10,50,100"
-MODE_UUID_QUERIES["extreme"]="100000"
-MODE_RADIUS_QUERIES["extreme"]="10000"
-MODE_POLYGON_QUERIES["extreme"]="1000"
-
-
 # Cap concurrency lists to supported client limit and de-duplicate.
 cap_concurrency_list() {
     local list="$1"
     local max="$2"
-    local -a items out
+    local -a items=() out=()
     IFS=',' read -ra items <<< "$list"
-    for item in "${items[@]}"; do
+    for item in "${items[@]-}"; do
         if [[ ! "$item" =~ ^[0-9]+$ ]]; then
             continue
         fi
@@ -105,7 +101,7 @@ cap_concurrency_list() {
             value="$max"
         fi
         local exists=0
-        for existing in "${out[@]}"; do
+        for existing in "${out[@]-}"; do
             if [[ "$existing" == "$value" ]]; then
                 exists=1
                 break
@@ -115,12 +111,48 @@ cap_concurrency_list() {
             out+=("$value")
         fi
     done
-    (IFS=','; echo "${out[*]}")
+    (IFS=','; echo "${out[*]-}")
 }
 
-MODE_CONCURRENCY["quick"]="$(cap_concurrency_list "${MODE_CONCURRENCY["quick"]}" "$CLIENTS_MAX")"
-MODE_CONCURRENCY["full"]="$(cap_concurrency_list "${MODE_CONCURRENCY["full"]}" "$CLIENTS_MAX")"
-MODE_CONCURRENCY["extreme"]="$(cap_concurrency_list "${MODE_CONCURRENCY["extreme"]}" "$CLIENTS_MAX")"
+QUICK_CONCURRENCY="$(cap_concurrency_list "$QUICK_CONCURRENCY" "$CLIENTS_MAX")"
+FULL_CONCURRENCY="$(cap_concurrency_list "$FULL_CONCURRENCY" "$CLIENTS_MAX")"
+EXTREME_CONCURRENCY="$(cap_concurrency_list "$EXTREME_CONCURRENCY" "$CLIENTS_MAX")"
+
+set_mode_parameters() {
+    case "$MODE" in
+        quick)
+            MODE_EVENTS="$QUICK_EVENTS"
+            MODE_ENTITIES="$QUICK_ENTITIES"
+            MODE_RUNS="$QUICK_RUNS"
+            MODE_CONCURRENCY="$QUICK_CONCURRENCY"
+            MODE_UUID_QUERIES="$QUICK_UUID_QUERIES"
+            MODE_RADIUS_QUERIES="$QUICK_RADIUS_QUERIES"
+            MODE_POLYGON_QUERIES="$QUICK_POLYGON_QUERIES"
+            ;;
+        full)
+            MODE_EVENTS="$FULL_EVENTS"
+            MODE_ENTITIES="$FULL_ENTITIES"
+            MODE_RUNS="$FULL_RUNS"
+            MODE_CONCURRENCY="$FULL_CONCURRENCY"
+            MODE_UUID_QUERIES="$FULL_UUID_QUERIES"
+            MODE_RADIUS_QUERIES="$FULL_RADIUS_QUERIES"
+            MODE_POLYGON_QUERIES="$FULL_POLYGON_QUERIES"
+            ;;
+        extreme)
+            MODE_EVENTS="$EXTREME_EVENTS"
+            MODE_ENTITIES="$EXTREME_ENTITIES"
+            MODE_RUNS="$EXTREME_RUNS"
+            MODE_CONCURRENCY="$EXTREME_CONCURRENCY"
+            MODE_UUID_QUERIES="$EXTREME_UUID_QUERIES"
+            MODE_RADIUS_QUERIES="$EXTREME_RADIUS_QUERIES"
+            MODE_POLYGON_QUERIES="$EXTREME_POLYGON_QUERIES"
+            ;;
+        *)
+            echo -e "${RED}Error: Unknown mode: $MODE${NC}" >&2
+            exit 1
+            ;;
+    esac
+}
 
 # Usage help
 usage() {
@@ -240,6 +272,57 @@ find_binary() {
     exit 1
 }
 
+check_server_reachable() {
+    local address="$1"
+    local host="${address%:*}"
+    local port="${address##*:}"
+
+    if [[ -z "$host" || -z "$port" || "$host" == "$port" ]]; then
+        return 1
+    fi
+
+    if command -v python3 >/dev/null 2>&1; then
+        python3 - "$host" "$port" <<'PYEOF'
+import socket
+import sys
+
+host = sys.argv[1]
+port = int(sys.argv[2])
+sock = socket.socket()
+sock.settimeout(1.0)
+try:
+    sock.connect((host, port))
+    sock.close()
+    sys.exit(0)
+except Exception:
+    sys.exit(1)
+PYEOF
+        return $?
+    fi
+
+    (echo > "/dev/tcp/${host}/${port}") >/dev/null 2>&1
+}
+
+write_skip_summary() {
+    mkdir -p "$RESULTS_DIR"
+    {
+        echo "============================================================"
+        echo "  ArcherDB Performance Benchmark Summary"
+        echo "============================================================"
+        echo ""
+        echo "Date:     $(date)"
+        echo "Mode:     $MODE"
+        echo "Address:  $ARCHERDB_ADDRESS"
+        echo "Binary:   $ARCHERDB_BINARY"
+        echo ""
+        echo "Status:   SKIPPED"
+        echo "Reason:   Cluster address is not reachable"
+        echo ""
+        echo "To run benchmarks, start ArcherDB and ensure it listens on:"
+        echo "  $ARCHERDB_ADDRESS"
+    } | tee "$RESULTS_DIR/summary.txt"
+}
+
 # Run a single benchmark configuration
 run_benchmark() {
     local run_num=$1
@@ -272,8 +355,19 @@ run_benchmark() {
 # Extract metric from benchmark output
 extract_metric() {
     local file=$1
-    local pattern=$2
-    grep -oP "$pattern" "$file" 2>/dev/null | head -1 || echo "N/A"
+    local label=$2
+    local line value
+    line=$(awk -v label="$label" 'index($0, label) { print; exit }' "$file")
+    if [[ -z "$line" ]]; then
+        echo "N/A"
+        return
+    fi
+    value=$(echo "$line" | sed -E 's/.*= *([0-9]+).*/\1/')
+    if [[ "$value" =~ ^[0-9]+$ ]]; then
+        echo "$value"
+    else
+        echo "N/A"
+    fi
 }
 
 # Aggregate results from multiple runs
@@ -306,13 +400,14 @@ aggregate_results() {
 
 # Main benchmark execution
 run_benchmarks() {
-    local events="${MODE_EVENTS[$MODE]}"
-    local entities="${MODE_ENTITIES[$MODE]}"
-    local runs="${MODE_RUNS[$MODE]}"
-    local concurrency_levels="${MODE_CONCURRENCY[$MODE]}"
-    local uuid_queries="${MODE_UUID_QUERIES[$MODE]}"
-    local radius_queries="${MODE_RADIUS_QUERIES[$MODE]}"
-    local polygon_queries="${MODE_POLYGON_QUERIES[$MODE]}"
+    set_mode_parameters
+    local events="$MODE_EVENTS"
+    local entities="$MODE_ENTITIES"
+    local runs="$MODE_RUNS"
+    local concurrency_levels="$MODE_CONCURRENCY"
+    local uuid_queries="$MODE_UUID_QUERIES"
+    local radius_queries="$MODE_RADIUS_QUERIES"
+    local polygon_queries="$MODE_POLYGON_QUERIES"
 
     echo ""
     echo -e "${GREEN}============================================================${NC}"
@@ -358,18 +453,18 @@ run_benchmarks() {
                 local polygon_p50 polygon_p99
                 local memory_rss
 
-                throughput=$(extract_metric "$output_file" 'throughput = \K[0-9]+')
-                insert_p50=$(extract_metric "$output_file" 'insert batch latency p50 *= *\K[0-9]+')
-                insert_p95=$(extract_metric "$output_file" 'insert batch latency p95 *= *\K[0-9]+')
-                insert_p99=$(extract_metric "$output_file" 'insert batch latency p99 *= *\K[0-9]+')
-                insert_p99_9=$(extract_metric "$output_file" 'insert batch latency p99.9.*= *\K[0-9]+')
-                uuid_p50=$(extract_metric "$output_file" 'UUID query latency p50 *= *\K[0-9]+')
-                uuid_p99=$(extract_metric "$output_file" 'UUID query latency p99 *= *\K[0-9]+')
-                radius_p50=$(extract_metric "$output_file" 'radius query latency p50 *= *\K[0-9]+')
-                radius_p99=$(extract_metric "$output_file" 'radius query latency p99 *= *\K[0-9]+')
-                polygon_p50=$(extract_metric "$output_file" 'polygon query latency p50 *= *\K[0-9]+')
-                polygon_p99=$(extract_metric "$output_file" 'polygon query latency p99 *= *\K[0-9]+')
-                memory_rss=$(extract_metric "$output_file" 'current RSS *= *\K[0-9]+')
+                throughput=$(extract_metric "$output_file" 'throughput =')
+                insert_p50=$(extract_metric "$output_file" 'insert batch latency p50')
+                insert_p95=$(extract_metric "$output_file" 'insert batch latency p95')
+                insert_p99=$(extract_metric "$output_file" 'insert batch latency p99')
+                insert_p99_9=$(extract_metric "$output_file" 'insert batch latency p99.9')
+                uuid_p50=$(extract_metric "$output_file" 'UUID query latency p50')
+                uuid_p99=$(extract_metric "$output_file" 'UUID query latency p99')
+                radius_p50=$(extract_metric "$output_file" 'radius query latency p50')
+                radius_p99=$(extract_metric "$output_file" 'radius query latency p99')
+                polygon_p50=$(extract_metric "$output_file" 'polygon query latency p50')
+                polygon_p99=$(extract_metric "$output_file" 'polygon query latency p99')
+                memory_rss=$(extract_metric "$output_file" 'current RSS')
 
                 echo "$concurrency,$run,$throughput,$insert_p50,$insert_p95,$insert_p99,$insert_p99_9,$uuid_p50,$uuid_p99,$radius_p50,$radius_p99,$polygon_p50,$polygon_p99,$memory_rss" >> "$csv_file"
             fi
@@ -378,16 +473,17 @@ run_benchmarks() {
         # Print aggregated results for this concurrency level
         echo ""
         echo "Aggregated results (concurrency=$concurrency):"
-        echo "  Insert throughput: $(aggregate_results 'throughput = \K[0-9]+' "${run_files[@]}") events/sec"
-        echo "  Insert latency p99: $(aggregate_results 'insert batch latency p99 *= *\K[0-9]+' "${run_files[@]}") ms"
-        echo "  UUID query p99: $(aggregate_results 'UUID query latency p99 *= *\K[0-9]+' "${run_files[@]}") ms"
-        echo "  Radius query p99: $(aggregate_results 'radius query latency p99 *= *\K[0-9]+' "${run_files[@]}") ms"
+        echo "  Insert throughput: $(aggregate_results 'throughput =' "${run_files[@]}") events/sec"
+        echo "  Insert latency p99: $(aggregate_results 'insert batch latency p99' "${run_files[@]}") ms"
+        echo "  UUID query p99: $(aggregate_results 'UUID query latency p99' "${run_files[@]}") ms"
+        echo "  Radius query p99: $(aggregate_results 'radius query latency p99' "${run_files[@]}") ms"
     done
 }
 
 # Generate summary report
 generate_summary() {
     local summary_file="$RESULTS_DIR/summary.txt"
+    set_mode_parameters
 
     {
         echo "============================================================"
@@ -400,10 +496,10 @@ generate_summary() {
         echo "Binary:   $ARCHERDB_BINARY"
         echo ""
         echo "Configuration:"
-        echo "  Events:     ${MODE_EVENTS[$MODE]}"
-        echo "  Entities:   ${MODE_ENTITIES[$MODE]}"
-        echo "  Runs:       ${MODE_RUNS[$MODE]}"
-        echo "  Concurrency: ${MODE_CONCURRENCY[$MODE]}"
+        echo "  Events:     $MODE_EVENTS"
+        echo "  Entities:   $MODE_ENTITIES"
+        echo "  Runs:       $MODE_RUNS"
+        echo "  Concurrency: $MODE_CONCURRENCY"
         echo ""
         echo "============================================================"
         echo "  Results"
@@ -490,6 +586,11 @@ generate_summary() {
 main() {
     parse_args "$@"
     find_binary
+    if ! check_server_reachable "$ARCHERDB_ADDRESS"; then
+        echo -e "${YELLOW}Warning: ArcherDB is not reachable at $ARCHERDB_ADDRESS. Skipping benchmarks.${NC}"
+        write_skip_summary
+        exit 0
+    fi
     run_benchmarks
     generate_summary
 

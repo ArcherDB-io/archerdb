@@ -46,10 +46,11 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-# Test results storage
-declare -A TEST_RESULTS
-declare -A TEST_DURATIONS
-declare -A TEST_MESSAGES
+# Test results storage (indexed arrays for Bash 3 compatibility).
+TEST_NAMES=()
+TEST_RESULTS=()
+TEST_DURATIONS=()
+TEST_MESSAGES=()
 TOTAL_TESTS=0
 PASSED_TESTS=0
 FAILED_TESTS=0
@@ -93,15 +94,28 @@ record_result() {
     local duration="$3"
     local message="${4:-}"
 
-    TEST_RESULTS["$test_name"]="$status"
-    TEST_DURATIONS["$test_name"]="$duration"
-    TEST_MESSAGES["$test_name"]="$message"
+    local index=-1
+    local i
+    for i in "${!TEST_NAMES[@]}"; do
+        if [[ "${TEST_NAMES[$i]}" == "$test_name" ]]; then
+            index="$i"
+            break
+        fi
+    done
+    if [[ "$index" -eq -1 ]]; then
+        index="${#TEST_NAMES[@]}"
+        TEST_NAMES+=("$test_name")
+    fi
 
-    ((TOTAL_TESTS++))
+    TEST_RESULTS[$index]="$status"
+    TEST_DURATIONS[$index]="$duration"
+    TEST_MESSAGES[$index]="$message"
+
+    TOTAL_TESTS=$((TOTAL_TESTS + 1))
     case "$status" in
-        pass) ((PASSED_TESTS++)) ;;
-        fail) ((FAILED_TESTS++)) ;;
-        skip) ((SKIPPED_TESTS++)) ;;
+        pass) PASSED_TESTS=$((PASSED_TESTS + 1)) ;;
+        fail) FAILED_TESTS=$((FAILED_TESTS + 1)) ;;
+        skip) SKIPPED_TESTS=$((SKIPPED_TESTS + 1)) ;;
     esac
 }
 
@@ -243,7 +257,7 @@ test_single_replica_failure() {
     for ((i=0; i<replica_count-1; i++)); do
         if kubectl exec "archerdb-$i" -n archerdb -- \
             curl -sf http://localhost:9100/health/ready &> /dev/null; then
-            ((remaining_healthy++))
+            remaining_healthy=$((remaining_healthy + 1))
         fi
     done
 
@@ -438,15 +452,17 @@ output_json() {
     echo "  \"tests\": {"
 
     local first=true
-    for test_name in "${!TEST_RESULTS[@]}"; do
+    local i
+    for i in "${!TEST_NAMES[@]}"; do
         if [[ "$first" != "true" ]]; then
             echo ","
         fi
         first=false
 
-        local status="${TEST_RESULTS[$test_name]}"
-        local duration="${TEST_DURATIONS[$test_name]}"
-        local message="${TEST_MESSAGES[$test_name]}"
+        local test_name="${TEST_NAMES[$i]}"
+        local status="${TEST_RESULTS[$i]}"
+        local duration="${TEST_DURATIONS[$i]}"
+        local message="${TEST_MESSAGES[$i]}"
 
         # Escape message for JSON
         message="${message//\\/\\\\}"
@@ -472,10 +488,12 @@ output_summary() {
     echo "Total: $TOTAL_TESTS | Passed: $PASSED_TESTS | Failed: $FAILED_TESTS | Skipped: $SKIPPED_TESTS"
     echo ""
     echo "Results:"
-    for test_name in "${!TEST_RESULTS[@]}"; do
-        local status="${TEST_RESULTS[$test_name]}"
-        local duration="${TEST_DURATIONS[$test_name]}"
-        local message="${TEST_MESSAGES[$test_name]}"
+    local i
+    for i in "${!TEST_NAMES[@]}"; do
+        local test_name="${TEST_NAMES[$i]}"
+        local status="${TEST_RESULTS[$i]}"
+        local duration="${TEST_DURATIONS[$i]}"
+        local message="${TEST_MESSAGES[$i]}"
 
         case "$status" in
             pass)

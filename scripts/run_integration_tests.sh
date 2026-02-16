@@ -78,6 +78,35 @@ wait_for_server() {
     return 1
 }
 
+setup_python_test_environment() {
+    PYTHON_TEST_EXEC=""
+    PYTHON_PIP_FLAGS=()
+    PYTHON_TEST_VENV_DIR=""
+
+    if ! command -v python3 >/dev/null 2>&1; then
+        return 1
+    fi
+
+    local venv_dir
+    venv_dir=$(mktemp -d /tmp/archerdb-python-integration-venv-XXXXXX 2>/dev/null || true)
+    if [ -n "$venv_dir" ] && python3 -m venv "$venv_dir" >/dev/null 2>&1 && "$venv_dir/bin/python" -m pip --version >/dev/null 2>&1; then
+        PYTHON_TEST_EXEC="$venv_dir/bin/python"
+        PYTHON_TEST_VENV_DIR="$venv_dir"
+        return 0
+    fi
+
+    PYTHON_TEST_EXEC="$(command -v python3)"
+    if "$PYTHON_TEST_EXEC" -m pip --version >/dev/null 2>&1; then
+        PYTHON_PIP_FLAGS=(--user)
+        if "$PYTHON_TEST_EXEC" -m pip help install 2>/dev/null | grep -q -- "--break-system-packages"; then
+            PYTHON_PIP_FLAGS+=(--break-system-packages)
+        fi
+        return 0
+    fi
+
+    return 1
+}
+
 # 1. Build ArcherDB
 echo "Building ArcherDB..."
 ./zig/zig build $ZIG_BUILD_FLAGS
@@ -112,6 +141,9 @@ cleanup() {
     kill $SERVER_PID 2>/dev/null || true
     wait $SERVER_PID 2>/dev/null || true
     rm -f $DATA_FILE
+    if [ -n "${PYTHON_TEST_VENV_DIR:-}" ]; then
+        rm -rf "$PYTHON_TEST_VENV_DIR"
+    fi
 }
 trap cleanup EXIT
 
@@ -213,8 +245,38 @@ echo ""
 echo "=== Python Integration Tests ==="
 if [ -d "src/clients/python" ]; then
     cd src/clients/python
+    echo "Preparing Python test environment..."
+    if setup_python_test_environment; then
+        if ! "$PYTHON_TEST_EXEC" -m pytest --version >/dev/null 2>&1; then
+            echo "Installing pytest..."
+            if ! "$PYTHON_TEST_EXEC" -m pip install ${PYTHON_PIP_FLAGS[@]+"${PYTHON_PIP_FLAGS[@]}"} --no-cache-dir pytest >/dev/null 2>&1; then
+                echo "FAIL: Could not install pytest"
+                FAIL_COUNT=$((FAIL_COUNT + 1))
+                cd "$ARCHERDB_DIR"
+                echo "=============================================="
+                echo "Integration Test Results"
+                echo "=============================================="
+                echo "$FAIL_COUNT test suites FAILED"
+                echo "Server Log (last 50 lines):"
+                tail -n 50 server.log
+                exit 1
+            fi
+        fi
+    else
+        echo "FAIL: Could not prepare Python test environment"
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+        cd "$ARCHERDB_DIR"
+        echo "=============================================="
+        echo "Integration Test Results"
+        echo "=============================================="
+        echo "$FAIL_COUNT test suites FAILED"
+        echo "Server Log (last 50 lines):"
+        tail -n 50 server.log
+        exit 1
+    fi
+
     echo "Running Python tests..."
-    if python3 -m pytest tests/test_integration.py; then
+    if PYTHONPATH="$ARCHERDB_DIR/src/clients/python/src" "$PYTHON_TEST_EXEC" -m pytest tests/test_integration.py; then
         echo "PASS: Python integration tests"
     else
         echo "FAIL: Python integration tests"

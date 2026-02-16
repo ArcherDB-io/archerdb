@@ -27,8 +27,8 @@ echo "Server PID: $SERVER_PID"
 # Give server time to start
 sleep 2
 
-# Extract metrics port from log
-METRICS_PORT=$(grep "metrics server listening" server.log | grep -oP '127.0.0.1:\K[0-9]+')
+# Extract metrics port from log (portable: avoid grep -P).
+METRICS_PORT=$(sed -n 's/.*metrics server listening.*127\.0\.0\.1:\([0-9][0-9]*\).*/\1/p' server.log | awk 'NR==1{print; exit}')
 echo "Metrics port: $METRICS_PORT"
 
 if [ -z "$METRICS_PORT" ]; then

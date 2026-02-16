@@ -3,7 +3,7 @@
 # This script tests all client libraries using echo mode which doesn't require a server
 # Real-world tests require io_uring support (kernel 5.5+, no seccomp restrictions)
 
-set -e
+set -uo pipefail
 
 ARCHERDB_DIR="$(dirname "$(dirname "$(realpath "$0")")")"
 cd "$ARCHERDB_DIR"
@@ -19,7 +19,13 @@ FAIL_COUNT=0
 
 # Check if io_uring is available
 check_io_uring() {
-    local disabled=$(cat /proc/sys/kernel/io_uring_disabled 2>/dev/null || echo "unknown")
+    if [ ! -r /proc/sys/kernel/io_uring_disabled ]; then
+        echo "io_uring: NOT AVAILABLE (non-Linux platform)"
+        return 0
+    fi
+
+    local disabled
+    disabled=$(cat /proc/sys/kernel/io_uring_disabled 2>/dev/null || echo "unknown")
     if [ "$disabled" = "0" ]; then
         echo "io_uring: ENABLED"
         return 0
@@ -33,7 +39,7 @@ check_io_uring() {
 }
 
 echo "=== System Check ==="
-check_io_uring
+check_io_uring || true
 echo ""
 
 # Python Echo Test
@@ -42,7 +48,7 @@ test_python_echo() {
 
     if ! python3 --version &>/dev/null; then
         echo "SKIP: Python 3 not available"
-        return 1
+        return 0
     fi
 
     python3 << 'PYEOF'
@@ -142,19 +148,41 @@ test_nodejs_echo() {
 
     if ! node --version &>/dev/null; then
         echo "SKIP: Node.js not available"
-        return 1
+        return 0
     fi
 
-    BINDING_PATH="src/clients/node/dist/bin/x86_64-linux-gnu/client.node"
-    if [ ! -f "$BINDING_PATH" ]; then
-        echo "SKIP: Native binding not found at $BINDING_PATH"
-        return 1
-    fi
+    local os_name
+    local arch_name
+    local preferred_binding
+    local binding_path
 
-    node << 'JSEOF'
+    os_name=$(uname -s | tr '[:upper:]' '[:lower:]')
+    arch_name=$(uname -m)
+    case "$arch_name" in
+        arm64|aarch64) arch_name="aarch64" ;;
+        x86_64|amd64) arch_name="x86_64" ;;
+    esac
+    case "$os_name" in
+        darwin) os_name="macos" ;;
+        linux) os_name="linux-gnu" ;;
+    esac
+
+    preferred_binding="src/clients/node/dist/bin/${arch_name}-${os_name}/client.node"
+    if [ -f "$preferred_binding" ]; then
+        binding_path="$preferred_binding"
+    else
+        binding_path=$(ls src/clients/node/dist/bin/*/client.node 2>/dev/null | awk 'NR==1{print; exit}')
+    fi
+    if [ -z "$binding_path" ]; then
+        echo "SKIP: Native binding not found in src/clients/node/dist/bin/*/client.node"
+        return 0
+    fi
+    binding_path="$ARCHERDB_DIR/$binding_path"
+
+    BINDING_PATH="$binding_path" node << 'JSEOF'
 const path = require('path');
 
-const bindingPath = path.join(process.cwd(), 'src/clients/node/dist/bin/x86_64-linux-gnu/client.node');
+const bindingPath = process.env.BINDING_PATH;
 const binding = require(bindingPath);
 const { Operation, GeoEventFlags } = require(path.join(process.cwd(), 'src/clients/node/dist/bindings.js'));
 
@@ -218,17 +246,17 @@ test_java_echo() {
 
     if ! java -version &>/dev/null; then
         echo "SKIP: Java not available"
-        return 1
+        return 0
     fi
 
     if ! mvn -version &>/dev/null; then
         echo "SKIP: Maven not available"
-        return 1
+        return 0
     fi
 
     if ! javac -version &>/dev/null; then
         echo "SKIP: javac not available"
-        return 1
+        return 0
     fi
 
     cd src/clients/java
@@ -337,18 +365,21 @@ test_go_echo() {
 
     if ! go version &>/dev/null; then
         echo "SKIP: Go not available"
-        return 1
+        return 0
     fi
 
     cd src/clients/go
-    if go test -run TestEchoClient -v -count=1 . 2>&1 | grep -q "PASS"; then
+    local go_output
+    if go_output=$(go test -run TestEchoClient -v -count=1 . 2>&1); then
         PASS_COUNT=$((PASS_COUNT + 1))
         echo "PASS: Go client echo test"
+        echo "$go_output"
         cd "$ARCHERDB_DIR"
         return 0
     else
         FAIL_COUNT=$((FAIL_COUNT + 1))
         echo "FAIL: Go client echo test"
+        echo "$go_output"
         cd "$ARCHERDB_DIR"
         return 1
     fi

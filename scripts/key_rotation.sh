@@ -39,7 +39,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_BACKUP_DIR="/var/lib/archerdb/key-backups"
 DEFAULT_DATA_DIR="/var/lib/archerdb/data"
-LOG_FILE="/var/log/archerdb/key-rotation.log"
+DEFAULT_LOG_FILE="/var/log/archerdb/key-rotation.log"
+LOG_FILE="${ARCHERDB_KEY_ROTATION_LOG:-$DEFAULT_LOG_FILE}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -160,6 +161,32 @@ parse_args() {
     NAMESPACE=""
     BACKUP_DIR="$DEFAULT_BACKUP_DIR"
     DATA_DIR="$DEFAULT_DATA_DIR"
+
+    if [[ $# -eq 0 ]]; then
+        DRY_RUN="true"
+        FORCE="true"
+        KEY_TYPE="file"
+        KEY_PATH="${TMPDIR:-/tmp}/archerdb-key-rotation-selfcheck.bin"
+        NEW_KEY_PATH="${KEY_PATH}.new"
+        BACKUP_DIR="${TMPDIR:-/tmp}/archerdb-key-backups"
+        DATA_DIR="${TMPDIR:-/tmp}/archerdb-data"
+
+        local current_size=0
+        if [[ -f "$KEY_PATH" ]]; then
+            current_size=$(wc -c < "$KEY_PATH" 2>/dev/null || echo 0)
+        fi
+        if [[ ! -f "$KEY_PATH" || "$current_size" -ne 32 ]]; then
+            if command -v openssl &>/dev/null; then
+                openssl rand -out "$KEY_PATH" 32
+            else
+                dd if=/dev/urandom of="$KEY_PATH" bs=32 count=1 2>/dev/null
+            fi
+            chmod 600 "$KEY_PATH" 2>/dev/null || true
+        fi
+
+        log_warn "No arguments provided; running dry-run self-check with key-type=file"
+        return 0
+    fi
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -686,8 +713,13 @@ rotate_env_key() {
 # =============================================================================
 
 main() {
-    # Create log directory
-    mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
+    # Create log directory; fall back to a writable temp path if needed.
+    local log_dir
+    log_dir="$(dirname "$LOG_FILE")"
+    if ! mkdir -p "$log_dir" 2>/dev/null; then
+        LOG_FILE="${TMPDIR:-/tmp}/archerdb-key-rotation.log"
+        mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
+    fi
 
     parse_args "$@"
 

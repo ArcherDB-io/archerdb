@@ -51,15 +51,43 @@ if [ ! -x "$ARCHERDB" ]; then
     exit 1
 fi
 
-# Set up Python environment for archerdb client
+# Set up Python environment for archerdb client.
 PYTHON_CLIENT="$ROOT_DIR/src/clients/python"
-PYTHON_VENV="$PYTHON_CLIENT/venv/bin/python"
+PYTHON_CLIENT_VENV="$PYTHON_CLIENT/venv/bin/python"
+PYTHON_EXEC=""
+PYTHON_PIP_FLAGS=()
 export PYTHONPATH="$PYTHON_CLIENT/src"
+
+if [ -x "$PYTHON_CLIENT_VENV" ] && "$PYTHON_CLIENT_VENV" -m pip --version >/dev/null 2>&1; then
+    PYTHON_EXEC="$PYTHON_CLIENT_VENV"
+    echo "Using Python client venv: $PYTHON_EXEC"
+else
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "ERROR: python3 not found and client venv is not usable"
+        exit 1
+    fi
+    PYTHON_EXEC="$TEMP_DIR/ttl-venv/bin/python"
+    echo "Bootstrapping temporary Python venv at $TEMP_DIR/ttl-venv..."
+    if python3 -m venv "$TEMP_DIR/ttl-venv" >/dev/null 2>&1 && "$PYTHON_EXEC" -m pip --version >/dev/null 2>&1; then
+        "$PYTHON_EXEC" -m pip install --upgrade pip >/dev/null
+    else
+        echo "WARN: Could not create a virtualenv with pip; falling back to system python3 --user installs"
+        if ! python3 -m pip --version >/dev/null 2>&1; then
+            echo "ERROR: python3 pip is unavailable; cannot install archerdb Python client"
+            exit 1
+        fi
+        PYTHON_EXEC="$(command -v python3)"
+        PYTHON_PIP_FLAGS=(--user)
+        if "$PYTHON_EXEC" -m pip help install 2>/dev/null | grep -q -- "--break-system-packages"; then
+            PYTHON_PIP_FLAGS+=(--break-system-packages)
+        fi
+    fi
+fi
 
 # Install/Update Python archerdb client
 echo "Installing Python client..."
 cd "$PYTHON_CLIENT"
-$PYTHON_VENV -m pip install --no-cache-dir --force-reinstall .
+"$PYTHON_EXEC" -m pip install ${PYTHON_PIP_FLAGS[@]+"${PYTHON_PIP_FLAGS[@]}"} --no-cache-dir --force-reinstall .
 cd "$TEMP_DIR"
 
 cd "$TEMP_DIR"
@@ -273,7 +301,7 @@ client.close()
 PYEOF
 
 export ARCHERDB_PORT=$DATA_PORT
-$PYTHON_VENV ttl_test.py 2>&1 | tee ttl_test.log
+"$PYTHON_EXEC" ttl_test.py 2>&1 | tee ttl_test.log
 TTL_TEST_RESULT=${PIPESTATUS[0]}
 
 echo ""
