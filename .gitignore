@@ -44,6 +44,7 @@ pytest.err
 python.out
 python.err
 server.log
+server_*.log
 vopr-*.log
 tools/s2_golden_gen/s2_golden_gen
 tests/sdk_tests/go/bin/
@@ -53,6 +54,8 @@ tests/sdk_tests/go/.tmp/
 __pycache__/
 *.pyc
 *.pyo
+.venv
+.venv/
 
 # Go coverage
 coverage.out
