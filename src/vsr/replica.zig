@@ -44,6 +44,7 @@ const Command = vsr.Command;
 const Version = vsr.Version;
 const SyncStage = vsr.SyncStage;
 const ClientSessions = vsr.ClientSessions;
+const ReplySlot = @import("client_sessions.zig").ReplySlot;
 const Tracer = vsr.trace.Tracer;
 const membership = @import("membership.zig");
 const MembershipConfig = membership.MembershipConfig;
@@ -328,6 +329,8 @@ pub fn ReplicaType(
 
         /// The persistent log of the latest reply per active client.
         client_replies: ClientReplies,
+        /// In-memory cache for solo read-only fast-path replies, indexed by client slot.
+        fast_read_replies: [constants.clients_max]?*Message.Reply = @splat(null),
 
         /// An abstraction to send messages from the replica to another replica or client.
         /// The message bus will also deliver messages to this replica by calling
@@ -1628,6 +1631,7 @@ pub fn ReplicaType(
         pub fn deinit(self: *Replica, allocator: Allocator) void {
             self.static_allocator.transition_from_static_to_deinit();
 
+            self.fast_read_replies_clear_all();
             self.grid_scrubber.deinit(allocator);
             self.client_replies.deinit();
             self.client_sessions_checkpoint.deinit(allocator);
@@ -2186,14 +2190,34 @@ pub fn ReplicaType(
 
             entry.header = reply.header.*;
             const reply_slot = self.client_sessions.get_slot_for_client(reply.header.client).?;
-            if (entry.header.size == @sizeOf(Header)) {
-                self.client_replies.remove_reply(reply_slot);
-            } else {
-                self.client_replies.write_reply(reply_slot, reply, .commit);
-            }
+            self.fast_read_reply_store(reply_slot, reply);
+            self.client_replies.remove_reply(reply_slot);
 
             self.send_reply_message_to_client(reply);
             return true;
+        }
+
+        fn fast_read_reply_store(
+            self: *Replica,
+            slot: ReplySlot,
+            reply: *Message.Reply,
+        ) void {
+            self.fast_read_reply_clear(slot);
+            self.fast_read_replies[slot.index] = reply.ref();
+        }
+
+        fn fast_read_reply_clear(self: *Replica, slot: ReplySlot) void {
+            if (self.fast_read_replies[slot.index]) |cached| {
+                self.fast_read_replies[slot.index] = null;
+                self.message_bus.unref(cached);
+            }
+        }
+
+        fn fast_read_replies_clear_all(self: *Replica) void {
+            for (0..constants.clients_max) |slot_index| {
+                const slot = ReplySlot{ .index = slot_index };
+                self.fast_read_reply_clear(slot);
+            }
         }
 
         /// Replication is simple, with a single code path for the primary and backups.
@@ -5960,6 +5984,8 @@ pub fn ReplicaType(
             assert(clients <= constants.clients_max);
             if (clients == constants.clients_max) {
                 const evictee = self.client_sessions.evictee();
+                const evictee_slot = self.client_sessions.get_slot_for_client(evictee).?;
+                self.fast_read_reply_clear(evictee_slot);
                 self.client_sessions.remove(evictee);
 
                 assert(self.client_sessions.count() == constants.clients_max - 1);
@@ -6021,9 +6047,10 @@ pub fn ReplicaType(
                     reply.header.request,
                 });
 
+                const reply_slot = self.client_sessions.get_slot_for_client(reply.header.client).?;
+                self.fast_read_reply_clear(reply_slot);
                 entry.header = reply.header.*;
 
-                const reply_slot = self.client_sessions.get_slot_for_header(reply.header).?;
                 if (entry.header.size == @sizeOf(Header)) {
                     self.client_replies.remove_reply(reply_slot);
                 } else {
@@ -6916,6 +6943,14 @@ pub fn ReplicaType(
             assert(message.header.checksum == entry.header.request_checksum);
             assert(message.header.request == entry.header.request);
 
+            const slot = self.client_sessions.get_slot_for_client(message.header.client).?;
+            if (self.fast_read_replies[slot.index]) |reply| {
+                if (reply.header.checksum == entry.header.checksum) {
+                    self.send_reply_message_to_client(reply);
+                    return;
+                }
+            }
+
             if (entry.header.size == @sizeOf(Header)) {
                 const reply = self.create_message_from_header(@bitCast(entry.header))
                     .into(.reply).?;
@@ -6925,7 +6960,6 @@ pub fn ReplicaType(
                 return;
             }
 
-            const slot = self.client_sessions.get_slot_for_client(message.header.client).?;
             if (self.client_replies.read_reply_sync(slot, entry)) |reply| {
                 on_request_repeat_reply_callback(
                     &self.client_replies,
@@ -10859,6 +10893,7 @@ pub fn ReplicaType(
 
             self.client_sessions_checkpoint.reset();
             self.client_sessions.reset();
+            self.fast_read_replies_clear_all();
 
             if (self.aof) |aof| aof.sync();
             // Faulty bits will be set in client_sessions_open_callback().
