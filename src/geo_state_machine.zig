@@ -1076,11 +1076,12 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         /// Allocated during init for VOPR testing support.
         ram_index: *DefaultRamIndex,
 
-        /// Cached slot positions for live entities used by spatial scans.
-        /// Rebuilt lazily after mutating operations to avoid scanning full capacity per query.
-        spatial_scan_slots: []u64,
-        spatial_scan_slots_len: usize = 0,
-        spatial_scan_slots_dirty: bool = true,
+        /// Cached scan keys for live entities used by spatial queries.
+        /// Key layout: [cell_id (upper 64) | slot (lower 64)].
+        /// Rebuilt lazily after mutating operations and sorted by cell_id.
+        spatial_scan_keys: []u128,
+        spatial_scan_keys_len: usize = 0,
+        spatial_scan_keys_dirty: bool = true,
 
         /// Index recovery tracking for query gating.
         index_recovery: IndexRecoveryState = .{},
@@ -1298,8 +1299,8 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 allocator.destroy(cache);
             };
 
-            const spatial_scan_slots = try allocator.alloc(u64, @intCast(ram_index.capacity));
-            errdefer allocator.free(spatial_scan_slots);
+            const spatial_scan_keys = try allocator.alloc(u128, @intCast(ram_index.capacity));
+            errdefer allocator.free(spatial_scan_keys);
 
             // Initialize session prepared queries map (14-05)
             const session_prepared_queries = std.AutoHashMap(u128, SessionPreparedQueries).init(allocator);
@@ -1315,9 +1316,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .index_checkpoint_enabled = options.enable_index_checkpoint,
                 .last_index_checkpoint_op = 0,
                 .ram_index = ram_index,
-                .spatial_scan_slots = spatial_scan_slots,
-                .spatial_scan_slots_len = 0,
-                .spatial_scan_slots_dirty = true,
+                .spatial_scan_keys = spatial_scan_keys,
+                .spatial_scan_keys_len = 0,
+                .spatial_scan_keys_dirty = true,
                 .index_recovery = .{},
                 .tiering_manager = tiering_manager,
                 .result_cache = result_cache,
@@ -1390,7 +1391,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             self.forest.deinit(allocator);
             self.ram_index.deinit(allocator);
             allocator.destroy(self.ram_index);
-            allocator.free(self.spatial_scan_slots);
+            allocator.free(self.spatial_scan_keys);
 
             // Clean up TieringManager if enabled (F2.6)
             if (self.tiering_manager) |tm| {
@@ -1447,9 +1448,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .forest = self.forest,
                 .grid = self.grid,
                 .ram_index = self.ram_index,
-                .spatial_scan_slots = self.spatial_scan_slots,
-                .spatial_scan_slots_len = 0,
-                .spatial_scan_slots_dirty = true,
+                .spatial_scan_keys = self.spatial_scan_keys,
+                .spatial_scan_keys_len = 0,
+                .spatial_scan_keys_dirty = true,
                 .index_recovery = .{},
                 .index_checkpoint_enabled = self.index_checkpoint_enabled,
                 .last_index_checkpoint_op = 0,
@@ -2029,7 +2030,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             // Record metrics
             if (result.entries_removed > 0) {
                 archerdb_metrics.Registry.write_events_total.add(result.entries_removed);
-                self.spatial_scan_slots_dirty = true;
+                self.spatial_scan_keys_dirty = true;
             }
 
             // F2.6: Process tiering maintenance during pulse
@@ -2062,7 +2063,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                         // Entity demoted to cold tier - remove from RAM index
                         // Cold entities are disk-only and require LSM scan for queries
                         _ = self.ram_index.remove(transition.entity_id);
-                        self.spatial_scan_slots_dirty = true;
+                        self.spatial_scan_keys_dirty = true;
                         log.debug("tiering: entity {x} demoted to cold tier", .{transition.entity_id});
                     }
                 }
@@ -2227,7 +2228,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             // Record writes for adaptive compaction (12-09: deletion tombstones count as writes)
             if (deleted_count > 0) {
                 self.forest.adaptive_record_write(deleted_count);
-                self.spatial_scan_slots_dirty = true;
+                self.spatial_scan_keys_dirty = true;
 
                 // Invalidate query result cache on deletes (14-01)
                 if (self.result_cache) |cache| {
@@ -2510,7 +2511,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             // Record writes for adaptive compaction (12-09: workload tracking)
             if (inserted_count > 0) {
                 self.forest.adaptive_record_write(inserted_count);
-                self.spatial_scan_slots_dirty = true;
+                self.spatial_scan_keys_dirty = true;
 
                 // Invalidate query result cache on writes (14-01)
                 if (self.result_cache) |cache| {
@@ -4093,22 +4094,28 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             var has_more: bool = false;
             const radius_mm_u64 = @as(u64, filter.radius_mm);
 
-            // Scan only live slots cached from the RAM index.
-            // The cache is rebuilt lazily after mutating operations.
-            const active_slots = self.spatialScanSlots();
-            for (active_slots) |position| {
-                // Check if we've hit the result limit
-                if (result_count >= effective_limit) {
-                    // There might be more results - we hit the limit before scanning all
-                    has_more = true;
-                    break;
-                }
-                // Read entry from index
-                const entry = self.ram_index.entries[@intCast(position)];
+            const scan_keys = self.spatialScanKeys();
+            var merged_covering: [s2_index.s2_max_cells]s2_index.CellRange = undefined;
+            const merged_covering_count = mergeCoveringRanges(
+                &covering,
+                num_ranges,
+                &merged_covering,
+            );
 
-                // Extract S2 cell ID from composite latest_id (upper 64 bits)
-                const cell_id = @as(u64, @truncate(entry.latest_id >> 64));
-                const timestamp = @as(u64, @truncate(entry.latest_id));
+            ranges: for (merged_covering[0..merged_covering_count]) |range| {
+                var key_index = lowerBoundScanKey(scan_keys, range.start);
+                const end_key = @as(u128, range.end) << 64;
+                while (key_index < scan_keys.len and scan_keys[key_index] < end_key) : (key_index += 1) {
+                    // Check if we've hit the result limit
+                    if (result_count >= effective_limit) {
+                        // There might be more results - we hit the limit before scanning all
+                        has_more = true;
+                        break :ranges;
+                    }
+
+                    const position = @as(u64, @truncate(scan_keys[key_index]));
+                    const entry = self.ram_index.entries[@intCast(position)];
+                    const timestamp = @as(u64, @truncate(entry.latest_id));
 
                 // Check TTL expiration (per query-engine/spec.md)
                 if (entry.ttl_seconds > 0) {
@@ -4122,69 +4129,65 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     }
                 }
 
-                const metadata = entryMetadata(entry);
+                    const metadata = entryMetadata(entry);
 
-                // Apply group_id filter if specified
-                if (filter.group_id != 0 and metadata.group_id != filter.group_id) {
-                    continue;
-                }
+                    // Apply group_id filter if specified
+                    if (filter.group_id != 0 and metadata.group_id != filter.group_id) {
+                        continue;
+                    }
 
-                // Coarse filter: Check if cell is in any covering range
-                if (!cellInCovering(cell_id, &covering)) {
-                    continue;
-                }
+                    // Apply timestamp filter if specified
+                    if (filter.timestamp_min > 0 and timestamp < filter.timestamp_min) {
+                        continue;
+                    }
+                    if (filter.timestamp_max > 0 and timestamp > filter.timestamp_max) {
+                        continue;
+                    }
 
-                // Apply timestamp filter if specified
-                if (filter.timestamp_min > 0 and timestamp < filter.timestamp_min) {
-                    continue;
-                }
-                if (filter.timestamp_max > 0 and timestamp > filter.timestamp_max) {
-                    continue;
-                }
+                    const lat_nano = metadata.lat_nano;
+                    const lon_nano = metadata.lon_nano;
 
-                const lat_nano = metadata.lat_nano;
-                const lon_nano = metadata.lon_nano;
+                    // Post-filter: Precise distance check using Haversine formula
+                    if (!S2.isWithinDistance(
+                        filter.center_lat_nano,
+                        filter.center_lon_nano,
+                        lat_nano,
+                        lon_nano,
+                        radius_mm_u64,
+                    )) {
+                        continue;
+                    }
 
-                // Post-filter: Precise distance check using Haversine formula
-                if (!S2.isWithinDistance(
-                    filter.center_lat_nano,
-                    filter.center_lon_nano,
-                    lat_nano,
-                    lon_nano,
-                    radius_mm_u64,
-                )) {
-                    continue;
-                }
+                    // F2.6: Record access in tiering manager for each returned entity
+                    if (self.tiering_manager) |tm| {
+                        _ = tm.recordAccess(entry.entity_id, self.commit_timestamp) catch |err| {
+                            log.debug("tiering: failed to record access for entity {x}: {}", .{ entry.entity_id, err });
+                        };
+                    }
 
-                // F2.6: Record access in tiering manager for each returned entity
-                if (self.tiering_manager) |tm| {
-                    _ = tm.recordAccess(entry.entity_id, self.commit_timestamp) catch |err| {
-                        log.debug("tiering: failed to record access for entity {x}: {}", .{ entry.entity_id, err });
+                    // Build GeoEvent result
+                    // NOTE: This creates a minimal GeoEvent from index data.
+                    // When Forest is integrated, we should fetch the full event from LSM.
+                    results_slice[result_count] = GeoEvent{
+                        .id = entry.latest_id,
+                        .entity_id = entry.entity_id,
+                        .correlation_id = 0, // Not stored in RAM index
+                        .user_data = 0, // Not stored in RAM index
+                        .lat_nano = lat_nano,
+                        .lon_nano = lon_nano,
+                        .group_id = metadata.group_id,
+                        .timestamp = timestamp,
+                        .altitude_mm = 0,
+                        .velocity_mms = 0,
+                        .ttl_seconds = entry.ttl_seconds,
+                        .accuracy_mm = 0,
+                        .heading_cdeg = 0,
+                        .flags = GeoEventFlags.none,
+                        .reserved = [_]u8{0} ** 12,
                     };
+
+                    result_count += 1;
                 }
-
-                // Build GeoEvent result
-                // NOTE: This creates a minimal GeoEvent from index data.
-                // When Forest is integrated, we should fetch the full event from LSM.
-                results_slice[result_count] = GeoEvent{
-                    .id = entry.latest_id,
-                    .entity_id = entry.entity_id,
-                    .correlation_id = 0, // Not stored in RAM index
-                    .user_data = 0, // Not stored in RAM index
-                    .lat_nano = lat_nano,
-                    .lon_nano = lon_nano,
-                    .group_id = metadata.group_id,
-                    .timestamp = timestamp,
-                    .altitude_mm = 0,
-                    .velocity_mms = 0,
-                    .ttl_seconds = entry.ttl_seconds,
-                    .accuracy_mm = 0,
-                    .heading_cdeg = 0,
-                    .flags = GeoEventFlags.none,
-                    .reserved = [_]u8{0} ** 12,
-                };
-
-                result_count += 1;
             }
             const end_execute = std.time.nanoTimestamp();
 
@@ -4656,22 +4659,32 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             var entries_seen: usize = 0;
             var covering_passed: usize = 0;
 
-            // Scan only live slots cached from the RAM index.
-            const active_slots = self.spatialScanSlots();
-            for (active_slots) |position| {
-                // Check if we've hit the result limit
-                if (result_count >= effective_limit) {
-                    // There might be more results - we hit the limit before scanning all
-                    has_more = true;
-                    break;
-                }
-                // Read entry from index
-                const entry = self.ram_index.entries[@intCast(position)];
-                entries_seen += 1;
+            const scan_keys = self.spatialScanKeys();
+            var merged_covering: [s2_index.s2_max_cells]s2_index.CellRange = undefined;
+            const merged_covering_count = mergeCoveringRanges(
+                &covering,
+                num_ranges,
+                &merged_covering,
+            );
 
-                // Extract S2 cell ID and timestamp from composite latest_id
-                const cell_id = @as(u64, @truncate(entry.latest_id >> 64));
-                const timestamp = @as(u64, @truncate(entry.latest_id));
+            ranges: for (merged_covering[0..merged_covering_count]) |range| {
+                var key_index = lowerBoundScanKey(scan_keys, range.start);
+                const end_key = @as(u128, range.end) << 64;
+                while (key_index < scan_keys.len and scan_keys[key_index] < end_key) : (key_index += 1) {
+                    // Check if we've hit the result limit
+                    if (result_count >= effective_limit) {
+                        // There might be more results - we hit the limit before scanning all
+                        has_more = true;
+                        break :ranges;
+                    }
+
+                    // Read entry from index
+                    const position = @as(u64, @truncate(scan_keys[key_index]));
+                    const entry = self.ram_index.entries[@intCast(position)];
+                    entries_seen += 1;
+
+                    // Extract timestamp from composite latest_id
+                    const timestamp = @as(u64, @truncate(entry.latest_id));
 
                 // Check TTL expiration (per query-engine/spec.md)
                 if (entry.ttl_seconds > 0) {
@@ -4685,76 +4698,70 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     }
                 }
 
-                const metadata = entryMetadata(entry);
+                    const metadata = entryMetadata(entry);
 
-                // Apply group_id filter if specified
-                if (filter.group_id != 0 and metadata.group_id != filter.group_id) {
-                    continue;
-                }
+                    // Apply group_id filter if specified
+                    if (filter.group_id != 0 and metadata.group_id != filter.group_id) {
+                        continue;
+                    }
+                    covering_passed += 1;
 
-                // Coarse filter: Check if cell is in any covering range
-                // This is an optimization - cells outside the covering can be skipped
-                // without the more expensive point-in-polygon test
-                if (!cellInCovering(cell_id, &covering)) {
-                    continue;
-                }
-                covering_passed += 1;
+                    // Apply timestamp filter if specified
+                    if (filter.timestamp_min > 0 and timestamp < filter.timestamp_min) {
+                        continue;
+                    }
+                    if (filter.timestamp_max > 0 and timestamp > filter.timestamp_max) {
+                        continue;
+                    }
 
-                // Apply timestamp filter if specified
-                if (filter.timestamp_min > 0 and timestamp < filter.timestamp_min) {
-                    continue;
-                }
-                if (filter.timestamp_max > 0 and timestamp > filter.timestamp_max) {
-                    continue;
-                }
-
-                // Post-filter: Point-in-polygon test using ray casting algorithm
-                // If holes are present, use pointInPolygonWithHoles which excludes
-                // points inside holes
-                const point = s2_index.LatLon{
-                    .lat_nano = metadata.lat_nano,
-                    .lon_nano = metadata.lon_nano,
-                };
-                const in_polygon = if (hole_count > 0)
-                    S2.pointInPolygonWithHoles(point, polygon_slice, holes_slice)
-                else
-                    S2.pointInPolygon(point, polygon_slice);
-
-                log.debug("query_polygon: point lat={d}, lon={d}, in_polygon={}", .{
-                    metadata.lat_nano, metadata.lon_nano, in_polygon,
-                });
-
-                if (!in_polygon) {
-                    continue;
-                }
-
-                // F2.6: Record access in tiering manager for each returned entity
-                if (self.tiering_manager) |tm| {
-                    _ = tm.recordAccess(entry.entity_id, self.commit_timestamp) catch |err| {
-                        log.debug("tiering: failed to record access for entity {x}: {}", .{ entry.entity_id, err });
+                    // Post-filter: Point-in-polygon test using ray casting algorithm
+                    // If holes are present, use pointInPolygonWithHoles which excludes
+                    // points inside holes
+                    const point = s2_index.LatLon{
+                        .lat_nano = metadata.lat_nano,
+                        .lon_nano = metadata.lon_nano,
                     };
+                    const in_polygon = if (hole_count > 0)
+                        S2.pointInPolygonWithHoles(point, polygon_slice, holes_slice)
+                    else
+                        S2.pointInPolygon(point, polygon_slice);
+
+                    log.debug("query_polygon: point lat={d}, lon={d}, in_polygon={}", .{
+                        metadata.lat_nano, metadata.lon_nano, in_polygon,
+                    });
+
+                    if (!in_polygon) {
+                        continue;
+                    }
+
+                    // F2.6: Record access in tiering manager for each returned entity
+                    if (self.tiering_manager) |tm| {
+                        _ = tm.recordAccess(entry.entity_id, self.commit_timestamp) catch |err| {
+                            log.debug("tiering: failed to record access for entity {x}: {}", .{ entry.entity_id, err });
+                        };
+                    }
+
+                    // Build GeoEvent result
+                    results_slice[result_count] = GeoEvent{
+                        .id = entry.latest_id,
+                        .entity_id = entry.entity_id,
+                        .correlation_id = 0, // Not stored in RAM index
+                        .user_data = 0, // Not stored in RAM index
+                        .lat_nano = metadata.lat_nano,
+                        .lon_nano = metadata.lon_nano,
+                        .group_id = metadata.group_id,
+                        .timestamp = timestamp,
+                        .altitude_mm = 0,
+                        .velocity_mms = 0,
+                        .ttl_seconds = entry.ttl_seconds,
+                        .accuracy_mm = 0,
+                        .heading_cdeg = 0,
+                        .flags = GeoEventFlags.none,
+                        .reserved = [_]u8{0} ** 12,
+                    };
+
+                    result_count += 1;
                 }
-
-                // Build GeoEvent result
-                results_slice[result_count] = GeoEvent{
-                    .id = entry.latest_id,
-                    .entity_id = entry.entity_id,
-                    .correlation_id = 0, // Not stored in RAM index
-                    .user_data = 0, // Not stored in RAM index
-                    .lat_nano = metadata.lat_nano,
-                    .lon_nano = metadata.lon_nano,
-                    .group_id = metadata.group_id,
-                    .timestamp = timestamp,
-                    .altitude_mm = 0,
-                    .velocity_mms = 0,
-                    .ttl_seconds = entry.ttl_seconds,
-                    .accuracy_mm = 0,
-                    .heading_cdeg = 0,
-                    .flags = GeoEventFlags.none,
-                    .reserved = [_]u8{0} ** 12,
-                };
-
-                result_count += 1;
             }
             const end_execute = std.time.nanoTimestamp();
 
@@ -4905,11 +4912,12 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             var candidate_count: usize = 0;
             var matching_count: usize = 0;
 
-            // Scan cached live slots to collect all non-deleted entries
+            // Scan cached live keys to collect all non-deleted entries
             // Per query-engine/spec.md: Use cursor_timestamp for pagination
             // cursor_timestamp > 0 means "only return events OLDER than this timestamp"
-            const active_slots = self.spatialScanSlots();
-            for (active_slots) |position| {
+            const active_keys = self.spatialScanKeys();
+            for (active_keys) |scan_key| {
+                const position = @as(u64, @truncate(scan_key));
                 const entry = self.ram_index.entries[@intCast(position)];
 
                 // Apply cursor filter for pagination (F1.3.3 cursor-based pagination)
@@ -5113,23 +5121,86 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             return false;
         }
 
-        fn spatialScanSlots(self: *GeoStateMachine) []const u64 {
-            if (!self.spatial_scan_slots_dirty) {
-                return self.spatial_scan_slots[0..self.spatial_scan_slots_len];
+        fn spatialScanKeys(self: *GeoStateMachine) []const u128 {
+            if (!self.spatial_scan_keys_dirty) {
+                return self.spatial_scan_keys[0..self.spatial_scan_keys_len];
             }
 
-            var slot_count: usize = 0;
+            var key_count: usize = 0;
             var position: u64 = 0;
             while (position < self.ram_index.capacity) : (position += 1) {
                 const entry = self.ram_index.entries[@intCast(position)];
                 if (entry.is_empty() or entry.is_tombstone()) continue;
-                self.spatial_scan_slots[slot_count] = position;
-                slot_count += 1;
+                const cell_id = @as(u64, @truncate(entry.latest_id >> 64));
+                self.spatial_scan_keys[key_count] = (@as(u128, cell_id) << 64) | @as(u128, position);
+                key_count += 1;
             }
-            self.spatial_scan_slots_len = slot_count;
-            self.spatial_scan_slots_dirty = false;
 
-            return self.spatial_scan_slots[0..slot_count];
+            std.mem.sort(u128, self.spatial_scan_keys[0..key_count], {}, struct {
+                fn lessThan(_: void, a: u128, b: u128) bool {
+                    return a < b;
+                }
+            }.lessThan);
+
+            self.spatial_scan_keys_len = key_count;
+            self.spatial_scan_keys_dirty = false;
+
+            return self.spatial_scan_keys[0..key_count];
+        }
+
+        fn lowerBoundScanKey(scan_keys: []const u128, cell_start: u64) usize {
+            const target = @as(u128, cell_start) << 64;
+            var low: usize = 0;
+            var high: usize = scan_keys.len;
+            while (low < high) {
+                const mid = low + (high - low) / 2;
+                if (scan_keys[mid] < target) {
+                    low = mid + 1;
+                } else {
+                    high = mid;
+                }
+            }
+            return low;
+        }
+
+        fn mergeCoveringRanges(
+            covering: *const [s2_index.s2_max_cells]s2_index.CellRange,
+            num_ranges_hint: usize,
+            output: *[s2_index.s2_max_cells]s2_index.CellRange,
+        ) usize {
+            var input_count: usize = 0;
+            var considered: usize = 0;
+            const stop_after = if (num_ranges_hint > 0) num_ranges_hint else covering.len;
+            for (covering) |range| {
+                if (range.start == 0 and range.end == 0) continue;
+                output[input_count] = range;
+                input_count += 1;
+                considered += 1;
+                if (considered >= stop_after) break;
+            }
+            if (input_count == 0) return 0;
+
+            std.mem.sort(s2_index.CellRange, output[0..input_count], {}, struct {
+                fn lessThan(_: void, a: s2_index.CellRange, b: s2_index.CellRange) bool {
+                    return a.start < b.start;
+                }
+            }.lessThan);
+
+            var merged_count: usize = 1;
+            var current = output[0];
+            var idx: usize = 1;
+            while (idx < input_count) : (idx += 1) {
+                const next = output[idx];
+                if (next.start <= current.end) {
+                    if (next.end > current.end) current.end = next.end;
+                } else {
+                    output[merged_count - 1] = current;
+                    current = next;
+                    merged_count += 1;
+                }
+            }
+            output[merged_count - 1] = current;
+            return merged_count;
         }
 
         /// Select S2 levels based on radius per spec decision table.
@@ -5266,7 +5337,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                         self.cleanup_scanner.total_removed,
                     },
                 );
-                self.spatial_scan_slots_dirty = true;
+                self.spatial_scan_keys_dirty = true;
 
                 // Invalidate query result cache when entries are removed (F2.4.8)
                 // Cached query results may reference expired/removed entries
