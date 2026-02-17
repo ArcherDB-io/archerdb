@@ -1150,8 +1150,8 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         /// are deallocated (PostgreSQL semantics per query-performance/spec.md).
         session_prepared_queries: std.AutoHashMap(u128, SessionPreparedQueries) = undefined,
 
-        /// Cache of latest full GeoEvent per entity for fast UUID queries.
-        /// Bounded by RAM index capacity to avoid unbounded memory growth.
+        /// Query-hot cache of full GeoEvents for fast UUID reads.
+        /// Populated on-demand by UUID lookups to keep write path lean.
         latest_event_cache: std.AutoHashMap(u128, GeoEvent) = undefined,
 
         /// Prepared query metrics for observability (14-05).
@@ -1607,9 +1607,6 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                         if (event.ttl_seconds > 0) {
                             self.entries_with_ttl += 1;
                         }
-                        self.latest_event_cache.put(event.entity_id, event) catch |err| {
-                            log.debug("latest_event_cache: rebuild put failed: {}", .{err});
-                        };
                         self.rebuild_count += 1;
                     }
                 },
@@ -2477,9 +2474,6 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     stored_event.timestamp = event_timestamp;
                     stored_event.ttl_seconds = effective_ttl_seconds;
                     self.forest.grooves.geo_events.insert(&stored_event);
-                    self.latest_event_cache.put(event.entity_id, stored_event) catch |err| {
-                        log.debug("latest_event_cache: insert put failed: {}", .{err});
-                    };
                 } else if (upsert_result.updated) {
                     // LWW accepted the update
                     results[results_count] = InsertGeoEventsResult{
@@ -2513,9 +2507,6 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     stored_event.timestamp = event_timestamp;
                     stored_event.ttl_seconds = effective_ttl_seconds;
                     self.forest.grooves.geo_events.insert(&stored_event);
-                    self.latest_event_cache.put(event.entity_id, stored_event) catch |err| {
-                        log.debug("latest_event_cache: update put failed: {}", .{err});
-                    };
                 } else {
                     // LWW rejected - older event
                     results[results_count] = InsertGeoEventsResult{
@@ -2546,9 +2537,6 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 
             // Record writes for adaptive compaction (12-09: workload tracking)
             if (inserted_count > 0) {
-                if (self.latest_event_cache.count() > self.ram_index.capacity) {
-                    self.latest_event_cache.clearRetainingCapacity();
-                }
                 self.forest.adaptive_record_write(inserted_count);
                 self.spatial_scan_keys_dirty = true;
 
