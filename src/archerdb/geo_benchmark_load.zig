@@ -211,6 +211,8 @@ const GeoBenchmark = struct {
     client_requests: []align(constants.sector_size) [constants.message_body_size_max]u8,
     client_replies: []align(constants.sector_size) [constants.message_body_size_max]u8,
     request_latency_histogram: []u64,
+    latency_bucket_ns: u64 = std.time.ns_per_ms,
+    latency_unit_label: []const u8 = "ms",
     request_index: usize = 0,
     event_index: usize = 0,
     query_index: usize = 0,
@@ -238,6 +240,16 @@ const GeoBenchmark = struct {
         assert(stage != .idle);
 
         b.stage = stage;
+        switch (stage) {
+            .query_uuid => {
+                b.latency_bucket_ns = std.time.ns_per_us;
+                b.latency_unit_label = "us";
+            },
+            else => {
+                b.latency_bucket_ns = std.time.ns_per_ms;
+                b.latency_unit_label = "ms";
+            },
+        }
         b.timer.reset();
 
         const active_clients = b.stageClientCount(stage);
@@ -357,12 +369,16 @@ const GeoBenchmark = struct {
         }
 
         const request_duration_ns = b.timer.read() - b.clients_request_ns[client_index];
-        const request_duration_ms = @divTrunc(request_duration_ns, std.time.ns_per_ms);
-        const hist_idx = @min(request_duration_ms, b.request_latency_histogram.len - 1);
+        const request_duration_units = @divTrunc(request_duration_ns, b.latency_bucket_ns);
+        const hist_idx = @min(request_duration_units, b.request_latency_histogram.len - 1);
         b.request_latency_histogram[hist_idx] += 1;
 
         if (b.print_batch_timings) {
-            log.info("insert batch {}: {} ms", .{ b.request_index, request_duration_ms });
+            log.info("insert batch {}: {} {s}", .{
+                b.request_index,
+                request_duration_units,
+                b.latency_unit_label,
+            });
         }
 
         b.insert_events(client_index);
@@ -395,7 +411,12 @@ const GeoBenchmark = struct {
             .rate = events_per_sec,
         }) catch unreachable;
 
-        print_percentiles_histogram(b.output, "insert batch", b.request_latency_histogram);
+        print_percentiles_histogram(
+            b.output,
+            "insert batch",
+            b.request_latency_histogram,
+            b.latency_unit_label,
+        );
 
         b.run_finish();
     }
@@ -474,8 +495,8 @@ const GeoBenchmark = struct {
         _ = result; // Results contain GeoEvent(s)
 
         const request_duration_ns = b.timer.read() - b.clients_request_ns[client_index];
-        const request_duration_ms = @divTrunc(request_duration_ns, std.time.ns_per_ms);
-        const hist_idx = @min(request_duration_ms, b.request_latency_histogram.len - 1);
+        const request_duration_units = @divTrunc(request_duration_ns, b.latency_bucket_ns);
+        const hist_idx = @min(request_duration_units, b.request_latency_histogram.len - 1);
         b.request_latency_histogram[hist_idx] += 1;
 
         b.do_query_uuid(client_index);
@@ -498,7 +519,12 @@ const GeoBenchmark = struct {
             .duration = duration_s,
         }) catch unreachable;
 
-        print_percentiles_histogram(b.output, "UUID query", b.request_latency_histogram);
+        print_percentiles_histogram(
+            b.output,
+            "UUID query",
+            b.request_latency_histogram,
+            b.latency_unit_label,
+        );
 
         b.run_finish();
     }
@@ -545,8 +571,8 @@ const GeoBenchmark = struct {
         _ = result;
 
         const request_duration_ns = b.timer.read() - b.clients_request_ns[client_index];
-        const request_duration_ms = @divTrunc(request_duration_ns, std.time.ns_per_ms);
-        const hist_idx = @min(request_duration_ms, b.request_latency_histogram.len - 1);
+        const request_duration_units = @divTrunc(request_duration_ns, b.latency_bucket_ns);
+        const hist_idx = @min(request_duration_units, b.request_latency_histogram.len - 1);
         b.request_latency_histogram[hist_idx] += 1;
 
         b.do_query_radius(client_index);
@@ -571,7 +597,12 @@ const GeoBenchmark = struct {
             .duration = duration_s,
         }) catch unreachable;
 
-        print_percentiles_histogram(b.output, "radius query", b.request_latency_histogram);
+        print_percentiles_histogram(
+            b.output,
+            "radius query",
+            b.request_latency_histogram,
+            b.latency_unit_label,
+        );
 
         b.run_finish();
     }
@@ -653,8 +684,8 @@ const GeoBenchmark = struct {
         _ = result;
 
         const request_duration_ns = b.timer.read() - b.clients_request_ns[client_index];
-        const request_duration_ms = @divTrunc(request_duration_ns, std.time.ns_per_ms);
-        const hist_idx = @min(request_duration_ms, b.request_latency_histogram.len - 1);
+        const request_duration_units = @divTrunc(request_duration_ns, b.latency_bucket_ns);
+        const hist_idx = @min(request_duration_units, b.request_latency_histogram.len - 1);
         b.request_latency_histogram[hist_idx] += 1;
 
         b.do_query_polygon(client_index);
@@ -677,7 +708,12 @@ const GeoBenchmark = struct {
             .duration = duration_s,
         }) catch unreachable;
 
-        print_percentiles_histogram(b.output, "polygon query", b.request_latency_histogram);
+        print_percentiles_histogram(
+            b.output,
+            "polygon query",
+            b.request_latency_histogram,
+            b.latency_unit_label,
+        );
 
         b.run_finish();
     }
@@ -842,6 +878,7 @@ fn print_percentiles_histogram(
     stdout: std.io.AnyWriter,
     label: []const u8,
     histogram_buckets: []const u64,
+    unit_label: []const u8,
 ) void {
     var histogram_total: u64 = 0;
     for (histogram_buckets) |bucket| histogram_total += bucket;
@@ -870,11 +907,12 @@ fn print_percentiles_histogram(
             if (sum >= histogram_percentile) break bucket_index;
         } else histogram_buckets.len;
 
-        stdout.print("{s} latency {s} = {} ms{s}\n", .{
+        stdout.print("{s} latency {s} = {} {s}{s}\n", .{
             label,
             pspec.label(),
             latency,
-            if (latency == histogram_buckets.len) "+ (exceeds histogram resolution)" else "",
+            unit_label,
+            if (latency == histogram_buckets.len) " + (exceeds histogram resolution)" else "",
         }) catch unreachable;
     }
 }
