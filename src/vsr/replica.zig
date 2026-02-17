@@ -2108,6 +2108,10 @@ pub fn ReplicaType(
                     return;
                 };
 
+            if (self.try_execute_read_only_fast_path(message, realtime)) {
+                return;
+            }
+
             const request: Request = .{
                 .message = message.ref(),
                 .realtime = realtime,
@@ -2118,6 +2122,76 @@ pub fn ReplicaType(
             } else {
                 self.primary_pipeline_prepare(request);
             }
+        }
+
+        fn try_execute_read_only_fast_path(
+            self: *Replica,
+            message: *Message.Request,
+            realtime: i64,
+        ) bool {
+            if (!self.solo()) return false;
+            if (message.header.client == 0) return false;
+
+            if (StateMachine.Operation != @import("../archerdb.zig").Operation) return false;
+            const operation = StateMachine.Operation.from_vsr(message.header.operation) orelse {
+                return false;
+            };
+            if (!operation.isReadOnly()) return false;
+            if (!self.client_replies.ready_sync()) return false;
+
+            const entry = self.client_sessions.get(message.header.client) orelse return false;
+            assert(entry.header.request + 1 == message.header.request);
+            assert(entry.header.release.value == message.header.release.value);
+
+            const timestamp = @max(
+                @max(self.state_machine.prepare_timestamp, self.state_machine.commit_timestamp) + 1,
+                @as(u64, @intCast(realtime)),
+            );
+
+            const reply = self.message_bus.get_message(.reply);
+            defer self.message_bus.unref(reply);
+
+            const reply_body_size = self.state_machine.commit(
+                message.header.client,
+                entry.header.op,
+                timestamp,
+                operation,
+                message.body_used(),
+                reply.buffer[@sizeOf(Header)..],
+            );
+
+            reply.header.* = .{
+                .command = .reply,
+                .operation = message.header.operation,
+                .request_checksum = message.header.checksum,
+                .client = message.header.client,
+                .request = message.header.request,
+                .cluster = message.header.cluster,
+                .replica = self.replica,
+                .view = self.view,
+                .release = message.header.release,
+                .op = entry.header.op,
+                .timestamp = timestamp,
+                .commit = entry.header.commit,
+                .size = @sizeOf(Header) + @as(u32, @intCast(reply_body_size)),
+            };
+            assert(reply.header.epoch == 0);
+
+            reply.header.set_checksum_body(reply.body_used());
+            // See `send_reply_message_to_client` for why we compute the checksum twice.
+            reply.header.context = reply.header.calculate_checksum();
+            reply.header.set_checksum();
+
+            entry.header = reply.header.*;
+            const reply_slot = self.client_sessions.get_slot_for_client(reply.header.client).?;
+            if (entry.header.size == @sizeOf(Header)) {
+                self.client_replies.remove_reply(reply_slot);
+            } else {
+                self.client_replies.write_reply(reply_slot, reply, .commit);
+            }
+
+            self.send_reply_message_to_client(reply);
+            return true;
         }
 
         /// Replication is simple, with a single code path for the primary and backups.
