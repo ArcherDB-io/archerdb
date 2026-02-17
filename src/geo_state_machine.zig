@@ -2812,74 +2812,32 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 }
 
                 var result_event: GeoEvent = undefined;
-                if (self.latest_event_cache.get(filter.entity_id)) |cached_event| {
-                    if (cached_event.id == entry.latest_id) {
-                        result_event = cached_event;
-                    } else {
-                        // Try to get full event from LSM tree (memtable or cache)
-                        switch (self.forest.grooves.geo_events.get(entry.latest_id)) {
-                            .found_object => |event| {
-                                result_event = event;
-                                self.latest_event_cache.put(filter.entity_id, event) catch |err| {
-                                    log.debug("latest_event_cache: query put failed: {}", .{err});
-                                };
-                            },
-                            else => {
-                                // Fallback to RAM index reconstruction (metadata only).
-                                // This happens if the event is on disk and was not prefetched.
-                                const metadata = entryMetadata(entry);
-                                result_event = GeoEvent{
-                                    .id = entry.latest_id,
-                                    .entity_id = entry.entity_id,
-                                    .correlation_id = 0, // Not stored in RAM index
-                                    .user_data = 0, // Not stored in RAM index
-                                    .lat_nano = metadata.lat_nano,
-                                    .lon_nano = metadata.lon_nano,
-                                    .group_id = metadata.group_id,
-                                    .timestamp = event_timestamp,
-                                    .altitude_mm = 0,
-                                    .velocity_mms = 0,
-                                    .ttl_seconds = entry.ttl_seconds,
-                                    .accuracy_mm = 0,
-                                    .heading_cdeg = 0,
-                                    .flags = GeoEventFlags.none,
-                                    .reserved = [_]u8{0} ** 12,
-                                };
-                            },
-                        }
-                    }
-                } else {
-                    // Try to get full event from LSM tree (memtable or cache)
-                    switch (self.forest.grooves.geo_events.get(entry.latest_id)) {
-                        .found_object => |event| {
-                            result_event = event;
-                            self.latest_event_cache.put(filter.entity_id, event) catch |err| {
-                                log.debug("latest_event_cache: query put failed: {}", .{err});
-                            };
-                        },
-                        else => {
-                            // Fallback to RAM index reconstruction (metadata only).
-                            // This happens if the event is on disk and was not prefetched.
-                            const metadata = entryMetadata(entry);
-                            result_event = GeoEvent{
-                                .id = entry.latest_id,
-                                .entity_id = entry.entity_id,
-                                .correlation_id = 0, // Not stored in RAM index
-                                .user_data = 0, // Not stored in RAM index
-                                .lat_nano = metadata.lat_nano,
-                                .lon_nano = metadata.lon_nano,
-                                .group_id = metadata.group_id,
-                                .timestamp = event_timestamp,
-                                .altitude_mm = 0,
-                                .velocity_mms = 0,
-                                .ttl_seconds = entry.ttl_seconds,
-                                .accuracy_mm = 0,
-                                .heading_cdeg = 0,
-                                .flags = GeoEventFlags.none,
-                                .reserved = [_]u8{0} ** 12,
-                            };
-                        },
-                    }
+                switch (self.forest.grooves.geo_events.get(entry.latest_id)) {
+                    .found_object => |event| {
+                        result_event = event;
+                    },
+                    else => {
+                        // Fallback to RAM index reconstruction (metadata only).
+                        // This happens if the event is on disk and was not prefetched.
+                        const metadata = entryMetadata(entry);
+                        result_event = GeoEvent{
+                            .id = entry.latest_id,
+                            .entity_id = entry.entity_id,
+                            .correlation_id = 0, // Not stored in RAM index
+                            .user_data = 0, // Not stored in RAM index
+                            .lat_nano = metadata.lat_nano,
+                            .lon_nano = metadata.lon_nano,
+                            .group_id = metadata.group_id,
+                            .timestamp = event_timestamp,
+                            .altitude_mm = 0,
+                            .velocity_mms = 0,
+                            .ttl_seconds = entry.ttl_seconds,
+                            .accuracy_mm = 0,
+                            .heading_cdeg = 0,
+                            .flags = GeoEventFlags.none,
+                            .reserved = [_]u8{0} ** 12,
+                        };
+                    },
                 }
                 const end_execute = std.time.nanoTimestamp();
 
@@ -2956,9 +2914,6 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 };
 
                 if (forest_event) |result_event| {
-                    self.latest_event_cache.put(filter.entity_id, result_event) catch |err| {
-                        log.debug("latest_event_cache: fallback put failed: {}", .{err});
-                    };
                     // Found in forest — build response (same format as RAM index hit)
                     if (output.len < response_size + @sizeOf(GeoEvent)) {
                         log.warn("query_uuid: output buffer too small", .{});
