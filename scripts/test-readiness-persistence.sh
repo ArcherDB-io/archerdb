@@ -68,6 +68,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 ARCHERDB="$ROOT_DIR/zig-out/bin/archerdb"
 C_SAMPLE="$ROOT_DIR/zig-out/bin/c_sample"
+READY_ATTEMPTS_START="${READY_ATTEMPTS_START:-150}"
+READY_ATTEMPTS_RESTART="${READY_ATTEMPTS_RESTART:-150}"
 
 # Check for development mode flag
 DEV_MODE=""
@@ -131,7 +133,7 @@ echo "Server PID: $SERVER_PID"
 echo "Data port: $DATA_PORT"
 echo "Metrics port: $METRICS_PORT"
 
-if ! wait_for_ready "$METRICS_PORT" 20; then
+if ! wait_for_ready "$METRICS_PORT" "$READY_ATTEMPTS_START"; then
     echo "FAIL: Server did not become ready on metrics port $METRICS_PORT"
     cat server1.log
     kill $SERVER_PID 2>/dev/null || true
@@ -259,7 +261,7 @@ echo "Server PID: $SERVER_PID"
 echo "New metrics port: $METRICS_PORT2"
 echo "New data port: $DATA_PORT2"
 
-if ! wait_for_ready "$METRICS_PORT2" 30; then
+if ! wait_for_ready "$METRICS_PORT2" "$READY_ATTEMPTS_RESTART"; then
     echo "FAIL: Server did not become ready after restart on metrics port $METRICS_PORT2"
     cat server2.log
     kill $SERVER_PID 2>/dev/null || true

@@ -33,6 +33,9 @@ ITERATIONS=${ITERATIONS:-3}
 TIMEOUT=${TIMEOUT:-30}
 SEED=${SEED:-42}
 REQUESTS_MAX=${REQUESTS_MAX:-100}
+TICKS_MAX_REQUESTS=${TICKS_MAX_REQUESTS:-10000}
+TICKS_MAX_CONVERGENCE=${TICKS_MAX_CONVERGENCE:-5000}
+FULL_RUN_TIMEOUT=${FULL_RUN_TIMEOUT:-180}
 
 usage() {
     echo "Usage: $0 [options]"
@@ -42,6 +45,9 @@ usage() {
     echo "  --timeout N       Seconds before sending SIGKILL (default: 30)"
     echo "  --seed N          VOPR seed for deterministic testing (default: 42)"
     echo "  --requests-max N  Maximum requests per VOPR run (default: 100)"
+    echo "  --ticks-max-requests N   Max ticks during request phase (default: 10000)"
+    echo "  --ticks-max-convergence N Max ticks during convergence phase (default: 5000)"
+    echo "  --full-run-timeout N      Timeout in seconds for Phase 2 run (default: 180)"
     echo "  --help            Show this help message"
     echo ""
     echo "This test verifies ArcherDB's crash recovery by:"
@@ -75,6 +81,41 @@ check_prerequisites() {
     log_info "Prerequisites check passed"
 }
 
+run_with_timeout_if_available() {
+    local timeout_seconds="$1"
+    shift
+
+    local timeout_bin=""
+    if command -v gtimeout >/dev/null 2>&1; then
+        timeout_bin="gtimeout"
+    elif command -v timeout >/dev/null 2>&1; then
+        timeout_bin="timeout"
+    fi
+
+    if [[ -n "$timeout_bin" ]]; then
+        "$timeout_bin" "$timeout_seconds" "$@"
+        return $?
+    fi
+
+    if command -v python3 >/dev/null 2>&1; then
+        python3 - "$timeout_seconds" "$@" <<'PYEOF'
+import subprocess
+import sys
+
+timeout_seconds = float(sys.argv[1])
+command = sys.argv[2:]
+try:
+    completed = subprocess.run(command, timeout=timeout_seconds, check=False)
+    raise SystemExit(completed.returncode)
+except subprocess.TimeoutExpired:
+    raise SystemExit(124)
+PYEOF
+        return $?
+    fi
+
+    "$@"
+}
+
 run_vopr_with_timeout() {
     local timeout_sec=$1
     local kill_after_sec=$2
@@ -85,7 +126,10 @@ run_vopr_with_timeout() {
 
     # Start VOPR in background
     "${ZIG_BIN}" build vopr -Dvopr-state-machine=testing -- \
-        --lite --requests-max="${REQUESTS_MAX}" "${SEED}" &
+        --lite --requests-max="${REQUESTS_MAX}" \
+        --ticks-max-requests="${TICKS_MAX_REQUESTS}" \
+        --ticks-max-convergence="${TICKS_MAX_CONVERGENCE}" \
+        "${SEED}" &
     pid=$!
 
     log_info "VOPR started with PID: ${pid}"
@@ -126,9 +170,13 @@ run_full_vopr() {
 
     log_info "Running full VOPR to verify recovery (seed=${SEED})..."
 
-    # Run VOPR with --replay flag for extra logging
-    "${ZIG_BIN}" build vopr -Dvopr-state-machine=testing -- \
-        --lite --requests-max="${REQUESTS_MAX}" "${SEED}" || exit_code=$?
+    # Keep Phase 2 bounded; otherwise this can run for a very long time.
+    run_with_timeout_if_available "${FULL_RUN_TIMEOUT}" \
+        "${ZIG_BIN}" build vopr -Dvopr-state-machine=testing -- \
+        --lite --requests-max="${REQUESTS_MAX}" \
+        --ticks-max-requests="${TICKS_MAX_REQUESTS}" \
+        --ticks-max-convergence="${TICKS_MAX_CONVERGENCE}" \
+        "${SEED}" || exit_code=$?
 
     return $exit_code
 }
@@ -189,6 +237,18 @@ main() {
                 REQUESTS_MAX="$2"
                 shift 2
                 ;;
+            --ticks-max-requests)
+                TICKS_MAX_REQUESTS="$2"
+                shift 2
+                ;;
+            --ticks-max-convergence)
+                TICKS_MAX_CONVERGENCE="$2"
+                shift 2
+                ;;
+            --full-run-timeout)
+                FULL_RUN_TIMEOUT="$2"
+                shift 2
+                ;;
             --help)
                 usage
                 exit 0
@@ -210,6 +270,9 @@ main() {
     echo "  Timeout: ${TIMEOUT}s"
     echo "  Base seed: ${SEED}"
     echo "  Requests max: ${REQUESTS_MAX}"
+    echo "  Ticks max (requests): ${TICKS_MAX_REQUESTS}"
+    echo "  Ticks max (convergence): ${TICKS_MAX_CONVERGENCE}"
+    echo "  Full run timeout: ${FULL_RUN_TIMEOUT}s"
     echo "  Platform: $(uname)"
     echo ""
 

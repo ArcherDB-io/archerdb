@@ -218,8 +218,9 @@ METRICS COLLECTED:
 See docs/benchmarks.md for methodology and interpretation.
 
 BEHAVIOR:
-    The script is strict by default: it fails if no benchmark target is reachable.
-    It prints actionable remediation steps.
+    For local addresses (localhost/127.0.0.1/::1), the script will auto-start
+    a temporary benchmark node if the target is unreachable.
+    For non-local addresses, it remains strict and prints remediation steps.
 EOF
     exit 0
 }
@@ -724,8 +725,19 @@ main() {
     parse_args "$@"
     find_binary
     trap cleanup_auto_started_server EXIT
+
     if ! check_server_reachable "$ARCHERDB_ADDRESS"; then
+        local host
+        host="$(address_host "$ARCHERDB_ADDRESS")"
+        local should_auto_start="false"
         if [[ "$AUTO_START_LOCAL" == "true" ]]; then
+            should_auto_start="true"
+        elif is_local_host "$host"; then
+            should_auto_start="true"
+            echo -e "${BLUE}Info: Local benchmark target is unreachable; attempting temporary auto-start.${NC}"
+        fi
+
+        if [[ "$should_auto_start" == "true" ]]; then
             if ! auto_start_local_server "$ARCHERDB_ADDRESS"; then
                 echo -e "${RED}Error: Benchmark target is unreachable and auto-start failed.${NC}" >&2
                 echo -e "${YELLOW}Hint: Start ArcherDB manually and ensure it listens on $ARCHERDB_ADDRESS${NC}" >&2

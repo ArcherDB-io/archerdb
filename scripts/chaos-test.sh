@@ -39,6 +39,12 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Configuration
 MODE="${1:---quick}"
 SEED="${SEED:-42}"  # Fixed seed for determinism (per project decision 02-01)
+SIGKILL_ITERATIONS="${SIGKILL_ITERATIONS:-3}"
+SIGKILL_TIMEOUT="${SIGKILL_TIMEOUT:-30}"
+SIGKILL_REQUESTS_MAX="${SIGKILL_REQUESTS_MAX:-100}"
+SIGKILL_TICKS_MAX_REQUESTS="${SIGKILL_TICKS_MAX_REQUESTS:-10000}"
+SIGKILL_TICKS_MAX_CONVERGENCE="${SIGKILL_TICKS_MAX_CONVERGENCE:-5000}"
+SIGKILL_FULL_RUN_TIMEOUT="${SIGKILL_FULL_RUN_TIMEOUT:-120}"
 
 # Test counters
 PASSED=0
@@ -141,13 +147,20 @@ run_sigkill_tests() {
         return 0
     fi
 
-    log_info "Running SIGKILL crash recovery tests (seed=$SEED, iterations=3)..."
+    log_info "Running SIGKILL crash recovery tests (seed=$SEED, iterations=$SIGKILL_ITERATIONS)..."
 
     local start_time
     start_time=$(date +%s)
 
     # Run with fixed seed for determinism
-    if SEED="$SEED" "$sigkill_script" --iterations 3 --seed "$SEED"; then
+    if SEED="$SEED" "$sigkill_script" \
+        --iterations "$SIGKILL_ITERATIONS" \
+        --timeout "$SIGKILL_TIMEOUT" \
+        --requests-max "$SIGKILL_REQUESTS_MAX" \
+        --ticks-max-requests "$SIGKILL_TICKS_MAX_REQUESTS" \
+        --ticks-max-convergence "$SIGKILL_TICKS_MAX_CONVERGENCE" \
+        --full-run-timeout "$SIGKILL_FULL_RUN_TIMEOUT" \
+        --seed "$SEED"; then
         local end_time
         end_time=$(date +%s)
         local duration=$((end_time - start_time))

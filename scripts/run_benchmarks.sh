@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # ArcherDB Multi-Language Benchmark Suite
 #
@@ -74,6 +74,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 CLIENTS_DIR="$PROJECT_ROOT/src/clients"
 
+# Normalize output path to absolute so function-local cd calls are safe.
+if [[ "$OUTPUT_DIR" != /* ]]; then
+    OUTPUT_DIR="$PROJECT_ROOT/$OUTPUT_DIR"
+fi
+
 # Create output directory
 mkdir -p "$OUTPUT_DIR"
 SUMMARY_FILE="$OUTPUT_DIR/summary_${TIMESTAMP}.csv"
@@ -92,7 +97,50 @@ echo ""
 echo "============================================================"
 
 # Results summary
-declare -A RESULTS
+RESULT_LANGS=()
+RESULT_VALUES=()
+
+set_result() {
+    local lang="$1"
+    local value="$2"
+    local i
+    for i in "${!RESULT_LANGS[@]}"; do
+        if [[ "${RESULT_LANGS[$i]}" == "$lang" ]]; then
+            RESULT_VALUES[$i]="$value"
+            return
+        fi
+    done
+    RESULT_LANGS+=("$lang")
+    RESULT_VALUES+=("$value")
+}
+
+extract_events_per_second() {
+    local file="$1"
+    awk '
+        match($0, /[0-9][0-9,]*[[:space:]]+events\/second/) {
+            value = substr($0, RSTART, RLENGTH)
+            gsub(/[^0-9]/, "", value)
+            if (value != "") last = value
+        }
+        END {
+            if (last != "") print last
+        }
+    ' "$file"
+}
+
+extract_ns_per_op() {
+    local file="$1"
+    awk '
+        match($0, /[0-9]+[[:space:]]+ns\/op/) {
+            value = substr($0, RSTART, RLENGTH)
+            gsub(/[^0-9]/, "", value)
+            if (value != "") {
+                print value
+                exit
+            }
+        }
+    ' "$file"
+}
 
 # Function to run Python benchmark
 run_python_benchmark() {
@@ -104,11 +152,11 @@ run_python_benchmark() {
 
     if ! command -v python3 &> /dev/null; then
         echo "Python 3 not found, skipping Python benchmark"
-        RESULTS["python"]="SKIPPED"
+        set_result "python" "SKIPPED"
         return
     fi
 
-    local output_file="$PROJECT_ROOT/$OUTPUT_DIR/python_${TIMESTAMP}.txt"
+    local output_file="$OUTPUT_DIR/python_${TIMESTAMP}.txt"
 
     if python3 benchmark.py \
         --events "$EVENTS" \
@@ -117,11 +165,12 @@ run_python_benchmark() {
         --cluster-id "$CLUSTER_ID" 2>&1 | tee "$output_file"; then
 
         # Extract throughput from output
-        local throughput=$(grep -oP '\d+(?=,?\d* events/second)' "$output_file" | tail -1)
-        RESULTS["python"]="${throughput:-FAILED}"
+        local throughput
+        throughput="$(extract_events_per_second "$output_file")"
+        set_result "python" "${throughput:-FAILED}"
         echo "Python throughput: ${throughput:-FAILED} events/sec"
     else
-        RESULTS["python"]="FAILED"
+        set_result "python" "FAILED"
     fi
 }
 
@@ -135,11 +184,11 @@ run_node_benchmark() {
 
     if ! command -v node &> /dev/null; then
         echo "Node.js not found, skipping Node benchmark"
-        RESULTS["node"]="SKIPPED"
+        set_result "node" "SKIPPED"
         return
     fi
 
-    local output_file="$PROJECT_ROOT/$OUTPUT_DIR/node_${TIMESTAMP}.txt"
+    local output_file="$OUTPUT_DIR/node_${TIMESTAMP}.txt"
 
     # Try to run benchmark (requires native bindings)
     if [ -f "dist/benchmark.js" ]; then
@@ -149,14 +198,15 @@ run_node_benchmark() {
             --addresses "$CLUSTER_ADDR" \
             --cluster-id "$CLUSTER_ID" 2>&1 | tee "$output_file"; then
 
-            local throughput=$(grep -oP '\d+(?=,?\d* events/second)' "$output_file" | tail -1)
-            RESULTS["node"]="${throughput:-FAILED}"
+            local throughput
+            throughput="$(extract_events_per_second "$output_file")"
+            set_result "node" "${throughput:-FAILED}"
         else
-            RESULTS["node"]="FAILED"
+            set_result "node" "FAILED"
         fi
     else
         echo "Node benchmark not built (native bindings required)"
-        RESULTS["node"]="NOT_BUILT"
+        set_result "node" "NOT_BUILT"
     fi
 }
 
@@ -170,23 +220,24 @@ run_go_benchmark() {
 
     if ! command -v go &> /dev/null; then
         echo "Go not found, skipping Go benchmark"
-        RESULTS["go"]="SKIPPED"
+        set_result "go" "SKIPPED"
         return
     fi
 
-    local output_file="$PROJECT_ROOT/$OUTPUT_DIR/go_${TIMESTAMP}.txt"
+    local output_file="$OUTPUT_DIR/go_${TIMESTAMP}.txt"
 
     if go test -run=^$ -bench=BenchmarkInsert -benchtime=10s -count=1 2>&1 | tee "$output_file"; then
         # Extract ops/sec from Go benchmark output
-        local ops=$(grep -oP '\d+(?= ns/op)' "$output_file" | head -1)
+        local ops
+        ops="$(extract_ns_per_op "$output_file")"
         if [ -n "$ops" ] && [ "$ops" -gt 0 ]; then
             local throughput=$((1000000000 / ops))
-            RESULTS["go"]="$throughput"
+            set_result "go" "$throughput"
         else
-            RESULTS["go"]="COMPLETED"
+            set_result "go" "COMPLETED"
         fi
     else
-        RESULTS["go"]="FAILED"
+        set_result "go" "FAILED"
     fi
 }
 
@@ -200,15 +251,15 @@ run_java_benchmark() {
 
     if ! command -v mvn &> /dev/null; then
         echo "Maven not found, skipping Java benchmark"
-        RESULTS["java"]="SKIPPED"
+        set_result "java" "SKIPPED"
         return
     fi
 
-    local output_file="$PROJECT_ROOT/$OUTPUT_DIR/java_${TIMESTAMP}.txt"
+    local output_file="$OUTPUT_DIR/java_${TIMESTAMP}.txt"
 
     # Java benchmark would need native JNI bindings
     echo "Java benchmark requires native bindings (build via CI)"
-    RESULTS["java"]="NOT_BUILT"
+    set_result "java" "NOT_BUILT"
 }
 
 # Run standalone Python benchmark script (uses low-level bindings)
@@ -227,11 +278,12 @@ run_python_standalone() {
         --addresses "$CLUSTER_ADDR" \
         --cluster-id "$CLUSTER_ID" 2>&1 | tee "$output_file"; then
 
-        local throughput=$(grep -oP '\d+(?=,?\d* events/second)' "$output_file" | tail -1)
-        RESULTS["python_standalone"]="${throughput:-COMPLETED}"
+        local throughput
+        throughput="$(extract_events_per_second "$output_file")"
+        set_result "python_standalone" "${throughput:-COMPLETED}"
         echo "Python standalone throughput: ${throughput:-N/A} events/sec"
     else
-        RESULTS["python_standalone"]="FAILED"
+        set_result "python_standalone" "FAILED"
     fi
 }
 
@@ -245,8 +297,9 @@ print_summary() {
     printf "%-20s %s\n" "Language" "Throughput (events/sec)"
     printf "%-20s %s\n" "--------" "-----------------------"
 
-    for lang in "${!RESULTS[@]}"; do
-        printf "%-20s %s\n" "$lang" "${RESULTS[$lang]}"
+    local i
+    for i in "${!RESULT_LANGS[@]}"; do
+        printf "%-20s %s\n" "${RESULT_LANGS[$i]}" "${RESULT_VALUES[$i]}"
     done
 
     echo ""
@@ -258,8 +311,9 @@ print_summary() {
 write_summary_file() {
     {
         echo "language,throughput"
-        for lang in "${!RESULTS[@]}"; do
-            echo "${lang},${RESULTS[$lang]}"
+        local i
+        for i in "${!RESULT_LANGS[@]}"; do
+            echo "${RESULT_LANGS[$i]},${RESULT_VALUES[$i]}"
         done
     } > "$SUMMARY_FILE"
 }
@@ -275,19 +329,30 @@ compare_baseline() {
         return
     fi
 
-    declare -A BASELINE
+    local -a BASELINE_LANGS=()
+    local -a BASELINE_VALUES=()
     while IFS=, read -r lang value; do
         if [[ "$lang" == "language" ]]; then
             continue
         fi
-        BASELINE["$lang"]="$value"
+        BASELINE_LANGS+=("$lang")
+        BASELINE_VALUES+=("$value")
     done < "$baseline_path"
 
     echo ""
     echo "Baseline comparison: $baseline_path"
-    for lang in "${!RESULTS[@]}"; do
-        local current="${RESULTS[$lang]}"
-        local base="${BASELINE[$lang]}"
+    local i
+    for i in "${!RESULT_LANGS[@]}"; do
+        local lang="${RESULT_LANGS[$i]}"
+        local current="${RESULT_VALUES[$i]}"
+        local base=""
+        local j
+        for j in "${!BASELINE_LANGS[@]}"; do
+            if [[ "${BASELINE_LANGS[$j]}" == "$lang" ]]; then
+                base="${BASELINE_VALUES[$j]}"
+                break
+            fi
+        done
         if [[ "$current" =~ ^[0-9]+$ && "$base" =~ ^[0-9]+$ && "$base" -gt 0 ]]; then
             local delta
             delta=$(awk -v cur="$current" -v base="$base" \
@@ -309,10 +374,14 @@ main() {
         echo "Make sure ArcherDB is running:"
         echo "  ./scripts/dev-cluster.sh start"
         echo ""
-        read -p "Continue anyway? [y/N] " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            exit 1
+        if [[ -t 0 ]]; then
+            read -p "Continue anyway? [y/N] " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                exit 1
+            fi
+        else
+            echo "Non-interactive mode detected; continuing."
         fi
     fi
 
