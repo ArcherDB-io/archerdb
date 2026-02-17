@@ -96,7 +96,7 @@ pub fn main(
     );
     std.log.info(
         "Concurrency: write clients={}, query clients=1",
-        .{ cli_args.clients },
+        .{cli_args.clients},
     );
 
     var clients = stdx.BoundedArrayType(Client, constants.clients_max){};

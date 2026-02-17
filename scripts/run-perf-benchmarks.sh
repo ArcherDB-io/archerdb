@@ -378,6 +378,9 @@ cleanup_auto_started_server() {
         kill "$AUTO_STARTED_SERVER_PID" 2>/dev/null || true
         wait "$AUTO_STARTED_SERVER_PID" 2>/dev/null || true
     fi
+    if [[ -n "$AUTO_STARTED_WORK_DIR" && -d "$AUTO_STARTED_WORK_DIR" ]]; then
+        rm -rf "$AUTO_STARTED_WORK_DIR"
+    fi
 }
 
 write_unreachable_summary() {

@@ -35,8 +35,7 @@ cd "$ROOT_DIR"
 
 # Create temporary directory
 TEMP_DIR=$(mktemp -d)
-# trap "rm -rf $TEMP_DIR; kill $SERVER_PID 2>/dev/null || true" EXIT
-trap "kill $SERVER_PID 2>/dev/null || true" EXIT
+trap "rm -rf $TEMP_DIR; kill $SERVER_PID 2>/dev/null || true" EXIT
 
 echo "============================================"
 echo "ArcherDB TTL Cleanup Test (CRIT-04)"

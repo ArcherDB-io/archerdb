@@ -826,8 +826,15 @@ output_json() {
     echo "$json"
 }
 
+cleanup() {
+    if [[ -n "${LATENCIES_FILE:-}" ]]; then
+        rm -rf "$(dirname "$LATENCIES_FILE")"
+    fi
+}
+
 main() {
     parse_args "$@"
+    trap cleanup EXIT
 
     START_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 

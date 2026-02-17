@@ -4787,17 +4787,17 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     // Extract timestamp from composite latest_id
                     const timestamp = @as(u64, @truncate(entry.latest_id));
 
-                // Check TTL expiration (per query-engine/spec.md)
-                if (entry.ttl_seconds > 0) {
-                    const now_seconds = self.commit_timestamp / 1_000_000_000;
-                    const creation_seconds = timestamp / 1_000_000_000;
-                    const expiry_seconds = creation_seconds + @as(u64, entry.ttl_seconds);
-                    if (now_seconds > expiry_seconds) {
-                        // Entity expired - skip it
-                        self.ttl_metrics.record_lookup_expiration();
-                        continue;
+                    // Check TTL expiration (per query-engine/spec.md)
+                    if (entry.ttl_seconds > 0) {
+                        const now_seconds = self.commit_timestamp / 1_000_000_000;
+                        const creation_seconds = timestamp / 1_000_000_000;
+                        const expiry_seconds = creation_seconds + @as(u64, entry.ttl_seconds);
+                        if (now_seconds > expiry_seconds) {
+                            // Entity expired - skip it
+                            self.ttl_metrics.record_lookup_expiration();
+                            continue;
+                        }
                     }
-                }
 
                     const metadata = entryMetadata(entry);
 
