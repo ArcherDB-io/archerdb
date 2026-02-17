@@ -270,7 +270,7 @@ const GeoBenchmark = struct {
             const io_step_ns: u63 = switch (b.stage) {
                 .insert_events => constants.tick_ms * std.time.ns_per_ms,
                 .register => constants.tick_ms * std.time.ns_per_ms,
-                .query_uuid, .query_radius, .query_polygon => @as(u63, std.time.ns_per_ms),
+                .query_uuid, .query_radius, .query_polygon => @as(u63, 100 * std.time.ns_per_us),
                 .idle => unreachable,
             };
             try b.io.run_for_ns(io_step_ns);
