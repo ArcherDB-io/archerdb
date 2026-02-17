@@ -1147,6 +1147,10 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         /// are deallocated (PostgreSQL semantics per query-performance/spec.md).
         session_prepared_queries: std.AutoHashMap(u128, SessionPreparedQueries) = undefined,
 
+        /// Cache of latest full GeoEvent per entity for fast UUID queries.
+        /// Bounded by RAM index capacity to avoid unbounded memory growth.
+        latest_event_cache: std.AutoHashMap(u128, GeoEvent) = undefined,
+
         /// Prepared query metrics for observability (14-05).
         /// Tracks compile, execute, and error counts.
         prepared_query_metrics: PreparedQueryMetrics = PreparedQueryMetrics{},
@@ -1303,7 +1307,15 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             errdefer allocator.free(spatial_scan_keys);
 
             // Initialize session prepared queries map (14-05)
-            const session_prepared_queries = std.AutoHashMap(u128, SessionPreparedQueries).init(allocator);
+            var session_prepared_queries = std.AutoHashMap(u128, SessionPreparedQueries).init(allocator);
+            errdefer session_prepared_queries.deinit();
+
+            // Initialize latest-event cache for UUID fast path.
+            var latest_event_cache = std.AutoHashMap(u128, GeoEvent).init(allocator);
+            errdefer latest_event_cache.deinit();
+            latest_event_cache.ensureTotalCapacity(ram_index_capacity) catch |err| {
+                log.warn("GeoStateMachine: latest-event cache reserve failed: {}", .{err});
+            };
 
             self.* = .{
                 .batch_size_limit = options.batch_size_limit,
@@ -1324,6 +1336,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .result_cache = result_cache,
                 .covering_cache = covering_cache,
                 .session_prepared_queries = session_prepared_queries,
+                .latest_event_cache = latest_event_cache,
                 .session_queries_initialized = true,
             };
 
@@ -1415,6 +1428,8 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             if (self.session_queries_initialized) {
                 self.session_prepared_queries.deinit();
             }
+
+            self.latest_event_cache.deinit();
         }
 
         /// Reset state machine for state sync.
@@ -1437,6 +1452,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             // from the previous state. WAL replay after sync will rebuild it
             // with operations from the checkpoint forward.
             self.ram_index.clear();
+            self.latest_event_cache.clearRetainingCapacity();
 
             self.* = .{
                 .batch_size_limit = self.batch_size_limit,
@@ -1458,6 +1474,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .result_cache = self.result_cache,
                 .covering_cache = self.covering_cache,
                 .session_prepared_queries = self.session_prepared_queries,
+                .latest_event_cache = self.latest_event_cache,
                 .session_queries_initialized = self.session_queries_initialized,
                 .rebuild_scan_context = .{ .callback = rebuild_scan_read_callback },
                 .rebuild_scan_ptr = null,
@@ -1563,6 +1580,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     if (event.is_tombstone()) {
                         // Entity was deleted — remove from RAM index if present.
                         _ = self.ram_index.remove(event.entity_id);
+                        _ = self.latest_event_cache.remove(event.entity_id);
                     } else {
                         // Upsert into RAM index with LWW semantics.
                         _ = self.ram_index.upsertWithMetadata(
@@ -1581,6 +1599,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                         if (event.ttl_seconds > 0) {
                             self.entries_with_ttl += 1;
                         }
+                        self.latest_event_cache.put(event.entity_id, event) catch |err| {
+                            log.debug("latest_event_cache: rebuild put failed: {}", .{err});
+                        };
                         self.rebuild_count += 1;
                     }
                 },
@@ -2172,6 +2193,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 // Track metrics (F2.5.5).
                 if (removed) {
                     deleted_count += 1;
+                    _ = self.latest_event_cache.remove(entity_id);
 
                     // F2.6: Record deletion in tiering manager
                     if (self.tiering_manager) |tm| {
@@ -2447,6 +2469,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     stored_event.timestamp = event_timestamp;
                     stored_event.ttl_seconds = effective_ttl_seconds;
                     self.forest.grooves.geo_events.insert(&stored_event);
+                    self.latest_event_cache.put(event.entity_id, stored_event) catch |err| {
+                        log.debug("latest_event_cache: insert put failed: {}", .{err});
+                    };
                 } else if (upsert_result.updated) {
                     // LWW accepted the update
                     results[results_count] = InsertGeoEventsResult{
@@ -2480,6 +2505,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     stored_event.timestamp = event_timestamp;
                     stored_event.ttl_seconds = effective_ttl_seconds;
                     self.forest.grooves.geo_events.insert(&stored_event);
+                    self.latest_event_cache.put(event.entity_id, stored_event) catch |err| {
+                        log.debug("latest_event_cache: update put failed: {}", .{err});
+                    };
                 } else {
                     // LWW rejected - older event
                     results[results_count] = InsertGeoEventsResult{
@@ -2510,6 +2538,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 
             // Record writes for adaptive compaction (12-09: workload tracking)
             if (inserted_count > 0) {
+                if (self.latest_event_cache.count() > self.ram_index.capacity) {
+                    self.latest_event_cache.clearRetainingCapacity();
+                }
                 self.forest.adaptive_record_write(inserted_count);
                 self.spatial_scan_keys_dirty = true;
 
@@ -2802,34 +2833,74 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 }
 
                 var result_event: GeoEvent = undefined;
-
-                // Try to get full event from LSM tree (memtable or cache)
-                switch (self.forest.grooves.geo_events.get(entry.latest_id)) {
-                    .found_object => |event| {
-                        result_event = event;
-                    },
-                    else => {
-                        // Fallback to RAM index reconstruction (metadata only).
-                        // This happens if the event is on disk and was not prefetched.
-                        const metadata = entryMetadata(entry);
-                        result_event = GeoEvent{
-                            .id = entry.latest_id,
-                            .entity_id = entry.entity_id,
-                            .correlation_id = 0, // Not stored in RAM index
-                            .user_data = 0, // Not stored in RAM index
-                            .lat_nano = metadata.lat_nano,
-                            .lon_nano = metadata.lon_nano,
-                            .group_id = metadata.group_id,
-                            .timestamp = event_timestamp,
-                            .altitude_mm = 0,
-                            .velocity_mms = 0,
-                            .ttl_seconds = entry.ttl_seconds,
-                            .accuracy_mm = 0,
-                            .heading_cdeg = 0,
-                            .flags = GeoEventFlags.none,
-                            .reserved = [_]u8{0} ** 12,
-                        };
-                    },
+                if (self.latest_event_cache.get(filter.entity_id)) |cached_event| {
+                    if (cached_event.id == entry.latest_id) {
+                        result_event = cached_event;
+                    } else {
+                        // Try to get full event from LSM tree (memtable or cache)
+                        switch (self.forest.grooves.geo_events.get(entry.latest_id)) {
+                            .found_object => |event| {
+                                result_event = event;
+                                self.latest_event_cache.put(filter.entity_id, event) catch |err| {
+                                    log.debug("latest_event_cache: query put failed: {}", .{err});
+                                };
+                            },
+                            else => {
+                                // Fallback to RAM index reconstruction (metadata only).
+                                // This happens if the event is on disk and was not prefetched.
+                                const metadata = entryMetadata(entry);
+                                result_event = GeoEvent{
+                                    .id = entry.latest_id,
+                                    .entity_id = entry.entity_id,
+                                    .correlation_id = 0, // Not stored in RAM index
+                                    .user_data = 0, // Not stored in RAM index
+                                    .lat_nano = metadata.lat_nano,
+                                    .lon_nano = metadata.lon_nano,
+                                    .group_id = metadata.group_id,
+                                    .timestamp = event_timestamp,
+                                    .altitude_mm = 0,
+                                    .velocity_mms = 0,
+                                    .ttl_seconds = entry.ttl_seconds,
+                                    .accuracy_mm = 0,
+                                    .heading_cdeg = 0,
+                                    .flags = GeoEventFlags.none,
+                                    .reserved = [_]u8{0} ** 12,
+                                };
+                            },
+                        }
+                    }
+                } else {
+                    // Try to get full event from LSM tree (memtable or cache)
+                    switch (self.forest.grooves.geo_events.get(entry.latest_id)) {
+                        .found_object => |event| {
+                            result_event = event;
+                            self.latest_event_cache.put(filter.entity_id, event) catch |err| {
+                                log.debug("latest_event_cache: query put failed: {}", .{err});
+                            };
+                        },
+                        else => {
+                            // Fallback to RAM index reconstruction (metadata only).
+                            // This happens if the event is on disk and was not prefetched.
+                            const metadata = entryMetadata(entry);
+                            result_event = GeoEvent{
+                                .id = entry.latest_id,
+                                .entity_id = entry.entity_id,
+                                .correlation_id = 0, // Not stored in RAM index
+                                .user_data = 0, // Not stored in RAM index
+                                .lat_nano = metadata.lat_nano,
+                                .lon_nano = metadata.lon_nano,
+                                .group_id = metadata.group_id,
+                                .timestamp = event_timestamp,
+                                .altitude_mm = 0,
+                                .velocity_mms = 0,
+                                .ttl_seconds = entry.ttl_seconds,
+                                .accuracy_mm = 0,
+                                .heading_cdeg = 0,
+                                .flags = GeoEventFlags.none,
+                                .reserved = [_]u8{0} ** 12,
+                            };
+                        },
+                    }
                 }
                 const end_execute = std.time.nanoTimestamp();
 
@@ -2911,6 +2982,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 };
 
                 if (forest_event) |result_event| {
+                    self.latest_event_cache.put(filter.entity_id, result_event) catch |err| {
+                        log.debug("latest_event_cache: fallback put failed: {}", .{err});
+                    };
                     // Found in forest — build response (same format as RAM index hit)
                     if (output.len < response_size + @sizeOf(GeoEvent)) {
                         log.warn("query_uuid: output buffer too small", .{});
