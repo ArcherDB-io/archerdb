@@ -40,6 +40,7 @@ const QueryUuidBatchFilter = tb.QueryUuidBatchFilter;
 const QueryRadiusFilter = tb.QueryRadiusFilter;
 const QueryPolygonFilter = tb.QueryPolygonFilter;
 const InsertGeoEventsResult = tb.InsertGeoEventsResult;
+const latency_histogram_max_units: usize = 200_000;
 
 /// Polygon vertex (lat/lon pair) - matches geo_state_machine.PolygonVertex
 const PolygonVertex = extern struct {
@@ -116,8 +117,9 @@ pub fn main(
         ));
     }
 
-    // Latency histogram (1ms buckets, 0-10000ms)
-    const request_latency_histogram = try allocator.alloc(u64, 10_001);
+    // Shared latency histogram sized for the highest-resolution stages.
+    // With 1us buckets this covers 0..200ms; with 1ms buckets this covers 0..200s.
+    const request_latency_histogram = try allocator.alloc(u64, latency_histogram_max_units + 1);
     @memset(request_latency_histogram, 0);
     defer allocator.free(request_latency_histogram);
 
@@ -247,7 +249,7 @@ const GeoBenchmark = struct {
 
         b.stage = stage;
         switch (stage) {
-            .query_uuid_single, .query_uuid_batch => {
+            .query_uuid_single, .query_uuid_batch, .query_radius, .query_polygon => {
                 b.latency_bucket_ns = std.time.ns_per_us;
                 b.latency_unit_label = "us";
             },
@@ -675,7 +677,7 @@ const GeoBenchmark = struct {
             \\queries = {[queries]}
             \\radius = {[radius]} meters
             \\duration = {[duration]d:.2} s
-            \\target = <50ms p99
+            \\target = <50ms p99 (reported in us)
             \\
         , .{
             .queries = b.request_index,
@@ -787,7 +789,7 @@ const GeoBenchmark = struct {
             \\=== F5.1.4: Polygon Query Latency ===
             \\queries = {[queries]}
             \\duration = {[duration]d:.2} s
-            \\target = <100ms p99
+            \\target = <100ms p99 (reported in us)
             \\
         , .{
             .queries = b.request_index,
