@@ -4093,6 +4093,22 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             var result_count: usize = 0;
             var has_more: bool = false;
             const radius_mm_u64 = @as(u64, filter.radius_mm);
+            const center_lat = filter.center_lat_nano;
+            const center_lon = filter.center_lon_nano;
+
+            // Cheap prefilter window to avoid expensive Haversine checks for obvious misses.
+            const radius_m = @as(f64, @floatFromInt(filter.radius_mm)) / 1000.0;
+            const lat_delta_nano_f = radius_m * (1_000_000_000.0 / 111_320.0);
+            const lat_delta_nano = @as(i64, @intFromFloat(@ceil(lat_delta_nano_f)));
+            const center_lat_deg = @as(f64, @floatFromInt(center_lat)) / 1_000_000_000.0;
+            const center_lat_rad = center_lat_deg * std.math.pi / 180.0;
+            const cos_lat = @abs(@cos(center_lat_rad));
+            const lon_delta_nano = blk: {
+                if (cos_lat < 0.000001) break :blk @as(i64, 180_000_000_000);
+                const lon_delta = lat_delta_nano_f / cos_lat;
+                if (lon_delta >= 180_000_000_000.0) break :blk @as(i64, 180_000_000_000);
+                break :blk @as(i64, @intFromFloat(@ceil(lon_delta)));
+            };
 
             const scan_keys = self.spatialScanKeys();
             var merged_covering: [s2_index.s2_max_cells]s2_index.CellRange = undefined;
@@ -4147,10 +4163,29 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     const lat_nano = metadata.lat_nano;
                     const lon_nano = metadata.lon_nano;
 
+                    const lat_diff = if (lat_nano >= center_lat)
+                        lat_nano - center_lat
+                    else
+                        center_lat - lat_nano;
+                    if (lat_diff > lat_delta_nano) {
+                        continue;
+                    }
+
+                    var lon_diff = if (lon_nano >= center_lon)
+                        lon_nano - center_lon
+                    else
+                        center_lon - lon_nano;
+                    if (lon_diff > 180_000_000_000) {
+                        lon_diff = 360_000_000_000 - lon_diff;
+                    }
+                    if (lon_diff > lon_delta_nano) {
+                        continue;
+                    }
+
                     // Post-filter: Precise distance check using Haversine formula
                     if (!S2.isWithinDistance(
-                        filter.center_lat_nano,
-                        filter.center_lon_nano,
+                        center_lat,
+                        center_lon,
                         lat_nano,
                         lon_nano,
                         radius_mm_u64,
@@ -5206,11 +5241,10 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         /// Select S2 levels based on radius per spec decision table.
         /// Returns min_level and max_level for RegionCoverer.
         ///
-        /// NOTE (05-03): Optimized for better spatial query performance:
-        /// - Level range reduced from 4 to 3 for tighter coverings (fewer cells to check)
-        /// - Min level adjustment reduced from -2 to -1 for more precise cells
-        /// - These changes reduce false positives in the coarse filter, decreasing
-        ///   the number of expensive Haversine distance calculations needed.
+        /// NOTE (17-02): Tuned for tighter small-radius coverings:
+        /// - Bias min_level upward for small radii to reduce false positives
+        /// - Use a 2-level range (min..min+2) to keep coverings compact
+        /// - Falls back to coarse levels for very large radii
         ///
         /// The covering algorithm has limited cells (16 max), so for large radii
         /// we use coarser levels to ensure complete coverage. The formula
@@ -5220,12 +5254,12 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             // Convert mm to meters for level selection
             const radius_m = @as(f64, @floatFromInt(radius_mm)) / 1000.0;
 
-            // Per query-engine/spec.md decision table:
+            // Baseline from query-engine/spec.md decision table:
             // min_level = max(0, min(18, floor(log2(7842000 / radius_meters))))
             // max_level = min(min_level + 3, 18)
             //
-            // We subtract 1 from min_level (was 2) and use a 3-level range (was 4)
-            // for tighter coverings that produce fewer false positive candidates.
+            // We intentionally bias to finer cells for small radii to reduce
+            // the coarse-filter candidate set before Haversine post-filtering.
 
             if (radius_m <= 0) {
                 return .{ .min_level = 18, .max_level = 18 };
@@ -5243,13 +5277,17 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             const min_level_raw = @floor(log2_val);
 
             var min_level: u8 = 0;
-            if (min_level_raw > 1) {
-                // Subtract 1 level to ensure covering fits in 16 cells while maintaining precision
-                min_level = @min(18, @as(u8, @intFromFloat(min_level_raw)) - 1);
+            if (min_level_raw > 0) {
+                const base_level = @as(u8, @intFromFloat(min_level_raw));
+                min_level = if (radius_m <= 5_000.0)
+                    @min(17, base_level + 2)
+                else if (radius_m <= 50_000.0)
+                    @min(18, base_level + 1)
+                else
+                    @min(18, base_level);
             }
 
-            // Use 3-level range for tighter coverings (was 4)
-            const max_level = @min(min_level + 3, 18);
+            const max_level = @min(min_level + 2, 18);
 
             return .{ .min_level = min_level, .max_level = max_level };
         }
