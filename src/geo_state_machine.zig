@@ -1776,7 +1776,8 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 
             switch (operation) {
                 .query_uuid => {
-                    // Parse entity_id and prefetch from forest for cache hit in commit.
+                    // Parse entity_id. For RAM index hits we skip explicit Forest prefetch
+                    // to keep point-query commit latency low; execute() will read directly.
                     if (message_body_used.len == @sizeOf(QueryUuidFilter)) {
                         const filter = mem.bytesAsValue(
                             QueryUuidFilter,
@@ -1785,13 +1786,8 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                         if (filter.entity_id != 0) {
                             const lookup_result = self.ram_index.lookup(filter.entity_id);
                             if (lookup_result.entry) |entry| {
-                                // RAM index hit — prefetch composite ID from forest
-                                self.forest.grooves.geo_events.prefetch_setup(null);
-                                self.forest.grooves.geo_events.prefetch_enqueue(entry.latest_id);
-                                self.forest.grooves.geo_events.prefetch(
-                                    prefetch_forest_callback,
-                                    &self.prefetch_context,
-                                );
+                                _ = entry;
+                                self.prefetch_finish();
                                 return;
                             } else {
                                 // RAM index miss — scan entity_id index for forest fallback.
@@ -1820,42 +1816,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     self.prefetch_finish();
                 },
                 .query_uuid_batch => {
-                    // Prefetch known entries from forest for cache hits in commit.
-                    // Entities missing from RAM index still return not_found (batch
-                    // scan fallback is deferred to a follow-up).
-                    if (message_body_used.len >= @sizeOf(QueryUuidBatchFilter)) {
-                        const filter = mem.bytesAsValue(
-                            QueryUuidBatchFilter,
-                            message_body_used[0..@sizeOf(QueryUuidBatchFilter)],
-                        ).*;
-                        if (filter.count > 0 and filter.count <= QueryUuidBatchFilter.max_count) {
-                            const entity_ids_size = filter.count * @sizeOf(u128);
-                            if (message_body_used.len >= @sizeOf(QueryUuidBatchFilter) + entity_ids_size) {
-                                const entity_ids = @as(
-                                    [*]const u128,
-                                    @ptrCast(@alignCast(message_body_used[@sizeOf(QueryUuidBatchFilter)..].ptr)),
-                                )[0..filter.count];
-
-                                self.forest.grooves.geo_events.prefetch_setup(null);
-                                var enqueued: u32 = 0;
-                                for (entity_ids) |entity_id| {
-                                    if (entity_id == 0) continue;
-                                    const lookup_result = self.ram_index.lookup(entity_id);
-                                    if (lookup_result.entry) |entry| {
-                                        self.forest.grooves.geo_events.prefetch_enqueue(entry.latest_id);
-                                        enqueued += 1;
-                                    }
-                                }
-                                if (enqueued > 0) {
-                                    self.forest.grooves.geo_events.prefetch(
-                                        prefetch_forest_callback,
-                                        &self.prefetch_context,
-                                    );
-                                    return;
-                                }
-                            }
-                        }
-                    }
+                    // Avoid eager batch prefetch to reduce read-path tail latency.
                     self.prefetch_finish();
                 },
                 // All other operations use optimistic/immediate execution.
