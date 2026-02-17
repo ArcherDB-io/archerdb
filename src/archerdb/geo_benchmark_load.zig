@@ -10,9 +10,9 @@
 //!
 //! Workload steps:
 //! 1. Insert GeoEvents (bulk insert to measure write throughput)
-//! 2. Query by UUID (point lookups to measure index performance)
-//! 3. Query by radius (spatial queries around random points)
-//! 4. Query by polygon (spatial queries with polygon bounds)
+//! 2. Query by UUID (single-client point lookup latency)
+//! 3. Query by radius (single-client spatial latency)
+//! 4. Query by polygon (single-client spatial latency)
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -90,6 +90,10 @@ pub fn main(
             cli_args.query_radius_count,
             cli_args.query_polygon_count,
         },
+    );
+    std.log.info(
+        "Concurrency: write clients={}, query clients=1",
+        .{ cli_args.clients },
     );
 
     var clients = stdx.BoundedArrayType(Client, constants.clients_max){};
@@ -236,7 +240,8 @@ const GeoBenchmark = struct {
         b.stage = stage;
         b.timer.reset();
 
-        for (0..b.clients.len) |client_usize| {
+        const active_clients = b.stageClientCount(stage);
+        for (0..active_clients) |client_usize| {
             const client = @as(u32, @intCast(client_usize));
             switch (b.stage) {
                 .register => b.register(client),
@@ -258,6 +263,14 @@ const GeoBenchmark = struct {
             };
             try b.io.run_for_ns(io_step_ns);
         }
+    }
+
+    fn stageClientCount(b: *const GeoBenchmark, stage: Stage) usize {
+        return switch (stage) {
+            .insert_events, .register => b.clients.len,
+            .query_uuid, .query_radius, .query_polygon => 1,
+            .idle => 0,
+        };
     }
 
     fn run_finish(b: *GeoBenchmark) void {
