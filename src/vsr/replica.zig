@@ -2181,6 +2181,8 @@ pub fn ReplicaType(
             // See `send_reply_message_to_client` for why we compute the checksum twice.
             reply.header.context = reply.header.calculate_checksum();
             reply.header.set_checksum();
+            const size_ceil = vsr.sector_ceil(reply.header.size);
+            @memset(reply.buffer[reply.header.size..size_ceil], 0);
 
             entry.header = reply.header.*;
             const reply_slot = self.client_sessions.get_slot_for_client(reply.header.client).?;
