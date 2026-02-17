@@ -1080,6 +1080,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         /// Key layout: [cell_id (upper 64) | slot (lower 64)].
         /// Rebuilt lazily after mutating operations and sorted by cell_id.
         spatial_scan_keys: []u128,
+        /// Cached scan keys sorted by latitude for radius fast path.
+        /// Key layout: [sortable_lat (upper 64) | slot (lower 64)].
+        spatial_scan_lat_keys: []u128,
         spatial_scan_keys_len: usize = 0,
         spatial_scan_keys_dirty: bool = true,
 
@@ -1305,6 +1308,8 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 
             const spatial_scan_keys = try allocator.alloc(u128, @intCast(ram_index.capacity));
             errdefer allocator.free(spatial_scan_keys);
+            const spatial_scan_lat_keys = try allocator.alloc(u128, @intCast(ram_index.capacity));
+            errdefer allocator.free(spatial_scan_lat_keys);
 
             // Initialize session prepared queries map (14-05)
             var session_prepared_queries = std.AutoHashMap(u128, SessionPreparedQueries).init(allocator);
@@ -1329,6 +1334,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .last_index_checkpoint_op = 0,
                 .ram_index = ram_index,
                 .spatial_scan_keys = spatial_scan_keys,
+                .spatial_scan_lat_keys = spatial_scan_lat_keys,
                 .spatial_scan_keys_len = 0,
                 .spatial_scan_keys_dirty = true,
                 .index_recovery = .{},
@@ -1405,6 +1411,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             self.ram_index.deinit(allocator);
             allocator.destroy(self.ram_index);
             allocator.free(self.spatial_scan_keys);
+            allocator.free(self.spatial_scan_lat_keys);
 
             // Clean up TieringManager if enabled (F2.6)
             if (self.tiering_manager) |tm| {
@@ -1465,6 +1472,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .grid = self.grid,
                 .ram_index = self.ram_index,
                 .spatial_scan_keys = self.spatial_scan_keys,
+                .spatial_scan_lat_keys = self.spatial_scan_lat_keys,
                 .spatial_scan_keys_len = 0,
                 .spatial_scan_keys_dirty = true,
                 .index_recovery = .{},
@@ -4183,50 +4191,45 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 if (lon_delta >= 180_000_000_000.0) break :blk @as(i64, 180_000_000_000);
                 break :blk @as(i64, @intFromFloat(@ceil(lon_delta)));
             };
+            const radius_fast_path = radius_m <= 10_000.0;
+            if (radius_fast_path) {
+                const min_lat_i128 = @as(i128, center_lat) - @as(i128, lat_delta_nano);
+                const max_lat_i128 = @as(i128, center_lat) + @as(i128, lat_delta_nano);
+                const min_lat = @as(i64, @intCast(@max(@as(i128, GeoEvent.lat_nano_min), min_lat_i128)));
+                const max_lat = @as(i64, @intCast(@min(@as(i128, GeoEvent.lat_nano_max), max_lat_i128)));
 
-            const scan_keys = self.spatialScanKeys();
-            var merged_covering: [s2_index.s2_max_cells]s2_index.CellRange = undefined;
-            const merged_covering_count = mergeCoveringRanges(
-                &covering,
-                num_ranges,
-                &merged_covering,
-            );
+                const lat_scan_keys = self.spatialScanLatKeys();
+                var key_index = lowerBoundLatScanKey(lat_scan_keys, min_lat);
+                const max_lat_sort = latToSortable(max_lat);
+                const end_key = if (max_lat_sort == std.math.maxInt(u64))
+                    std.math.maxInt(u128)
+                else
+                    (@as(u128, max_lat_sort + 1) << 64);
 
-            ranges: for (merged_covering[0..merged_covering_count]) |range| {
-                var key_index = lowerBoundScanKey(scan_keys, range.start);
-                const end_key = @as(u128, range.end) << 64;
-                while (key_index < scan_keys.len and scan_keys[key_index] < end_key) : (key_index += 1) {
-                    // Check if we've hit the result limit
+                while (key_index < lat_scan_keys.len and lat_scan_keys[key_index] < end_key) : (key_index += 1) {
                     if (result_count >= effective_limit) {
-                        // There might be more results - we hit the limit before scanning all
                         has_more = true;
-                        break :ranges;
+                        break;
                     }
 
-                    const position = @as(u64, @truncate(scan_keys[key_index]));
+                    const position = @as(u64, @truncate(lat_scan_keys[key_index]));
                     const entry = self.ram_index.entries[@intCast(position)];
                     const timestamp = @as(u64, @truncate(entry.latest_id));
 
-                // Check TTL expiration (per query-engine/spec.md)
-                if (entry.ttl_seconds > 0) {
-                    const now_seconds = self.commit_timestamp / 1_000_000_000;
-                    const creation_seconds = timestamp / 1_000_000_000;
-                    const expiry_seconds = creation_seconds + @as(u64, entry.ttl_seconds);
-                    if (now_seconds > expiry_seconds) {
-                        // Entity expired - skip it
-                        self.ttl_metrics.record_lookup_expiration();
-                        continue;
+                    if (entry.ttl_seconds > 0) {
+                        const now_seconds = self.commit_timestamp / 1_000_000_000;
+                        const creation_seconds = timestamp / 1_000_000_000;
+                        const expiry_seconds = creation_seconds + @as(u64, entry.ttl_seconds);
+                        if (now_seconds > expiry_seconds) {
+                            self.ttl_metrics.record_lookup_expiration();
+                            continue;
+                        }
                     }
-                }
 
                     const metadata = entryMetadata(entry);
-
-                    // Apply group_id filter if specified
                     if (filter.group_id != 0 and metadata.group_id != filter.group_id) {
                         continue;
                     }
-
-                    // Apply timestamp filter if specified
                     if (filter.timestamp_min > 0 and timestamp < filter.timestamp_min) {
                         continue;
                     }
@@ -4236,7 +4239,6 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 
                     const lat_nano = metadata.lat_nano;
                     const lon_nano = metadata.lon_nano;
-
                     const lat_diff = if (lat_nano >= center_lat)
                         lat_nano - center_lat
                     else
@@ -4256,7 +4258,6 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                         continue;
                     }
 
-                    // Post-filter: Precise distance check using Haversine formula
                     if (!S2.isWithinDistance(
                         center_lat,
                         center_lon,
@@ -4267,21 +4268,17 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                         continue;
                     }
 
-                    // F2.6: Record access in tiering manager for each returned entity
                     if (self.tiering_manager) |tm| {
                         _ = tm.recordAccess(entry.entity_id, self.commit_timestamp) catch |err| {
                             log.debug("tiering: failed to record access for entity {x}: {}", .{ entry.entity_id, err });
                         };
                     }
 
-                    // Build GeoEvent result
-                    // NOTE: This creates a minimal GeoEvent from index data.
-                    // When Forest is integrated, we should fetch the full event from LSM.
                     results_slice[result_count] = GeoEvent{
                         .id = entry.latest_id,
                         .entity_id = entry.entity_id,
-                        .correlation_id = 0, // Not stored in RAM index
-                        .user_data = 0, // Not stored in RAM index
+                        .correlation_id = 0,
+                        .user_data = 0,
                         .lat_nano = lat_nano,
                         .lon_nano = lon_nano,
                         .group_id = metadata.group_id,
@@ -4294,8 +4291,122 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                         .flags = GeoEventFlags.none,
                         .reserved = [_]u8{0} ** 12,
                     };
-
                     result_count += 1;
+                }
+            } else {
+                const scan_keys = self.spatialScanKeys();
+                var merged_covering: [s2_index.s2_max_cells]s2_index.CellRange = undefined;
+                const merged_covering_count = mergeCoveringRanges(
+                    &covering,
+                    num_ranges,
+                    &merged_covering,
+                );
+
+                ranges: for (merged_covering[0..merged_covering_count]) |range| {
+                    var key_index = lowerBoundScanKey(scan_keys, range.start);
+                    const end_key = @as(u128, range.end) << 64;
+                    while (key_index < scan_keys.len and scan_keys[key_index] < end_key) : (key_index += 1) {
+                        // Check if we've hit the result limit
+                        if (result_count >= effective_limit) {
+                            // There might be more results - we hit the limit before scanning all
+                            has_more = true;
+                            break :ranges;
+                        }
+
+                        const position = @as(u64, @truncate(scan_keys[key_index]));
+                        const entry = self.ram_index.entries[@intCast(position)];
+                        const timestamp = @as(u64, @truncate(entry.latest_id));
+
+                        // Check TTL expiration (per query-engine/spec.md)
+                        if (entry.ttl_seconds > 0) {
+                            const now_seconds = self.commit_timestamp / 1_000_000_000;
+                            const creation_seconds = timestamp / 1_000_000_000;
+                            const expiry_seconds = creation_seconds + @as(u64, entry.ttl_seconds);
+                            if (now_seconds > expiry_seconds) {
+                                // Entity expired - skip it
+                                self.ttl_metrics.record_lookup_expiration();
+                                continue;
+                            }
+                        }
+
+                        const metadata = entryMetadata(entry);
+
+                        // Apply group_id filter if specified
+                        if (filter.group_id != 0 and metadata.group_id != filter.group_id) {
+                            continue;
+                        }
+
+                        // Apply timestamp filter if specified
+                        if (filter.timestamp_min > 0 and timestamp < filter.timestamp_min) {
+                            continue;
+                        }
+                        if (filter.timestamp_max > 0 and timestamp > filter.timestamp_max) {
+                            continue;
+                        }
+
+                        const lat_nano = metadata.lat_nano;
+                        const lon_nano = metadata.lon_nano;
+
+                        const lat_diff = if (lat_nano >= center_lat)
+                            lat_nano - center_lat
+                        else
+                            center_lat - lat_nano;
+                        if (lat_diff > lat_delta_nano) {
+                            continue;
+                        }
+
+                        var lon_diff = if (lon_nano >= center_lon)
+                            lon_nano - center_lon
+                        else
+                            center_lon - lon_nano;
+                        if (lon_diff > 180_000_000_000) {
+                            lon_diff = 360_000_000_000 - lon_diff;
+                        }
+                        if (lon_diff > lon_delta_nano) {
+                            continue;
+                        }
+
+                        // Post-filter: Precise distance check using Haversine formula
+                        if (!S2.isWithinDistance(
+                            center_lat,
+                            center_lon,
+                            lat_nano,
+                            lon_nano,
+                            radius_mm_u64,
+                        )) {
+                            continue;
+                        }
+
+                        // F2.6: Record access in tiering manager for each returned entity
+                        if (self.tiering_manager) |tm| {
+                            _ = tm.recordAccess(entry.entity_id, self.commit_timestamp) catch |err| {
+                                log.debug("tiering: failed to record access for entity {x}: {}", .{ entry.entity_id, err });
+                            };
+                        }
+
+                        // Build GeoEvent result
+                        // NOTE: This creates a minimal GeoEvent from index data.
+                        // When Forest is integrated, we should fetch the full event from LSM.
+                        results_slice[result_count] = GeoEvent{
+                            .id = entry.latest_id,
+                            .entity_id = entry.entity_id,
+                            .correlation_id = 0, // Not stored in RAM index
+                            .user_data = 0, // Not stored in RAM index
+                            .lat_nano = lat_nano,
+                            .lon_nano = lon_nano,
+                            .group_id = metadata.group_id,
+                            .timestamp = timestamp,
+                            .altitude_mm = 0,
+                            .velocity_mms = 0,
+                            .ttl_seconds = entry.ttl_seconds,
+                            .accuracy_mm = 0,
+                            .heading_cdeg = 0,
+                            .flags = GeoEventFlags.none,
+                            .reserved = [_]u8{0} ** 12,
+                        };
+
+                        result_count += 1;
+                    }
                 }
             }
             const end_execute = std.time.nanoTimestamp();
@@ -5242,10 +5353,17 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 if (entry.is_empty() or entry.is_tombstone()) continue;
                 const cell_id = @as(u64, @truncate(entry.latest_id >> 64));
                 self.spatial_scan_keys[key_count] = (@as(u128, cell_id) << 64) | @as(u128, position);
+                self.spatial_scan_lat_keys[key_count] = (@as(u128, latToSortable(entry.lat_nano)) << 64) |
+                    @as(u128, position);
                 key_count += 1;
             }
 
             std.mem.sort(u128, self.spatial_scan_keys[0..key_count], {}, struct {
+                fn lessThan(_: void, a: u128, b: u128) bool {
+                    return a < b;
+                }
+            }.lessThan);
+            std.mem.sort(u128, self.spatial_scan_lat_keys[0..key_count], {}, struct {
                 fn lessThan(_: void, a: u128, b: u128) bool {
                     return a < b;
                 }
@@ -5257,8 +5375,32 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             return self.spatial_scan_keys[0..key_count];
         }
 
+        fn spatialScanLatKeys(self: *GeoStateMachine) []const u128 {
+            _ = self.spatialScanKeys();
+            return self.spatial_scan_lat_keys[0..self.spatial_scan_keys_len];
+        }
+
+        fn latToSortable(lat_nano: i64) u64 {
+            return @as(u64, @bitCast(lat_nano)) ^ 0x8000_0000_0000_0000;
+        }
+
         fn lowerBoundScanKey(scan_keys: []const u128, cell_start: u64) usize {
             const target = @as(u128, cell_start) << 64;
+            var low: usize = 0;
+            var high: usize = scan_keys.len;
+            while (low < high) {
+                const mid = low + (high - low) / 2;
+                if (scan_keys[mid] < target) {
+                    low = mid + 1;
+                } else {
+                    high = mid;
+                }
+            }
+            return low;
+        }
+
+        fn lowerBoundLatScanKey(scan_keys: []const u128, lat_nano: i64) usize {
+            const target = @as(u128, latToSortable(lat_nano)) << 64;
             var low: usize = 0;
             var high: usize = scan_keys.len;
             while (low < high) {
