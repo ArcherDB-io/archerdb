@@ -2727,23 +2727,6 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             const start_time = std.time.nanoTimestamp();
             const response_size = @sizeOf(QueryUuidResponse);
 
-            // Check query result cache (14-01)
-            const query_hash = if (self.result_cache != null)
-                QueryResultCache.hashQuery(@intFromEnum(Operation.query_uuid), input)
-            else
-                0;
-            if (self.result_cache) |cache| {
-                if (cache.get(query_hash)) |cached| {
-                    const cached_data = cached.getData();
-                    if (cached_data.len <= output.len) {
-                        @memcpy(output[0..cached_data.len], cached_data);
-                        self.query_metrics.recordCacheHit();
-                        return cached_data.len;
-                    }
-                }
-                self.query_metrics.recordCacheMiss();
-            }
-
             // Validate input size
             if (input.len != @sizeOf(QueryUuidFilter)) {
                 log.warn("query_uuid: input size invalid ({d} != {d})", .{
@@ -2955,11 +2938,6 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 self.forest.adaptive_record_read(1);
 
                 log.debug("query_uuid: found entity {x}", .{filter.entity_id});
-
-                // Cache the result (14-01)
-                if (self.result_cache) |cache| {
-                    cache.put(query_hash, output[0 .. response_size + @sizeOf(GeoEvent)]);
-                }
                 return response_size + @sizeOf(GeoEvent);
             } else {
                 // RAM index miss — try forest fallback (post-crash recovery path).
@@ -3033,10 +3011,6 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 
                     self.forest.adaptive_record_read(1);
                     log.debug("query_uuid: found entity {x} via forest fallback", .{filter.entity_id});
-
-                    if (self.result_cache) |cache| {
-                        cache.put(query_hash, output[0 .. response_size + @sizeOf(GeoEvent)]);
-                    }
                     return response_size + @sizeOf(GeoEvent);
                 }
 
