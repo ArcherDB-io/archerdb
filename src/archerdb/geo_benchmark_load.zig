@@ -476,7 +476,7 @@ const GeoBenchmark = struct {
         }
 
         const remaining = b.query_uuid_count - b.query_index;
-        const batch_count: u32 = @min(remaining, 16);
+        const batch_count: u32 = @min(remaining, 128);
 
         const filter: *QueryUuidBatchFilter = @ptrCast(@alignCast(&b.client_requests[client_index]));
         filter.* = .{
