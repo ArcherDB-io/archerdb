@@ -986,21 +986,30 @@ fn print_percentiles_histogram(
     };
 
     for (percentiles) |pspec| {
-        const histogram_percentile: usize = @intCast(pspec.histogram_index(histogram_total));
+        const histogram_percentile_raw: usize = @intCast(pspec.histogram_index(histogram_total));
+        const histogram_percentile: usize = @max(histogram_percentile_raw, 1);
 
         var sum: usize = 0;
         const latency = for (histogram_buckets, 0..) |bucket, bucket_index| {
             sum += bucket;
             if (sum >= histogram_percentile) break bucket_index;
         } else histogram_buckets.len;
-
-        stdout.print("{s} latency {s} = {} {s}{s}\n", .{
-            label,
-            pspec.label(),
-            latency,
-            unit_label,
-            if (latency == histogram_buckets.len) " + (exceeds histogram resolution)" else "",
-        }) catch unreachable;
+        const capped = latency == histogram_buckets.len - 1;
+        if (capped) {
+            stdout.print("{s} latency {s} >= {} {s} (capped at histogram max)\n", .{
+                label,
+                pspec.label(),
+                latency,
+                unit_label,
+            }) catch unreachable;
+        } else {
+            stdout.print("{s} latency {s} = {} {s}\n", .{
+                label,
+                pspec.label(),
+                latency,
+                unit_label,
+            }) catch unreachable;
+        }
     }
 }
 
