@@ -250,7 +250,13 @@ const GeoBenchmark = struct {
 
         while (b.stage != .idle) {
             for (b.clients) |*client| client.tick();
-            try b.io.run_for_ns(constants.tick_ms * std.time.ns_per_ms);
+            const io_step_ns: u63 = switch (b.stage) {
+                .insert_events => constants.tick_ms * std.time.ns_per_ms,
+                .register => constants.tick_ms * std.time.ns_per_ms,
+                .query_uuid, .query_radius, .query_polygon => @as(u63, std.time.ns_per_ms),
+                .idle => unreachable,
+            };
+            try b.io.run_for_ns(io_step_ns);
         }
     }
 
