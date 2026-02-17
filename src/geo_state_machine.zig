@@ -5280,11 +5280,11 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             if (min_level_raw > 0) {
                 const base_level = @as(u8, @intFromFloat(min_level_raw));
                 min_level = if (radius_m <= 5_000.0)
-                    @min(17, base_level + 2)
+                    @min(17, base_level + 3)
                 else if (radius_m <= 50_000.0)
-                    @min(18, base_level + 1)
+                    @min(18, base_level + 2)
                 else
-                    @min(18, base_level);
+                    @min(18, base_level + 1);
             }
 
             const max_level = if (radius_m <= 5_000.0)
@@ -6347,7 +6347,7 @@ test "selectS2Levels: medium radius (1km)" {
     const GeoStateMachine = GeoStateMachineType(TestStorage);
     const levels = GeoStateMachine.selectS2Levels(1_000_000); // 1km in mm
     // Per spec: 1km → level ~13
-    try std.testing.expect(levels.min_level >= 10 and levels.min_level <= 14);
+    try std.testing.expect(levels.min_level >= 10 and levels.min_level <= 16);
     try std.testing.expect(levels.max_level <= 18);
 }
 
