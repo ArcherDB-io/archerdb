@@ -1076,6 +1076,12 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         /// Allocated during init for VOPR testing support.
         ram_index: *DefaultRamIndex,
 
+        /// Cached slot positions for live entities used by spatial scans.
+        /// Rebuilt lazily after mutating operations to avoid scanning full capacity per query.
+        spatial_scan_slots: []u64,
+        spatial_scan_slots_len: usize = 0,
+        spatial_scan_slots_dirty: bool = true,
+
         /// Index recovery tracking for query gating.
         index_recovery: IndexRecoveryState = .{},
 
@@ -1292,6 +1298,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 allocator.destroy(cache);
             };
 
+            const spatial_scan_slots = try allocator.alloc(u64, @intCast(ram_index.capacity));
+            errdefer allocator.free(spatial_scan_slots);
+
             // Initialize session prepared queries map (14-05)
             const session_prepared_queries = std.AutoHashMap(u128, SessionPreparedQueries).init(allocator);
 
@@ -1306,6 +1315,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .index_checkpoint_enabled = options.enable_index_checkpoint,
                 .last_index_checkpoint_op = 0,
                 .ram_index = ram_index,
+                .spatial_scan_slots = spatial_scan_slots,
+                .spatial_scan_slots_len = 0,
+                .spatial_scan_slots_dirty = true,
                 .index_recovery = .{},
                 .tiering_manager = tiering_manager,
                 .result_cache = result_cache,
@@ -1378,6 +1390,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             self.forest.deinit(allocator);
             self.ram_index.deinit(allocator);
             allocator.destroy(self.ram_index);
+            allocator.free(self.spatial_scan_slots);
 
             // Clean up TieringManager if enabled (F2.6)
             if (self.tiering_manager) |tm| {
@@ -1434,6 +1447,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .forest = self.forest,
                 .grid = self.grid,
                 .ram_index = self.ram_index,
+                .spatial_scan_slots = self.spatial_scan_slots,
+                .spatial_scan_slots_len = 0,
+                .spatial_scan_slots_dirty = true,
                 .index_recovery = .{},
                 .index_checkpoint_enabled = self.index_checkpoint_enabled,
                 .last_index_checkpoint_op = 0,
@@ -2013,6 +2029,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             // Record metrics
             if (result.entries_removed > 0) {
                 archerdb_metrics.Registry.write_events_total.add(result.entries_removed);
+                self.spatial_scan_slots_dirty = true;
             }
 
             // F2.6: Process tiering maintenance during pulse
@@ -2045,6 +2062,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                         // Entity demoted to cold tier - remove from RAM index
                         // Cold entities are disk-only and require LSM scan for queries
                         _ = self.ram_index.remove(transition.entity_id);
+                        self.spatial_scan_slots_dirty = true;
                         log.debug("tiering: entity {x} demoted to cold tier", .{transition.entity_id});
                     }
                 }
@@ -2209,6 +2227,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             // Record writes for adaptive compaction (12-09: deletion tombstones count as writes)
             if (deleted_count > 0) {
                 self.forest.adaptive_record_write(deleted_count);
+                self.spatial_scan_slots_dirty = true;
 
                 // Invalidate query result cache on deletes (14-01)
                 if (self.result_cache) |cache| {
@@ -2491,6 +2510,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             // Record writes for adaptive compaction (12-09: workload tracking)
             if (inserted_count > 0) {
                 self.forest.adaptive_record_write(inserted_count);
+                self.spatial_scan_slots_dirty = true;
 
                 // Invalidate query result cache on writes (14-01)
                 if (self.result_cache) |cache| {
@@ -4073,11 +4093,10 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             var has_more: bool = false;
             const radius_mm_u64 = @as(u64, filter.radius_mm);
 
-            // Scan entire RAM index (temporary until LSM scan is available)
-            // NOTE: This is O(n) where n is index capacity. For production use,
-            // LSM tree range scan should be used instead.
-            var position: u64 = 0;
-            while (position < self.ram_index.capacity) {
+            // Scan only live slots cached from the RAM index.
+            // The cache is rebuilt lazily after mutating operations.
+            const active_slots = self.spatialScanSlots();
+            for (active_slots) |position| {
                 // Check if we've hit the result limit
                 if (result_count >= effective_limit) {
                     // There might be more results - we hit the limit before scanning all
@@ -4085,15 +4104,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     break;
                 }
                 // Read entry from index
-                const entry_ptr: *IndexEntry = &self.ram_index.entries[@intCast(position)];
-                const entry = @as(*volatile IndexEntry, @ptrCast(entry_ptr)).*;
-
-                position += 1;
-
-                // Skip empty slots and tombstones
-                if (entry.is_empty() or entry.is_tombstone()) {
-                    continue;
-                }
+                const entry = self.ram_index.entries[@intCast(position)];
 
                 // Extract S2 cell ID from composite latest_id (upper 64 bits)
                 const cell_id = @as(u64, @truncate(entry.latest_id >> 64));
@@ -4645,9 +4656,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             var entries_seen: usize = 0;
             var covering_passed: usize = 0;
 
-            // Scan entire RAM index (temporary until LSM scan is available)
-            var position: u64 = 0;
-            while (position < self.ram_index.capacity) {
+            // Scan only live slots cached from the RAM index.
+            const active_slots = self.spatialScanSlots();
+            for (active_slots) |position| {
                 // Check if we've hit the result limit
                 if (result_count >= effective_limit) {
                     // There might be more results - we hit the limit before scanning all
@@ -4655,15 +4666,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     break;
                 }
                 // Read entry from index
-                const entry_ptr: *IndexEntry = &self.ram_index.entries[@intCast(position)];
-                const entry = @as(*volatile IndexEntry, @ptrCast(entry_ptr)).*;
-
-                position += 1;
-
-                // Skip empty slots and tombstones
-                if (entry.is_empty() or entry.is_tombstone()) {
-                    continue;
-                }
+                const entry = self.ram_index.entries[@intCast(position)];
                 entries_seen += 1;
 
                 // Extract S2 cell ID and timestamp from composite latest_id
@@ -4902,17 +4905,12 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             var candidate_count: usize = 0;
             var matching_count: usize = 0;
 
-            // Scan RAM index to collect all non-deleted entries
+            // Scan cached live slots to collect all non-deleted entries
             // Per query-engine/spec.md: Use cursor_timestamp for pagination
             // cursor_timestamp > 0 means "only return events OLDER than this timestamp"
-            var position: u64 = 0;
-            while (position < self.ram_index.capacity) {
-                const entry_ptr: *IndexEntry = &self.ram_index.entries[@intCast(position)];
-                const entry = @as(*volatile IndexEntry, @ptrCast(entry_ptr)).*;
-                position += 1;
-
-                // Skip empty slots and tombstones
-                if (entry.is_empty() or entry.is_tombstone()) continue;
+            const active_slots = self.spatialScanSlots();
+            for (active_slots) |position| {
+                const entry = self.ram_index.entries[@intCast(position)];
 
                 // Apply cursor filter for pagination (F1.3.3 cursor-based pagination)
                 // Timestamp is lower 64 bits of latest_id
@@ -5115,6 +5113,25 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             return false;
         }
 
+        fn spatialScanSlots(self: *GeoStateMachine) []const u64 {
+            if (!self.spatial_scan_slots_dirty) {
+                return self.spatial_scan_slots[0..self.spatial_scan_slots_len];
+            }
+
+            var slot_count: usize = 0;
+            var position: u64 = 0;
+            while (position < self.ram_index.capacity) : (position += 1) {
+                const entry = self.ram_index.entries[@intCast(position)];
+                if (entry.is_empty() or entry.is_tombstone()) continue;
+                self.spatial_scan_slots[slot_count] = position;
+                slot_count += 1;
+            }
+            self.spatial_scan_slots_len = slot_count;
+            self.spatial_scan_slots_dirty = false;
+
+            return self.spatial_scan_slots[0..slot_count];
+        }
+
         /// Select S2 levels based on radius per spec decision table.
         /// Returns min_level and max_level for RegionCoverer.
         ///
@@ -5249,6 +5266,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                         self.cleanup_scanner.total_removed,
                     },
                 );
+                self.spatial_scan_slots_dirty = true;
 
                 // Invalidate query result cache when entries are removed (F2.4.8)
                 // Cached query results may reference expired/removed entries
