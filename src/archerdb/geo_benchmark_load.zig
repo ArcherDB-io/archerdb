@@ -4,15 +4,17 @@
 //!
 //! Measures:
 //! - F5.1.1: GeoEvent insert throughput (target: 1M events/sec per node)
-//! - F5.1.2: UUID lookup latency (target: <500us p99)
+//! - F5.1.2: UUID lookup latency (single-request, target: <500us p99)
+//! - F5.1.2b: UUID lookup latency (per-entity cost in batched requests, diagnostic)
 //! - F5.1.3: Radius query latency (target: <50ms p99)
 //! - F5.1.4: Polygon query latency (target: <100ms p99)
 //!
 //! Workload steps:
 //! 1. Insert GeoEvents (bulk insert to measure write throughput)
-//! 2. Query by UUID (single-client point lookup latency)
-//! 3. Query by radius (single-client spatial latency)
-//! 4. Query by polygon (single-client spatial latency)
+//! 2. Query by UUID (single-request, grade gate)
+//! 3. Query by UUID batch (per-entity diagnostic)
+//! 4. Query by radius (single-client spatial latency)
+//! 5. Query by polygon (single-client spatial latency)
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -33,6 +35,7 @@ const Client = vsr.ClientType(tb.Operation, MessageBus);
 const cli = @import("./cli.zig");
 
 const GeoEvent = tb.GeoEvent;
+const QueryUuidFilter = tb.QueryUuidFilter;
 const QueryUuidBatchFilter = tb.QueryUuidBatchFilter;
 const QueryRadiusFilter = tb.QueryRadiusFilter;
 const QueryPolygonFilter = tb.QueryPolygonFilter;
@@ -169,9 +172,10 @@ pub fn main(
     // F5.1.1: Insert throughput benchmark
     try benchmark.run(.insert_events);
 
-    // F5.1.2: UUID query latency benchmark
+    // F5.1.2: UUID single-request latency benchmark (grade gate)
     if (benchmark.query_uuid_count > 0) {
-        try benchmark.run(.query_uuid);
+        try benchmark.run(.query_uuid_single);
+        try benchmark.run(.query_uuid_batch);
     }
 
     // F5.1.3: Radius query latency benchmark
@@ -225,7 +229,8 @@ const GeoBenchmark = struct {
         idle,
         register,
         insert_events,
-        query_uuid,
+        query_uuid_single,
+        query_uuid_batch,
         query_radius,
         query_polygon,
     };
@@ -242,7 +247,7 @@ const GeoBenchmark = struct {
 
         b.stage = stage;
         switch (stage) {
-            .query_uuid => {
+            .query_uuid_single, .query_uuid_batch => {
                 b.latency_bucket_ns = std.time.ns_per_us;
                 b.latency_unit_label = "us";
             },
@@ -259,7 +264,8 @@ const GeoBenchmark = struct {
             switch (b.stage) {
                 .register => b.register(client),
                 .insert_events => b.insert_events(client),
-                .query_uuid => b.do_query_uuid(client),
+                .query_uuid_single => b.do_query_uuid_single(client),
+                .query_uuid_batch => b.do_query_uuid_batch(client),
                 .query_radius => b.do_query_radius(client),
                 .query_polygon => b.do_query_polygon(client),
                 .idle => break,
@@ -271,7 +277,7 @@ const GeoBenchmark = struct {
             const io_step_ns: u63 = switch (b.stage) {
                 .insert_events => constants.tick_ms * std.time.ns_per_ms,
                 .register => constants.tick_ms * std.time.ns_per_ms,
-                .query_uuid, .query_radius, .query_polygon => @as(u63, 100 * std.time.ns_per_us),
+                .query_uuid_single, .query_uuid_batch, .query_radius, .query_polygon => @as(u63, 100 * std.time.ns_per_us),
                 .idle => unreachable,
             };
             try b.io.run_for_ns(io_step_ns);
@@ -281,7 +287,7 @@ const GeoBenchmark = struct {
     fn stageClientCount(b: *const GeoBenchmark, stage: Stage) usize {
         return switch (stage) {
             .insert_events, .register => b.clients.len,
-            .query_uuid, .query_radius, .query_polygon => 1,
+            .query_uuid_single, .query_uuid_batch, .query_radius, .query_polygon => 1,
             .idle => 0,
         };
     }
@@ -296,6 +302,7 @@ const GeoBenchmark = struct {
         b.query_index = 0;
         b.events_created = 0;
         b.events_failed = 0;
+        b.clients_query_batch_count = @splat(0);
         @memset(b.request_latency_histogram, 0);
     }
 
@@ -463,15 +470,83 @@ const GeoBenchmark = struct {
     }
 
     // =========================================================================
-    // F5.1.2: UUID Query (Lookup Latency)
+    // F5.1.2a: UUID Query (Single-Request Latency, Grade Gate)
     // =========================================================================
 
-    fn do_query_uuid(b: *GeoBenchmark, client_index: u32) void {
-        assert(b.stage == .query_uuid);
+    fn do_query_uuid_single(b: *GeoBenchmark, client_index: u32) void {
+        assert(b.stage == .query_uuid_single);
         assert(!b.clients_busy.is_set(client_index));
 
         if (b.query_index >= b.query_uuid_count) {
-            if (b.clients_busy.empty()) b.query_uuid_finish();
+            if (b.clients_busy.empty()) b.query_uuid_single_finish();
+            return;
+        }
+
+        // Pick a random entity to query.
+        const entity_idx = b.prng.int(u32) % b.entity_count;
+        const entity_id = b.entity_ids[entity_idx];
+
+        const filter: *QueryUuidFilter = @ptrCast(@alignCast(&b.client_requests[client_index]));
+        filter.* = .{
+            .entity_id = entity_id,
+        };
+
+        b.query_index += 1;
+        b.request(client_index, .query_uuid, .{
+            .batch_count = 1,
+            .event_size = @sizeOf(QueryUuidFilter),
+        });
+    }
+
+    fn query_uuid_single_callback(b: *GeoBenchmark, client_index: u32, result: []const u8) void {
+        assert(b.stage == .query_uuid_single);
+        _ = result;
+
+        const request_duration_ns = b.timer.read() - b.clients_request_ns[client_index];
+        const request_duration_units = @divTrunc(request_duration_ns, b.latency_bucket_ns);
+        const hist_idx = @min(request_duration_units, b.request_latency_histogram.len - 1);
+        b.request_latency_histogram[hist_idx] += 1;
+
+        b.do_query_uuid_single(client_index);
+    }
+
+    fn query_uuid_single_finish(b: *GeoBenchmark) void {
+        assert(b.stage == .query_uuid_single);
+
+        const duration_s = @as(f64, @floatFromInt(b.timer.read())) / std.time.ns_per_s;
+
+        b.output.print(
+            \\
+            \\=== F5.1.2: UUID Query Latency (Single) ===
+            \\queries = {[queries]}
+            \\duration = {[duration]d:.2} s
+            \\target = <500us p99 (grade gate)
+            \\
+        , .{
+            .queries = b.query_index,
+            .duration = duration_s,
+        }) catch unreachable;
+
+        print_percentiles_histogram(
+            b.output,
+            "UUID single query",
+            b.request_latency_histogram,
+            b.latency_unit_label,
+        );
+
+        b.run_finish();
+    }
+
+    // =========================================================================
+    // F5.1.2b: UUID Query (Per-Entity Latency in Batch, Diagnostic)
+    // =========================================================================
+
+    fn do_query_uuid_batch(b: *GeoBenchmark, client_index: u32) void {
+        assert(b.stage == .query_uuid_batch);
+        assert(!b.clients_busy.is_set(client_index));
+
+        if (b.query_index >= b.query_uuid_count) {
+            if (b.clients_busy.empty()) b.query_uuid_batch_finish();
             return;
         }
 
@@ -498,9 +573,9 @@ const GeoBenchmark = struct {
         });
     }
 
-    fn query_uuid_callback(b: *GeoBenchmark, client_index: u32, result: []const u8) void {
-        assert(b.stage == .query_uuid);
-        _ = result; // Results contain GeoEvent(s)
+    fn query_uuid_batch_callback(b: *GeoBenchmark, client_index: u32, result: []const u8) void {
+        assert(b.stage == .query_uuid_batch);
+        _ = result;
 
         const batch_count = @max(@as(u16, 1), b.clients_query_batch_count[client_index]);
         b.clients_query_batch_count[client_index] = 0;
@@ -510,20 +585,20 @@ const GeoBenchmark = struct {
         const hist_idx = @min(request_duration_units, b.request_latency_histogram.len - 1);
         b.request_latency_histogram[hist_idx] += batch_count;
 
-        b.do_query_uuid(client_index);
+        b.do_query_uuid_batch(client_index);
     }
 
-    fn query_uuid_finish(b: *GeoBenchmark) void {
-        assert(b.stage == .query_uuid);
+    fn query_uuid_batch_finish(b: *GeoBenchmark) void {
+        assert(b.stage == .query_uuid_batch);
 
         const duration_s = @as(f64, @floatFromInt(b.timer.read())) / std.time.ns_per_s;
 
         b.output.print(
             \\
-            \\=== F5.1.2: UUID Query Latency ===
+            \\=== F5.1.2b: UUID Query Latency (Batch Per Entity) ===
             \\queries = {[queries]}
             \\duration = {[duration]d:.2} s
-            \\target = <500us p99
+            \\note = diagnostic only (not grade gate)
             \\
         , .{
             .queries = b.query_index,
@@ -532,7 +607,7 @@ const GeoBenchmark = struct {
 
         print_percentiles_histogram(
             b.output,
-            "UUID query",
+            "UUID batch-per-entity",
             b.request_latency_histogram,
             b.latency_unit_label,
         );
@@ -824,8 +899,8 @@ const GeoBenchmark = struct {
 
         switch (operation) {
             .insert_events => b.insert_events_callback(client, input),
-            .query_uuid => b.query_uuid_callback(client, input),
-            .query_uuid_batch => b.query_uuid_callback(client, input),
+            .query_uuid => b.query_uuid_single_callback(client, input),
+            .query_uuid_batch => b.query_uuid_batch_callback(client, input),
             .query_radius => b.query_radius_callback(client, input),
             .query_polygon => b.query_polygon_callback(client, input),
             else => unreachable,
