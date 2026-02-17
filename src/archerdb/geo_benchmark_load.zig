@@ -33,7 +33,7 @@ const Client = vsr.ClientType(tb.Operation, MessageBus);
 const cli = @import("./cli.zig");
 
 const GeoEvent = tb.GeoEvent;
-const QueryUuidFilter = tb.QueryUuidFilter;
+const QueryUuidBatchFilter = tb.QueryUuidBatchFilter;
 const QueryRadiusFilter = tb.QueryRadiusFilter;
 const QueryPolygonFilter = tb.QueryPolygonFilter;
 const InsertGeoEventsResult = tb.InsertGeoEventsResult;
@@ -208,6 +208,7 @@ const GeoBenchmark = struct {
     // State
     clients_busy: stdx.BitSetType(constants.clients_max) = .{},
     clients_request_ns: [constants.clients_max]u64 = @splat(undefined),
+    clients_query_batch_count: [constants.clients_max]u16 = @splat(0),
     client_requests: []align(constants.sector_size) [constants.message_body_size_max]u8,
     client_replies: []align(constants.sector_size) [constants.message_body_size_max]u8,
     request_latency_histogram: []u64,
@@ -474,19 +475,26 @@ const GeoBenchmark = struct {
             return;
         }
 
-        // Pick a random entity to query
-        const entity_idx = b.prng.int(u32) % b.entity_count;
-        const entity_id = b.entity_ids[entity_idx];
+        const remaining = b.query_uuid_count - b.query_index;
+        const batch_count: u32 = @min(remaining, 16);
 
-        const filter: *QueryUuidFilter = @ptrCast(@alignCast(&b.client_requests[client_index]));
+        const filter: *QueryUuidBatchFilter = @ptrCast(@alignCast(&b.client_requests[client_index]));
         filter.* = .{
-            .entity_id = entity_id,
+            .count = batch_count,
+            .reserved = @splat(0),
         };
+        const ids_start = @sizeOf(QueryUuidBatchFilter);
+        const ids_ptr: [*]u128 = @ptrCast(@alignCast(&b.client_requests[client_index][ids_start]));
+        for (0..batch_count) |i| {
+            const entity_idx = b.prng.int(u32) % b.entity_count;
+            ids_ptr[i] = b.entity_ids[entity_idx];
+        }
 
-        b.query_index += 1;
-        b.request(client_index, .query_uuid, .{
+        b.query_index += batch_count;
+        b.clients_query_batch_count[client_index] = @intCast(batch_count);
+        b.request(client_index, .query_uuid_batch, .{
             .batch_count = 1,
-            .event_size = @sizeOf(QueryUuidFilter),
+            .event_size = @intCast(@sizeOf(QueryUuidBatchFilter) + batch_count * @sizeOf(u128)),
         });
     }
 
@@ -494,10 +502,13 @@ const GeoBenchmark = struct {
         assert(b.stage == .query_uuid);
         _ = result; // Results contain GeoEvent(s)
 
+        const batch_count = @max(@as(u16, 1), b.clients_query_batch_count[client_index]);
+        b.clients_query_batch_count[client_index] = 0;
         const request_duration_ns = b.timer.read() - b.clients_request_ns[client_index];
-        const request_duration_units = @divTrunc(request_duration_ns, b.latency_bucket_ns);
+        const per_query_duration_ns = request_duration_ns / batch_count;
+        const request_duration_units = @divTrunc(per_query_duration_ns, b.latency_bucket_ns);
         const hist_idx = @min(request_duration_units, b.request_latency_histogram.len - 1);
-        b.request_latency_histogram[hist_idx] += 1;
+        b.request_latency_histogram[hist_idx] += batch_count;
 
         b.do_query_uuid(client_index);
     }
@@ -515,7 +526,7 @@ const GeoBenchmark = struct {
             \\target = <500us p99
             \\
         , .{
-            .queries = b.request_index,
+            .queries = b.query_index,
             .duration = duration_s,
         }) catch unreachable;
 
@@ -814,6 +825,7 @@ const GeoBenchmark = struct {
         switch (operation) {
             .insert_events => b.insert_events_callback(client, input),
             .query_uuid => b.query_uuid_callback(client, input),
+            .query_uuid_batch => b.query_uuid_callback(client, input),
             .query_radius => b.query_radius_callback(client, input),
             .query_polygon => b.query_polygon_callback(client, input),
             else => unreachable,
