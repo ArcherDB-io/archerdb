@@ -266,7 +266,7 @@ const GeoBenchmark = struct {
         }
 
         while (b.stage != .idle) {
-            for (b.clients) |*client| client.tick();
+            for (b.clients[0..active_clients]) |*client| client.tick();
             const io_step_ns: u63 = switch (b.stage) {
                 .insert_events => constants.tick_ms * std.time.ns_per_ms,
                 .register => constants.tick_ms * std.time.ns_per_ms,
