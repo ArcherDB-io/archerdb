@@ -4,6 +4,15 @@ High-performance geospatial database for fleet tracking, logistics, and real-tim
 
 ArcherDB provides specialized geospatial capabilities on a battle-tested distributed systems foundation.
 
+## Deployment Model
+
+ArcherDB follows a trusted-network, infrastructure-first security model:
+
+- Built-in authn/authz is out of scope (enforce at API/service gateway)
+- Built-in TLS/mTLS is out of scope (terminate and enforce in your network layer)
+- Built-in encryption-at-rest is out of scope (use disk/volume/cloud-native encryption)
+- Built-in managed backup orchestration is out of scope (use platform snapshots/backup tooling)
+
 ## Features
 
 ### Geospatial operations
@@ -45,11 +54,11 @@ ArcherDB provides specialized geospatial capabilities on a battle-tested distrib
 - Manual TTL operations
 - Data validation/integrity
 - Compliance/privacy controls
-- Encryption at rest
-- TLS/secure transport
+- Trusted-network deployment guidance
 
 ### Data movement & integration
-- Backup/restore
+- Replica recovery/rebuild
+- External snapshot/backup integration (operator-managed)
 - Data export
 - CSV import/export
 - Incremental load

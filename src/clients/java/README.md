@@ -281,7 +281,7 @@ try {
 
 | Exception | Error Codes | Retryable | Description |
 |-----------|-------------|-----------|-------------|
-| `ConnectionException` | 1-3 | Yes | Network connectivity issues (connection failed, timeout, TLS error) |
+| `ConnectionException` | 1-3 | Yes | Network connectivity issues (connection failed, timeout, transport boundary error) |
 | `ClusterException` | 201-203 | Yes | Cluster state issues (unavailable, view change, not primary) |
 | `ValidationException` | 100-120 | No | Invalid input parameters (coordinates, polygon, batch size) |
 | `OperationException` | 200-310 | Varies | Operation-level failures (entity not found, timeout, resource exhausted) |
@@ -313,22 +313,22 @@ try {
 }
 ```
 
-### Encryption Errors (410-414)
+### Security Boundary Errors (410-414, reserved/legacy)
 
-For clusters with encryption at rest:
+For deployments with external key/encryption controls:
 
 ```java
 EncryptionError encError = EncryptionError.fromCode(e.getErrorCode());
 if (encError != null) {
     switch (encError) {
         case ENCRYPTION_KEY_UNAVAILABLE:
-            // KMS/Vault connectivity issue - retry with backoff
+            // External key service issue - retry with backoff
             break;
         case DECRYPTION_FAILED:
-            // Data corruption or tampering - do not retry
+            // External data-protection/integrity failure - do not retry
             break;
         case KEY_ROTATION_IN_PROGRESS:
-            // Wait for rotation to complete
+            // Wait for external key rotation to complete
             break;
     }
 }

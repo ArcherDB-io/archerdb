@@ -59,19 +59,20 @@ We follow coordinated disclosure practices:
 
 ### Architecture Security
 
-ArcherDB inherits ArcherDB's security-focused architecture:
+ArcherDB follows deterministic, resource-bounded architecture principles:
 
 - **Deterministic execution**: All operations are deterministic, reducing attack surface
 - **No dynamic memory allocation**: Bounded resource usage prevents many memory-based attacks
 - **Consensus-based replication**: Byzantine fault tolerance through VSR protocol
 
-### Planned Security Features
+### Security Boundary Model
 
-The following security features are planned or in development:
+ArcherDB treats the following as external controls:
 
-- **mTLS**: Mutual TLS for all inter-node and client-server communication
-- **Authentication**: Client certificate validation
-- **Encryption at rest**: Data file encryption (planned)
+- **Authentication/authorization** at API gateway or service boundary
+- **TLS/mTLS** at gateway/service mesh/network layer
+- **Encryption at rest** via storage/cloud platform controls
+- **Backup orchestration** via external snapshot/backup systems
 
 ### Deployment Security
 
@@ -109,9 +110,7 @@ We appreciate the security research community's efforts in helping keep ArcherDB
 
 ## Upstream Security
 
-ArcherDB is a derivative of [ArcherDB](https://archerdb.com/). Security issues that affect the core consensus protocol or storage engine may also affect ArcherDB. We coordinate with the ArcherDB team on shared security concerns.
-
-If you discover a vulnerability that may affect ArcherDB, please also consider reporting it to them through their security channels.
+ArcherDB incorporates upstream distributed systems ideas and dependencies. If a vulnerability appears to affect upstream components, include that context in your report so maintainers can coordinate disclosure and remediation.
 
 ## Updates to This Policy
 

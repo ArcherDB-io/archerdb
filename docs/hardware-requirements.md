@@ -105,7 +105,7 @@ Required CPU features:
 | Feature | Required | Why |
 |---------|----------|-----|
 | x86-64 | Yes | Instruction set |
-| AES-NI | Yes | Aegis-128L checksums, encryption |
+| AES-NI | Yes | Aegis-128L checksums and crypto primitives used by core internals |
 | AVX2 | Recommended | SIMD operations |
 | RDTSCP | Recommended | High-resolution timing |
 

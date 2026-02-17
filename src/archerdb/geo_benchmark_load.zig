@@ -211,6 +211,7 @@ const GeoBenchmark = struct {
     event_index: usize = 0,
     query_index: usize = 0,
     events_created: usize = 0,
+    events_failed: usize = 0,
     stage: Stage = .idle,
 
     const Stage = enum {
@@ -261,6 +262,8 @@ const GeoBenchmark = struct {
         b.request_index = 0;
         b.event_index = 0;
         b.query_index = 0;
+        b.events_created = 0;
+        b.events_failed = 0;
         @memset(b.request_latency_histogram, 0);
     }
 
@@ -329,6 +332,7 @@ const GeoBenchmark = struct {
         // Check for errors
         for (results) |r| {
             if (r.result != .ok) {
+                b.events_failed += 1;
                 log.warn("insert error at index {}: {}", .{ r.index, r.result });
             }
         }
@@ -350,19 +354,24 @@ const GeoBenchmark = struct {
 
         const timer_ns: f64 = @floatFromInt(b.timer.read());
         const duration_s = timer_ns / std.time.ns_per_s;
-        const events_f: f64 = @floatFromInt(b.events_created);
+        const events_inserted = b.events_created -| b.events_failed;
+        const events_f: f64 = @floatFromInt(events_inserted);
         const events_per_sec: u64 = @intFromFloat(events_f / duration_s);
 
         b.output.print(
             \\
             \\=== F5.1.1: GeoEvent Write Throughput ===
-            \\events inserted = {[events]}
+            \\events attempted = {[events_attempted]}
+            \\events inserted = {[events_inserted]}
+            \\events failed = {[events_failed]}
             \\duration = {[duration]d:.2} s
             \\throughput = {[rate]} events/s
             \\target = 1,000,000 events/s per node
             \\
         , .{
-            .events = b.events_created,
+            .events_attempted = b.events_created,
+            .events_inserted = events_inserted,
+            .events_failed = b.events_failed,
             .duration = duration_s,
             .rate = events_per_sec,
         }) catch unreachable;

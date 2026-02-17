@@ -111,7 +111,7 @@ These errors fail immediately without retry:
 - `batch_too_large` - Batch exceeds maximum size
 - `query_result_too_large` - Query limit exceeded
 - `invalid_entity_id` - Zero or malformed entity ID
-- TLS/certificate errors
+- Secure-transport boundary errors (gateway/proxy certificate failures)
 
 ## Multi-Batch Retry Pattern
 

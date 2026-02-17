@@ -9,7 +9,7 @@ Before deploying ArcherDB in production, verify:
 - [ ] ArcherDB ports (3000-3002) not exposed to internet
 - [ ] Data files have restricted permissions (600)
 - [ ] Full disk encryption enabled on data volumes
-- [ ] Regular backups with encryption at rest
+- [ ] External snapshot/backup tooling configured with encrypted storage
 - [ ] SSH access restricted to authorized users only
 - [ ] Audit logging enabled for compliance requirements
 - [ ] Firewall rules configured to block external access
@@ -157,11 +157,11 @@ ls -la /var/lib/archerdb/
 Always encrypt backups at rest:
 
 ```bash
-# Encrypt backup with GPG
-archerdb backup /var/lib/archerdb/backup | gpg --symmetric --cipher-algo AES256 > backup.gpg
+# Encrypt platform snapshot/export with GPG
+tar -C /var/lib/archerdb -cf - . | gpg --symmetric --cipher-algo AES256 > archerdb-snapshot.tar.gpg
 
 # Encrypt with age (modern alternative)
-archerdb backup /var/lib/archerdb/backup | age -r age1... > backup.age
+tar -C /var/lib/archerdb -cf - . | age -r age1... > archerdb-snapshot.tar.age
 ```
 
 For automated backups, see [Backup Operations](./backup-operations.md) for integration with encrypted storage backends.
@@ -181,54 +181,23 @@ hdparm --user-master u --security-erase SECRET /dev/sdb
 
 For cloud deployments, rely on provider's encryption and volume destruction procedures.
 
-## Available Security Capabilities
+## Security Non-Goals (Product Surface)
 
-ArcherDB includes security capabilities that are available but not enabled in the default local-only deployment. Enable these features if your threat model requires them:
+ArcherDB intentionally does not treat the following controls as built-in server guarantees:
 
-### TLS Support
+- Authentication / authorization
+- TLS / mTLS transport security
+- Native encryption-at-rest key management
+- Managed backup orchestration
 
-TLS encryption for client and replica connections is available:
+These controls should be enforced in surrounding infrastructure:
 
-```bash
-# Enable TLS for client connections (configuration example)
-archerdb --tls-cert /etc/archerdb/server.crt \
-         --tls-key /etc/archerdb/server.key \
-         --tls-ca /etc/archerdb/ca.crt
-```
+- API gateway/service mesh for authn/authz and TLS termination
+- Private networking + firewall segmentation for east-west traffic
+- Cloud/disk encryption and KMS policy controls for at-rest protection
+- Platform backup tooling (volume snapshots, object-store replication, restore drills)
 
-Configuration details: See `src/archerdb/tls_config.zig` for supported cipher suites and mTLS configuration.
-
-### Encryption at Rest
-
-Page-level encryption is available via the `--encryption` flag:
-
-```bash
-# Enable encryption at rest
-archerdb --encryption --encryption-key-file /etc/archerdb/data.key
-```
-
-Supports:
-- Aegis-256 and AES-256-GCM algorithms
-- KMS integration for key management
-- Key rotation without downtime
-
-Configuration details: See [Encryption Guide](./encryption-guide.md) for comprehensive setup.
-
-### Audit Logging
-
-GDPR-compliant audit logging is available:
-
-```bash
-# Enable audit logging
-archerdb --audit-log /var/log/archerdb/audit.log
-```
-
-Captures:
-- All data access events
-- Administrative operations
-- Configuration changes
-
-Configuration details: See `src/archerdb/compliance_audit.zig` for audit event structure.
+Use this model as the default for production hardening and compliance evidence.
 
 ## Operational Security
 
@@ -295,8 +264,9 @@ sudo apt update && sudo apt upgrade
 Regularly verify backup integrity:
 
 ```bash
-# Verify backup can be restored (quarterly)
-archerdb restore --verify-only /backups/archerdb-latest.backup
+# Verify latest snapshot/archive can be restored (quarterly)
+# Example: restore in staging and run smoke checks
+./scripts/test-readiness-persistence.sh
 
 # Test actual restore to staging environment (monthly)
 # See disaster-recovery.md for full procedure
@@ -314,24 +284,22 @@ This deployment model is appropriate **only if** these assumptions hold:
 | OS-level security | Firewall active, disk encryption enabled, patches applied |
 | Single-tenant | No multi-tenant isolation requirements |
 
-If any assumption does not hold, enable the additional security capabilities described above or reconsider the deployment architecture.
+If any assumption does not hold, do not expose ArcherDB directly. Introduce an external security boundary (gateway/proxy/service mesh) and infrastructure encryption controls before expanding trust boundaries.
 
-## When to Enable Additional Security
+## When to Add External Controls
 
-Enable TLS, encryption at rest, and/or authentication when:
+Add or strengthen external controls when:
 
-- Remote access is required (clients connect over network, not localhost)
-- Multi-tenant deployment is needed (different users' data must be isolated)
-- Compliance requirements apply (PCI-DSS, HIPAA, SOC 2)
-- Data sensitivity requires defense in depth (PII, PHI, financial data)
-- SaaS deployment exposes database to external customers
-
-See [Phase 6 Verification](../.planning/phases/06-security-hardening/06-VERIFICATION.md) for the full implementation path when these triggers occur.
+- Remote access is required (non-local clients)
+- Multi-tenant isolation is required
+- Compliance controls require auditable authn/authz and encrypted transport
+- Data sensitivity requires defense in depth
+- Any workload introduces untrusted clients or networks
 
 ## Related Documentation
 
-- [Disaster Recovery](./disaster-recovery.md) - Backup and restore procedures
+- [Disaster Recovery](./disaster-recovery.md) - External backup and restore procedures
 - [Operations Runbook](./operations-runbook.md) - Day-to-day operational procedures
-- [Encryption Guide](./encryption-guide.md) - Encryption at rest configuration
-- [Encryption Security](./encryption-security.md) - Security model and key management
+- [Encryption Guide](./encryption-guide.md) - External encryption-at-rest controls
+- [Encryption Security](./encryption-security.md) - Data-protection model and non-goals
 - [Upgrade Guide](./upgrade-guide.md) - Secure upgrade procedures

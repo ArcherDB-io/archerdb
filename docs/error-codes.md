@@ -11,7 +11,7 @@ This document provides a complete reference for all ArcherDB error codes.
 | 100-199 | Validation | Invalid inputs, constraint violations |
 | 200-299 | State | Entity/cluster state errors |
 | 300-399 | Resource | Limits exceeded, capacity constraints |
-| 400-499 | Security | Authentication, authorization |
+| 400-499 | Security | External security-boundary policy and access controls |
 | 500-599 | Internal | Bugs (should not occur in production) |
 
 ## Retry Semantics
@@ -64,24 +64,24 @@ These errors occur in sharded cluster deployments.
 - Code 223: The requested shard count is not valid (e.g., must be power of 2).
 - Code 224: A resharding operation failed. Check cluster health.
 
-### Encryption Errors (410-414)
+### Security Boundary Errors (410-414, reserved/legacy)
 
-These errors occur with encryption at rest enabled.
+These codes are reserved for deployments that layer external security controls around ArcherDB.
 
 | Code | Name | Message | Retryable |
 |------|------|---------|-----------|
-| 410 | `ENCRYPTION_KEY_UNAVAILABLE` | Cannot retrieve encryption key from provider | Yes |
-| 411 | `DECRYPTION_FAILED` | Failed to decrypt data (auth tag mismatch) | No |
-| 412 | `ENCRYPTION_NOT_ENABLED` | Encryption required but not configured | No |
-| 413 | `KEY_ROTATION_IN_PROGRESS` | Key rotation in progress, retry later | Yes |
-| 414 | `UNSUPPORTED_ENCRYPTION_VERSION` | File encrypted with unsupported version | No |
+| 410 | `ENCRYPTION_KEY_UNAVAILABLE` | External key service unavailable | Yes |
+| 411 | `DECRYPTION_FAILED` | External data-protection validation failed | No |
+| 412 | `ENCRYPTION_NOT_ENABLED` | External encryption policy not satisfied | No |
+| 413 | `KEY_ROTATION_IN_PROGRESS` | External key rotation in progress | Yes |
+| 414 | `UNSUPPORTED_ENCRYPTION_VERSION` | Unsupported external data-protection format/version | No |
 
 **Usage Notes:**
-- Code 410: KMS/Vault connectivity issue. Check key provider health.
-- Code 411: Data corruption or tampering detected. Data integrity compromised.
-- Code 412: Server requires encryption but client didn't configure it.
-- Code 413: Wait for key rotation to complete. Operations will succeed after.
-- Code 414: Upgrade server to support the encryption version.
+- Code 410: Check external key management service availability and IAM/policy bindings.
+- Code 411: Validate storage snapshot integrity and external decryption path.
+- Code 412: Verify infrastructure policy requires encrypted storage/transport for this route.
+- Code 413: Retry after external key rotation completes.
+- Code 414: Align external tooling format/version with deployment standards.
 
 ## SDK Error Handling
 
@@ -91,10 +91,8 @@ These errors occur with encryption at rest enabled.
 from archerdb import (
     MultiRegionError,
     ShardingError,
-    EncryptionError,
     MultiRegionException,
     ShardingException,
-    EncryptionException,
     is_retryable,
 )
 
@@ -116,7 +114,6 @@ except ShardingException as e:
 
 ```java
 import com.archerdb.geo.ShardingError;
-import com.archerdb.geo.EncryptionError;
 import com.archerdb.geo.ArcherDBException;
 
 try {
@@ -124,10 +121,6 @@ try {
 } catch (ArcherDBException e) {
     ShardingError shardError = ShardingError.fromCode(e.getErrorCode());
     if (shardError != null && shardError.isRetryable()) {
-        // Retry with backoff
-    }
-    EncryptionError encError = EncryptionError.fromCode(e.getErrorCode());
-    if (encError != null && encError.isRetryable()) {
         // Retry with backoff
     }
 }
@@ -191,13 +184,13 @@ try {
 | 221 errors cluster-wide | Shard failure | Check cluster health, may need recovery |
 | Long 222 wait times | Large resharding | Monitor resharding progress |
 
-### Encryption Issues
+### Security Boundary Issues (410-414)
 
 | Symptom | Likely Cause | Solution |
 |---------|--------------|----------|
-| 410 errors at startup | KMS connectivity | Check KMS credentials and network |
-| 411 errors on read | Data corruption | Restore from backup |
-| 413 during rotation | Key rotation | Wait for completion (~minutes) |
+| 410 errors at startup | External key service unreachable | Check key-service connectivity and IAM/policy |
+| 411 errors on read | External protection/integrity failure | Restore from validated external snapshot |
+| 413 during rotation | External key rotation window | Wait for completion and retry |
 
 ## Related Documentation
 

@@ -2,6 +2,8 @@
 
 ArcherDB is a distributed geospatial database built for real-time location tracking at scale. It combines the consistency guarantees of Viewstamped Replication (VSR) with a high-performance S2-based spatial index, enabling sub-millisecond queries across billions of location events.
 
+Security and continuity controls are infrastructure-managed by default: authn/authz, TLS/mTLS, encryption at rest, and backup orchestration are expected to be enforced outside of ArcherDB itself.
+
 ## Quick Links
 
 | Guide | Time | Description |
@@ -63,10 +65,10 @@ Comprehensive guides for each language:
 - [Capacity Planning](capacity-planning.md) - Sizing clusters for your workload
 - [Multi-Region Deployment](multi-region-deployment.md) - Cross-region replication setup
 
-### Backup & Recovery
+### Recovery & Continuity
 
-- [Backup Operations](backup-operations.md) - Online backup procedures
-- [Disaster Recovery](disaster-recovery.md) - Failover and restore procedures
+- [Backup Operations](backup-operations.md) - External snapshot/backup integration guidance
+- [Disaster Recovery](disaster-recovery.md) - Replica recovery and external restore procedures
 - [Upgrade Guide](upgrade-guide.md) - Rolling upgrades and rollback
 
 ### Troubleshooting
@@ -106,9 +108,9 @@ Architecture and design:
 
 ## Security
 
-- [Security Best Practices](security-best-practices.md) - Infrastructure security for local deployment
-- [Encryption Guide](encryption-guide.md) - Encryption at rest configuration
-- [Encryption Security](encryption-security.md) - Security model and key management
+- [Security Best Practices](security-best-practices.md) - Infrastructure security and trust-boundary model
+- [Encryption Guide](encryption-guide.md) - External encryption-at-rest controls
+- [Encryption Security](encryption-security.md) - Data-protection model and non-goals
 
 ## Internals
 

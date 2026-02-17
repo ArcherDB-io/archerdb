@@ -16,7 +16,7 @@
 # The --development flag is for testing dev mode behavior.
 # Default runs in production mode to validate CRIT-02.
 
-set -e
+set -euo pipefail
 
 # macOS-compatible timeout function (GNU timeout not available by default)
 if ! command -v timeout &>/dev/null; then
@@ -25,6 +25,35 @@ if ! command -v timeout &>/dev/null; then
         perl -e 'alarm shift; exec @ARGV' "$duration" "$@"
     }
 fi
+
+get_free_port() {
+    python3 - <<'PYEOF'
+import socket
+
+sock = socket.socket()
+sock.bind(("127.0.0.1", 0))
+print(sock.getsockname()[1])
+sock.close()
+PYEOF
+}
+
+wait_for_ready() {
+    local port=$1
+    local max_attempts=${2:-20}
+    local attempt=1
+
+    while [ "$attempt" -le "$max_attempts" ]; do
+        local status
+        status=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${port}/health/ready" 2>/dev/null || echo "000")
+        if [ "$status" = "200" ]; then
+            return 0
+        fi
+        sleep 0.2
+        attempt=$((attempt + 1))
+    done
+
+    return 1
+}
 
 file_size_bytes() {
     local file_path=$1
@@ -42,7 +71,7 @@ C_SAMPLE="$ROOT_DIR/zig-out/bin/c_sample"
 
 # Check for development mode flag
 DEV_MODE=""
-if [ "$1" = "--development" ]; then
+if [ "${1:-}" = "--development" ]; then
     DEV_MODE="--development"
     echo "NOTE: Running in development mode (for comparison testing)"
 fi
@@ -91,33 +120,23 @@ echo ""
 # ===========================================================
 echo "PHASE 2: Starting server (first time)..."
 
+# Reserve explicit ports to avoid brittle log scraping for random ports
+DATA_PORT=$(get_free_port)
+METRICS_PORT=$(get_free_port)
+
 # Start server with metrics
-$ARCHERDB start --addresses=127.0.0.1:0 --metrics-port=0 --metrics-bind=127.0.0.1 $DEV_MODE test.archerdb > server1.log 2>&1 &
+$ARCHERDB start --addresses="127.0.0.1:${DATA_PORT}" --metrics-port="$METRICS_PORT" --metrics-bind=127.0.0.1 $DEV_MODE test.archerdb > server1.log 2>&1 &
 SERVER_PID=$!
 echo "Server PID: $SERVER_PID"
-
-# Wait for server to start and extract ports
-sleep 2
-
-# Extract metrics port from log (metrics server listening line)
-METRICS_PORT=$(grep "metrics server listening" server1.log | sed -n 's/.*127\.0\.0\.1:\([0-9]*\).*/\1/p' || echo "")
-if [ -z "$METRICS_PORT" ]; then
-    echo "FAIL: Could not determine metrics port"
-    cat server1.log
-    kill $SERVER_PID 2>/dev/null || true
-    exit 1
-fi
+echo "Data port: $DATA_PORT"
 echo "Metrics port: $METRICS_PORT"
 
-# Extract data port from log (cluster listening line - has "cluster=" prefix)
-DATA_PORT=$(grep "cluster=.*listening on" server1.log | sed -n 's/.*127\.0\.0\.1:\([0-9]*\).*/\1/p' || echo "")
-if [ -z "$DATA_PORT" ]; then
-    echo "FAIL: Could not determine data port"
+if ! wait_for_ready "$METRICS_PORT" 20; then
+    echo "FAIL: Server did not become ready on metrics port $METRICS_PORT"
     cat server1.log
     kill $SERVER_PID 2>/dev/null || true
     exit 1
 fi
-echo "Data port: $DATA_PORT"
 
 # Test CRIT-01: Readiness probe should return 200 immediately
 echo ""
@@ -231,25 +250,21 @@ echo ""
 # ===========================================================
 echo "PHASE 5: Restarting server..."
 
-$ARCHERDB start --addresses=127.0.0.1:0 --metrics-port=0 --metrics-bind=127.0.0.1 $DEV_MODE test.archerdb > server2.log 2>&1 &
+DATA_PORT2=$(get_free_port)
+METRICS_PORT2=$(get_free_port)
+
+$ARCHERDB start --addresses="127.0.0.1:${DATA_PORT2}" --metrics-port="$METRICS_PORT2" --metrics-bind=127.0.0.1 $DEV_MODE test.archerdb > server2.log 2>&1 &
 SERVER_PID=$!
 echo "Server PID: $SERVER_PID"
+echo "New metrics port: $METRICS_PORT2"
+echo "New data port: $DATA_PORT2"
 
-# Wait for server to start
-sleep 3
-
-# Extract new ports
-METRICS_PORT2=$(grep "metrics server listening" server2.log | sed -n 's/.*127\.0\.0\.1:\([0-9]*\).*/\1/p' || echo "")
-DATA_PORT2=$(grep "cluster=.*listening on" server2.log | sed -n 's/.*127\.0\.0\.1:\([0-9]*\).*/\1/p' || echo "")
-
-if [ -z "$METRICS_PORT2" ] || [ -z "$DATA_PORT2" ]; then
-    echo "FAIL: Could not determine ports after restart"
+if ! wait_for_ready "$METRICS_PORT2" 30; then
+    echo "FAIL: Server did not become ready after restart on metrics port $METRICS_PORT2"
     cat server2.log
     kill $SERVER_PID 2>/dev/null || true
     exit 1
 fi
-echo "New metrics port: $METRICS_PORT2"
-echo "New data port: $DATA_PORT2"
 
 # Test readiness after restart
 echo ""

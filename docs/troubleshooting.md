@@ -34,7 +34,7 @@ Use this table to quickly identify and resolve common issues:
 - [Cluster Issues](#cluster-issues)
 - [Query Issues](#query-issues)
 - [Replication Issues](#replication-issues)
-- [Encryption Issues](#encryption-issues)
+- [Data Protection Issues](#data-protection-issues)
 - [Diagnostic Commands](#diagnostic-commands)
 
 ## How to Use This Guide
@@ -186,44 +186,44 @@ For log format configuration, see `--log-format` and `--log-level` options.
    ```
 
 3. **If data file is wrong:**
-   Restore from backup or re-format with correct cluster ID.
+   Restore from external snapshot/archive or re-format with correct cluster ID.
 
 **Prevention:** Store cluster IDs in configuration management. Use separate DNS names per cluster.
 
 ---
 
-### TLS Handshake Failed
+### Gateway TLS Handshake Failed
 
-**Symptom:** Connection fails with TLS/SSL handshake error.
+**Symptom:** Connection fails with TLS/SSL handshake error at gateway/proxy boundary.
 
 **Possible Causes:**
 1. Certificate expired
 2. Hostname mismatch
 3. CA certificate not trusted
-4. Protocol version mismatch
+4. Protocol/cipher mismatch in gateway or service mesh
 
 **Resolution:**
 
-1. **Check certificate expiry:**
+1. **Check certificate expiry in gateway/proxy:**
    ```bash
    openssl x509 -in /path/to/cert.pem -noout -dates
    ```
-   If expired, rotate certificates (see [Certificate Rotation](operations-runbook.md#certificate-rotation-mtls)).
+   If expired, rotate certificates (see [Certificate Rotation](operations-runbook.md#gatewayproxy-certificate-rotation)).
 
-2. **Verify hostname matches certificate:**
+2. **Verify hostname/SAN matches exposed endpoint:**
    ```bash
    openssl x509 -in /path/to/cert.pem -noout -text | grep -A1 "Subject Alternative Name"
    ```
 
-3. **Test TLS connection:**
+3. **Test TLS endpoint directly:**
    ```bash
    openssl s_client -connect node1:3000 -CAfile /path/to/ca.pem
    ```
 
-4. **Check TLS version compatibility:**
-   Ensure both client and server support TLS 1.2+.
+4. **Check TLS version/cipher compatibility:**
+   Ensure client and gateway/proxy settings are aligned.
 
-**Prevention:** Monitor certificate expiry dates. Automate certificate rotation. Use consistent TLS configuration.
+**Prevention:** Monitor certificate expiry dates. Automate rotation in gateway/mesh control plane. Keep TLS policy managed centrally.
 
 ## Performance Issues
 
@@ -625,9 +625,9 @@ This is **not possible** with ArcherDB's Viewstamped Replication (VSR) protocol.
 
 ## Replication Issues
 
-### S3 Upload Failing
+### S3 Log Shipping Failing
 
-**Symptom:** S3 backup uploads failing; `archerdb_replication_state` shows degraded.
+**Symptom:** S3 log-shipping uploads failing; `archerdb_replication_state` shows degraded.
 
 **Possible Causes:**
 1. Invalid credentials
@@ -726,71 +726,39 @@ This is **not possible** with ArcherDB's Viewstamped Replication (VSR) protocol.
 
 **Prevention:** Alert on spillover directory size. Use multiple S3 regions for redundancy.
 
-## Encryption Issues
+## Data Protection Issues
 
-### Decryption Failed
+ArcherDB expects encryption-at-rest and key operations to be managed by storage/cloud infrastructure.
 
-**Symptom:** "Decryption failed" errors in logs; queries returning errors.
+### Storage Encryption Policy Drift
+
+**Symptom:** Security scans report unencrypted volumes/snapshots.
 
 **Possible Causes:**
-1. Key rotation incomplete
-2. Data corruption
-3. Wrong encryption key
+1. New volume created outside policy
+2. Snapshot replication policy disabled
+3. Wrong storage class or account defaults
 
 **Resolution:**
 
-1. **Check key rotation status:**
-   ```bash
-   ./archerdb encryption status --data-file=/data/archerdb.db
-   ```
-   If rotation in progress, wait for completion.
+1. Verify encryption settings on active data volumes and snapshots.
+2. Recreate non-compliant resources with enforced encryption policy.
+3. Re-run restore drill from compliant snapshot set.
 
-2. **Verify data integrity:**
-   ```bash
-   ./archerdb verify /data/archerdb.db
-   ```
+### External Key Service Issues
 
-3. **If key was lost:**
-   Data encrypted with lost key is unrecoverable. Restore from backup made before key loss.
-
-**Prevention:** Back up encryption keys securely. Test key rotation in staging. Never delete keys without backup verification.
-
----
-
-### Key Unavailable
-
-**Symptom:** "Key unavailable" or KMS errors at startup.
+**Symptom:** Platform tooling reports KMS/key policy failures.
 
 **Possible Causes:**
-1. KMS connectivity failure
-2. IAM permissions insufficient
-3. Key deleted or disabled
+1. KMS connectivity or endpoint policy issue
+2. IAM permissions drift
+3. Key disabled/deleted
 
 **Resolution:**
 
-1. **Test KMS connectivity:**
-   ```bash
-   # AWS KMS
-   aws kms describe-key --key-id your-key-id
-
-   # Check IAM permissions
-   aws iam simulate-principal-policy \
-     --policy-source-arn arn:aws:iam::...:role/archerdb \
-     --action-names kms:Decrypt kms:Encrypt
-   ```
-
-2. **Verify key status:**
-   ```bash
-   aws kms describe-key --key-id your-key-id | grep KeyState
-   # Should be "Enabled"
-   ```
-
-3. **Check network to KMS endpoint:**
-   ```bash
-   nc -zv kms.us-east-1.amazonaws.com 443
-   ```
-
-**Prevention:** Use VPC endpoints for KMS. Monitor KMS API errors. Enable key automatic rotation in KMS.
+1. Validate key accessibility with platform tooling.
+2. Restore least-privilege IAM/key policies from IaC baseline.
+3. Ensure restore pipeline can access required keys before recovery exercises.
 
 ## Diagnostic Commands
 
@@ -935,7 +903,7 @@ When opening a GitHub issue, include:
 
 For production emergencies:
 
-1. **Data loss suspected**: Stop writes, take backup, preserve logs
+1. **Data loss suspected**: Stop writes, capture external snapshot, preserve logs
 2. **Cluster unavailable**: Check quorum (need 2/3 or 3/5 replicas)
 3. **Security incident**: Isolate affected nodes, preserve evidence, rotate credentials
 

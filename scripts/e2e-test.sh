@@ -337,7 +337,7 @@ run_client_tests() {
     local metrics_response
     metrics_response=$(curl -sf "http://127.0.0.1:$metrics_port/metrics" 2>&1)
 
-    if echo "$metrics_response" | grep -q "archerdb_"; then
+    if grep -q "archerdb_" <<< "$metrics_response"; then
         success "Cluster metrics available"
         tests_passed=$((tests_passed + 1))
     else

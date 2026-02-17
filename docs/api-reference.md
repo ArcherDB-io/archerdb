@@ -1236,7 +1236,7 @@ Errors are grouped into ranges by category:
 | 100-199 | Validation | Fix request parameters |
 | 200-299 | State | Check cluster health, retry if transient |
 | 300-399 | Resource | Reduce batch size, check limits |
-| 400-499 | Security | Check authentication, permissions |
+| 400-499 | Security | Check gateway/service authn/authz policy |
 | 500-599 | Internal | Contact support (should not occur) |
 
 ### Retry Semantics
@@ -1546,7 +1546,7 @@ For most use cases, use the official SDKs. This section provides protocol detail
 
 ArcherDB uses a custom binary protocol over TCP:
 
-- **Transport:** TCP with optional TLS
+- **Transport:** TCP on trusted private networks (TLS termination external)
 - **Framing:** Length-prefixed messages
 - **Encoding:** Little-endian binary
 - **Compression:** None (data is already compact)

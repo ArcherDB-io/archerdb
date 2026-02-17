@@ -896,7 +896,7 @@ All errors return a JSON object with error details:
 | 100-199 | Validation | Fix request parameters |
 | 200-299 | State | Check cluster health, retry if transient |
 | 300-399 | Resource | Reduce batch size, check limits |
-| 400-499 | Security | Check authentication, permissions |
+| 400-499 | Security | Check external gateway/service authn/authz policy |
 | 500-599 | Internal | Contact support |
 
 ### Retryable vs Non-Retryable Errors
@@ -988,11 +988,14 @@ All query operations (radius, polygon, latest) use cursor-based pagination.
 
 ## Authentication
 
-Authentication is not currently required. All endpoints are open.
+Authentication is enforced outside ArcherDB in the API/service boundary.
 
-Future versions may add:
-- API key authentication
-- JWT token authentication
+ArcherDB protocol endpoints should only be reachable from trusted internal networks.
+Use gateway/service-mesh policy for:
+
+- Client identity
+- Authentication
+- Authorization
 
 ---
 

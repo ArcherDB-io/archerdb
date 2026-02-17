@@ -134,7 +134,7 @@
 - [ ] Does the WAL (Write-Ahead Log) replay correctly?
 - [ ] Does checkpointing preserve state?
 - [ ] Can you verify checksums on stored data?
-- [ ] Does encryption work without data loss?
+- [ ] Do external encryption controls preserve data without loss?
 - [ ] Is fsync called appropriately?
 - [ ] What's the durability guarantee? (per-write, batched)
 
@@ -290,13 +290,13 @@
 - [ ] Are corruption events logged/alerted?
 
 #### 7.6 Backup & Restore
-- [ ] Does backup and restore work?
-- [ ] Can you do online backups? (no downtime)
-- [ ] Can you do incremental backups?
-- [ ] Can you restore to a point in time?
-- [ ] What's the backup performance impact?
+- [ ] Are external backup/snapshot and restore workflows documented and tested?
+- [ ] Can you do online snapshots/backups? (no downtime)
+- [ ] Can you do incremental backups via platform tooling?
+- [ ] Can you restore to a point in time via external tooling?
+- [ ] What's the snapshot/backup performance impact?
 - [ ] What's the restore time for typical dataset?
-- [ ] Are backups verified/checksummed?
+- [ ] Are backup artifacts verified/checksummed?
 
 #### 7.7 RTO/RPO Validation
 - [ ] Are RTO targets defined per deployment tier? (dev/staging/prod/enterprise)
@@ -308,7 +308,7 @@
 
 #### 7.8 Crypto & Key Management Failure Drills
 - [ ] Is behavior validated when KMS/HSM/key provider is unavailable?
-- [ ] Is expired/invalid TLS certificate behavior fail-safe and alerting?
+- [ ] Is expired/invalid external transport certificate behavior fail-safe and alerting?
 - [ ] Are key-rotation failure/rollback procedures tested end-to-end?
 - [ ] Can mixed-key rollout mismatches be detected and recovered without data loss?
 - [ ] Is lost-key disaster handling documented with expected recoverability outcomes?
@@ -379,7 +379,7 @@
 - [ ] Are timeouts configurable?
 - [ ] Is connection pooling configurable?
 - [ ] Are retry policies configurable?
-- [ ] Is TLS configurable?
+- [ ] Is external secure transport configuration documented?
 - [ ] Are SDK defaults sensible?
 
 #### 9.5 Error Handling
@@ -876,25 +876,25 @@
 ### 23. Security & Compliance
 
 #### 23.1 Encryption
-- [ ] Does encryption at rest work? (AES-256-GCM)
-- [ ] Does TLS/encryption in transit work?
-- [ ] Are keys rotated?
-- [ ] Is key management secure?
-- [ ] Are encryption algorithms configurable?
+- [ ] Is encryption at rest enforced by storage/platform controls?
+- [ ] Is encryption in transit enforced by gateway/service mesh/network controls?
+- [ ] Are external keys rotated?
+- [ ] Is external key management secure?
+- [ ] Are encryption policies configurable in infrastructure/IaC?
 
 #### 23.2 Authentication
-- [ ] Is authentication implemented?
-- [ ] Are multiple auth methods supported?
-- [ ] Is password hashing secure?
-- [ ] Is MFA/2FA supported?
-- [ ] Are credentials stored securely?
+- [ ] Is authentication enforced at the API/service boundary?
+- [ ] Are supported external auth methods documented?
+- [ ] Is credential storage delegated to an identity platform securely?
+- [ ] Is MFA/2FA enforced for administrative surfaces?
+- [ ] Are machine credentials stored and rotated securely?
 
 #### 23.3 Authorization
-- [ ] Is authorization implemented?
-- [ ] Is RBAC supported?
+- [ ] Is authorization enforced at the API/service boundary?
+- [ ] Is RBAC/ABAC supported in the external control plane?
 - [ ] Are permissions granular enough?
 - [ ] Is principle of least privilege enforced?
-- [ ] Can you audit permissions?
+- [ ] Can you audit permissions from external control-plane logs?
 
 #### 23.4 Audit & Compliance
 - [ ] Can you audit access?
@@ -975,8 +975,8 @@
 
 #### 25.3 Tenant Security
 - [ ] Is cross-tenant data access prevented?
-- [ ] Are tenant-specific encryption keys supported?
-- [ ] Can tenants have separate auth configs?
+- [ ] Are tenant-specific encryption controls supported by platform tooling?
+- [ ] Can tenants have separate auth configs at the gateway/control plane?
 
 ---
 
@@ -1163,7 +1163,7 @@
 #### 32.3 Dependency & Toolchain Compatibility
 - [ ] Are compiler/runtime/library version floors and ceilings defined?
 - [ ] Are dependency upgrade smoke tests automated?
-- [ ] Are TLS/cipher compatibility matrices validated for supported clients?
+- [ ] Are secure transport compatibility matrices validated for the chosen gateway/mesh stack?
 - [ ] Are package-manager and SDK language-version matrices tested?
 
 #### 32.4 Upgrade & Rollback Compatibility

@@ -305,7 +305,7 @@ except MultiRegionException as e:
 2. **Follower Count**: 1-3 followers per region (more increases replication load)
 3. **Network**: Use dedicated inter-region links or VPN for replication
 4. **Monitoring**: Alert on `replication_lag_seconds > 5`
-5. **Backups**: Run backups from primary only (`--backup-primary-only`)
+5. **Backups**: Run external snapshot pipelines from the primary region
 6. **Testing**: Regularly test failover procedures
 
 ## Troubleshooting
@@ -327,5 +327,5 @@ except MultiRegionException as e:
 ## Related Documentation
 
 - [Error Codes Reference](error-codes.md) - Multi-region error codes
-- [Disaster Recovery](disaster-recovery.md) - Backup and recovery procedures
+- [Disaster Recovery](disaster-recovery.md) - External snapshot recovery procedures
 - [Operations Runbook](operations-runbook.md) - Day-to-day operations

@@ -413,7 +413,7 @@ See [error-codes.md](../../../docs/error-codes.md) for complete error code docum
 | 100-199 | Validation | Invalid inputs, constraint violations |
 | 200-299 | State | Entity/cluster state errors |
 | 300-399 | Resource | Limits exceeded, capacity constraints |
-| 400-499 | Security | Authentication, authorization |
+| 400-499 | Security | External security-boundary policy and access controls |
 | 500-599 | Internal | Server bugs (contact support) |
 
 ## Sample Projects

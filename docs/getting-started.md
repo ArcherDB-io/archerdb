@@ -20,6 +20,15 @@ This guide gets you to your first spatial query quickly, then shows you the full
 - **Operating System**: Linux (kernel >= 5.6), macOS, or Windows
 - **For SDKs**: Python 3.9+, Node.js 18+, Go 1.21+, or Java 11+
 
+## Security Boundary Note
+
+ArcherDB expects security controls at the infrastructure boundary:
+
+- Authentication/authorization at your API or gateway layer
+- TLS/mTLS in gateway/service mesh or private network transport
+- Encryption at rest and key management in storage/cloud platform
+- Backup orchestration via external snapshot/backup tooling
+
 ## Installation (~2 min)
 
 Download the pre-built binary for your platform:

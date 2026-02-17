@@ -52,8 +52,8 @@ Before starting any upgrade, complete this checklist:
 ### Required Checks
 
 - [ ] **Review CHANGELOG** for breaking changes between your current version and target version
-- [ ] **Verify backup is recent** - Ensure backup completed within acceptable RPO (see [backup-operations.md](backup-operations.md))
-- [ ] **Test backup restore** - Verify backup can be restored in a test environment
+- [ ] **Verify external snapshots are recent** - Ensure snapshot jobs completed within acceptable RPO (see [backup-operations.md](backup-operations.md))
+- [ ] **Test snapshot restore** - Verify external restore works in a test environment
 - [ ] **Check cluster health** - All replicas must be healthy before upgrade
   ```bash
   archerdb upgrade status --addresses=node1:3000,node2:3000,node3:3000
@@ -500,6 +500,6 @@ Triggers manual rollback. Requires `--force` flag for confirmation.
 ## Related Documentation
 
 - [Operations Runbook](operations-runbook.md) - General operational procedures
-- [Backup Operations](backup-operations.md) - Backup and restore procedures
+- [Backup Operations](backup-operations.md) - External snapshot and restore procedures
 - [Disaster Recovery](disaster-recovery.md) - DR planning and procedures
 - [Monitoring](operations-runbook.md#monitoring) - Metrics and alerting

@@ -58,7 +58,7 @@ kubectl exec archerdb-0 -n archerdb -- curl -s localhost:9090/metrics | grep arc
 - **High ingest rate:** Writing data faster than TTL can clean it
 - **TTL not configured:** Data accumulating without automatic cleanup
 - **Compaction behind:** Dead space not being reclaimed
-- **Spillover files:** S3 backup failures causing local spillover
+- **Spillover files:** S3 log-shipping failures causing local spillover
 - **Logs/temp files:** Non-database files consuming space
 
 ## Resolution
@@ -68,13 +68,13 @@ kubectl exec archerdb-0 -n archerdb -- curl -s localhost:9090/metrics | grep arc
 1. **Check for non-essential files:**
    ```bash
    kubectl exec archerdb-0 -n archerdb -- ls -la /data/
-   # Look for spillover/, tmp/, or backup files
+   # Look for spillover/, tmp/, or snapshot export files
    ```
 
 2. **Check spillover directory:**
    ```bash
    kubectl exec archerdb-0 -n archerdb -- du -sh /data/spillover/ 2>/dev/null
-   # If large, check S3 backup status
+   # If large, check S3 log-shipping status
    ```
 
 3. **Force compaction (recovers dead space):**
@@ -125,14 +125,15 @@ kubectl exec archerdb-0 -n archerdb -- curl -s localhost:9090/metrics | grep arc
 
 If immediate deletion is not acceptable:
 
-1. **Create backup of current data:**
+1. **Create external snapshot/archive of current data:**
    ```bash
-   ./archerdb backup create --bucket=s3://archive-bucket --cluster-id=...
+   # Example: archive data directory to encrypted object storage
+   tar -C /data -cf - archerdb.db | aws s3 cp - s3://archive-bucket/archerdb-$(date +%Y%m%d).tar
    ```
 
-2. **Verify backup success:**
+2. **Verify archive success:**
    ```bash
-   ./archerdb backup list --bucket=s3://archive-bucket
+   aws s3 ls s3://archive-bucket/ | tail -n 5
    ```
 
 3. **Consider time-based archival strategy** for compliance requirements.
@@ -217,6 +218,6 @@ watch -n 60 'kubectl exec archerdb-0 -n archerdb -- df -h /data'
 ## Related Documentation
 
 - [Capacity Planning](../capacity-planning.md) - Sizing guidelines
-- [Backup Operations](../backup-operations.md) - Backup procedures
+- [Backup Operations](../backup-operations.md) - External snapshot procedures
 - [Compaction Backlog](compaction-backlog.md) - If compaction is contributing to space issues
 - [Operations Runbook](../operations-runbook.md) - General operations

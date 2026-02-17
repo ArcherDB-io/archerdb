@@ -534,8 +534,8 @@ Before any upgrade:
 - [ ] Read the [CHANGELOG](CHANGELOG.md) for breaking changes
 - [ ] Verify current cluster health: `./archerdb status --addresses=$ADDRESSES`
 - [ ] Check all replicas are healthy: `curl localhost:9090/health/detailed` on each
-- [ ] Create a backup: `./archerdb backup create --bucket=s3://... --cluster-id=...`
-- [ ] Verify backup succeeded: `./archerdb backup verify --bucket=s3://...`
+- [ ] Trigger external snapshot/backup workflow for all replica volumes
+- [ ] Verify snapshot replication and retention policy status
 - [ ] Test the new version in a staging environment
 - [ ] Schedule maintenance window (upgrades are non-disruptive but allow buffer time)
 
@@ -671,7 +671,7 @@ kubectl rollout undo statefulset/archerdb -n archerdb
 ```
 
 **If rollback fails or data corruption suspected:**
-See [Disaster Recovery Procedures](disaster-recovery.md) for backup restoration.
+See [Disaster Recovery Procedures](disaster-recovery.md) for external snapshot restoration.
 
 ## Maintenance
 
@@ -730,7 +730,7 @@ cp benchmark-results/summary_*.csv benchmark-results/baseline.csv
 The benchmark summary is stored under `benchmark-results/` and can be compared to a baseline
 by re-running the script with `--baseline benchmark-results/baseline.csv`.
 
-### Certificate Rotation (mTLS)
+### Gateway/Proxy Certificate Rotation
 
 ```bash
 # 1. Deploy new certificates alongside old ones
@@ -751,7 +751,7 @@ This section covers quick troubleshooting tips. For comprehensive diagnosis and 
 1. Check server is running: `systemctl status archerdb`
 2. Check port is open: `netstat -tlnp | grep 3000`
 3. Check firewall rules: `iptables -L -n`
-4. Check TLS certificates (if using mTLS)
+4. Check gateway/proxy TLS certificates (if applicable)
 5. Verify cluster_id matches between client and server
 
 ### High Latency
@@ -881,11 +881,11 @@ curl -s localhost:9090/metrics > metrics-$(date +%Y%m%d).prom
 | [Capacity Planning](capacity-planning.md) | Sizing guidelines for hardware and configuration |
 | [LSM Tuning](lsm-tuning.md) | Storage engine performance optimization |
 
-### Backup and Recovery
+### External Backup and Recovery
 
 | Document | Description |
 |----------|-------------|
-| [Backup Operations](backup-operations.md) | Online backup procedures, verification, retention |
+| [Backup Operations](backup-operations.md) | External snapshot procedures, verification, retention |
 | [Disaster Recovery](disaster-recovery.md) | DR planning, RTO/RPO targets, recovery procedures |
 | [Upgrade Guide](upgrade-guide.md) | Rolling upgrade procedures, rollback, health checks |
 
