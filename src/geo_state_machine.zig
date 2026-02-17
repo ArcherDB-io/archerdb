@@ -4074,29 +4074,56 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 return @sizeOf(QueryResponse);
             }
 
-            // Generate S2 covering for the query region (plan phase)
-            // Try covering cache first (14-02)
-            var scratch: [s2_index.s2_scratch_size]u8 = undefined;
-
-            // Select S2 levels based on radius per spec decision table
-            const level_params = selectS2Levels(filter.radius_mm);
+            const radius_m = @as(f64, @floatFromInt(filter.radius_mm)) / 1000.0;
+            const radius_fast_path = radius_m <= 10_000.0;
 
             var covering: [s2_index.s2_max_cells]s2_index.CellRange = undefined;
             var num_ranges: usize = 0;
+            const end_plan = if (radius_fast_path) end_parse else plan: {
+                // Generate S2 covering for the query region (plan phase)
+                // Try covering cache first (14-02)
+                var scratch: [s2_index.s2_scratch_size]u8 = undefined;
 
-            if (self.covering_cache) |cache| {
-                if (cache.getCapCovering(
-                    filter.center_lat_nano,
-                    filter.center_lon_nano,
-                    filter.radius_mm,
-                )) |cached| {
-                    // Cache hit - use cached covering
-                    covering = cached.ranges;
-                    num_ranges = cached.num_ranges;
-                    archerdb_metrics.Registry.s2_covering_cache_hits_total.inc();
+                // Select S2 levels based on radius per spec decision table
+                const level_params = selectS2Levels(filter.radius_mm);
+
+                if (self.covering_cache) |cache| {
+                    if (cache.getCapCovering(
+                        filter.center_lat_nano,
+                        filter.center_lon_nano,
+                        filter.radius_mm,
+                    )) |cached| {
+                        // Cache hit - use cached covering
+                        covering = cached.ranges;
+                        num_ranges = cached.num_ranges;
+                        archerdb_metrics.Registry.s2_covering_cache_hits_total.inc();
+                    } else {
+                        // Cache miss - compute and cache
+                        archerdb_metrics.Registry.s2_covering_cache_misses_total.inc();
+                        covering = S2.coverCap(
+                            &scratch,
+                            filter.center_lat_nano,
+                            filter.center_lon_nano,
+                            filter.radius_mm,
+                            level_params.min_level,
+                            level_params.max_level,
+                        );
+                        // Count non-empty ranges
+                        for (covering) |range| {
+                            if (range.start != 0 or range.end != 0) {
+                                num_ranges += 1;
+                            }
+                        }
+                        // Cache the result
+                        cache.putCapCovering(
+                            filter.center_lat_nano,
+                            filter.center_lon_nano,
+                            filter.radius_mm,
+                            covering,
+                        );
+                    }
                 } else {
-                    // Cache miss - compute and cache
-                    archerdb_metrics.Registry.s2_covering_cache_misses_total.inc();
+                    // No cache - compute directly
                     covering = S2.coverCap(
                         &scratch,
                         filter.center_lat_nano,
@@ -4111,39 +4138,17 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                             num_ranges += 1;
                         }
                     }
-                    // Cache the result
-                    cache.putCapCovering(
-                        filter.center_lat_nano,
-                        filter.center_lon_nano,
-                        filter.radius_mm,
-                        covering,
-                    );
                 }
-            } else {
-                // No cache - compute directly
-                covering = S2.coverCap(
-                    &scratch,
-                    filter.center_lat_nano,
-                    filter.center_lon_nano,
-                    filter.radius_mm,
-                    level_params.min_level,
-                    level_params.max_level,
-                );
-                // Count non-empty ranges
-                for (covering) |range| {
-                    if (range.start != 0 or range.end != 0) {
-                        num_ranges += 1;
-                    }
-                }
-            }
-            const end_plan = std.time.nanoTimestamp();
 
-            // Record S2 covering size for spatial stats (14-03)
-            self.spatial_stats.recordCoveringSize(.radius, @intCast(num_ranges));
+                // Record S2 covering size for spatial stats (14-03)
+                self.spatial_stats.recordCoveringSize(.radius, @intCast(num_ranges));
+                log.debug("query_radius: covering generated with {d} ranges", .{num_ranges});
+                break :plan std.time.nanoTimestamp();
+            };
 
-            log.debug("query_radius: covering generated with {d} ranges", .{num_ranges});
-
-            if (self.index_recovery_blocks_covering(covering[0..])) {
+            if ((radius_fast_path and self.index_recovery.blocks_all()) or
+                (!radius_fast_path and self.index_recovery_blocks_covering(covering[0..])))
+            {
                 const end_time = std.time.nanoTimestamp();
                 const duration_ns: u64 = if (end_time > start_time)
                     @intCast(end_time - start_time)
@@ -4179,7 +4184,6 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             const center_lon = filter.center_lon_nano;
 
             // Cheap prefilter window to avoid expensive Haversine checks for obvious misses.
-            const radius_m = @as(f64, @floatFromInt(filter.radius_mm)) / 1000.0;
             const lat_delta_nano_f = radius_m * (1_000_000_000.0 / 111_320.0);
             const lat_delta_nano = @as(i64, @intFromFloat(@ceil(lat_delta_nano_f)));
             const center_lat_deg = @as(f64, @floatFromInt(center_lat)) / 1_000_000_000.0;
@@ -4191,7 +4195,6 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 if (lon_delta >= 180_000_000_000.0) break :blk @as(i64, 180_000_000_000);
                 break :blk @as(i64, @intFromFloat(@ceil(lon_delta)));
             };
-            const radius_fast_path = radius_m <= 10_000.0;
             if (radius_fast_path) {
                 const min_lat_i128 = @as(i128, center_lat) - @as(i128, lat_delta_nano);
                 const max_lat_i128 = @as(i128, center_lat) + @as(i128, lat_delta_nano);
