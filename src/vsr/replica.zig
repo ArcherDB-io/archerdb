@@ -331,6 +331,11 @@ pub fn ReplicaType(
         client_replies: ClientReplies,
         /// In-memory cache for solo read-only fast-path replies, indexed by client slot.
         fast_read_replies: [constants.clients_max]?*Message.Reply = @splat(null),
+        /// Last committed reply headers per client slot.
+        /// Fast read-path responses update `client_sessions` for request chaining but do not update
+        /// this committed snapshot, so checkpoints remain replay-safe.
+        client_sessions_committed_headers: [constants.clients_max]Header.Reply =
+            @splat(std.mem.zeroes(Header.Reply)),
 
         /// An abstraction to send messages from the replica to another replica or client.
         /// The message bus will also deliver messages to this replica by calling
@@ -1075,6 +1080,7 @@ pub fn ReplicaType(
                 assert(trailer_size == trailer_chunks[0].len);
                 self.client_sessions.decode(trailer_chunks[0]);
             }
+            self.client_sessions_committed_refresh_from_entries();
 
             if (self.superblock.working.vsr_state.sync_op_max > 0) {
                 maybe(!self.client_replies.writing.empty());
@@ -1632,6 +1638,7 @@ pub fn ReplicaType(
             self.static_allocator.transition_from_static_to_deinit();
 
             self.fast_read_replies_clear_all();
+            self.client_sessions_committed_clear_all();
             self.grid_scrubber.deinit(allocator);
             self.client_replies.deinit();
             self.client_sessions_checkpoint.deinit(allocator);
@@ -2218,6 +2225,42 @@ pub fn ReplicaType(
                 const slot = ReplySlot{ .index = slot_index };
                 self.fast_read_reply_clear(slot);
             }
+        }
+
+        fn client_sessions_committed_clear_all(self: *Replica) void {
+            @memset(
+                self.client_sessions_committed_headers[0..],
+                std.mem.zeroes(Header.Reply),
+            );
+        }
+
+        fn client_sessions_committed_refresh_from_entries(self: *Replica) void {
+            self.client_sessions_committed_clear_all();
+            for (0..constants.clients_max) |slot_index| {
+                if (!self.client_sessions.entries_present.is_set(slot_index)) continue;
+                self.client_sessions_committed_headers[slot_index] =
+                    self.client_sessions.entries[slot_index].header;
+            }
+        }
+
+        fn client_sessions_encode_committed_snapshot(
+            self: *Replica,
+            target: []align(@alignOf(vsr.Header)) u8,
+        ) usize {
+            var runtime_headers: [constants.clients_max]Header.Reply = undefined;
+            for (0..constants.clients_max) |slot_index| {
+                if (!self.client_sessions.entries_present.is_set(slot_index)) continue;
+
+                runtime_headers[slot_index] = self.client_sessions.entries[slot_index].header;
+                self.client_sessions.entries[slot_index].header =
+                    self.client_sessions_committed_headers[slot_index];
+            }
+            const encoded_size = self.client_sessions.encode(target);
+            for (0..constants.clients_max) |slot_index| {
+                if (!self.client_sessions.entries_present.is_set(slot_index)) continue;
+                self.client_sessions.entries[slot_index].header = runtime_headers[slot_index];
+            }
+            return encoded_size;
         }
 
         /// Replication is simple, with a single code path for the primary and backups.
@@ -5264,7 +5307,8 @@ pub fn ReplicaType(
             const chunks = self.client_sessions_checkpoint.encode_chunks();
             assert(chunks.len == 1);
 
-            self.client_sessions_checkpoint.size = self.client_sessions.encode(chunks[0]);
+            self.client_sessions_checkpoint.size =
+                self.client_sessions_encode_committed_snapshot(chunks[0]);
             assert(self.client_sessions_checkpoint.size == ClientSessions.encode_size);
 
             if (self.status == .normal and self.primary()) {
@@ -5772,11 +5816,22 @@ pub fn ReplicaType(
                     .{ self.log_prefix(), prepare.header.op, self.op_checkpoint() },
                 );
             } else {
-                switch (reply.header.operation) {
-                    .root => unreachable,
-                    .register => self.client_table_entry_create(reply),
-                    .pulse, .upgrade => assert(reply.header.client == 0),
-                    else => self.client_table_entry_update(reply),
+                if (self.status == .recovering and
+                    self.replica_count == 1 and
+                    reply.header.client != 0 and
+                    reply.header.operation != .register)
+                {
+                    // In solo recovery, read-only fast-path requests are not journaled.
+                    // Replaying only committed prepares can therefore leave request chains
+                    // sparse relative to the in-memory session state.
+                    // Keep the session state loaded from trailer and skip replay updates.
+                } else {
+                    switch (reply.header.operation) {
+                        .root => unreachable,
+                        .register => self.client_table_entry_create(reply),
+                        .pulse, .upgrade => assert(reply.header.client == 0),
+                        else => self.client_table_entry_update(reply),
+                    }
                 }
             }
 
@@ -5986,6 +6041,8 @@ pub fn ReplicaType(
                 const evictee = self.client_sessions.evictee();
                 const evictee_slot = self.client_sessions.get_slot_for_client(evictee).?;
                 self.fast_read_reply_clear(evictee_slot);
+                self.client_sessions_committed_headers[evictee_slot.index] =
+                    std.mem.zeroes(Header.Reply);
                 self.client_sessions.remove(evictee);
 
                 assert(self.client_sessions.count() == constants.clients_max - 1);
@@ -6013,6 +6070,7 @@ pub fn ReplicaType(
             // client table entry already existed, or been dropped if a session was being committed:
             const reply_slot = self.client_sessions.put(session, reply.header);
             assert(self.client_sessions.count() <= constants.clients_max);
+            self.client_sessions_committed_headers[reply_slot.index] = reply.header.*;
 
             self.client_replies.write_reply(reply_slot, reply, .commit);
         }
@@ -6031,7 +6089,28 @@ pub fn ReplicaType(
                 assert(entry.header.commit >= entry.session);
 
                 assert(entry.header.client == reply.header.client);
-                assert(entry.header.request + 1 == reply.header.request);
+                const reply_slot = self.client_sessions.get_slot_for_client(reply.header.client).?;
+                if (self.solo() and
+                    (entry.header.request >= reply.header.request or
+                        entry.header.op >= reply.header.op or
+                        entry.header.commit >= reply.header.commit))
+                {
+                    // In solo mode, read-only fast-path responses may advance request
+                    // chaining without creating prepares. Replay can therefore observe
+                    // stale committed replies relative to the in-memory chain.
+                    self.client_sessions_committed_headers[reply_slot.index] = reply.header.*;
+                    entry.header.op = @max(entry.header.op, reply.header.op);
+                    entry.header.commit = @max(entry.header.commit, reply.header.commit);
+                    entry.header.timestamp = @max(entry.header.timestamp, reply.header.timestamp);
+                    return;
+                }
+
+                if (self.solo()) {
+                    // Solo request chaining can contain gaps because fast-path reads are not journaled.
+                    assert(entry.header.request < reply.header.request);
+                } else {
+                    assert(entry.header.request + 1 == reply.header.request);
+                }
                 assert(entry.header.op < reply.header.op);
                 assert(entry.header.commit < reply.header.commit);
                 assert(entry.header.release.value == reply.header.release.value);
@@ -6047,9 +6126,9 @@ pub fn ReplicaType(
                     reply.header.request,
                 });
 
-                const reply_slot = self.client_sessions.get_slot_for_client(reply.header.client).?;
                 self.fast_read_reply_clear(reply_slot);
                 entry.header = reply.header.*;
+                self.client_sessions_committed_headers[reply_slot.index] = reply.header.*;
 
                 if (entry.header.size == @sizeOf(Header)) {
                     self.client_replies.remove_reply(reply_slot);
@@ -10894,6 +10973,7 @@ pub fn ReplicaType(
             self.client_sessions_checkpoint.reset();
             self.client_sessions.reset();
             self.fast_read_replies_clear_all();
+            self.client_sessions_committed_clear_all();
 
             if (self.aof) |aof| aof.sync();
             // Faulty bits will be set in client_sessions_open_callback().
