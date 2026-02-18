@@ -285,9 +285,9 @@ main() {
 
     for i in $(seq 1 "${ITERATIONS}"); do
         if run_test_iteration "$i"; then
-            ((passed++))
+            passed=$((passed + 1))
         else
-            ((failed++))
+            failed=$((failed + 1))
         fi
         echo ""
     done
