@@ -1088,6 +1088,7 @@ test "tidy unix permissions" {
         "scripts/parca-agent.sh",
         "scripts/profile.sh",
         "scripts/run-perf-benchmarks.sh",
+        "scripts/run_benchmarks.sh",
         "scripts/run_integration_tests.sh",
         "scripts/sigkill_crash_test.sh",
         "scripts/stress-test.sh",
