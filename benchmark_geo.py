@@ -182,6 +182,12 @@ assert ctypes.sizeof(CGeoEvent) == 128, f"GeoEvent size mismatch: {ctypes.sizeof
 # These are different from ArcherDB's Account/Transfer operations
 OP_INSERT_EVENTS = 146  # vsr_operations_reserved (128) + 18
 
+# Maximum events per request.  The server rejects batches whose encoded size
+# exceeds message_body_size_max.  With lite config (message_size_max=32 KiB,
+# header=256 B, safety_margin=1024 B) the limit is 246 events.  Use a safe
+# value that works with both lite and production configs.
+WIRE_BATCH_MAX = 240
+
 # ============================================================================
 # ID Generator (ULID-based)
 # ============================================================================
@@ -306,10 +312,22 @@ class GeoClient:
         print(f"Connected to cluster {cluster_id} at {addresses}")
 
     def insert_events(self, events: List[CGeoEvent], timeout_ms: int = 30000) -> int:
-        """Insert GeoEvents and return number of errors."""
+        """Insert GeoEvents and return number of errors.
+
+        Automatically splits the batch into wire-safe chunks so callers
+        don't need to know the server's message_size_max.
+        """
         if not events:
             return 0
 
+        total_errors = 0
+        for offset in range(0, len(events), WIRE_BATCH_MAX):
+            chunk = events[offset:offset + WIRE_BATCH_MAX]
+            total_errors += self._send_insert_batch(chunk, timeout_ms)
+        return total_errors
+
+    def _send_insert_batch(self, events: List[CGeoEvent], timeout_ms: int) -> int:
+        """Send a single insert batch that fits within the wire limit."""
         # Create array of events
         EventArray = CGeoEvent * len(events)
         events_array = EventArray(*events)
