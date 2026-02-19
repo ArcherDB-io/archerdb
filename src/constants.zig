@@ -159,6 +159,12 @@ pub const memory_size_max_default = config.process.memory_size_max_default;
 /// This impacts the amount of memory allocated at initialization by the server.
 pub const cache_geo_events_size_default = config.process.cache_geo_events_size_default;
 
+/// Memory budget for the RAM index (entity lookup hash table).
+/// Determines how many entities the node can track before IndexDegraded.
+/// Each slot costs 96 bytes (64-byte IndexEntry + 32 bytes scan buffers).
+/// Usable entities ≈ ram_index_size_default / 96 × 0.70 (load factor).
+pub const ram_index_size_default = config.process.ram_index_size_default;
+
 /// The size of the client replies zone.
 pub const client_replies_size = clients_max * message_size_max;
 

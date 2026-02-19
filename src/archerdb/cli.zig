@@ -115,6 +115,7 @@ const CLIArgs = union(enum) {
         // Stable CLI arguments.
         addresses: []const u8,
         cache_grid: ?ByteSize = null,
+        ram_index_size: ?ByteSize = null,
         development: bool = false,
         log_level: LogLevel = .info,
         log_format: LogFormat = .auto,
@@ -1612,6 +1613,7 @@ pub const Command = union(enum) {
         // this logic by accident.
         addresses_zero: bool,
         cache_geo_events: u32,
+        ram_index_capacity: u32,
         storage_size_limit: u64,
         pipeline_requests_limit: u32,
         request_size_limit: u32,
@@ -2461,6 +2463,13 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
             start.cache_geo_events orelse defaults.cache_geo_events,
             "--cache-geo-events",
         ),
+        .ram_index_capacity = ram_index_capacity: {
+            const size = if (start.ram_index_size) |s| s else ByteSize{ .value = constants.ram_index_size_default };
+            const bytes = size.bytes();
+            // Each RAM index slot costs ~96 bytes (64B entry + 32B scan buffers).
+            const slots = @max(500_000, bytes / 96);
+            break :ram_index_capacity @intCast(slots);
+        },
         .cache_grid_blocks = parse_cache_size_to_count(
             [constants.block_size]u8,
             Grid.Cache,

@@ -1012,6 +1012,11 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             lsm_forest_node_count: u32 = 4096,
             /// Cache entries for geo events.
             cache_entries_geo_events: u32 = 256,
+            /// RAM index capacity (hash table slots) for entity lookups.
+            /// At 70% load factor, supports capacity × 0.70 unique entities.
+            /// Derived from ram_index_size_default / 96 (bytes per slot) at the
+            /// call site.  Falls back to 500K for tests and backwards compat.
+            ram_index_capacity: u32 = 500_000,
             /// Per ttl-retention/spec.md: Global default TTL in days.
             /// 0 = infinite (no expiration), > 0 = events expire after that many days.
             /// Applied when clients set event.ttl_seconds = 0.
@@ -1225,14 +1230,11 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         ) !void {
             _ = time;
 
-            // Allocate RAM index for entity lookups (F2.1)
-            // Capacity: 500K slots at 50% cuckoo load factor = 250K entities.
-            // This supports benchmark workloads (10K-200K events, 1K-10K entities)
-            // while remaining reasonable for lite config (~32MB at 64 bytes/entry).
-            // For production scale (1B entities), use constants.index_capacity.
-            // Optimization note (05-02): Increased from 10K to 500K to eliminate
-            // IndexDegraded errors at benchmark scale - was the #1 write bottleneck.
-            const ram_index_capacity: u32 = 500_000;
+            // Allocate RAM index for entity lookups (F2.1).
+            // Capacity is derived from the per-config cache_geo_events_size_default
+            // so that production/enterprise configs get a proportionally larger index.
+            // At ~50% cuckoo load factor the usable entity count ≈ capacity / 2.
+            const ram_index_capacity: u32 = options.ram_index_capacity;
             const ram_index = try init_ram_index(allocator, ram_index_capacity, options);
             errdefer {
                 ram_index.deinit(allocator);

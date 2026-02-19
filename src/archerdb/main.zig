@@ -889,6 +889,7 @@ fn command_start(
                 .lsm_forest_compaction_block_count = args.lsm_forest_compaction_block_count,
                 .lsm_forest_node_count = args.lsm_forest_node_count,
                 .cache_entries_geo_events = args.cache_geo_events,
+                .ram_index_capacity = args.ram_index_capacity,
                 // Per ttl-retention/spec.md: Global default TTL configuration
                 .default_ttl_days = args.default_ttl_days,
                 .memory_mapped_index_enabled = args.memory_mapped_index_enabled,

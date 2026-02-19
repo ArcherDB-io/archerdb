@@ -135,6 +135,11 @@ const ConfigProcess = struct {
     storage_size_limit_max: u64 = 64 * TiB,
     memory_size_max_default: u64 = GiB,
     cache_geo_events_size_default: u64,
+    /// Memory budget for the RAM index (entity lookup hash table).
+    /// Determines how many entities the node can track before IndexDegraded.
+    /// Each slot costs 64 bytes (IndexEntry) plus ~32 bytes for scan buffers.
+    /// Usable entities ≈ ram_index_size_default / 96 × 0.70 (load factor).
+    ram_index_size_default: u64,
     client_request_queue_max: u32 = 2,
     lsm_manifest_node_size: u64 = 16 * KiB,
     connection_delay_min_ms: u64 = 50,
@@ -487,6 +492,7 @@ pub const configs = struct {
         .process = .{
             .direct_io = true,
             .cache_geo_events_size_default = @sizeOf(vsr.archerdb.GeoEvent) * MiB,
+            .ram_index_size_default = 2 * GiB, // ~22M slots → ~15M entities
             .verify = true,
         },
         .cluster = .{
@@ -538,6 +544,7 @@ pub const configs = struct {
         .process = .{
             .direct_io = true,
             .cache_geo_events_size_default = @sizeOf(vsr.archerdb.GeoEvent) * 4 * MiB,
+            .ram_index_size_default = 16 * GiB, // ~178M slots → ~125M entities
             .verify = true,
             // Higher I/O concurrency for NVMe
             .journal_iops_read_max = 16,
@@ -598,6 +605,7 @@ pub const configs = struct {
         .process = .{
             .direct_io = true,
             .cache_geo_events_size_default = @sizeOf(vsr.archerdb.GeoEvent) * 2 * MiB,
+            .ram_index_size_default = 4 * GiB, // ~44M slots → ~31M entities
             .verify = true,
             // Moderate I/O concurrency for SATA SSDs
             .journal_iops_read_max = 8,
@@ -652,6 +660,7 @@ pub const configs = struct {
             .storage_size_limit_max = 16 * GiB,
             .direct_io = false,
             .cache_geo_events_size_default = @sizeOf(vsr.archerdb.GeoEvent) * 256,
+            .ram_index_size_default = 64 * MiB, // ~699K slots → ~489K entities
             .journal_iops_read_max = 3,
             .journal_iops_write_max = 2,
             .grid_repair_request_max = 4,
