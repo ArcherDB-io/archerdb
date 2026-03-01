@@ -2451,6 +2451,18 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
         vsr.fatal(.cli, "--log-level=debug must be provided when using --log-trace", .{});
     }
 
+    // Multi-region flags are parsed but not yet plumbed through to the start path.
+    // Emit a clear error rather than silently dropping them.
+    if (start.region_role != null or start.region_id != null or
+        start.primary_region != null or start.follower_regions != null)
+    {
+        vsr.fatal(
+            .cli,
+            "multi-region flags (--region-role, --region-id, --primary-region, --follower-regions) are not yet implemented",
+            .{},
+        );
+    }
+
     return .{
         .addresses = addresses,
         .addresses_zero = std.mem.eql(u8, start.addresses, "0"),
@@ -2519,23 +2531,31 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
         // Backup configuration (F5.5 - Backup & Restore)
         .backup_enabled = start.backup_enabled,
         .backup_provider = if (start.backup_provider) |p|
-            backup_config.StorageProvider.fromString(p) orelse .s3
+            backup_config.StorageProvider.fromString(p) orelse {
+                vsr.fatal(.cli, "--backup-provider: invalid '{s}' (s3/gcs/azure/local)", .{p});
+            }
         else
             .s3,
         .backup_bucket = start.backup_bucket,
         .backup_region = start.backup_region,
         .backup_credentials = start.backup_credentials,
         .backup_mode = if (start.backup_mode) |m|
-            backup_config.BackupMode.fromString(m) orelse .best_effort
+            backup_config.BackupMode.fromString(m) orelse {
+                vsr.fatal(.cli, "--backup-mode: invalid '{s}' (best-effort/mandatory)", .{m});
+            }
         else
             .best_effort,
         .backup_encryption = if (start.backup_encryption) |e|
-            backup_config.EncryptionMode.fromString(e) orelse .sse
+            backup_config.EncryptionMode.fromString(e) orelse {
+                vsr.fatal(.cli, "--backup-encryption: invalid '{s}' (none/sse/sse-kms)", .{e});
+            }
         else
             .sse,
         .backup_kms_key_id = start.backup_kms_key_id,
         .backup_compress = if (start.backup_compress) |c|
-            backup_config.CompressionMode.fromString(c) orelse .none
+            backup_config.CompressionMode.fromString(c) orelse {
+                vsr.fatal(.cli, "--backup-compress: invalid '{s}' (none/zstd)", .{c});
+            }
         else
             .none,
         .backup_queue_soft_limit = start.backup_queue_soft_limit,

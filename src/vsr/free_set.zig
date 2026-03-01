@@ -655,8 +655,7 @@ pub const FreeSet = struct {
 
         // The encoder does not encode trailing 0s, so everything past words_decoded must be zeroed.
         assert(stdx.zeroed(std.mem.sliceAsBytes(target_bitset_words[words_decoded..])));
-        // TODO: uncomment on the next release:
-        // if (words_decoded > 0) assert(target_bitset_words[words_decoded - 1] != 0);
+        if (words_decoded > 0) assert(target_bitset_words[words_decoded - 1] != 0);
     }
 
     pub fn decode_chunks(

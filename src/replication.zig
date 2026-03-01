@@ -1237,7 +1237,7 @@ pub const ShipCoordinator = struct {
 
                 // Mark as uploaded in spillover manager (cleans up disk files)
                 if (self.queue.spillover_manager) |*sm| {
-                    sm.markUploaded(entry.header.op) catch {};
+                    sm.markUploaded(entry.header.op) catch |err| log.warn("spillover cleanup failed: {}", .{err});
 
                     // If spillover cleared, set state back to healthy
                     if (!sm.hasPending()) {

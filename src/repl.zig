@@ -900,15 +900,15 @@ pub fn ReplType(comptime MessageBus: type) type {
         }
 
         fn cmdBegin(self: *Self) !void {
-            try self.terminal.print("BEGIN (transactions not yet implemented)\n", .{});
+            try self.printError("transactions are not supported", .{});
         }
 
         fn cmdCommit(self: *Self) !void {
-            try self.terminal.print("COMMIT (transactions not yet implemented)\n", .{});
+            try self.printError("transactions are not supported", .{});
         }
 
         fn cmdRollback(self: *Self) !void {
-            try self.terminal.print("ROLLBACK (transactions not yet implemented)\n", .{});
+            try self.printError("transactions are not supported", .{});
         }
 
         // =====================================================================
