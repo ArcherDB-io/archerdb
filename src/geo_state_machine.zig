@@ -2849,7 +2849,11 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 log.debug("query_uuid: found entity {x}", .{filter.entity_id});
                 return response_size + @sizeOf(GeoEvent);
             } else {
-                // RAM index miss — try forest fallback (post-crash recovery path).
+                // RAM index miss — try forest fallback.
+                // This handles two cases:
+                //   1. Post-crash recovery: RAM index is empty but forest has persisted data.
+                //   2. Cold-tier queries (F2.6): Entity was demoted to cold tier (removed
+                //      from RAM index) but still exists in the LSM tree.
                 // During prefetch, we scanned the entity_id index tree to find the
                 // latest timestamp for this entity. If found, the data is now cached.
                 const forest_event: ?GeoEvent = forest_fallback: {
@@ -2877,10 +2881,25 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 };
 
                 if (forest_event) |result_event| {
-                    // Found in forest — build response (same format as RAM index hit)
+                    // Found in forest — build response (same format as RAM index hit).
+                    // This entity is either recovering post-crash or is in the cold tier.
                     if (output.len < response_size + @sizeOf(GeoEvent)) {
                         log.warn("query_uuid: output buffer too small", .{});
                         return 0;
+                    }
+
+                    // F2.6: Record cold-tier access in tiering manager.
+                    // This tracks the access pattern so frequently-queried cold entities
+                    // can be promoted back to the warm tier (RAM index).
+                    if (self.tiering_manager) |tm| {
+                        _ = tm.recordAccess(filter.entity_id, self.commit_timestamp) catch |err| {
+                            log.warn("tiering: cold-tier recordAccess failed: {}", .{err});
+                        };
+                        // Increment cold tier fetch metric.
+                        _ = archerdb_metrics.Registry.cold_tier_fetches_total.store(
+                            tm.getStats().cold_tier_queries,
+                            .monotonic,
+                        );
                     }
 
                     const end_execute = std.time.nanoTimestamp();
@@ -2916,7 +2935,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     });
 
                     self.forest.adaptive_record_read(1);
-                    log.debug("query_uuid: found entity {x} via forest fallback", .{filter.entity_id});
+                    log.debug("query_uuid: found entity {x} via forest fallback (cold-tier or recovery)", .{filter.entity_id});
                     return response_size + @sizeOf(GeoEvent);
                 }
 
@@ -5080,6 +5099,86 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                         continue;
                     }
                     candidates[oldest_idx] = candidate;
+                }
+            }
+
+            // F2.6: Include cold-tier entities in query_latest results.
+            //
+            // Cold-tier entities have been demoted from the RAM index but still
+            // exist in the LSM tree. The TieringManager tracks their metadata,
+            // which we use here to include them in results.
+            //
+            // NOTE: This is a best-effort inclusion. Cold entities that the
+            // TieringManager has metadata for (i.e., they were accessed at least
+            // once since being demoted, or were recently demoted) will be included
+            // with approximate data from the Forest cache. Entities that have never
+            // been accessed since demotion and whose metadata was evicted will not
+            // appear here until they are explicitly queried by UUID (which triggers
+            // the LSM prefetch scan and promotes them).
+            //
+            // TODO(WS-5): Add an async cold-tier scan phase to query_latest's
+            // prefetch pipeline for complete cold-tier coverage.
+            if (self.tiering_manager) |tm| {
+                const cold_results = tm.queryByTimeRange(
+                    0, // min_ts: include all cold entities
+                    if (filter.cursor_timestamp > 0) filter.cursor_timestamp else std.math.maxInt(u64),
+                ) catch &[_]tiering.ColdTierResult{};
+                defer if (cold_results.len > 0) tm.allocator.free(cold_results);
+
+                for (cold_results) |cold_entity| {
+                    // Skip if group_id filter doesn't match (we don't have group_id
+                    // in the cold metadata, so we include all and let the caller filter).
+                    // Also skip entities with unknown latest_id (no LSM lookup done).
+                    if (cold_entity.latest_id == 0) continue;
+
+                    // Try to get the full event from the Forest cache.
+                    // If the entity was recently accessed (triggering a prefetch),
+                    // the data may still be cached.
+                    const groove_result = self.forest.grooves.geo_events.get(cold_entity.latest_id);
+                    if (groove_result == .found_object) {
+                        const event = groove_result.found_object;
+                        if (event.is_tombstone()) continue;
+
+                        // Apply group_id filter
+                        if (filter.group_id != 0 and event.group_id != filter.group_id) continue;
+
+                        // Apply cursor filter
+                        if (filter.cursor_timestamp > 0 and event.timestamp >= filter.cursor_timestamp) continue;
+
+                        matching_count += 1;
+                        const candidate = Candidate{
+                            .entity_id = event.entity_id,
+                            .latest_id = event.id,
+                            .ttl_seconds = event.ttl_seconds,
+                            .lat_nano = event.lat_nano,
+                            .lon_nano = event.lon_nano,
+                            .group_id = event.group_id,
+                        };
+
+                        if (candidate_count < candidates.len) {
+                            candidates[candidate_count] = candidate;
+                            candidate_count += 1;
+                        } else {
+                            // Replace oldest candidate if this one is newer
+                            var oldest_idx2: usize = 0;
+                            var oldest_ts2 = @as(u64, @truncate(candidates[0].latest_id));
+                            var idx2: usize = 1;
+                            while (idx2 < candidate_count) : (idx2 += 1) {
+                                const ts2 = @as(u64, @truncate(candidates[idx2].latest_id));
+                                if (ts2 < oldest_ts2) {
+                                    oldest_ts2 = ts2;
+                                    oldest_idx2 = idx2;
+                                }
+                            }
+                            const candidate_ts2 = @as(u64, @truncate(candidate.latest_id));
+                            if (candidate_ts2 > oldest_ts2) {
+                                candidates[oldest_idx2] = candidate;
+                            }
+                        }
+
+                        // Record tiering access for promotion tracking
+                        _ = tm.recordAccess(cold_entity.entity_id, self.commit_timestamp) catch {};
+                    }
                 }
             }
 
