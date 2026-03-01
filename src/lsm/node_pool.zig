@@ -29,12 +29,18 @@ pub fn NodePoolType(comptime _node_size: u32, comptime _node_alignment: u13) typ
         buffer: []align(node_alignment) u8,
         free: std.bit_set.DynamicBitSetUnmanaged,
 
+        /// Minimum number of free nodes to reserve. When available nodes drop below
+        /// this threshold, the replica should reject new writes to prevent pool
+        /// exhaustion. Computed as 5% of total pool size, with a minimum of 64.
+        reserve_watermark: u32,
+
         pub fn init(pool: *NodePool, allocator: mem.Allocator, node_count: u32) !void {
             assert(node_count > 0);
 
             pool.* = .{
                 .buffer = undefined,
                 .free = undefined,
+                .reserve_watermark = @max(64, node_count / 20),
             };
             const size = node_size * node_count;
             pool.buffer = try allocator.alignedAlloc(u8, node_alignment, size);
@@ -59,6 +65,7 @@ pub fn NodePoolType(comptime _node_size: u32, comptime _node_alignment: u13) typ
             pool.* = .{
                 .buffer = pool.buffer,
                 .free = pool.free,
+                .reserve_watermark = pool.reserve_watermark,
             };
         }
 
@@ -90,6 +97,23 @@ pub fn NodePoolType(comptime _node_size: u32, comptime _node_alignment: u13) typ
             const node_index = @divExact(node_offset, node_size);
             assert(!pool.free.isSet(node_index));
             pool.free.set(node_index);
+        }
+
+        /// Returns the number of nodes currently available for acquisition.
+        pub fn available_count(pool: *const NodePool) u32 {
+            return @intCast(pool.free.count());
+        }
+
+        /// Returns the total number of nodes in the pool.
+        pub fn node_count_total(pool: *const NodePool) u32 {
+            return @intCast(pool.free.bit_length);
+        }
+
+        /// Returns true if the pool has sufficient free nodes to accept new writes.
+        /// Returns false when available nodes are below the reserve watermark,
+        /// indicating the replica should apply backpressure.
+        pub fn has_capacity(pool: *const NodePool) bool {
+            return pool.available_count() >= pool.reserve_watermark;
         }
     };
 }

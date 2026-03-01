@@ -4202,6 +4202,22 @@ pub fn ReplicaType(
             self.trace.gauge(.grid_cache_hits, self.grid.cache.metrics.hits);
             self.trace.gauge(.grid_cache_misses, self.grid.cache.metrics.misses);
             self.trace.gauge(.lsm_nodes_free, self.state_machine.forest.node_pool.free.count());
+
+            // Warn when node pool capacity drops below 25% to aid operational monitoring.
+            {
+                const pool = &self.state_machine.forest.node_pool;
+                const available = pool.available_count();
+                const total = pool.node_count_total();
+                if (total > 0 and available * 4 < total) {
+                    log.warn("{}: node pool low: available={} total={} ({}%)", .{
+                        self.log_prefix(),
+                        available,
+                        total,
+                        (available * 100) / total,
+                    });
+                }
+            }
+
             self.trace.gauge(.release, self.release.value);
 
             self.trace.gauge(
@@ -6717,6 +6733,25 @@ pub fn ReplicaType(
                 log.debug("{}: on_request: ignoring (still persisting view)", .{
                     self.log_prefix(),
                 });
+                return true;
+            }
+
+            // Reject client writes when the LSM node pool is running low to prevent
+            // pool exhaustion (which would crash the replica). This only affects
+            // client requests, not internal replication or recovery messages.
+            if (!self.state_machine.forest.node_pool.has_capacity()) {
+                log.warn("{}: on_request: rejecting (node pool backpressure, " ++
+                    "available={} watermark={} total={})", .{
+                    self.log_prefix(),
+                    self.state_machine.forest.node_pool.available_count(),
+                    self.state_machine.forest.node_pool.reserve_watermark,
+                    self.state_machine.forest.node_pool.node_count_total(),
+                });
+                self.send_eviction_message_to_client(
+                    message.header.client,
+                    .overloaded,
+                    1000, // Suggest 1s retry to allow compaction to free nodes.
+                );
                 return true;
             }
 
