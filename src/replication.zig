@@ -163,8 +163,14 @@ pub const ShipQueueStats = struct {
 pub const ShipQueue = struct {
     allocator: Allocator,
 
-    /// In-memory queue (ring buffer)
-    memory_queue: std.ArrayList(QueuedEntry),
+    /// In-memory ring buffer (pre-allocated, fixed-size circular buffer)
+    memory_buffer: []QueuedEntry,
+
+    /// Index of the first (oldest) element in the ring buffer
+    memory_head: u32 = 0,
+
+    /// Number of elements currently in the ring buffer
+    memory_len: u32 = 0,
 
     /// Maximum entries to hold in memory before spilling to disk
     memory_max: u32,
@@ -204,9 +210,14 @@ pub const ShipQueue = struct {
             sm = try spillover.SpilloverManager.init(allocator, dir);
         }
 
+        // Pre-allocate the ring buffer to memory_max capacity
+        const buffer = try allocator.alloc(QueuedEntry, config.memory_max);
+
         return ShipQueue{
             .allocator = allocator,
-            .memory_queue = std.ArrayList(QueuedEntry).init(allocator),
+            .memory_buffer = buffer,
+            .memory_head = 0,
+            .memory_len = 0,
             .memory_max = config.memory_max,
             .spillover_manager = sm,
             .spillover_path = null, // Legacy field, deprecated
@@ -216,10 +227,12 @@ pub const ShipQueue = struct {
     }
 
     pub fn deinit(self: *ShipQueue) void {
-        for (self.memory_queue.items) |entry| {
-            self.allocator.free(entry.body);
+        // Free body allocations for all valid entries in the ring buffer
+        for (0..self.memory_len) |i| {
+            const idx = (self.memory_head + @as(u32, @intCast(i))) % self.memory_max;
+            self.allocator.free(self.memory_buffer[idx].body);
         }
-        self.memory_queue.deinit();
+        self.allocator.free(self.memory_buffer);
         if (self.spillover_manager) |*sm| {
             sm.deinit();
         }
@@ -234,17 +247,19 @@ pub const ShipQueue = struct {
         body: []const u8,
     ) !void {
         // Check memory limit
-        if (self.memory_queue.items.len >= self.memory_max) {
+        if (self.memory_len >= self.memory_max) {
             if (self.spillover_manager != null) {
                 try self.spillToDisk();
             } else {
-                // No spillover configured, drop oldest entry
+                // No spillover configured, drop oldest entry (O(1) from head)
                 log.warn("Ship queue overflow, dropping oldest entry op={}", .{
                     self.stats.lowest_op,
                 });
-                if (self.memory_queue.items.len > 0) {
-                    const dropped = self.memory_queue.orderedRemove(0);
+                if (self.memory_len > 0) {
+                    const dropped = self.memory_buffer[self.memory_head];
                     self.allocator.free(dropped.body);
+                    self.memory_head = (self.memory_head + 1) % self.memory_max;
+                    self.memory_len -= 1;
                     self.stats.memory_entries -|= 1;
                     self.stats.memory_bytes -|= dropped.body.len;
                 }
@@ -263,12 +278,15 @@ pub const ShipQueue = struct {
         // Copy body
         const body_copy = try self.allocator.dupe(u8, body);
 
-        try self.memory_queue.append(.{
+        // Insert at tail of ring buffer (O(1))
+        const tail = (self.memory_head + self.memory_len) % self.memory_max;
+        self.memory_buffer[tail] = .{
             .header = header,
             .body = body_copy,
             .queued_at_ns = @intCast(std.time.nanoTimestamp()),
             .retry_count = 0,
-        });
+        };
+        self.memory_len += 1;
 
         // Update stats
         self.stats.memory_entries += 1;
@@ -279,17 +297,20 @@ pub const ShipQueue = struct {
         }
     }
 
-    /// Dequeue the next entry to ship (FIFO)
+    /// Dequeue the next entry to ship (FIFO) — O(1) via ring buffer
     pub fn dequeue(self: *ShipQueue) ?QueuedEntry {
-        if (self.memory_queue.items.len == 0) return null;
+        if (self.memory_len == 0) return null;
 
-        const entry = self.memory_queue.orderedRemove(0);
+        const entry = self.memory_buffer[self.memory_head];
+        self.memory_head = (self.memory_head + 1) % self.memory_max;
+        self.memory_len -= 1;
+
         self.stats.memory_entries -|= 1;
         self.stats.memory_bytes -|= entry.body.len;
 
         // Update lowest_op
-        if (self.memory_queue.items.len > 0) {
-            self.stats.lowest_op = self.memory_queue.items[0].header.op;
+        if (self.memory_len > 0) {
+            self.stats.lowest_op = self.memory_buffer[self.memory_head].header.op;
         } else {
             self.stats.lowest_op = 0;
         }
@@ -299,17 +320,22 @@ pub const ShipQueue = struct {
 
     /// Peek at the next entry without removing it
     pub fn peek(self: *ShipQueue) ?*const QueuedEntry {
-        if (self.memory_queue.items.len == 0) return null;
-        return &self.memory_queue.items[0];
+        if (self.memory_len == 0) return null;
+        return &self.memory_buffer[self.memory_head];
     }
 
-    /// Re-queue an entry that failed to ship (for retry)
+    /// Re-queue an entry that failed to ship (for retry) — O(1) via ring buffer
     pub fn requeue(self: *ShipQueue, entry: QueuedEntry) !void {
+        if (self.memory_len >= self.memory_max) return error.OutOfMemory;
+
         var updated = entry;
         updated.retry_count += 1;
 
-        // Insert at front for immediate retry
-        try self.memory_queue.insert(0, updated);
+        // Insert at head of ring buffer (decrement head, wrapping)
+        self.memory_head = if (self.memory_head == 0) self.memory_max - 1 else self.memory_head - 1;
+        self.memory_buffer[self.memory_head] = updated;
+        self.memory_len += 1;
+
         self.stats.memory_entries += 1;
         self.stats.memory_bytes += entry.body.len;
         self.stats.ship_failures_total += 1;
@@ -327,7 +353,7 @@ pub const ShipQueue = struct {
         const sm = &(self.spillover_manager orelse return error.NoSpilloverPath);
 
         // Spill half of memory queue to disk (batch spillover)
-        const entries_to_spill = self.memory_queue.items.len / 2;
+        const entries_to_spill = self.memory_len / 2;
         if (entries_to_spill == 0) return;
 
         // Build SpillEntry array for SpilloverManager
@@ -335,7 +361,8 @@ pub const ShipQueue = struct {
         defer self.allocator.free(spill_entries);
 
         for (0..entries_to_spill) |i| {
-            const entry = self.memory_queue.items[i];
+            const idx = (self.memory_head + @as(u32, @intCast(i))) % self.memory_max;
+            const entry = self.memory_buffer[idx];
             spill_entries[i] = .{
                 .header = spillover.ShipEntry{
                     .op = entry.header.op,
@@ -351,12 +378,14 @@ pub const ShipQueue = struct {
         // Spill to disk (atomic via SpilloverManager)
         try sm.spillEntries(spill_entries);
 
-        // Remove from memory queue and free bodies
+        // Remove spilled entries from ring buffer head and free bodies (O(1) per entry)
         var spilled_bytes: u64 = 0;
         for (0..entries_to_spill) |_| {
-            const removed = self.memory_queue.orderedRemove(0);
+            const removed = self.memory_buffer[self.memory_head];
             spilled_bytes += removed.body.len;
             self.allocator.free(removed.body);
+            self.memory_head = (self.memory_head + 1) % self.memory_max;
+            self.memory_len -= 1;
         }
 
         // Update stats
@@ -383,7 +412,7 @@ pub const ShipQueue = struct {
         var recovered: u64 = 0;
 
         while (iter.next()) |entry| {
-            if (self.memory_queue.items.len >= self.memory_max) {
+            if (self.memory_len >= self.memory_max) {
                 log.warn("Spillover recovery paused (memory queue full)", .{});
                 break;
             }
@@ -406,12 +435,15 @@ pub const ShipQueue = struct {
                 break :blk buf;
             };
 
-            try self.memory_queue.append(.{
+            // Append to tail of ring buffer (O(1))
+            const tail = (self.memory_head + self.memory_len) % self.memory_max;
+            self.memory_buffer[tail] = .{
                 .header = header,
                 .body = body_copy,
                 .queued_at_ns = @intCast(std.time.nanoTimestamp()),
                 .retry_count = 0,
-            });
+            };
+            self.memory_len += 1;
 
             recovered += 1;
             self.stats.memory_entries += 1;
