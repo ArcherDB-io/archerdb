@@ -2355,14 +2355,13 @@ pub fn ReplicaType(
             }
 
             if (message.header.size > self.request_size_limit) {
-                // The replica needs to be restarted with a higher batch size limit.
-                log.err("{}: on_prepare: ignoring (large prepare, op={} size={} size_limit={})", .{
+                log.warn("{}: on_prepare: ignoring (large prepare, op={} size={} size_limit={})", .{
                     self.log_prefix(),
                     message.header.op,
                     message.header.size,
                     self.request_size_limit,
                 });
-                @panic("Cannot prepare; batch limit too low.");
+                return;
             }
 
             assert(self.status == .normal);
@@ -5045,16 +5044,21 @@ pub fn ReplicaType(
             const prepare = self.commit_prepare.?;
 
             if (prepare.header.size > self.request_size_limit) {
-                // Normally this would be caught during on_prepare(), but it is possible that we are
-                // replaying a message that we prepared before a restart, and the restart changed
-                // our batch_size_limit.
-                log.err("{}: commit_prefetch: op={} size={} size_limit={}", .{
+                // This prepare was accepted before a restart that lowered the batch_size_limit.
+                // We cannot skip it because the commit path must process ops sequentially
+                // (commit_min + 1) -- skipping would break state machine determinism across
+                // replicas. The operator must restart with a batch_size_limit >= this prepare's
+                // size, or restore from a checkpoint that does not include this op.
+                log.err("{}: commit_prefetch: cannot commit oversized prepare, " ++
+                    "restart with a higher batch_size_limit " ++
+                    "(op={} size={} size_limit={})", .{
                     self.log_prefix(),
                     prepare.header.op,
                     prepare.header.size,
                     self.request_size_limit,
                 });
-                @panic("Cannot commit prepare; batch limit too low.");
+                @panic("Cannot commit prepare; batch limit too low. " ++
+                    "Restart with a higher batch_size_limit.");
             }
 
             if (StateMachine.Operation.from_vsr(prepare.header.operation)) |prepare_operation| {

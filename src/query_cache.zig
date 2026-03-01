@@ -23,7 +23,7 @@
 //!
 //! ```zig
 //! // On query:
-//! const query_hash = QueryResultCache.hashQuery(operation, filter_bytes);
+//! const query_hash = cache.hashQuery(operation, filter_bytes);
 //! if (cache.get(query_hash)) |cached| {
 //!     // Return cached result
 //!     @memcpy(output[0..cached.result_len], cached.result_data[0..cached.result_len]);
@@ -109,6 +109,9 @@ pub const QueryResultCache = struct {
     /// Current generation (incremented on every write)
     generation: u64,
 
+    /// Seed for query hashing, initialized from OS entropy to prevent HashDoS.
+    hash_seed: u64,
+
     /// Metrics
     hits: u64,
     misses: u64,
@@ -141,6 +144,7 @@ pub const QueryResultCache = struct {
         return Self{
             .cache = try InternalCache.init(allocator, adjusted, .{ .name = "query_cache" }),
             .generation = 1, // Start at 1 so 0 is always invalid
+            .hash_seed = std.crypto.random.int(u64),
             .hits = 0,
             .misses = 0,
         };
@@ -215,11 +219,12 @@ pub const QueryResultCache = struct {
     /// Hash a query for cache lookup.
     ///
     /// Combines operation type and filter bytes into a deterministic hash.
-    /// Uses stdx.low_level_hash for cross-platform determinism.
-    pub fn hashQuery(operation: u8, filter_bytes: []const u8) u64 {
+    /// The hash seed is initialized from OS entropy at cache creation to
+    /// prevent HashDoS attacks against the query cache.
+    pub fn hashQuery(self: *const Self, operation: u8, filter_bytes: []const u8) u64 {
         // Combine operation and filter into a single hash
         // Start with operation byte, then hash the filter data
-        var hasher = std.hash.Wyhash.init(0);
+        var hasher = std.hash.Wyhash.init(self.hash_seed);
         hasher.update(&[_]u8{operation});
         hasher.update(filter_bytes);
         return hasher.final();
@@ -244,7 +249,7 @@ test "QueryResultCache: basic put and get" {
     var cache = try QueryResultCache.init(allocator, 256);
     defer cache.deinit(allocator);
 
-    const query_hash = QueryResultCache.hashQuery(1, "test filter");
+    const query_hash = cache.hashQuery(1, "test filter");
     const result = "test result data";
 
     // Cache miss before put
@@ -270,7 +275,7 @@ test "QueryResultCache: write-invalidation" {
     var cache = try QueryResultCache.init(allocator, 256);
     defer cache.deinit(allocator);
 
-    const query_hash = QueryResultCache.hashQuery(1, "test filter");
+    const query_hash = cache.hashQuery(1, "test filter");
     const result = "test result data";
 
     // Put result
@@ -296,7 +301,7 @@ test "QueryResultCache: generation wrapping" {
     // Force generation to near max
     cache.generation = std.math.maxInt(u64);
 
-    const query_hash = QueryResultCache.hashQuery(1, "test filter");
+    const query_hash = cache.hashQuery(1, "test filter");
     const result = "test result data";
 
     // Put at max generation
@@ -313,18 +318,22 @@ test "QueryResultCache: generation wrapping" {
 
 test "QueryResultCache: hash function determinism" {
     const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var cache = try QueryResultCache.init(allocator, 256);
+    defer cache.deinit(allocator);
 
     // Same operation+filter produces same hash
-    const hash1 = QueryResultCache.hashQuery(1, "filter bytes");
-    const hash2 = QueryResultCache.hashQuery(1, "filter bytes");
+    const hash1 = cache.hashQuery(1, "filter bytes");
+    const hash2 = cache.hashQuery(1, "filter bytes");
     try testing.expectEqual(hash1, hash2);
 
     // Different operations produce different hashes
-    const hash3 = QueryResultCache.hashQuery(2, "filter bytes");
+    const hash3 = cache.hashQuery(2, "filter bytes");
     try testing.expect(hash1 != hash3);
 
     // Different filters produce different hashes
-    const hash4 = QueryResultCache.hashQuery(1, "different filter");
+    const hash4 = cache.hashQuery(1, "different filter");
     try testing.expect(hash1 != hash4);
 }
 
@@ -335,7 +344,7 @@ test "QueryResultCache: oversized results not cached" {
     var cache = try QueryResultCache.init(allocator, 256);
     defer cache.deinit(allocator);
 
-    const query_hash = QueryResultCache.hashQuery(1, "test filter");
+    const query_hash = cache.hashQuery(1, "test filter");
 
     // Create oversized result
     var oversized: [max_cached_result_size + 1]u8 = undefined;
@@ -361,21 +370,21 @@ test "QueryResultCache: CLOCK eviction under pressure" {
     while (i < 512) : (i += 1) {
         var filter_buf: [8]u8 = undefined;
         std.mem.writeInt(u64, &filter_buf, i, .little);
-        const query_hash = QueryResultCache.hashQuery(1, &filter_buf);
+        const query_hash = cache.hashQuery(1, &filter_buf);
         cache.put(query_hash, "result data");
     }
 
     // Access first entry to increase its count
     var first_filter: [8]u8 = undefined;
     std.mem.writeInt(u64, &first_filter, 0, .little);
-    const first_hash = QueryResultCache.hashQuery(1, &first_filter);
+    const first_hash = cache.hashQuery(1, &first_filter);
 
     // First entry may or may not be present depending on eviction
     // The important thing is the cache doesn't crash under pressure
     _ = cache.get(first_hash);
 
     // Cache should still be functional
-    const new_hash = QueryResultCache.hashQuery(1, "new entry");
+    const new_hash = cache.hashQuery(1, "new entry");
     cache.put(new_hash, "new result");
     try testing.expect(cache.get(new_hash) != null);
 }
@@ -388,19 +397,19 @@ test "QueryResultCache: reset clears all" {
     defer cache.deinit(allocator);
 
     // Add some entries
-    cache.put(QueryResultCache.hashQuery(1, "filter1"), "result1");
-    cache.put(QueryResultCache.hashQuery(2, "filter2"), "result2");
+    cache.put(cache.hashQuery(1, "filter1"), "result1");
+    cache.put(cache.hashQuery(2, "filter2"), "result2");
 
     // Verify they exist
-    try testing.expect(cache.get(QueryResultCache.hashQuery(1, "filter1")) != null);
-    try testing.expect(cache.get(QueryResultCache.hashQuery(2, "filter2")) != null);
+    try testing.expect(cache.get(cache.hashQuery(1, "filter1")) != null);
+    try testing.expect(cache.get(cache.hashQuery(2, "filter2")) != null);
 
     // Reset
     cache.reset();
 
     // All gone
-    try testing.expect(cache.get(QueryResultCache.hashQuery(1, "filter1")) == null);
-    try testing.expect(cache.get(QueryResultCache.hashQuery(2, "filter2")) == null);
+    try testing.expect(cache.get(cache.hashQuery(1, "filter1")) == null);
+    try testing.expect(cache.get(cache.hashQuery(2, "filter2")) == null);
     try testing.expectEqual(@as(u64, 0), cache.hits);
     // Misses are recorded for the gets above
     try testing.expectEqual(@as(u64, 2), cache.misses);
@@ -444,7 +453,7 @@ test "QueryResultCache: VERIFY dashboard workload 80%+ cache hit ratio" {
     // Pre-compute hashes
     var query_hashes: [10]u64 = undefined;
     for (dashboard_queries, 0..) |q, i| {
-        query_hashes[i] = QueryResultCache.hashQuery(q.op, q.filter);
+        query_hashes[i] = cache.hashQuery(q.op, q.filter);
     }
 
     // Simulate dashboard refresh pattern: 100 refresh cycles
@@ -513,7 +522,7 @@ test "QueryResultCache: VERIFY sub-millisecond cached query latency P99" {
     for (0..num_queries) |i| {
         var filter_buf: [32]u8 = undefined;
         const filter_len = std.fmt.bufPrint(&filter_buf, "query:panel:{d}", .{i}) catch unreachable;
-        query_hashes[i] = QueryResultCache.hashQuery(1, filter_buf[0..filter_len.len]);
+        query_hashes[i] = cache.hashQuery(1, filter_buf[0..filter_len.len]);
 
         // Generate realistic result data (100-250 bytes)
         const result_len = 100 + (i * 3);

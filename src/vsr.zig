@@ -791,7 +791,6 @@ pub const Timeout = struct {
         self.attempts = 0;
         self.ticks = 0;
         assert(self.ticking);
-        // TODO Use self.prng to adjust for rtt and attempts.
         log.debug("{}: {s} reset", .{ self.id, self.name });
     }
 
@@ -803,14 +802,14 @@ pub const Timeout = struct {
         assert(self.ticks == 0);
         assert(self.rtt > 0);
 
-        const after = (self.rtt * self.rtt_multiple) + exponential_backoff_with_jitter(
+        const after_raw = (self.rtt * self.rtt_multiple) + exponential_backoff_with_jitter(
             prng,
             constants.backoff_min_ticks,
             constants.backoff_max_ticks,
             self.attempts,
         );
 
-        // TODO Clamp `after` to min/max tick bounds for timeout.
+        const after = @max(constants.backoff_min_ticks, @min(after_raw, constants.backoff_max_ticks));
 
         log.debug("{}: {s} after={}..{} (rtt={} min={} max={} attempts={})", .{
             self.id,
@@ -851,7 +850,6 @@ pub const Timeout = struct {
         self.after_dynamic = self.after;
         self.ticks = 0;
         self.ticking = true;
-        // TODO Use self.prng to adjust for rtt and attempts.
         log.debug("{}: {s} started", .{ self.id, self.name });
     }
 
