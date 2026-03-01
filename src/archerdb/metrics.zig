@@ -10,6 +10,7 @@
 //! All types are thread-safe using atomic operations for lock-free access.
 
 const std = @import("std");
+const log = std.log.scoped(.metrics);
 
 /// Storage-specific metrics for write/space amplification monitoring.
 /// Provides Prometheus-compatible metrics for LSM tree health tracking.
@@ -3466,6 +3467,47 @@ pub const Registry = struct {
     /// Record a mandatory mode halt timeout bypass.
     pub fn recordBackupMandatoryBypass() void {
         _ = backup_mandatory_bypass_total.fetchAdd(1, .monotonic);
+    }
+
+    /// Update the ship queue depth metric for a follower region.
+    /// Clamps the index to `max_followers - 1` and logs a warning when
+    /// the caller-supplied index exceeds the metric cardinality cap.
+    pub fn updateFollowerShipQueueDepth(follower: usize, depth: u64) void {
+        const idx = if (follower >= max_followers) blk: {
+            log.warn("follower index {} clamped to {} (max cardinality {})", .{
+                follower,
+                max_followers - 1,
+                max_followers,
+            });
+            break :blk max_followers - 1;
+        } else follower;
+        replication_ship_queue_depth[idx].store(depth, .monotonic);
+    }
+
+    /// Update per-shard entity count.
+    /// Logs a warning and drops the update when `shard` exceeds `max_shards`.
+    pub fn updateShardEntityCount(shard: usize, count: u64) void {
+        if (shard >= max_shards) {
+            log.warn("shard index {} exceeds max_shards {} — metric dropped", .{
+                shard,
+                max_shards,
+            });
+            return;
+        }
+        shard_entity_count[shard].store(count, .monotonic);
+    }
+
+    /// Update per-shard size in bytes.
+    /// Logs a warning and drops the update when `shard` exceeds `max_shards`.
+    pub fn updateShardSizeBytes(shard: usize, size: u64) void {
+        if (shard >= max_shards) {
+            log.warn("shard index {} exceeds max_shards {} — metric dropped", .{
+                shard,
+                max_shards,
+            });
+            return;
+        }
+        shard_size_bytes[shard].store(size, .monotonic);
     }
 };
 

@@ -686,7 +686,12 @@ pub const lsm_table_value_blocks_max = table_blocks_max: {
 
 /// The default size in bytes of the NodePool used for the LSM forest's manifests.
 pub const lsm_manifest_memory_size_default = lsm_manifest_memory: {
-    // TODO Tune this better.
+    // 8192 nodes * 16 KiB node size = 128 MiB of manifest memory.
+    // This must be large enough to hold manifest entries for all tables across
+    // every tree and level in the forest. The VOPR and tests use 4096 nodes;
+    // production doubles that to leave headroom for larger forests (more trees)
+    // and higher table counts at deeper LSM levels. Operators can override this
+    // via the --lsm-manifest-memory CLI flag.
     const lsm_forest_node_count: u32 = 8192;
     break :lsm_manifest_memory lsm_forest_node_count * lsm_manifest_node_size;
 };

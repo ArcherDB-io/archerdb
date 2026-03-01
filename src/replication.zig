@@ -1255,11 +1255,7 @@ pub const ShipCoordinator = struct {
                     repl_constants.ship_retry_backoff_initial_ms * std.time.ns_per_ms;
 
                 // Update queue depth metric
-                const follower_idx = @min(idx, metrics.max_followers - 1);
-                metrics.replication_ship_queue_depth[follower_idx].store(
-                    self.queue.depth(),
-                    .monotonic,
-                );
+                metrics.updateFollowerShipQueueDepth(idx, self.queue.depth());
             }
         }
 
