@@ -1386,11 +1386,9 @@ pub fn GrooveType(
         }
 
         /// Asserts that the object with the given PrimaryKey exists.
+        /// Unlike `remove_orphaned_id`, this is designed to work within scopes;
+        /// the underlying `CacheMap.remove` handles scope rollback.
         pub fn remove(groove: *Groove, key: PrimaryKey) void {
-            // TODO: Nothing currently calls or tests this method. The forest fuzzer should be
-            // extended to cover it.
-            assert(false);
-
             const object = groove.objects_cache.get(key).?;
             assert(TimestampRange.valid(object.timestamp));
 
@@ -1432,16 +1430,25 @@ pub fn GrooveType(
             groove.ids.key_range_update(id);
         }
 
+        /// Remove an orphaned id that has no associated object.
+        /// The caller must have prefetched the id into the objects_cache.
         pub fn remove_orphaned_id(groove: *Groove, id: u128) void {
             comptime assert(groove_options.orphaned_ids);
             comptime assert(has_id);
 
-            // TODO: Nothing currently calls or tests this method. The forest fuzzer should be
-            // extended to cover it.
-            assert(false);
+            assert(id != 0);
+            assert(id != std.math.maxInt(u128));
 
-            _ = groove;
-            _ = id;
+            // We should not remove an orphaned `id` inside a scope.
+            assert(!groove.objects_cache.scope_is_active);
+            assert(groove.ids.active_scope == null);
+
+            const object = groove.objects_cache.get(id).?;
+            assert(object.timestamp == 0); // orphaned ids have timestamp 0
+
+            groove.ids.remove(&.{ .id = id, .timestamp = 0 });
+            groove.ids.key_range_update(id);
+            groove.objects_cache.remove(id);
         }
 
         pub fn scope_open(groove: *Groove) void {

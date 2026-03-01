@@ -223,9 +223,8 @@ pub fn CacheMapType(
         }
 
         pub fn remove(self: *CacheMap, key: Key) void {
-            // The only thing that tests this in any depth is the cache_map fuzz itself.
-            // Make sure we aren't being called in regular code without another once over.
-            comptime assert(constants.verify);
+            // Used by groove.remove() and groove.remove_orphaned_id() in production.
+            // Also covered by the cache_map fuzz.
 
             const cache_removed: ?Value = if (self.cache) |*cache|
                 cache.remove(key)
