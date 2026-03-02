@@ -15,6 +15,7 @@
 //! which apply them in commit order to maintain eventual consistency.
 
 const std = @import("std");
+const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
 const stdx = @import("stdx");
@@ -204,6 +205,8 @@ pub const ShipQueue = struct {
     };
 
     pub fn init(allocator: Allocator, config: Config) !ShipQueue {
+        assert(config.memory_max > 0);
+
         // Initialize spillover manager if directory is configured
         var sm: ?spillover.SpilloverManager = null;
         if (config.spillover_dir) |dir| {
@@ -352,9 +355,10 @@ pub const ShipQueue = struct {
     pub fn spillToDisk(self: *ShipQueue) !void {
         const sm = &(self.spillover_manager orelse return error.NoSpilloverPath);
 
-        // Spill half of memory queue to disk (batch spillover)
-        const entries_to_spill = self.memory_len / 2;
-        if (entries_to_spill == 0) return;
+        // Spill half of memory queue to disk (batch spillover).
+        // Use @max(1, ...) to guarantee progress even when memory_len is 1.
+        const entries_to_spill = @max(1, self.memory_len / 2);
+        if (self.memory_len == 0) return;
 
         // Build SpillEntry array for SpilloverManager
         var spill_entries = try self.allocator.alloc(spillover.SpillEntry, entries_to_spill);

@@ -5123,18 +5123,20 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     0, // min_ts: include all cold entities
                     if (filter.cursor_timestamp > 0) filter.cursor_timestamp else std.math.maxInt(u64),
                 ) catch &[_]tiering.ColdTierResult{};
-                defer if (cold_results.len > 0) tm.allocator.free(cold_results);
+                const cold_results_owned = cold_results.len > 0 and
+                    @intFromPtr(cold_results.ptr) != @intFromPtr((&[_]tiering.ColdTierResult{}).ptr);
+                defer if (cold_results_owned) tm.allocator.free(cold_results);
 
                 for (cold_results) |cold_entity| {
-                    // Skip if group_id filter doesn't match (we don't have group_id
-                    // in the cold metadata, so we include all and let the caller filter).
-                    // Also skip entities with unknown latest_id (no LSM lookup done).
-                    if (cold_entity.latest_id == 0) continue;
-
                     // Try to get the full event from the Forest cache.
-                    // If the entity was recently accessed (triggering a prefetch),
-                    // the data may still be cached.
-                    const groove_result = self.forest.grooves.geo_events.get(cold_entity.latest_id);
+                    // Cold entities from queryByTimeRange have latest_id=0 (unknown
+                    // from metadata scan), so look up by entity_id which works if
+                    // the entity was recently accessed and is still in cache.
+                    const groove_result = if (cold_entity.latest_id != 0)
+                        self.forest.grooves.geo_events.get(cold_entity.latest_id)
+                    else
+                        self.forest.grooves.geo_events.get(cold_entity.entity_id);
+
                     if (groove_result == .found_object) {
                         const event = groove_result.found_object;
                         if (event.is_tombstone()) continue;
@@ -5144,6 +5146,12 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 
                         // Apply cursor filter
                         if (filter.cursor_timestamp > 0 and event.timestamp >= filter.cursor_timestamp) continue;
+
+                        // Apply TTL filter (mirrors hot-tier TTL check above)
+                        if (event.ttl_seconds > 0) {
+                            const ttl_ns: u64 = @as(u64, event.ttl_seconds) * std.time.ns_per_s;
+                            if (event.timestamp + ttl_ns < self.commit_timestamp) continue;
+                        }
 
                         matching_count += 1;
                         const candidate = Candidate{

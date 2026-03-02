@@ -31,7 +31,8 @@ pub fn NodePoolType(comptime _node_size: u32, comptime _node_alignment: u13) typ
 
         /// Minimum number of free nodes to reserve. When available nodes drop below
         /// this threshold, the replica should reject new writes to prevent pool
-        /// exhaustion. Computed as 5% of total pool size, with a minimum of 64.
+        /// exhaustion. Computed as 5% of total pool size, with a floor of 64 and
+        /// a ceiling of 50% of the pool (so small pools are never fully blocked).
         reserve_watermark: u32,
 
         pub fn init(pool: *NodePool, allocator: mem.Allocator, node_count: u32) !void {
@@ -40,7 +41,8 @@ pub fn NodePoolType(comptime _node_size: u32, comptime _node_alignment: u13) typ
             pool.* = .{
                 .buffer = undefined,
                 .free = undefined,
-                .reserve_watermark = @max(64, node_count / 20),
+                // 5% of pool with a floor of 64 nodes, but never more than half the pool.
+                .reserve_watermark = @min(node_count / 2, @max(64, node_count / 20)),
             };
             const size = node_size * node_count;
             pool.buffer = try allocator.alignedAlloc(u8, node_alignment, size);

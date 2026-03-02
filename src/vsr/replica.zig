@@ -6737,22 +6737,37 @@ pub fn ReplicaType(
             }
 
             // Reject client writes when the LSM node pool is running low to prevent
-            // pool exhaustion (which would crash the replica). This only affects
-            // client requests, not internal replication or recovery messages.
+            // pool exhaustion (which would crash the replica). Only reject write
+            // operations (insert/upsert/delete) — read-only queries don't consume
+            // node pool resources and should remain available under pressure.
             if (!self.state_machine.forest.node_pool.has_capacity()) {
-                log.warn("{}: on_request: rejecting (node pool backpressure, " ++
-                    "available={} watermark={} total={})", .{
-                    self.log_prefix(),
-                    self.state_machine.forest.node_pool.available_count(),
-                    self.state_machine.forest.node_pool.reserve_watermark,
-                    self.state_machine.forest.node_pool.node_count_total(),
-                });
-                self.send_eviction_message_to_client(
-                    message.header.client,
-                    .overloaded,
-                    1000, // Suggest 1s retry to allow compaction to free nodes.
-                );
-                return true;
+                const is_write = if (StateMachine.Operation == @import("../archerdb.zig").Operation)
+                    if (StateMachine.Operation.from_vsr(message.header.operation)) |op|
+                        switch (op) {
+                            .insert_events, .upsert_events, .delete_entities,
+                            .cleanup_expired, .ttl_set, .ttl_extend, .ttl_clear,
+                            => true,
+                            else => false,
+                        }
+                    else
+                        true // Unknown VSR operations treated conservatively as writes
+                else
+                    true; // Non-ArcherDB state machines: reject all under pressure
+                if (is_write) {
+                    log.warn("{}: on_request: rejecting write (node pool backpressure, " ++
+                        "available={} watermark={} total={})", .{
+                        self.log_prefix(),
+                        self.state_machine.forest.node_pool.available_count(),
+                        self.state_machine.forest.node_pool.reserve_watermark,
+                        self.state_machine.forest.node_pool.node_count_total(),
+                    });
+                    self.send_eviction_message_to_client(
+                        message.header.client,
+                        .overloaded,
+                        1000, // Suggest 1s retry to allow compaction to free nodes.
+                    );
+                    return true;
+                }
             }
 
             const queue_depth: u32 = @intCast(
