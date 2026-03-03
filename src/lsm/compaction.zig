@@ -445,6 +445,14 @@ pub fn CompactionType(
         /// Per ttl-retention/spec.md: use consensus timestamp for determinism.
         compaction_timestamp_ns: u64 = 0,
 
+        /// When true, the immutable table deferral optimization is disabled to
+        /// ensure all in-memory data is flushed to the LSM for persistent snapshot
+        /// consistency. Without this guard, deferred immutable table data would be
+        /// missing from the on-disk snapshot.
+        /// TODO(Snapshots): Wire this flag from the replica/forest layer when a
+        /// persistent snapshot is requested.
+        snapshot_in_progress: bool = false,
+
         /// Counters track physical IO and are not fully deterministic. In particular, `in` and
         /// `dropped` values can vary between the replicas.
         ///
@@ -715,12 +723,17 @@ pub fn CompactionType(
                 // This optimization cannot apply to the last bar before a checkpoint trigger, since
                 // recovery from the checkpoint only replays that final bar, which must reconstruct
                 // the original immutable table.
-                // TODO(Snapshots) This optimization must be disabled to take a persistent snapshot.
+                //
+                // The optimization is also disabled when a persistent snapshot is in progress,
+                // because the immutable table data must be flushed to the LSM on disk so that
+                // the snapshot captures a complete and consistent state.
                 const mutable_count_half_bar_first = compaction.tree.table_mutable.count();
                 const mutable_count_half_bar_last = @divExact(table_value_count_limit, 2);
                 const mutable_count = mutable_count_half_bar_first + mutable_count_half_bar_last;
                 const immutable_count = compaction.tree.table_immutable.count();
-                if (immutable_count + mutable_count <= table_value_count_limit) {
+                if (!compaction.snapshot_in_progress and
+                    immutable_count + mutable_count <= table_value_count_limit)
+                {
                     const op_checkpoint =
                         compaction.grid.superblock.working.vsr_state.checkpoint.header.op;
                     const op_checkpoint_next = vsr.Checkpoint.checkpoint_after(op_checkpoint);
