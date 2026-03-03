@@ -5005,7 +5005,18 @@ pub fn ReplicaType(
                 log.debug("{}: commit_start_journal_callback: prepare == null", .{
                     self.log_prefix(),
                 });
-                if (self.solo()) @panic("cannot recover corrupt prepare");
+                if (self.solo()) {
+                    // In solo mode there is no cluster to recover the prepare from, so
+                    // the data for this op is permanently lost. Log the error and skip
+                    // to the next op rather than panicking the entire replica. The
+                    // operator should check for data integrity after this event.
+                    log.err("{}: commit_start_journal_callback: " ++
+                        "skipping corrupt prepare in solo mode (op={}), " ++
+                        "data for this op is lost", .{
+                        self.log_prefix(),
+                        self.commit_min + 1,
+                    });
+                }
                 return self.commit_dispatch_resume();
             }
 
