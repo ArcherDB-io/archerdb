@@ -909,16 +909,26 @@ pub const VaultKeyProvider = struct {
         if (result.Exited != 0) return;
 
         // Parse JSON response for client_token
-        // In production, use proper JSON parser
         const response = buffer[0..bytes_read];
-        if (std.mem.indexOf(u8, response, "\"client_token\":\"")) |start| {
-            const token_start = start + 16;
-            if (std.mem.indexOfPos(u8, response, token_start, "\"")) |end| {
-                if (self.token) |old| self.allocator.free(old);
-                self.token = self.allocator.dupe(u8, response[token_start..end]) catch return;
-                log.info("Authenticated with Vault using AppRole", .{});
-            }
-        }
+        const VaultAuthResponse = struct {
+            auth: struct {
+                client_token: []const u8,
+            },
+        };
+        const parsed = std.json.parseFromSlice(
+            VaultAuthResponse,
+            self.allocator,
+            response,
+            .{ .ignore_unknown_fields = true },
+        ) catch |err| {
+            log.warn("Failed to parse Vault auth response: {}", .{err});
+            return;
+        };
+        defer parsed.deinit();
+
+        if (self.token) |old| self.allocator.free(old);
+        self.token = self.allocator.dupe(u8, parsed.value.auth.client_token) catch return;
+        log.info("Authenticated with Vault using AppRole", .{});
     }
 
     /// Generate a random key via Vault Transit engine
@@ -980,19 +990,27 @@ pub const VaultKeyProvider = struct {
 
         // Parse JSON response for plaintext
         const response = buffer[0..bytes_read];
-        if (std.mem.indexOf(u8, response, "\"plaintext\":\"")) |start| {
-            const b64_start = start + 13;
-            if (std.mem.indexOfPos(u8, response, b64_start, "\"")) |end| {
-                const b64_key = response[b64_start..end];
-                var dek: [DEK_SIZE]u8 = undefined;
-                const b64_decoder = std.base64.standard.Decoder;
-                _ = b64_decoder.decode(&dek, b64_key) catch return error.KeyUnavailable;
-                log.info("Generated new DEK via Vault Transit", .{});
-                return dek;
-            }
-        }
+        const VaultDatakeyResponse = struct {
+            data: struct {
+                plaintext: []const u8,
+            },
+        };
+        const parsed = std.json.parseFromSlice(
+            VaultDatakeyResponse,
+            self.allocator,
+            response,
+            .{ .ignore_unknown_fields = true },
+        ) catch |err| {
+            log.warn("Failed to parse Vault datakey response: {}", .{err});
+            return error.KeyUnavailable;
+        };
+        defer parsed.deinit();
 
-        return error.KeyUnavailable;
+        var dek: [DEK_SIZE]u8 = undefined;
+        const b64_decoder = std.base64.standard.Decoder;
+        _ = b64_decoder.decode(&dek, parsed.value.data.plaintext) catch return error.KeyUnavailable;
+        log.info("Generated new DEK via Vault Transit", .{});
+        return dek;
     }
 
     /// Encrypt data using Vault Transit engine
@@ -1056,28 +1074,37 @@ pub const VaultKeyProvider = struct {
 
         // Parse ciphertext from response
         const response = buffer[0..bytes_read];
-        if (std.mem.indexOf(u8, response, "\"ciphertext\":\"")) |start| {
-            const ct_start = start + 14;
-            if (std.mem.indexOfPos(u8, response, ct_start, "\"")) |end| {
-                // Vault returns "vault:v1:base64..." format
-                // We store the base64 portion in our wrapped DEK
-                const vault_ciphertext = response[ct_start..end];
-                var wrapped: [WRAPPED_DEK_SIZE]u8 = .{0} ** WRAPPED_DEK_SIZE;
+        const VaultEncryptResponse = struct {
+            data: struct {
+                ciphertext: []const u8,
+            },
+        };
+        const parsed = std.json.parseFromSlice(
+            VaultEncryptResponse,
+            self.allocator,
+            response,
+            .{ .ignore_unknown_fields = true },
+        ) catch |err| {
+            log.warn("Failed to parse Vault encrypt response: {}", .{err});
+            return error.KeyUnavailable;
+        };
+        defer parsed.deinit();
 
-                // Store hash of ciphertext for lookup (simplified)
-                const hash = std.hash.Wyhash.hash(0, vault_ciphertext);
-                std.mem.writeInt(u64, wrapped[0..8], hash, .little);
+        // Vault returns "vault:v1:base64..." format
+        // We store the base64 portion in our wrapped DEK
+        const vault_ciphertext = parsed.value.data.ciphertext;
+        var wrapped: [WRAPPED_DEK_SIZE]u8 = .{0} ** WRAPPED_DEK_SIZE;
 
-                // Store truncated ciphertext identifier
-                const copy_len = @min(vault_ciphertext.len, WRAPPED_DEK_SIZE - 8);
-                const src = vault_ciphertext[0..copy_len];
-                stdx.copy_disjoint(.exact, u8, wrapped[8..][0..copy_len], src);
+        // Store hash of ciphertext for lookup (simplified)
+        const hash = std.hash.Wyhash.hash(0, vault_ciphertext);
+        std.mem.writeInt(u64, wrapped[0..8], hash, .little);
 
-                return wrapped;
-            }
-        }
+        // Store truncated ciphertext identifier
+        const copy_len = @min(vault_ciphertext.len, WRAPPED_DEK_SIZE - 8);
+        const src = vault_ciphertext[0..copy_len];
+        stdx.copy_disjoint(.exact, u8, wrapped[8..][0..copy_len], src);
 
-        return error.KeyUnavailable;
+        return wrapped;
     }
 
     /// Decrypt data using Vault Transit engine
@@ -1140,19 +1167,27 @@ pub const VaultKeyProvider = struct {
 
         // Parse plaintext from response
         const response = buffer[0..bytes_read];
-        if (std.mem.indexOf(u8, response, "\"plaintext\":\"")) |start| {
-            const b64_start = start + 13;
-            if (std.mem.indexOfPos(u8, response, b64_start, "\"")) |end| {
-                const b64_plaintext = response[b64_start..end];
-                var dek: [DEK_SIZE]u8 = undefined;
-                const b64_decoder = std.base64.standard.Decoder;
-                _ = b64_decoder.decode(&dek, b64_plaintext) catch
-                    return error.DekUnwrapFailed;
-                return dek;
-            }
-        }
+        const VaultDecryptResponse = struct {
+            data: struct {
+                plaintext: []const u8,
+            },
+        };
+        const parsed = std.json.parseFromSlice(
+            VaultDecryptResponse,
+            self.allocator,
+            response,
+            .{ .ignore_unknown_fields = true },
+        ) catch |err| {
+            log.warn("Failed to parse Vault decrypt response: {}", .{err});
+            return error.DekUnwrapFailed;
+        };
+        defer parsed.deinit();
 
-        return error.DekUnwrapFailed;
+        var dek: [DEK_SIZE]u8 = undefined;
+        const b64_decoder = std.base64.standard.Decoder;
+        _ = b64_decoder.decode(&dek, parsed.value.data.plaintext) catch
+            return error.DekUnwrapFailed;
+        return dek;
     }
 
     /// Check if KEK cache is valid
