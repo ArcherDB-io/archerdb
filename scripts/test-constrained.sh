@@ -48,7 +48,7 @@ while [[ $# -gt 0 ]]; do
             echo "Resource profiles:"
             echo "  --minimal      -j2, lite config (~2GB RAM, 2 cores)"
             echo "  --constrained  -j4, lite config (~4GB RAM, 4 cores) [default]"
-            echo "  --full         All cores, production config"
+            echo "  --full         All cores, default config"
             echo ""
             echo "Test targets:"
             echo "  unit           Run unit tests (test:unit)"
@@ -116,7 +116,7 @@ fi
 
 # Show what we're running
 echo "Running: ${BUILD_CMD[*]}"
-echo "Resources: jobs=${JOBS:-all}, config=${CONFIG:-production}"
+echo "Resources: jobs=${JOBS:-all}, config=${CONFIG:-default}"
 echo ""
 
 # Run it

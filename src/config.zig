@@ -26,16 +26,23 @@ const BuildOptions = struct {
     release: ?[]const u8,
     release_client_min: ?[]const u8,
     config_aof_recovery: bool,
-    config_base: ?[]const u8, // "production" or "lite" as string
+    config_base: ?[]const u8, // Build config preset name as string
     index_format: []const u8, // "standard" or "compact"
 };
 
 /// Build configuration presets.
-/// - `production`: Full-featured, optimized for throughput (7+ GiB RAM)
-/// - `lite`: Minimal footprint for evaluation/testing (~130 MiB RAM)
+/// Canonical names:
+/// - `lite`: High-performance runtime with smallest capacity quotas.
+/// - `standard`: High-performance runtime with larger capacity quotas.
+/// - `pro`: High-performance runtime with higher capacity quotas.
+/// - `enterprise`: High-performance runtime with large capacity quotas.
+/// - `ultra`: High-performance runtime with highest capacity quotas.
 pub const ConfigBase = enum {
-    production,
     lite,
+    standard,
+    pro,
+    enterprise,
+    ultra,
 };
 
 /// RAM index entry format.
@@ -487,228 +494,115 @@ const ConfigCluster = struct {
 // ConfigBase enum is now defined earlier in the file
 
 pub const configs = struct {
-    /// A good default config for production.
-    pub const default_production = Config{
-        .process = .{
-            .direct_io = true,
-            .cache_geo_events_size_default = @sizeOf(vsr.archerdb.GeoEvent) * MiB,
-            .ram_index_size_default = 2 * GiB, // ~22M slots → ~15M entities
-            .verify = true,
-        },
-        .cluster = .{
-            .clients_max = 64,
-        },
-    };
-
-    // =========================================================================
-    // Hardware Tier Configurations for LSM Performance Tuning
-    // =========================================================================
-    //
-    // These configurations are optimized for different hardware tiers to meet
-    // the performance targets from CONTEXT.md:
-    // - Enterprise: 1M+ writes/sec, 100k+ reads/sec
-    // - Mid-tier: 500k+ writes/sec, 50k+ reads/sec
-    // - Point queries: < 1ms at p99
-    // - No p99 latency spikes during compaction
-    //
-    // Key tuning parameters:
-    // - lsm_levels: More levels = larger capacity, but higher read amplification
-    // - lsm_growth_factor: Higher = lower write amp, but higher read amp
-    // - lsm_compaction_ops: Larger memtable = fewer flushes, but more memory
-    // - block_size: Larger blocks = better seq read, but higher space amp
-    // - lsm_manifest_compact_extra_blocks: More = faster manifest compaction
-    // - lsm_table_coalescing_threshold_percent: Lower = more aggressive coalescing
-    //
-    // Bloom filter note: ArcherDB uses key-range based filtering at the index
-    // block level rather than traditional bloom filters. The index block stores
-    // min/max keys per value block, enabling efficient range pruning.
-    //
-    // See docs/lsm-tuning.md for detailed explanations.
-    // =========================================================================
-
-    /// Enterprise tier configuration — optimized for high-end hardware.
-    ///
-    /// Target hardware:
-    /// - NVMe SSDs (4+ GB/s sequential read/write)
-    /// - 16+ CPU cores
-    /// - 64+ GB RAM
-    ///
-    /// Expected performance:
-    /// - 1M+ writes/sec
-    /// - 100k+ reads/sec
-    /// - Point queries < 1ms at p99
-    /// - No latency spikes during compaction
-    ///
-    /// Write amplification: ~10x (excellent for write-heavy workloads)
-    pub const enterprise = Config{
+    /// Shared high-performance runtime profile used by every tier.
+    /// Tier differentiation is handled by RAM/disk capacity quotas only.
+    const runtime_high_perf = Config{
         .process = .{
             .direct_io = true,
             .cache_geo_events_size_default = @sizeOf(vsr.archerdb.GeoEvent) * 4 * MiB,
-            .ram_index_size_default = 16 * GiB, // ~178M slots → ~125M entities
+            .ram_index_size_default = 2 * GiB, // Overridden per tier.
             .verify = true,
-            // Higher I/O concurrency for NVMe
-            .journal_iops_read_max = 16,
-            .journal_iops_write_max = 64,
-            // Larger grid cache for better read performance
+            .journal_iops_read_max = 24,
+            .journal_iops_write_max = 32,
             .grid_cache_size_default = 4 * GiB,
-            .grid_iops_read_max = 64,
-            .grid_iops_write_max = 64,
-            // More concurrent block repairs
-            .grid_repair_request_max = 8,
-            .grid_repair_reads_max = 8,
-            .grid_missing_blocks_max = 64,
-            .grid_missing_tables_max = 12,
+            .grid_iops_read_max = 96,
+            .grid_iops_write_max = 96,
+            .grid_repair_request_max = 12,
+            .grid_repair_reads_max = 12,
+            .grid_missing_blocks_max = 128,
+            .grid_missing_tables_max = 16,
         },
         .cluster = .{
             .clients_max = 256,
-            // 7 levels with growth factor 8:
-            // L0: 8 tables, L1: 64, L2: 512, L3: 4K, L4: 32K, L5: 256K, L6: 2M
-            // Total capacity: ~2.4M tables, each up to 512KB = ~1.2 TB per tree
-            .lsm_levels = 7,
+            .pipeline_prepare_queue_max = 24,
+            .view_change_headers_suffix_max = 24 + 1,
+            .journal_slot_count = 1024,
+            .message_size_max = 10 * MiB,
+            .lsm_levels = 8,
             .lsm_growth_factor = 8,
-            // Larger memtable (64 ops) reduces flush frequency
-            // More ops per flush = better batching = lower write amplification
-            .lsm_compaction_ops = 64,
-            // Large blocks optimized for NVMe sequential I/O
-            // 512 KB blocks reduce metadata overhead and improve throughput
-            .block_size = 512 * KiB,
-            // More aggressive manifest compaction for large datasets
-            .lsm_manifest_compact_extra_blocks = 2,
-            // More aggressive table coalescing (40%) to reduce fragmentation
-            // Lower threshold = more frequent coalescing = better space efficiency
-            .lsm_table_coalescing_threshold_percent = 40,
-            // Larger pipeline for higher throughput
-            .pipeline_prepare_queue_max = 16,
-            .view_change_headers_suffix_max = 16 + 1,
-            // More snapshots for longer-running queries
-            .lsm_snapshots_max = 64,
-            // More concurrent scans
-            .lsm_scans_max = 12,
+            .lsm_compaction_ops = 128,
+            .block_size = 1 * MiB,
+            .lsm_manifest_compact_extra_blocks = 3,
+            .lsm_table_coalescing_threshold_percent = 35,
+            .lsm_snapshots_max = 128,
+            .lsm_scans_max = 16,
         },
     };
 
-    /// Mid-tier configuration — optimized for moderate hardware.
-    ///
-    /// Target hardware:
-    /// - SATA SSDs (500 MB/s sequential read/write)
-    /// - 8 CPU cores
-    /// - 32 GB RAM
-    ///
-    /// Expected performance:
-    /// - 500k+ writes/sec
-    /// - 50k+ reads/sec
-    /// - Point queries < 2ms at p99
-    /// - Minimal latency impact during compaction
-    ///
-    /// Write amplification: ~12x (good balance)
-    pub const mid_tier = Config{
-        .process = .{
-            .direct_io = true,
-            .cache_geo_events_size_default = @sizeOf(vsr.archerdb.GeoEvent) * 2 * MiB,
-            .ram_index_size_default = 4 * GiB, // ~44M slots → ~31M entities
-            .verify = true,
-            // Moderate I/O concurrency for SATA SSDs
-            .journal_iops_read_max = 8,
-            .journal_iops_write_max = 32,
-            // Moderate grid cache
-            .grid_cache_size_default = 2 * GiB,
-            .grid_iops_read_max = 32,
-            .grid_iops_write_max = 32,
-            // Standard block repairs
-            .grid_repair_request_max = 4,
-            .grid_repair_reads_max = 4,
-            .grid_missing_blocks_max = 32,
-            .grid_missing_tables_max = 8,
-        },
-        .cluster = .{
-            .clients_max = 128,
-            // 6 levels with growth factor 10:
-            // L0: 10 tables, L1: 100, L2: 1K, L3: 10K, L4: 100K, L5: 1M
-            // Higher growth factor = fewer levels = faster reads
-            // Trade-off: higher write amplification
-            .lsm_levels = 6,
-            .lsm_growth_factor = 10,
-            // Standard memtable size
-            .lsm_compaction_ops = 32,
-            // Smaller blocks for SATA (better latency characteristics)
-            // 256 KB blocks balance throughput and latency
-            .block_size = 256 * KiB,
-            // Standard manifest compaction
-            .lsm_manifest_compact_extra_blocks = 1,
-            // Standard coalescing threshold
-            .lsm_table_coalescing_threshold_percent = 50,
-            // Standard pipeline
-            .pipeline_prepare_queue_max = 8,
-            .view_change_headers_suffix_max = 8 + 1,
-            // Standard snapshot limit
-            .lsm_snapshots_max = 32,
-            // Standard scan concurrency
-            .lsm_scans_max = 8,
-        },
-    };
+    fn with_capacity(
+        comptime storage_default: u64,
+        comptime storage_max: u64,
+        comptime ram_index_default: u64,
+    ) Config {
+        var process = runtime_high_perf.process;
+        process.storage_size_limit_default = storage_default;
+        process.storage_size_limit_max = storage_max;
+        process.ram_index_size_default = ram_index_default;
+        return Config{
+            .process = process,
+            .cluster = runtime_high_perf.cluster,
+        };
+    }
 
-    /// Lite configuration — minimal memory footprint (~200 MiB) for evaluation and testing.
-    /// Uses small WAL, small messages, and minimal caches. Great for trying out ArcherDB
-    /// without requiring 7+ GiB of RAM. Tradeoff: smaller batch sizes.
-    ///
-    /// Note: clients_max increased from 7 to 64 to support concurrent client testing
-    /// without requiring production config's 7+ GiB RAM. This required increasing
-    /// block_size from 4KB to 32KB. Memory impact: ~70MB additional for larger blocks.
-    pub const lite = Config{
-        .process = .{
-            .storage_size_limit_default = 16 * GiB,
-            .storage_size_limit_max = 16 * GiB,
-            .direct_io = false,
-            .cache_geo_events_size_default = @sizeOf(vsr.archerdb.GeoEvent) * 256,
-            .ram_index_size_default = 64 * MiB, // ~699K slots → ~489K entities
-            .journal_iops_read_max = 3,
-            .journal_iops_write_max = 2,
-            .grid_repair_request_max = 4,
-            .grid_repair_reads_max = 4,
-            .grid_missing_blocks_max = 3,
-            .grid_missing_tables_max = 2,
-            .grid_scrubber_reads_max = 2,
-            .grid_scrubber_cycle_ms = std.time.ms_per_hour,
-            .verify = true,
-        },
-        .cluster = .{
-            // 64 clients (same as production) allows concurrent client testing without
-            // production RAM requirements. This requires message_size_max >= ~17KB to fit
-            // ClientSessions encoding (64 * (256 + 8) = ~17KB), plus block_size constraints.
-            .clients_max = 64,
-            .pipeline_prepare_queue_max = 4,
-            .view_change_headers_suffix_max = 4 + 1,
-            .journal_slot_count = Config.Cluster.journal_slot_count_min,
-            // 32KB message_size_max (power of 2, >= message_size_max_min(64)=~20KB).
-            .message_size_max = 32 * KiB,
+    /// Smallest capacity tier with full high-performance runtime behavior.
+    pub const lite = with_capacity(
+        16 * GiB,
+        16 * GiB,
+        128 * MiB,
+    );
 
-            // block_size must be a power of 2 and <= message_size_max.
-            // 32KB block_size fits ClientSessions for 64 clients (~17KB).
-            .block_size = 32 * KiB,
-            .lsm_compaction_ops = 4,
-            .lsm_growth_factor = 4,
-            // (This is higher than the production default value because the block size is smaller.)
-            .lsm_manifest_compact_extra_blocks = 5,
-            // (We need to fuzz more scans merge than in production.)
-            .lsm_scans_max = 12,
-        },
-    };
+    /// Baseline production capacity tier.
+    pub const standard = with_capacity(
+        256 * GiB,
+        1 * TiB,
+        16 * GiB,
+    );
+
+    /// Mid-tier capacity profile for larger datasets.
+    pub const pro = with_capacity(
+        2 * TiB,
+        8 * TiB,
+        32 * GiB,
+    );
+
+    /// Large production capacity profile.
+    pub const enterprise = with_capacity(
+        16 * TiB,
+        64 * TiB,
+        64 * GiB,
+    );
+
+    /// Highest-capacity profile.
+    pub const ultra = with_capacity(
+        64 * TiB,
+        256 * TiB,
+        128 * GiB,
+    );
 
     pub const current = current: {
-        // Priority: 1) build option -Dconfig, 2) root config, 3) test default, 4) production
+        // Priority: 1) build option -Dconfig, 2) root config, 3) test default, 4) standard
         var base = if (build_options.config_base) |config_base_str|
             if (std.mem.eql(u8, config_base_str, "lite"))
                 lite
-            else if (std.mem.eql(u8, config_base_str, "production"))
-                default_production
+            else if (std.mem.eql(u8, config_base_str, "standard"))
+                standard
+            else if (std.mem.eql(u8, config_base_str, "pro"))
+                pro
+            else if (std.mem.eql(u8, config_base_str, "enterprise"))
+                enterprise
+            else if (std.mem.eql(u8, config_base_str, "ultra"))
+                ultra
             else
-                @compileError("Invalid config_base: expected 'lite' or 'production'")
+                @compileError(
+                    "Invalid config_base: expected 'lite', 'standard', 'pro', " ++
+                        "'enterprise', or 'ultra'",
+                )
         else if (@hasDecl(root, "archerdb_config"))
             root.archerdb_config
         else if (builtin.is_test)
             lite
         else
-            default_production;
+            standard;
 
         if (build_options.release == null and build_options.release_client_min != null) {
             @compileError("must set release if setting release_client_min");
@@ -742,4 +636,13 @@ pub const configs = struct {
 
         break :current base;
     };
+
+    /// The name of the active build configuration tier ("lite", "standard", etc.).
+    /// Used by tests to skip resource-intensive cluster tests in lite mode.
+    pub const config_name: []const u8 = if (build_options.config_base) |name|
+        name
+    else if (builtin.is_test)
+        "lite"
+    else
+        "standard";
 };

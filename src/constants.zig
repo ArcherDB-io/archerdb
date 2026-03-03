@@ -13,6 +13,7 @@ const stdx = @import("stdx");
 const MiB = stdx.MiB;
 
 pub const config = @import("config.zig").configs.current;
+pub const config_name = @import("config.zig").configs.config_name;
 
 pub const semver = std.SemanticVersion{
     .major = config.process.release.triple().major,

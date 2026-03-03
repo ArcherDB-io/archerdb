@@ -49,8 +49,23 @@ This server has limited resources (24GB RAM, 8 cores, no swap). Use these flags 
 
 ## Build Configurations
 
-- **lite**: ~130 MiB RAM footprint, suitable for testing
-- **production**: 7+ GiB RAM footprint, for real workloads
+- **lite**: Demo/evaluation tier. Fast and lightweight, with intentionally strict data limits.
+- **standard**: Baseline production tier.
+- **pro**: Higher-performance tier for moderate production hardware.
+- **enterprise**: High-end production tier for maximum throughput.
+- **ultra**: Top-end tier (currently aligned with enterprise tuning).
+
+## Tier Product Strategy
+
+These rules are intentional product-positioning constraints and should be preserved:
+
+- `lite` is the public demo/trial experience (downloadable and easy to run).
+- `lite` must feel fast on first run: prioritize startup speed, responsiveness, and low footprint.
+- `lite` must remain intentionally storage-limited (do not relax capacity caps without explicit approval).
+- Higher tiers (`standard` -> `pro` -> `enterprise` -> `ultra`) should scale capability/resources progressively.
+- Do not add legacy/alternate config aliases; keep canonical tier names only.
+
+When changing tier defaults, always update `docs/tier-profiles.md` and any user-facing tier docs.
 
 ## Targeted Tests
 

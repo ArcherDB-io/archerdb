@@ -353,12 +353,23 @@ ArcherDB's compaction has dedicated I/O resources (18 read IOPS, 17 write IOPS) 
 
 Key tuning parameters:
 
-| Parameter | Enterprise | Mid-Tier | Effect |
-|-----------|------------|----------|--------|
-| `lsm_levels` | 7 | 6 | More levels = higher capacity but more read amplification |
-| `lsm_growth_factor` | 8 | 10 | Higher = fewer levels needed, but more data per compaction |
-| `lsm_compaction_ops` | 64 | 32 | More = larger memtable, fewer flushes |
-| `block_size` | 512 KiB | 256 KiB | Larger = better throughput, worse random read latency |
+| Runtime parameter | Shared value across tiers | Effect |
+|-------------------|--------------------------|--------|
+| `lsm_levels` | `8` | Higher capacity envelope per tree |
+| `lsm_growth_factor` | `8` | Balanced write/read amplification |
+| `lsm_compaction_ops` | `128` | Larger memtable, fewer flushes |
+| `block_size` | `1 MiB` | Higher sequential throughput |
+| `message_size_max` | `10 MiB` | Large request envelope; avoid transport bottlenecks |
+
+Capacity differences are enforced only by quotas:
+
+| Tier | RAM index default | Storage default / max |
+|------|-------------------|-----------------------|
+| `lite` | `128 MiB` | `16 GiB / 16 GiB` |
+| `standard` | `16 GiB` | `256 GiB / 1 TiB` |
+| `pro` | `32 GiB` | `2 TiB / 8 TiB` |
+| `enterprise` | `64 GiB` | `16 TiB / 64 TiB` |
+| `ultra` | `128 GiB` | `64 TiB / 256 TiB` |
 
 For detailed tuning guidance, see [lsm-tuning.md](lsm-tuning.md).
 

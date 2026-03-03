@@ -408,7 +408,7 @@ fn options_swarm(prng: *stdx.PRNG) Simulator.Options {
     // -1 since otherwise it is possible that all clients will evict each other.
     // (Due to retried register messages from the first set of evicted clients.
     // See the "Cluster: eviction: session_too_low" replica test for a related scenario.)
-    const client_count = prng.range_inclusive(u8, 1, constants.clients_max * 2 - 1);
+    const client_count = prng.range_inclusive(u16, 1, constants.clients_max * 2 - 1);
 
     const batch_size_limit_min = comptime batch_size_limit_min: {
         var event_size_max: u32 = @sizeOf(vsr.RegisterRequest);

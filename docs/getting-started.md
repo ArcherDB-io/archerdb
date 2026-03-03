@@ -79,6 +79,23 @@ cd archerdb
 
 </details>
 
+## Choose a Tier
+
+ArcherDB binaries are intended to be distributed by tier:
+
+- `lite` (recommended for demos/evaluation): fastest first-run experience, low footprint, intentionally storage-limited.
+- `standard`: baseline production profile.
+- `pro`: higher-performance mainstream profile.
+- `enterprise`: high-end production profile.
+- `ultra`: top-end profile.
+
+If building from source, choose a tier explicitly:
+
+```bash
+./zig/zig build -Dconfig=lite
+# or: standard, pro, enterprise, ultra
+```
+
 ## Starting a Cluster (~1 min)
 
 ### Single-Node Development

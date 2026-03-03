@@ -36,6 +36,7 @@ Complete API and configuration documentation:
 
 - [API Reference](api-reference.md) - All operations with request/response details
 - [OpenAPI Specification](openapi.yaml) - Machine-readable API definition
+- [Tier Profiles](tier-profiles.md) - Product tier intent and release positioning
 - [Hardware Requirements](hardware-requirements.md) - Minimum and recommended specs
 - [LSM Tuning](lsm-tuning.md) - Storage engine configuration
 - [Journal Sizing](journal_sizing.md) - Write-ahead log configuration

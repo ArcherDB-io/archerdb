@@ -339,7 +339,7 @@ results.to_csv("benchmark_results.csv")
 
 - Use dedicated hardware or CI runners
 - Close other applications during local runs
-- Use the same build configuration (lite vs production)
+- Use the same build configuration tier (for example, lite vs standard)
 
 ### Warm-up
 

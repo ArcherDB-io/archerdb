@@ -7,7 +7,13 @@ const Query = std.Target.Query;
 
 const VoprStateMachine = enum { testing, geo };
 const VoprLog = enum { short, full };
-const ConfigBase = enum { production, lite };
+const ConfigBase = enum {
+    lite,
+    standard,
+    pro,
+    enterprise,
+    ultra,
+};
 const IndexFormat = enum { standard, compact };
 
 // ArcherDB binary requires certain CPU features and supports a closed set of CPUs. Here, we
@@ -97,7 +103,28 @@ pub fn build(b: *std.Build) !void {
         .profile = b.step("profile", "Build with profiling instrumentation (Tracy on-demand, frame pointers)"),
     };
 
-    const mode = b.standardOptimizeOption(.{ .preferred_optimize_mode = .ReleaseSafe });
+    const mode = mode: {
+        if (b.option(
+            std.builtin.OptimizeMode,
+            "optimize",
+            "Optimization mode override: Debug, ReleaseSafe, ReleaseFast, or ReleaseSmall.",
+        )) |optimize_mode| {
+            break :mode optimize_mode;
+        }
+
+        switch (b.release_mode) {
+            .off => {},
+            .any, .safe => break :mode .ReleaseSafe,
+            .fast => break :mode .ReleaseFast,
+            .small => break :mode .ReleaseSmall,
+        }
+
+        if (b.option(bool, "release", "optimize for end users") orelse false) {
+            break :mode .ReleaseSafe;
+        }
+
+        break :mode .Debug;
+    };
 
     // Build options passed with `-D` flags.
     const build_options = .{
@@ -123,7 +150,7 @@ pub fn build(b: *std.Build) !void {
         .config_base = b.option(
             ConfigBase,
             "config",
-            "Build configuration preset: 'production' (7+ GiB RAM) or 'lite' (~130 MiB RAM).",
+            "Build configuration preset: 'lite', 'standard', 'pro', 'enterprise', or 'ultra'.",
         ),
         .config_release = b.option([]const u8, "config-release", "Release triple."),
         .config_release_client_min = b.option(

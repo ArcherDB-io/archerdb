@@ -125,6 +125,18 @@ All SDK features listed below are supported across each language.
 ./zig-out/bin/archerdb start --addresses=3000 data.archerdb
 ```
 
+## Tier Profiles
+
+ArcherDB is distributed as tiered builds with distinct product intent:
+
+- `lite`: Demo/evaluation tier. Fast and lightweight by design, with intentionally strict storage limits.
+- `standard`: Baseline production tier.
+- `pro`: Higher-performance mainstream tier.
+- `enterprise`: High-end production tier.
+- `ultra`: Top-end tier for premium performance positioning.
+
+See [Tier Profiles](docs/tier-profiles.md) for authoritative tier intent and guardrails.
+
 ## Documentation
 
 - [Getting Started Guide](docs/getting-started.md)

@@ -14,7 +14,7 @@ const Instant = stdx.Instant;
 
 pub const PacketSimulatorOptions = struct {
     node_count: u8,
-    client_count: u8,
+    client_count: u16,
     seed: u64,
 
     recorded_count_max: u8 = 0,

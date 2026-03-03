@@ -411,10 +411,10 @@ test "format" {
     // counts are lower.
     //
     // Note: This checksum changes when cluster config changes (clients_max, block_size, etc.).
-    // Updated 2026-01-29: New checksum after increasing lite config clients_max to 64 and
-    // block_size/message_size_max to 32KB.
+    // Updated 2026-03-03: New checksum after unifying all tiers to runtime_high_perf cluster
+    // config (clients_max=256, journal_slot_count=1024, message_size_max=10MiB, block_size=1MiB).
     try std.testing.expectEqual(
-        303245869584125383912230750088474350476,
+        198541975069722639608548680214558207948,
         vsr.checksum(storage.memory),
     );
 }

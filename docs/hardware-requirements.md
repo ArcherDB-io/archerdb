@@ -13,6 +13,20 @@ This document specifies minimum and recommended hardware requirements for Archer
 - [Cloud Instance Mapping](#cloud-instance-mapping)
 - [Sizing Calculator](#sizing-calculator)
 
+## Tier Objective Summary
+
+Use hardware planning together with capacity quotas:
+
+| Tier | Runtime posture | Capacity posture |
+|------|-----------------|------------------|
+| `lite` | Same high-performance runtime as all tiers | Smallest RAM/disk quota |
+| `standard` | Same high-performance runtime as all tiers | Larger RAM/disk quota |
+| `pro` | Same high-performance runtime as all tiers | Mid-tier RAM/disk quota |
+| `enterprise` | Same high-performance runtime as all tiers | Large RAM/disk quota |
+| `ultra` | Same high-performance runtime as all tiers | Highest RAM/disk quota |
+
+See [Tier Profiles](tier-profiles.md) for canonical product intent.
+
 ## Quick Reference
 
 ### By Entity Count

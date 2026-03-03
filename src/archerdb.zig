@@ -713,8 +713,9 @@ comptime {
         @compileError("big-endian systems not supported");
     }
 
+    // Permit all optimize modes so build matrices can include Debug, ReleaseSafe,
+    // ReleaseFast, and ReleaseSmall artifacts.
     switch (builtin.mode) {
-        .Debug, .ReleaseSafe => {},
-        .ReleaseFast, .ReleaseSmall => @compileError("safety checks are required for correctness"),
+        .Debug, .ReleaseSafe, .ReleaseFast, .ReleaseSmall => {},
     }
 }

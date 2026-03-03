@@ -110,8 +110,11 @@ test "u128 consistency test" {
 // 2. the application can submit messages and receive replies through the completion callback.
 // 3. the data marshaling is correct, and exactly the same data sent was received back.
 test "arch_client echo" {
-    // Using the insert_events operation for this test.
-    const RequestContext = RequestContextType(constants.message_body_size_max);
+    // Cap buffer size to avoid stack overflow in the on_complete callback,
+    // which constructs result buffers as local variables. The full
+    // message_body_size_max (10 MiB) exceeds the default thread stack size.
+    const test_request_size_max = @min(constants.message_body_size_max, 64 * 1024);
+    const RequestContext = RequestContextType(test_request_size_max);
 
     // Test multiple ArcherDB geospatial operations (F1.3.7)
     const operations = [_]arch_client.Operation{
@@ -358,7 +361,11 @@ test "arch_client client status" {
 
 // Asserts the validation rules associated with the "PacketStatus" enum.
 test "arch_client PacketStatus" {
-    const RequestContext = RequestContextType(constants.message_body_size_max);
+    // Cap buffer size to avoid stack overflow — the action() closure constructs
+    // a RequestContext as a local variable, and the full message_body_size_max
+    // (10 MiB) exceeds the default thread stack size.
+    const test_request_size_max = @min(constants.message_body_size_max, 64 * 1024);
+    const RequestContext = RequestContextType(test_request_size_max);
 
     var client_out: arch_client.ClientInterface = undefined;
     const cluster_id: u128 = 0;
@@ -562,7 +569,8 @@ test "arch_client insert_events integration" {
     defer if (address_opt) |addr| testing.allocator.free(addr);
     const address = address_opt orelse "127.0.0.1:3001";
 
-    const RequestContext = RequestContextType(constants.message_body_size_max);
+    const test_request_size_max = @min(constants.message_body_size_max, 64 * 1024);
+    const RequestContext = RequestContextType(test_request_size_max);
 
     var client: arch_client.ClientInterface = undefined;
     const cluster_id: u128 = 0;

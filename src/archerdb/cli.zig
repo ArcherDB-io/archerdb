@@ -2288,6 +2288,8 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
         .{ .value = constants.storage_size_limit_default };
     const start_memory_lsm_manifest: ByteSize = start.memory_lsm_manifest orelse
         .{ .value = constants.lsm_manifest_memory_size_default };
+    const start_ram_index_size: ByteSize = start.ram_index_size orelse
+        .{ .value = constants.ram_index_size_default };
 
     const storage_size_limit = start_limit_storage.bytes();
     const storage_size_limit_min = data_file_size_min;
@@ -2316,6 +2318,16 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
                 vsr.stdx.fmt_int_size_bin_exact(constants.sector_size),
             },
         );
+    }
+
+    const ram_index_size = start_ram_index_size.bytes();
+    const ram_index_size_max = constants.ram_index_size_default;
+    if (ram_index_size > ram_index_size_max) {
+        vsr.fatal(.cli, "--ram-index-size: size {}{s} exceeds maximum for this tier: {}", .{
+            start_ram_index_size.value,
+            start_ram_index_size.suffix(),
+            vsr.stdx.fmt_int_size_bin_exact(ram_index_size_max),
+        });
     }
 
     const pipeline_limit =
@@ -2487,8 +2499,7 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
             "--cache-geo-events",
         ),
         .ram_index_capacity = ram_index_capacity: {
-            const size = if (start.ram_index_size) |s| s else ByteSize{ .value = constants.ram_index_size_default };
-            const bytes = size.bytes();
+            const bytes = ram_index_size;
             // Each RAM index slot costs ~96 bytes (64B entry + 32B scan buffers).
             const slots = @max(500_000, bytes / 96);
             break :ram_index_capacity @intCast(slots);

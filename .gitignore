@@ -75,3 +75,4 @@ tests/sdk_tests/java/target/
 
 # Temp directories
 .tmp/
+test_data/

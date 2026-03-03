@@ -11,10 +11,10 @@
 # - Latency percentiles (p50, p95, p99, p999)
 # - Compaction impact on tail latency
 #
-# Performance Targets (from CONTEXT.md):
-# - Enterprise tier: 1M+ writes/sec, 100k+ reads/sec
-# - Point queries: < 1ms at p99
-# - No p99 latency spikes during compaction
+# Capacity-only tier model:
+# - All tiers share the same high-performance runtime profile.
+# - Tiers differ by RAM/disk capacity quotas, not runtime throttles.
+# - Benchmarks should be compared across hardware/workload conditions.
 #
 # Usage:
 #   ./scripts/benchmark_lsm.sh [options]
@@ -24,7 +24,7 @@
 #   --reads N            Number of read operations (default: 10000)
 #   --duration S         Test duration in seconds (default: 60)
 #   --warmup S           Warmup period in seconds (default: 10)
-#   --config CONFIG      Configuration preset: enterprise|mid_tier|current (default: current)
+#   --config CONFIG      Configuration preset: current|lite|standard|pro|enterprise|ultra (default: current)
 #   --scenario SCENARIO  Benchmark scenario (default: mixed)
 #                        Options: write_only, read_only, mixed, range_scan, compaction_stress
 #   --output FORMAT      Output format: text|json (default: text)
@@ -46,6 +46,18 @@
 #   ./scripts/benchmark_lsm.sh --output=json --duration=60
 
 set -euo pipefail
+
+# Require bash 4+ for associative arrays (declare -A).
+# macOS ships bash 3.2; try Homebrew bash as fallback.
+if [[ "${BASH_VERSINFO[0]}" -lt 4 ]]; then
+    for _bash in /opt/homebrew/bin/bash /usr/local/bin/bash; do
+        if [[ -x "$_bash" ]] && "$_bash" -c '[[ "${BASH_VERSINFO[0]}" -ge 4 ]]' 2>/dev/null; then
+            exec "$_bash" "$0" "$@"
+        fi
+    done
+    echo "ERROR: bash 4+ required (for associative arrays). Install via: brew install bash" >&2
+    exit 1
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -88,7 +100,7 @@ Options:
   --reads N            Number of read operations (default: $READS)
   --duration S         Test duration in seconds (default: $DURATION)
   --warmup S           Warmup period in seconds (default: $WARMUP)
-  --config CONFIG      Configuration preset: enterprise|mid_tier|current (default: $CONFIG)
+  --config CONFIG      Configuration preset: current|lite|standard|pro|enterprise|ultra (default: $CONFIG)
   --scenario SCENARIO  Benchmark scenario (default: $SCENARIO)
                        Options: write_only, read_only, mixed, range_scan, compaction_stress
   --output FORMAT      Output format: text|json (default: $OUTPUT_FORMAT)
@@ -99,10 +111,11 @@ Options:
 
 Configuration Presets:
   current      Use current compiled configuration
-  enterprise   Enterprise tier (NVMe, 16+ cores, 64GB+ RAM)
-               - lsm_levels=7, growth_factor=8, block_size=512KB
-  mid_tier     Mid-tier (SATA SSD, 8 cores, 32GB RAM)
-               - lsm_levels=6, growth_factor=10, block_size=256KB
+  lite         Shared high-performance runtime + smallest capacity quotas
+  standard     Shared high-performance runtime + larger capacity quotas
+  pro          Shared high-performance runtime + mid-tier capacity quotas
+  enterprise   Shared high-performance runtime + large capacity quotas
+  ultra        Shared high-performance runtime + highest capacity quotas
 
 Benchmark Scenarios:
   write_only         100% insert workload
@@ -111,9 +124,9 @@ Benchmark Scenarios:
   range_scan         Range query workload
   compaction_stress  Sustained writes to trigger compaction
 
-Performance Targets (Enterprise Tier):
-  - Writes: 1M+ ops/sec
-  - Reads: 100k+ ops/sec
+Performance Targets (Hardware Dependent):
+  - Throughput depends on host CPU, memory bandwidth, and storage performance
+  - Tier name should not be treated as a throughput class
   - Point query p99: < 1ms
   - No latency spikes during compaction
 
@@ -222,10 +235,11 @@ parse_args() {
 
     # Validate config
     case "$CONFIG" in
-        current|enterprise|mid_tier)
+        current|lite|standard|pro|enterprise|ultra)
             ;;
         *)
-            echo "Error: Invalid config '$CONFIG'. Must be one of: current, enterprise, mid_tier" >&2
+            echo "Error: Invalid config '$CONFIG'." >&2
+            echo "Must be one of: current, lite, standard, pro, enterprise, ultra" >&2
             exit 1
             ;;
     esac
@@ -312,34 +326,56 @@ get_system_info() {
 }
 
 get_config_params() {
-    # Document the configuration parameters for each tier
+    # In capacity-only mode, runtime knobs are shared across tiers.
+    RESULTS["config_lsm_levels"]="8"
+    RESULTS["config_lsm_growth_factor"]="8"
+    RESULTS["config_lsm_compaction_ops"]="128"
+    RESULTS["config_block_size_kb"]="1024"
+    RESULTS["config_lsm_manifest_compact_extra_blocks"]="3"
+    RESULTS["config_lsm_table_coalescing_threshold_percent"]="35"
+    RESULTS["config_message_size_kb"]="10240"
+
+    # Tier-specific capacity quotas.
     case "$CONFIG" in
-        enterprise)
-            RESULTS["config_lsm_levels"]="7"
-            RESULTS["config_lsm_growth_factor"]="8"
-            RESULTS["config_lsm_compaction_ops"]="64"
-            RESULTS["config_block_size_kb"]="512"
-            RESULTS["config_lsm_manifest_compact_extra_blocks"]="2"
-            RESULTS["config_lsm_table_coalescing_threshold_percent"]="40"
+        ultra)
+            RESULTS["config_ram_index"]="128GiB"
+            RESULTS["config_storage_default"]="64TiB"
+            RESULTS["config_storage_max"]="256TiB"
             ;;
-        mid_tier)
-            RESULTS["config_lsm_levels"]="6"
-            RESULTS["config_lsm_growth_factor"]="10"
-            RESULTS["config_lsm_compaction_ops"]="32"
-            RESULTS["config_block_size_kb"]="256"
-            RESULTS["config_lsm_manifest_compact_extra_blocks"]="1"
-            RESULTS["config_lsm_table_coalescing_threshold_percent"]="50"
+        enterprise)
+            RESULTS["config_ram_index"]="64GiB"
+            RESULTS["config_storage_default"]="16TiB"
+            RESULTS["config_storage_max"]="64TiB"
+            ;;
+        pro)
+            RESULTS["config_ram_index"]="32GiB"
+            RESULTS["config_storage_default"]="2TiB"
+            RESULTS["config_storage_max"]="8TiB"
+            ;;
+        standard)
+            RESULTS["config_ram_index"]="16GiB"
+            RESULTS["config_storage_default"]="256GiB"
+            RESULTS["config_storage_max"]="1TiB"
+            ;;
+        lite)
+            RESULTS["config_ram_index"]="128MiB"
+            RESULTS["config_storage_default"]="16GiB"
+            RESULTS["config_storage_max"]="16GiB"
             ;;
         current)
-            # Extract from current compiled config (would need zig build info)
-            RESULTS["config_lsm_levels"]="7"
-            RESULTS["config_lsm_growth_factor"]="8"
-            RESULTS["config_lsm_compaction_ops"]="32"
-            RESULTS["config_block_size_kb"]="512"
-            RESULTS["config_lsm_manifest_compact_extra_blocks"]="1"
-            RESULTS["config_lsm_table_coalescing_threshold_percent"]="50"
+            RESULTS["config_ram_index"]="runtime-config"
+            RESULTS["config_storage_default"]="runtime-config"
+            RESULTS["config_storage_max"]="runtime-config"
             ;;
     esac
+}
+
+run_vopr() {
+    if [[ "$CONFIG" == "current" ]]; then
+        "$ZIG_BIN" build vopr -- "$@"
+    else
+        "$ZIG_BIN" build vopr -Dconfig="$CONFIG" -- "$@"
+    fi
 }
 
 run_benchmark() {
@@ -406,7 +442,7 @@ simulate_write_benchmark() {
     start_ns=$(date +%s%N)
 
     # Run VOPR with minimal requests to measure write path
-    if ! "$ZIG_BIN" build vopr -Dconfig=lite -- --lite --requests-max=100 42 2>/dev/null; then
+    if ! run_vopr --lite --requests-max=100 42 2>/dev/null; then
         log "  Warning: VOPR benchmark failed, using estimated values"
     fi
 
@@ -439,7 +475,7 @@ simulate_read_benchmark() {
     start_ns=$(date +%s%N)
 
     # Run a quick VOPR to exercise read path
-    if ! "$ZIG_BIN" build vopr -Dconfig=lite -- --lite --requests-max=50 97 2>/dev/null; then
+    if ! run_vopr --lite --requests-max=50 97 2>/dev/null; then
         log "  Warning: VOPR benchmark failed, using estimated values"
     fi
 
@@ -471,7 +507,7 @@ simulate_mixed_benchmark() {
     start_ns=$(date +%s%N)
 
     # Run VOPR with mixed workload
-    if ! "$ZIG_BIN" build vopr -Dconfig=lite -- --lite --requests-max=100 123 2>/dev/null; then
+    if ! run_vopr --lite --requests-max=100 123 2>/dev/null; then
         log "  Warning: VOPR benchmark failed, using estimated values"
     fi
 
@@ -534,7 +570,7 @@ simulate_compaction_stress() {
     start_ns=$(date +%s%N)
 
     # Run extended VOPR to trigger compaction
-    if ! "$ZIG_BIN" build vopr -Dconfig=lite -- --lite --requests-max=200 42 2>/dev/null; then
+    if ! run_vopr --lite --requests-max=200 42 2>/dev/null; then
         log "  Warning: VOPR benchmark failed, using estimated values"
     fi
 
@@ -597,39 +633,30 @@ check_targets() {
     log "Performance Target Verification"
     log "================================"
 
-    # Target: Write throughput (varies by config)
-    local write_target
-    case "$CONFIG" in
-        enterprise) write_target=1000000 ;;  # 1M ops/sec
-        mid_tier)   write_target=500000 ;;   # 500K ops/sec
-        current)    write_target=100000 ;;   # 100K ops/sec (conservative)
-    esac
+    # Throughput targets are hardware-dependent in the capacity-only model.
+    # Keep conservative smoke targets here for sanity checks only.
+    local write_target=10000
 
     local write_actual="${RESULTS[write_throughput]:-0}"
     ((check_count++))
     if [[ "$write_actual" -ge "$write_target" ]]; then
-        log_colored "$GREEN" "[PASS] Write throughput: $write_actual ops/sec >= $write_target target"
+        log_colored "$GREEN" "[PASS] Write throughput: $write_actual ops/sec >= $write_target smoke target"
         ((pass_count++))
     else
-        log_colored "$YELLOW" "[INFO] Write throughput: $write_actual ops/sec (target: $write_target for $CONFIG)"
-        # Don't fail for simulation - actual hardware determines capability
+        log_colored "$YELLOW" "[INFO] Write throughput: $write_actual ops/sec (smoke target: $write_target)"
+        # Don't fail this benchmark script on throughput; host hardware is the main determinant.
     fi
 
-    # Target: Read throughput
-    local read_target
-    case "$CONFIG" in
-        enterprise) read_target=100000 ;;  # 100K ops/sec
-        mid_tier)   read_target=50000 ;;   # 50K ops/sec
-        current)    read_target=10000 ;;   # 10K ops/sec (conservative)
-    esac
+    # Target: Read throughput smoke check.
+    local read_target=5000
 
     local read_actual="${RESULTS[read_throughput]:-0}"
     ((check_count++))
     if [[ "$read_actual" -ge "$read_target" ]]; then
-        log_colored "$GREEN" "[PASS] Read throughput: $read_actual ops/sec >= $read_target target"
+        log_colored "$GREEN" "[PASS] Read throughput: $read_actual ops/sec >= $read_target smoke target"
         ((pass_count++))
     else
-        log_colored "$YELLOW" "[INFO] Read throughput: $read_actual ops/sec (target: $read_target for $CONFIG)"
+        log_colored "$YELLOW" "[INFO] Read throughput: $read_actual ops/sec (smoke target: $read_target)"
     fi
 
     # Target: Point query p99 < 1ms (1000us)
@@ -682,6 +709,11 @@ output_text() {
     echo "  Growth Factor: ${RESULTS[config_lsm_growth_factor]:-unknown}"
     echo "  Compaction Ops: ${RESULTS[config_lsm_compaction_ops]:-unknown}"
     echo "  Block Size: ${RESULTS[config_block_size_kb]:-unknown} KB"
+    echo "  Message Size: ${RESULTS[config_message_size_kb]:-unknown} KB"
+    echo "Capacity Quotas:"
+    echo "  RAM Index Default: ${RESULTS[config_ram_index]:-unknown}"
+    echo "  Storage Default: ${RESULTS[config_storage_default]:-unknown}"
+    echo "  Storage Max: ${RESULTS[config_storage_max]:-unknown}"
     echo ""
 
     case "$SCENARIO" in
@@ -763,7 +795,11 @@ output_json() {
     json+="\"lsm_levels\":${RESULTS[config_lsm_levels]:-0},"
     json+="\"lsm_growth_factor\":${RESULTS[config_lsm_growth_factor]:-0},"
     json+="\"lsm_compaction_ops\":${RESULTS[config_lsm_compaction_ops]:-0},"
-    json+="\"block_size_kb\":${RESULTS[config_block_size_kb]:-0}"
+    json+="\"block_size_kb\":${RESULTS[config_block_size_kb]:-0},"
+    json+="\"message_size_kb\":${RESULTS[config_message_size_kb]:-0},"
+    json+="\"ram_index\":\"${RESULTS[config_ram_index]:-unknown}\","
+    json+="\"storage_default\":\"${RESULTS[config_storage_default]:-unknown}\","
+    json+="\"storage_max\":\"${RESULTS[config_storage_max]:-unknown}\""
     json+="},"
 
     json+="\"results\":{"
@@ -861,7 +897,7 @@ main() {
     if [[ "$WARMUP" -gt 0 ]]; then
         log "Warmup phase (${WARMUP}s)..."
         # Quick warmup run
-        "$ZIG_BIN" build vopr -Dconfig=lite -- --lite --requests-max=10 1 2>/dev/null || true
+        run_vopr --lite --requests-max=10 1 2>/dev/null || true
     fi
 
     # Run the benchmark

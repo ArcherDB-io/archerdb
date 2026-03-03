@@ -81,7 +81,7 @@ pub fn ClusterType(comptime StateMachineType: anytype) type {
             cluster_id: u128,
             replica_count: u8,
             standby_count: u8,
-            client_count: u8,
+            client_count: u16,
             storage_size_limit: u64,
             reformats_max: u8,
             seed: u64,
@@ -245,7 +245,7 @@ pub fn ClusterType(comptime StateMachineType: anytype) type {
             // There may be more clients than `clients_max` (to test session eviction).
             // +1 is for pulse which uses client_id = 0.
             const pipeline_requests_limit =
-                (@min(options.cluster.client_count, constants.clients_max) + @as(u8, 1)) -|
+                (@min(options.cluster.client_count, constants.clients_max) + @as(u16, 1)) -|
                 constants.pipeline_prepare_queue_max;
 
             for (replica_pools, 0..) |*pool, i| {

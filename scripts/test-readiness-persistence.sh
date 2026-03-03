@@ -8,13 +8,13 @@
 # Expected behavior:
 #   - Server /health/ready returns 200 within 2 seconds of startup
 #   - Data written via client persists across server restart
-#   - Works in production config (no --development flag)
+#   - Works in non-development mode (no --development flag)
 #
 # Usage:
 #   ./scripts/test-readiness-persistence.sh [--development]
 #
 # The --development flag is for testing dev mode behavior.
-# Default runs in production mode to validate CRIT-02.
+# Default runs in non-development mode to validate CRIT-02.
 
 set -euo pipefail
 

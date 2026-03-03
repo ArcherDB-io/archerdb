@@ -6,16 +6,19 @@
 #
 # Tests that the server handles 100+ concurrent clients.
 # The server's clients_max configuration determines the limit:
-#   - Lite config: clients_max = 7 (limited for testing/development)
-#   - Production config: clients_max = 64 (default production)
-#   - Enterprise config: clients_max = 256
+#   - Lite/Standard: clients_max = 64
+#   - Pro: clients_max = 128
+#   - Enterprise/Ultra: clients_max = 256
 #
 # Usage:
 #   ./scripts/test-concurrent-clients.sh [OPTIONS]
 #
 # Options:
-#   --lite          Use lite config (expect ~7 client limit)
-#   --production    Use production config (expect 64+ client limit)
+#   --lite          Expect lite tier limits (clients_max=64)
+#   --standard      Expect standard tier limits (clients_max=64) [default]
+#   --pro           Expect pro tier limits (clients_max=128)
+#   --enterprise    Expect enterprise tier limits (clients_max=256)
+#   --ultra         Expect ultra tier limits (clients_max=256)
 #   --clients N     Number of concurrent clients to test (default: 100)
 #   --stress        Run stress test finding actual breaking point
 #   --quick         Quick test with 10 clients only
@@ -26,8 +29,9 @@
 #   - Python 3 for client spawning
 #
 # Expected behavior:
-#   - Production config: handles 64 concurrent clients
-#   - Lite config: handles 7 concurrent clients
+#   - Lite/Standard tiers: handle up to 64 concurrent clients
+#   - Pro tier: handles up to 128 concurrent clients
+#   - Enterprise/Ultra tiers: handle up to 256 concurrent clients
 #   - Beyond limits: connections gracefully rejected, no crashes
 
 set -e
@@ -38,7 +42,8 @@ ARCHERDB="$ROOT_DIR/zig-out/bin/archerdb"
 
 # Default options
 NUM_CLIENTS=100
-USE_LITE=false
+CONFIG_TIER="standard"
+EXPECTED_CLIENTS_MAX=64
 USE_STRESS=false
 VERBOSE=false
 QUICK_MODE=false
@@ -47,11 +52,28 @@ QUICK_MODE=false
 while [[ $# -gt 0 ]]; do
     case $1 in
         --lite)
-            USE_LITE=true
+            CONFIG_TIER="lite"
+            EXPECTED_CLIENTS_MAX=64
             shift
             ;;
-        --production)
-            USE_LITE=false
+        --standard)
+            CONFIG_TIER="standard"
+            EXPECTED_CLIENTS_MAX=64
+            shift
+            ;;
+        --pro)
+            CONFIG_TIER="pro"
+            EXPECTED_CLIENTS_MAX=128
+            shift
+            ;;
+        --enterprise)
+            CONFIG_TIER="enterprise"
+            EXPECTED_CLIENTS_MAX=256
+            shift
+            ;;
+        --ultra)
+            CONFIG_TIER="ultra"
+            EXPECTED_CLIENTS_MAX=256
             shift
             ;;
         --clients)
@@ -86,16 +108,27 @@ echo "============================================"
 echo "ArcherDB Concurrent Clients Test (CRIT-03)"
 echo "============================================"
 echo "Working directory: $TEMP_DIR"
-echo "Config: $([ "$USE_LITE" = true ] && echo "lite (clients_max=7)" || echo "production (clients_max=64)")"
+echo "Expected tier: $CONFIG_TIER (clients_max=$EXPECTED_CLIENTS_MAX)"
 echo "Target clients: $NUM_CLIENTS"
+echo "NOTE: ensure binary was built with matching -Dconfig tier."
 echo ""
 
 # Check prerequisites
 if [ ! -x "$ARCHERDB" ]; then
     echo "ERROR: archerdb binary not found at $ARCHERDB"
-    echo "Build with: ./zig/zig build -j4 -Dconfig=lite"
+    echo "Build with: ./zig/zig build -j4 -Dconfig=$CONFIG_TIER"
     exit 1
 fi
+
+get_free_port() {
+    python3 - <<'PYEOF'
+import socket
+sock = socket.socket()
+sock.bind(("127.0.0.1", 0))
+print(sock.getsockname()[1])
+sock.close()
+PYEOF
+}
 
 cd "$TEMP_DIR"
 
@@ -117,25 +150,14 @@ echo ""
 # ===========================================================
 echo "PHASE 2: Starting server..."
 
-$ARCHERDB start --addresses=127.0.0.1:0 --metrics-port=0 --metrics-bind=127.0.0.1 test.archerdb > server.log 2>&1 &
+DATA_PORT=$(get_free_port)
+METRICS_PORT=$(get_free_port)
+
+$ARCHERDB start --addresses=127.0.0.1:${DATA_PORT} --metrics-port=${METRICS_PORT} --metrics-bind=127.0.0.1 test.archerdb > server.log 2>&1 &
 SERVER_PID=$!
 echo "Server PID: $SERVER_PID"
-
-# Wait for server startup
-sleep 3
-
-# Extract ports from log
-METRICS_PORT=$(grep "metrics server listening" server.log | sed -n 's/.*127\.0\.0\.1:\([0-9]*\).*/\1/p' || echo "")
-DATA_PORT=$(grep "cluster=.*listening on" server.log | sed -n 's/.*127\.0\.0\.1:\([0-9]*\).*/\1/p' || echo "")
-
-if [ -z "$METRICS_PORT" ] || [ -z "$DATA_PORT" ]; then
-    echo "FAIL: Could not determine server ports"
-    cat server.log
-    kill $SERVER_PID 2>/dev/null || true
-    exit 1
-fi
-echo "Metrics port: $METRICS_PORT"
 echo "Data port: $DATA_PORT"
+echo "Metrics port: $METRICS_PORT"
 
 # Wait for readiness
 echo "Waiting for server readiness..."

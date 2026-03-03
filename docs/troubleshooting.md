@@ -13,7 +13,7 @@ Use this table to quickly identify and resolve common issues:
 | High P99 latency (>100ms) | Compaction backlog | Increase `compaction_threads` to 3, check disk I/O |
 | Connection refused | Server not running or wrong port | Verify `systemctl status archerdb`, check port binding |
 | "cluster ID mismatch" | Client configured for wrong cluster | Update client cluster_id to match server |
-| "max clients reached" | Connection limit hit | Check `clients_max` config (default 64), close idle connections |
+| "max clients reached" | Connection limit hit | Check `clients_max` for your tier (lite/standard=64, pro=128, enterprise/ultra=256), close idle connections |
 | TTL cleanup removes 0 | TTL not configured on events | Events must have `ttl_seconds > 0` when inserted |
 | Replica lag growing | Follower disk too slow | Check `iostat` on lagging replica, upgrade to NVMe |
 | Memory usage growing | Entity count exceeds plan | Check entity count vs capacity, scale or archive data |

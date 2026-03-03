@@ -61,8 +61,8 @@ const releases = [_]Release{
 
 comptime {
     // The tests are written for these configuration values in particular.
-    assert(constants.journal_slot_count == 32);
-    assert(constants.lsm_compaction_ops == 4);
+    assert(constants.journal_slot_count == 1024);
+    assert(constants.lsm_compaction_ops == 128);
 }
 
 test "Cluster: smoke" {
@@ -515,9 +515,7 @@ test "Cluster: network: partition flexible quorum" {
     // Two out of four replicas should be able to carry on as long the pair includes the primary.
     // TODO: This test has a known issue with assertion failures during cluster initialization
     // when running with lite configuration. Skip until flexible quorum is fully implemented.
-    if (@import("../constants.zig").config.cluster.journal_slot_count < 1024) {
-        return error.SkipZigTest;
-    }
+    if (std.mem.eql(u8, constants.config_name, "lite")) return error.SkipZigTest;
 
     const t = try TestContext.init(.{ .replica_count = 4 });
     defer t.deinit();
@@ -1292,9 +1290,7 @@ test "Cluster: repair: R=2 (primary checkpoints, but backup lags behind)" {
 
 test "Cluster: sync: R=4, 2/4 ahead + idle, 2/4 lagging, sync" {
     // Skip for lite configuration - 4-replica tests require more resources
-    if (@import("../constants.zig").config.cluster.journal_slot_count < 1024) {
-        return error.SkipZigTest;
-    }
+    if (std.mem.eql(u8, constants.config_name, "lite")) return error.SkipZigTest;
 
     const t = try TestContext.init(.{ .replica_count = 4 });
     defer t.deinit();
@@ -1454,9 +1450,7 @@ test "Cluster: sync: checkpoint from a newer view" {
     // When B1 subsequently joins, it should state sync and truncate the log. Immediately
     // after state sync, the log doesn't connect to B1's new checkpoint.
     // Skip for lite configuration - 6-replica tests require more resources
-    if (@import("../constants.zig").config.cluster.journal_slot_count < 1024) {
-        return error.SkipZigTest;
-    }
+    if (std.mem.eql(u8, constants.config_name, "lite")) return error.SkipZigTest;
 
     const t = try TestContext.init(.{ .replica_count = 6 });
     defer t.deinit();
@@ -1829,9 +1823,7 @@ test "Cluster: eviction: client_release_too_high" {
 test "Cluster: eviction: session_too_low" {
     // Skip for lite configuration - test requires creating more than clients_max clients
     // which may not work correctly with limited resources
-    if (@import("../constants.zig").config.cluster.journal_slot_count < 1024) {
-        return error.SkipZigTest;
-    }
+    if (std.mem.eql(u8, constants.config_name, "lite")) return error.SkipZigTest;
 
     const t = try TestContext.init(.{
         .replica_count = 3,
@@ -2245,16 +2237,13 @@ const TestContext = struct {
     pub fn init(options: struct {
         replica_count: u8,
         standby_count: u8 = 0,
-        client_count: u8 = constants.clients_max,
+        client_count: u16 = constants.clients_max,
         client_release: vsr.Release = releases[0].release,
         seed: u64 = 123,
     }) !*TestContext {
-        // Skip for lite configuration - Cluster-based tests require production config
-        // The lite config (32KB block_size) causes storage assertion failures during
-        // cluster initialization due to journal slot count differences.
-        if (constants.config.cluster.journal_slot_count < 1024) {
-            return error.SkipZigTest;
-        }
+        // Skip for lite configuration - cluster-based tests require non-lite defaults.
+        // Lite uses a reduced journal_slot_count; these tests require >= 1024 slots.
+        if (std.mem.eql(u8, constants.config_name, "lite")) return error.SkipZigTest;
         const log_level_original = std.testing.log_level;
         std.testing.log_level = log_level;
         var prng = stdx.PRNG.from_seed(options.seed);

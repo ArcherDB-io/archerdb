@@ -941,7 +941,7 @@
 
 #### 24.2 Resource Requirements
 - [ ] What's minimum viable configuration?
-- [ ] What's recommended production configuration?
+- [ ] What's the recommended tier profile configuration?
 - [ ] What's high-availability configuration?
 - [ ] Are cloud instance types recommended?
 
@@ -1460,7 +1460,7 @@ Keep all metadata fields populated so the run can be audited and replayed.
 **Version:** v2.1.0
 **Assessment Tier:** Tier 3 (Production Readiness)
 **Control Baseline Version:** checklist-v2.3
-**Environment:** pre-prod-eu-west-1 (5 node cluster, production config)
+**Environment:** pre-prod-eu-west-1 (5 node cluster, standard tier config)
 **Workload Profile(s):** prod-mixed-v2, prod-spatial-burst-v1
 **SLO Definition Reference:** docs/testing/performance-baselines.md
 **Dataset Version + Checksum:** datasets/validation/v2026.02.20 (sha256: 4b7d11e3...aa9f)
