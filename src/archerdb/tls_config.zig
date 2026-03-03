@@ -49,6 +49,7 @@ const builtin = @import("builtin");
 const log = std.log.scoped(.tls_config);
 const fs = std.fs;
 const mem = std.mem;
+const http = std.http;
 
 // During tests, we don't want log.err to fail tests when testing error paths.
 // Wrap logging functions to suppress errors in test mode.
@@ -220,6 +221,32 @@ pub const Crl = struct {
     }
 };
 
+/// Cached CRL with fetch timestamp for TTL-based refresh.
+pub const CachedCrl = struct {
+    /// The parsed CRL data.
+    crl: Crl,
+    /// Timestamp (seconds since epoch) when the CRL was fetched.
+    fetched_at: i64,
+    /// Time-to-live in seconds for the cached CRL (matches crl_refresh_interval).
+    ttl: i64,
+
+    /// Check if the cached CRL has expired according to the TTL.
+    pub fn isStale(self: *const CachedCrl, now: i64) bool {
+        return (now - self.fetched_at) >= self.ttl;
+    }
+
+    pub fn deinit(self: *CachedCrl) void {
+        self.crl.deinit();
+        self.* = undefined;
+    }
+};
+
+/// Maximum response body size for CRL downloads (2 MiB).
+const max_crl_response_size: usize = 2 * 1024 * 1024;
+
+/// Maximum response body size for OCSP responses (256 KiB).
+const max_ocsp_response_size: usize = 256 * 1024;
+
 /// OCSP response status.
 pub const OcspResponseStatus = enum(u8) {
     successful = 0,
@@ -272,6 +299,13 @@ pub const TlsConfig = struct {
     /// Timestamp when CRL was last loaded.
     crl_load_time: i64,
 
+    /// CRL distribution point URL extracted from the certificate or configured.
+    /// Used by fetchCrl() when no local crl_path is set.
+    crl_distribution_point: ?[]const u8,
+
+    /// Cached CRL fetched via HTTP with TTL tracking.
+    http_cached_crl: ?CachedCrl,
+
     /// Initialize TLS configuration from options.
     /// Validates and loads certificates if TLS is required.
     pub fn init(allocator: mem.Allocator, options: TlsOptions) !TlsConfig {
@@ -282,6 +316,8 @@ pub const TlsConfig = struct {
             .enabled = false,
             .cached_crl = null,
             .crl_load_time = 0,
+            .crl_distribution_point = null,
+            .http_cached_crl = null,
         };
 
         // If TLS is required, we must have certificate paths
@@ -318,6 +354,9 @@ pub const TlsConfig = struct {
         }
         if (self.cached_crl) |*crl| {
             crl.deinit();
+        }
+        if (self.http_cached_crl) |*cached| {
+            cached.deinit();
         }
         self.* = undefined;
     }
@@ -403,7 +442,7 @@ pub const TlsConfig = struct {
             if (self.options.crl_path) |crl_path| {
                 try self.loadCrl(crl_path);
             } else {
-                // Would fetch CRL from distribution point
+                // Fetch CRL from distribution point via HTTP
                 try self.fetchCrl();
             }
         }
@@ -439,13 +478,147 @@ pub const TlsConfig = struct {
         self.crl_load_time = std.time.timestamp();
     }
 
-    /// Fetch CRL from distribution point (HTTP).
-    /// In production, this would use an HTTP client to download the CRL.
+    /// Fetch CRL from distribution point via HTTP.
+    /// Downloads the CRL from the configured distribution point URL, parses it,
+    /// and caches the result with a TTL based on crl_refresh_interval.
+    /// On HTTP failure, returns cached data if available, otherwise returns error.
     pub fn fetchCrl(self: *TlsConfig) !void {
-        // Note: Would implement HTTP GET to CRL distribution point
-        // For now, return error if no local CRL path configured
-        _ = self;
-        return error.CrlFetchNotImplemented;
+        // Check if we have a valid cached HTTP CRL that is not stale
+        const now = std.time.timestamp();
+        if (self.http_cached_crl) |*cached| {
+            if (!cached.isStale(now)) {
+                // Cache is still valid; swap into cached_crl for checkCrl to use
+                if (self.cached_crl) |*old| {
+                    old.deinit();
+                }
+                // Copy the CRL entries into a new Crl so the cache retains ownership
+                var entries_copy = self.allocator.alloc(CrlEntry, cached.crl.entries.len) catch {
+                    return error.OutOfMemory;
+                };
+                errdefer self.allocator.free(entries_copy);
+                for (cached.crl.entries, 0..) |entry, idx| {
+                    entries_copy[idx] = .{
+                        .serial = self.allocator.dupe(u8, entry.serial) catch {
+                            // Clean up already-copied entries
+                            for (entries_copy[0..idx]) |copied| {
+                                self.allocator.free(copied.serial);
+                            }
+                            self.allocator.free(entries_copy);
+                            return error.OutOfMemory;
+                        },
+                        .revocation_date = entry.revocation_date,
+                        .reason = entry.reason,
+                    };
+                }
+                self.cached_crl = Crl{
+                    .entries = entries_copy,
+                    .this_update = cached.crl.this_update,
+                    .next_update = cached.crl.next_update,
+                    .allocator = self.allocator,
+                };
+                self.crl_load_time = now;
+                return;
+            }
+        }
+
+        // Determine the CRL distribution point URL
+        const url = self.crl_distribution_point orelse {
+            logWarn("no CRL distribution point URL configured and no local CRL path set", .{});
+            // If we have stale cached data, use it as fallback
+            if (self.http_cached_crl != null) {
+                logWarn("using stale cached CRL as fallback", .{});
+                return;
+            }
+            return error.NoCrlDistributionPoint;
+        };
+
+        // Perform HTTP GET to fetch the CRL
+        var client = http.Client{ .allocator = self.allocator };
+        defer client.deinit();
+
+        var response_body = std.ArrayList(u8).init(self.allocator);
+        defer response_body.deinit();
+
+        const result = client.fetch(.{
+            .location = .{ .url = url },
+            .method = .GET,
+            .response_storage = .{ .dynamic = &response_body },
+            .max_append_size = max_crl_response_size,
+        }) catch |err| {
+            logWarn("HTTP GET to CRL distribution point '{s}' failed: {}", .{ url, err });
+            // Fall back to cached data if available
+            if (self.http_cached_crl != null) {
+                logWarn("using stale cached CRL as fallback after fetch failure", .{});
+                return;
+            }
+            return error.CrlFetchFailed;
+        };
+
+        if (result.status != http.Status.ok) {
+            logWarn("CRL distribution point returned HTTP {d}", .{@intFromEnum(result.status)});
+            if (self.http_cached_crl != null) {
+                logWarn("using stale cached CRL as fallback after HTTP error", .{});
+                return;
+            }
+            return error.CrlFetchFailed;
+        }
+
+        if (response_body.items.len == 0) {
+            logWarn("CRL distribution point returned empty response", .{});
+            return error.CrlFetchFailed;
+        }
+
+        // Parse the CRL response (handles both PEM and DER)
+        const crl = self.parseCrl(response_body.items) catch |err| {
+            logWarn("failed to parse CRL from distribution point: {}", .{err});
+            if (self.http_cached_crl != null) {
+                logWarn("using stale cached CRL as fallback after parse failure", .{});
+                return;
+            }
+            return error.InvalidCrlFormat;
+        };
+
+        // Update the HTTP cache
+        if (self.http_cached_crl) |*old_cached| {
+            old_cached.deinit();
+        }
+        self.http_cached_crl = CachedCrl{
+            .crl = crl,
+            .fetched_at = now,
+            .ttl = @intCast(self.options.crl_refresh_interval),
+        };
+
+        // Also set as the active CRL for checkCrl
+        if (self.cached_crl) |*old| {
+            old.deinit();
+        }
+        // Create a copy for cached_crl since http_cached_crl owns the original
+        var entries_copy = self.allocator.alloc(CrlEntry, crl.entries.len) catch {
+            return error.OutOfMemory;
+        };
+        errdefer self.allocator.free(entries_copy);
+        for (crl.entries, 0..) |entry, idx| {
+            entries_copy[idx] = .{
+                .serial = self.allocator.dupe(u8, entry.serial) catch {
+                    for (entries_copy[0..idx]) |copied| {
+                        self.allocator.free(copied.serial);
+                    }
+                    self.allocator.free(entries_copy);
+                    return error.OutOfMemory;
+                },
+                .revocation_date = entry.revocation_date,
+                .reason = entry.reason,
+            };
+        }
+        self.cached_crl = Crl{
+            .entries = entries_copy,
+            .this_update = crl.this_update,
+            .next_update = crl.next_update,
+            .allocator = self.allocator,
+        };
+        self.crl_load_time = now;
+
+        logInfo("CRL fetched and cached from '{s}' ({d} entries)", .{ url, crl.entries.len });
     }
 
     /// Parse CRL data (PEM or DER format).
@@ -646,17 +819,51 @@ pub const TlsConfig = struct {
         return final_request.toOwnedSlice();
     }
 
-    /// Send OCSP request to responder.
-    /// In production, this would use HTTP POST to the OCSP responder URL.
+    /// Send OCSP request to the responder via HTTP POST.
+    /// Posts the DER-encoded OCSP request to the configured responder URL
+    /// with Content-Type: application/ocsp-request.
+    /// Returns the raw response bytes for parsing by parseOcspResponse().
     pub fn sendOcspRequest(self: *TlsConfig, request: []const u8) ![]const u8 {
-        _ = request;
+        const url = self.options.ocsp_responder_url orelse {
+            logWarn("no OCSP responder URL configured", .{});
+            return error.NoOcspResponderUrl;
+        };
 
-        // Note: Would implement HTTP POST to OCSP responder
-        // For now, return a mock "good" response
-        const mock_response = self.allocator.alloc(u8, 10) catch return error.OutOfMemory;
-        // Minimal OCSP response indicating "successful" with "good" status
-        @memcpy(mock_response[0..10], &[_]u8{ 0x30, 0x08, 0x0a, 0x01, 0x00, 0x30, 0x03, 0x0a, 0x01, 0x00 });
-        return mock_response;
+        var client = http.Client{ .allocator = self.allocator };
+        defer client.deinit();
+
+        var response_body = std.ArrayList(u8).init(self.allocator);
+        errdefer response_body.deinit();
+
+        const result = client.fetch(.{
+            .location = .{ .url = url },
+            .method = .POST,
+            .payload = request,
+            .headers = .{
+                .content_type = .{ .override = "application/ocsp-request" },
+            },
+            .response_storage = .{ .dynamic = &response_body },
+            .max_append_size = max_ocsp_response_size,
+        }) catch |err| {
+            logWarn("OCSP request to '{s}' failed: {}", .{ url, err });
+            return error.OcspRequestFailed;
+        };
+
+        if (result.status != http.Status.ok) {
+            logWarn("OCSP responder returned HTTP {d}", .{@intFromEnum(result.status)});
+            response_body.deinit();
+            return error.OcspRequestFailed;
+        }
+
+        if (response_body.items.len == 0) {
+            logWarn("OCSP responder returned empty response", .{});
+            response_body.deinit();
+            return error.OcspRequestFailed;
+        }
+
+        // Transfer ownership of the response bytes to the caller.
+        // The caller (parseOcspResponse) will free this memory.
+        return response_body.toOwnedSlice();
     }
 
     /// Parse an OCSP response.
