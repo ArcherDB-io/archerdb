@@ -6755,8 +6755,13 @@ pub fn ReplicaType(
                 const is_write = if (StateMachine.Operation == @import("../archerdb.zig").Operation)
                     if (StateMachine.Operation.from_vsr(message.header.operation)) |op|
                         switch (op) {
-                            .insert_events, .upsert_events, .delete_entities,
-                            .cleanup_expired, .ttl_set, .ttl_extend, .ttl_clear,
+                            .insert_events,
+                            .upsert_events,
+                            .delete_entities,
+                            .cleanup_expired,
+                            .ttl_set,
+                            .ttl_extend,
+                            .ttl_clear,
                             => true,
                             else => false,
                         }
