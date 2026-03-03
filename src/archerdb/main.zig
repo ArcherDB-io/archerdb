@@ -1685,6 +1685,8 @@ fn command_import(
     time: Time,
     args: *const cli.Command.Import,
 ) !void {
+    const GeoEvent = vsr.archerdb.GeoEvent;
+    const Operation = StateMachine.Operation;
     // Use vsr module's data_export to avoid duplicate module issues
     const data_export = vsr.data_export;
 
@@ -1750,10 +1752,12 @@ fn command_import(
 
     try reader.readAllArrayList(&content, 100 * 1024 * 1024); // Max 100MB
 
-    var events_imported: usize = 0;
-    var events_failed: usize = 0;
+    // Phase 1: Parse all events into a buffer
+    var parsed_events = std.ArrayList(GeoEvent).init(gpa);
+    defer parsed_events.deinit();
 
-    // Parse based on format
+    var parse_failed: usize = 0;
+
     switch (args.format) {
         .json => {
             var importer = data_export.JsonImporter.init(gpa, .{});
@@ -1766,11 +1770,10 @@ fn command_import(
                     std.mem.indexOf(u8, line, "entity_id") != null)
                 {
                     const result = importer.parseEvent(line);
-                    if (result) |_| {
-                        events_imported += 1;
-                        // In non-dry-run mode, would send to cluster via client
+                    if (result) |event| {
+                        try parsed_events.append(event);
                     } else |_| {
-                        events_failed += 1;
+                        parse_failed += 1;
                         if (!args.skip_errors) {
                             log.err("Failed to parse line, stopping import", .{});
                             break;
@@ -1813,10 +1816,10 @@ fn command_import(
                     if (brace_start) |start| {
                         const feature_str = content.items[start..feature_end];
                         const result = importer.parseFeature(feature_str);
-                        if (result) |_| {
-                            events_imported += 1;
+                        if (result) |event| {
+                            try parsed_events.append(event);
                         } else |_| {
-                            events_failed += 1;
+                            parse_failed += 1;
                             if (!args.skip_errors) break;
                         }
                     }
@@ -1831,29 +1834,147 @@ fn command_import(
         },
     }
 
+    const total_parsed = parsed_events.items.len;
+
+    if (args.progress) {
+        try stderr.print("Parsed {} events ({} parse failures)\n", .{ total_parsed, parse_failed });
+    }
+
+    // Phase 2: Send parsed events to the cluster (unless dry-run)
+    var events_sent: usize = 0;
+    var events_send_failed: usize = 0;
+
+    if (!args.dry_run and total_parsed > 0) {
+        try stderr.print("Registering client session with cluster...\n", .{});
+
+        // Register client session with the cluster (required before sending requests)
+        import_register_done = false;
+        client.register(&import_register_callback, 0);
+        while (!import_register_done) {
+            client.tick();
+            try io.run_for_ns(constants.tick_ms * std.time.ns_per_ms);
+        }
+
+        try stderr.print("Sending {} events to cluster...\n", .{total_parsed});
+
+        // Calculate maximum events per batch based on the client's batch_size_limit
+        const batch_size_limit = client.batch_size_limit orelse constants.message_body_size_max;
+        const max_events_per_batch = batch_size_limit / @sizeOf(GeoEvent);
+        if (max_events_per_batch == 0) {
+            log.err("batch_size_limit ({}) too small for a single GeoEvent ({})", .{
+                batch_size_limit,
+                @sizeOf(GeoEvent),
+            });
+            return error.BatchSizeTooSmall;
+        }
+
+        // Send events in batches
+        var offset: usize = 0;
+        var batch_num: usize = 0;
+        while (offset < total_parsed) {
+            const batch_end = @min(offset + max_events_per_batch, total_parsed);
+            const batch = parsed_events.items[offset..batch_end];
+            const batch_bytes = std.mem.sliceAsBytes(batch);
+
+            // Submit request and wait for completion
+            import_request_done = false;
+            import_request_err = false;
+            client.request(
+                &import_request_callback,
+                0,
+                Operation.insert_events,
+                batch_bytes,
+            );
+
+            // Drive the IO loop until the request completes
+            while (!import_request_done) {
+                client.tick();
+                try io.run_for_ns(constants.tick_ms * std.time.ns_per_ms);
+            }
+
+            if (import_request_err) {
+                events_send_failed += batch.len;
+            } else {
+                events_sent += batch.len;
+            }
+
+            batch_num += 1;
+            offset = batch_end;
+
+            // Progress reporting every 10 batches or on the last batch
+            if (args.progress and (batch_num % 10 == 0 or offset == total_parsed)) {
+                try stderr.print(
+                    "  Progress: {}/{} events sent ({} batches)\n",
+                    .{ offset, total_parsed, batch_num },
+                );
+            }
+        }
+    }
+
     if (args.progress) {
         try stderr.print(
             \\
             \\Import Summary
             \\==============
-            \\Events imported: {}
-            \\Events failed: {}
+            \\Events parsed: {}
+            \\Parse failures: {}
+            \\Events sent: {}
+            \\Send failures: {}
             \\Dry run: {}
             \\
         , .{
-            events_imported,
-            events_failed,
+            total_parsed,
+            parse_failed,
+            events_sent,
+            events_send_failed,
             args.dry_run,
         });
     }
 
-    if (!args.dry_run and events_imported > 0) {
+    if (args.dry_run and total_parsed > 0) {
         try stderr.print(
-            "Note: Events were validated but not sent to cluster in this version.\n",
-            .{},
+            "Dry run complete. {} events validated successfully.\n",
+            .{total_parsed},
         );
-        try stderr.print("Use SDK clients for production data import.\n", .{});
     }
+}
+
+// Import command state for async callbacks.
+// These file-level variables are used to synchronize the import command's
+// synchronous send loop with the client's asynchronous callback mechanism.
+var import_register_done: bool = false;
+var import_request_done: bool = false;
+var import_request_err: bool = false;
+
+fn import_register_callback(user_data: u128, result: *const vsr.RegisterResult) void {
+    _ = user_data;
+    _ = result;
+    import_register_done = true;
+}
+
+fn import_request_callback(
+    user_data: u128,
+    operation: vsr.Operation,
+    timestamp: u64,
+    results: []u8,
+) void {
+    _ = user_data;
+    _ = operation;
+    _ = timestamp;
+
+    // Check individual event results for errors
+    const InsertGeoEventsResult = vsr.archerdb.InsertGeoEventsResult;
+    if (results.len > 0 and results.len % @sizeOf(InsertGeoEventsResult) == 0) {
+        const result_slice = stdx.bytes_as_slice(.exact, InsertGeoEventsResult, results);
+        for (result_slice) |r| {
+            if (r.result != .ok) {
+                import_request_err = true;
+                log.warn("insert error at index {}: {}", .{ r.index, r.result });
+            }
+        }
+    }
+
+    import_request_done = true;
 }
 
 fn import_client_eviction_callback(
@@ -1862,6 +1983,10 @@ fn import_client_eviction_callback(
 ) void {
     _ = client;
     log.err("import client evicted: {s}", .{@tagName(eviction.header.reason)});
+    // Signal request done so the import loop can exit gracefully
+    import_request_done = true;
+    import_request_err = true;
+    import_register_done = true;
 }
 
 fn run_online_resharding(
