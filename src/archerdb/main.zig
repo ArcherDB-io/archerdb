@@ -484,7 +484,7 @@ pub fn main() !void {
             try stdout_buffer.flush();
         },
         .amqp => |*args| try command_amqp(gpa, time, args),
-        .@"export" => |*args| try command_export(gpa, &io, &tracer, args),
+        .@"export" => |*args| try command_export(gpa, &io, time, args),
         .import => |*args| try command_import(gpa, &io, time, args),
         .shard => |*args| try command_shard(gpa, &io, time, args),
         .ttl => |*args| try command_ttl(gpa, &io, time, args),
@@ -1392,12 +1392,22 @@ fn print_value(
 }
 
 // Data Export command (F-Data-Portability)
+//
+// Connects to a running ArcherDB cluster via the client protocol and exports
+// events using the query_latest operation with cursor-based pagination.
+// Supports JSON, GeoJSON, NDJSON, and CSV output formats.
 fn command_export(
     gpa: mem.Allocator,
     io: *IO,
-    tracer: *Tracer,
+    time: Time,
     args: *const cli.Command.Export,
 ) !void {
+    const data_export = vsr.data_export;
+    const data_export_csv = vsr.data_export_csv;
+    const archerdb_types = vsr.archerdb;
+
+    const stderr = std.io.getStdErr().writer();
+
     // Open output file or use stdout
     var output_file: std.fs.File = undefined;
     var output_buffered: std.io.BufferedWriter(4096, std.fs.File.Writer) = undefined;
@@ -1415,50 +1425,257 @@ fn command_export(
     output_buffered = std.io.bufferedWriter(output_file.writer());
     const output_writer = output_buffered.writer();
 
-    // Open the data file for reading
-    var storage = try Storage.init(io, tracer, .{
-        .path = args.path,
-        .size_min = data_file_size_min,
-        .purpose = .open,
-        .direct_io = if (constants.direct_io) .direct_io_optional else .direct_io_disabled,
-    });
-    defer storage.deinit();
-
-    // Enhancement: Direct data file export (Phase 7)
-    // Full implementation requires LSM tree traversal. Currently document CLI interface.
-    const stderr = std.io.getStdErr().writer();
-    _ = gpa;
-    _ = output_writer;
-
     try stderr.print(
-        \\
-        \\ArcherDB Export - Data File Export
-        \\====================================
-        \\
-        \\Export format: {s}
-        \\Data file: {s}
+        \\ArcherDB Export
+        \\===============
+        \\Format: {s}
         \\Output: {s}
-        \\
-        \\Note: Direct data file export requires LSM tree traversal.
-        \\For runtime data access, use the client SDKs or REPL:
-        \\
-        \\  archerdb repl --addresses=3000 --cluster=0
-        \\  > SELECT * FROM events WHERE entity_id = 'abc123'
-        \\
-        \\Or use the SDK export methods after querying:
-        \\
-        \\  // Node.js example
-        \\  const events = await client.queryLatest({{ entityId: 'abc123' }});
-        \\  const exporter = new DataExporter({{ format: 'geojson' }});
-        \\  exporter.export(events, 'output.geojson');
         \\
     , .{
         @tagName(args.format),
-        args.path,
         args.output orelse "stdout",
     });
 
+    if (args.entity_id) |eid| {
+        try stderr.print("Entity filter: {s}\n", .{eid});
+    }
+    if (args.limit > 0) {
+        try stderr.print("Limit: {} events\n", .{args.limit});
+    }
+    try stderr.print("Connecting to cluster...\n", .{});
+
+    // Initialize message pool and client to connect to the running cluster
+    var message_pool = try MessagePool.init(gpa, .client);
+    defer message_pool.deinit(gpa);
+
+    var client = try Client.init(
+        gpa,
+        time,
+        &message_pool,
+        .{
+            .id = stdx.unique_u128(),
+            .cluster = args.cluster,
+            .replica_count = @intCast(args.addresses.count()),
+
+            .message_bus_options = .{
+                .configuration = args.addresses.const_slice(),
+                .io = io,
+                .clients_limit = null,
+            },
+            .eviction_callback = &export_client_eviction_callback,
+        },
+    );
+    defer client.deinit(gpa);
+
+    // Register client session with the cluster
+    var registered = false;
+    client.register(&export_register_callback, @intFromPtr(&registered));
+
+    while (!registered) {
+        client.tick();
+        try io.run_for_ns(constants.tick_ms * std.time.ns_per_ms);
+    }
+
+    try stderr.print("Connected. Exporting events...\n", .{});
+
+    // Set up the format-specific exporter and write header
+    var json_exporter: data_export.DataExporter = undefined;
+    var csv_exporter: data_export_csv.CsvExporter = undefined;
+    const is_csv = args.format == .csv;
+
+    if (is_csv) {
+        csv_exporter = data_export_csv.CsvExporter.init(gpa, .{});
+        try csv_exporter.writeHeader(output_writer);
+    } else {
+        const export_format: data_export.ExportFormat = switch (args.format) {
+            .json => .json,
+            .geojson => .geojson,
+            .ndjson => .ndjson,
+            .csv => unreachable,
+        };
+        json_exporter = data_export.DataExporter.init(gpa, .{
+            .format = export_format,
+            .include_metadata = args.include_metadata,
+            .pretty = args.pretty,
+        });
+        try json_exporter.writeHeader(output_writer);
+    }
+
+    // Paginated export using query_latest with cursor
+    var cursor_timestamp: u64 = 0; // 0 = start from latest
+    var total_exported: usize = 0;
+    var done = false;
+    const page_limit: u32 = 1000;
+
+    while (!done) {
+        // Build the query_latest filter
+        var filter = archerdb_types.QueryLatestFilter{
+            .limit = page_limit,
+            .group_id = 0, // All groups
+            .cursor_timestamp = cursor_timestamp,
+        };
+        _ = &filter;
+
+        // Send request and wait for response
+        var response_state = ExportResponseState{
+            .received = false,
+            .results = null,
+            .results_len = 0,
+            .has_more = false,
+            .next_cursor = 0,
+        };
+
+        client.request(
+            &export_request_callback,
+            @intFromPtr(&response_state),
+            .query_latest,
+            std.mem.asBytes(&filter),
+        );
+
+        // Drive IO until we get a response
+        while (!response_state.received) {
+            client.tick();
+            try io.run_for_ns(constants.tick_ms * std.time.ns_per_ms);
+        }
+
+        // Process the response
+        if (response_state.results) |results_ptr| {
+            const events_in_page = response_state.results_len;
+
+            if (events_in_page == 0) {
+                done = true;
+                break;
+            }
+
+            const events = @as(
+                [*]const archerdb_types.GeoEvent,
+                @ptrCast(@alignCast(results_ptr)),
+            )[0..events_in_page];
+
+            for (events) |*event| {
+                // Apply client-side filters
+                if (args.start_time) |start| {
+                    if (event.timestamp < start) continue;
+                }
+                if (args.end_time) |end| {
+                    if (event.timestamp > end) continue;
+                }
+
+                // Write event in the chosen format
+                if (is_csv) {
+                    try csv_exporter.writeRow(output_writer, event);
+                } else {
+                    try json_exporter.writeEvent(output_writer, event);
+                }
+
+                total_exported += 1;
+
+                // Check limit
+                if (args.limit > 0 and total_exported >= args.limit) {
+                    done = true;
+                    break;
+                }
+            }
+
+            // Advance cursor for next page
+            if (response_state.has_more and !done) {
+                cursor_timestamp = response_state.next_cursor;
+            } else {
+                done = true;
+            }
+        } else {
+            // No results or error
+            done = true;
+        }
+
+        // Periodic progress on stderr
+        if (total_exported > 0 and total_exported % 10000 == 0) {
+            try stderr.print("  ... exported {} events\n", .{total_exported});
+        }
+    }
+
+    // Write format footer
+    if (!is_csv) {
+        try json_exporter.writeFooter(output_writer);
+    }
+
+    // Flush output
     try output_buffered.flush();
+
+    try stderr.print(
+        \\
+        \\Export complete: {} events exported.
+        \\
+    , .{total_exported});
+}
+
+/// State passed through user_data pointer for export request callbacks.
+const ExportResponseState = struct {
+    received: bool,
+    results: ?[*]const u8,
+    results_len: usize,
+    has_more: bool,
+    next_cursor: u64,
+};
+
+fn export_request_callback(
+    user_data: u128,
+    operation: vsr.Operation,
+    timestamp: u64,
+    results: []u8,
+) void {
+    _ = operation;
+    _ = timestamp;
+    const archerdb_types = vsr.archerdb;
+
+    const state: *ExportResponseState = @ptrFromInt(@as(usize, @intCast(user_data)));
+    state.received = true;
+
+    // Parse QueryResponse header followed by GeoEvent array
+    if (results.len >= @sizeOf(archerdb_types.QueryResponse)) {
+        const response_header = std.mem.bytesAsValue(
+            archerdb_types.QueryResponse,
+            results[0..@sizeOf(archerdb_types.QueryResponse)],
+        );
+
+        const event_data = results[@sizeOf(archerdb_types.QueryResponse)..];
+        const event_count = response_header.count;
+
+        if (event_count > 0 and event_data.len >= event_count * @sizeOf(archerdb_types.GeoEvent)) {
+            state.results = event_data.ptr;
+            state.results_len = event_count;
+            state.has_more = response_header.has_more == 1;
+
+            // Extract cursor from the last event's timestamp for pagination
+            const events = @as(
+                [*]const archerdb_types.GeoEvent,
+                @ptrCast(@alignCast(event_data.ptr)),
+            )[0..event_count];
+            state.next_cursor = events[event_count - 1].timestamp;
+        } else {
+            state.results = null;
+            state.results_len = 0;
+            state.has_more = false;
+        }
+    } else {
+        state.results = null;
+        state.results_len = 0;
+        state.has_more = false;
+    }
+}
+
+fn export_register_callback(user_data: u128, result: *const vsr.RegisterResult) void {
+    _ = result;
+    const registered: *bool = @ptrFromInt(@as(usize, @intCast(user_data)));
+    registered.* = true;
+}
+
+fn export_client_eviction_callback(
+    client: *Client,
+    eviction: *const MessagePool.Message.Eviction,
+) void {
+    _ = client;
+    log.err("export client evicted: {s}", .{@tagName(eviction.header.reason)});
 }
 
 // Data Import command (F-Data-Portability)

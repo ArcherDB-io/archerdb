@@ -467,18 +467,28 @@ const CLIArgs = union(enum) {
         pretty: bool = false,
         /// Maximum events to export (0 = unlimited)
         limit: u64 = 0,
+        /// ArcherDB cluster addresses (required for client-based export)
+        addresses: []const u8 = "3000",
+        /// Cluster ID
+        cluster: u128 = 0,
         log_level: LogLevel = .info,
 
         @"--": void,
-        /// Path to the data file to export from
-        path: []const u8,
+        /// Positional argument (unused for client-based export, kept for compatibility)
+        path: ?[]const u8 = null,
 
         pub const help =
             \\Usage:
             \\
-            \\  archerdb export [options] <path>
+            \\  archerdb export --addresses=<addresses> --cluster=<id> [options]
             \\
             \\Options:
+            \\
+            \\  --addresses=<addresses>
+            \\        Cluster addresses to connect to (required). Example: 3000 or 127.0.0.1:3000
+            \\
+            \\  --cluster=<id>
+            \\        Cluster ID (required).
             \\
             \\  --format=<json|geojson|ndjson|csv>
             \\        Export format. Defaults to json.
@@ -506,10 +516,10 @@ const CLIArgs = union(enum) {
             \\
             \\Examples:
             \\
-            \\  archerdb export 0_0.archerdb > events.json
-            \\  archerdb export --format=geojson --output=locations.geojson 0_0.archerdb
-            \\  archerdb export --format=csv --entity-id=abc123 0_0.archerdb
-            \\  archerdb export --start-time=1704067200000000000 --limit=1000 0_0.archerdb
+            \\  archerdb export --addresses=3000 --cluster=0 > events.json
+            \\  archerdb export --addresses=3000 --cluster=0 --format=geojson --output=locations.geojson
+            \\  archerdb export --addresses=3000 --cluster=0 --format=csv --entity-id=abc123
+            \\  archerdb export --addresses=3000 --cluster=0 --limit=1000 --pretty
             \\
         ;
     };
@@ -1809,6 +1819,8 @@ pub const Command = union(enum) {
 
     /// Data export command (F-Data-Portability).
     pub const Export = struct {
+        addresses: Addresses,
+        cluster: u128,
         format: ExportFormat,
         output: ?[]const u8,
         entity_id: ?[]const u8,
@@ -1817,7 +1829,6 @@ pub const Command = union(enum) {
         include_metadata: bool,
         pretty: bool,
         limit: u64,
-        path: []const u8,
         log_level: LogLevel,
     };
 
@@ -2809,6 +2820,8 @@ fn parse_args_amqp(amqp: CLIArgs.AMQP) Command.AMQP {
 }
 
 fn parse_args_export(exp: CLIArgs.Export) Command.Export {
+    const addresses = parse_addresses(exp.addresses, "--addresses", Command.Addresses);
+
     // Parse format string to enum
     const format = parse_export_format(exp.format);
 
@@ -2820,6 +2833,8 @@ fn parse_args_export(exp: CLIArgs.Export) Command.Export {
     }
 
     return .{
+        .addresses = addresses,
+        .cluster = exp.cluster,
         .format = format,
         .output = exp.output,
         .entity_id = exp.entity_id,
@@ -2828,7 +2843,6 @@ fn parse_args_export(exp: CLIArgs.Export) Command.Export {
         .include_metadata = !exp.no_metadata, // Inverted: --no-metadata flag
         .pretty = exp.pretty,
         .limit = exp.limit,
-        .path = exp.path,
         .log_level = exp.log_level,
     };
 }
