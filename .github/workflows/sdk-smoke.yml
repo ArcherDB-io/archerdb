@@ -37,6 +37,10 @@ jobs:
       - name: Build ArcherDB (lite config)
         run: ./zig/zig build -j4 -Dconfig=lite
 
+      - name: Build Python native client artifacts
+        if: matrix.sdk == 'python'
+        run: ./zig/zig build -j4 -Dconfig=lite clients:python
+
       - name: Start single-node server
         run: |
           TMPDIR=$(mktemp -d)
