@@ -400,9 +400,7 @@ jobs:
           MINIO_ACCESS_KEY: minioadmin
           MINIO_SECRET_KEY: minioadmin
           MINIO_BUCKET: archerdb-test-bucket
-        run: |
-          ./zig/zig build test:integration:build -Dconfig=lite
-          ./zig-out/bin/test-integration
+        run: ./zig/zig build test:integration -Dconfig=lite
 
       - name: Run replication integration tests
         env:

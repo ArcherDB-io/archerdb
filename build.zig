@@ -1209,6 +1209,8 @@ fn build_test_integration(
     steps.test_integration_build.dependOn(&b.addInstallArtifact(integration_tests, .{}).step);
 
     const run_integration_tests = b.addRunArtifact(integration_tests);
+    run_integration_tests.setEnvironmentVariable("ZIG_EXE", b.graph.zig_exe);
+    run_integration_tests.setCwd(b.path("."));
     if (b.args != null) { // Don't cache test results if running a specific test.
         run_integration_tests.has_side_effects = true;
     }
@@ -1311,6 +1313,8 @@ fn build_test_integration_replication(
     replication_integration_tests.root_module.addImport("stdx", options.stdx_module);
 
     const run_replication_tests = b.addRunArtifact(replication_integration_tests);
+    run_replication_tests.setEnvironmentVariable("ZIG_EXE", b.graph.zig_exe);
+    run_replication_tests.setCwd(b.path("."));
     if (b.args != null) {
         run_replication_tests.has_side_effects = true;
     }
