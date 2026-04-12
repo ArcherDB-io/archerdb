@@ -203,6 +203,9 @@ jobs:
       - name: Build ArcherDB
         run: ./zig/zig build -j4 -Dconfig=lite
 
+      - name: Build Node native client artifacts
+        run: ./zig/zig build -j4 -Dconfig=lite clients:node
+
       - name: Start ArcherDB server
         run: |
           TMPDIR=$(mktemp -d)
