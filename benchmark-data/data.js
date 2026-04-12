@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1775999492979,
+  "lastUpdate": 1776000768945,
   "repoUrl": "https://github.com/ArcherDB-io/archerdb",
   "entries": {
     "Benchmark": [
@@ -175,6 +175,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Polygon Query p99 Latency",
             "value": 85,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "committer": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "distinct": true,
+          "id": "4800a794487b8d6f242b3da079b8a400271fff85",
+          "message": "fix(ci): skip unauthenticated codecov uploads",
+          "timestamp": "2026-04-12T15:15:40+02:00",
+          "tree_id": "1b94a60bfe0a783a96b8c1e59a5b1867c7a9afc9",
+          "url": "https://github.com/ArcherDB-io/archerdb/commit/4800a794487b8d6f242b3da079b8a400271fff85"
+        },
+        "date": 1776000767770,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "Insert Throughput",
+            "value": 1500602,
+            "unit": "events/s"
+          },
+          {
+            "name": "Insert p99 Latency",
+            "value": 6,
+            "unit": "ms"
+          },
+          {
+            "name": "Radius Query p99 Latency",
+            "value": 136,
+            "unit": "ms"
+          },
+          {
+            "name": "Polygon Query p99 Latency",
+            "value": 95,
             "unit": "ms"
           }
         ]
