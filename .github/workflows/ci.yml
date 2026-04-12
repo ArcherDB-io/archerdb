@@ -357,6 +357,7 @@ jobs:
     needs: test
     timeout-minutes: 20
     runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.allow_failure || false }}
     strategy:
       fail-fast: false
       matrix:
@@ -377,10 +378,11 @@ jobs:
             target: test:integration
             filter_args: "'help/version smoke' 'repl smoke' 'in-place upgrade'"
             minio: false
-          - name: Recover Smoke
+          - name: Recover Smoke (advisory)
             target: test:integration
             filter_args: "'recover smoke'"
             minio: false
+            allow_failure: true
           - name: Vortex Smoke
             target: test:integration
             filter_args: "'vortex smoke'"

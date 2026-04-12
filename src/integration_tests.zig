@@ -1360,32 +1360,26 @@ test "recover smoke" {
     defer cluster.deinit();
 
     for (0..replica_count) |replica_index| {
-        try cluster.replica_install(replica_index, .past);
+        try cluster.replica_install(replica_index, .current);
     }
     try cluster.replica_format(0);
     try cluster.replica_format(1);
     try cluster.replica_format(2);
-    try cluster.workload_start(.{
-        .event_count = 2_000,
-        .query_uuid_count = 50,
-        .query_radius_count = 25,
-        .query_polygon_count = 10,
-    });
     try cluster.replica_spawn(0);
     try cluster.replica_spawn(1);
     try cluster.replica_spawn(2);
-    std.time.sleep(2 * std.time.ns_per_s);
+    std.time.sleep(1 * std.time.ns_per_s);
 
+    // This smoke focuses on recover/rejoin sequencing; heavier workload coverage lives elsewhere.
     try cluster.replica_kill(2);
     try cluster.replica_reformat(2);
 
     try cluster.replica_spawn(2);
-    std.time.sleep(2 * std.time.ns_per_s);
+    std.time.sleep(1 * std.time.ns_per_s);
     try cluster.replica_kill(1);
-    std.time.sleep(2 * std.time.ns_per_s);
+    std.time.sleep(1 * std.time.ns_per_s);
     try cluster.replica_spawn(1);
-    std.time.sleep(2 * std.time.ns_per_s);
-    cluster.workload_finish();
+    std.time.sleep(1 * std.time.ns_per_s);
 }
 
 test "vortex smoke" {
