@@ -70,9 +70,29 @@ jobs:
         run: |
           set +e
           python - <<'PYTEST'
+          import os
+          import time
+
           from archerdb import GeoClientSync, GeoClientConfig, create_geo_event, id as archerdb_id
 
-          client = GeoClientSync(GeoClientConfig(cluster_id=0, addresses=["127.0.0.1:3000"]))
+          address = os.environ["ARCHERDB_ADDRESS"]
+          client = GeoClientSync(
+              GeoClientConfig(
+                  cluster_id=0,
+                  addresses=[address],
+                  request_timeout_ms=10000,
+              )
+          )
+
+          def wait_until(description, fn, timeout_s=30.0, interval_s=0.5):
+              deadline = time.monotonic() + timeout_s
+              while time.monotonic() < deadline:
+                  value = fn()
+                  if value:
+                      return value
+                  time.sleep(interval_s)
+              raise AssertionError(f"{description} did not become true within {timeout_s:.1f}s")
+
           try:
               entity_id = archerdb_id()
               event = create_geo_event(
@@ -85,17 +105,28 @@ jobs:
               errors = client.insert_events([event])
               assert errors == []
 
-              found = client.get_latest_by_uuid(entity_id)
-              assert found is not None
+              found = wait_until(
+                  "latest lookup",
+                  lambda: (evt := client.get_latest_by_uuid(entity_id))
+                  and evt.entity_id == entity_id and evt,
+              )
               assert found.entity_id == entity_id
 
-              radius_result = client.query_radius(
-                  latitude=37.7749,
-                  longitude=-122.4194,
-                  radius_m=2000,
-                  limit=5,
+              radius_result = wait_until(
+                  "radius query visibility",
+                  lambda: (result := client.query_radius(
+                      latitude=37.7749,
+                      longitude=-122.4194,
+                      radius_m=2000,
+                      limit=5,
+                  )) and next(
+                      (evt for evt in result.events if evt.entity_id == entity_id),
+                      None,
+                  ),
+                  timeout_s=45.0,
+                  interval_s=1.0,
               )
-              assert radius_result.events
+              assert radius_result.entity_id == entity_id
 
               delete_result = client.delete_entities([entity_id])
               assert delete_result.deleted_count == 1
