@@ -715,6 +715,8 @@ test "CDC Runner initialization" {
         .event_count = 0,
         .next_sequence = 0,
         .last_published_sequence = 0,
+        .pending_publish_count = 0,
+        .pending_publish_last_sequence = 0,
         .consumer_offsets = undefined,
         .reconnect_attempts = 0,
         .last_error = null,
@@ -811,6 +813,7 @@ test "ChangeType toString" {
 
 test "CDC Runner publishes to a live RabbitMQ broker" {
     if (builtin.os.tag != .linux or !builtin.cpu.arch.isX86()) return;
+    if (!std.process.hasEnvVarConstant("ARCHERDB_RUN_AMQP_INTEGRATION")) return;
 
     const testing = std.testing;
     const docker_probe = std.process.Child.run(.{

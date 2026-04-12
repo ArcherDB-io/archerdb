@@ -101,6 +101,10 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Trust checkout for git-based build metadata
+        shell: bash
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       # Download Zig (musl-compatible)
       - name: Download Zig
         shell: bash

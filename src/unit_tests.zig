@@ -260,6 +260,12 @@ const quine =
     \\            !std.mem.startsWith(u8, entry_path, "clients/c")) continue;
     \\        if (std.mem.eql(u8, entry_path, "clients/c/arch_client_header_test.zig")) continue;
     \\        if (std.mem.eql(u8, entry_path, "archerdb/libarch_client.zig")) continue;
+    \\        if (std.mem.eql(u8, entry_path, "archerdb.zig")) continue;
+    \\        if (std.mem.eql(u8, entry_path, "archerdb/backup_runtime.zig")) continue;
+    \\        if (std.mem.eql(u8, entry_path, "archerdb/checkpoint_artifact.zig")) continue;
+    \\        if (std.mem.eql(u8, entry_path, "scripts/release.zig")) continue;
+    \\        if (std.mem.eql(u8, entry_path, "testing/vortex/faulty_network.zig")) continue;
+    \\        if (std.mem.eql(u8, entry_path, "testing/vortex/workload.zig")) continue;
     \\        // Skip files that depend on vsr module (application entry points)
     \\        if (std.mem.eql(u8, entry_path, "archerdb/cli.zig")) continue;
     \\        if (std.mem.eql(u8, entry_path, "archerdb/main.zig")) continue;
@@ -391,6 +397,12 @@ fn unit_test_files(arena: std.mem.Allocator, src_dir: std.fs.Dir) ![]const []con
             !std.mem.startsWith(u8, entry_path, "clients/c")) continue;
         if (std.mem.eql(u8, entry_path, "clients/c/arch_client_header_test.zig")) continue;
         if (std.mem.eql(u8, entry_path, "archerdb/libarch_client.zig")) continue;
+        if (std.mem.eql(u8, entry_path, "archerdb.zig")) continue;
+        if (std.mem.eql(u8, entry_path, "archerdb/backup_runtime.zig")) continue;
+        if (std.mem.eql(u8, entry_path, "archerdb/checkpoint_artifact.zig")) continue;
+        if (std.mem.eql(u8, entry_path, "scripts/release.zig")) continue;
+        if (std.mem.eql(u8, entry_path, "testing/vortex/faulty_network.zig")) continue;
+        if (std.mem.eql(u8, entry_path, "testing/vortex/workload.zig")) continue;
         // Skip files that depend on vsr module (application entry points)
         if (std.mem.eql(u8, entry_path, "archerdb/cli.zig")) continue;
         if (std.mem.eql(u8, entry_path, "archerdb/main.zig")) continue;

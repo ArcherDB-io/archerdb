@@ -451,90 +451,100 @@ test "Pipe rate helpers bound chunk size and compute delay" {
     try std.testing.expectEqual(@as(u63, 128_000_000), Pipe.rate_delay_ns(rate, 128));
 }
 
-fn pipeForTest(faults: Faults) Pipe {
-    const network_storage = struct {
-        var prng = stdx.PRNG.from_seed(1);
-        var network = Network{
+const PipeTestHarness = struct {
+    prng: stdx.PRNG,
+    network: Network,
+    connection: Connection,
+    pipe: Pipe,
+
+    fn init(faults: Faults) PipeTestHarness {
+        var harness = PipeTestHarness{
+            .prng = stdx.PRNG.from_seed(1),
+            .network = undefined,
+            .connection = undefined,
+            .pipe = undefined,
+        };
+
+        harness.network = .{
             .io = undefined,
-            .prng = &prng,
+            .prng = &harness.prng,
             .proxies = &.{},
             .faults = faults,
         };
-        var connection = Connection{
+        harness.connection = .{
             .io = undefined,
-            .network = &network,
+            .network = &harness.network,
             .state = .proxying,
             .replica_index = 0,
             .connection_index = 0,
             .origin_to_remote_pipe = undefined,
             .remote_to_origin_pipe = undefined,
         };
-    };
-
-    const pipe = Pipe{
-        .io = undefined,
-        .connection = &network_storage.connection,
-    };
-    network_storage.connection.origin_to_remote_pipe = pipe;
-    return pipe;
-}
+        harness.pipe = .{
+            .io = undefined,
+            .connection = &harness.connection,
+        };
+        harness.connection.origin_to_remote_pipe = harness.pipe;
+        return harness;
+    }
+};
 
 test "Pipe advance_after_send transitions into duplicate replay" {
-    var pipe = pipeForTest(.{});
-    pipe.recv_count = 32;
-    pipe.send_count = 16;
-    pipe.duplicate_pending = true;
+    var harness = PipeTestHarness.init(.{});
+    harness.pipe.recv_count = 32;
+    harness.pipe.send_count = 16;
+    harness.pipe.duplicate_pending = true;
 
     try std.testing.expectEqual(
         Pipe.NextAction.send_active_chunk,
-        pipe.advance_after_send(16),
+        harness.pipe.advance_after_send(16),
     );
-    try std.testing.expectEqual(Pipe.SendSource.duplicate, pipe.send_source);
-    try std.testing.expectEqual(@as(usize, 0), pipe.duplicate_send_count);
+    try std.testing.expectEqual(Pipe.SendSource.duplicate, harness.pipe.send_source);
+    try std.testing.expectEqual(@as(usize, 0), harness.pipe.duplicate_send_count);
 }
 
 test "Pipe advance_after_send transitions into reordered replay" {
-    var pipe = pipeForTest(.{});
-    pipe.recv_count = 24;
-    pipe.send_count = 24;
-    pipe.reorder_recv_count = 24;
-    @memcpy(pipe.reorder_buffer[0..24], "reordered-buffer-payload!"[0..24]);
+    var harness = PipeTestHarness.init(.{});
+    harness.pipe.recv_count = 24;
+    harness.pipe.send_count = 24;
+    harness.pipe.reorder_recv_count = 24;
+    @memcpy(harness.pipe.reorder_buffer[0..24], "reordered-buffer-payload!"[0..24]);
 
     try std.testing.expectEqual(
         Pipe.NextAction.send_active_chunk,
-        pipe.advance_after_send(0),
+        harness.pipe.advance_after_send(0),
     );
-    try std.testing.expectEqual(Pipe.SendSource.reorder, pipe.send_source);
-    try std.testing.expectEqual(@as(usize, 0), pipe.reorder_send_count);
+    try std.testing.expectEqual(Pipe.SendSource.reorder, harness.pipe.send_source);
+    try std.testing.expectEqual(@as(usize, 0), harness.pipe.reorder_send_count);
 }
 
 test "Pipe advance_after_send rate limits partial sends" {
-    var pipe = pipeForTest(.{
+    var harness = PipeTestHarness.init(.{
         .rate = .{
             .bytes_per_second = 1024,
             .burst_bytes = 8,
         },
     });
-    pipe.recv_count = 32;
-    pipe.send_count = 0;
+    harness.pipe.recv_count = 32;
+    harness.pipe.send_count = 0;
 
     try std.testing.expectEqual(
         Pipe.NextAction.schedule_timeout,
-        pipe.advance_after_send(8),
+        harness.pipe.advance_after_send(8),
     );
-    try std.testing.expectEqual(@as(usize, 8), pipe.send_count);
+    try std.testing.expectEqual(@as(usize, 8), harness.pipe.send_count);
 }
 
 test "Pipe advance_after_send clears reorder state after replay" {
-    var pipe = pipeForTest(.{});
-    pipe.send_source = .reorder;
-    pipe.reorder_recv_count = 20;
-    pipe.reorder_send_count = 12;
+    var harness = PipeTestHarness.init(.{});
+    harness.pipe.send_source = .reorder;
+    harness.pipe.reorder_recv_count = 20;
+    harness.pipe.reorder_send_count = 12;
 
-    try std.testing.expectEqual(Pipe.NextAction.recv, pipe.advance_after_send(8));
-    try std.testing.expectEqual(Pipe.SendSource.current, pipe.send_source);
-    try std.testing.expectEqual(@as(usize, 0), pipe.reorder_recv_count);
-    try std.testing.expectEqual(@as(usize, 0), pipe.reorder_send_count);
+    try std.testing.expectEqual(Pipe.NextAction.recv, harness.pipe.advance_after_send(8));
+    try std.testing.expectEqual(Pipe.SendSource.current, harness.pipe.send_source);
+    try std.testing.expectEqual(@as(usize, 0), harness.pipe.reorder_recv_count);
+    try std.testing.expectEqual(@as(usize, 0), harness.pipe.reorder_send_count);
 }
 
 const Connection = struct {
