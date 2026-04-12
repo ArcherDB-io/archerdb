@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776012015471,
+  "lastUpdate": 1776013570259,
   "repoUrl": "https://github.com/ArcherDB-io/archerdb",
   "entries": {
     "Benchmark": [
@@ -395,6 +395,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Polygon Query p99 Latency",
             "value": 96,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "committer": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "distinct": true,
+          "id": "eb43e648229f4ccd90332b17153ecc095979e1af",
+          "message": "fix(vsr): block solo read fast path behind pending prepares",
+          "timestamp": "2026-04-12T18:48:26+02:00",
+          "tree_id": "21f13051e6f8d8be62b975212156da4ecc6f1c21",
+          "url": "https://github.com/ArcherDB-io/archerdb/commit/eb43e648229f4ccd90332b17153ecc095979e1af"
+        },
+        "date": 1776013568729,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "Insert Throughput",
+            "value": 1334080,
+            "unit": "events/s"
+          },
+          {
+            "name": "Insert p99 Latency",
+            "value": 6,
+            "unit": "ms"
+          },
+          {
+            "name": "Radius Query p99 Latency",
+            "value": 119,
+            "unit": "ms"
+          },
+          {
+            "name": "Polygon Query p99 Latency",
+            "value": 109,
             "unit": "ms"
           }
         ]
