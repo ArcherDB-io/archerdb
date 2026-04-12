@@ -49,9 +49,10 @@ ZIG_CHECKSUM_EXPECTED=$(echo "$ZIG_CHECKSUMS" | grep -F "$ZIG_URL" | cut -d ' ' 
 ZIG_ARCHIVE=$(basename "$ZIG_URL")
 ZIG_DIRECTORY=$(basename "$ZIG_ARCHIVE" "$ZIG_EXTENSION")
 
-# Download, making sure we download to the same output document, without wget adding "-1" etc. if the file was previously partially downloaded:
+# Download, making sure we download to the same output document, without curl/wget
+# silently accepting redirects or partial files.
 if command -v curl > /dev/null; then
-    curl --silent --output "$ZIG_ARCHIVE" "$ZIG_URL"
+    curl --fail --location --show-error --silent --output "$ZIG_ARCHIVE" "$ZIG_URL"
 elif command -v wget > /dev/null; then
     # -4 forces `wget` to connect to ipv4 addresses, as ipv6 fails to resolve on certain distros.
     # Only A records (for ipv4) are used in DNS:
@@ -65,6 +66,12 @@ elif command -v wget > /dev/null; then
     wget $ipv4 --quiet --output-document="$ZIG_ARCHIVE" "$ZIG_URL"
 else
     echo "Neither curl nor wget available."
+    exit 1
+fi
+
+# Ensure the archive is non-empty before hashing.
+if [ ! -s "$ZIG_ARCHIVE" ]; then
+    echo "Downloaded archive is empty: $ZIG_ARCHIVE"
     exit 1
 fi
 

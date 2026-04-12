@@ -94,6 +94,12 @@ cd "$PROJECT_ROOT"
 GIT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
+# Ensure Zig is available before building.
+if [[ ! -x ./zig/zig ]]; then
+    echo "Zig toolchain missing; downloading..."
+    ./zig/download.sh
+fi
+
 # Build with release optimizations
 echo "Building with release optimizations..."
 ./zig/zig build -Drelease -j4 2>&1

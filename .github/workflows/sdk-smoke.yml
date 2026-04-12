@@ -8,6 +8,10 @@
 name: SDK Smoke Tests
 on: [push, pull_request]
 
+permissions:
+  contents: read
+  checks: write
+
 concurrency:
   group: sdk-smoke-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
