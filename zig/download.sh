@@ -1,15 +1,16 @@
 #!/usr/bin/env sh
 set -eu
 
-ZIG_MIRROR="https://pkg.machengine.org/zig"
+ZIG_PRIMARY_MIRROR="https://ziglang.org/download"
+ZIG_FALLBACK_MIRROR="https://pkg.machengine.org/zig"
 ZIG_RELEASE="0.14.1"
 ZIG_CHECKSUMS=$(cat<<EOF
-${ZIG_MIRROR}/0.14.1/zig-aarch64-linux-0.14.1.tar.xz f7a654acc967864f7a050ddacfaa778c7504a0eca8d2b678839c21eea47c992b
-${ZIG_MIRROR}/0.14.1/zig-aarch64-macos-0.14.1.tar.xz 39f3dc5e79c22088ce878edc821dedb4ca5a1cd9f5ef915e9b3cc3053e8faefa
-${ZIG_MIRROR}/0.14.1/zig-aarch64-windows-0.14.1.zip b5aac0ccc40dd91e8311b1f257717d8e3903b5fefb8f659de6d65a840ad1d0e7
-${ZIG_MIRROR}/0.14.1/zig-x86_64-linux-0.14.1.tar.xz 24aeeec8af16c381934a6cd7d95c807a8cb2cf7df9fa40d359aa884195c4716c
-${ZIG_MIRROR}/0.14.1/zig-x86_64-macos-0.14.1.tar.xz b0f8bdfb9035783db58dd6c19d7dea89892acc3814421853e5752fe4573e5f43
-${ZIG_MIRROR}/0.14.1/zig-x86_64-windows-0.14.1.zip 554f5378228923ffd558eac35e21af020c73789d87afeabf4bfd16f2e6feed2c
+zig-aarch64-linux-0.14.1.tar.xz f7a654acc967864f7a050ddacfaa778c7504a0eca8d2b678839c21eea47c992b
+zig-aarch64-macos-0.14.1.tar.xz 39f3dc5e79c22088ce878edc821dedb4ca5a1cd9f5ef915e9b3cc3053e8faefa
+zig-aarch64-windows-0.14.1.zip b5aac0ccc40dd91e8311b1f257717d8e3903b5fefb8f659de6d65a840ad1d0e7
+zig-x86_64-linux-0.14.1.tar.xz 24aeeec8af16c381934a6cd7d95c807a8cb2cf7df9fa40d359aa884195c4716c
+zig-x86_64-macos-0.14.1.tar.xz b0f8bdfb9035783db58dd6c19d7dea89892acc3814421853e5752fe4573e5f43
+zig-x86_64-windows-0.14.1.zip 554f5378228923ffd558eac35e21af020c73789d87afeabf4bfd16f2e6feed2c
 EOF
 )
 
@@ -42,30 +43,55 @@ case "$(uname)" in
         ;;
 esac
 
-ZIG_URL="${ZIG_MIRROR}/${ZIG_RELEASE}/zig-${ZIG_ARCH}-${ZIG_OS}-${ZIG_RELEASE}${ZIG_EXTENSION}"
-ZIG_CHECKSUM_EXPECTED=$(echo "$ZIG_CHECKSUMS" | grep -F "$ZIG_URL" | cut -d ' ' -f 2)
-
-# Work out the filename from the URL, as well as the directory without the ".tar.xz" file extension:
-ZIG_ARCHIVE=$(basename "$ZIG_URL")
+ZIG_ARCHIVE="zig-${ZIG_ARCH}-${ZIG_OS}-${ZIG_RELEASE}${ZIG_EXTENSION}"
 ZIG_DIRECTORY=$(basename "$ZIG_ARCHIVE" "$ZIG_EXTENSION")
+ZIG_CHECKSUM_EXPECTED=$(printf "%s\n" "$ZIG_CHECKSUMS" | awk -v archive="$ZIG_ARCHIVE" '$1 == archive { print $2 }')
 
-# Download, making sure we download to the same output document, without curl/wget
-# silently accepting redirects or partial files.
-if command -v curl > /dev/null; then
-    curl --fail --location --show-error --silent --output "$ZIG_ARCHIVE" "$ZIG_URL"
-elif command -v wget > /dev/null; then
-    # -4 forces `wget` to connect to ipv4 addresses, as ipv6 fails to resolve on certain distros.
-    # Only A records (for ipv4) are used in DNS:
-    ipv4="-4"
-    # But Alpine doesn't support this argument
-    if [ -f /etc/alpine-release ]; then
-        ipv4=""
+if [ -z "$ZIG_CHECKSUM_EXPECTED" ]; then
+    echo "Missing checksum for archive: $ZIG_ARCHIVE"
+    exit 1
+fi
+
+download_archive() {
+    url="$1"
+
+    if command -v curl > /dev/null; then
+        curl --fail --location --show-error --silent --output "$ZIG_ARCHIVE" "$url"
+        return $?
     fi
 
-    # shellcheck disable=SC2086 # We control ipv4 and it'll always either be empty or -4
-    wget $ipv4 --quiet --output-document="$ZIG_ARCHIVE" "$ZIG_URL"
-else
+    if command -v wget > /dev/null; then
+        ipv4="-4"
+        if [ -f /etc/alpine-release ]; then
+            ipv4=""
+        fi
+
+        # shellcheck disable=SC2086 # We control ipv4 and it'll always either be empty or -4
+        wget $ipv4 --quiet --output-document="$ZIG_ARCHIVE" "$url"
+        return $?
+    fi
+
     echo "Neither curl nor wget available."
+    exit 1
+}
+
+ZIG_URL_PRIMARY="${ZIG_PRIMARY_MIRROR}/${ZIG_RELEASE}/${ZIG_ARCHIVE}"
+ZIG_URL_FALLBACK="${ZIG_FALLBACK_MIRROR}/${ZIG_RELEASE}/${ZIG_ARCHIVE}"
+DOWNLOAD_ERROR=""
+
+for ZIG_URL in "$ZIG_URL_PRIMARY" "$ZIG_URL_FALLBACK"; do
+    echo "Attempting download: $ZIG_URL"
+    rm -f "$ZIG_ARCHIVE"
+    if download_archive "$ZIG_URL"; then
+        DOWNLOAD_ERROR=""
+        break
+    fi
+    DOWNLOAD_ERROR="$ZIG_URL"
+    echo "Download failed from $ZIG_URL, trying next mirror..." >&2
+done
+
+if [ -n "$DOWNLOAD_ERROR" ] && [ ! -f "$ZIG_ARCHIVE" ]; then
+    echo "Failed to download Zig archive from all mirrors." >&2
     exit 1
 fi
 
