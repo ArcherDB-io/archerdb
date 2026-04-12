@@ -12,6 +12,7 @@
 //! for downstream consumers (replication, analytics, alerting).
 
 const std = @import("std");
+const stdx = @import("stdx");
 const builtin = @import("builtin");
 const mem = std.mem;
 const assert = std.debug.assert;
@@ -538,6 +539,9 @@ pub const Runner = struct {
             }) catch self.options.routing_key_prefix;
             var payload = json;
 
+            const publish_timestamp: u64 = @intCast(
+                @divFloor(change_event.commit_timestamp, std.time.ns_per_s),
+            );
             client.publish_enqueue(.{
                 .exchange = self.options.exchange_name,
                 .routing_key = routing_key,
@@ -546,7 +550,7 @@ pub const Runner = struct {
                 .properties = .{
                     .content_type = "application/json",
                     .delivery_mode = .persistent,
-                    .timestamp = @intCast(@divFloor(change_event.commit_timestamp, std.time.ns_per_s)),
+                    .timestamp = publish_timestamp,
                 },
                 .body = messageBodyFromSlice(&payload),
             });
@@ -569,7 +573,7 @@ pub const Runner = struct {
         const VTable = struct {
             fn write(context: *const anyopaque, buffer: []u8) usize {
                 const slice: *const []const u8 = @ptrCast(@alignCast(context));
-                @memcpy(buffer[0..slice.*.len], slice.*);
+                stdx.copy_disjoint(.exact, u8, buffer[0..slice.*.len], slice.*);
                 return slice.*.len;
             }
         };
