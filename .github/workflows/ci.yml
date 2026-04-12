@@ -326,11 +326,15 @@ jobs:
         with:
           go-version: '1.21'
 
+      - name: Build Go native client artifacts
+        run: ./zig/zig build clients:go
+
       - name: Run Go SDK tests
         env:
           ARCHERDB_HOST: 127.0.0.1
           ARCHERDB_PORT: 3000
         run: |
+          export CC="$PWD/zig/zig cc"
           cd src/clients/go
           go test ./... -v
 
