@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776004013273,
+  "lastUpdate": 1776007277987,
   "repoUrl": "https://github.com/ArcherDB-io/archerdb",
   "entries": {
     "Benchmark": [
@@ -307,6 +307,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Polygon Query p99 Latency",
             "value": 88,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "committer": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "distinct": true,
+          "id": "5fbf83ab5278d793046c313986f78ff1cff7825d",
+          "message": "fix(ci): make benchmark and recover lanes deterministic",
+          "timestamp": "2026-04-12T17:03:52+02:00",
+          "tree_id": "692f2f2dcf41dd5f92b9e3a97918e6de64aff3c1",
+          "url": "https://github.com/ArcherDB-io/archerdb/commit/5fbf83ab5278d793046c313986f78ff1cff7825d"
+        },
+        "date": 1776007276939,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "Insert Throughput",
+            "value": 1450356,
+            "unit": "events/s"
+          },
+          {
+            "name": "Insert p99 Latency",
+            "value": 6,
+            "unit": "ms"
+          },
+          {
+            "name": "Radius Query p99 Latency",
+            "value": 132,
+            "unit": "ms"
+          },
+          {
+            "name": "Polygon Query p99 Latency",
+            "value": 118,
             "unit": "ms"
           }
         ]
