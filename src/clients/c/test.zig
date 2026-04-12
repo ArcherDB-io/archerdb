@@ -300,15 +300,27 @@ test "arch_client init" {
             var client_out: arch_client.ClientInterface = undefined;
             const cluster_id: u128 = 0;
             const arch_context: usize = 0;
-            const result = initEchoOrSkip(
-                testing.allocator,
-                &client_out,
-                cluster_id,
-                addresses,
-                arch_context,
-                RequestContextType(0).on_complete,
-            );
-            defer if (!std.meta.isError(result)) client_out.deinit() catch unreachable;
+            const result: arch_client.InitError!void = blk: {
+                break :blk initEchoOrSkip(
+                    testing.allocator,
+                    &client_out,
+                    cluster_id,
+                    addresses,
+                    arch_context,
+                    RequestContextType(0).on_complete,
+                ) catch |err| switch (err) {
+                    error.SkipZigTest => return error.SkipZigTest,
+                    error.OutOfMemory => error.OutOfMemory,
+                    error.SystemResources => error.SystemResources,
+                    error.Unexpected => error.Unexpected,
+                    error.AddressInvalid => error.AddressInvalid,
+                    error.AddressLimitExceeded => error.AddressLimitExceeded,
+                    error.NetworkSubsystemFailed => error.NetworkSubsystemFailed,
+                };
+            };
+            if (result) |_| {
+                defer client_out.deinit() catch unreachable;
+            } else |_| {}
             try testing.expectEqual(expected, result);
         }
     }.action;

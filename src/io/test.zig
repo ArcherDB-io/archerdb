@@ -22,6 +22,16 @@ pub const tcp_options: IO.TCPOptions = .{
     .nodelay = false,
 };
 
+fn initIoOrSkip(entries: u12, flags: u32) !IO {
+    if (builtin.target.os.tag == .linux) {
+        return IO.init(entries, flags) catch |err| switch (err) {
+            error.PermissionDenied => error.SkipZigTest,
+            else => err,
+        };
+    }
+    return try IO.init(entries, flags);
+}
+
 test "open/write/read/close/statx" {
     try struct {
         const Context = @This();
@@ -42,7 +52,7 @@ test "open/write/read/close/statx" {
 
         fn run_test() !void {
             var self: Context = .{
-                .io = try IO.init(32, 0),
+                .io = try initIoOrSkip(32, 0),
             };
             defer self.io.deinit();
 
@@ -172,7 +182,7 @@ test "accept/connect/send/receive" {
         received: usize = 0,
 
         fn run_test() !void {
-            var io = try IO.init(32, 0);
+            var io = try initIoOrSkip(32, 0);
             defer io.deinit();
 
             const address = try std.net.Address.parseIp4("127.0.0.1", 0);
@@ -299,7 +309,7 @@ test "timeout" {
             const start_time = timer.monotonic().ns;
             var self: Context = .{
                 .timer = timer,
-                .io = try IO.init(32, 0),
+                .io = try initIoOrSkip(32, 0),
             };
             defer self.io.deinit();
 
@@ -354,7 +364,7 @@ test "event" {
 
         fn run_test() !void {
             var self: Context = .{
-                .io = try IO.init(32, 0),
+                .io = try initIoOrSkip(32, 0),
                 .main_thread_id = std.Thread.getCurrentId(),
             };
             defer self.io.deinit();
@@ -416,7 +426,7 @@ test "submission queue full" {
         count: u32 = 0,
 
         fn run_test() !void {
-            var self: Context = .{ .io = try IO.init(1, 0) };
+            var self: Context = .{ .io = try initIoOrSkip(1, 0) };
             defer self.io.deinit();
 
             var completions: [count]IO.Completion = undefined;
@@ -460,7 +470,7 @@ test "tick to wait" {
         received: bool = false,
 
         fn run_test() !void {
-            var self: Context = .{ .io = try IO.init(1, 0) };
+            var self: Context = .{ .io = try initIoOrSkip(1, 0) };
             defer self.io.deinit();
 
             const address = try std.net.Address.parseIp4("127.0.0.1", 0);
@@ -618,7 +628,7 @@ test "pipe data over socket" {
             @memset(tx_buf, 1);
             @memset(rx_buf, 0);
             var self = Context{
-                .io = try IO.init(32, 0),
+                .io = try initIoOrSkip(32, 0),
                 .tx = .{ .buffer = tx_buf },
                 .rx = .{ .buffer = rx_buf },
             };
@@ -783,7 +793,7 @@ test "cancel_all" {
         fn run_test() !void {
             defer std.fs.cwd().deleteFile(file_path) catch {};
 
-            var context: Context = .{ .io = try IO.init(32, 0) };
+            var context: Context = .{ .io = try initIoOrSkip(32, 0) };
             defer context.io.deinit();
 
             {
@@ -877,7 +887,7 @@ test "cancel" {
 
         fn run_test() !void {
             const allocator = std.testing.allocator;
-            var io = try IO.init(32, 0);
+            var io = try initIoOrSkip(32, 0);
             defer io.deinit();
             const buffer_size = 512 * KiB;
 
