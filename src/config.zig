@@ -595,6 +595,43 @@ pub const configs = struct {
         };
     };
 
+    /// Small-footprint configuration for local fuzzing and VOPR in CI.
+    /// Keeps fixed-size buffers and the initial data file layout small enough for
+    /// bounded simulations to run comfortably on shared runners.
+    pub const simulation = simulation: {
+        var process = runtime_lite.process;
+        process.storage_size_limit_default = 512 * MiB;
+        process.storage_size_limit_max = 512 * MiB;
+        process.ram_index_size_default = 64 * MiB;
+        process.journal_iops_read_max = 4;
+        process.journal_iops_write_max = 4;
+        process.grid_cache_size_default = 128 * MiB;
+        process.grid_iops_read_max = 16;
+        process.grid_iops_write_max = 16;
+        process.grid_repair_request_max = 4;
+        process.grid_repair_reads_max = 4;
+        process.grid_missing_blocks_max = 32;
+        process.grid_missing_tables_max = 8;
+        break :simulation Config{
+            .process = process,
+            .cluster = .{
+                .clients_max = 8,
+                .pipeline_prepare_queue_max = 4,
+                .view_change_headers_suffix_max = 4 + 1,
+                .journal_slot_count = 128,
+                .message_size_max = 1 * MiB,
+                .lsm_levels = 6,
+                .lsm_growth_factor = 8,
+                .lsm_compaction_ops = 8,
+                .block_size = 256 * KiB,
+                .lsm_manifest_compact_extra_blocks = 3,
+                .lsm_table_coalescing_threshold_percent = 35,
+                .lsm_snapshots_max = 32,
+                .lsm_scans_max = 8,
+            },
+        };
+    };
+
     /// Baseline production capacity tier.
     pub const standard = with_capacity(
         64 * GiB,

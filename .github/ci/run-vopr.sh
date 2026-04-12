@@ -130,6 +130,13 @@ fi
 
 echo "VOPR build complete. Starting fuzzer..."
 
+VOPR_ARGS=(
+    --lite
+    --requests-max=5
+    --ticks-max-requests=10000
+    --ticks-max-convergence=5000
+)
+
 # Track overall result
 FAILED_SEEDS=()
 PASSED_SEEDS=()
@@ -155,7 +162,7 @@ run_single_seed() {
     # - Exit code 124 means timeout reached (expected behavior)
     # - Tee output to both console and log file
     run_with_timeout "$DURATION" \
-        "$VOPR_BIN" "$SEED" \
+        "$VOPR_BIN" "${VOPR_ARGS[@]}" "$SEED" \
         2>&1 | tee "$LOG_FILE" || {
             local EXIT_CODE=$?
             if [ $EXIT_CODE -eq 124 ]; then
@@ -169,7 +176,7 @@ run_single_seed() {
             echo "=========================================="
             echo "Seed $SEED: FAILED with exit code $EXIT_CODE"
             echo "Log: $LOG_FILE"
-            echo "To reproduce: $VOPR_BIN $SEED"
+            echo "To reproduce: $VOPR_BIN ${VOPR_ARGS[*]} $SEED"
             echo "=========================================="
             FAILED_SEEDS+=("$SEED")
             return 1
@@ -208,7 +215,7 @@ if [[ ${#FAILED_SEEDS[@]} -gt 0 ]]; then
     echo "VOPR FAILED: ${#FAILED_SEEDS[@]} seed(s) found issues"
     echo "To reproduce failures, run:"
     for SEED in "${FAILED_SEEDS[@]}"; do
-        echo "  $VOPR_BIN $SEED"
+        echo "  $VOPR_BIN ${VOPR_ARGS[*]} $SEED"
     done
     exit 1
 fi

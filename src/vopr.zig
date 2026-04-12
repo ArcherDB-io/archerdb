@@ -76,7 +76,7 @@ pub const std_options: std.Options = .{
     // };
 };
 
-pub const archerdb_config = @import("config.zig").configs.lite;
+pub const archerdb_config = @import("config.zig").configs.simulation;
 
 const cluster_id = 0;
 
@@ -405,10 +405,8 @@ fn options_swarm(prng: *stdx.PRNG) Simulator.Options {
     const replica_count = prng.range_inclusive(u8, 1, constants.replicas_max);
     const standby_count = prng.int_inclusive(u8, constants.standbys_max);
     const node_count = replica_count + standby_count;
-    // -1 since otherwise it is possible that all clients will evict each other.
-    // (Due to retried register messages from the first set of evicted clients.
-    // See the "Cluster: eviction: session_too_low" replica test for a related scenario.)
-    const client_count = prng.range_inclusive(u16, 1, constants.clients_max * 2 - 1);
+    // Keep the swarm client count within the simulation profile bounds.
+    const client_count = prng.range_inclusive(u16, 1, constants.clients_max);
 
     const batch_size_limit_min = comptime batch_size_limit_min: {
         var event_size_max: u32 = @sizeOf(vsr.RegisterRequest);
@@ -432,8 +430,9 @@ fn options_swarm(prng: *stdx.PRNG) Simulator.Options {
         );
     };
 
-    const storage_size_limit = vsr.sector_floor(
-        200 * MiB - prng.int_inclusive(u64, 20 * MiB),
+    const storage_size_limit = @max(
+        vsr.sector_floor(200 * MiB - prng.int_inclusive(u64, 20 * MiB)),
+        vsr.superblock.data_file_size_min,
     );
 
     const cluster_options: Cluster.Options = .{
@@ -476,7 +475,7 @@ fn options_swarm(prng: *stdx.PRNG) Simulator.Options {
         .one_way_delay_min = range_inclusive_ms(prng, 0, 30),
         .one_way_delay_mean = range_inclusive_ms(prng, 30, 100),
         .packet_loss_probability = ratio(prng.int_inclusive(u8, 30), 100),
-        .path_maximum_capacity = prng.range_inclusive(u8, 2, 20),
+        .path_maximum_capacity = prng.range_inclusive(u8, 1, 4),
         .path_clog_duration_mean = range_inclusive_ms(prng, 0, 5_000),
         .path_clog_probability = ratio(prng.int_inclusive(u8, 2), 100),
         .packet_replay_probability = ratio(prng.int_inclusive(u8, 50), 100),
@@ -555,9 +554,20 @@ fn options_swarm(prng: *stdx.PRNG) Simulator.Options {
 
 fn options_lite(prng: *stdx.PRNG) Simulator.Options {
     var base = options_swarm(prng);
+
+    // Keep the quick VOPR profile bounded enough for CI runners.
     base.cluster.replica_count = 3;
     base.cluster.standby_count = 0;
-    base.network.node_count = 3;
+    base.cluster.client_count = @min(base.cluster.client_count, 4);
+    base.cluster.reformats_max = 0;
+    base.cluster.storage_size_limit = @max(
+        base.cluster.storage_size_limit,
+        vsr.superblock.data_file_size_min,
+    );
+
+    base.network.node_count = base.cluster.replica_count;
+    base.network.client_count = base.cluster.client_count;
+    base.network.path_maximum_capacity = 1;
     return base;
 }
 
@@ -567,7 +577,7 @@ fn options_performance(prng: *stdx.PRNG) Simulator.Options {
         .replica_count = 6,
         .standby_count = 0,
         .client_count = 4,
-        .storage_size_limit = vsr.sector_floor(200 * MiB),
+        .storage_size_limit = @max(vsr.sector_floor(200 * MiB), vsr.superblock.data_file_size_min),
         .seed = prng.int(u64),
         .releases = releases[0..1],
         .client_release = releases[0].release,

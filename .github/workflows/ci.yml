@@ -675,7 +675,6 @@ jobs:
 
       - name: Run VOPR quick smoke
         run: ./.github/ci/run-vopr.sh ${{ matrix.state_machine }} 300 5
-        continue-on-error: true  # Non-blocking until validated stable
 
   # Chaos tests (quick mode) - validates fault tolerance
   chaos-quick:
@@ -693,7 +692,6 @@ jobs:
 
       - name: Run chaos tests
         run: ./scripts/chaos-test.sh --quick
-        continue-on-error: true  # Non-blocking until FAULT tests compile
 
   # Stress tests (5 min) - validates sustained load stability
   stress-quick:
