@@ -145,8 +145,8 @@ jobs:
 
       - name: Build ArcherDB and Python client
         run: |
-          ./zig/zig build -j4
-          ./zig/zig build -j4 clients:python
+          ./zig/zig build -j4 -Dconfig=lite
+          ./zig/zig build -j4 -Dconfig=lite clients:python
 
       - name: Start ArcherDB server
         run: |
@@ -201,7 +201,7 @@ jobs:
         run: ./zig/download.sh
 
       - name: Build ArcherDB
-        run: ./zig/zig build -j4
+        run: ./zig/zig build -j4 -Dconfig=lite
 
       - name: Start ArcherDB server
         run: |
@@ -257,7 +257,7 @@ jobs:
         run: ./zig/download.sh
 
       - name: Build ArcherDB
-        run: ./zig/zig build -j4
+        run: ./zig/zig build -j4 -Dconfig=lite
 
       - name: Start ArcherDB server
         run: |
@@ -309,7 +309,7 @@ jobs:
         run: ./zig/download.sh
 
       - name: Build ArcherDB
-        run: ./zig/zig build -j4
+        run: ./zig/zig build -j4 -Dconfig=lite
 
       - name: Start ArcherDB server
         run: |
@@ -331,7 +331,7 @@ jobs:
           go-version: '1.21'
 
       - name: Build Go native client artifacts
-        run: ./zig/zig build clients:go
+        run: ./zig/zig build -Dconfig=lite clients:go
 
       - name: Run Go SDK tests
         env:
@@ -355,22 +355,6 @@ jobs:
     timeout-minutes: 30  # Explicit timeout for integration tests
     runs-on: ubuntu-latest
     name: Integration Tests
-    services:
-      minio:
-        image: minio/minio:latest
-        ports:
-          - 9000:9000
-          - 9001:9001
-        env:
-          MINIO_ROOT_USER: minioadmin
-          MINIO_ROOT_PASSWORD: minioadmin
-        options: >-
-          --health-cmd "curl -f http://localhost:9000/minio/health/live || exit 1"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-          --entrypoint "/usr/bin/minio server /data --console-address :9001"
-
     steps:
       - uses: actions/checkout@v4
         with:
@@ -381,6 +365,24 @@ jobs:
 
       - name: Build ArcherDB
         run: ./zig/zig build --release=safe
+
+      - name: Start MinIO
+        run: |
+          docker run -d \
+            --name minio \
+            -p 9000:9000 \
+            -p 9001:9001 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio:latest server /data --console-address :9001
+
+          for i in {1..30}; do
+            if curl -sf http://localhost:9000/minio/health/live > /dev/null 2>&1; then
+              echo "MinIO ready after ${i}s"
+              break
+            fi
+            sleep 1
+          done
 
       - name: Configure MinIO
         run: |
@@ -412,11 +414,15 @@ jobs:
           # Run replication-specific tests that require MinIO
           ./zig/zig build test:integration:replication || echo "Replication tests completed"
 
+      - name: Stop MinIO
+        if: always()
+        run: docker rm -f minio 2>/dev/null || true
+
   # Coverage collection (Linux only)
   coverage:
     needs: test
     timeout-minutes: 30  # Explicit timeout for coverage collection
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     name: Coverage
     steps:
       - uses: actions/checkout@v4
@@ -588,7 +594,7 @@ jobs:
         run: ./zig/download.sh
 
       - name: Build ArcherDB
-        run: ./zig/zig build -j4
+        run: ./zig/zig build -j4 -Dconfig=lite
 
       - name: Run E2E tests
         run: ./scripts/e2e-test.sh

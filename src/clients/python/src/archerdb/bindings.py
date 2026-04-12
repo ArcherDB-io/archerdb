@@ -264,6 +264,12 @@ class StatusResponse:
     tombstone_count: int = 0
     ttl_expirations: int = 0
     deletion_count: int = 0
+    index_resize_status: int = 0
+    membership_state: int = 0
+    _status_padding: int = 0
+    index_resize_progress: int = 0
+    membership_voters_count: int = 0
+    membership_learners_count: int = 0
 
 
 @dataclass
@@ -833,6 +839,12 @@ class CStatusResponse(ctypes.Structure):
         validate_uint(bits=64, name="tombstone_count", number=obj.tombstone_count)
         validate_uint(bits=64, name="ttl_expirations", number=obj.ttl_expirations)
         validate_uint(bits=64, name="deletion_count", number=obj.deletion_count)
+        validate_uint(bits=8, name="index_resize_status", number=obj.index_resize_status)
+        validate_uint(bits=8, name="membership_state", number=obj.membership_state)
+        validate_uint(bits=16, name="_status_padding", number=obj._status_padding)
+        validate_uint(bits=32, name="index_resize_progress", number=obj.index_resize_progress)
+        validate_uint(bits=32, name="membership_voters_count", number=obj.membership_voters_count)
+        validate_uint(bits=32, name="membership_learners_count", number=obj.membership_learners_count)
         return cls(
             ram_index_count=obj.ram_index_count,
             ram_index_capacity=obj.ram_index_capacity,
@@ -841,6 +853,12 @@ class CStatusResponse(ctypes.Structure):
             tombstone_count=obj.tombstone_count,
             ttl_expirations=obj.ttl_expirations,
             deletion_count=obj.deletion_count,
+            index_resize_status=obj.index_resize_status,
+            membership_state=obj.membership_state,
+            _status_padding=obj._status_padding,
+            index_resize_progress=obj.index_resize_progress,
+            membership_voters_count=obj.membership_voters_count,
+            membership_learners_count=obj.membership_learners_count,
         )
 
 
@@ -853,6 +871,12 @@ class CStatusResponse(ctypes.Structure):
             tombstone_count=self.tombstone_count,
             ttl_expirations=self.ttl_expirations,
             deletion_count=self.deletion_count,
+            index_resize_status=self.index_resize_status,
+            membership_state=self.membership_state,
+            _status_padding=self._status_padding,
+            index_resize_progress=self.index_resize_progress,
+            membership_voters_count=self.membership_voters_count,
+            membership_learners_count=self.membership_learners_count,
         )
 
 CStatusResponse._fields_ = [ # noqa: SLF001
@@ -863,7 +887,12 @@ CStatusResponse._fields_ = [ # noqa: SLF001
     ("tombstone_count", ctypes.c_uint64),
     ("ttl_expirations", ctypes.c_uint64),
     ("deletion_count", ctypes.c_uint64),
-    ("reserved", ctypes.c_uint8 * 16),
+    ("index_resize_status", ctypes.c_uint8),
+    ("membership_state", ctypes.c_uint8),
+    ("_status_padding", ctypes.c_uint16),
+    ("index_resize_progress", ctypes.c_uint32),
+    ("membership_voters_count", ctypes.c_uint32),
+    ("membership_learners_count", ctypes.c_uint32),
 ]
 
 
