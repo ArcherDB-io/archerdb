@@ -189,7 +189,7 @@ jobs:
           npm install
           npm install --save-dev jest-junit
           ARCHERDB_HOST=127.0.0.1 ARCHERDB_PORT=3000 \
-          JEST_JUNIT_OUTPUT_DIR="../../test-results" \
+          JEST_JUNIT_OUTPUT_DIR="../../../test-results" \
           JEST_JUNIT_OUTPUT_NAME="nodejs.xml" \
           npm test -- --grep "insert" --timeout 30000 --reporter=jest-junit || true
 
