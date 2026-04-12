@@ -182,6 +182,10 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Build Node native client artifacts
+        if: matrix.sdk == 'nodejs'
+        run: ./zig/zig build -j4 -Dconfig=lite clients:node
+
       - name: Node.js smoke
         if: matrix.sdk == 'nodejs'
         run: |
