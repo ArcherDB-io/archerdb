@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776013570259,
+  "lastUpdate": 1776016208578,
   "repoUrl": "https://github.com/ArcherDB-io/archerdb",
   "entries": {
     "Benchmark": [
@@ -439,6 +439,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Polygon Query p99 Latency",
             "value": 109,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "committer": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "distinct": true,
+          "id": "e6eec7db4204eade375a808e84d586bb560f5a23",
+          "message": "fix(ci): validate quick vopr and chaos lanes",
+          "timestamp": "2026-04-12T19:32:56+02:00",
+          "tree_id": "56df40a499ac2154caf919c4dd3df60008c7e2af",
+          "url": "https://github.com/ArcherDB-io/archerdb/commit/e6eec7db4204eade375a808e84d586bb560f5a23"
+        },
+        "date": 1776016207394,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "Insert Throughput",
+            "value": 1426249,
+            "unit": "events/s"
+          },
+          {
+            "name": "Insert p99 Latency",
+            "value": 6,
+            "unit": "ms"
+          },
+          {
+            "name": "Radius Query p99 Latency",
+            "value": 103,
+            "unit": "ms"
+          },
+          {
+            "name": "Polygon Query p99 Latency",
+            "value": 110,
             "unit": "ms"
           }
         ]
