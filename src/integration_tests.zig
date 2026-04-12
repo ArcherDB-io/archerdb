@@ -401,6 +401,121 @@ test "geo operations integration" {
     }
 }
 
+test "integration: solo ttl insert immediate queries stay stable" {
+    const testing = std.testing;
+    const RequestContext = RequestContextType(constants.message_body_size_max);
+
+    var tmp_archerdb = try TmpArcherDB.init(testing.allocator, .{
+        .development = true,
+        .prebuilt = archerdb,
+    });
+    defer tmp_archerdb.deinit(testing.allocator);
+
+    var client: arch_client.ClientInterface = undefined;
+    try arch_client.init(
+        testing.allocator,
+        &client,
+        0,
+        tmp_archerdb.port_str,
+        42,
+        RequestContext.on_complete,
+    );
+    defer client.deinit() catch unreachable;
+
+    var completion = Completion{ .pending = 0 };
+    const request = try testing.allocator.create(RequestContext);
+    defer testing.allocator.destroy(request);
+    request.* = RequestContext{
+        .packet = undefined,
+        .completion = &completion,
+        .sent_data_size = 0,
+    };
+
+    for (0..16) |i| {
+        var event = make_event(10_000 + @as(u128, @intCast(i)), 37.7749, -122.4194);
+        event.ttl_seconds = 60;
+
+        const insert_reply = try send_request(
+            &client,
+            &completion,
+            request,
+            .insert_events,
+            std.mem.asBytes(&event),
+        );
+        {
+            try testing.expectEqual(@as(usize, @sizeOf(tb.InsertGeoEventsResult)), insert_reply.len);
+            const result = read_struct(tb.InsertGeoEventsResult, insert_reply);
+            try testing.expectEqual(tb.InsertGeoEventResult.ok, result.result);
+        }
+
+        var uuid_filter = tb.QueryUuidFilter{ .entity_id = event.entity_id };
+        const uuid_reply = try send_request(
+            &client,
+            &completion,
+            request,
+            .query_uuid,
+            std.mem.asBytes(&uuid_filter),
+        );
+        {
+            try testing.expect(uuid_reply.len >= @sizeOf(tb.QueryUuidResponse) + @sizeOf(tb.GeoEvent));
+            const header = read_struct(
+                tb.QueryUuidResponse,
+                uuid_reply[0..@sizeOf(tb.QueryUuidResponse)],
+            );
+            try testing.expectEqual(@as(u8, 0), header.status);
+            const found = read_struct(
+                tb.GeoEvent,
+                uuid_reply[@sizeOf(tb.QueryUuidResponse)..][0..@sizeOf(tb.GeoEvent)],
+            );
+            try testing.expectEqual(event.entity_id, found.entity_id);
+        }
+
+        var radius_filter = tb.QueryRadiusFilter{
+            .center_lat_nano = event.lat_nano,
+            .center_lon_nano = event.lon_nano,
+            .radius_mm = 2_000_000,
+            .limit = 64,
+            .timestamp_min = 0,
+            .timestamp_max = 0,
+            .group_id = event.group_id,
+        };
+        const radius_reply = try send_request(
+            &client,
+            &completion,
+            request,
+            .query_radius,
+            std.mem.asBytes(&radius_filter),
+        );
+        {
+            try testing.expect(radius_reply.len >= @sizeOf(tb.QueryResponse));
+            const header = read_struct(
+                tb.QueryResponse,
+                radius_reply[0..@sizeOf(tb.QueryResponse)],
+            );
+            try testing.expect(header.error_status() == null);
+            try testing.expect(header.count > 0);
+
+            const events_bytes = radius_reply[@sizeOf(tb.QueryResponse)..];
+            const event_count: usize = @intCast(header.count);
+            try testing.expect(events_bytes.len >= event_count * @sizeOf(tb.GeoEvent));
+
+            var found_entity = false;
+            var offset: usize = 0;
+            while (offset < event_count * @sizeOf(tb.GeoEvent)) : (offset += @sizeOf(tb.GeoEvent)) {
+                const found = read_struct(
+                    tb.GeoEvent,
+                    events_bytes[offset .. offset + @sizeOf(tb.GeoEvent)],
+                );
+                if (found.entity_id == event.entity_id) {
+                    found_entity = true;
+                    break;
+                }
+            }
+            try testing.expect(found_entity);
+        }
+    }
+}
+
 test "integration: geospatial batch insert and query" {
     // INT-01: Test batch inserts and verify all events are queryable
     const testing = std.testing;

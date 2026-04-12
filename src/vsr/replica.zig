@@ -2146,6 +2146,12 @@ pub fn ReplicaType(
         ) bool {
             if (!self.solo()) return false;
             if (message.header.client == 0) return false;
+            // A solo read may bypass consensus only when the pipeline is fully idle.
+            // Otherwise it can advance the state machine timestamp ahead of an already-queued
+            // prepare (for example, a pulse triggered by a TTL-bearing write), and the later
+            // commit will trip execute_op's monotonic timestamp invariant.
+            if (!self.pipeline.queue.prepare_queue.empty()) return false;
+            if (!self.pipeline.queue.request_queue.empty()) return false;
 
             if (StateMachine.Operation != @import("../archerdb.zig").Operation) return false;
             const operation = StateMachine.Operation.from_vsr(message.header.operation) orelse {
@@ -7410,7 +7416,8 @@ pub fn ReplicaType(
         fn membershipNodePort(self: *const Replica, node_id: u8) u16 {
             return if (@hasField(MessageBus, "replicas_addresses"))
                 self.message_bus.replicas_addresses[node_id].getPort()
-            else 0;
+            else
+                0;
         }
 
         fn membershipNodeInfoFromRuntime(self: *const Replica, node_id: u8) membership.NodeInfo {
