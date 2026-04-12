@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776000768945,
+  "lastUpdate": 1776001995101,
   "repoUrl": "https://github.com/ArcherDB-io/archerdb",
   "entries": {
     "Benchmark": [
@@ -219,6 +219,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Polygon Query p99 Latency",
             "value": 95,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "committer": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "distinct": true,
+          "id": "0c1d92ce689dca9149829c94dec5ff3e98737d73",
+          "message": "chore(ci): opt workflows into node 24",
+          "timestamp": "2026-04-12T15:35:42+02:00",
+          "tree_id": "b2f7570f9e5e028806c59bcc23b09155e0e2566d",
+          "url": "https://github.com/ArcherDB-io/archerdb/commit/0c1d92ce689dca9149829c94dec5ff3e98737d73"
+        },
+        "date": 1776001994350,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "Insert Throughput",
+            "value": 1448925,
+            "unit": "events/s"
+          },
+          {
+            "name": "Insert p99 Latency",
+            "value": 6,
+            "unit": "ms"
+          },
+          {
+            "name": "Radius Query p99 Latency",
+            "value": 115,
+            "unit": "ms"
+          },
+          {
+            "name": "Polygon Query p99 Latency",
+            "value": 116,
             "unit": "ms"
           }
         ]
