@@ -2,7 +2,7 @@
 # Copyright (c) 2024-2025 ArcherDB Contributors
 #
 # SDK Smoke Tests - All 5 SDKs with JUnit XML reporting
-# Strict 5 minute timeout per CI-02.
+# Budget includes Zig bootstrap, lite build, server startup, and SDK smoke.
 # Runs on every push and pull request.
 
 name: SDK Smoke Tests
@@ -22,7 +22,7 @@ env:
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 5  # Strict 5 min budget per CI-02
+    timeout-minutes: 8
     strategy:
       fail-fast: true  # Per CONTEXT.md decision
       matrix:
@@ -173,7 +173,7 @@ jobs:
           exit "$status"
 
       - name: Show server log on failure
-        if: failure()
+        if: failure() || cancelled()
         run: tail -n 200 server.log || true
 
       # Node.js smoke test with JUnit XML
@@ -275,7 +275,7 @@ jobs:
 
       - name: Upload server log on failure
         uses: actions/upload-artifact@v7
-        if: failure()
+        if: failure() || cancelled()
         with:
           name: smoke-server-log-${{ matrix.sdk }}
           path: server.log
