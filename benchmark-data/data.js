@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1775994419198,
+  "lastUpdate": 1775997165108,
   "repoUrl": "https://github.com/ArcherDB-io/archerdb",
   "entries": {
     "Benchmark": [
@@ -87,6 +87,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Polygon Query p99 Latency",
             "value": 94,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "committer": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "distinct": true,
+          "id": "c7648bc9d7594264e9eefd3f385dc7465007c9d9",
+          "message": "fix(ci): shard integration and unblock reporting",
+          "timestamp": "2026-04-12T14:15:18+02:00",
+          "tree_id": "72e71c14032ea5133e8ddf804456106e8d120163",
+          "url": "https://github.com/ArcherDB-io/archerdb/commit/c7648bc9d7594264e9eefd3f385dc7465007c9d9"
+        },
+        "date": 1775997163841,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "Insert Throughput",
+            "value": 1453474,
+            "unit": "events/s"
+          },
+          {
+            "name": "Insert p99 Latency",
+            "value": 6,
+            "unit": "ms"
+          },
+          {
+            "name": "Radius Query p99 Latency",
+            "value": 120,
+            "unit": "ms"
+          },
+          {
+            "name": "Polygon Query p99 Latency",
+            "value": 113,
             "unit": "ms"
           }
         ]
