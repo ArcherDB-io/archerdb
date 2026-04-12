@@ -366,9 +366,6 @@ jobs:
       - name: Download Zig
         run: ./zig/download.sh
 
-      - name: Build ArcherDB
-        run: ./zig/zig build --release=safe -Dconfig=lite
-
       - name: Start MinIO
         run: |
           docker run -d \
@@ -404,8 +401,8 @@ jobs:
           MINIO_SECRET_KEY: minioadmin
           MINIO_BUCKET: archerdb-test-bucket
         run: |
-          # Run integration tests (builds and runs test binary)
-          ./zig/zig build test:integration -Dconfig=lite || echo "Integration tests completed"
+          ./zig/zig build test:integration:build -Dconfig=lite
+          ./zig-out/bin/test-integration
 
       - name: Run replication integration tests
         env:
@@ -413,9 +410,7 @@ jobs:
           MINIO_ACCESS_KEY: minioadmin
           MINIO_SECRET_KEY: minioadmin
           MINIO_BUCKET: archerdb-test-bucket
-        run: |
-          # Run replication-specific tests that require MinIO
-          ./zig/zig build test:integration:replication -Dconfig=lite || echo "Replication tests completed"
+        run: ./zig/zig build test:integration:replication -Dconfig=lite
 
       - name: Stop MinIO
         if: always()
@@ -526,6 +521,31 @@ jobs:
           print(pathlib.Path("benchmark-results.txt").read_text(), file=sys.stderr)
           sys.exit(1)
           PY2
+
+      - name: Ensure benchmark history branch exists
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
+            exit 0
+          fi
+
+          TMP_REPO=$(mktemp -d)
+          trap 'rm -rf "$TMP_REPO"' EXIT
+          cd "$TMP_REPO"
+          git init
+          git checkout --orphan gh-pages
+          mkdir -p benchmark-data
+          touch .nojekyll benchmark-data/.gitkeep
+          cat > README.md <<'EOF'
+          # ArcherDB Benchmark History
+
+          This branch is managed by CI for `benchmark-action/github-action-benchmark`.
+          EOF
+          git add .nojekyll benchmark-data/.gitkeep README.md
+          git -c user.name='github-actions[bot]'               -c user.email='41898282+github-actions[bot]@users.noreply.github.com'               commit -m 'Initialize benchmark history branch'
+          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push origin gh-pages
 
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@v1

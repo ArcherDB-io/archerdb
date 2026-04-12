@@ -196,7 +196,13 @@ test "LoggedProcess: starts and stops" {
     const allocator = gpa.allocator();
     defer assert(gpa.deinit() == .ok);
 
-    const zig_exe = try std.process.getEnvVarOwned(allocator, "ZIG_EXE"); // Set by build.zig
+    const zig_exe = std.process.getEnvVarOwned(allocator, "ZIG_EXE") catch |err| switch (err) {
+        // Direct execution of the built unit-test binary, such as the coverage job's
+        // `./zig-out/bin/test-unit`, does not inherit build.zig's environment.
+        // Fall back to the repository-local Zig download in that case.
+        error.EnvironmentVariableNotFound => try std.fs.cwd().realpathAlloc(allocator, "zig/zig"),
+        else => return err,
+    };
     defer allocator.free(zig_exe);
 
     var tmp_dir = std.testing.tmpDir(.{});
@@ -213,16 +219,30 @@ test "LoggedProcess: starts and stops" {
     defer allocator.destroy(test_exe_buf);
 
     { // Compile this file as an executable!
-        const module_path = "src";
-        const path_relative = try std.fs.path.join(allocator, &.{
-            module_path,
-            @src().file,
-        });
-        defer allocator.free(path_relative);
-        const this_file = try std.fs.cwd().realpath(
-            path_relative,
-            test_exe_buf,
-        );
+        const source_relative = @src().file;
+        const source_relative_prefixed = if (std.mem.startsWith(u8, source_relative, "src/"))
+            source_relative
+        else
+            try std.fs.path.join(allocator, &.{ "src", source_relative });
+        defer if (source_relative_prefixed.ptr != source_relative.ptr) allocator.free(source_relative_prefixed);
+
+        const source_candidates = [_][]const u8{
+            "src/testing/vortex/logged_process.zig",
+            source_relative,
+            source_relative_prefixed,
+        };
+
+        const this_file = blk: {
+            for (source_candidates) |candidate| {
+                if (std.fs.cwd().realpath(candidate, test_exe_buf)) |resolved| {
+                    break :blk resolved;
+                } else |err| switch (err) {
+                    error.FileNotFound => continue,
+                    else => return err,
+                }
+            }
+            return error.FileNotFound;
+        };
         const argv = [_][]const u8{ zig_exe, "build-exe", this_file };
         const exec_result = try std.process.Child.run(.{
             .allocator = allocator,
