@@ -92,12 +92,22 @@ jobs:
         run: |
           cd src/clients/node
           npm install
-          npm install --save-dev jest-junit
-          ARCHERDB_HOST=127.0.0.1 ARCHERDB_PORT=3000 \
-          JEST_JUNIT_OUTPUT_DIR="../../../test-results" \
-          JEST_JUNIT_OUTPUT_NAME="nodejs.xml" \
-          npm test -- --reporter=jest-junit
-
+          set +e
+          ARCHERDB_HOST=127.0.0.1 ARCHERDB_PORT=3000 npm test
+          status=$?
+          cd ../../..
+          if [ "$status" -eq 0 ]; then
+            cat > test-results/nodejs.xml <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <testsuites><testsuite name="nodejs-sdk" tests="1" failures="0"><testcase name="nodejs-sdk-full" classname="nodejs-sdk"/></testsuite></testsuites>
+          EOF
+          else
+            cat > test-results/nodejs.xml <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <testsuites><testsuite name="nodejs-sdk" tests="1" failures="1"><testcase name="nodejs-sdk-full" classname="nodejs-sdk"><failure message="Node.js SDK full suite failed">See workflow logs for details.</failure></testcase></testsuite></testsuites>
+          EOF
+          fi
+          exit "$status"
       # Go: Full suite with JUnit XML
       - uses: actions/setup-go@v6
         if: matrix.sdk == 'go'
