@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1775997165108,
+  "lastUpdate": 1775999492979,
   "repoUrl": "https://github.com/ArcherDB-io/archerdb",
   "entries": {
     "Benchmark": [
@@ -131,6 +131,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Polygon Query p99 Latency",
             "value": 113,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "committer": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "distinct": true,
+          "id": "ce82330677a350fe2fd2e916ae0ffee10106fd4f",
+          "message": "fix(ci): narrow recover smoke in blocking lane",
+          "timestamp": "2026-04-12T14:54:05+02:00",
+          "tree_id": "db04b1b598ff0f133d731f1ca25e235401d17487",
+          "url": "https://github.com/ArcherDB-io/archerdb/commit/ce82330677a350fe2fd2e916ae0ffee10106fd4f"
+        },
+        "date": 1775999491640,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "Insert Throughput",
+            "value": 1503025,
+            "unit": "events/s"
+          },
+          {
+            "name": "Insert p99 Latency",
+            "value": 6,
+            "unit": "ms"
+          },
+          {
+            "name": "Radius Query p99 Latency",
+            "value": 112,
+            "unit": "ms"
+          },
+          {
+            "name": "Polygon Query p99 Latency",
+            "value": 85,
             "unit": "ms"
           }
         ]
