@@ -780,10 +780,13 @@ test "aof write / read" {
 
     const allocator = std.testing.allocator;
 
-    var io = IO.init(32, 0) catch |err| switch (err) {
-        error.PermissionDenied => return error.SkipZigTest,
-        else => return err,
-    };
+    var io = if (builtin.target.os.tag == .linux)
+        IO.init(32, 0) catch |err| switch (err) {
+            error.PermissionDenied => return error.SkipZigTest,
+            else => return err,
+        }
+    else
+        try IO.init(32, 0);
     defer io.deinit();
 
     const dir_fd = try IO.open_dir(".");

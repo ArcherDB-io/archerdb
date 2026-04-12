@@ -60,10 +60,13 @@ fn logInfo(comptime fmt: []const u8, args: anytype) void {
 }
 
 fn ioInitOrSkip(entries: u12, flags: u32) !vsr.io.IO {
-    return vsr.io.IO.init(entries, flags) catch |err| switch (err) {
-        error.PermissionDenied => error.SkipZigTest,
-        else => err,
-    };
+    if (builtin.target.os.tag == .linux) {
+        return vsr.io.IO.init(entries, flags) catch |err| switch (err) {
+            error.PermissionDenied => error.SkipZigTest,
+            else => err,
+        };
+    }
+    return try vsr.io.IO.init(entries, flags);
 }
 
 fn skipRemoteFixtureOnMusl() !void {

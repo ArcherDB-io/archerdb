@@ -168,10 +168,13 @@ test "signal" {
 
         fn run_test() !void {
             var self: Context = .{
-                .io = IO.init(32, 0) catch |err| switch (err) {
-                    error.PermissionDenied => return error.SkipZigTest,
-                    else => return err,
-                },
+                .io = if (builtin.target.os.tag == .linux)
+                    IO.init(32, 0) catch |err| switch (err) {
+                        error.PermissionDenied => return error.SkipZigTest,
+                        else => return err,
+                    }
+                else
+                    try IO.init(32, 0),
                 .main_thread_id = std.Thread.getCurrentId(),
                 .signal = undefined,
             };

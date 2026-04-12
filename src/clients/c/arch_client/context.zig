@@ -292,11 +292,18 @@ pub fn ContextType(
                         @errorName(err),
                     });
                 }
-                return switch (err) {
-                    error.ProcessFdQuotaExceeded, error.PermissionDenied => error.SystemResources,
-                    error.Unexpected => error.Unexpected,
-                    else => unreachable,
-                };
+                return if (builtin.target.os.tag == .linux)
+                    switch (err) {
+                        error.ProcessFdQuotaExceeded, error.PermissionDenied => error.SystemResources,
+                        error.Unexpected => error.Unexpected,
+                        else => unreachable,
+                    }
+                else
+                    switch (err) {
+                        error.ProcessFdQuotaExceeded => error.SystemResources,
+                        error.Unexpected => error.Unexpected,
+                        else => unreachable,
+                    };
             };
             errdefer context.io.deinit();
 
