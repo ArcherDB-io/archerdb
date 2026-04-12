@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1775993311686,
+  "lastUpdate": 1775994419198,
   "repoUrl": "https://github.com/ArcherDB-io/archerdb",
   "entries": {
     "Benchmark": [
@@ -43,6 +43,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Polygon Query p99 Latency",
             "value": 102,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "committer": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "distinct": true,
+          "id": "6417aa4e5b6626e0bafeb6d4b8975d8c2ad57098",
+          "message": "fix(ci): run integration tests with build runner env",
+          "timestamp": "2026-04-12T13:29:56+02:00",
+          "tree_id": "8b86651d88b893332aaa4b37ea7da2402b8cc929",
+          "url": "https://github.com/ArcherDB-io/archerdb/commit/6417aa4e5b6626e0bafeb6d4b8975d8c2ad57098"
+        },
+        "date": 1775994418258,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "Insert Throughput",
+            "value": 1496348,
+            "unit": "events/s"
+          },
+          {
+            "name": "Insert p99 Latency",
+            "value": 6,
+            "unit": "ms"
+          },
+          {
+            "name": "Radius Query p99 Latency",
+            "value": 88,
+            "unit": "ms"
+          },
+          {
+            "name": "Polygon Query p99 Latency",
+            "value": 94,
             "unit": "ms"
           }
         ]
