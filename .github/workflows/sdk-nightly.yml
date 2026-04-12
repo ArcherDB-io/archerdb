@@ -69,9 +69,35 @@ jobs:
           fi
           # Wait for cluster ready
           for i in {1..120}; do
-            curl -sf http://127.0.0.1:9100/health/ready && break
+            if [ "${{ matrix.node_count }}" == "1" ]; then
+              if curl -sf http://127.0.0.1:9100/health/ready >/dev/null 2>&1 && \
+                 grep -q 'listening on 127.0.0.1:3000' server.log; then
+                echo "Single-node cluster ready after ${i}s"
+                break
+              fi
+              if [ -f cluster_pids.txt ] && ! kill -0 "$(cat cluster_pids.txt)" 2>/dev/null; then
+                echo "Single-node cluster exited during startup"
+                cat server.log || true
+                exit 1
+              fi
+            elif curl -sf http://127.0.0.1:9100/health/ready >/dev/null 2>&1; then
+              echo "Cluster ready after ${i}s"
+              break
+            fi
             sleep 1
           done
+          if [ "${{ matrix.node_count }}" == "1" ]; then
+            if ! curl -sf http://127.0.0.1:9100/health/ready >/dev/null 2>&1 || \
+               ! grep -q 'listening on 127.0.0.1:3000' server.log; then
+              echo "Single-node cluster did not become ready in time"
+              tail -n 200 server.log || true
+              exit 1
+            fi
+          elif ! curl -sf http://127.0.0.1:9100/health/ready >/dev/null 2>&1; then
+            echo "Cluster did not become ready in time"
+            ls -1 *.log 2>/dev/null | xargs -r -n1 tail -n 80 || true
+            exit 1
+          fi
 
       # Python SDK tests with JUnit XML
       - name: Run Python SDK tests

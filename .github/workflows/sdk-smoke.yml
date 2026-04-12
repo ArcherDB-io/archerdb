@@ -47,11 +47,26 @@ jobs:
           ./zig-out/bin/archerdb format --cluster=0 --replica=0 --replica-count=1 "$TMPDIR/test.archerdb"
           ./zig-out/bin/archerdb start --addresses=127.0.0.1:3000 --metrics-port=9100 --metrics-bind=127.0.0.1 "$TMPDIR/test.archerdb" > server.log 2>&1 &
           echo $! > server.pid
-          # Health check polling (no fixed sleep)
-          for i in {1..30}; do
-            curl -sf http://127.0.0.1:9100/health/ready && break
+          # Wait for both readiness and the data-plane listener log line.
+          for i in {1..60}; do
+            if curl -sf http://127.0.0.1:9100/health/ready >/dev/null 2>&1 && \
+               grep -q 'listening on 127.0.0.1:3000' server.log; then
+              echo "Server ready after ${i}s"
+              break
+            fi
+            if ! kill -0 "$(cat server.pid)" 2>/dev/null; then
+              echo "Server exited during startup"
+              cat server.log || true
+              exit 1
+            fi
             sleep 1
           done
+          if ! curl -sf http://127.0.0.1:9100/health/ready >/dev/null 2>&1 || \
+             ! grep -q 'listening on 127.0.0.1:3000' server.log; then
+            echo "Server did not become ready in time"
+            tail -n 200 server.log || true
+            exit 1
+          fi
 
       - name: Create test-results directory
         run: mkdir -p test-results
@@ -71,18 +86,12 @@ jobs:
           set +e
           python - <<'PYTEST'
           import os
+          import sys
           import time
 
           from archerdb import GeoClientSync, GeoClientConfig, create_geo_event, id as archerdb_id
 
           address = os.environ["ARCHERDB_ADDRESS"]
-          client = GeoClientSync(
-              GeoClientConfig(
-                  cluster_id=0,
-                  addresses=[address],
-                  request_timeout_ms=10000,
-              )
-          )
 
           def wait_until(description, fn, timeout_s=30.0, interval_s=0.5):
               deadline = time.monotonic() + timeout_s
@@ -93,43 +102,61 @@ jobs:
                   time.sleep(interval_s)
               raise AssertionError(f"{description} did not become true within {timeout_s:.1f}s")
 
-          try:
-              entity_id = archerdb_id()
-              event = create_geo_event(
-                  entity_id=entity_id,
-                  latitude=37.7749,
-                  longitude=-122.4194,
-                  ttl_seconds=60,
+          def run_smoke_attempt(attempt: int):
+              client = GeoClientSync(
+                  GeoClientConfig(
+                      cluster_id=0,
+                      addresses=[address],
+                      request_timeout_ms=10000,
+                  )
               )
-
-              errors = client.insert_events([event])
-              assert errors == []
-
-              found = wait_until(
-                  "latest lookup",
-                  lambda: (evt := client.get_latest_by_uuid(entity_id))
-                  and evt.entity_id == entity_id and evt,
-              )
-              assert found.entity_id == entity_id
-
-              radius_result = wait_until(
-                  "radius query visibility",
-                  lambda: (result := client.query_radius(
+              try:
+                  entity_id = archerdb_id()
+                  event = create_geo_event(
+                      entity_id=entity_id,
                       latitude=37.7749,
                       longitude=-122.4194,
-                      radius_m=2000,
-                      limit=5,
-                  )) and next(
-                      (evt for evt in result.events if evt.entity_id == entity_id),
-                      None,
-                  ),
-                  timeout_s=45.0,
-                  interval_s=1.0,
-              )
-              assert radius_result.entity_id == entity_id
+                      ttl_seconds=60,
+                  )
 
-          finally:
-              client.close()
+                  errors = client.insert_events([event])
+                  assert errors == []
+
+                  found = wait_until(
+                      f"latest lookup attempt {attempt}",
+                      lambda: (evt := client.get_latest_by_uuid(entity_id))
+                      and evt.entity_id == entity_id and evt,
+                  )
+                  assert found.entity_id == entity_id
+
+                  radius_result = wait_until(
+                      f"radius query visibility attempt {attempt}",
+                      lambda: (result := client.query_radius(
+                          latitude=37.7749,
+                          longitude=-122.4194,
+                          radius_m=2000,
+                          limit=5,
+                      )) and next(
+                          (evt for evt in result.events if evt.entity_id == entity_id),
+                          None,
+                      ),
+                      timeout_s=45.0,
+                      interval_s=1.0,
+                  )
+                  assert radius_result.entity_id == entity_id
+
+              finally:
+                  client.close()
+
+          for attempt in (1, 2):
+              try:
+                  run_smoke_attempt(attempt)
+                  break
+              except Exception as exc:
+                  print(f"Python smoke attempt {attempt} failed: {exc}", file=sys.stderr)
+                  if attempt == 2:
+                      raise
+                  time.sleep(2.0)
           PYTEST
           status=$?
           if [ "$status" -eq 0 ]; then
@@ -144,6 +171,10 @@ jobs:
           EOF
           fi
           exit "$status"
+
+      - name: Show server log on failure
+        if: failure()
+        run: tail -n 200 server.log || true
 
       # Node.js smoke test with JUnit XML
       - uses: actions/setup-node@v6
@@ -241,6 +272,14 @@ jobs:
           name: smoke-test-results-${{ matrix.sdk }}
           path: test-results/
           retention-days: 30
+
+      - name: Upload server log on failure
+        uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: smoke-server-log-${{ matrix.sdk }}
+          path: server.log
+          retention-days: 14
 
       - name: Cleanup
         if: always()

@@ -42,9 +42,24 @@ jobs:
           ./zig-out/bin/archerdb start --addresses=127.0.0.1:3000 --metrics-port=9100 --metrics-bind=127.0.0.1 "$TMPDIR/test.archerdb" > server.log 2>&1 &
           echo $! > server.pid
           for i in {1..60}; do
-            curl -sf http://127.0.0.1:9100/health/ready && break
+            if curl -sf http://127.0.0.1:9100/health/ready >/dev/null 2>&1 && \
+               grep -q 'listening on 127.0.0.1:3000' server.log; then
+              echo "Server ready after ${i}s"
+              break
+            fi
+            if ! kill -0 "$(cat server.pid)" 2>/dev/null; then
+              echo "Server exited during startup"
+              cat server.log || true
+              exit 1
+            fi
             sleep 1
           done
+          if ! curl -sf http://127.0.0.1:9100/health/ready >/dev/null 2>&1 || \
+             ! grep -q 'listening on 127.0.0.1:3000' server.log; then
+            echo "Server did not become ready in time"
+            tail -n 200 server.log || true
+            exit 1
+          fi
 
       - name: Create test-results directory
         run: mkdir -p test-results
