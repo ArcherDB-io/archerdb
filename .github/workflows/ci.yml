@@ -367,7 +367,7 @@ jobs:
         run: ./zig/download.sh
 
       - name: Build ArcherDB
-        run: ./zig/zig build --release=safe
+        run: ./zig/zig build --release=safe -Dconfig=lite
 
       - name: Start MinIO
         run: |
@@ -405,7 +405,7 @@ jobs:
           MINIO_BUCKET: archerdb-test-bucket
         run: |
           # Run integration tests (builds and runs test binary)
-          ./zig/zig build test:integration || echo "Integration tests completed"
+          ./zig/zig build test:integration -Dconfig=lite || echo "Integration tests completed"
 
       - name: Run replication integration tests
         env:
@@ -415,7 +415,7 @@ jobs:
           MINIO_BUCKET: archerdb-test-bucket
         run: |
           # Run replication-specific tests that require MinIO
-          ./zig/zig build test:integration:replication || echo "Replication tests completed"
+          ./zig/zig build test:integration:replication -Dconfig=lite || echo "Replication tests completed"
 
       - name: Stop MinIO
         if: always()
@@ -441,19 +441,22 @@ jobs:
         run: ./zig/download.sh
 
       - name: Build test binary
-        run: ./zig/zig build test:unit -Doptimize=Debug
+        run: ./zig/zig build test:unit:build -Doptimize=Debug
 
       - name: Run tests with coverage
         run: |
           mkdir -p coverage
-          kcov --exclude-pattern=/zig/lib/,/test/,/.zig-cache/ \
+          test -x ./zig-out/bin/test-unit
+          kcov --include-path=./src \
             ./coverage \
-            ./zig-out/bin/test-unit || true
+            ./zig-out/bin/test-unit
+          find ./coverage -type l -delete
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
-          directory: ./coverage
+          files: ./coverage/test-unit/cobertura.xml
+          disable_search: true
           fail_ci_if_error: true
           verbose: true
 
@@ -499,16 +502,30 @@ jobs:
 
       - name: Run benchmarks
         run: |
-          ./zig/zig build -Drelease
+          ./zig/zig build -Drelease -Dconfig=lite
           ./zig-out/bin/archerdb benchmark \
             --event-count=10000 \
             --entity-count=1000 \
             --query-uuid-count=1000 \
             --query-radius-count=100 \
             --query-polygon-count=100 \
-            > benchmark-results.txt 2>&1 || true
-          # Parse results into JSON format for github-action-benchmark
+            --cache-grid=64MiB \
+            > benchmark-results.txt 2>&1
           python3 .github/ci/parse-benchmark.py benchmark-results.txt > benchmark-results.json
+          python3 - <<'PY2'
+          import json
+          import pathlib
+          import sys
+
+          path = pathlib.Path("benchmark-results.json")
+          results = json.loads(path.read_text())
+          if results:
+              sys.exit(0)
+
+          print("benchmark parser produced no metrics", file=sys.stderr)
+          print(pathlib.Path("benchmark-results.txt").read_text(), file=sys.stderr)
+          sys.exit(1)
+          PY2
 
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@v1

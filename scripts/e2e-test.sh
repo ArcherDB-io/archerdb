@@ -149,8 +149,9 @@ start_cluster() {
         local metrics_port=$((9100 + i))
 
         "$ARCHERDB" start \
+            --development \
             --addresses="$addresses" \
-            --cache-grid=256MiB \
+            --cache-grid=64MiB \
             --metrics-port="$metrics_port" \
             --metrics-bind=127.0.0.1 \
             "$datafile" \
