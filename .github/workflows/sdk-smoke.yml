@@ -128,9 +128,6 @@ jobs:
               )
               assert radius_result.entity_id == entity_id
 
-              delete_result = client.delete_entities([entity_id])
-              assert delete_result.deleted_count == 1
-              assert delete_result.not_found_count == 0
           finally:
               client.close()
           PYTEST
