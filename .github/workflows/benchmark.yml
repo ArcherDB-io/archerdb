@@ -31,7 +31,7 @@ jobs:
       pull-requests: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0  # Need history for baseline comparison
 
@@ -45,7 +45,7 @@ jobs:
 
       - name: Download baseline (main branch)
         if: github.event_name == 'pull_request'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: benchmark-baseline
           path: baseline/
@@ -102,7 +102,7 @@ jobs:
 
       - name: Upload results as baseline
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: benchmark-baseline
           path: benchmark-results.json
@@ -110,7 +110,7 @@ jobs:
 
       - name: Post PR comment
         if: always() && github.event_name == 'pull_request' && hashFiles('comment.md') != ''
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const fs = require('fs');
@@ -145,7 +145,7 @@ jobs:
             }
 
       - name: Upload benchmark results artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: benchmark-results-${{ github.sha }}
           path: benchmark-results.json
