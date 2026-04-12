@@ -510,13 +510,39 @@ jobs:
           echo "path=$report" >> "$GITHUB_OUTPUT"
           echo "Found coverage report at $report"
 
+      - name: Determine Codecov upload mode
+        id: codecov-auth
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        run: |
+          if [ -n "$CODECOV_TOKEN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-cobertura
+          path: ${{ steps.coverage-report.outputs.path }}
+          if-no-files-found: error
+
       - name: Upload coverage to Codecov
+        if: steps.codecov-auth.outputs.enabled == 'true'
         uses: codecov/codecov-action@v5
         with:
+          token: ${{ secrets.CODECOV_TOKEN }}
           files: ${{ steps.coverage-report.outputs.path }}
           disable_search: true
           fail_ci_if_error: true
           verbose: true
+
+      - name: Skip Codecov upload when token is unavailable
+        if: steps.codecov-auth.outputs.enabled != 'true'
+        run: |
+          echo "CODECOV_TOKEN is not configured; skipping Codecov upload."
+          echo "Cobertura report is available in the coverage-cobertura workflow artifact."
 
   # Build reproducibility check
   reproducible-build:
