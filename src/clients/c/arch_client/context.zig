@@ -286,12 +286,14 @@ pub fn ContextType(
 
             log.debug("{}: init: initializing IO", .{context.client_id});
             context.io = IO.init(32, 0) catch |err| {
-                log.err("{}: failed to initialize IO: {s}", .{
-                    context.client_id,
-                    @errorName(err),
-                });
+                if (!builtin.is_test) {
+                    log.err("{}: failed to initialize IO: {s}", .{
+                        context.client_id,
+                        @errorName(err),
+                    });
+                }
                 return switch (err) {
-                    error.ProcessFdQuotaExceeded => error.SystemResources,
+                    error.ProcessFdQuotaExceeded, error.PermissionDenied => error.SystemResources,
                     error.Unexpected => error.Unexpected,
                     else => unreachable,
                 };

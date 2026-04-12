@@ -95,7 +95,7 @@ jobs:
     name: Test (Linux Alpine)
     steps:
       - name: Install dependencies
-        run: apk add --no-cache git bash curl xz
+        run: apk add --no-cache git bash curl xz python3
 
       - uses: actions/checkout@v4
         with:

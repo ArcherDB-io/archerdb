@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2024-2025 ArcherDB Contributors
 const std = @import("std");
+const builtin = @import("builtin");
 const assert = std.debug.assert;
 const os = std.os;
 const posix = std.posix;
@@ -73,13 +74,17 @@ pub const IO = struct {
 
         errdefer |err| switch (err) {
             error.SystemOutdated => {
-                log.err("io_uring is not available", .{});
-                log.err("likely cause: the syscall is disabled by seccomp", .{});
+                if (!builtin.is_test) {
+                    log.err("io_uring is not available", .{});
+                    log.err("likely cause: the syscall is disabled by seccomp", .{});
+                }
             },
             error.PermissionDenied => {
-                log.err("io_uring is not available", .{});
-                log.err("likely cause: the syscall is disabled by sysctl, " ++
-                    "try 'sysctl -w kernel.io_uring_disabled=0'", .{});
+                if (!builtin.is_test) {
+                    log.err("io_uring is not available", .{});
+                    log.err("likely cause: the syscall is disabled by sysctl, " ++
+                        "try 'sysctl -w kernel.io_uring_disabled=0'", .{});
+                }
             },
             else => {},
         };

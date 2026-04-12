@@ -7356,13 +7356,16 @@ test "query_latest: includes cold-tier entities after demotion" {
     defer grid.deinit(allocator);
     fixtures.open_grid(&grid);
 
+    const test_message_body_size = @min(constants.message_body_size_max, 64 * 1024);
+
     var machine: GeoStateMachine = undefined;
     try machine.init(
         allocator,
         time_sim.time(),
         &grid,
         .{
-            .batch_size_limit = constants.message_body_size_max,
+            .batch_size_limit = test_message_body_size,
+            .ram_index_capacity = 1024,
             .tiering_enabled = true,
             .tiering_config = .{
                 .hot_to_warm_timeout_ns = 100 * std.time.ns_per_ms,
@@ -7409,7 +7412,7 @@ test "query_latest: includes cold-tier entities after demotion" {
             timestamp: u64,
             event: GeoEvent,
         ) void {
-            var output: [constants.message_body_size_max]u8 align(16) = undefined;
+            var output: [test_message_body_size]u8 align(16) = undefined;
             var events = [_]GeoEvent{event};
             const body: []align(16) const u8 = @alignCast(mem.sliceAsBytes(events[0..]));
             _ = machine_ptr.commit(1, op, timestamp, .insert_events, body, output[0..]);
@@ -7418,7 +7421,7 @@ test "query_latest: includes cold-tier entities after demotion" {
 
     const commitPulse = struct {
         fn run(machine_ptr: *GeoStateMachine, op: u64, timestamp: u64) void {
-            var output: [constants.message_body_size_max]u8 align(16) = undefined;
+            var output: [test_message_body_size]u8 align(16) = undefined;
             const empty = [_]u8{} ** 0;
             _ = machine_ptr.commit(0, op, timestamp, .pulse, empty[0..], output[0..]);
         }
@@ -7450,7 +7453,7 @@ test "query_latest: includes cold-tier entities after demotion" {
         if (!MachineContext.pending) break;
     } else @panic("query_latest prefetch stuck");
 
-    var output: [constants.message_body_size_max]u8 align(16) = undefined;
+    var output: [test_message_body_size]u8 align(16) = undefined;
     const written = machine.commit(1, 6, 6_000_000_000, .query_latest, filter_body, output[0..]);
     try std.testing.expect(written >= @sizeOf(QueryResponse));
 

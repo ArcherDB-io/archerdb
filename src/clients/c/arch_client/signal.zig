@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2024-2025 ArcherDB Contributors
 const std = @import("std");
+const builtin = @import("builtin");
 const assert = std.debug.assert;
 
 const vsr = @import("../arch_client.zig").vsr;
@@ -167,7 +168,10 @@ test "signal" {
 
         fn run_test() !void {
             var self: Context = .{
-                .io = try IO.init(32, 0),
+                .io = IO.init(32, 0) catch |err| switch (err) {
+                    error.PermissionDenied => return error.SkipZigTest,
+                    else => return err,
+                },
                 .main_thread_id = std.Thread.getCurrentId(),
                 .signal = undefined,
             };

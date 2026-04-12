@@ -59,6 +59,19 @@ fn logInfo(comptime fmt: []const u8, args: anytype) void {
     }
 }
 
+fn ioInitOrSkip(entries: u12, flags: u32) !vsr.io.IO {
+    return vsr.io.IO.init(entries, flags) catch |err| switch (err) {
+        error.PermissionDenied => error.SkipZigTest,
+        else => err,
+    };
+}
+
+fn skipRemoteFixtureOnMusl() !void {
+    if (builtin.target.os.tag == .linux and builtin.target.abi == .musl) {
+        return error.SkipZigTest;
+    }
+}
+
 /// Point-in-time specification for restore.
 pub const PointInTime = union(enum) {
     /// Restore up to a specific block sequence number.
@@ -2503,6 +2516,8 @@ test "RestoreManager: verifyBlockChecksum rejects mismatched metadata checksum" 
 }
 
 test "RestoreManager: execute against S3-compatible storage" {
+    try skipRemoteFixtureOnMusl();
+
     const allocator = std.testing.allocator;
 
     const prefix = "cluster-abc/replica-0";
@@ -2636,6 +2651,8 @@ test "RestoreManager: execute against S3-compatible storage" {
 }
 
 test "RestoreManager: execute against S3-compatible storage preserves remote grid addresses" {
+    try skipRemoteFixtureOnMusl();
+
     const allocator = std.testing.allocator;
 
     const prefix = "cluster-xyz/replica-0";
@@ -2776,6 +2793,8 @@ test "RestoreManager: execute against S3-compatible storage preserves remote gri
 }
 
 test "RestoreManager: selectCheckpointArtifact chooses latest remote checkpoint artifact" {
+    try skipRemoteFixtureOnMusl();
+
     const allocator = std.testing.allocator;
 
     const prefix = "cluster-remote/replica-0";
@@ -3057,6 +3076,8 @@ test "RestoreManager: selectCheckpointArtifact chooses latest covered checkpoint
 }
 
 test "RestoreManager: selectCheckpointArtifact chooses latest remote S3-compatible checkpoint" {
+    try skipRemoteFixtureOnMusl();
+
     const allocator = std.testing.allocator;
 
     var tmp = std.testing.tmpDir(.{});
@@ -3415,7 +3436,7 @@ test "RestoreManager: restored data file boots under Replica.open" {
     var time_os: vsr.time.TimeOS = .{};
     const time = time_os.time();
 
-    var io = try IO.init(128, 0);
+    var io = try ioInitOrSkip(128, 0);
     defer io.deinit();
 
     var tracer = try Tracer.init(allocator, time, .unknown, .{

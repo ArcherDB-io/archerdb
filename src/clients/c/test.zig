@@ -58,6 +58,27 @@ fn RequestContextType(comptime request_size_max: comptime_int) type {
 }
 
 // Notifies the main thread when all pending requests are completed.
+fn initEchoOrSkip(
+    allocator: std.mem.Allocator,
+    client_out: *arch_client.ClientInterface,
+    cluster_id: u128,
+    addresses: []const u8,
+    arch_context: usize,
+    on_complete: anytype,
+) !void {
+    arch_client.init_echo(
+        allocator,
+        client_out,
+        cluster_id,
+        addresses,
+        arch_context,
+        on_complete,
+    ) catch |err| switch (err) {
+        error.SystemResources => return error.SkipZigTest,
+        else => return err,
+    };
+}
+
 const Completion = struct {
     pending: usize,
     mutex: Mutex = .{},
@@ -135,7 +156,7 @@ test "arch_client echo" {
     const address = "3000";
     const concurrency_max: u32 = constants.client_request_queue_max;
     const arch_context: usize = 42;
-    try arch_client.init_echo(
+    try initEchoOrSkip(
         testing.allocator,
         &client,
         cluster_id,
@@ -279,7 +300,7 @@ test "arch_client init" {
             var client_out: arch_client.ClientInterface = undefined;
             const cluster_id: u128 = 0;
             const arch_context: usize = 0;
-            const result = arch_client.init_echo(
+            const result = initEchoOrSkip(
                 testing.allocator,
                 &client_out,
                 cluster_id,
@@ -320,7 +341,7 @@ test "arch_client client status" {
     const cluster_id: u128 = 0;
     const addresses = "3000";
     const arch_context: usize = 0;
-    try arch_client.init_echo(
+    try initEchoOrSkip(
         testing.allocator,
         &client,
         cluster_id,
@@ -371,7 +392,7 @@ test "arch_client PacketStatus" {
     const cluster_id: u128 = 0;
     const addresses = "3000";
     const arch_context: usize = 42;
-    try arch_client.init_echo(
+    try initEchoOrSkip(
         testing.allocator,
         &client_out,
         cluster_id,
