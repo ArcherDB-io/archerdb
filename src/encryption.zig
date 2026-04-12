@@ -2911,10 +2911,18 @@ test "benchmark: Aegis-256 vs AES-GCM comparison" {
         improvement,
     });
 
-    // Both ciphers should complete successfully
-    // Aegis-256 should be at least as fast as AES-GCM (typically 2-3x faster)
-    // We use >= 0.8x as a conservative threshold to handle CI variance
-    try std.testing.expect(improvement >= 0.8);
+    // Both ciphers should complete successfully.
+    // The relative speed assumption is only stable on x86_64 AES-NI hosts.
+    // ARM crypto extensions and shared CI runners can invert the microbenchmark.
+    const enforce_relative_speed = builtin.cpu.arch == .x86_64 and hasAesNi();
+    if (enforce_relative_speed) {
+        // Aegis-256 should be at least as fast as AES-GCM (typically 2-3x faster).
+        // We use >= 0.8x as a conservative threshold to handle CI variance.
+        try std.testing.expect(improvement >= 0.8);
+    } else {
+        try std.testing.expect(gcm_avg_ns > 0);
+        try std.testing.expect(aegis_avg_ns > 0);
+    }
 }
 
 // ============================================================================
