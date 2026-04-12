@@ -71,30 +71,19 @@ systemctl status archerdb
 ./archerdb client ping --addresses=node1:3000,node2:3000,node3:3000
 ```
 
-### Dynamic Membership (Add/Remove Nodes)
+### Cluster Membership Boundary
 
-Use the cluster management commands to safely change membership without downtime:
+Use `cluster status` to inspect the current static membership:
 
 ```bash
 # Show membership status
 ./archerdb cluster status --addresses=node1:3000,node2:3000,node3:3000 --cluster=12345
-
-# Add a new node as a learner and wait for catch-up (default)
-./archerdb cluster add-node \
-  --addresses=node1:3000,node2:3000,node3:3000 \
-  --cluster=12345 \
-  --node=node4:3000
-
-# Remove a node (drains in-flight ops); use --force only if unhealthy
-./archerdb cluster remove-node \
-  --addresses=node1:3000,node2:3000,node3:3000 \
-  --cluster=12345 \
-  --node=2 --force
 ```
 
 Notes:
-- `add-node` uses joint consensus and promotes the learner automatically.
-- Use `--no-wait` to return immediately; `--timeout` controls catch-up or drain timeouts.
+- The public `archerdb cluster` CLI currently supports `status` only; membership mutation remains an external orchestration concern.
+- Cluster membership is fixed by the startup `--addresses` set.
+- To change the node set, provision a replacement cluster with the desired addresses and perform a controlled migration or restore/cutover.
 
 ### Coordinator Mode (Multi-Shard Routing)
 
@@ -664,13 +653,13 @@ mv /usr/local/bin/archerdb.old /usr/local/bin/archerdb
 systemctl start archerdb
 ```
 
-**4. For Kubernetes rollback:**
+**4. For Kubernetes rollback with your deployment tooling:**
 
 ```bash
 kubectl rollout undo statefulset/archerdb -n archerdb
 ```
 
-**If rollback fails or data corruption suspected:**
+**If external rollback fails or data corruption is suspected:**
 See [Disaster Recovery Procedures](disaster-recovery.md) for external snapshot restoration.
 
 ## Maintenance
@@ -887,7 +876,7 @@ curl -s localhost:9090/metrics > metrics-$(date +%Y%m%d).prom
 |----------|-------------|
 | [Backup Operations](backup-operations.md) | External snapshot procedures, verification, retention |
 | [Disaster Recovery](disaster-recovery.md) | DR planning, RTO/RPO targets, recovery procedures |
-| [Upgrade Guide](upgrade-guide.md) | Rolling upgrade procedures, rollback, health checks |
+| [Upgrade Guide](upgrade-guide.md) | Rolling upgrade procedures, external rollback planning, health checks |
 
 ### Alert Runbooks
 

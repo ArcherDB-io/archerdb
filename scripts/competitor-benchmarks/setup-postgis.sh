@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2025 ArcherDB Contributors
 # PostGIS Setup Script for Competitor Benchmarks (BENCH-03)
 #
 # Creates the geo_events table with GIST spatial index for fair comparison

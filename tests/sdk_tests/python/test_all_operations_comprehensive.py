@@ -46,14 +46,7 @@ _fixtures = {
 
 def _should_skip_case(case) -> tuple[bool, str]:
     """Determine if a test case should be skipped."""
-    tags = case.tags if hasattr(case, "tags") else case.get("tags", [])
     case_name = case.name if hasattr(case, "name") else case.get("name", "")
-
-    # Skip unimplemented features only - invalid input tests should verify SDK validation
-    if "group_filter" in case_name:
-        return True, "Group filtering not yet implemented in SDK"
-    if "timestamp_filter" in case_name:
-        return True, "Timestamp filtering not yet implemented in SDK"
 
     return False, ""
 

@@ -825,11 +825,7 @@ pub const BreachNotificationSystem = struct {
             return generateDefaultContent(breach, assessment, buffer);
         }
 
-        // For now, return template as-is (in production, would substitute variables)
-        const content = template_content.?;
-        const len = @min(content.len, buffer.len);
-        stdx.copy_disjoint(.inexact, u8, buffer[0..len], content[0..len]);
-        return len;
+        return renderTemplateContent(template_content.?, breach, assessment, buffer);
     }
 
     /// Generate default notification content.
@@ -847,6 +843,147 @@ pub const BreachNotificationSystem = struct {
         const len = @min(default_msg.len, buffer.len);
         stdx.copy_disjoint(.inexact, u8, buffer[0..len], default_msg[0..len]);
         return len;
+    }
+
+    fn renderTemplateContent(
+        template: []const u8,
+        breach: BreachIncident,
+        assessment: AssessmentResult,
+        buffer: []u8,
+    ) usize {
+        var stream = std.io.fixedBufferStream(buffer);
+        const writer = stream.writer();
+
+        var cursor: usize = 0;
+        while (cursor < template.len) {
+            const placeholder_start_rel = std.mem.indexOf(u8, template[cursor..], "{{") orelse {
+                writer.writeAll(template[cursor..]) catch return stream.pos;
+                return stream.pos;
+            };
+            const placeholder_start = cursor + placeholder_start_rel;
+            writer.writeAll(template[cursor..placeholder_start]) catch return stream.pos;
+
+            const value_start = placeholder_start + 2;
+            const placeholder_end_rel = std.mem.indexOf(u8, template[value_start..], "}}") orelse {
+                writer.writeAll(template[placeholder_start..]) catch return stream.pos;
+                return stream.pos;
+            };
+            const placeholder_end = value_start + placeholder_end_rel;
+            const key = std.mem.trim(u8, template[value_start..placeholder_end], " \t\r\n");
+
+            const substituted = writeTemplateVariable(writer, key, breach, assessment) catch
+                return stream.pos;
+            if (!substituted) {
+                writer.writeAll(template[placeholder_start .. placeholder_end + 2]) catch
+                    return stream.pos;
+            }
+            cursor = placeholder_end + 2;
+        }
+
+        return stream.pos;
+    }
+
+    fn writeTemplateVariable(
+        writer: anytype,
+        key: []const u8,
+        breach: BreachIncident,
+        assessment: AssessmentResult,
+    ) !bool {
+        if (std.mem.eql(u8, key, "incident_id")) {
+            try writer.print("{d}", .{breach.incident_id});
+        } else if (std.mem.eql(u8, key, "breach_type")) {
+            try writer.writeAll(@tagName(breach.breach_type));
+        } else if (std.mem.eql(u8, key, "breach_status")) {
+            try writer.writeAll(@tagName(breach.status));
+        } else if (std.mem.eql(u8, key, "detected_at")) {
+            try writer.print("{d}", .{breach.detected_at});
+        } else if (std.mem.eql(u8, key, "reported_at")) {
+            try writer.print("{d}", .{breach.reported_at});
+        } else if (std.mem.eql(u8, key, "entities_affected")) {
+            try writer.print("{d}", .{breach.entities_affected});
+        } else if (std.mem.eql(u8, key, "description")) {
+            try writer.writeAll(breach.getDescription());
+        } else if (std.mem.eql(u8, key, "response")) {
+            try writer.writeAll(breach.response[0..breach.response_len]);
+        } else if (std.mem.eql(u8, key, "risk_score")) {
+            try writer.print("{d}", .{assessment.risk_score});
+        } else if (std.mem.eql(u8, key, "affected_count")) {
+            try writer.print("{d}", .{assessment.affected_count});
+        } else if (std.mem.eql(u8, key, "impact_severity")) {
+            try writer.writeAll(@tagName(assessment.impact_severity));
+        } else if (std.mem.eql(u8, key, "authority_notification_required")) {
+            try writer.writeAll(if (assessment.authority_notification_required) "true" else "false");
+        } else if (std.mem.eql(u8, key, "individual_notification_required")) {
+            try writer.writeAll(if (assessment.individual_notification_required) "true" else "false");
+        } else if (
+            std.mem.eql(u8, key, "affected_data_categories") or
+                std.mem.eql(u8, key, "data_categories")
+        ) {
+            try writeDataCategories(writer, assessment.affected_data_categories);
+        } else if (
+            std.mem.eql(u8, key, "affected_regions") or
+                std.mem.eql(u8, key, "regions")
+        ) {
+            try writeRegions(writer, assessment.affected_regions);
+        } else if (std.mem.eql(u8, key, "assessor_id")) {
+            try writer.print("{x}", .{assessment.assessor_id});
+        } else {
+            return false;
+        }
+
+        return true;
+    }
+
+    fn writeDataCategories(writer: anytype, categories: u16) !void {
+        const entries = [_]struct { mask: u16, name: []const u8 }{
+            .{ .mask = AssessmentResult.DataCategory.location, .name = "location" },
+            .{ .mask = AssessmentResult.DataCategory.identity, .name = "identity" },
+            .{ .mask = AssessmentResult.DataCategory.financial, .name = "financial" },
+            .{ .mask = AssessmentResult.DataCategory.health, .name = "health" },
+            .{ .mask = AssessmentResult.DataCategory.biometric, .name = "biometric" },
+            .{ .mask = AssessmentResult.DataCategory.communications, .name = "communications" },
+            .{ .mask = AssessmentResult.DataCategory.behavioral, .name = "behavioral" },
+            .{ .mask = AssessmentResult.DataCategory.credentials, .name = "credentials" },
+        };
+        try writeFlagList(writer, u16, categories, &entries);
+    }
+
+    fn writeRegions(writer: anytype, regions: u32) !void {
+        const entries = [_]struct { mask: u32, name: []const u8 }{
+            .{ .mask = AssessmentResult.Region.eu, .name = "eu" },
+            .{ .mask = AssessmentResult.Region.uk, .name = "uk" },
+            .{ .mask = AssessmentResult.Region.us, .name = "us" },
+            .{ .mask = AssessmentResult.Region.canada, .name = "canada" },
+            .{ .mask = AssessmentResult.Region.australia, .name = "australia" },
+            .{ .mask = AssessmentResult.Region.japan, .name = "japan" },
+            .{ .mask = AssessmentResult.Region.brazil, .name = "brazil" },
+            .{ .mask = AssessmentResult.Region.other, .name = "other" },
+        };
+        try writeFlagList(writer, u32, regions, &entries);
+    }
+
+    fn writeFlagList(
+        writer: anytype,
+        comptime Int: type,
+        flags: Int,
+        entries: anytype,
+    ) !void {
+        if (flags == 0) {
+            try writer.writeAll("none");
+            return;
+        }
+
+        var wrote_any = false;
+        for (entries) |entry| {
+            if ((flags & entry.mask) == 0) continue;
+            if (wrote_any) try writer.writeByte(',');
+            try writer.writeAll(entry.name);
+            wrote_any = true;
+        }
+
+        if (!wrote_any) {
+            try writer.writeAll("none");
+        }
     }
 
     /// Get system statistics.
@@ -1223,4 +1360,62 @@ test "NotificationTemplate management" {
         "Dear Authority, we report a data breach...",
         retrieved.?.getContent(),
     );
+}
+
+test "BreachNotificationSystem template rendering substitutes variables" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var system = try BreachNotificationSystem.init(allocator, .{});
+    defer system.deinit();
+
+    var template = NotificationTemplate.init(0, .authority_initial, "en".*);
+    template.setContent(
+        "Incident {{incident_id}} {{breach_type}} affected {{affected_count}} " ++
+            "subjects across {{affected_regions}} with {{affected_data_categories}} " ++
+            "(risk={{risk_score}}, authority={{authority_notification_required}}, " ++
+            "individual={{individual_notification_required}}): {{description}} / {{response}}",
+    );
+    _ = try system.addTemplate(template);
+
+    var breach = BreachIncident.init(42, .api_vulnerability);
+    breach.entities_affected = 17;
+    breach.setDescription("API token disclosure");
+    const response = "Access tokens rotated";
+    stdx.copy_disjoint(.inexact, u8, breach.response[0..response.len], response);
+    breach.response_len = @intCast(response.len);
+
+    const assessment = AssessmentResult{
+        .risk_score = 67,
+        .affected_count = 17,
+        .authority_notification_required = true,
+        .individual_notification_required = false,
+        .impact_severity = .critical,
+        .affected_data_categories = AssessmentResult.DataCategory.location |
+            AssessmentResult.DataCategory.credentials,
+        .affected_regions = AssessmentResult.Region.eu | AssessmentResult.Region.us,
+        .assessed_at = 1234,
+        .assessor_id = 0xabc,
+    };
+
+    var buffer: [1024]u8 = undefined;
+    const len = system.generateNotificationContent(
+        .authority_initial,
+        "en".*,
+        breach,
+        assessment,
+        &buffer,
+    );
+    const rendered = buffer[0..len];
+
+    try testing.expect(std.mem.indexOf(u8, rendered, "Incident 42") != null);
+    try testing.expect(std.mem.indexOf(u8, rendered, "api_vulnerability") != null);
+    try testing.expect(std.mem.indexOf(u8, rendered, "eu,us") != null);
+    try testing.expect(std.mem.indexOf(u8, rendered, "location,credentials") != null);
+    try testing.expect(std.mem.indexOf(u8, rendered, "risk=67") != null);
+    try testing.expect(std.mem.indexOf(u8, rendered, "authority=true") != null);
+    try testing.expect(std.mem.indexOf(u8, rendered, "individual=false") != null);
+    try testing.expect(std.mem.indexOf(u8, rendered, "API token disclosure") != null);
+    try testing.expect(std.mem.indexOf(u8, rendered, "Access tokens rotated") != null);
+    try testing.expect(std.mem.indexOf(u8, rendered, "{{incident_id}}") == null);
 }

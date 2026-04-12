@@ -14,6 +14,11 @@ from typing import Any, Dict
 # Paths for Java SDK
 SDK_DIR = Path(__file__).parent.parent.parent.parent / "src" / "clients" / "java"
 TEST_DIR = Path(__file__).parent.parent.parent / "sdk_tests" / "java"
+PARITY_MAIN_CLASS = "com.archerdb.sdktests.ParityRunner"
+CLASSPATH_FILE = TEST_DIR / ".parity.classpath"
+TEST_CLASSES_DIR = TEST_DIR / "target" / "test-classes"
+MAIN_CLASSES_DIR = TEST_DIR / "target" / "classes"
+_JAVA_RUNTIME: dict[str, str] | None = None
 
 
 def run_operation(server_url: str, operation: str, input_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -27,15 +32,17 @@ def run_operation(server_url: str, operation: str, input_data: Dict[str, Any]) -
         return _run_with_inline_java(server_url, operation, input_data, env)
 
     try:
+        runtime = _ensure_runtime(env)
+        if "error" in runtime:
+            return runtime
+
         result = subprocess.run(
             [
-                "mvn",
-                "-q",
-                "test-compile",
-                "org.codehaus.mojo:exec-maven-plugin:3.1.0:java",
-                "-Dexec.mainClass=com.archerdb.sdktests.ParityRunner",
-                "-Dexec.classpathScope=test",
-                f"-Dexec.args={operation}",
+                runtime["java"],
+                "-cp",
+                runtime["classpath"],
+                PARITY_MAIN_CLASS,
+                operation,
             ],
             input=json.dumps(input_data),
             capture_output=True,
@@ -66,13 +73,125 @@ def run_operation(server_url: str, operation: str, input_data: Dict[str, Any]) -
         return {"error": f"No JSON found in output: {stdout[:200]}"}
 
     except subprocess.TimeoutExpired:
-        return {"error": "Java runner timed out (60s)"}
+        return {"error": "Java runner timed out (120s)"}
     except json.JSONDecodeError as e:
         return {"error": f"Invalid JSON output: {e}"}
     except FileNotFoundError:
-        return {"error": "Maven not found. Install Maven to run Java parity tests."}
+        return {"error": "Java runtime not found. Install Java/Maven to run Java parity tests."}
     except Exception as e:
         return {"error": str(e)}
+
+
+def _ensure_runtime(env: Dict[str, str]) -> Dict[str, str]:
+    """Compile the parity test project once and cache its runtime classpath."""
+    global _JAVA_RUNTIME
+    if _JAVA_RUNTIME is not None:
+        return _JAVA_RUNTIME
+
+    compile_result = _compile_test_project(env)
+    if compile_result is not None:
+        return compile_result
+
+    try:
+        raw_classpath = CLASSPATH_FILE.read_text(encoding="utf-8").strip()
+    except OSError as e:
+        return {"error": f"Failed to read Java parity classpath: {e}"}
+
+    classpath_entries = [str(TEST_CLASSES_DIR)]
+    if MAIN_CLASSES_DIR.exists():
+        classpath_entries.append(str(MAIN_CLASSES_DIR))
+    if raw_classpath:
+        classpath_entries.append(raw_classpath)
+
+    java_home = env.get("JAVA_HOME")
+    java_bin = str(Path(java_home) / "bin" / "java") if java_home else "java"
+    _JAVA_RUNTIME = {
+        "java": java_bin,
+        "classpath": os.pathsep.join(classpath_entries),
+    }
+    return _JAVA_RUNTIME
+
+
+def _compile_test_project(env: Dict[str, str]) -> Dict[str, str] | None:
+    """Compile the parity test project and emit a reusable test runtime classpath."""
+    install_result = _install_java_sdk(env)
+    if install_result is not None:
+        return install_result
+
+    result = _run_maven(
+        TEST_DIR,
+        [
+            "-q",
+            "-DskipTests",
+            "test-compile",
+            "dependency:build-classpath",
+            f"-Dmdep.outputFile={CLASSPATH_FILE.name}",
+            f"-Dmdep.pathSeparator={os.pathsep}",
+            "-Dmdep.includeScope=test",
+        ],
+        env,
+        timeout=180,
+    )
+    if result.returncode == 0:
+        return None
+    output = (result.stderr or "") + "\n" + (result.stdout or "")
+    return {"error": _trim_error(output) or "Java parity compile failed"}
+
+
+def _install_java_sdk(env: Dict[str, str]) -> Dict[str, str] | None:
+    """Install the local ArcherDB Java SDK into the active Maven repository."""
+    if not (SDK_DIR / "pom.xml").exists():
+        return {"error": f"Java SDK pom.xml not found at {pom_path_string(SDK_DIR / 'pom.xml')}"}
+
+    result = _run_maven(
+        SDK_DIR,
+        [
+            "-q",
+            "-DskipTests",
+            "-Dmaven.javadoc.skip=true",
+            "install",
+        ],
+        env,
+        timeout=300,
+    )
+    if result.returncode == 0:
+        return None
+    output = (result.stderr or "") + "\n" + (result.stdout or "")
+    return {"error": _trim_error(output) or "Java SDK install failed"}
+
+
+def _run_maven(
+    cwd: Path,
+    args: list[str],
+    env: Dict[str, str],
+    timeout: int,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["mvn", *args],
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=timeout,
+    )
+
+
+def _requires_local_sdk_install(output: str) -> bool:
+    return (
+        "Could not find artifact com.archerdb:archerdb-java:0.1.0-SNAPSHOT" in output
+        or "Failed to collect dependencies" in output and "archerdb-java" in output
+    )
+
+
+def _trim_error(output: str) -> str:
+    stripped = output.strip()
+    if not stripped:
+        return ""
+    for line in stripped.splitlines():
+        candidate = line.strip()
+        if candidate:
+            return candidate
+    return stripped
 
 
 def _run_with_inline_java(
@@ -81,7 +200,7 @@ def _run_with_inline_java(
     input_data: Dict[str, Any],
     env: Dict[str, str],
 ) -> Dict[str, Any]:
-    """Fall back to running Java with javac/java directly.
+    """Fail explicitly when the Maven-backed Java parity runner is unavailable.
 
     Args:
         server_url: Server URL
@@ -92,94 +211,17 @@ def _run_with_inline_java(
     Returns:
         Dict with operation result
     """
-    # Check if Java is available
-    try:
-        subprocess.run(
-            ["java", "-version"],
-            capture_output=True,
-            check=True,
+    _ = server_url
+    _ = operation
+    _ = input_data
+    _ = env
+    return {
+        "error": (
+            "Java parity runner requires the Maven-backed test project at "
+            f"{pom_path_string(TEST_DIR / 'pom.xml')}; inline fallback is intentionally disabled."
         )
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return {"error": "Java not found. Install Java to run parity tests."}
-
-    java_code = _get_java_runner_code(operation)
-
-    try:
-        # Create temporary directory for Java files
-        temp_dir = SDK_DIR / "_parity_temp"
-        temp_dir.mkdir(parents=True, exist_ok=True)
-
-        # Write Java source
-        java_file = temp_dir / "ParityRunner.java"
-        with open(java_file, "w") as f:
-            f.write(java_code)
-
-        # Compile
-        compile_result = subprocess.run(
-            ["javac", str(java_file)],
-            capture_output=True,
-            text=True,
-            cwd=str(temp_dir),
-            timeout=30,
-        )
-
-        if compile_result.returncode != 0:
-            return {"error": f"Java compile failed: {compile_result.stderr}"}
-
-        # Run
-        result = subprocess.run(
-            ["java", "ParityRunner"],
-            input=json.dumps(input_data),
-            capture_output=True,
-            text=True,
-            cwd=str(temp_dir),
-            env=env,
-            timeout=30,
-        )
-
-        # Cleanup
-        import shutil
-
-        shutil.rmtree(temp_dir, ignore_errors=True)
-
-        if result.returncode != 0:
-            return {"error": result.stderr.strip() or "Java run failed"}
-
-        return json.loads(result.stdout.strip())
-
-    except Exception as e:
-        return {"error": str(e)}
+    }
 
 
-def _get_java_runner_code(operation: str) -> str:
-    """Get Java code for inline parity runner.
-
-    Args:
-        operation: Operation name
-
-    Returns:
-        Java source code as string
-    """
-    return f'''
-import java.io.*;
-import java.util.*;
-
-public class ParityRunner {{
-    public static void main(String[] args) throws Exception {{
-        // Read input from stdin
-        BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
-        StringBuilder sb = new StringBuilder();
-        String line;
-        while ((line = reader.readLine()) != null) {{
-            sb.append(line);
-        }}
-        String input = sb.toString();
-
-        String url = System.getenv("ARCHERDB_URL");
-        if (url == null) url = "http://127.0.0.1:7000";
-
-        // Placeholder - would use actual Java SDK here
-        System.out.println("{{\\"error\\":\\"Java SDK parity runner not fully implemented for: {operation}\\"}}");
-    }}
-}}
-'''
+def pom_path_string(path: Path) -> str:
+    return str(path)

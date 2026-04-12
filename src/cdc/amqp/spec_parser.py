@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2025 ArcherDB Contributors
 ## Converts the Advanced Message Queuing Protocol (AMQP) specification into Zig declarations.
 ## Usage: `python spec_parser.py amqp0-9-1.xml > spec.zig`
 ##

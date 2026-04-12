@@ -226,7 +226,7 @@ pub const MinioTestContext = struct {
     /// Get an S3 client configured for this MinIO instance
     pub fn getClient(self: MinioTestContext) !s3_client.S3Client {
         return s3_client.S3Client.init(self.allocator, .{
-            .endpoint = "127.0.0.1:9000",
+            .endpoint = self.endpoint,
             .region = "us-east-1",
             .credentials = self.credentials,
         });

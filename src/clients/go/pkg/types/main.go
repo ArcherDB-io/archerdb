@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 // Package types provides the core data structures for the ArcherDB Go SDK.
 //
 // This package contains type definitions for:

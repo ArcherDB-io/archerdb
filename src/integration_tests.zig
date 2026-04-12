@@ -85,6 +85,13 @@ fn expectContains(haystack: []const u8, needle: []const u8) !void {
     return error.TestUnexpectedResult;
 }
 
+fn childExitedOk(term: std.process.Child.Term) bool {
+    return switch (term) {
+        .Exited => |code| code == 0,
+        else => false,
+    };
+}
+
 fn RequestContextType(comptime request_size_max: comptime_int) type {
     return struct {
         const RequestContext = @This();
@@ -968,6 +975,270 @@ test "metrics endpoint includes sharding strategy and query shard histograms" {
     try expectContains(response, "archerdb_shard_strategy");
     try expectContains(response, "archerdb_shard_lookup_duration_seconds");
     try expectContains(response, "archerdb_query_shards_queried");
+}
+
+test "integration: index resize control reports live status" {
+    const testing = std.testing;
+    const RequestContext = RequestContextType(constants.message_body_size_max);
+    const metrics_port = try pickFreePort();
+
+    var tmp_archerdb = try TmpArcherDB.init(testing.allocator, .{
+        .development = true,
+        .prebuilt = archerdb,
+        .metrics_port = metrics_port,
+        .metrics_bind = "127.0.0.1",
+        .index_resize_batch_size = 1,
+    });
+    defer tmp_archerdb.deinit(testing.allocator);
+    errdefer tmp_archerdb.log_stderr();
+
+    var client: arch_client.ClientInterface = undefined;
+    try arch_client.init(
+        testing.allocator,
+        &client,
+        0,
+        tmp_archerdb.port_str,
+        42,
+        RequestContext.on_complete,
+    );
+    var client_active = true;
+    defer if (client_active) client.deinit() catch unreachable;
+
+    var completion = Completion{ .pending = 0 };
+    const request = try testing.allocator.create(RequestContext);
+    defer testing.allocator.destroy(request);
+    request.* = RequestContext{
+        .packet = undefined,
+        .completion = &completion,
+        .sent_data_size = 0,
+    };
+
+    const event_count: usize = 2_000;
+    const batch_size: usize = 20;
+    var events = try testing.allocator.alloc(tb.GeoEvent, batch_size);
+    defer testing.allocator.free(events);
+
+    var next_entity_id: u128 = 10_000;
+    var remaining: usize = event_count;
+    while (remaining > 0) {
+        const count: usize = @min(remaining, batch_size);
+        for (events[0..count], 0..) |*event, i| {
+            const ordinal: f64 = @floatFromInt(i + @as(usize, @intCast(next_entity_id - 10_000)));
+            event.* = make_event(
+                next_entity_id + i,
+                37.0 + (ordinal * 0.00001),
+                -122.0 - (ordinal * 0.00001),
+            );
+        }
+
+        const insert_reply = try send_request(
+            &client,
+            &completion,
+            request,
+            .insert_events,
+            std.mem.sliceAsBytes(events[0..count]),
+        );
+
+        const result_size = @sizeOf(tb.InsertGeoEventsResult);
+        try testing.expectEqual(@as(usize, 0), insert_reply.len % result_size);
+        var offset: usize = 0;
+        while (offset < insert_reply.len) : (offset += result_size) {
+            const result = read_struct(
+                tb.InsertGeoEventsResult,
+                insert_reply[offset .. offset + result_size],
+            );
+            try testing.expectEqual(tb.InsertGeoEventResult.ok, result.result);
+        }
+
+        next_entity_id += count;
+        remaining -= count;
+    }
+
+    try client.deinit();
+    client_active = false;
+
+    const shell = try Shell.create(testing.allocator);
+    defer shell.destroy();
+
+    const address = try std.fmt.allocPrint(testing.allocator, "127.0.0.1:{d}", .{
+        tmp_archerdb.port,
+    });
+    defer testing.allocator.free(address);
+
+    const target_capacity: u64 = 2_000_000;
+    const start_output = try shell.exec_stdout(
+        "{archerdb} index resize --addresses={address} --cluster=0 " ++
+            "--metrics-port={metrics_port} --new-capacity={target_capacity} --format=json",
+        .{
+            .archerdb = archerdb,
+            .address = address,
+            .metrics_port = metrics_port,
+            .target_capacity = target_capacity,
+        },
+    );
+    try expectContains(start_output, "\"accepted_nodes\":1");
+    try expectContains(start_output, "\"target_capacity\":2000000");
+
+    const status_deadline = std.time.nanoTimestamp() + (10 * std.time.ns_per_s);
+    var saw_active_resize = false;
+    var last_status_stdout: []const u8 = "";
+    var last_status_stderr: []const u8 = "";
+    while (std.time.nanoTimestamp() < status_deadline) {
+        const result = try shell.exec_raw(
+            "{archerdb} index resize --addresses={address} --cluster=0 --format=json status",
+            .{
+                .archerdb = archerdb,
+                .address = address,
+            },
+        );
+        last_status_stdout = result.stdout;
+        last_status_stderr = result.stderr;
+
+        if (childExitedOk(result.term) and
+            std.mem.indexOf(u8, result.stdout, "\"active_nodes\":1") != null and
+            (std.mem.indexOf(u8, result.stdout, "\"index_resize_status\":\"in_progress\"") != null or
+                std.mem.indexOf(u8, result.stdout, "\"index_resize_status\":\"completing\"") != null))
+        {
+            saw_active_resize = true;
+            break;
+        }
+
+        std.time.sleep(50 * std.time.ns_per_ms);
+    }
+    if (!saw_active_resize) {
+        const metrics_snapshot = try fetchMetrics(testing.allocator, metrics_port);
+        defer testing.allocator.free(metrics_snapshot);
+        std.debug.print(
+            "index resize status never became active\nstdout:\n{s}\nstderr:\n{s}\nmetrics preview:\n{s}\n",
+            .{
+                last_status_stdout,
+                last_status_stderr,
+                metrics_snapshot[0..@min(metrics_snapshot.len, 2048)],
+            },
+        );
+    }
+    try testing.expect(saw_active_resize);
+
+    const abort_output = try shell.exec_stdout(
+        "{archerdb} index resize --addresses={address} --cluster=0 " ++
+            "--metrics-port={metrics_port} --format=json abort",
+        .{
+            .archerdb = archerdb,
+            .address = address,
+            .metrics_port = metrics_port,
+        },
+    );
+    try expectContains(abort_output, "\"accepted_nodes\":1");
+
+    const final_deadline = std.time.nanoTimestamp() + (10 * std.time.ns_per_s);
+    var saw_post_abort_status = false;
+    while (std.time.nanoTimestamp() < final_deadline) {
+        const result = try shell.exec_raw(
+            "{archerdb} index resize --addresses={address} --cluster=0 --format=json status",
+            .{
+                .archerdb = archerdb,
+                .address = address,
+            },
+        );
+
+        if (childExitedOk(result.term) and
+            std.mem.indexOf(u8, result.stdout, "\"active_nodes\":1") != null and
+            (std.mem.indexOf(u8, result.stdout, "\"index_resize_status\":\"idle\"") != null or
+                std.mem.indexOf(u8, result.stdout, "\"index_resize_status\":\"aborted\"") != null or
+                std.mem.indexOf(u8, result.stdout, "\"index_resize_status\":\"completing\"") != null))
+        {
+            saw_post_abort_status = true;
+            break;
+        }
+
+        std.time.sleep(50 * std.time.ns_per_ms);
+    }
+    try testing.expect(saw_post_abort_status);
+}
+
+test "integration: upgrade status emits json and live start fails closed" {
+    const testing = std.testing;
+    const metrics_port = try pickFreePort();
+
+    var tmp_archerdb = try TmpArcherDB.init(testing.allocator, .{
+        .development = true,
+        .prebuilt = archerdb,
+        .metrics_port = metrics_port,
+        .metrics_bind = "127.0.0.1",
+    });
+    defer tmp_archerdb.deinit(testing.allocator);
+    errdefer tmp_archerdb.log_stderr();
+
+    const shell = try Shell.create(testing.allocator);
+    defer shell.destroy();
+
+    const address = try std.fmt.allocPrint(testing.allocator, "127.0.0.1:{d}", .{
+        tmp_archerdb.port,
+    });
+    defer testing.allocator.free(address);
+
+    const status_result = try shell.exec_raw(
+        "{archerdb} upgrade status --addresses={address} --metrics-port={metrics_port} --format=json",
+        .{
+            .archerdb = archerdb,
+            .address = address,
+            .metrics_port = metrics_port,
+        },
+    );
+    try testing.expect(childExitedOk(status_result.term));
+    try testing.expect(std.mem.indexOf(u8, status_result.stdout, "\"state\":\"not_started\"") != null);
+    try testing.expect(std.mem.indexOf(u8, status_result.stdout, "\"has_quorum\":true") != null);
+    try testing.expect(std.mem.indexOf(u8, status_result.stdout, "\"replicas\":[") != null);
+
+    const start_result = try shell.exec_raw(
+        "{archerdb} upgrade start --addresses={address} --metrics-port={metrics_port} " ++
+            "--target-version=9.9.9 --format=json",
+        .{
+            .archerdb = archerdb,
+            .address = address,
+            .metrics_port = metrics_port,
+        },
+    );
+    try testing.expect(!childExitedOk(start_result.term));
+    try testing.expect(
+        std.mem.indexOf(u8, start_result.stdout, "\"error\":\"not_implemented\"") != null,
+    );
+    try testing.expect(
+        std.mem.indexOf(u8, start_result.stdout, "\"feature\":\"upgrade start\"") != null,
+    );
+}
+
+test "integration: cluster status reuses sync clients without crashing" {
+    const testing = std.testing;
+    const metrics_port = try pickFreePort();
+
+    var tmp_archerdb = try TmpArcherDB.init(testing.allocator, .{
+        .development = true,
+        .prebuilt = archerdb,
+        .metrics_port = metrics_port,
+        .metrics_bind = "127.0.0.1",
+    });
+    defer tmp_archerdb.deinit(testing.allocator);
+    errdefer tmp_archerdb.log_stderr();
+
+    const shell = try Shell.create(testing.allocator);
+    defer shell.destroy();
+
+    const address = try std.fmt.allocPrint(testing.allocator, "127.0.0.1:{d}", .{
+        tmp_archerdb.port,
+    });
+    defer testing.allocator.free(address);
+
+    const status_result = try shell.exec_raw(
+        "{archerdb} cluster status --addresses={address},{address} --cluster=0 --format=json",
+        .{
+            .archerdb = archerdb,
+            .address = address,
+        },
+    );
+    try testing.expect(childExitedOk(status_result.term));
+    try testing.expect(std.mem.indexOf(u8, status_result.stdout, "\"cluster\":0") != null);
+    try testing.expect(std.mem.indexOf(u8, status_result.stdout, "\"nodes\":[") != null);
 }
 
 test "help/version smoke" {

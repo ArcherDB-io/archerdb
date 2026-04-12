@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 package com.archerdb.geo;
 
 import java.util.ArrayList;
@@ -168,19 +170,19 @@ public final class GeoEventBatch {
      * <pre>
      * {
      *     &#64;code
-     *     List<GeoEvent> events = generateLargeEventList();
+     *     List&lt;GeoEvent&gt; events = generateLargeEventList();
      *
      *     try {
      *         client.insertEvents(events);
      *     } catch (OperationTimeoutException e) {
      *         // Split into smaller chunks and retry
-     *         List<List<GeoEvent>> chunks = GeoEventBatch.splitBatch(events, 500);
-     *         for (List<GeoEvent> chunk : chunks) {
+     *         List&lt;List&lt;GeoEvent&gt;&gt; chunks = GeoEventBatch.splitBatch(events, 500);
+     *         for (List&lt;GeoEvent&gt; chunk : chunks) {
      *             try {
      *                 client.insertEvents(chunk);
      *             } catch (OperationTimeoutException retryError) {
      *                 // Retry with even smaller chunks
-     *                 List<List<GeoEvent>> smallerChunks = GeoEventBatch.splitBatch(chunk, 100);
+     *                 List&lt;List&lt;GeoEvent&gt;&gt; smallerChunks = GeoEventBatch.splitBatch(chunk, 100);
      *                 // ... continue
      *             }
      *         }

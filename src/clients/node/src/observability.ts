@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 ///////////////////////////////////////////////////////
 // ArcherDB Node.js SDK - Observability Module        //
 // Logging, Metrics, Health Check (per client-sdk spec) //

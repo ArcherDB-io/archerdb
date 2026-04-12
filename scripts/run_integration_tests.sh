@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2025 ArcherDB Contributors
 ARCHERDB_DIR="$(dirname "$(dirname "$(realpath "$0")")")"
 cd "$ARCHERDB_DIR"
 ZIG_BUILD_FLAGS="-Dconfig=lite"

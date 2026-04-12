@@ -1939,11 +1939,19 @@ pub const Registry = struct {
     );
 
     /// Build version (set at startup)
-    pub var build_version: [32]u8 = [_]u8{0} ** 32;
+    pub var build_version: [32]u8 = blk: {
+        var value = [_]u8{0} ** 32;
+        for ("0.0.1", 0..) |c, i| value[i] = c;
+        break :blk value;
+    };
     pub var build_version_len: u8 = 7; // "0.0.1" default
 
     /// Build commit hash (set at startup)
-    pub var build_commit: [64]u8 = [_]u8{0} ** 64;
+    pub var build_commit: [64]u8 = blk: {
+        var value = [_]u8{0} ** 64;
+        for ("unknown", 0..) |c, i| value[i] = c;
+        break :blk value;
+    };
     pub var build_commit_len: u8 = 7; // "unknown" default
 
     /// Access cluster metrics for pool/shed/routing subsystems.

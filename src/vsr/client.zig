@@ -189,6 +189,18 @@ pub fn ClientType(
             self.message_bus.deinit(allocator);
         }
 
+        pub fn shutdown(self: *Client, io: anytype, timeout_ns: u64) !void {
+            self.message_bus.shutdown();
+
+            const start_ns = std.time.nanoTimestamp();
+            while (!self.message_bus.shutdown_complete()) {
+                if (std.time.nanoTimestamp() - start_ns > timeout_ns) {
+                    return error.Timeout;
+                }
+                try io.run_for_ns(constants.tick_ms * std.time.ns_per_ms);
+            }
+        }
+
         pub fn on_messages(message_bus: *MessageBus, buffer: *MessageBuffer) void {
             const self: *Client = @fieldParentPtr("message_bus", message_bus);
             while (buffer.next_header()) |header| {

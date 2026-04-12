@@ -9,6 +9,13 @@ requests>=2.28.0
 # Retry with backoff for consistency verification
 tenacity>=8.2.0
 
+# Benchmark statistics and regression analysis
+numpy>=1.26.0
+scipy>=1.11.0
+
+# Rich terminal benchmark reporting
+rich>=13.7.0
+
 # No external dependencies for:
 # - Port allocation (uses stdlib socket)
 # - Log capture (uses stdlib threading, io)

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 // Package errors provides error codes for ArcherDB distributed features.
 //
 // Error code ranges:

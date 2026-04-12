@@ -38,6 +38,7 @@ pub const observability = @import("archerdb/observability.zig");
 pub const backup_config = @import("archerdb/backup_config.zig");
 pub const backup_queue = @import("archerdb/backup_queue.zig");
 pub const backup_state = @import("archerdb/backup_state.zig");
+pub const checkpoint_artifact = @import("archerdb/checkpoint_artifact.zig");
 pub const restore = @import("archerdb/restore.zig");
 pub const backup_coordinator = @import("archerdb/backup_coordinator.zig");
 pub const backup_restore_test = @import("archerdb/backup_restore_test.zig");
@@ -1689,6 +1690,9 @@ pub const Checkpoint = struct {
 };
 
 test "Checkpoint ops diagram" {
+    // Snapshot is for the high-perf runtime (journal_slot_count=1024, compaction=128).
+    if (constants.journal_slot_count != 1024) return error.SkipZigTest;
+
     const Snap = stdx.Snap;
     const snap = Snap.snap_fn("src");
 

@@ -1,19 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2024-2025 ArcherDB Contributors
-//! Rolling Upgrade and Rollback Orchestration (OPS-07, OPS-08)
+//! Rolling upgrade status and dry-run planning (OPS-07, OPS-08)
 //!
-//! This module provides upgrade orchestration for ArcherDB clusters with
-//! health-based rollback triggers. It follows the TigerBeetle model of
-//! sequential version upgrades with automatic health monitoring.
+//! This module currently provides live upgrade status probing and dry-run
+//! planning for ArcherDB clusters. It does not yet own a process or
+//! deployment actuator for real rolling upgrades, and that boundary is
+//! intentional in the current public runtime surface.
 //!
 //! Key features:
 //! - Primary identification before upgrade
-//! - Followers first, primary last upgrade order
-//! - Health-based rollback triggers (latency, error rate, probe failures)
-//! - Support for both bare-metal and Kubernetes deployments
-//!
-//! For Kubernetes deployments, the CLI provides guidance and monitoring.
-//! Actual binary replacement happens via StatefulSet image updates.
+//! - Dry-run follower-first, primary-last upgrade planning
+//! - Live readiness/metrics probing for status and preflight checks
+//! - Explicit fail-closed boundary for missing live actuation
 //!
 //! Usage:
 //! ```bash
@@ -23,17 +21,11 @@
 //! # Start rolling upgrade with dry-run
 //! archerdb upgrade start --addresses=... --target-version=1.2.0 --dry-run
 //!
-//! # Start actual upgrade
-//! archerdb upgrade start --addresses=... --target-version=1.2.0
+//! # Generate a dry-run plan
+//! archerdb upgrade start --addresses=... --target-version=1.2.0 --dry-run
 //!
-//! # Pause upgrade
-//! archerdb upgrade pause
-//!
-//! # Resume upgrade
-//! archerdb upgrade resume
-//!
-//! # Trigger manual rollback
-//! archerdb upgrade rollback
+//! # Perform the live rollout with your deployment tooling
+//! systemctl restart archerdb
 //! ```
 
 const std = @import("std");
@@ -259,6 +251,21 @@ pub const ReplicaInfo = struct {
             self.commit_sequence,
         });
     }
+
+    pub fn jsonStringify(self: ReplicaInfo, jw: anytype) !void {
+        try jw.write(.{
+            .address = self.address,
+            .replica_id = self.replica_id,
+            .is_primary = self.is_primary,
+            .version = self.version,
+            .healthy = self.healthy,
+            .role = @tagName(self.role),
+            .commit_sequence = self.commit_sequence,
+            .p99_latency_ms = self.p99_latency_ms,
+            .error_rate_pct = self.error_rate_pct,
+            .upgraded = self.upgraded,
+        });
+    }
 };
 
 /// Health status result from health check.
@@ -338,6 +345,18 @@ pub const UpgradeResult = struct {
             });
         }
     }
+
+    pub fn jsonStringify(self: UpgradeResult, jw: anytype) !void {
+        try jw.write(.{
+            .state = @tagName(self.state),
+            .success = self.success,
+            .duration_ms = self.duration_ms,
+            .replicas_upgraded = self.replicas_upgraded,
+            .replicas_failed = self.replicas_failed,
+            .error_message = self.error_message,
+            .rollback_performed = self.rollback_performed,
+        });
+    }
 };
 
 /// Upgrade orchestrator.
@@ -373,6 +392,9 @@ pub const Upgrader = struct {
 
     /// Clean up resources.
     pub fn deinit(self: *Self) void {
+        for (self.replicas.items) |replica| {
+            self.allocator.free(replica.version);
+        }
         self.replicas.deinit();
     }
 
@@ -419,6 +441,12 @@ pub const Upgrader = struct {
 
     /// Discover replicas from the provided addresses.
     pub fn discoverReplicas(self: *Self) !void {
+        for (self.replicas.items) |replica| {
+            self.allocator.free(replica.version);
+        }
+        self.replicas.clearRetainingCapacity();
+        self.primary_index = null;
+
         // Parse addresses and probe each replica
         var iter = mem.splitScalar(u8, self.options.addresses, ',');
         var replica_id: u8 = 0;
@@ -427,15 +455,24 @@ pub const Upgrader = struct {
             const trimmed = mem.trim(u8, addr, " ");
             if (trimmed.len == 0) continue;
 
-            // Create replica info (in production, this would query the replica)
+            const probe = self.probeReplica(trimmed) catch |err| blk: {
+                logWarn("Failed to probe replica {s}: {}", .{ trimmed, err });
+                break :blk ReplicaProbe{
+                    .healthy = false,
+                    .version = try self.allocator.dupe(u8, "unknown"),
+                    .commit_sequence = 0,
+                    .is_primary = false,
+                };
+            };
+
             const replica = ReplicaInfo{
                 .address = trimmed,
                 .replica_id = replica_id,
-                .is_primary = false, // Will be determined by identifyPrimary
-                .version = "1.0.0", // Will be queried from replica
-                .healthy = true, // Will be probed
-                .role = .unknown,
-                .commit_sequence = 0,
+                .is_primary = probe.is_primary,
+                .version = probe.version,
+                .healthy = probe.healthy,
+                .role = if (!probe.healthy) .unknown else if (probe.is_primary) .primary else .follower,
+                .commit_sequence = probe.commit_sequence,
                 .p99_latency_ms = 0,
                 .error_rate_pct = 0.0,
                 .upgraded = false,
@@ -452,15 +489,21 @@ pub const Upgrader = struct {
     pub fn identifyPrimary(self: *Self) !?ReplicaInfo {
         logInfo("Identifying primary replica...", .{});
 
-        // In production, this would query /health/ready or /metrics to identify primary
-        // For now, we simulate by checking replica status
         for (self.replicas.items, 0..) |*replica, i| {
-            // Query replica for role (simulated)
-            const is_primary = self.queryReplicaRole(replica);
-            replica.is_primary = is_primary;
-            replica.role = if (is_primary) .primary else .follower;
+            const probe = self.probeReplica(replica.address) catch |err| blk: {
+                logWarn("Failed to refresh replica role for {s}: {}", .{ replica.address, err });
+                replica.healthy = false;
+                replica.is_primary = false;
+                replica.role = .unknown;
+                break :blk null;
+            };
+            if (probe == null) continue;
+            replica.healthy = probe.?.healthy;
+            replica.commit_sequence = probe.?.commit_sequence;
+            replica.is_primary = probe.?.is_primary;
+            replica.role = if (!replica.healthy) .unknown else if (replica.is_primary) .primary else .follower;
 
-            if (is_primary) {
+            if (replica.is_primary) {
                 self.primary_index = i;
                 logInfo("Primary identified: replica {d} at {s}", .{ replica.replica_id, replica.address });
                 return replica.*;
@@ -469,15 +512,6 @@ pub const Upgrader = struct {
 
         logWarn("No primary identified - cluster may be in election", .{});
         return null;
-    }
-
-    /// Query a replica for its role (simulated).
-    fn queryReplicaRole(self: *Self, replica: *const ReplicaInfo) bool {
-        _ = self;
-        // In production, this would make an HTTP request to /health/ready
-        // and check the response for primary status
-        // For now, assume first replica is primary (will be overridden by actual query)
-        return replica.replica_id == 0;
     }
 
     /// Upgrade a single replica.
@@ -517,7 +551,7 @@ pub const Upgrader = struct {
                 return;
             }
 
-            // Sleep for interval (in production)
+            std.time.sleep(interval_ms * std.time.ns_per_ms);
             elapsed += interval_ms;
             logDebug("Waiting for replica {d} to become healthy... ({d}ms elapsed)", .{
                 replica.replica_id,
@@ -534,10 +568,136 @@ pub const Upgrader = struct {
 
     /// Probe a single replica's health.
     fn probeReplicaHealth(self: *Self, replica: ReplicaInfo) !bool {
-        _ = self;
-        // In production, this would make an HTTP request to /health/ready
-        // For now, simulate healthy
-        return replica.healthy;
+        const probe = try self.probeReplica(replica.address);
+        return probe.healthy;
+    }
+
+    const ReplicaProbe = struct {
+        healthy: bool,
+        version: []const u8,
+        commit_sequence: u64,
+        is_primary: bool,
+    };
+
+    const HttpResponse = struct {
+        status_code: u16,
+        body: []u8,
+    };
+
+    fn probeReplica(self: *Self, address: []const u8) !ReplicaProbe {
+        const endpoint = try parseReplicaAddress(address);
+
+        const ready = try self.httpGet(endpoint.host, self.options.metrics_port, "/health/ready");
+        defer self.allocator.free(ready.body);
+
+        const metrics = try self.httpGet(endpoint.host, self.options.metrics_port, "/metrics");
+        defer self.allocator.free(metrics.body);
+
+        const version = try self.parseVersionFromReadyBody(ready.body);
+        errdefer self.allocator.free(version);
+
+        return .{
+            .healthy = ready.status_code == 200,
+            .version = version,
+            .commit_sequence = parseMetricU64(metrics.body, "archerdb_vsr_op_number") orelse 0,
+            .is_primary = (parseMetricU64(metrics.body, "archerdb_vsr_is_primary") orelse 0) == 1,
+        };
+    }
+
+    fn httpGet(self: *Self, host: []const u8, port: u16, path: []const u8) !HttpResponse {
+        const addr = std.net.Address.parseIp4(host, port) catch return error.InvalidAddress;
+        const socket = try std.posix.socket(std.posix.AF.INET, std.posix.SOCK.STREAM, 0);
+        defer std.posix.close(socket);
+
+        try std.posix.connect(socket, &addr.any, addr.getOsSockLen());
+
+        const request = try std.fmt.allocPrint(
+            self.allocator,
+            "GET {s} HTTP/1.1\r\nHost: {s}\r\nConnection: close\r\n\r\n",
+            .{ path, host },
+        );
+        defer self.allocator.free(request);
+
+        _ = try std.posix.write(socket, request);
+
+        var response = std.ArrayList(u8).init(self.allocator);
+        errdefer response.deinit();
+        var buffer: [4096]u8 = undefined;
+        while (true) {
+            const bytes_read = std.posix.read(socket, &buffer) catch |err| switch (err) {
+                error.WouldBlock => continue,
+                else => return err,
+            };
+            if (bytes_read == 0) break;
+            try response.appendSlice(buffer[0..bytes_read]);
+        }
+
+        const response_bytes = try response.toOwnedSlice();
+        errdefer self.allocator.free(response_bytes);
+
+        const header_end = mem.indexOf(u8, response_bytes, "\r\n\r\n") orelse return error.InvalidHttpResponse;
+        const status_code = parseHttpStatusCode(response_bytes[0..header_end]) orelse
+            return error.InvalidHttpResponse;
+
+        const body = try self.allocator.dupe(u8, response_bytes[header_end + 4 ..]);
+        self.allocator.free(response_bytes);
+        return .{
+            .status_code = status_code,
+            .body = body,
+        };
+    }
+
+    fn parseVersionFromReadyBody(self: *Self, body: []const u8) ![]u8 {
+        const ReadyResponse = struct {
+            version: ?[]const u8 = null,
+        };
+
+        const parsed = std.json.parseFromSlice(
+            ReadyResponse,
+            self.allocator,
+            body,
+            .{ .ignore_unknown_fields = true },
+        ) catch return self.allocator.dupe(u8, "unknown");
+        defer parsed.deinit();
+
+        return self.allocator.dupe(u8, parsed.value.version orelse "unknown");
+    }
+
+    fn parseReplicaAddress(address: []const u8) !struct { host: []const u8, port: u16 } {
+        const colon = mem.lastIndexOfScalar(u8, address, ':') orelse return error.InvalidAddress;
+        const host = mem.trim(u8, address[0..colon], " []");
+        const port = std.fmt.parseInt(u16, address[colon + 1 ..], 10) catch return error.InvalidAddress;
+        if (host.len == 0) return error.InvalidAddress;
+        return .{ .host = host, .port = port };
+    }
+
+    fn parseHttpStatusCode(response_head: []const u8) ?u16 {
+        const first_space = mem.indexOfScalar(u8, response_head, ' ') orelse return null;
+        const rest = response_head[first_space + 1 ..];
+        const second_space = mem.indexOfScalar(u8, rest, ' ') orelse return null;
+        return std.fmt.parseInt(u16, rest[0..second_space], 10) catch null;
+    }
+
+    fn parseMetricU64(metrics_body: []const u8, metric_name: []const u8) ?u64 {
+        var lines = mem.tokenizeScalar(u8, metrics_body, '\n');
+        while (lines.next()) |line_raw| {
+            const line = mem.trim(u8, line_raw, " \r\t");
+            if (line.len == 0) continue;
+            if (line[0] == '#') continue;
+            if (!mem.startsWith(u8, line, metric_name)) continue;
+            if (line.len <= metric_name.len) continue;
+
+            var value_start = metric_name.len;
+            if (line[value_start] == '{') {
+                const labels_end = mem.indexOfScalarPos(u8, line, value_start, '}') orelse continue;
+                value_start = labels_end + 1;
+            }
+
+            if (value_start >= line.len or line[value_start] != ' ') continue;
+            const value = mem.trim(u8, line[value_start + 1 ..], " ");
+            return std.fmt.parseInt(u64, value, 10) catch null;
+        }
+        return null;
     }
 
     /// Check overall cluster health.
@@ -835,6 +995,22 @@ pub const ClusterStatus = struct {
             self.error_rate_pct,
         });
     }
+
+    pub fn jsonStringify(self: ClusterStatus, jw: anytype) !void {
+        try jw.write(.{
+            .state = @tagName(self.state),
+            .total_replicas = self.total_replicas,
+            .healthy_replicas = self.healthy_replicas,
+            .upgraded_replicas = self.upgraded_replicas,
+            .primary_address = self.primary_address,
+            .primary_version = self.primary_version,
+            .target_version = self.target_version,
+            .has_quorum = self.has_quorum,
+            .p99_latency_ms = self.p99_latency_ms,
+            .error_rate_pct = self.error_rate_pct,
+            .replicas = self.replicas,
+        });
+    }
 };
 
 // =============================================================================
@@ -922,4 +1098,91 @@ test "HealthThresholds: defaults" {
     try std.testing.expectEqual(@as(f64, 1.0), thresholds.error_rate_threshold_pct);
     try std.testing.expectEqual(@as(u32, 3), thresholds.probe_failure_threshold);
     try std.testing.expectEqual(@as(u32, 300), thresholds.catchup_timeout_seconds);
+}
+
+test "Upgrader: parseReplicaAddress" {
+    const parsed = try Upgrader.parseReplicaAddress("127.0.0.1:3000");
+    try std.testing.expectEqualStrings("127.0.0.1", parsed.host);
+    try std.testing.expectEqual(@as(u16, 3000), parsed.port);
+    try std.testing.expectError(error.InvalidAddress, Upgrader.parseReplicaAddress("127.0.0.1"));
+}
+
+test "Upgrader: parseHttpStatusCode" {
+    try std.testing.expectEqual(@as(?u16, 200), Upgrader.parseHttpStatusCode("HTTP/1.1 200 OK\r\n"));
+    try std.testing.expectEqual(@as(?u16, 503), Upgrader.parseHttpStatusCode("HTTP/1.1 503 Service Unavailable\r\n"));
+    try std.testing.expectEqual(@as(?u16, null), Upgrader.parseHttpStatusCode("malformed"));
+}
+
+test "Upgrader: parseMetricU64" {
+    const body =
+        \\# HELP archerdb_vsr_is_primary Whether this replica is the primary
+        \\# TYPE archerdb_vsr_is_primary gauge
+        \\archerdb_vsr_is_primary 1
+        \\archerdb_vsr_op_number 4242
+        \\archerdb_health_status{status="ready"} 1
+        \\
+    ;
+    try std.testing.expectEqual(@as(?u64, 1), Upgrader.parseMetricU64(body, "archerdb_vsr_is_primary"));
+    try std.testing.expectEqual(@as(?u64, 4242), Upgrader.parseMetricU64(body, "archerdb_vsr_op_number"));
+    try std.testing.expectEqual(@as(?u64, 1), Upgrader.parseMetricU64(body, "archerdb_health_status"));
+    try std.testing.expectEqual(@as(?u64, null), Upgrader.parseMetricU64(body, "archerdb_missing_metric"));
+}
+
+test "ClusterStatus: jsonStringify includes replica details" {
+    const allocator = std.testing.allocator;
+    var output = std.ArrayList(u8).init(allocator);
+    defer output.deinit();
+
+    const replicas = [_]ReplicaInfo{
+        .{
+            .address = "127.0.0.1:3000",
+            .replica_id = 0,
+            .is_primary = true,
+            .version = "1.2.3",
+            .healthy = true,
+            .role = .primary,
+            .commit_sequence = 42,
+            .p99_latency_ms = 7,
+            .error_rate_pct = 0.0,
+            .upgraded = false,
+        },
+    };
+
+    try std.json.stringify(ClusterStatus{
+        .state = .not_started,
+        .total_replicas = 1,
+        .healthy_replicas = 1,
+        .upgraded_replicas = 0,
+        .primary_address = replicas[0].address,
+        .primary_version = replicas[0].version,
+        .target_version = "1.2.4",
+        .has_quorum = true,
+        .p99_latency_ms = 7,
+        .error_rate_pct = 0.0,
+        .replicas = &replicas,
+    }, .{}, output.writer());
+
+    try std.testing.expect(std.mem.indexOf(u8, output.items, "\"state\":\"not_started\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output.items, "\"role\":\"primary\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output.items, "\"primary_version\":\"1.2.3\"") != null);
+}
+
+test "UpgradeResult: jsonStringify includes rollback state" {
+    const allocator = std.testing.allocator;
+    var output = std.ArrayList(u8).init(allocator);
+    defer output.deinit();
+
+    try std.json.stringify(UpgradeResult{
+        .state = .failed,
+        .success = false,
+        .duration_ms = 500,
+        .replicas_upgraded = 1,
+        .replicas_failed = 1,
+        .error_message = "Replica failed to recover after upgrade",
+        .rollback_performed = true,
+    }, .{}, output.writer());
+
+    try std.testing.expect(std.mem.indexOf(u8, output.items, "\"state\":\"failed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output.items, "\"rollback_performed\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output.items, "\"error_message\":\"Replica failed to recover after upgrade\"") != null);
 }

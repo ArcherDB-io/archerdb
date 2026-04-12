@@ -381,6 +381,10 @@ async function main() {
   const client = createGeoClient({
     cluster_id: 0n,
     addresses: [address],
+    request_timeout_ms: 120000,
+    retry: {
+      total_timeout_ms: 120000,
+    },
   });
 
   try {

@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2025 ArcherDB Contributors
 # Quick validation script for readiness probe fix
 # Tests that /health/ready returns 200 OK after server initialization
 

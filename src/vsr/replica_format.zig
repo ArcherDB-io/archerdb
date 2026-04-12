@@ -24,7 +24,7 @@ pub fn format(
     });
     defer superblock.deinit(gpa);
 
-    var replica_format = try ReplicaFormat.init(gpa);
+    var replica_format = try ReplicaFormat.init(gpa, options.development);
     defer replica_format.deinit(gpa);
 
     try replica_format.queue_format_wal(options.cluster, storage);
@@ -59,8 +59,9 @@ fn ReplicaFormatType(comptime Storage: type) type {
 
         sectors_written: std.DynamicBitSetUnmanaged,
         arena: std.heap.ArenaAllocator,
+        development: bool,
 
-        fn init(gpa: std.mem.Allocator) !ReplicaFormat {
+        fn init(gpa: std.mem.Allocator, development: bool) !ReplicaFormat {
             var sectors_written = try std.DynamicBitSetUnmanaged.initEmpty(
                 gpa,
                 @divExact(data_file_size_min, constants.sector_size),
@@ -73,6 +74,7 @@ fn ReplicaFormatType(comptime Storage: type) type {
             return .{
                 .sectors_written = sectors_written,
                 .arena = arena,
+                .development = development,
             };
         }
 
@@ -95,13 +97,15 @@ fn ReplicaFormatType(comptime Storage: type) type {
             // first. This allows the test Storage to check the invariant "never write the redundant
             // header before the prepare".
             for (0..constants.journal_slot_count) |slot| {
-                // Direct I/O requires the buffer to be sector-aligned. Allocate a full
-                // message_size_max buffer per slot so that recovery (which reads the full
-                // slot) finds all sectors marked as written in the test storage.
+                const prepare_write_size =
+                    if (self.development) constants.sector_size else constants.message_size_max;
+                // Direct I/O requires the buffer to be sector-aligned. In development mode we
+                // rely on sparse zeros for the remainder of each prepare slot to keep local
+                // formatting fast and lightweight.
                 const header_buffer = try arena.alignedAlloc(
                     u8,
                     constants.sector_size,
-                    constants.message_size_max,
+                    prepare_write_size,
                 );
                 // Zero the entire buffer first, then write the header at the start.
                 @memset(header_buffer, 0);
@@ -269,9 +273,14 @@ fn ReplicaFormatType(comptime Storage: type) type {
                     // Every sector in the wal_headers zone has been written:
                     .wal_headers => assert(self.sectors_written.isSet(sector)),
 
-                    // Every sector in the wal_prepares zone has been written
-                    // (full message_size_max per slot, so recovery can read them):
-                    .wal_prepares => assert(self.sectors_written.isSet(sector)),
+                    .wal_prepares => {
+                        const prepare_offset = sector_start - vsr.Zone.wal_prepares.start();
+                        const should_be_written = if (self.development)
+                            @mod(prepare_offset, constants.message_size_max) < constants.sector_size
+                        else
+                            true;
+                        assert(self.sectors_written.isSet(sector) == should_be_written);
+                    },
 
                     // Nothing else has been written:
                     else => assert(!self.sectors_written.isSet(sector)),
@@ -337,6 +346,7 @@ test "format" {
         .replica = replica,
         .replica_count = replica_count,
         .sharding_strategy = vsr.sharding.ShardingStrategy.virtual_ring,
+        .development = false,
         .view = null,
     });
 
@@ -411,10 +421,35 @@ test "format" {
     // counts are lower.
     //
     // Note: This checksum changes when cluster config changes (clients_max, block_size, etc.).
-    // Updated 2026-03-03: New checksum after unifying all tiers to runtime_high_perf cluster
-    // config (clients_max=256, journal_slot_count=1024, message_size_max=10MiB, block_size=1MiB).
+    // The lite tier uses a different cluster config (runtime_lite) so it has a different checksum.
+    const expected_checksum: u128 = if (constants.config.cluster.clients_max == 64)
+        335934545077331603480356053174214781209 // lite runtime (64 clients, journal 256, compaction 32)
+    else
+        198541975069722639608548680214558207948; // high-perf runtime (256 clients, journal 1024)
     try std.testing.expectEqual(
-        198541975069722639608548680214558207948,
+        expected_checksum,
         vsr.checksum(storage.memory),
     );
+}
+
+test "format development writes sparse prepare sectors only" {
+    const Storage = @import("../testing/storage.zig").Storage;
+    const fixtures = @import("../testing/fixtures.zig");
+    const allocator = std.testing.allocator;
+
+    var storage = try fixtures.init_storage(allocator, .{
+        .size = data_file_size_min,
+        .iops_write_max = writes_max,
+    });
+    defer storage.deinit(allocator);
+
+    try format(Storage, allocator, &storage, .{
+        .cluster = 0,
+        .release = vsr.Release.minimum,
+        .replica = 0,
+        .replica_count = 1,
+        .sharding_strategy = vsr.sharding.ShardingStrategy.default(),
+        .development = true,
+        .view = null,
+    });
 }

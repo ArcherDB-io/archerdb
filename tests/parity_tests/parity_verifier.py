@@ -114,7 +114,9 @@ class ParityVerifier:
         }
         prepare_per_sdk = operation not in read_only_ops
 
-        if not prepare_per_sdk:
+        should_prepare_shared_state = (not prepare_per_sdk) and operation != "topology"
+
+        if should_prepare_shared_state:
             self._prepare_case_state(setup_config)
 
         for sdk in sdks:
@@ -273,8 +275,9 @@ class ParityVerifier:
                     if not address:
                         continue
 
-                    # Some SDKs report a placeholder default endpoint when the
-                    # server omits topology addresses. Treat it as empty.
+                    # Ignore the legacy single-endpoint fallback emitted by
+                    # stale SDK artifacts; current SDKs should return explicit
+                    # topology nodes instead.
                     if (
                         address == "127.0.0.1:5000"
                         and self._server_address != "127.0.0.1:5000"

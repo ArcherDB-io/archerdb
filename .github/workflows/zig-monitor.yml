@@ -1,9 +1,8 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2025 ArcherDB Contributors
 name: Zig Release Monitor
 
 on:
-  schedule:
-    # Run every Monday at 9:00 UTC
-    - cron: '0 9 * * 1'
   workflow_dispatch:  # Allow manual trigger
 
 jobs:

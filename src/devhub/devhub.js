@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 // Code powering "developer dashboard" aka devhub, at <https://archerdb.github.io/archerdb>.
 //
 // At the moment, it isn't clear what's the right style for this kind of non-Zig developer facing

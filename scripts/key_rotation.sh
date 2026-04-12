@@ -86,8 +86,8 @@ USAGE:
     key_rotation.sh --key-type=TYPE [OPTIONS]
 
 KEY TYPES:
-    file        File-based key (development only)
-    env         Environment variable key (development only)
+    file        File-based key (verify/rollback or dry-run preview only)
+    env         Environment variable key (verify or dry-run preview only)
     kms         AWS Key Management Service (production)
     vault       HashiCorp Vault Transit (production)
 
@@ -124,13 +124,13 @@ EXAMPLES:
     # Dry-run rotation for file key
     ./key_rotation.sh --key-type=file --key-path=/etc/archerdb/key.bin --dry-run
 
-    # Rotate file-based key
-    ./key_rotation.sh --key-type=file --key-path=/etc/archerdb/key.bin
+    # Preview file-based key rotation requirements
+    ./key_rotation.sh --key-type=file --key-path=/etc/archerdb/key.bin --dry-run
 
-    # Rotate AWS KMS key
+    # Configure or trigger AWS KMS-managed rotation
     ./key_rotation.sh --key-type=kms --key-arn=arn:aws:kms:us-east-1:123456789:key/abc123
 
-    # Rotate Vault key
+    # Rotate a Vault Transit key version
     ./key_rotation.sh --key-type=vault --vault-addr=https://vault.example.com:8200 --key-name=archerdb
 
     # Rollback to previous key
@@ -400,47 +400,26 @@ rotate_file_key() {
     # Step 1: Verify current key
     verify_file_key "$old_key_path" || return $?
 
-    # Step 2: Backup current key
-    backup_file_key "$old_key_path" "$BACKUP_DIR" || return $?
-
-    # Step 3: Generate new key (if not provided)
-    if [[ ! -f "$new_key_path" ]]; then
-        generate_file_key "$new_key_path" || return $?
-    else
-        log_info "Using provided new key: $new_key_path"
-        verify_file_key "$new_key_path" || return $?
-    fi
-
-    # Step 4: Re-encrypt DEKs (this is where the actual rotation happens)
-    log_info "Re-encrypting data encryption keys with new master key..."
-
     if [[ "$DRY_RUN" == "true" ]]; then
-        log_info "[DRY-RUN] Would re-encrypt all DEKs in: $DATA_DIR"
-        log_info "[DRY-RUN] Would update key file: $old_key_path"
-    else
-        # In a real implementation, this would:
-        # 1. List all encrypted files in DATA_DIR
-        # 2. For each file: unwrap DEK with old KEK, re-wrap with new KEK, update file header
-        # 3. Verify re-encryption succeeded
-        log_warn "DEK re-encryption not yet implemented - manual re-encryption required"
-        log_info "Manual steps:"
-        log_info "  1. Stop ArcherDB server"
-        log_info "  2. Replace key file: mv $new_key_path $old_key_path"
-        log_info "  3. Start ArcherDB server"
-        log_info "  4. Verify data is accessible"
+        backup_file_key "$old_key_path" "$BACKUP_DIR" || return $?
+        if [[ -f "$new_key_path" ]]; then
+            log_info "[DRY-RUN] Would use provided new key: $new_key_path"
+            verify_file_key "$new_key_path" || return $?
+        else
+            log_info "[DRY-RUN] Would generate new key at: $new_key_path"
+        fi
+        log_info "[DRY-RUN] Automatic file-key rotation is not available in this release"
+        log_info "[DRY-RUN] A separate offline DEK re-wrap or export/import workflow is required"
+        return 0
     fi
 
-    # Step 5: Verify new key works
-    log_info "Verifying new key..."
-    if [[ "$DRY_RUN" != "true" ]]; then
-        verify_file_key "$new_key_path" || return $?
-    fi
-
-    log_info "=== Key Rotation Complete ==="
-    log_info "Old key backed up to: $BACKUP_DIR"
-    log_info "New key ready at: $new_key_path"
-
-    return 0
+    log_error "Automatic rotation for file-based master keys is not available in this release"
+    log_error "Replacing the file key without re-wrapping stored DEKs would make encrypted files unreadable"
+    log_info "Supported paths:"
+    log_info "  1. Use --verify or --rollback only for file-based keys"
+    log_info "  2. Migrate to a provider-managed key backend (KMS or Vault)"
+    log_info "  3. Perform an offline export/import or DEK re-wrap workflow before replacing the key file"
+    return 3
 }
 
 rollback_file_key() {
@@ -548,15 +527,13 @@ rotate_kms_key() {
     log_info "To trigger immediate rotation, use AWS console or:"
     log_info "  aws kms rotate-key-on-demand --key-id $KEY_ARN --region $region"
 
-    # Step 4: Re-encrypt DEKs
-    log_info "Re-encrypting DEKs with new key material..."
-
+    # Step 4: Document ciphertext compatibility
     if [[ "$DRY_RUN" == "true" ]]; then
-        log_info "[DRY-RUN] Would re-encrypt all DEKs"
+        log_info "[DRY-RUN] Existing wrapped DEKs remain decryptable because KMS tracks key material versions"
+        log_info "[DRY-RUN] Optional bulk DEK re-wrap is not performed by this helper"
     else
-        log_warn "Automatic DEK re-encryption not yet implemented"
-        log_info "KMS manages key material versioning automatically."
-        log_info "Existing wrapped DEKs will continue to work (KMS tracks versions)."
+        log_info "Existing wrapped DEKs remain decryptable because KMS tracks key material versions"
+        log_info "Optional bulk DEK re-wrap is not required for correctness and is not performed by this helper"
     fi
 
     log_info "=== KMS Key Rotation Complete ==="
@@ -626,15 +603,13 @@ rotate_vault_key() {
         }
     fi
 
-    # Step 3: Re-encrypt DEKs with new key version
-    log_info "Re-encrypting DEKs with new key version..."
-
+    # Step 3: Document ciphertext compatibility
     if [[ "$DRY_RUN" == "true" ]]; then
-        log_info "[DRY-RUN] Would re-wrap all DEKs"
+        log_info "[DRY-RUN] Existing wrapped DEKs remain decryptable through older Vault key versions"
+        log_info "[DRY-RUN] Optional bulk rewrap is not performed by this helper"
     else
-        log_warn "Automatic DEK re-wrapping not yet implemented"
-        log_info "Vault Transit handles key versioning automatically."
-        log_info "Use 'vault write $MOUNT_PATH/rewrap/$KEY_NAME' for each wrapped DEK."
+        log_info "Existing wrapped DEKs remain decryptable through older Vault key versions"
+        log_info "Optional bulk rewrap is not required for correctness and is not performed by this helper"
     fi
 
     # Step 4: Verify new key version
@@ -682,7 +657,7 @@ rotate_env_key() {
     # Step 1: Verify current key
     verify_env_key "$KEY_VAR" || return $?
 
-    # Step 2: Generate new key
+    # Step 2: Generate new key material for preview
     local new_key_b64
     if command -v openssl &>/dev/null; then
         new_key_b64=$(openssl rand -base64 32)
@@ -690,22 +665,19 @@ rotate_env_key() {
         new_key_b64=$(dd if=/dev/urandom bs=32 count=1 2>/dev/null | base64)
     fi
 
-    log_info "Generated new key (base64 encoded)"
-
     if [[ "$DRY_RUN" == "true" ]]; then
         log_info "[DRY-RUN] Would update environment variable: $KEY_VAR"
         log_info "[DRY-RUN] New key value: ***REDACTED***"
-    else
-        log_info "To complete rotation:"
-        log_info "  1. Update your environment/secrets manager with new key:"
-        log_info "     export $KEY_VAR=\"$new_key_b64\""
-        log_info "  2. Restart ArcherDB server"
-        log_info "  3. Verify data is accessible"
+        log_info "[DRY-RUN] Automatic env-key rotation is not available in this release"
+        log_info "[DRY-RUN] A separate offline DEK re-wrap or export/import workflow is required"
+        return 0
     fi
 
-    log_info "=== Environment Key Rotation Complete ==="
-
-    return 0
+    log_error "Automatic rotation for environment-variable master keys is not available in this release"
+    log_error "Replacing $KEY_VAR without re-wrapping stored DEKs would make encrypted files unreadable"
+    log_info "Preview of the next key value is available only in --dry-run mode"
+    log_info "Supported paths: migrate to KMS/Vault or perform an offline re-encryption workflow first"
+    return 3
 }
 
 # =============================================================================

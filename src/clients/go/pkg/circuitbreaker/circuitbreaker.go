@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 // Package circuitbreaker provides per-replica circuit breaker for failure isolation.
 //
 // This package implements the circuit breaker pattern from client-retry/spec.md:

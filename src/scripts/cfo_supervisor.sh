@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2025 ArcherDB Contributors
 
 # Scripts that runs `zig/zig build scripts -- cfo` in a loop.
 # This is intentionally written in POSIX sh, as this is a bootstrap script that needs

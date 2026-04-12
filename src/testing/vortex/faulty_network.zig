@@ -35,36 +35,70 @@ const Faults = struct {
         jitter_ms: u32,
     };
 
+    const Rate = struct {
+        bytes_per_second: u32,
+        burst_bytes: u32,
+    };
+
     delay: ?Delay = null,
     lose: ?Ratio = null,
     corrupt: ?Ratio = null,
-
-    // Others not implemented: duplication, reordering, rate
+    duplicate: ?Ratio = null,
+    reorder: ?Ratio = null,
+    rate: ?Rate = null,
 
     pub fn heal(faults: *Faults) void {
         faults.delay = null;
         faults.lose = null;
         faults.corrupt = null;
+        faults.duplicate = null;
+        faults.reorder = null;
+        faults.rate = null;
     }
 
     pub fn is_healed(faults: *const Faults) bool {
-        return faults.delay == null and faults.lose == null and faults.corrupt == null;
+        return faults.delay == null and
+            faults.lose == null and
+            faults.corrupt == null and
+            faults.duplicate == null and
+            faults.reorder == null and
+            faults.rate == null;
     }
 };
 
 const Pipe = struct {
+    const SendSource = enum {
+        current,
+        duplicate,
+        reorder,
+    };
+
+    const NextAction = enum {
+        recv,
+        send_active_chunk,
+        schedule_timeout,
+    };
+
     io: *IO,
     connection: *Connection,
     input: ?std.posix.socket_t = null,
     output: ?std.posix.socket_t = null,
     buffer: [constants.vsr.message_size_max]u8 = undefined,
+    reorder_buffer: [constants.vsr.message_size_max]u8 = undefined,
     send_inflight: bool = false,
     recv_inflight: bool = false,
+    timer_inflight: bool = false,
     recv_count: usize = 0,
     send_count: usize = 0,
+    duplicate_send_count: usize = 0,
+    reorder_recv_count: usize = 0,
+    reorder_send_count: usize = 0,
+    duplicate_pending: bool = false,
+    send_source: SendSource = .current,
 
     recv_completion: IO.Completion = undefined,
     send_completion: IO.Completion = undefined,
+    timer_completion: IO.Completion = undefined,
 
     fn open(
         pipe: *Pipe,
@@ -77,13 +111,18 @@ const Pipe = struct {
         pipe.output = output;
         pipe.recv_count = 0;
         pipe.send_count = 0;
+        pipe.duplicate_send_count = 0;
+        pipe.reorder_recv_count = 0;
+        pipe.reorder_send_count = 0;
+        pipe.duplicate_pending = false;
+        pipe.send_source = .current;
 
         // Kick off the recv/send loop.
         pipe.recv();
     }
 
     fn has_inflight_operations(pipe: *const Pipe) bool {
-        return pipe.recv_inflight or pipe.send_inflight;
+        return pipe.recv_inflight or pipe.send_inflight or pipe.timer_inflight;
     }
 
     fn recv(pipe: *Pipe) void {
@@ -126,6 +165,11 @@ const Pipe = struct {
             return pipe.connection.try_close();
         }
 
+        pipe.send_source = .current;
+        pipe.send_count = 0;
+        pipe.duplicate_send_count = 0;
+        pipe.duplicate_pending = false;
+
         if (pipe.connection.network.faults.lose) |lose| {
             if (pipe.connection.network.prng.chance(lose)) {
                 log.debug("losing {d} bytes ({d},{d})", .{
@@ -161,41 +205,58 @@ const Pipe = struct {
             }
         }
 
+        if (pipe.reorder_recv_count == 0) {
+            if (pipe.connection.network.faults.reorder) |reorder| {
+                if (pipe.connection.network.prng.chance(reorder)) {
+                    log.debug("holding {d} bytes for reordering ({d},{d})", .{
+                        pipe.recv_count,
+                        pipe.connection.replica_index,
+                        pipe.connection.connection_index,
+                    });
+                    @memcpy(
+                        pipe.reorder_buffer[0..pipe.recv_count],
+                        pipe.buffer[0..pipe.recv_count],
+                    );
+                    pipe.reorder_recv_count = pipe.recv_count;
+                    pipe.reorder_send_count = 0;
+                    pipe.recv();
+                    return;
+                }
+            }
+        }
+
+        if (pipe.connection.network.faults.duplicate) |duplicate| {
+            if (pipe.connection.network.prng.chance(duplicate)) {
+                pipe.duplicate_pending = true;
+                log.debug("duplicating {d} bytes ({d},{d})", .{
+                    pipe.recv_count,
+                    pipe.connection.replica_index,
+                    pipe.connection.connection_index,
+                });
+            }
+        }
+
         if (pipe.connection.network.faults.delay) |delay| {
-            assert(delay.jitter_ms <= delay.time_ms);
-            const jitter_size = pipe.connection.network.prng.int_inclusive(
-                u32,
-                delay.jitter_ms,
-            );
-            const jitter_diff_ms: i32 = @as(i32, @intCast(jitter_size)) *
-                (if (pipe.connection.network.prng.boolean()) @as(i32, 1) else -1);
-            const timeout_duration_ns = @as(
-                u63,
-                @intCast(@as(i32, @intCast(delay.time_ms)) + jitter_diff_ms),
-            ) * std.time.ns_per_ms;
+            const timeout_duration_ns = pipe.compute_delay_timeout_ns(delay);
             log.debug("delaying {} ({d},{d})", .{
                 std.fmt.fmtDuration(timeout_duration_ns),
                 pipe.connection.replica_index,
                 pipe.connection.connection_index,
             });
-            pipe.io.timeout(
-                *Pipe,
-                pipe,
-                on_timeout,
-                &pipe.send_completion,
-                timeout_duration_ns,
-            );
+            pipe.schedule_timeout(timeout_duration_ns);
         } else {
-            pipe.send(pipe.buffer[pipe.send_count..pipe.recv_count]);
+            pipe.send_active_chunk();
         }
     }
 
     fn on_timeout(pipe: *Pipe, _: *IO.Completion, result: IO.TimeoutError!void) void {
+        assert(pipe.timer_inflight);
+        pipe.timer_inflight = false;
         if (pipe.connection.state != .proxying) {
             return;
         }
         result catch @panic("timeout error");
-        pipe.send(pipe.buffer[pipe.send_count..pipe.recv_count]);
+        pipe.send_active_chunk();
     }
 
     fn send(pipe: *Pipe, buffer: []u8) void {
@@ -227,15 +288,254 @@ const Pipe = struct {
             });
             return pipe.connection.try_close();
         };
-        pipe.send_count += send_count;
+        switch (pipe.advance_after_send(send_count)) {
+            .schedule_timeout => {
+                const rate = pipe.connection.network.faults.rate.?;
+                const timeout_duration_ns = Pipe.rate_delay_ns(rate, send_count);
+                log.debug("rate limiting {} ({d},{d})", .{
+                    std.fmt.fmtDuration(timeout_duration_ns),
+                    pipe.connection.replica_index,
+                    pipe.connection.connection_index,
+                });
+                pipe.schedule_timeout(timeout_duration_ns);
+            },
+            .send_active_chunk => pipe.send_active_chunk(),
+            .recv => pipe.recv(),
+        }
+    }
 
-        if (pipe.send_count < pipe.recv_count) {
-            pipe.send(pipe.buffer[pipe.send_count..pipe.recv_count]);
-        } else {
-            pipe.recv();
+    fn schedule_timeout(pipe: *Pipe, nanoseconds: u63) void {
+        assert(!pipe.timer_inflight);
+        pipe.timer_inflight = true;
+        pipe.io.timeout(
+            *Pipe,
+            pipe,
+            on_timeout,
+            &pipe.timer_completion,
+            nanoseconds,
+        );
+    }
+
+    fn compute_delay_timeout_ns(pipe: *Pipe, delay: Faults.Delay) u63 {
+        assert(delay.jitter_ms <= delay.time_ms);
+        const jitter_size = pipe.connection.network.prng.int_inclusive(u32, delay.jitter_ms);
+        const jitter_diff_ms: i32 = @as(i32, @intCast(jitter_size)) *
+            (if (pipe.connection.network.prng.boolean()) @as(i32, 1) else -1);
+        return @as(
+            u63,
+            @intCast(@as(i32, @intCast(delay.time_ms)) + jitter_diff_ms),
+        ) * std.time.ns_per_ms;
+    }
+
+    fn active_sent_count(pipe: *const Pipe) usize {
+        return switch (pipe.send_source) {
+            .current => pipe.send_count,
+            .duplicate => pipe.duplicate_send_count,
+            .reorder => pipe.reorder_send_count,
+        };
+    }
+
+    fn active_total_count(pipe: *const Pipe) usize {
+        return switch (pipe.send_source) {
+            .current, .duplicate => pipe.recv_count,
+            .reorder => pipe.reorder_recv_count,
+        };
+    }
+
+    fn active_sent_count_add(pipe: *Pipe, count: usize) void {
+        switch (pipe.send_source) {
+            .current => pipe.send_count += count,
+            .duplicate => pipe.duplicate_send_count += count,
+            .reorder => pipe.reorder_send_count += count,
+        }
+    }
+
+    fn active_slice(pipe: *Pipe) []u8 {
+        return switch (pipe.send_source) {
+            .current, .duplicate => pipe.buffer[0..pipe.recv_count],
+            .reorder => pipe.reorder_buffer[0..pipe.reorder_recv_count],
+        };
+    }
+
+    fn send_active_chunk(pipe: *Pipe) void {
+        const slice = pipe.active_slice();
+        const sent = pipe.active_sent_count();
+        const remaining = slice[sent..];
+        if (remaining.len == 0) return;
+
+        const send_len = if (pipe.connection.network.faults.rate) |rate|
+            Pipe.rate_chunk_size(rate, remaining.len)
+        else
+            remaining.len;
+        pipe.send(remaining[0..send_len]);
+    }
+
+    fn rate_chunk_size(rate: Faults.Rate, remaining: usize) usize {
+        const burst_bytes: usize = @max(@as(usize, rate.burst_bytes), 1);
+        return @min(remaining, burst_bytes);
+    }
+
+    fn rate_delay_ns(rate: Faults.Rate, bytes_sent: usize) u63 {
+        const bps: u64 = @max(@as(u64, rate.bytes_per_second), 1);
+        const numerator: u128 = @as(u128, bytes_sent) * std.time.ns_per_s;
+        return @intCast(@max((numerator + bps - 1) / bps, 1));
+    }
+
+    fn advance_after_send(pipe: *Pipe, send_count: usize) NextAction {
+        pipe.active_sent_count_add(send_count);
+
+        if (pipe.active_sent_count() < pipe.active_total_count()) {
+            return if (pipe.connection.network.faults.rate != null)
+                .schedule_timeout
+            else
+                .send_active_chunk;
+        }
+
+        switch (pipe.send_source) {
+            .current => {
+                if (pipe.duplicate_pending) {
+                    pipe.send_source = .duplicate;
+                    pipe.duplicate_send_count = 0;
+                    return .send_active_chunk;
+                }
+                if (pipe.reorder_recv_count > 0) {
+                    pipe.send_source = .reorder;
+                    pipe.reorder_send_count = 0;
+                    return .send_active_chunk;
+                }
+                return .recv;
+            },
+            .duplicate => {
+                pipe.duplicate_pending = false;
+                pipe.duplicate_send_count = 0;
+                if (pipe.reorder_recv_count > 0) {
+                    pipe.send_source = .reorder;
+                    pipe.reorder_send_count = 0;
+                    return .send_active_chunk;
+                }
+                pipe.send_source = .current;
+                return .recv;
+            },
+            .reorder => {
+                pipe.send_source = .current;
+                pipe.reorder_recv_count = 0;
+                pipe.reorder_send_count = 0;
+                return .recv;
+            },
         }
     }
 };
+
+test "Faults heal clears all injected network modes" {
+    var faults = Faults{
+        .delay = .{ .time_ms = 10, .jitter_ms = 2 },
+        .lose = Ratio{ .numerator = 1, .denominator = 10 },
+        .corrupt = Ratio{ .numerator = 1, .denominator = 20 },
+        .duplicate = Ratio{ .numerator = 1, .denominator = 30 },
+        .reorder = Ratio{ .numerator = 1, .denominator = 40 },
+        .rate = .{ .bytes_per_second = 1024, .burst_bytes = 64 },
+    };
+    try std.testing.expect(!faults.is_healed());
+    faults.heal();
+    try std.testing.expect(faults.is_healed());
+}
+
+test "Pipe rate helpers bound chunk size and compute delay" {
+    const rate = Faults.Rate{
+        .bytes_per_second = 1000,
+        .burst_bytes = 128,
+    };
+
+    try std.testing.expectEqual(@as(usize, 128), Pipe.rate_chunk_size(rate, 4096));
+    try std.testing.expectEqual(@as(usize, 64), Pipe.rate_chunk_size(rate, 64));
+    try std.testing.expectEqual(@as(u63, 128_000_000), Pipe.rate_delay_ns(rate, 128));
+}
+
+fn pipeForTest(faults: Faults) Pipe {
+    const network_storage = struct {
+        var prng = stdx.PRNG.from_seed(1);
+        var network = Network{
+            .io = undefined,
+            .prng = &prng,
+            .proxies = &.{},
+            .faults = faults,
+        };
+        var connection = Connection{
+            .io = undefined,
+            .network = &network,
+            .state = .proxying,
+            .replica_index = 0,
+            .connection_index = 0,
+            .origin_to_remote_pipe = undefined,
+            .remote_to_origin_pipe = undefined,
+        };
+    };
+
+    const pipe = Pipe{
+        .io = undefined,
+        .connection = &network_storage.connection,
+    };
+    network_storage.connection.origin_to_remote_pipe = pipe;
+    return pipe;
+}
+
+test "Pipe advance_after_send transitions into duplicate replay" {
+    var pipe = pipeForTest(.{});
+    pipe.recv_count = 32;
+    pipe.send_count = 16;
+    pipe.duplicate_pending = true;
+
+    try std.testing.expectEqual(
+        Pipe.NextAction.send_active_chunk,
+        pipe.advance_after_send(16),
+    );
+    try std.testing.expectEqual(Pipe.SendSource.duplicate, pipe.send_source);
+    try std.testing.expectEqual(@as(usize, 0), pipe.duplicate_send_count);
+}
+
+test "Pipe advance_after_send transitions into reordered replay" {
+    var pipe = pipeForTest(.{});
+    pipe.recv_count = 24;
+    pipe.send_count = 24;
+    pipe.reorder_recv_count = 24;
+    @memcpy(pipe.reorder_buffer[0..24], "reordered-buffer-payload!"[0..24]);
+
+    try std.testing.expectEqual(
+        Pipe.NextAction.send_active_chunk,
+        pipe.advance_after_send(0),
+    );
+    try std.testing.expectEqual(Pipe.SendSource.reorder, pipe.send_source);
+    try std.testing.expectEqual(@as(usize, 0), pipe.reorder_send_count);
+}
+
+test "Pipe advance_after_send rate limits partial sends" {
+    var pipe = pipeForTest(.{
+        .rate = .{
+            .bytes_per_second = 1024,
+            .burst_bytes = 8,
+        },
+    });
+    pipe.recv_count = 32;
+    pipe.send_count = 0;
+
+    try std.testing.expectEqual(
+        Pipe.NextAction.schedule_timeout,
+        pipe.advance_after_send(8),
+    );
+    try std.testing.expectEqual(@as(usize, 8), pipe.send_count);
+}
+
+test "Pipe advance_after_send clears reorder state after replay" {
+    var pipe = pipeForTest(.{});
+    pipe.send_source = .reorder;
+    pipe.reorder_recv_count = 20;
+    pipe.reorder_send_count = 12;
+
+    try std.testing.expectEqual(Pipe.NextAction.recv, pipe.advance_after_send(8));
+    try std.testing.expectEqual(Pipe.SendSource.current, pipe.send_source);
+    try std.testing.expectEqual(@as(usize, 0), pipe.reorder_recv_count);
+    try std.testing.expectEqual(@as(usize, 0), pipe.reorder_send_count);
+}
 
 const Connection = struct {
     io: *IO,

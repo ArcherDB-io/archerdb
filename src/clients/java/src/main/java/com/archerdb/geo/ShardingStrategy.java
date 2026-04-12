@@ -5,15 +5,16 @@ package com.archerdb.geo;
 
 /**
  * Strategy for distributing entities across shards.
+ *
  * <p>
  * Different strategies offer different trade-offs:
+ * </p>
  * <ul>
- * <li>{@link #MODULO} - Simple, requires power-of-2 shard counts, moves most data on resize</li>
- * <li>{@link #VIRTUAL_RING} - Consistent hashing with O(log N) lookup and memory cost</li>
- * <li>{@link #JUMP_HASH} - Google's algorithm - O(1) memory, O(log N) compute, optimal
+ * <li>{@link #MODULO}: simple, requires power-of-2 shard counts, moves most data on resize</li>
+ * <li>{@link #VIRTUAL_RING}: consistent hashing with O(log N) lookup and memory cost</li>
+ * <li>{@link #JUMP_HASH}: Google's algorithm with O(1) memory, O(log N) compute, and optimal
  * movement</li>
  * </ul>
- * </p>
  *
  * @see <a href="https://research.google/pubs/pub44824/">Jump Consistent Hash (Google, 2014)</a>
  */
@@ -31,8 +32,15 @@ public enum ShardingStrategy {
     VIRTUAL_RING((byte) 1),
 
     /**
-     * Jump Consistent Hash (Google, 2014). O(1) memory, O(log N) compute, optimal 1/(N+1) movement.
-     * Default strategy - best balance of performance and movement.
+     * Jump Consistent Hash (Google, 2014).
+     *
+     * <p>
+     * Uses O(1) memory, O(log N) compute, and optimal 1/(N+1) movement.
+     * </p>
+     * <p>
+     * This is the default strategy because it provides the best balance of performance and
+     * movement.
+     * </p>
      */
     JUMP_HASH((byte) 2);
 

@@ -1044,7 +1044,17 @@ pub const IO = struct {
         // Ask the file system to allocate contiguous sectors for the file (if possible):
         // If the file system does not support `fallocate()`, then this could mean more seeks or a
         // panic if we run out of disk space (ENOSPC).
-        if (purpose == .format) try fs_allocate(fd, size);
+        if (purpose == .format) {
+            if (direct_io == .direct_io_optional) {
+                log.warn(
+                    "development mode uses sparse data-file allocation for faster local testing",
+                    .{},
+                );
+                try fs_allocate_sparse(fd, size);
+            } else {
+                try fs_allocate(fd, size);
+            }
+        }
 
         // Validate F_FULLFSYNC support before first sync operation.
         // This ensures we fail early with an actionable error if the filesystem
@@ -1171,6 +1181,17 @@ pub const IO = struct {
             error.AccessDenied => error.PermissionDenied,
             else => |e| e,
         };
+    }
+
+    fn fs_allocate_sparse(fd: fd_t, size: u64) !void {
+        const sector_size = constants.sector_size;
+        const sector: [sector_size]u8 align(sector_size) = @splat(0);
+
+        const write_offset = size - sector.len;
+        var written: usize = 0;
+        while (written < sector.len) {
+            written += try posix.pwrite(fd, sector[written..], write_offset + written);
+        }
     }
 
     pub const PReadError = posix.PReadError;

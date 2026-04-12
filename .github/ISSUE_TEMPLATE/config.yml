@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2025 ArcherDB Contributors
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability report
+    url: https://github.com/ArcherDB-io/archerdb/security/advisories/new
+    about: Report vulnerabilities privately instead of filing a public issue.
+  - name: ArcherDB support guide
+    url: https://github.com/ArcherDB-io/archerdb/blob/main/SUPPORT.md
+    about: Read issue-routing and support guidance before opening a ticket.
+  - name: ArcherDB documentation
+    url: https://github.com/ArcherDB-io/archerdb/blob/main/docs/README.md
+    about: Start with the docs index for setup, operations, and testing guides.

@@ -328,6 +328,26 @@ pub const BackupQueue = struct {
         }
     }
 
+    /// Remove a block from the queue without counting it as uploaded.
+    /// Used when the runtime gives up on a queued block and wants it to be rediscovered later.
+    pub fn discard(self: *BackupQueue, sequence: u64) BackupQueueError!void {
+        var index: ?usize = null;
+        for (self.pending.items, 0..) |upload, i| {
+            if (upload.block.sequence == sequence) {
+                index = i;
+                break;
+            }
+        }
+
+        if (index) |i| {
+            _ = self.pending.orderedRemove(i);
+            _ = self.pending_sequences.remove(sequence);
+            self.stats.pending_count = @intCast(self.pending.items.len);
+        } else {
+            return BackupQueueError.block_not_found;
+        }
+    }
+
     /// Mark a block upload as failed, schedule retry with exponential backoff.
     /// Returns true if retry scheduled, false if max retries exceeded.
     pub fn markFailed(self: *BackupQueue, sequence: u64) BackupQueueError!bool {

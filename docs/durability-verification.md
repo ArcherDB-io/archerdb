@@ -162,13 +162,14 @@ sudo ./scripts/dm_flakey_test.sh --iterations=10 --size-mb=500
 ### How It Works
 
 1. Create a loop device backed by a file
-2. Create dm-flakey device on top of loop device
-3. Format and mount dm-flakey device
-4. Start ArcherDB on the flakey device
-5. Trigger disk failure (drop_writes mode)
-6. Wait for failure to propagate
-7. Restore disk access
-8. Remount and verify ArcherDB recovery
+2. Create a dm-flakey device on top of the loop device
+3. Format and mount the dm-flakey device
+4. Run a real `archerdb benchmark` workload against a data file on that mount
+5. Trigger `drop_writes` during the live workload
+6. Stop the workload process group after the fault window
+7. Restore disk access and remount the filesystem
+8. Run `archerdb verify` on the recovered file
+9. Restart `archerdb start` and wait for `/health/ready`
 
 ### macOS Alternative
 
@@ -214,9 +215,9 @@ Every pull request runs:
 
 This uses the commit hash as a seed for reproducible failures.
 
-### Nightly Verification
+### Extended Manual Verification
 
-Nightly CI runs extended verification:
+For release candidates and deep validation, run the extended verification suite manually:
 ```bash
 # 8-hour VOPR run with swarm testing
 ./scripts/run_vopr.sh --no-lite --seeds "$(seq 1 1000)" --requests-max=100000

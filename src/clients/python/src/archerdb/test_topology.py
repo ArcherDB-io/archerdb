@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2025 ArcherDB Contributors
 """
 Unit tests for ArcherDB Python SDK - Topology Support (F5.1)
 
@@ -10,6 +12,7 @@ Tests cover:
 
 import threading
 import time
+import struct
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -33,7 +36,10 @@ from .types import (
     TopologyChangeNotification,
     TopologyChangeType,
     MAX_SHARDS,
+    MAX_SHARDS_COMPACT,
     MAX_REPLICAS_PER_SHARD,
+    MAX_ADDRESS_LEN,
+    TOPOLOGY_HEADER_SIZE,
 )
 
 
@@ -120,6 +126,54 @@ class TestTopologyResponse(unittest.TestCase):
         self.assertEqual(topology.version, 42)
         self.assertEqual(topology.num_shards, 2)
         self.assertEqual(len(topology.shards), 2)
+
+    def test_from_bytes_parses_compact_topology_layout(self):
+        """Compact topology responses include a padded 64-byte header."""
+        shard_info_size = 472
+        payload = bytearray(TOPOLOGY_HEADER_SIZE + (MAX_SHARDS_COMPACT * shard_info_size))
+
+        struct.pack_into("<Q", payload, 0, 8)
+        struct.pack_into("<I", payload, 8, 1)
+        struct.pack_into("<Q", payload, 12, 0x1234)
+        struct.pack_into("<Q", payload, 20, 0)
+        struct.pack_into("<Q", payload, 28, 0)
+        struct.pack_into("<Q", payload, 36, 0)
+        payload[44] = 0
+        payload[45] = 0
+
+        shard_offset = TOPOLOGY_HEADER_SIZE
+        struct.pack_into("<I", payload, shard_offset, 0)
+        shard_offset += 4
+
+        primary = b"127.0.0.1:3402"
+        payload[shard_offset:shard_offset + len(primary)] = primary
+        shard_offset += MAX_ADDRESS_LEN
+
+        replica0 = b"127.0.0.1:3401"
+        payload[shard_offset:shard_offset + len(replica0)] = replica0
+        shard_offset += MAX_ADDRESS_LEN
+
+        replica1 = b"127.0.0.1:3403"
+        payload[shard_offset:shard_offset + len(replica1)] = replica1
+        shard_offset += MAX_ADDRESS_LEN
+
+        shard_offset += MAX_ADDRESS_LEN * (MAX_REPLICAS_PER_SHARD - 2)
+        payload[shard_offset] = 2
+        payload[shard_offset + 1] = ShardStatus.ACTIVE
+        struct.pack_into("<Q", payload, shard_offset + 4, 0)
+        struct.pack_into("<Q", payload, shard_offset + 12, 0)
+
+        topology = TopologyResponse.from_bytes(bytes(payload))
+
+        self.assertEqual(topology.version, 8)
+        self.assertEqual(topology.cluster_id, 0x1234)
+        self.assertEqual(topology.num_shards, 1)
+        self.assertEqual(len(topology.shards), 1)
+        self.assertEqual(topology.shards[0].primary, "127.0.0.1:3402")
+        self.assertEqual(
+            topology.shards[0].replicas,
+            ["127.0.0.1:3401", "127.0.0.1:3403"],
+        )
 
 
 class TestTopologyCache(unittest.TestCase):

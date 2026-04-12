@@ -3,13 +3,11 @@
 #
 # Weekly Benchmark Suite
 # Runs comprehensive benchmarks with historical tracking and regression detection.
-# Schedule: Sunday 2 AM UTC
+# Automatic schedule disabled; run via manual dispatch only.
 # Regression threshold: 10% (per Phase 15/17 decisions)
 
 name: Weekly Benchmark Suite
 on:
-  schedule:
-    - cron: '0 2 * * 0'  # Sunday 2 AM UTC
   workflow_dispatch:  # Allow manual trigger
 
 concurrency:

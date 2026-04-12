@@ -1,11 +1,10 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2025 ArcherDB Contributors
 name: VOPR Fuzzer
 permissions:
   contents: read
 
 on:
-  schedule:
-    # Daily at 2 AM UTC
-    - cron: '0 2 * * *'
   workflow_dispatch:
     inputs:
       duration:

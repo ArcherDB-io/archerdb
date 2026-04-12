@@ -42,7 +42,6 @@ function shouldSkipCase(testCase: any): boolean {
   const name = testCase.name || '';
   if (name.includes('boundary_') || name.includes('invalid_')) return true;
   if (name.includes('concave') || name.includes('antimeridian')) return true;
-  if (name.includes('timestamp_filter')) return true;
   return false;
 }
 

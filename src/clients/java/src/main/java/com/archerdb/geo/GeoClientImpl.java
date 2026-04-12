@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 package com.archerdb.geo;
 
 import com.archerdb.core.GeoNativeBridge;
@@ -58,7 +60,9 @@ final class GeoClientImpl implements GeoClient {
     static final int TTL_REQUEST_SIZE = 64;
     static final int TTL_RESPONSE_SIZE = 64;
     static final int TOPOLOGY_REQUEST_SIZE = 8;
-    static final int TOPOLOGY_HEADER_SIZE = 52;
+    // Compact topology responses align the shard array to 8 bytes, so the
+    // logical 52-byte header occupies 56 bytes on the wire.
+    static final int TOPOLOGY_HEADER_SIZE = 56;
     static final int MAX_ADDRESS_LEN = 64;
     static final int SHARD_INFO_HEADER_SIZE = 4 + MAX_ADDRESS_LEN
             + (TopologyResponse.MAX_REPLICAS_PER_SHARD * MAX_ADDRESS_LEN) + 1 + 1;

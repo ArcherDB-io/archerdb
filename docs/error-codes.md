@@ -20,7 +20,7 @@ Errors are classified into three categories:
 
 - **Retryable**: Transient errors that may succeed on retry (e.g., leader election, network issues)
 - **Client Error**: Invalid request that will always fail (fix the request, don't retry)
-- **Fatal**: Server-side bugs (contact support)
+- **Fatal**: Server-side bugs (open an issue with logs and reproduction details)
 
 ## Distributed Error Codes
 

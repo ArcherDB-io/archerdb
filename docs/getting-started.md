@@ -81,7 +81,7 @@ cd archerdb
 
 ## Choose a Tier
 
-ArcherDB binaries are intended to be distributed by tier:
+ArcherDB tier presets are open-source runtime and capacity profiles:
 
 - `lite` (recommended for demos/evaluation): fastest first-run experience, low footprint, intentionally storage-limited.
 - `standard`: baseline production profile.

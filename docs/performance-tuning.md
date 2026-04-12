@@ -1,6 +1,6 @@
 # Performance Tuning Guide
 
-This guide helps you optimize ArcherDB for your specific workload. The recommendations are based on Phase 5 performance optimization findings, where we achieved a 23x throughput improvement through systematic tuning.
+This guide helps you optimize ArcherDB for your specific workload. Use the checked-in benchmark artifacts and `docs/BENCHMARKS.md` for current measured results; this document focuses on tuning levers and validation workflow rather than fixed product numbers.
 
 ## Quick Reference
 
@@ -15,15 +15,15 @@ This guide helps you optimize ArcherDB for your specific workload. The recommend
 | `s2_level_range` | 4 | 3 | Need tighter spatial coverings |
 | `s2_min_level_adjustment` | 2 | 1 | More precise S2 cell selection |
 
-### Performance Targets
+### Validation Goals
 
-| Metric | Target | Achieved (Phase 5) |
-|--------|--------|-------------------|
-| Write throughput | 1M events/sec | 770K/sec (dev server) |
-| Read P99 | <10ms | 1ms |
-| Radius query P99 | <50ms | 45ms |
-| Polygon query P99 | <100ms | 10ms |
-| Memory stability | No leaks | 0 MB/hour growth |
+| Metric | Goal |
+|--------|------|
+| Write throughput | Validate against a comparable checked-in baseline |
+| Read P99 | <10ms on the target hardware profile |
+| Radius query P99 | <50ms on the target hardware profile |
+| Polygon query P99 | <100ms on the target hardware profile |
+| Memory stability | No leaks or unbounded growth |
 
 ## Key Optimizations
 
@@ -129,21 +129,22 @@ s2_covering_cache_size: 1024
 
 ### Running Benchmarks
 
-Use the benchmark script to measure your specific workload:
+Use maintained benchmark entry points for current measurements:
 
 ```bash
-# Quick benchmark (10K events)
-./scripts/benchmark_lsm.sh --writes=10000 --reads=1000 --duration=10
+# Quick single-node smoke via the built-in benchmark driver
+zig-out/bin/archerdb benchmark --event-count=100000 --query-uuid-count=10000 --query-radius-count=1000 --query-polygon-count=100
 
-# Production simulation (1M events)
-./scripts/benchmark_lsm.sh --writes=1000000 --reads=100000 --duration=300
+# Time-bounded multi-node harness run
+python3 test_infrastructure/benchmarks/cli.py run --topology 3 --time-limit 60
 
-# Spatial query benchmark
-./scripts/benchmark_lsm.sh --scenario=spatial --radius-queries=10000
-
-# Endurance test (stability over time)
-./scripts/benchmark_lsm.sh --scenario=endurance --duration=3600
+# Full release-style suite
+python3 test_infrastructure/benchmarks/cli.py run --full-suite
 ```
+
+The legacy `./scripts/benchmark_lsm.sh` path now only forwards simple single-node
+`write_only` / `read_only` / `mixed` smoke runs to `archerdb benchmark`. It no
+longer fabricates benchmark numbers or supports time-bounded benchmark modes.
 
 ### Interpreting Results
 
@@ -151,28 +152,24 @@ Key metrics to watch:
 
 ```
 Write Performance:
-  Throughput: 770,000 ops/sec    # Target: > 100K (interim), > 1M (final)
-  P99 Latency: 0.5 ms            # Target: < 1ms
+  Throughput: compare against the latest checked-in baseline on comparable hardware
+  P99 Latency: keep tail latency stable while ingest volume increases
 
 Read Performance:
-  UUID Query P99: 1 ms           # Target: < 10ms
-  Radius Query P99: 45 ms        # Target: < 50ms
-  Polygon Query P99: 10 ms       # Target: < 100ms
+  UUID Query P99: validate against your target SLA and checked-in evidence
+  Radius Query P99: validate against your target SLA and checked-in evidence
+  Polygon Query P99: validate against your target SLA and checked-in evidence
 
 Stability:
-  Memory Growth: 0 MB/hour       # Target: 0 (no leaks)
-  Throughput CV: 5%              # Target: < 10% variance
+  Memory Growth: 0 MB/hour (no leaks)
+  Throughput CV: < 10% variance on repeated runs
 ```
 
 ### Hardware Scaling
 
-Benchmark results scale with hardware:
-
-| Hardware | Write Throughput | Notes |
-|----------|-----------------|-------|
-| Dev server (8 core, HDD) | 770K/s | Phase 5 baseline |
-| Production (16 core, NVMe) | 1.2-1.5M/s | 1.5-2x improvement |
-| High-perf (32 core, Gen4 NVMe) | 2-3M/s | Linear scaling |
+Absolute throughput depends primarily on CPU, memory bandwidth, storage, and topology.
+Treat checked-in benchmark artifacts as evidence for a specific machine/profile, not as
+universal product guarantees.
 
 ## Monitoring for Performance
 

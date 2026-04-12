@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	archerdb "github.com/archerdb/archerdb-go"
 	"github.com/archerdb/archerdb-go/pkg/types"
@@ -31,8 +32,9 @@ func main() {
 
 	address := parseServerAddress(os.Getenv("ARCHERDB_URL"))
 	config := archerdb.GeoClientConfig{
-		ClusterID: types.ToUint128(0),
-		Addresses: []string{address},
+		ClusterID:      types.ToUint128(0),
+		Addresses:      []string{address},
+		RequestTimeout: 120 * time.Second,
 	}
 
 	client, err := archerdb.NewGeoClient(config)

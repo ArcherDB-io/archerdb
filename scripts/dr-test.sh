@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: BSL-1.1
-# Copyright (c) 2024-2025 ArcherDB. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2025 ArcherDB Contributors
 #
 # Disaster Recovery Test Automation Script
 # Validates backup verification, single replica failure, and backup restore procedures.
@@ -23,7 +23,7 @@
 #   backup-verify         Verify backup integrity
 #   single-replica        Single replica failure and recovery
 #   backup-restore        Restore from backup to temp file
-#   data-integrity        Verify restored data matches original
+#   data-integrity        Verify restored backup integrity
 
 set -euo pipefail
 
@@ -151,6 +151,31 @@ check_k8s_access() {
     fi
 
     return 0
+}
+
+# Kubernetes restore helpers
+k8s_temp_restore_path() {
+    local suffix="$1"
+    echo "/tmp/archerdb-${suffix}-$$.db"
+}
+
+k8s_cleanup_restore_path() {
+    local path="$1"
+    kubectl exec archerdb-0 -n archerdb -- rm -f "$path" &> /dev/null || true
+}
+
+k8s_restore_backup() {
+    local output_path="$1"
+    kubectl exec archerdb-0 -n archerdb -- \
+        ./archerdb restore \
+        --bucket="$BACKUP_BUCKET" \
+        --cluster-id="$CLUSTER_ID" \
+        --output="$output_path"
+}
+
+k8s_verify_restored_file() {
+    local output_path="$1"
+    kubectl exec archerdb-0 -n archerdb -- ./archerdb verify "$output_path"
 }
 
 # Get replica count
@@ -308,52 +333,33 @@ test_backup_restore() {
     fi
 
     local temp_file
-    temp_file=$(mktemp /tmp/archerdb-restore-test.XXXXXX.db)
-    trap "rm -f '$temp_file'" RETURN
-
     local restore_output
     local restore_exit_code=0
 
     if [[ "$MODE" == "k8s" ]]; then
-        # For K8s, we'd need to run restore in a job - skip for now
-        local duration=$(($(date +%s) - start_time))
-        record_result "backup-restore" "skip" "$duration" "K8s restore test not yet implemented"
-        log_warn "Skipping backup restore test: K8s mode restore requires Job creation"
-        return 0
-    else
-        local binary
-        binary=$(check_local_binary) || {
-            local duration=$(($(date +%s) - start_time))
-            record_result "backup-restore" "skip" "$duration" "archerdb binary not found"
-            return 0
-        }
-
-        log_verbose "Restoring to: $temp_file"
-
-        # Restore from backup
-        restore_output=$("$binary" restore \
-            --bucket="$BACKUP_BUCKET" \
-            --cluster-id="$CLUSTER_ID" \
-            --output="$temp_file" 2>&1) || restore_exit_code=$?
+        temp_file=$(k8s_temp_restore_path "restore-test")
+        k8s_cleanup_restore_path "$temp_file"
+        restore_output=$(k8s_restore_backup "$temp_file" 2>&1) || restore_exit_code=$?
 
         if [[ $restore_exit_code -ne 0 ]]; then
             local duration=$(($(date +%s) - start_time))
             record_result "backup-restore" "fail" "$duration" "Restore failed: $restore_output"
             log_error "Backup restore FAILED: $restore_output"
+            k8s_cleanup_restore_path "$temp_file"
             return 0
         fi
 
         log_verbose "Restore output: $restore_output"
 
-        # Verify restored data
         local verify_output
         local verify_exit_code=0
-        verify_output=$("$binary" verify "$temp_file" 2>&1) || verify_exit_code=$?
+        verify_output=$(k8s_verify_restored_file "$temp_file" 2>&1) || verify_exit_code=$?
+        k8s_cleanup_restore_path "$temp_file"
 
         local duration=$(($(date +%s) - start_time))
 
         if [[ $verify_exit_code -eq 0 ]]; then
-            record_result "backup-restore" "pass" "$duration" "Restore and verify succeeded"
+            record_result "backup-restore" "pass" "$duration" "Restore and verify succeeded in Kubernetes"
             log_info "Backup restore test PASSED (${duration}s)"
             log_verbose "Verify output: $verify_output"
         else
@@ -361,6 +367,45 @@ test_backup_restore() {
             log_error "Backup restore test FAILED: verification failed"
             log_error "$verify_output"
         fi
+        return 0
+    fi
+
+    temp_file=$(mktemp /tmp/archerdb-restore-test.XXXXXX.db)
+    trap "rm -f '$temp_file'" RETURN
+
+    local binary
+    binary=$(check_local_binary) || {
+        local duration=$(($(date +%s) - start_time))
+        record_result "backup-restore" "skip" "$duration" "archerdb binary not found"
+        return 0
+    }
+
+    log_verbose "Restoring to: $temp_file"
+    restore_output=$("$binary" restore         --bucket="$BACKUP_BUCKET"         --cluster-id="$CLUSTER_ID"         --output="$temp_file" 2>&1) || restore_exit_code=$?
+
+    if [[ $restore_exit_code -ne 0 ]]; then
+        local duration=$(($(date +%s) - start_time))
+        record_result "backup-restore" "fail" "$duration" "Restore failed: $restore_output"
+        log_error "Backup restore FAILED: $restore_output"
+        return 0
+    fi
+
+    log_verbose "Restore output: $restore_output"
+
+    local verify_output
+    local verify_exit_code=0
+    verify_output=$("$binary" verify "$temp_file" 2>&1) || verify_exit_code=$?
+
+    local duration=$(($(date +%s) - start_time))
+
+    if [[ $verify_exit_code -eq 0 ]]; then
+        record_result "backup-restore" "pass" "$duration" "Restore and verify succeeded"
+        log_info "Backup restore test PASSED (${duration}s)"
+        log_verbose "Verify output: $verify_output"
+    else
+        record_result "backup-restore" "fail" "$duration" "Verification failed: $verify_output"
+        log_error "Backup restore test FAILED: verification failed"
+        log_error "$verify_output"
     fi
 }
 
@@ -379,64 +424,76 @@ test_data_integrity() {
     fi
 
     if [[ "$MODE" == "k8s" ]]; then
-        # For K8s mode, compare metrics from live cluster
-        local live_count
-        live_count=$(kubectl exec archerdb-0 -n archerdb -- \
-            curl -sf http://localhost:9100/metrics 2>/dev/null | \
-            grep 'archerdb_total_records' | awk '{print $2}' || echo "0")
-
-        log_verbose "Live cluster record count: $live_count"
-
-        # We can't easily compare with restored data in K8s mode without a Job
-        local duration=$(($(date +%s) - start_time))
-        if [[ -n "$live_count" && "$live_count" != "0" ]]; then
-            record_result "data-integrity" "pass" "$duration" "Live cluster has $live_count records"
-            log_info "Data integrity test PASSED (${duration}s) - verified $live_count records in live cluster"
-        else
-            record_result "data-integrity" "skip" "$duration" "No records in cluster or metrics unavailable"
-            log_warn "Data integrity test skipped: no records to verify"
-        fi
-    else
-        local binary
-        binary=$(check_local_binary) || {
-            local duration=$(($(date +%s) - start_time))
-            record_result "data-integrity" "skip" "$duration" "archerdb binary not found"
-            return 0
-        }
-
-        # Create temp file for restore
         local temp_file
-        temp_file=$(mktemp /tmp/archerdb-integrity-test.XXXXXX.db)
-        trap "rm -f '$temp_file'" RETURN
+        temp_file=$(k8s_temp_restore_path "integrity-test")
+        k8s_cleanup_restore_path "$temp_file"
 
-        # Restore from backup
+        local restore_output
         local restore_exit_code=0
-        "$binary" restore \
-            --bucket="$BACKUP_BUCKET" \
-            --cluster-id="$CLUSTER_ID" \
-            --output="$temp_file" 2>&1 || restore_exit_code=$?
+        restore_output=$(k8s_restore_backup "$temp_file" 2>&1) || restore_exit_code=$?
 
         if [[ $restore_exit_code -ne 0 ]]; then
             local duration=$(($(date +%s) - start_time))
-            record_result "data-integrity" "fail" "$duration" "Restore failed"
+            record_result "data-integrity" "fail" "$duration" "Restore failed: $restore_output"
             log_error "Data integrity test FAILED: could not restore backup"
+            k8s_cleanup_restore_path "$temp_file"
             return 0
         fi
 
-        # Get record count from restored data
-        local restored_count
-        restored_count=$("$binary" stats "$temp_file" 2>/dev/null | \
-            grep 'total_records' | awk '{print $2}' || echo "0")
+        local verify_output
+        local verify_exit_code=0
+        verify_output=$(k8s_verify_restored_file "$temp_file" 2>&1) || verify_exit_code=$?
+        k8s_cleanup_restore_path "$temp_file"
 
         local duration=$(($(date +%s) - start_time))
-
-        if [[ -n "$restored_count" && "$restored_count" != "0" ]]; then
-            record_result "data-integrity" "pass" "$duration" "Restored $restored_count records from backup"
-            log_info "Data integrity test PASSED (${duration}s) - restored $restored_count records"
+        if [[ $verify_exit_code -eq 0 ]]; then
+            record_result "data-integrity" "pass" "$duration" "Restored backup verified successfully in Kubernetes"
+            log_info "Data integrity test PASSED (${duration}s) - restored backup verified in Kubernetes"
+            log_verbose "$verify_output"
         else
-            record_result "data-integrity" "pass" "$duration" "Backup restored successfully (no records to count)"
-            log_info "Data integrity test PASSED (${duration}s) - backup restore verified"
+            record_result "data-integrity" "fail" "$duration" "Verification failed: $verify_output"
+            log_error "Data integrity test FAILED: restored backup verification failed"
+            log_error "$verify_output"
         fi
+        return 0
+    fi
+
+    local binary
+    binary=$(check_local_binary) || {
+        local duration=$(($(date +%s) - start_time))
+        record_result "data-integrity" "skip" "$duration" "archerdb binary not found"
+        return 0
+    }
+
+    local temp_file
+    temp_file=$(mktemp /tmp/archerdb-integrity-test.XXXXXX.db)
+    trap "rm -f '$temp_file'" RETURN
+
+    local restore_exit_code=0
+    local restore_output
+    restore_output=$("$binary" restore         --bucket="$BACKUP_BUCKET"         --cluster-id="$CLUSTER_ID"         --output="$temp_file" 2>&1) || restore_exit_code=$?
+
+    if [[ $restore_exit_code -ne 0 ]]; then
+        local duration=$(($(date +%s) - start_time))
+        record_result "data-integrity" "fail" "$duration" "Restore failed: $restore_output"
+        log_error "Data integrity test FAILED: could not restore backup"
+        return 0
+    fi
+
+    local verify_output
+    local verify_exit_code=0
+    verify_output=$("$binary" verify "$temp_file" 2>&1) || verify_exit_code=$?
+
+    local duration=$(($(date +%s) - start_time))
+
+    if [[ $verify_exit_code -eq 0 ]]; then
+        record_result "data-integrity" "pass" "$duration" "Restored backup verified successfully"
+        log_info "Data integrity test PASSED (${duration}s) - restored backup verified"
+        log_verbose "$verify_output"
+    else
+        record_result "data-integrity" "fail" "$duration" "Verification failed: $verify_output"
+        log_error "Data integrity test FAILED: restored backup verification failed"
+        log_error "$verify_output"
     fi
 }
 

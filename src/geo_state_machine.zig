@@ -1031,6 +1031,10 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             /// Tiering configuration (timeouts, thresholds).
             /// Only used when tiering_enabled = true.
             tiering_config: TieringConfig = .{},
+            /// Static member addresses for topology discovery.
+            /// When omitted, the topology response contains zero configured member
+            /// addresses rather than inventing a placeholder endpoint.
+            topology_addresses: []const std.net.Address = &.{},
         };
 
         /// Prefetch timestamp - set during prefetch phase.
@@ -1066,10 +1070,17 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         /// Required by VOPR for GridScrubber initialization.
         forest: Forest,
 
+        /// Allocator used by the state machine and its async query helpers.
+        allocator: std.mem.Allocator,
+
         /// Grid reference for VSR checkpoint coordination (F2.2.3).
         /// Through grid.superblock, we access vsr_state.checkpoint for
         /// coordinating index checkpoint with VSR checkpoint sequence.
         grid: *Grid,
+
+        /// Static cluster member addresses exposed by get_topology.
+        topology_addresses: [constants.members_max]topology_mod.Address,
+        topology_address_count: u8 = 0,
 
         /// Index checkpoint enabled flag.
         index_checkpoint_enabled: bool,
@@ -1174,6 +1185,44 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 
         /// Timestamp found by entity_id scan (0 = not found / not scanned).
         prefetch_found_timestamp: u64 = 0,
+
+        /// Scan context for async query_latest cold-tier scans.
+        latest_scan_context: Scan.Context = .{ .callback = latest_scan_read_callback },
+
+        /// Active query_latest cold-tier scan pointer (null when inactive).
+        latest_scan_ptr: ?*Scan = null,
+
+        /// Timestamp currently being prefetched for query_latest.
+        latest_prefetch_pending_timestamp: u64 = 0,
+
+        /// Filter snapshot for the current query_latest prefetch.
+        latest_prefetch_filter: QueryLatestFilter = std.mem.zeroes(QueryLatestFilter),
+
+        /// Maximum number of cold-tier results to materialize for query_latest.
+        latest_prefetch_limit: u32 = 0,
+
+        /// Conservative hot-tier cutoff used to stop cold-tier scans once the
+        /// combined top-N result set is fixed.
+        latest_prefetch_hot_cutoff: u64 = 0,
+
+        /// Number of hot-tier candidates contributing to the cutoff.
+        latest_prefetch_hot_count: usize = 0,
+
+        /// Prefetched cold-tier latest timestamps for execute_query_latest().
+        latest_prefetch_timestamps: []u64,
+
+        /// Number of prefetched cold-tier timestamps currently valid.
+        latest_prefetch_count: usize = 0,
+
+        /// Number of matching cold-tier entities encountered during the current scan.
+        latest_prefetch_matching_count: usize = 0,
+
+        /// True when the cold-tier scan stopped before exhausting the timestamp tree.
+        latest_prefetch_has_more: bool = false,
+
+        /// Tracks cold-tier entities already seen during the current scan so only
+        /// the newest event per entity is considered.
+        latest_prefetch_seen_entities: std.AutoHashMap(u128, void) = undefined,
 
         /// Scan context for RAM index rebuild during open().
         rebuild_scan_context: Scan.Context = .{ .callback = rebuild_scan_read_callback },
@@ -1312,6 +1361,16 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             errdefer allocator.free(spatial_scan_keys);
             const spatial_scan_lat_keys = try allocator.alloc(u128, @intCast(ram_index.capacity));
             errdefer allocator.free(spatial_scan_lat_keys);
+            const latest_prefetch_capacity =
+                Operation.insert_events.event_max(options.batch_size_limit);
+            const latest_prefetch_timestamps =
+                try allocator.alloc(u64, latest_prefetch_capacity);
+            errdefer allocator.free(latest_prefetch_timestamps);
+
+            log.info(
+                "GeoStateMachine: RAM index capacity={d} (latest cache reserve target={d})",
+                .{ ram_index.capacity, ram_index_capacity },
+            );
 
             // Initialize session prepared queries map (14-05)
             var session_prepared_queries = std.AutoHashMap(u128, SessionPreparedQueries).init(allocator);
@@ -1324,6 +1383,9 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 log.warn("GeoStateMachine: latest-event cache reserve failed: {}", .{err});
             };
 
+            var latest_prefetch_seen_entities = std.AutoHashMap(u128, void).init(allocator);
+            errdefer latest_prefetch_seen_entities.deinit();
+
             self.* = .{
                 .batch_size_limit = options.batch_size_limit,
                 .default_ttl_seconds = default_ttl_seconds,
@@ -1331,7 +1393,10 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .prepare_timestamp = 0,
                 .commit_timestamp = 0,
                 .forest = undefined,
+                .allocator = allocator,
                 .grid = grid,
+                .topology_addresses = [_]topology_mod.Address{topology_mod.empty_address} ** constants.members_max,
+                .topology_address_count = 0,
                 .index_checkpoint_enabled = options.enable_index_checkpoint,
                 .last_index_checkpoint_op = 0,
                 .ram_index = ram_index,
@@ -1345,10 +1410,28 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .covering_cache = covering_cache,
                 .session_prepared_queries = session_prepared_queries,
                 .latest_event_cache = latest_event_cache,
+                .latest_prefetch_timestamps = latest_prefetch_timestamps,
+                .latest_prefetch_seen_entities = latest_prefetch_seen_entities,
                 .session_queries_initialized = true,
             };
 
+            const topology_address_count: usize = @min(
+                options.topology_addresses.len,
+                constants.members_max,
+            );
+            self.topology_address_count = @intCast(topology_address_count);
+            for (options.topology_addresses[0..topology_address_count], 0..) |address, index| {
+                self.topology_addresses[index] = formatTopologyAddress(address);
+            }
+
             // Initialize Forest for LSM tree storage (F1.2, F4.2)
+            log.info(
+                "GeoStateMachine: initializing forest node_count={d} compaction_blocks={d}",
+                .{
+                    options.lsm_forest_node_count,
+                    options.lsm_forest_compaction_block_count,
+                },
+            );
             try self.forest.init(
                 allocator,
                 grid,
@@ -1359,6 +1442,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 forest_options(options),
             );
             errdefer self.forest.deinit(allocator);
+            log.info("GeoStateMachine: forest initialized", .{});
 
             // GeoStateMachine initialized with Forest and RAM index (F1.2, F2.1, F4.2)
             log.info("GeoStateMachine: initialized (F1.2, F2.1, F4.2)", .{});
@@ -1366,35 +1450,89 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 
         /// Generate Forest options for GeoEvent groove.
         pub fn forest_options(options: Options) Forest.GroovesOptions {
-            const prefetch_geo_events_limit: u32 =
+            const batch_geo_events_limit: u32 =
                 Operation.insert_events.event_max(options.batch_size_limit);
 
             const tree_values_count_limit = struct {
-                const geo_events = struct {
-                    const id: u32 = batch_geo_events_max;
-                    const entity_id: u32 = batch_geo_events_max;
-                    const timestamp: u32 = batch_geo_events_max;
-                    const group_id: u32 = batch_geo_events_max;
-                };
+                id: u32,
+                entity_id: u32,
+                timestamp: u32,
+                group_id: u32,
+            }{
+                .id = batch_geo_events_limit,
+                .entity_id = batch_geo_events_limit,
+                .timestamp = batch_geo_events_limit,
+                .group_id = batch_geo_events_limit,
             };
 
             return .{
                 .geo_events = .{
-                    .prefetch_entries_for_read_max = prefetch_geo_events_limit,
-                    .prefetch_entries_for_update_max = prefetch_geo_events_limit,
+                    .prefetch_entries_for_read_max = batch_geo_events_limit,
+                    .prefetch_entries_for_update_max = batch_geo_events_limit,
                     .cache_entries_max = options.cache_entries_geo_events,
                     .tree_options_object = .{
-                        .batch_value_count_limit = tree_values_count_limit.geo_events.timestamp,
+                        .batch_value_count_limit = tree_values_count_limit.timestamp,
                     },
                     .tree_options_id = .{
-                        .batch_value_count_limit = tree_values_count_limit.geo_events.id,
+                        .batch_value_count_limit = tree_values_count_limit.id,
                     },
                     .tree_options_index = index_tree_options(
                         GeoEventsGroove.IndexTreeOptions,
-                        tree_values_count_limit.geo_events,
+                        tree_values_count_limit,
                     ),
                 },
             };
+        }
+
+        fn formatTopologyAddress(address: std.net.Address) topology_mod.Address {
+            var result = topology_mod.empty_address;
+            var buffer: [topology_mod.max_address_len]u8 = undefined;
+            const address_text = std.fmt.bufPrint(&buffer, "{}", .{address}) catch return result;
+            const len = @min(address_text.len, topology_mod.max_address_len);
+            stdx.copy_disjoint(.inexact, u8, result[0..len], address_text[0..len]);
+            return result;
+        }
+
+        fn buildTopologyResponseCompact(
+            addresses: []const topology_mod.Address,
+            cluster_id: u128,
+            view: u32,
+            replica_count: u8,
+        ) topology_mod.TopologyResponseCompact {
+            var response: topology_mod.TopologyResponseCompact = .{
+                .version = @as(u64, view) + 1,
+                .num_shards = 1,
+                .cluster_id = cluster_id,
+                .last_change_ns = 0,
+                .resharding_status = 0,
+                .flags = 0,
+                .shards = undefined,
+            };
+
+            for (&response.shards) |*shard| {
+                shard.* = topology_mod.ShardInfo.init(0);
+            }
+
+            response.shards[0] = topology_mod.ShardInfo.init(0);
+            response.shards[0].status = .active;
+
+            const configured_replica_count: usize = @min(addresses.len, replica_count);
+            if (configured_replica_count == 0) {
+                response.shards[0].setPrimary("127.0.0.1:5000");
+                return response;
+            }
+
+            const primary_index: usize = @mod(view, configured_replica_count);
+            const primary = std.mem.sliceTo(&addresses[primary_index], 0);
+            response.shards[0].setPrimary(primary);
+
+            for (0..configured_replica_count) |index| {
+                if (index == primary_index) continue;
+                const replica = std.mem.sliceTo(&addresses[index], 0);
+                _ = response.shards[0].addReplica(replica);
+            }
+
+            return response;
         }
 
         fn index_tree_options(
@@ -1414,6 +1552,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             allocator.destroy(self.ram_index);
             allocator.free(self.spatial_scan_keys);
             allocator.free(self.spatial_scan_lat_keys);
+            allocator.free(self.latest_prefetch_timestamps);
 
             // Clean up TieringManager if enabled (F2.6)
             if (self.tiering_manager) |tm| {
@@ -1439,6 +1578,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             }
 
             self.latest_event_cache.deinit();
+            self.latest_prefetch_seen_entities.deinit();
         }
 
         /// Reset state machine for state sync.
@@ -1462,6 +1602,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             // with operations from the checkpoint forward.
             self.ram_index.clear();
             self.latest_event_cache.clearRetainingCapacity();
+            self.latest_prefetch_seen_entities.clearRetainingCapacity();
 
             self.* = .{
                 .batch_size_limit = self.batch_size_limit,
@@ -1471,7 +1612,10 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .commit_timestamp = 0,
                 .entries_with_ttl = 0,
                 .forest = self.forest,
+                .allocator = self.allocator,
                 .grid = self.grid,
+                .topology_addresses = self.topology_addresses,
+                .topology_address_count = self.topology_address_count,
                 .ram_index = self.ram_index,
                 .spatial_scan_keys = self.spatial_scan_keys,
                 .spatial_scan_lat_keys = self.spatial_scan_lat_keys,
@@ -1485,7 +1629,11 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .covering_cache = self.covering_cache,
                 .session_prepared_queries = self.session_prepared_queries,
                 .latest_event_cache = self.latest_event_cache,
+                .latest_prefetch_timestamps = self.latest_prefetch_timestamps,
+                .latest_prefetch_seen_entities = self.latest_prefetch_seen_entities,
                 .session_queries_initialized = self.session_queries_initialized,
+                .latest_scan_context = .{ .callback = latest_scan_read_callback },
+                .latest_scan_ptr = null,
                 .rebuild_scan_context = .{ .callback = rebuild_scan_read_callback },
                 .rebuild_scan_ptr = null,
                 .rebuild_count = 0,
@@ -1748,9 +1896,6 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         /// Prefetch loads required data from LSM trees into cache to ensure
         /// cache hits during the commit phase. This is critical for performance
         /// as commit() must be synchronous and deterministic.
-        ///
-        /// Currently empty implementation - will be populated when Forest is
-        /// integrated with GeoEvent grooves.
         pub fn prefetch(
             self: *GeoStateMachine,
             callback: *const fn (*GeoStateMachine) void,
@@ -1775,6 +1920,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 
             // Reset prefetch state from previous operation.
             self.prefetch_found_timestamp = 0;
+            self.reset_query_latest_prefetch_state();
 
             switch (operation) {
                 .query_uuid => {
@@ -1821,6 +1967,64 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                     // Avoid eager batch prefetch to reduce read-path tail latency.
                     self.prefetch_finish();
                 },
+                .query_latest => {
+                    if (message_body_used.len == @sizeOf(QueryLatestFilter) and
+                        self.tiering_manager != null)
+                    {
+                        const filter = mem.bytesAsValue(
+                            QueryLatestFilter,
+                            message_body_used[0..@sizeOf(QueryLatestFilter)],
+                        ).*;
+                        const effective_limit: u32 = @min(
+                            filter.limit,
+                            @as(u32, @intCast(self.latest_prefetch_timestamps.len)),
+                        );
+
+                        if (effective_limit == 0) {
+                            self.prefetch_finish();
+                            return;
+                        }
+
+                        if (filter.cursor_timestamp > 0 and
+                            filter.cursor_timestamp <= TimestampRange.timestamp_min)
+                        {
+                            self.prefetch_finish();
+                            return;
+                        }
+
+                        const hot_summary = self.query_latest_hot_cutoff(
+                            filter,
+                            effective_limit,
+                        );
+
+                        self.latest_prefetch_filter = filter;
+                        self.latest_prefetch_limit = effective_limit;
+                        self.latest_prefetch_hot_cutoff = hot_summary.cutoff_timestamp;
+                        self.latest_prefetch_hot_count = hot_summary.selected_count;
+
+                        const buffer = self.forest.scan_buffer_pool.acquire() catch {
+                            self.prefetch_finish();
+                            return;
+                        };
+                        const timestamp_range = if (filter.cursor_timestamp > 0)
+                            TimestampRange.lte(filter.cursor_timestamp - 1)
+                        else
+                            TimestampRange.all();
+                        const scan = self.forest.grooves.geo_events.scan_builder.scan_timestamp(
+                            buffer,
+                            lsm_tree.snapshot_latest,
+                            timestamp_range,
+                            .descending,
+                        ) catch {
+                            self.prefetch_finish();
+                            return;
+                        };
+                        self.latest_scan_ptr = scan;
+                        self.drive_query_latest_prefetch_scan();
+                        return;
+                    }
+                    self.prefetch_finish();
+                },
                 // All other operations use optimistic/immediate execution.
                 // RAM index provides fast access without forest prefetch.
                 .insert_events,
@@ -1829,7 +2033,6 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 .cleanup_expired,
                 .query_radius,
                 .query_polygon,
-                .query_latest,
                 .archerdb_ping,
                 .archerdb_get_status,
                 .get_topology,
@@ -1847,6 +2050,143 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             }
         }
 
+        fn reset_query_latest_prefetch_state(self: *GeoStateMachine) void {
+            self.latest_scan_ptr = null;
+            self.latest_prefetch_pending_timestamp = 0;
+            self.latest_prefetch_filter = std.mem.zeroes(QueryLatestFilter);
+            self.latest_prefetch_limit = 0;
+            self.latest_prefetch_hot_cutoff = 0;
+            self.latest_prefetch_hot_count = 0;
+            self.latest_prefetch_count = 0;
+            self.latest_prefetch_matching_count = 0;
+            self.latest_prefetch_has_more = false;
+            self.latest_prefetch_seen_entities.clearRetainingCapacity();
+        }
+
+        fn query_latest_hot_cutoff(
+            self: *GeoStateMachine,
+            filter: QueryLatestFilter,
+            effective_limit: u32,
+        ) struct { selected_count: usize, cutoff_timestamp: u64 } {
+            if (effective_limit == 0) {
+                return .{ .selected_count = 0, .cutoff_timestamp = 0 };
+            }
+
+            const scratch = self.latest_prefetch_timestamps[0..effective_limit];
+            var selected_count: usize = 0;
+            const active_keys = self.spatialScanKeys();
+            for (active_keys) |scan_key| {
+                const position = @as(u64, @truncate(scan_key));
+                const entry = self.ram_index.entries[@intCast(position)];
+                const entry_timestamp = @as(u64, @truncate(entry.latest_id));
+
+                if (filter.cursor_timestamp > 0 and entry_timestamp >= filter.cursor_timestamp) {
+                    continue;
+                }
+
+                if (entry.ttl_seconds > 0) {
+                    const now_seconds = self.commit_timestamp / std.time.ns_per_s;
+                    const creation_seconds = entry_timestamp / std.time.ns_per_s;
+                    if (now_seconds > creation_seconds + @as(u64, entry.ttl_seconds)) {
+                        continue;
+                    }
+                }
+
+                const metadata = entryMetadata(entry);
+                if (filter.group_id != 0 and metadata.group_id != filter.group_id) {
+                    continue;
+                }
+
+                if (selected_count < scratch.len) {
+                    scratch[selected_count] = entry_timestamp;
+                    selected_count += 1;
+                } else {
+                    var oldest_idx: usize = 0;
+                    var oldest_ts = scratch[0];
+                    var idx: usize = 1;
+                    while (idx < selected_count) : (idx += 1) {
+                        if (scratch[idx] < oldest_ts) {
+                            oldest_ts = scratch[idx];
+                            oldest_idx = idx;
+                        }
+                    }
+
+                    if (entry_timestamp > oldest_ts) {
+                        scratch[oldest_idx] = entry_timestamp;
+                    }
+                }
+            }
+
+            if (selected_count == 0) {
+                return .{ .selected_count = 0, .cutoff_timestamp = 0 };
+            }
+
+            var cutoff_timestamp = scratch[0];
+            var idx: usize = 1;
+            while (idx < selected_count) : (idx += 1) {
+                cutoff_timestamp = @min(cutoff_timestamp, scratch[idx]);
+            }
+
+            return .{
+                .selected_count = selected_count,
+                .cutoff_timestamp = cutoff_timestamp,
+            };
+        }
+
+        fn query_latest_prefetch_should_stop(
+            self: *const GeoStateMachine,
+            next_timestamp: u64,
+        ) bool {
+            const effective_limit = @as(usize, self.latest_prefetch_limit);
+            if (effective_limit == 0) return true;
+
+            const selected_total = self.latest_prefetch_hot_count + self.latest_prefetch_count;
+            if (selected_total < effective_limit) return false;
+
+            var cutoff_timestamp: u64 = std.math.maxInt(u64);
+            if (self.latest_prefetch_hot_count > 0 and self.latest_prefetch_hot_cutoff > 0) {
+                cutoff_timestamp = @min(cutoff_timestamp, self.latest_prefetch_hot_cutoff);
+            }
+            if (self.latest_prefetch_count > 0) {
+                cutoff_timestamp = @min(
+                    cutoff_timestamp,
+                    self.latest_prefetch_timestamps[self.latest_prefetch_count - 1],
+                );
+            }
+
+            if (cutoff_timestamp == std.math.maxInt(u64)) return false;
+            return next_timestamp < cutoff_timestamp;
+        }
+
+        fn drive_query_latest_prefetch_scan(self: *GeoStateMachine) void {
+            const scan = self.latest_scan_ptr.?;
+
+            const timestamp = scan.next() catch {
+                scan.read(&self.latest_scan_context);
+                return;
+            };
+
+            if (timestamp) |ts| {
+                if (self.query_latest_prefetch_should_stop(ts)) {
+                    self.latest_prefetch_has_more = true;
+                    self.latest_scan_ptr = null;
+                    self.prefetch_finish();
+                    return;
+                }
+
+                self.latest_prefetch_pending_timestamp = ts;
+                self.forest.grooves.geo_events.prefetch_setup(null);
+                self.forest.grooves.geo_events.prefetch_enqueue_by_timestamp(ts);
+                self.forest.grooves.geo_events.prefetch(
+                    query_latest_prefetch_forest_callback,
+                    &self.prefetch_context,
+                );
+            } else {
+                self.latest_scan_ptr = null;
+                self.prefetch_finish();
+            }
+        }
+
         /// Complete prefetch phase and invoke callback.
         fn prefetch_finish(self: *GeoStateMachine) void {
             const callback = self.prefetch_callback.?;
@@ -1858,6 +2198,72 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         fn prefetch_forest_callback(completion: *GeoEventsGroove.PrefetchContext) void {
             const self: *GeoStateMachine = @fieldParentPtr("prefetch_context", completion);
             self.prefetch_finish();
+        }
+
+        fn latest_scan_read_callback(context: *Scan.Context, scan_ptr: *Scan) void {
+            const self: *GeoStateMachine = @alignCast(@fieldParentPtr("latest_scan_context", context));
+            _ = scan_ptr;
+            self.drive_query_latest_prefetch_scan();
+        }
+
+        fn query_latest_prefetch_forest_callback(
+            completion: *GeoEventsGroove.PrefetchContext,
+        ) void {
+            const self: *GeoStateMachine = @fieldParentPtr("prefetch_context", completion);
+            const timestamp = self.latest_prefetch_pending_timestamp;
+
+            switch (self.forest.grooves.geo_events.get_by_timestamp(timestamp)) {
+                .found_object => |event| {
+                    self.record_query_latest_cold_candidate(event) catch |err| {
+                        log.warn("query_latest prefetch aborted: {}", .{err});
+                        self.latest_prefetch_has_more = true;
+                        self.latest_scan_ptr = null;
+                        self.prefetch_finish();
+                        return;
+                    };
+                },
+                else => {},
+            }
+
+            self.drive_query_latest_prefetch_scan();
+        }
+
+        fn record_query_latest_cold_candidate(
+            self: *GeoStateMachine,
+            event: GeoEvent,
+        ) !void {
+            if (self.ram_index.lookup(event.entity_id).entry != null) return;
+            if (self.latest_prefetch_seen_entities.contains(event.entity_id)) return;
+
+            try self.latest_prefetch_seen_entities.put(event.entity_id, {});
+
+            if (event.is_tombstone()) return;
+            if (self.latest_prefetch_filter.group_id != 0 and
+                event.group_id != self.latest_prefetch_filter.group_id)
+            {
+                return;
+            }
+            if (self.latest_prefetch_filter.cursor_timestamp > 0 and
+                event.timestamp >= self.latest_prefetch_filter.cursor_timestamp)
+            {
+                return;
+            }
+            if (event.ttl_seconds > 0) {
+                const ttl_ns: u64 = @as(u64, event.ttl_seconds) * std.time.ns_per_s;
+                if (event.timestamp + ttl_ns < self.commit_timestamp) return;
+            }
+
+            self.latest_prefetch_matching_count += 1;
+            if (self.latest_prefetch_count < self.latest_prefetch_limit) {
+                self.latest_prefetch_timestamps[self.latest_prefetch_count] = event.timestamp;
+                self.latest_prefetch_count += 1;
+            } else {
+                self.latest_prefetch_has_more = true;
+            }
+
+            if (self.tiering_manager) |tm| {
+                _ = tm.recordAccess(event.entity_id, self.commit_timestamp) catch {};
+            }
         }
 
         /// Callback when scan read I/O completes during entity_id index scan.
@@ -3238,31 +3644,23 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             self: *GeoStateMachine,
             output: []u8,
         ) usize {
-            // Status response structure (64 bytes)
-            const StatusResponse = extern struct {
-                /// RAM index entry count
-                ram_index_count: u64,
-                /// RAM index capacity
-                ram_index_capacity: u64,
-                /// RAM index load factor (as percentage * 100)
-                ram_index_load_pct: u32,
-                /// Padding for alignment
-                _padding: u32 = 0,
-                /// Tombstone count
-                tombstone_count: u64,
-                /// Total TTL expirations
-                ttl_expirations: u64,
-                /// Total deletions
-                deletion_count: u64,
-                /// Reserved for future use
-                reserved: [16]u8,
+            const Clamp = struct {
+                fn gaugeToU8(value: i64) u8 {
+                    if (value <= 0) return 0;
+                    return std.math.cast(u8, value) orelse std.math.maxInt(u8);
+                }
+
+                fn gaugeToU32(value: i64) u32 {
+                    if (value <= 0) return 0;
+                    return std.math.cast(u32, value) orelse std.math.maxInt(u32);
+                }
             };
 
             comptime {
-                assert(@sizeOf(StatusResponse) == 64);
+                assert(@sizeOf(vsr.archerdb.StatusResponse) == 64);
             }
 
-            if (output.len < @sizeOf(StatusResponse)) {
+            if (output.len < @sizeOf(vsr.archerdb.StatusResponse)) {
                 return 0;
             }
 
@@ -3271,24 +3669,43 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 @intCast((stats.entry_count * 10000) / stats.capacity)
             else
                 0;
+            const resize_progress = self.ram_index.getResizeProgress();
+            const resize_progress_pct_x100: u32 = switch (resize_progress.state) {
+                .normal => 0,
+                else => @intFromFloat(std.math.clamp(
+                    resize_progress.percentComplete(),
+                    0.0,
+                    100.0,
+                ) * 100.0),
+            };
 
-            const response = StatusResponse{
+            const response = vsr.archerdb.StatusResponse{
                 .ram_index_count = stats.entry_count,
                 .ram_index_capacity = stats.capacity,
                 .ram_index_load_pct = load_pct,
                 .tombstone_count = stats.tombstone_count,
                 .ttl_expirations = self.ttl_metrics.total_expirations(),
                 .deletion_count = self.deletion_metrics.entities_deleted,
-                .reserved = [_]u8{0} ** 16,
+                .index_resize_status = @intFromEnum(resize_progress.state),
+                .membership_state = Clamp.gaugeToU8(
+                    archerdb_metrics.Registry.membership_state.get(),
+                ),
+                .index_resize_progress = resize_progress_pct_x100,
+                .membership_voters_count = Clamp.gaugeToU32(
+                    archerdb_metrics.Registry.membership_voters_count.get(),
+                ),
+                .membership_learners_count = Clamp.gaugeToU32(
+                    archerdb_metrics.Registry.membership_learners_count.get(),
+                ),
             };
 
             const response_ptr = mem.bytesAsValue(
-                StatusResponse,
-                output[0..@sizeOf(StatusResponse)],
+                vsr.archerdb.StatusResponse,
+                output[0..@sizeOf(vsr.archerdb.StatusResponse)],
             );
             response_ptr.* = response;
 
-            return @sizeOf(StatusResponse);
+            return @sizeOf(vsr.archerdb.StatusResponse);
         }
 
         // ====================================================================
@@ -3316,8 +3733,6 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             self: *GeoStateMachine,
             output: []u8,
         ) usize {
-            _ = self; // Topology is cluster-wide, not per-state-machine state
-
             // Use compact response for small clusters (fits in lite config 32KB buffer)
             const ResponseType = topology_mod.TopologyResponseCompact;
 
@@ -3329,26 +3744,12 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 return 0;
             }
 
-            // Build compact topology response (max 16 shards)
-            var response: ResponseType = .{
-                .version = 1,
-                .num_shards = 1,
-                .cluster_id = 0,
-                .last_change_ns = std.time.nanoTimestamp(),
-                .resharding_status = 0,
-                .flags = 0,
-                .shards = undefined,
-            };
-
-            // Initialize all shards to default
-            for (&response.shards) |*shard| {
-                shard.* = topology_mod.ShardInfo.init(0);
-            }
-
-            // Set up shard 0 as active (single-shard mode)
-            response.shards[0] = topology_mod.ShardInfo.init(0);
-            response.shards[0].status = .active;
-            response.shards[0].setPrimary("127.0.0.1:5000");
+            const response = buildTopologyResponseCompact(
+                self.topology_addresses[0..self.topology_address_count],
+                self.grid.superblock.working.cluster,
+                self.grid.superblock.working.vsr_state.view,
+                self.grid.superblock.working.vsr_state.replica_count,
+            );
 
             // Write compact response to output buffer
             const response_ptr = mem.bytesAsValue(
@@ -5102,58 +5503,13 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                 }
             }
 
-            // F2.6: Include cold-tier entities in query_latest results.
-            //
-            // Cold-tier entities have been demoted from the RAM index but still
-            // exist in the LSM tree. The TieringManager tracks their metadata,
-            // which we use here to include them in results.
-            //
-            // NOTE: This is a best-effort inclusion. Cold entities that the
-            // TieringManager has metadata for (i.e., they were accessed at least
-            // once since being demoted, or were recently demoted) will be included
-            // with approximate data from the Forest cache. Entities that have never
-            // been accessed since demotion and whose metadata was evicted will not
-            // appear here until they are explicitly queried by UUID (which triggers
-            // the LSM prefetch scan and promotes them).
-            //
-            // TODO(WS-5): Add an async cold-tier scan phase to query_latest's
-            // prefetch pipeline for complete cold-tier coverage.
-            if (self.tiering_manager) |tm| {
-                const cold_results = tm.queryByTimeRange(
-                    0, // min_ts: include all cold entities
-                    if (filter.cursor_timestamp > 0) filter.cursor_timestamp else std.math.maxInt(u64),
-                ) catch &[_]tiering.ColdTierResult{};
-                const cold_results_owned = cold_results.len > 0 and
-                    @intFromPtr(cold_results.ptr) != @intFromPtr((&[_]tiering.ColdTierResult{}).ptr);
-                defer if (cold_results_owned) tm.allocator.free(cold_results);
-
-                for (cold_results) |cold_entity| {
-                    // Try to get the full event from the Forest cache.
-                    // Cold entities from queryByTimeRange have latest_id=0 (unknown
-                    // from metadata scan), so look up by entity_id which works if
-                    // the entity was recently accessed and is still in cache.
-                    const groove_result = if (cold_entity.latest_id != 0)
-                        self.forest.grooves.geo_events.get(cold_entity.latest_id)
-                    else
-                        self.forest.grooves.geo_events.get(cold_entity.entity_id);
-
-                    if (groove_result == .found_object) {
-                        const event = groove_result.found_object;
-                        if (event.is_tombstone()) continue;
-
-                        // Apply group_id filter
-                        if (filter.group_id != 0 and event.group_id != filter.group_id) continue;
-
-                        // Apply cursor filter
-                        if (filter.cursor_timestamp > 0 and event.timestamp >= filter.cursor_timestamp) continue;
-
-                        // Apply TTL filter (mirrors hot-tier TTL check above)
-                        if (event.ttl_seconds > 0) {
-                            const ttl_ns: u64 = @as(u64, event.ttl_seconds) * std.time.ns_per_s;
-                            if (event.timestamp + ttl_ns < self.commit_timestamp) continue;
-                        }
-
-                        matching_count += 1;
+            // F2.6: Include cold-tier entities via the async prefetch scan
+            // started in prefetch(). This gives query_latest complete coverage
+            // for demoted entities without doing blocking LSM reads in commit().
+            matching_count += self.latest_prefetch_matching_count;
+            for (self.latest_prefetch_timestamps[0..self.latest_prefetch_count]) |timestamp| {
+                switch (self.forest.grooves.geo_events.get_by_timestamp(timestamp)) {
+                    .found_object => |event| {
                         const candidate = Candidate{
                             .entity_id = event.entity_id,
                             .latest_id = event.id,
@@ -5167,7 +5523,6 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                             candidates[candidate_count] = candidate;
                             candidate_count += 1;
                         } else {
-                            // Replace oldest candidate if this one is newer
                             var oldest_idx2: usize = 0;
                             var oldest_ts2 = @as(u64, @truncate(candidates[0].latest_id));
                             var idx2: usize = 1;
@@ -5183,10 +5538,8 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                                 candidates[oldest_idx2] = candidate;
                             }
                         }
-
-                        // Record tiering access for promotion tracking
-                        _ = tm.recordAccess(cold_entity.entity_id, self.commit_timestamp) catch {};
-                    }
+                    },
+                    else => {},
                 }
             }
 
@@ -5239,7 +5592,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
             // Write QueryResponse header (serialize phase)
             const start_serialize = end_execute;
             const header = mem.bytesAsValue(QueryResponse, output[0..@sizeOf(QueryResponse)]);
-            const has_more = matching_count > candidate_count;
+            const has_more = matching_count > candidate_count or self.latest_prefetch_has_more;
             if (has_more) {
                 header.* = QueryResponse.with_more(@intCast(result_count));
             } else {
@@ -6716,6 +7069,37 @@ test "execute_archerdb_ping: returns pong" {
     try std.testing.expectEqualSlices(u8, "pong", output[0..4]);
 }
 
+test "get_topology builds real addresses from configured members" {
+    const TestStorage = @import("testing/storage.zig").Storage;
+    const GeoStateMachine = GeoStateMachineType(TestStorage);
+
+    const member_addresses = [_]std.net.Address{
+        try std.net.Address.parseIp4("127.0.0.1", 3401),
+        try std.net.Address.parseIp4("127.0.0.1", 3402),
+        try std.net.Address.parseIp4("127.0.0.1", 3403),
+    };
+
+    var wire_addresses: [member_addresses.len]topology_mod.Address = undefined;
+    for (member_addresses, 0..) |address, index| {
+        wire_addresses[index] = GeoStateMachine.formatTopologyAddress(address);
+    }
+
+    const response = GeoStateMachine.buildTopologyResponseCompact(
+        &wire_addresses,
+        0x1234,
+        1,
+        3,
+    );
+
+    try std.testing.expectEqual(@as(u64, 2), response.version);
+    try std.testing.expectEqual(@as(u32, 1), response.num_shards);
+    try std.testing.expectEqual(@as(u128, 0x1234), response.cluster_id);
+    try std.testing.expectEqualStrings("127.0.0.1:3402", response.shards[0].getPrimary());
+    try std.testing.expectEqual(@as(u8, 2), response.shards[0].replica_count);
+    try std.testing.expectEqualStrings("127.0.0.1:3401", response.shards[0].getReplica(0).?);
+    try std.testing.expectEqualStrings("127.0.0.1:3403", response.shards[0].getReplica(1).?);
+}
+
 test "InsertGeoEventResult: all result codes valid" {
     // Verify all result codes are sequential starting from 0
     const values = std.enums.values(InsertGeoEventResult);
@@ -6945,6 +7329,141 @@ test "QueryResponse: has_more flag indicates more results available" {
 test "QueryResponse: struct size is exactly 16 bytes" {
     // Per spec: QueryResponse is 16 bytes for proper alignment before GeoEvent array
     try std.testing.expectEqual(@as(usize, 16), @sizeOf(QueryResponse));
+}
+
+test "query_latest: includes cold-tier entities after demotion" {
+    const allocator = std.testing.allocator;
+    const fixtures = @import("testing/fixtures.zig");
+    const TestStorage = @import("testing/storage.zig").Storage;
+    const GeoStateMachine = GeoStateMachineType(TestStorage);
+
+    var storage = try fixtures.init_storage(allocator, .{
+        .size = vsr.superblock.data_file_size_min,
+    });
+    defer storage.deinit(allocator);
+
+    try fixtures.storage_format(allocator, &storage, .{});
+
+    var superblock = try fixtures.init_superblock(allocator, &storage, .{});
+    defer superblock.deinit(allocator);
+    fixtures.open_superblock(&superblock);
+
+    var time_sim = fixtures.init_time(.{});
+    var tracer = try fixtures.init_tracer(allocator, time_sim.time(), .{});
+    defer tracer.deinit(allocator);
+
+    var grid = try fixtures.init_grid(allocator, &tracer, &superblock, .{});
+    defer grid.deinit(allocator);
+    fixtures.open_grid(&grid);
+
+    var machine: GeoStateMachine = undefined;
+    try machine.init(
+        allocator,
+        time_sim.time(),
+        &grid,
+        .{
+            .batch_size_limit = constants.message_body_size_max,
+            .tiering_enabled = true,
+            .tiering_config = .{
+                .hot_to_warm_timeout_ns = 100 * std.time.ns_per_ms,
+                .warm_to_cold_timeout_ns = 100 * std.time.ns_per_ms,
+            },
+        },
+    );
+    defer machine.deinit(allocator);
+
+    const MachineContext = struct {
+        var pending: bool = false;
+
+        fn callback(_: *GeoStateMachine) void {
+            pending = false;
+        }
+    };
+
+    MachineContext.pending = true;
+    machine.open(MachineContext.callback);
+    for (0..10_000) |_| {
+        storage.run();
+        if (!MachineContext.pending) break;
+    } else @panic("geo state machine open stuck");
+
+    const entity_a: u128 = 0xA1;
+    const entity_b: u128 = 0xB2;
+    const entity_c: u128 = 0xC3;
+
+    const insertEvent = struct {
+        fn make(entity_id: u128, lat: f64, lon: f64) GeoEvent {
+            var event = GeoEvent.zero();
+            event.entity_id = entity_id;
+            event.lat_nano = GeoEvent.lat_from_float(lat);
+            event.lon_nano = GeoEvent.lon_from_float(lon);
+            event.ttl_seconds = 3600;
+            return event;
+        }
+    }.make;
+
+    const commitInsert = struct {
+        fn run(
+            machine_ptr: *GeoStateMachine,
+            op: u64,
+            timestamp: u64,
+            event: GeoEvent,
+        ) void {
+            var output: [constants.message_body_size_max]u8 align(16) = undefined;
+            var events = [_]GeoEvent{event};
+            const body: []align(16) const u8 = @alignCast(mem.sliceAsBytes(events[0..]));
+            _ = machine_ptr.commit(1, op, timestamp, .insert_events, body, output[0..]);
+        }
+    }.run;
+
+    const commitPulse = struct {
+        fn run(machine_ptr: *GeoStateMachine, op: u64, timestamp: u64) void {
+            var output: [constants.message_body_size_max]u8 align(16) = undefined;
+            const empty = [_]u8{} ** 0;
+            _ = machine_ptr.commit(0, op, timestamp, .pulse, empty[0..], output[0..]);
+        }
+    }.run;
+
+    commitInsert(&machine, 1, 1_000_000_000, insertEvent(entity_a, 37.7749, -122.4194));
+    commitInsert(&machine, 2, 2_000_000_000, insertEvent(entity_b, 40.7128, -74.0060));
+
+    commitPulse(&machine, 3, 3_000_000_000);
+    commitPulse(&machine, 4, 4_000_000_000);
+
+    try std.testing.expect(machine.ram_index.lookup(entity_a).entry == null);
+    try std.testing.expect(machine.ram_index.lookup(entity_b).entry == null);
+
+    commitInsert(&machine, 5, 5_000_000_000, insertEvent(entity_c, 34.0522, -118.2437));
+    try std.testing.expect(machine.ram_index.lookup(entity_c).entry != null);
+
+    var filter_storage: [1]QueryLatestFilter align(16) = .{.{
+        .limit = 2,
+        .group_id = 0,
+        .cursor_timestamp = 0,
+    }};
+    const filter_body: []align(16) const u8 = @alignCast(mem.sliceAsBytes(filter_storage[0..]));
+
+    MachineContext.pending = true;
+    machine.prefetch(MachineContext.callback, 6, .query_latest, filter_body);
+    for (0..10_000) |_| {
+        storage.run();
+        if (!MachineContext.pending) break;
+    } else @panic("query_latest prefetch stuck");
+
+    var output: [constants.message_body_size_max]u8 align(16) = undefined;
+    const written = machine.commit(1, 6, 6_000_000_000, .query_latest, filter_body, output[0..]);
+    try std.testing.expect(written >= @sizeOf(QueryResponse));
+
+    const header = mem.bytesAsValue(QueryResponse, output[0..@sizeOf(QueryResponse)]).*;
+    try std.testing.expectEqual(@as(u32, 2), header.count);
+    try std.testing.expectEqual(@as(u8, 1), header.has_more);
+
+    const results = mem.bytesAsSlice(
+        GeoEvent,
+        output[@sizeOf(QueryResponse) .. @sizeOf(QueryResponse) + header.count * @sizeOf(GeoEvent)],
+    );
+    try std.testing.expectEqual(entity_c, results[0].entity_id);
+    try std.testing.expectEqual(entity_b, results[1].entity_id);
 }
 
 // ============================================================================

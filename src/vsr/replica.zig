@@ -85,6 +85,8 @@ pub const ReplicaEvent = union(enum) {
     compaction_completed,
     /// Called immediately before a checkpoint.
     checkpoint_commenced,
+    /// Called when the current checkpoint becomes durable on the replica.
+    checkpoint_durable,
     /// Called immediately after a checkpoint.
     /// Note: The replica may checkpoint without calling this function:
     /// 1. Begin checkpoint.
@@ -1698,6 +1700,8 @@ pub fn ReplicaType(
             assert(self.loopback_queue == null);
             defer self.invariants();
 
+            self.syncMembershipConfigFromRuntime();
+
             if (self.message_bus.resume_needed()) {
                 // See fn suspend_message conditions.
                 assert(self.journal.writes.available() == 0 or
@@ -2158,6 +2162,10 @@ pub fn ReplicaType(
                 @max(self.state_machine.prepare_timestamp, self.state_machine.commit_timestamp) + 1,
                 @as(u64, @intCast(realtime)),
             );
+            // Keep the primary prepare clock ahead of fast-path read timestamps.
+            // Otherwise a concurrent non-fast-path request can be prepared with the
+            // same timestamp and later trip execute_op's monotonicity assertion.
+            self.state_machine.prepare_timestamp = timestamp;
 
             const reply = self.message_bus.get_message(.reply);
             defer self.message_bus.unref(reply);
@@ -5270,6 +5278,7 @@ pub fn ReplicaType(
             assert(self.commit_stage == .checkpoint_durable);
             assert(self.grid.free_set.checkpoint_durable);
             assert(vsr.Checkpoint.durable(self.op_checkpoint(), self.commit_min));
+            if (self.event_callback) |hook| hook(self, .checkpoint_durable);
             self.commit_dispatch_resume();
         }
 
@@ -7383,22 +7392,70 @@ pub fn ReplicaType(
             return self.replica >= self.replica_count;
         }
 
+        fn membershipNodeAddressText(
+            self: *const Replica,
+            node_id: u8,
+            buffer: *[64]u8,
+        ) []const u8 {
+            if (comptime @hasField(MessageBus, "replicas_addresses")) {
+                return std.fmt.bufPrint(
+                    buffer,
+                    "{}",
+                    .{self.message_bus.replicas_addresses[node_id]},
+                ) catch "";
+            }
+            return std.fmt.bufPrint(buffer, "replica-{d}", .{node_id}) catch "";
+        }
+
+        fn membershipNodePort(self: *const Replica, node_id: u8) u16 {
+            return if (@hasField(MessageBus, "replicas_addresses"))
+                self.message_bus.replicas_addresses[node_id].getPort()
+            else 0;
+        }
+
+        fn membershipNodeInfoFromRuntime(self: *const Replica, node_id: u8) membership.NodeInfo {
+            assert(node_id < self.node_count);
+
+            var address_buffer: [64]u8 = undefined;
+            const address_text = self.membershipNodeAddressText(node_id, &address_buffer);
+
+            var node = membership.NodeInfo.init(
+                node_id,
+                address_text,
+                self.membershipNodePort(node_id),
+            );
+            node.status = .healthy;
+            node.role = if (node_id >= self.replica_count)
+                .learner
+            else if (node_id == self.primary_index(self.view))
+                .primary
+            else
+                .follower;
+            return node;
+        }
+
+        fn syncMembershipConfigFromRuntime(self: *Replica) void {
+            if (self.membership_config == null) {
+                self.membership_config = MembershipConfig.init(self.node_count);
+            }
+
+            if (self.membership_config) |*config| {
+                if (config.state == .stable and config.node_count == self.node_count) {
+                    for (0..self.node_count) |index| {
+                        config.nodes[index] = self.membershipNodeInfoFromRuntime(@intCast(index));
+                    }
+                    for (self.node_count..membership.MAX_NODES) |index| {
+                        config.nodes[index] = membership.NodeInfo.init(0, "", 0);
+                    }
+                }
+                config.publishMetrics();
+            }
+        }
+
         /// Initialize membership configuration from current replica state.
         /// Called during startup to sync membership with static configuration.
         pub fn initMembershipConfig(self: *Replica) void {
-            if (self.membership_config != null) return;
-
-            var config = MembershipConfig.init(self.replica_count);
-            // Initialize nodes from current configuration
-            for (0..self.replica_count) |i| {
-                config.nodes[i] = membership.NodeInfo.init(
-                    @intCast(i),
-                    "", // Address populated from message bus
-                    0, // Port populated from message bus
-                );
-                config.nodes[i].status = .healthy;
-            }
-            self.membership_config = config;
+            self.syncMembershipConfigFromRuntime();
         }
 
         /// Check if the cluster has quorum for replication, considering joint consensus.

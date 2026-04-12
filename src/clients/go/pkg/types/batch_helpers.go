@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 package types
 
 // SplitGeoEventBatch splits a slice of GeoEvent into smaller chunks for retry scenarios.

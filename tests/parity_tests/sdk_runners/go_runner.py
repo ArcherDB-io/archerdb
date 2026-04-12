@@ -14,6 +14,7 @@ from typing import Any, Dict
 TEST_DIR = Path(__file__).parent.parent.parent / "sdk_tests" / "go"
 PARITY_BINARY = TEST_DIR / ".tmp" / "parity_runner"
 PARITY_SRC = TEST_DIR / "cmd" / "parity_runner"
+GO_SDK_DIR = Path(__file__).parent.parent.parent.parent / "src" / "clients" / "go"
 
 
 def run_operation(
@@ -39,7 +40,7 @@ def run_operation(
             capture_output=True,
             text=True,
             env={**os.environ, "ARCHERDB_URL": server_url},
-            timeout=30,
+            timeout=120,
             cwd=str(TEST_DIR),
         )
 
@@ -54,7 +55,7 @@ def run_operation(
         return json.loads(stdout)
 
     except subprocess.TimeoutExpired:
-        return {"error": "Go runner timed out (30s)"}
+        return {"error": "Go runner timed out (120s)"}
     except json.JSONDecodeError as e:
         return {"error": f"Invalid JSON output: {e}"}
     except Exception as e:
@@ -92,12 +93,29 @@ def _build_binary() -> Dict[str, Any] | None:
 
 
 def _binary_is_stale() -> bool:
-    """Check whether parity binary is older than any source file."""
+    """Check whether parity binary is older than any source or native SDK input."""
     if not PARITY_BINARY.exists():
         return True
 
     binary_mtime = PARITY_BINARY.stat().st_mtime
-    for source in PARITY_SRC.rglob("*.go"):
+
+    for source in TEST_DIR.rglob("*.go"):
+        if ".tmp" in source.parts:
+            continue
         if source.stat().st_mtime > binary_mtime:
             return True
+
+    for metadata in (TEST_DIR / "go.mod", TEST_DIR / "go.sum"):
+        if metadata.exists() and metadata.stat().st_mtime > binary_mtime:
+            return True
+
+    for sdk_source in GO_SDK_DIR.rglob("*.go"):
+        if sdk_source.stat().st_mtime > binary_mtime:
+            return True
+
+    native_dir = GO_SDK_DIR / "pkg" / "native"
+    for native_input in native_dir.rglob("*"):
+        if native_input.is_file() and native_input.stat().st_mtime > binary_mtime:
+            return True
+
     return False

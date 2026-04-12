@@ -1,20 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 ArcherDB Contributors
 
-"""Mixed workload for interleaved read/write operations.
-
-Combines reads and writes in configurable ratios to simulate realistic
-production workloads (e.g., 80% reads, 20% writes).
-"""
+"""Mixed workload for interleaved read/write operations."""
 
 import random
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
-
-import requests
+from typing import List, Optional, Sequence
 
 from ..executor import Sample
+from ..sdk_adapter import batch_to_geo_events, build_client, normalize_addresses
 from ...generators.data_generator import DatasetConfig, generate_events
 
 
@@ -57,12 +52,15 @@ class MixedWorkload:
 
     def __init__(
         self,
-        host: str,
-        port: int,
+        host: Optional[str],
+        port: Optional[int],
         data_config: DatasetConfig,
         read_ratio: float = 0.8,
         timeout: float = 30.0,
         seed: Optional[int] = None,
+        *,
+        addresses: Optional[Sequence[str]] = None,
+        cluster_id: int = 0,
     ) -> None:
         """Initialize mixed workload.
 
@@ -73,29 +71,30 @@ class MixedWorkload:
             read_ratio: Fraction of reads (0.8 = 80% reads, 20% writes).
             timeout: HTTP request timeout in seconds.
             seed: Random seed for operation selection (None = random).
+            addresses: Optional list of ArcherDB replica addresses.
+            cluster_id: ArcherDB cluster identifier.
         """
         if not 0.0 <= read_ratio <= 1.0:
             raise ValueError(f"read_ratio must be 0.0-1.0, got {read_ratio}")
 
-        self.host = host
-        self.port = port
+        self.cluster_id = cluster_id
         self.data_config = data_config
         self.read_ratio = read_ratio
         self.timeout = timeout
 
-        self._base_url = f"http://{host}:{port}"
+        self._addresses = normalize_addresses(addresses=addresses, host=host, port=port)
         self._rng = random.Random(seed)
 
         # Pre-generated data
-        self._read_entity_ids: List[str] = []
-        self._write_events: List[Dict[str, Any]] = []
+        self._read_entity_ids: List[int] = []
+        self._write_events: List[object] = []
         self._write_index = 0
 
         # Sample tracking for separate read/write metrics
         self._read_samples: List[MixedSample] = []
         self._write_samples: List[MixedSample] = []
 
-        self._session: Optional[requests.Session] = None
+        self._client = None
 
     def setup(self) -> None:
         """Pre-insert initial data for reads and generate events for writes.
@@ -112,8 +111,8 @@ class MixedWorkload:
             cities=self.data_config.cities,
             hotspots=self.data_config.hotspots,
         )
-        initial_events = generate_events(initial_config)
-        self._read_entity_ids = [e["entity_id"] for e in initial_events]
+        initial_events = batch_to_geo_events(generate_events(initial_config))
+        self._read_entity_ids = [event.entity_id for event in initial_events]
 
         # Generate events for writes (50% of data_size)
         write_seed = (self.data_config.seed + 1) if self.data_config.seed else None
@@ -124,21 +123,20 @@ class MixedWorkload:
             cities=self.data_config.cities,
             hotspots=self.data_config.hotspots,
         )
-        self._write_events = generate_events(write_config)
+        self._write_events = batch_to_geo_events(generate_events(write_config))
         self._write_index = 0
 
-        # Create session
-        self._session = requests.Session()
+        self._client = build_client(
+            cluster_id=self.cluster_id,
+            addresses=self._addresses,
+            timeout=self.timeout,
+        )
 
         # Pre-insert initial events for reads
         if initial_events:
             try:
-                self._session.post(
-                    f"{self._base_url}/insert",
-                    json=initial_events,
-                    timeout=self.timeout * 2,  # Longer timeout for bulk insert
-                )
-            except requests.RequestException:
+                _ = self._client.insert_events(initial_events)
+            except Exception:
                 pass  # Continue even if initial insert fails
 
         # Clear sample tracking
@@ -154,8 +152,12 @@ class MixedWorkload:
         if not self._read_entity_ids and not self._write_events:
             raise RuntimeError("Workload not setup. Call setup() first.")
 
-        if self._session is None:
-            self._session = requests.Session()
+        if self._client is None:
+            self._client = build_client(
+                cluster_id=self.cluster_id,
+                addresses=self._addresses,
+                timeout=self.timeout,
+            )
 
         # Decide operation type based on read_ratio
         is_read = self._rng.random() < self.read_ratio
@@ -190,12 +192,8 @@ class MixedWorkload:
 
         start_ns = time.perf_counter_ns()
         try:
-            response = self._session.get(
-                f"{self._base_url}/query/uuid/{entity_id}",
-                timeout=self.timeout,
-            )
-            success = response.status_code in (200, 404)
-        except requests.RequestException:
+            success = self._client.get_latest_by_uuid(entity_id) is not None
+        except Exception:
             success = False
         end_ns = time.perf_counter_ns()
 
@@ -212,17 +210,13 @@ class MixedWorkload:
         self._write_index += 1
 
         # Add written entity to read pool for future reads
-        self._read_entity_ids.append(event["entity_id"])
+        self._read_entity_ids.append(event.entity_id)
 
         start_ns = time.perf_counter_ns()
         try:
-            response = self._session.post(
-                f"{self._base_url}/insert",
-                json=[event],
-                timeout=self.timeout,
-            )
-            success = response.status_code == 200
-        except requests.RequestException:
+            errors = self._client.insert_events([event])
+            success = len(errors) == 0
+        except Exception:
             success = False
         end_ns = time.perf_counter_ns()
 
@@ -251,9 +245,9 @@ class MixedWorkload:
 
     def cleanup(self) -> None:
         """Clean up resources."""
-        if self._session:
-            self._session.close()
-            self._session = None
+        if self._client:
+            self._client.close()
+            self._client = None
         self._read_entity_ids.clear()
         self._write_events.clear()
         self._read_samples.clear()

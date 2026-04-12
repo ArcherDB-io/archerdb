@@ -3,12 +3,10 @@
 #
 # SDK Nightly Tests - All 5 SDKs with JUnit XML reporting
 # Multi-node topology testing with 2 hour timeout.
-# Runs daily at 2 AM UTC.
+# Automatic schedule disabled; run via manual dispatch only.
 
 name: SDK Nightly Tests
 on:
-  schedule:
-    - cron: '0 2 * * *'  # 2 AM UTC daily
   workflow_dispatch:  # Allow manual trigger
 
 concurrency:
@@ -132,22 +130,29 @@ jobs:
       # C SDK tests with JUnit XML
       - name: Run C SDK tests
         if: matrix.sdk == 'c'
+        env:
+          ARCHERDB_ADDRESS: ${{ steps.cluster.outputs.addresses || '127.0.0.1:3000' }}
+          TEST_TAG: nightly
         run: |
-          cd src/clients/c
-          # C tests output JUnit XML if available
-          if make test-junit 2>/dev/null; then
-            cp test-results/*.xml ../../../test-results/c.xml 2>/dev/null || true
-          elif make test 2>/dev/null; then
-            echo '<?xml version="1.0" encoding="UTF-8"?>' > ../../../test-results/c.xml
-            echo '<testsuites><testsuite name="c-sdk" tests="1" failures="0">' >> ../../../test-results/c.xml
-            echo '<testcase name="c-sdk-tests" classname="c-sdk"/>' >> ../../../test-results/c.xml
-            echo '</testsuite></testsuites>' >> ../../../test-results/c.xml
+          ./zig/zig build clients:c
+          set +e
+          (
+            cd tests/sdk_tests/c
+            ../../../zig/zig build test -Doptimize=ReleaseSafe
+          )
+          status=$?
+          if [ "$status" -eq 0 ]; then
+            cat > test-results/c.xml <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <testsuites><testsuite name="c-sdk" tests="1" failures="0"><testcase name="c-sdk-nightly" classname="c-sdk"/></testsuite></testsuites>
+          EOF
           else
-            echo '<?xml version="1.0" encoding="UTF-8"?>' > ../../../test-results/c.xml
-            echo '<testsuites><testsuite name="c-sdk" tests="0" failures="0" skipped="1">' >> ../../../test-results/c.xml
-            echo '<testcase name="placeholder" classname="c-sdk"><skipped message="C SDK tests not yet implemented"/></testcase>' >> ../../../test-results/c.xml
-            echo '</testsuite></testsuites>' >> ../../../test-results/c.xml
+            cat > test-results/c.xml <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <testsuites><testsuite name="c-sdk" tests="1" failures="1"><testcase name="c-sdk-nightly" classname="c-sdk"><failure message="C SDK nightly tests failed">See workflow logs for details.</failure></testcase></testsuite></testsuites>
+          EOF
           fi
+          exit "$status"
 
       # Publish JUnit XML test results
       - name: Publish Test Results

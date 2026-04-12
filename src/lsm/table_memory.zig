@@ -317,6 +317,7 @@ pub fn TableMemoryType(comptime Table: type) type {
             },
         ) !void {
             assert(options.value_count_limit <= Table.value_count_max);
+            assert(options.value_count_limit > 0);
             assert(radix_buffer.state == .free);
 
             table.* = .{
@@ -333,9 +334,9 @@ pub fn TableMemoryType(comptime Table: type) type {
                 .values = undefined,
             };
 
-            // TODO This would ideally be value_count_limit, but needs to be value_count_max to
-            // ensure that memory table coalescing is deterministic even if the batch limit changes.
-            table.values = try allocator.alloc(Value, Table.value_count_max);
+            // Size memory tables to the active runtime batch limit rather than the compile-time
+            // ceiling so low-footprint modes can start without reserving production-scale buffers.
+            table.values = try allocator.alloc(Value, options.value_count_limit);
             errdefer allocator.free(table.values);
         }
 

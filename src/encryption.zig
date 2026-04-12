@@ -28,6 +28,13 @@ const Aegis256 = crypto.aead.aegis.Aegis256;
 
 const log = std.log.scoped(.encryption);
 
+fn openPath(path: []const u8, flags: std.fs.File.OpenFlags) !std.fs.File {
+    return if (std.fs.path.isAbsolute(path))
+        std.fs.openFileAbsolute(path, flags)
+    else
+        std.fs.cwd().openFile(path, flags);
+}
+
 /// Magic bytes identifying an encrypted ArcherDB file
 pub const ENCRYPTED_FILE_MAGIC: [4]u8 = .{ 'A', 'R', 'C', 'E' };
 
@@ -335,7 +342,7 @@ pub const FileKeyProvider = struct {
 
     /// Load key from file
     pub fn loadKey(self: *FileKeyProvider) !void {
-        const file = std.fs.cwd().openFile(self.key_path, .{}) catch {
+        const file = openPath(self.key_path, .{}) catch {
             return error.KeyUnavailable;
         };
         defer file.close();
@@ -1648,7 +1655,7 @@ pub const EncryptedFileReader = struct {
         path: []const u8,
         key_provider: KeyProvider,
     ) !EncryptedFileReader {
-        const file = try std.fs.cwd().openFile(path, .{});
+        const file = try openPath(path, .{});
         errdefer file.close();
 
         // Read and validate header
@@ -1784,7 +1791,7 @@ pub const EncryptionConfig = struct {
 
 /// Check if file is encrypted (has ARCE magic)
 pub fn isEncryptedFile(path: []const u8) bool {
-    const file = std.fs.cwd().openFile(path, .{}) catch return false;
+    const file = openPath(path, .{}) catch return false;
     defer file.close();
 
     var magic: [4]u8 = undefined;

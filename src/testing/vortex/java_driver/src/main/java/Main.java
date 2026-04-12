@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 import com.archerdb.geo.GeoClient;
 import com.archerdb.geo.GeoEvent;
 import com.archerdb.geo.InsertGeoEventsError;

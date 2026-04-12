@@ -21,6 +21,7 @@ const Cluster = @import("../testing/cluster.zig").ClusterType(StateMachineType);
 const Release = @import("../testing/cluster.zig").Release;
 const LinkFilter = @import("../testing/cluster/network.zig").LinkFilter;
 const Network = @import("../testing/cluster/network.zig").Network;
+const membership = @import("membership.zig");
 const Ratio = stdx.PRNG.Ratio;
 
 const slot_count = constants.journal_slot_count;
@@ -59,10 +60,15 @@ const releases = [_]Release{
 // TODO Detect when cluster has stabilized and stop run() early, rather than just running for a
 //      fixed number of ticks.
 
+// The tests are written for these configuration values in particular.
+// On lite, the runtime uses reduced journal/compaction settings, so skip.
+const skip_on_lite = constants.journal_slot_count != 1024 or constants.lsm_compaction_ops != 128;
+
 comptime {
-    // The tests are written for these configuration values in particular.
-    assert(constants.journal_slot_count == 1024);
-    assert(constants.lsm_compaction_ops == 128);
+    if (!skip_on_lite) {
+        assert(constants.journal_slot_count == 1024);
+        assert(constants.lsm_compaction_ops == 128);
+    }
 }
 
 test "Cluster: smoke" {
@@ -203,6 +209,44 @@ test "Cluster: recovery: WAL torn prepare, standby with intact prepare (R=1 S=1)
     try c.request(3, 3);
     try expectEqual(t.replica(.R0).commit(), 3);
     try expectEqual(t.replica(.S0).commit(), 3);
+}
+
+test "Replica: membership config reflects runtime addresses and standby learners" {
+    const t = try TestContext.init(.{
+        .replica_count = 3,
+        .standby_count = 1,
+    });
+    defer t.deinit();
+
+    var replica = &t.cluster.replicas[0];
+    replica.initMembershipConfig();
+
+    const config = replica.membership_config.?;
+    try expectEqual(@as(u8, 4), config.node_count);
+    try expectEqual(membership.MembershipState.stable, config.state);
+    try expectEqual(
+        membership.NodeRole.primary,
+        config.nodes[replica.primary_index(replica.view)].role,
+    );
+    try expectEqual(membership.NodeRole.learner, config.nodes[3].role);
+
+    for (0..config.node_count) |i| {
+        var address_buffer: [64]u8 = undefined;
+        const expected_address = if (comptime @hasField(@TypeOf(replica.message_bus), "replicas_addresses"))
+            std.fmt.bufPrint(
+                &address_buffer,
+                "{}",
+                .{replica.message_bus.replicas_addresses[i]},
+            ) catch unreachable
+        else
+            std.fmt.bufPrint(&address_buffer, "replica-{d}", .{i}) catch unreachable;
+        try std.testing.expectEqualStrings(expected_address, config.nodes[i].getAddress());
+        if (comptime @hasField(@TypeOf(replica.message_bus), "replicas_addresses")) {
+            try expectEqual(replica.message_bus.replicas_addresses[i].getPort(), config.nodes[i].port);
+        } else {
+            try expectEqual(@as(u16, 0), config.nodes[i].port);
+        }
+    }
 }
 
 test "Cluster: recovery: grid corruption (disjoint)" {

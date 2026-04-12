@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 /**
  * @file arch_client_errors.h
  * @brief ArcherDB C Client Error Helpers

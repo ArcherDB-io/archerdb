@@ -9,10 +9,11 @@ manages cluster lifecycle, and collects comprehensive results.
 
 import json
 import os
+import socket
 import time
 from contextlib import contextmanager
 from dataclasses import asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Generator, List, Optional
 
@@ -20,6 +21,7 @@ from .config import BenchmarkConfig
 from .executor import BenchmarkExecutor, BenchmarkResult, Sample
 from .histogram import LatencyHistogram
 from .reporter import BenchmarkReporter
+from .sdk_adapter import batch_to_geo_events, build_client
 from .stats import confidence_interval, coefficient_of_variation, summarize
 from .workloads.throughput import ThroughputWorkload
 from .workloads.latency_read import LatencyReadWorkload
@@ -74,11 +76,51 @@ class BenchmarkOrchestrator:
         Path(output_dir).mkdir(parents=True, exist_ok=True)
         Path(history_dir).mkdir(parents=True, exist_ok=True)
 
+    @staticmethod
+    def _utc_now_iso() -> str:
+        return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+    @staticmethod
+    def _cluster_profile_for_topology(
+        topology: int,
+        cache_grid: Optional[str],
+    ) -> Dict[str, Any]:
+        """Choose a machine-fit benchmark cluster profile.
+
+        Benchmarks run all replicas on one machine. Larger topologies need a
+        tighter per-node memory profile to avoid startup stalls or OOM kills.
+        """
+        if topology == 6:
+            return {
+                "cache_grid": cache_grid or "64MiB",
+                "ram_index_size": "2MiB",
+                "memory_lsm_manifest": "8MiB",
+                "startup_timeout": max(240.0, 60.0 * topology),
+                "primary_head_start_timeout": 180.0,
+            }
+
+        if topology >= 5:
+            return {
+                "cache_grid": cache_grid or "64MiB",
+                "ram_index_size": "4MiB",
+                "memory_lsm_manifest": "16MiB",
+                "startup_timeout": max(180.0, 40.0 * topology),
+                "primary_head_start_timeout": 120.0,
+            }
+
+        return {
+            "cache_grid": cache_grid or "512MiB",
+            "ram_index_size": "8MiB",
+            "memory_lsm_manifest": "64MiB",
+            "startup_timeout": max(60.0, 30.0 * topology),
+            "primary_head_start_timeout": 0.0,
+        }
+
     @contextmanager
     def _isolated_cluster(
         self,
         topology: int,
-        cache_grid: str = "512MiB",
+        cache_grid: Optional[str] = None,
     ) -> Generator[ArcherDBCluster, None, None]:
         """Context manager for isolated cluster lifecycle.
 
@@ -92,21 +134,37 @@ class BenchmarkOrchestrator:
         Yields:
             Ready ArcherDBCluster instance.
         """
+        profile = self._cluster_profile_for_topology(topology, cache_grid)
+
         config = ClusterConfig(
             node_count=topology,
-            cache_grid=cache_grid,
+            replica_count=5 if topology == 6 else topology,
+            cache_grid=profile["cache_grid"],
+            ram_index_size=profile["ram_index_size"],
+            memory_lsm_manifest=profile["memory_lsm_manifest"],
+            startup_timeout=profile["startup_timeout"],
+            primary_head_start_timeout=profile["primary_head_start_timeout"],
         )
 
         cluster = ArcherDBCluster(config)
         try:
             cluster.start()
-            cluster.wait_for_ready()
+            # Benchmarks only require a routable data plane. Larger local
+            # topologies can accept SDK traffic before every replica's
+            # /health/ready probe turns green.
+            leader_port = cluster.wait_for_leader(timeout=config.startup_timeout)
+            if leader_port is None:
+                logs = cluster.get_recent_logs()
+                raise RuntimeError(
+                    "Timed out waiting for benchmark cluster leader "
+                    f"({topology} nodes, timeout={config.startup_timeout:.0f}s)\n{logs}"
+                )
             yield cluster
         finally:
             cluster.stop()
 
     def _get_leader_port(self, cluster: ArcherDBCluster) -> int:
-        """Get the leader port for write operations.
+        """Get a healthy replica port for write operations.
 
         Args:
             cluster: Running cluster.
@@ -121,6 +179,64 @@ class BenchmarkOrchestrator:
         if leader_port is None:
             raise RuntimeError("Failed to find cluster leader")
         return leader_port
+
+    def _get_cluster_addresses(self, cluster: ArcherDBCluster) -> List[str]:
+        """Get benchmark client endpoints.
+
+        Order the current leader first, then the remaining voting replicas.
+        This keeps the warm path pointed at the primary while still giving the
+        SDK enough endpoints to recover if the current leader dies during a
+        stressed local benchmark run. Standbys are excluded because they do not
+        need direct client traffic for benchmark measurement.
+        """
+        leader_port = self._get_leader_port(cluster)
+        replica_count = cluster.config.replica_count or cluster.config.node_count
+        voter_ports = cluster._ports[:replica_count]
+        ordered_ports = [leader_port] + [port for port in voter_ports if port != leader_port]
+        return [f"127.0.0.1:{port}" for port in ordered_ports]
+
+    def _wait_for_data_plane_ready(
+        self,
+        cluster: ArcherDBCluster,
+        timeout: float = 30.0,
+    ) -> None:
+        """Wait until the benchmark SDK surface is actually usable.
+
+        Leader metrics can be stale during large-cluster convergence, so probing
+        only the reported primary can spin on the wrong node. For benchmark
+        bring-up, a live data-plane listener is the least flaky readiness gate:
+        the first real benchmark operation will exercise the supported SDK
+        surface with retries, while native ping requests have proven to time out
+        spuriously on larger shared-machine local clusters.
+        """
+        effective_timeout = max(timeout, cluster.config.startup_timeout)
+        deadline = time.time() + effective_timeout
+        addresses = self._get_cluster_addresses(cluster)
+        while time.time() < deadline:
+            for address in addresses:
+                host, port_text = address.rsplit(":", 1)
+                try:
+                    with socket.create_connection((host, int(port_text)), timeout=0.5):
+                        return
+                except OSError:
+                    continue
+
+            time.sleep(0.25)
+
+        logs = cluster.get_recent_logs()
+        raise RuntimeError(
+            "Timed out waiting for benchmark data plane readiness "
+            f"({cluster.config.node_count} nodes, timeout={effective_timeout:.0f}s)\n{logs}"
+        )
+
+    @staticmethod
+    def _require_success(result: BenchmarkResult, benchmark_name: str) -> None:
+        """Reject benchmark runs that measured failed operations."""
+        failures = sum(1 for sample in result.samples if not sample.success)
+        if failures:
+            raise RuntimeError(
+                f"{benchmark_name} recorded {failures}/{len(result.samples)} failed operations"
+            )
 
     def _calculate_percentiles(
         self,
@@ -162,7 +278,8 @@ class BenchmarkOrchestrator:
             Result dict with throughput, percentiles, configuration.
         """
         with self._isolated_cluster(topology) as cluster:
-            leader_port = self._get_leader_port(cluster)
+            self._wait_for_data_plane_ready(cluster)
+            addresses = self._get_cluster_addresses(cluster)
 
             # Create workload
             data_config = DatasetConfig(
@@ -171,10 +288,12 @@ class BenchmarkOrchestrator:
                 seed=config.seed,
             )
             workload = ThroughputWorkload(
-                host="127.0.0.1",
-                port=leader_port,
+                host=None,
+                port=None,
                 data_config=data_config,
                 batch_size=1000,
+                addresses=addresses,
+                cluster_id=cluster.config.cluster_id,
             )
             workload.setup()
 
@@ -188,6 +307,7 @@ class BenchmarkOrchestrator:
                 # Run measurement
                 result = executor.run(workload.execute_one)
                 result.warmup_stable = stable
+                self._require_success(result, "throughput")
 
                 # Calculate metrics
                 duration_sec = result.duration_ns / 1e9
@@ -207,7 +327,7 @@ class BenchmarkOrchestrator:
                     "warmup_stable": result.warmup_stable,
                     **percentiles,
                     "config": asdict(config),
-                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                    "timestamp": self._utc_now_iso(),
                 }
             finally:
                 workload.cleanup()
@@ -229,7 +349,8 @@ class BenchmarkOrchestrator:
             Result dict with percentiles (P50/P95/P99) and configuration.
         """
         with self._isolated_cluster(topology) as cluster:
-            leader_port = self._get_leader_port(cluster)
+            self._wait_for_data_plane_ready(cluster)
+            addresses = self._get_cluster_addresses(cluster)
 
             # Pre-load data for reads
             data_config = DatasetConfig(
@@ -240,25 +361,28 @@ class BenchmarkOrchestrator:
             events = generate_events(data_config)
             entity_ids = [e["entity_id"] for e in events]
 
-            # Bulk insert events
-            import requests
-            session = requests.Session()
+            # Bulk insert events over the supported SDK/client path.
+            preload_client = None
             try:
-                response = session.post(
-                    f"http://127.0.0.1:{leader_port}/insert",
-                    json=events,
-                    timeout=60,
+                preload_client = build_client(
+                    cluster_id=cluster.config.cluster_id,
+                    addresses=addresses,
+                    timeout=60.0,
                 )
-                if response.status_code != 200:
-                    raise RuntimeError(f"Failed to pre-load data: {response.status_code}")
+                errors = preload_client.insert_events(batch_to_geo_events(events))
+                if errors:
+                    raise RuntimeError(f"Failed to pre-load data: {len(errors)} insert errors")
             finally:
-                session.close()
+                if preload_client is not None:
+                    preload_client.close()
 
             # Create workload
             workload = LatencyReadWorkload(
-                host="127.0.0.1",
-                port=leader_port,
+                host=None,
+                port=None,
                 entity_ids=entity_ids,
+                addresses=addresses,
+                cluster_id=cluster.config.cluster_id,
             )
             workload.setup()
 
@@ -272,6 +396,7 @@ class BenchmarkOrchestrator:
                 # Run measurement
                 result = executor.run(workload.execute_one)
                 result.warmup_stable = stable
+                self._require_success(result, "latency_read")
 
                 # Calculate metrics
                 percentiles = self._calculate_percentiles(result.samples)
@@ -291,7 +416,7 @@ class BenchmarkOrchestrator:
                     "ci_low_ms": stats["ci_low"],
                     "ci_high_ms": stats["ci_high"],
                     "config": asdict(config),
-                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                    "timestamp": self._utc_now_iso(),
                 }
             finally:
                 workload.cleanup()
@@ -313,7 +438,8 @@ class BenchmarkOrchestrator:
             Result dict with percentiles (P50/P95/P99) and configuration.
         """
         with self._isolated_cluster(topology) as cluster:
-            leader_port = self._get_leader_port(cluster)
+            self._wait_for_data_plane_ready(cluster)
+            addresses = self._get_cluster_addresses(cluster)
 
             # Create workload
             data_config = DatasetConfig(
@@ -322,9 +448,11 @@ class BenchmarkOrchestrator:
                 seed=config.seed,
             )
             workload = LatencyWriteWorkload(
-                host="127.0.0.1",
-                port=leader_port,
+                host=None,
+                port=None,
                 data_config=data_config,
+                addresses=addresses,
+                cluster_id=cluster.config.cluster_id,
             )
             workload.setup()
 
@@ -338,6 +466,7 @@ class BenchmarkOrchestrator:
                 # Run measurement
                 result = executor.run(workload.execute_one)
                 result.warmup_stable = stable
+                self._require_success(result, "latency_write")
 
                 # Calculate metrics
                 percentiles = self._calculate_percentiles(result.samples)
@@ -357,7 +486,7 @@ class BenchmarkOrchestrator:
                     "ci_low_ms": stats["ci_low"],
                     "ci_high_ms": stats["ci_high"],
                     "config": asdict(config),
-                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                    "timestamp": self._utc_now_iso(),
                 }
             finally:
                 workload.cleanup()
@@ -381,7 +510,8 @@ class BenchmarkOrchestrator:
             Result dict with separate read/write percentiles.
         """
         with self._isolated_cluster(topology) as cluster:
-            leader_port = self._get_leader_port(cluster)
+            self._wait_for_data_plane_ready(cluster)
+            addresses = self._get_cluster_addresses(cluster)
 
             # Create workload
             data_config = DatasetConfig(
@@ -390,10 +520,12 @@ class BenchmarkOrchestrator:
                 seed=config.seed,
             )
             workload = MixedWorkload(
-                host="127.0.0.1",
-                port=leader_port,
+                host=None,
+                port=None,
                 data_config=data_config,
                 read_ratio=config.read_write_ratio,
+                addresses=addresses,
+                cluster_id=cluster.config.cluster_id,
             )
             workload.setup()
 
@@ -407,6 +539,7 @@ class BenchmarkOrchestrator:
                 # Run measurement
                 result = executor.run(workload.execute_one)
                 result.warmup_stable = stable
+                self._require_success(result, "mixed")
 
                 # Get separate read/write samples
                 read_samples = workload.get_read_samples()
@@ -454,7 +587,7 @@ class BenchmarkOrchestrator:
                     **read_metrics,
                     **write_metrics,
                     "config": asdict(config),
-                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                    "timestamp": self._utc_now_iso(),
                 }
             finally:
                 workload.cleanup()
@@ -464,6 +597,7 @@ class BenchmarkOrchestrator:
         topologies: Optional[List[int]] = None,
         include_mixed: bool = True,
         config: Optional[BenchmarkConfig] = None,
+        checkpoint_path: Optional[Path] = None,
     ) -> Dict[str, Any]:
         """Run complete benchmark suite across all topologies.
 
@@ -487,8 +621,15 @@ class BenchmarkOrchestrator:
                 op_count_limit=10_000,
             )
 
+        def checkpoint() -> None:
+            if checkpoint_path is None:
+                return
+            checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(checkpoint_path, "w") as f:
+                json.dump(results, f, indent=2)
+
         results: Dict[str, Any] = {
-            "suite_start": datetime.utcnow().isoformat() + "Z",
+            "suite_start": self._utc_now_iso(),
             "topologies": topologies,
             "include_mixed": include_mixed,
             "benchmarks": {
@@ -524,6 +665,7 @@ class BenchmarkOrchestrator:
                 results["benchmarks"]["throughput"][str(topology)] = throughput_result
             except Exception as e:
                 results["benchmarks"]["throughput"][str(topology)] = {"error": str(e)}
+            checkpoint()
 
             # Run read latency benchmark
             print(f"\n--- Read Latency Benchmark ({topology}-node) ---")
@@ -532,6 +674,7 @@ class BenchmarkOrchestrator:
                 results["benchmarks"]["latency_read"][str(topology)] = read_result
             except Exception as e:
                 results["benchmarks"]["latency_read"][str(topology)] = {"error": str(e)}
+            checkpoint()
 
             # Run write latency benchmark
             print(f"\n--- Write Latency Benchmark ({topology}-node) ---")
@@ -540,6 +683,7 @@ class BenchmarkOrchestrator:
                 results["benchmarks"]["latency_write"][str(topology)] = write_result
             except Exception as e:
                 results["benchmarks"]["latency_write"][str(topology)] = {"error": str(e)}
+            checkpoint()
 
             # Run mixed workload benchmark
             if include_mixed:
@@ -549,11 +693,13 @@ class BenchmarkOrchestrator:
                     results["benchmarks"]["mixed"][str(topology)] = mixed_result
                 except Exception as e:
                     results["benchmarks"]["mixed"][str(topology)] = {"error": str(e)}
+                checkpoint()
 
-        results["suite_end"] = datetime.utcnow().isoformat() + "Z"
+        results["suite_end"] = self._utc_now_iso()
+        checkpoint()
 
         # Save results
-        timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
         output_path = Path(self.output_dir) / f"{timestamp}-full-suite.json"
         with open(output_path, "w") as f:
             json.dump(results, f, indent=2)

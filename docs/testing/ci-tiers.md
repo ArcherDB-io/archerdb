@@ -8,8 +8,8 @@ ArcherDB uses a tiered CI approach to balance fast feedback with comprehensive t
 |------|----------|---------|---------|
 | Smoke | <5 min | Every push | Fast feedback, gate PRs |
 | PR | <15 min | Pull requests | Comprehensive validation |
-| Nightly | 2h | 2 AM UTC daily | Full coverage, edge cases |
-| Weekly | 3h | Sunday 2 AM UTC | Performance regression detection |
+| Nightly | 2h | Manual dispatch | Full coverage, edge cases |
+| Weekly | 3h | Manual dispatch | Performance regression detection and history publication |
 
 ## Tier 1: Smoke Tests
 
@@ -83,7 +83,7 @@ All SDK jobs run in parallel using GitHub Actions matrix strategy.
 
 ## Tier 3: Nightly Tests
 
-**Trigger:** Scheduled cron at 2 AM UTC daily
+**Trigger:** Manual `workflow_dispatch`
 
 **Duration:** ~2 hours
 
@@ -102,10 +102,9 @@ All SDK jobs run in parallel using GitHub Actions matrix strategy.
 - Find rare race conditions
 
 **Failure handling:**
-- Does NOT block merges (already merged)
-- Alerts via Slack/email
-- Creates GitHub issue for failures
-- Tracked in nightly dashboard
+- Does NOT block merges
+- Used for release-candidate and deep validation runs
+- Failures are triaged manually from workflow output and artifacts
 
 **Jobs:**
 
@@ -121,7 +120,7 @@ All SDK jobs run in parallel using GitHub Actions matrix strategy.
 
 ## Tier 4: Weekly Benchmarks
 
-**Trigger:** Scheduled cron Sunday 2 AM UTC
+**Trigger:** Manual `workflow_dispatch`
 
 **Duration:** ~3 hours
 
@@ -140,9 +139,8 @@ All SDK jobs run in parallel using GitHub Actions matrix strategy.
 - Validate scaling behavior
 
 **Failure handling:**
-- Alerts on >10% regression from baseline
-- Creates GitHub issue with comparison
-- Comments on commit that introduced regression
+- Used when maintainers want to refresh published benchmark history
+- Results are reviewed manually before promotion into long-term history
 - Does not block future merges
 
 **Performance Targets:**
@@ -171,7 +169,7 @@ All SDK jobs run in parallel using GitHub Actions matrix strategy.
 | benchmark-6 | 6-node cluster | 55 min |
 | sdk-parity-bench | SDK comparison | 20 min |
 
-Results stored in `benchmarks/history/YYYY-MM-DD.json` and visualized using github-action-benchmark.
+Local benchmark outputs live under `reports/benchmarks/`, `reports/history/`, and `reports/baselines/`. Published history can be promoted into `benchmarks/history/YYYY-MM-DD.json` by the manual benchmark publication workflow.
 
 ## Hardware
 
@@ -219,7 +217,7 @@ python -m test_infrastructure.harness.cli stop
 
 **Weekly (requires cluster setup):**
 ```bash
-python test_infrastructure/benchmarks/cli.py run --full-suite
+python3 test_infrastructure/benchmarks/cli.py run --full-suite
 ```
 
 ## Workflow Files
@@ -228,10 +226,10 @@ CI workflows are defined in `.github/workflows/`:
 
 | File | Tier |
 |------|------|
-| `smoke.yml` | Smoke tests |
-| `pr-full.yml` | PR tests |
-| `nightly.yml` | Nightly tests |
-| `weekly-benchmark.yml` | Weekly benchmarks |
+| `sdk-smoke.yml` | Smoke tests |
+| `sdk-pr.yml` | PR tests |
+| `sdk-nightly.yml` | Nightly tests |
+| `benchmark-weekly.yml` | Benchmark publication |
 
 ## Monitoring
 

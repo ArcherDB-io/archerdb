@@ -60,10 +60,16 @@ Use tier quotas for capacity governance, not performance throttling.
 
 ## Benchmarking
 
-### Quick benchmark
+### Quick local smoke
 
 ```bash
-./scripts/benchmark_lsm.sh --config=standard --scenario=mixed --duration=60
+zig-out/bin/archerdb benchmark --event-count=100000 --query-uuid-count=10000 --query-radius-count=1000 --query-polygon-count=100
+```
+
+### Maintained benchmark harness
+
+```bash
+python3 test_infrastructure/benchmarks/cli.py run --topology 3 --time-limit 60
 ```
 
 ### Capacity test (real run)
@@ -116,4 +122,5 @@ Example summary fields:
 - `src/config.zig`
 - `src/constants.zig`
 - `scripts/test_capacity_limits.py`
-- `scripts/benchmark_lsm.sh`
+- `zig-out/bin/archerdb benchmark`
+- `test_infrastructure/benchmarks/cli.py`

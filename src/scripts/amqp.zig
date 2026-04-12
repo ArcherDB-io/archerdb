@@ -355,7 +355,7 @@ fn run_serialization_test(
     }
 }
 
-const AmqpContext = struct {
+pub const AmqpContext = struct {
     const Message = struct {
         header: amqp.GetMessagePropertiesResult,
         body: ?[]const u8,
@@ -516,9 +516,9 @@ const AmqpContext = struct {
     }
 };
 
-const TmpRabbitMQ = struct {
-    const rabbitmq3 = "rabbitmq:3";
-    const rabbitmq4 = "rabbitmq:4";
+pub const TmpRabbitMQ = struct {
+    pub const rabbitmq3 = "rabbitmq:3";
+    pub const rabbitmq4 = "rabbitmq:4";
 
     id: u128,
     host: std.net.Address,

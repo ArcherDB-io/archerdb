@@ -1,18 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 ArcherDB Contributors
 
-"""Read latency workload for measuring query performance.
-
-Measures read latency by querying entities by UUID and recording response time.
-"""
+"""Read latency workload for measuring query performance."""
 
 import random
 import time
-from typing import List, Optional
-
-import requests
+from typing import Iterable, List, Optional, Sequence
 
 from ..executor import Sample
+from ..sdk_adapter import build_client, normalize_addresses, parse_entity_id
 
 
 class LatencyReadWorkload:
@@ -34,11 +30,14 @@ class LatencyReadWorkload:
 
     def __init__(
         self,
-        host: str,
-        port: int,
-        entity_ids: List[str],
+        host: Optional[str],
+        port: Optional[int],
+        entity_ids: Iterable[str | int],
         timeout: float = 30.0,
         seed: Optional[int] = None,
+        *,
+        addresses: Optional[Sequence[str]] = None,
+        cluster_id: int = 0,
     ) -> None:
         """Initialize read latency workload.
 
@@ -48,15 +47,16 @@ class LatencyReadWorkload:
             entity_ids: List of entity IDs to query (must be pre-inserted).
             timeout: HTTP request timeout in seconds.
             seed: Random seed for entity selection (None = random).
+            addresses: Optional list of ArcherDB replica addresses.
+            cluster_id: ArcherDB cluster identifier.
         """
-        self.host = host
-        self.port = port
-        self.entity_ids = entity_ids
+        self.cluster_id = cluster_id
+        self.entity_ids = [parse_entity_id(entity_id) for entity_id in entity_ids]
         self.timeout = timeout
 
-        self._base_url = f"http://{host}:{port}"
+        self._addresses = normalize_addresses(addresses=addresses, host=host, port=port)
         self._rng = random.Random(seed)
-        self._session: Optional[requests.Session] = None
+        self._client = None
 
     def setup(self) -> None:
         """Prepare workload for execution.
@@ -67,8 +67,11 @@ class LatencyReadWorkload:
         if not self.entity_ids:
             raise ValueError("No entity_ids provided. Load data first.")
 
-        # Create reusable session for connection pooling
-        self._session = requests.Session()
+        self._client = build_client(
+            cluster_id=self.cluster_id,
+            addresses=self._addresses,
+            timeout=self.timeout,
+        )
 
     def execute_one(self) -> Sample:
         """Execute one read query and measure latency.
@@ -81,8 +84,12 @@ class LatencyReadWorkload:
         if not self.entity_ids:
             raise RuntimeError("Workload not setup. Call setup() first.")
 
-        if self._session is None:
-            self._session = requests.Session()
+        if self._client is None:
+            self._client = build_client(
+                cluster_id=self.cluster_id,
+                addresses=self._addresses,
+                timeout=self.timeout,
+            )
 
         # Select random entity
         entity_id = self._rng.choice(self.entity_ids)
@@ -90,13 +97,8 @@ class LatencyReadWorkload:
         # Measure query time
         start_ns = time.perf_counter_ns()
         try:
-            response = self._session.get(
-                f"{self._base_url}/query/uuid/{entity_id}",
-                timeout=self.timeout,
-            )
-            # Success if 200 (found) or 404 (not found but query worked)
-            success = response.status_code in (200, 404)
-        except requests.RequestException:
+            success = self._client.get_latest_by_uuid(entity_id) is not None
+        except Exception:
             success = False
         end_ns = time.perf_counter_ns()
 
@@ -109,6 +111,6 @@ class LatencyReadWorkload:
 
     def cleanup(self) -> None:
         """Clean up resources."""
-        if self._session:
-            self._session.close()
-            self._session = None
+        if self._client:
+            self._client.close()
+            self._client = None

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 package com.archerdb.geo;
 
 import java.util.HashMap;
@@ -8,16 +10,17 @@ import java.util.Map;
  * Multi-region GeoClient implementation with read preference routing.
  *
  * <p>
- * Per client-sdk/spec.md v2 multi-region support:
+ * This implementation is intentionally conservative and non-GA.
  * <ul>
  * <li>Write operations always go to the primary region</li>
- * <li>Read operations are routed based on read preference</li>
- * <li>Follower reads include staleness metadata</li>
+ * <li>{@code PRIMARY} reads go to the primary region</li>
+ * <li>{@code FOLLOWER} reads use deterministic first-follower selection</li>
+ * <li>{@code NEAREST} currently falls back to the primary region</li>
  * </ul>
  *
  * <p>
- * This implementation maintains connections to all configured regions and routes requests based on
- * the configured read preference.
+ * This implementation maintains connections to all configured regions and exposes the multi-region
+ * config surface without claiming latency-aware routing that does not exist yet.
  */
 final class MultiRegionGeoClient implements GeoClient {
 
@@ -296,12 +299,10 @@ final class MultiRegionGeoClient implements GeoClient {
     }
 
     /**
-     * Selects the nearest client based on latency. Currently returns the first available client.
-     * TODO: Implement latency-based selection with health checks.
+     * Intended nearest-region routing. The current implementation is non-GA and falls back to the
+     * primary region until latency-aware selection and health checks land.
      */
     private GeoClientImpl selectNearestClient() {
-        // For skeleton implementation, just return primary
-        // Real implementation would measure latencies
         return primaryClient;
     }
 

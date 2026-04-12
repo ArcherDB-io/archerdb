@@ -1,18 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 ArcherDB Contributors
 
-"""Throughput workload for measuring insert events/sec.
-
-Measures batch insert throughput by sending batches of events via HTTP POST
-and recording latency per batch operation.
-"""
+"""Throughput workload for measuring insert events/sec."""
 
 import time
-from typing import Any, Dict, List, Optional
-
-import requests
+from typing import List, Optional, Sequence
 
 from ..executor import Sample
+from ..sdk_adapter import batch_to_geo_events, build_client, normalize_addresses
 from ...generators.data_generator import DatasetConfig, generate_events
 
 
@@ -35,11 +30,14 @@ class ThroughputWorkload:
 
     def __init__(
         self,
-        host: str,
-        port: int,
+        host: Optional[str],
+        port: Optional[int],
         data_config: DatasetConfig,
         batch_size: int = 1000,
         timeout: float = 30.0,
+        *,
+        addresses: Optional[Sequence[str]] = None,
+        cluster_id: int = 0,
     ) -> None:
         """Initialize throughput workload.
 
@@ -49,17 +47,18 @@ class ThroughputWorkload:
             data_config: Configuration for test data generation.
             batch_size: Number of events per batch insert.
             timeout: HTTP request timeout in seconds.
+            addresses: Optional list of ArcherDB replica addresses.
+            cluster_id: ArcherDB cluster identifier.
         """
-        self.host = host
-        self.port = port
+        self.cluster_id = cluster_id
         self.data_config = data_config
         self.batch_size = batch_size
         self.timeout = timeout
 
-        self._base_url = f"http://{host}:{port}"
-        self._batches: List[List[Dict[str, Any]]] = []
+        self._addresses = normalize_addresses(addresses=addresses, host=host, port=port)
+        self._batches: List[list] = []
         self._batch_index = 0
-        self._session: Optional[requests.Session] = None
+        self._client = None
 
     def setup(self) -> None:
         """Pre-generate events and create batches.
@@ -73,13 +72,16 @@ class ThroughputWorkload:
         # Split into batches
         self._batches = []
         for i in range(0, len(events), self.batch_size):
-            batch = events[i:i + self.batch_size]
+            batch = batch_to_geo_events(events[i:i + self.batch_size])
             self._batches.append(batch)
 
         self._batch_index = 0
 
-        # Create reusable session for connection pooling
-        self._session = requests.Session()
+        self._client = build_client(
+            cluster_id=self.cluster_id,
+            addresses=self._addresses,
+            timeout=self.timeout,
+        )
 
     def execute_one(self) -> Sample:
         """Execute one batch insert and measure latency.
@@ -90,8 +92,12 @@ class ThroughputWorkload:
         if not self._batches:
             raise RuntimeError("Workload not setup. Call setup() first.")
 
-        if self._session is None:
-            self._session = requests.Session()
+        if self._client is None:
+            self._client = build_client(
+                cluster_id=self.cluster_id,
+                addresses=self._addresses,
+                timeout=self.timeout,
+            )
 
         # Get current batch (cycle through batches)
         batch = self._batches[self._batch_index % len(self._batches)]
@@ -100,13 +106,9 @@ class ThroughputWorkload:
         # Measure insert time
         start_ns = time.perf_counter_ns()
         try:
-            response = self._session.post(
-                f"{self._base_url}/insert",
-                json=batch,
-                timeout=self.timeout,
-            )
-            success = response.status_code == 200
-        except requests.RequestException:
+            errors = self._client.insert_events(batch)
+            success = len(errors) == 0
+        except Exception:
             success = False
         end_ns = time.perf_counter_ns()
 
@@ -127,8 +129,8 @@ class ThroughputWorkload:
 
     def cleanup(self) -> None:
         """Clean up resources."""
-        if self._session:
-            self._session.close()
-            self._session = None
+        if self._client:
+            self._client.close()
+            self._client = None
         self._batches.clear()
         self._batch_index = 0

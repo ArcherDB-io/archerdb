@@ -48,33 +48,33 @@
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter-api</artifactId>
-      <version>5.10.1</version>
+      <version>5.14.3</version>
       <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter-engine</artifactId>
-      <version>5.10.1</version>
+      <version>5.14.3</version>
       <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter-params</artifactId>
-      <version>5.10.1</version>
+      <version>5.14.3</version>
       <scope>test</scope>
     </dependency>
     <!-- JUnit 4 legacy support (for existing tests) -->
     <dependency>
       <groupId>junit</groupId>
       <artifactId>junit</artifactId>
-      <version>[4.13.1,)</version>
+      <version>4.13.2</version>
       <scope>test</scope>
     </dependency>
     <!-- Gson for JSON parsing in wire format tests -->
     <dependency>
       <groupId>com.google.code.gson</groupId>
       <artifactId>gson</artifactId>
-      <version>2.10.1</version>
+      <version>2.13.2</version>
       <scope>test</scope>
     </dependency>
   </dependencies>
@@ -352,6 +352,7 @@
         <executions>
             <execution>
                 <id>attach-sources</id>
+                <phase>package</phase>
                 <goals>
                     <goal>jar</goal>
                 </goals>
@@ -366,6 +367,7 @@
         <executions>
           <execution>
             <id>attach-javadocs</id>
+            <phase>package</phase>
             <goals>
               <goal>jar</goal>
             </goals>

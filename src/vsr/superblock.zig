@@ -632,6 +632,48 @@ pub const data_file_size_min =
     constants.client_replies_size +
     vsr.Zone.size(.grid_padding).?;
 
+pub const RestoreInstall = struct {
+    release_format: vsr.Release,
+    cluster: u128,
+    sharding_strategy: u8,
+    vsr_state: SuperBlockHeader.VSRState,
+    view_headers_count: u32,
+    view_headers_all: [constants.view_headers_max]vsr.Header.Prepare,
+};
+
+pub fn writeRestoreSuperblockCopies(
+    file: std.fs.File,
+    install: RestoreInstall,
+) !void {
+    assert(install.view_headers_count <= constants.view_headers_max);
+    install.vsr_state.assert_internally_consistent();
+    assert(install.vsr_state.checkpoint.storage_size >= data_file_size_min);
+
+    var header = std.mem.zeroes(SuperBlockHeader);
+    var view_headers_all = install.view_headers_all;
+    @memset(view_headers_all[@intCast(install.view_headers_count)..], std.mem.zeroes(vsr.Header.Prepare));
+
+    header.version = SuperBlockVersion;
+    header.copy = 0;
+    header.sequence = 1;
+    header.release_format = install.release_format;
+    header.cluster = install.cluster;
+    header.parent = 0;
+    header.vsr_state = install.vsr_state;
+    header.view_headers_count = install.view_headers_count;
+    header.sharding_strategy = install.sharding_strategy;
+    header.view_headers_all = view_headers_all;
+    header.set_checksum();
+
+    const bytes = std.mem.asBytes(&header);
+    for (0..constants.superblock_copies) |copy| {
+        header.copy = @intCast(copy);
+        assert(header.valid_checksum());
+        const offset = superblock_copy_size * @as(u64, @intCast(copy));
+        try file.pwriteAll(bytes, offset);
+    }
+}
+
 /// This table shows the sequence number progression of the SuperBlock's headers.
 ///
 /// action        working  staging  disk
@@ -763,6 +805,7 @@ pub fn SuperBlockType(comptime Storage: type) type {
             replica: u8,
             replica_count: u8,
             sharding_strategy: sharding.ShardingStrategy,
+            development: bool = false,
             /// Set to null during initial cluster formatting.
             /// Set to the target view when constructing a new data file for a reformatted replica.
             view: ?u32,

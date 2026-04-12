@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 // Package observability provides logging, metrics, and health check infrastructure
 // for the ArcherDB Go SDK per client-sdk/spec.md and client-retry/spec.md.
 //

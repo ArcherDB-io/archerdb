@@ -1,6 +1,10 @@
 # Multi-Region Deployment Guide
 
-This guide explains how to deploy ArcherDB in a multi-region configuration with async replication between a primary region and follower regions.
+This document is currently a design/reference guide, not a GA server deployment path.
+
+The current `archerdb start` CLI does not accept server-side multi-region runtime flags. The examples below describe a proposed future runtime shape and should be treated as architecture and planning material only.
+
+This guide explains the intended ArcherDB multi-region configuration with async replication between a primary region and follower regions.
 
 ## Overview
 
@@ -55,18 +59,18 @@ First, deploy a standard 3-replica cluster in your primary region:
 ./archerdb format --cluster=12345 --replica=2 --replica-count=3 /data/archerdb.db  # node 3
 ```
 
-Start the primary cluster with region configuration:
+Future runtime sketch for the primary cluster configuration (not accepted by the current `archerdb start` CLI):
 
-```bash
+```text
 # On all primary region nodes
-./archerdb start \
+archerdb start \
   --addresses=10.0.1.1:3000,10.0.1.2:3000,10.0.1.3:3000 \
   --region-role=primary \
   --follower-regions=10.0.2.1:3001,10.0.3.1:3001 \
   /data/archerdb.db
 ```
 
-**Primary Configuration Options:**
+**Primary Configuration Options (future runtime design):**
 
 | Flag | Description |
 |------|-------------|
@@ -75,21 +79,21 @@ Start the primary cluster with region configuration:
 
 ### Step 2: Deploy Follower Regions
 
-On each follower region, format and start a single-replica follower:
+Future runtime sketch for each follower region (not accepted by the current `archerdb start` CLI):
 
-```bash
+```text
 # Format the follower data file
-./archerdb format --cluster=12345 --replica=0 --replica-count=1 /data/archerdb.db
+archerdb format --cluster=12345 --replica=0 --replica-count=1 /data/archerdb.db
 
 # Start as follower
-./archerdb start \
+archerdb start \
   --addresses=10.0.2.1:3001 \
   --region-role=follower \
   --primary-region=10.0.1.1:3000 \
   /data/archerdb.db
 ```
 
-**Follower Configuration Options:**
+**Follower Configuration Options (future runtime design):**
 
 | Flag | Description |
 |------|-------------|
@@ -119,7 +123,7 @@ Followers:
 
 Best for low-latency inter-region links (<100ms RTT):
 
-```bash
+```text
 --region-role=primary \
 --follower-regions=10.0.2.1:3001,10.0.3.1:3001
 ```
@@ -128,7 +132,7 @@ Best for low-latency inter-region links (<100ms RTT):
 
 For high-latency or unreliable links, use S3 as an intermediate buffer:
 
-```bash
+```text
 # Primary
 --region-role=primary \
 --replication-transport=s3 \

@@ -897,7 +897,7 @@ All errors return a JSON object with error details:
 | 200-299 | State | Check cluster health, retry if transient |
 | 300-399 | Resource | Reduce batch size, check limits |
 | 400-499 | Security | Check external gateway/service authn/authz policy |
-| 500-599 | Internal | Contact support |
+| 500-599 | Internal | Open an issue with logs and reproduction details |
 
 ### Retryable vs Non-Retryable Errors
 

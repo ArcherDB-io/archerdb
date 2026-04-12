@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2025 ArcherDB Contributors
+name: Bug report
+description: Report a correctness, stability, performance, or documentation bug in ArcherDB.
+title: "[bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. Please provide a minimal, reproducible report.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: Exact commands, SDK calls, config, or steps to reproduce.
+      placeholder: |
+        1. Build with ...
+        2. Start node with ...
+        3. Run query ...
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Commit/version, OS, architecture, and relevant runtime details.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and output
+      description: Paste relevant logs, stack traces, metrics, or screenshots.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues first.
+          required: true
+        - label: I can reproduce this on the current `main` branch or a recent release.
+          required: false
+        - label: This is not a private security report.
+          required: true

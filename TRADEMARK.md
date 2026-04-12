@@ -84,16 +84,17 @@ For products that integrate with ArcherDB:
 When using ArcherDB in your project:
 
 1. **Include NOTICE file contents** as required by Apache License 2.0
-2. **Acknowledge ArcherDB** as the upstream project (see NOTICE file)
+2. **Acknowledge TigerBeetle where required** for derivative-work attribution (see NOTICE file)
 3. **Link to the official project** when practical
 
-## ArcherDB Acknowledgment
+## Upstream Acknowledgment
 
-ArcherDB is a derivative work of ArcherDB. When discussing ArcherDB's architecture or heritage:
+ArcherDB incorporates derivative work and implementation ideas from
+TigerBeetle. When discussing ArcherDB's architecture or heritage:
 
-- Acknowledge ArcherDB as the foundation
-- Do not claim ArcherDB features as ArcherDB innovations
-- Reference ArcherDB's documentation for core consensus and storage details
+- Acknowledge TigerBeetle as upstream where attribution is relevant
+- Do not misrepresent upstream VSR/storage work as original ArcherDB work
+- Reference TigerBeetle documentation for upstream consensus and storage details
 
 See the [NOTICE](NOTICE) file for complete attribution requirements.
 

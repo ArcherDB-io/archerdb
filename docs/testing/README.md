@@ -320,8 +320,8 @@ Tests are run automatically in CI with tiered execution:
 
 - **Smoke** (<5 min): Every push, basic connectivity
 - **PR** (<15 min): Pull requests, full SDK suite
-- **Nightly** (2h): Comprehensive multi-node testing
-- **Weekly** (3h): Full benchmark suite
+- **Nightly** (2h): Manual-dispatch comprehensive multi-node testing
+- **Weekly** (3h): Manual-dispatch benchmark publication
 
 See [docs/testing/ci-tiers.md](ci-tiers.md) for tier details.
 

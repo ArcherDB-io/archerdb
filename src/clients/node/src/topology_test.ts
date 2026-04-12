@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 ///////////////////////////////////////////////////////
 // ArcherDB Node.js SDK - Topology Tests              //
 // Smart Client Topology Discovery (F5.1)             //

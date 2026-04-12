@@ -329,9 +329,13 @@ pub const BackupCoordinator = struct {
         };
     }
 
-    /// Execute backup with progress callback.
-    /// This is a placeholder that would integrate with actual backup operations.
-    /// The callback is invoked with (blocks_done, blocks_total, context).
+    /// Execute backup bookkeeping with progress callbacks.
+    ///
+    /// This helper advances the coordinator's incremental state for a
+    /// successful sequential batch and reports progress after each block.
+    /// Production upload implementations can use it as the default synchronous
+    /// path while more advanced async uploaders can drive `recordQueued()` and
+    /// `recordBackedUp()` directly.
     pub fn backupWithProgress(
         self: *BackupCoordinator,
         blocks_to_backup: u64,
@@ -340,10 +344,28 @@ pub const BackupCoordinator = struct {
     ) void {
         self.startBatch(blocks_to_backup);
 
-        // Progress callback invocation point - actual backup logic would go here
-        // and call the callback as blocks are uploaded
         if (callback) |cb| {
             cb(0, blocks_to_backup, context);
+        }
+
+        if (!self.shouldBackup()) {
+            for (0..blocks_to_backup) |_| {
+                self.recordSkipped();
+            }
+            return;
+        }
+
+        const base_timestamp = std.time.timestamp();
+        var sequence = self.incremental.last_backed_up_sequence;
+        var i: u64 = 0;
+        while (i < blocks_to_backup) : (i += 1) {
+            self.recordQueued();
+            sequence += 1;
+            self.recordBackedUp(sequence, base_timestamp + @as(i64, @intCast(i)));
+
+            if (callback) |cb| {
+                cb(self.incremental.current_batch_done, blocks_to_backup, context);
+            }
         }
     }
 
@@ -812,4 +834,55 @@ test "BackupCoordinator: getReplicaRole returns correct role" {
         .initial_view = 0,
     });
     try std.testing.expectEqual(ReplicaRole.follower, coordinator2.getReplicaRole());
+}
+
+test "BackupCoordinator: backupWithProgress updates stats and callbacks" {
+    const CallbackState = struct {
+        calls: u32 = 0,
+        last_done: u64 = 0,
+        last_total: u64 = 0,
+
+        fn onProgress(done: u64, total: u64, context: ?*anyopaque) void {
+            const Self = @This();
+            const state: *Self = @ptrCast(@alignCast(context.?));
+            state.calls += 1;
+            state.last_done = done;
+            state.last_total = total;
+        }
+    };
+
+    var coordinator = BackupCoordinator.init(.{
+        .follower_only = false,
+        .replica_count = 3,
+        .replica_id = 1,
+    });
+
+    var state = CallbackState{};
+    coordinator.backupWithProgress(3, CallbackState.onProgress, &state);
+
+    try std.testing.expectEqual(@as(u64, 3), coordinator.getLastBackedUpSequence());
+    try std.testing.expectEqual(@as(u64, 3), coordinator.stats.blocks_uploaded);
+    try std.testing.expectEqual(@as(u64, 3), coordinator.stats.blocks_queued);
+    try std.testing.expectEqual(@as(u64, 3), coordinator.getProgress().done);
+    try std.testing.expectEqual(@as(u32, 4), state.calls); // initial + one per block
+    try std.testing.expectEqual(@as(u64, 3), state.last_done);
+    try std.testing.expectEqual(@as(u64, 3), state.last_total);
+}
+
+test "BackupCoordinator: backupWithProgress records skips when inactive" {
+    var coordinator = BackupCoordinator.init(.{
+        .primary_only = true,
+        .follower_only = false,
+        .replica_count = 3,
+        .replica_id = 1,
+        .initial_view = 0,
+    });
+
+    try std.testing.expect(!coordinator.shouldBackup());
+    coordinator.backupWithProgress(2, null, null);
+
+    try std.testing.expectEqual(@as(u64, 0), coordinator.stats.blocks_uploaded);
+    try std.testing.expectEqual(@as(u64, 2), coordinator.stats.blocks_skipped_not_primary);
+    try std.testing.expectEqual(@as(u64, 0), coordinator.getProgress().done);
+    try std.testing.expectEqual(@as(u64, 2), coordinator.getProgress().total);
 }

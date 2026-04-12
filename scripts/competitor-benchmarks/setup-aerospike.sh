@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2025 ArcherDB Contributors
 # Aerospike Setup Script for Competitor Benchmarks (BENCH-06)
 #
 # Verifies Aerospike namespace is ready and creates secondary index

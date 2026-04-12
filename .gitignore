@@ -63,12 +63,15 @@ coverage_detail.out
 
 # Benchmark output
 benchmark-results/
+benchmark-results.json
 
 # Generated artifacts
 tools/FlameGraph/
 validation-results/
 integration-check-report.md
 reports/
+tests/sdk_tests/go/parity_runner
+tests/sdk_tests/java/.parity.classpath
 
 # Java Maven build artifacts
 tests/sdk_tests/java/target/

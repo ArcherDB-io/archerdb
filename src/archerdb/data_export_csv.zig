@@ -342,6 +342,7 @@ pub const CsvImporter = struct {
     /// Import errors.
     pub const ImportError = error{
         MissingRequiredColumn,
+        MissingRequiredField,
         InvalidCoordinate,
         InvalidTimestamp,
         InvalidInteger,
@@ -421,7 +422,7 @@ pub const CsvImporter = struct {
         }
 
         // Validate required columns
-        if (map.latitude == null or map.longitude == null) {
+        if (map.entity_id == null or map.latitude == null or map.longitude == null) {
             return ImportError.MissingRequiredColumn;
         }
 
@@ -497,6 +498,9 @@ pub const CsvImporter = struct {
         if (!GeoEvent.validate_coordinates(event.lat_nano, event.lon_nano)) {
             return ImportError.InvalidCoordinate;
         }
+        if (event.entity_id == 0) {
+            return ImportError.MissingRequiredField;
+        }
 
         self.row_count += 1;
         return event;
@@ -538,6 +542,14 @@ pub const CsvImporter = struct {
             col_index += 1;
         }
 
+        if (!GeoEvent.validate_coordinates(event.lat_nano, event.lon_nano)) {
+            return ImportError.InvalidCoordinate;
+        }
+        if (event.entity_id == 0) {
+            return ImportError.MissingRequiredField;
+        }
+
+        self.row_count += 1;
         return event;
     }
 };
@@ -656,13 +668,16 @@ test "CsvImporter: parse row" {
     var importer = try CsvImporter.init(allocator, .{});
     defer importer.deinit();
 
-    try importer.parseHeader("latitude,longitude,timestamp_ns,group_id");
+    try importer.parseHeader("entity_id,latitude,longitude,timestamp_ns,group_id");
 
-    const event = try importer.parseRow("37.7749,-122.4194,1704067200000000000,42");
+    const event = try importer.parseRow(
+        "123456789abcdef0,37.7749,-122.4194,1704067200000000000,42",
+    );
 
     const lat = GeoEvent.lat_to_float(event.lat_nano);
     const lon = GeoEvent.lon_to_float(event.lon_nano);
 
+    try std.testing.expectEqual(@as(u128, 0x123456789abcdef0), event.entity_id);
     try std.testing.expectApproxEqAbs(@as(f64, 37.7749), lat, 1e-6);
     try std.testing.expectApproxEqAbs(@as(f64, -122.4194), lon, 1e-6);
     try std.testing.expectEqual(@as(u64, 1704067200000000000), event.timestamp);
@@ -719,11 +734,23 @@ test "CsvImporter: invalid coordinates" {
     var importer = try CsvImporter.init(allocator, .{});
     defer importer.deinit();
 
-    try importer.parseHeader("latitude,longitude");
+    try importer.parseHeader("entity_id,latitude,longitude");
 
     // Invalid latitude (out of range)
-    const result = importer.parseRow("91.0,0.0");
+    const result = importer.parseRow("1234,91.0,0.0");
     try std.testing.expectError(CsvImporter.ImportError.InvalidCoordinate, result);
+}
+
+test "CsvImporter: missing entity_id rejected" {
+    const allocator = std.testing.allocator;
+
+    var importer = try CsvImporter.init(allocator, .{});
+    defer importer.deinit();
+
+    try importer.parseHeader("entity_id,latitude,longitude");
+
+    const result = importer.parseRow(",37.0,-122.0");
+    try std.testing.expectError(CsvImporter.ImportError.MissingRequiredField, result);
 }
 
 test "parseBool: various formats" {

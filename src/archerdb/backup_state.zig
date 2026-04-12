@@ -198,6 +198,13 @@ pub const BackupStateManager = struct {
         self.state.pending_count += 1;
     }
 
+    /// Decrement pending count when a queued block is dropped or abandoned.
+    pub fn decrementPending(self: *BackupStateManager) void {
+        if (self.state.pending_count > 0) {
+            self.state.pending_count -= 1;
+        }
+    }
+
     /// Increment failed count.
     pub fn incrementFailed(self: *BackupStateManager) void {
         self.state.failed_count += 1;

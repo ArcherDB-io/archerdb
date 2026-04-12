@@ -803,8 +803,19 @@ fn findJsonNumber(json: []const u8, key: []const u8) ?[]const u8 {
 
 /// Parse a hex string (with or without 0x prefix) to u128.
 fn parseHexU128(str: []const u8) ?u128 {
-    const hex = if (mem.startsWith(u8, str, "0x")) str[2..] else str;
-    return std.fmt.parseInt(u128, hex, 16) catch null;
+    const source = if (mem.startsWith(u8, str, "0x")) str[2..] else str;
+
+    var normalized: [32]u8 = undefined;
+    var normalized_len: usize = 0;
+    for (source) |c| {
+        if (c == '-') continue;
+        if (normalized_len >= normalized.len) return null;
+        normalized[normalized_len] = c;
+        normalized_len += 1;
+    }
+
+    if (normalized_len == 0) return null;
+    return std.fmt.parseInt(u128, normalized[0..normalized_len], 16) catch null;
 }
 
 /// Find the matching closing brace for an opening brace.
@@ -1041,6 +1052,20 @@ test "JsonImporter: parse single event" {
     try std.testing.expectEqual(@as(u64, 1704067200000000000), event.timestamp);
 }
 
+test "JsonImporter: parse single event with dashed UUID" {
+    const allocator = std.testing.allocator;
+
+    const json =
+        \\{"entity_id":"12345678-abcd-ef00-1234-5678abcdef00","latitude":37.7749,
+        \\"longitude":-122.4194,"timestamp":1704067200000000000}
+    ;
+
+    var importer = JsonImporter.init(allocator, .{});
+    const event = try importer.parseEvent(json);
+
+    try std.testing.expectEqual(@as(u128, 0x12345678abcdef0012345678abcdef00), event.entity_id);
+}
+
 test "JsonImporter: parse event with optional fields" {
     const allocator = std.testing.allocator;
 
@@ -1153,6 +1178,10 @@ test "parseHexU128: various formats" {
     try std.testing.expectEqual(@as(u128, 0x12345678), parseHexU128("12345678").?);
     try std.testing.expectEqual(@as(u128, 0xABCDEF), parseHexU128("0xABCDEF").?);
     try std.testing.expectEqual(@as(u128, 1), parseHexU128("1").?);
+    try std.testing.expectEqual(
+        @as(u128, 0x12345678abcdef0012345678abcdef00),
+        parseHexU128("12345678-abcd-ef00-1234-5678abcdef00").?,
+    );
     try std.testing.expect(parseHexU128("invalid") == null);
 }
 

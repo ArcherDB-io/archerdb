@@ -7,17 +7,20 @@
 //! - PEM file format validation
 //! - Certificate loading infrastructure
 //! - TLS configuration management
-//! - Certificate revocation checking via CRL and OCSP (F5.4.4)
-//!
+//! - non-GA helper code for certificate revocation experiments via CRL and OCSP
+//! 
 //! Certificate Revocation Checking (F5.4.4):
-//! Full CRL and OCSP support with configurable fail policy.
+//! ArcherDB does not currently ship GA in-process CRL/OCSP enforcement. The
+//! parsing and request helpers below are kept for test coverage and future
+//! implementation work, but `TlsConfig.init()` fails closed if revocation
+//! checking is enabled.
 //!
 //! Revocation options:
-//! - `revocation_check`: Mode (disabled, crl, ocsp, both)
-//! - `crl_path`: Local CRL file path
-//! - `crl_refresh_interval`: CRL refresh interval in seconds (default: 3600)
-//! - `ocsp_responder_url`: OCSP responder URL override
-//! - `ocsp_timeout`: OCSP request timeout in seconds (default: 5)
+//! - `revocation_check`: reserved for future in-process support
+//! - `crl_path`: reserved for future in-process support
+//! - `crl_refresh_interval`: reserved for future in-process support
+//! - `ocsp_responder_url`: reserved for future in-process support
+//! - `ocsp_timeout`: reserved for future in-process support
 //! - `revocation_failure_mode`: fail_closed or fail_open
 //!
 //! Usage:
@@ -27,13 +30,8 @@
 //!     .key_path = "/path/to/key.pem",
 //!     .ca_path = "/path/to/ca.pem",
 //!     .required = true,
-//!     .revocation_check = .crl,
-//!     .crl_path = "/path/to/crl.pem",
 //! });
 //! defer config.deinit();
-//!
-//! // Check certificate revocation status
-//! const status = try config.checkRevocation(cert);
 //! ```
 //!
 //! Certificate Reload (F5.4.3):
@@ -122,23 +120,23 @@ pub const TlsOptions = struct {
     // =========================================================================
 
     /// Revocation checking mode (--tls-revocation-check).
-    /// Default: disabled in dev mode, crl in production mode.
+    /// Non-GA: init currently rejects any mode other than `disabled`.
     revocation_check: RevocationCheckMode = .disabled,
 
     /// Path to local CRL file (--tls-crl-path).
-    /// If not set, CRL will be fetched from CA certificate's distribution point.
+    /// Non-GA: reserved for future in-process support.
     crl_path: ?[]const u8 = null,
 
     /// CRL refresh interval in seconds (--tls-crl-refresh-interval).
-    /// Default: 3600 (1 hour).
+    /// Non-GA: reserved for future in-process support.
     crl_refresh_interval: u32 = 3600,
 
     /// OCSP responder URL override (--tls-ocsp-responder-url).
-    /// If not set, URL is extracted from certificate's AIA extension.
+    /// Non-GA: reserved for future in-process support.
     ocsp_responder_url: ?[]const u8 = null,
 
     /// OCSP request timeout in seconds (--tls-ocsp-timeout).
-    /// Default: 5 seconds.
+    /// Non-GA: reserved for future in-process support.
     ocsp_timeout: u32 = 5,
 
     /// Failure mode when revocation check fails (--tls-revocation-failure-mode).
@@ -309,6 +307,10 @@ pub const TlsConfig = struct {
     /// Initialize TLS configuration from options.
     /// Validates and loads certificates if TLS is required.
     pub fn init(allocator: mem.Allocator, options: TlsOptions) !TlsConfig {
+        if (options.revocation_check != .disabled) {
+            return error.UnsupportedRevocationChecking;
+        }
+
         var self = TlsConfig{
             .allocator = allocator,
             .options = options,
@@ -334,15 +336,6 @@ pub const TlsConfig = struct {
             logInfo("TLS enabled (optional mode)", .{});
         } else {
             logWarn("TLS disabled - development mode only, do not use in production", .{});
-        }
-
-        // Load CRL if configured
-        if (options.revocation_check == .crl or options.revocation_check == .both) {
-            if (options.crl_path) |crl_path| {
-                self.loadCrl(crl_path) catch |err| {
-                    logWarn("failed to load CRL from '{s}': {}", .{ crl_path, err });
-                };
-            }
         }
 
         return self;
@@ -1164,11 +1157,27 @@ test "getPemType: RSA private key" {
 // CRL Tests
 // =============================================================================
 
+test "tls: init rejects non-GA revocation checking" {
+    try std.testing.expectError(error.UnsupportedRevocationChecking, TlsConfig.init(
+        std.testing.allocator,
+        .{ .revocation_check = .crl },
+    ));
+    try std.testing.expectError(error.UnsupportedRevocationChecking, TlsConfig.init(
+        std.testing.allocator,
+        .{ .revocation_check = .ocsp },
+    ));
+    try std.testing.expectError(error.UnsupportedRevocationChecking, TlsConfig.init(
+        std.testing.allocator,
+        .{ .revocation_check = .both },
+    ));
+}
+
 test "tls: checkCrl with valid CRL" {
     var config = try TlsConfig.init(std.testing.allocator, .{
-        .revocation_check = .crl,
+        .revocation_check = .disabled,
     });
     defer config.deinit();
+    config.options.revocation_check = .crl;
 
     // Create a mock CRL with known entries
     var entries = std.ArrayList(CrlEntry).init(std.testing.allocator);
@@ -1199,9 +1208,10 @@ test "tls: checkCrl with valid CRL" {
 
 test "tls: checkCrl with revoked cert" {
     var config = try TlsConfig.init(std.testing.allocator, .{
-        .revocation_check = .crl,
+        .revocation_check = .disabled,
     });
     defer config.deinit();
+    config.options.revocation_check = .crl;
 
     // Create a mock CRL with known entries
     const revoked_serial = &[_]u8{ 0x01, 0x02, 0x03 };
@@ -1230,9 +1240,10 @@ test "tls: checkCrl with revoked cert" {
 
 test "tls: checkOcsp request building" {
     var config = try TlsConfig.init(std.testing.allocator, .{
-        .revocation_check = .ocsp,
+        .revocation_check = .disabled,
     });
     defer config.deinit();
+    config.options.revocation_check = .ocsp;
 
     const cert = Certificate{
         .serial = &[_]u8{ 0x01, 0x02, 0x03, 0x04 },
@@ -1250,9 +1261,10 @@ test "tls: checkOcsp request building" {
 
 test "tls: checkOcsp response parsing" {
     var config = try TlsConfig.init(std.testing.allocator, .{
-        .revocation_check = .ocsp,
+        .revocation_check = .disabled,
     });
     defer config.deinit();
+    config.options.revocation_check = .ocsp;
 
     // Create a mock OCSP response indicating "good" status
     // SEQUENCE { ENUMERATED(0=successful) SEQUENCE { ENUMERATED(0=good) } }
@@ -1278,10 +1290,11 @@ test "tls: checkOcsp response parsing" {
 
 test "tls: fail-open allows unknown" {
     var config = try TlsConfig.init(std.testing.allocator, .{
-        .revocation_check = .crl,
+        .revocation_check = .disabled,
         .revocation_failure_mode = .fail_open,
     });
     defer config.deinit();
+    config.options.revocation_check = .crl;
 
     // No CRL loaded, so checkCrl returns unknown
     const cert = Certificate{ .serial = &[_]u8{ 0x01, 0x02, 0x03 } };
@@ -1297,10 +1310,11 @@ test "tls: fail-open allows unknown" {
 
 test "tls: fail-closed rejects unknown" {
     var config = try TlsConfig.init(std.testing.allocator, .{
-        .revocation_check = .crl,
+        .revocation_check = .disabled,
         .revocation_failure_mode = .fail_closed,
     });
     defer config.deinit();
+    config.options.revocation_check = .crl;
 
     // No CRL loaded, so checkCrl returns unknown
     const cert = Certificate{ .serial = &[_]u8{ 0x01, 0x02, 0x03 } };
@@ -1312,10 +1326,11 @@ test "tls: fail-closed rejects unknown" {
 
 test "tls: CRL caching respects refresh interval" {
     var config = try TlsConfig.init(std.testing.allocator, .{
-        .revocation_check = .crl,
+        .revocation_check = .disabled,
         .crl_refresh_interval = 3600, // 1 hour
     });
     defer config.deinit();
+    config.options.revocation_check = .crl;
 
     // Manually set cached CRL and load time
     const serial = try std.testing.allocator.dupe(u8, &[_]u8{ 0x01, 0x02 });

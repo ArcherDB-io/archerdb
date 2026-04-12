@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2025 ArcherDB Contributors
 """
 Tests for ArcherDB Python SDK - Geo-Routing Module
 
@@ -8,9 +10,6 @@ Tests cover:
 - Automatic failover
 - Geo-routing metrics
 """
-
-# Copyright 2025 ArcherDB Authors. All rights reserved.
-# Use of this source code is governed by the Apache 2.0 license.
 
 import json
 import threading

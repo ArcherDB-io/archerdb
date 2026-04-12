@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 package com.archerdb.geo;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -14,8 +16,8 @@ import org.junit.jupiter.api.Test;
  * Unit tests for GeoClient implementation.
  *
  * <p>
- * These tests verify the GeoClient skeleton implementation. When native bindings are enabled, these
- * tests will require a running ArcherDB cluster.
+ * These tests verify API-level behavior in non-cluster unit mode. They are not release evidence for
+ * a live ArcherDB cluster or JNI-backed integration coverage.
  */
 class GeoClientTest {
 

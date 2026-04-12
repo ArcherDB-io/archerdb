@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 package com.archerdb.geo;
 
 import java.util.List;
@@ -147,8 +149,8 @@ public interface GeoClient extends AutoCloseable {
      * <pre>
      * {
      *     &#64;code
-     *     List<GeoEvent> events = createEvents();
-     *     List<InsertGeoEventsError> errors = client.insertEvents(events);
+     *     List&lt;GeoEvent&gt; events = createEvents();
+     *     List&lt;InsertGeoEventsError&gt; errors = client.insertEvents(events);
      *
      *     if (errors.isEmpty()) {
      *         System.out.println("All events inserted!");
@@ -188,7 +190,7 @@ public interface GeoClient extends AutoCloseable {
      *     &#64;code
      *     // Custom retry: 3 attempts, 10 second timeout
      *     OperationOptions options = OperationOptions.with(3, 10000);
-     *     List<InsertGeoEventsError> errors = client.insertEvents(events, options);
+     *     List&lt;InsertGeoEventsError&gt; errors = client.insertEvents(events, options);
      * }
      * </pre>
      *
@@ -225,8 +227,8 @@ public interface GeoClient extends AutoCloseable {
      * {
      *     &#64;code
      *     // Update vehicle locations - existing positions are replaced
-     *     List<GeoEvent> locationUpdates = getVehicleUpdates();
-     *     List<InsertGeoEventsError> errors = client.upsertEvents(locationUpdates);
+     *     List&lt;GeoEvent&gt; locationUpdates = getVehicleUpdates();
+     *     List&lt;InsertGeoEventsError&gt; errors = client.upsertEvents(locationUpdates);
      * }
      * </pre>
      *
@@ -275,7 +277,7 @@ public interface GeoClient extends AutoCloseable {
      * <pre>
      * {
      *     &#64;code
-     *     List<UInt128> entityIds = Arrays.asList(entityId1, entityId2, entityId3);
+     *     List&lt;UInt128&gt; entityIds = Arrays.asList(entityId1, entityId2, entityId3);
      *     DeleteResult result = client.deleteEntities(entityIds);
      *     System.out.println("Deleted: " + result.getDeletedCount());
      *     System.out.println("Not found: " + result.getNotFoundCount());
@@ -535,8 +537,8 @@ public interface GeoClient extends AutoCloseable {
      * <pre>
      * {
      *     &#64;code
-     *     List<UInt128> ids = Arrays.asList(id1, id2, id3);
-     *     Map<UInt128, GeoEvent> results = client.lookupBatch(ids);
+     *     List&lt;UInt128&gt; ids = Arrays.asList(id1, id2, id3);
+     *     Map&lt;UInt128, GeoEvent&gt; results = client.lookupBatch(ids);
      *
      *     for (UInt128 id : ids) {
      *         GeoEvent event = results.get(id);
@@ -927,8 +929,10 @@ public interface GeoClient extends AutoCloseable {
      * Creates a new multi-region GeoClient from configuration.
      *
      * <p>
-     * Use this for multi-region deployments with read preference routing. The client automatically
-     * routes writes to the primary region and reads according to the configured preference.
+     * This Java multi-region surface is currently non-GA. The client routes writes to the primary
+     * region, supports deterministic primary/follower read routing, and exposes the config model
+     * needed for future routing work. It does not yet perform latency-based nearest-region
+     * selection.
      *
      * <p>
      * Example:
@@ -939,12 +943,12 @@ public interface GeoClient extends AutoCloseable {
      *     ClientConfig config = ClientConfig.builder().setClusterId(UInt128.of(1L))
      *             .addRegion(RegionConfig.primary("us-west-2", "10.0.0.1:3001", "10.0.0.2:3001"))
      *             .addRegion(RegionConfig.follower("eu-west-1", "10.1.0.1:3001", "10.1.0.2:3001"))
-     *             .setReadPreference(ReadPreference.NEAREST).build();
+     *             .setReadPreference(ReadPreference.FOLLOWER).build();
      *
      *     try (GeoClient client = GeoClient.create(config)) {
-     *         // Writes go to us-west-2, reads go to nearest region
+     *         // Writes go to us-west-2, reads use the configured deterministic routing mode
      *         client.insertEvents(events); // -> us-west-2
-     *         client.queryRadius(filter); // -> nearest region
+     *         client.queryRadius(filter); // -> configured follower path
      *     }
      * }
      * </pre>

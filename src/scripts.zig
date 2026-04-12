@@ -76,6 +76,9 @@ const CLIArgs = union(enum) {
         \\  --publish
         \\        Publish the packages.
         \\
+        \\  --preflight
+        \\        Check local build/publish prerequisites without changing external systems.
+        \\
     ;
 };
 

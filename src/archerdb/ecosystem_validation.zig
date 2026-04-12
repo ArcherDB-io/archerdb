@@ -3,7 +3,7 @@
 // ArcherDB Zig Ecosystem Validation
 // F0.0.1: Execute Zig ecosystem validation audit per implementation-guide/spec.md
 //
-// This file validates that Zig 0.15.2 has all critical features required for ArcherDB.
+// This file validates that Zig 0.14.1 has all critical features required for ArcherDB.
 
 const std = @import("std");
 const builtin = @import("builtin");

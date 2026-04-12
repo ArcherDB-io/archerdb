@@ -36,7 +36,7 @@ Complete API and configuration documentation:
 
 - [API Reference](api-reference.md) - All operations with request/response details
 - [OpenAPI Specification](openapi.yaml) - Machine-readable API definition
-- [Tier Profiles](tier-profiles.md) - Product tier intent and release positioning
+- [Tier Profiles](tier-profiles.md) - Runtime/capacity presets and release artifact guidance
 - [Hardware Requirements](hardware-requirements.md) - Minimum and recommended specs
 - [LSM Tuning](lsm-tuning.md) - Storage engine configuration
 - [Journal Sizing](journal_sizing.md) - Write-ahead log configuration
@@ -64,13 +64,13 @@ Comprehensive guides for each language:
 
 - [Operations Runbook](operations-runbook.md) - Day-to-day operational procedures
 - [Capacity Planning](capacity-planning.md) - Sizing clusters for your workload
-- [Multi-Region Deployment](multi-region-deployment.md) - Cross-region replication setup
+- [Multi-Region Deployment](multi-region-deployment.md) - Design/reference guide; server runtime is not GA
 
 ### Recovery & Continuity
 
 - [Backup Operations](backup-operations.md) - External snapshot/backup integration guidance
 - [Disaster Recovery](disaster-recovery.md) - Replica recovery and external restore procedures
-- [Upgrade Guide](upgrade-guide.md) - Rolling upgrades and rollback
+- [Upgrade Guide](upgrade-guide.md) - Rolling upgrades and external rollback planning
 
 ### Troubleshooting
 
@@ -122,6 +122,7 @@ For contributors:
 ## Release Notes
 
 - [Changelog](CHANGELOG.md) - Release history and notable changes
+- [Finalization Plan](../FINALIZATION_PLAN.md) - Release hardening and exit criteria
 
 ---
 
@@ -136,7 +137,7 @@ All documentation requirements (DOCS-01 through DOCS-08) are complete:
 | DOCS-03: Operations runbook | [operations-runbook.md](operations-runbook.md), [runbooks/](runbooks/) |
 | DOCS-04: Troubleshooting | [troubleshooting.md](troubleshooting.md) |
 | DOCS-05: Architecture | [architecture.md](architecture.md) |
-| DOCS-06: Performance tuning | [lsm-tuning.md](lsm-tuning.md), [profiling.md](profiling.md), [benchmarks.md](benchmarks.md) |
+| DOCS-06: Performance tuning | [lsm-tuning.md](lsm-tuning.md), [profiling.md](profiling.md), [BENCHMARKS.md](BENCHMARKS.md) |
 | DOCS-07: Security | [security-best-practices.md](security-best-practices.md), [encryption-guide.md](encryption-guide.md) |
 | DOCS-08: SDK documentation | [sdk/README.md](sdk/README.md), [src/clients/*/README.md](../src/clients/) |
 

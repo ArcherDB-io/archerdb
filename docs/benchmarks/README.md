@@ -14,7 +14,7 @@ ArcherDB benchmarks measure:
 
 ## Performance Targets
 
-Production readiness requires meeting these targets:
+The repository uses the following comparison gates on comparable hardware profiles:
 
 | Metric | Baseline Target | Stretch Target |
 |--------|-----------------|----------------|
@@ -40,23 +40,23 @@ pip install -r test_infrastructure/requirements.txt
 
 ```bash
 # Run all benchmark types on 3-node cluster
-python test_infrastructure/benchmarks/cli.py run --topology 3
+python3 test_infrastructure/benchmarks/cli.py run --topology 3
 
 # With time limit
-python test_infrastructure/benchmarks/cli.py run --topology 3 --time-limit 60
+python3 test_infrastructure/benchmarks/cli.py run --topology 3 --time-limit 60
 
 # With operation count limit
-python test_infrastructure/benchmarks/cli.py run --topology 3 --op-count 10000
+python3 test_infrastructure/benchmarks/cli.py run --topology 3 --op-count 10000
 ```
 
 ### Full Suite (All Topologies)
 
 ```bash
 # Run complete benchmark suite (1/3/5/6 node topologies)
-python test_infrastructure/benchmarks/cli.py run --full-suite
+python3 test_infrastructure/benchmarks/cli.py run --full-suite
 
 # Exclude mixed workload tests (faster)
-python test_infrastructure/benchmarks/cli.py run --full-suite --no-mixed
+python3 test_infrastructure/benchmarks/cli.py run --full-suite --no-mixed
 ```
 
 ### Mixed Workload Benchmarks
@@ -65,29 +65,23 @@ Control the read/write ratio:
 
 ```bash
 # 80% reads, 20% writes (default)
-python test_infrastructure/benchmarks/cli.py run --topology 3 --read-write-ratio 0.8
+python3 test_infrastructure/benchmarks/cli.py run --topology 3 --read-write-ratio 0.8
 
 # 50% reads, 50% writes
-python test_infrastructure/benchmarks/cli.py run --topology 3 --read-write-ratio 0.5
+python3 test_infrastructure/benchmarks/cli.py run --topology 3 --read-write-ratio 0.5
 
 # Write-heavy (20% reads, 80% writes)
-python test_infrastructure/benchmarks/cli.py run --topology 3 --read-write-ratio 0.2
+python3 test_infrastructure/benchmarks/cli.py run --topology 3 --read-write-ratio 0.2
 
 # Read-only
-python test_infrastructure/benchmarks/cli.py run --topology 3 --read-write-ratio 1.0
+python3 test_infrastructure/benchmarks/cli.py run --topology 3 --read-write-ratio 1.0
 ```
 
 ### Compare to Baseline
 
 ```bash
 # Compare current run to stored baseline
-python test_infrastructure/benchmarks/cli.py compare --baseline baseline.json
-
-# Compare specific topology
-python test_infrastructure/benchmarks/cli.py compare --topology 3 --baseline benchmarks/history/baseline-3node.json
-
-# Save current results as new baseline
-python test_infrastructure/benchmarks/cli.py baseline --topology 3 --save
+python3 test_infrastructure/benchmarks/cli.py compare baseline.json current.json
 ```
 
 ## Interpreting Results
@@ -97,9 +91,9 @@ python test_infrastructure/benchmarks/cli.py baseline --topology 3 --save
 Events processed per second. Higher is better.
 
 ```
-Throughput: 823,456 events/sec
-Target: >=770,000 events/sec
-Status: PASS (107% of target)
+Throughput: <measured events/sec>
+Compare against: the latest checked-in baseline for the same hardware/profile
+Status: PASS when the run meets or exceeds the local comparison gate
 ```
 
 Key factors:
@@ -178,21 +172,21 @@ Benefits:
 ```
 Regression Analysis
 ==================
-Baseline: 2026-01-25.json (770,000 events/sec)
-Current:  2026-02-01.json (692,000 events/sec)
+Baseline: previous checked-in artifact
+Current:  current run artifact
 
-Change: -10.1%
-p-value: 0.003
-Status: REGRESSION DETECTED
+Change: <measured delta>
+p-value: <measured significance>
+Status: REGRESSION DETECTED when the comparison crosses the configured threshold
 
-Recommendation: Investigate recent changes
+Recommendation: Investigate recent changes when the current run underperforms the baseline
 ```
 
 ## Historical Tracking
 
-### Weekly Runs
+### Manual Publication Runs
 
-Every Sunday at 2 AM UTC, CI runs the full benchmark suite and stores results:
+Maintainers can run the publication workflow manually and promote benchmark results into checked-in history:
 
 ```
 benchmarks/history/
@@ -206,14 +200,14 @@ benchmarks/history/
 
 ### Baseline Files
 
-Reference baselines for regression detection:
+Local baselines for regression detection live under:
 
 ```
-benchmarks/history/
-  baseline-1node.json
-  baseline-3node.json
-  baseline-5node.json
-  baseline-6node.json
+reports/baselines/
+  baseline-1node-*.json
+  baseline-3node-*.json
+  baseline-5node-*.json
+  baseline-6node-*.json
 ```
 
 ### Visualization
@@ -228,15 +222,15 @@ View at: `https://github.com/[org]/archerdb/benchmarks`
 
 ## CI Integration
 
-### Weekly Workflow
+### Publication Workflow
 
-The `weekly-benchmark.yml` workflow:
+The `benchmark-weekly.yml` workflow:
 
 1. Spins up clusters (1/3/5/6 nodes)
 2. Runs full benchmark suite
 3. Compares to baseline
 4. Alerts on >10% regression
-5. Stores results in `benchmarks/history/`
+5. Can promote approved results into `benchmarks/history/`
 6. Updates benchmark graphs
 
 ### Alerts
@@ -252,7 +246,7 @@ On regression detection:
 
 ```bash
 # Trigger weekly benchmark manually
-gh workflow run weekly-benchmark.yml
+gh workflow run benchmark-weekly.yml
 ```
 
 ## Programmatic Usage
@@ -272,25 +266,21 @@ config = BenchmarkConfig(
 )
 
 # Run individual benchmarks
-throughput = orchestrator.run_throughput_benchmark(config)
-read_latency = orchestrator.run_latency_read_benchmark(config)
-write_latency = orchestrator.run_latency_write_benchmark(config)
-mixed = orchestrator.run_mixed_workload_benchmark(config)
+throughput = orchestrator.run_throughput_benchmark(3, config)
+read_latency = orchestrator.run_latency_read_benchmark(3, config)
+write_latency = orchestrator.run_latency_write_benchmark(3, config)
+mixed = orchestrator.run_mixed_workload_benchmark(3, config)
 
 # Access results
-print(f"Throughput: {throughput.events_per_sec}")
-print(f"Read P95: {read_latency.p95_ms}ms")
-print(f"Write P95: {write_latency.p95_ms}ms")
+print(f"Throughput: {throughput['throughput_events_per_sec']}")
+print(f"Read P95: {read_latency['p95_ms']}ms")
+print(f"Write P95: {write_latency['p95_ms']}ms")
 
 # Run full suite
 results = orchestrator.run_full_suite(
     topologies=[1, 3, 5, 6],
     include_mixed=True,
 )
-
-# Export results
-results.to_json("benchmark_results.json")
-results.to_csv("benchmark_results.csv")
 ```
 
 ## Output Formats

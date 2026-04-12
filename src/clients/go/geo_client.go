@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 // Package archerdb provides a high-performance Go client for ArcherDB, a geospatial database
 // optimized for real-time location tracking and spatial queries.
 //

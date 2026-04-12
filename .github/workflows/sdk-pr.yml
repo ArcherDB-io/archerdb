@@ -111,26 +111,29 @@ jobs:
       # C: Full suite with JUnit XML
       - name: C full suite
         if: matrix.sdk == 'c'
+        env:
+          ARCHERDB_ADDRESS: 127.0.0.1:3000
+          TEST_TAG: pr
         run: |
-          cd src/clients/c
-          # Build C SDK
-          make 2>/dev/null || echo "C SDK build skipped"
-          # C tests output JUnit XML if available
-          if make test-junit 2>/dev/null; then
-            cp test-results/*.xml ../../../test-results/c.xml 2>/dev/null || true
-          elif make test 2>/dev/null; then
-            # Create minimal JUnit XML from test output
-            echo '<?xml version="1.0" encoding="UTF-8"?>' > ../../../test-results/c.xml
-            echo '<testsuites><testsuite name="c-sdk" tests="1" failures="0">' >> ../../../test-results/c.xml
-            echo '<testcase name="c-sdk-tests" classname="c-sdk"/>' >> ../../../test-results/c.xml
-            echo '</testsuite></testsuites>' >> ../../../test-results/c.xml
+          ./zig/zig build clients:c
+          set +e
+          (
+            cd tests/sdk_tests/c
+            ../../../zig/zig build test -Doptimize=ReleaseSafe
+          )
+          status=$?
+          if [ "$status" -eq 0 ]; then
+            cat > test-results/c.xml <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <testsuites><testsuite name="c-sdk" tests="1" failures="0"><testcase name="c-sdk-pr" classname="c-sdk"/></testsuite></testsuites>
+          EOF
           else
-            # Create placeholder for tracking
-            echo '<?xml version="1.0" encoding="UTF-8"?>' > ../../../test-results/c.xml
-            echo '<testsuites><testsuite name="c-sdk" tests="0" failures="0" skipped="1">' >> ../../../test-results/c.xml
-            echo '<testcase name="placeholder" classname="c-sdk"><skipped message="C SDK tests not yet implemented"/></testcase>' >> ../../../test-results/c.xml
-            echo '</testsuite></testsuites>' >> ../../../test-results/c.xml
+            cat > test-results/c.xml <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <testsuites><testsuite name="c-sdk" tests="1" failures="1"><testcase name="c-sdk-pr" classname="c-sdk"><failure message="C SDK PR tests failed">See workflow logs for details.</failure></testcase></testsuite></testsuites>
+          EOF
           fi
+          exit "$status"
 
       # Publish JUnit XML test results
       - name: Publish Test Results

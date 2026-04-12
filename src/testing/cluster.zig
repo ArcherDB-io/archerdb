@@ -1041,6 +1041,7 @@ pub fn ClusterType(comptime StateMachineType: anytype) type {
                 .checkpoint_commenced => {
                     cluster.log_replica(.checkpoint_commenced, replica.replica);
                 },
+                .checkpoint_durable => {},
                 .checkpoint_completed => {
                     cluster.log_replica(.checkpoint_completed, replica.replica);
                     cluster.manifest_checker.forest_checkpoint(&replica.state_machine.forest);

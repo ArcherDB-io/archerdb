@@ -1237,7 +1237,7 @@ Errors are grouped into ranges by category:
 | 200-299 | State | Check cluster health, retry if transient |
 | 300-399 | Resource | Reduce batch size, check limits |
 | 400-499 | Security | Check gateway/service authn/authz policy |
-| 500-599 | Internal | Contact support (should not occur) |
+| 500-599 | Internal | Open an issue with logs and reproduction details (should not occur) |
 
 ### Retry Semantics
 

@@ -231,6 +231,30 @@ function verifyEventsExclude(events: any[], excludedIds: number[], operation: st
   }
 }
 
+function verifyEventsContain(events: any[], expectedIds: number[], operation: string) {
+  const actualIds = new Set(events.map(e => BigInt(e.entity_id)));
+  const expected = expectedIds.map(id => BigInt(id));
+  for (const id of expected) {
+    expect(actualIds.has(id)).toBeTruthy();
+  }
+}
+
+function verifyEventsOrderedByTimestamp(events: any[], operation: string) {
+  for (let index = 1; index < events.length; index++) {
+    const previous = BigInt(events[index - 1].timestamp);
+    const current = BigInt(events[index].timestamp);
+    expect(previous >= current).toBeTruthy();
+  }
+}
+
+function parseClusterAddresses(raw: string): string[] {
+  return raw
+    .split(',')
+    .map(entry => entry.trim())
+    .filter(Boolean)
+    .map(entry => (entry.includes(':') ? entry : `127.0.0.1:${entry}`));
+}
+
 async function getOutputCap(client: GeoClient, insertedIds: number[]): Promise<number | null> {
   if (!insertedIds.length) return null;
   const latest = await client.queryLatest({ limit: 10000 });
@@ -281,12 +305,18 @@ let client: GeoClient | null = null;
 
 describeIntegration('ArcherDB Node.js SDK Operation Tests', () => {
   beforeAll(async () => {
-    const projectRoot = path.resolve(__dirname, '../../..');
-    
-    // Use venv Python if available (has required deps like requests)
-    const venvPython = path.join(projectRoot, '.venv', 'bin', 'python3');
-    const pythonCmd = require('fs').existsSync(venvPython) ? venvPython : 'python3';
-    const proc = spawn(pythonCmd, ['-c', `
+    const providedAddresses = process.env.ARCHERDB_ADDRESS?.trim();
+    let addresses: string[];
+
+    if (providedAddresses) {
+      addresses = parseClusterAddresses(providedAddresses);
+    } else {
+      const projectRoot = path.resolve(__dirname, '../../..');
+
+      // Use venv Python if available (has required deps like requests)
+      const venvPython = path.join(projectRoot, '.venv', 'bin', 'python3');
+      const pythonCmd = require('fs').existsSync(venvPython) ? venvPython : 'python3';
+      const proc = spawn(pythonCmd, ['-c', `
 import sys, time
 sys.path.insert(0, '${projectRoot}')
 sys.path.insert(0, '${projectRoot}/src/clients/python/src')
@@ -301,20 +331,63 @@ sys.stdout.flush()
 while True: time.sleep(1)
 `]);
 
-    const ready = await new Promise<string>((resolve, reject) => {
-      proc.stdout?.on('data', (data) => {
-        const output = data.toString();
-        if (output.includes('READY:')) {
-          resolve(output.split('READY:')[1].trim());
-        }
-      });
-      setTimeout(() => reject(new Error('Cluster timeout')), 90000);
-    });
+      const ready = await new Promise<string>((resolve, reject) => {
+        let settled = false;
+        let stdoutBuffer = '';
+        let stderrBuffer = '';
 
-    clusterProcess = proc;
+        const finish = (callback: () => void) => {
+          if (settled) return;
+          settled = true;
+          callback();
+        };
+
+        proc.stdout?.on('data', (data) => {
+          stdoutBuffer += data.toString();
+          const lines = stdoutBuffer.split(/\r?\n/);
+          stdoutBuffer = lines.pop() ?? '';
+          for (const line of lines) {
+            if (line.includes('READY:')) {
+              finish(() => resolve(line.split('READY:')[1].trim()));
+              return;
+            }
+          }
+          if (stdoutBuffer.includes('READY:')) {
+            finish(() => resolve(stdoutBuffer.split('READY:')[1].trim()));
+          }
+        });
+
+        proc.stderr?.on('data', (data) => {
+          stderrBuffer += data.toString();
+          finish(() => reject(new Error(`Cluster bootstrap failed:\n${stderrBuffer.trim()}`)));
+        });
+
+        proc.on('error', (error) => {
+          finish(() => reject(error));
+        });
+
+        proc.on('exit', (code, signal) => {
+          finish(() => reject(new Error(
+            `Cluster bootstrap exited before readiness (code=${code}, signal=${signal}).` +
+            (stderrBuffer.trim() ? `\n${stderrBuffer.trim()}` : '')
+          )));
+        });
+
+        setTimeout(() => {
+          finish(() => reject(new Error(
+            `Cluster timeout after 90000ms.` +
+            (stderrBuffer.trim() ? `\n${stderrBuffer.trim()}` : '')
+          )));
+        }, 90000);
+      });
+
+      clusterProcess = proc;
+      addresses = parseClusterAddresses(ready);
+    }
+
     client = createGeoClient({
       cluster_id: 0n,
-      addresses: [`127.0.0.1:${ready}`],
+      addresses,
     });
   }, 120000);
 
@@ -538,6 +611,12 @@ while True: time.sleep(1)
         group_id: testCase.input.group_id ? BigInt(testCase.input.group_id) : undefined,
       });
 
+      if (expected?.events_contain) {
+        verifyEventsContain(result.events, expected.events_contain, 'query_latest');
+      }
+      if (expected?.events_ordered_by_timestamp) {
+        verifyEventsOrderedByTimestamp(result.events, 'query_latest');
+      }
       if (needsCountCheck) {
         assertCountMatches(expected, result.events.length, 'query_latest', maxResults);
       }

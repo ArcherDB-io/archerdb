@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2025 ArcherDB Contributors
 """CI utilities for SDK testing and benchmarking."""
 
 from .warmup_loader import (

@@ -42,7 +42,7 @@ function shouldSkip(testCase: any): boolean {
   if (tags.includes('boundary') || tags.includes('invalid')) return true;
   if (name.includes('boundary_') || name.includes('invalid_')) return true;
   if (name.includes('concave') || name.includes('antimeridian')) return true;
-  if (name.includes('timestamp_filter') || name.includes('hotspot')) return true;
+  if (name.includes('hotspot')) return true;
   
   return false;
 }

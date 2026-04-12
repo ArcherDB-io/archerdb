@@ -11,10 +11,11 @@
 
 const std = @import("std");
 const log = std.log.scoped(.membership);
+const constants = @import("../constants.zig");
 const metrics = @import("../archerdb/metrics.zig");
 
 /// Maximum number of nodes in a cluster configuration.
-pub const MAX_NODES = 7;
+pub const MAX_NODES = constants.members_max;
 
 /// Membership state - either stable or transitioning via joint consensus.
 pub const MembershipState = enum {
@@ -423,6 +424,15 @@ pub const MembershipConfig = struct {
 
         metrics.Registry.membership_voters_count.set(voters);
         metrics.Registry.membership_learners_count.set(learners);
+    }
+
+    /// Publish the current membership state and node counts to process metrics.
+    pub fn publishMetrics(self: *const MembershipConfig) void {
+        metrics.Registry.membership_state.set(switch (self.state) {
+            .stable => 0,
+            .joint => 1,
+        });
+        self.updateNodeMetrics();
     }
 
     /// Check if removing a node would require a view change.

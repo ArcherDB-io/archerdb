@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 const CACHE_NAME = "$cache_name";
 const FILES_TO_CACHE = 
   $files_to_cache

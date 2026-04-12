@@ -312,6 +312,35 @@ pub fn MessageBusType(comptime IO: type) type {
             bus.* = undefined;
         }
 
+        /// Begin shutting down a client-side bus so the owner can drive IO until all
+        /// submitted operations complete before deinitialization.
+        pub fn shutdown(bus: *MessageBus) void {
+            assert(bus.process == .client);
+
+            for (bus.connections) |*connection| {
+                switch (connection.state) {
+                    .free, .terminating => {},
+                    .accepting => unreachable,
+                    .connecting, .connected => bus.terminate(connection, .shutdown),
+                }
+            }
+        }
+
+        pub fn shutdown_complete(bus: *const MessageBus) bool {
+            assert(bus.process == .client);
+
+            if (bus.resume_receive_submitted) return false;
+            if (!bus.connections_suspended.empty()) return false;
+
+            for (bus.connections) |*connection| {
+                if (connection.state != .free) return false;
+                assert(!connection.recv_submitted);
+                assert(!connection.send_submitted);
+            }
+
+            return true;
+        }
+
         fn init_tcp(io: *IO, process: vsr.ProcessType, family: u32) !IO.socket_t {
             return try io.open_socket_tcp(family, .{
                 .rcvbuf = constants.tcp_rcvbuf,

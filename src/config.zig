@@ -494,7 +494,7 @@ const ConfigCluster = struct {
 // ConfigBase enum is now defined earlier in the file
 
 pub const configs = struct {
-    /// Shared high-performance runtime profile used by every tier.
+    /// Shared high-performance runtime profile used by standard–ultra tiers.
     /// Tier differentiation is handled by RAM/disk capacity quotas only.
     const runtime_high_perf = Config{
         .process = .{
@@ -529,6 +529,45 @@ pub const configs = struct {
         },
     };
 
+    /// Lightweight runtime profile for lite/demo tier.
+    /// Reduces clients, pipeline depth, and journal slots to cut fixed overhead,
+    /// making the data file small enough to run on a dev laptop.
+    const runtime_lite = Config{
+        .process = .{
+            .direct_io = true,
+            .cache_geo_events_size_default = @sizeOf(vsr.archerdb.GeoEvent) * 4 * MiB,
+            .ram_index_size_default = 128 * MiB, // Overridden below.
+            .verify = true,
+            .journal_iops_read_max = 8,
+            .journal_iops_write_max = 8,
+            .grid_cache_size_default = 4 * GiB,
+            .grid_iops_read_max = 96,
+            .grid_iops_write_max = 96,
+            .grid_repair_request_max = 12,
+            .grid_repair_reads_max = 12,
+            .grid_missing_blocks_max = 128,
+            .grid_missing_tables_max = 16,
+        },
+        .cluster = .{
+            .clients_max = 64,
+            .pipeline_prepare_queue_max = 8,
+            .view_change_headers_suffix_max = 8 + 1,
+            .journal_slot_count = 256,
+            .message_size_max = 10 * MiB,
+            .lsm_levels = 8,
+            .lsm_growth_factor = 8,
+            // Reduced from 128 so checkpoint interval fits in 256 journal slots.
+            // vsr_checkpoint_ops = 256 - 32 - 32*ceil(16/32) = 192, which satisfies
+            // all assertions (>= pipeline=8, >= compaction=32, % 32 == 0).
+            .lsm_compaction_ops = 32,
+            .block_size = 1 * MiB,
+            .lsm_manifest_compact_extra_blocks = 3,
+            .lsm_table_coalescing_threshold_percent = 35,
+            .lsm_snapshots_max = 128,
+            .lsm_scans_max = 16,
+        },
+    };
+
     fn with_capacity(
         comptime storage_default: u64,
         comptime storage_max: u64,
@@ -544,39 +583,44 @@ pub const configs = struct {
         };
     }
 
-    /// Smallest capacity tier with full high-performance runtime behavior.
-    pub const lite = with_capacity(
-        16 * GiB,
-        16 * GiB,
-        128 * MiB,
-    );
+    /// Demo/evaluation tier — small footprint, fast startup, runnable on a dev laptop.
+    pub const lite = lite: {
+        var process = runtime_lite.process;
+        process.storage_size_limit_default = 4 * GiB;
+        process.storage_size_limit_max = 4 * GiB;
+        process.ram_index_size_default = 128 * MiB;
+        break :lite Config{
+            .process = process,
+            .cluster = runtime_lite.cluster,
+        };
+    };
 
     /// Baseline production capacity tier.
     pub const standard = with_capacity(
+        64 * GiB,
         256 * GiB,
-        1 * TiB,
-        16 * GiB,
+        4 * GiB,
     );
 
     /// Mid-tier capacity profile for larger datasets.
     pub const pro = with_capacity(
+        512 * GiB,
         2 * TiB,
-        8 * TiB,
-        32 * GiB,
+        16 * GiB,
     );
 
     /// Large production capacity profile.
     pub const enterprise = with_capacity(
+        4 * TiB,
         16 * TiB,
-        64 * TiB,
-        64 * GiB,
+        32 * GiB,
     );
 
     /// Highest-capacity profile.
     pub const ultra = with_capacity(
+        16 * TiB,
         64 * TiB,
-        256 * TiB,
-        128 * GiB,
+        64 * GiB,
     );
 
     pub const current = current: {

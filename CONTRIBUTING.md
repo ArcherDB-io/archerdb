@@ -11,12 +11,15 @@ Thank you for your interest in contributing to ArcherDB! This document provides 
 - [Code Style](#code-style)
 - [Testing](#testing)
 - [Documentation](#documentation)
-- [Contributor License Agreement](#contributor-license-agreement)
+- [Developer Certificate of Origin](#developer-certificate-of-origin)
+- [Governance](#governance)
+- [Support](#support)
 - [Questions?](#questions)
 
 ## Code of Conduct
 
-We are committed to providing a welcoming and inclusive environment. Please be respectful and constructive in all interactions.
+ArcherDB is an open-source project. All contributors are expected to follow
+the project [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Getting Started
 
@@ -34,6 +37,8 @@ We welcome:
 1. Check existing [issues](https://github.com/ArcherDB-io/archerdb/issues) to avoid duplicates
 2. For significant changes, open an issue first to discuss the approach
 3. Review the [project board](https://github.com/orgs/ArcherDB-io/projects/1) for current priorities
+4. Read [GOVERNANCE.md](GOVERNANCE.md) for maintainer decision-making and release expectations
+5. Read [SUPPORT.md](SUPPORT.md) for issue-routing guidance
 
 ## Development Setup
 
@@ -119,7 +124,7 @@ Fixes #123
 
 ## Code Style
 
-ArcherDB inherits ArcherDB's engineering philosophy. Key principles:
+ArcherDB follows a pragmatic systems-engineering style. Key principles:
 
 ### Safety First
 
@@ -185,21 +190,20 @@ ArcherDB uses VOPR (Viewstamped Operation Replayer) for deterministic simulation
 - Keep examples up to date and tested
 - Use consistent terminology
 
-## Contributor License Agreement
+## Developer Certificate of Origin
 
-By contributing to ArcherDB, you agree that:
+ArcherDB does not currently require a separate Contributor License Agreement.
+Instead, contributions are accepted under the Apache License 2.0 project
+license using a Developer Certificate of Origin style sign-off.
+
+By contributing to ArcherDB, you certify that:
 
 1. **Original Work**: Your contribution is your original work, or you have the right to submit it.
+2. **License Grant**: Your contribution may be distributed under the repository's Apache License 2.0 terms.
+3. **Patent Grant**: The Apache License 2.0 patent terms apply to your contribution.
+4. **Attribution**: Your contribution may be attributed to you unless you request otherwise.
 
-2. **License Grant**: You grant ArcherDB Contributors a perpetual, worldwide, non-exclusive, royalty-free license to use, copy, modify, and distribute your contribution under the Apache License 2.0.
-
-3. **Patent Grant**: You grant a patent license for any patents you own that would be infringed by your contribution.
-
-4. **No Support Obligation**: You are not obligated to provide support for your contribution.
-
-5. **Attribution**: Your contribution may be attributed to you unless you request otherwise.
-
-### Signing Your Work
+### Signing your work
 
 Include a sign-off in your commit message:
 
@@ -207,15 +211,27 @@ Include a sign-off in your commit message:
 Signed-off-by: Your Name <your.email@example.com>
 ```
 
-This indicates you agree to the terms above. You can add this automatically:
+This indicates that you certify the contribution under the Developer
+Certificate of Origin process. You can add this automatically:
 
 ```bash
 git commit -s -m "Your commit message"
 ```
 
+## Governance
+
+Project governance and maintainer responsibilities live in
+[GOVERNANCE.md](GOVERNANCE.md).
+
+## Support
+
+Issue-routing and support guidance live in [SUPPORT.md](SUPPORT.md).
+
 ## Attribution
 
-ArcherDB is a derivative work of [ArcherDB](https://archerdb.com/). See the [NOTICE](NOTICE) file for full attribution.
+ArcherDB incorporates derivative work and implementation ideas from
+[TigerBeetle](https://github.com/tigerbeetle/tigerbeetle). See the
+[NOTICE](NOTICE) file for project attribution details.
 
 When contributing code that originates from or is inspired by other open source projects, please ensure proper attribution in the code comments and update the NOTICE file if required.
 

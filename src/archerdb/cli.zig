@@ -114,6 +114,7 @@ const CLIArgs = union(enum) {
     const Start = struct {
         // Stable CLI arguments.
         addresses: []const u8,
+        @"replica-count": ?u8 = null,
         cache_grid: ?ByteSize = null,
         ram_index_size: ?ByteSize = null,
         development: bool = false,
@@ -127,6 +128,7 @@ const CLIArgs = union(enum) {
         metrics_port: ?u16 = null,
         metrics_bind: ?[]const u8 = null,
         metrics_auth_token: ?[]const u8 = null,
+        @"index-resize-batch-size": ?u32 = null,
 
         // Backup configuration (F5.5 - Backup & Restore)
         backup_enabled: bool = false,
@@ -161,12 +163,6 @@ const CLIArgs = union(enum) {
         ttl_extension_max: ?u32 = null,
         // Minimum time between extensions for same entity (seconds, default 3600 = 1 hour)
         ttl_extension_cooldown: ?u32 = null,
-
-        // Multi-Region Replication options
-        region_role: ?[]const u8 = null, // "primary" or "follower"
-        region_id: ?u32 = null, // Unique region identifier
-        primary_region: ?[]const u8 = null, // Primary endpoint (follower only)
-        follower_regions: ?[]const u8 = null, // Comma-separated follower endpoints (primary only)
 
         // Encryption at Rest options
         encryption_enabled: bool = false,
@@ -635,7 +631,7 @@ const CLIArgs = union(enum) {
             \\                        [--format=<text|json>]
             \\
             \\  archerdb shard reshard --addresses=<addresses> --cluster=<id> --to=<count>
-            \\                         [--mode=<offline|online>] [--dry-run]
+            \\                         [--mode=<online|offline>] [--dry-run]
             \\
             \\Commands:
             \\
@@ -645,7 +641,8 @@ const CLIArgs = union(enum) {
             \\
             \\  reshard    Initiate resharding to change the number of shards.
             \\             The target count must be a power of 2.
-            \\             Default mode is 'offline' (stop-the-world).
+            \\             Live execution supports online mode only; offline mode is
+            \\             available for planning with --dry-run.
             \\
             \\Options:
             \\
@@ -661,9 +658,9 @@ const CLIArgs = union(enum) {
             \\  --to=<integer>
             \\        Target shard count for resharding. Must be a power of 2.
             \\
-            \\  --mode=<offline|online>
-            \\        Resharding mode. 'offline' is stop-the-world (default).
-            \\        'online' allows reads during migration.
+            \\  --mode=<online|offline>
+            \\        Resharding mode. Defaults to 'online'.
+            \\        'offline' is planning-only and requires --dry-run.
             \\
             \\  --metrics-port=<port>
             \\        Metrics server port to submit online resharding control requests.
@@ -800,41 +797,8 @@ const CLIArgs = union(enum) {
 
     // Coordinator mode
     // Cluster management commands
-    // Provides dynamic membership management: add/remove nodes from running cluster
+    // The public GA surface provides cluster status only.
     const Cluster = union(enum) {
-        /// Add a new node to the cluster
-        @"add-node": struct {
-            /// ArcherDB cluster addresses
-            addresses: []const u8,
-            /// Cluster ID
-            cluster: u128,
-            /// Address of the new node to add (host:port)
-            node: []const u8,
-            /// Don't wait for node to catch up (return immediately)
-            @"no-wait": bool = false,
-            /// Timeout in seconds for catchup (default 300)
-            timeout: u32 = 300,
-            /// Output format
-            format: ?[]const u8 = null,
-            @"log-level": LogLevel = .info,
-        },
-        /// Remove a node from the cluster
-        @"remove-node": struct {
-            /// ArcherDB cluster addresses
-            addresses: []const u8,
-            /// Cluster ID
-            cluster: u128,
-            /// Node index or address to remove
-            node: []const u8,
-            /// Force removal even if node is unhealthy
-            force: bool = false,
-            /// Timeout in seconds for graceful drain (default 60)
-            timeout: u32 = 60,
-            /// Output format
-            format: ?[]const u8 = null,
-            @"log-level": LogLevel = .info,
-        },
-        /// Show cluster membership status
         status: struct {
             /// ArcherDB cluster addresses
             addresses: []const u8,
@@ -844,30 +808,23 @@ const CLIArgs = union(enum) {
             format: ?[]const u8 = null,
             @"log-level": LogLevel = .info,
         },
+        // Hidden sentinel so stdx.flags still treats this as a command union.
+        sentinel: struct {
+            @"log-level": LogLevel = .info,
+        },
 
         pub const help =
             \\Usage:
             \\
             \\  archerdb cluster [-h | --help]
             \\
-            \\  archerdb cluster add-node --addresses=<addresses> --cluster=<id> --node=<host:port>
-            \\                            [--no-wait] [--timeout=<seconds>] [--format=<text|json>]
-            \\
-            \\  archerdb cluster remove-node --addresses=<addresses> --cluster=<id> --node=<id|addr>
-            \\                               [--force] [--timeout=<seconds>] [--format=<text|json>]
-            \\
             \\  archerdb cluster status --addresses=<addresses> --cluster=<id>
             \\                          [--format=<text|json>]
             \\
             \\Commands:
             \\
-            \\  add-node     Add a new node to the cluster as a learner, then promote.
-            \\               Uses joint consensus for safe membership changes.
-            \\
-            \\  remove-node  Remove a node from the cluster gracefully.
-            \\               Drains in-flight operations before removal.
-            \\
             \\  status       Show cluster membership status, node roles, and health.
+            \\               This is the supported GA surface for cluster management.
             \\
             \\Options:
             \\
@@ -877,26 +834,12 @@ const CLIArgs = union(enum) {
             \\  --cluster=<integer>
             \\        Cluster ID (required).
             \\
-            \\  --node=<host:port|id>
-            \\        Node address for add-node, or node ID/address for remove-node.
-            \\
-            \\  --no-wait
-            \\        Return immediately without waiting for node to catch up (add-node only).
-            \\
-            \\  --timeout=<seconds>
-            \\        Timeout for catchup or drain operation. Defaults to 300 for add, 60 for remove.
-            \\
-            \\  --force
-            \\        Force removal even if node is unhealthy (remove-node only).
-            \\
             \\  --format=<text|json>
             \\        Output format. Defaults to 'text'.
             \\
             \\Examples:
             \\
             \\  archerdb cluster status --addresses=3000,3001,3002 --cluster=0
-            \\  archerdb cluster add-node --addresses=3000,3001,3002 --cluster=0 --node=192.168.1.4:3003
-            \\  archerdb cluster remove-node --addresses=3000,3001,3002 --cluster=0 --node=2 --force
             \\
         ;
     };
@@ -912,6 +855,8 @@ const CLIArgs = union(enum) {
             cluster: u128,
             /// New capacity (number of buckets)
             @"new-capacity": ?u64 = null,
+            /// Metrics port for control requests (default: 9091)
+            @"metrics-port": u16 = 9091,
             /// Output format
             format: ?[]const u8 = null,
             @"log-level": LogLevel = .info,
@@ -962,6 +907,10 @@ const CLIArgs = union(enum) {
             \\        New index capacity in number of buckets.
             \\        Must be greater than current capacity.
             \\
+            \\  --metrics-port=<port>
+            \\        Metrics/control port for resize start/abort requests.
+            \\        Defaults to 9091.
+            \\
             \\  --format=<text|json>
             \\        Output format. Defaults to 'text'.
             \\
@@ -995,13 +944,13 @@ const CLIArgs = union(enum) {
             format: ?[]const u8 = null,
             @"log-level": LogLevel = .info,
         },
-        /// Start rolling upgrade
+        /// Show a rolling-upgrade dry-run plan (`--dry-run` required for now)
         start: struct {
             /// ArcherDB cluster addresses
             addresses: []const u8,
             /// Target version to upgrade to
             @"target-version": []const u8,
-            /// Dry run - show what would happen without making changes
+            /// Dry run - required for now because live upgrade actuation is not implemented
             @"dry-run": bool = false,
             /// Metrics port for health probes (default: 9100)
             @"metrics-port": u16 = 9100,
@@ -1017,27 +966,6 @@ const CLIArgs = union(enum) {
             format: ?[]const u8 = null,
             @"log-level": LogLevel = .info,
         },
-        /// Pause in-progress upgrade
-        pause: struct {
-            /// ArcherDB cluster addresses
-            addresses: []const u8,
-            @"log-level": LogLevel = .info,
-        },
-        /// Resume paused upgrade
-        @"resume": struct {
-            /// ArcherDB cluster addresses
-            addresses: []const u8,
-            @"log-level": LogLevel = .info,
-        },
-        /// Trigger manual rollback
-        rollback: struct {
-            /// ArcherDB cluster addresses
-            addresses: []const u8,
-            /// Force rollback without confirmation
-            force: bool = false,
-            @"log-level": LogLevel = .info,
-        },
-
         pub const help =
             \\Usage:
             \\
@@ -1047,32 +975,18 @@ const CLIArgs = union(enum) {
             \\                          [--format=<text|json>]
             \\
             \\  archerdb upgrade start --addresses=<addresses> --target-version=<version>
-            \\                         [--dry-run] [--metrics-port=<port>]
+            \\                         --dry-run [--metrics-port=<port>]
             \\                         [--p99-threshold=<multiplier>] [--error-threshold=<pct>]
             \\                         [--catchup-timeout=<seconds>] [--format=<text|json>]
-            \\
-            \\  archerdb upgrade pause --addresses=<addresses>
-            \\
-            \\  archerdb upgrade resume --addresses=<addresses>
-            \\
-            \\  archerdb upgrade rollback --addresses=<addresses> [--force]
             \\
             \\Commands:
             \\
             \\  status     Show current cluster versions and identify primary.
             \\             Displays version of each replica and upgrade readiness.
             \\
-            \\  start      Start rolling upgrade to target version.
-            \\             Upgrades followers first, primary last.
-            \\             Monitors health and triggers rollback if thresholds exceeded.
-            \\
-            \\  pause      Pause an in-progress upgrade between replica upgrades.
-            \\             Safe to call at any time during upgrade.
-            \\
-            \\  resume     Resume a paused upgrade from where it stopped.
-            \\
-            \\  rollback   Manually trigger rollback to previous version.
-            \\             Use --force to skip confirmation prompt.
+            \\  start      Generate a dry-run rolling-upgrade plan to a target version.
+            \\             The ArcherDB CLI does not restart processes or roll back
+            \\             deployments; use your external deployment tooling for live rollout.
             \\
             \\Options:
             \\
@@ -1083,7 +997,7 @@ const CLIArgs = union(enum) {
             \\        Version to upgrade to (e.g., "1.2.0").
             \\
             \\  --dry-run
-            \\        Show upgrade plan without making changes.
+            \\        Required. Show upgrade plan without making changes.
             \\
             \\  --metrics-port=<port>
             \\        Metrics/health endpoint port. Defaults to 9100.
@@ -1105,34 +1019,26 @@ const CLIArgs = union(enum) {
             \\  --format=<text|json>
             \\        Output format. Defaults to 'text'.
             \\
-            \\  --force
-            \\        Skip confirmation prompt for rollback.
+            \\Health-Based Planning Checks:
             \\
-            \\Health-Based Rollback Triggers:
-            \\
-            \\  Automatic rollback is triggered when any of these conditions are met:
+            \\  The dry-run planner evaluates these thresholds for rollout readiness:
             \\  - Readiness probe fails for > 3 consecutive checks
             \\  - P99 latency exceeds baseline * p99-threshold
             \\  - Error rate exceeds error-threshold percentage
             \\  - Replica fails to catch up within catchup-timeout
             \\
-            \\Upgrade Order:
+            \\Suggested Upgrade Order:
             \\
             \\  1. Identify primary replica
-            \\  2. Upgrade followers one at a time
+            \\  2. Roll followers one at a time with external deployment tooling
             \\  3. Wait for each follower to catch up and pass health checks
-            \\  4. Upgrade primary last
+            \\  4. Roll the primary last
             \\
             \\Examples:
             \\
             \\  archerdb upgrade status --addresses=node1:3000,node2:3000,node3:3000
             \\  archerdb upgrade start --addresses=node1:3000,node2:3000,node3:3000 \
             \\    --target-version=1.2.0 --dry-run
-            \\  archerdb upgrade start --addresses=node1:3000,node2:3000,node3:3000 \
-            \\    --target-version=1.2.0
-            \\  archerdb upgrade pause --addresses=node1:3000,node2:3000,node3:3000
-            \\  archerdb upgrade resume --addresses=node1:3000,node2:3000,node3:3000
-            \\  archerdb upgrade rollback --addresses=node1:3000,node2:3000,node3:3000 --force
             \\
         ;
     };
@@ -1333,11 +1239,11 @@ const CLIArgs = union(enum) {
         \\
         \\  coordinator  Start/stop/status of coordinator for multi-shard query routing.
         \\
-        \\  cluster    Manage cluster membership (add-node, remove-node, status).
+        \\  cluster    Cluster status and membership visibility.
         \\
         \\  index      Manage index operations (resize).
         \\
-        \\  upgrade    Rolling upgrade and rollback (status, start, pause, resume, rollback).
+        \\  upgrade    Upgrade status and dry-run planning.
         \\
         \\Options:
         \\
@@ -1424,6 +1330,11 @@ const CLIArgs = union(enum) {
         \\        Defaults to "127.0.0.1" for security (localhost only).
         \\        Use "0.0.0.0" to listen on all interfaces (requires explicit opt-in).
         \\
+        \\  --index-resize-batch-size=<entries>
+        \\        Number of RAM-index entries migrated per main-loop tick during online resize.
+        \\        Lower values reduce per-tick work and make resize progress more gradual.
+        \\        Defaults to 1024.
+        \\
         \\  --vsr-timeout-profile=<cloud|datacenter|custom>
         \\        Select timeout profile preset for replication (cloud/datacenter/custom).
         \\
@@ -1460,6 +1371,7 @@ const CLIArgs = union(enum) {
         \\  --development
         \\        Allow the replica to format/start/recover even when Direct IO is unavailable.
         \\        Additionally, use smaller cache sizes and batch size by default.
+        \\        Development mode also uses sparse data-file allocation for faster local testing.
         \\
         \\        Since this shrinks the batch size, note that:
         \\        * All replicas should use the same batch size. That is, if any replica in the cluster has
@@ -1550,6 +1462,8 @@ const StartDefaults = struct {
     limit_request: ByteSize,
     cache_geo_events: ByteSize,
     cache_grid: ByteSize,
+    ram_index_size: ByteSize,
+    memory_lsm_manifest: ByteSize,
     memory_lsm_compaction: ByteSize,
 };
 
@@ -1559,6 +1473,8 @@ const start_defaults_production = StartDefaults{
     .limit_request = .{ .value = constants.message_size_max },
     .cache_geo_events = .{ .value = constants.cache_geo_events_size_default },
     .cache_grid = .{ .value = constants.grid_cache_size_default },
+    .ram_index_size = .{ .value = constants.ram_index_size_default },
+    .memory_lsm_manifest = .{ .value = constants.lsm_manifest_memory_size_default },
     .memory_lsm_compaction = .{
         // By default, add a few extra blocks for beat-scoped work.
         .value = (lsm_compaction_block_count_min + 16) * constants.block_size,
@@ -1575,6 +1491,12 @@ const start_defaults_development = StartDefaults{
     },
     .cache_geo_events = .{ .value = 0 },
     .cache_grid = .{ .value = constants.block_size * Grid.Cache.value_count_max_multiple },
+    .ram_index_size = .{ .value = 128 * 1024 * 1024 },
+    .memory_lsm_manifest = .{
+        // The repo's deterministic tests use 4096 manifest nodes; keep development mode aligned
+        // with that footprint rather than silently using the production 8192-node budget.
+        .value = 4096 * constants.lsm_manifest_node_size,
+    },
     .memory_lsm_compaction = .{ .value = lsm_compaction_block_memory_min },
 };
 
@@ -1618,6 +1540,7 @@ pub const Command = union(enum) {
     // ArcherDB geospatial Start command structure (F1.3.1)
     pub const Start = struct {
         addresses: Addresses,
+        replica_count: u8,
         // true when the value of `--addresses` is exactly `0`. Used to enable "magic zero" mode for
         // testing. We check the raw string rather then the parsed address to prevent triggering
         // this logic by accident.
@@ -1627,6 +1550,7 @@ pub const Command = union(enum) {
         storage_size_limit: u64,
         pipeline_requests_limit: u32,
         request_size_limit: u32,
+        index_resize_batch_size: u32,
         cache_grid_blocks: u32,
         lsm_forest_compaction_block_count: u32,
         lsm_forest_node_count: u32,
@@ -1956,30 +1880,13 @@ pub const Command = union(enum) {
 
     /// Cluster management command.
     pub const Cluster = union(enum) {
-        @"add-node": struct {
-            addresses: Addresses,
-            cluster: u128,
-            node_address: []const u8,
-            wait: bool,
-            timeout_seconds: u32,
-            format: OutputFormat,
-            log_level: LogLevel,
-        },
-        @"remove-node": struct {
-            addresses: Addresses,
-            cluster: u128,
-            node_id: []const u8,
-            force: bool,
-            timeout_seconds: u32,
-            format: OutputFormat,
-            log_level: LogLevel,
-        },
         status: struct {
             addresses: Addresses,
             cluster: u128,
             format: OutputFormat,
             log_level: LogLevel,
         },
+        sentinel: void,
     };
 
     /// Index management command.
@@ -1995,6 +1902,7 @@ pub const Command = union(enum) {
             addresses: Addresses,
             cluster: u128,
             new_capacity: ?u64,
+            metrics_port: u16,
             action: IndexResizeAction,
             format: OutputFormat,
             log_level: LogLevel,
@@ -2011,9 +1919,6 @@ pub const Command = union(enum) {
     pub const UpgradeAction = enum {
         status,
         start,
-        pause,
-        @"resume",
-        rollback,
     };
 
     /// Upgrade command (OPS-07, OPS-08).
@@ -2026,8 +1931,6 @@ pub const Command = union(enum) {
         target_version: ?[]const u8,
         /// Dry run mode.
         dry_run: bool,
-        /// Force flag (for rollback action).
-        force: bool,
         /// Metrics port for health probes.
         metrics_port: u16,
         /// P99 latency threshold multiplier for rollback.
@@ -2229,7 +2132,8 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
         "log_module_levels",          "log_file",
         "log_rotate_size",            "log_rotate_count",
         "metrics_port",               "metrics_bind",
-        "metrics_auth_token",         "backup_enabled",
+        "metrics_auth_token",         "index-resize-batch-size",
+        "backup_enabled",
         "backup_provider",            "backup_bucket",
         "backup_region",              "backup_credentials",
         "backup_mode",                "backup_encryption",
@@ -2280,16 +2184,25 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
     const GeoEventsValuesCache = groove_config.geo_events.ObjectsCache.Cache;
 
     const addresses = parse_addresses(start.addresses, "--addresses", Command.Addresses);
-    const replica_count = addresses.count_as(u8);
+    const replica_count = start.@"replica-count" orelse addresses.count_as(u8);
+    if (replica_count == 0) {
+        vsr.fatal(.cli, "--replica-count: value needs to be greater than zero", .{});
+    }
+    if (replica_count > addresses.count_as(u8)) {
+        vsr.fatal(
+            .cli,
+            "--replica-count: value {} exceeds number of --addresses ({})",
+            .{ replica_count, addresses.count_as(u8) },
+        );
+    }
     const defaults =
         if (start.development) start_defaults_development else start_defaults_production;
 
     const start_limit_storage: ByteSize = start.limit_storage orelse
         .{ .value = constants.storage_size_limit_default };
     const start_memory_lsm_manifest: ByteSize = start.memory_lsm_manifest orelse
-        .{ .value = constants.lsm_manifest_memory_size_default };
-    const start_ram_index_size: ByteSize = start.ram_index_size orelse
-        .{ .value = constants.ram_index_size_default };
+        defaults.memory_lsm_manifest;
+    const start_ram_index_size: ByteSize = start.ram_index_size orelse defaults.ram_index_size;
 
     const storage_size_limit = start_limit_storage.bytes();
     const storage_size_limit_min = data_file_size_min;
@@ -2364,6 +2277,11 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
             request_size_limit.suffix(),
             vsr.stdx.fmt_int_size_bin_exact(request_size_limit_min),
         });
+    }
+
+    const index_resize_batch_size = start.@"index-resize-batch-size" orelse 1024;
+    if (index_resize_batch_size == 0) {
+        vsr.fatal(.cli, "--index-resize-batch-size must be greater than zero", .{});
     }
 
     const lsm_manifest_memory = start_memory_lsm_manifest.bytes();
@@ -2474,24 +2392,14 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
         vsr.fatal(.cli, "--log-level=debug must be provided when using --log-trace", .{});
     }
 
-    // Multi-region flags are parsed but not yet plumbed through to the start path.
-    // Emit a clear error rather than silently dropping them.
-    if (start.region_role != null or start.region_id != null or
-        start.primary_region != null or start.follower_regions != null)
-    {
-        vsr.fatal(
-            .cli,
-            "multi-region flags (--region-role, --region-id, --primary-region, --follower-regions) are not yet implemented",
-            .{},
-        );
-    }
-
     return .{
         .addresses = addresses,
+        .replica_count = replica_count,
         .addresses_zero = std.mem.eql(u8, start.addresses, "0"),
         .storage_size_limit = storage_size_limit,
         .pipeline_requests_limit = pipeline_limit,
         .request_size_limit = @intCast(request_size_limit.bytes()),
+        .index_resize_batch_size = index_resize_batch_size,
         .cache_geo_events = parse_cache_size_to_count(
             archerdb.GeoEvent,
             GeoEventsValuesCache,
@@ -2501,7 +2409,8 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
         .ram_index_capacity = ram_index_capacity: {
             const bytes = ram_index_size;
             // Each RAM index slot costs ~96 bytes (64B entry + 32B scan buffers).
-            const slots = @max(500_000, bytes / 96);
+            const slots_min: u64 = if (start.development) 10_000 else 500_000;
+            const slots = @max(slots_min, bytes / 96);
             break :ram_index_capacity @intCast(slots);
         },
         .cache_grid_blocks = parse_cache_size_to_count(
@@ -2945,6 +2854,14 @@ fn parse_args_shard(shard: CLIArgs.Shard) Command.Shard {
                     .{reshard.to},
                 );
             }
+            const mode = parse_reshard_mode(reshard.mode);
+            if (mode == .offline and !reshard.@"dry-run") {
+                vsr.fatal(
+                    .cli,
+                    "shard reshard: offline execution is not supported by this CLI; use --mode=online or add --dry-run for planning",
+                    .{},
+                );
+            }
             break :blk .{
                 .reshard = .{
                     .addresses = parse_addresses(
@@ -2954,7 +2871,7 @@ fn parse_args_shard(shard: CLIArgs.Shard) Command.Shard {
                     ),
                     .cluster = reshard.cluster,
                     .to = reshard.to,
-                    .mode = parse_reshard_mode(reshard.mode),
+                    .mode = mode,
                     .metrics_port = reshard.@"metrics-port",
                     .dry_run = reshard.@"dry-run",
                     .log_level = reshard.@"log-level",
@@ -3024,7 +2941,7 @@ fn parse_output_format(format_str: ?[]const u8) Command.OutputFormat {
 }
 
 fn parse_reshard_mode(mode_str: ?[]const u8) Command.ReshardMode {
-    const mode = mode_str orelse return .offline;
+    const mode = mode_str orelse return .online;
     if (std.mem.eql(u8, mode, "offline")) return .offline;
     if (std.mem.eql(u8, mode, "online")) return .online;
     vsr.fatal(.cli, "--mode: invalid mode '{s}', expected offline or online", .{mode});
@@ -3148,32 +3065,6 @@ fn parse_fan_out_policy(policy: ?[]const u8) Command.FanOutPolicy {
 
 fn parse_args_cluster(cluster: CLIArgs.Cluster) Command.Cluster {
     return switch (cluster) {
-        .@"add-node" => |add_node| .{
-            .@"add-node" = .{
-                .addresses = parse_addresses(add_node.addresses, "--addresses", Command.Addresses),
-                .cluster = add_node.cluster,
-                .node_address = add_node.node,
-                .wait = !add_node.@"no-wait",
-                .timeout_seconds = add_node.timeout,
-                .format = parse_output_format(add_node.format),
-                .log_level = add_node.@"log-level",
-            },
-        },
-        .@"remove-node" => |remove_node| .{
-            .@"remove-node" = .{
-                .addresses = parse_addresses(
-                    remove_node.addresses,
-                    "--addresses",
-                    Command.Addresses,
-                ),
-                .cluster = remove_node.cluster,
-                .node_id = remove_node.node,
-                .force = remove_node.force,
-                .timeout_seconds = remove_node.timeout,
-                .format = parse_output_format(remove_node.format),
-                .log_level = remove_node.@"log-level",
-            },
-        },
         .status => |status| .{
             .status = .{
                 .addresses = parse_addresses(status.addresses, "--addresses", Command.Addresses),
@@ -3182,6 +3073,7 @@ fn parse_args_cluster(cluster: CLIArgs.Cluster) Command.Cluster {
                 .log_level = status.@"log-level",
             },
         },
+        .sentinel => vsr.fatal(.cli, "cluster: only the 'status' action is supported", .{}),
     };
 }
 
@@ -3222,6 +3114,7 @@ fn parse_args_index(index: CLIArgs.Index) Command.Index {
                     ),
                     .cluster = resize.cluster,
                     .new_capacity = resize.@"new-capacity",
+                    .metrics_port = resize.@"metrics-port",
                     .action = action,
                     .format = parse_output_format(resize.format),
                     .log_level = resize.@"log-level",
@@ -3246,7 +3139,6 @@ fn parse_args_upgrade(upgrade: CLIArgs.Upgrade) Command.Upgrade {
             .addresses = parse_addresses(status.addresses, "--addresses", Command.Addresses),
             .target_version = null,
             .dry_run = false,
-            .force = false,
             .metrics_port = status.@"metrics-port",
             .p99_threshold = 2.0,
             .error_threshold = 1.0,
@@ -3259,7 +3151,6 @@ fn parse_args_upgrade(upgrade: CLIArgs.Upgrade) Command.Upgrade {
             .addresses = parse_addresses(start.addresses, "--addresses", Command.Addresses),
             .target_version = start.@"target-version",
             .dry_run = start.@"dry-run",
-            .force = false,
             .metrics_port = start.@"metrics-port",
             // Convert x10 values back to f64 (e.g., 20 -> 2.0)
             .p99_threshold = @as(f64, @floatFromInt(start.@"p99-threshold-x10" orelse 20)) / 10.0,
@@ -3267,45 +3158,6 @@ fn parse_args_upgrade(upgrade: CLIArgs.Upgrade) Command.Upgrade {
             .catchup_timeout = start.@"catchup-timeout" orelse 300,
             .format = parse_output_format(start.format),
             .log_level = start.@"log-level",
-        },
-        .pause => |pause| .{
-            .action = .pause,
-            .addresses = parse_addresses(pause.addresses, "--addresses", Command.Addresses),
-            .target_version = null,
-            .dry_run = false,
-            .force = false,
-            .metrics_port = 9100,
-            .p99_threshold = 2.0,
-            .error_threshold = 1.0,
-            .catchup_timeout = 300,
-            .format = .text,
-            .log_level = pause.@"log-level",
-        },
-        .@"resume" => |resume_cmd| .{
-            .action = .@"resume",
-            .addresses = parse_addresses(resume_cmd.addresses, "--addresses", Command.Addresses),
-            .target_version = null,
-            .dry_run = false,
-            .force = false,
-            .metrics_port = 9100,
-            .p99_threshold = 2.0,
-            .error_threshold = 1.0,
-            .catchup_timeout = 300,
-            .format = .text,
-            .log_level = resume_cmd.@"log-level",
-        },
-        .rollback => |rollback| .{
-            .action = .rollback,
-            .addresses = parse_addresses(rollback.addresses, "--addresses", Command.Addresses),
-            .target_version = null,
-            .dry_run = false,
-            .force = rollback.force,
-            .metrics_port = 9100,
-            .p99_threshold = 2.0,
-            .error_threshold = 1.0,
-            .catchup_timeout = 300,
-            .format = .text,
-            .log_level = rollback.@"log-level",
         },
     };
 }
@@ -3605,6 +3457,46 @@ test "parse_args_info: basic parsing" {
     try std.testing.expectEqual(LogLevel.debug, cmd.log_level);
 }
 
+test "parse_args_start: development defaults clamp RAM index size" {
+    const cli_start = CLIArgs.Start{
+        .addresses = "127.0.0.1:3000",
+        .development = true,
+        .@"--" = {},
+        .path = "/data/0_0.archerdb",
+    };
+
+    const cmd = parse_args_start(cli_start);
+
+    try std.testing.expectEqual(@as(u32, 1_398_101), cmd.ram_index_capacity);
+}
+
+test "parse_args_start: development honors small RAM index overrides" {
+    const cli_start = CLIArgs.Start{
+        .addresses = "127.0.0.1:3000",
+        .development = true,
+        .ram_index_size = .{ .value = 1, .unit = .mib },
+        .@"--" = {},
+        .path = "/data/0_0.archerdb",
+    };
+
+    const cmd = parse_args_start(cli_start);
+
+    try std.testing.expectEqual(@as(u32, 10_922), cmd.ram_index_capacity);
+}
+
+test "parse_args_start: development defaults clamp LSM manifest memory" {
+    const cli_start = CLIArgs.Start{
+        .addresses = "127.0.0.1:3000",
+        .development = true,
+        .@"--" = {},
+        .path = "/data/0_0.archerdb",
+    };
+
+    const cmd = parse_args_start(cli_start);
+
+    try std.testing.expectEqual(@as(u32, 4096), cmd.lsm_forest_node_count);
+}
+
 // ============================================================================
 // Unit Tests (Shard CLI)
 // ============================================================================
@@ -3616,7 +3508,7 @@ test "parse_output_format: valid formats" {
 }
 
 test "parse_reshard_mode: valid modes" {
-    try std.testing.expectEqual(Command.ReshardMode.offline, parse_reshard_mode(null));
+    try std.testing.expectEqual(Command.ReshardMode.online, parse_reshard_mode(null));
     try std.testing.expectEqual(Command.ReshardMode.offline, parse_reshard_mode("offline"));
     try std.testing.expectEqual(Command.ReshardMode.online, parse_reshard_mode("online"));
 }
@@ -3701,7 +3593,7 @@ test "parse_args_shard: reshard command defaults" {
             .addresses = "127.0.0.1:3000",
             .cluster = 22222,
             .to = 4,
-            .mode = null, // Default to offline
+            .mode = null, // Default to online
             .@"dry-run" = false,
             .@"log-level" = .info,
         },
@@ -3712,7 +3604,7 @@ test "parse_args_shard: reshard command defaults" {
     switch (cmd) {
         .reshard => |reshard| {
             try std.testing.expectEqual(@as(u32, 4), reshard.to);
-            try std.testing.expectEqual(Command.ReshardMode.offline, reshard.mode);
+            try std.testing.expectEqual(Command.ReshardMode.online, reshard.mode);
             try std.testing.expect(!reshard.dry_run);
         },
         else => unreachable,

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2025 ArcherDB Contributors
 """Tests for distributed error codes (multi-region 213-218, sharding 220-224, encryption 410-414)."""
 
 import pytest

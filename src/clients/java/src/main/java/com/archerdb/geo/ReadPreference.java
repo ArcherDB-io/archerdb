@@ -1,14 +1,21 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 package com.archerdb.geo;
 
 /**
  * Read routing preference for multi-region deployments.
  *
  * <p>
- * Per client-sdk/spec.md v2 multi-region support:
+ * The enum expresses the intended routing policy. In the current Java SDK, {@link #PRIMARY} is
+ * implemented directly, {@link #FOLLOWER} uses deterministic follower selection, and
+ * {@link #NEAREST} is retained as a configuration value but does not yet perform latency-based
+ * routing.
+ *
+ * <p>
  * <ul>
  * <li>PRIMARY - Route all reads to primary region (strongly consistent)</li>
  * <li>FOLLOWER - Route reads to follower regions (eventually consistent)</li>
- * <li>NEAREST - Route reads to geographically nearest region</li>
+ * <li>NEAREST - Intended nearest-region routing; currently non-GA in the Java SDK</li>
  * </ul>
  *
  * <p>
@@ -29,8 +36,8 @@ public enum ReadPreference {
     FOLLOWER("follower"),
 
     /**
-     * Route reads to the geographically nearest region. Balances latency and consistency based on
-     * client location.
+     * Intended nearest-region routing. The current Java SDK retains this value for configuration
+     * compatibility but does not yet perform latency-based region selection.
      */
     NEAREST("nearest");
 

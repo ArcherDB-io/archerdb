@@ -12,10 +12,11 @@ Per CONTEXT.md: "Full data consistency checks after every topology change"
 - Data consistency across all nodes
 """
 
-from typing import TYPE_CHECKING, Any, Dict, List, Set
-
-import requests
-from tenacity import retry, stop_after_attempt, wait_fixed
+import json
+import time
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
+from urllib import error as urllib_error
+from urllib import request as urllib_request
 
 if TYPE_CHECKING:
     from test_infrastructure.harness import ArcherDBCluster
@@ -59,12 +60,13 @@ class ConsistencyChecker:
                 health[f"node_{i}"] = False
                 continue
             try:
-                resp = requests.get(
+                status_code, _ = _http_request(
+                    "GET",
                     f"http://127.0.0.1:{self.cluster.get_metrics_ports()[i]}/health/ready",
                     timeout=5,
                 )
-                health[f"node_{i}"] = resp.status_code == 200
-            except requests.RequestException:
+                health[f"node_{i}"] = status_code == 200
+            except RuntimeError:
                 health[f"node_{i}"] = False
 
         # Check leader exists
@@ -141,23 +143,27 @@ class ConsistencyChecker:
             RuntimeError: If query fails after all retries.
         """
 
-        @retry(
-            stop=stop_after_attempt(retry_attempts),
-            wait=wait_fixed(retry_delay_sec),
-            reraise=True,
-        )
-        def query() -> Set[str]:
-            port = self.cluster.get_ports()[node_idx]
-            resp = requests.post(
-                f"http://127.0.0.1:{port}/query/uuid/batch",
-                json={"entity_ids": entity_ids},
-                timeout=10,
-            )
-            if resp.status_code != 200:
-                raise RuntimeError(f"Query failed: {resp.status_code}")
-            return set(e["entity_id"] for e in resp.json().get("events", []))
+        last_error: Optional[Exception] = None
 
-        return query()
+        for attempt in range(retry_attempts):
+            try:
+                port = self.cluster.get_ports()[node_idx]
+                status_code, payload = _http_request(
+                    "POST",
+                    f"http://127.0.0.1:{port}/query/uuid/batch",
+                    json_body={"entity_ids": entity_ids},
+                    timeout=10,
+                )
+                if status_code != 200:
+                    raise RuntimeError(f"Query failed: {status_code}")
+                return set(e["entity_id"] for e in payload.get("events", []))
+            except Exception as exc:
+                last_error = exc
+                if attempt + 1 >= retry_attempts:
+                    break
+                time.sleep(retry_delay_sec)
+
+        raise RuntimeError(f"Query failed after {retry_attempts} attempts: {last_error}")
 
     def verify_operation_correctness(
         self,
@@ -202,19 +208,21 @@ class ConsistencyChecker:
                 port = self.cluster.get_ports()[i]
 
                 if operation in ("ping", "status", "topology"):
-                    resp = requests.get(
+                    status_code, _ = _http_request(
+                        "GET",
                         f"http://127.0.0.1:{port}{endpoint}",
                         timeout=5,
                     )
                 else:
-                    resp = requests.post(
+                    status_code, _ = _http_request(
+                        "POST",
                         f"http://127.0.0.1:{port}{endpoint}",
-                        json=input_data,
+                        json_body=input_data,
                         timeout=5,
                     )
 
-                results[f"node_{i}_status"] = resp.status_code
-                results[f"node_{i}_correct"] = resp.status_code == expected_response.get(
+                results[f"node_{i}_status"] = status_code
+                results[f"node_{i}_correct"] = status_code == expected_response.get(
                     "status_code", 200
                 )
 
@@ -222,3 +230,36 @@ class ConsistencyChecker:
                 results[f"node_{i}_error"] = str(e)
 
         return results
+
+
+def _http_request(
+    method: str,
+    url: str,
+    *,
+    timeout: float,
+    json_body: Optional[Dict[str, Any]] = None,
+) -> tuple[int, Any]:
+    data = None
+    headers: Dict[str, str] = {}
+    if json_body is not None:
+        data = json.dumps(json_body).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+
+    req = urllib_request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib_request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read()
+            content_type = resp.headers.get("Content-Type", "")
+            if "application/json" in content_type and body:
+                return resp.status, json.loads(body.decode("utf-8"))
+            return resp.status, body
+    except urllib_error.HTTPError as exc:
+        body = exc.read()
+        if body:
+            try:
+                return exc.code, json.loads(body.decode("utf-8"))
+            except json.JSONDecodeError:
+                pass
+        return exc.code, body
+    except (urllib_error.URLError, TimeoutError) as exc:
+        raise RuntimeError(str(exc)) from exc

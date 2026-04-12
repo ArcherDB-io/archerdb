@@ -16,6 +16,7 @@ const archerdb_metrics = vsr.archerdb_metrics;
 const sharding = vsr.sharding;
 
 const benchmark_driver = @import("benchmark_driver.zig");
+const backup_runtime = @import("backup_runtime.zig");
 const cli = @import("cli.zig");
 const encryption = vsr.encryption;
 const inspect = @import("inspect.zig");
@@ -338,7 +339,8 @@ pub fn main() !void {
             else => .info, // status and stop use default log level
         },
         .cluster => |cluster_cmd| switch (cluster_cmd) {
-            inline else => |*args| args.log_level.toStdLogLevel(),
+            .status => |status| status.log_level.toStdLogLevel(),
+            .sentinel => .info,
         },
         .index => |index_cmd| switch (index_cmd) {
             inline else => |*args| args.log_level.toStdLogLevel(),
@@ -483,7 +485,7 @@ pub fn main() !void {
             try vsr.multiversion.print_information(gpa, args.path, stdout);
             try stdout_buffer.flush();
         },
-        .amqp => |*args| try command_amqp(gpa, time, args),
+        .amqp => |*args| try command_amqp(gpa, &io, time, args),
         .@"export" => |*args| try command_export(gpa, &io, time, args),
         .import => |*args| try command_import(gpa, &io, time, args),
         .shard => |*args| try command_shard(gpa, &io, time, args),
@@ -659,6 +661,83 @@ fn send_reshard_request(metrics_address: std.net.Address, target_shards: u32) !v
     return error.ReshardingRequestRejected;
 }
 
+fn send_index_resize_start_request(
+    metrics_address: std.net.Address,
+    target_capacity: u64,
+) !void {
+    const socket = std.posix.socket(metrics_address.any.family, std.posix.SOCK.STREAM, 0) catch |err| {
+        return err;
+    };
+    defer std.posix.close(socket);
+
+    std.posix.connect(socket, &metrics_address.any, metrics_address.getOsSockLen()) catch |err| {
+        return err;
+    };
+
+    var request_buf: [256]u8 = undefined;
+    const request = std.fmt.bufPrint(
+        &request_buf,
+        "GET /control/index-resize/start/{d} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+        .{target_capacity},
+    ) catch return error.ResponseTooLarge;
+
+    _ = std.posix.write(socket, request) catch |err| {
+        return err;
+    };
+
+    var response_buf: [4096]u8 = undefined;
+    const bytes_read = std.posix.read(socket, &response_buf) catch |err| {
+        return err;
+    };
+    if (bytes_read == 0) return error.EmptyResponse;
+
+    const response = response_buf[0..bytes_read];
+    if (std.mem.indexOf(u8, response, " ")) |status_start| {
+        const status_line = response[status_start + 1 ..];
+        if (std.mem.indexOf(u8, status_line, " ")) |status_end| {
+            const status_code = status_line[0..status_end];
+            if (std.mem.eql(u8, status_code, "200")) return;
+        }
+    }
+
+    return error.IndexResizeRequestRejected;
+}
+
+fn send_index_resize_abort_request(metrics_address: std.net.Address) !void {
+    const socket = std.posix.socket(metrics_address.any.family, std.posix.SOCK.STREAM, 0) catch |err| {
+        return err;
+    };
+    defer std.posix.close(socket);
+
+    std.posix.connect(socket, &metrics_address.any, metrics_address.getOsSockLen()) catch |err| {
+        return err;
+    };
+
+    const request =
+        "GET /control/index-resize/abort HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+
+    _ = std.posix.write(socket, request) catch |err| {
+        return err;
+    };
+
+    var response_buf: [4096]u8 = undefined;
+    const bytes_read = std.posix.read(socket, &response_buf) catch |err| {
+        return err;
+    };
+    if (bytes_read == 0) return error.EmptyResponse;
+
+    const response = response_buf[0..bytes_read];
+    if (std.mem.indexOf(u8, response, " ")) |status_start| {
+        const status_line = response[status_start + 1 ..];
+        if (std.mem.indexOf(u8, status_line, " ")) |status_end| {
+            const status_code = status_line[0..status_end];
+            if (std.mem.eql(u8, status_code, "200")) return;
+        }
+    }
+
+    return error.IndexResizeAbortRejected;
+}
+
 fn command_info(
     gpa: mem.Allocator,
     io: *IO,
@@ -709,6 +788,7 @@ fn command_format(
         .replica_count = args.replica_count,
         .release = config.process.release,
         .sharding_strategy = args.sharding_strategy,
+        .development = args.development,
         .view = null,
     });
 
@@ -854,6 +934,14 @@ fn command_start(
     log.info("release_client_min={}", .{config.process.release_client_min});
     log.info("releases_bundled={any}", .{multiversion.releases_bundled().slice()});
     log.info("git_commit={?s}", .{config.process.git_commit});
+    var release_buf: [32]u8 = undefined;
+    const release_text = std.fmt.bufPrint(&release_buf, "{}", .{config.process.release}) catch
+        "0.0.1";
+    const git_commit_text: []const u8 = if (config.process.git_commit) |commit|
+        commit[0..]
+    else
+        "unknown";
+    archerdb_metrics.Registry.initBuildInfo(release_text, git_commit_text);
     log_journal_sizing_warning();
 
     const clients_limit = constants.pipeline_prepare_queue_max + args.pipeline_requests_limit;
@@ -894,6 +982,7 @@ fn command_start(
                 .default_ttl_days = args.default_ttl_days,
                 .memory_mapped_index_enabled = args.memory_mapped_index_enabled,
                 .memory_mapped_index_path = mmap_index_path,
+                .topology_addresses = args.addresses.const_slice(),
             },
             .message_bus_options = .{
                 .configuration = args.addresses.const_slice(),
@@ -958,6 +1047,54 @@ fn command_start(
         replica.cluster,
         replica.message_bus.accept_address.?,
     });
+
+    var backup_rt: ?backup_runtime.BackupRuntime = null;
+    defer if (backup_rt) |*runtime| runtime.deinit();
+
+    if (args.backup_enabled) {
+        backup_rt = backup_runtime.BackupRuntime.init(gpa, .{
+            .data_file_path = args.path,
+            .cluster_id = replica.cluster,
+            .replica_id = replica.replica,
+            .replica_count = replica.replica_count,
+            .initial_view = replica.view,
+            .backup_options = .{
+                .enabled = true,
+                .provider = args.backup_provider,
+                .bucket = args.backup_bucket,
+                .region = args.backup_region,
+                .credentials_path = args.backup_credentials,
+                .mode = args.backup_mode,
+                .encryption = args.backup_encryption,
+                .kms_key_id = args.backup_kms_key_id,
+                .compression = args.backup_compress,
+                .queue_soft_limit = args.backup_queue_soft_limit,
+                .queue_hard_limit = args.backup_queue_hard_limit,
+                .retention_days = args.backup_retention_days,
+                .primary_only = args.backup_primary_only,
+            },
+        }) catch |err| {
+            vsr.fatal(.cli, "backup runtime init failed: {}", .{err});
+        };
+
+        const backup_event_bridge = struct {
+            fn onReplicaEvent(replica_: *const Replica, event: vsr.ReplicaEvent) void {
+                const runtime: *backup_runtime.BackupRuntime = @ptrCast(@alignCast(
+                    replica_.test_context.?,
+                ));
+
+                switch (event) {
+                    .checkpoint_completed => runtime.captureCheckpoint(replica_) catch |err| {
+                        log.err("backup checkpoint capture failed: {}", .{err});
+                    },
+                    else => {},
+                }
+            }
+        };
+
+        replica.test_context = &backup_rt.?;
+        replica.event_callback = backup_event_bridge.onReplicaEvent;
+    }
 
     if (constants.aof_recovery) {
         log.warn(
@@ -1069,6 +1206,8 @@ fn command_start(
     var resharding_next_entity_id: u128 = 1;
     var resharding_target_shards: u32 = 0;
     var resharding_last_batch_ns: i128 = 0;
+    var index_resize_cursor: u64 = 0;
+    const index_resize_batch_size: u64 = args.index_resize_batch_size;
 
     // Track previous view for detecting view changes
     var prev_view: u32 = replica.view;
@@ -1252,6 +1391,54 @@ fn command_start(
             }
         }
 
+        if (metrics_server.takeIndexResizeRequest()) |target_capacity| {
+            replica.state_machine.ram_index.startResize(gpa, target_capacity) catch |err| {
+                log.err("index resize: start failed for capacity {d}: {}", .{
+                    target_capacity,
+                    err,
+                });
+            };
+            index_resize_cursor = 0;
+        }
+
+        if (metrics_server.takeIndexResizeAbort()) {
+            replica.state_machine.ram_index.abortResize(gpa);
+            index_resize_cursor = 0;
+        }
+
+        const resize_progress = replica.state_machine.ram_index.getResizeProgress();
+        switch (resize_progress.state) {
+            .resizing => {
+                _ = replica.state_machine.ram_index.migrateEntryBatch(
+                    index_resize_cursor,
+                    index_resize_batch_size,
+                );
+                index_resize_cursor += index_resize_batch_size;
+
+                const progress_after = replica.state_machine.ram_index.getResizeProgress();
+                if (progress_after.total_entries == 0 or
+                    progress_after.entries_migrated >= progress_after.total_entries or
+                    index_resize_cursor >= progress_after.old_capacity)
+                {
+                    replica.state_machine.ram_index.completeResize(gpa) catch |err| {
+                        log.err("index resize: complete failed: {}", .{err});
+                    };
+                    index_resize_cursor = 0;
+                }
+            },
+            .completing => {
+                replica.state_machine.ram_index.completeResize(gpa) catch |err| {
+                    log.err("index resize: complete failed: {}", .{err});
+                };
+                index_resize_cursor = 0;
+            },
+            .normal, .aborted => index_resize_cursor = 0,
+        }
+
+        if (backup_rt) |*runtime| {
+            runtime.tick(&replica, storage);
+        }
+
         try io.run_for_ns(constants.tick_ms * std.time.ns_per_ms);
     }
 }
@@ -1291,6 +1478,7 @@ fn command_reformat(
         .replica_count = args.replica_count,
         .release = config.process.release,
         .sharding_strategy = args.sharding_strategy,
+        .development = args.development,
         .view = null,
     });
     defer reformatter.deinit(gpa);
@@ -1336,33 +1524,297 @@ fn command_repl(
     try repl_instance.run(args.statements);
 }
 
-fn command_amqp(gpa: mem.Allocator, time: Time, args: *const cli.Command.AMQP) !void {
-    // Enhancement: AMQP CLI command for CDC consumer management (Phase 9)
-    // Note: The AMQP client library (src/cdc/amqp.zig) is fully implemented
-    // and tested. This CLI command would expose runtime CDC configuration.
-    _ = gpa;
-    _ = time;
-    _ = args;
+fn command_amqp(
+    gpa: mem.Allocator,
+    io: *IO,
+    time: Time,
+    args: *const cli.Command.AMQP,
+) !void {
+    const amqp = vsr.cdc.amqp;
+    const data_export = vsr.data_export;
+    const archerdb_types = vsr.archerdb;
 
     const stderr = std.io.getStdErr().writer();
+    const tick_ns = constants.tick_ms * std.time.ns_per_ms;
+    const publish_exchange = args.publish_exchange orelse "";
+    const publish_routing_key = args.publish_routing_key;
+    const event_count_limit: usize = args.event_count_max orelse std.math.maxInt(u32);
+    const idle_interval_ns: u64 = @as(u64, args.idle_interval_ms orelse 0) * std.time.ns_per_ms;
+    const request_interval_ns: u64 = if (args.requests_per_second_limit) |limit|
+        @divFloor(std.time.ns_per_s, limit)
+    else
+        0;
+
+    const WaitState = struct {
+        var pending: bool = false;
+        fn callback(_: *amqp.Client) void {
+            @This().pending = false;
+        }
+    };
+
+    const MessageBody = struct {
+        fn fromSlice(bytes: *const []const u8) amqp.Encoder.Body {
+            const VTable = struct {
+                fn write(context: *const anyopaque, buffer: []u8) usize {
+                    const slice: *const []const u8 = @ptrCast(@alignCast(context));
+                    @memcpy(buffer[0..slice.*.len], slice.*);
+                    return slice.*.len;
+                }
+            };
+            return .{
+                .context = @ptrCast(bytes),
+                .vtable = &.{
+                    .write = VTable.write,
+                },
+            };
+        }
+    };
+
+    try stderr.print(
+        \\ArcherDB AMQP Bridge
+        \\====================
+        \\Exchange: {s}
+        \\Routing: {s}
+        \\Since:   {d}
+        \\Limit:   {}
+        \\
+    , .{
+        if (publish_exchange.len > 0) publish_exchange else "<default>",
+        publish_routing_key orelse "<dynamic geo.events.*>",
+        args.timestamp_last orelse 0,
+        event_count_limit,
+    });
+
+    var message_pool = try MessagePool.init(gpa, .client);
+    defer message_pool.deinit(gpa);
+
+    var client = try Client.init(
+        gpa,
+        time,
+        &message_pool,
+        .{
+            .id = stdx.unique_u128(),
+            .cluster = args.cluster,
+            .replica_count = @intCast(args.addresses.count()),
+            .message_bus_options = .{
+                .configuration = args.addresses.const_slice(),
+                .io = io,
+                .clients_limit = null,
+            },
+            .eviction_callback = &export_client_eviction_callback,
+        },
+    );
+    defer client.deinit(gpa);
+
+    var amqp_client = try amqp.Client.init(gpa, .{
+        .io = io,
+        .message_count_max = 1024,
+        .message_body_size_max = 4096,
+        .reply_timeout_ticks = 10_000,
+    });
+    defer amqp_client.deinit(gpa);
+
+    const Pump = struct {
+        fn tick(io_ptr: *IO, db_client: *Client, broker_client: *amqp.Client) !void {
+            db_client.tick();
+            broker_client.tick();
+            try io_ptr.run_for_ns(tick_ns);
+        }
+
+        fn wait(
+            io_ptr: *IO,
+            db_client: *Client,
+            broker_client: *amqp.Client,
+            max_ticks: usize,
+        ) !void {
+            for (0..max_ticks) |_| {
+                try tick(io_ptr, db_client, broker_client);
+                if (!WaitState.pending) return;
+            }
+            return error.Timeout;
+        }
+
+        fn sleep(
+            io_ptr: *IO,
+            db_client: *Client,
+            broker_client: *amqp.Client,
+            duration_ns: u64,
+        ) !void {
+            var remaining = duration_ns;
+            while (remaining > 0) {
+                try tick(io_ptr, db_client, broker_client);
+                remaining -|= @min(remaining, tick_ns);
+            }
+        }
+    };
+
+    var registered = false;
+    client.register(&export_register_callback, @intFromPtr(&registered));
+    while (!registered) {
+        client.tick();
+        try io.run_for_ns(tick_ns);
+    }
+
+    WaitState.pending = true;
+    try amqp_client.connect(WaitState.callback, .{
+        .host = args.host,
+        .user_name = args.user,
+        .password = args.password,
+        .vhost = args.vhost,
+    });
+    try Pump.wait(io, &client, &amqp_client, 10_000);
+
+    if (publish_exchange.len > 0) {
+        WaitState.pending = true;
+        amqp_client.exchange_declare(WaitState.callback, .{
+            .exchange = publish_exchange,
+            .type = "topic",
+            .passive = false,
+            .durable = true,
+            .auto_delete = false,
+            .internal = false,
+        });
+        try Pump.wait(io, &client, &amqp_client, 10_000);
+    }
+
+    var exporter = data_export.DataExporter.init(gpa, .{
+        .format = .ndjson,
+        .include_metadata = false,
+        .pretty = false,
+    });
+
+    var watermark = args.timestamp_last orelse 0;
+    var published_total: usize = 0;
+    var poll_round: usize = 0;
+
+    try stderr.print("Connected. Polling and publishing...\n", .{});
+
+    while (published_total < event_count_limit) {
+        poll_round += 1;
+
+        var events_to_publish = std.ArrayList(archerdb_types.GeoEvent).init(gpa);
+        defer events_to_publish.deinit();
+
+        var cursor_timestamp: u64 = 0;
+        const newest_seen_before_round = watermark;
+
+        while (published_total + events_to_publish.items.len < event_count_limit) {
+            const remaining = event_count_limit - published_total - events_to_publish.items.len;
+            const page_limit: u32 = @intCast(@min(@as(usize, 1000), remaining));
+            if (page_limit == 0) break;
+
+            var filter = archerdb_types.QueryLatestFilter{
+                .limit = page_limit,
+                .group_id = 0,
+                .cursor_timestamp = cursor_timestamp,
+            };
+
+            var response_state = ExportResponseState{
+                .received = false,
+                .results = null,
+                .results_len = 0,
+                .has_more = false,
+                .next_cursor = 0,
+            };
+
+            client.request(
+                &export_request_callback,
+                @intFromPtr(&response_state),
+                .query_latest,
+                std.mem.asBytes(&filter),
+            );
+
+            while (!response_state.received) {
+                try Pump.tick(io, &client, &amqp_client);
+            }
+
+            if (response_state.results == null or response_state.results_len == 0) break;
+
+            const page_events = @as(
+                [*]const archerdb_types.GeoEvent,
+                @ptrCast(@alignCast(response_state.results.?)),
+            )[0..response_state.results_len];
+
+            var reached_watermark = false;
+            for (page_events) |event| {
+                if (watermark > 0 and event.timestamp <= watermark) {
+                    reached_watermark = true;
+                    break;
+                }
+                try events_to_publish.append(event);
+            }
+
+            if (reached_watermark or !response_state.has_more) break;
+            cursor_timestamp = response_state.next_cursor;
+        }
+
+        if (events_to_publish.items.len == 0) {
+            if (idle_interval_ns == 0) break;
+            try Pump.sleep(io, &client, &amqp_client, idle_interval_ns);
+            continue;
+        }
+
+        var newest_published = newest_seen_before_round;
+        var json_buffer: [4096]u8 = undefined;
+        var index = events_to_publish.items.len;
+        while (index > 0) : (index -= 1) {
+            const event = events_to_publish.items[index - 1];
+            var stream = std.io.fixedBufferStream(&json_buffer);
+            try exporter.writeEvent(stream.writer(), &event);
+            var payload = stream.getWritten();
+            if (payload.len > 0 and payload[payload.len - 1] == '\n') {
+                payload = payload[0 .. payload.len - 1];
+            }
+
+            var routing_key_buffer: [96]u8 = undefined;
+            const routing_key = if (publish_routing_key) |key|
+                key
+            else
+                try std.fmt.bufPrint(&routing_key_buffer, "geo.events.{x}", .{
+                    @as(u64, @truncate(event.entity_id)),
+                });
+
+            amqp_client.publish_enqueue(.{
+                .exchange = publish_exchange,
+                .routing_key = routing_key,
+                .mandatory = false,
+                .immediate = false,
+                .properties = .{
+                    .content_type = "application/json",
+                    .delivery_mode = .persistent,
+                    .timestamp = @intCast(@divFloor(event.timestamp, std.time.ns_per_s)),
+                },
+                .body = MessageBody.fromSlice(&payload),
+            });
+
+            newest_published = @max(newest_published, event.timestamp);
+            published_total += 1;
+        }
+
+        WaitState.pending = true;
+        amqp_client.publish_send(WaitState.callback);
+        try Pump.wait(io, &client, &amqp_client, 10_000);
+
+        watermark = newest_published;
+        try stderr.print(
+            "  round {}: published {} events, watermark={}\n",
+            .{ poll_round, events_to_publish.items.len, watermark },
+        );
+
+        if (published_total >= event_count_limit) break;
+        if (idle_interval_ns == 0) break;
+        if (request_interval_ns > 0) {
+            try Pump.sleep(io, &client, &amqp_client, request_interval_ns);
+        } else {
+            try Pump.sleep(io, &client, &amqp_client, idle_interval_ns);
+        }
+    }
+
     try stderr.print(
         \\
-        \\ArcherDB CDC (Change Data Capture) - CLI Not Available
-        \\======================================================
+        \\Publish complete: {} events published. Final watermark={}
         \\
-        \\The AMQP/CDC CLI is reserved for future CDC consumer management.
-        \\The AMQP client library is fully implemented and tested.
-        \\
-        \\For real-time event streaming, use the client SDKs with:
-        \\  - query_latest: Poll for most recent events
-        \\  - query_uuid: Track specific entities
-        \\  - query_radius: Monitor geographic areas
-        \\
-        \\For more information: https://archerdb.io/docs
-        \\
-    , .{});
-
-    return error.NotImplemented;
+    , .{ published_total, watermark });
 }
 
 fn print_value(
@@ -1689,6 +2141,7 @@ fn command_import(
     const Operation = StateMachine.Operation;
     // Use vsr module's data_export to avoid duplicate module issues
     const data_export = vsr.data_export;
+    const data_export_csv = vsr.data_export_csv;
 
     // Open input file
     const input_file = std.fs.cwd().openFile(args.path, .{}) catch |err| {
@@ -1828,9 +2281,47 @@ fn command_import(
             }
         },
         .csv => {
-            // CSV import would use data_export_csv module
             try stderr.print("CSV import parsing...\n", .{});
-            // Placeholder - would parse CSV and convert to GeoEvents
+
+            var importer = try data_export_csv.CsvImporter.init(gpa, .{});
+            defer importer.deinit();
+
+            var lines = std.mem.splitScalar(u8, content.items, '\n');
+            var first_nonempty_line = true;
+
+            while (lines.next()) |raw_line| {
+                const line = std.mem.trimRight(u8, raw_line, "\r");
+                if (std.mem.trim(u8, line, " \t\r").len == 0) continue;
+
+                if (first_nonempty_line) {
+                    first_nonempty_line = false;
+
+                    const looks_like_header =
+                        std.mem.indexOf(u8, line, "latitude") != null or
+                        std.mem.indexOf(u8, line, "longitude") != null or
+                        std.mem.indexOf(u8, line, "entity_id") != null or
+                        std.mem.indexOf(u8, line, "timestamp") != null;
+
+                    if (looks_like_header) {
+                        importer.parseHeader(line) catch |err| {
+                            parse_failed += 1;
+                            if (!args.skip_errors) return err;
+                        };
+                        continue;
+                    }
+                }
+
+                const result = importer.parseRow(line);
+                if (result) |event| {
+                    try parsed_events.append(event);
+                } else |_| {
+                    parse_failed += 1;
+                    if (!args.skip_errors) {
+                        log.err("Failed to parse CSV row, stopping import", .{});
+                        break;
+                    }
+                }
+            }
         },
     }
 
@@ -1867,12 +2358,14 @@ fn command_import(
             });
             return error.BatchSizeTooSmall;
         }
+        const configured_batch_size = @max(@as(usize, args.batch_size), 1);
+        const events_per_batch = @min(max_events_per_batch, configured_batch_size);
 
         // Send events in batches
         var offset: usize = 0;
         var batch_num: usize = 0;
         while (offset < total_parsed) {
-            const batch_end = @min(offset + max_events_per_batch, total_parsed);
+            const batch_end = @min(offset + events_per_batch, total_parsed);
             const batch = parsed_events.items[offset..batch_end];
             const batch_bytes = std.mem.sliceAsBytes(batch);
 
@@ -1989,6 +2482,188 @@ fn import_client_eviction_callback(
     import_register_done = true;
 }
 
+const SyncRegisterState = struct {
+    registered: bool = false,
+};
+
+const SyncRequestState = struct {
+    received: bool = false,
+    response_buffer: []u8,
+    response_len: usize = 0,
+    response_truncated: bool = false,
+    timestamp: u64 = 0,
+};
+
+const NodeStatusResult = struct {
+    ok: bool = false,
+    response: vsr.archerdb.StatusResponse = std.mem.zeroes(vsr.archerdb.StatusResponse),
+    error_name: ?[]const u8 = null,
+};
+
+fn sync_register_callback(user_data: u128, result: *const vsr.RegisterResult) void {
+    _ = result;
+    const state: *SyncRegisterState = @ptrFromInt(@as(usize, @intCast(user_data)));
+    state.registered = true;
+}
+
+fn sync_request_callback(
+    user_data: u128,
+    operation: vsr.Operation,
+    timestamp: u64,
+    results: []u8,
+) void {
+    _ = operation;
+
+    const state: *SyncRequestState = @ptrFromInt(@as(usize, @intCast(user_data)));
+    const copy_len = @min(results.len, state.response_buffer.len);
+    if (copy_len > 0) {
+        @memcpy(state.response_buffer[0..copy_len], results[0..copy_len]);
+    }
+    state.received = true;
+    state.response_len = copy_len;
+    state.response_truncated = results.len > state.response_buffer.len;
+    state.timestamp = timestamp;
+}
+
+fn sync_client_eviction_callback(
+    client: *Client,
+    eviction: *const MessagePool.Message.Eviction,
+) void {
+    _ = client;
+    log.warn("control client evicted: {s}", .{@tagName(eviction.header.reason)});
+}
+
+fn register_client_sync(client: *Client, io: *IO) !void {
+    var state = SyncRegisterState{};
+    const start_ns = std.time.nanoTimestamp();
+    const timeout_ns = 10 * std.time.ns_per_s;
+
+    client.register(&sync_register_callback, @intFromPtr(&state));
+
+    while (!state.registered) {
+        if (std.time.nanoTimestamp() - start_ns > timeout_ns) {
+            return error.Timeout;
+        }
+
+        client.tick();
+        try io.run_for_ns(constants.tick_ms * std.time.ns_per_ms);
+    }
+}
+
+fn request_client_sync(
+    client: *Client,
+    io: *IO,
+    operation: StateMachine.Operation,
+    payload: []const u8,
+    response_buffer: []u8,
+) ![]const u8 {
+    var state = SyncRequestState{ .response_buffer = response_buffer };
+    const start_ns = std.time.nanoTimestamp();
+    const timeout_ns = 10 * std.time.ns_per_s;
+
+    client.request(&sync_request_callback, @intFromPtr(&state), operation, payload);
+
+    while (!state.received) {
+        if (std.time.nanoTimestamp() - start_ns > timeout_ns) {
+            return error.Timeout;
+        }
+
+        client.tick();
+        try io.run_for_ns(constants.tick_ms * std.time.ns_per_ms);
+    }
+
+    if (state.response_truncated) return error.ResponseTooLarge;
+    return response_buffer[0..state.response_len];
+}
+
+fn query_single_node_status(
+    gpa: mem.Allocator,
+    io: *IO,
+    time: Time,
+    cluster_id: u128,
+    address: std.net.Address,
+) NodeStatusResult {
+    var message_pool = MessagePool.init(gpa, .client) catch |err| {
+        return .{ .error_name = @errorName(err) };
+    };
+    defer message_pool.deinit(gpa);
+
+    const addresses = [_]std.net.Address{address};
+    var client = Client.init(
+        gpa,
+        time,
+        &message_pool,
+        .{
+            .id = stdx.unique_u128(),
+            .cluster = cluster_id,
+            .replica_count = 1,
+            .message_bus_options = .{
+                .configuration = &addresses,
+                .io = io,
+                .clients_limit = null,
+            },
+            .eviction_callback = &sync_client_eviction_callback,
+        },
+    ) catch |err| {
+        return .{ .error_name = @errorName(err) };
+    };
+    defer {
+        client.shutdown(io, 5 * std.time.ns_per_s) catch |err| {
+            log.warn("query_single_node_status: client shutdown error={s}", .{
+                @errorName(err),
+            });
+        };
+        client.deinit(gpa);
+    }
+
+    register_client_sync(&client, io) catch |err| {
+        return .{ .error_name = @errorName(err) };
+    };
+
+    var request = vsr.archerdb.StatusRequest{};
+    var response_buffer: [@sizeOf(vsr.archerdb.StatusResponse)]u8 = undefined;
+    const response_bytes = request_client_sync(
+        &client,
+        io,
+        .archerdb_get_status,
+        mem.asBytes(&request),
+        &response_buffer,
+    ) catch |err| {
+        return .{ .error_name = @errorName(err) };
+    };
+
+    if (response_bytes.len < @sizeOf(vsr.archerdb.StatusResponse)) {
+        return .{ .error_name = "short_response" };
+    }
+
+    return .{
+        .ok = true,
+        .response = mem.bytesAsValue(
+            vsr.archerdb.StatusResponse,
+            response_bytes[0..@sizeOf(vsr.archerdb.StatusResponse)],
+        ).*,
+    };
+}
+
+fn format_net_address(address: std.net.Address, buffer: []u8) []const u8 {
+    return std.fmt.bufPrint(buffer, "{}", .{address}) catch "<invalid-address>";
+}
+
+fn print_not_implemented(
+    stdout: anytype,
+    format: cli.Command.OutputFormat,
+    feature: []const u8,
+    detail: []const u8,
+) !void {
+    switch (format) {
+        .json => try stdout.print(
+            "{{\"error\":\"not_implemented\",\"feature\":\"{s}\",\"message\":\"{s}\"}}\n",
+            .{ feature, detail },
+        ),
+        .text => try stdout.print("{s}: {s}\n", .{ feature, detail }),
+    }
+}
+
 fn run_online_resharding(
     allocator: mem.Allocator,
     cluster_id: u128,
@@ -2083,50 +2758,159 @@ fn command_shard(
     time: Time,
     args: *const cli.Command.Shard,
 ) !void {
-    _ = gpa;
-    _ = io;
-    _ = time;
+    var stdout_buffer = std.io.bufferedWriter(std.io.getStdOut().writer());
+    var stdout_writer = stdout_buffer.writer();
+    const stdout = stdout_writer.any();
 
-    var stderr_buffer = std.io.bufferedWriter(std.io.getStdErr().writer());
-    var stderr_writer = stderr_buffer.writer();
-    const stderr = stderr_writer.any();
-
-    // Enhancement: Shard CLI commands (Phase 8 - Multi-Cluster Operations)
-    // Core sharding algorithm (jump_hash) is implemented. CLI management deferred.
     switch (args.*) {
         .list => |list| {
-            try stderr.print("Shard list for cluster {d}:\n", .{list.cluster});
-            try stderr.print("  Enhancement: Shard listing via CLI (Phase 8)\n", .{});
+            const addresses = list.addresses.const_slice();
+            if (list.format == .json) {
+                try stdout.writeAll("[\n");
+                for (addresses, 0..) |address, index| {
+                    const status = query_single_node_status(gpa, io, time, list.cluster, address);
+                    var address_buf: [128]u8 = undefined;
+                    const address_text = format_net_address(address, &address_buf);
+
+                    if (index > 0) try stdout.writeAll(",\n");
+                    if (status.ok) {
+                        try stdout.print(
+                            "  {{\"shard_id\":{d},\"address\":\"{s}\",\"status\":\"active\",\"ram_index_count\":{d},\"ram_index_capacity\":{d},\"ram_index_load_pct\":{d},\"ttl_expirations\":{d},\"deletion_count\":{d}}}",
+                            .{
+                                index,
+                                address_text,
+                                status.response.ram_index_count,
+                                status.response.ram_index_capacity,
+                                status.response.ram_index_load_pct,
+                                status.response.ttl_expirations,
+                                status.response.deletion_count,
+                            },
+                        );
+                    } else {
+                        try stdout.print(
+                            "  {{\"shard_id\":{d},\"address\":\"{s}\",\"status\":\"unavailable\",\"error\":\"{s}\"}}",
+                            .{ index, address_text, status.error_name orelse "unknown" },
+                        );
+                    }
+                }
+                try stdout.writeAll("\n]\n");
+            } else {
+                try stdout.print("Shard list for cluster {d}:\n", .{list.cluster});
+                for (addresses, 0..) |address, index| {
+                    const status = query_single_node_status(gpa, io, time, list.cluster, address);
+                    const load_pct = if (status.ok)
+                        @as(f64, @floatFromInt(status.response.ram_index_load_pct)) / 100.0
+                    else
+                        0.0;
+
+                    if (status.ok) {
+                        try stdout.print(
+                            "  shard {d}: {} active ram_index={d}/{d} load={d:.2}% ttl_expirations={d} deletions={d}\n",
+                            .{
+                                index,
+                                address,
+                                status.response.ram_index_count,
+                                status.response.ram_index_capacity,
+                                load_pct,
+                                status.response.ttl_expirations,
+                                status.response.deletion_count,
+                            },
+                        );
+                    } else {
+                        try stdout.print(
+                            "  shard {d}: {} unavailable ({s})\n",
+                            .{ index, address, status.error_name orelse "unknown" },
+                        );
+                    }
+                }
+            }
         },
         .status => |status| {
-            try stderr.print(
-                "Status for shard {d} in cluster {d}:\n",
-                .{ status.shard_id, status.cluster },
-            );
-            try stderr.print(
-                "  Enhancement: Shard status via CLI (Phase 8)\n",
-                .{},
-            );
+            const addresses = status.addresses.const_slice();
+            const shard_index: usize = std.math.cast(usize, status.shard_id) orelse
+                return error.ShardIdOutOfRange;
+            if (shard_index >= addresses.len) return error.ShardIdOutOfRange;
+
+            const address = addresses[shard_index];
+            const result = query_single_node_status(gpa, io, time, status.cluster, address);
+            var address_buf: [128]u8 = undefined;
+            const address_text = format_net_address(address, &address_buf);
+
+            if (status.format == .json) {
+                if (result.ok) {
+                    try stdout.print(
+                        "{{\"cluster\":{d},\"shard_id\":{d},\"address\":\"{s}\",\"status\":\"active\",\"ram_index_count\":{d},\"ram_index_capacity\":{d},\"ram_index_load_pct\":{d},\"tombstone_count\":{d},\"ttl_expirations\":{d},\"deletion_count\":{d}}}\n",
+                        .{
+                            status.cluster,
+                            status.shard_id,
+                            address_text,
+                            result.response.ram_index_count,
+                            result.response.ram_index_capacity,
+                            result.response.ram_index_load_pct,
+                            result.response.tombstone_count,
+                            result.response.ttl_expirations,
+                            result.response.deletion_count,
+                        },
+                    );
+                } else {
+                    try stdout.print(
+                        "{{\"cluster\":{d},\"shard_id\":{d},\"address\":\"{s}\",\"status\":\"unavailable\",\"error\":\"{s}\"}}\n",
+                        .{
+                            status.cluster,
+                            status.shard_id,
+                            address_text,
+                            result.error_name orelse "unknown",
+                        },
+                    );
+                }
+            } else {
+                try stdout.print("Status for shard {d} in cluster {d}:\n", .{
+                    status.shard_id,
+                    status.cluster,
+                });
+                try stdout.print("  Address: {s}\n", .{address_text});
+
+                if (!result.ok) {
+                    try stdout.print("  Status: unavailable ({s})\n", .{
+                        result.error_name orelse "unknown",
+                    });
+                } else {
+                    try stdout.writeAll("  Status: active\n");
+                    try stdout.print("  RAM index: {d}/{d}\n", .{
+                        result.response.ram_index_count,
+                        result.response.ram_index_capacity,
+                    });
+                    try stdout.print("  RAM load: {d:.2}%\n", .{
+                        @as(f64, @floatFromInt(result.response.ram_index_load_pct)) / 100.0,
+                    });
+                    try stdout.print("  Tombstones: {d}\n", .{result.response.tombstone_count});
+                    try stdout.print("  TTL expirations: {d}\n", .{result.response.ttl_expirations});
+                    try stdout.print("  Deletions: {d}\n", .{result.response.deletion_count});
+                }
+            }
         },
         .reshard => |reshard| {
             const mode_label = @tagName(reshard.mode);
             if (reshard.dry_run) {
-                try stderr.print(
+                try stdout.print(
                     "Dry run: Would reshard cluster {d} to {d} shards (mode: {s})\n",
                     .{ reshard.cluster, reshard.to, mode_label },
                 );
-                try stderr_buffer.flush();
+                try stdout_buffer.flush();
                 return;
             }
 
-            try stderr.print(
+            try stdout.print(
                 "Resharding cluster {d} to {d} shards (mode: {s}):\n",
                 .{ reshard.cluster, reshard.to, mode_label },
             );
 
             switch (reshard.mode) {
                 .offline => {
-                    try stderr.print("  Enhancement: Offline resharding (Phase 8)\n", .{});
+                    try stdout.writeAll(
+                        "  Offline resharding is planning-only in this CLI; use --dry-run for planning or --mode=online for live execution.\n",
+                    );
+                    return error.NotImplemented;
                 },
                 .online => {
                     const metrics_port: u16 = reshard.metrics_port orelse 9091;
@@ -2134,7 +2918,7 @@ fn command_shard(
                     metrics_address.setPort(metrics_port);
 
                     try send_reshard_request(metrics_address, reshard.to);
-                    try stderr.print(
+                    try stdout.print(
                         "  Online resharding request submitted (metrics: {any})\n",
                         .{metrics_address},
                     );
@@ -2142,7 +2926,7 @@ fn command_shard(
             }
         },
     }
-    try stderr_buffer.flush();
+    try stdout_buffer.flush();
 }
 
 /// TTL management command handler.
@@ -2152,41 +2936,139 @@ fn command_ttl(
     time: Time,
     args: *const cli.Command.TTL,
 ) !void {
-    _ = gpa;
-    _ = io;
-    _ = time;
+    const cluster_id = switch (args.*) {
+        .set => |set| set.cluster,
+        .extend => |extend| extend.cluster,
+        .clear => |clear| clear.cluster,
+    };
+    const addresses = switch (args.*) {
+        .set => |set| set.addresses.const_slice(),
+        .extend => |extend| extend.addresses.const_slice(),
+        .clear => |clear| clear.addresses.const_slice(),
+    };
 
-    var stderr_buffer = std.io.bufferedWriter(std.io.getStdErr().writer());
-    var stderr_writer = stderr_buffer.writer();
-    const stderr = stderr_writer.any();
+    var stdout_buffer = std.io.bufferedWriter(std.io.getStdOut().writer());
+    var stdout_writer = stdout_buffer.writer();
+    const stdout = stdout_writer.any();
 
-    // Enhancement: TTL CLI commands (Phase 6 - TTL Extensions)
-    // Note: Core TTL functionality (ttl.zig, TTL expiration) is fully implemented.
-    // These CLI commands would allow runtime TTL management per-entity.
+    var message_pool = try MessagePool.init(gpa, .client);
+    defer message_pool.deinit(gpa);
+
+    var client = try Client.init(
+        gpa,
+        time,
+        &message_pool,
+        .{
+            .id = stdx.unique_u128(),
+            .cluster = cluster_id,
+            .replica_count = @intCast(addresses.len),
+            .message_bus_options = .{
+                .configuration = addresses,
+                .io = io,
+                .clients_limit = null,
+            },
+            .eviction_callback = &sync_client_eviction_callback,
+        },
+    );
+    defer client.deinit(gpa);
+
+    try register_client_sync(&client, io);
+
     switch (args.*) {
         .set => |set| {
-            try stderr.print(
-                "Setting TTL for entity {x} in cluster {d} to {d} seconds\n",
-                .{ set.entity_id, set.cluster, set.ttl_seconds },
+            const ttl_seconds = std.math.cast(u32, set.ttl_seconds) orelse
+                return error.TtlValueTooLarge;
+            var request = vsr.archerdb.TtlSetRequest{
+                .entity_id = set.entity_id,
+                .ttl_seconds = ttl_seconds,
+            };
+            var response_buffer: [@sizeOf(vsr.archerdb.TtlSetResponse)]u8 = undefined;
+            const response_bytes = try request_client_sync(
+                &client,
+                io,
+                .ttl_set,
+                mem.asBytes(&request),
+                &response_buffer,
             );
-            try stderr.print("  Enhancement: TTL set via CLI (use REPL or SDK)\n", .{});
+            if (response_bytes.len < @sizeOf(vsr.archerdb.TtlSetResponse)) {
+                return error.InvalidResponse;
+            }
+            const response = mem.bytesAsValue(
+                vsr.archerdb.TtlSetResponse,
+                response_bytes[0..@sizeOf(vsr.archerdb.TtlSetResponse)],
+            ).*;
+
+            try stdout.print("TTL set for entity {x} in cluster {d}\n", .{
+                set.entity_id,
+                set.cluster,
+            });
+            try stdout.print("  Previous TTL: {d}s\n", .{response.previous_ttl_seconds});
+            try stdout.print("  New TTL: {d}s\n", .{response.new_ttl_seconds});
+            try stdout.print("  Result: {s}\n", .{@tagName(response.result)});
+            if (response.result != .success) return error.TtlOperationFailed;
         },
         .extend => |extend| {
-            try stderr.print(
-                "Extending TTL for entity {x} in cluster {d} by {d} seconds\n",
-                .{ extend.entity_id, extend.cluster, extend.extend_seconds },
+            const extend_seconds = std.math.cast(u32, extend.extend_seconds) orelse
+                return error.TtlValueTooLarge;
+            var request = vsr.archerdb.TtlExtendRequest{
+                .entity_id = extend.entity_id,
+                .extend_by_seconds = extend_seconds,
+            };
+            var response_buffer: [@sizeOf(vsr.archerdb.TtlExtendResponse)]u8 = undefined;
+            const response_bytes = try request_client_sync(
+                &client,
+                io,
+                .ttl_extend,
+                mem.asBytes(&request),
+                &response_buffer,
             );
-            try stderr.print("  Enhancement: TTL extend via CLI (use REPL or SDK)\n", .{});
+            if (response_bytes.len < @sizeOf(vsr.archerdb.TtlExtendResponse)) {
+                return error.InvalidResponse;
+            }
+            const response = mem.bytesAsValue(
+                vsr.archerdb.TtlExtendResponse,
+                response_bytes[0..@sizeOf(vsr.archerdb.TtlExtendResponse)],
+            ).*;
+
+            try stdout.print("TTL extended for entity {x} in cluster {d}\n", .{
+                extend.entity_id,
+                extend.cluster,
+            });
+            try stdout.print("  Previous TTL: {d}s\n", .{response.previous_ttl_seconds});
+            try stdout.print("  New TTL: {d}s\n", .{response.new_ttl_seconds});
+            try stdout.print("  Result: {s}\n", .{@tagName(response.result)});
+            if (response.result != .success) return error.TtlOperationFailed;
         },
         .clear => |clear| {
-            try stderr.print(
-                "Clearing TTL for entity {x} in cluster {d}\n",
-                .{ clear.entity_id, clear.cluster },
+            var request = vsr.archerdb.TtlClearRequest{
+                .entity_id = clear.entity_id,
+            };
+            var response_buffer: [@sizeOf(vsr.archerdb.TtlClearResponse)]u8 = undefined;
+            const response_bytes = try request_client_sync(
+                &client,
+                io,
+                .ttl_clear,
+                mem.asBytes(&request),
+                &response_buffer,
             );
-            try stderr.print("  Enhancement: TTL clear via CLI (use REPL or SDK)\n", .{});
+            if (response_bytes.len < @sizeOf(vsr.archerdb.TtlClearResponse)) {
+                return error.InvalidResponse;
+            }
+            const response = mem.bytesAsValue(
+                vsr.archerdb.TtlClearResponse,
+                response_bytes[0..@sizeOf(vsr.archerdb.TtlClearResponse)],
+            ).*;
+
+            try stdout.print("TTL cleared for entity {x} in cluster {d}\n", .{
+                clear.entity_id,
+                clear.cluster,
+            });
+            try stdout.print("  Previous TTL: {d}s\n", .{response.previous_ttl_seconds});
+            try stdout.print("  Result: {s}\n", .{@tagName(response.result)});
+            if (response.result != .success) return error.TtlOperationFailed;
         },
     }
-    try stderr_buffer.flush();
+    try stdout_buffer.flush();
 }
 
 /// Verification command handler.
@@ -2196,24 +3078,108 @@ fn command_verify(
     tracer: *Tracer,
     args: *const cli.Command.Verify,
 ) !void {
-    _ = gpa;
-    _ = io;
-    _ = tracer;
+    var stdout_buffer = std.io.bufferedWriter(std.io.getStdOut().writer());
+    var stdout_writer = stdout_buffer.writer();
+    const stdout = stdout_writer.any();
 
-    var stderr_buffer = std.io.bufferedWriter(std.io.getStdErr().writer());
-    var stderr_writer = stderr_buffer.writer();
-    const stderr = stderr_writer.any();
+    const file = if (std.fs.path.isAbsolute(args.path))
+        try std.fs.openFileAbsolute(args.path, .{})
+    else
+        try std.fs.cwd().openFile(args.path, .{});
+    defer file.close();
+    const stat = try file.stat();
 
-    // Enhancement: Data file verification CLI (Phase 7)
-    // Note: Superblock and LSM verification exists internally.
-    try stderr.print("Verifying data file: {s}\n", .{args.path});
+    try stdout.print("Verifying data file: {s}\n", .{args.path});
+    try stdout.print("  Size: {} bytes\n", .{stat.size});
+
     if (args.encryption) {
-        try stderr.print("  Checking encryption status...\n", .{});
-        try stderr.print("  Enhancement: Encryption verification (Phase 7)\n", .{});
-    } else {
-        try stderr.print("  Enhancement: Full verification command (Phase 7)\n", .{});
+        if (encryption.isEncryptedFile(args.path)) {
+            try stdout.writeAll("  Encryption: ARCE header detected\n");
+
+            const key_path = std.process.getEnvVarOwned(
+                gpa,
+                "ARCHERDB_ENCRYPTION_KEY_PATH",
+            ) catch |err| switch (err) {
+                error.EnvironmentVariableNotFound => null,
+                else => return err,
+            };
+            defer if (key_path) |path| gpa.free(path);
+
+            const key_id = std.process.getEnvVarOwned(
+                gpa,
+                "ARCHERDB_ENCRYPTION_KEY_ID",
+            ) catch |err| switch (err) {
+                error.EnvironmentVariableNotFound => null,
+                else => return err,
+            };
+            defer if (key_id) |id| gpa.free(id);
+
+            if (key_path) |path| {
+                var key_provider = try encryption.FileKeyProvider.init(
+                    gpa,
+                    path,
+                    key_id orelse "archerdb-verify",
+                );
+                defer key_provider.deinit();
+
+                const verify_result = encryption.verifyEncryptedFile(
+                    gpa,
+                    args.path,
+                    key_provider.provider(),
+                );
+                try stdout.print("  Encryption header valid: {}\n", .{
+                    verify_result.has_valid_header,
+                });
+                try stdout.print("  DEK unwrap valid: {}\n", .{
+                    verify_result.dek_valid,
+                });
+                try stdout.print("  Encryption integrity valid: {}\n", .{
+                    verify_result.integrity_valid,
+                });
+                if (verify_result.error_message) |message| {
+                    try stdout.print("  Encryption note: {s}\n", .{message});
+                }
+                if (!(verify_result.has_valid_header and
+                    verify_result.dek_valid and
+                    verify_result.integrity_valid))
+                {
+                    try stdout_buffer.flush();
+                    return error.EncryptionVerificationFailed;
+                }
+            } else {
+                try stdout.writeAll(
+                    "  Encryption detail: set ARCHERDB_ENCRYPTION_KEY_PATH to verify DEK unwrap and auth tags\n",
+                );
+            }
+        } else {
+            try stdout.writeAll("  Encryption: not detected\n");
+        }
     }
-    try stderr_buffer.flush();
+
+    try stdout.writeAll("  Integrity: running offline scrubber\n");
+    try stdout_buffer.flush();
+
+    const path_z = try gpa.dupeZ(u8, args.path);
+    defer gpa.free(path_z);
+
+    var inspect_args = cli.Command.Inspect{
+        .integrity = .{
+            .log_level = args.log_level,
+            .seed = null,
+            .lsm_forest_node_count = @intCast(@divExact(
+                constants.lsm_manifest_memory_size_default,
+                constants.lsm_manifest_node_size,
+            )),
+            .skip_wal = false,
+            .skip_client_replies = false,
+            .skip_grid = false,
+            .path = path_z,
+        },
+    };
+    try inspect.command_inspect(gpa, io, tracer, &inspect_args);
+
+    try stdout.print("Verification complete for {s}\n", .{args.path});
+    try stdout_buffer.flush();
 }
 
 /// Coordinator command handler (per add-coordinator-mode/spec.md).
@@ -2231,8 +3197,6 @@ fn command_coordinator(
     var stdout_writer = stdout_buffer.writer();
     const stdout = stdout_writer.any();
 
-    // Enhancement: Coordinator process (Phase 8)
-    // Note: Coordinator types and protocol are defined. Process management deferred.
     switch (args.*) {
         .start => |start| {
             try stdout.print("Starting coordinator...\n", .{});
@@ -2263,7 +3227,7 @@ fn command_coordinator(
                 trace_exporter = try observability.OtlpTraceExporter.init(gpa, endpoint);
             }
 
-            var coordinator_instance = coordinator.Coordinator.init(gpa, .{
+            var service = coordinator.Service.init(gpa, .{
                 .bind_address = coordinator.Address.init(start.bind_host, start.bind_port),
                 .max_connections = start.max_connections,
                 .query_timeout_ms = start.query_timeout_ms,
@@ -2271,31 +3235,43 @@ fn command_coordinator(
                 .read_from_replicas = start.read_from_replicas,
                 .trace_exporter = trace_exporter,
             });
-            defer coordinator_instance.deinit();
+            defer service.deinit();
 
-            try coordinator_instance.start();
+            try service.coordinator.start();
             if (start.shards) |shards| {
-                try seedCoordinatorShards(&coordinator_instance, shards.const_slice());
+                try seedCoordinatorShards(&service.coordinator, shards.const_slice());
             } else if (start.seed_nodes) |seeds| {
-                try seedCoordinatorShards(&coordinator_instance, seeds.const_slice());
+                try seedCoordinatorShards(&service.coordinator, seeds.const_slice());
             }
 
-            try coordinatorProbeQuery(&coordinator_instance, stdout);
+            try coordinatorProbeQuery(&service.coordinator, stdout);
+            try stdout.writeAll("  Control endpoint: GET /status, POST /stop\n");
+            try stdout.writeAll("  Service mode: foreground\n");
+            try stdout_buffer.flush();
+
+            try service.serve();
         },
         .status => |status| {
-            try stdout.print("Querying coordinator status at {s}:{d}...\n", .{
+            const body = try coordinator.queryStatus(
+                gpa,
                 status.address,
                 status.port,
-            });
-            try stdout.print("  Enhancement: Coordinator status (Phase 8)\n", .{});
+                @tagName(status.format),
+            );
+            defer gpa.free(body);
+            try stdout.writeAll(body);
+            if (body.len == 0 or body[body.len - 1] != '\n') {
+                try stdout.writeByte('\n');
+            }
         },
         .stop => |stop| {
-            try stdout.print("Stopping coordinator at {s}:{d}...\n", .{
-                stop.address,
-                stop.port,
-            });
-            try stdout.print("  Graceful shutdown timeout: {d}s\n", .{stop.timeout});
-            try stdout.print("  Enhancement: Coordinator stop (Phase 8)\n", .{});
+            _ = stop.timeout;
+            const body = try coordinator.requestStop(gpa, stop.address, stop.port);
+            defer gpa.free(body);
+            try stdout.writeAll(body);
+            if (body.len == 0 or body[body.len - 1] != '\n') {
+                try stdout.writeByte('\n');
+            }
         },
     }
     try stdout_buffer.flush();
@@ -2382,41 +3358,224 @@ fn command_cluster(
     time: Time,
     args: *const cli.Command.Cluster,
 ) !void {
-    _ = gpa;
-    _ = io;
-    _ = time;
-
     var stdout_buffer = std.io.bufferedWriter(std.io.getStdOut().writer());
     var stdout_writer = stdout_buffer.writer();
     const stdout = stdout_writer.any();
 
     switch (args.*) {
-        .@"add-node" => |add_node| {
-            try stdout.print("Adding node to cluster...\n", .{});
-            try stdout.print("  Cluster ID: {d}\n", .{add_node.cluster});
-            try stdout.print("  New node address: {s}\n", .{add_node.node_address});
-            try stdout.print("  Wait for catchup: {}\n", .{add_node.wait});
-            try stdout.print("  Timeout: {d}s\n", .{add_node.timeout_seconds});
-            try stdout.writeAll("\n");
-            try stdout.print("  (Add-node: see membership.zig)\n", .{});
-        },
-        .@"remove-node" => |remove_node| {
-            try stdout.print("Removing node from cluster...\n", .{});
-            try stdout.print("  Cluster ID: {d}\n", .{remove_node.cluster});
-            try stdout.print("  Node to remove: {s}\n", .{remove_node.node_id});
-            try stdout.print("  Force removal: {}\n", .{remove_node.force});
-            try stdout.print("  Timeout: {d}s\n", .{remove_node.timeout_seconds});
-            try stdout.writeAll("\n");
-            try stdout.print("  (Remove-node: see membership.zig)\n", .{});
-        },
         .status => |status| {
-            try stdout.print("Cluster membership status:\n", .{});
-            try stdout.print("  Cluster ID: {d}\n", .{status.cluster});
-            try stdout.print("  Addresses: {d} nodes configured\n", .{status.addresses.count()});
-            try stdout.writeAll("\n");
-            try stdout.print("  (Status: see membership.zig)\n", .{});
-        },
+            const addresses = status.addresses.const_slice();
+    var active_nodes: usize = 0;
+    var unavailable_nodes: usize = 0;
+    var total_ram_index_count: u64 = 0;
+    var total_ram_index_capacity: u64 = 0;
+    var total_tombstones: u64 = 0;
+    var total_ttl_expirations: u64 = 0;
+    var total_deletions: u64 = 0;
+    var membership_consistent = true;
+    var cluster_membership_state: ?u8 = null;
+    var cluster_membership_voters: ?u32 = null;
+    var cluster_membership_learners: ?u32 = null;
+    var resize_consistent = true;
+    var cluster_resize_status: ?u8 = null;
+    var cluster_resize_progress: ?u32 = null;
+
+    if (status.format == .json) {
+        try stdout.print(
+            "{{\"cluster\":{d},\"total_nodes\":{d},\"nodes\":[",
+            .{ status.cluster, addresses.len },
+        );
+        for (addresses, 0..) |address, index| {
+            const result = query_single_node_status(gpa, io, time, status.cluster, address);
+            var address_buf: [128]u8 = undefined;
+            const address_text = format_net_address(address, &address_buf);
+
+            if (index > 0) try stdout.writeAll(",");
+
+            if (result.ok) {
+                active_nodes += 1;
+                total_ram_index_count += result.response.ram_index_count;
+                total_ram_index_capacity += result.response.ram_index_capacity;
+                total_tombstones += result.response.tombstone_count;
+                total_ttl_expirations += result.response.ttl_expirations;
+                total_deletions += result.response.deletion_count;
+                if (cluster_membership_state) |value| {
+                    membership_consistent = membership_consistent and
+                        value == result.response.membership_state and
+                        cluster_membership_voters.? == result.response.membership_voters_count and
+                        cluster_membership_learners.? == result.response.membership_learners_count;
+                } else {
+                    cluster_membership_state = result.response.membership_state;
+                    cluster_membership_voters = result.response.membership_voters_count;
+                    cluster_membership_learners = result.response.membership_learners_count;
+                }
+                if (cluster_resize_status) |value| {
+                    resize_consistent = resize_consistent and
+                        value == result.response.index_resize_status and
+                        cluster_resize_progress.? == result.response.index_resize_progress;
+                } else {
+                    cluster_resize_status = result.response.index_resize_status;
+                    cluster_resize_progress = result.response.index_resize_progress;
+                }
+
+                try stdout.print(
+                    "{{\"node_id\":{d},\"address\":\"{s}\",\"status\":\"active\",\"ram_index_count\":{d},\"ram_index_capacity\":{d},\"ram_index_load_pct\":{d},\"tombstone_count\":{d},\"ttl_expirations\":{d},\"deletion_count\":{d},\"membership_state\":\"{s}\",\"membership_voters_count\":{d},\"membership_learners_count\":{d},\"index_resize_status\":\"{s}\",\"index_resize_progress_pct\":{d:.2}}}",
+                    .{
+                        index,
+                        address_text,
+                        result.response.ram_index_count,
+                        result.response.ram_index_capacity,
+                        result.response.ram_index_load_pct,
+                        result.response.tombstone_count,
+                        result.response.ttl_expirations,
+                        result.response.deletion_count,
+                        result.response.membershipStateName(),
+                        result.response.membership_voters_count,
+                        result.response.membership_learners_count,
+                        result.response.indexResizeStatusName(),
+                        result.response.indexResizeProgressPct(),
+                    },
+                );
+            } else {
+                unavailable_nodes += 1;
+                try stdout.print(
+                    "{{\"node_id\":{d},\"address\":\"{s}\",\"status\":\"unavailable\",\"error\":\"{s}\"}}",
+                    .{ index, address_text, result.error_name orelse "unknown" },
+                );
+            }
+        }
+        try stdout.print(
+            "],\"active_nodes\":{d},\"unavailable_nodes\":{d},\"ram_index_count\":{d},\"ram_index_capacity\":{d},\"tombstone_count\":{d},\"ttl_expirations\":{d},\"deletion_count\":{d},\"membership_consistent\":{},\"index_resize_consistent\":{}",
+            .{
+                active_nodes,
+                unavailable_nodes,
+                total_ram_index_count,
+                total_ram_index_capacity,
+                total_tombstones,
+                total_ttl_expirations,
+                total_deletions,
+                membership_consistent,
+                resize_consistent,
+            },
+        );
+        if (active_nodes > 0 and membership_consistent) {
+            try stdout.print(
+                ",\"membership_state\":\"{s}\",\"membership_voters_count\":{d},\"membership_learners_count\":{d}",
+                .{
+                    vsr.archerdb.statusMembershipStateName(cluster_membership_state.?),
+                    cluster_membership_voters.?,
+                    cluster_membership_learners.?,
+                },
+            );
+        }
+        if (active_nodes > 0 and resize_consistent) {
+            try stdout.print(
+                ",\"index_resize_status\":\"{s}\",\"index_resize_progress_pct\":{d:.2}",
+                .{
+                    vsr.archerdb.statusIndexResizeName(cluster_resize_status.?),
+                    @as(f64, @floatFromInt(cluster_resize_progress.?)) / 100.0,
+                },
+            );
+        }
+        try stdout.writeAll("}\n");
+    } else {
+        try stdout.print("Cluster status for cluster {d}:\n", .{status.cluster});
+        try stdout.print("  Nodes configured: {d}\n", .{addresses.len});
+
+        for (addresses, 0..) |address, index| {
+            const result = query_single_node_status(gpa, io, time, status.cluster, address);
+            var address_buf: [128]u8 = undefined;
+            const address_text = format_net_address(address, &address_buf);
+
+            if (result.ok) {
+                active_nodes += 1;
+                total_ram_index_count += result.response.ram_index_count;
+                total_ram_index_capacity += result.response.ram_index_capacity;
+                total_tombstones += result.response.tombstone_count;
+                total_ttl_expirations += result.response.ttl_expirations;
+                total_deletions += result.response.deletion_count;
+                if (cluster_membership_state) |value| {
+                    membership_consistent = membership_consistent and
+                        value == result.response.membership_state and
+                        cluster_membership_voters.? == result.response.membership_voters_count and
+                        cluster_membership_learners.? == result.response.membership_learners_count;
+                } else {
+                    cluster_membership_state = result.response.membership_state;
+                    cluster_membership_voters = result.response.membership_voters_count;
+                    cluster_membership_learners = result.response.membership_learners_count;
+                }
+                if (cluster_resize_status) |value| {
+                    resize_consistent = resize_consistent and
+                        value == result.response.index_resize_status and
+                        cluster_resize_progress.? == result.response.index_resize_progress;
+                } else {
+                    cluster_resize_status = result.response.index_resize_status;
+                    cluster_resize_progress = result.response.index_resize_progress;
+                }
+
+                try stdout.print(
+                    "  node {d}: {s} active ram_index={d}/{d} load={d:.2}% tombstones={d} ttl_expirations={d} deletions={d} membership={s} voters={d} learners={d} resize={s}({d:.2}%)\n",
+                    .{
+                        index,
+                        address_text,
+                        result.response.ram_index_count,
+                        result.response.ram_index_capacity,
+                        @as(f64, @floatFromInt(result.response.ram_index_load_pct)) / 100.0,
+                        result.response.tombstone_count,
+                        result.response.ttl_expirations,
+                        result.response.deletion_count,
+                        result.response.membershipStateName(),
+                        result.response.membership_voters_count,
+                        result.response.membership_learners_count,
+                        result.response.indexResizeStatusName(),
+                        result.response.indexResizeProgressPct(),
+                    },
+                );
+            } else {
+                unavailable_nodes += 1;
+                try stdout.print(
+                    "  node {d}: {s} unavailable ({s})\n",
+                    .{ index, address_text, result.error_name orelse "unknown" },
+                );
+            }
+        }
+
+        try stdout.print("  Active nodes: {d}\n", .{active_nodes});
+        try stdout.print("  Unavailable nodes: {d}\n", .{unavailable_nodes});
+        try stdout.print("  Aggregate RAM index: {d}/{d}\n", .{
+            total_ram_index_count,
+            total_ram_index_capacity,
+        });
+        try stdout.print("  Aggregate tombstones: {d}\n", .{total_tombstones});
+        try stdout.print("  Aggregate TTL expirations: {d}\n", .{total_ttl_expirations});
+        try stdout.print("  Aggregate deletions: {d}\n", .{total_deletions});
+        if (active_nodes > 0) {
+            try stdout.print("  Membership consistent: {}\n", .{membership_consistent});
+            if (membership_consistent) {
+                try stdout.print("  Membership state: {s} voters={d} learners={d}\n", .{
+                    vsr.archerdb.statusMembershipStateName(cluster_membership_state.?),
+                    cluster_membership_voters.?,
+                    cluster_membership_learners.?,
+                });
+            } else {
+                try stdout.writeAll("  Membership state: mixed across active nodes\n");
+            }
+            try stdout.print("  Index resize consistent: {}\n", .{resize_consistent});
+            if (resize_consistent) {
+                try stdout.print("  Index resize: {s} ({d:.2}%)\n", .{
+                    vsr.archerdb.statusIndexResizeName(cluster_resize_status.?),
+                    @as(f64, @floatFromInt(cluster_resize_progress.?)) / 100.0,
+                });
+            } else {
+                try stdout.writeAll("  Index resize: mixed across active nodes\n");
+            }
+        }
     }
+
+        },
+        .sentinel => unreachable,
+    }
+
     try stdout_buffer.flush();
 }
 
@@ -2426,10 +3585,6 @@ fn command_index(
     time: Time,
     args: *const cli.Command.Index,
 ) !void {
-    _ = gpa;
-    _ = io;
-    _ = time;
-
     var stdout_buffer = std.io.bufferedWriter(std.io.getStdOut().writer());
     var stdout_writer = stdout_buffer.writer();
     const stdout = stdout_writer.any();
@@ -2438,38 +3593,361 @@ fn command_index(
         .resize => |resize| {
             switch (resize.action) {
                 .start => {
-                    try stdout.print("Starting index resize...\n", .{});
-                    try stdout.print("  Cluster ID: {d}\n", .{resize.cluster});
-                    try stdout.print("  New capacity: {d} buckets\n", .{resize.new_capacity.?});
-                    try stdout.writeAll("\n");
-                    try stdout.print("  (Resize: see ram_index.zig)\n", .{});
+                    const target_capacity = resize.new_capacity orelse return error.MissingCapacity;
+                    const metrics_port = resize.metrics_port;
+                    const addresses = resize.addresses.const_slice();
+                    var accepted_nodes: usize = 0;
+
+                    for (addresses) |address| {
+                        var metrics_address = address;
+                        metrics_address.setPort(metrics_port);
+                        send_index_resize_start_request(metrics_address, target_capacity) catch |err| {
+                            log.warn("index resize start rejected by {any}: {}", .{
+                                metrics_address,
+                                err,
+                            });
+                            continue;
+                        };
+                        accepted_nodes += 1;
+                    }
+
+                    if (accepted_nodes == 0) return error.NoActiveNodes;
+
+                    if (resize.format == .json) {
+                        try stdout.print(
+                            "{{\"cluster\":{d},\"target_capacity\":{d},\"metrics_port\":{d},\"accepted_nodes\":{d}}}\n",
+                            .{ resize.cluster, target_capacity, metrics_port, accepted_nodes },
+                        );
+                    } else {
+                        try stdout.print(
+                            "Index resize request submitted for cluster {d}: target_capacity={d}, metrics_port={d}, accepted_nodes={d}\n",
+                            .{ resize.cluster, target_capacity, metrics_port, accepted_nodes },
+                        );
+                    }
                 },
                 .check => {
-                    try stdout.print("Checking resize feasibility...\n", .{});
-                    try stdout.print("  Cluster ID: {d}\n", .{resize.cluster});
-                    try stdout.print("  Target capacity: {d} buckets\n", .{resize.new_capacity.?});
-                    try stdout.writeAll("\n");
-                    try stdout.print("  (Check: see ram_index.zig)\n", .{});
+                    const target_capacity = resize.new_capacity orelse return error.MissingCapacity;
+                    const addresses = resize.addresses.const_slice();
+                    var active_nodes: usize = 0;
+                    var current_capacity_min: u64 = std.math.maxInt(u64);
+                    var current_capacity_max: u64 = 0;
+                    var current_entries_max: u64 = 0;
+
+                    for (addresses) |address| {
+                        const result = query_single_node_status(gpa, io, time, resize.cluster, address);
+                        if (!result.ok) continue;
+
+                        active_nodes += 1;
+                        current_capacity_min = @min(
+                            current_capacity_min,
+                            result.response.ram_index_capacity,
+                        );
+                        current_capacity_max = @max(
+                            current_capacity_max,
+                            result.response.ram_index_capacity,
+                        );
+                        current_entries_max = @max(
+                            current_entries_max,
+                            result.response.ram_index_count,
+                        );
+                    }
+
+                    if (active_nodes == 0) return error.NoActiveNodes;
+
+                    const capacity_consistent = current_capacity_min == current_capacity_max;
+                    const above_current_capacity = target_capacity > current_capacity_max;
+                    const above_current_entries = target_capacity > current_entries_max;
+                    const recommended = target_capacity >= current_entries_max * 2;
+
+                    if (resize.format == .json) {
+                        try stdout.print(
+                            "{{\"cluster\":{d},\"active_nodes\":{d},\"target_capacity\":{d},\"current_capacity_min\":{d},\"current_capacity_max\":{d},\"current_entries_max\":{d},\"capacity_consistent\":{},\"above_current_capacity\":{},\"above_current_entries\":{},\"recommended\":{}}}\n",
+                            .{
+                                resize.cluster,
+                                active_nodes,
+                                target_capacity,
+                                current_capacity_min,
+                                current_capacity_max,
+                                current_entries_max,
+                                capacity_consistent,
+                                above_current_capacity,
+                                above_current_entries,
+                                recommended,
+                            },
+                        );
+                    } else {
+                        try stdout.print("Index resize feasibility for cluster {d}:\n", .{
+                            resize.cluster,
+                        });
+                        try stdout.print("  Active nodes: {d}\n", .{active_nodes});
+                        try stdout.print("  Target capacity: {d}\n", .{target_capacity});
+                        try stdout.print("  Current capacity range: {d}..{d}\n", .{
+                            current_capacity_min,
+                            current_capacity_max,
+                        });
+                        try stdout.print("  Current max entries: {d}\n", .{current_entries_max});
+                        try stdout.print("  Capacity consistent across nodes: {}\n", .{
+                            capacity_consistent,
+                        });
+                        try stdout.print("  Greater than current capacity: {}\n", .{
+                            above_current_capacity,
+                        });
+                        try stdout.print("  Greater than current entries: {}\n", .{
+                            above_current_entries,
+                        });
+                        try stdout.print("  Recommended headroom (>=2x entries): {}\n", .{
+                            recommended,
+                        });
+                    }
                 },
                 .status => {
-                    try stdout.print("Index resize status:\n", .{});
-                    try stdout.print("  Cluster ID: {d}\n", .{resize.cluster});
-                    try stdout.writeAll("\n");
-                    try stdout.print("  (Status: see ram_index.zig)\n", .{});
+                    const addresses = resize.addresses.const_slice();
+                    var active_nodes: usize = 0;
+                    var unavailable_nodes: usize = 0;
+                    var resize_consistent = true;
+                    var cluster_resize_status: ?u8 = null;
+                    var cluster_resize_progress: ?u32 = null;
+
+                    if (resize.format == .json) {
+                        try stdout.print("{{\"cluster\":{d},\"nodes\":[", .{resize.cluster});
+                        for (addresses, 0..) |address, index| {
+                            const result = query_single_node_status(
+                                gpa,
+                                io,
+                                time,
+                                resize.cluster,
+                                address,
+                            );
+                            var address_buf: [128]u8 = undefined;
+                            const address_text = format_net_address(address, &address_buf);
+
+                            if (index > 0) try stdout.writeAll(",");
+
+                            if (result.ok) {
+                                active_nodes += 1;
+                                if (cluster_resize_status) |value| {
+                                    resize_consistent = resize_consistent and
+                                        value == result.response.index_resize_status and
+                                        cluster_resize_progress.? == result.response.index_resize_progress;
+                                } else {
+                                    cluster_resize_status = result.response.index_resize_status;
+                                    cluster_resize_progress = result.response.index_resize_progress;
+                                }
+
+                                try stdout.print(
+                                    "{{\"node_id\":{d},\"address\":\"{s}\",\"status\":\"active\",\"index_resize_status\":\"{s}\",\"index_resize_progress_pct\":{d:.2},\"ram_index_capacity\":{d},\"ram_index_count\":{d}}}",
+                                    .{
+                                        index,
+                                        address_text,
+                                        result.response.indexResizeStatusName(),
+                                        result.response.indexResizeProgressPct(),
+                                        result.response.ram_index_capacity,
+                                        result.response.ram_index_count,
+                                    },
+                                );
+                            } else {
+                                unavailable_nodes += 1;
+                                try stdout.print(
+                                    "{{\"node_id\":{d},\"address\":\"{s}\",\"status\":\"unavailable\",\"error\":\"{s}\"}}",
+                                    .{ index, address_text, result.error_name orelse "unknown" },
+                                );
+                            }
+                        }
+                        try stdout.print(
+                            "],\"active_nodes\":{d},\"unavailable_nodes\":{d},\"resize_consistent\":{}",
+                            .{ active_nodes, unavailable_nodes, resize_consistent },
+                        );
+                        if (active_nodes > 0 and resize_consistent) {
+                            try stdout.print(
+                                ",\"index_resize_status\":\"{s}\",\"index_resize_progress_pct\":{d:.2}",
+                                .{
+                                    vsr.archerdb.statusIndexResizeName(cluster_resize_status.?),
+                                    @as(f64, @floatFromInt(cluster_resize_progress.?)) / 100.0,
+                                },
+                            );
+                        }
+                        try stdout.writeAll("}\n");
+                    } else {
+                        try stdout.print("Index resize status for cluster {d}:\n", .{
+                            resize.cluster,
+                        });
+                        for (addresses, 0..) |address, index| {
+                            const result = query_single_node_status(
+                                gpa,
+                                io,
+                                time,
+                                resize.cluster,
+                                address,
+                            );
+                            var address_buf: [128]u8 = undefined;
+                            const address_text = format_net_address(address, &address_buf);
+
+                            if (result.ok) {
+                                active_nodes += 1;
+                                if (cluster_resize_status) |value| {
+                                    resize_consistent = resize_consistent and
+                                        value == result.response.index_resize_status and
+                                        cluster_resize_progress.? == result.response.index_resize_progress;
+                                } else {
+                                    cluster_resize_status = result.response.index_resize_status;
+                                    cluster_resize_progress = result.response.index_resize_progress;
+                                }
+
+                                try stdout.print(
+                                    "  node {d}: {s} {s} ({d:.2}%) entries={d}/{d}\n",
+                                    .{
+                                        index,
+                                        address_text,
+                                        result.response.indexResizeStatusName(),
+                                        result.response.indexResizeProgressPct(),
+                                        result.response.ram_index_count,
+                                        result.response.ram_index_capacity,
+                                    },
+                                );
+                            } else {
+                                unavailable_nodes += 1;
+                                try stdout.print(
+                                    "  node {d}: {s} unavailable ({s})\n",
+                                    .{ index, address_text, result.error_name orelse "unknown" },
+                                );
+                            }
+                        }
+                        try stdout.print("  Active nodes: {d}\n", .{active_nodes});
+                        try stdout.print("  Unavailable nodes: {d}\n", .{unavailable_nodes});
+                        try stdout.print("  Index resize consistent: {}\n", .{resize_consistent});
+                        if (active_nodes > 0 and resize_consistent) {
+                            try stdout.print("  Cluster resize state: {s} ({d:.2}%)\n", .{
+                                vsr.archerdb.statusIndexResizeName(cluster_resize_status.?),
+                                @as(f64, @floatFromInt(cluster_resize_progress.?)) / 100.0,
+                            });
+                        }
+                    }
                 },
                 .abort => {
-                    try stdout.print("Aborting index resize...\n", .{});
-                    try stdout.print("  Cluster ID: {d}\n", .{resize.cluster});
-                    try stdout.writeAll("\n");
-                    try stdout.print("  (Abort: see ram_index.zig)\n", .{});
+                    const metrics_port = resize.metrics_port;
+                    const addresses = resize.addresses.const_slice();
+                    var accepted_nodes: usize = 0;
+
+                    for (addresses) |address| {
+                        var metrics_address = address;
+                        metrics_address.setPort(metrics_port);
+                        send_index_resize_abort_request(metrics_address) catch |err| {
+                            log.warn("index resize abort rejected by {any}: {}", .{
+                                metrics_address,
+                                err,
+                            });
+                            continue;
+                        };
+                        accepted_nodes += 1;
+                    }
+
+                    if (accepted_nodes == 0) return error.NoActiveNodes;
+
+                    if (resize.format == .json) {
+                        try stdout.print(
+                            "{{\"cluster\":{d},\"metrics_port\":{d},\"accepted_nodes\":{d}}}\n",
+                            .{ resize.cluster, metrics_port, accepted_nodes },
+                        );
+                    } else {
+                        try stdout.print(
+                            "Index resize abort submitted for cluster {d}: metrics_port={d}, accepted_nodes={d}\n",
+                            .{ resize.cluster, metrics_port, accepted_nodes },
+                        );
+                    }
                 },
             }
         },
         .stats => |stats| {
-            try stdout.print("Index statistics:\n", .{});
-            try stdout.print("  Cluster ID: {d}\n", .{stats.cluster});
-            try stdout.writeAll("\n");
-            try stdout.print("  (Stats: see ram_index.zig)\n", .{});
+            const addresses = stats.addresses.const_slice();
+            var active_nodes: usize = 0;
+            var unavailable_nodes: usize = 0;
+            var total_count: u64 = 0;
+            var total_capacity: u64 = 0;
+            var total_tombstones: u64 = 0;
+
+            if (stats.format == .json) {
+                try stdout.print("{{\"cluster\":{d},\"nodes\":[", .{stats.cluster});
+                for (addresses, 0..) |address, index| {
+                    const result = query_single_node_status(gpa, io, time, stats.cluster, address);
+                    var address_buf: [128]u8 = undefined;
+                    const address_text = format_net_address(address, &address_buf);
+
+                    if (index > 0) try stdout.writeAll(",");
+
+                    if (result.ok) {
+                        active_nodes += 1;
+                        total_count += result.response.ram_index_count;
+                        total_capacity += result.response.ram_index_capacity;
+                        total_tombstones += result.response.tombstone_count;
+
+                        try stdout.print(
+                            "{{\"node_id\":{d},\"address\":\"{s}\",\"status\":\"active\",\"count\":{d},\"capacity\":{d},\"load_pct\":{d},\"tombstone_count\":{d}}}",
+                            .{
+                                index,
+                                address_text,
+                                result.response.ram_index_count,
+                                result.response.ram_index_capacity,
+                                result.response.ram_index_load_pct,
+                                result.response.tombstone_count,
+                            },
+                        );
+                    } else {
+                        unavailable_nodes += 1;
+                        try stdout.print(
+                            "{{\"node_id\":{d},\"address\":\"{s}\",\"status\":\"unavailable\",\"error\":\"{s}\"}}",
+                            .{ index, address_text, result.error_name orelse "unknown" },
+                        );
+                    }
+                }
+                try stdout.print(
+                    "],\"active_nodes\":{d},\"unavailable_nodes\":{d},\"total_count\":{d},\"total_capacity\":{d},\"total_tombstones\":{d}}}\n",
+                    .{
+                        active_nodes,
+                        unavailable_nodes,
+                        total_count,
+                        total_capacity,
+                        total_tombstones,
+                    },
+                );
+            } else {
+                try stdout.print("Index statistics for cluster {d}:\n", .{stats.cluster});
+                for (addresses, 0..) |address, index| {
+                    const result = query_single_node_status(gpa, io, time, stats.cluster, address);
+                    var address_buf: [128]u8 = undefined;
+                    const address_text = format_net_address(address, &address_buf);
+
+                    if (result.ok) {
+                        active_nodes += 1;
+                        total_count += result.response.ram_index_count;
+                        total_capacity += result.response.ram_index_capacity;
+                        total_tombstones += result.response.tombstone_count;
+
+                        try stdout.print(
+                            "  node {d}: {s} count={d} capacity={d} load={d:.2}% tombstones={d}\n",
+                            .{
+                                index,
+                                address_text,
+                                result.response.ram_index_count,
+                                result.response.ram_index_capacity,
+                                @as(f64, @floatFromInt(result.response.ram_index_load_pct)) / 100.0,
+                                result.response.tombstone_count,
+                            },
+                        );
+                    } else {
+                        unavailable_nodes += 1;
+                        try stdout.print(
+                            "  node {d}: {s} unavailable ({s})\n",
+                            .{ index, address_text, result.error_name orelse "unknown" },
+                        );
+                    }
+                }
+
+                try stdout.print("  Active nodes: {d}\n", .{active_nodes});
+                try stdout.print("  Unavailable nodes: {d}\n", .{unavailable_nodes});
+                try stdout.print("  Aggregate entries: {d}\n", .{total_count});
+                try stdout.print("  Aggregate capacity: {d}\n", .{total_capacity});
+                try stdout.print("  Aggregate tombstones: {d}\n", .{total_tombstones});
+            }
         },
     }
     try stdout_buffer.flush();
@@ -2504,9 +3982,6 @@ fn command_upgrade(
 
     switch (args.action) {
         .status => {
-            try stdout.print("Cluster Upgrade Status\n", .{});
-            try stdout.print("======================\n\n", .{});
-
             var upgrader = upgrade.Upgrader.init(gpa, .{
                 .addresses = addresses_str,
                 .metrics_port = args.metrics_port,
@@ -2515,7 +3990,14 @@ fn command_upgrade(
 
             // Discover replicas and get status
             upgrader.discoverReplicas() catch |err| {
-                try stdout.print("Error discovering replicas: {any}\n", .{err});
+                if (args.format == .json) {
+                    try stdout.print(
+                        "{{\"error\":\"{s}\",\"message\":\"failed to discover replicas\"}}\n",
+                        .{@errorName(err)},
+                    );
+                } else {
+                    try stdout.print("Error discovering replicas: {any}\n", .{err});
+                }
                 try stdout_buffer.flush();
                 return;
             };
@@ -2523,30 +4005,50 @@ fn command_upgrade(
             _ = upgrader.identifyPrimary() catch null;
 
             const status = upgrader.getStatus() catch |err| {
-                try stdout.print("Error getting status: {any}\n", .{err});
+                if (args.format == .json) {
+                    try stdout.print(
+                        "{{\"error\":\"{s}\",\"message\":\"failed to get upgrade status\"}}\n",
+                        .{@errorName(err)},
+                    );
+                } else {
+                    try stdout.print("Error getting status: {any}\n", .{err});
+                }
                 try stdout_buffer.flush();
                 return;
             };
 
-            try stdout.print("{}\n", .{status});
+            if (args.format == .json) {
+                try std.json.stringify(status, .{}, stdout);
+                try stdout.writeByte('\n');
+            } else {
+                try stdout.print("Cluster Upgrade Status\n", .{});
+                try stdout.print("======================\n\n", .{});
+                try stdout.print("{}\n", .{status});
+            }
         },
         .start => {
             const target_version = args.target_version orelse {
-                try stdout.print("Error: --target-version is required\n", .{});
+                if (args.format == .json) {
+                    try stdout.writeAll(
+                        "{\"error\":\"MissingTargetVersion\",\"message\":\"--target-version is required\"}\n",
+                    );
+                } else {
+                    try stdout.print("Error: --target-version is required\n", .{});
+                }
                 try stdout_buffer.flush();
                 return;
             };
 
-            if (args.dry_run) {
-                try stdout.print("[DRY RUN] Rolling Upgrade Plan\n", .{});
-            } else {
-                try stdout.print("Starting Rolling Upgrade\n", .{});
+            if (!args.dry_run) {
+                try print_not_implemented(
+                    stdout,
+                    args.format,
+                    "upgrade start",
+                    "live rollout actuation is owned by external deployment tooling; use --dry-run for planning and `upgrade status` for live checks",
+                );
+                try stdout_buffer.flush();
+                return error.NotImplemented;
             }
-            try stdout.print("=========================\n\n", .{});
-            try stdout.print("Target version: {s}\n", .{target_version});
-            try stdout.print("P99 threshold:  {d:.1}x baseline\n", .{args.p99_threshold});
-            try stdout.print("Error threshold: {d:.1}%\n", .{args.error_threshold});
-            try stdout.print("Catchup timeout: {d}s\n\n", .{args.catchup_timeout});
 
             var upgrader = upgrade.Upgrader.init(gpa, .{
                 .addresses = addresses_str,
@@ -2562,50 +4064,37 @@ fn command_upgrade(
             defer upgrader.deinit();
 
             const result = upgrader.execute() catch |err| {
-                try stdout.print("Upgrade failed: {any}\n", .{err});
+                if (args.format == .json) {
+                    try stdout.print(
+                        "{{\"error\":\"{s}\",\"message\":\"upgrade dry-run failed\"}}\n",
+                        .{@errorName(err)},
+                    );
+                } else {
+                    try stdout.print("Upgrade failed: {any}\n", .{err});
+                }
                 try stdout_buffer.flush();
                 return;
             };
 
-            try stdout.print("\n{}\n", .{result});
-        },
-        .pause => {
-            try stdout.print("Pausing upgrade...\n", .{});
-            try stdout.print("(Upgrade state is managed by the cluster)\n", .{});
-        },
-        .@"resume" => {
-            try stdout.print("Resuming upgrade...\n", .{});
-            try stdout.print("(Upgrade state is managed by the cluster)\n", .{});
-        },
-        .rollback => {
-            if (!args.force) {
-                try stdout.print("WARNING: Manual rollback requested.\n", .{});
-                try stdout.print("This will revert all upgraded replicas to their previous version.\n", .{});
-                try stdout.print("Use --force to confirm.\n", .{});
-                try stdout_buffer.flush();
-                return;
+            if (args.format == .json) {
+                try std.json.stringify(.{
+                    .mode = "dry_run",
+                    .target_version = target_version,
+                    .p99_threshold = args.p99_threshold,
+                    .error_threshold = args.error_threshold,
+                    .catchup_timeout = args.catchup_timeout,
+                    .result = result,
+                }, .{}, stdout);
+                try stdout.writeByte('\n');
+            } else {
+                try stdout.print("[DRY RUN] Rolling Upgrade Plan\n", .{});
+                try stdout.print("=========================\n\n", .{});
+                try stdout.print("Target version: {s}\n", .{target_version});
+                try stdout.print("P99 threshold:  {d:.1}x baseline\n", .{args.p99_threshold});
+                try stdout.print("Error threshold: {d:.1}%\n", .{args.error_threshold});
+                try stdout.print("Catchup timeout: {d}s\n\n", .{args.catchup_timeout});
+                try stdout.print("{}\n", .{result});
             }
-
-            try stdout.print("Initiating manual rollback...\n", .{});
-
-            var upgrader = upgrade.Upgrader.init(gpa, .{
-                .addresses = addresses_str,
-            });
-            defer upgrader.deinit();
-
-            upgrader.discoverReplicas() catch |err| {
-                try stdout.print("Error discovering replicas: {any}\n", .{err});
-                try stdout_buffer.flush();
-                return;
-            };
-
-            upgrader.rollback() catch |err| {
-                try stdout.print("Rollback failed: {any}\n", .{err});
-                try stdout_buffer.flush();
-                return;
-            };
-
-            try stdout.print("Rollback completed.\n", .{});
         },
     }
     try stdout_buffer.flush();

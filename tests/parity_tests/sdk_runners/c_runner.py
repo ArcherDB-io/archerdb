@@ -74,7 +74,7 @@ def run_operation(server_url: str, operation: str, input_data: Dict[str, Any]) -
         if build_result is not None:
             return build_result
 
-    # If binary still doesn't exist, return placeholder
+    # If the binary still does not exist, fail closed instead of inventing a result.
     if not os.path.exists(binary_path):
         return {
             "error": f"C SDK parity runner not built. Expected at: {binary_path}"

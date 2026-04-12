@@ -13,6 +13,9 @@
     "declaration": false,
     "resolveJsonModule": true
   },
-  "include": ["*.ts"],
+  "include": [
+    "fixture_adapter.ts",
+    "test_all_operations.ts"
+  ],
   "exclude": ["node_modules", "dist"]
 }

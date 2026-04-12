@@ -232,6 +232,55 @@ pub fn ForestType(comptime _Storage: type, comptime groove_cfg: anytype) type {
             pub const compaction_block_count_min: u32 = compaction_block_count_beat_min;
         };
 
+        fn runtime_tree_value_count_limit(comptime Tree: type, options: Tree.Options) usize {
+            const value_count_limit =
+                @as(usize, options.batch_value_count_limit) * constants.lsm_compaction_ops;
+            assert(value_count_limit > 0);
+            assert(value_count_limit <= Tree.Table.value_count_max);
+            return value_count_limit;
+        }
+
+        fn runtime_radix_buffer_size(grooves_options: GroovesOptions) usize {
+            var size_max: usize = 0;
+
+            inline for (std.meta.fields(Grooves)) |field| {
+                const Groove = field.type;
+                const groove_options: Groove.Options = @field(grooves_options, field.name);
+
+                size_max = @max(
+                    size_max,
+                    runtime_tree_value_count_limit(
+                        Groove.ObjectTree,
+                        groove_options.tree_options_object,
+                    ) * @sizeOf(Groove.ObjectTree.Value),
+                );
+
+                if (Groove.IdTree != void) {
+                    size_max = @max(
+                        size_max,
+                        runtime_tree_value_count_limit(
+                            Groove.IdTree,
+                            groove_options.tree_options_id,
+                        ) * @sizeOf(Groove.IdTree.Value),
+                    );
+                }
+
+                inline for (std.meta.fields(Groove.IndexTrees)) |index_field| {
+                    const Tree = index_field.type;
+                    size_max = @max(
+                        size_max,
+                        runtime_tree_value_count_limit(
+                            Tree,
+                            @field(groove_options.tree_options_index, index_field.name),
+                        ) * @sizeOf(Tree.Value),
+                    );
+                }
+            }
+
+            assert(size_max > 0);
+            return size_max;
+        }
+
         progress: ?union(enum) {
             open: struct { callback: Callback },
             checkpoint: struct { callback: Callback },
@@ -315,9 +364,15 @@ pub fn ForestType(comptime _Storage: type, comptime groove_cfg: anytype) type {
                 .radix_buffer = undefined,
             };
 
+            log.info("forest.init: node_count={} compaction_block_count={}", .{
+                options.node_count,
+                options.compaction_block_count,
+            });
+
             // TODO: look into using lsm_table_size_max for the node_count.
             try forest.node_pool.init(allocator, options.node_count);
             errdefer forest.node_pool.deinit(allocator);
+            log.info("forest.init: node_pool ready", .{});
 
             try forest.manifest_log.init(
                 allocator,
@@ -325,6 +380,7 @@ pub fn ForestType(comptime _Storage: type, comptime groove_cfg: anytype) type {
                 &manifest_log_compaction_pace,
             );
             errdefer forest.manifest_log.deinit(allocator);
+            log.info("forest.init: manifest_log ready", .{});
 
             var grooves_initialized: usize = 0;
             errdefer inline for (std.meta.fields(Grooves), 0..) |field, field_index| {
@@ -335,24 +391,18 @@ pub fn ForestType(comptime _Storage: type, comptime groove_cfg: anytype) type {
                 }
             };
 
-            const radix_buffer_size: usize = comptime blk: {
-                var size_max: usize = 0;
-                for (std.enums.values(_TreeID)) |tree_id| {
-                    const tree = _tree_infos[@intFromEnum(tree_id) - _tree_infos[0].tree_id];
-                    const size = tree.Tree.Table.value_count_max * @sizeOf(tree.Tree.Value);
-                    assert(size > 0);
-                    size_max = @max(size_max, size);
-                }
-                break :blk size_max;
-            };
+            const radix_buffer_size = runtime_radix_buffer_size(grooves_options);
 
             forest.radix_buffer = try .init(allocator, radix_buffer_size);
             errdefer forest.radix_buffer.deinit(allocator);
+            log.info("forest.init: radix_buffer ready size={}B", .{radix_buffer_size});
 
             inline for (std.meta.fields(Grooves)) |field| {
                 const Groove = field.type;
                 const groove: *Groove = &@field(forest.grooves, field.name);
                 const groove_options: Groove.Options = @field(grooves_options, field.name);
+
+                log.info("forest.init: initializing groove {s}", .{field.name});
 
                 try groove.init(
                     allocator,
@@ -362,6 +412,7 @@ pub fn ForestType(comptime _Storage: type, comptime groove_cfg: anytype) type {
                     groove_options,
                 );
                 grooves_initialized += 1;
+                log.info("forest.init: initialized groove {s}", .{field.name});
             }
 
             try forest.compaction_schedule.init(
@@ -371,13 +422,16 @@ pub fn ForestType(comptime _Storage: type, comptime groove_cfg: anytype) type {
                 options.compaction_block_count,
             );
             errdefer forest.compaction_schedule.deinit(allocator);
+            log.info("forest.init: compaction_schedule ready", .{});
 
             try forest.scan_buffer_pool.init(allocator);
             errdefer forest.scan_buffer_pool.deinit(allocator);
+            log.info("forest.init: scan_buffer_pool ready", .{});
 
             try forest.adaptive_load_from_constants();
             forest.adaptive_apply_l0_trigger_override();
             forest.adaptive_apply_compaction_thread_limit();
+            log.info("forest.init: ready", .{});
         }
 
         pub fn deinit(forest: *Forest, allocator: mem.Allocator) void {

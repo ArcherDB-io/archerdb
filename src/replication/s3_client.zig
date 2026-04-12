@@ -60,6 +60,12 @@ pub const PartInfo = struct {
     etag: []const u8,
 };
 
+/// Listed object metadata.
+pub const ObjectInfo = struct {
+    key: []const u8,
+    size: u64,
+};
+
 /// S3 API error
 pub const S3Error = error{
     ConnectionFailed,
@@ -154,6 +160,248 @@ pub const S3Client = struct {
         self.allocator.free(self._owned_region);
         self.allocator.free(self._owned_access_key);
         self.allocator.free(self._owned_secret_key);
+    }
+
+    /// Download an object body from S3-compatible storage.
+    pub fn getObject(
+        self: *S3Client,
+        bucket: []const u8,
+        key: []const u8,
+    ) S3Error![]u8 {
+        const url = providers.buildRequestUrl(
+            self.allocator,
+            self.provider,
+            self.endpoint,
+            bucket,
+            key,
+            self.url_style,
+        ) catch return error.OutOfMemory;
+        defer self.allocator.free(url);
+
+        const signing_uri = providers.getSigningUri(
+            self.allocator,
+            bucket,
+            key,
+            self.url_style,
+        ) catch return error.OutOfMemory;
+        defer self.allocator.free(signing_uri);
+
+        const host = providers.getHostHeader(
+            self.allocator,
+            self.provider,
+            self.endpoint,
+            bucket,
+            self.url_style,
+        ) catch return error.OutOfMemory;
+        defer self.allocator.free(host);
+
+        var payload_hash: [64]u8 = undefined;
+        sigv4.hashPayload("", &payload_hash);
+
+        var date_buf: [16]u8 = undefined;
+        const amz_date = sigv4.formatAmzDate(&date_buf);
+
+        const headers = [_]sigv4.Header{
+            .{ .name = "Host", .value = host },
+            .{ .name = "x-amz-content-sha256", .value = &payload_hash },
+            .{ .name = "x-amz-date", .value = amz_date },
+        };
+
+        const request = sigv4.Request{
+            .method = .GET,
+            .uri = signing_uri,
+            .query = "",
+            .headers = &headers,
+            .payload = "",
+        };
+
+        const auth_header = sigv4.sign(
+            self.allocator,
+            .{
+                .access_key_id = self.credentials.access_key_id,
+                .secret_access_key = self.credentials.secret_access_key,
+            },
+            request,
+            self.region,
+            providers.getServiceName(self.provider),
+        ) catch return error.SignatureError;
+        defer self.allocator.free(auth_header);
+
+        var body = std.ArrayList(u8).init(self.allocator);
+        errdefer body.deinit();
+
+        const result = self.http_client.fetch(.{
+            .location = .{ .url = url },
+            .method = .GET,
+            .extra_headers = &[_]std.http.Header{
+                .{ .name = "Host", .value = host },
+                .{ .name = "x-amz-content-sha256", .value = &payload_hash },
+                .{ .name = "x-amz-date", .value = amz_date },
+                .{ .name = "Authorization", .value = auth_header },
+            },
+            .response_storage = .{ .dynamic = &body },
+            .max_append_size = 64 * 1024 * 1024,
+        }) catch |err| {
+            log.warn("S3 GET failed to execute: {}", .{err});
+            return error.RequestFailed;
+        };
+
+        if (result.status != .ok) {
+            if (result.status != .not_found) {
+                log.warn("S3 GET failed: bucket={s}, key={s}, status={}", .{
+                    bucket,
+                    key,
+                    result.status,
+                });
+            }
+            return switch (result.status) {
+                .not_found => error.ObjectNotFound,
+                .forbidden => error.AccessDenied,
+                .unauthorized => error.AuthenticationFailed,
+                else => error.RequestFailed,
+            };
+        }
+
+        return body.toOwnedSlice() catch return error.OutOfMemory;
+    }
+
+    /// List objects under a prefix using ListObjectsV2.
+    pub fn listObjects(
+        self: *S3Client,
+        bucket: []const u8,
+        prefix: []const u8,
+    ) S3Error![]ObjectInfo {
+        const base_url = providers.buildRequestUrl(
+            self.allocator,
+            self.provider,
+            self.endpoint,
+            bucket,
+            "",
+            self.url_style,
+        ) catch return error.OutOfMemory;
+        defer self.allocator.free(base_url);
+
+        const signing_uri = providers.getSigningUri(
+            self.allocator,
+            bucket,
+            "",
+            self.url_style,
+        ) catch return error.OutOfMemory;
+        defer self.allocator.free(signing_uri);
+
+        const host = providers.getHostHeader(
+            self.allocator,
+            self.provider,
+            self.endpoint,
+            bucket,
+            self.url_style,
+        ) catch return error.OutOfMemory;
+        defer self.allocator.free(host);
+
+        var all_objects = std.ArrayList(ObjectInfo).init(self.allocator);
+        errdefer {
+            for (all_objects.items) |object| {
+                self.allocator.free(object.key);
+            }
+            all_objects.deinit();
+        }
+
+        var continuation_token: ?[]u8 = null;
+        defer if (continuation_token) |token| self.allocator.free(token);
+
+        while (true) {
+            const query = buildListObjectsQuery(self.allocator, prefix, continuation_token) catch
+                return error.OutOfMemory;
+            defer self.allocator.free(query);
+
+            const url = std.fmt.allocPrint(self.allocator, "{s}?{s}", .{ base_url, query }) catch
+                return error.OutOfMemory;
+            defer self.allocator.free(url);
+
+            var payload_hash: [64]u8 = undefined;
+            sigv4.hashPayload("", &payload_hash);
+
+            var date_buf: [16]u8 = undefined;
+            const amz_date = sigv4.formatAmzDate(&date_buf);
+
+            const headers = [_]sigv4.Header{
+                .{ .name = "Host", .value = host },
+                .{ .name = "x-amz-content-sha256", .value = &payload_hash },
+                .{ .name = "x-amz-date", .value = amz_date },
+            };
+
+            const request = sigv4.Request{
+                .method = .GET,
+                .uri = signing_uri,
+                .query = query,
+                .headers = &headers,
+                .payload = "",
+            };
+
+            const auth_header = sigv4.sign(
+                self.allocator,
+                .{
+                    .access_key_id = self.credentials.access_key_id,
+                    .secret_access_key = self.credentials.secret_access_key,
+                },
+                request,
+                self.region,
+                providers.getServiceName(self.provider),
+            ) catch return error.SignatureError;
+            defer self.allocator.free(auth_header);
+
+            var body = std.ArrayList(u8).init(self.allocator);
+            defer body.deinit();
+
+            const result = self.http_client.fetch(.{
+                .location = .{ .url = url },
+                .method = .GET,
+                .extra_headers = &[_]std.http.Header{
+                    .{ .name = "Host", .value = host },
+                    .{ .name = "x-amz-content-sha256", .value = &payload_hash },
+                    .{ .name = "x-amz-date", .value = amz_date },
+                    .{ .name = "Authorization", .value = auth_header },
+                },
+                .response_storage = .{ .dynamic = &body },
+                .max_append_size = 8 * 1024 * 1024,
+            }) catch |err| {
+                log.warn("S3 list failed to execute: {}", .{err});
+                return error.RequestFailed;
+            };
+
+            if (result.status != .ok) {
+                log.warn("S3 list failed: bucket={s}, prefix={s}, status={}", .{
+                    bucket,
+                    prefix,
+                    result.status,
+                });
+                return switch (result.status) {
+                    .not_found => error.BucketNotFound,
+                    .forbidden => error.AccessDenied,
+                    .unauthorized => error.AuthenticationFailed,
+                    else => error.RequestFailed,
+                };
+            }
+
+            var page = parseListObjectsResponse(
+                self.allocator,
+                body.items,
+            ) catch return error.InvalidResponse;
+            defer page.deinit(self.allocator);
+
+            try all_objects.appendSlice(page.objects.items);
+            page.objects.clearRetainingCapacity();
+
+            if (!page.is_truncated) break;
+
+            if (continuation_token) |token| self.allocator.free(token);
+            continuation_token = if (page.next_continuation_token) |token|
+                try self.allocator.dupe(u8, token)
+            else
+                return error.InvalidResponse;
+        }
+
+        return all_objects.toOwnedSlice() catch return error.OutOfMemory;
     }
 
     /// Upload an object to S3 (single PUT request)
@@ -268,8 +516,14 @@ pub const S3Client = struct {
         };
         defer req.deinit();
 
+        req.transfer_encoding = .{ .content_length = body.len };
+        req.send() catch |err| {
+            log.warn("HTTP send failed: {}", .{err});
+            return error.RequestFailed;
+        };
+
         // Send body
-        _ = req.write(body) catch |err| {
+        req.writeAll(body) catch |err| {
             log.warn("HTTP write failed: {}", .{err});
             return error.RequestFailed;
         };
@@ -413,6 +667,7 @@ pub const S3Client = struct {
         }) catch return error.ConnectionFailed;
         defer req.deinit();
 
+        req.send() catch return error.RequestFailed;
         req.finish() catch return error.RequestFailed;
         req.wait() catch return error.RequestFailed;
 
@@ -555,7 +810,9 @@ pub const S3Client = struct {
         }) catch return error.ConnectionFailed;
         defer req.deinit();
 
-        _ = req.write(body) catch return error.RequestFailed;
+        req.transfer_encoding = .{ .content_length = body.len };
+        req.send() catch return error.RequestFailed;
+        req.writeAll(body) catch return error.RequestFailed;
         req.finish() catch return error.RequestFailed;
         req.wait() catch return error.RequestFailed;
 
@@ -712,7 +969,9 @@ pub const S3Client = struct {
         }) catch return error.ConnectionFailed;
         defer req.deinit();
 
-        _ = req.write(body) catch return error.RequestFailed;
+        req.transfer_encoding = .{ .content_length = body.len };
+        req.send() catch return error.RequestFailed;
+        req.writeAll(body) catch return error.RequestFailed;
         req.finish() catch return error.RequestFailed;
         req.wait() catch return error.RequestFailed;
 
@@ -823,6 +1082,7 @@ pub const S3Client = struct {
         }) catch return error.ConnectionFailed;
         defer req.deinit();
 
+        req.send() catch return error.RequestFailed;
         req.finish() catch return error.RequestFailed;
         req.wait() catch return error.RequestFailed;
 
@@ -893,6 +1153,86 @@ pub const S3Client = struct {
     }
 };
 
+const ListObjectsPage = struct {
+    objects: std.ArrayList(ObjectInfo),
+    is_truncated: bool,
+    next_continuation_token: ?[]const u8,
+
+    fn deinit(self: *const ListObjectsPage, allocator: Allocator) void {
+        for (self.objects.items) |object| {
+            allocator.free(object.key);
+        }
+        self.objects.deinit();
+    }
+};
+
+fn buildListObjectsQuery(
+    allocator: Allocator,
+    prefix: []const u8,
+    continuation_token: ?[]const u8,
+) ![]u8 {
+    if (continuation_token) |token| {
+        if (prefix.len > 0) {
+            return std.fmt.allocPrint(
+                allocator,
+                "continuation-token={s}&list-type=2&prefix={s}",
+                .{ token, prefix },
+            );
+        }
+        return std.fmt.allocPrint(
+            allocator,
+            "continuation-token={s}&list-type=2",
+            .{token},
+        );
+    }
+
+    if (prefix.len > 0) {
+        return std.fmt.allocPrint(allocator, "list-type=2&prefix={s}", .{prefix});
+    }
+
+    return allocator.dupe(u8, "list-type=2");
+}
+
+fn parseListObjectsResponse(allocator: Allocator, xml: []const u8) !ListObjectsPage {
+    var objects = std.ArrayList(ObjectInfo).init(allocator);
+    errdefer {
+        for (objects.items) |object| {
+            allocator.free(object.key);
+        }
+        objects.deinit();
+    }
+
+    var cursor: usize = 0;
+    while (std.mem.indexOfPos(u8, xml, cursor, "<Contents>")) |contents_start| {
+        const contents_end = std.mem.indexOfPos(u8, xml, contents_start, "</Contents>") orelse
+            return error.InvalidResponse;
+        const section = xml[contents_start .. contents_end + "</Contents>".len];
+
+        const key = parseXmlElement(section, "Key") orelse return error.InvalidResponse;
+        const size_text = parseXmlElement(section, "Size") orelse return error.InvalidResponse;
+        const size = std.fmt.parseInt(u64, std.mem.trim(u8, size_text, " \t\r\n"), 10) catch
+            return error.InvalidResponse;
+
+        try objects.append(.{
+            .key = try allocator.dupe(u8, key),
+            .size = size,
+        });
+
+        cursor = contents_end + "</Contents>".len;
+    }
+
+    const is_truncated = if (parseXmlElement(xml, "IsTruncated")) |value|
+        std.mem.eql(u8, std.mem.trim(u8, value, " \t\r\n"), "true")
+    else
+        false;
+
+    return .{
+        .objects = objects,
+        .is_truncated = is_truncated,
+        .next_continuation_token = parseXmlElement(xml, "NextContinuationToken"),
+    };
+}
+
 /// Parse a simple XML element value
 fn parseXmlElement(xml: []const u8, element: []const u8) ?[]const u8 {
     // Look for <element>value</element>
@@ -926,6 +1266,36 @@ test "s3_client parseXmlElement" {
 
     const missing = parseXmlElement(xml, "NotFound");
     try std.testing.expect(missing == null);
+}
+
+test "s3_client parseListObjectsResponse" {
+    const allocator = std.testing.allocator;
+    const xml =
+        \\<?xml version="1.0" encoding="UTF-8"?>
+        \\<ListBucketResult>
+        \\  <Name>test</Name>
+        \\  <Prefix>prefix/</Prefix>
+        \\  <IsTruncated>true</IsTruncated>
+        \\  <Contents>
+        \\    <Key>prefix/000000000001.block</Key>
+        \\    <Size>128</Size>
+        \\  </Contents>
+        \\  <Contents>
+        \\    <Key>prefix/000000000001.block.ts</Key>
+        \\    <Size>10</Size>
+        \\  </Contents>
+        \\  <NextContinuationToken>page-2</NextContinuationToken>
+        \\</ListBucketResult>
+    ;
+
+    const page = try parseListObjectsResponse(allocator, xml);
+    defer page.deinit(allocator);
+
+    try std.testing.expect(page.is_truncated);
+    try std.testing.expectEqual(@as(usize, 2), page.objects.items.len);
+    try std.testing.expectEqualStrings("prefix/000000000001.block", page.objects.items[0].key);
+    try std.testing.expectEqual(@as(u64, 128), page.objects.items[0].size);
+    try std.testing.expectEqualStrings("page-2", page.next_continuation_token.?);
 }
 
 test "s3_client init and deinit" {

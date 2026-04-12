@@ -43,6 +43,9 @@ pub fn init(
         metrics_port: ?u16 = null,
         metrics_bind: ?[]const u8 = null,
         metrics_auth_token: ?[]const u8 = null,
+        index_resize_batch_size: ?u32 = null,
+        data_file: ?[]const u8 = null,
+        backup_bucket: ?[]const u8 = null,
     },
 ) !TmpArcherDB {
     const shell = try Shell.create(gpa);
@@ -81,13 +84,18 @@ pub fn init(
     const tmp_dir_path = try tmp_dir.dir.realpathAlloc(gpa, ".");
     defer gpa.free(tmp_dir_path);
 
-    const data_file: []const u8 = try std.fs.path.join(gpa, &.{ tmp_dir_path, "0_0.archerdb" });
+    const data_file: []const u8 = if (options.data_file) |path|
+        try gpa.dupe(u8, path)
+    else
+        try std.fs.path.join(gpa, &.{ tmp_dir_path, "0_0.archerdb" });
     defer gpa.free(data_file);
 
-    try shell.exec(
-        "{archerdb} format --cluster=0 --replica=0 --replica-count=1 {data_file}",
-        .{ .archerdb = archerdb_exe, .data_file = data_file },
-    );
+    if (options.data_file == null) {
+        try shell.exec(
+            "{archerdb} format --cluster=0 --replica=0 --replica-count=1 {data_file}",
+            .{ .archerdb = archerdb_exe, .data_file = data_file },
+        );
+    }
 
     var reader_maybe: ?*StreamReader = null;
 
@@ -114,6 +122,18 @@ pub fn init(
     }
     if (options.metrics_auth_token) |token| {
         try argv.append(try std.fmt.allocPrint(shell.gpa, "--metrics-auth-token={s}", .{token}));
+    }
+    if (options.index_resize_batch_size) |batch_size| {
+        try argv.append(try std.fmt.allocPrint(
+            shell.gpa,
+            "--index-resize-batch-size={d}",
+            .{batch_size},
+        ));
+    }
+    if (options.backup_bucket) |bucket| {
+        try argv.append(try shell.gpa.dupe(u8, "--backup-enabled=true"));
+        try argv.append(try shell.gpa.dupe(u8, "--backup-provider=local"));
+        try argv.append(try std.fmt.allocPrint(shell.gpa, "--backup-bucket={s}", .{bucket}));
     }
     try argv.append(try shell.gpa.dupe(u8, data_file));
 
@@ -209,10 +229,10 @@ const StreamReader = struct {
         // 3. Close stderr file descriptor.
         // TODO(Zig) https://github.com/ziglang/zig/issues/16820
         std.posix.kill(process.id, std.posix.SIG.TERM) catch {};
-        assert(process.stderr != null);
         self.thread.join();
-        _ = process.wait() catch unreachable;
-        assert(process.stderr == null);
+        if (process.term == null) {
+            _ = process.wait() catch unreachable;
+        }
         gpa.destroy(self);
     }
 

@@ -15,12 +15,25 @@
 //! which apply them in commit order to maintain eventual consistency.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
 const stdx = @import("stdx");
 const constants = @import("constants.zig");
 const log = std.log.scoped(.replication);
+
+fn logWarn(comptime fmt: []const u8, args: anytype) void {
+    if (!builtin.is_test) {
+        log.warn(fmt, args);
+    }
+}
+
+fn logErr(comptime fmt: []const u8, args: anytype) void {
+    if (!builtin.is_test) {
+        log.err(fmt, args);
+    }
+}
 
 // S3 transport modules
 const s3_client = @import("replication/s3_client.zig");
@@ -739,6 +752,8 @@ pub const S3RelayTransport = struct {
     multipart_threshold: u64,
     // Retry configuration
     max_retries: u32,
+    // Allow test-only simulated uploads when no real S3 client is configured.
+    allow_simulated_uploads: bool,
 
     /// Configuration for S3RelayTransport
     pub const Config = struct {
@@ -748,16 +763,22 @@ pub const S3RelayTransport = struct {
         endpoint: ?[]const u8 = null, // Auto-detect from region if null
         access_key_id: ?[]const u8 = null, // Falls back to env var
         secret_access_key: ?[]const u8 = null, // Falls back to env var
+        use_env_credentials: bool = true,
         multipart_threshold: u64 = 100 * 1024 * 1024, // 100MB
         max_retries: u32 = 10, // ~17 minutes total with exponential backoff
+        allow_simulated_uploads: bool = false,
     };
 
     pub fn init(allocator: Allocator, config: Config) !S3RelayTransport {
         // Try to get credentials from config or environment
-        const access_key = config.access_key_id orelse
-            std.posix.getenv("AWS_ACCESS_KEY_ID");
-        const secret_key = config.secret_access_key orelse
-            std.posix.getenv("AWS_SECRET_ACCESS_KEY");
+        const access_key = config.access_key_id orelse if (config.use_env_credentials)
+            std.posix.getenv("AWS_ACCESS_KEY_ID")
+        else
+            null;
+        const secret_key = config.secret_access_key orelse if (config.use_env_credentials)
+            std.posix.getenv("AWS_SECRET_ACCESS_KEY")
+        else
+            null;
 
         // Create S3 client if credentials are available
         var client: ?s3_client.S3Client = null;
@@ -782,11 +803,18 @@ pub const S3RelayTransport = struct {
                     .secret_access_key = secret_key.?,
                 },
             }) catch |err| blk: {
-                log.warn("Failed to initialize S3 client: {}, uploads will be simulated", .{err});
+                if (!config.allow_simulated_uploads) {
+                    logErr("Failed to initialize S3 client for real uploads: {}", .{err});
+                    return err;
+                }
+                logWarn("Failed to initialize S3 client: {}, continuing in simulated test mode", .{err});
                 break :blk null;
             };
+        } else if (!config.allow_simulated_uploads) {
+            logErr("S3 credentials not available for real uploads", .{});
+            return error.MissingS3Credentials;
         } else {
-            log.warn("S3 credentials not available, uploads will be simulated", .{});
+            logWarn("S3 credentials not available, continuing in simulated test mode", .{});
         }
 
         // Initialize PRNG with random seed
@@ -814,6 +842,7 @@ pub const S3RelayTransport = struct {
             .retry_prng = std.Random.DefaultPrng.init(seed),
             .multipart_threshold = config.multipart_threshold,
             .max_retries = config.max_retries,
+            .allow_simulated_uploads = config.allow_simulated_uploads,
         };
     }
 
@@ -835,8 +864,10 @@ pub const S3RelayTransport = struct {
         self.connected = true;
         if (self.client != null) {
             log.info("S3 Relay transport initialized: s3://{s}/{s}/ (real uploads)", .{ self.bucket, self.prefix });
-        } else {
+        } else if (self.allow_simulated_uploads) {
             log.info("S3 Relay transport initialized: s3://{s}/{s}/ (simulated)", .{ self.bucket, self.prefix });
+        } else {
+            return error.ConnectionFailed;
         }
     }
 
@@ -897,7 +928,7 @@ pub const S3RelayTransport = struct {
         // Perform upload with retry
         self.uploadWithRetry(key, content, content_md5, total_size) catch |err| {
             self.upload_failures += 1;
-            log.err("S3 upload failed after all retries: op={d}, err={}", .{ entry.op, err });
+            logErr("S3 upload failed after all retries: op={d}, err={}", .{ entry.op, err });
             return error.ConnectionFailed; // Map to TransportError
         };
 
@@ -923,7 +954,7 @@ pub const S3RelayTransport = struct {
                 if (content.len >= self.multipart_threshold) {
                     // Use multipart upload for large files
                     client.multipartUpload(self.bucket, key, content) catch |err| {
-                        log.warn("Multipart upload failed (retry {d}/{d}): {}", .{ retry + 1, self.max_retries, err });
+                        logWarn("Multipart upload failed (retry {d}/{d}): {}", .{ retry + 1, self.max_retries, err });
                         const delay = calculateBackoff(retry, &self.retry_prng);
                         std.time.sleep(delay * std.time.ns_per_ms);
                         continue;
@@ -931,7 +962,7 @@ pub const S3RelayTransport = struct {
                 } else {
                     // Use single PUT for small files
                     var result = client.putObject(self.bucket, key, content, content_md5) catch |err| {
-                        log.warn("S3 PUT failed (retry {d}/{d}): {}", .{ retry + 1, self.max_retries, err });
+                        logWarn("S3 PUT failed (retry {d}/{d}): {}", .{ retry + 1, self.max_retries, err });
                         const delay = calculateBackoff(retry, &self.retry_prng);
                         std.time.sleep(delay * std.time.ns_per_ms);
                         continue;
@@ -946,7 +977,11 @@ pub const S3RelayTransport = struct {
                 });
                 return; // Success
             } else {
-                // Simulated upload (no credentials configured)
+                if (!self.allow_simulated_uploads) {
+                    return error.UploadFailed;
+                }
+
+                // Simulated upload (explicitly enabled for tests)
                 log.debug("S3 ship (simulated): size={d} to s3://{s}/{s}", .{
                     total_size,
                     self.bucket,
@@ -1876,6 +1911,8 @@ test "S3RelayTransport initialization" {
         .bucket = "my-replication-bucket",
         .prefix = "prod/replication",
         .region = "eu-west-1",
+        .allow_simulated_uploads = true,
+        .use_env_credentials = false,
     });
     defer transport_obj.deinit();
 
@@ -1889,6 +1926,8 @@ test "S3RelayTransport connect and disconnect" {
     const allocator = std.testing.allocator;
     var transport_obj = try S3RelayTransport.init(allocator, .{
         .bucket = "test-bucket",
+        .allow_simulated_uploads = true,
+        .use_env_credentials = false,
     });
     defer transport_obj.deinit();
 
@@ -1906,11 +1945,22 @@ test "S3RelayTransport connect and disconnect" {
     try std.testing.expect(!t.isConnected());
 }
 
-test "S3RelayTransport ship simulated" {
+test "S3RelayTransport requires credentials by default" {
+    const allocator = std.testing.allocator;
+
+    try std.testing.expectError(error.MissingS3Credentials, S3RelayTransport.init(allocator, .{
+        .bucket = "test-bucket",
+        .use_env_credentials = false,
+    }));
+}
+
+test "S3RelayTransport ship simulated when explicitly allowed" {
     const allocator = std.testing.allocator;
     var transport_obj = try S3RelayTransport.init(allocator, .{
         .bucket = "test-bucket",
         .prefix = "test",
+        .allow_simulated_uploads = true,
+        .use_env_credentials = false,
     });
     defer transport_obj.deinit();
 

@@ -14,27 +14,179 @@ Usage:
 import argparse
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
-from .config import BenchmarkConfig
-from .reporter import BenchmarkReporter
+try:
+    from .config import BenchmarkConfig
+    from .reporter import BenchmarkReporter
+except ImportError:  # Direct script execution
+    if __package__ in (None, ""):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+        from test_infrastructure.benchmarks.config import BenchmarkConfig
+        from test_infrastructure.benchmarks.reporter import BenchmarkReporter
+    else:
+        raise
 
 
-def get_output_filename(topology: int, output_dir: str) -> str:
+def get_output_filename(name: str, output_dir: str) -> str:
     """Generate timestamped output filename.
 
     Args:
-        topology: Node count for the benchmark.
+        name: Benchmark file label.
         output_dir: Directory for output files.
 
     Returns:
         Full path to output file.
     """
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    filename = f"{timestamp}-{topology}node.json"
+    filename = f"{timestamp}-{name}.json"
     return str(Path(output_dir) / filename)
+
+
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def build_config(args: argparse.Namespace) -> BenchmarkConfig:
+    """Create benchmark configuration from CLI arguments."""
+    kwargs: Dict[str, Any] = {}
+    if args.min_samples is not None:
+        kwargs["min_samples"] = args.min_samples
+    if args.target_samples is not None:
+        kwargs["target_samples"] = args.target_samples
+    if args.warmup_iterations is not None:
+        kwargs["warmup_iterations"] = args.warmup_iterations
+    if args.target_cv is not None:
+        kwargs["target_cv"] = args.target_cv
+    if args.data_size is not None:
+        kwargs["data_size"] = args.data_size
+
+    return BenchmarkConfig(
+        topology=args.topology,
+        time_limit_sec=args.time_limit,
+        op_count_limit=args.op_count,
+        data_pattern=args.pattern,
+        read_write_ratio=args.read_write_ratio,
+        seed=args.seed,
+        **kwargs,
+    )
+
+
+def summarize_topology_results(results: Dict[str, Any], topology: int) -> Dict[str, Any]:
+    """Flatten a topology result set into the reporter's summary format."""
+    topo_key = str(topology)
+    throughput = results.get("benchmarks", {}).get("throughput", {}).get(topo_key, {})
+    latency_read = results.get("benchmarks", {}).get("latency_read", {}).get(topo_key, {})
+    latency_write = results.get("benchmarks", {}).get("latency_write", {}).get(topo_key, {})
+    mixed = results.get("benchmarks", {}).get("mixed", {}).get(topo_key, {})
+
+    summary: Dict[str, Any] = {
+        "topology": topology,
+        "generated": utc_now_iso(),
+    }
+
+    if "throughput_events_per_sec" in throughput:
+        summary["throughput"] = throughput["throughput_events_per_sec"]
+    if "p95_ms" in latency_read:
+        summary["read_p95_ms"] = latency_read["p95_ms"]
+    if "p99_ms" in latency_read:
+        summary["read_p99_ms"] = latency_read["p99_ms"]
+    if "p95_ms" in latency_write:
+        summary["write_p95_ms"] = latency_write["p95_ms"]
+    if "p99_ms" in latency_write:
+        summary["write_p99_ms"] = latency_write["p99_ms"]
+    if "read_p95_ms" in mixed:
+        summary["mixed_read_p95_ms"] = mixed["read_p95_ms"]
+    if "write_p95_ms" in mixed:
+        summary["mixed_write_p95_ms"] = mixed["write_p95_ms"]
+
+    return summary
+
+
+def run_single_topology(
+    orchestrator,
+    topology: int,
+    include_mixed: bool,
+    config: BenchmarkConfig,
+    checkpoint_path: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """Run the benchmark suite for one topology and collect results."""
+    def checkpoint() -> None:
+        if checkpoint_path is None:
+            return
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(checkpoint_path, "w") as f:
+            json.dump(results, f, indent=2)
+
+    topo_key = str(topology)
+    results: Dict[str, Any] = {
+        "suite_start": utc_now_iso(),
+        "topologies": [topology],
+        "include_mixed": include_mixed,
+        "benchmarks": {
+            "throughput": {},
+            "latency_read": {},
+            "latency_write": {},
+            "mixed": {},
+        },
+    }
+
+    print(f"\n=== Throughput Benchmark ({topology}-node) ===")
+    try:
+        results["benchmarks"]["throughput"][topo_key] = orchestrator.run_throughput_benchmark(
+            topology,
+            config,
+        )
+    except Exception as exc:
+        results["benchmarks"]["throughput"][topo_key] = {"error": str(exc)}
+    checkpoint()
+
+    print(f"\n=== Read Latency Benchmark ({topology}-node) ===")
+    try:
+        results["benchmarks"]["latency_read"][topo_key] = orchestrator.run_latency_read_benchmark(
+            topology,
+            config,
+        )
+    except Exception as exc:
+        results["benchmarks"]["latency_read"][topo_key] = {"error": str(exc)}
+    checkpoint()
+
+    print(f"\n=== Write Latency Benchmark ({topology}-node) ===")
+    try:
+        results["benchmarks"]["latency_write"][topo_key] = orchestrator.run_latency_write_benchmark(
+            topology,
+            config,
+        )
+    except Exception as exc:
+        results["benchmarks"]["latency_write"][topo_key] = {"error": str(exc)}
+    checkpoint()
+
+    if include_mixed:
+        print(f"\n=== Mixed Workload Benchmark ({topology}-node) ===")
+        try:
+            results["benchmarks"]["mixed"][topo_key] = orchestrator.run_mixed_workload_benchmark(
+                topology,
+                config,
+            )
+        except Exception as exc:
+            results["benchmarks"]["mixed"][topo_key] = {"error": str(exc)}
+        checkpoint()
+
+    results["suite_end"] = utc_now_iso()
+    checkpoint()
+    return results
+
+
+def has_errors(results: Dict[str, Any]) -> bool:
+    """Return True if any benchmark section recorded an error."""
+    benchmarks = results.get("benchmarks", {})
+    for suite in benchmarks.values():
+        for topo_result in suite.values():
+            if isinstance(topo_result, dict) and "error" in topo_result:
+                return True
+    return False
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -47,35 +199,81 @@ def cmd_run(args: argparse.Namespace) -> int:
         Exit code (0 for success, 1 for failure).
     """
     # Create configuration
-    config = BenchmarkConfig(
-        topology=args.topology,
-        time_limit_sec=args.time_limit,
-        op_count_limit=args.op_count,
-        data_pattern=args.pattern,
-        read_write_ratio=args.read_write_ratio,
-    )
+    config = build_config(args)
+    include_mixed = not args.no_mixed
 
     print(f"Benchmark configuration:")
-    print(f"  Topology: {config.topology} nodes")
+    if args.full_suite:
+        print(f"  Topology: full suite (1/3/5/6 nodes)")
+    else:
+        print(f"  Topology: {config.topology} nodes")
     print(f"  Time limit: {config.time_limit_sec}s")
     print(f"  Op count limit: {config.op_count_limit:,}")
+    print(f"  Min samples: {config.min_samples:,}")
+    print(f"  Warmup iterations: {config.warmup_iterations:,}")
     print(f"  Data pattern: {config.data_pattern}")
+    print(f"  Data size: {config.data_size:,}")
     print(f"  Read/write ratio: {config.read_write_ratio}")
+    print(f"  Mixed workload: {'enabled' if include_mixed else 'disabled'}")
+    if config.seed is not None:
+        print(f"  Seed: {config.seed}")
     print()
-
-    # NOTE: Actual benchmark execution requires orchestrator (Phase 15-02)
-    # This CLI sets up configuration and output paths
-    print("Benchmark execution requires orchestrator module (15-02-PLAN).")
-    print("Configuration validated successfully.")
 
     # Ensure output directory exists
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    output_path = get_output_filename(args.topology, args.output_dir)
-    print(f"Output will be written to: {output_path}")
+    try:
+        from .orchestrator import BenchmarkOrchestrator
+    except ImportError:
+        if __package__ in (None, ""):
+            from test_infrastructure.benchmarks.orchestrator import BenchmarkOrchestrator
+        else:
+            raise
 
-    return 0
+    orchestrator = BenchmarkOrchestrator(output_dir=args.output_dir)
+
+    if args.full_suite:
+        output_path = Path(get_output_filename("full-suite", args.output_dir))
+        results = orchestrator.run_full_suite(
+            topologies=[1, 3, 5, 6],
+            include_mixed=include_mixed,
+            config=config,
+            checkpoint_path=output_path,
+        )
+    else:
+        output_path = Path(get_output_filename(f"{args.topology}node", args.output_dir))
+        results = run_single_topology(
+            orchestrator=orchestrator,
+            topology=args.topology,
+            include_mixed=include_mixed,
+            config=config,
+            checkpoint_path=output_path,
+        )
+
+    with open(output_path, "w") as f:
+        json.dump(results, f, indent=2)
+
+    print(f"\nDetailed results written to: {output_path}")
+
+    if not args.full_suite:
+        summary = summarize_topology_results(results, args.topology)
+        reporter = BenchmarkReporter(summary)
+
+        summary_json = output_path.with_name(output_path.stem + "-summary.json")
+        summary_csv = output_path.with_name(output_path.stem + "-summary.csv")
+        summary_md = output_path.with_name(output_path.stem + "-summary.md")
+
+        reporter.to_json(str(summary_json))
+        reporter.to_csv(str(summary_csv))
+        reporter.to_markdown(str(summary_md))
+        reporter.to_terminal()
+
+        print(f"Summary written to: {summary_json}")
+        print(f"Summary written to: {summary_csv}")
+        print(f"Summary written to: {summary_md}")
+
+    return 1 if has_errors(results) else 0
 
 
 def cmd_compare(args: argparse.Namespace) -> int:
@@ -184,6 +382,31 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Maximum operation count (default: 10000)",
     )
     run_parser.add_argument(
+        "--min-samples",
+        type=int,
+        help="Minimum required samples before a run is considered valid",
+    )
+    run_parser.add_argument(
+        "--target-samples",
+        type=int,
+        help="Target samples for reporting heuristics",
+    )
+    run_parser.add_argument(
+        "--warmup-iterations",
+        type=int,
+        help="Warmup iterations before measurement",
+    )
+    run_parser.add_argument(
+        "--target-cv",
+        type=float,
+        help="Warmup stability coefficient-of-variation target",
+    )
+    run_parser.add_argument(
+        "--data-size",
+        type=int,
+        help="Preloaded/generated dataset size for read and mixed workloads",
+    )
+    run_parser.add_argument(
         "--pattern",
         type=str,
         default="uniform",
@@ -201,6 +424,21 @@ def main(argv: Optional[List[str]] = None) -> int:
         type=float,
         default=1.0,
         help="Read/write ratio for mixed workloads (default: 1.0 = 100%% reads)",
+    )
+    run_parser.add_argument(
+        "--full-suite",
+        action="store_true",
+        help="Run all supported topologies (1, 3, 5, 6)",
+    )
+    run_parser.add_argument(
+        "--no-mixed",
+        action="store_true",
+        help="Skip mixed workload benchmarks",
+    )
+    run_parser.add_argument(
+        "--seed",
+        type=int,
+        help="Random seed for deterministic data generation",
     )
     run_parser.set_defaults(func=cmd_run)
 

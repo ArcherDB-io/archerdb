@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 /**
  * @file arch_client.h
  * @brief ArcherDB C Client - High-performance geospatial database client
@@ -330,7 +332,12 @@ typedef struct status_response_t {
     uint64_t tombstone_count;
     uint64_t ttl_expirations;
     uint64_t deletion_count;
-    uint8_t reserved[16];
+    uint8_t index_resize_status;
+    uint8_t membership_state;
+    uint16_t _status_padding;
+    uint32_t index_resize_progress;
+    uint32_t membership_voters_count;
+    uint32_t membership_learners_count;
 } status_response_t;
 
 /**

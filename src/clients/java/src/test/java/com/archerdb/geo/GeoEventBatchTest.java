@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 package com.archerdb.geo;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -28,12 +30,12 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 class GeoEventBatchTest {
 
-    // Use real client in skeleton mode (NATIVE_ENABLED=false)
+    // Use API-level unit mode (NATIVE_ENABLED=false). This is not cluster-backed integration.
     private GeoClientImpl client;
 
     @BeforeEach
     void setUp() {
-        // Create client with skeleton mode - requires non-null addresses
+        // Create client in unit mode - requires non-null addresses for API validation only
         client = new GeoClientImpl(UInt128.random(), new String[] {"localhost:3000"});
     }
 
@@ -336,7 +338,7 @@ class GeoEventBatchTest {
         assertTrue(latch.await(10, TimeUnit.SECONDS));
         executor.shutdown();
 
-        // All commits should succeed (skeleton mode returns empty errors)
+        // All commits should succeed in unit mode because no native/cluster error path is exercised
         for (CompletableFuture<List<InsertGeoEventsError>> future : futures) {
             assertTrue(future.get().isEmpty());
         }

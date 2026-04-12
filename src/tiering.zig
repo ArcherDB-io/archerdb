@@ -624,20 +624,18 @@ pub const TransitionType = enum {
 ///   `prefetch_found_timestamp` and uses `get_by_timestamp` to retrieve the
 ///   full GeoEvent from cache.
 ///
-/// - `GeoStateMachine.execute_query_latest()`: Scans only RAM index keys.
-///   Cold-tier entities require a separate LSM scan which is not yet
-///   implemented for the latest-query path (see TODO below).
+/// - `GeoStateMachine.execute_query_latest()`: Merges RAM-index results with
+///   the async cold-tier prefetch scan so demoted entities can still appear in
+///   latest-query results.
 ///
 /// ## Limitations
 ///
 /// - `queryById`: Works for point lookups via the existing prefetch pipeline.
 ///   The prefetch scan is triggered automatically when the RAM index misses.
 ///
-/// - `queryByTimeRange`: Full time-range scans of cold-tier entities require
-///   iterating the LSM object tree, which is an async operation that does not
-///   fit into the current `execute_query_latest` synchronous scan loop.
-///   Returns tracked cold entity IDs from the TieringManager metadata as a
-///   best-effort result, with a TODO for full LSM scan integration.
+/// - `queryByTimeRange`: Full cold-tier time-range scans are still best-effort.
+///   Latest-query coverage is real, but broader cold-tier time-range scans still
+///   depend on TieringManager metadata until the async LSM scan path is extended.
 pub const ColdTierQueryHandler = struct {
     allocator: Allocator,
     tiering_manager: ?*TieringManager = null,

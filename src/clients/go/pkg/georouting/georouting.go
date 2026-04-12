@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 // Package georouting provides geo-routing capabilities for the ArcherDB Go SDK
 // per the add-geo-routing spec.
 //

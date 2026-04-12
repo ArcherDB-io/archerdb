@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2025 ArcherDB Contributors
 """Load and use test fixtures in SDK tests.
 
 This module demonstrates how SDKs should load and validate fixtures

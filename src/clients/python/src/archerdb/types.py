@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2025 ArcherDB Contributors
 """
 ArcherDB Python SDK - Type Definitions
 
@@ -987,8 +989,10 @@ class TtlClearResponse:
 
 # Maximum shards supported
 MAX_SHARDS = 256
+MAX_SHARDS_COMPACT = 16
 MAX_REPLICAS_PER_SHARD = 6
 MAX_ADDRESS_LEN = 64
+TOPOLOGY_HEADER_SIZE = 56
 
 
 class ShardStatus(IntEnum):
@@ -1098,8 +1102,10 @@ class TopologyResponse:
     def from_bytes(cls, data: bytes) -> "TopologyResponse":
         """Parse TopologyResponse from raw bytes."""
         import struct
-        if len(data) < 52:
-            raise ValueError(f"TopologyResponse requires at least 52 bytes, got {len(data)}")
+        if len(data) < TOPOLOGY_HEADER_SIZE:
+            raise ValueError(
+                f"TopologyResponse requires at least {TOPOLOGY_HEADER_SIZE} bytes, got {len(data)}"
+            )
 
         version = struct.unpack("<Q", data[0:8])[0]
         num_shards = struct.unpack("<I", data[8:12])[0]
@@ -1121,10 +1127,16 @@ class TopologyResponse:
         shard_header_size = 4 + MAX_ADDRESS_LEN + (MAX_REPLICAS_PER_SHARD * MAX_ADDRESS_LEN) + 1 + 1
         shard_padding = (8 - (shard_header_size % 8)) % 8
         shard_info_size = shard_header_size + shard_padding + 8 + 8
+        shard_data_start = TOPOLOGY_HEADER_SIZE
+        shard_payload_size = len(data) - shard_data_start
+        shard_slots = shard_payload_size // shard_info_size
+        if shard_slots <= 0:
+            raise ValueError(
+                f"TopologyResponse has no shard payload: len={len(data)} header={shard_data_start}"
+            )
 
         shards = []
-        shard_data_start = 52
-        for i in range(num_shards):
+        for i in range(min(num_shards, shard_slots)):
             start = shard_data_start + i * shard_info_size
             end = start + shard_info_size
             if end <= len(data):

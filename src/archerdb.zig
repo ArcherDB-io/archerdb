@@ -105,6 +105,25 @@ pub const PingResponse = extern struct {
 
 /// Response to archerdb_get_status operation (F1.2.6).
 /// Returns current server status information (64 bytes).
+pub fn statusIndexResizeName(status: u8) []const u8 {
+    return switch (status) {
+        0 => "idle",
+        1 => "in_progress",
+        2 => "completing",
+        3 => "aborted",
+        else => "unknown",
+    };
+}
+
+pub fn statusMembershipStateName(state: u8) []const u8 {
+    return switch (state) {
+        0 => "stable",
+        1 => "joint",
+        2 => "transitioning",
+        else => "unknown",
+    };
+}
+
 pub const StatusResponse = extern struct {
     /// RAM index entry count.
     ram_index_count: u64,
@@ -120,14 +139,52 @@ pub const StatusResponse = extern struct {
     ttl_expirations: u64,
     /// Total deletions.
     deletion_count: u64,
-    /// Reserved for future use.
-    reserved: [16]u8 = @splat(0),
+    /// Index resize status code (0=idle, 1=in_progress, 2=completing, 3=aborted).
+    index_resize_status: u8 = 0,
+    /// Membership state code (0=stable, 1=joint, 2=transitioning).
+    membership_state: u8 = 0,
+    /// Reserved for future packing within the status extension block.
+    _status_padding: u16 = 0,
+    /// Index resize progress in percentage * 100 (range 0..10000).
+    index_resize_progress: u32 = 0,
+    /// Number of voting members in the current cluster configuration.
+    membership_voters_count: u32 = 0,
+    /// Number of learner members in the current cluster configuration.
+    membership_learners_count: u32 = 0,
+
+    pub fn indexResizeStatusName(self: *const StatusResponse) []const u8 {
+        return statusIndexResizeName(self.index_resize_status);
+    }
+
+    pub fn membershipStateName(self: *const StatusResponse) []const u8 {
+        return statusMembershipStateName(self.membership_state);
+    }
+
+    pub fn indexResizeProgressPct(self: *const StatusResponse) f64 {
+        return @as(f64, @floatFromInt(self.index_resize_progress)) / 100.0;
+    }
 
     comptime {
         assert(@sizeOf(StatusResponse) == 64);
         assert(stdx.no_padding(StatusResponse));
     }
 };
+
+test "StatusResponse helper methods decode operator status extensions" {
+    const response = std.mem.zeroInit(StatusResponse, .{
+        .index_resize_status = 2,
+        .membership_state = 1,
+        .index_resize_progress = 5050,
+        .membership_voters_count = 5,
+        .membership_learners_count = 2,
+    });
+
+    try std.testing.expectEqualStrings("completing", response.indexResizeStatusName());
+    try std.testing.expectEqualStrings("joint", response.membershipStateName());
+    try std.testing.expectEqual(@as(f64, 50.5), response.indexResizeProgressPct());
+    try std.testing.expectEqual(@as(u32, 5), response.membership_voters_count);
+    try std.testing.expectEqual(@as(u32, 2), response.membership_learners_count);
+}
 
 // ============================================================================
 // ArcherDB Prepared Query Request/Response Types (14-05)

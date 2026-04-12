@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2025 ArcherDB Contributors
 # Competitor Benchmark Comparison Runner (BENCH-07)
 #
 # Orchestrates full benchmark suite across ArcherDB and all competitors,

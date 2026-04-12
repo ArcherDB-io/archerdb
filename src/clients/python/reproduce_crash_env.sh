@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2025 ArcherDB Contributors
 set -e
 ROOT="$(dirname "$(dirname "$(dirname "$(dirname "$(realpath "$0")")")")")"
 cd "$ROOT"

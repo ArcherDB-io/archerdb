@@ -1654,26 +1654,27 @@ pub const IO = struct {
         // If the file system does not support `fallocate()`, then this could mean more seeks or a
         // panic if we run out of disk space (ENOSPC).
         if (purpose == .format and kind == .file) {
-            log.info("allocating {}...", .{std.fmt.fmtIntSizeBin(size)});
-            fs_allocate(fd, size) catch |err| switch (err) {
-                error.OperationNotSupported => {
-                    log.warn("file system does not support fallocate(), an ENOSPC will panic", .{});
-                    log.info("allocating by writing to the last sector " ++
-                        "of the file instead...", .{});
-
-                    const sector_size = constants.sector_size;
-                    const sector: [sector_size]u8 align(sector_size) = @splat(0);
-
-                    // Handle partial writes where the physical sector is
-                    // less than a logical sector:
-                    const write_offset = size - sector.len;
-                    var written: usize = 0;
-                    while (written < sector.len) {
-                        written += try posix.pwrite(fd, sector[written..], write_offset + written);
-                    }
-                },
-                else => |e| return e,
-            };
+            if (direct_io == .direct_io_optional) {
+                log.warn(
+                    "development mode uses sparse data-file allocation for faster local testing",
+                    .{},
+                );
+                try fs_allocate_sparse(fd, size);
+            } else {
+                log.info("allocating {}...", .{std.fmt.fmtIntSizeBin(size)});
+                fs_allocate(fd, size) catch |err| switch (err) {
+                    error.OperationNotSupported => {
+                        log.warn(
+                            "file system does not support fallocate(), an ENOSPC will panic",
+                            .{},
+                        );
+                        log.info("allocating by writing to the last sector " ++
+                            "of the file instead...", .{});
+                        try fs_allocate_sparse(fd, size);
+                    },
+                    else => |e| return e,
+                };
+            }
         }
 
         // The best fsync strategy is always to fsync before reading because this prevents us from
@@ -1828,6 +1829,18 @@ pub const IO = struct {
                 .TXTBSY => return error.FileBusy,
                 else => |errno| return stdx.unexpected_errno("fs_allocate", errno),
             }
+        }
+    }
+
+    fn fs_allocate_sparse(fd: fd_t, size: u64) !void {
+        const sector_size = constants.sector_size;
+        const sector: [sector_size]u8 align(sector_size) = @splat(0);
+
+        // Handle partial writes where the physical sector is less than a logical sector:
+        const write_offset = size - sector.len;
+        var written: usize = 0;
+        while (written < sector.len) {
+            written += try posix.pwrite(fd, sector[written..], write_offset + written);
         }
     }
 

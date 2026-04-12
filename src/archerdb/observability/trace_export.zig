@@ -145,6 +145,7 @@ const OwnedSpan = struct {
     status_message: ?[]const u8,
     attributes: []const Attribute,
     links: []const SpanLink,
+    events: []const SpanEvent,
 };
 
 /// OTLP trace exporter.
@@ -428,8 +429,9 @@ pub const OtlpTraceExporter = struct {
             try writer.writeByte(']');
         }
 
-        // Empty events for now
-        try writer.writeAll(",\"events\":[]}");
+        try writer.writeAll(",\"events\":[");
+        try formatEvents(writer, span.events);
+        try writer.writeAll("]}");
     }
 
     /// Send HTTP POST request with JSON payload.
@@ -597,6 +599,22 @@ fn formatLinks(writer: anytype, links: []const SpanLink) !void {
     }
 }
 
+fn formatEvents(writer: anytype, events: []const SpanEvent) !void {
+    for (events, 0..) |event, i| {
+        if (i > 0) try writer.writeByte(',');
+        try writer.print(
+            "{{\"name\":\"{s}\",\"timeUnixNano\":\"{d}\"",
+            .{ event.name, @as(u128, @intCast(event.time_ns)) },
+        );
+        if (event.attributes.len > 0) {
+            try writer.writeAll(",\"attributes\":[");
+            try formatAttributes(writer, event.attributes);
+            try writer.writeByte(']');
+        }
+        try writer.writeByte('}');
+    }
+}
+
 fn copySpan(allocator: std.mem.Allocator, span: Span) !OwnedSpan {
     const name_copy = try allocator.dupe(u8, span.name);
     errdefer allocator.free(name_copy);
@@ -613,6 +631,9 @@ fn copySpan(allocator: std.mem.Allocator, span: Span) !OwnedSpan {
     const links_copy = try copyLinks(allocator, span.links);
     errdefer freeLinks(allocator, links_copy);
 
+    const events_copy = try copyEvents(allocator, span.events);
+    errdefer freeEvents(allocator, events_copy);
+
     return OwnedSpan{
         .trace_id = span.trace_id,
         .span_id = span.span_id,
@@ -625,6 +646,7 @@ fn copySpan(allocator: std.mem.Allocator, span: Span) !OwnedSpan {
         .status_message = status_msg_copy,
         .attributes = attributes_copy,
         .links = links_copy,
+        .events = events_copy,
     };
 }
 
@@ -691,6 +713,37 @@ fn copyLinks(allocator: std.mem.Allocator, links: []const SpanLink) ![]SpanLink 
     return owned;
 }
 
+fn copyEvents(allocator: std.mem.Allocator, events: []const SpanEvent) ![]SpanEvent {
+    if (events.len == 0) return &[_]SpanEvent{};
+    var owned = try allocator.alloc(SpanEvent, events.len);
+    var i: usize = 0;
+    errdefer {
+        var j: usize = 0;
+        while (j < i) : (j += 1) {
+            allocator.free(owned[j].name);
+            freeAttributes(allocator, owned[j].attributes);
+        }
+        allocator.free(owned);
+    }
+
+    for (events, 0..) |event, idx| {
+        const name_copy = try allocator.dupe(u8, event.name);
+        errdefer allocator.free(name_copy);
+
+        const attrs_copy = try copyAttributes(allocator, event.attributes);
+        errdefer freeAttributes(allocator, attrs_copy);
+
+        owned[idx] = .{
+            .name = name_copy,
+            .time_ns = event.time_ns,
+            .attributes = attrs_copy,
+        };
+        i = idx + 1;
+    }
+
+    return owned;
+}
+
 fn freeAttributes(allocator: std.mem.Allocator, attributes: []const Attribute) void {
     if (attributes.len == 0) return;
     for (attributes) |attr| {
@@ -708,6 +761,15 @@ fn freeLinks(allocator: std.mem.Allocator, links: []const SpanLink) void {
     allocator.free(links);
 }
 
+fn freeEvents(allocator: std.mem.Allocator, events: []const SpanEvent) void {
+    if (events.len == 0) return;
+    for (events) |event| {
+        allocator.free(event.name);
+        freeAttributes(allocator, event.attributes);
+    }
+    allocator.free(events);
+}
+
 fn freeOwnedSpan(allocator: std.mem.Allocator, span: *const OwnedSpan) void {
     allocator.free(span.name);
     if (span.status_message) |msg| {
@@ -715,6 +777,7 @@ fn freeOwnedSpan(allocator: std.mem.Allocator, span: *const OwnedSpan) void {
     }
     freeAttributes(allocator, span.attributes);
     freeLinks(allocator, span.links);
+    freeEvents(allocator, span.events);
 }
 
 // =============================================================================
@@ -868,11 +931,21 @@ test "formatSpan includes attributes and links" {
     const link_attributes = [_]Attribute{
         .{ .key = "fanout", .value = .{ .bool = true } },
     };
+    const event_attributes = [_]Attribute{
+        .{ .key = "cache.hit", .value = .{ .bool = false } },
+    };
     const links = [_]SpanLink{
         .{
             .trace_id = [_]u8{0x10} ** 16,
             .span_id = [_]u8{0x20} ** 8,
             .attributes = &link_attributes,
+        },
+    };
+    const events = [_]SpanEvent{
+        .{
+            .name = "cache.miss",
+            .time_ns = 1500,
+            .attributes = &event_attributes,
         },
     };
 
@@ -886,7 +959,7 @@ test "formatSpan includes attributes and links" {
         .end_time_ns = 2000,
         .attributes = &attributes,
         .links = &links,
-        .events = &[_]SpanEvent{},
+        .events = &events,
         .status = .ok,
         .status_message = null,
     };
@@ -903,4 +976,7 @@ test "formatSpan includes attributes and links" {
     try std.testing.expect(std.mem.indexOf(u8, output, "\"result_count\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "\"links\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "\"fanout\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "\"events\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "\"cache.miss\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "\"cache.hit\"") != null);
 }

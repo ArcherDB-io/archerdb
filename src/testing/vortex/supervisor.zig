@@ -341,6 +341,9 @@ const Supervisor = struct {
                     network_delay,
                     network_lose,
                     network_corrupt,
+                    network_duplicate,
+                    network_reorder,
+                    network_rate,
                     network_heal,
                     quiesce,
                 };
@@ -354,6 +357,9 @@ const Supervisor = struct {
                     .network_delay = if (supervisor.network.faults.delay == null) 3 else 0,
                     .network_lose = if (supervisor.network.faults.lose == null) 3 else 0,
                     .network_corrupt = if (supervisor.network.faults.corrupt == null) 3 else 0,
+                    .network_duplicate = if (supervisor.network.faults.duplicate == null) 3 else 0,
+                    .network_reorder = if (supervisor.network.faults.reorder == null) 3 else 0,
+                    .network_rate = if (supervisor.network.faults.rate == null) 3 else 0,
                     .network_heal = if (!supervisor.network.faults.is_healed()) 10 else 0,
                     .quiesce = if (faulty_replica_count > 0 or
                         !supervisor.network.faults.is_healed()) 1 else 0,
@@ -401,6 +407,33 @@ const Supervisor = struct {
                         supervisor.network.faults.corrupt =
                             ratio(supervisor.prng.range_inclusive(u8, 1, 10), 100);
                         log.info("injecting network corruption: {any}", .{
+                            supervisor.network.faults,
+                        });
+                    },
+                    .network_duplicate => {
+                        supervisor.network.faults.duplicate =
+                            ratio(supervisor.prng.range_inclusive(u8, 1, 10), 100);
+                        log.info("injecting network duplication: {any}", .{
+                            supervisor.network.faults,
+                        });
+                    },
+                    .network_reorder => {
+                        supervisor.network.faults.reorder =
+                            ratio(supervisor.prng.range_inclusive(u8, 1, 10), 100);
+                        log.info("injecting network reordering: {any}", .{
+                            supervisor.network.faults,
+                        });
+                    },
+                    .network_rate => {
+                        supervisor.network.faults.rate = .{
+                            .bytes_per_second = supervisor.prng.range_inclusive(
+                                u32,
+                                1024,
+                                64 * 1024,
+                            ),
+                            .burst_bytes = supervisor.prng.range_inclusive(u32, 64, 2048),
+                        };
+                        log.info("injecting network rate limiting: {any}", .{
                             supervisor.network.faults,
                         });
                     },

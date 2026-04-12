@@ -1,8 +1,8 @@
 # ArcherDB Database Validation Checklist
 
-**Purpose:** Comprehensive validation framework for database readiness, production deployment, and enterprise certification
+**Purpose:** Comprehensive validation framework for database readiness, production deployment, and release certification
 **Usage:** Run validation tests against these criteria to verify database functionality, performance, and operational readiness
-**Scope:** Covers functional correctness, performance, security, operations, and enterprise requirements
+**Scope:** Covers functional correctness, performance, security, operations, and project release requirements
 
 ---
 
@@ -1594,8 +1594,8 @@ Full production deployment validation:
 
 **Estimated Time:** 2-4 days
 
-### Tier 4: Enterprise Certification
-Complete enterprise readiness assessment:
+### Tier 4: Full Release Certification
+Complete the deepest release-readiness assessment:
 - All sections
 - Section 33 evidence package complete and audit-ready
 - Section 35.3 final attestation complete with named approvers
@@ -1618,7 +1618,7 @@ Use this checklist to systematically validate database readiness:
 3. **Periodic:** Monthly health checks (Tier 2), quarterly deep assessment (Tier 3)
 4. **Post-incident:** After major issues, run relevant sections + root cause areas
 5. **Pre-release:** Run Tier 2-3 before any release
-6. **Enterprise sales:** Run Tier 4 for enterprise certification
+6. **Major releases:** Run Tier 4 for full release certification
 7. **Define workload gate:** Select workload profile and SLO targets before running tests
 8. **Pin datasets:** Record dataset version, checksum, and random seed for replayability
 9. **Run compatibility checks:** Execute the required Section 32 matrix for the release scope

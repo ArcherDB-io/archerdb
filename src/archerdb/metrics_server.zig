@@ -550,6 +550,10 @@ var bearer_token: ?[]const u8 = null;
 
 /// Pending online resharding request (0 = none).
 var resharding_request_target: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
+/// Pending index resize request target capacity (0 = none).
+var index_resize_request_target: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+/// Pending index resize abort request (0 = none, 1 = pending).
+var index_resize_abort_requested: std.atomic.Value(u8) = std.atomic.Value(u8).init(0);
 
 const rebalance_threshold: f64 = 0.70;
 const rebalance_ratio_guard: f64 = 1.5;
@@ -579,6 +583,28 @@ pub fn takeReshardingRequest() ?u32 {
 pub fn queueReshardingRequest(target_shards: u32) bool {
     if (target_shards == 0) return false;
     return resharding_request_target.cmpxchgStrong(0, target_shards, .acq_rel, .acquire) == null;
+}
+
+/// Consume a pending index resize request if one exists.
+pub fn takeIndexResizeRequest() ?u64 {
+    const target = index_resize_request_target.swap(0, .acq_rel);
+    return if (target == 0) null else target;
+}
+
+/// Queue an index resize request if no request is pending.
+pub fn queueIndexResizeRequest(target_capacity: u64) bool {
+    if (target_capacity == 0) return false;
+    return index_resize_request_target.cmpxchgStrong(0, target_capacity, .acq_rel, .acquire) == null;
+}
+
+/// Consume a pending index resize abort request if one exists.
+pub fn takeIndexResizeAbort() bool {
+    return index_resize_abort_requested.swap(0, .acq_rel) != 0;
+}
+
+/// Queue an index resize abort request if no abort is pending.
+pub fn queueIndexResizeAbort() bool {
+    return index_resize_abort_requested.cmpxchgStrong(0, 1, .acq_rel, .acquire) == null;
 }
 
 /// Record that a rebalance decision triggered a resharding request.
@@ -914,6 +940,15 @@ pub const MetricsServer = struct {
                 }
             }
             try handleControlReshard(client_fd, path);
+        } else if (std.mem.startsWith(u8, path, "/control/index-resize/")) {
+            if (bearer_token) |expected_token| {
+                const auth_header = parseAuthHeader(request);
+                if (auth_header == null or !std.mem.eql(u8, auth_header.?, expected_token)) {
+                    try sendResponse(client_fd, .unauthorized, "text/plain", "Unauthorized");
+                    return;
+                }
+            }
+            try handleControlIndexResize(client_fd, path);
         } else if (std.mem.eql(u8, path, "/metrics")) {
             // Check bearer token authentication if configured
             if (bearer_token) |expected_token| {
@@ -1254,6 +1289,61 @@ pub const MetricsServer = struct {
 
         resharding_request_target.store(target, .release);
         try sendResponse(client_fd, .ok, "text/plain", "Resharding request accepted");
+    }
+
+    fn handleControlIndexResize(client_fd: posix.socket_t, path: []const u8) !void {
+        const start_prefix = "/control/index-resize/start/";
+        if (std.mem.startsWith(u8, path, start_prefix)) {
+            const target_slice = path[start_prefix.len..];
+            if (target_slice.len == 0) {
+                try sendResponse(client_fd, .bad_request, "text/plain", "Missing target capacity");
+                return;
+            }
+
+            const target = std.fmt.parseUnsigned(u64, target_slice, 10) catch {
+                try sendResponse(client_fd, .bad_request, "text/plain", "Invalid target capacity");
+                return;
+            };
+            if (target == 0) {
+                try sendResponse(client_fd, .bad_request, "text/plain", "Target capacity must be > 0");
+                return;
+            }
+
+            if (metrics.Registry.index_resize_status.get() != 0) {
+                try sendResponse(client_fd, .bad_request, "text/plain", "Index resize already in progress");
+                return;
+            }
+
+            if (index_resize_request_target.load(.acquire) != 0) {
+                try sendResponse(client_fd, .bad_request, "text/plain", "Index resize request already pending");
+                return;
+            }
+
+            if (!queueIndexResizeRequest(target)) {
+                try sendResponse(client_fd, .bad_request, "text/plain", "Index resize request already pending");
+                return;
+            }
+            try sendResponse(client_fd, .ok, "text/plain", "Index resize request accepted");
+            return;
+        }
+
+        if (std.mem.eql(u8, path, "/control/index-resize/abort")) {
+            if (metrics.Registry.index_resize_status.get() == 0 and
+                index_resize_request_target.load(.acquire) == 0)
+            {
+                try sendResponse(client_fd, .bad_request, "text/plain", "No index resize is active");
+                return;
+            }
+
+            if (!queueIndexResizeAbort()) {
+                try sendResponse(client_fd, .bad_request, "text/plain", "Index resize abort already pending");
+                return;
+            }
+            try sendResponse(client_fd, .ok, "text/plain", "Index resize abort accepted");
+            return;
+        }
+
+        try sendResponse(client_fd, .not_found, "text/plain", "Not Found");
     }
 
     /// Control endpoint: Runtime log level toggle.

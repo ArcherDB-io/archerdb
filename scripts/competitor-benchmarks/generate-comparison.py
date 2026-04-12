@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2025 ArcherDB Contributors
 """
 Benchmark Comparison Report Generator
 
@@ -226,7 +228,7 @@ def generate_report(results: Dict[str, List[BenchmarkEntry]], output_path: str) 
     print(f"Report generated: {output_path}")
 
 
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser(
         description="Generate benchmark comparison report"
     )
@@ -245,22 +247,14 @@ def main():
     results = load_all_results(args.results_dir)
 
     if not results:
-        print(f"No benchmark results found in {args.results_dir}")
-        print("Creating placeholder report...")
-
-        # Create a placeholder report
-        with open(args.output, 'w') as f:
-            f.write("# ArcherDB Competitor Benchmark Comparison\n\n")
-            f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-            f.write("No benchmark results available. Run benchmarks first:\n\n")
-            f.write("```bash\n")
-            f.write("./run-comparison.sh\n")
-            f.write("```\n")
-        return
+        print(f"error: no benchmark results found in {args.results_dir}", file=sys.stderr)
+        print("Run ./run-comparison.sh to generate real comparison CSVs before writing a report.", file=sys.stderr)
+        return 1
 
     # Generate report
     generate_report(results, args.output)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

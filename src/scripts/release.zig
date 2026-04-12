@@ -28,6 +28,7 @@ const multiversion = @import("../multiversion.zig");
 const changelog = @import("./changelog.zig");
 
 const MiB = stdx.MiB;
+const java_group_path = "com/archerdb/archerdb-java";
 
 const multiversion_binary_size_max = multiversion.multiversion_binary_size_max;
 
@@ -38,6 +39,7 @@ pub const CLIArgs = struct {
     language: ?Language = null,
     build: bool = false,
     publish: bool = false,
+    preflight: bool = false,
     // Set if there's no changelog entry for the current code. That is, if the top changelog
     // entry describes a past release, and not the release we are creating here.
     //
@@ -72,6 +74,14 @@ pub fn main(shell: *Shell, gpa: std.mem.Allocator, cli_args: CLIArgs) !void {
         if (cli_args.language == null or cli_args.language.? != .zig) {
             @panic("--devhub is only supported with --languages=zig.");
         }
+    }
+
+    if (cli_args.preflight) {
+        try preflight(shell, languages, .{
+            .build = cli_args.build,
+            .publish = cli_args.publish,
+        });
+        return;
     }
 
     const changelog_text = try shell.project_root.readFileAlloc(
@@ -172,6 +182,149 @@ pub fn main(shell: *Shell, gpa: std.mem.Allocator, cli_args: CLIArgs) !void {
         assert(!cli_args.devhub);
         try publish(shell, languages, changelog_body, version_info);
     }
+}
+
+const PreflightOptions = struct {
+    build: bool,
+    publish: bool,
+};
+
+fn preflight(shell: *Shell, languages: LanguageSet, options: PreflightOptions) !void {
+    var section = try shell.open_section("release preflight");
+    defer section.close();
+
+    const check_build = options.build or (!options.build and !options.publish);
+    const check_publish = options.publish or (!options.build and !options.publish);
+
+    var failures = std.ArrayList([]const u8).init(shell.arena.allocator());
+
+    if (check_build) {
+        if (languages.contains(.go)) {
+            _ = shell.exec_stdout("go version", .{}) catch {
+                try failures.append("missing build prerequisite: `go version` failed");
+            };
+        }
+        if (languages.contains(.java)) {
+            _ = shell.exec_stdout("java --version", .{}) catch {
+                try failures.append("missing build prerequisite: `java --version` failed");
+            };
+            _ = shell.exec_stdout("mvn -v", .{}) catch {
+                try failures.append("missing build prerequisite: `mvn -v` failed");
+            };
+        }
+        if (languages.contains(.node)) {
+            _ = shell.exec_stdout("node --version", .{}) catch {
+                try failures.append("missing build prerequisite: `node --version` failed");
+            };
+            _ = shell.exec_stdout("npm --version", .{}) catch {
+                try failures.append("missing build prerequisite: `npm --version` failed");
+            };
+        }
+        if (languages.contains(.python)) {
+            _ = shell.exec_stdout("python3 --version", .{}) catch {
+                try failures.append("missing build prerequisite: `python3 --version` failed");
+            };
+            _ = shell.exec_stdout("python3 -m build --version", .{}) catch {
+                try failures.append(
+                    "missing build prerequisite: `python3 -m build --version` failed",
+                );
+            };
+        }
+        if (languages.contains(.docker)) {
+            _ = shell.exec_stdout("docker --version", .{}) catch {
+                try failures.append("missing build prerequisite: `docker --version` failed");
+            };
+        }
+    }
+
+    if (check_publish) {
+        if (languages.contains(.zig)) {
+            _ = shell.exec_stdout("gh --version", .{}) catch {
+                try failures.append("missing publish prerequisite: `gh --version` failed");
+            };
+            if (shell.env_get_option("ARCHERDB_DOCS_PAT") == null) {
+                try failures.append("missing publish prerequisite: `ARCHERDB_DOCS_PAT` is unset");
+            }
+            if (!options.build and !try shell.dir_exists("zig-out/dist/archerdb")) {
+                try failures.append("missing publish prerequisite: `zig-out/dist/archerdb` does not exist");
+            }
+        }
+        if (languages.contains(.go)) {
+            if (shell.env_get_option("ARCHERDB_GO_PAT") == null) {
+                try failures.append("missing publish prerequisite: `ARCHERDB_GO_PAT` is unset");
+            }
+            if (!options.build and !try shell.dir_exists("zig-out/dist/go")) {
+                try failures.append("missing publish prerequisite: `zig-out/dist/go` does not exist");
+            }
+        }
+        if (languages.contains(.java)) {
+            if (shell.env_get_option("MAVEN_USERNAME") == null) {
+                try failures.append("missing publish prerequisite: `MAVEN_USERNAME` is unset");
+            }
+            if (shell.env_get_option("MAVEN_CENTRAL_TOKEN") == null) {
+                try failures.append("missing publish prerequisite: `MAVEN_CENTRAL_TOKEN` is unset");
+            }
+            if (shell.env_get_option("MAVEN_GPG_PASSPHRASE") == null) {
+                try failures.append("missing publish prerequisite: `MAVEN_GPG_PASSPHRASE` is unset");
+            }
+            _ = shell.exec_stdout("gpg --version", .{}) catch {
+                try failures.append("missing publish prerequisite: `gpg --version` failed");
+            };
+            const gpg_secret_keys = shell.exec_stdout(
+                "gpg --list-secret-keys --keyid-format LONG",
+                .{},
+            ) catch "";
+            if (std.mem.trim(u8, gpg_secret_keys, " \r\n\t").len == 0) {
+                try failures.append("missing publish prerequisite: no GPG secret key is available");
+            }
+            if (!options.build and !try shell.dir_exists("zig-out/dist/java")) {
+                try failures.append("missing publish prerequisite: `zig-out/dist/java` does not exist");
+            }
+        }
+        if (languages.contains(.node)) {
+            _ = shell.exec_stdout("npm --version", .{}) catch {
+                try failures.append("missing publish prerequisite: `npm --version` failed");
+            };
+            if (!options.build and !try shell.dir_exists("zig-out/dist/node")) {
+                try failures.append("missing publish prerequisite: `zig-out/dist/node` does not exist");
+            }
+        }
+        if (languages.contains(.python)) {
+            if (shell.env_get_option("TWINE_USERNAME") == null) {
+                try failures.append("missing publish prerequisite: `TWINE_USERNAME` is unset");
+            }
+            if (shell.env_get_option("TWINE_PASSWORD") == null) {
+                try failures.append("missing publish prerequisite: `TWINE_PASSWORD` is unset");
+            }
+            _ = shell.exec_stdout("python3 -m twine --version", .{}) catch {
+                try failures.append("missing publish prerequisite: `python3 -m twine --version` failed");
+            };
+            if (!options.build and !try shell.dir_exists("zig-out/dist/python")) {
+                try failures.append("missing publish prerequisite: `zig-out/dist/python` does not exist");
+            }
+        }
+        if (languages.contains(.docker)) {
+            _ = shell.exec_stdout("docker --version", .{}) catch {
+                try failures.append("missing publish prerequisite: `docker --version` failed");
+            };
+            if (shell.env_get_option("GITHUB_TOKEN") == null) {
+                try failures.append("missing publish prerequisite: `GITHUB_TOKEN` is unset");
+            }
+            if (!options.build and !try shell.dir_exists("zig-out/dist/archerdb")) {
+                try failures.append("missing publish prerequisite: `zig-out/dist/archerdb` does not exist");
+            }
+        }
+    }
+
+    if (failures.items.len == 0) {
+        log.info("release preflight passed", .{});
+        return;
+    }
+
+    for (failures.items) |failure| {
+        log.err("{s}", .{failure});
+    }
+    return error.PreflightFailed;
 }
 
 fn build(shell: *Shell, languages: LanguageSet, info: VersionInfo, devhub: bool) !void {
@@ -401,12 +554,26 @@ fn build_java(shell: *Shell, info: VersionInfo, dist_dir: std.fs.Dir) !void {
         \\  package
     , .{});
 
-    try Shell.copy_path(
-        shell.cwd,
-        try shell.fmt("target/archerdb-java-{s}.jar", .{info.tag}),
-        dist_dir,
-        try shell.fmt("archerdb-java-{s}.jar", .{info.tag}),
-    );
+    for ([_]struct { src: []const u8, dst: []const u8 }{
+        .{
+            .src = try shell.fmt("target/archerdb-java-{s}.jar", .{info.tag}),
+            .dst = try shell.fmt("archerdb-java-{s}.jar", .{info.tag}),
+        },
+        .{
+            .src = try shell.fmt("target/archerdb-java-{s}-sources.jar", .{info.tag}),
+            .dst = try shell.fmt("archerdb-java-{s}-sources.jar", .{info.tag}),
+        },
+        .{
+            .src = try shell.fmt("target/archerdb-java-{s}-javadoc.jar", .{info.tag}),
+            .dst = try shell.fmt("archerdb-java-{s}-javadoc.jar", .{info.tag}),
+        },
+        .{
+            .src = "pom.xml",
+            .dst = try shell.fmt("archerdb-java-{s}.pom", .{info.tag}),
+        },
+    }) |artifact| {
+        try Shell.copy_path(shell.cwd, artifact.src, dist_dir, artifact.dst);
+    }
 }
 
 fn build_node(shell: *Shell, info: VersionInfo, dist_dir: std.fs.Dir) !void {
@@ -727,47 +894,33 @@ fn publish_java(shell: *Shell, info: VersionInfo) !void {
 
     // These variables don't have a special meaning in maven, and instead are a part of
     // settings.xml generated by GitHub actions.
-    _ = try shell.env_get("MAVEN_USERNAME");
-    _ = try shell.env_get("MAVEN_CENTRAL_TOKEN");
-    _ = try shell.env_get("MAVEN_GPG_PASSPHRASE");
+    const maven_username = try shell.env_get("MAVEN_USERNAME");
+    const maven_token = try shell.env_get("MAVEN_CENTRAL_TOKEN");
+    const gpg_passphrase = try shell.env_get("MAVEN_GPG_PASSPHRASE");
 
-    // TODO: Maven uniquely doesn't support uploading pre-build package, so here we just rebuild
-    // from source and upload a _different_ artifact. This is wrong.
-    //
-    // As far as I can tell, there isn't a great solution here. See, for example:
-    //
-    // <https://users.maven.apache.narkive.com/jQ3WocgT/mvn-deploy-without-rebuilding>
-    //
-    // I think what we should do here is for `build` to deploy to the local repo, and then use
-    //
-    // <https://gist.github.com/rishabh9/183cc0c4c3ada4f8df94d65fcd73a502>
-    //
-    // to move the contents of that local repo to maven central. But this is todo, just rebuild now.
-    try backup_create(shell.project_root, "src/clients/java/pom.xml");
-    defer backup_restore(shell.project_root, "src/clients/java/pom.xml");
+    const auth_header = try central_bearer_header(shell.arena.allocator(), maven_username, maven_token);
+    const bundle_path = try stage_java_central_bundle(shell, info, gpg_passphrase);
+    const upload_url = try shell.fmt(
+        "https://central.sonatype.com/api/v1/publisher/upload?publishingType=AUTOMATIC&name=archerdb-java-{s}",
+        .{info.tag},
+    );
 
-    try shell.exec(
-        \\mvn --batch-mode --quiet --file src/clients/java/pom.xml
-        \\  versions:set -DnewVersion={tag}
-    , .{ .tag = info.tag });
+    const deployment_id_raw = try shell.exec_stdout(
+        \\curl --silent --show-error --fail
+        \\  --header {auth_header}
+        \\  --form bundle=@{bundle_path}
+        \\  --request POST {upload_url}
+    , .{
+        .auth_header = auth_header,
+        .bundle_path = bundle_path,
+        .upload_url = upload_url,
+    });
+    const deployment_id = std.mem.trim(u8, deployment_id_raw, " \r\n\t");
+    if (deployment_id.len == 0) return error.InvalidHttpResponse;
 
-    // Retrying in case of timeout:
-    const attempts_max = 5;
-    for (0..attempts_max) |index| {
-        return shell.exec_options(.{ .timeout = .minutes(5) },
-            \\mvn --batch-mode --quiet --file src/clients/java/pom.xml
-            \\  -Dmaven.test.skip -Djacoco.skip
-            \\  deploy
-        , .{}) catch |err| switch (err) {
-            error.ExecTimeout => {
-                const attempt = index + 1;
-                log.warn("java deploy timed out. Attempt={}", .{attempt});
-                if (attempt == attempts_max) return err;
-                continue;
-            },
-            else => err,
-        };
-    } else unreachable;
+    log.info("uploaded java central bundle, deployment_id={s}", .{deployment_id});
+    try wait_for_central_publish(shell, auth_header, deployment_id);
+    try verify_java_central_artifacts(shell, info);
 }
 
 fn publish_node(shell: *Shell, info: VersionInfo) !void {
@@ -898,10 +1051,11 @@ fn publish_docs(shell: *Shell, info: VersionInfo) !void {
     }
 
     const token = try shell.env_get("ARCHERDB_DOCS_PAT");
+    const docs_repo = shell.env_get_option("ARCHERDB_DOCS_REPO") orelse "ArcherDB-io/docs";
     try shell.exec(
         \\git clone --no-checkout --depth 1
-        \\  https://oauth2:{token}@github.com/archerdb/docs.git archerdb-docs
-    , .{ .token = token });
+        \\  https://oauth2:{token}@github.com/{docs_repo}.git archerdb-docs
+    , .{ .token = token, .docs_repo = docs_repo });
     defer {
         shell.project_root.deleteTree("archerdb-docs") catch {};
     }
@@ -952,4 +1106,325 @@ fn backup_restore(dir: std.fs.Dir, comptime file: []const u8) void {
     dir.deleteFile(file) catch {};
     Shell.copy_path(dir, file ++ ".backup", dir, file) catch {};
     dir.deleteFile(file ++ ".backup") catch {};
+}
+
+fn central_bearer_header(
+    allocator: std.mem.Allocator,
+    username: []const u8,
+    token: []const u8,
+) ![]const u8 {
+    const joined = try std.fmt.allocPrint(allocator, "{s}:{s}", .{ username, token });
+    defer allocator.free(joined);
+    const encoded_len = std.base64.standard.Encoder.calcSize(joined.len);
+    const encoded = try allocator.alloc(u8, encoded_len);
+    defer allocator.free(encoded);
+    _ = std.base64.standard.Encoder.encode(encoded, joined);
+    return std.fmt.allocPrint(allocator, "Authorization: Bearer {s}", .{encoded});
+}
+
+fn stage_java_central_bundle(
+    shell: *Shell,
+    info: VersionInfo,
+    gpg_passphrase: []const u8,
+) ![]const u8 {
+    const staging_root = "zig-out/dist/java/central-staging";
+    const version_dir = try shell.fmt("{s}/{s}/{s}", .{ staging_root, java_group_path, info.tag });
+    const bundle_path = try shell.fmt("zig-out/dist/java/archerdb-java-{s}-central-bundle.zip", .{
+        info.tag,
+    });
+
+    shell.project_root.deleteTree(staging_root) catch {};
+    shell.project_root.deleteFile(bundle_path) catch {};
+    {
+        var dir = try shell.project_root.makeOpenPath(version_dir, .{});
+        dir.close();
+    }
+
+    const staged_files = [_][]const u8{
+        try shell.fmt("archerdb-java-{s}.jar", .{info.tag}),
+        try shell.fmt("archerdb-java-{s}-sources.jar", .{info.tag}),
+        try shell.fmt("archerdb-java-{s}-javadoc.jar", .{info.tag}),
+        try shell.fmt("archerdb-java-{s}.pom", .{info.tag}),
+    };
+
+    var all_files = std.ArrayList([]const u8).init(shell.arena.allocator());
+    for (staged_files) |filename| {
+        const src = try shell.fmt("zig-out/dist/java/{s}", .{filename});
+        if (!shell.file_exists(src)) {
+            log.err("missing staged java artifact: {s}", .{src});
+            return error.FileNotFound;
+        }
+
+        const dst = try shell.fmt("{s}/{s}", .{ version_dir, filename });
+        try Shell.copy_path(shell.project_root, src, shell.project_root, dst);
+        try all_files.append(dst);
+    }
+
+    const signed_count = all_files.items.len;
+    for (all_files.items[0..signed_count]) |path| {
+        const signature_path = try shell.fmt("{s}.asc", .{path});
+        try shell.exec(
+            \\gpg --batch --yes --armor --detach-sign
+            \\  --pinentry-mode loopback
+            \\  --passphrase {passphrase}
+            \\  --output {signature_path}
+            \\  {path}
+        , .{
+            .passphrase = gpg_passphrase,
+            .signature_path = signature_path,
+            .path = path,
+        });
+        try all_files.append(signature_path);
+    }
+
+    for (all_files.items) |path| {
+        try write_all_checksum_files(shell.project_root, shell.arena.allocator(), path);
+    }
+
+    try shell.pushd("./zig-out/dist/java/central-staging");
+    defer shell.popd();
+    try shell.exec("zip --quiet --recurse-paths ../{bundle} .", .{
+        .bundle = try shell.fmt("archerdb-java-{s}-central-bundle.zip", .{info.tag}),
+    });
+
+    return bundle_path;
+}
+
+fn write_all_checksum_files(
+    dir: std.fs.Dir,
+    allocator: std.mem.Allocator,
+    path: []const u8,
+) !void {
+    const data = try dir.readFileAlloc(allocator, path, 128 * MiB);
+
+    var md5: [16]u8 = undefined;
+    std.crypto.hash.Md5.hash(data, &md5, .{});
+    try write_checksum_file(dir, allocator, path, ".md5", &md5);
+
+    var sha1: [20]u8 = undefined;
+    std.crypto.hash.Sha1.hash(data, &sha1, .{});
+    try write_checksum_file(dir, allocator, path, ".sha1", &sha1);
+
+    var sha256: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(data, &sha256, .{});
+    try write_checksum_file(dir, allocator, path, ".sha256", &sha256);
+
+    var sha512: [64]u8 = undefined;
+    std.crypto.hash.sha2.Sha512.hash(data, &sha512, .{});
+    try write_checksum_file(dir, allocator, path, ".sha512", &sha512);
+}
+
+fn write_checksum_file(
+    dir: std.fs.Dir,
+    allocator: std.mem.Allocator,
+    path: []const u8,
+    suffix: []const u8,
+    digest: []const u8,
+) !void {
+    const checksum_path = try std.fmt.allocPrint(allocator, "{s}{s}", .{ path, suffix });
+    const checksum = try std.fmt.allocPrint(allocator, "{s}", .{std.fmt.fmtSliceHexLower(digest)});
+    try dir.writeFile(.{ .sub_path = checksum_path, .data = checksum });
+}
+
+fn wait_for_central_publish(
+    shell: *Shell,
+    auth_header: []const u8,
+    deployment_id: []const u8,
+) !void {
+    const status_url = try shell.fmt(
+        "https://central.sonatype.com/api/v1/publisher/status?id={s}",
+        .{deployment_id},
+    );
+
+    const attempts_max = 120;
+    for (0..attempts_max) |attempt| {
+        const response = try shell.exec_stdout(
+            \\curl --silent --show-error --fail
+            \\  --header {auth_header}
+            \\  --request POST {status_url}
+        , .{
+            .auth_header = auth_header,
+            .status_url = status_url,
+        });
+
+        const status = try parse_central_deployment_status(shell.arena.allocator(), response);
+        log.info("java central deployment status={s} attempt={d}/{d}", .{
+            @tagName(status),
+            attempt + 1,
+            attempts_max,
+        });
+
+        switch (status) {
+            .PUBLISHED => return,
+            .FAILED => {
+                log.err("java central deployment failed: {s}", .{response});
+                return error.PublishFailed;
+            },
+            else => std.time.sleep(5 * std.time.ns_per_s),
+        }
+    }
+
+    return error.ExecTimeout;
+}
+
+fn verify_java_central_artifacts(shell: *Shell, info: VersionInfo) !void {
+    const base_url = shell.env_get_option("MAVEN_CENTRAL_BASE_URL") orelse
+        "https://repo1.maven.org/maven2";
+    const artifact_names = [_][]const u8{
+        try shell.fmt("archerdb-java-{s}.jar", .{info.tag}),
+        try shell.fmt("archerdb-java-{s}-sources.jar", .{info.tag}),
+        try shell.fmt("archerdb-java-{s}-javadoc.jar", .{info.tag}),
+        try shell.fmt("archerdb-java-{s}.pom", .{info.tag}),
+    };
+
+    const attempts_max = 24;
+    for (0..attempts_max) |attempt| {
+        var verified_all = true;
+
+        for (artifact_names) |artifact_name| {
+            const local_path = try shell.fmt("zig-out/dist/java/{s}", .{artifact_name});
+            const local_sha256 = try compute_file_sha256_hex(
+                shell.project_root,
+                shell.arena.allocator(),
+                local_path,
+            );
+            const checksum_url = try shell.fmt(
+                "{s}/{s}/{s}/{s}.sha256",
+                .{ base_url, java_group_path, info.tag, artifact_name },
+            );
+
+            const remote_checksum_raw = shell.exec_stdout(
+                \\curl --silent --show-error --fail {checksum_url}
+            , .{
+                .checksum_url = checksum_url,
+            }) catch {
+                verified_all = false;
+                break;
+            };
+            const remote_checksum = parse_remote_checksum(remote_checksum_raw) orelse {
+                verified_all = false;
+                break;
+            };
+
+            if (!std.mem.eql(u8, local_sha256, remote_checksum)) {
+                verified_all = false;
+                break;
+            }
+        }
+
+        if (verified_all) return;
+
+        log.info("java central artifacts not yet consistent with staged files (attempt={d}/{d})", .{
+            attempt + 1,
+            attempts_max,
+        });
+        std.time.sleep(5 * std.time.ns_per_s);
+    }
+
+    return error.PublishedArtifactMismatch;
+}
+
+fn compute_file_sha256_hex(
+    dir: std.fs.Dir,
+    allocator: std.mem.Allocator,
+    path: []const u8,
+) ![]const u8 {
+    const data = try dir.readFileAlloc(allocator, path, 128 * MiB);
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(data, &digest, .{});
+    return std.fmt.allocPrint(allocator, "{s}", .{std.fmt.fmtSliceHexLower(&digest)});
+}
+
+fn parse_remote_checksum(raw: []const u8) ?[]const u8 {
+    const trimmed = std.mem.trim(u8, raw, " \r\n\t");
+    if (trimmed.len == 0) return null;
+
+    var tokens = std.mem.tokenizeAny(u8, trimmed, " \r\n\t");
+    while (tokens.next()) |token| {
+        if (token.len == 64 and is_hex_lower_or_upper(token)) return token;
+    }
+    return null;
+}
+
+fn is_hex_lower_or_upper(bytes: []const u8) bool {
+    for (bytes) |byte| {
+        switch (byte) {
+            '0'...'9', 'a'...'f', 'A'...'F' => {},
+            else => return false,
+        }
+    }
+    return true;
+}
+
+const CentralDeploymentStatus = enum {
+    PENDING,
+    VALIDATING,
+    VALIDATED,
+    PUBLISHING,
+    PUBLISHED,
+    FAILED,
+};
+
+fn parse_central_deployment_status(
+    allocator: std.mem.Allocator,
+    response: []const u8,
+) !CentralDeploymentStatus {
+    const Parsed = struct {
+        deploymentState: []const u8,
+    };
+    const parsed = try std.json.parseFromSlice(Parsed, allocator, response, .{
+        .ignore_unknown_fields = true,
+    });
+    defer parsed.deinit();
+
+    return std.meta.stringToEnum(CentralDeploymentStatus, parsed.value.deploymentState) orelse
+        error.InvalidHttpResponse;
+}
+
+test "central_bearer_header encodes Sonatype token" {
+    const allocator = std.testing.allocator;
+    const header = try central_bearer_header(allocator, "user", "token");
+    defer allocator.free(header);
+    try std.testing.expectEqualStrings("Authorization: Bearer dXNlcjp0b2tlbg==", header);
+}
+
+test "parse_central_deployment_status parses published state" {
+    const allocator = std.testing.allocator;
+    try std.testing.expectEqual(
+        CentralDeploymentStatus.PUBLISHED,
+        try parse_central_deployment_status(
+            allocator,
+            "{\"deploymentId\":\"abc\",\"deploymentState\":\"PUBLISHED\"}",
+        ),
+    );
+}
+
+test "parse_remote_checksum trims common checksum file formats" {
+    try std.testing.expectEqualStrings(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        parse_remote_checksum(
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  archerdb-java.jar\n",
+        ).?,
+    );
+    try std.testing.expectEqualStrings(
+        "ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789",
+        parse_remote_checksum(
+            "ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789\n",
+        ).?,
+    );
+    try std.testing.expect(parse_remote_checksum("not-a-checksum") == null);
+}
+
+test "compute_file_sha256_hex hashes file contents" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(.{ .sub_path = "sample.txt", .data = "archerdb\n" });
+    const digest = try compute_file_sha256_hex(tmp.dir, std.testing.allocator, "sample.txt");
+    defer std.testing.allocator.free(digest);
+
+    try std.testing.expectEqualStrings(
+        "60f1d1f4728f62e5d5a24c7f5f7f03156f13d8d0dca0d05f4ee0ab0bcb7a5ad7",
+        digest,
+    );
 }

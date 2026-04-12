@@ -4,6 +4,17 @@ High-performance geospatial database for fleet tracking, logistics, and real-tim
 
 ArcherDB provides specialized geospatial capabilities on a battle-tested distributed systems foundation.
 
+ArcherDB is open source under the [Apache License 2.0](LICENSE). See
+[NOTICE](NOTICE), [CONTRIBUTING.md](CONTRIBUTING.md), and
+[SECURITY.md](SECURITY.md) for project attribution and contribution policy.
+
+Project process and support:
+
+- [Contributing](CONTRIBUTING.md)
+- [Governance](GOVERNANCE.md)
+- [Support](SUPPORT.md)
+- [Security Policy](SECURITY.md)
+
 ## Deployment Model
 
 ArcherDB follows a trusted-network, infrastructure-first security model:
@@ -127,13 +138,13 @@ All SDK features listed below are supported across each language.
 
 ## Tier Profiles
 
-ArcherDB is distributed as tiered builds with distinct product intent:
+ArcherDB exposes tier presets as open-source runtime and capacity profiles:
 
 - `lite`: Demo/evaluation tier. Fast and lightweight by design, with intentionally strict storage limits.
 - `standard`: Baseline production tier.
 - `pro`: Higher-performance mainstream tier.
-- `enterprise`: High-end production tier.
-- `ultra`: Top-end tier for premium performance positioning.
+- `enterprise`: Large-capacity production profile.
+- `ultra`: Highest-capacity production profile.
 
 See [Tier Profiles](docs/tier-profiles.md) for authoritative tier intent and guardrails.
 

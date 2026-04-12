@@ -36,6 +36,20 @@ const EventMetricAggregate = vsr.trace.EventMetricAggregate;
 const EventTiming = vsr.trace.EventTiming;
 const EventTimingAggregate = vsr.trace.EventTimingAggregate;
 const command_inspect_integrity = @import("inspect_integrity.zig").command_inspect_integrity;
+const archerdb = vsr.archerdb;
+const batch_query_mod = struct {
+    const QueryType = archerdb.BatchQueryType;
+    const BatchQueryRequest = archerdb.BatchQueryRequest;
+    const BatchQueryResponse = archerdb.BatchQueryResponse;
+    const BatchQueryEntry = archerdb.BatchQueryEntry;
+    const BatchQueryResultEntry = archerdb.BatchQueryResultEntry;
+
+    fn polygonFilterSize(filter: *const archerdb.QueryPolygonFilter) usize {
+        return @sizeOf(archerdb.QueryPolygonFilter) +
+            @as(usize, filter.vertex_count) * @sizeOf(archerdb.PolygonVertex) +
+            @as(usize, filter.hole_count) * @sizeOf(archerdb.HoleDescriptor);
+    }
+};
 
 pub fn command_inspect(
     allocator: std.mem.Allocator,
@@ -931,7 +945,7 @@ const Inspector = struct {
         const header = schema.header_from_block(block);
         if (header.address != address) log.err("misdirected block", .{});
 
-        try print_block(output, block);
+        try print_block(inspector.allocator, output, block);
     }
 
     fn inspect_manifest(
@@ -1382,7 +1396,11 @@ fn print_value(output: std.io.AnyWriter, value: anytype) !void {
     try output.print("{}", .{value});
 }
 
-fn print_block(writer: std.io.AnyWriter, block: BlockPtrConst) !void {
+fn print_block(
+    allocator: std.mem.Allocator,
+    writer: std.io.AnyWriter,
+    block: BlockPtrConst,
+) !void {
     const header = schema.header_from_block(block);
     try print_struct(writer, "header", header);
 
@@ -1402,6 +1420,38 @@ fn print_block(writer: std.io.AnyWriter, block: BlockPtrConst) !void {
     }
 
     switch (header.block_type) {
+        .free_set => {
+            const body = schema.TrailerNode.body(block);
+            const words = std.mem.bytesAsSlice(u64, body);
+            try writer.print("body.word_count={}\n", .{words.len});
+            for (words, 0..) |word, i| {
+                try writer.print("body.words[{:_>4}]=0x{x:0>16}\n", .{ i, word });
+            }
+        },
+        .client_sessions => {
+            var client_sessions = try vsr.ClientSessions.init(allocator);
+            defer client_sessions.deinit(allocator);
+            client_sessions.decode(schema.TrailerNode.body(block));
+
+            try writer.print("body.entry_count={}\n", .{client_sessions.count()});
+            for (client_sessions.entries, 0..) |*entry, slot| {
+                if (entry.session == 0) continue;
+                try writer.print(
+                    "body.entry[slot={:_>4}].client=0x{x:0>32}\n",
+                    .{ slot, entry.header.client },
+                );
+                try print_struct(
+                    writer,
+                    "body.entry.session",
+                    &entry.session,
+                );
+                try print_struct(
+                    writer,
+                    "body.entry.header",
+                    &entry.header,
+                );
+            }
+        },
         .manifest => {
             const manifest_node = schema.ManifestNode.from(block);
             for (manifest_node.tables_const(block), 0..) |*table_info, entry_index| {
@@ -1469,12 +1519,22 @@ fn print_block(writer: std.io.AnyWriter, block: BlockPtrConst) !void {
             }
         },
         else => {
-            try writer.print(
-                "body: unimplemented for block_type={s}\n",
-                .{@tagName(header.block_type)},
-            );
+            var block_type_buffer: [32]u8 = undefined;
+            try writer.print("body: reserved/unknown/future block_type={s}\n", .{
+                format_block_type_label(header.block_type, &block_type_buffer),
+            });
         },
     }
+}
+
+fn format_block_type_label(block_type: schema.BlockType, buffer: *[32]u8) []const u8 {
+    if (schema.BlockType.valid(block_type)) return @tagName(block_type);
+    return std.fmt.bufPrint(buffer, "0x{x:0>2}", .{@intFromEnum(block_type)}) catch unreachable;
+}
+
+fn format_operation_label(operation: vsr.Operation, buffer: *[48]u8) []const u8 {
+    if (operation.valid(StateMachine.Operation)) return operation.tag_name(StateMachine.Operation);
+    return std.fmt.bufPrint(buffer, "0x{x:0>2}", .{@intFromEnum(operation)}) catch unreachable;
 }
 
 fn format_tree_id(tree_id: u16) []const u8 {
@@ -1519,6 +1579,7 @@ const operation_schemas = list: {
         .{ .reconfigure, vsr.ReconfigurationRequest, vsr.ReconfigurationResult },
         .{ .pulse, extern struct {}, extern struct {} },
         .{ .upgrade, vsr.UpgradeRequest, extern struct {} },
+        .{ .noop, extern struct {}, extern struct {} },
     }) |operation_schema| {
         list = list ++ [_]OperationSchema{.{
             .operation = operation_schema[0],
@@ -1538,8 +1599,553 @@ const operation_schemas = list: {
     break :list list;
 };
 
+fn print_geo_events(
+    output: std.io.AnyWriter,
+    label_prefix: []const u8,
+    events: []const archerdb.GeoEvent,
+) !void {
+    var label_buffer: [128]u8 = undefined;
+    for (events, 0..) |*event, index| {
+        var label_stream = std.io.fixedBufferStream(&label_buffer);
+        if (label_prefix.len > 0) try label_stream.writer().writeAll(label_prefix);
+        try label_stream.writer().print("events[{}]", .{index});
+        try print_struct(output, label_stream.getWritten(), event);
+    }
+}
+
+fn print_query_uuid_batch_request_body(
+    output: std.io.AnyWriter,
+    body: []const u8,
+    label_prefix: []const u8,
+) !void {
+    if (body.len < @sizeOf(archerdb.QueryUuidBatchFilter)) {
+        try output.print(
+            "error: query_uuid_batch body too small={} expected>={}\n",
+            .{ body.len, @sizeOf(archerdb.QueryUuidBatchFilter) },
+        );
+        return;
+    }
+
+    const filter = std.mem.bytesAsValue(
+        archerdb.QueryUuidBatchFilter,
+        body[0..@sizeOf(archerdb.QueryUuidBatchFilter)],
+    );
+
+    var label_buffer: [128]u8 = undefined;
+    var label_stream = std.io.fixedBufferStream(&label_buffer);
+    if (label_prefix.len > 0) try label_stream.writer().writeAll(label_prefix);
+    try label_stream.writer().writeAll("filter");
+    try print_struct(output, label_stream.getWritten(), filter);
+
+    const ids_size = @as(usize, filter.count) * @sizeOf(u128);
+    const expected_size = @sizeOf(archerdb.QueryUuidBatchFilter) + ids_size;
+    if (body.len < expected_size) {
+        try output.print(
+            "error: query_uuid_batch ids truncated body_size={} expected={}\n",
+            .{ body.len, expected_size },
+        );
+        return;
+    }
+
+    const ids_bytes = body[@sizeOf(archerdb.QueryUuidBatchFilter)..][0..ids_size];
+    const entity_ids = @as([*]const u128, @ptrCast(@alignCast(ids_bytes.ptr)))[0..filter.count];
+    for (entity_ids, 0..) |entity_id, index| {
+        label_stream.reset();
+        if (label_prefix.len > 0) try label_stream.writer().writeAll(label_prefix);
+        try label_stream.writer().print("entity_ids[{}]", .{index});
+        try print_struct(output, label_stream.getWritten(), &entity_id);
+    }
+}
+
+fn print_query_polygon_request_body(
+    output: std.io.AnyWriter,
+    body: []const u8,
+    label_prefix: []const u8,
+) !void {
+    if (body.len < @sizeOf(archerdb.QueryPolygonFilter)) {
+        try output.print(
+            "error: query_polygon body too small={} expected>={}\n",
+            .{ body.len, @sizeOf(archerdb.QueryPolygonFilter) },
+        );
+        return;
+    }
+
+    const filter = std.mem.bytesAsValue(
+        archerdb.QueryPolygonFilter,
+        body[0..@sizeOf(archerdb.QueryPolygonFilter)],
+    );
+
+    var label_buffer: [128]u8 = undefined;
+    var label_stream = std.io.fixedBufferStream(&label_buffer);
+    if (label_prefix.len > 0) try label_stream.writer().writeAll(label_prefix);
+    try label_stream.writer().writeAll("filter");
+    try print_struct(output, label_stream.getWritten(), filter);
+
+    const outer_vertices_size = @as(usize, filter.vertex_count) * @sizeOf(archerdb.PolygonVertex);
+    const hole_descriptors_size =
+        @as(usize, filter.hole_count) * @sizeOf(archerdb.HoleDescriptor);
+    const descriptors_offset = @sizeOf(archerdb.QueryPolygonFilter) + outer_vertices_size;
+    if (body.len < descriptors_offset + hole_descriptors_size) {
+        try output.print(
+            "error: query_polygon body truncated before hole descriptors body_size={} expected>={}\n",
+            .{ body.len, descriptors_offset + hole_descriptors_size },
+        );
+        return;
+    }
+
+    const vertices_bytes = body[@sizeOf(archerdb.QueryPolygonFilter)..][0..outer_vertices_size];
+    const outer_vertices = std.mem.bytesAsSlice(archerdb.PolygonVertex, vertices_bytes);
+    for (outer_vertices, 0..) |*vertex, index| {
+        label_stream.reset();
+        if (label_prefix.len > 0) try label_stream.writer().writeAll(label_prefix);
+        try label_stream.writer().print("outer_vertices[{}]", .{index});
+        try print_struct(output, label_stream.getWritten(), vertex);
+    }
+
+    const descriptors_bytes = body[descriptors_offset..][0..hole_descriptors_size];
+    const descriptors = std.mem.bytesAsSlice(archerdb.HoleDescriptor, descriptors_bytes);
+    var hole_vertices_offset = descriptors_offset + hole_descriptors_size;
+    for (descriptors, 0..) |*descriptor, hole_index| {
+        label_stream.reset();
+        if (label_prefix.len > 0) try label_stream.writer().writeAll(label_prefix);
+        try label_stream.writer().print("holes[{}].descriptor", .{hole_index});
+        try print_struct(output, label_stream.getWritten(), descriptor);
+
+        const hole_vertices_size =
+            @as(usize, descriptor.vertex_count) * @sizeOf(archerdb.PolygonVertex);
+        if (body.len < hole_vertices_offset + hole_vertices_size) {
+            try output.print(
+                "error: query_polygon body truncated in hole={} body_size={} expected>={}\n",
+                .{ hole_index, body.len, hole_vertices_offset + hole_vertices_size },
+            );
+            return;
+        }
+
+        const hole_vertices_bytes = body[hole_vertices_offset..][0..hole_vertices_size];
+        const hole_vertices = std.mem.bytesAsSlice(archerdb.PolygonVertex, hole_vertices_bytes);
+        for (hole_vertices, 0..) |*vertex, vertex_index| {
+            label_stream.reset();
+            if (label_prefix.len > 0) try label_stream.writer().writeAll(label_prefix);
+            try label_stream.writer().print(
+                "holes[{}].vertices[{}]",
+                .{ hole_index, vertex_index },
+            );
+            try print_struct(output, label_stream.getWritten(), vertex);
+        }
+        hole_vertices_offset += hole_vertices_size;
+    }
+
+    if (body.len != hole_vertices_offset) {
+        try output.print(
+            "warning: query_polygon trailing_bytes={}\n",
+            .{body.len - hole_vertices_offset},
+        );
+    }
+}
+
+fn print_batch_query_filter_body(
+    output: std.io.AnyWriter,
+    query_type: archerdb.BatchQueryType,
+    filter_body: []const u8,
+    label_prefix: []const u8,
+) !void {
+    switch (query_type) {
+        .uuid => {
+            if (filter_body.len < @sizeOf(archerdb.QueryUuidFilter)) {
+                try output.print(
+                    "error: batch_query uuid filter too small={} expected>={}\n",
+                    .{ filter_body.len, @sizeOf(archerdb.QueryUuidFilter) },
+                );
+                return;
+            }
+            const filter = std.mem.bytesAsValue(
+                archerdb.QueryUuidFilter,
+                filter_body[0..@sizeOf(archerdb.QueryUuidFilter)],
+            );
+            try print_struct(output, label_prefix, filter);
+        },
+        .radius => {
+            if (filter_body.len < @sizeOf(archerdb.QueryRadiusFilter)) {
+                try output.print(
+                    "error: batch_query radius filter too small={} expected>={}\n",
+                    .{ filter_body.len, @sizeOf(archerdb.QueryRadiusFilter) },
+                );
+                return;
+            }
+            const filter = std.mem.bytesAsValue(
+                archerdb.QueryRadiusFilter,
+                filter_body[0..@sizeOf(archerdb.QueryRadiusFilter)],
+            );
+            try print_struct(output, label_prefix, filter);
+        },
+        .polygon => try print_query_polygon_request_body(output, filter_body, label_prefix),
+        .latest => {
+            if (filter_body.len < @sizeOf(archerdb.QueryLatestFilter)) {
+                try output.print(
+                    "error: batch_query latest filter too small={} expected>={}\n",
+                    .{ filter_body.len, @sizeOf(archerdb.QueryLatestFilter) },
+                );
+                return;
+            }
+            const filter = std.mem.bytesAsValue(
+                archerdb.QueryLatestFilter,
+                filter_body[0..@sizeOf(archerdb.QueryLatestFilter)],
+            );
+            try print_struct(output, label_prefix, filter);
+        },
+    }
+}
+
+fn print_batch_query_request_body(output: std.io.AnyWriter, body: []const u8) !void {
+    if (body.len < @sizeOf(archerdb.BatchQueryRequest)) {
+        try output.print(
+            "error: batch_query body too small={} expected>={}\n",
+            .{ body.len, @sizeOf(archerdb.BatchQueryRequest) },
+        );
+        return;
+    }
+
+    const request = std.mem.bytesAsValue(
+        archerdb.BatchQueryRequest,
+        body[0..@sizeOf(archerdb.BatchQueryRequest)],
+    );
+    try print_struct(output, "request", request);
+
+    var offset: usize = @sizeOf(archerdb.BatchQueryRequest);
+    var label_buffer: [128]u8 = undefined;
+    for (0..request.query_count) |query_index| {
+        if (body.len < offset + @sizeOf(archerdb.BatchQueryEntry)) {
+            try output.print(
+                "error: batch_query truncated before entry={} body_size={} offset={}\n",
+                .{ query_index, body.len, offset },
+            );
+            return;
+        }
+
+        const entry = std.mem.bytesAsValue(
+            archerdb.BatchQueryEntry,
+            body[offset..][0..@sizeOf(archerdb.BatchQueryEntry)],
+        );
+        var label_stream = std.io.fixedBufferStream(&label_buffer);
+        try label_stream.writer().print("queries[{}].entry", .{query_index});
+        try print_struct(output, label_stream.getWritten(), entry);
+        offset += @sizeOf(archerdb.BatchQueryEntry);
+
+        const filter_size = switch (entry.query_type) {
+            .uuid => @sizeOf(archerdb.QueryUuidFilter),
+            .radius => @sizeOf(archerdb.QueryRadiusFilter),
+            .latest => @sizeOf(archerdb.QueryLatestFilter),
+            .polygon => blk: {
+                if (body.len < offset + @sizeOf(archerdb.QueryPolygonFilter)) {
+                    try output.print(
+                        "error: batch_query polygon header truncated for entry={}\n",
+                        .{query_index},
+                    );
+                    return;
+                }
+                const filter = std.mem.bytesAsValue(
+                    archerdb.QueryPolygonFilter,
+                    body[offset..][0..@sizeOf(archerdb.QueryPolygonFilter)],
+                );
+                break :blk @sizeOf(archerdb.QueryPolygonFilter) +
+                    @as(usize, filter.vertex_count) * @sizeOf(archerdb.PolygonVertex) +
+                    @as(usize, filter.hole_count) * @sizeOf(archerdb.HoleDescriptor);
+            },
+        };
+
+        if (body.len < offset + filter_size) {
+            try output.print(
+                "error: batch_query filter truncated for entry={} body_size={} expected>={}\n",
+                .{ query_index, body.len, offset + filter_size },
+            );
+            return;
+        }
+
+        label_stream.reset();
+        try label_stream.writer().print("queries[{}].filter", .{query_index});
+        try print_batch_query_filter_body(
+            output,
+            entry.query_type,
+            body[offset..][0..filter_size],
+            label_stream.getWritten(),
+        );
+        offset += filter_size;
+    }
+
+    if (body.len != offset) {
+        try output.print("warning: batch_query trailing_bytes={}\n", .{body.len - offset});
+    }
+}
+
+fn print_prepare_query_request_body(output: std.io.AnyWriter, body: []const u8) !void {
+    if (body.len < @sizeOf(archerdb.PrepareQueryRequest)) {
+        try output.print(
+            "error: prepare_query body too small={} expected>={}\n",
+            .{ body.len, @sizeOf(archerdb.PrepareQueryRequest) },
+        );
+        return;
+    }
+
+    const request = std.mem.bytesAsValue(
+        archerdb.PrepareQueryRequest,
+        body[0..@sizeOf(archerdb.PrepareQueryRequest)],
+    );
+    try print_struct(output, "request", request);
+
+    const total_size = @sizeOf(archerdb.PrepareQueryRequest) + request.name_len + request.query_len;
+    if (body.len < total_size) {
+        try output.print(
+            "error: prepare_query body truncated body_size={} expected>={}\n",
+            .{ body.len, total_size },
+        );
+        return;
+    }
+
+    const name = body[@sizeOf(archerdb.PrepareQueryRequest)..][0..request.name_len];
+    const query_text =
+        body[@sizeOf(archerdb.PrepareQueryRequest) + request.name_len ..][0..request.query_len];
+    try output.print("name=\"{}\"\n", .{std.zig.fmtEscapes(name)});
+    try output.print("query=\"{}\"\n", .{std.zig.fmtEscapes(query_text)});
+
+    if (body.len != total_size) {
+        try output.print("warning: prepare_query trailing_bytes={}\n", .{body.len - total_size});
+    }
+}
+
+fn print_execute_prepared_request_body(output: std.io.AnyWriter, body: []const u8) !void {
+    if (body.len < @sizeOf(archerdb.ExecutePreparedRequest)) {
+        try output.print(
+            "error: execute_prepared body too small={} expected>={}\n",
+            .{ body.len, @sizeOf(archerdb.ExecutePreparedRequest) },
+        );
+        return;
+    }
+
+    const request = std.mem.bytesAsValue(
+        archerdb.ExecutePreparedRequest,
+        body[0..@sizeOf(archerdb.ExecutePreparedRequest)],
+    );
+    try print_struct(output, "request", request);
+
+    const params = body[@sizeOf(archerdb.ExecutePreparedRequest)..];
+    try output.print("params.len={}\n", .{params.len});
+    try output.print("params.hex={}\n", .{std.fmt.fmtSliceHexLower(params)});
+}
+
+fn print_query_uuid_reply_body(output: std.io.AnyWriter, body: []const u8) !void {
+    if (body.len < @sizeOf(archerdb.QueryUuidResponse)) {
+        try output.print(
+            "error: query_uuid reply too small={} expected>={}\n",
+            .{ body.len, @sizeOf(archerdb.QueryUuidResponse) },
+        );
+        return;
+    }
+
+    const response = std.mem.bytesAsValue(
+        archerdb.QueryUuidResponse,
+        body[0..@sizeOf(archerdb.QueryUuidResponse)],
+    );
+    try print_struct(output, "response", response);
+
+    const event_offset = @sizeOf(archerdb.QueryUuidResponse);
+    if (response.status == 0) {
+        const expected_size = event_offset + @sizeOf(archerdb.GeoEvent);
+        if (body.len < expected_size) {
+            try output.print(
+                "error: query_uuid reply truncated body_size={} expected>={}\n",
+                .{ body.len, expected_size },
+            );
+            return;
+        }
+        const event = std.mem.bytesAsValue(
+            archerdb.GeoEvent,
+            body[event_offset..][0..@sizeOf(archerdb.GeoEvent)],
+        );
+        try print_struct(output, "events[0]", event);
+        if (body.len != expected_size) {
+            try output.print("warning: query_uuid trailing_bytes={}\n", .{body.len - expected_size});
+        }
+    } else if (body.len != event_offset) {
+        try output.print(
+            "warning: query_uuid non-success trailing_bytes={}\n",
+            .{body.len - event_offset},
+        );
+    }
+}
+
+fn print_query_response_body(output: std.io.AnyWriter, body: []const u8) !void {
+    if (body.len < @sizeOf(archerdb.QueryResponse)) {
+        try output.print(
+            "error: query response too small={} expected>={}\n",
+            .{ body.len, @sizeOf(archerdb.QueryResponse) },
+        );
+        return;
+    }
+
+    const response = std.mem.bytesAsValue(
+        archerdb.QueryResponse,
+        body[0..@sizeOf(archerdb.QueryResponse)],
+    );
+    try print_struct(output, "response", response);
+
+    const events_size = @as(usize, response.count) * @sizeOf(archerdb.GeoEvent);
+    const expected_size = @sizeOf(archerdb.QueryResponse) + events_size;
+    if (body.len < expected_size) {
+        try output.print(
+            "error: query response truncated body_size={} expected>={}\n",
+            .{ body.len, expected_size },
+        );
+        return;
+    }
+
+    const events_bytes = body[@sizeOf(archerdb.QueryResponse)..][0..events_size];
+    const events = std.mem.bytesAsSlice(archerdb.GeoEvent, events_bytes);
+    try print_geo_events(output, "", events);
+    if (body.len != expected_size) {
+        try output.print("warning: query response trailing_bytes={}\n", .{body.len - expected_size});
+    }
+}
+
+fn print_query_uuid_batch_reply_body(output: std.io.AnyWriter, body: []const u8) !void {
+    if (body.len < @sizeOf(archerdb.QueryUuidBatchResult)) {
+        try output.print(
+            "error: query_uuid_batch reply too small={} expected>={}\n",
+            .{ body.len, @sizeOf(archerdb.QueryUuidBatchResult) },
+        );
+        return;
+    }
+
+    const result = std.mem.bytesAsValue(
+        archerdb.QueryUuidBatchResult,
+        body[0..@sizeOf(archerdb.QueryUuidBatchResult)],
+    );
+    try print_struct(output, "result", result);
+    if (result.error_status()) |status| {
+        try output.print("result.error_status={s}\n", .{@tagName(status)});
+    }
+
+    const not_found_offset = @sizeOf(archerdb.QueryUuidBatchResult);
+    const not_found_size = @as(usize, result.not_found_count) * @sizeOf(u16);
+    const events_offset = std.mem.alignForward(usize, not_found_offset + not_found_size, 16);
+    const events_size = @as(usize, result.found_count) * @sizeOf(archerdb.GeoEvent);
+    const expected_size = events_offset + events_size;
+    if (body.len < expected_size) {
+        try output.print(
+            "error: query_uuid_batch reply truncated body_size={} expected>={}\n",
+            .{ body.len, expected_size },
+        );
+        return;
+    }
+
+    const not_found_bytes = body[not_found_offset..][0..not_found_size];
+    const not_found_indices = std.mem.bytesAsSlice(u16, not_found_bytes);
+    var label_buffer: [128]u8 = undefined;
+    for (not_found_indices, 0..) |not_found_index, index| {
+        var label_stream = std.io.fixedBufferStream(&label_buffer);
+        try label_stream.writer().print("not_found_indices[{}]", .{index});
+        try print_struct(output, label_stream.getWritten(), &not_found_index);
+    }
+
+    const events_bytes = body[events_offset..][0..events_size];
+    const events = std.mem.bytesAsSlice(archerdb.GeoEvent, events_bytes);
+    try print_geo_events(output, "", events);
+
+    if (body.len != expected_size) {
+        try output.print(
+            "warning: query_uuid_batch trailing_bytes={}\n",
+            .{body.len - expected_size},
+        );
+    }
+}
+
+fn print_heuristic_query_result_body(output: std.io.AnyWriter, body: []const u8) !void {
+    if (body.len >= @sizeOf(archerdb.QueryUuidResponse)) {
+        const response = std.mem.bytesAsValue(
+            archerdb.QueryUuidResponse,
+            body[0..@sizeOf(archerdb.QueryUuidResponse)],
+        ).*;
+        if (stdx.zeroed(&response.reserved) and
+            (response.status == 0 or response.status == 200 or response.status == 210) and
+            (body.len == @sizeOf(archerdb.QueryUuidResponse) or
+                body.len ==
+                @sizeOf(archerdb.QueryUuidResponse) + @sizeOf(archerdb.GeoEvent)))
+        {
+            return print_query_uuid_reply_body(output, body);
+        }
+
+        const query_response = std.mem.bytesAsValue(
+            archerdb.QueryResponse,
+            body[0..@sizeOf(archerdb.QueryResponse)],
+        ).*;
+        const expected_size =
+            @sizeOf(archerdb.QueryResponse) +
+            @as(usize, query_response.count) * @sizeOf(archerdb.GeoEvent);
+        if (query_response.has_more <= 1 and
+            query_response.partial_result <= 1 and
+            stdx.zeroed(&query_response.reserved) and
+            body.len == expected_size)
+        {
+            return print_query_response_body(output, body);
+        }
+    }
+
+    try output.print("body.len={}\n", .{body.len});
+    try output.print("body.hex={}\n", .{std.fmt.fmtSliceHexLower(body)});
+}
+
+fn print_batch_query_reply_body(output: std.io.AnyWriter, body: []const u8) !void {
+    if (body.len < @sizeOf(archerdb.BatchQueryResponse)) {
+        try output.print(
+            "error: batch_query reply too small={} expected>={}\n",
+            .{ body.len, @sizeOf(archerdb.BatchQueryResponse) },
+        );
+        return;
+    }
+
+    const response = std.mem.bytesAsValue(
+        archerdb.BatchQueryResponse,
+        body[0..@sizeOf(archerdb.BatchQueryResponse)],
+    );
+    try print_struct(output, "response", response);
+
+    const entries_size =
+        @as(usize, response.total_count) * @sizeOf(archerdb.BatchQueryResultEntry);
+    const results_offset = @sizeOf(archerdb.BatchQueryResponse) + entries_size;
+    if (body.len < results_offset) {
+        try output.print(
+            "error: batch_query reply truncated before result entries body_size={} expected>={}\n",
+            .{ body.len, results_offset },
+        );
+        return;
+    }
+
+    const entries_bytes = body[@sizeOf(archerdb.BatchQueryResponse)..][0..entries_size];
+    const entries = std.mem.bytesAsSlice(archerdb.BatchQueryResultEntry, entries_bytes);
+    const result_data = body[results_offset..];
+
+    var label_buffer: [128]u8 = undefined;
+    for (entries, 0..) |*entry, entry_index| {
+        var label_stream = std.io.fixedBufferStream(&label_buffer);
+        try label_stream.writer().print("results[{}]", .{entry_index});
+        try print_struct(output, label_stream.getWritten(), entry);
+
+        if (@as(usize, entry.result_offset) + @as(usize, entry.result_length) > result_data.len) {
+            try output.print(
+                "error: batch_query result={} out of bounds offset={} length={} data_len={}\n",
+                .{ entry_index, entry.result_offset, entry.result_length, result_data.len },
+            );
+            continue;
+        }
+
+        const nested = result_data[@intCast(entry.result_offset)..][0..entry.result_length];
+        try print_heuristic_query_result_body(output, nested);
+    }
+}
+
 fn print_prepare_body(output: std.io.AnyWriter, prepare: []const u8) !void {
     const header = std.mem.bytesAsValue(vsr.Header.Prepare, prepare[0..@sizeOf(vsr.Header)]);
+    if (try print_prepare_body_variable(output, header.operation, prepare[0..header.size])) return;
+
     inline for (operation_schemas) |operation_schema| {
         if (operation_schema.operation == header.operation) {
             const event_size = @sizeOf(operation_schema.Event);
@@ -1565,12 +2171,17 @@ fn print_prepare_body(output: std.io.AnyWriter, prepare: []const u8) !void {
             return;
         }
     } else {
-        try output.print("error: unimplemented operation={s}\n", .{@tagName(header.operation)});
+        var operation_buffer: [48]u8 = undefined;
+        try output.print("error: unknown/future/corrupt operation={s}\n", .{
+            format_operation_label(header.operation, &operation_buffer),
+        });
     }
 }
 
 fn print_reply_body(output: std.io.AnyWriter, reply: []const u8) !void {
     const header = std.mem.bytesAsValue(vsr.Header.Reply, reply[0..@sizeOf(vsr.Header)]);
+    if (try print_reply_body_variable(output, header.operation, reply[0..header.size])) return;
+
     inline for (operation_schemas) |operation_schema| {
         if (operation_schema.operation == header.operation) {
             const result_size = @sizeOf(operation_schema.Result);
@@ -1596,7 +2207,10 @@ fn print_reply_body(output: std.io.AnyWriter, reply: []const u8) !void {
             return;
         }
     } else {
-        try output.print("error: unimplemented operation={s}\n", .{@tagName(header.operation)});
+        var operation_buffer: [48]u8 = undefined;
+        try output.print("error: unknown/future/corrupt operation={s}\n", .{
+            format_operation_label(header.operation, &operation_buffer),
+        });
     }
 }
 
@@ -1691,4 +2305,1009 @@ fn GroupByType(comptime count_max: usize) type {
             return group_by.matches[0..distinct];
         }
     };
+}
+
+fn test_render_body(
+    comptime render_fn: fn (std.io.AnyWriter, []const u8) anyerror!void,
+    body: []const u8,
+) ![]u8 {
+    var output = std.ArrayList(u8).init(std.testing.allocator);
+    errdefer output.deinit();
+    try render_fn(output.writer().any(), body);
+    return try output.toOwnedSlice();
+}
+
+fn test_prepare_message(
+    operation: StateMachine.Operation,
+    body: []const u8,
+) ![]u8 {
+    return test_prepare_message_vsr(vsr.Operation.from(StateMachine.Operation, operation), body);
+}
+
+fn test_prepare_message_vsr(
+    operation: vsr.Operation,
+    body: []const u8,
+) ![]u8 {
+    const message = try std.testing.allocator.alloc(u8, @sizeOf(vsr.Header) + body.len);
+    errdefer std.testing.allocator.free(message);
+    @memset(message, 0);
+
+    const header = std.mem.bytesAsValue(vsr.Header.Prepare, message[0..@sizeOf(vsr.Header)]);
+    header.* = std.mem.zeroInit(vsr.Header.Prepare, .{
+        .cluster = 1,
+        .size = @as(u32, @intCast(@sizeOf(vsr.Header) + body.len)),
+        .release = vsr.Release.zero,
+        .command = .prepare,
+        .operation = operation,
+    });
+    @memcpy(message[@sizeOf(vsr.Header)..], body);
+    return message;
+}
+
+fn test_reply_message(
+    operation: StateMachine.Operation,
+    body: []const u8,
+) ![]u8 {
+    return test_reply_message_vsr(vsr.Operation.from(StateMachine.Operation, operation), body);
+}
+
+fn test_reply_message_vsr(
+    operation: vsr.Operation,
+    body: []const u8,
+) ![]u8 {
+    const message = try std.testing.allocator.alloc(u8, @sizeOf(vsr.Header) + body.len);
+    errdefer std.testing.allocator.free(message);
+    @memset(message, 0);
+
+    const header = std.mem.bytesAsValue(vsr.Header.Reply, message[0..@sizeOf(vsr.Header)]);
+    header.* = std.mem.zeroInit(vsr.Header.Reply, .{
+        .cluster = 1,
+        .size = @as(u32, @intCast(@sizeOf(vsr.Header) + body.len)),
+        .view = 1,
+        .release = vsr.Release.zero,
+        .command = .reply,
+        .operation = operation,
+    });
+    @memcpy(message[@sizeOf(vsr.Header)..], body);
+    return message;
+}
+
+fn test_event(entity_id: u128, timestamp: u64) archerdb.GeoEvent {
+    return std.mem.zeroInit(archerdb.GeoEvent, .{
+        .id = (@as(u128, 0xabc) << 64) | timestamp,
+        .entity_id = entity_id,
+        .lat_nano = 52_520_000_000,
+        .lon_nano = 13_405_000_000,
+        .group_id = 7,
+        .timestamp = timestamp,
+        .ttl_seconds = 30,
+    });
+}
+
+fn test_trailer_block(
+    block_type: schema.BlockType,
+    metadata: schema.TrailerNode.Metadata,
+    body: []const u8,
+) !BlockPtr {
+    const block = try allocate_block(std.testing.allocator);
+
+    @memcpy(block[@sizeOf(vsr.Header)..][0..body.len], body);
+    const header = std.mem.bytesAsValue(vsr.Header.Block, block[0..@sizeOf(vsr.Header)]);
+    header.* = .{
+        .cluster = 1,
+        .metadata_bytes = @bitCast(metadata),
+        .address = 7,
+        .snapshot = 0,
+        .size = @as(u32, @intCast(@sizeOf(vsr.Header) + body.len)),
+        .command = .block,
+        .release = .{ .value = 1 },
+        .block_type = block_type,
+    };
+    header.set_checksum_body(body);
+    header.set_checksum();
+    return block;
+}
+
+test "inspect: print_prepare_body decodes query_uuid_batch" {
+    const body_len = @sizeOf(archerdb.QueryUuidBatchFilter) + 2 * @sizeOf(u128);
+    var body: [body_len]u8 align(@alignOf(vsr.Header)) = @splat(0);
+    const filter = std.mem.bytesAsValue(
+        archerdb.QueryUuidBatchFilter,
+        body[0..@sizeOf(archerdb.QueryUuidBatchFilter)],
+    );
+    filter.* = .{ .count = 2 };
+    const ids = std.mem.bytesAsSlice(u128, body[@sizeOf(archerdb.QueryUuidBatchFilter)..]);
+    ids[0] = 0x11;
+    ids[1] = 0x22;
+
+    const message = try test_prepare_message(.query_uuid_batch, &body);
+    defer std.testing.allocator.free(message);
+
+    var output = std.ArrayList(u8).init(std.testing.allocator);
+    defer output.deinit();
+    try print_prepare_body(output.writer().any(), message);
+
+    try std.testing.expect(std.mem.indexOf(u8, output.items, "filter.count=2") != null);
+    try std.testing.expect(
+        std.mem.indexOf(u8, output.items, "entity_ids[___0]=0x00000000000000000000000000000011") != null,
+    );
+    try std.testing.expect(
+        std.mem.indexOf(u8, output.items, "entity_ids[___1]=0x00000000000000000000000000000022") != null,
+    );
+}
+
+test "inspect: print_batch_query_request decodes nested polygon filters" {
+    const outer_vertices = [_]archerdb.PolygonVertex{
+        .{ .lat_nano = 1, .lon_nano = 2 },
+        .{ .lat_nano = 3, .lon_nano = 4 },
+        .{ .lat_nano = 5, .lon_nano = 6 },
+    };
+    const hole_descriptor = archerdb.HoleDescriptor{ .vertex_count = 3 };
+    const hole_vertices = [_]archerdb.PolygonVertex{
+        .{ .lat_nano = 7, .lon_nano = 8 },
+        .{ .lat_nano = 9, .lon_nano = 10 },
+        .{ .lat_nano = 11, .lon_nano = 12 },
+    };
+
+    const polygon_body_len = @sizeOf(archerdb.QueryPolygonFilter) +
+        @sizeOf(@TypeOf(outer_vertices)) +
+        @sizeOf(@TypeOf(hole_descriptor)) +
+        @sizeOf(@TypeOf(hole_vertices));
+    const request_len = @sizeOf(batch_query_mod.BatchQueryRequest) +
+        @sizeOf(batch_query_mod.BatchQueryEntry) +
+        @sizeOf(archerdb.QueryUuidFilter) +
+        @sizeOf(batch_query_mod.BatchQueryEntry) +
+        polygon_body_len;
+
+    var request_body: [request_len]u8 align(@alignOf(vsr.Header)) = @splat(0);
+    const request = std.mem.bytesAsValue(
+        batch_query_mod.BatchQueryRequest,
+        request_body[0..@sizeOf(batch_query_mod.BatchQueryRequest)],
+    );
+    request.* = .{ .query_count = 2 };
+
+    var offset: usize = @sizeOf(batch_query_mod.BatchQueryRequest);
+    const entry_uuid = std.mem.bytesAsValue(
+        batch_query_mod.BatchQueryEntry,
+        request_body[offset..][0..@sizeOf(batch_query_mod.BatchQueryEntry)],
+    );
+    entry_uuid.* = .{ .query_type = .uuid, .query_id = 7 };
+    offset += @sizeOf(batch_query_mod.BatchQueryEntry);
+    const uuid_filter = std.mem.bytesAsValue(
+        archerdb.QueryUuidFilter,
+        request_body[offset..][0..@sizeOf(archerdb.QueryUuidFilter)],
+    );
+    uuid_filter.* = .{ .entity_id = 0x55 };
+    offset += @sizeOf(archerdb.QueryUuidFilter);
+
+    const entry_polygon = std.mem.bytesAsValue(
+        batch_query_mod.BatchQueryEntry,
+        request_body[offset..][0..@sizeOf(batch_query_mod.BatchQueryEntry)],
+    );
+    entry_polygon.* = .{ .query_type = .polygon, .query_id = 8 };
+    offset += @sizeOf(batch_query_mod.BatchQueryEntry);
+
+    const polygon_filter = std.mem.bytesAsValue(
+        archerdb.QueryPolygonFilter,
+        request_body[offset..][0..@sizeOf(archerdb.QueryPolygonFilter)],
+    );
+    polygon_filter.* = std.mem.zeroInit(archerdb.QueryPolygonFilter, .{
+        .vertex_count = outer_vertices.len,
+        .hole_count = 1,
+        .limit = 5,
+    });
+    offset += @sizeOf(archerdb.QueryPolygonFilter);
+    @memcpy(
+        request_body[offset..][0..@sizeOf(@TypeOf(outer_vertices))],
+        std.mem.sliceAsBytes(&outer_vertices),
+    );
+    offset += @sizeOf(@TypeOf(outer_vertices));
+    @memcpy(
+        request_body[offset..][0..@sizeOf(@TypeOf(hole_descriptor))],
+        std.mem.asBytes(&hole_descriptor),
+    );
+    offset += @sizeOf(@TypeOf(hole_descriptor));
+    @memcpy(
+        request_body[offset..][0..@sizeOf(@TypeOf(hole_vertices))],
+        std.mem.sliceAsBytes(&hole_vertices),
+    );
+
+    const output = try test_render_body(print_batch_query_request, &request_body);
+    defer std.testing.allocator.free(output);
+
+    try std.testing.expect(std.mem.indexOf(u8, output, "request.query_count=2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "queries[0].entry.query_id=7") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "queries[1].filter.vertex_count=3") != null);
+    try std.testing.expect(
+        std.mem.indexOf(u8, output, "queries[1].holes[0].vertices[2].lon_nano=12") != null,
+    );
+}
+
+test "inspect: print_reply_body decodes query_uuid_batch results" {
+    const not_found_count: usize = 1;
+    const events_offset: usize = 32;
+    const body_len: usize = events_offset + @sizeOf(archerdb.GeoEvent);
+    var body: [body_len]u8 align(@alignOf(vsr.Header)) = @splat(0);
+
+    const result = std.mem.bytesAsValue(
+        archerdb.QueryUuidBatchResult,
+        body[0..@sizeOf(archerdb.QueryUuidBatchResult)],
+    );
+    result.* = .{ .found_count = 1, .not_found_count = 1 };
+    const not_found = std.mem.bytesAsSlice(
+        u16,
+        body[@sizeOf(archerdb.QueryUuidBatchResult)..][0 .. not_found_count * @sizeOf(u16)],
+    );
+    not_found[0] = 1;
+    const event = std.mem.bytesAsValue(
+        archerdb.GeoEvent,
+        body[events_offset..][0..@sizeOf(archerdb.GeoEvent)],
+    );
+    event.* = test_event(0x1234, 99);
+
+    const message = try test_reply_message(.query_uuid_batch, &body);
+    defer std.testing.allocator.free(message);
+
+    var output = std.ArrayList(u8).init(std.testing.allocator);
+    defer output.deinit();
+    try print_reply_body(output.writer().any(), message);
+
+    try std.testing.expect(std.mem.indexOf(u8, output.items, "result.found_count=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output.items, "not_found_indices[___0]=1") != null);
+    try std.testing.expect(
+        std.mem.indexOf(u8, output.items, "events[0].entity_id=0x00000000000000000000000000001234") != null,
+    );
+}
+
+test "inspect: print_batch_query_reply prints result entry payload summaries" {
+    const response_len = @sizeOf(batch_query_mod.BatchQueryResponse) +
+        2 * @sizeOf(batch_query_mod.BatchQueryResultEntry) +
+        4;
+    var body: [response_len]u8 align(@alignOf(vsr.Header)) = @splat(0);
+    const response = std.mem.bytesAsValue(
+        batch_query_mod.BatchQueryResponse,
+        body[0..@sizeOf(batch_query_mod.BatchQueryResponse)],
+    );
+    response.* = .{ .total_count = 2, .success_count = 1, .error_count = 1, .has_more = 0 };
+
+    const entries = std.mem.bytesAsSlice(
+        batch_query_mod.BatchQueryResultEntry,
+        body[@sizeOf(batch_query_mod.BatchQueryResponse)..][0 .. 2 * @sizeOf(batch_query_mod.BatchQueryResultEntry)],
+    );
+    entries[0] = .{ .query_id = 7, .status = 0, .result_offset = 0, .result_length = 4 };
+    entries[1] = .{ .query_id = 8, .status = 9, .result_offset = 4, .result_length = 0 };
+    @memcpy(body[response_len - 4 ..][0..4], &[_]u8{ 0xde, 0xad, 0xbe, 0xef });
+
+    const output = try test_render_body(print_batch_query_reply, &body);
+    defer std.testing.allocator.free(output);
+
+    try std.testing.expect(std.mem.indexOf(u8, output, "results[0].query_id=7") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "results[1].status=9") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "deadbeef") != null);
+}
+
+test "inspect: print_block decodes free_set words and client_sessions trailer" {
+    const free_set_words = [_]u64{ 0x1234, 0x5678 };
+    const free_set_block = try test_trailer_block(
+        .free_set,
+        .{
+            .previous_trailer_block_checksum = 0,
+            .previous_trailer_block_address = 0,
+        },
+        std.mem.sliceAsBytes(&free_set_words),
+    );
+    defer std.testing.allocator.free(free_set_block);
+
+    var output = std.ArrayList(u8).init(std.testing.allocator);
+    defer output.deinit();
+    try print_block(std.testing.allocator, output.writer().any(), free_set_block);
+    try std.testing.expect(std.mem.indexOf(u8, output.items, "body.word_count=2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output.items, "0x0000000000001234") != null);
+
+    var zero_client_sessions: [vsr.ClientSessions.encode_size]u8 align(@alignOf(vsr.Header)) = @splat(0);
+    const client_sessions_block = try test_trailer_block(
+        .client_sessions,
+        .{
+            .previous_trailer_block_checksum = 0,
+            .previous_trailer_block_address = 0,
+        },
+        &zero_client_sessions,
+    );
+    defer std.testing.allocator.free(client_sessions_block);
+
+    output.clearRetainingCapacity();
+    try print_block(std.testing.allocator, output.writer().any(), client_sessions_block);
+    try std.testing.expect(std.mem.indexOf(u8, output.items, "body.entry_count=0") != null);
+}
+
+test "inspect: current operations never print unimplemented fallbacks" {
+    const empty_body = &[_]u8{};
+    var output = std.ArrayList(u8).init(std.testing.allocator);
+    defer output.deinit();
+
+    inline for (&[_]vsr.Operation{
+        .reserved,
+        .root,
+        .register,
+        .reconfigure,
+        .pulse,
+        .upgrade,
+        .noop,
+    }) |operation| {
+        const prepare_message = try test_prepare_message_vsr(operation, empty_body);
+        defer std.testing.allocator.free(prepare_message);
+
+        output.clearRetainingCapacity();
+        try print_prepare_body(output.writer().any(), prepare_message);
+        try std.testing.expect(std.mem.indexOf(u8, output.items, "unimplemented") == null);
+
+        const reply_message = try test_reply_message_vsr(operation, empty_body);
+        defer std.testing.allocator.free(reply_message);
+
+        output.clearRetainingCapacity();
+        try print_reply_body(output.writer().any(), reply_message);
+        try std.testing.expect(std.mem.indexOf(u8, output.items, "unimplemented") == null);
+    }
+
+    inline for (@typeInfo(StateMachine.Operation).@"enum".fields) |field| {
+        const operation = @field(StateMachine.Operation, field.name);
+        const vsr_operation = vsr.Operation.from(StateMachine.Operation, operation);
+
+        const prepare_message = try test_prepare_message_vsr(vsr_operation, empty_body);
+        defer std.testing.allocator.free(prepare_message);
+
+        output.clearRetainingCapacity();
+        try print_prepare_body(output.writer().any(), prepare_message);
+        try std.testing.expect(std.mem.indexOf(u8, output.items, "unimplemented") == null);
+
+        const reply_message = try test_reply_message_vsr(vsr_operation, empty_body);
+        defer std.testing.allocator.free(reply_message);
+
+        output.clearRetainingCapacity();
+        try print_reply_body(output.writer().any(), reply_message);
+        try std.testing.expect(std.mem.indexOf(u8, output.items, "unimplemented") == null);
+    }
+}
+
+test "inspect: block type labels remain stable for reserved and known values" {
+    var block_type_buffer: [32]u8 = undefined;
+
+    try std.testing.expectEqualStrings(
+        "reserved",
+        format_block_type_label(.reserved, &block_type_buffer),
+    );
+    try std.testing.expectEqualStrings(
+        "free_set",
+        format_block_type_label(.free_set, &block_type_buffer),
+    );
+}
+
+fn print_prepare_body_variable(
+    output: std.io.AnyWriter,
+    operation: vsr.Operation,
+    prepare: []const u8,
+) !bool {
+    const body = prepare[@sizeOf(vsr.Header)..];
+
+    if (operation.vsr_reserved() or !operation.valid(StateMachine.Operation)) return false;
+
+    return switch (operation.cast(StateMachine.Operation)) {
+        .query_uuid_batch => blk: {
+            try print_query_uuid_batch_filter(output, body);
+            break :blk true;
+        },
+        .query_polygon => blk: {
+            try print_query_polygon_filter(output, body);
+            break :blk true;
+        },
+        .batch_query => blk: {
+            try print_batch_query_request(output, body);
+            break :blk true;
+        },
+        .prepare_query => blk: {
+            try print_prepare_query_request(output, body);
+            break :blk true;
+        },
+        .execute_prepared => blk: {
+            try print_execute_prepared_request(output, body);
+            break :blk true;
+        },
+        else => false,
+    };
+}
+
+fn print_reply_body_variable(
+    output: std.io.AnyWriter,
+    operation: vsr.Operation,
+    reply: []const u8,
+) !bool {
+    const body = reply[@sizeOf(vsr.Header)..];
+
+    if (operation.vsr_reserved() or !operation.valid(StateMachine.Operation)) return false;
+
+    return switch (operation.cast(StateMachine.Operation)) {
+        .query_uuid => blk: {
+            try print_query_uuid_reply(output, body);
+            break :blk true;
+        },
+        .query_uuid_batch => blk: {
+            try print_query_uuid_batch_reply(output, body);
+            break :blk true;
+        },
+        .query_radius, .query_polygon, .query_latest => blk: {
+            try print_query_events_reply(output, body);
+            break :blk true;
+        },
+        .batch_query => blk: {
+            try print_batch_query_reply(output, body);
+            break :blk true;
+        },
+        .execute_prepared => blk: {
+            try print_execute_prepared_reply(output, body);
+            break :blk true;
+        },
+        else => false,
+    };
+}
+
+fn print_query_uuid_batch_filter(output: std.io.AnyWriter, body: []const u8) !void {
+    if (body.len < @sizeOf(archerdb.QueryUuidBatchFilter)) {
+        try output.print(
+            "error: query_uuid_batch body too small ({d} < {d})\n",
+            .{ body.len, @sizeOf(archerdb.QueryUuidBatchFilter) },
+        );
+        return;
+    }
+
+    const filter = std.mem.bytesAsValue(
+        archerdb.QueryUuidBatchFilter,
+        body[0..@sizeOf(archerdb.QueryUuidBatchFilter)],
+    );
+    try print_struct(output, "filter", filter);
+
+    const ids_size = @as(usize, filter.count) * @sizeOf(u128);
+    const expected_size = @sizeOf(archerdb.QueryUuidBatchFilter) + ids_size;
+    if (body.len != expected_size) {
+        try output.print("error: unexpected body size={}, expected={}\n", .{
+            body.len,
+            expected_size,
+        });
+        return;
+    }
+
+    const entity_ids = std.mem.bytesAsSlice(
+        u128,
+        body[@sizeOf(archerdb.QueryUuidBatchFilter)..],
+    );
+    for (entity_ids, 0..) |entity_id, i| {
+        try output.print("entity_ids[{:_>4}]=0x{x:0>32}\n", .{ i, entity_id });
+    }
+}
+
+fn print_query_polygon_filter(output: std.io.AnyWriter, body: []const u8) !void {
+    if (body.len < @sizeOf(archerdb.QueryPolygonFilter)) {
+        try output.print(
+            "error: query_polygon body too small ({d} < {d})\n",
+            .{ body.len, @sizeOf(archerdb.QueryPolygonFilter) },
+        );
+        return;
+    }
+
+    const filter = std.mem.bytesAsValue(
+        archerdb.QueryPolygonFilter,
+        body[0..@sizeOf(archerdb.QueryPolygonFilter)],
+    );
+    try print_struct(output, "filter", filter);
+
+    const outer_vertices_size = @as(usize, filter.vertex_count) * @sizeOf(archerdb.PolygonVertex);
+    const hole_descriptors_size = @as(usize, filter.hole_count) * @sizeOf(archerdb.HoleDescriptor);
+    const descriptors_offset = @sizeOf(archerdb.QueryPolygonFilter) + outer_vertices_size;
+
+    if (body.len < descriptors_offset + hole_descriptors_size) {
+        try output.print("error: polygon body truncated before hole descriptors\n", .{});
+        return;
+    }
+
+    const outer_vertices = std.mem.bytesAsSlice(
+        archerdb.PolygonVertex,
+        body[@sizeOf(archerdb.QueryPolygonFilter)..][0..outer_vertices_size],
+    );
+    for (outer_vertices, 0..) |*vertex, i| {
+        var label_buffer: [64]u8 = undefined;
+        var label_stream = std.io.fixedBufferStream(&label_buffer);
+        try label_stream.writer().print("outer_vertices[{}]", .{i});
+        try print_struct(output, label_stream.getWritten(), vertex);
+    }
+
+    const hole_descriptors = std.mem.bytesAsSlice(
+        archerdb.HoleDescriptor,
+        body[descriptors_offset..][0..hole_descriptors_size],
+    );
+    var hole_vertices_offset = descriptors_offset + hole_descriptors_size;
+    for (hole_descriptors, 0..) |*descriptor, hole_index| {
+        var label_buffer: [64]u8 = undefined;
+        var label_stream = std.io.fixedBufferStream(&label_buffer);
+        try label_stream.writer().print("holes[{}].descriptor", .{hole_index});
+        try print_struct(output, label_stream.getWritten(), descriptor);
+
+        const vertex_bytes_len = @as(usize, descriptor.vertex_count) * @sizeOf(archerdb.PolygonVertex);
+        if (body.len < hole_vertices_offset + vertex_bytes_len) {
+            try output.print("error: polygon body truncated in hole {} vertices\n", .{hole_index});
+            return;
+        }
+
+        const hole_vertices = std.mem.bytesAsSlice(
+            archerdb.PolygonVertex,
+            body[hole_vertices_offset..][0..vertex_bytes_len],
+        );
+        for (hole_vertices, 0..) |*vertex, vertex_index| {
+            label_stream = std.io.fixedBufferStream(&label_buffer);
+            try label_stream.writer().print("holes[{}].vertices[{}]", .{
+                hole_index,
+                vertex_index,
+            });
+            try print_struct(output, label_stream.getWritten(), vertex);
+        }
+        hole_vertices_offset += vertex_bytes_len;
+    }
+
+    if (body.len != hole_vertices_offset) {
+        try output.print("error: unexpected polygon body size={}, expected={}\n", .{
+            body.len,
+            hole_vertices_offset,
+        });
+    }
+}
+
+fn print_batch_query_request(output: std.io.AnyWriter, body: []const u8) !void {
+    if (body.len < @sizeOf(batch_query_mod.BatchQueryRequest)) {
+        try output.print(
+            "error: batch_query body too small ({d} < {d})\n",
+            .{ body.len, @sizeOf(batch_query_mod.BatchQueryRequest) },
+        );
+        return;
+    }
+
+    const header = std.mem.bytesAsValue(
+        batch_query_mod.BatchQueryRequest,
+        body[0..@sizeOf(batch_query_mod.BatchQueryRequest)],
+    );
+    try print_struct(output, "request", header);
+
+    var offset: usize = @sizeOf(batch_query_mod.BatchQueryRequest);
+    for (0..header.query_count) |query_index| {
+        if (body.len < offset + @sizeOf(batch_query_mod.BatchQueryEntry)) {
+            try output.print("error: truncated batch_query entry {}\n", .{query_index});
+            return;
+        }
+
+        const entry = std.mem.bytesAsValue(
+            batch_query_mod.BatchQueryEntry,
+            body[offset..][0..@sizeOf(batch_query_mod.BatchQueryEntry)],
+        );
+        var label_buffer: [64]u8 = undefined;
+        var label_stream = std.io.fixedBufferStream(&label_buffer);
+        try label_stream.writer().print("queries[{}].entry", .{query_index});
+        try print_struct(output, label_stream.getWritten(), entry);
+        offset += @sizeOf(batch_query_mod.BatchQueryEntry);
+
+        const filter_size = try batch_query_filter_size(body[offset..], entry.query_type);
+        if (body.len < offset + filter_size) {
+            try output.print("error: truncated batch_query filter {}\n", .{query_index});
+            return;
+        }
+
+        label_stream = std.io.fixedBufferStream(&label_buffer);
+        try label_stream.writer().print("queries[{}]", .{query_index});
+        try print_batch_query_filter(
+            output,
+            label_stream.getWritten(),
+            entry.query_type,
+            body[offset..][0..filter_size],
+        );
+        offset += filter_size;
+    }
+
+    if (body.len != offset) {
+        try output.print("error: unexpected batch_query body size={}, expected={}\n", .{
+            body.len,
+            offset,
+        });
+    }
+}
+
+fn batch_query_filter_size(body: []const u8, query_type: batch_query_mod.QueryType) !usize {
+    return switch (query_type) {
+        .uuid => @sizeOf(archerdb.QueryUuidFilter),
+        .radius => @sizeOf(archerdb.QueryRadiusFilter),
+        .latest => @sizeOf(archerdb.QueryLatestFilter),
+        .polygon => blk: {
+            if (body.len < @sizeOf(archerdb.QueryPolygonFilter)) return error.EndOfStream;
+            const filter = std.mem.bytesToValue(
+                archerdb.QueryPolygonFilter,
+                body[0..@sizeOf(archerdb.QueryPolygonFilter)],
+            );
+            const outer_vertices_size =
+                @as(usize, filter.vertex_count) * @sizeOf(archerdb.PolygonVertex);
+            const descriptors_offset = @sizeOf(archerdb.QueryPolygonFilter) + outer_vertices_size;
+            const descriptors_size =
+                @as(usize, filter.hole_count) * @sizeOf(archerdb.HoleDescriptor);
+            if (body.len < descriptors_offset + descriptors_size) return error.EndOfStream;
+
+            const descriptors = std.mem.bytesAsSlice(
+                archerdb.HoleDescriptor,
+                body[descriptors_offset..][0..descriptors_size],
+            );
+            var hole_vertices_size: usize = 0;
+            for (descriptors) |descriptor| {
+                hole_vertices_size +=
+                    @as(usize, descriptor.vertex_count) * @sizeOf(archerdb.PolygonVertex);
+            }
+            break :blk @sizeOf(archerdb.QueryPolygonFilter) +
+                outer_vertices_size +
+                descriptors_size +
+                hole_vertices_size;
+        },
+    };
+}
+
+fn print_batch_query_filter(
+    output: std.io.AnyWriter,
+    label: []const u8,
+    query_type: batch_query_mod.QueryType,
+    body: []const u8,
+) !void {
+    switch (query_type) {
+        .uuid => {
+            const filter = std.mem.bytesAsValue(archerdb.QueryUuidFilter, body);
+            try print_struct(output, label, filter);
+        },
+        .radius => {
+            const filter = std.mem.bytesAsValue(archerdb.QueryRadiusFilter, body);
+            try print_struct(output, label, filter);
+        },
+        .latest => {
+            const filter = std.mem.bytesAsValue(archerdb.QueryLatestFilter, body);
+            try print_struct(output, label, filter);
+        },
+        .polygon => {
+            try print_query_polygon_filter_with_label(output, label, body);
+        },
+    }
+}
+
+fn print_query_polygon_filter_with_label(
+    output: std.io.AnyWriter,
+    label: []const u8,
+    body: []const u8,
+) !void {
+    if (body.len < @sizeOf(archerdb.QueryPolygonFilter)) {
+        try output.print("error: {s} truncated polygon filter\n", .{label});
+        return;
+    }
+
+    const filter = std.mem.bytesAsValue(
+        archerdb.QueryPolygonFilter,
+        body[0..@sizeOf(archerdb.QueryPolygonFilter)],
+    );
+
+    var label_buffer: [96]u8 = undefined;
+    var label_stream = std.io.fixedBufferStream(&label_buffer);
+    try label_stream.writer().print("{s}.filter", .{label});
+    try print_struct(output, label_stream.getWritten(), filter);
+
+    const outer_vertices_size = @as(usize, filter.vertex_count) * @sizeOf(archerdb.PolygonVertex);
+    const descriptors_size = @as(usize, filter.hole_count) * @sizeOf(archerdb.HoleDescriptor);
+    const descriptors_offset = @sizeOf(archerdb.QueryPolygonFilter) + outer_vertices_size;
+    if (body.len < descriptors_offset + descriptors_size) {
+        try output.print("error: {s} truncated polygon descriptors\n", .{label});
+        return;
+    }
+
+    const outer_vertices = std.mem.bytesAsSlice(
+        archerdb.PolygonVertex,
+        body[@sizeOf(archerdb.QueryPolygonFilter)..][0..outer_vertices_size],
+    );
+    for (outer_vertices, 0..) |*vertex, vertex_index| {
+        label_stream = std.io.fixedBufferStream(&label_buffer);
+        try label_stream.writer().print("{s}.outer_vertices[{}]", .{ label, vertex_index });
+        try print_struct(output, label_stream.getWritten(), vertex);
+    }
+
+    const descriptors = std.mem.bytesAsSlice(
+        archerdb.HoleDescriptor,
+        body[descriptors_offset..][0..descriptors_size],
+    );
+    var hole_vertices_offset = descriptors_offset + descriptors_size;
+    for (descriptors, 0..) |*descriptor, hole_index| {
+        label_stream = std.io.fixedBufferStream(&label_buffer);
+        try label_stream.writer().print("{s}.holes[{}].descriptor", .{ label, hole_index });
+        try print_struct(output, label_stream.getWritten(), descriptor);
+
+        const vertices_size = @as(usize, descriptor.vertex_count) * @sizeOf(archerdb.PolygonVertex);
+        if (body.len < hole_vertices_offset + vertices_size) {
+            try output.print("error: {s} truncated hole {} vertices\n", .{ label, hole_index });
+            return;
+        }
+
+        const vertices = std.mem.bytesAsSlice(
+            archerdb.PolygonVertex,
+            body[hole_vertices_offset..][0..vertices_size],
+        );
+        for (vertices, 0..) |*vertex, vertex_index| {
+            label_stream = std.io.fixedBufferStream(&label_buffer);
+            try label_stream.writer().print("{s}.holes[{}].vertices[{}]", .{
+                label,
+                hole_index,
+                vertex_index,
+            });
+            try print_struct(output, label_stream.getWritten(), vertex);
+        }
+        hole_vertices_offset += vertices_size;
+    }
+}
+
+fn print_prepare_query_request(output: std.io.AnyWriter, body: []const u8) !void {
+    if (body.len < @sizeOf(archerdb.PrepareQueryRequest)) {
+        try output.print(
+            "error: prepare_query body too small ({d} < {d})\n",
+            .{ body.len, @sizeOf(archerdb.PrepareQueryRequest) },
+        );
+        return;
+    }
+
+    const request = std.mem.bytesAsValue(
+        archerdb.PrepareQueryRequest,
+        body[0..@sizeOf(archerdb.PrepareQueryRequest)],
+    );
+    try print_struct(output, "request", request);
+
+    const total_needed = @sizeOf(archerdb.PrepareQueryRequest) +
+        @as(usize, request.name_len) +
+        @as(usize, request.query_len);
+    if (body.len != total_needed) {
+        try output.print("error: unexpected prepare_query body size={}, expected={}\n", .{
+            body.len,
+            total_needed,
+        });
+        return;
+    }
+
+    const name_len = @as(usize, request.name_len);
+    const query_len = @as(usize, request.query_len);
+    const name = body[@sizeOf(archerdb.PrepareQueryRequest)..][0..name_len];
+    const query = body[@sizeOf(archerdb.PrepareQueryRequest) + name_len ..][0..query_len];
+    try output.print("request.name=\"{s}\"\n", .{name});
+    try output.print("request.query=\"{s}\"\n", .{query});
+}
+
+fn print_execute_prepared_request(output: std.io.AnyWriter, body: []const u8) !void {
+    if (body.len < @sizeOf(archerdb.ExecutePreparedRequest)) {
+        try output.print(
+            "error: execute_prepared body too small ({d} < {d})\n",
+            .{ body.len, @sizeOf(archerdb.ExecutePreparedRequest) },
+        );
+        return;
+    }
+
+    const request = std.mem.bytesAsValue(
+        archerdb.ExecutePreparedRequest,
+        body[0..@sizeOf(archerdb.ExecutePreparedRequest)],
+    );
+    try print_struct(output, "request", request);
+
+    const params = body[@sizeOf(archerdb.ExecutePreparedRequest)..];
+    try output.print(
+        "request.params: len={} checksum={x:0>32} bytes={}\n",
+        .{ params.len, vsr.checksum(params), std.fmt.fmtSliceHexLower(params) },
+    );
+}
+
+fn print_query_uuid_reply(output: std.io.AnyWriter, body: []const u8) !void {
+    if (body.len < @sizeOf(archerdb.QueryUuidResponse)) {
+        try output.print(
+            "error: query_uuid reply too small ({d} < {d})\n",
+            .{ body.len, @sizeOf(archerdb.QueryUuidResponse) },
+        );
+        return;
+    }
+
+    const response = std.mem.bytesAsValue(
+        archerdb.QueryUuidResponse,
+        body[0..@sizeOf(archerdb.QueryUuidResponse)],
+    );
+    try print_struct(output, "response", response);
+
+    switch (body.len) {
+        @sizeOf(archerdb.QueryUuidResponse) => {},
+        @sizeOf(archerdb.QueryUuidResponse) + @sizeOf(archerdb.GeoEvent) => {
+            const event = std.mem.bytesAsValue(
+                archerdb.GeoEvent,
+                body[@sizeOf(archerdb.QueryUuidResponse)..][0..@sizeOf(archerdb.GeoEvent)],
+            );
+            try print_struct(output, "event", event);
+        },
+        else => try output.print("error: unexpected query_uuid reply size={}\n", .{body.len}),
+    }
+}
+
+fn print_query_uuid_batch_reply(output: std.io.AnyWriter, body: []const u8) !void {
+    if (body.len < @sizeOf(archerdb.QueryUuidBatchResult)) {
+        try output.print(
+            "error: query_uuid_batch reply too small ({d} < {d})\n",
+            .{ body.len, @sizeOf(archerdb.QueryUuidBatchResult) },
+        );
+        return;
+    }
+
+    const result = std.mem.bytesAsValue(
+        archerdb.QueryUuidBatchResult,
+        body[0..@sizeOf(archerdb.QueryUuidBatchResult)],
+    );
+    try print_struct(output, "result", result);
+    if (result.error_status()) |status| {
+        try output.print("result.error_status={s}\n", .{@tagName(status)});
+    }
+
+    const not_found_size = @as(usize, result.not_found_count) * @sizeOf(u16);
+    const events_offset = std.mem.alignForward(
+        usize,
+        @sizeOf(archerdb.QueryUuidBatchResult) + not_found_size,
+        @alignOf(archerdb.GeoEvent),
+    );
+    const expected_size = events_offset + @as(usize, result.found_count) * @sizeOf(archerdb.GeoEvent);
+    if (body.len != expected_size) {
+        try output.print("error: unexpected query_uuid_batch reply size={}, expected={}\n", .{
+            body.len,
+            expected_size,
+        });
+        return;
+    }
+
+    const not_found_indices = std.mem.bytesAsSlice(
+        u16,
+        body[@sizeOf(archerdb.QueryUuidBatchResult)..][0..not_found_size],
+    );
+    for (not_found_indices, 0..) |index, i| {
+        try output.print("not_found_indices[{:_>4}]={}\n", .{ i, index });
+    }
+
+    const events = std.mem.bytesAsSlice(
+        archerdb.GeoEvent,
+        body[events_offset..],
+    );
+    for (events, 0..) |*event, i| {
+        var label_buffer: [64]u8 = undefined;
+        var label_stream = std.io.fixedBufferStream(&label_buffer);
+        try label_stream.writer().print("events[{}]", .{i});
+        try print_struct(output, label_stream.getWritten(), event);
+    }
+}
+
+fn print_query_events_reply(output: std.io.AnyWriter, body: []const u8) !void {
+    if (body.len < @sizeOf(archerdb.QueryResponse)) {
+        try output.print(
+            "error: query reply too small ({d} < {d})\n",
+            .{ body.len, @sizeOf(archerdb.QueryResponse) },
+        );
+        return;
+    }
+
+    const response = std.mem.bytesAsValue(
+        archerdb.QueryResponse,
+        body[0..@sizeOf(archerdb.QueryResponse)],
+    );
+    try print_struct(output, "response", response);
+
+    const events_size = body.len - @sizeOf(archerdb.QueryResponse);
+    if (events_size % @sizeOf(archerdb.GeoEvent) != 0) {
+        try output.print("error: unexpected query reply events size={}\n", .{events_size});
+        return;
+    }
+
+    const events = std.mem.bytesAsSlice(
+        archerdb.GeoEvent,
+        body[@sizeOf(archerdb.QueryResponse)..],
+    );
+    if (events.len != response.count) {
+        try output.print("error: response.count={} but decoded events={}\n", .{
+            response.count,
+            events.len,
+        });
+    }
+
+    for (events, 0..) |*event, i| {
+        var label_buffer: [64]u8 = undefined;
+        var label_stream = std.io.fixedBufferStream(&label_buffer);
+        try label_stream.writer().print("events[{}]", .{i});
+        try print_struct(output, label_stream.getWritten(), event);
+    }
+}
+
+fn print_batch_query_reply(output: std.io.AnyWriter, body: []const u8) !void {
+    if (body.len < @sizeOf(batch_query_mod.BatchQueryResponse)) {
+        try output.print(
+            "error: batch_query reply too small ({d} < {d})\n",
+            .{ body.len, @sizeOf(batch_query_mod.BatchQueryResponse) },
+        );
+        return;
+    }
+
+    const response = std.mem.bytesAsValue(
+        batch_query_mod.BatchQueryResponse,
+        body[0..@sizeOf(batch_query_mod.BatchQueryResponse)],
+    );
+    try print_struct(output, "response", response);
+
+    const entries_size = @as(usize, response.total_count) *
+        @sizeOf(batch_query_mod.BatchQueryResultEntry);
+    const result_data_offset = @sizeOf(batch_query_mod.BatchQueryResponse) + entries_size;
+    if (body.len < result_data_offset) {
+        try output.print("error: batch_query reply truncated before result entries\n", .{});
+        return;
+    }
+
+    const entries = std.mem.bytesAsSlice(
+        batch_query_mod.BatchQueryResultEntry,
+        body[@sizeOf(batch_query_mod.BatchQueryResponse)..][0..entries_size],
+    );
+    const result_data = body[result_data_offset..];
+    for (entries, 0..) |*entry, i| {
+        var label_buffer: [64]u8 = undefined;
+        var label_stream = std.io.fixedBufferStream(&label_buffer);
+        try label_stream.writer().print("results[{}]", .{i});
+        const label = label_stream.getWritten();
+        try print_struct(output, label, entry);
+
+        const end = @as(usize, entry.result_offset) + @as(usize, entry.result_length);
+        if (end > result_data.len) {
+            try output.print("error: {s}.data out of bounds ({} > {})\n", .{
+                label,
+                end,
+                result_data.len,
+            });
+            continue;
+        }
+
+        const bytes = result_data[@as(usize, entry.result_offset)..end];
+        try output.print(
+            "{s}.data: len={} checksum={x:0>32} bytes={}\n",
+            .{ label, bytes.len, vsr.checksum(bytes), std.fmt.fmtSliceHexLower(bytes) },
+        );
+    }
+}
+
+fn print_execute_prepared_reply(output: std.io.AnyWriter, body: []const u8) !void {
+    if (body.len == 0) {
+        try output.print("(no body)\n", .{});
+        return;
+    }
+
+    if (body.len >= @sizeOf(archerdb.QueryResponse)) {
+        const query_response = std.mem.bytesAsValue(
+            archerdb.QueryResponse,
+            body[0..@sizeOf(archerdb.QueryResponse)],
+        );
+        const events_bytes = body.len - @sizeOf(archerdb.QueryResponse);
+        if (events_bytes % @sizeOf(archerdb.GeoEvent) == 0 and
+            query_response.count == @as(u32, @intCast(events_bytes / @sizeOf(archerdb.GeoEvent))))
+        {
+            try output.writeAll("decoded_as=query_response\n");
+            try print_query_events_reply(output, body);
+            return;
+        }
+    }
+
+    if (body.len == @sizeOf(archerdb.QueryUuidResponse) or
+        body.len == @sizeOf(archerdb.QueryUuidResponse) + @sizeOf(archerdb.GeoEvent))
+    {
+        try output.writeAll("decoded_as=query_uuid_response\n");
+        try print_query_uuid_reply(output, body);
+        return;
+    }
+
+    try output.print(
+        "response.raw: len={} checksum={x:0>32} bytes={}\n",
+        .{ body.len, vsr.checksum(body), std.fmt.fmtSliceHexLower(body) },
+    );
 }

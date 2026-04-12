@@ -25,7 +25,7 @@ Use hardware planning together with capacity quotas:
 | `enterprise` | Same high-performance runtime as all tiers | Large RAM/disk quota |
 | `ultra` | Same high-performance runtime as all tiers | Highest RAM/disk quota |
 
-See [Tier Profiles](tier-profiles.md) for canonical product intent.
+See [Tier Profiles](tier-profiles.md) for canonical runtime/capacity intent.
 
 ## Quick Reference
 

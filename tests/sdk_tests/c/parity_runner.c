@@ -56,6 +56,8 @@ static bool pr_decode_query_response(
     uint32_t* count_out
 );
 static bool pr_query_uuid_entity(arch_uint128_t entity_id, bool* found_out, geo_event_t* event_out);
+static bool pr_decode_topology_response(const uint8_t* data, uint32_t len);
+static void pr_decode_address(const uint8_t* src, size_t len, char* dst, size_t dst_len);
 
 static void pr_u128_to_decimal(arch_uint128_t value, char* out, size_t out_len) {
     if (out_len == 0) return;
@@ -371,6 +373,68 @@ static bool pr_query_uuid_entity(arch_uint128_t entity_id, bool* found_out, geo_
     return true;
 }
 
+static void pr_decode_address(const uint8_t* src, size_t len, char* dst, size_t dst_len) {
+    size_t copy_len = 0;
+    if (dst_len == 0) return;
+    while (copy_len < len && src[copy_len] != 0 && copy_len + 1 < dst_len) {
+        dst[copy_len] = (char)src[copy_len];
+        copy_len++;
+    }
+    dst[copy_len] = '\0';
+}
+
+static bool pr_decode_topology_response(const uint8_t* data, uint32_t len) {
+    const uint32_t topology_header_size = 56;
+    const uint32_t max_address_len = 64;
+    const uint32_t max_replicas = 6;
+    const uint32_t shard_info_size = 472;
+
+    if (len < topology_header_size) {
+        pr_print_errorf("invalid topology response");
+        return false;
+    }
+
+    uint32_t num_shards = 0;
+    memcpy(&num_shards, data + 8, sizeof(num_shards));
+
+    fputs("{\"nodes\":[", stdout);
+    bool first = true;
+    for (uint32_t shard_index = 0; shard_index < num_shards; shard_index++) {
+        uint32_t offset = topology_header_size + (shard_index * shard_info_size);
+        if (offset + shard_info_size > len) {
+            break;
+        }
+
+        uint32_t cursor = offset + 4;  // skip shard id
+        char address[65];
+
+        pr_decode_address(data + cursor, max_address_len, address, sizeof(address));
+        cursor += max_address_len;
+        if (address[0] != '\0') {
+            if (!first) putchar(',');
+            first = false;
+            fputs("{\"address\":", stdout);
+            pr_print_json_string(address);
+            fputs(",\"role\":\"primary\"}", stdout);
+        }
+
+        for (uint32_t replica_index = 0; replica_index < max_replicas; replica_index++) {
+            pr_decode_address(data + cursor, max_address_len, address, sizeof(address));
+            cursor += max_address_len;
+            if (address[0] == '\0') {
+                continue;
+            }
+            if (!first) putchar(',');
+            first = false;
+            fputs("{\"address\":", stdout);
+            pr_print_json_string(address);
+            fputs(",\"role\":\"replica\"}", stdout);
+        }
+    }
+    fputs("]}\n", stdout);
+    return true;
+}
+
 static bool pr_run_ping(void) {
     ping_request_t req = {0};
     arch_packet_t packet = {0};
@@ -431,9 +495,7 @@ static bool pr_run_topology(void) {
         return false;
     }
 
-    // The Python reference may expose sparse/empty topology on local single-node clusters.
-    fputs("{\"nodes\":[]}\n", stdout);
-    return true;
+    return pr_decode_topology_response(g_last_response.data, g_last_response.len);
 }
 
 static bool pr_run_insert_or_upsert(const TestCase* tc, bool upsert) {

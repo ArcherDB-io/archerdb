@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2025 ArcherDB Contributors
 # ArcherDB Client Library Tests
 # This script tests all client libraries using echo mode which doesn't require a server
 # Real-world tests require io_uring support (kernel 5.5+, no seccomp restrictions)

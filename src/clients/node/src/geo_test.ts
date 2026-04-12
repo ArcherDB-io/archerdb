@@ -1,7 +1,10 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 ///////////////////////////////////////////////////////
 // ArcherDB Node.js SDK - GeoClient Tests            //
-// Note: These tests use the skeleton implementation //
-// and don't require the native binding.             //
+// Note: These are unit-mode API tests only.         //
+// They do not exercise the native binding or a      //
+// live ArcherDB cluster.                            //
 ///////////////////////////////////////////////////////
 
 import assert from 'assert'

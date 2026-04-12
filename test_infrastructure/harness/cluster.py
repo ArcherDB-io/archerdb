@@ -10,6 +10,7 @@ tests to start, stop, and interact with single and multi-node clusters.
 import os
 import re
 import shutil
+import socket
 import subprocess
 import tempfile
 import threading
@@ -18,10 +19,34 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
-import requests
+from urllib import error as urllib_error
+from urllib import request as urllib_request
 
 from .log_capture import LogCapture
 from .port_allocator import allocate_ports, release_port
+
+
+class _HttpRequestError(Exception):
+    """Raised when a local HTTP probe fails."""
+
+
+@dataclass
+class _HttpResponse:
+    status_code: int
+    text: str
+
+
+def _http_get(url: str, timeout: float = 1.0) -> _HttpResponse:
+    """Issue a small local HTTP GET without third-party dependencies."""
+    try:
+        with urllib_request.urlopen(url, timeout=timeout) as response:
+            body = response.read().decode("utf-8", errors="replace")
+            return _HttpResponse(status_code=response.getcode(), text=body)
+    except urllib_error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        return _HttpResponse(status_code=exc.code, text=body)
+    except (urllib_error.URLError, TimeoutError, OSError) as exc:
+        raise _HttpRequestError(str(exc)) from exc
 
 
 def _find_project_root() -> Path:
@@ -43,25 +68,36 @@ class ClusterConfig:
 
     Attributes:
         node_count: Number of nodes in the cluster (1, 3, 5, 7...).
+        replica_count: Number of voting replicas. If omitted, defaults to
+            node_count. Additional nodes beyond replica_count are formatted as
+            standbys/learners.
         base_port: Base port for node communication. 0 = auto-allocate.
         data_dir: Directory for data files. None = auto-create temp dir.
         cluster_id: Cluster identifier.
-        cache_grid: Cache grid size (e.g., "512MiB").
+        cache_grid: Cache grid size (e.g., "64MiB").
+        ram_index_size: RAM index budget (e.g., "8MiB").
+        memory_lsm_manifest: LSM manifest memory budget (e.g., "64MiB").
         preserve_on_failure: Keep data after failures for debugging.
         archerdb_bin: Path to archerdb binary. Empty = auto-detect.
         startup_timeout: Timeout in seconds for cluster startup.
         metrics_base_port: Base port for metrics endpoints. 0 = auto-allocate.
+        primary_head_start_timeout: Optional time to wait for replica 0 to bind its
+            data-plane port before starting the remaining replicas.
     """
 
     node_count: int = 1
+    replica_count: Optional[int] = None
     base_port: int = 0
     data_dir: Optional[str] = None
     cluster_id: int = 0
-    cache_grid: str = "512MiB"
+    cache_grid: str = "64MiB"
+    ram_index_size: str = "8MiB"
+    memory_lsm_manifest: str = "64MiB"
     preserve_on_failure: bool = field(default_factory=lambda: os.getenv("PRESERVE_ON_FAILURE", "") == "1")
     archerdb_bin: str = ""
     startup_timeout: float = 60.0
     metrics_base_port: int = 0
+    primary_head_start_timeout: float = 0.0
 
 
 class ArcherDBCluster:
@@ -130,6 +166,13 @@ class ArcherDBCluster:
             self._temp_dir_created = True
 
         # Allocate ports
+        replica_count = self.config.replica_count or self.config.node_count
+        if replica_count <= 0 or replica_count > self.config.node_count:
+            raise RuntimeError(
+                "replica_count must be between 1 and node_count "
+                f"(got replica_count={replica_count}, node_count={self.config.node_count})"
+            )
+
         self._ports = allocate_ports(
             self.config.node_count,
             base_port=self.config.base_port,
@@ -140,7 +183,7 @@ class ArcherDBCluster:
         )
 
         # Generate addresses string
-        addresses = ",".join(str(p) for p in self._ports)
+        addresses = ",".join(f"127.0.0.1:{p}" for p in self._ports)
 
         # Format data files
         for i in range(self.config.node_count):
@@ -150,9 +193,10 @@ class ArcherDBCluster:
                     [
                         str(self._bin_path),
                         "format",
+                        "--development=true",
                         f"--cluster={self.config.cluster_id}",
-                        f"--replica={i}",
-                        f"--replica-count={self.config.node_count}",
+                        f"--replica-count={replica_count}",
+                        f"--{'replica' if i < replica_count else 'standby'}={i}",
                         str(data_file),
                     ],
                     capture_output=True,
@@ -161,55 +205,86 @@ class ArcherDBCluster:
                 if result.returncode != 0:
                     raise RuntimeError(f"Format failed for replica {i}: {result.stderr}")
 
-        # Start all replicas
-        for i in range(self.config.node_count):
-            data_file = self._data_dir / f"replica-{i}.archerdb"
-            log_capture = LogCapture()
-            self._log_captures[i] = log_capture
+        try:
+            # Start all replicas
+            for i in range(self.config.node_count):
+                data_file = self._data_dir / f"replica-{i}.archerdb"
+                log_capture = LogCapture()
+                self._log_captures[i] = log_capture
 
-            cmd = [
-                str(self._bin_path),
-                "start",
-                f"--addresses={addresses}",
-                f"--cache-grid={self.config.cache_grid}",
-                f"--metrics-port={self._metrics_ports[i]}",
-                "--metrics-bind=127.0.0.1",
-                str(data_file),
-            ]
+                cmd = [
+                    str(self._bin_path),
+                    "start",
+                    "--development=true",
+                    "--experimental=true",
+                    f"--addresses={addresses}",
+                    f"--replica-count={replica_count}",
+                    f"--cache-grid={self.config.cache_grid}",
+                    f"--ram-index-size={self.config.ram_index_size}",
+                    f"--memory-lsm-manifest={self.config.memory_lsm_manifest}",
+                    f"--metrics-port={self._metrics_ports[i]}",
+                    "--metrics-bind=127.0.0.1",
+                    str(data_file),
+                ]
 
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,  # Line buffered
-            )
-            self._processes[i] = process
+                process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,  # Line buffered
+                )
+                self._processes[i] = process
 
-            # Start log capture thread
-            def capture_logs(proc: subprocess.Popen, capture: LogCapture) -> None:
-                try:
-                    if proc.stdout:
-                        for line in proc.stdout:
-                            capture.write(line)
-                except Exception:
-                    pass  # Process terminated
+                # Start log capture thread
+                def capture_logs(proc: subprocess.Popen, capture: LogCapture) -> None:
+                    try:
+                        if proc.stdout:
+                            for line in proc.stdout:
+                                capture.write(line)
+                    except Exception:
+                        pass  # Process terminated
 
-            thread = threading.Thread(
-                target=capture_logs,
-                args=(process, log_capture),
-                daemon=True,
-            )
-            thread.start()
-            self._log_threads[i] = thread
+                thread = threading.Thread(
+                    target=capture_logs,
+                    args=(process, log_capture),
+                    daemon=True,
+                )
+                thread.start()
+                self._log_threads[i] = thread
 
-        # Brief wait to check initial startup
-        time.sleep(0.5)
-        for i, proc in self._processes.items():
-            if proc.poll() is not None:
-                logs = self._log_captures[i].get_logs(max_lines=50)
-                self._failed = True
-                raise RuntimeError(f"Replica {i} failed to start:\n{logs}")
+                # On larger local clusters, stagger replica startup until each
+                # process has finished its expensive local init path. Waiting
+                # only for a bound TCP listener was too early: the next wave of
+                # replicas could still overlap forest init and push the shared
+                # machine into OOM/SIGKILL territory.
+                if self.config.node_count >= 5:
+                    start_timeout = (
+                        self.config.primary_head_start_timeout
+                        if self.config.primary_head_start_timeout > 0
+                        else min(120.0, self.config.startup_timeout)
+                    )
+                    if not self._wait_for_node_started(replica=i, timeout=start_timeout):
+                        logs = self._log_captures[i].get_logs(max_lines=120)
+                        self._failed = True
+                        raise RuntimeError(
+                            f"Replica {i} did not finish startup init "
+                            f"(timeout={start_timeout:.0f}s):\n{logs}"
+                        )
+
+            # Brief wait to check initial startup
+            time.sleep(0.5)
+            for i, proc in self._processes.items():
+                if proc.poll() is not None:
+                    logs = self._log_captures[i].get_logs(max_lines=50)
+                    self._failed = True
+                    raise RuntimeError(
+                        f"Replica {i} failed to start (exit_code={proc.returncode}):\n{logs}"
+                    )
+        except Exception:
+            self._failed = True
+            self.stop()
+            raise
 
         self._started = True
 
@@ -244,7 +319,42 @@ class ArcherDBCluster:
 
         self._started = False
 
-    def wait_for_ready(self, timeout: float = 60.0) -> bool:
+    def _wait_for_node_listener(self, replica: int, timeout: float) -> bool:
+        """Wait until a replica's data-plane TCP port accepts connections."""
+        deadline = time.time() + timeout
+        port = self._ports[replica]
+        while time.time() < deadline:
+            proc = self._processes[replica]
+            if proc.poll() is not None:
+                return False
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+                    return True
+            except OSError:
+                time.sleep(0.25)
+        return False
+
+    def _wait_for_node_started(self, replica: int, timeout: float) -> bool:
+        """Wait until a replica finishes local startup init.
+
+        The `listening on` log line is emitted after `replica.open()` returns
+        and the heavy local forest/grid initialization is complete. Using that
+        marker for large shared-machine clusters avoids overlapping the most
+        memory-intensive startup phase across too many replicas at once.
+        """
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            proc = self._processes[replica]
+            if proc.poll() is not None:
+                return False
+
+            if "listening on" in self._log_captures[replica].get_all():
+                return True
+
+            time.sleep(0.25)
+        return False
+
+    def wait_for_ready(self, timeout: Optional[float] = None) -> bool:
         """Wait for all nodes to be ready.
 
         Args:
@@ -255,6 +365,9 @@ class ArcherDBCluster:
         """
         if not self._started:
             raise RuntimeError("Cluster not started")
+
+        if timeout is None:
+            timeout = self.config.startup_timeout
 
         deadline = time.time() + timeout
         nodes_ready = set()
@@ -268,17 +381,19 @@ class ArcherDBCluster:
                 if self._processes[i].poll() is not None:
                     logs = self._log_captures[i].get_logs(max_lines=50)
                     self._failed = True
-                    raise RuntimeError(f"Replica {i} crashed:\n{logs}")
+                    raise RuntimeError(
+                        f"Replica {i} crashed (exit_code={self._processes[i].returncode}):\n{logs}"
+                    )
 
                 # Check health endpoint
                 try:
-                    resp = requests.get(
+                    resp = _http_get(
                         f"http://127.0.0.1:{self._metrics_ports[i]}/health/ready",
                         timeout=1,
                     )
                     if resp.status_code == 200:
                         nodes_ready.add(i)
-                except requests.RequestException:
+                except _HttpRequestError:
                     pass
 
             if len(nodes_ready) == self.config.node_count:
@@ -288,7 +403,7 @@ class ArcherDBCluster:
 
         return False
 
-    def wait_for_leader(self, timeout: float = 60.0) -> Optional[int]:
+    def wait_for_leader(self, timeout: Optional[float] = None) -> Optional[int]:
         """Wait for cluster to be ready for write operations.
 
         In a single-region cluster, ArcherDB handles Raft leader routing internally,
@@ -304,6 +419,9 @@ class ArcherDBCluster:
         if not self._started:
             raise RuntimeError("Cluster not started")
 
+        if timeout is None:
+            timeout = self.config.startup_timeout
+
         if self.config.node_count == 1:
             # Single node is always the leader
             return self._ports[0]
@@ -313,16 +431,11 @@ class ArcherDBCluster:
         while time.time() < deadline:
             for i in range(self.config.node_count):
                 try:
-                    # Check health endpoint first
-                    health_resp = requests.get(
-                        f"http://127.0.0.1:{self._metrics_ports[i]}/health/ready",
-                        timeout=1,
-                    )
-                    if health_resp.status_code != 200:
-                        continue
-
-                    # Check metrics for region role (primary = can accept writes)
-                    resp = requests.get(
+                    # Check metrics for region role (primary = can accept writes).
+                    # Multi-node clusters can surface role information before
+                    # /health/ready flips to 200, so do not gate leader discovery
+                    # on the readiness endpoint here.
+                    resp = _http_get(
                         f"http://127.0.0.1:{self._metrics_ports[i]}/metrics",
                         timeout=1,
                     )
@@ -330,7 +443,7 @@ class ArcherDBCluster:
                         # Look for: archerdb_region_info{region_id="0",role="primary"} 1
                         if re.search(r'archerdb_region_info\{[^}]*role="primary"[^}]*\}\s+1', resp.text):
                             return self._ports[i]
-                except requests.RequestException:
+                except _HttpRequestError:
                     pass
 
             time.sleep(0.5)
@@ -341,9 +454,9 @@ class ArcherDBCluster:
         """Get comma-separated addresses for SDK connection.
 
         Returns:
-            Address string like "3101,3102,3103".
+            Address string like "127.0.0.1:3101,127.0.0.1:3102,127.0.0.1:3103".
         """
-        return ",".join(str(p) for p in self._ports)
+        return ",".join(f"127.0.0.1:{p}" for p in self._ports)
 
     def get_leader_address(self) -> Optional[str]:
         """Get the leader's address for write operations.
@@ -368,6 +481,16 @@ class ArcherDBCluster:
         if replica not in self._log_captures:
             return ""
         return self._log_captures[replica].get_logs()
+
+    def get_recent_logs(self, max_lines_per_replica: int = 12) -> str:
+        """Get a compact recent log summary for all replicas."""
+        sections = []
+        for replica in range(self.config.node_count):
+            logs = self.get_logs(replica)
+            tail = logs.splitlines()[-max_lines_per_replica:]
+            body = "\n".join(tail) if tail else "(no logs)"
+            sections.append(f"replica {replica}:\n{body}")
+        return "\n\n".join(sections)
 
     def stop_node(self, replica: int, graceful: bool = True) -> None:
         """Stop a specific cluster node.
@@ -419,7 +542,7 @@ class ArcherDBCluster:
 
         # Data file already exists - no format needed
         data_file = self._data_dir / f"replica-{replica}.archerdb"
-        addresses = ",".join(str(p) for p in self._ports)
+        addresses = ",".join(f"127.0.0.1:{p}" for p in self._ports)
 
         # Create fresh log capture
         log_capture = LogCapture()
@@ -428,8 +551,12 @@ class ArcherDBCluster:
         cmd = [
             str(self._bin_path),
             "start",
+            "--development=true",
+            "--experimental=true",
             f"--addresses={addresses}",
             f"--cache-grid={self.config.cache_grid}",
+            f"--ram-index-size={self.config.ram_index_size}",
+            f"--memory-lsm-manifest={self.config.memory_lsm_manifest}",
             f"--metrics-port={self._metrics_ports[replica]}",
             "--metrics-bind=127.0.0.1",
             str(data_file),
@@ -465,7 +592,9 @@ class ArcherDBCluster:
         time.sleep(0.5)
         if process.poll() is not None:
             logs = log_capture.get_logs(max_lines=50)
-            raise RuntimeError(f"Replica {replica} failed to restart:\n{logs}")
+            raise RuntimeError(
+                f"Replica {replica} failed to restart (exit_code={process.returncode}):\n{logs}"
+            )
 
     def kill_node(self, replica: int) -> None:
         """Kill a specific cluster node immediately (SIGKILL).
@@ -508,7 +637,7 @@ class ArcherDBCluster:
             if not self.is_node_running(i):
                 continue
             try:
-                resp = requests.get(
+                resp = _http_get(
                     f"http://127.0.0.1:{self._metrics_ports[i]}/metrics",
                     timeout=1,
                 )
@@ -516,7 +645,7 @@ class ArcherDBCluster:
                     # Look for: archerdb_region_info{region_id="0",role="primary"} 1
                     if re.search(r'archerdb_region_info\{[^}]*role="primary"[^}]*\}\s+1', resp.text):
                         return i
-            except requests.RequestException:
+            except _HttpRequestError:
                 pass
         return None
 

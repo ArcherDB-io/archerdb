@@ -1,6 +1,7 @@
 package com.archerdb.sdktests;
 
 import com.archerdb.geo.DeleteResult;
+import com.archerdb.geo.ClientConfig;
 import com.archerdb.geo.GeoClient;
 import com.archerdb.geo.GeoEvent;
 import com.archerdb.geo.InsertGeoEventsError;
@@ -8,6 +9,7 @@ import com.archerdb.geo.QueryLatestFilter;
 import com.archerdb.geo.QueryPolygonFilter;
 import com.archerdb.geo.QueryRadiusFilter;
 import com.archerdb.geo.QueryResult;
+import com.archerdb.geo.RegionConfig;
 import com.archerdb.geo.ShardInfo;
 import com.archerdb.geo.StatusResponse;
 import com.archerdb.geo.TopologyResponse;
@@ -59,7 +61,13 @@ public final class ParityRunner {
 
         final String address = parseServerAddress(System.getenv("ARCHERDB_URL"));
 
-        try (GeoClient client = GeoClient.create(0L, address)) {
+        ClientConfig config = ClientConfig.builder()
+                .setClusterId(UInt128.fromLong(0L))
+                .addRegion(RegionConfig.primary("default", address))
+                .setRequestTimeoutMs(120_000)
+                .build();
+
+        try (GeoClient client = GeoClient.create(config)) {
             JsonObject result = runOperation(client, operation, input);
             System.out.println(GSON.toJson(result));
         } catch (Exception e) {

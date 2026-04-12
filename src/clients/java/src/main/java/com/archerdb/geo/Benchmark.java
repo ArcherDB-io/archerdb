@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 package com.archerdb.geo;
 
 import java.util.ArrayList;
@@ -5,27 +7,30 @@ import java.util.List;
 import java.util.Random;
 
 /**
- * ArcherDB Java SDK Performance Benchmark
+ * ArcherDB Java SDK performance benchmark.
  *
  * <p>
- * This benchmark tests:
+ * This benchmark measures:
+ * </p>
  * <ul>
- * <li>Insert throughput (events/sec)</li>
- * <li>Query latency (p50, p99)</li>
- * <li>Batch efficiency</li>
+ * <li>insert throughput in events per second</li>
+ * <li>query latency at p50 and p99</li>
+ * <li>batch efficiency</li>
  * </ul>
  *
  * <p>
- * Target specs from design doc:
+ * Reference targets from the design docs:
+ * </p>
  * <ul>
- * <li>Insert: 1M events/sec</li>
- * <li>UUID lookup: p99 < 500μs</li>
- * <li>Radius query: p99 < 50ms</li>
- * <li>Polygon query: p99 < 100ms</li>
+ * <li>insert: 1M events per second</li>
+ * <li>UUID lookup: p99 &lt; 500 microseconds</li>
+ * <li>radius query: p99 &lt; 50 ms</li>
+ * <li>polygon query: p99 &lt; 100 ms</li>
  * </ul>
  *
  * <p>
- * Run with: java -cp target/classes com.archerdb.geo.Benchmark
+ * Run with {@code java -cp target/classes com.archerdb.geo.Benchmark}.
+ * </p>
  */
 public final class Benchmark {
 

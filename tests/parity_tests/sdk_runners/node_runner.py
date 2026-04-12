@@ -27,7 +27,7 @@ def run_operation(
             input=json.dumps(input_data),
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=120,
             cwd=str(SDK_DIR),
             env={**os.environ, "ARCHERDB_URL": server_url},
         )
@@ -40,7 +40,7 @@ def run_operation(
         return json.loads(stdout)
 
     except subprocess.TimeoutExpired:
-        return {"error": "Node.js runner timed out (30s)"}
+        return {"error": "Node.js runner timed out (120s)"}
     except json.JSONDecodeError as e:
         return {"error": f"Invalid JSON output: {e}"}
     except FileNotFoundError:

@@ -1,6 +1,6 @@
 # ArcherDB Upgrade Guide
 
-This guide provides comprehensive procedures for safely upgrading ArcherDB clusters with minimal downtime and automatic rollback support.
+This guide provides procedures for safely upgrading ArcherDB clusters with minimal downtime, using `archerdb upgrade` for status and dry-run planning and your deployment tooling for live rollout and rollback.
 
 ## Table of Contents
 
@@ -10,8 +10,8 @@ This guide provides comprehensive procedures for safely upgrading ArcherDB clust
 - [Upgrade Procedures](#upgrade-procedures)
   - [Bare Metal Upgrade](#bare-metal-upgrade)
   - [Kubernetes Upgrade](#kubernetes-upgrade)
-- [Health-Based Rollback](#health-based-rollback)
-- [Manual Rollback](#manual-rollback)
+- [Health-Based Planning Thresholds](#health-based-planning-thresholds)
+- [External Rollback](#external-rollback)
 - [Post-Upgrade Verification](#post-upgrade-verification)
 - [Troubleshooting](#troubleshooting)
 - [CLI Reference](#cli-reference)
@@ -22,7 +22,7 @@ ArcherDB upgrades follow a **rolling upgrade** philosophy designed for zero-down
 
 1. **One node at a time** - Never upgrade multiple replicas simultaneously
 2. **Followers first, primary last** - Minimizes disruption to write operations
-3. **Health-based rollback** - Automatic rollback on health check failures
+3. **Health-based rollback planning** - Thresholds for your deployment tooling to decide when to stop or roll back
 4. **Version compatibility** - Backwards-compatible data format between versions
 
 ### Upgrade Order
@@ -43,7 +43,7 @@ The upgrade process follows this strict order:
 This order ensures:
 - Quorum is maintained throughout the upgrade
 - Write availability is preserved until the final step
-- Automatic rollback can restore the previous version if issues occur
+- External deployment tooling can roll back to the previous version if issues occur
 
 ## Pre-Upgrade Checklist
 
@@ -67,7 +67,7 @@ Before starting any upgrade, complete this checklist:
 - [ ] **Schedule maintenance window** - Plan for potential rollback time
 - [ ] **Notify stakeholders** - Alert users about potential brief interruptions
 - [ ] **Review monitoring dashboards** - Know baseline metrics before upgrade
-- [ ] **Prepare rollback commands** - Have rollback procedure ready
+- [ ] **Prepare external rollback procedure** - Have service-manager or orchestrator rollback steps ready
 - [ ] **Document current versions** - Record exact versions on each node
 
 ### Pre-Upgrade Health Check
@@ -243,18 +243,14 @@ archerdb upgrade status --addresses=archerdb-0:3000,archerdb-1:3000,archerdb-2:3
 
 ### Using the Upgrade CLI
 
-The upgrade CLI orchestrates the upgrade process with health monitoring:
+The upgrade CLI provides status inspection and dry-run planning. The live rollout is still performed by your external deployment tooling:
 
 ```bash
 # Dry-run first to see the upgrade plan
 archerdb upgrade start --addresses=node1:3000,node2:3000,node3:3000 \
   --target-version=1.2.0 --dry-run
 
-# Start actual upgrade with default thresholds
-archerdb upgrade start --addresses=node1:3000,node2:3000,node3:3000 \
-  --target-version=1.2.0
-
-# Start with custom thresholds
+# Generate a dry-run plan with custom thresholds
 archerdb upgrade start --addresses=node1:3000,node2:3000,node3:3000 \
   --target-version=1.2.0 \
   --p99-threshold-x10=30 \      # 3.0x baseline triggers rollback
@@ -262,13 +258,15 @@ archerdb upgrade start --addresses=node1:3000,node2:3000,node3:3000 \
   --catchup-timeout=600          # 10 minute catchup timeout
 ```
 
-## Health-Based Rollback
+Use the resulting plan to drive a follower-first rollout in your service manager, Kubernetes controller, or other deployment system.
 
-ArcherDB automatically triggers rollback when health checks fail during upgrade.
+## Health-Based Planning Thresholds
 
-### Rollback Triggers
+ArcherDB evaluates these thresholds during dry-run planning and live status checks. Actual rollback is performed by your deployment tooling.
 
-Automatic rollback is triggered when ANY of these conditions are met:
+### Rollout Risk Triggers
+
+Treat any of these conditions as rollout blockers:
 
 | Condition | Default Threshold | Description |
 |-----------|------------------|-------------|
@@ -283,27 +281,20 @@ Automatic rollback is triggered when ANY of these conditions are met:
 ```bash
 # Stricter thresholds (more sensitive to degradation)
 archerdb upgrade start --addresses=... --target-version=1.2.0 \
+  --dry-run \
   --p99-threshold-x10=15 \       # 1.5x baseline
   --error-threshold-x10=5 \       # 0.5% errors
   --catchup-timeout=180           # 3 minutes
 
 # Looser thresholds (more tolerant)
 archerdb upgrade start --addresses=... --target-version=1.2.0 \
+  --dry-run \
   --p99-threshold-x10=50 \       # 5.0x baseline
   --error-threshold-x10=20 \      # 2.0% errors
   --catchup-timeout=600           # 10 minutes
 ```
 
-### Rollback Process
-
-When a rollback is triggered:
-
-1. **Stop current upgrade** - No more replicas are upgraded
-2. **Rollback upgraded replicas** - In reverse order (primary first if upgraded)
-3. **Verify rollback** - Health checks confirm previous version works
-4. **Report status** - CLI reports rollback completion
-
-## Manual Rollback
+## External Rollback
 
 ### Bare Metal Rollback
 
@@ -311,11 +302,10 @@ When a rollback is triggered:
 # Check upgrade status
 archerdb upgrade status --addresses=node1:3000,node2:3000,node3:3000
 
-# Trigger manual rollback (requires --force)
-archerdb upgrade rollback --addresses=node1:3000,node2:3000,node3:3000 --force
+# ArcherDB does not perform rollback itself; use your service manager or deploy tool
 ```
 
-Or rollback manually on each node:
+Or roll back manually on each node with your service manager or deployment tooling:
 
 ```bash
 # On each upgraded node (primary first if upgraded):
@@ -410,7 +400,7 @@ curl http://node2:9100/metrics | grep replication_lag
 
 ### Rollback Fails to Complete
 
-**Symptom**: Manual rollback command hangs or reports errors
+**Symptom**: External rollback command hangs or reports errors
 
 **Diagnosis**:
 ```bash
@@ -433,18 +423,18 @@ systemctl status archerdb
 **Solutions**:
 1. Check CHANGELOG for upgrade path requirements
 2. Perform intermediate upgrade first
-3. Contact support for assistance with complex upgrades
+3. Open an issue with the logs and upgrade path details if the required sequence is unclear
 
 ### Health Check False Positives
 
-**Symptom**: Rollback triggers despite cluster appearing healthy
+**Symptom**: External rollback triggers despite cluster appearing healthy
 
 **Diagnosis**:
 ```bash
 # Check actual latency metrics
 curl http://node1:9100/metrics | grep request_duration
 
-# Review rollback reason in logs
+# Review external rollback reason in logs
 journalctl -u archerdb | grep -i rollback
 ```
 
@@ -467,7 +457,7 @@ Shows current cluster versions, identifies primary, and displays upgrade readine
 
 ```bash
 archerdb upgrade start --addresses=<addresses> --target-version=<version> \
-  [--dry-run] \
+  --dry-run \
   [--metrics-port=<port>] \
   [--p99-threshold-x10=<value>] \
   [--error-threshold-x10=<value>] \
@@ -475,25 +465,9 @@ archerdb upgrade start --addresses=<addresses> --target-version=<version> \
   [--format=<text|json>]
 ```
 
-Starts a rolling upgrade to the target version.
+Generates a dry-run rolling-upgrade plan to the target version. `--dry-run` is required in the current runtime surface.
 
-### Pause/Resume Commands
-
-```bash
-# Pause an in-progress upgrade
-archerdb upgrade pause --addresses=<addresses>
-
-# Resume a paused upgrade
-archerdb upgrade resume --addresses=<addresses>
-```
-
-### Rollback Command
-
-```bash
-archerdb upgrade rollback --addresses=<addresses> [--force]
-```
-
-Triggers manual rollback. Requires `--force` flag for confirmation.
+The ArcherDB CLI does not own process restarts, pause/resume state, or rollback actuation. Use your deployment tooling for those mutations and use `upgrade status` plus `upgrade start --dry-run` for inspection and planning.
 
 ---
 

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2025 ArcherDB Contributors
 ///////////////////////////////////////////////////////
 // ArcherDB Node.js SDK - v2 Error Codes Tests       //
 // Tests for state, multi-region, sharding, encryption //

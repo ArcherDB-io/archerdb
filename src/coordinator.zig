@@ -26,6 +26,8 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const posix = std.posix;
+const log = std.log.scoped(.coordinator);
 
 const stdx = @import("stdx");
 const sharding = @import("sharding.zig");
@@ -929,6 +931,321 @@ pub const RouteError = enum {
     shard_unavailable,
     invalid_entity_id,
 };
+
+/// Minimal control-plane service for coordinator lifecycle management.
+pub const Service = struct {
+    allocator: Allocator,
+    coordinator: Coordinator,
+    server_fd: ?posix.socket_t = null,
+    running: bool = false,
+    started_at_ns: i128 = 0,
+
+    pub fn init(allocator: Allocator, config: CoordinatorConfig) Service {
+        return .{
+            .allocator = allocator,
+            .coordinator = Coordinator.init(allocator, config),
+        };
+    }
+
+    pub fn deinit(self: *Service) void {
+        if (self.server_fd) |fd| {
+            posix.close(fd);
+            self.server_fd = null;
+        }
+        self.coordinator.deinit();
+    }
+
+    pub fn serve(self: *Service) !void {
+        switch (self.coordinator.state) {
+            .stopped => try self.coordinator.start(),
+            .running => {},
+            else => return error.InvalidState,
+        }
+
+        const address = try resolveNetAddress(
+            self.allocator,
+            self.coordinator.config.bind_address.getHost(),
+            self.coordinator.config.bind_address.port,
+        );
+
+        const family: u32 = switch (address.any.family) {
+            posix.AF.INET => posix.AF.INET,
+            posix.AF.INET6 => posix.AF.INET6,
+            else => return error.InvalidAddress,
+        };
+
+        const server_fd = try posix.socket(family, posix.SOCK.STREAM, 0);
+        errdefer posix.close(server_fd);
+
+        const enable: u32 = 1;
+        try posix.setsockopt(
+            server_fd,
+            posix.SOL.SOCKET,
+            posix.SO.REUSEADDR,
+            std.mem.asBytes(&enable),
+        );
+
+        try posix.bind(server_fd, &address.any, address.getOsSockLen());
+        try posix.listen(server_fd, 16);
+
+        self.server_fd = server_fd;
+        self.running = true;
+        self.started_at_ns = std.time.nanoTimestamp();
+
+        var bound_addr: posix.sockaddr = undefined;
+        var bound_addr_len: posix.socklen_t = @sizeOf(posix.sockaddr);
+        try posix.getsockname(server_fd, &bound_addr, &bound_addr_len);
+        const bound_port = switch (bound_addr.family) {
+            posix.AF.INET => std.mem.bigToNative(u16, (@as(*align(1) const posix.sockaddr.in, @ptrCast(&bound_addr))).port),
+            posix.AF.INET6 => std.mem.bigToNative(u16, (@as(*align(1) const posix.sockaddr.in6, @ptrCast(&bound_addr))).port),
+            else => self.coordinator.config.bind_address.port,
+        };
+        self.coordinator.config.bind_address.port = bound_port;
+
+        log.info("coordinator service listening on {s}:{d}", .{
+            self.coordinator.config.bind_address.getHost(),
+            bound_port,
+        });
+
+        while (self.running) {
+            var client_addr: posix.sockaddr = undefined;
+            var client_addr_len: posix.socklen_t = @sizeOf(posix.sockaddr);
+            const client_fd = posix.accept(server_fd, &client_addr, &client_addr_len, 0) catch |err| {
+                if (!self.running) break;
+                log.warn("coordinator accept failed: {}", .{err});
+                continue;
+            };
+            defer posix.close(client_fd);
+
+            self.handleRequest(client_fd) catch |err| {
+                log.warn("coordinator request failed: {}", .{err});
+            };
+        }
+
+        self.coordinator.stop();
+        posix.close(server_fd);
+        self.server_fd = null;
+        self.running = false;
+    }
+
+    fn handleRequest(self: *Service, client_fd: posix.socket_t) !void {
+        var buf: [4096]u8 = undefined;
+        const bytes_read = try posix.read(client_fd, &buf);
+        if (bytes_read == 0) return;
+
+        const request = buf[0..bytes_read];
+        const method = parseRequestMethod(request) orelse {
+            try sendHttpResponse(client_fd, "400 Bad Request", "text/plain", "Bad Request");
+            return;
+        };
+        const target = parseRequestTarget(request) orelse {
+            try sendHttpResponse(client_fd, "400 Bad Request", "text/plain", "Bad Request");
+            return;
+        };
+        const path = stripQueryString(target);
+
+        if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/health/live")) {
+            try sendHttpResponse(client_fd, "200 OK", "text/plain", "ok\n");
+            return;
+        }
+
+        if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/status")) {
+            const format = queryValue(target, "format") orelse "json";
+            try self.handleStatus(client_fd, format);
+            return;
+        }
+
+        if ((std.mem.eql(u8, method, "POST") or std.mem.eql(u8, method, "GET")) and
+            std.mem.eql(u8, path, "/stop"))
+        {
+            self.running = false;
+            try sendHttpResponse(client_fd, "200 OK", "text/plain", "stopping\n");
+            return;
+        }
+
+        try sendHttpResponse(client_fd, "404 Not Found", "text/plain", "Not Found\n");
+    }
+
+    fn handleStatus(self: *Service, client_fd: posix.socket_t, format: []const u8) !void {
+        const topology = self.coordinator.getTopology();
+        const stats = self.coordinator.getStats();
+
+        var active: u32 = 0;
+        var unavailable: u32 = 0;
+        for (topology.getActiveShards()) |shard| {
+            switch (shard.status) {
+                .active => active += 1,
+                .unavailable => unavailable += 1,
+                else => {},
+            }
+        }
+
+        const uptime_ns = @max(std.time.nanoTimestamp() - self.started_at_ns, 0);
+        const uptime_seconds: u64 = @intCast(@divFloor(uptime_ns, std.time.ns_per_s));
+
+        if (std.mem.eql(u8, format, "text")) {
+            var body_buf: [1024]u8 = undefined;
+            const body = std.fmt.bufPrint(
+                &body_buf,
+                "state: {s}\nlisten: {s}:{d}\nuptime_seconds: {d}\nshards_total: {d}\nshards_active: {d}\nshards_unavailable: {d}\ntopology_version: {d}\nqueries_total: {d}\nqueries_fan_out: {d}\nfailovers: {d}\n",
+                .{
+                    @tagName(self.coordinator.state),
+                    self.coordinator.config.bind_address.getHost(),
+                    self.coordinator.config.bind_address.port,
+                    uptime_seconds,
+                    topology.num_shards,
+                    active,
+                    unavailable,
+                    topology.version,
+                    stats.queries_total,
+                    stats.queries_fan_out,
+                    stats.failovers,
+                },
+            ) catch "state: error\n";
+            try sendHttpResponse(client_fd, "200 OK", "text/plain", body);
+            return;
+        }
+
+        var body_buf: [1536]u8 = undefined;
+        const body = std.fmt.bufPrint(
+            &body_buf,
+            "{{\"state\":\"{s}\",\"listen\":\"{s}:{d}\",\"uptime_seconds\":{d},\"topology_version\":{d},\"shards_total\":{d},\"shards_active\":{d},\"shards_unavailable\":{d},\"queries_total\":{d},\"queries_fan_out\":{d},\"queries_single_shard\":{d},\"query_errors\":{d},\"failovers\":{d}}}",
+            .{
+                @tagName(self.coordinator.state),
+                self.coordinator.config.bind_address.getHost(),
+                self.coordinator.config.bind_address.port,
+                uptime_seconds,
+                topology.version,
+                topology.num_shards,
+                active,
+                unavailable,
+                stats.queries_total,
+                stats.queries_fan_out,
+                stats.queries_single_shard,
+                stats.queries_error,
+                stats.failovers,
+            },
+        ) catch "{\"state\":\"error\"}";
+        try sendHttpResponse(client_fd, "200 OK", "application/json", body);
+    }
+};
+
+pub fn queryStatus(
+    allocator: Allocator,
+    host: []const u8,
+    port: u16,
+    format: []const u8,
+) ![]u8 {
+    const request = try std.fmt.allocPrint(
+        allocator,
+        "GET /status?format={s} HTTP/1.1\r\nHost: {s}\r\nConnection: close\r\n\r\n",
+        .{ format, host },
+    );
+    defer allocator.free(request);
+
+    return try controlRequest(allocator, host, port, request);
+}
+
+pub fn requestStop(
+    allocator: Allocator,
+    host: []const u8,
+    port: u16,
+) ![]u8 {
+    const request = try std.fmt.allocPrint(
+        allocator,
+        "POST /stop HTTP/1.1\r\nHost: {s}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+        .{host},
+    );
+    defer allocator.free(request);
+
+    return try controlRequest(allocator, host, port, request);
+}
+
+fn resolveNetAddress(allocator: Allocator, host: []const u8, port: u16) !std.net.Address {
+    return std.net.Address.parseIp4(host, port) catch
+        std.net.Address.parseIp6(host, port) catch blk: {
+            const addresses = try std.net.getAddressList(allocator, host, port);
+            defer addresses.deinit();
+            if (addresses.addrs.len == 0) return error.UnknownHostName;
+            break :blk addresses.addrs[0];
+        };
+}
+
+fn controlRequest(
+    allocator: Allocator,
+    host: []const u8,
+    port: u16,
+    request: []const u8,
+) ![]u8 {
+    var stream = try std.net.tcpConnectToHost(allocator, host, port);
+    defer stream.close();
+
+    try stream.writeAll(request);
+    const response = try stream.reader().readAllAlloc(allocator, 1024 * 1024);
+    defer allocator.free(response);
+
+    const body_start = std.mem.indexOf(u8, response, "\r\n\r\n") orelse return allocator.dupe(u8, response);
+    return allocator.dupe(u8, response[body_start + 4 ..]);
+}
+
+fn parseRequestMethod(request: []const u8) ?[]const u8 {
+    const line_end = std.mem.indexOf(u8, request, "\r\n") orelse
+        std.mem.indexOfScalar(u8, request, '\n') orelse return null;
+    const first_line = request[0..line_end];
+    var parts = std.mem.splitScalar(u8, first_line, ' ');
+    return parts.next();
+}
+
+fn parseRequestTarget(request: []const u8) ?[]const u8 {
+    const line_end = std.mem.indexOf(u8, request, "\r\n") orelse
+        std.mem.indexOfScalar(u8, request, '\n') orelse return null;
+    const first_line = request[0..line_end];
+    var parts = std.mem.splitScalar(u8, first_line, ' ');
+    _ = parts.next() orelse return null;
+    return parts.next();
+}
+
+fn stripQueryString(target: []const u8) []const u8 {
+    if (std.mem.indexOfScalar(u8, target, '?')) |idx| {
+        return target[0..idx];
+    }
+    return target;
+}
+
+fn queryValue(target: []const u8, key: []const u8) ?[]const u8 {
+    const query_start = std.mem.indexOfScalar(u8, target, '?') orelse return null;
+    var pairs = std.mem.splitScalar(u8, target[query_start + 1 ..], '&');
+    while (pairs.next()) |pair| {
+        const equals = std.mem.indexOfScalar(u8, pair, '=') orelse continue;
+        if (!std.mem.eql(u8, pair[0..equals], key)) continue;
+        return pair[equals + 1 ..];
+    }
+    return null;
+}
+
+fn sendHttpResponse(
+    client_fd: posix.socket_t,
+    status: []const u8,
+    content_type: []const u8,
+    body: []const u8,
+) !void {
+    var header_buf: [512]u8 = undefined;
+    const headers = std.fmt.bufPrint(
+        &header_buf,
+        "HTTP/1.1 {s}\r\nContent-Type: {s}\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n",
+        .{ status, content_type, body.len },
+    ) catch return error.ResponseTooLarge;
+
+    try writeAllFd(client_fd, headers);
+    try writeAllFd(client_fd, body);
+}
+
+fn writeAllFd(fd: posix.socket_t, bytes: []const u8) !void {
+    var offset: usize = 0;
+    while (offset < bytes.len) {
+        offset += try posix.write(fd, bytes[offset..]);
+    }
+}
 
 // =============================================================================
 // Tests

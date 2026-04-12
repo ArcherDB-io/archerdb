@@ -34,6 +34,7 @@
 const std = @import("std");
 const stdx = @import("stdx");
 const tb = @import("../../archerdb.zig");
+const s2 = @import("../../s2/s2.zig");
 const Operation = tb.Operation;
 const GeoEvent = tb.GeoEvent;
 const GeoEventFlags = tb.GeoEventFlags;
@@ -355,9 +356,7 @@ fn random_insert_events(prng: *stdx.PRNG, model: *const Model) Command {
         const lon_nano: i64 = @as(i64, @intCast(prng.int_inclusive(u64, lon_range))) +
             GeoEvent.lon_nano_min;
 
-        // Generate a random S2 cell ID (simplified - actual S2 calculation is complex)
-        // In a real implementation, this would use proper S2 geometry
-        const s2_cell_id: u64 = prng.int(u64);
+        const s2_cell_id = s2.latLonToCellId(lat_nano, lon_nano, s2.max_level);
         const timestamp_ns: u64 = @as(u64, @intCast(std.time.nanoTimestamp()));
 
         event.* = std.mem.zeroInit(GeoEvent, .{
@@ -397,6 +396,26 @@ fn query_latest_events(model: *const Model) Command {
     });
 
     return .{ .query_latest = filters[0..1] };
+}
+
+test "random_insert_events derives S2 cell ids from generated coordinates" {
+    var entities_buffer = std.mem.zeroes([entities_count_max]u128);
+    var model = Model{
+        .entities = std.ArrayListUnmanaged(u128).initBuffer(&entities_buffer),
+    };
+
+    var prng = stdx.PRNG.from_seed(42);
+    const command = random_insert_events(&prng, &model);
+    const events = command.insert_events;
+    try std.testing.expect(events.len > 0);
+
+    for (events) |event| {
+        const unpacked = GeoEvent.unpack_id(event.id);
+        try std.testing.expectEqual(
+            s2.latLonToCellId(event.lat_nano, event.lon_nano, s2.max_level),
+            unpacked.s2_cell_id,
+        );
+    }
 }
 
 /// Converts a union type, where each field is of a slice type, into a struct of arrays of the

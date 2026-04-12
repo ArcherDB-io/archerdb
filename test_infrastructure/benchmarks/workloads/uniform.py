@@ -1,20 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 ArcherDB Contributors
 
-"""Uniform distribution workload for benchmarking.
-
-Generates events with random lat/lon across the entire valid range,
-modeling globally distributed data access patterns.
-"""
+"""Uniform distribution workload for benchmarking."""
 
 import random
 import time
 import uuid
-from typing import Any, Dict, List, Optional
-
-import requests
+from typing import Any, Dict, List, Optional, Sequence
 
 from ..executor import Sample
+from ..sdk_adapter import batch_to_geo_events, build_client, normalize_addresses
 from ...generators.data_generator import DatasetConfig
 
 
@@ -40,11 +35,14 @@ class UniformWorkload:
 
     def __init__(
         self,
-        host: str,
-        port: int,
+        host: Optional[str],
+        port: Optional[int],
         data_config: DatasetConfig,
         batch_size: int = 1000,
         timeout: float = 30.0,
+        *,
+        addresses: Optional[Sequence[str]] = None,
+        cluster_id: int = 0,
     ) -> None:
         """Initialize uniform workload.
 
@@ -55,14 +53,13 @@ class UniformWorkload:
             batch_size: Number of events per batch insert.
             timeout: HTTP request timeout in seconds.
         """
-        self.host = host
-        self.port = port
+        self.cluster_id = cluster_id
         self.data_config = data_config
         self.batch_size = batch_size
         self.timeout = timeout
 
-        self._base_url = f"http://{host}:{port}"
-        self._session: Optional[requests.Session] = None
+        self._addresses = normalize_addresses(addresses=addresses, host=host, port=port)
+        self._client = None
         self._rng: Optional[random.Random] = None
 
     def setup(self) -> None:
@@ -71,7 +68,11 @@ class UniformWorkload:
         Creates HTTP session for connection pooling and seeds RNG
         for reproducible data generation.
         """
-        self._session = requests.Session()
+        self._client = build_client(
+            cluster_id=self.cluster_id,
+            addresses=self._addresses,
+            timeout=self.timeout,
+        )
 
         # Use seeded RNG for reproducibility
         seed = self.data_config.seed if self.data_config.seed is not None else 42
@@ -85,22 +86,24 @@ class UniformWorkload:
         Returns:
             Sample with latency in nanoseconds and success status.
         """
-        if self._session is None or self._rng is None:
+        if self._rng is None:
             raise RuntimeError("Workload not setup. Call setup() first.")
+        if self._client is None:
+            self._client = build_client(
+                cluster_id=self.cluster_id,
+                addresses=self._addresses,
+                timeout=self.timeout,
+            )
 
         # Generate batch with uniform distribution
-        batch = self._generate_uniform_batch()
+        batch = batch_to_geo_events(self._generate_uniform_batch())
 
         # Measure insert time
         start_ns = time.perf_counter_ns()
         try:
-            response = self._session.post(
-                f"{self._base_url}/insert",
-                json=batch,
-                timeout=self.timeout,
-            )
-            success = response.status_code == 200
-        except requests.RequestException:
+            errors = self._client.insert_events(batch)
+            success = len(errors) == 0
+        except Exception:
             success = False
         end_ns = time.perf_counter_ns()
 
@@ -139,9 +142,9 @@ class UniformWorkload:
 
     def cleanup(self) -> None:
         """Clean up resources."""
-        if self._session:
-            self._session.close()
-            self._session = None
+        if self._client:
+            self._client.close()
+            self._client = None
         self._rng = None
 
     def get_pattern_name(self) -> str:
