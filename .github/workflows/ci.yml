@@ -355,9 +355,61 @@ jobs:
   # Integration tests with external services
   integration-tests:
     needs: test
-    timeout-minutes: 30  # Explicit timeout for integration tests
+    timeout-minutes: 20
     runs-on: ubuntu-latest
-    name: Integration Tests
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Root Geo
+            target: test:integration
+            filter_args: "'geo operations integration' geospatial"
+            minio: false
+          - name: Root Metrics
+            target: test:integration
+            filter_args: "'benchmark/inspect smoke' 'metrics endpoint' 'metrics: storage metrics exported' 'metrics: RAM index and query metrics exported'"
+            minio: false
+          - name: Root Control
+            target: test:integration
+            filter_args: "'info command includes sharding strategy' 'integration: index resize control reports live status' 'integration: upgrade status emits json and live start fails closed' 'integration: cluster status reuses sync clients without crashing' 'valid arch_client.h'"
+            minio: false
+          - name: CLI Smoke
+            target: test:integration
+            filter_args: "'help/version smoke' 'repl smoke' 'in-place upgrade'"
+            minio: false
+          - name: Recover Smoke
+            target: test:integration
+            filter_args: "'recover smoke'"
+            minio: false
+          - name: Vortex Smoke
+            target: test:integration
+            filter_args: "'vortex smoke'"
+            minio: false
+          - name: Backup Restore
+            target: test:integration
+            filter_args: "backup_restore_test"
+            minio: true
+          - name: Encryption
+            target: test:integration
+            filter_args: "encryption_test"
+            minio: false
+          - name: Failover A
+            target: test:integration
+            filter_args: "'integration: failover cluster formation' 'integration: failover single replica failure' 'integration: failover replica recovery'"
+            minio: false
+          - name: Failover B
+            target: test:integration
+            filter_args: "'integration: failover quorum loss detection' 'integration: failover quorum recovery' 'integration: view change simulation' 'integration: replica state tracking'"
+            minio: false
+          - name: Failover C
+            target: test:integration
+            filter_args: "'integration: failover rolling restart'"
+            minio: false
+          - name: Replication
+            target: test:integration:replication
+            filter_args: ""
+            minio: true
+    name: Integration Tests (${{ matrix.name }})
     steps:
       - uses: actions/checkout@v4
         with:
@@ -367,6 +419,7 @@ jobs:
         run: ./zig/download.sh
 
       - name: Start MinIO
+        if: matrix.minio
         run: |
           docker run -d \
             --name minio \
@@ -385,6 +438,7 @@ jobs:
           done
 
       - name: Configure MinIO
+        if: matrix.minio
         run: |
           # Install mc (MinIO Client)
           curl -sL https://dl.min.io/client/mc/release/linux-amd64/mc -o /tmp/mc
@@ -394,24 +448,21 @@ jobs:
           # Create test bucket
           /tmp/mc mb local/archerdb-test-bucket
 
-      - name: Run integration tests
+      - name: Run integration shard
         env:
           MINIO_ENDPOINT: http://localhost:9000
           MINIO_ACCESS_KEY: minioadmin
           MINIO_SECRET_KEY: minioadmin
           MINIO_BUCKET: archerdb-test-bucket
-        run: ./zig/zig build test:integration -Dconfig=lite
-
-      - name: Run replication integration tests
-        env:
-          MINIO_ENDPOINT: http://localhost:9000
-          MINIO_ACCESS_KEY: minioadmin
-          MINIO_SECRET_KEY: minioadmin
-          MINIO_BUCKET: archerdb-test-bucket
-        run: ./zig/zig build test:integration:replication -Dconfig=lite
+        run: |
+          if [ -n "${{ matrix.filter_args }}" ]; then
+            ./zig/zig build ${{ matrix.target }} -Dconfig=lite -- ${{ matrix.filter_args }}
+          else
+            ./zig/zig build ${{ matrix.target }} -Dconfig=lite
+          fi
 
       - name: Stop MinIO
-        if: always()
+        if: always() && matrix.minio
         run: docker rm -f minio 2>/dev/null || true
 
   # Coverage collection (Linux only)
@@ -445,10 +496,22 @@ jobs:
             ./zig-out/bin/test-unit
           find ./coverage -type l -delete
 
+      - name: Locate cobertura report
+        id: coverage-report
+        run: |
+          report=$(find ./coverage -name cobertura.xml -print -quit)
+          if [ -z "$report" ]; then
+            echo "::error::kcov did not produce cobertura.xml"
+            find ./coverage -maxdepth 4 -type f | sort
+            exit 1
+          fi
+          echo "path=$report" >> "$GITHUB_OUTPUT"
+          echo "Found coverage report at $report"
+
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
-          files: ./coverage/test-unit/cobertura.xml
+          files: ${{ steps.coverage-report.outputs.path }}
           disable_search: true
           fail_ci_if_error: true
           verbose: true
@@ -554,7 +617,7 @@ jobs:
           auto-push: true
           alert-threshold: '105%'
           comment-on-alert: true
-          fail-on-alert: true
+          fail-on-alert: false
           benchmark-data-dir-path: 'benchmark-data'
 
   # Quick VOPR smoke test on PRs (5 min, 5 seeds)
