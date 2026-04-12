@@ -1368,18 +1368,18 @@ test "recover smoke" {
     try cluster.replica_spawn(0);
     try cluster.replica_spawn(1);
     try cluster.replica_spawn(2);
-    std.time.sleep(1 * std.time.ns_per_s);
+    try cluster.wait_for_live_replicas(&.{ 0, 1, 2 }, .seconds(10));
 
     // This smoke focuses on recover/rejoin sequencing; heavier workload coverage lives elsewhere.
     try cluster.replica_kill(2);
+    try cluster.wait_for_live_replicas(&.{ 0, 1 }, .seconds(10));
     try cluster.replica_reformat(2);
-
     try cluster.replica_spawn(2);
-    std.time.sleep(1 * std.time.ns_per_s);
+    try cluster.wait_for_live_replicas(&.{ 0, 1, 2 }, .seconds(10));
     try cluster.replica_kill(1);
-    std.time.sleep(1 * std.time.ns_per_s);
+    try cluster.wait_for_live_replicas(&.{ 0, 2 }, .seconds(10));
     try cluster.replica_spawn(1);
-    std.time.sleep(1 * std.time.ns_per_s);
+    try cluster.wait_for_live_replicas(&.{ 0, 1, 2 }, .seconds(10));
 }
 
 test "vortex smoke" {
@@ -1524,6 +1524,7 @@ const TmpCluster = struct {
     const replica_count = 3;
     // The test uses this hard-coded address, so only one instance can be running at a time.
     const addresses = "127.0.0.1:7121,127.0.0.1:7122,127.0.0.1:7123";
+    const replica_ports = [_]u16{ 7121, 7122, 7123 };
 
     shell: *Shell,
     tmp: []const u8,
@@ -1628,6 +1629,7 @@ const TmpCluster = struct {
             \\    --cluster=0
             \\    --replica={replica}
             \\    --replica-count=3
+            \\    --development=true
             \\    --addresses={addresses}
             \\    {datafile}
         , .{
@@ -1663,7 +1665,7 @@ const TmpCluster = struct {
     fn replica_spawn(cluster: *TmpCluster, replica_index: usize) !void {
         assert(cluster.replicas[replica_index] == null);
         cluster.replicas[replica_index] = try cluster.shell.spawn(.{},
-            \\{archerdb} start --addresses={addresses} {datafile}
+            \\{archerdb} start --development=true --addresses={addresses} {datafile}
         , .{
             .archerdb = cluster.replica_exe[replica_index],
             .addresses = addresses,
@@ -1675,6 +1677,49 @@ const TmpCluster = struct {
         assert(cluster.replicas[replica_index] != null);
         _ = cluster.replicas[replica_index].?.kill() catch {};
         cluster.replicas[replica_index] = null;
+    }
+
+    fn wait_for_live_replicas(
+        cluster: *TmpCluster,
+        replica_indices: []const usize,
+        timeout: stdx.Duration,
+    ) !void {
+        _ = cluster;
+
+        const deadline = std.time.nanoTimestamp() + timeout.ns;
+        var stable_checks: usize = 0;
+        while (std.time.nanoTimestamp() < deadline) {
+            var all_listening = true;
+            for (replica_indices) |replica_index| {
+                var stream = std.net.tcpConnectToAddress(replica_address(replica_index)) catch |err| switch (err) {
+                    error.ConnectionRefused,
+                    error.ConnectionTimedOut,
+                    error.NetworkUnreachable,
+                    error.ConnectionResetByPeer,
+                    => {
+                        all_listening = false;
+                        break;
+                    },
+                    else => return err,
+                };
+                stream.close();
+            }
+
+            if (all_listening) {
+                stable_checks += 1;
+                if (stable_checks >= 3) return;
+            } else {
+                stable_checks = 0;
+            }
+
+            std.time.sleep(200 * std.time.ns_per_ms);
+        }
+
+        return error.ExecTimeout;
+    }
+
+    fn replica_address(replica_index: usize) std.net.Address {
+        return std.net.Address.parseIp4("127.0.0.1", replica_ports[replica_index]) catch unreachable;
     }
 
     const WorkloadStartOptions = struct {
