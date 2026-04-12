@@ -14,6 +14,9 @@ concurrency:
   group: benchmark-weekly
   cancel-in-progress: false  # Never cancel running benchmarks
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   benchmark:
     runs-on: ubuntu-latest-8-cores  # Per CONTEXT.md decision
