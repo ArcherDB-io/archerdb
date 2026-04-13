@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776016208578,
+  "lastUpdate": 1776057308293,
   "repoUrl": "https://github.com/ArcherDB-io/archerdb",
   "entries": {
     "Benchmark": [
@@ -483,6 +483,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Polygon Query p99 Latency",
             "value": 110,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "committer": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "distinct": true,
+          "id": "c81b8151c6a7c33597d16108194c2856d24735f4",
+          "message": "fix(release): harden java release build path",
+          "timestamp": "2026-04-13T06:57:51+02:00",
+          "tree_id": "f72dfdee39346c2be78a34933d4269dbc8e7d190",
+          "url": "https://github.com/ArcherDB-io/archerdb/commit/c81b8151c6a7c33597d16108194c2856d24735f4"
+        },
+        "date": 1776057307708,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "Insert Throughput",
+            "value": 1446746,
+            "unit": "events/s"
+          },
+          {
+            "name": "Insert p99 Latency",
+            "value": 6,
+            "unit": "ms"
+          },
+          {
+            "name": "Radius Query p99 Latency",
+            "value": 122,
+            "unit": "ms"
+          },
+          {
+            "name": "Polygon Query p99 Latency",
+            "value": 92,
             "unit": "ms"
           }
         ]
