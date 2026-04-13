@@ -79,6 +79,10 @@ pub fn create(gpa: std.mem.Allocator) !*Shell {
     errdefer env.deinit();
 
     const ci = env.get("CI") != null;
+    const zig_exe = env.get("ZIG_EXE") orelse project_root.realpathAlloc(
+        arena.allocator(),
+        "zig/zig",
+    ) catch null;
 
     const result = try gpa.create(Shell);
     errdefer gpa.destroy(result);
@@ -92,7 +96,7 @@ pub fn create(gpa: std.mem.Allocator) !*Shell {
         .cwd_stack_count = 0,
         .env = env,
         .ci = ci,
-        .zig_exe = env.get("ZIG_EXE"),
+        .zig_exe = zig_exe,
     };
 
     return result;
@@ -480,7 +484,8 @@ pub fn exec_zig_options(
     var argv = Argv.init(shell.gpa);
     defer argv.deinit();
 
-    try argv.append_new_arg("{s}", .{shell.zig_exe.?});
+    const zig_exe = shell.zig_exe orelse return error.ZigExeUnavailable;
+    try argv.append_new_arg("{s}", .{zig_exe});
     try expand_argv(&argv, cmd, cmd_args);
 
     return shell.exec_inner(argv.slice(), .{

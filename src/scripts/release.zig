@@ -84,6 +84,8 @@ pub fn main(shell: *Shell, gpa: std.mem.Allocator, cli_args: CLIArgs) !void {
         return;
     }
 
+    const first_multiversion_release = "0.15.4";
+
     const changelog_text = try shell.project_root.readFileAlloc(
         shell.arena.allocator(),
         "CHANGELOG.md",
@@ -111,14 +113,23 @@ pub fn main(shell: *Shell, gpa: std.mem.Allocator, cli_args: CLIArgs) !void {
             if (changelog_current.release == null) {
                 @panic("The last changelog entry must have a release version.");
             }
-            const changelog_previous = while (changelog_iteratator.next_changelog()) |entry| {
+            const release_previous = while (changelog_iteratator.next_changelog()) |entry| {
                 // The release number can be null if it was tagged as "unreleased".
                 if (entry.release == null) continue;
-                break entry;
-            } else unreachable;
+                break entry.release.?;
+            } else blk_previous: {
+                if (cli_args.publish or languages.contains(.zig)) {
+                    return error.MissingPreviousReleaseInChangelog;
+                }
+                log.warn(
+                    "CHANGELOG.md has no previous numbered release; using {s} as build-only multiversion baseline",
+                    .{first_multiversion_release},
+                );
+                break :blk_previous try multiversion.Release.parse(first_multiversion_release);
+            };
             break :blk .{
                 changelog_current.release.?,
-                changelog_previous.release.?,
+                release_previous,
                 changelog_current.text_body,
             };
         }
@@ -128,7 +139,6 @@ pub fn main(shell: *Shell, gpa: std.mem.Allocator, cli_args: CLIArgs) !void {
     // Ensure we're building a version newer than the first multiversion release. That was
     // bootstrapped with code to do a custom build of the release before that (see git history)
     // whereas now past binaries are downloaded and the multiversion parts extracted.
-    const first_multiversion_release = "0.15.4";
     assert(release.value >
         (try multiversion.Release.parse(first_multiversion_release)).value);
 
