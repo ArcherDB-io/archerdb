@@ -158,20 +158,31 @@ go get github.com/archerdb/archerdb-go
 </details>
 
 <details>
-<summary>Java (Maven)</summary>
+<summary>Java (source checkout / local Maven install)</summary>
+
+Until `archerdb-java` is explicitly published to Maven Central, use a source checkout:
+
+```bash
+./zig/zig build clients:java -Drelease
+(cd src/clients/java && mvn --batch-mode --quiet install)
+```
+
+Then depend on the local Maven artifact version from
+[`src/clients/java/pom.xml`](/home/g/archerdb/src/clients/java/pom.xml), which is currently
+`0.1.0-SNAPSHOT`:
 
 ```xml
 <dependency>
     <groupId>com.archerdb</groupId>
     <artifactId>archerdb-java</artifactId>
-    <version>1.0.0</version>
+    <version>0.1.0-SNAPSHOT</version>
 </dependency>
 ```
 
 Or Gradle:
 
 ```groovy
-implementation 'com.archerdb:archerdb-java:1.0.0'
+implementation 'com.archerdb:archerdb-java:0.1.0-SNAPSHOT'
 ```
 
 </details>

@@ -29,6 +29,8 @@ Goal-oriented guides:
 - [Error Codes](error-codes.md) - Understand and troubleshoot errors
 - [Testing Guide](testing/README.md) - Run tests locally for all 5 SDKs
 - [Benchmark Guide](benchmarks/README.md) - Run and interpret performance benchmarks
+- [Release Checklist](release-checklist.md) - Must-do go/no-go checklist before calling ArcherDB released
+- [Java Publish Checklist](java-publish-checklist.md) - Separate maintainer checklist for Maven Central publication
 
 ### Reference
 
@@ -55,7 +57,7 @@ Comprehensive guides for each language:
 | Python | `archerdb` | [Full Guide](../src/clients/python/README.md) |
 | Node.js | `archerdb-node` | [Full Guide](../src/clients/node/README.md) |
 | Go | `archerdb-go` | [Full Guide](../src/clients/go/README.md) |
-| Java | `archerdb-java` | [Full Guide](../src/clients/java/README.md) |
+| Java | `com.archerdb:archerdb-java` (local install until Central publish) | [Full Guide](../src/clients/java/README.md) |
 | C | `libarcherdb` | [Full Guide](../src/clients/c/README.md) |
 
 ## For Operators

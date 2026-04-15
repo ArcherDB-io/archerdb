@@ -15,9 +15,9 @@ pub const JavaDocs = Docs{
     .description =
     \\The ArcherDB client for Java.
     \\
-    \\[![javadoc](https://javadoc.io/badge2/io.archerdb/archerdb-java/javadoc.svg)](https://javadoc.io/doc/io.archerdb/archerdb-java)
-    \\
-    \\[![maven-central](https://img.shields.io/maven-central/v/io.archerdb/archerdb-java)](https://central.sonatype.com/namespace/io.archerdb)
+    \\The intended package coordinates are `com.archerdb:archerdb-java`.
+    \\Maven Central publication is a separate release step; until that happens,
+    \\build from a source checkout and install into your local Maven repository.
     ,
 
     .prerequisites =
@@ -33,7 +33,7 @@ pub const JavaDocs = Docs{
     \\         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     \\  <modelVersion>4.0.0</modelVersion>
     \\
-    \\  <groupId>io.archerdb</groupId>
+    \\  <groupId>com.archerdb</groupId>
     \\  <artifactId>samples</artifactId>
     \\  <version>1.0-SNAPSHOT</version>
     \\
@@ -60,7 +60,7 @@ pub const JavaDocs = Docs{
     \\        <artifactId>exec-maven-plugin</artifactId>
     \\        <version>1.6.0</version>
     \\        <configuration>
-    \\          <mainClass>io.archerdb.samples.Main</mainClass>
+    \\          <mainClass>com.archerdb.samples.Main</mainClass>
     \\        </configuration>
     \\      </plugin>
     \\    </plugins>
@@ -68,9 +68,9 @@ pub const JavaDocs = Docs{
     \\
     \\  <dependencies>
     \\    <dependency>
-    \\      <groupId>io.archerdb</groupId>
+    \\      <groupId>com.archerdb</groupId>
     \\      <artifactId>archerdb-java</artifactId>
-    \\      <version>0.0.1</version>
+    \\      <version>0.1.0-SNAPSHOT</version>
     \\    </dependency>
     \\  </dependencies>
     \\</project>
@@ -91,7 +91,7 @@ pub const JavaDocs = Docs{
     \\pass in a long, a pair of longs (least and most significant bits),
     \\or a `byte[]`.
     \\
-    \\There is also an `io.archerdb.UInt128` helper with static
+    \\There is also a `com.archerdb.geo.UInt128` helper with static
     \\methods for converting 128-bit little-endian unsigned integers
     \\between instances of `long`, `java.util.UUID`, `java.math.BigInteger` and `byte[]`.
     ,

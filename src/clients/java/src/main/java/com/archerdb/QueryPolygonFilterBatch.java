@@ -45,8 +45,7 @@ public final class QueryPolygonFilterBatch extends Batch {
 
     /**
      * @throws IllegalStateException if not at a {@link #isValidPosition valid position}.
-     * @see <a href=
-     *      "https://docs.archerdb.io/reference/query-polygon-filter#vertex_count">vertex_count</a>
+     * @see <a href="https://docs.archerdb.io/reference/query-polygon-filter#vertex_count">vertex_count</a>
      */
     public int getVertexCount() {
         final var value = getUInt32(at(Struct.VertexCount));
@@ -57,8 +56,7 @@ public final class QueryPolygonFilterBatch extends Batch {
      * @param vertexCount
      * @throws IllegalStateException if not at a {@link #isValidPosition valid position}.
      * @throws IllegalStateException if a {@link #isReadOnly() read-only} batch.
-     * @see <a href=
-     *      "https://docs.archerdb.io/reference/query-polygon-filter#vertex_count">vertex_count</a>
+     * @see <a href="https://docs.archerdb.io/reference/query-polygon-filter#vertex_count">vertex_count</a>
      */
     public void setVertexCount(final int vertexCount) {
         putUInt32(at(Struct.VertexCount), vertexCount);
@@ -66,8 +64,7 @@ public final class QueryPolygonFilterBatch extends Batch {
 
     /**
      * @throws IllegalStateException if not at a {@link #isValidPosition valid position}.
-     * @see <a href=
-     *      "https://docs.archerdb.io/reference/query-polygon-filter#hole_count">hole_count</a>
+     * @see <a href="https://docs.archerdb.io/reference/query-polygon-filter#hole_count">hole_count</a>
      */
     public int getHoleCount() {
         final var value = getUInt32(at(Struct.HoleCount));
@@ -78,8 +75,7 @@ public final class QueryPolygonFilterBatch extends Batch {
      * @param holeCount
      * @throws IllegalStateException if not at a {@link #isValidPosition valid position}.
      * @throws IllegalStateException if a {@link #isReadOnly() read-only} batch.
-     * @see <a href=
-     *      "https://docs.archerdb.io/reference/query-polygon-filter#hole_count">hole_count</a>
+     * @see <a href="https://docs.archerdb.io/reference/query-polygon-filter#hole_count">hole_count</a>
      */
     public void setHoleCount(final int holeCount) {
         putUInt32(at(Struct.HoleCount), holeCount);
@@ -106,8 +102,7 @@ public final class QueryPolygonFilterBatch extends Batch {
 
     /**
      * @throws IllegalStateException if not at a {@link #isValidPosition valid position}.
-     * @see <a href=
-     *      "https://docs.archerdb.io/reference/query-polygon-filter#_reserved_align">_reserved_align</a>
+     * @see <a href="https://docs.archerdb.io/reference/query-polygon-filter#_reserved_align">_reserved_align</a>
      */
     public int getReservedAlign() {
         final var value = getUInt32(at(Struct.ReservedAlign));
@@ -118,8 +113,7 @@ public final class QueryPolygonFilterBatch extends Batch {
      * @param reservedAlign
      * @throws IllegalStateException if not at a {@link #isValidPosition valid position}.
      * @throws IllegalStateException if a {@link #isReadOnly() read-only} batch.
-     * @see <a href=
-     *      "https://docs.archerdb.io/reference/query-polygon-filter#_reserved_align">_reserved_align</a>
+     * @see <a href="https://docs.archerdb.io/reference/query-polygon-filter#_reserved_align">_reserved_align</a>
      */
     public void setReservedAlign(final int reservedAlign) {
         putUInt32(at(Struct.ReservedAlign), reservedAlign);
@@ -127,8 +121,7 @@ public final class QueryPolygonFilterBatch extends Batch {
 
     /**
      * @throws IllegalStateException if not at a {@link #isValidPosition valid position}.
-     * @see <a href=
-     *      "https://docs.archerdb.io/reference/query-polygon-filter#timestamp_min">timestamp_min</a>
+     * @see <a href="https://docs.archerdb.io/reference/query-polygon-filter#timestamp_min">timestamp_min</a>
      */
     public long getTimestampMin() {
         final var value = getUInt64(at(Struct.TimestampMin));
@@ -139,8 +132,7 @@ public final class QueryPolygonFilterBatch extends Batch {
      * @param timestampMin
      * @throws IllegalStateException if not at a {@link #isValidPosition valid position}.
      * @throws IllegalStateException if a {@link #isReadOnly() read-only} batch.
-     * @see <a href=
-     *      "https://docs.archerdb.io/reference/query-polygon-filter#timestamp_min">timestamp_min</a>
+     * @see <a href="https://docs.archerdb.io/reference/query-polygon-filter#timestamp_min">timestamp_min</a>
      */
     public void setTimestampMin(final long timestampMin) {
         putUInt64(at(Struct.TimestampMin), timestampMin);
@@ -148,8 +140,7 @@ public final class QueryPolygonFilterBatch extends Batch {
 
     /**
      * @throws IllegalStateException if not at a {@link #isValidPosition valid position}.
-     * @see <a href=
-     *      "https://docs.archerdb.io/reference/query-polygon-filter#timestamp_max">timestamp_max</a>
+     * @see <a href="https://docs.archerdb.io/reference/query-polygon-filter#timestamp_max">timestamp_max</a>
      */
     public long getTimestampMax() {
         final var value = getUInt64(at(Struct.TimestampMax));
@@ -160,8 +151,7 @@ public final class QueryPolygonFilterBatch extends Batch {
      * @param timestampMax
      * @throws IllegalStateException if not at a {@link #isValidPosition valid position}.
      * @throws IllegalStateException if a {@link #isReadOnly() read-only} batch.
-     * @see <a href=
-     *      "https://docs.archerdb.io/reference/query-polygon-filter#timestamp_max">timestamp_max</a>
+     * @see <a href="https://docs.archerdb.io/reference/query-polygon-filter#timestamp_max">timestamp_max</a>
      */
     public void setTimestampMax(final long timestampMax) {
         putUInt64(at(Struct.TimestampMax), timestampMax);

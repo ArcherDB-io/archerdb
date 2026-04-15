@@ -20,7 +20,7 @@ info:
     For most use cases, we recommend using one of the official SDKs:
     - [Python](https://github.com/archerdb/archerdb-python)
     - [Node.js](https://github.com/archerdb/archerdb-node)
-    - [Java](https://github.com/archerdb/archerdb-java)
+    - [Java](https://github.com/ArcherDB-io/archerdb/tree/main/src/clients/java)
     - [Go](https://github.com/archerdb/archerdb-go)
     - [C](https://github.com/archerdb/archerdb-c)
   version: 1.0.0

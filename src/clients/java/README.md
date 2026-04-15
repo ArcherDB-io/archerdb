@@ -2,6 +2,10 @@
 
 The ArcherDB Java client for high-performance geospatial data storage and queries.
 
+## Maintainers
+
+Before publishing `archerdb-java` to Maven Central, first use the [Release Checklist](../../../docs/release-checklist.md), then the [Java Publish Checklist](../../../docs/java-publish-checklist.md).
+
 ## Prerequisites
 
 Linux >= 5.6 is the only production environment we support. For development, macOS and Windows are also supported.
@@ -11,21 +15,40 @@ Linux >= 5.6 is the only production environment we support. For development, mac
 
 ## Installation
 
-### Maven
+The intended package coordinates are `com.archerdb:archerdb-java`, but Maven Central
+publication is a separate release step and may not exist for the current commit.
+
+### Source Checkout / Local Maven Install
+
+From the repo root:
+
+```bash
+./zig/zig build clients:java -Drelease
+cd src/clients/java
+mvn --batch-mode --quiet install
+```
+
+That installs the current Java client into your local Maven repository using the version in
+[`pom.xml`](/home/g/archerdb/src/clients/java/pom.xml), which is currently `0.1.0-SNAPSHOT`.
+
+### Maven / Gradle Coordinates
+
+After local installation, use the version from [`pom.xml`](/home/g/archerdb/src/clients/java/pom.xml):
 
 ```xml
 <dependency>
     <groupId>com.archerdb</groupId>
     <artifactId>archerdb-java</artifactId>
-    <version>0.1.0</version>
+    <version>0.1.0-SNAPSHOT</version>
 </dependency>
 ```
 
-### Gradle
-
 ```groovy
-implementation 'com.archerdb:archerdb-java:0.1.0'
+implementation 'com.archerdb:archerdb-java:0.1.0-SNAPSHOT'
 ```
+
+Do not assume Maven Central availability unless a release note explicitly says that the Java
+package was published.
 
 ## Quick Start
 

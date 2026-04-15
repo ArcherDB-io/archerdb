@@ -22,19 +22,13 @@ public enum ShardStatus {
 
     public static ShardStatus fromValue(byte value) {
         switch (value) {
-            case 0:
-                return Active;
-            case 1:
-                return Syncing;
-            case 2:
-                return Unavailable;
-            case 3:
-                return Migrating;
-            case 4:
-                return Decommissioning;
-            default:
-                throw new IllegalArgumentException(
-                        String.format("Invalid ShardStatus value=%d", value));
+            case 0: return Active;
+            case 1: return Syncing;
+            case 2: return Unavailable;
+            case 3: return Migrating;
+            case 4: return Decommissioning;
+            default: throw new IllegalArgumentException(
+                String.format("Invalid ShardStatus value=%d", value));
         }
     }
 }

@@ -7,7 +7,7 @@ ArcherDB ships five client SDKs over a shared geospatial operation surface:
 | Python | `archerdb` | [Python README](/home/g/archerdb/src/clients/python/README.md) |
 | Node.js | `archerdb-node` | [Node.js README](/home/g/archerdb/src/clients/node/README.md) |
 | Go | `github.com/archerdb/archerdb-go` | [Go README](/home/g/archerdb/src/clients/go/README.md) |
-| Java | `com.archerdb:archerdb-java` | [Java README](/home/g/archerdb/src/clients/java/README.md) |
+| Java | `com.archerdb:archerdb-java` (local install until Central publish) | [Java README](/home/g/archerdb/src/clients/java/README.md) |
 | C | `archerdb-c` | [C README](/home/g/archerdb/src/clients/c/README.md) |
 
 ## Shared Capability Surface

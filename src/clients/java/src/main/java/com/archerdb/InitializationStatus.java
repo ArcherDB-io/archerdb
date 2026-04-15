@@ -24,23 +24,15 @@ public enum InitializationStatus {
 
     public static InitializationStatus fromValue(int value) {
         switch (value) {
-            case 0:
-                return Success;
-            case 1:
-                return Unexpected;
-            case 2:
-                return OutOfMemory;
-            case 3:
-                return AddressInvalid;
-            case 4:
-                return AddressLimitExceeded;
-            case 5:
-                return SystemResources;
-            case 6:
-                return NetworkSubsystem;
-            default:
-                throw new IllegalArgumentException(
-                        String.format("Invalid InitializationStatus value=%d", value));
+            case 0: return Success;
+            case 1: return Unexpected;
+            case 2: return OutOfMemory;
+            case 3: return AddressInvalid;
+            case 4: return AddressLimitExceeded;
+            case 5: return SystemResources;
+            case 6: return NetworkSubsystem;
+            default: throw new IllegalArgumentException(
+                String.format("Invalid InitializationStatus value=%d", value));
         }
     }
 }
