@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776057308293,
+  "lastUpdate": 1776292997306,
   "repoUrl": "https://github.com/ArcherDB-io/archerdb",
   "entries": {
     "Benchmark": [
@@ -527,6 +527,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Polygon Query p99 Latency",
             "value": 92,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "committer": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "distinct": true,
+          "id": "a5c69b9063e3bea82b95bd61a409f28f4c99be94",
+          "message": "fix(release): separate Java Central publish from core release\n\nAlign release docs with the local Java install path, add explicit release and Java publish checklists, update Java sample snapshot versions, and keep regenerated Java bindings header-safe.",
+          "timestamp": "2026-04-16T00:25:30+02:00",
+          "tree_id": "84c3005c5523f46fa7714a764d1208da791d5bf2",
+          "url": "https://github.com/ArcherDB-io/archerdb/commit/a5c69b9063e3bea82b95bd61a409f28f4c99be94"
+        },
+        "date": 1776292995921,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "Insert Throughput",
+            "value": 1411365,
+            "unit": "events/s"
+          },
+          {
+            "name": "Insert p99 Latency",
+            "value": 6,
+            "unit": "ms"
+          },
+          {
+            "name": "Radius Query p99 Latency",
+            "value": 96,
+            "unit": "ms"
+          },
+          {
+            "name": "Polygon Query p99 Latency",
+            "value": 87,
             "unit": "ms"
           }
         ]
