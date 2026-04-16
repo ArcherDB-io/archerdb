@@ -29,13 +29,13 @@ const assert = std.debug.assert;
 const log = std.log.scoped(.faulty_network);
 const Ratio = stdx.PRNG.Ratio;
 
-const Faults = struct {
-    const Delay = struct {
+pub const Faults = struct {
+    pub const Delay = struct {
         time_ms: u32,
         jitter_ms: u32,
     };
 
-    const Rate = struct {
+    pub const Rate = struct {
         bytes_per_second: u32,
         burst_bytes: u32,
     };

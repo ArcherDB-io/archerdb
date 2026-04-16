@@ -8,14 +8,16 @@ package com.archerdb.geo;
  * <p>
  * The enum expresses the intended routing policy. In the current Java SDK, {@link #PRIMARY} is
  * implemented directly, {@link #FOLLOWER} uses deterministic follower selection, and
- * {@link #NEAREST} is retained as a configuration value but does not yet perform latency-based
- * routing.
+ * {@link #NEAREST} performs static config-driven routing: it selects the first region listed in
+ * {@link ClientConfig#getRegions()}. Latency-aware selection is deliberately out of scope for the
+ * Java SDK; callers express regional preference through the configured region order.
  *
  * <p>
  * <ul>
  * <li>PRIMARY - Route all reads to primary region (strongly consistent)</li>
  * <li>FOLLOWER - Route reads to follower regions (eventually consistent)</li>
- * <li>NEAREST - Intended nearest-region routing; currently non-GA in the Java SDK</li>
+ * <li>NEAREST - Route reads to the first region listed in {@code ClientConfig.getRegions()}; static
+ * priority, no latency probing</li>
  * </ul>
  *
  * <p>
@@ -36,8 +38,9 @@ public enum ReadPreference {
     FOLLOWER("follower"),
 
     /**
-     * Intended nearest-region routing. The current Java SDK retains this value for configuration
-     * compatibility but does not yet perform latency-based region selection.
+     * Nearest-region routing via static config order. The first region in
+     * {@link ClientConfig#getRegions()} is used as the read target. This is not latency-aware;
+     * reorder regions in {@code ClientConfig} to change priority.
      */
     NEAREST("nearest");
 

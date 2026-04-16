@@ -53,7 +53,7 @@ This server has limited resources (24GB RAM, 8 cores, no swap). Use these flags 
 - **standard**: Baseline production tier.
 - **pro**: Higher-performance tier for moderate production hardware.
 - **enterprise**: High-end production tier for maximum throughput.
-- **ultra**: Top-end tier (currently aligned with enterprise tuning).
+- **ultra**: Highest-capacity profile. Shares the high-performance runtime with standard/pro/enterprise; differs only in RAM index ceiling (64 GiB) and storage ceilings (16 TiB default / 64 TiB max). Use only when enterprise-tier capacity is insufficient for the workload.
 
 ## Tier Product Strategy
 

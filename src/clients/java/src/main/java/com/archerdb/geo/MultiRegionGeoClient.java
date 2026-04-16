@@ -10,17 +10,19 @@ import java.util.Map;
  * Multi-region GeoClient implementation with read preference routing.
  *
  * <p>
- * This implementation is intentionally conservative and non-GA.
+ * This implementation is intentionally conservative and static.
  * <ul>
  * <li>Write operations always go to the primary region</li>
  * <li>{@code PRIMARY} reads go to the primary region</li>
  * <li>{@code FOLLOWER} reads use deterministic first-follower selection</li>
- * <li>{@code NEAREST} currently falls back to the primary region</li>
+ * <li>{@code NEAREST} reads use the first region in {@link ClientConfig#getRegions()} order (static
+ * priority; not latency-aware)</li>
  * </ul>
  *
  * <p>
  * This implementation maintains connections to all configured regions and exposes the multi-region
- * config surface without claiming latency-aware routing that does not exist yet.
+ * config surface without claiming latency-aware routing. Callers control regional preference by
+ * ordering {@code addRegion(...)} calls on the {@code ClientConfig} builder.
  */
 final class MultiRegionGeoClient implements GeoClient {
 
@@ -299,10 +301,20 @@ final class MultiRegionGeoClient implements GeoClient {
     }
 
     /**
-     * Intended nearest-region routing. The current implementation is non-GA and falls back to the
-     * primary region until latency-aware selection and health checks land.
+     * Static nearest-region routing: returns the client for the first region in
+     * {@link ClientConfig#getRegions()} order. Callers express regional preference by ordering
+     * {@code addRegion(...)} calls on the {@code ClientConfig} builder. This is deliberately not
+     * latency-aware; use {@link ReadPreference#FOLLOWER} or {@link ReadPreference#PRIMARY} for
+     * explicit role-based routing.
      */
     private GeoClientImpl selectNearestClient() {
+        List<RegionConfig> regions = config.getRegions();
+        if (!regions.isEmpty()) {
+            GeoClientImpl client = regionClients.get(regions.get(0).getName());
+            if (client != null) {
+                return client;
+            }
+        }
         return primaryClient;
     }
 

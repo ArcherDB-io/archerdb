@@ -64,11 +64,29 @@ pub const CLIArgs = struct {
     disable_faults: bool = false,
     output_directory: ?[]const u8 = null,
     log_debug: bool = false,
+    /// Name of a named network fault profile to lock in for the entire run. When set, the
+    /// supervisor applies the preset once at startup and disables random network fault actions;
+    /// replica-process chaos (crash/pause/restart) continues to operate normally. Valid values:
+    /// "wan-typical" (100ms delay, 20ms jitter, 1% loss).
+    network_scenario: ?[]const u8 = null,
 
     @"--": void,
     /// Vortex is non-deterministic, but providing a seed can still help constrain the scenario.
     seed: ?u64 = null,
 };
+
+fn apply_network_scenario(faults: *faulty_network.Faults, name: []const u8) !void {
+    if (std.mem.eql(u8, name, "wan-typical")) {
+        faults.delay = .{ .time_ms = 100, .jitter_ms = 20 };
+        faults.lose = ratio(1, 100);
+    } else {
+        log.err(
+            "unknown network scenario: '{s}' (valid: wan-typical)",
+            .{name},
+        );
+        return error.UnknownNetworkScenario;
+    }
+}
 
 pub fn main(allocator: std.mem.Allocator, args: CLIArgs) !void {
     var namespaces_enabled = false;
@@ -205,6 +223,11 @@ pub fn main(allocator: std.mem.Allocator, args: CLIArgs) !void {
         workload.destroy(allocator);
     }
 
+    if (args.network_scenario) |scenario_name| {
+        try apply_network_scenario(&network.faults, scenario_name);
+        log.info("locked network scenario '{s}': {any}", .{ scenario_name, network.faults });
+    }
+
     const supervisor = try Supervisor.create(allocator, .{
         .io = &io,
         .network = network,
@@ -214,6 +237,7 @@ pub fn main(allocator: std.mem.Allocator, args: CLIArgs) !void {
         .test_duration = args.test_duration,
         .faulty = !args.disable_faults,
         .namespaces_enabled = namespaces_enabled,
+        .network_scenario_locked = args.network_scenario != null,
     });
     defer supervisor.destroy(allocator);
 
@@ -229,6 +253,9 @@ const Supervisor = struct {
     test_deadline: i128,
     faulty: bool,
     namespaces_enabled: bool,
+    /// When true, network faults are pinned by a named scenario. Random network-fault and
+    /// network-heal actions are disabled so the scenario holds for the full run.
+    network_scenario_locked: bool,
 
     fn create(allocator: std.mem.Allocator, options: struct {
         io: *IO,
@@ -239,6 +266,7 @@ const Supervisor = struct {
         test_duration: stdx.Duration,
         faulty: bool,
         namespaces_enabled: bool,
+        network_scenario_locked: bool,
     }) !*Supervisor {
         const supervisor = try allocator.create(Supervisor);
         errdefer allocator.destroy(supervisor);
@@ -252,6 +280,7 @@ const Supervisor = struct {
             .test_deadline = std.time.nanoTimestamp() + options.test_duration.ns,
             .faulty = options.faulty,
             .namespaces_enabled = options.namespaces_enabled,
+            .network_scenario_locked = options.network_scenario_locked,
         };
         return supervisor;
     }
@@ -348,19 +377,27 @@ const Supervisor = struct {
                     quiesce,
                 };
 
+                const net_unlocked = !supervisor.network_scenario_locked;
                 switch (supervisor.prng.enum_weighted(Action, .{
                     .sleep = 10,
                     .replica_terminate = if (running_replicas.len > 0) 4 else 0,
                     .replica_restart = if (terminated_replicas.len > 0) 3 else 0,
                     .replica_pause = if (running_replicas.len > 0) 3 else 0,
                     .replica_resume = if (paused_replicas.len > 0) 10 else 0,
-                    .network_delay = if (supervisor.network.faults.delay == null) 3 else 0,
-                    .network_lose = if (supervisor.network.faults.lose == null) 3 else 0,
-                    .network_corrupt = if (supervisor.network.faults.corrupt == null) 3 else 0,
-                    .network_duplicate = if (supervisor.network.faults.duplicate == null) 3 else 0,
-                    .network_reorder = if (supervisor.network.faults.reorder == null) 3 else 0,
-                    .network_rate = if (supervisor.network.faults.rate == null) 3 else 0,
-                    .network_heal = if (!supervisor.network.faults.is_healed()) 10 else 0,
+                    .network_delay = if (net_unlocked and
+                        supervisor.network.faults.delay == null) 3 else 0,
+                    .network_lose = if (net_unlocked and
+                        supervisor.network.faults.lose == null) 3 else 0,
+                    .network_corrupt = if (net_unlocked and
+                        supervisor.network.faults.corrupt == null) 3 else 0,
+                    .network_duplicate = if (net_unlocked and
+                        supervisor.network.faults.duplicate == null) 3 else 0,
+                    .network_reorder = if (net_unlocked and
+                        supervisor.network.faults.reorder == null) 3 else 0,
+                    .network_rate = if (net_unlocked and
+                        supervisor.network.faults.rate == null) 3 else 0,
+                    .network_heal = if (net_unlocked and
+                        !supervisor.network.faults.is_healed()) 10 else 0,
                     .quiesce = if (faulty_replica_count > 0 or
                         !supervisor.network.faults.is_healed()) 1 else 0,
                 })) {

@@ -64,6 +64,8 @@ coverage_detail.out
 # Benchmark output
 benchmark-results/
 benchmark-results.json
+compaction-results.json
+compression-results.json
 
 # Generated artifacts
 tools/FlameGraph/
