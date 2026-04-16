@@ -136,6 +136,16 @@ const CLIArgs = union(enum) {
         backup_bucket: ?[]const u8 = null,
         backup_region: ?[]const u8 = null,
         backup_credentials: ?[]const u8 = null,
+        // S3 and S3-compatible endpoint override (MinIO, LocalStack, R2, Backblaze, ...).
+        // Null uses the provider default (e.g. s3.<region>.amazonaws.com).
+        backup_endpoint: ?[]const u8 = null,
+        // Explicit S3 credentials. Prefer environment variables
+        // (AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY) in production — struct-borne secrets
+        // can leak via argv. These are intended for local development and tests.
+        backup_access_key_id: ?[]const u8 = null,
+        backup_secret_access_key: ?[]const u8 = null,
+        // "path" or "virtual-hosted". Null auto-detects from provider.
+        backup_url_style: ?[]const u8 = null,
         backup_mode: ?[]const u8 = null, // best-effort, mandatory
         backup_encryption: ?[]const u8 = null, // none, sse, sse-kms
         backup_kms_key_id: ?[]const u8 = null,
@@ -1586,6 +1596,10 @@ pub const Command = union(enum) {
         backup_bucket: ?[]const u8,
         backup_region: ?[]const u8,
         backup_credentials: ?[]const u8,
+        backup_endpoint: ?[]const u8,
+        backup_access_key_id: ?[]const u8,
+        backup_secret_access_key: ?[]const u8,
+        backup_url_style: ?[]const u8,
         backup_mode: backup_config.BackupMode,
         backup_encryption: backup_config.EncryptionMode,
         backup_kms_key_id: ?[]const u8,
@@ -2136,6 +2150,8 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
         "backup_enabled",
         "backup_provider",            "backup_bucket",
         "backup_region",              "backup_credentials",
+        "backup_endpoint",            "backup_access_key_id",
+        "backup_secret_access_key",   "backup_url_style",
         "backup_mode",                "backup_encryption",
         "backup_kms_key_id",          "backup_compress",
         "backup_queue_soft_limit",    "backup_queue_hard_limit",
@@ -2470,6 +2486,10 @@ fn parse_args_start(start: CLIArgs.Start) Command.Start {
         .backup_bucket = start.backup_bucket,
         .backup_region = start.backup_region,
         .backup_credentials = start.backup_credentials,
+        .backup_endpoint = start.backup_endpoint,
+        .backup_access_key_id = start.backup_access_key_id,
+        .backup_secret_access_key = start.backup_secret_access_key,
+        .backup_url_style = start.backup_url_style,
         .backup_mode = if (start.backup_mode) |m|
             backup_config.BackupMode.fromString(m) orelse {
                 vsr.fatal(.cli, "--backup-mode: invalid '{s}' (best-effort/mandatory)", .{m});
