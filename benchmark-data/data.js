@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776378470687,
+  "lastUpdate": 1776379501296,
   "repoUrl": "https://github.com/ArcherDB-io/archerdb",
   "entries": {
     "Benchmark": [
@@ -615,6 +615,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Polygon Query p99 Latency",
             "value": 68,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "committer": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "distinct": true,
+          "id": "e63305359a84a4e543ab483601cf05e86541dfcd",
+          "message": "feat(release,ci): staging upload hook and WAN vortex lane\n\nTwo follow-ups to c003883c that make last commit's scaffolds actually\nexercise the things they promised:\n\n- release(java): add `MAVEN_CENTRAL_PUBLISHER_BASE_URL` and\n  `MAVEN_CENTRAL_PUBLISHING_TYPE` env hooks to `publish_java`. When\n  `MAVEN_CENTRAL_PUBLISHING_TYPE=USER_MANAGED`, the upload flow treats\n  `VALIDATED` as terminal success (Sonatype's staged state) and skips\n  the post-publish repo1 verification, since the artifacts never reach\n  repo1 without a manual release. Defaults preserve production behavior\n  (AUTOMATIC + central.sonatype.com).\n- ci(java-central-rehearsal): add a real upload step that runs the\n  publish path with `USER_MANAGED`, so the rehearsal now exercises\n  bundle upload, credential auth, and server-side validation without\n  auto-publishing. Releasing or dropping the staged deployment stays a\n  deliberate operator step.\n- test(integration): add `vortex wan-typical scenario`, a 30s 3-replica\n  supervisor run that pins the WAN preset added in c003883c.\n- ci(core): add matching `Vortex WAN Scenario` entry to the\n  integration-tests matrix so every PR exercises the scenario.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-04-17T00:19:58+02:00",
+          "tree_id": "1c09eb33b29af9d188b442fc1592d3b1310652ae",
+          "url": "https://github.com/ArcherDB-io/archerdb/commit/e63305359a84a4e543ab483601cf05e86541dfcd"
+        },
+        "date": 1776379500319,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "Insert Throughput",
+            "value": 1489477,
+            "unit": "events/s"
+          },
+          {
+            "name": "Insert p99 Latency",
+            "value": 6,
+            "unit": "ms"
+          },
+          {
+            "name": "Radius Query p99 Latency",
+            "value": 87,
+            "unit": "ms"
+          },
+          {
+            "name": "Polygon Query p99 Latency",
+            "value": 95,
             "unit": "ms"
           }
         ]
