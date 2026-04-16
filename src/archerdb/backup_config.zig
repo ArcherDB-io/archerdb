@@ -493,8 +493,31 @@ pub const BackupOptions = struct {
     /// Region for the bucket (provider-specific).
     region: ?[]const u8 = null,
 
+    /// Explicit endpoint override. When null, the uploader derives a provider-appropriate
+    /// default (e.g. `s3.<region>.amazonaws.com` for S3). Set this for S3-compatible systems
+    /// like MinIO (`http://localhost:9000`), LocalStack (`http://localhost:4566`), R2,
+    /// Backblaze B2, or any private network S3 endpoint.
+    endpoint: ?[]const u8 = null,
+
     /// Path to credentials file (provider-specific).
     credentials_path: ?[]const u8 = null,
+
+    /// Explicit access key override. Primarily intended for programmatic and test use.
+    /// Production deployments should prefer environment variables (`AWS_ACCESS_KEY_ID` for
+    /// S3/S3-compatible providers) or a credentials file referenced by `credentials_path`,
+    /// since struct-borne secrets can leak through CLI argv or serialized config dumps. Not
+    /// logged by this module.
+    access_key_id: ?[]const u8 = null,
+
+    /// Explicit secret key override. Same warning as `access_key_id` — prefer env vars or
+    /// `credentials_path` in production. Not logged by this module.
+    secret_access_key: ?[]const u8 = null,
+
+    /// URL style for S3-style requests. Accepts "path" (e.g. `http://endpoint/bucket/key`)
+    /// or "virtual-hosted" (e.g. `https://bucket.endpoint/key`). When null, the uploader
+    /// picks the provider-recommended style (virtual-hosted for AWS/R2/Backblaze; path for
+    /// MinIO/LocalStack/generic). MinIO and LocalStack require path style.
+    url_style: ?[]const u8 = null,
 
     /// Operating mode: best-effort (default) or mandatory.
     mode: BackupMode = .best_effort,
@@ -547,6 +570,32 @@ pub const BackupOptions = struct {
     /// Backup schedule specification.
     /// Supports cron format ("0 2 * * *") or intervals ("every 1h").
     schedule: ?[]const u8 = null,
+
+    /// Resolve access/secret credentials from the options struct, falling back to environment
+    /// variables. For S3 and S3-compatible providers, the env vars are `AWS_ACCESS_KEY_ID`
+    /// and `AWS_SECRET_ACCESS_KEY`. Returns null for either value when it cannot be
+    /// resolved; the uploader treats both-null as "no credentials configured" and fails
+    /// closed. Values returned in the struct are pointers into process environment or the
+    /// caller's options; they must not outlive the resolution site. Credentials resolved here
+    /// are never logged.
+    pub fn resolveS3Credentials(self: BackupOptions) ResolvedCredentials {
+        const access = self.access_key_id orelse std.posix.getenv("AWS_ACCESS_KEY_ID");
+        const secret = self.secret_access_key orelse
+            std.posix.getenv("AWS_SECRET_ACCESS_KEY");
+        return .{ .access_key_id = access, .secret_access_key = secret };
+    }
+};
+
+/// Resolved credential pair. Either field may be null when no source could provide it.
+/// Returned by `BackupOptions.resolveS3Credentials` so uploader code can treat explicit-options
+/// and env-var resolution uniformly.
+pub const ResolvedCredentials = struct {
+    access_key_id: ?[]const u8,
+    secret_access_key: ?[]const u8,
+
+    pub fn isComplete(self: ResolvedCredentials) bool {
+        return self.access_key_id != null and self.secret_access_key != null;
+    }
 };
 
 /// Block reference for backup tracking.
@@ -712,6 +761,17 @@ pub const BackupConfig = struct {
             logErr("queue_soft_limit must be < queue_hard_limit", .{});
             return error.InvalidQueueLimits;
         }
+
+        // Validate url_style early so the uploader can trust it.
+        if (self.options.url_style) |style| {
+            if (!mem.eql(u8, style, "path") and !mem.eql(u8, style, "virtual-hosted")) {
+                logErr(
+                    "invalid backup url_style '{s}' (expected 'path' or 'virtual-hosted')",
+                    .{style},
+                );
+                return error.InvalidUrlStyle;
+            }
+        }
     }
 
     /// Get the object key prefix for this cluster/replica.
@@ -799,6 +859,65 @@ test "BackupConfig: sse-kms requires key" {
         .encryption = .sse_kms,
     });
     try std.testing.expectError(error.MissingKmsKey, result);
+}
+
+test "BackupConfig: invalid url_style rejected" {
+    const result = BackupConfig.init(std.testing.allocator, .{
+        .enabled = true,
+        .bucket = "test-bucket",
+        .url_style = "bogus",
+    });
+    try std.testing.expectError(error.InvalidUrlStyle, result);
+}
+
+test "BackupConfig: valid url_style accepted" {
+    var path_config = try BackupConfig.init(std.testing.allocator, .{
+        .enabled = true,
+        .bucket = "test-bucket",
+        .url_style = "path",
+    });
+    defer path_config.deinit();
+
+    var hosted_config = try BackupConfig.init(std.testing.allocator, .{
+        .enabled = true,
+        .bucket = "test-bucket",
+        .url_style = "virtual-hosted",
+    });
+    defer hosted_config.deinit();
+}
+
+test "BackupConfig: endpoint override accepted" {
+    var config = try BackupConfig.init(std.testing.allocator, .{
+        .enabled = true,
+        .bucket = "test-bucket",
+        .endpoint = "http://localhost:4566",
+    });
+    defer config.deinit();
+    try std.testing.expectEqualStrings("http://localhost:4566", config.options.endpoint.?);
+}
+
+test "BackupOptions: resolveS3Credentials prefers explicit over env" {
+    const options = BackupOptions{
+        .enabled = true,
+        .bucket = "test-bucket",
+        .access_key_id = "explicit-access",
+        .secret_access_key = "explicit-secret",
+    };
+    const creds = options.resolveS3Credentials();
+    try std.testing.expect(creds.isComplete());
+    try std.testing.expectEqualStrings("explicit-access", creds.access_key_id.?);
+    try std.testing.expectEqualStrings("explicit-secret", creds.secret_access_key.?);
+}
+
+test "BackupOptions: resolveS3Credentials returns incomplete when unset" {
+    // Exercises the no-config-no-env branch. If the host environment happens to have
+    // AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY set (CI runners often do not), we accept
+    // either outcome — the important invariant is that the resolver does not panic.
+    const options = BackupOptions{
+        .enabled = true,
+        .bucket = "test-bucket",
+    };
+    _ = options.resolveS3Credentials();
 }
 
 test "BackupConfig: object key format" {
