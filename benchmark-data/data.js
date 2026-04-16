@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776381697060,
+  "lastUpdate": 1776382782613,
   "repoUrl": "https://github.com/ArcherDB-io/archerdb",
   "entries": {
     "Benchmark": [
@@ -747,6 +747,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Polygon Query p99 Latency",
             "value": 95,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "committer": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "distinct": true,
+          "id": "0697a285754efd265a93360aa8f29447ff6283f5",
+          "message": "feat(cli): expose S3 backup config flags\n\nStep 4a of wiring S3/GCS/Azure backup providers through the runtime.\nSurfaces the config fields added in a7593fc9 through the `archerdb\nstart` CLI so operators can configure cloud backup without editing\ncode.\n\nNew flags on `start`:\n- `--backup-endpoint=<url>` — override for MinIO, LocalStack, R2,\n  Backblaze, or any private S3 endpoint. Omit for AWS default\n  (`s3.<region>.amazonaws.com`).\n- `--backup-access-key-id=<id>` and `--backup-secret-access-key=<key>`\n  — explicit overrides. Prefer `AWS_ACCESS_KEY_ID` /\n  `AWS_SECRET_ACCESS_KEY` env vars in production; the CLI forms are\n  primarily for local dev and tests since struct-borne secrets leak\n  through argv.\n- `--backup-url-style=<path|virtual-hosted>` — MinIO and LocalStack\n  need `path`; AWS and R2 pick `virtual-hosted` automatically when\n  this is omitted.\n\nAll four are marked stable (added to `stable_args` in cli.zig) —\nthey configure a public feature, not an experimental one.\n\nEnd-to-end verification against the built binary:\n- Invalid `--backup-url-style=bogus` surfaces `error.InvalidUrlStyle`\n  from `BackupConfig.validate()` (via main.zig plumbing).\n- `--backup-provider=s3` without credentials (no env, no flags)\n  fails closed with `error.MissingCredentials` from\n  `BackupUploader.init`.\n- `--backup-provider=s3` with all flags set reaches the data-plane\n  listener (uploader init succeeds).\n\nThis commit leaves live cloud testing to a follow-up: step 4b adds\nthe LocalStack/MinIO CI lane and a new integration test that exercises\nthe start path with `--backup-provider=s3` and asserts objects land\nin the emulator.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-04-17T01:03:38+02:00",
+          "tree_id": "76a011059510fc8e6637dfd00a5131837bb4cc31",
+          "url": "https://github.com/ArcherDB-io/archerdb/commit/0697a285754efd265a93360aa8f29447ff6283f5"
+        },
+        "date": 1776382781545,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "Insert Throughput",
+            "value": 1456852,
+            "unit": "events/s"
+          },
+          {
+            "name": "Insert p99 Latency",
+            "value": 6,
+            "unit": "ms"
+          },
+          {
+            "name": "Radius Query p99 Latency",
+            "value": 129,
+            "unit": "ms"
+          },
+          {
+            "name": "Polygon Query p99 Latency",
+            "value": 94,
             "unit": "ms"
           }
         ]
