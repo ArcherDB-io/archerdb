@@ -41,6 +41,7 @@ pub const backup_state = @import("archerdb/backup_state.zig");
 pub const checkpoint_artifact = @import("archerdb/checkpoint_artifact.zig");
 pub const restore = @import("archerdb/restore.zig");
 pub const backup_coordinator = @import("archerdb/backup_coordinator.zig");
+pub const backup_uploader = @import("archerdb/backup_uploader.zig");
 pub const backup_restore_test = @import("archerdb/backup_restore_test.zig");
 pub const data_export = @import("archerdb/data_export.zig");
 pub const data_export_csv = @import("archerdb/data_export_csv.zig");

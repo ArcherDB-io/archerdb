@@ -15,6 +15,7 @@ const backup_config = vsr.backup_config;
 const backup_queue = vsr.backup_queue;
 const backup_coordinator = vsr.backup_coordinator;
 const backup_state = vsr.backup_state;
+const backup_uploader = vsr.backup_uploader;
 const schema = vsr.lsm.schema;
 const checkpoint_artifact = vsr.checkpoint_artifact;
 
@@ -24,6 +25,7 @@ const BackupQueue = backup_queue.BackupQueue;
 const BackupCoordinator = backup_coordinator.BackupCoordinator;
 const BackupStateManager = backup_state.BackupStateManager;
 const BlockRef = backup_config.BlockRef;
+const BackupUploader = backup_uploader.BackupUploader;
 
 fn logErr(comptime fmt: []const u8, args: anytype) void {
     if (!builtin.is_test) {
@@ -52,7 +54,12 @@ pub const BackupRuntime = struct {
     known_blocks: std.AutoHashMap(BlockIdentity, void),
     captured_checkpoint_blocks: std.ArrayList(BufferedCheckpointBlock),
     pending_checkpoint_artifacts: std.ArrayList(checkpoint_artifact.DurableCheckpointArtifact),
+    /// Directory path used by the `.local` provider. Empty slice for cloud providers.
     local_prefix_path: []u8,
+    /// Transport for block and artifact uploads. Owns any live cloud client.
+    uploader: BackupUploader,
+    cluster_id: u128,
+    replica_id: u8,
     next_sequence: u64,
     pending_scan: bool = true,
     scan_retry_deadline_ns: i128 = 0,
@@ -95,7 +102,6 @@ pub const BackupRuntime = struct {
         errdefer config.deinit();
 
         if (!config.isEnabled()) return error.BackupDisabled;
-        if (config.options.provider != .local) return error.UnsupportedBackupProvider;
         if (config.options.mode == .mandatory) {
             return error.UnsupportedBackupMode;
         }
@@ -131,15 +137,33 @@ pub const BackupRuntime = struct {
             .initial_view = options.initial_view,
         });
 
-        const local_prefix_path = try buildLocalPrefixPath(
-            allocator,
-            config.options.bucket.?,
-            options.cluster_id,
-            options.replica_id,
-        );
+        // Only the `.local` provider has a meaningful on-disk prefix directory. For cloud
+        // providers the prefix is embedded in the object key and the local path is unused;
+        // we still allocate an empty slice so the field can be freed uniformly in deinit.
+        const local_prefix_path = if (config.options.provider == .local)
+            try buildLocalPrefixPath(
+                allocator,
+                config.options.bucket.?,
+                options.cluster_id,
+                options.replica_id,
+            )
+        else
+            try allocator.dupe(u8, "");
         errdefer allocator.free(local_prefix_path);
 
-        try makePath(local_prefix_path);
+        if (config.options.provider == .local) {
+            try makePath(local_prefix_path);
+        }
+
+        var uploader = backup_uploader.BackupUploader.init(
+            allocator,
+            &config,
+            local_prefix_path,
+        ) catch |err| {
+            logErr("failed to initialize backup uploader: {}", .{err});
+            return err;
+        };
+        errdefer uploader.deinit();
 
         var self = BackupRuntime{
             .allocator = allocator,
@@ -153,6 +177,9 @@ pub const BackupRuntime = struct {
                 checkpoint_artifact.DurableCheckpointArtifact,
             ).init(allocator),
             .local_prefix_path = local_prefix_path,
+            .uploader = uploader,
+            .cluster_id = options.cluster_id,
+            .replica_id = options.replica_id,
             .next_sequence = 1,
             .last_checkpoint_timestamp = std.time.timestamp(),
         };
@@ -165,11 +192,17 @@ pub const BackupRuntime = struct {
         const state = self.state_manager.getState();
         var last_sequence = state.last_uploaded_sequence;
         var last_timestamp = state.last_upload_timestamp;
-        try self.loadExistingLocalMetadata(&last_sequence, &last_timestamp);
+        // Re-hydrating known_blocks from on-disk metadata only makes sense for the local
+        // provider today. For cloud providers we rely on state_manager to track
+        // last_uploaded_sequence; on restart we may re-upload some recently-uploaded blocks
+        // (idempotent via S3 object overwrite) but correctness is preserved.
+        if (config.options.provider == .local) {
+            try self.loadExistingLocalMetadata(&last_sequence, &last_timestamp);
+        }
         self.coordinator.setIncrementalState(last_sequence, last_timestamp);
         self.next_sequence = last_sequence + 1;
 
-        if (self.config.options.encryption != .none) {
+        if (self.config.options.encryption != .none and self.config.options.provider == .local) {
             logWarn(
                 "backup provider=local ignores server-side encryption setting ({s})",
                 .{self.config.options.encryption.toString()},
@@ -182,6 +215,7 @@ pub const BackupRuntime = struct {
 
     pub fn deinit(self: *BackupRuntime) void {
         self.state_manager.persist() catch {};
+        self.uploader.deinit();
         self.allocator.free(self.local_prefix_path);
         self.clearCapturedCheckpointBlocks();
         self.captured_checkpoint_blocks.deinit();
@@ -571,20 +605,20 @@ pub const BackupRuntime = struct {
         self: *BackupRuntime,
         artifact: checkpoint_artifact.DurableCheckpointArtifact,
     ) !void {
+        // The method name is retained for call-site stability; dispatch now goes through
+        // the provider-aware uploader so the same path works for `.local` and `.s3`.
         const file_name = try artifact.fileName(self.allocator);
         defer self.allocator.free(file_name);
-
-        const file_path = try std.fmt.allocPrint(
-            self.allocator,
-            "{s}/{s}",
-            .{ self.local_prefix_path, file_name },
-        );
-        defer self.allocator.free(file_path);
 
         const contents = try artifact.encodeKeyValue(self.allocator);
         defer self.allocator.free(contents);
 
-        try writeFileAtomic(file_path, contents);
+        try self.uploader.writeArtifact(
+            self.cluster_id,
+            self.replica_id,
+            file_name,
+            contents,
+        );
     }
 
     fn uploadLocalBlock(
@@ -593,6 +627,8 @@ pub const BackupRuntime = struct {
         fd: std.posix.fd_t,
         block: BlockRef,
     ) !void {
+        // Method name preserved for existing call sites; actual upload is dispatched
+        // through `self.uploader` which picks the local or S3 transport based on config.
         var block_buffer: BlockBuffer align(constants.sector_size) = undefined;
         const header = try self.readGridBlockWithReplica(
             replica,
@@ -603,39 +639,12 @@ pub const BackupRuntime = struct {
             &block_buffer,
         );
 
-        const block_name = try std.fmt.allocPrint(
-            self.allocator,
-            "{d:0>12}.block",
-            .{block.sequence},
+        try self.uploader.uploadBlock(
+            self.cluster_id,
+            self.replica_id,
+            block,
+            block_buffer[0..header.size],
         );
-        defer self.allocator.free(block_name);
-
-        const block_path = try std.fmt.allocPrint(
-            self.allocator,
-            "{s}/{s}",
-            .{ self.local_prefix_path, block_name },
-        );
-        defer self.allocator.free(block_path);
-
-        const ts_path = try std.fmt.allocPrint(self.allocator, "{s}.ts", .{block_path});
-        defer self.allocator.free(ts_path);
-
-        const meta_path = try std.fmt.allocPrint(self.allocator, "{s}.meta", .{block_path});
-        defer self.allocator.free(meta_path);
-
-        try writeFile(block_path, block_buffer[0..header.size]);
-
-        var ts_buf: [64]u8 = undefined;
-        const ts_text = try std.fmt.bufPrint(&ts_buf, "{d}\n", .{block.closed_timestamp});
-        try writeFile(ts_path, ts_text);
-
-        const meta_text = try std.fmt.allocPrint(
-            self.allocator,
-            "sequence={d}\naddress={d}\nchecksum={x:0>32}\nclosed_timestamp={d}\n",
-            .{ block.sequence, block.address, block.checksum, block.closed_timestamp },
-        );
-        defer self.allocator.free(meta_text);
-        try writeFile(meta_path, meta_text);
     }
 
     fn loadExistingLocalMetadata(
