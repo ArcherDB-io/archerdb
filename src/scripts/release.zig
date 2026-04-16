@@ -908,11 +908,26 @@ fn publish_java(shell: *Shell, info: VersionInfo) !void {
     const maven_token = try shell.env_get("MAVEN_CENTRAL_TOKEN");
     const gpg_passphrase = try shell.env_get("MAVEN_GPG_PASSPHRASE");
 
+    // Optional overrides:
+    // - MAVEN_CENTRAL_PUBLISHER_BASE_URL: override the Central Portal API base (for rehearsal
+    //   workflows targeting a mock server or alternate endpoint). Defaults to production.
+    // - MAVEN_CENTRAL_PUBLISHING_TYPE: "AUTOMATIC" (default) auto-publishes after validation;
+    //   "USER_MANAGED" stages the deployment so a rehearsal can exercise upload and validation
+    //   without auto-publishing to Maven Central. When USER_MANAGED is used, the deployment will
+    //   never reach PUBLISHED on its own; this function treats the "VALIDATED" state as terminal
+    //   success and returns without invoking the post-publish artifact verification, since the
+    //   artifacts are not yet on repo1.
+    const publisher_base_url = shell.env_get_option("MAVEN_CENTRAL_PUBLISHER_BASE_URL") orelse
+        "https://central.sonatype.com/api/v1/publisher";
+    const publishing_type = shell.env_get_option("MAVEN_CENTRAL_PUBLISHING_TYPE") orelse
+        "AUTOMATIC";
+    const user_managed = std.mem.eql(u8, publishing_type, "USER_MANAGED");
+
     const auth_header = try central_bearer_header(shell.arena.allocator(), maven_username, maven_token);
     const bundle_path = try stage_java_central_bundle(shell, info, gpg_passphrase);
     const upload_url = try shell.fmt(
-        "https://central.sonatype.com/api/v1/publisher/upload?publishingType=AUTOMATIC&name=archerdb-java-{s}",
-        .{info.tag},
+        "{s}/upload?publishingType={s}&name=archerdb-java-{s}",
+        .{ publisher_base_url, publishing_type, info.tag },
     );
 
     const deployment_id_raw = try shell.exec_stdout(
@@ -928,8 +943,21 @@ fn publish_java(shell: *Shell, info: VersionInfo) !void {
     const deployment_id = std.mem.trim(u8, deployment_id_raw, " \r\n\t");
     if (deployment_id.len == 0) return error.InvalidHttpResponse;
 
-    log.info("uploaded java central bundle, deployment_id={s}", .{deployment_id});
-    try wait_for_central_publish(shell, auth_header, deployment_id);
+    log.info("uploaded java central bundle, deployment_id={s}, publishingType={s}", .{
+        deployment_id,
+        publishing_type,
+    });
+    try wait_for_central_publish(shell, auth_header, publisher_base_url, deployment_id, .{
+        .user_managed = user_managed,
+    });
+    if (user_managed) {
+        log.info(
+            "rehearsal (USER_MANAGED) complete: deployment validated but not published. " ++
+                "Drop or release from https://central.sonatype.com/publishing/deployments.",
+            .{},
+        );
+        return;
+    }
     try verify_java_central_artifacts(shell, info);
 }
 
@@ -1239,11 +1267,19 @@ fn write_checksum_file(
 fn wait_for_central_publish(
     shell: *Shell,
     auth_header: []const u8,
+    publisher_base_url: []const u8,
     deployment_id: []const u8,
+    options: struct {
+        /// When true, accept VALIDATED as terminal success. Sonatype's USER_MANAGED flow stages
+        /// a deployment that validates but never publishes on its own — a human or follow-up
+        /// call must release it. Production publishes (AUTOMATIC) should leave this false and
+        /// wait for PUBLISHED.
+        user_managed: bool,
+    },
 ) !void {
     const status_url = try shell.fmt(
-        "https://central.sonatype.com/api/v1/publisher/status?id={s}",
-        .{deployment_id},
+        "{s}/status?id={s}",
+        .{ publisher_base_url, deployment_id },
     );
 
     const attempts_max = 120;
@@ -1266,6 +1302,7 @@ fn wait_for_central_publish(
 
         switch (status) {
             .PUBLISHED => return,
+            .VALIDATED => if (options.user_managed) return else std.time.sleep(5 * std.time.ns_per_s),
             .FAILED => {
                 log.err("java central deployment failed: {s}", .{response});
                 return error.PublishFailed;

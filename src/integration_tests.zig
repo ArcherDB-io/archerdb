@@ -1518,6 +1518,34 @@ test "vortex smoke" {
     );
 }
 
+test "vortex wan-typical scenario" {
+    if (builtin.os.tag != .linux) {
+        return error.SkipZigTest;
+    }
+
+    if (!canCreateUserNamespace()) {
+        log.warn(
+            "Skipping vortex wan-typical test: user namespaces not available",
+            .{},
+        );
+        return error.SkipZigTest;
+    }
+
+    const shell = try Shell.create(std.testing.allocator);
+    defer shell.destroy();
+
+    // Lock the network into the WAN-typical profile (100ms delay, 20ms jitter, 1% loss).
+    // Three replicas so inter-replica traffic is exercised under the scenario. Replica-process
+    // chaos (crash/pause/restart) continues to be injected randomly; only network faults are
+    // pinned. A 30s run is long enough to cover at least one liveness window while keeping CI
+    // time bounded.
+    try shell.exec(
+        "{vortex_exe} supervisor --test-duration=30s --replica-count=3 " ++
+            "--network-scenario=wan-typical",
+        .{ .vortex_exe = vortex_exe },
+    );
+}
+
 /// Check if we can create Linux namespaces (required for vortex process isolation).
 /// Vortex requires both user and PID namespaces for proper cleanup.
 fn canCreateUserNamespace() bool {

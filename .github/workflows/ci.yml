@@ -391,6 +391,10 @@ jobs:
             target: test:integration
             filter_args: "'vortex smoke'"
             minio: false
+          - name: Vortex WAN Scenario
+            target: test:integration
+            filter_args: "'vortex wan-typical scenario'"
+            minio: false
           - name: Backup Restore
             target: test:integration
             filter_args: "backup_restore_test"

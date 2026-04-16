@@ -13,14 +13,16 @@
 #   3. The produced artifacts are staged under zig-out/dist/java with stable
 #      checksums, and the checksums match a second invocation on the same
 #      source tree (rebuild determinism check).
+#   4. A USER_MANAGED upload to Sonatype Central that validates server-side
+#      but does NOT auto-publish. After the workflow completes, an operator
+#      must either drop or release the staged deployment from
+#      https://central.sonatype.com/publishing/deployments. This uses the
+#      MAVEN_CENTRAL_PUBLISHING_TYPE hook added to src/scripts/release.zig.
 #
 # What this does NOT do:
-#   - It does not upload to Sonatype / Maven Central. The release script's
-#     publish path currently targets production Central unconditionally
-#     (see src/scripts/release.zig, curl to central.sonatype.com). Until the
-#     release script exposes an explicit staging-base-url override for the
-#     upload endpoint (not just the polling endpoint), a full end-to-end
-#     staging rehearsal is out of scope for this workflow.
+#   - It does not auto-publish to Maven Central. The upload runs with
+#     publishingType=USER_MANAGED so the deployment stays in the VALIDATED
+#     state. Releasing it is a deliberate manual follow-up.
 #
 # Triggers: manual dispatch and a weekly schedule. Per-PR runs are intentionally
 # avoided because the prerequisites include real secrets.
@@ -173,6 +175,26 @@ jobs:
             fi
             gpg --verify "$asc" "$target"
           done
+
+      - name: USER_MANAGED upload to Sonatype Central (staged, not published)
+        env:
+          MAVEN_USERNAME: ${{ secrets.MAVEN_USERNAME }}
+          MAVEN_CENTRAL_TOKEN: ${{ secrets.MAVEN_CENTRAL_TOKEN }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+          MAVEN_CENTRAL_PUBLISHING_TYPE: USER_MANAGED
+        run: |
+          SHA="${{ github.event.inputs.sha || github.sha }}"
+          # --publish (no --preflight) runs the full Central upload flow.
+          # MAVEN_CENTRAL_PUBLISHING_TYPE=USER_MANAGED makes release.zig treat
+          # VALIDATED as terminal success and skip the post-publish artifact
+          # verification — the artifacts stay staged, not on repo1.
+          ./zig/zig build scripts -- release \
+            --language=java \
+            --publish \
+            --no-changelog \
+            --sha="$SHA"
+          echo "Deployment staged with VALIDATED status. Drop or release it from"
+          echo "https://central.sonatype.com/publishing/deployments to complete the rehearsal."
 
       - name: Upload rehearsal artifacts
         if: always()
