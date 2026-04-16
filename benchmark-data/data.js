@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776380544276,
+  "lastUpdate": 1776381697060,
   "repoUrl": "https://github.com/ArcherDB-io/archerdb",
   "entries": {
     "Benchmark": [
@@ -703,6 +703,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Polygon Query p99 Latency",
             "value": 99,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "committer": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "distinct": true,
+          "id": "ef2e97798412c5ea4307662b6e7e9d77189814d6",
+          "message": "feat(backup): dispatch runtime uploads through BackupUploader\n\nStep 3 of wiring S3/GCS/Azure backup providers through the runtime.\nRemoves the hard-reject at backup_runtime.zig:98 that previously\nreturned `error.UnsupportedBackupProvider` for anything but `.local`,\nand routes block/checkpoint uploads through the new `BackupUploader`\ntransport added in b7693999.\n\nWhat `BackupRuntime` now looks like:\n- Owns a `BackupUploader` built at init time from `BackupConfig`.\n- Stores `cluster_id` and `replica_id` on the struct so the upload\n  path can form cloud object keys without threading them through every\n  call.\n- Keeps `local_prefix_path` but only populates it for `provider=.local`\n  (empty slice for cloud providers; still freed uniformly in deinit).\n- Skips `loadExistingLocalMetadata` for non-local providers; the\n  state_manager alone drives `next_sequence` in that case. On restart\n  against a cloud provider this may re-upload recently-uploaded blocks,\n  which is idempotent via object overwrite — a focused optimization\n  (remote sequence scan) can follow.\n- `uploadLocalBlock` and `writeLocalCheckpointArtifact` are kept as\n  method names for call-site stability, but their bodies now read the\n  block and hand off to `self.uploader.uploadBlock` /\n  `self.uploader.writeArtifact`.\n\nModule plumbing: registered `backup_uploader` in `vsr.zig` alongside\nits peers so both `backup_runtime` and `backup_uploader` see the same\n`backup_config` module (prior attempt tripped \"file exists in multiple\nmodules\" via the archerdb root).\n\nWhat this commit does not yet prove: live S3 upload. That needs the\nLocalStack/MinIO integration test in step 4. Local-provider behavior is\nunchanged — `backup_restore_test` integration (end-to-end backup ->\nrestore) passes on this commit, and all `backup*`/`BackupRuntime`/\n`RestoreManager` unit tests pass.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-04-17T00:56:31+02:00",
+          "tree_id": "9b0bce5a802fe5cb291b929daab10de59dfbe6dd",
+          "url": "https://github.com/ArcherDB-io/archerdb/commit/ef2e97798412c5ea4307662b6e7e9d77189814d6"
+        },
+        "date": 1776381695945,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "Insert Throughput",
+            "value": 1394257,
+            "unit": "events/s"
+          },
+          {
+            "name": "Insert p99 Latency",
+            "value": 6,
+            "unit": "ms"
+          },
+          {
+            "name": "Radius Query p99 Latency",
+            "value": 126,
+            "unit": "ms"
+          },
+          {
+            "name": "Polygon Query p99 Latency",
+            "value": 95,
             "unit": "ms"
           }
         ]
