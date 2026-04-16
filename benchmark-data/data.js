@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776379501296,
+  "lastUpdate": 1776380544276,
   "repoUrl": "https://github.com/ArcherDB-io/archerdb",
   "entries": {
     "Benchmark": [
@@ -659,6 +659,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Polygon Query p99 Latency",
             "value": 95,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "committer": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "distinct": true,
+          "id": "a7593fc9343a7825471661a242d20bb7568290e8",
+          "message": "feat(backup): extend BackupOptions with S3 endpoint/credentials/url_style\n\nGroundwork for wiring S3/GCS/Azure backup providers through the runtime\n(backup_runtime.zig:98 today hard-rejects anything but `.local`). This\ncommit is the config-surface change; the uploader and runtime dispatch\nfollow in subsequent commits.\n\nNew fields on `BackupOptions`:\n- `endpoint`: explicit override. Lets the uploader target MinIO,\n  LocalStack, R2, Backblaze, or any private S3 endpoint without\n  code changes. When null, derives `s3.<region>.amazonaws.com` at the\n  uploader boundary.\n- `access_key_id` / `secret_access_key`: optional struct-borne\n  credentials for programmatic and test use. Documented as \"prefer env\n  vars or `credentials_path` in production\" since struct fields can\n  leak through argv / serialized config dumps.\n- `url_style`: \"path\" or \"virtual-hosted\". Null means auto-detect;\n  MinIO and LocalStack need \"path\".\n\nNew helper on `BackupOptions`:\n- `resolveS3Credentials()` returns a `ResolvedCredentials` pair that\n  merges struct values with env vars (`AWS_ACCESS_KEY_ID`/\n  `AWS_SECRET_ACCESS_KEY`). Matches the fallback pattern in\n  `S3RelayTransport.init` (replication.zig:774-779) so callers don't\n  re-implement it.\n\nValidation:\n- `BackupConfig.validate()` now rejects invalid `url_style` strings\n  up front with `error.InvalidUrlStyle`. Credential completeness is\n  intentionally not validated here — that's the uploader's job so\n  local-provider flows keep working without AWS credentials.\n\nTests added:\n- Invalid `url_style` rejected.\n- Valid `url_style` accepted (\"path\" and \"virtual-hosted\").\n- `endpoint` override is round-tripped.\n- `resolveS3Credentials` prefers explicit options over env vars.\n- Resolver is safe to call with nothing configured (returns incomplete\n  without panicking).\n\nNo behavior change for existing users: all new fields default to null\nand the local provider path is untouched.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-04-17T00:42:26+02:00",
+          "tree_id": "7dfb288d4ae7d508c9f41c3dbe82f096b5423259",
+          "url": "https://github.com/ArcherDB-io/archerdb/commit/a7593fc9343a7825471661a242d20bb7568290e8"
+        },
+        "date": 1776380542779,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "Insert Throughput",
+            "value": 1426045,
+            "unit": "events/s"
+          },
+          {
+            "name": "Insert p99 Latency",
+            "value": 6,
+            "unit": "ms"
+          },
+          {
+            "name": "Radius Query p99 Latency",
+            "value": 103,
+            "unit": "ms"
+          },
+          {
+            "name": "Polygon Query p99 Latency",
+            "value": 99,
             "unit": "ms"
           }
         ]
