@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776292997306,
+  "lastUpdate": 1776378470687,
   "repoUrl": "https://github.com/ArcherDB-io/archerdb",
   "entries": {
     "Benchmark": [
@@ -571,6 +571,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Polygon Query p99 Latency",
             "value": 87,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "committer": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "distinct": true,
+          "id": "c003883c4a301c4024f722743a62e9090ee31222",
+          "message": "chore: close release-evidence gaps across tooling, sdk, and ci\n\nAddress narrow shortcomings surfaced during the post-finalization audit:\n\n- docs(tier): describe `ultra` as a capacity-only profile that shares the\n  high-perf runtime with enterprise, instead of implying it is retuned.\n- sdk(java): `MultiRegionGeoClient` NEAREST read routing now uses the\n  first region in `ClientConfig.getRegions()` order instead of silently\n  collapsing to primary. Javadoc on `ReadPreference.NEAREST` relabels it\n  as static, not latency-aware, and directs callers to express preference\n  via region ordering.\n- test(vortex): add `--network-scenario=<name>` with the `wan-typical`\n  preset (100ms delay, 20ms jitter, 1% loss). When set, the supervisor\n  pins the named fault profile and disables random network-fault / heal\n  actions so the scenario holds for the full run. Replica-process chaos\n  is unaffected. Unknown scenario names fail closed.\n- ci: new `java-central-rehearsal.yml` workflow (manual + weekly) that\n  validates publish prerequisites, builds the Java dist twice and diffs\n  jar/pom checksums for determinism, and verifies GPG signatures on the\n  produced artifacts. Does not push to Maven Central — that needs a\n  staging-endpoint override in `release.zig` before it is safe to\n  automate.\n- chore: remove stale root scratch files (`test_topology.c`,\n  `test_topology.js`) and stop tracking benchmark result JSONs that the\n  scripts already regenerate.\n\nDeferred (not in this commit, need their own design pass):\n- S3/GCS/Azure backup provider runtime plumbing (prerequisite for a\n  LocalStack/Azurite/fake-gcs emulator CI lane).\n- ENOSPC capacity tracking in the journal/grid write paths; QEMU-backed\n  kernel-crash durability harness.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-04-17T00:10:46+02:00",
+          "tree_id": "50f30f258241f46f19ee2deb4e39c45a800722a2",
+          "url": "https://github.com/ArcherDB-io/archerdb/commit/c003883c4a301c4024f722743a62e9090ee31222"
+        },
+        "date": 1776378469644,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "Insert Throughput",
+            "value": 1392581,
+            "unit": "events/s"
+          },
+          {
+            "name": "Insert p99 Latency",
+            "value": 6,
+            "unit": "ms"
+          },
+          {
+            "name": "Radius Query p99 Latency",
+            "value": 122,
+            "unit": "ms"
+          },
+          {
+            "name": "Polygon Query p99 Latency",
+            "value": 68,
             "unit": "ms"
           }
         ]
