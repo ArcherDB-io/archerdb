@@ -31,6 +31,12 @@ public final class ClientConfig {
     private static final int DEFAULT_CONNECT_TIMEOUT_MS = 5000;
     private static final int DEFAULT_REQUEST_TIMEOUT_MS = 30000;
     private static final int DEFAULT_MAX_STALENESS_MS = 10000;
+    // Latency-aware NEAREST routing defaults. Values match Python's geo_routing defaults so
+    // the two SDKs behave consistently under the same ReadPreference.
+    private static final int DEFAULT_PROBE_INTERVAL_MS = 30_000;
+    private static final int DEFAULT_PROBE_TIMEOUT_MS = 5_000;
+    private static final int DEFAULT_PROBE_SAMPLE_COUNT = 5;
+    private static final int DEFAULT_UNHEALTHY_THRESHOLD = 3;
 
     private final UInt128 clusterId;
     private final List<RegionConfig> regions;
@@ -38,6 +44,11 @@ public final class ClientConfig {
     private final int connectTimeoutMs;
     private final int requestTimeoutMs;
     private final int maxStalenessMs;
+    private final int probeIntervalMs;
+    private final int probeTimeoutMs;
+    private final int probeSampleCount;
+    private final int unhealthyThreshold;
+    private final boolean backgroundProbingEnabled;
 
     private ClientConfig(Builder builder) {
         this.clusterId = builder.clusterId;
@@ -46,6 +57,11 @@ public final class ClientConfig {
         this.connectTimeoutMs = builder.connectTimeoutMs;
         this.requestTimeoutMs = builder.requestTimeoutMs;
         this.maxStalenessMs = builder.maxStalenessMs;
+        this.probeIntervalMs = builder.probeIntervalMs;
+        this.probeTimeoutMs = builder.probeTimeoutMs;
+        this.probeSampleCount = builder.probeSampleCount;
+        this.unhealthyThreshold = builder.unhealthyThreshold;
+        this.backgroundProbingEnabled = builder.backgroundProbingEnabled;
     }
 
     /**
@@ -90,6 +106,46 @@ public final class ClientConfig {
      */
     public int getMaxStalenessMs() {
         return maxStalenessMs;
+    }
+
+    /**
+     * Returns the interval between latency probes for NEAREST routing, in milliseconds. Only
+     * consulted when {@link #getReadPreference()} is {@link ReadPreference#NEAREST} and
+     * {@link #isBackgroundProbingEnabled()} is true.
+     */
+    public int getProbeIntervalMs() {
+        return probeIntervalMs;
+    }
+
+    /**
+     * Returns the TCP connect timeout used by the latency prober, in milliseconds.
+     */
+    public int getProbeTimeoutMs() {
+        return probeTimeoutMs;
+    }
+
+    /**
+     * Returns the size of the rolling window of latency samples kept per region.
+     */
+    public int getProbeSampleCount() {
+        return probeSampleCount;
+    }
+
+    /**
+     * Returns the number of consecutive probe failures that transitions a region to unhealthy and
+     * excludes it from latency-based NEAREST selection.
+     */
+    public int getUnhealthyThreshold() {
+        return unhealthyThreshold;
+    }
+
+    /**
+     * Returns whether the background latency prober is enabled. Default: true. Tests and embedded
+     * uses that cannot afford a background thread can disable this, in which case NEAREST routing
+     * falls back to static config order (v1 behavior).
+     */
+    public boolean isBackgroundProbingEnabled() {
+        return backgroundProbingEnabled;
     }
 
     /**
@@ -142,20 +198,29 @@ public final class ClientConfig {
                 && readPreference == other.readPreference
                 && connectTimeoutMs == other.connectTimeoutMs
                 && requestTimeoutMs == other.requestTimeoutMs
-                && maxStalenessMs == other.maxStalenessMs;
+                && maxStalenessMs == other.maxStalenessMs
+                && probeIntervalMs == other.probeIntervalMs
+                && probeTimeoutMs == other.probeTimeoutMs
+                && probeSampleCount == other.probeSampleCount
+                && unhealthyThreshold == other.unhealthyThreshold
+                && backgroundProbingEnabled == other.backgroundProbingEnabled;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(clusterId, regions, readPreference, connectTimeoutMs, requestTimeoutMs,
-                maxStalenessMs);
+                maxStalenessMs, probeIntervalMs, probeTimeoutMs, probeSampleCount,
+                unhealthyThreshold, backgroundProbingEnabled);
     }
 
     @Override
     public String toString() {
         return "ClientConfig{clusterId=" + clusterId + ", regions=" + regions + ", readPreference="
                 + readPreference + ", connectTimeoutMs=" + connectTimeoutMs + ", requestTimeoutMs="
-                + requestTimeoutMs + ", maxStalenessMs=" + maxStalenessMs + "}";
+                + requestTimeoutMs + ", maxStalenessMs=" + maxStalenessMs + ", probeIntervalMs="
+                + probeIntervalMs + ", probeTimeoutMs=" + probeTimeoutMs + ", probeSampleCount="
+                + probeSampleCount + ", unhealthyThreshold=" + unhealthyThreshold
+                + ", backgroundProbingEnabled=" + backgroundProbingEnabled + "}";
     }
 
     /**
@@ -187,6 +252,11 @@ public final class ClientConfig {
         private int connectTimeoutMs = DEFAULT_CONNECT_TIMEOUT_MS;
         private int requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS;
         private int maxStalenessMs = DEFAULT_MAX_STALENESS_MS;
+        private int probeIntervalMs = DEFAULT_PROBE_INTERVAL_MS;
+        private int probeTimeoutMs = DEFAULT_PROBE_TIMEOUT_MS;
+        private int probeSampleCount = DEFAULT_PROBE_SAMPLE_COUNT;
+        private int unhealthyThreshold = DEFAULT_UNHEALTHY_THRESHOLD;
+        private boolean backgroundProbingEnabled = true;
 
         /**
          * Sets the cluster ID (required).
@@ -259,6 +329,59 @@ public final class ClientConfig {
                 throw new IllegalArgumentException("Max staleness cannot be negative");
             }
             this.maxStalenessMs = maxStalenessMs;
+            return this;
+        }
+
+        /**
+         * Sets the interval between latency probes for NEAREST routing.
+         */
+        public Builder setProbeIntervalMs(int probeIntervalMs) {
+            if (probeIntervalMs <= 0) {
+                throw new IllegalArgumentException("Probe interval must be positive");
+            }
+            this.probeIntervalMs = probeIntervalMs;
+            return this;
+        }
+
+        /**
+         * Sets the TCP connect timeout used by the latency prober.
+         */
+        public Builder setProbeTimeoutMs(int probeTimeoutMs) {
+            if (probeTimeoutMs <= 0) {
+                throw new IllegalArgumentException("Probe timeout must be positive");
+            }
+            this.probeTimeoutMs = probeTimeoutMs;
+            return this;
+        }
+
+        /**
+         * Sets the rolling window size of probe samples kept per region.
+         */
+        public Builder setProbeSampleCount(int probeSampleCount) {
+            if (probeSampleCount <= 0) {
+                throw new IllegalArgumentException("Probe sample count must be positive");
+            }
+            this.probeSampleCount = probeSampleCount;
+            return this;
+        }
+
+        /**
+         * Sets the number of consecutive probe failures that marks a region unhealthy.
+         */
+        public Builder setUnhealthyThreshold(int unhealthyThreshold) {
+            if (unhealthyThreshold <= 0) {
+                throw new IllegalArgumentException("Unhealthy threshold must be positive");
+            }
+            this.unhealthyThreshold = unhealthyThreshold;
+            return this;
+        }
+
+        /**
+         * Enables or disables the background latency prober. When false, NEAREST routing uses the
+         * static region order (v1 behavior) instead of latency-aware selection.
+         */
+        public Builder setBackgroundProbingEnabled(boolean enabled) {
+            this.backgroundProbingEnabled = enabled;
             return this;
         }
 
