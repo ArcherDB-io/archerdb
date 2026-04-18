@@ -126,6 +126,23 @@ pub const Storage = struct {
 
         iops_read_max: u64 = constants.iops_read_max,
         iops_write_max: u64 = constants.iops_write_max,
+
+        /// When set, enforce a ceiling on distinct bytes written across the simulated disk.
+        /// A write whose target sectors would push `memory_written.count() * sector_size`
+        /// past this budget is dropped at `write_sectors_finish` time: the write's callback
+        /// still fires (the caller believes the I/O completed), but the backing bytes are
+        /// not flipped to written, and the sectors are tagged as faulty so subsequent
+        /// reads surface as checksum failures. This models a silent ENOSPC, where the
+        /// kernel accepts the write into the page cache but the fsync never lands. Null
+        /// (the default) disables the check.
+        ///
+        /// The simulated failure is deliberately coarse: it does not propagate a
+        /// NoSpaceLeft error back to the VSR layer, because the existing
+        /// `write_sectors` / `write_sectors_finish` contract is return-void. Error-path
+        /// propagation through the journal/grid stack is follow-up work; this field lets
+        /// VOPR and targeted tests characterize how the rest of the system behaves when
+        /// writes are silently dropped under capacity pressure.
+        available_capacity: ?u64 = null,
     };
 
     /// See usage in Journal.write_sectors() for details.
@@ -233,6 +250,11 @@ pub const Storage = struct {
     next_tick_queue: QueueType(NextTick) = QueueType(NextTick).init(.{
         .name = "storage_next_tick",
     }),
+
+    /// Count of writes dropped by the `available_capacity` simulated ENOSPC. Tests read
+    /// this to assert the capacity path fired without needing to reach into the fault
+    /// bitset. Never decremented.
+    writes_dropped_by_capacity: u64 = 0,
 
     pub fn init(allocator: mem.Allocator, options: Storage.Options) !Storage {
         assert(options.size <= constants.storage_size_limit_max);
@@ -674,6 +696,28 @@ pub const Storage = struct {
 
             stdx.copy_disjoint(.inexact, u8, overlay_mistaken_buffer, write.buffer);
             stdx.copy_disjoint(.inexact, u8, overlay_intended_buffer, target_intended_buffer);
+        }
+
+        // Simulated ENOSPC: if the new sectors would push total written bytes past the
+        // configured capacity, drop the write. Callback still fires (caller sees success)
+        // but the backing memory is not updated and the target sectors are flagged
+        // faulty so subsequent reads surface as checksum failures. Models a silent fsync
+        // failure. See `Options.available_capacity` for the design rationale.
+        if (storage.options.available_capacity) |capacity_bytes| {
+            const already_bytes: u64 = storage.memory_written.count() * constants.sector_size;
+            if (capacity_would_reject(already_bytes, write.buffer.len, capacity_bytes)) {
+                storage.writes_dropped_by_capacity += 1;
+                var fault_range = SectorRange.from_zone(
+                    write.zone,
+                    write.offset,
+                    write.buffer.len,
+                );
+                while (fault_range.next()) |sector| {
+                    storage.fault_sector(write.zone, sector);
+                }
+                write.callback(write);
+                return;
+            }
         }
 
         var sectors = SectorRange.from_zone(write.zone, write.offset, write.buffer.len);
@@ -1283,3 +1327,44 @@ const StackTrace = struct {
         try writer.print("{}", .{stack_trace});
     }
 };
+
+// =============================================================================
+// ENOSPC capacity budget
+// =============================================================================
+
+/// Returns true when a new write of `write_bytes` would push total written bytes past
+/// `capacity_bytes`. Split out from `write_sectors_finish` so the policy is easy to
+/// unit-test in isolation without having to stand up a full Storage with valid zone
+/// layout. The function treats every sector of the write as new — a conservative choice
+/// that makes overwrites count as fresh allocation, which is safe for modeling a
+/// write-once-style ENOSPC (the common workload for backup blocks and WAL appends) and
+/// wrong-direction (permissive) for heavy overwrite workloads. When that matters, callers
+/// should subtract already-written sectors before calling this helper.
+fn capacity_would_reject(
+    already_bytes: u64,
+    write_bytes: u64,
+    capacity_bytes: u64,
+) bool {
+    return already_bytes +| write_bytes > capacity_bytes;
+}
+
+test "capacity_would_reject: within budget → accept" {
+    try std.testing.expect(!capacity_would_reject(0, 1024, 4096));
+    try std.testing.expect(!capacity_would_reject(2048, 2048, 4096)); // exact fit
+}
+
+test "capacity_would_reject: past budget → reject" {
+    try std.testing.expect(capacity_would_reject(4096, 1, 4096));
+    try std.testing.expect(capacity_would_reject(0, 4097, 4096));
+}
+
+test "capacity_would_reject: saturation guards overflow" {
+    // A pathologically large already_bytes + write_bytes must not wrap to a small number
+    // that slips under capacity. Zig's `+|` saturates at u64.max, and a realistic capacity
+    // (far below u64.max) is exceeded by any saturated result.
+    try std.testing.expect(capacity_would_reject(
+        std.math.maxInt(u64) - 100,
+        200,
+        1 << 40, // 1 TiB — a plausibly large disk; saturated projected dwarfs this.
+    ));
+}

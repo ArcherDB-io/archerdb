@@ -1658,6 +1658,14 @@ pub const IO = struct {
         // Ask the file system to allocate contiguous sectors for the file (if possible):
         // If the file system does not support `fallocate()`, then this could mean more seeks or a
         // panic if we run out of disk space (ENOSPC).
+        //
+        // Simulation-side ENOSPC modeling exists in `src/testing/storage.zig` via
+        // `Storage.Options.available_capacity`; that path flags writes beyond the budget as
+        // dropped+faulty so the rest of VSR sees them as checksum failures on read-back.
+        // Propagating a real `error.NoSpaceLeft` through the journal/grid write path so
+        // the replica can surface ENOSPC as a first-class condition (rather than
+        // panicking) is still open work — see the capacity-budget comment in
+        // `testing/storage.zig`.
         if (purpose == .format and kind == .file) {
             if (direct_io == .direct_io_optional) {
                 log.warn(
