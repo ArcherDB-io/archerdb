@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776484069574,
+  "lastUpdate": 1776485150981,
   "repoUrl": "https://github.com/ArcherDB-io/archerdb",
   "entries": {
     "Benchmark": [
@@ -835,6 +835,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Polygon Query p99 Latency",
             "value": 108,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "committer": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "distinct": true,
+          "id": "4c3226dfe5c4d1aa3321bf83875bfe71d9c0f9dd",
+          "message": "feat(java-sdk): latency-aware NEAREST routing (v2)\n\nPromotes the Java SDK's `ReadPreference.NEAREST` from the static\npriority list shipped in c003883c to true latency-aware routing,\nmirroring the Python SDK's `geo_routing.LatencyProber` +\n`RegionSelector`. NEAREST reads now pick the healthy region with the\nlowest rolling-average RTT; when probes haven't produced data yet\n(first request after construction) or probing is disabled, the\nselector falls back to the v1 static-config-order behavior so the\nfirst request never stalls.\n\nNew classes (both package-private):\n- `RegionLatencyStats` — rolling window of TCP-connect RTT samples,\n  consecutive-failure counter, three-state health model\n  (UNKNOWN / HEALTHY / UNHEALTHY). Method set mirrors the Python\n  class so future parity work stays cheap.\n- `LatencyProber` — single daemon thread, sequentially TCP-connects\n  to the first address of each region on `probeIntervalMs` cadence.\n  Records RTT via `addSample`; IO failures feed `recordFailure`.\n  `recordSample` / `recordFailure` are package-private so tests can\n  seed stats without opening real sockets.\n\n`ClientConfig` gains five knobs, defaults matching Python's\n`geo_routing` constants: `probeIntervalMs` (30s), `probeTimeoutMs`\n(5s), `probeSampleCount` (5), `unhealthyThreshold` (3), and\n`backgroundProbingEnabled` (true). `equals`/`hashCode`/`toString`\nupdated to include the new fields.\n\n`MultiRegionGeoClient`:\n- Constructs and starts the prober only for NEAREST + probing\n  enabled + multi-region configs — single-region and PRIMARY/FOLLOWER\n  clients never spawn a thread.\n- `selectNearestClient` walks the configured regions, excludes any\n  with `Health.UNHEALTHY`, and returns the one with the lowest\n  average RTT. Falls back to `regions.get(0)` when no region has a\n  measured sample.\n- `close()` stops the prober before closing the per-region clients.\n- Adds package-private `getLatencyProberForTest()` and\n  `selectedReadRegionNameForTest()` so unit tests can exercise\n  selection without real I/O.\n\nTests (11 new, all passing; full Java suite 584/584):\n- `RegionLatencyStatsTest`: rolling window eviction, failure\n  threshold transition, recovery on next success, UNKNOWN eligibility.\n- `MultiRegionNearestLatencyTest`: probing-disabled fallback, no-\n  samples fallback, lowest-RTT selection, unhealthy region exclusion\n  despite prior-best RTT, stable selection when only one region has\n  measured latency.\n\nDesign note: no `java.util.logging` dependency is introduced.\nProbe failures are expected behavior under WAN Vortex scenarios\nand partitions; the health model is the observability surface for\noperators, not per-probe log lines.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-04-18T05:44:50+02:00",
+          "tree_id": "12be6446ed4ed2002b758b52a18c810976097f9b",
+          "url": "https://github.com/ArcherDB-io/archerdb/commit/4c3226dfe5c4d1aa3321bf83875bfe71d9c0f9dd"
+        },
+        "date": 1776485150166,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "Insert Throughput",
+            "value": 1475344,
+            "unit": "events/s"
+          },
+          {
+            "name": "Insert p99 Latency",
+            "value": 6,
+            "unit": "ms"
+          },
+          {
+            "name": "Radius Query p99 Latency",
+            "value": 130,
+            "unit": "ms"
+          },
+          {
+            "name": "Polygon Query p99 Latency",
+            "value": 103,
             "unit": "ms"
           }
         ]
