@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776486243115,
+  "lastUpdate": 1776487334053,
   "repoUrl": "https://github.com/ArcherDB-io/archerdb",
   "entries": {
     "Benchmark": [
@@ -923,6 +923,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Polygon Query p99 Latency",
             "value": 111,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "committer": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "distinct": true,
+          "id": "e5ffc4f73b7fdf9886d7770ae15c10e52b2fd75b",
+          "message": "feat(backup): Azure Blob Storage transport with SharedKey auth\n\nAdds the `.azure` backup provider. Unlike `.s3`/`.gcs`, Azure Blob uses\nSharedKey authentication (HMAC-SHA256 of a structured string-to-sign),\nnot SigV4, so this lands as a new, dedicated client under\n`src/replication/azure_blob_client.zig`. No SDK dependency — HTTP goes\nthrough `std.http.Client` and HMAC through `std.crypto.auth.hmac`.\n\n`AzureBlobClient` covers the subset the backup uploader needs:\n- `createContainer` (idempotent; treats 409 ContainerAlreadyExists as\n  success so tests and operator setup can re-run without branching)\n- `putBlob` (single PUT of a BlockBlob; blocks are 4-8 MiB so no\n  block-list / commit-block-list path is needed)\n- `getBlob` / `listBlobs(prefix)` (for verification and future\n  restore support)\n\nSharedKey canonicalization: the path-style (Azurite, Azure Stack) and\nvirtual-hosted (production) URLs have different canonical-resource\nshapes. Under path-style, the URL already contains the account name,\nso per the SharedKey spec the canonical resource is\n`/<account>` + `<url_path>`, which collapses to the account name\nappearing twice: `/devstoreaccount1/devstoreaccount1/<container>/...`.\nThis matches Azurite's logged expectation exactly. All three signing\nsites (`createContainer`, single-blob `sign`, `signListBlobs`) handle\nthis.\n\n`BackupUploader` gains a new `AzureTransport` variant next to\n`S3Transport`. Provider dispatch maps `.azure` to `initAzure`; the CLI\nfields shipped in 0697a285 are reused unchanged:\n- `access_key_id` is the Azure storage account name (non-secret).\n- `secret_access_key` is the base64 account key (sensitive; env-var\n  fallback keeps it out of argv).\n- `bucket` is the container name.\n- `url_style = \"path\"` selects Azurite semantics; null auto-detects\n  based on whether the endpoint is loopback.\n- `endpoint` defaults to `<account>.blob.core.windows.net`.\n\nTests:\n- `buildStringToSign`: canonical form for PUT, zero Content-Length\n  renders as empty field (Azure's spec requirement).\n- `AzureBlobClient: init` accepts a valid base64 key, rejects a\n  malformed one.\n- `parseListResponse`: extracts blob name + size from the XML list\n  response, handling nested `<Properties>`.\n- `BackupUploader: azure provider routes through AzureTransport`\n  constructs an uploader with HMAC creds and verifies the transport\n  variant.\n- `BackupUploader: azure without credentials fails closed`.\n- New integration test `integration: start path uploads backup blocks\n  to azure blob after live writes` drives `archerdb start\n  --backup-provider=azure` end-to-end against Azurite, asserts\n  `archerdb_backup_blocks_uploaded_total > 0`, and verifies block +\n  sidecar blobs via `listBlobs`. Local runs posted 144 blobs into\n  Azurite with StatusCode=201, gated by AZURITE_ENDPOINT env var so\n  dev environments without Docker skip cleanly.\n\nCI: new `Backup Restore Azure` matrix entry spins up Azurite (official\n`mcr.microsoft.com/azure-storage/azurite` image) alongside the\nexisting MinIO service; exports the Azurite well-known account name +\ndefault key + container via env vars the test reads.\n\nNon-goals (documented): SAS-token auth, OAuth2, block-list multi-part\nfor >100 MiB blobs, and snapshot/versioning. Block-list multi-part\nlands when a customer needs >100 MiB blocks; SAS/OAuth2 are follow-ups\nfor rotated-credential deployments.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-04-18T06:21:02+02:00",
+          "tree_id": "05599805620922d4f1d1066bc66d7457a6676f3c",
+          "url": "https://github.com/ArcherDB-io/archerdb/commit/e5ffc4f73b7fdf9886d7770ae15c10e52b2fd75b"
+        },
+        "date": 1776487333075,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "Insert Throughput",
+            "value": 1402228,
+            "unit": "events/s"
+          },
+          {
+            "name": "Insert p99 Latency",
+            "value": 6,
+            "unit": "ms"
+          },
+          {
+            "name": "Radius Query p99 Latency",
+            "value": 163,
+            "unit": "ms"
+          },
+          {
+            "name": "Polygon Query p99 Latency",
+            "value": 126,
             "unit": "ms"
           }
         ]
