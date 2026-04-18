@@ -7,15 +7,22 @@
 //! two sidecar artifacts (`.block.ts` timestamp, `.block.meta` metadata) to the
 //! configured destination.
 //!
-//! Two transports are supported today:
+//! Three transports are supported today:
 //!   - `.local`: writes to a directory on the local filesystem. Used for demos
 //!     and automated tests against a tempdir.
 //!   - `.s3`: PUTs to an S3 or S3-compatible endpoint (AWS, MinIO, LocalStack,
 //!     R2, Backblaze). Reuses `replication/s3_client.zig` so signing, multipart,
 //!     and retry/provider-detection are shared with the replication relay.
+//!   - `.gcs`: Google Cloud Storage via the S3-compatible XML interop API
+//!     (https://cloud.google.com/storage/docs/interoperability). Uses the same
+//!     `S3Client` with HMAC credentials; the operator supplies an HMAC access
+//!     key + secret issued via the GCS console. Endpoint defaults to
+//!     `storage.googleapis.com`. The native GCS JSON+OAuth2 API is not
+//!     supported — the interop path is explicitly faster to ship and matches
+//!     how most self-hosted S3 backup tools target GCS today.
 //!
-//! GCS and Azure are planned follow-ups that will extend this module with
-//! additional transport variants.
+//! Azure is a planned follow-up and currently fails closed with
+//! `error.UnsupportedProvider` at init time.
 //!
 //! Callers (backup_runtime / backup_coordinator) should treat the uploader as
 //! the single seam that dispatches on `BackupOptions.provider`. The uploader
@@ -93,8 +100,11 @@ pub const BackupUploader = struct {
                     } },
                 };
             },
-            .s3 => return initS3(allocator, options),
-            .gcs, .azure => {
+            // GCS runs through the S3-compatible interop API, so it shares the `.s3` transport
+            // variant and just varies the endpoint / region defaults. Full native GCS
+            // (JSON + OAuth2) is deliberately out of scope for this path.
+            .s3, .gcs => return initS3Compatible(allocator, options, options.provider),
+            .azure => {
                 logErr(
                     "backup provider '{s}' is not yet wired through the runtime",
                     .{options.provider.toString()},
@@ -104,31 +114,49 @@ pub const BackupUploader = struct {
         }
     }
 
-    fn initS3(allocator: mem.Allocator, options: BackupOptions) !BackupUploader {
+    /// Build an uploader backed by `S3Client` for any provider that speaks the S3-compatible
+    /// XML API (AWS S3, MinIO, LocalStack, R2, Backblaze, and GCS via Interop HMAC).
+    fn initS3Compatible(
+        allocator: mem.Allocator,
+        options: BackupOptions,
+        provider: StorageProvider,
+    ) !BackupUploader {
         const bucket = options.bucket orelse {
-            logErr("s3 backup provider requires `bucket`", .{});
+            logErr("{s} backup provider requires `bucket`", .{provider.toString()});
             return error.MissingBucket;
         };
-        const region = options.region orelse "us-east-1";
+
+        // Region selection. AWS defaults to us-east-1. GCS Interop treats region as
+        // informational; the signer accepts "auto" (matches `providers.getRegion(.gcs)`).
+        const region = options.region orelse switch (provider) {
+            .gcs => "auto",
+            else => "us-east-1",
+        };
 
         const creds = options.resolveS3Credentials();
         if (!creds.isComplete()) {
             logErr(
-                "s3 backup provider requires credentials " ++
+                "{s} backup provider requires HMAC credentials " ++
                     "(set `access_key_id`/`secret_access_key` or " ++
-                    "`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`)",
-                .{},
+                    "`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`). For GCS, issue an HMAC " ++
+                    "key under a service account at Cloud Storage > Settings > Interoperability.",
+                .{provider.toString()},
             );
             return error.MissingCredentials;
         }
 
-        // Compute an endpoint if the caller didn't specify one.
+        // Endpoint default: AWS per-region host for `.s3`, Interop host for `.gcs`. The
+        // caller may override via `--backup-endpoint` to point at LocalStack, fake-gcs-server
+        // in interop mode, or any private S3-compatible service.
         var endpoint_buf: [192]u8 = undefined;
-        const endpoint = options.endpoint orelse try fmt.bufPrint(
-            &endpoint_buf,
-            "s3.{s}.amazonaws.com",
-            .{region},
-        );
+        const endpoint = options.endpoint orelse switch (provider) {
+            .gcs => "storage.googleapis.com",
+            else => try fmt.bufPrint(
+                &endpoint_buf,
+                "s3.{s}.amazonaws.com",
+                .{region},
+            ),
+        };
 
         var client = s3_client.S3Client.init(allocator, .{
             .endpoint = endpoint,
@@ -138,7 +166,10 @@ pub const BackupUploader = struct {
                 .secret_access_key = creds.secret_access_key.?,
             },
         }) catch |err| {
-            logErr("failed to initialize S3 client for backup: {}", .{err});
+            logErr("failed to initialize S3 client for {s} backup: {}", .{
+                provider.toString(),
+                err,
+            });
             return error.UploadFailed;
         };
         errdefer client.deinit();
@@ -406,10 +437,10 @@ test "BackupUploader: init rejects unconfigured s3 provider" {
     }
 }
 
-test "BackupUploader: init rejects unsupported provider (gcs)" {
+test "BackupUploader: init rejects unsupported provider (azure)" {
     var config = try BackupConfig.init(std.testing.allocator, .{
         .enabled = true,
-        .provider = .gcs,
+        .provider = .azure,
         .bucket = "test-bucket",
     });
     defer config.deinit();
@@ -418,6 +449,57 @@ test "BackupUploader: init rejects unsupported provider (gcs)" {
         error.UnsupportedProvider,
         BackupUploader.init(std.testing.allocator, &config, ""),
     );
+}
+
+test "BackupUploader: gcs provider routes through S3-compatible transport" {
+    var config = try BackupConfig.init(std.testing.allocator, .{
+        .enabled = true,
+        .provider = .gcs,
+        .bucket = "test-bucket",
+        .access_key_id = "gcs-hmac-access",
+        .secret_access_key = "gcs-hmac-secret",
+    });
+    defer config.deinit();
+
+    var uploader = try BackupUploader.init(std.testing.allocator, &config, "");
+    defer uploader.deinit();
+
+    // GCS uses the .s3 transport variant (shared S3-compatible XML API).
+    switch (uploader.transport) {
+        .s3 => |t| try std.testing.expectEqualStrings("test-bucket", t.bucket),
+        else => try std.testing.expect(false),
+    }
+}
+
+test "BackupUploader: gcs provider without credentials fails closed" {
+    // Must clear any ambient AWS_* env var for this test; we can't do that from Zig
+    // portably, so skip when the environment would satisfy the credential check.
+    if (std.posix.getenv("AWS_ACCESS_KEY_ID") != null and
+        std.posix.getenv("AWS_SECRET_ACCESS_KEY") != null)
+    {
+        return error.SkipZigTest;
+    }
+
+    var config = try BackupConfig.init(std.testing.allocator, .{
+        .enabled = true,
+        .provider = .gcs,
+        .bucket = "test-bucket",
+    });
+    defer config.deinit();
+
+    try std.testing.expectError(
+        error.MissingCredentials,
+        BackupUploader.init(std.testing.allocator, &config, ""),
+    );
+}
+
+test "BackupUploader: gcs provider requires bucket" {
+    // BackupConfig.validate already rejects missing bucket; init never reaches the uploader.
+    const result = BackupConfig.init(std.testing.allocator, .{
+        .enabled = true,
+        .provider = .gcs,
+    });
+    try std.testing.expectError(error.MissingBucket, result);
 }
 
 test "BackupUploader: local transport uploads block + sidecars" {
