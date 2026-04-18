@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776485150981,
+  "lastUpdate": 1776486243115,
   "repoUrl": "https://github.com/ArcherDB-io/archerdb",
   "entries": {
     "Benchmark": [
@@ -879,6 +879,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Polygon Query p99 Latency",
             "value": 103,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "committer": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "distinct": true,
+          "id": "30044022b3c0a5628cbb8778a019c08006acd4d4",
+          "message": "test(java-sdk): integration proof for latency-aware NEAREST routing\n\nCloses the loop on the Java NEAREST v2 work (4c3226df) with an\nend-to-end test that exercises the full probe path — socket\nconstruction, TCP connect timing, `RegionLatencyStats` updates,\n`selectReadClient` selection — without any mocking.\n\nThe test spins up two real local `ServerSocket` listeners:\n- a \"fast\" region that accepts promptly;\n- a \"slow\" region whose accept loop sleeps 200ms between accepts,\n  creating back-pressure that shows up in measured connect RTT.\n\nRegion order in the config deliberately lists the slow region first,\nso the v1 static-priority fallback would pick it. The assertion\nrequires the prober to override that order on latency grounds.\n\nRobustness:\n- Uses a 1-second probe interval (vs the 30-second production\n  default) so samples accumulate within a sensible test timeout.\n- Uses `setProbeSampleCount(3)` and waits for ≥2 samples per region\n  before reading averages, so neither side is evaluated from a single\n  noisy measurement.\n- Asserts `slowRtt > fastRtt + 50us` — well above typical localhost\n  TCP noise (~20us) but far below the observed delta (~1.7ms in\n  local runs) so flakes on other hosts remain unlikely.\n- Prints the measured RTT pair so CI logs record whether the test\n  passed incidentally or with a real signal.\n- Validated 10/10 passes across two 5-run batches locally.\n\nTakes roughly 1.3s per run; no Docker or external services required,\nso this lives alongside the existing unit tests rather than behind a\nmatrix gate.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-04-18T06:02:05+02:00",
+          "tree_id": "3d0019e0ad910d6f734dddd22c3eeef76f003a8d",
+          "url": "https://github.com/ArcherDB-io/archerdb/commit/30044022b3c0a5628cbb8778a019c08006acd4d4"
+        },
+        "date": 1776486242202,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "Insert Throughput",
+            "value": 1465421,
+            "unit": "events/s"
+          },
+          {
+            "name": "Insert p99 Latency",
+            "value": 6,
+            "unit": "ms"
+          },
+          {
+            "name": "Radius Query p99 Latency",
+            "value": 129,
+            "unit": "ms"
+          },
+          {
+            "name": "Polygon Query p99 Latency",
+            "value": 111,
             "unit": "ms"
           }
         ]
