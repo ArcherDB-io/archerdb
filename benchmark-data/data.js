@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776382782613,
+  "lastUpdate": 1776484069574,
   "repoUrl": "https://github.com/ArcherDB-io/archerdb",
   "entries": {
     "Benchmark": [
@@ -791,6 +791,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Polygon Query p99 Latency",
             "value": 94,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "committer": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "distinct": true,
+          "id": "ec9ae2a03c6342e24dd4c07a4947e6e8ba79e7bf",
+          "message": "feat(backup,s3): end-to-end MinIO-backed S3 upload + two S3Client bug fixes\n\nStep 4b closes the S3 runtime work begun in a7593fc9..0697a285. The new\nMinIO-backed integration test proves the full start -> insert -> block\nupload -> bucket verification flow against a real S3 endpoint. Getting\nthere required fixing two real bugs in the long-dormant S3 client.\n\nTest (src/testing/backup_restore_test.zig):\n- `integration: start path uploads backup blocks to s3 after live writes`\n  spins up archerdb with `--backup-provider=s3` pointed at\n  `$MINIO_ENDPOINT`, drives writes through the C client, and polls\n  both the metrics endpoint and S3 `listObjects` until block+sidecar\n  artifacts show up under the expected cluster/replica prefix.\n- Skips cleanly when MINIO_ENDPOINT/ACCESS_KEY/SECRET_KEY are unset so\n  local runs without Docker continue to work.\n\nCI (.github/workflows/ci.yml):\n- New matrix entry \"Backup Restore S3\" in integration-tests, reusing\n  the existing MinIO service and Configure MinIO bucket step. The env\n  vars `MINIO_ENDPOINT` / `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` /\n  `MINIO_BUCKET` were already exported to that shard.\n\nTest harness (src/testing/tmp_archerdb.zig):\n- `TmpArcherDB.init` grows optional `backup_provider`, `backup_region`,\n  `backup_endpoint`, `backup_access_key_id`, `backup_secret_access_key`,\n  and `backup_url_style` fields that forward to the new CLI flags.\n  Existing callers that only pass `backup_bucket` keep the legacy\n  `provider=local` default.\n\nS3 client bug fixes (src/replication/s3_client.zig, src/replication/sigv4.zig):\n\n1. Duplicate Host / Content-Length headers on PUT/GET/LIST/DELETE.\n   `std.http.Client` auto-adds `host:` from the URL and adds\n   `content-length:` from `transfer_encoding = .content_length`. The\n   client was ALSO adding `Host` and `Content-Length` as extra_headers,\n   so every request reached the server with two of each. S3-compatible\n   servers (MinIO, LocalStack, and AWS) reject duplicate Host with HTTP\n   400 and the body \"400 Bad Request\" — with no XML error payload,\n   making this silently invisible. Fix: drop both manual headers from\n   the wire side while keeping Host in the SigV4 signed-headers list.\n   Wire bytes diffed through a Python TCP tap confirmed the duplicate\n   before the fix and a clean single Host after.\n\n2. SigV4 canonical query not URL-encoded. `createCanonicalRequest`\n   passed the raw query string (e.g. `list-type=2&prefix=foo/bar/`)\n   straight into the canonical request, but SigV4 requires each\n   parameter name and value to be RFC 3986 percent-encoded and sorted\n   by name. Result: `listObjects` with any prefix containing `/`, `-`,\n   or other reserved characters signed one string and the server\n   reconstructed a different one, yielding HTTP 403. Added\n   `canonicalizeQuery` + `encodeQueryComponent` helpers and routed\n   both into the canonical builder. Existing sigv4 tests still pass.\n\nImpact of those two fixes beyond this test: all 52 tests in\n`test:integration:replication` now execute the real S3 path. Before\nthis commit they were silently returning `error.SkipZigTest` from the\nfirst `putObject` failure.\n\nAlso fixed: `backup_uploader.putObject` was calling\n`PutObjectResult.deinit(std.heap.page_allocator)` — a cross-allocator\nfree that corrupted the heap whenever an etag actually came back. Now\nroutes through `client.allocator`, matching the allocator used to\nduplicate the etag inside `s3_client.putObject`.\n\nVerified locally: MinIO container started fresh, integration test\npasses end-to-end; `mc ls --recursive local/archerdb-test-bucket`\nconfirms `{sequence}.block` + `.ts` + `.meta` + checkpoint artifacts\nare really in the bucket. Local-provider `backup_restore_test`\nintegration and `BackupUploader` unit tests stay green.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-04-18T05:29:54+02:00",
+          "tree_id": "b72d5cb4a775fe27a811e8e5a26ee1adac0e7224",
+          "url": "https://github.com/ArcherDB-io/archerdb/commit/ec9ae2a03c6342e24dd4c07a4947e6e8ba79e7bf"
+        },
+        "date": 1776484068877,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "Insert Throughput",
+            "value": 1272006,
+            "unit": "events/s"
+          },
+          {
+            "name": "Insert p99 Latency",
+            "value": 7,
+            "unit": "ms"
+          },
+          {
+            "name": "Radius Query p99 Latency",
+            "value": 112,
+            "unit": "ms"
+          },
+          {
+            "name": "Polygon Query p99 Latency",
+            "value": 108,
             "unit": "ms"
           }
         ]
