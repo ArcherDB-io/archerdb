@@ -233,8 +233,11 @@ pub const S3Client = struct {
         const result = self.http_client.fetch(.{
             .location = .{ .url = url },
             .method = .GET,
+            // Host header is auto-added by std.http.Client from the URL; including it
+            // here would send a duplicate Host header and servers (MinIO, LocalStack)
+            // reject duplicate Host with HTTP 400. The SigV4 signature still covers Host
+            // because `host` is passed to sigv4.sign() above.
             .extra_headers = &[_]std.http.Header{
-                .{ .name = "Host", .value = host },
                 .{ .name = "x-amz-content-sha256", .value = &payload_hash },
                 .{ .name = "x-amz-date", .value = amz_date },
                 .{ .name = "Authorization", .value = auth_header },
@@ -356,8 +359,9 @@ pub const S3Client = struct {
             const result = self.http_client.fetch(.{
                 .location = .{ .url = url },
                 .method = .GET,
+                // See comment above: Host is auto-added by std.http.Client, so we must
+                // not include it in extra_headers. The signature still covers Host.
                 .extra_headers = &[_]std.http.Header{
-                    .{ .name = "Host", .value = host },
                     .{ .name = "x-amz-content-sha256", .value = &payload_hash },
                     .{ .name = "x-amz-date", .value = amz_date },
                     .{ .name = "Authorization", .value = auth_header },
@@ -450,16 +454,15 @@ pub const S3Client = struct {
         var date_buf: [16]u8 = undefined;
         const amz_date = sigv4.formatAmzDate(&date_buf);
 
-        // Calculate Content-MD5 if not provided
+        // Calculate Content-MD5 if not provided. Both buffers are declared at function scope
+        // so the slices returned below remain valid through the HTTP request.
+        var md5_hash: [16]u8 = undefined;
         var md5_buf: [24]u8 = undefined;
-        const md5_header = if (content_md5) |md5|
-            md5
-        else blk: {
-            var md5_hash: [16]u8 = undefined;
+        const md5_encoded_len = std.base64.standard.Encoder.calcSize(16);
+        const md5_header = if (content_md5) |md5| md5 else blk: {
             Md5.hash(body, &md5_hash, .{});
-            const encoded_len = std.base64.standard.Encoder.calcSize(16);
-            _ = std.base64.standard.Encoder.encode(md5_buf[0..encoded_len], &md5_hash);
-            break :blk md5_buf[0..encoded_len];
+            _ = std.base64.standard.Encoder.encode(md5_buf[0..md5_encoded_len], &md5_hash);
+            break :blk md5_buf[0..md5_encoded_len];
         };
 
         // Build headers for signing
@@ -494,21 +497,21 @@ pub const S3Client = struct {
         // Parse URL
         const uri = std.Uri.parse(url) catch return error.InvalidResponse;
 
-        // Make HTTP request
+        // Make HTTP request. Content-Length is set via `transfer_encoding` below; do not
+        // add it as an extra header or the request will send two Content-Length headers and
+        // S3-compatible servers (MinIO, LocalStack) reject the request with HTTP 400.
         var server_header_buffer: [8192]u8 = undefined;
         var req = self.http_client.open(.PUT, uri, .{
             .server_header_buffer = &server_header_buffer,
+            // Host header is auto-added by std.http.Client from the URL; including it
+            // here would send a duplicate Host header and servers (MinIO, LocalStack)
+            // reject duplicate Host with HTTP 400. The SigV4 signature still covers Host
+            // because `host` is passed to sigv4.sign() above.
             .extra_headers = &[_]std.http.Header{
-                .{ .name = "Host", .value = host },
                 .{ .name = "x-amz-content-sha256", .value = &payload_hash },
                 .{ .name = "x-amz-date", .value = amz_date },
                 .{ .name = "Content-MD5", .value = md5_header },
                 .{ .name = "Authorization", .value = auth_header },
-                .{ .name = "Content-Length", .value = blk: {
-                    var len_buf: [20]u8 = undefined;
-                    const len_str = std.fmt.bufPrint(&len_buf, "{d}", .{body.len}) catch unreachable;
-                    break :blk len_str;
-                } },
             },
         }) catch |err| {
             log.warn("HTTP request open failed: {}", .{err});
@@ -658,8 +661,11 @@ pub const S3Client = struct {
         var server_header_buffer: [8192]u8 = undefined;
         var req = self.http_client.open(.POST, uri, .{
             .server_header_buffer = &server_header_buffer,
+            // Host header is auto-added by std.http.Client from the URL; including it
+            // here would send a duplicate Host header and servers (MinIO, LocalStack)
+            // reject duplicate Host with HTTP 400. The SigV4 signature still covers Host
+            // because `host` is passed to sigv4.sign() above.
             .extra_headers = &[_]std.http.Header{
-                .{ .name = "Host", .value = host },
                 .{ .name = "x-amz-content-sha256", .value = &payload_hash },
                 .{ .name = "x-amz-date", .value = amz_date },
                 .{ .name = "Authorization", .value = auth_header },
@@ -796,8 +802,11 @@ pub const S3Client = struct {
         var server_header_buffer: [8192]u8 = undefined;
         var req = self.http_client.open(.PUT, uri, .{
             .server_header_buffer = &server_header_buffer,
+            // Host header is auto-added by std.http.Client from the URL; including it
+            // here would send a duplicate Host header and servers (MinIO, LocalStack)
+            // reject duplicate Host with HTTP 400. The SigV4 signature still covers Host
+            // because `host` is passed to sigv4.sign() above.
             .extra_headers = &[_]std.http.Header{
-                .{ .name = "Host", .value = host },
                 .{ .name = "x-amz-content-sha256", .value = &payload_hash },
                 .{ .name = "x-amz-date", .value = amz_date },
                 .{ .name = "Authorization", .value = auth_header },
@@ -954,8 +963,11 @@ pub const S3Client = struct {
         var server_header_buffer: [8192]u8 = undefined;
         var req = self.http_client.open(.POST, uri, .{
             .server_header_buffer = &server_header_buffer,
+            // Host header is auto-added by std.http.Client from the URL; including it
+            // here would send a duplicate Host header and servers (MinIO, LocalStack)
+            // reject duplicate Host with HTTP 400. The SigV4 signature still covers Host
+            // because `host` is passed to sigv4.sign() above.
             .extra_headers = &[_]std.http.Header{
-                .{ .name = "Host", .value = host },
                 .{ .name = "x-amz-content-sha256", .value = &payload_hash },
                 .{ .name = "x-amz-date", .value = amz_date },
                 .{ .name = "Authorization", .value = auth_header },
@@ -1073,8 +1085,11 @@ pub const S3Client = struct {
         var server_header_buffer: [8192]u8 = undefined;
         var req = self.http_client.open(.DELETE, uri, .{
             .server_header_buffer = &server_header_buffer,
+            // Host header is auto-added by std.http.Client from the URL; including it
+            // here would send a duplicate Host header and servers (MinIO, LocalStack)
+            // reject duplicate Host with HTTP 400. The SigV4 signature still covers Host
+            // because `host` is passed to sigv4.sign() above.
             .extra_headers = &[_]std.http.Header{
-                .{ .name = "Host", .value = host },
                 .{ .name = "x-amz-content-sha256", .value = &payload_hash },
                 .{ .name = "x-amz-date", .value = amz_date },
                 .{ .name = "Authorization", .value = auth_header },

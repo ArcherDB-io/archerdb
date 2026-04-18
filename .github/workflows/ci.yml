@@ -399,6 +399,10 @@ jobs:
             target: test:integration
             filter_args: "backup_restore_test"
             minio: true
+          - name: Backup Restore S3
+            target: test:integration
+            filter_args: "'integration: start path uploads backup blocks to s3'"
+            minio: true
           - name: Encryption
             target: test:integration
             filter_args: "encryption_test"

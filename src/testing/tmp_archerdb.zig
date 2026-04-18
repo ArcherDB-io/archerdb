@@ -45,7 +45,19 @@ pub fn init(
         metrics_auth_token: ?[]const u8 = null,
         index_resize_batch_size: ?u32 = null,
         data_file: ?[]const u8 = null,
+        /// When set, enables backups with `provider=local` and the given bucket path
+        /// unless `backup_provider` overrides the provider. This field doubles as the
+        /// S3 `--backup-bucket` value when `backup_provider == "s3"`.
         backup_bucket: ?[]const u8 = null,
+        /// Override the backup provider. Default is `local` (matching the legacy
+        /// single-field call sites). Pass `s3` for emulator-backed integration tests.
+        backup_provider: ?[]const u8 = null,
+        backup_region: ?[]const u8 = null,
+        backup_endpoint: ?[]const u8 = null,
+        backup_access_key_id: ?[]const u8 = null,
+        backup_secret_access_key: ?[]const u8 = null,
+        /// "path" or "virtual-hosted"; null lets the uploader auto-detect.
+        backup_url_style: ?[]const u8 = null,
     },
 ) !TmpArcherDB {
     const shell = try Shell.create(gpa);
@@ -132,8 +144,40 @@ pub fn init(
     }
     if (options.backup_bucket) |bucket| {
         try argv.append(try shell.gpa.dupe(u8, "--backup-enabled=true"));
-        try argv.append(try shell.gpa.dupe(u8, "--backup-provider=local"));
+        const provider = options.backup_provider orelse "local";
+        try argv.append(try std.fmt.allocPrint(
+            shell.gpa,
+            "--backup-provider={s}",
+            .{provider},
+        ));
         try argv.append(try std.fmt.allocPrint(shell.gpa, "--backup-bucket={s}", .{bucket}));
+        if (options.backup_region) |v| {
+            try argv.append(try std.fmt.allocPrint(shell.gpa, "--backup-region={s}", .{v}));
+        }
+        if (options.backup_endpoint) |v| {
+            try argv.append(try std.fmt.allocPrint(shell.gpa, "--backup-endpoint={s}", .{v}));
+        }
+        if (options.backup_access_key_id) |v| {
+            try argv.append(try std.fmt.allocPrint(
+                shell.gpa,
+                "--backup-access-key-id={s}",
+                .{v},
+            ));
+        }
+        if (options.backup_secret_access_key) |v| {
+            try argv.append(try std.fmt.allocPrint(
+                shell.gpa,
+                "--backup-secret-access-key={s}",
+                .{v},
+            ));
+        }
+        if (options.backup_url_style) |v| {
+            try argv.append(try std.fmt.allocPrint(
+                shell.gpa,
+                "--backup-url-style={s}",
+                .{v},
+            ));
+        }
     }
     try argv.append(try shell.gpa.dupe(u8, data_file));
 

@@ -134,6 +134,14 @@ pub fn createCanonicalRequest(
     const canonical_uri = try encodeUri(allocator, uri);
     defer allocator.free(canonical_uri);
 
+    // Canonicalize the query string: each parameter name and value must be URI-encoded
+    // (RFC 3986 unreserved only), parameters sorted by name. The caller passes the
+    // un-encoded query string `k1=v1&k2=v2&...`; we split, encode per-param, and re-join.
+    // Canonicalization here is required — S3 uses the canonical query in the signature,
+    // and any mismatch with what the server reconstructs produces HTTP 403.
+    const canonical_query = try canonicalizeQuery(allocator, query);
+    defer allocator.free(canonical_query);
+
     // Sort headers by lowercase name
     const sorted_headers = try allocator.alloc(Header, headers.len);
     defer allocator.free(sorted_headers);
@@ -180,11 +188,86 @@ pub fn createCanonicalRequest(
     return std.fmt.allocPrint(allocator, "{s}\n{s}\n{s}\n{s}\n{s}\n{s}", .{
         method.toString(),
         canonical_uri,
-        query,
+        canonical_query,
         canonical_headers,
         signed_headers,
         payload_hash,
     });
+}
+
+/// Canonicalize a query string for SigV4 signing.
+///
+/// - Splits on `&` into `k=v` pairs (a pair with no `=` is treated as key-only with empty value).
+/// - URI-encodes each key and value using the RFC 3986 unreserved set
+///   (`A-Z a-z 0-9 - _ . ~`); everything else becomes `%XX`.
+/// - Sorts pairs by the encoded key (ties broken by encoded value).
+/// - Joins with `&`; pairs always include `=` even when the value is empty.
+///
+/// Accepts an empty query (returns an empty string) so callers do not need to branch.
+fn canonicalizeQuery(allocator: Allocator, query: []const u8) ![]const u8 {
+    if (query.len == 0) return allocator.dupe(u8, "");
+
+    const Pair = struct {
+        key: []const u8,
+        value: []const u8,
+    };
+
+    var pairs = std.ArrayList(Pair).init(allocator);
+    defer {
+        for (pairs.items) |pair| {
+            allocator.free(pair.key);
+            allocator.free(pair.value);
+        }
+        pairs.deinit();
+    }
+
+    var iter = std.mem.splitScalar(u8, query, '&');
+    while (iter.next()) |segment| {
+        if (segment.len == 0) continue;
+        const eq = std.mem.indexOfScalar(u8, segment, '=');
+        const raw_key = if (eq) |i| segment[0..i] else segment;
+        const raw_value = if (eq) |i| segment[i + 1 ..] else "";
+        const key = try encodeQueryComponent(allocator, raw_key);
+        errdefer allocator.free(key);
+        const value = try encodeQueryComponent(allocator, raw_value);
+        errdefer allocator.free(value);
+        try pairs.append(.{ .key = key, .value = value });
+    }
+
+    std.mem.sort(Pair, pairs.items, {}, struct {
+        fn lessThan(_: void, a: Pair, b: Pair) bool {
+            const key_order = std.mem.order(u8, a.key, b.key);
+            if (key_order != .eq) return key_order == .lt;
+            return std.mem.order(u8, a.value, b.value) == .lt;
+        }
+    }.lessThan);
+
+    var out = std.ArrayList(u8).init(allocator);
+    errdefer out.deinit();
+    for (pairs.items, 0..) |pair, i| {
+        if (i > 0) try out.append('&');
+        try out.appendSlice(pair.key);
+        try out.append('=');
+        try out.appendSlice(pair.value);
+    }
+    return out.toOwnedSlice();
+}
+
+fn encodeQueryComponent(allocator: Allocator, component: []const u8) ![]const u8 {
+    var result = std.ArrayList(u8).init(allocator);
+    errdefer result.deinit();
+    for (component) |c| {
+        if (isUnreservedUriChar(c)) {
+            try result.append(c);
+        } else {
+            try result.appendSlice(&[_]u8{
+                '%',
+                hexDigit(@truncate(c >> 4)),
+                hexDigit(@truncate(c & 0xF)),
+            });
+        }
+    }
+    return result.toOwnedSlice();
 }
 
 /// Create the string to sign

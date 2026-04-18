@@ -25,6 +25,7 @@ const tb = vsr.archerdb;
 const arch_client = @import("../clients/c/arch_client.zig");
 const restore = @import("../archerdb/restore.zig");
 const checkpoint_artifact = vsr.checkpoint_artifact;
+const s3_client = @import("../replication/s3_client.zig");
 
 const archerdb: []const u8 = @import("test_options").archerdb_exe;
 
@@ -717,6 +718,199 @@ test "integration: start path uploads backup blocks after live writes" {
         metrics_port,
         blocks_dir,
         60 * std.time.ns_per_s,
+    );
+    try testing.expect(backup.uploaded_blocks > 0);
+    try testing.expect(backup.counts.blocks > 0);
+    try testing.expectEqual(backup.counts.blocks, backup.counts.timestamps);
+    try testing.expectEqual(backup.counts.blocks, backup.counts.metadata);
+    try testing.expect(backup.counts.checkpoints > 0);
+}
+
+// =============================================================================
+// S3-backed integration test (MinIO / LocalStack / live AWS)
+// =============================================================================
+
+/// Environment-driven S3 endpoint configuration for the MinIO-backed test below.
+/// Returns null when any required variable is missing — the test then skips. This
+/// keeps local runs ergonomic (skip) and makes CI failures loud (CI sets all three).
+const S3Env = struct {
+    endpoint: []const u8,
+    access_key_id: []const u8,
+    secret_access_key: []const u8,
+    bucket: []const u8,
+
+    fn read() ?S3Env {
+        const endpoint = std.posix.getenv("MINIO_ENDPOINT") orelse return null;
+        const access_key_id = std.posix.getenv("MINIO_ACCESS_KEY") orelse return null;
+        const secret_access_key = std.posix.getenv("MINIO_SECRET_KEY") orelse return null;
+        const bucket = std.posix.getenv("MINIO_BUCKET") orelse "archerdb-test-bucket";
+        return .{
+            .endpoint = endpoint,
+            .access_key_id = access_key_id,
+            .secret_access_key = secret_access_key,
+            .bucket = bucket,
+        };
+    }
+};
+
+/// Count backup artifacts in an S3 bucket under the given prefix. Mirrors the
+/// filesystem-based `countBackupArtifacts` but speaks S3 `ListObjects`.
+fn countBackupArtifactsS3(
+    allocator: std.mem.Allocator,
+    env: S3Env,
+    prefix: []const u8,
+) !BackupArtifactCounts {
+    var client = try s3_client.S3Client.init(allocator, .{
+        .endpoint = env.endpoint,
+        .region = "us-east-1",
+        .credentials = .{
+            .access_key_id = env.access_key_id,
+            .secret_access_key = env.secret_access_key,
+        },
+    });
+    defer client.deinit();
+
+    const objects = try client.listObjects(env.bucket, prefix);
+    defer {
+        for (objects) |obj| {
+            allocator.free(obj.key);
+        }
+        allocator.free(objects);
+    }
+
+    var counts = BackupArtifactCounts{};
+    for (objects) |obj| {
+        if (std.mem.endsWith(u8, obj.key, ".block")) {
+            counts.blocks += 1;
+        } else if (std.mem.endsWith(u8, obj.key, ".block.ts")) {
+            counts.timestamps += 1;
+        } else if (std.mem.endsWith(u8, obj.key, ".block.meta")) {
+            counts.metadata += 1;
+        } else if (std.mem.endsWith(u8, obj.key, checkpoint_artifact.file_suffix)) {
+            counts.checkpoints += 1;
+        }
+    }
+    return counts;
+}
+
+fn waitForBackupArtifactsS3(
+    allocator: std.mem.Allocator,
+    metrics_port: u16,
+    env: S3Env,
+    prefix: []const u8,
+    timeout_ns: u64,
+) !struct {
+    uploaded_blocks: u64,
+    counts: BackupArtifactCounts,
+} {
+    const deadline = std.time.nanoTimestamp() + @as(i128, @intCast(timeout_ns));
+
+    while (std.time.nanoTimestamp() < deadline) {
+        const metrics = try fetchMetrics(allocator, metrics_port);
+        defer allocator.free(metrics);
+
+        const uploaded_blocks = parseMetricU64(
+            metrics,
+            "archerdb_backup_blocks_uploaded_total",
+        ) orelse 0;
+        const counts = try countBackupArtifactsS3(allocator, env, prefix);
+        if (uploaded_blocks > 0 and
+            counts.blocks > 0 and
+            counts.timestamps > 0 and
+            counts.metadata > 0 and
+            counts.checkpoints > 0)
+        {
+            return .{
+                .uploaded_blocks = uploaded_blocks,
+                .counts = counts,
+            };
+        }
+
+        std.time.sleep(250 * std.time.ns_per_ms);
+    }
+
+    return error.BackupArtifactsTimeout;
+}
+
+test "integration: start path uploads backup blocks to s3 after live writes" {
+    const env = S3Env.read() orelse return error.SkipZigTest;
+
+    const allocator = std.testing.allocator;
+    const RequestContext = RequestContextType(constants.message_body_size_max);
+
+    const metrics_port = try pickFreePort();
+
+    // Cluster 0 matches TmpArcherDB's `format --cluster=0`. The backup uploader will
+    // write objects under the prefix `00000000000000000000000000000000/replica-0/blocks/`.
+    const object_prefix = "00000000000000000000000000000000/replica-0/";
+
+    var tmp_archerdb = try TmpArcherDB.init(allocator, .{
+        .development = true,
+        .prebuilt = archerdb,
+        .metrics_port = metrics_port,
+        .metrics_bind = "127.0.0.1",
+        .backup_bucket = env.bucket,
+        .backup_provider = "s3",
+        .backup_region = "us-east-1",
+        .backup_endpoint = env.endpoint,
+        .backup_access_key_id = env.access_key_id,
+        .backup_secret_access_key = env.secret_access_key,
+        .backup_url_style = "path", // MinIO and LocalStack require path style.
+    });
+    defer tmp_archerdb.deinit(allocator);
+    errdefer tmp_archerdb.log_stderr();
+
+    try waitForReady(metrics_port, 10 * std.time.ns_per_s);
+
+    var client: arch_client.ClientInterface = undefined;
+    try arch_client.init(
+        allocator,
+        &client,
+        0,
+        tmp_archerdb.port_str,
+        99,
+        RequestContext.on_complete,
+    );
+    defer client.deinit() catch unreachable;
+
+    var completion = Completion{ .pending = 0 };
+    const request = try allocator.create(RequestContext);
+    defer allocator.destroy(request);
+    request.* = RequestContext{
+        .packet = undefined,
+        .completion = &completion,
+        .sent_data_size = 0,
+    };
+
+    const requests_target: usize = @intCast(constants.vsr_checkpoint_ops + 256);
+    for (0..requests_target) |i| {
+        var event = [_]tb.GeoEvent{make_event(
+            20_000 + i,
+            37.7749 + (@as(f64, @floatFromInt(i % 10)) * 0.0001),
+            -122.4194 - (@as(f64, @floatFromInt(i % 10)) * 0.0001),
+        )};
+
+        const insert_reply = try send_request(
+            &client,
+            &completion,
+            request,
+            .insert_events,
+            std.mem.sliceAsBytes(&event),
+        );
+
+        const result = read_struct(
+            tb.InsertGeoEventsResult,
+            insert_reply[0..@sizeOf(tb.InsertGeoEventsResult)],
+        );
+        try testing.expectEqual(tb.InsertGeoEventResult.ok, result.result);
+    }
+
+    const backup = try waitForBackupArtifactsS3(
+        allocator,
+        metrics_port,
+        env,
+        object_prefix,
+        90 * std.time.ns_per_s,
     );
     try testing.expect(backup.uploaded_blocks > 0);
     try testing.expect(backup.counts.blocks > 0);

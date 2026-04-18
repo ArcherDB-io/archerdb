@@ -351,7 +351,9 @@ fn putObject(
         logErr("s3 putObject failed for key '{s}': {}", .{ key, err });
         return error.UploadFailed;
     };
-    result.deinit(std.heap.page_allocator);
+    // PutObjectResult strings are allocated via the S3Client's own allocator.
+    // Using a different allocator here (e.g. page_allocator) corrupts the heap.
+    result.deinit(client.allocator);
 }
 
 /// Format a full object key: `{cluster:0>32}/replica-{replica}/blocks/{file_name}`.
