@@ -26,6 +26,7 @@ const arch_client = @import("../clients/c/arch_client.zig");
 const restore = @import("../archerdb/restore.zig");
 const checkpoint_artifact = vsr.checkpoint_artifact;
 const s3_client = @import("../replication/s3_client.zig");
+const azure_blob_client = @import("../replication/azure_blob_client.zig");
 
 const archerdb: []const u8 = @import("test_options").archerdb_exe;
 
@@ -917,6 +918,140 @@ test "integration: start path uploads backup blocks to s3 after live writes" {
     try testing.expectEqual(backup.counts.blocks, backup.counts.timestamps);
     try testing.expectEqual(backup.counts.blocks, backup.counts.metadata);
     try testing.expect(backup.counts.checkpoints > 0);
+}
+
+// =============================================================================
+// Azure Blob Storage-backed integration test (Azurite)
+// =============================================================================
+
+const AzuriteEnv = struct {
+    endpoint: []const u8,
+    account: []const u8,
+    account_key_base64: []const u8,
+    container: []const u8,
+
+    fn read() ?AzuriteEnv {
+        const endpoint = std.posix.getenv("AZURITE_ENDPOINT") orelse return null;
+        const account = std.posix.getenv("AZURITE_ACCOUNT") orelse "devstoreaccount1";
+        const key = std.posix.getenv("AZURITE_ACCOUNT_KEY") orelse return null;
+        const container = std.posix.getenv("AZURITE_CONTAINER") orelse "archerdb-test-container";
+        return .{
+            .endpoint = endpoint,
+            .account = account,
+            .account_key_base64 = key,
+            .container = container,
+        };
+    }
+};
+
+test "integration: start path uploads backup blocks to azure blob after live writes" {
+    const env = AzuriteEnv.read() orelse return error.SkipZigTest;
+
+    const allocator = std.testing.allocator;
+    const RequestContext = RequestContextType(constants.message_body_size_max);
+
+    // Ensure the container exists; Azurite does not create it automatically.
+    {
+        var client = try azure_blob_client.AzureBlobClient.init(allocator, .{
+            .endpoint = env.endpoint,
+            .credentials = .{
+                .account = env.account,
+                .account_key_base64 = env.account_key_base64,
+            },
+            .use_path_style = true,
+        });
+        defer client.deinit();
+        try client.createContainer(env.container);
+    }
+
+    const metrics_port = try pickFreePort();
+    const object_prefix = "00000000000000000000000000000000/replica-0/";
+
+    var tmp_archerdb = try TmpArcherDB.init(allocator, .{
+        .development = true,
+        .prebuilt = archerdb,
+        .metrics_port = metrics_port,
+        .metrics_bind = "127.0.0.1",
+        .backup_bucket = env.container,
+        .backup_provider = "azure",
+        .backup_endpoint = env.endpoint,
+        .backup_access_key_id = env.account,
+        .backup_secret_access_key = env.account_key_base64,
+        .backup_url_style = "path",
+    });
+    defer tmp_archerdb.deinit(allocator);
+    errdefer tmp_archerdb.log_stderr();
+
+    try waitForReady(metrics_port, 10 * std.time.ns_per_s);
+
+    var client: arch_client.ClientInterface = undefined;
+    try arch_client.init(allocator, &client, 0, tmp_archerdb.port_str, 99,
+        RequestContext.on_complete);
+    defer client.deinit() catch unreachable;
+
+    var completion = Completion{ .pending = 0 };
+    const request = try allocator.create(RequestContext);
+    defer allocator.destroy(request);
+    request.* = RequestContext{
+        .packet = undefined,
+        .completion = &completion,
+        .sent_data_size = 0,
+    };
+
+    const requests_target: usize = @intCast(constants.vsr_checkpoint_ops + 256);
+    for (0..requests_target) |i| {
+        var event = [_]tb.GeoEvent{make_event(
+            30_000 + i,
+            37.7749 + (@as(f64, @floatFromInt(i % 10)) * 0.0001),
+            -122.4194 - (@as(f64, @floatFromInt(i % 10)) * 0.0001),
+        )};
+        const insert_reply = try send_request(&client, &completion, request,
+            .insert_events, std.mem.sliceAsBytes(&event));
+        const result = read_struct(
+            tb.InsertGeoEventsResult,
+            insert_reply[0..@sizeOf(tb.InsertGeoEventsResult)],
+        );
+        try testing.expectEqual(tb.InsertGeoEventResult.ok, result.result);
+    }
+
+    const deadline = std.time.nanoTimestamp() + 90 * std.time.ns_per_s;
+    while (std.time.nanoTimestamp() < deadline) {
+        const metrics = try fetchMetrics(allocator, metrics_port);
+        defer allocator.free(metrics);
+        const uploaded = parseMetricU64(metrics, "archerdb_backup_blocks_uploaded_total") orelse 0;
+        if (uploaded > 0) break;
+        std.time.sleep(250 * std.time.ns_per_ms);
+    } else {
+        return error.BackupArtifactsTimeout;
+    }
+
+    // Verify block, ts, meta, and checkpoint artifacts are in Azurite.
+    var list_client = try azure_blob_client.AzureBlobClient.init(allocator, .{
+        .endpoint = env.endpoint,
+        .credentials = .{
+            .account = env.account,
+            .account_key_base64 = env.account_key_base64,
+        },
+        .use_path_style = true,
+    });
+    defer list_client.deinit();
+    const blobs = try list_client.listBlobs(env.container, object_prefix);
+    defer {
+        for (blobs) |b| allocator.free(b.name);
+        allocator.free(blobs);
+    }
+
+    var counts = BackupArtifactCounts{};
+    for (blobs) |b| {
+        if (std.mem.endsWith(u8, b.name, ".block")) counts.blocks += 1
+        else if (std.mem.endsWith(u8, b.name, ".block.ts")) counts.timestamps += 1
+        else if (std.mem.endsWith(u8, b.name, ".block.meta")) counts.metadata += 1
+        else if (std.mem.endsWith(u8, b.name, checkpoint_artifact.file_suffix)) counts.checkpoints += 1;
+    }
+    try testing.expect(counts.blocks > 0);
+    try testing.expectEqual(counts.blocks, counts.timestamps);
+    try testing.expectEqual(counts.blocks, counts.metadata);
+    try testing.expect(counts.checkpoints > 0);
 }
 
 test "integration: point-in-time restore targeting" {

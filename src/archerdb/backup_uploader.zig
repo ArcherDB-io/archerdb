@@ -41,6 +41,7 @@ const BlockRef = backup_config.BlockRef;
 const StorageProvider = backup_config.StorageProvider;
 
 const s3_client = @import("../replication/s3_client.zig");
+const azure_blob_client = @import("../replication/azure_blob_client.zig");
 
 const log = std.log.scoped(.backup_uploader);
 
@@ -67,6 +68,7 @@ pub const BackupUploader = struct {
     pub const Transport = union(enum) {
         local: LocalTransport,
         s3: S3Transport,
+        azure: AzureTransport,
     };
 
     /// Local filesystem transport. Writes artifacts under `prefix_path`, which is
@@ -80,6 +82,14 @@ pub const BackupUploader = struct {
     pub const S3Transport = struct {
         client: s3_client.S3Client,
         bucket: []const u8, // owned
+    };
+
+    /// Azure Blob Storage transport. Owns an `AzureBlobClient` and the container name.
+    /// Azure reuses the ArcherDB object-key scheme used by the S3 transport so a single
+    /// restore tool can recover from any provider.
+    pub const AzureTransport = struct {
+        client: azure_blob_client.AzureBlobClient,
+        container: []const u8, // owned
     };
 
     /// Build an uploader from the config. `local_prefix_path` is only used when
@@ -104,14 +114,78 @@ pub const BackupUploader = struct {
             // variant and just varies the endpoint / region defaults. Full native GCS
             // (JSON + OAuth2) is deliberately out of scope for this path.
             .s3, .gcs => return initS3Compatible(allocator, options, options.provider),
-            .azure => {
-                logErr(
-                    "backup provider '{s}' is not yet wired through the runtime",
-                    .{options.provider.toString()},
-                );
-                return error.UnsupportedProvider;
-            },
+            .azure => return initAzure(allocator, options),
         }
+    }
+
+    /// Build an uploader backed by the Azure Blob Storage REST API (`AzureBlobClient`).
+    /// Provider-specific semantics:
+    ///   - `bucket` is the Azure container name.
+    ///   - `access_key_id` is the Azure storage account name (non-secret; safe in argv).
+    ///   - `secret_access_key` is the base64 account key (sensitive; prefer env vars).
+    ///   - `url_style = "path"` switches the client to Azurite-style paths
+    ///     (`http://host/<account>/<container>/<blob>`), which Azurite requires. The
+    ///     production Azure default is virtual-hosted (`<account>.blob.core.windows.net`).
+    ///   - `endpoint` defaults to `<account>.blob.core.windows.net`.
+    fn initAzure(allocator: mem.Allocator, options: BackupOptions) !BackupUploader {
+        const container = options.bucket orelse {
+            logErr("azure backup provider requires `bucket` (Azure container name)", .{});
+            return error.MissingBucket;
+        };
+
+        // Azure reuses the S3 credential-resolution path: access_key_id = account name;
+        // secret_access_key = base64 account key. Env-var fallback keeps the key out of
+        // argv for production deployments.
+        const creds = options.resolveS3Credentials();
+        if (!creds.isComplete()) {
+            logErr(
+                "azure backup provider requires `access_key_id` (account name) and " ++
+                    "`secret_access_key` (base64 account key). In CI, pass the key via " ++
+                    "`AWS_SECRET_ACCESS_KEY` to keep it out of argv.",
+                .{},
+            );
+            return error.MissingCredentials;
+        }
+
+        // Endpoint default: production Azure Blob host for the configured account. Override
+        // via `--backup-endpoint` for Azurite (`localhost:10000`) or a private Azure
+        // Stack host. Path-style is the Azurite default; production uses virtual-hosted.
+        var endpoint_buf: [256]u8 = undefined;
+        const endpoint = options.endpoint orelse try fmt.bufPrint(
+            &endpoint_buf,
+            "{s}.blob.core.windows.net",
+            .{creds.access_key_id.?},
+        );
+        const use_path_style = if (options.url_style) |style|
+            mem.eql(u8, style, "path")
+        else
+            // Default heuristic: Azurite endpoints are local; everything else is Azure.
+            mem.indexOf(u8, endpoint, "localhost") != null or
+                mem.indexOf(u8, endpoint, "127.0.0.1") != null;
+
+        var client = azure_blob_client.AzureBlobClient.init(allocator, .{
+            .endpoint = endpoint,
+            .credentials = .{
+                .account = creds.access_key_id.?,
+                .account_key_base64 = creds.secret_access_key.?,
+            },
+            .use_path_style = use_path_style,
+        }) catch |err| {
+            logErr("failed to initialize Azure Blob client for backup: {}", .{err});
+            return switch (err) {
+                error.InvalidAccountKey => error.MissingCredentials,
+                else => error.UploadFailed,
+            };
+        };
+        errdefer client.deinit();
+
+        return .{
+            .allocator = allocator,
+            .transport = .{ .azure = .{
+                .client = client,
+                .container = try allocator.dupe(u8, container),
+            } },
+        };
     }
 
     /// Build an uploader backed by `S3Client` for any provider that speaks the S3-compatible
@@ -190,6 +264,10 @@ pub const BackupUploader = struct {
                 t.client.deinit();
                 self.allocator.free(t.bucket);
             },
+            .azure => |*t| {
+                t.client.deinit();
+                self.allocator.free(t.container);
+            },
         }
     }
 
@@ -245,6 +323,17 @@ pub const BackupUploader = struct {
                 ts_text,
                 meta_text,
             ),
+            .azure => |*t| try uploadBlockAzure(
+                self.allocator,
+                &t.client,
+                t.container,
+                cluster_id,
+                replica_id,
+                block_name,
+                block_bytes,
+                ts_text,
+                meta_text,
+            ),
         }
     }
 
@@ -277,6 +366,19 @@ pub const BackupUploader = struct {
                 );
                 defer self.allocator.free(key);
                 try putObject(&t.client, t.bucket, key, contents);
+            },
+            .azure => |*t| {
+                const blob = try formatObjectKey(
+                    self.allocator,
+                    cluster_id,
+                    replica_id,
+                    file_name,
+                );
+                defer self.allocator.free(blob);
+                t.client.putBlob(t.container, blob, contents) catch |err| {
+                    logErr("azure putBlob failed for blob '{s}': {}", .{ blob, err });
+                    return error.UploadFailed;
+                };
             },
         }
     }
@@ -387,6 +489,51 @@ fn putObject(
     result.deinit(client.allocator);
 }
 
+// -----------------------------------------------------------------------------
+// Azure Blob transport helpers
+// -----------------------------------------------------------------------------
+
+fn uploadBlockAzure(
+    allocator: mem.Allocator,
+    client: *azure_blob_client.AzureBlobClient,
+    container: []const u8,
+    cluster_id: u128,
+    replica_id: u8,
+    block_name: []const u8,
+    block_bytes: []const u8,
+    ts_text: []const u8,
+    meta_text: []const u8,
+) !void {
+    const block_key = try formatObjectKey(allocator, cluster_id, replica_id, block_name);
+    defer allocator.free(block_key);
+
+    const ts_name = try fmt.allocPrint(allocator, "{s}.ts", .{block_name});
+    defer allocator.free(ts_name);
+    const ts_key = try formatObjectKey(allocator, cluster_id, replica_id, ts_name);
+    defer allocator.free(ts_key);
+
+    const meta_name = try fmt.allocPrint(allocator, "{s}.meta", .{block_name});
+    defer allocator.free(meta_name);
+    const meta_key = try formatObjectKey(allocator, cluster_id, replica_id, meta_name);
+    defer allocator.free(meta_key);
+
+    putBlob(client, container, block_key, block_bytes) catch |err| return err;
+    putBlob(client, container, ts_key, ts_text) catch |err| return err;
+    putBlob(client, container, meta_key, meta_text) catch |err| return err;
+}
+
+fn putBlob(
+    client: *azure_blob_client.AzureBlobClient,
+    container: []const u8,
+    key: []const u8,
+    body: []const u8,
+) !void {
+    client.putBlob(container, key, body) catch |err| {
+        logErr("azure putBlob failed for blob '{s}': {}", .{ key, err });
+        return error.UploadFailed;
+    };
+}
+
 /// Format a full object key: `{cluster:0>32}/replica-{replica}/blocks/{file_name}`.
 /// The caller owns the returned slice.
 fn formatObjectKey(
@@ -437,18 +584,53 @@ test "BackupUploader: init rejects unconfigured s3 provider" {
     }
 }
 
-test "BackupUploader: init rejects unsupported provider (azure)" {
+test "BackupUploader: azure without credentials fails closed" {
+    if (std.posix.getenv("AWS_ACCESS_KEY_ID") != null and
+        std.posix.getenv("AWS_SECRET_ACCESS_KEY") != null)
+    {
+        return error.SkipZigTest;
+    }
+
     var config = try BackupConfig.init(std.testing.allocator, .{
         .enabled = true,
         .provider = .azure,
-        .bucket = "test-bucket",
+        .bucket = "test-container",
     });
     defer config.deinit();
 
     try std.testing.expectError(
-        error.UnsupportedProvider,
+        error.MissingCredentials,
         BackupUploader.init(std.testing.allocator, &config, ""),
     );
+}
+
+test "BackupUploader: azure provider routes through AzureTransport" {
+    var raw_key: [64]u8 = undefined;
+    for (0..64) |i| raw_key[i] = @intCast((i * 11 + 3) % 256);
+    var b64_buf: [88]u8 = undefined;
+    const encoded_len = std.base64.standard.Encoder.calcSize(raw_key.len);
+    _ = std.base64.standard.Encoder.encode(b64_buf[0..encoded_len], &raw_key);
+
+    var config = try BackupConfig.init(std.testing.allocator, .{
+        .enabled = true,
+        .provider = .azure,
+        .bucket = "test-container",
+        // `access_key_id` is the Azure account name (non-secret), `secret_access_key`
+        // is the base64 account key.
+        .access_key_id = "devstoreaccount1",
+        .secret_access_key = b64_buf[0..encoded_len],
+        .endpoint = "localhost:10000",
+        .url_style = "path",
+    });
+    defer config.deinit();
+
+    var uploader = try BackupUploader.init(std.testing.allocator, &config, "");
+    defer uploader.deinit();
+
+    switch (uploader.transport) {
+        .azure => |t| try std.testing.expectEqualStrings("test-container", t.container),
+        else => try std.testing.expect(false),
+    }
 }
 
 test "BackupUploader: gcs provider routes through S3-compatible transport" {

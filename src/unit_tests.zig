@@ -104,6 +104,7 @@ comptime {
     _ = @import("repl/parser.zig");
     _ = @import("repl/terminal.zig");
     _ = @import("replication.zig");
+    _ = @import("replication/azure_blob_client.zig");
     _ = @import("replication/integration_test.zig");
     _ = @import("replication/providers.zig");
     _ = @import("replication/s3_client.zig");
