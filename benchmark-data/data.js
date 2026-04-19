@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776629748053,
+  "lastUpdate": 1776630831288,
   "repoUrl": "https://github.com/ArcherDB-io/archerdb",
   "entries": {
     "Benchmark": [
@@ -1094,6 +1094,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Radius Query p99 Latency",
             "value": 130,
+            "unit": "ms"
+          },
+          {
+            "name": "Polygon Query p99 Latency",
+            "value": 91,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "committer": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "distinct": true,
+          "id": "ef8412daa8dd5cf440fc56e5ba4b90d2cd639e95",
+          "message": "feat(azure): block-list multipart upload for large blobs\n\nExtends `AzureBlobClient.putBlob` with automatic Put Block + Put Block\nList dispatch when the body exceeds `multipart_threshold` (100 MiB,\nmatching the S3Client multipart threshold). Small bodies still take\nthe single-PUT fast path — unchanged for the 4–8 MiB LSM blocks\nArcherDB writes today.\n\nImplementation:\n- `putBlobMultipart` splits the body into chunks of\n  `multipart_block_size` (8 MiB default), uploads each via\n  `putBlockRaw` with a deterministic base64-encoded block ID from\n  `makeBlockId(index)`, then commits via `putBlockListRaw` with a\n  minimal `<BlockList><Latest>...</Latest></BlockList>` XML body.\n- `makeBlockId` pads the sequence index to 12 digits under a fixed\n  \"block-\" prefix so every ID in the blob base64-encodes to the same\n  length — Azure's uniformity rule. Tested.\n- 50 000 block cap enforced client-side to produce a clear error\n  instead of trusting Azure to reject a mid-upload overrun.\n- New SharedKey signers `signBlockUpload` (comp=block&blockid=...)\n  and `signBlockListCommit` (comp=blocklist) handle the canonical-\n  resource format each op requires; parameter ordering is\n  alphabetical as the SharedKey spec demands (`blockid` < `comp`).\n\nKnobs:\n- `Config.multipart_threshold_override` and\n  `Config.multipart_block_size_override` let tests exercise the\n  Put Block / Put Block List path at modest body sizes instead of\n  paying for 100 MiB per run. Null defaults map to the module-level\n  constants.\n\nTests:\n- `makeBlockId: deterministic, uniform length, valid base64` — the\n  three properties Azure requires on every block ID: round-trippable\n  as base64, same decoded length per blob, distinct per index.\n- `AzureBlobClient: multipart put+get round-trip against Azurite` —\n  lowered overrides (64 KiB threshold, 48 KiB block) so a 128 KiB\n  body uploads as three blocks; GET returns byte-identical content.\n  Verified: Azurite logs show three `PUT ...?comp=block` (201), one\n  `PUT ...?comp=blocklist` (201), and a final GET returning 131072\n  bytes. Skipped when AZURITE_ENDPOINT is unset.\n\nNon-goal: streaming uploads. The current implementation buffers the\nfull body in memory (caller-provided slice) and composes the block-\nlist payload up-front. Large-blob streaming is a separate feature\nthat only matters when ArcherDB's block_size grows past ~100 MiB,\nwhich is not on the roadmap.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-04-19T22:10:02+02:00",
+          "tree_id": "7675462b95f56ccf52f4cf1c28363990cfd84831",
+          "url": "https://github.com/ArcherDB-io/archerdb/commit/ef8412daa8dd5cf440fc56e5ba4b90d2cd639e95"
+        },
+        "date": 1776630830332,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "Insert Throughput",
+            "value": 1455948,
+            "unit": "events/s"
+          },
+          {
+            "name": "Insert p99 Latency",
+            "value": 6,
+            "unit": "ms"
+          },
+          {
+            "name": "Radius Query p99 Latency",
+            "value": 89,
             "unit": "ms"
           },
           {
