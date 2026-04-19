@@ -136,6 +136,7 @@ comptime {
     _ = @import("testing/geo_workload.zig");
     _ = @import("testing/id.zig");
     _ = @import("testing/marks.zig");
+    _ = @import("testing/storage.zig");
     _ = @import("testing/table.zig");
     _ = @import("testing/tracy_zones.zig");
     _ = @import("testing/vortex/logged_process.zig");
