@@ -38,7 +38,6 @@ These are intentionally outside the current GA release surface and should stay d
 - live upgrade actuation beyond status and dry-run planning
 - server-side multi-region runtime
 - in-process CRL/OCSP revocation enforcement
-- Java `NEAREST` latency-aware multi-region routing
 
 ## Separate From Release Go/No-Go
 

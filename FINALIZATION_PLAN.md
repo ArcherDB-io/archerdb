@@ -49,7 +49,16 @@ ArcherDB is only considered finalized when all of the following are true:
 - Java and Node unit tests still lean on skeleton-mode paths.
 - Vortex network fault injection is missing duplication, reordering, and rate limiting.
 - Vortex workload generation still uses fake S2 IDs rather than proper geometry.
-- Durability automation still has declared blind spots: full disk, kernel crash, hardware corruption, WAN latency.
+- Durability automation now has partial coverage for previously-blind spots:
+  - Full disk: simulation-side ENOSPC budget in `testing/storage.zig`
+    (`a915e546`). Production error-path propagation from `io/linux.zig` up
+    through journal/grid remains open work.
+  - Kernel crash: QEMU-backed operator harness `scripts/durability-kernel-crash.sh`
+    plus `docs/runbooks/kernel-crash-durability.md` (`554f0fe1`). Not yet in CI.
+  - Hardware corruption: existing bit-flip injection in `testing/storage.zig`
+    covers simulation; real hardware bit-rot remains out of scope.
+  - WAN latency: `wan-typical` Vortex scenario lane wired into CI (`c003883c`
+    / `e6330535`).
 - Java release publishing rebuilds and uploads a different artifact than the verified dist output.
 
 ## Execution Strategy

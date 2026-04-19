@@ -1,14 +1,34 @@
-# Backup Operations (Infrastructure-Managed)
+# Backup Operations
 
-ArcherDB does not provide built-in backup orchestration. Backups are managed by your platform tooling.
+ArcherDB has built-in backup upload to local filesystem, S3 (or S3-compatible
+endpoints — MinIO, R2, Backblaze, LocalStack), GCS via interop, and Azure Blob
+Storage. All four providers are end-to-end proven via integration tests and
+have CI lanes (`Backup Restore`, `Backup Restore S3`, `Backup Restore Azure`,
+and their `Round-trip` variants) that run on every PR.
+
+Operators can still combine the built-in path with platform snapshots for
+extra redundancy; the two are not mutually exclusive.
+
+## Built-in Backup Providers
+
+| Provider | Config | Credentials |
+|----------|--------|-------------|
+| `local`  | `--backup-provider=local --backup-bucket=/mnt/backups` | filesystem write access |
+| `s3`     | `--backup-provider=s3 --backup-bucket=<name> [--backup-endpoint=<url> --backup-url-style=path]` | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` or `--backup-access-key-id` / `--backup-secret-access-key` |
+| `gcs`    | `--backup-provider=gcs --backup-bucket=<name>` (uses storage.googleapis.com over the S3-compatible Interop API) | HMAC key issued via Cloud Storage → Settings → Interoperability |
+| `azure`  | `--backup-provider=azure --backup-bucket=<container> --backup-access-key-id=<account> --backup-secret-access-key=<base64-key>` | Azure storage account + SharedKey; SAS tokens supported on the restore side |
+
+See [Disaster Recovery](disaster-recovery.md) for the matching restore
+procedures.
 
 ## Strategy
 
 Use a layered approach:
 
 1. Replica redundancy for high availability
-2. Volume/object snapshots for disaster recovery
-3. Off-site/cross-region immutable copies for resilience
+2. Built-in backup upload (S3/GCS/Azure/local) for durable off-host copies
+3. Volume/object snapshots or cross-region immutable copies for defense-in-depth
+4. Off-site retention lock for regulated workloads
 
 ## Recommended Backup Sources
 

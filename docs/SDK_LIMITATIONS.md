@@ -29,7 +29,7 @@ This document captures practical SDK constraints that matter when shipping Arche
 
 - Uses JNI/native bindings and requires a working JVM plus native artifact generation in build/test flows.
 - JVM ergonomics differ from the other SDKs; release validation must include the JNI path, not only pure-Java compilation.
-- The Java multi-region client surface is currently configuration-compatible but not latency-aware. `FOLLOWER` routing is deterministic, and `NEAREST` should be treated as non-GA until real region selection lands.
+- The Java multi-region client has latency-aware `NEAREST` routing: a background `LatencyProber` periodically TCP-connects to each configured region, maintains rolling RTT averages per region, and selection picks the healthy region with the lowest average. `FOLLOWER` routing remains deterministic (first follower). Before the first probe completes NEAREST falls back to config-order, so the very first request never stalls on a probe.
 
 ### Java And Node Unit Tests
 

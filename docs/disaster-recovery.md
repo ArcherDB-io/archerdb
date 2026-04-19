@@ -3,9 +3,10 @@
 This guide covers disaster recovery for ArcherDB using:
 
 - Consensus replication for node/replica failures
-- External backup/snapshot tooling for catastrophic loss
-
-ArcherDB itself does not provide built-in backup orchestration.
+- ArcherDB's built-in backup/restore to S3, GCS, Azure Blob, or a local
+  filesystem (see [Backup Operations](backup-operations.md) for provider
+  configuration)
+- Optional external backup/snapshot tooling as defense-in-depth
 
 ## Recovery Objectives
 
