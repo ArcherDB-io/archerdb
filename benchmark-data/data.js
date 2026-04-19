@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776487334053,
+  "lastUpdate": 1776582011451,
   "repoUrl": "https://github.com/ArcherDB-io/archerdb",
   "entries": {
     "Benchmark": [
@@ -967,6 +967,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Polygon Query p99 Latency",
             "value": 126,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "committer": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "distinct": true,
+          "id": "12a4bfd33369e433d843d184cfa6667c398e8f00",
+          "message": "chore(tidy): register testing/storage.zig unit tests and durability-kernel-crash.sh\n\nTwo tidy-invariant snapshots got stale when the preceding commits\nadded new tested code:\n\n- a915e546 (ENOSPC capacity budget) put unit tests inside\n  `src/testing/storage.zig` but didn't add the import to\n  `src/unit_tests.zig`. The `decltest.quine` snapshot detected the\n  gap and failed with \"unit_tests.zig needs updating\". Regenerated\n  with `SNAP_UPDATE=1`.\n- 554f0fe1 (QEMU kernel-crash harness) added `scripts/durability-\n  kernel-crash.sh` with mode 755 but did not list it in the\n  `executable_files` array in `src/tidy.zig`. The `tidy unix\n  permissions` test flagged it as UnexpectedExecutable.\n\nBoth files were intentionally mode 755 / intentionally test-registered;\nthese edits only update the guardrails to match. Full `test:unit`\nnow passes: 1827/1939 tests pass, 112 skipped, 0 failed.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-04-19T08:41:55+02:00",
+          "tree_id": "6287f91aae41fa59f6c456b51670cef0d85a73e1",
+          "url": "https://github.com/ArcherDB-io/archerdb/commit/12a4bfd33369e433d843d184cfa6667c398e8f00"
+        },
+        "date": 1776582009920,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "Insert Throughput",
+            "value": 1482136,
+            "unit": "events/s"
+          },
+          {
+            "name": "Insert p99 Latency",
+            "value": 6,
+            "unit": "ms"
+          },
+          {
+            "name": "Radius Query p99 Latency",
+            "value": 132,
+            "unit": "ms"
+          },
+          {
+            "name": "Polygon Query p99 Latency",
+            "value": 102,
             "unit": "ms"
           }
         ]
