@@ -403,9 +403,18 @@ jobs:
             target: test:integration
             filter_args: "'integration: start path uploads backup blocks to s3'"
             minio: true
+          - name: Backup Restore S3 Round-trip
+            target: test:integration
+            filter_args: "'integration: restore from s3 via minio round-trip'"
+            minio: true
           - name: Backup Restore Azure
             target: test:integration
             filter_args: "'integration: start path uploads backup blocks to azure blob'"
+            minio: false
+            azurite: true
+          - name: Backup Restore Azure Round-trip
+            target: test:integration
+            filter_args: "'integration: restore from azure blob via shared-key auth'"
             minio: false
             azurite: true
           - name: Encryption
