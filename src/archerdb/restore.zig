@@ -38,6 +38,7 @@ const backup_config = @import("backup_config.zig");
 const StorageProvider = backup_config.StorageProvider;
 const CompressionMode = backup_config.CompressionMode;
 const s3_client = @import("../replication/s3_client.zig");
+const azure_blob_client = @import("../replication/azure_blob_client.zig");
 const checkpoint_artifact = vsr.checkpoint_artifact;
 
 // Test-safe logging wrapper
@@ -500,9 +501,9 @@ pub const RestoreManager = struct {
 
     /// List blocks from Azure Blob Storage.
     fn listAzureBlocks(self: *RestoreManager) RestoreError![]BlockMetadata {
-        const auth = self.loadAzureAuth() catch return RestoreError.StorageError;
+        var auth = self.loadAzureAuth() catch return RestoreError.StorageError;
         defer auth.deinit(self.allocator);
-        return self.listAzureBlobBlocks(auth);
+        return self.listAzureBlobBlocks(&auth);
     }
 
     /// Filter blocks by point-in-time target.
@@ -1096,9 +1097,9 @@ pub const RestoreManager = struct {
                 break :blk try self.selectS3CompatibleCheckpointArtifact(blocks, auth, "gs://");
             },
             .azure => blk: {
-                const auth = self.loadAzureAuth() catch return RestoreError.StorageError;
+                var auth = self.loadAzureAuth() catch return RestoreError.StorageError;
                 defer auth.deinit(self.allocator);
-                break :blk try self.selectAzureCheckpointArtifact(blocks, auth);
+                break :blk try self.selectAzureCheckpointArtifact(blocks, &auth);
             },
         };
     }
@@ -1187,7 +1188,7 @@ pub const RestoreManager = struct {
     fn selectAzureCheckpointArtifact(
         self: *RestoreManager,
         blocks: []const BlockMetadata,
-        auth: AzureAuth,
+        auth: *AzureAuth,
     ) RestoreError!?checkpoint_artifact.DurableCheckpointArtifact {
         const location = try self.parseRemotePath("azure://");
         const prefix = try self.listingPrefix(location.prefix);
@@ -1205,10 +1206,7 @@ pub const RestoreManager = struct {
         defer if (marker) |value| self.allocator.free(value);
 
         while (true) {
-            const url = try self.buildAzureListUrl(auth, location.container, prefix, marker);
-            defer self.allocator.free(url);
-
-            const body = try self.fetchAzureUrl(url);
+            const body = try self.azureFetchListXml(auth, location.container, prefix, marker);
             defer self.allocator.free(body);
 
             const page = try self.parseAzureListResponse(body);
@@ -1425,13 +1423,38 @@ pub const RestoreManager = struct {
         }
     };
 
-    const AzureAuth = struct {
-        endpoint: []u8,
-        sas_token: []u8,
+    /// Azure restore authentication. Two variants so operators can use a single set of
+    /// credentials across backup and restore:
+    ///
+    /// - `.sas` (existing): endpoint + SAS token. Suitable for read-only restore when
+    ///   backup credentials are issued elsewhere and the restore operator only holds a
+    ///   narrow-scoped token.
+    /// - `.shared_key` (new): endpoint + account name + base64 account key, wrapped in an
+    ///   `AzureBlobClient`. Matches the credentials the backup uploader accepts — set
+    ///   `AZURE_STORAGE_ACCOUNT` + `AZURE_STORAGE_KEY` in the environment and a single
+    ///   auth config covers both sides. Required for Azurite (the emulator does not issue
+    ///   SAS tokens out of the box).
+    const AzureAuth = union(enum) {
+        sas: SasAuth,
+        shared_key: SharedKeyAuth,
 
-        fn deinit(self: AzureAuth, allocator: mem.Allocator) void {
-            allocator.free(self.endpoint);
-            allocator.free(self.sas_token);
+        const SasAuth = struct {
+            endpoint: []u8,
+            sas_token: []u8,
+        };
+
+        const SharedKeyAuth = struct {
+            client: azure_blob_client.AzureBlobClient,
+        };
+
+        fn deinit(self: *AzureAuth, allocator: mem.Allocator) void {
+            switch (self.*) {
+                .sas => |*a| {
+                    allocator.free(a.endpoint);
+                    allocator.free(a.sas_token);
+                },
+                .shared_key => |*a| a.client.deinit(),
+            }
         }
     };
 
@@ -1510,43 +1533,187 @@ pub const RestoreManager = struct {
         var creds_file = self.loadCredentialsFile() catch return RestoreError.StorageError;
         defer if (creds_file) |*file| file.deinit(self.allocator);
 
+        // Account name: required for both variants. Used to form the default endpoint
+        // (production Azure only) and — for shared-key — as the signing account.
+        const account_opt = blk: {
+            if (creds_file) |*file| {
+                if (file.get("account_name")) |v| break :blk v;
+            }
+            break :blk std.posix.getenv("AZURE_STORAGE_ACCOUNT");
+        };
+
+        // Endpoint resolution: explicit > derived from account_name. Required before
+        // we know which auth variant to return since it is common to both.
         const endpoint_owned = blk: {
             if (creds_file) |*file| {
                 if (file.get("endpoint")) |value| {
                     break :blk self.allocator.dupe(u8, value) catch return RestoreError.OutOfMemory;
                 }
-                if (file.get("account_name")) |account| {
-                    break :blk std.fmt.allocPrint(
-                        self.allocator,
-                        "https://{s}.blob.core.windows.net",
-                        .{account},
-                    ) catch return RestoreError.OutOfMemory;
-                }
             }
-            if (std.posix.getenv("AZURE_STORAGE_ACCOUNT")) |account| {
+            if (std.posix.getenv("AZURE_STORAGE_ENDPOINT")) |value| {
+                break :blk self.allocator.dupe(u8, value) catch return RestoreError.OutOfMemory;
+            }
+            if (account_opt) |account| {
                 break :blk std.fmt.allocPrint(
                     self.allocator,
                     "https://{s}.blob.core.windows.net",
                     .{account},
                 ) catch return RestoreError.OutOfMemory;
             }
-            logErr("Azure restore requires endpoint or account_name in credentials", .{});
+            logErr("Azure restore requires endpoint, AZURE_STORAGE_ENDPOINT, or " ++
+                "account_name in credentials", .{});
             return RestoreError.StorageError;
         };
+        errdefer self.allocator.free(endpoint_owned);
 
+        // Prefer SharedKey when both account name and key are available. This lets a
+        // single set of credentials cover backup (AzureBlobClient) and restore.
+        const shared_key_raw = std.posix.getenv("AZURE_STORAGE_KEY") orelse
+            if (creds_file) |*file| file.get("account_key") else null;
+        if (account_opt != null and shared_key_raw != null) {
+            // Determine URL style. `use_path_style=true` is required for Azurite and
+            // Azure Stack; production uses virtual-hosted. Mirror the auto-detection the
+            // backup uploader uses so operator intent stays consistent across both sides.
+            const use_path_style = mem.indexOf(u8, endpoint_owned, "localhost") != null or
+                mem.indexOf(u8, endpoint_owned, "127.0.0.1") != null;
+
+            // Pass the endpoint through unchanged. AzureBlobClient honors `http://` or
+            // `https://` when present (required for Azurite's plaintext listener) and
+            // defaults to `https://` otherwise, which is what production Azure expects.
+            const client = azure_blob_client.AzureBlobClient.init(self.allocator, .{
+                .endpoint = endpoint_owned,
+                .credentials = .{
+                    .account = account_opt.?,
+                    .account_key_base64 = shared_key_raw.?,
+                },
+                .use_path_style = use_path_style,
+            }) catch |err| {
+                logErr("Failed to init Azure SharedKey client: {}", .{err});
+                return RestoreError.StorageError;
+            };
+            self.allocator.free(endpoint_owned);
+            return .{ .shared_key = .{ .client = client } };
+        }
+
+        // Fall back to SAS. Either operators intentionally scoped a read-only token, or
+        // they have not rotated to the unified-credentials world yet.
         const sas_token_raw = std.posix.getenv("AZURE_STORAGE_SAS_TOKEN") orelse
             if (creds_file) |*file| file.get("sas_token") else null;
         if (sas_token_raw == null) {
-            logErr("Azure restore requires SAS token credentials", .{});
-            self.allocator.free(endpoint_owned);
+            logErr(
+                "Azure restore requires either SharedKey (AZURE_STORAGE_ACCOUNT + " ++
+                    "AZURE_STORAGE_KEY, or account_name + account_key) or a SAS token " ++
+                    "(AZURE_STORAGE_SAS_TOKEN or sas_token)",
+                .{},
+            );
             return RestoreError.StorageError;
         }
 
         const sas_token = mem.trimLeft(u8, sas_token_raw.?, "?");
-        return .{
+        return .{ .sas = .{
             .endpoint = endpoint_owned,
             .sas_token = self.allocator.dupe(u8, sas_token) catch return RestoreError.OutOfMemory,
-        };
+        } };
+    }
+
+    // ------------------------------------------------------------------------
+    // Azure dispatch helpers: one entry point per operation, auth-variant-aware.
+    // ------------------------------------------------------------------------
+
+    /// List blobs under `prefix`, optionally starting from `marker` (NextMarker from a
+    /// previous page). Returns the raw Azure XML list response so callers can use the
+    /// existing `parseAzureListResponse` regardless of the underlying auth variant.
+    /// Caller owns the returned slice.
+    fn azureFetchListXml(
+        self: *RestoreManager,
+        auth: *AzureAuth,
+        container: []const u8,
+        prefix: []const u8,
+        marker: ?[]const u8,
+    ) RestoreError![]u8 {
+        switch (auth.*) {
+            .sas => |*a| {
+                const url = try self.buildAzureSasListUrl(
+                    a.*,
+                    container,
+                    prefix,
+                    marker,
+                );
+                defer self.allocator.free(url);
+                return self.fetchAzureUrl(url);
+            },
+            .shared_key => |*a| {
+                return a.client.listBlobsRaw(container, prefix, marker) catch |err| {
+                    logErr("Azure SharedKey list failed: {}", .{err});
+                    return RestoreError.StorageError;
+                };
+            },
+        }
+    }
+
+    /// Fetch a blob by exact key. Errors on not-found. Caller owns the returned slice.
+    fn azureFetchBlob(
+        self: *RestoreManager,
+        auth: *AzureAuth,
+        container: []const u8,
+        object_key: []const u8,
+    ) RestoreError![]u8 {
+        switch (auth.*) {
+            .sas => |*a| {
+                const url = try self.buildAzureSasBlobUrl(a.*, container, object_key);
+                defer self.allocator.free(url);
+                return self.fetchAzureUrl(url);
+            },
+            .shared_key => |*a| {
+                return a.client.getBlob(container, object_key) catch |err| {
+                    logErr("Azure SharedKey GET failed for {s}: {}", .{ object_key, err });
+                    return RestoreError.StorageError;
+                };
+            },
+        }
+    }
+
+    /// Fetch a blob by exact key. Returns null on 404. Caller owns the returned slice
+    /// when non-null.
+    fn azureFetchBlobOptional(
+        self: *RestoreManager,
+        auth: *AzureAuth,
+        container: []const u8,
+        object_key: []const u8,
+    ) RestoreError!?[]u8 {
+        switch (auth.*) {
+            .sas => |*a| {
+                const url = try self.buildAzureSasBlobUrl(a.*, container, object_key);
+                defer self.allocator.free(url);
+                return self.fetchAzureUrlOptional(url);
+            },
+            .shared_key => |*a| {
+                const result = a.client.getBlob(container, object_key) catch |err| switch (err) {
+                    error.BlobNotFound => return null,
+                    else => {
+                        logErr(
+                            "Azure SharedKey GET (optional) failed for {s}: {}",
+                            .{ object_key, err },
+                        );
+                        return RestoreError.StorageError;
+                    },
+                };
+                return result;
+            },
+        }
+    }
+
+    fn buildAzureSasBlobUrl(
+        self: *RestoreManager,
+        auth: AzureAuth.SasAuth,
+        container: []const u8,
+        object_key: []const u8,
+    ) RestoreError![]u8 {
+        return std.fmt.allocPrint(
+            self.allocator,
+            "{s}/{s}/{s}?{s}",
+            .{ auth.endpoint, container, object_key, auth.sas_token },
+        ) catch RestoreError.OutOfMemory;
     }
 
     fn parseRemotePath(
@@ -1754,9 +1921,11 @@ pub const RestoreManager = struct {
         return client.getObject(location.container, block.object_key);
     }
 
-    fn buildAzureListUrl(
+    /// SAS-variant list-blobs URL builder. SharedKey list goes through `AzureBlobClient`
+    /// via `azureFetchListXml`; this helper stays SAS-only.
+    fn buildAzureSasListUrl(
         self: *RestoreManager,
-        auth: AzureAuth,
+        auth: AzureAuth.SasAuth,
         container: []const u8,
         prefix: []const u8,
         marker: ?[]const u8,
@@ -1883,7 +2052,7 @@ pub const RestoreManager = struct {
         };
     }
 
-    fn listAzureBlobBlocks(self: *RestoreManager, auth: AzureAuth) RestoreError![]BlockMetadata {
+    fn listAzureBlobBlocks(self: *RestoreManager, auth: *AzureAuth) RestoreError![]BlockMetadata {
         const location = try self.parseRemotePath("azure://");
         const prefix = try self.listingPrefix(location.prefix);
         defer self.allocator.free(prefix);
@@ -1900,10 +2069,7 @@ pub const RestoreManager = struct {
         defer if (marker) |value| self.allocator.free(value);
 
         while (true) {
-            const url = try self.buildAzureListUrl(auth, location.container, prefix, marker);
-            defer self.allocator.free(url);
-
-            const body = try self.fetchAzureUrl(url);
+            const body = try self.azureFetchListXml(auth, location.container, prefix, marker);
             defer self.allocator.free(body);
 
             const page = try self.parseAzureListResponse(body);
@@ -1984,18 +2150,12 @@ pub const RestoreManager = struct {
 
     fn readAzureTimestampSidecar(
         self: *RestoreManager,
-        auth: AzureAuth,
+        auth: *AzureAuth,
         container: []const u8,
         object_key: []const u8,
     ) i64 {
-        const url = std.fmt.allocPrint(
-            self.allocator,
-            "{s}/{s}/{s}?{s}",
-            .{ auth.endpoint, container, object_key, auth.sas_token },
-        ) catch return 0;
-        defer self.allocator.free(url);
-
-        const body = (self.fetchAzureUrlOptional(url) catch return 0) orelse return 0;
+        const body_opt = self.azureFetchBlobOptional(auth, container, object_key) catch return 0;
+        const body = body_opt orelse return 0;
         defer self.allocator.free(body);
 
         const trimmed = mem.trim(u8, body, " \t\r\n");
@@ -2005,18 +2165,11 @@ pub const RestoreManager = struct {
 
     fn readAzureBlockMetadata(
         self: *RestoreManager,
-        auth: AzureAuth,
+        auth: *AzureAuth,
         container: []const u8,
         object_key: []const u8,
     ) RestoreError!?BlockSidecarMetadata {
-        const url = std.fmt.allocPrint(
-            self.allocator,
-            "{s}/{s}/{s}?{s}",
-            .{ auth.endpoint, container, object_key, auth.sas_token },
-        ) catch return RestoreError.OutOfMemory;
-        defer self.allocator.free(url);
-
-        const body = (try self.fetchAzureUrlOptional(url)) orelse return null;
+        const body = (try self.azureFetchBlobOptional(auth, container, object_key)) orelse return null;
         defer self.allocator.free(body);
 
         return try parseBlockSidecarMetadata(body, object_key);
@@ -2024,33 +2177,19 @@ pub const RestoreManager = struct {
 
     fn readAzureCheckpointArtifact(
         self: *RestoreManager,
-        auth: AzureAuth,
+        auth: *AzureAuth,
         container: []const u8,
         object_key: []const u8,
     ) RestoreError!?[]u8 {
-        const url = std.fmt.allocPrint(
-            self.allocator,
-            "{s}/{s}/{s}?{s}",
-            .{ auth.endpoint, container, object_key, auth.sas_token },
-        ) catch return RestoreError.OutOfMemory;
-        defer self.allocator.free(url);
-
-        return try self.fetchAzureUrlOptional(url);
+        return self.azureFetchBlobOptional(auth, container, object_key);
     }
 
     fn readAzureBlockData(self: *RestoreManager, block: BlockMetadata) ![]u8 {
-        const auth = try self.loadAzureAuth();
+        var auth = try self.loadAzureAuth();
         defer auth.deinit(self.allocator);
 
         const location = try self.parseRemotePath("azure://");
-        const url = std.fmt.allocPrint(
-            self.allocator,
-            "{s}/{s}/{s}?{s}",
-            .{ auth.endpoint, location.container, block.object_key, auth.sas_token },
-        ) catch return error.OutOfMemory;
-        defer self.allocator.free(url);
-
-        return self.fetchAzureUrl(url);
+        return self.azureFetchBlob(&auth, location.container, block.object_key);
     }
 
     fn parseXmlElementValue(xml: []const u8, element: []const u8) ?[]const u8 {

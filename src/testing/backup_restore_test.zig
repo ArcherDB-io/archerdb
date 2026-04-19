@@ -1054,6 +1054,166 @@ test "integration: start path uploads backup blocks to azure blob after live wri
     try testing.expect(counts.checkpoints > 0);
 }
 
+test "integration: restore from azure blob via shared-key auth" {
+    const env = AzuriteEnv.read() orelse return error.SkipZigTest;
+
+    const allocator = std.testing.allocator;
+    const RequestContext = RequestContextType(constants.message_body_size_max);
+
+    // Phase 1: produce a backup in Azurite via the live `archerdb start` path.
+    // This is the same flow the upload-only Azurite test exercises; we re-run it here
+    // because `RestoreManager` needs a populated bucket to restore from.
+    {
+        var client = try azure_blob_client.AzureBlobClient.init(allocator, .{
+            .endpoint = env.endpoint,
+            .credentials = .{
+                .account = env.account,
+                .account_key_base64 = env.account_key_base64,
+            },
+            .use_path_style = true,
+        });
+        defer client.deinit();
+        try client.createContainer(env.container);
+    }
+
+    const metrics_port = try pickFreePort();
+    const object_prefix = "00000000000000000000000000000000/replica-0/";
+
+    var tmp_archerdb = try TmpArcherDB.init(allocator, .{
+        .development = true,
+        .prebuilt = archerdb,
+        .metrics_port = metrics_port,
+        .metrics_bind = "127.0.0.1",
+        .backup_bucket = env.container,
+        .backup_provider = "azure",
+        .backup_endpoint = env.endpoint,
+        .backup_access_key_id = env.account,
+        .backup_secret_access_key = env.account_key_base64,
+        .backup_url_style = "path",
+    });
+    errdefer tmp_archerdb.log_stderr();
+
+    try waitForReady(metrics_port, 10 * std.time.ns_per_s);
+
+    var client: arch_client.ClientInterface = undefined;
+    try arch_client.init(allocator, &client, 0, tmp_archerdb.port_str, 99,
+        RequestContext.on_complete);
+    var client_closed = false;
+    defer if (!client_closed) {
+        client.deinit() catch {};
+    };
+
+    var completion = Completion{ .pending = 0 };
+    const request = try allocator.create(RequestContext);
+    defer allocator.destroy(request);
+    request.* = RequestContext{
+        .packet = undefined,
+        .completion = &completion,
+        .sent_data_size = 0,
+    };
+
+    const requests_target: usize = @intCast(constants.vsr_checkpoint_ops + 256);
+    for (0..requests_target) |i| {
+        var event = [_]tb.GeoEvent{make_event(
+            40_000 + i,
+            37.7749 + (@as(f64, @floatFromInt(i % 10)) * 0.0001),
+            -122.4194 - (@as(f64, @floatFromInt(i % 10)) * 0.0001),
+        )};
+        const insert_reply = try send_request(&client, &completion, request,
+            .insert_events, std.mem.sliceAsBytes(&event));
+        const result = read_struct(
+            tb.InsertGeoEventsResult,
+            insert_reply[0..@sizeOf(tb.InsertGeoEventsResult)],
+        );
+        try testing.expectEqual(tb.InsertGeoEventResult.ok, result.result);
+    }
+
+    const upload_deadline = std.time.nanoTimestamp() + 90 * std.time.ns_per_s;
+    while (std.time.nanoTimestamp() < upload_deadline) {
+        const metrics = try fetchMetrics(allocator, metrics_port);
+        defer allocator.free(metrics);
+        const uploaded = parseMetricU64(metrics, "archerdb_backup_blocks_uploaded_total") orelse 0;
+        if (uploaded > 0) break;
+        std.time.sleep(250 * std.time.ns_per_ms);
+    } else {
+        return error.BackupArtifactsTimeout;
+    }
+
+    // Tear down the source replica before restore so we aren't confused between "still
+    // writing" and "fully flushed" artifacts. The data file on the source VM is
+    // independent of what's in Azurite; the restore will pull solely from the bucket.
+    client.deinit() catch {};
+    client_closed = true;
+    tmp_archerdb.deinit(allocator);
+
+    // Phase 2: restore from Azurite into a fresh data file via RestoreManager's
+    // shared-key auth path. Stage the Azurite credentials through a credentials file
+    // (the env-var path works identically but Zig's std.posix.setenv is not available
+    // in this version; a file avoids that dependency and is also what production
+    // operators are likeliest to use).
+    var restore_tmp = std.testing.tmpDir(.{});
+    defer restore_tmp.cleanup();
+    const restore_dir = try restore_tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(restore_dir);
+
+    const creds_path = try std.fmt.allocPrint(
+        allocator,
+        "{s}/azurite-creds.txt",
+        .{restore_dir},
+    );
+    defer allocator.free(creds_path);
+    {
+        const creds_body = try std.fmt.allocPrint(
+            allocator,
+            "endpoint={s}\naccount_name={s}\naccount_key={s}\n",
+            .{ env.endpoint, env.account, env.account_key_base64 },
+        );
+        defer allocator.free(creds_body);
+        const creds_file = try std.fs.createFileAbsolute(creds_path, .{ .truncate = true });
+        defer creds_file.close();
+        try creds_file.writeAll(creds_body);
+    }
+
+    const restored_path = try std.fmt.allocPrint(
+        allocator,
+        "{s}/restored-azure.archerdb",
+        .{restore_dir},
+    );
+    defer allocator.free(restored_path);
+
+    const source_url = try std.fmt.allocPrint(
+        allocator,
+        "azure://{s}/{s}",
+        .{ env.container, object_prefix[0 .. object_prefix.len - 1] }, // drop trailing slash
+    );
+    defer allocator.free(source_url);
+
+    var manager = try restore.RestoreManager.init(allocator, .{
+        .source_url = source_url,
+        .dest_data_file = restored_path,
+        .point_in_time = .latest,
+        .verify_checksums = true,
+        .credentials_path = creds_path,
+    });
+    defer manager.deinit();
+
+    const stats = try manager.execute();
+    try testing.expect(stats.success);
+    try testing.expect(stats.blocks_written > 0);
+    try testing.expect(stats.bytes_written > 0);
+
+    // The restored data file is on disk with non-zero length. Booting it under a fresh
+    // `archerdb start` is deliberately out of scope for this test — a backup captured
+    // from a still-running source can hold in-flight journal state that needs its own
+    // crash-recovery path. That lives under the existing local-restore boot-check test
+    // and under the QEMU kernel-crash harness; here the focus is the SharedKey auth
+    // pipeline (list + get + write).
+    const file = try std.fs.openFileAbsolute(restored_path, .{});
+    defer file.close();
+    const stat = try file.stat();
+    try testing.expect(stat.size > 0);
+}
+
 test "integration: point-in-time restore targeting" {
     // INT-03: Verify point-in-time restore can target specific sequences
 

@@ -290,6 +290,85 @@ pub const AzureBlobClient = struct {
         return body.toOwnedSlice() catch return error.OutOfMemory;
     }
 
+    /// List blobs under a prefix, returning the raw Azure XML response body. Callers
+    /// handle parsing (existing restore.zig parser), and pagination via the optional
+    /// `marker` argument (NextMarker from the previous page). Caller owns the returned
+    /// slice.
+    ///
+    /// Used by restore code paths that already have an XML parser and need multi-page
+    /// listing; the `listBlobs` method is a higher-level convenience for simple cases.
+    pub fn listBlobsRaw(
+        self: *AzureBlobClient,
+        container: []const u8,
+        prefix: []const u8,
+        marker: ?[]const u8,
+    ) AzureError![]u8 {
+        // Build the query string. Order on the wire does not matter (server canonicalizes),
+        // but SharedKey canonical-resource sorting does — handled in signListBlobs.
+        const query_parts = if (marker) |m|
+            if (prefix.len > 0)
+                try std.fmt.allocPrint(
+                    self.allocator,
+                    "restype=container&comp=list&prefix={s}&marker={s}",
+                    .{ prefix, m },
+                )
+            else
+                try std.fmt.allocPrint(
+                    self.allocator,
+                    "restype=container&comp=list&marker={s}",
+                    .{m},
+                )
+        else if (prefix.len > 0)
+            try std.fmt.allocPrint(
+                self.allocator,
+                "restype=container&comp=list&prefix={s}",
+                .{prefix},
+            )
+        else
+            try self.allocator.dupe(u8, "restype=container&comp=list");
+        defer self.allocator.free(query_parts);
+
+        const url = try self.buildUrlContainer(container, query_parts);
+        defer self.allocator.free(url);
+
+        var date_buf: [48]u8 = undefined;
+        const rfc1123_date = formatRfc1123Now(&date_buf);
+
+        const authorization = self.signListBlobsWithMarker(
+            rfc1123_date,
+            container,
+            prefix,
+            marker,
+        ) catch |err| return mapSignErr(err);
+        defer self.allocator.free(authorization);
+
+        var body = std.ArrayList(u8).init(self.allocator);
+        errdefer body.deinit();
+
+        const result = self.http.fetch(.{
+            .location = .{ .url = url },
+            .method = .GET,
+            .extra_headers = &[_]std.http.Header{
+                .{ .name = "x-ms-date", .value = rfc1123_date },
+                .{ .name = "x-ms-version", .value = api_version },
+                .{ .name = "Authorization", .value = authorization },
+            },
+            .response_storage = .{ .dynamic = &body },
+            .max_append_size = 16 * 1024 * 1024,
+        }) catch |err| {
+            log.warn("azure list raw execute failed: {}", .{err});
+            return error.RequestFailed;
+        };
+        if (result.status != .ok) {
+            log.warn(
+                "azure list raw failed: container={s} prefix={s} status={}",
+                .{ container, prefix, result.status },
+            );
+            return mapHttpStatus(result.status);
+        }
+        return body.toOwnedSlice() catch return error.OutOfMemory;
+    }
+
     /// List blobs under a prefix. Caller owns both the slice and the per-entry `name`
     /// string. Only returns up to 5000 blobs per call (Azure's default page size); no
     /// pagination is implemented — sufficient for backup-verification use cases.
@@ -446,6 +525,81 @@ pub const AzureBlobClient = struct {
             self.allocator,
             params.method,
             params.content_length,
+            canonical_headers,
+            canonical_resource,
+        );
+        defer self.allocator.free(string_to_sign);
+
+        return self.buildAuthHeader(string_to_sign);
+    }
+
+    fn signListBlobsWithMarker(
+        self: *AzureBlobClient,
+        rfc1123_date: []const u8,
+        container: []const u8,
+        prefix: []const u8,
+        marker: ?[]const u8,
+    ) ![]const u8 {
+        // Canonicalized resource with four possible query params sorted by name:
+        //   comp:list
+        //   marker:<m>     (only if present)
+        //   prefix:<p>     (only if non-empty)
+        //   restype:container
+        const path = if (self.use_path_style)
+            try std.fmt.allocPrint(
+                self.allocator,
+                "/{s}/{s}/{s}",
+                .{ self.account, self.account, container },
+            )
+        else
+            try std.fmt.allocPrint(
+                self.allocator,
+                "/{s}/{s}",
+                .{ self.account, container },
+            );
+        defer self.allocator.free(path);
+
+        const canonical_resource = build: {
+            if (marker) |m| {
+                if (prefix.len > 0) {
+                    break :build try std.fmt.allocPrint(
+                        self.allocator,
+                        "{s}\ncomp:list\nmarker:{s}\nprefix:{s}\nrestype:container",
+                        .{ path, m, prefix },
+                    );
+                }
+                break :build try std.fmt.allocPrint(
+                    self.allocator,
+                    "{s}\ncomp:list\nmarker:{s}\nrestype:container",
+                    .{ path, m },
+                );
+            }
+            if (prefix.len > 0) {
+                break :build try std.fmt.allocPrint(
+                    self.allocator,
+                    "{s}\ncomp:list\nprefix:{s}\nrestype:container",
+                    .{ path, prefix },
+                );
+            }
+            break :build try std.fmt.allocPrint(
+                self.allocator,
+                "{s}\ncomp:list\nrestype:container",
+                .{path},
+            );
+        };
+        defer self.allocator.free(canonical_resource);
+
+        const canonical_headers = try std.fmt.allocPrint(
+            self.allocator,
+            "x-ms-date:{s}\nx-ms-version:{s}",
+            .{ rfc1123_date, api_version },
+        );
+        defer self.allocator.free(canonical_headers);
+
+        const string_to_sign = try buildStringToSign(
+            self.allocator,
+            "GET",
+            "",
             canonical_headers,
             canonical_resource,
         );
