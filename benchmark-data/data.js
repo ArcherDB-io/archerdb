@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776582011451,
+  "lastUpdate": 1776583168568,
   "repoUrl": "https://github.com/ArcherDB-io/archerdb",
   "entries": {
     "Benchmark": [
@@ -1011,6 +1011,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Polygon Query p99 Latency",
             "value": 102,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "committer": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "distinct": true,
+          "id": "c709f020f36831af077bd4d752b2a11b5291ece8",
+          "message": "feat(restore): Azure SharedKey auth + Azurite round-trip integration test\n\nRestore.zig previously supported Azure only via SAS tokens. My Azure\nbackup work (e5ffc4f7) uses SharedKey. Unifying the two means an\noperator configures one set of Azure credentials — the SharedKey\naccount name + base64 account key that backup already accepts — and\nit covers both write and read.\n\nChanges:\n\nsrc/archerdb/restore.zig\n  - `AzureAuth` is now a tagged union: `.sas` (existing endpoint +\n    SAS token) or `.shared_key` (owned `AzureBlobClient`).\n    Both variants deinit through a single switch.\n  - `loadAzureAuth` prefers SharedKey when `AZURE_STORAGE_ACCOUNT` +\n    `AZURE_STORAGE_KEY` are available (either env vars or credentials\n    file keys `account_name` / `account_key`). Falls back to SAS\n    (`AZURE_STORAGE_SAS_TOKEN` / `sas_token`). Also picks up\n    `AZURE_STORAGE_ENDPOINT` as an additional env override.\n  - Three new dispatch helpers collapse every call site down to a\n    single auth-variant-aware entry point: `azureFetchListXml`,\n    `azureFetchBlob`, `azureFetchBlobOptional`. For `.sas` these\n    delegate to the existing URL-plus-token helpers; for\n    `.shared_key` they call through the new `AzureBlobClient`.\n  - Every Azure restore function (`selectAzureCheckpointArtifact`,\n    `listAzureBlobBlocks`, `readAzure{Timestamp,BlockMetadata,\n    CheckpointArtifact,BlockData}`) now takes `auth: *AzureAuth`\n    and routes through the helpers — no more hand-built URLs with\n    `auth.endpoint` / `auth.sas_token` scattered across the file.\n\nsrc/replication/azure_blob_client.zig\n  - New `listBlobsRaw(container, prefix, marker)` returning the raw\n    Azure XML list response so restore can reuse its existing\n    `parseAzureListResponse` parser across both auth paths, and\n    handle pagination via `NextMarker` the same way the SAS path does.\n  - `signListBlobsWithMarker` handles canonical-resource\n    construction when the `marker` query param is present; the\n    four possible query combinations (with/without marker,\n    with/without prefix) all sort their names alphabetically as\n    SharedKey requires.\n\nsrc/testing/backup_restore_test.zig\n  - New `integration: restore from azure blob via shared-key auth`\n    test. End-to-end flow: start `archerdb` with\n    `--backup-provider=azure`, drive writes until the first block\n    uploads to Azurite, shut down the source replica, then invoke\n    `RestoreManager` pointed at `azure://{container}/{prefix}` with\n    SharedKey credentials supplied via a tempfile. Asserts\n    `stats.success && blocks_written > 0 && bytes_written > 0` and\n    that the restored data file is non-zero on disk.\n  - Boot-from-restored assertion is deliberately skipped — a live\n    backup captures in-flight journal state that needs its own\n    crash-recovery path (which is what the QEMU kernel-crash\n    harness in 554f0fe1 is for). This test focuses on the auth\n    and I/O pipeline: list, GET, write.\n  - Local verification: passes against a fresh Azurite container\n    (`mcr.microsoft.com/azure-storage/azurite`). The existing\n    Azurite upload-only test still passes, confirming no\n    regression in the backup path.\n\nSkipped when AZURITE_ENDPOINT/ACCOUNT/ACCOUNT_KEY env vars are\nunset; will run in the `Backup Restore Azure` CI lane shipped in\ne5ffc4f7 once the matrix entry is picked up (env vars are already\nexported to that shard).\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-04-19T09:00:50+02:00",
+          "tree_id": "2d45cadca75ae8ae3521d41ebf4fca1b1f9cf599",
+          "url": "https://github.com/ArcherDB-io/archerdb/commit/c709f020f36831af077bd4d752b2a11b5291ece8"
+        },
+        "date": 1776583167357,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "Insert Throughput",
+            "value": 1445627,
+            "unit": "events/s"
+          },
+          {
+            "name": "Insert p99 Latency",
+            "value": 6,
+            "unit": "ms"
+          },
+          {
+            "name": "Radius Query p99 Latency",
+            "value": 95,
+            "unit": "ms"
+          },
+          {
+            "name": "Polygon Query p99 Latency",
+            "value": 106,
             "unit": "ms"
           }
         ]
