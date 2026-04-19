@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776630831288,
+  "lastUpdate": 1776631958552,
   "repoUrl": "https://github.com/ArcherDB-io/archerdb",
   "entries": {
     "Benchmark": [
@@ -1143,6 +1143,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Polygon Query p99 Latency",
             "value": 91,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "committer": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "distinct": true,
+          "id": "7248689b4aed430a230e5b8ffd59e866ea93b5c5",
+          "message": "docs: reflect this arc's cloud-provider + NEAREST v2 + durability landings\n\nSurgical updates to docs that drifted while commits 4c3226df through\nef8412da landed. Focus: backup provider story, Java NEAREST routing,\ndurability coverage.\n\n- docs/SDK_LIMITATIONS.md: Java NEAREST is now latency-aware\n  (LatencyProber + rolling RTT, health-based selection). Replaces\n  the prior \"configuration-compatible but not latency-aware\" note.\n- docs/release-checklist.md: drop \"Java NEAREST latency-aware\n  multi-region routing\" from the non-GA list — it shipped in\n  4c3226df / 30044022.\n- docs/backup-operations.md: replace the \"no built-in orchestration\"\n  opener with a provider-configuration table covering local, S3\n  (incl. MinIO / R2 / Backblaze / LocalStack), GCS interop, and\n  Azure Blob. Keep external snapshots as defense-in-depth.\n- docs/disaster-recovery.md: mirror the backup change — built-in\n  backup/restore is the primary path; external tooling is now\n  described as optional.\n- FINALIZATION_PLAN.md: the durability blind-spots line gets a\n  per-item status update: ENOSPC simulation landed (a915e546),\n  kernel-crash harness landed (554f0fe1), WAN latency landed in\n  CI (c003883c/e6330535). Hardware-corruption simulation existed\n  already; real hardware bit-rot stays out of scope.\n- integration-check-report.md (gitignored local-only artifact) was\n  updated alongside these on disk for operator reference but is\n  not part of this commit.\n\nUnit suite stays green: 1825/1941 pass, 116 skipped (more skipped\nbecause the new Azurite multipart and S3 round-trip tests gate on\nenv vars).\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-04-19T22:21:48+02:00",
+          "tree_id": "a6e5e221030c94adbb2fbe2e1f6c0556587484b2",
+          "url": "https://github.com/ArcherDB-io/archerdb/commit/7248689b4aed430a230e5b8ffd59e866ea93b5c5"
+        },
+        "date": 1776631957173,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "Insert Throughput",
+            "value": 1424624,
+            "unit": "events/s"
+          },
+          {
+            "name": "Insert p99 Latency",
+            "value": 6,
+            "unit": "ms"
+          },
+          {
+            "name": "Radius Query p99 Latency",
+            "value": 149,
+            "unit": "ms"
+          },
+          {
+            "name": "Polygon Query p99 Latency",
+            "value": 118,
             "unit": "ms"
           }
         ]
