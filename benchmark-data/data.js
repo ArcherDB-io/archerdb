@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776583168568,
+  "lastUpdate": 1776629748053,
   "repoUrl": "https://github.com/ArcherDB-io/archerdb",
   "entries": {
     "Benchmark": [
@@ -1055,6 +1055,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Polygon Query p99 Latency",
             "value": 106,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "committer": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "distinct": true,
+          "id": "857541cf9361e5f34a2ea98cbe00eb4014d17e8c",
+          "message": "test(backup): S3 and Azure restore round-trip integration tests\n\nSymmetric to the Azure SharedKey round-trip test in c709f020: drive a\nlive `archerdb --backup-provider=s3` session against MinIO, shut down\nthe source replica, then restore from the bucket into a fresh data\nfile via `RestoreManager`. Proves the S3 restore pipeline still works\nend-to-end after the S3Client fixes landed in ec9ae2a0 (duplicate Host\nheader, duplicate Content-Length, SigV4 query canonicalization).\n\nAlso adds matching CI matrix entries so every PR exercises both the\nbackup and the restore direction for both providers:\n  - Backup Restore S3 Round-trip  (MinIO)\n  - Backup Restore Azure Round-trip (Azurite, shared-key auth)\n\nThe upload-only lanes continue to exist, so failures can be localized\nto the backup or restore side rather than conflated into a single\nround-trip signal.\n\nBoot-from-restored is not asserted here for the same reason as the\nAzure round-trip test: a backup captured from a still-writing source\nmay hold in-flight journal state whose crash-recovery path lives in\nthe QEMU kernel-crash harness (554f0fe1), not in the auth/I/O pipeline\nthese tests cover.\n\nLocal verification: passes against a fresh MinIO container with the\nsame credentials the existing upload-only test uses. Skipped cleanly\nwhen MINIO_ENDPOINT is unset.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-04-19T21:57:05+02:00",
+          "tree_id": "b11a2b3dfe288822ccb9cdade01b2c48ae18e34e",
+          "url": "https://github.com/ArcherDB-io/archerdb/commit/857541cf9361e5f34a2ea98cbe00eb4014d17e8c"
+        },
+        "date": 1776629746848,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "Insert Throughput",
+            "value": 1227003,
+            "unit": "events/s"
+          },
+          {
+            "name": "Insert p99 Latency",
+            "value": 7,
+            "unit": "ms"
+          },
+          {
+            "name": "Radius Query p99 Latency",
+            "value": 130,
+            "unit": "ms"
+          },
+          {
+            "name": "Polygon Query p99 Latency",
+            "value": 91,
             "unit": "ms"
           }
         ]
