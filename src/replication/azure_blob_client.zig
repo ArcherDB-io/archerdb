@@ -26,6 +26,18 @@ const log = std.log.scoped(.azure_blob_client);
 
 pub const api_version = "2021-12-02";
 
+/// Blobs at or above this size upload via Put Block + Put Block List instead of a single
+/// PUT Blob. Matches the S3Client multipart threshold so large-block operators get the
+/// same behaviour on both providers. Azure's hard single-PUT ceiling is 256 MiB on
+/// premium/block-blob accounts and 5 TiB via multi-block uploads; 100 MiB is well below
+/// both while comfortably above the 4–8 MiB LSM block sizes ArcherDB uses today.
+pub const multipart_threshold: usize = 100 * 1024 * 1024;
+
+/// Per-block chunk size for multipart uploads. Azure requires every block inside a single
+/// blob to be the same size (except optionally the final block). 8 MiB balances
+/// throughput vs request count; 100 MiB blob → 13 blocks.
+pub const multipart_block_size: usize = 8 * 1024 * 1024;
+
 pub const AzureError = error{
     ConnectionFailed,
     RequestFailed,
@@ -54,6 +66,14 @@ pub const Config = struct {
     /// container. Production Azure defaults to false.
     use_path_style: bool = false,
     request_timeout_ms: u32 = 30_000,
+    /// Optional multipart threshold override. Tests use this to force the Put Block
+    /// List path at a body size small enough to validate on an emulator without
+    /// waiting on 100 MiB uploads. `null` means use `multipart_threshold`.
+    multipart_threshold_override: ?usize = null,
+    /// Optional per-block chunk size override. Only read by the multipart path. Tests
+    /// pair this with `multipart_threshold_override` to exercise multi-block uploads
+    /// against an emulator at modest body sizes. `null` means use `multipart_block_size`.
+    multipart_block_size_override: ?usize = null,
 };
 
 pub const ListedBlob = struct {
@@ -69,6 +89,8 @@ pub const AzureBlobClient = struct {
     account_key: [64]u8, // decoded; up to 64 bytes supported
     account_key_len: usize,
     use_path_style: bool,
+    multipart_threshold_override: ?usize,
+    multipart_block_size_override: ?usize,
 
     pub fn init(allocator: Allocator, config: Config) !AzureBlobClient {
         // Decode the base64 account key once, at init; sign loops then just run HMAC.
@@ -90,6 +112,8 @@ pub const AzureBlobClient = struct {
             .account_key = undefined,
             .account_key_len = decoded_len,
             .use_path_style = config.use_path_style,
+            .multipart_threshold_override = config.multipart_threshold_override,
+            .multipart_block_size_override = config.multipart_block_size_override,
         };
         @memcpy(self.account_key[0..decoded_len], key_buf[0..decoded_len]);
         return self;
@@ -184,7 +208,22 @@ pub const AzureBlobClient = struct {
     }
 
     /// PUT a block blob of `body` bytes. Overwrites any existing blob at the same key.
+    /// For `body.len >= multipart_threshold` this delegates to a block-list upload
+    /// (`Put Block` per chunk, then `Put Block List` to commit); small bodies take the
+    /// single-PUT fast path.
     pub fn putBlob(
+        self: *AzureBlobClient,
+        container: []const u8,
+        blob: []const u8,
+        body: []const u8,
+    ) AzureError!void {
+        if (body.len >= self.multipart_threshold_override orelse multipart_threshold) {
+            return self.putBlobMultipart(container, blob, body);
+        }
+        return self.putBlobSingle(container, blob, body);
+    }
+
+    fn putBlobSingle(
         self: *AzureBlobClient,
         container: []const u8,
         blob: []const u8,
@@ -236,6 +275,198 @@ pub const AzureBlobClient = struct {
         if (req.response.status != .created and req.response.status != .ok) {
             log.warn(
                 "azure PUT failed: container={s} blob={s} status={}",
+                .{ container, blob, req.response.status },
+            );
+            return mapHttpStatus(req.response.status);
+        }
+    }
+
+    /// Block-list upload. Splits `body` into chunks of `multipart_block_size` (last chunk
+    /// may be smaller), uploads each via `Put Block`, and commits the blob via
+    /// `Put Block List`. Azure requires every block ID in a blob to be the same decoded
+    /// length; this path generates deterministic base64-encoded IDs from a zero-padded
+    /// index that satisfies that rule.
+    fn putBlobMultipart(
+        self: *AzureBlobClient,
+        container: []const u8,
+        blob: []const u8,
+        body: []const u8,
+    ) AzureError!void {
+        // Pre-compute the number of blocks and build the ID list up-front so we know the
+        // Put Block List payload ahead of time (keeps the request simple, no streaming).
+        const block_size = self.multipart_block_size_override orelse multipart_block_size;
+        const block_count = (body.len + block_size - 1) / block_size;
+        if (block_count == 0) {
+            // Defensive: caller should never reach here with an empty body, but treat as
+            // single-PUT if they do.
+            return self.putBlobSingle(container, blob, body);
+        }
+        if (block_count > 50_000) {
+            // Azure's absolute limit is 50_000 blocks per blob. Clamp with a clear error
+            // instead of letting the server reject a multi-gigabyte upload halfway.
+            log.warn(
+                "azure multipart would exceed 50000 blocks " ++
+                    "(body={d}, block_size={d}): refusing",
+                .{ body.len, block_size },
+            );
+            return error.UploadFailed;
+        }
+
+        var block_ids = std.ArrayList([]u8).init(self.allocator);
+        defer {
+            for (block_ids.items) |id| self.allocator.free(id);
+            block_ids.deinit();
+        }
+
+        var offset: usize = 0;
+        var idx: u32 = 0;
+        while (offset < body.len) : (idx += 1) {
+            const chunk_end = @min(offset + block_size, body.len);
+            const chunk = body[offset..chunk_end];
+            const block_id = try makeBlockId(self.allocator, idx);
+            errdefer self.allocator.free(block_id);
+            try self.putBlockRaw(container, blob, block_id, chunk);
+            try block_ids.append(block_id);
+            offset = chunk_end;
+        }
+
+        try self.putBlockListRaw(container, blob, block_ids.items);
+    }
+
+    /// Upload a single block under an uncommitted blob. The `block_id` must be
+    /// base64-encoded and the same decoded length as every other block in the blob.
+    fn putBlockRaw(
+        self: *AzureBlobClient,
+        container: []const u8,
+        blob: []const u8,
+        block_id: []const u8,
+        body: []const u8,
+    ) AzureError!void {
+        const query = try std.fmt.allocPrint(
+            self.allocator,
+            "comp=block&blockid={s}",
+            .{block_id},
+        );
+        defer self.allocator.free(query);
+        const url = try self.buildUrl(container, blob, query);
+        defer self.allocator.free(url);
+
+        var date_buf: [48]u8 = undefined;
+        const rfc1123_date = formatRfc1123Now(&date_buf);
+
+        var content_length_buf: [20]u8 = undefined;
+        const content_length = std.fmt.bufPrint(
+            &content_length_buf,
+            "{d}",
+            .{body.len},
+        ) catch return error.OutOfMemory;
+
+        const authorization = self.signBlockUpload(
+            rfc1123_date,
+            container,
+            blob,
+            block_id,
+            content_length,
+        ) catch |err| return mapSignErr(err);
+        defer self.allocator.free(authorization);
+
+        const uri = std.Uri.parse(url) catch return error.InvalidResponse;
+        var header_buf: [8192]u8 = undefined;
+        var req = self.http.open(.PUT, uri, .{
+            .server_header_buffer = &header_buf,
+            .extra_headers = &[_]std.http.Header{
+                .{ .name = "x-ms-date", .value = rfc1123_date },
+                .{ .name = "x-ms-version", .value = api_version },
+                .{ .name = "Authorization", .value = authorization },
+            },
+        }) catch |err| {
+            log.warn("azure PutBlock open failed: {}", .{err});
+            return error.ConnectionFailed;
+        };
+        defer req.deinit();
+
+        req.transfer_encoding = .{ .content_length = body.len };
+        req.send() catch |err| return httpErr("send", err);
+        req.writeAll(body) catch |err| return httpErr("write", err);
+        req.finish() catch |err| return httpErr("finish", err);
+        req.wait() catch |err| return httpErr("wait", err);
+
+        if (req.response.status != .created and req.response.status != .ok) {
+            log.warn(
+                "azure PutBlock failed: container={s} blob={s} block_id={s} status={}",
+                .{ container, blob, block_id, req.response.status },
+            );
+            return mapHttpStatus(req.response.status);
+        }
+    }
+
+    /// Commit an uncommitted block list to form the final blob. Sends an XML body listing
+    /// each block ID in upload order under the `<Latest>` element; Azure treats that as
+    /// "use the latest uploaded version of this block ID", which for us is exactly the
+    /// block we just uploaded.
+    fn putBlockListRaw(
+        self: *AzureBlobClient,
+        container: []const u8,
+        blob: []const u8,
+        block_ids: []const []u8,
+    ) AzureError!void {
+        var xml = std.ArrayList(u8).init(self.allocator);
+        defer xml.deinit();
+        try xml.appendSlice("<?xml version=\"1.0\" encoding=\"utf-8\"?><BlockList>");
+        for (block_ids) |id| {
+            try xml.appendSlice("<Latest>");
+            try xml.appendSlice(id);
+            try xml.appendSlice("</Latest>");
+        }
+        try xml.appendSlice("</BlockList>");
+
+        const query = try self.allocator.dupe(u8, "comp=blocklist");
+        defer self.allocator.free(query);
+        const url = try self.buildUrl(container, blob, query);
+        defer self.allocator.free(url);
+
+        var date_buf: [48]u8 = undefined;
+        const rfc1123_date = formatRfc1123Now(&date_buf);
+
+        var content_length_buf: [20]u8 = undefined;
+        const content_length = std.fmt.bufPrint(
+            &content_length_buf,
+            "{d}",
+            .{xml.items.len},
+        ) catch return error.OutOfMemory;
+
+        const authorization = self.signBlockListCommit(
+            rfc1123_date,
+            container,
+            blob,
+            content_length,
+        ) catch |err| return mapSignErr(err);
+        defer self.allocator.free(authorization);
+
+        const uri = std.Uri.parse(url) catch return error.InvalidResponse;
+        var header_buf: [8192]u8 = undefined;
+        var req = self.http.open(.PUT, uri, .{
+            .server_header_buffer = &header_buf,
+            .extra_headers = &[_]std.http.Header{
+                .{ .name = "x-ms-date", .value = rfc1123_date },
+                .{ .name = "x-ms-version", .value = api_version },
+                .{ .name = "Authorization", .value = authorization },
+            },
+        }) catch |err| {
+            log.warn("azure PutBlockList open failed: {}", .{err});
+            return error.ConnectionFailed;
+        };
+        defer req.deinit();
+
+        req.transfer_encoding = .{ .content_length = xml.items.len };
+        req.send() catch |err| return httpErr("send", err);
+        req.writeAll(xml.items) catch |err| return httpErr("write", err);
+        req.finish() catch |err| return httpErr("finish", err);
+        req.wait() catch |err| return httpErr("wait", err);
+
+        if (req.response.status != .created and req.response.status != .ok) {
+            log.warn(
+                "azure PutBlockList failed: container={s} blob={s} status={}",
                 .{ container, blob, req.response.status },
             );
             return mapHttpStatus(req.response.status);
@@ -608,6 +839,107 @@ pub const AzureBlobClient = struct {
         return self.buildAuthHeader(string_to_sign);
     }
 
+    /// SharedKey signer for `Put Block` (one block within a multipart upload).
+    /// Canonical resource layout for `PUT /<container>/<blob>?comp=block&blockid=<id>`:
+    ///   /<account>/<container>/<blob>\nblockid:<id>\ncomp:block
+    /// (parameters sorted alphabetically by name; `blockid` < `comp`).
+    fn signBlockUpload(
+        self: *AzureBlobClient,
+        rfc1123_date: []const u8,
+        container: []const u8,
+        blob: []const u8,
+        block_id: []const u8,
+        content_length: []const u8,
+    ) ![]const u8 {
+        const base_path = if (self.use_path_style)
+            try std.fmt.allocPrint(
+                self.allocator,
+                "/{s}/{s}/{s}/{s}",
+                .{ self.account, self.account, container, blob },
+            )
+        else
+            try std.fmt.allocPrint(
+                self.allocator,
+                "/{s}/{s}/{s}",
+                .{ self.account, container, blob },
+            );
+        defer self.allocator.free(base_path);
+
+        const canonical_resource = try std.fmt.allocPrint(
+            self.allocator,
+            "{s}\nblockid:{s}\ncomp:block",
+            .{ base_path, block_id },
+        );
+        defer self.allocator.free(canonical_resource);
+
+        const canonical_headers = try std.fmt.allocPrint(
+            self.allocator,
+            "x-ms-date:{s}\nx-ms-version:{s}",
+            .{ rfc1123_date, api_version },
+        );
+        defer self.allocator.free(canonical_headers);
+
+        const string_to_sign = try buildStringToSign(
+            self.allocator,
+            "PUT",
+            content_length,
+            canonical_headers,
+            canonical_resource,
+        );
+        defer self.allocator.free(string_to_sign);
+
+        return self.buildAuthHeader(string_to_sign);
+    }
+
+    /// SharedKey signer for `Put Block List` (commit). Canonical resource:
+    ///   /<account>/<container>/<blob>\ncomp:blocklist
+    fn signBlockListCommit(
+        self: *AzureBlobClient,
+        rfc1123_date: []const u8,
+        container: []const u8,
+        blob: []const u8,
+        content_length: []const u8,
+    ) ![]const u8 {
+        const base_path = if (self.use_path_style)
+            try std.fmt.allocPrint(
+                self.allocator,
+                "/{s}/{s}/{s}/{s}",
+                .{ self.account, self.account, container, blob },
+            )
+        else
+            try std.fmt.allocPrint(
+                self.allocator,
+                "/{s}/{s}/{s}",
+                .{ self.account, container, blob },
+            );
+        defer self.allocator.free(base_path);
+
+        const canonical_resource = try std.fmt.allocPrint(
+            self.allocator,
+            "{s}\ncomp:blocklist",
+            .{base_path},
+        );
+        defer self.allocator.free(canonical_resource);
+
+        const canonical_headers = try std.fmt.allocPrint(
+            self.allocator,
+            "x-ms-date:{s}\nx-ms-version:{s}",
+            .{ rfc1123_date, api_version },
+        );
+        defer self.allocator.free(canonical_headers);
+
+        const string_to_sign = try buildStringToSign(
+            self.allocator,
+            "PUT",
+            content_length,
+            canonical_headers,
+            canonical_resource,
+        );
+        defer self.allocator.free(string_to_sign);
+
+        return self.buildAuthHeader(string_to_sign);
+    }
+
     fn signListBlobs(
         self: *AzureBlobClient,
         rfc1123_date: []const u8,
@@ -687,6 +1019,22 @@ pub const AzureBlobClient = struct {
 /// Build the Azure Blob SharedKey "string to sign" for the given method and canonical
 /// parts. Exposed at module scope for focused unit testing against Microsoft's documented
 /// example vectors.
+/// Generate a deterministic, Azure-compliant block ID from a zero-padded sequence number.
+/// Azure requires every block ID within a single blob to be the same decoded length
+/// (up to 64 bytes) and base64-encoded on the wire. We hash in a fixed-length decimal
+/// index so "block-000001" and "block-050000" occupy the same raw-byte width (18 bytes),
+/// satisfying the uniformity rule without a separate configuration knob. Caller owns the
+/// returned slice.
+fn makeBlockId(allocator: Allocator, index: u32) AzureError![]u8 {
+    // 18-byte raw form → 24-byte base64 encoded. Well below Azure's 64-byte cap.
+    var raw: [18]u8 = undefined;
+    _ = std.fmt.bufPrint(&raw, "block-{d:0>12}", .{index}) catch return error.OutOfMemory;
+    const encoded_len = std.base64.standard.Encoder.calcSize(raw.len);
+    const buf = allocator.alloc(u8, encoded_len) catch return error.OutOfMemory;
+    _ = std.base64.standard.Encoder.encode(buf, &raw);
+    return buf;
+}
+
 pub fn buildStringToSign(
     allocator: Allocator,
     method: []const u8,
@@ -897,6 +1245,72 @@ test "AzureBlobClient: init accepts a valid base64 account key" {
     try std.testing.expectEqualStrings("devstoreaccount1", client.account);
     try std.testing.expectEqual(@as(usize, 64), client.account_key_len);
     try std.testing.expectEqualSlices(u8, &raw_key, client.account_key[0..64]);
+}
+
+test "makeBlockId: deterministic, uniform length, valid base64" {
+    const allocator = std.testing.allocator;
+    const id_a = try makeBlockId(allocator, 0);
+    defer allocator.free(id_a);
+    const id_b = try makeBlockId(allocator, 1);
+    defer allocator.free(id_b);
+    const id_z = try makeBlockId(allocator, 50_000);
+    defer allocator.free(id_z);
+
+    // All IDs must be the same length (Azure rule).
+    try std.testing.expectEqual(id_a.len, id_b.len);
+    try std.testing.expectEqual(id_a.len, id_z.len);
+
+    // IDs must round-trip as valid base64.
+    var decoded: [32]u8 = undefined;
+    const decoded_len = std.base64.standard.Decoder.calcSizeForSlice(id_a) catch unreachable;
+    try std.base64.standard.Decoder.decode(decoded[0..decoded_len], id_a);
+
+    // Different indices must yield different IDs (otherwise Put Block List would overwrite).
+    try std.testing.expect(!std.mem.eql(u8, id_a, id_b));
+    try std.testing.expect(!std.mem.eql(u8, id_a, id_z));
+}
+
+test "AzureBlobClient: multipart put+get round-trip against Azurite" {
+    // Azurite integration test; skipped when not configured. Uses a lowered multipart
+    // threshold so we can exercise Put Block / Put Block List without waiting on a real
+    // 100 MiB upload.
+    const endpoint = std.posix.getenv("AZURITE_ENDPOINT") orelse return error.SkipZigTest;
+    const account = std.posix.getenv("AZURITE_ACCOUNT") orelse "devstoreaccount1";
+    const key = std.posix.getenv("AZURITE_ACCOUNT_KEY") orelse return error.SkipZigTest;
+    const container = std.posix.getenv("AZURITE_CONTAINER") orelse "archerdb-test-container";
+
+    const allocator = std.testing.allocator;
+
+    var client = try AzureBlobClient.init(allocator, .{
+        .endpoint = endpoint,
+        .credentials = .{
+            .account = account,
+            .account_key_base64 = key,
+        },
+        .use_path_style = true,
+        // Force multipart at 64 KiB and 48 KiB per block so the 128 KiB test body
+        // splits into three blocks (48 KiB + 48 KiB + 32 KiB) — exercises the multi-
+        // block Put Block / Put Block List path including a short tail block.
+        .multipart_threshold_override = 64 * 1024,
+        .multipart_block_size_override = 48 * 1024,
+    });
+    defer client.deinit();
+
+    try client.createContainer(container);
+
+    // 128 KiB test body with a recognizable fill pattern so a short read would show up
+    // in the assertion comparison.
+    const body_size: usize = 128 * 1024;
+    const body = try allocator.alloc(u8, body_size);
+    defer allocator.free(body);
+    for (0..body_size) |i| body[i] = @intCast((i * 37) & 0xFF);
+
+    try client.putBlob(container, "multipart-test.bin", body);
+
+    const downloaded = try client.getBlob(container, "multipart-test.bin");
+    defer allocator.free(downloaded);
+    try std.testing.expectEqual(body_size, downloaded.len);
+    try std.testing.expectEqualSlices(u8, body, downloaded);
 }
 
 test "parseListResponse: extracts multiple blobs with sizes" {
