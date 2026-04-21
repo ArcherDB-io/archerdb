@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776631958552,
+  "lastUpdate": 1776782453490,
   "repoUrl": "https://github.com/ArcherDB-io/archerdb",
   "entries": {
     "Benchmark": [
@@ -1187,6 +1187,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Polygon Query p99 Latency",
             "value": 118,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "committer": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "distinct": true,
+          "id": "90929621455799f4ec4e5e1b026c55d28b97b72c",
+          "message": "feat(storage,state-machine): ENOSPC replica-lifecycle MVP\n\nTurns the simulation-side capacity budget from a915e546 into a\nreplica-level response: storage reports space exhaustion via a gauge\nmetric, the state machine stops applying writes while the gauge is\nset, reads continue, and the next successful storage write clears\nthe gauge automatically.\n\nThis is the MVP scope proposed last session — pause writes, emit a\nmetric, fail new inserts, recover on the next successful write. It\nlands the full round trip through the sim storage path; production\nIO (src/io/linux.zig) already returns `error.NoSpaceLeft` at the\nsyscall layer but its propagation to the replica via the write\ncompletion callback is a separate follow-up tracked in the commit\nbelow.\n\nsrc/archerdb/metrics.zig\n  - New counter `archerdb_storage_space_exhausted_total` (monotonic;\n    event history for alerting).\n  - New gauge `archerdb_storage_space_exhausted` (current state;\n    state machine consumes this to decide whether to reject writes).\n  - Both registered for Prometheus export beside the backup metrics.\n\nsrc/testing/storage.zig\n  - `Storage.Write` carries an optional `write_error` field (default\n    null). Populated with `error.NoSpaceLeft` on the capacity-drop\n    path so higher layers can observe the silent drop without a\n    callback-signature change.\n  - `write_sectors_finish` on capacity drop: bump counter, set gauge\n    to 1, populate write.write_error, continue to flag sectors\n    faulty (existing behavior).\n  - `write_sectors_finish` on success: clear the gauge — the next\n    good write is the recovery signal.\n  - New test `capacity exhausted: metric counter bumps, gauge\n    transitions, Write.write_error set` exercises the bookkeeping\n    directly without standing up a full zone-aware write flow.\n\nsrc/geo_state_machine.zig\n  - New module-level `rejectsOnSpaceExhausted(operation)` pinpoints\n    the operation set: insert_events, upsert_events, delete_entities,\n    ttl_set, ttl_extend, ttl_clear. Reads, `pulse`, admin ops,\n    topology, and prepared-query ops stay allowed — the cluster\n    keeps serving queries and maintenance while operators add disk.\n    `cleanup_expired` is explicitly allowed because it frees space.\n  - `commit()` gate: when `archerdb_storage_space_exhausted != 0`\n    AND the operation is in the rejection set, log a warning and\n    return 0 bytes. Existing VSR semantics handle the zero-length\n    response; the client sees an empty results buffer and — paired\n    with the metric — an operator-level signal.\n  - New test `rejectsOnSpaceExhausted: write ops rejected, reads and\n    pulse allowed` pins the operation-filter policy so adding a new\n    operation later has to make a conscious allow/reject decision.\n\nFull `test:unit` 1827/1943 pass, 116 skipped, 0 failed on this HEAD.\n\nNon-goals (deliberate, to be picked up in a follow-up):\n- A structured `InsertGeoEventResult.storage_space_exhausted` wire\n  error and matching variants across all five SDKs (C, Go, Java,\n  Node, Python). Today clients see length-0 results and infer\n  rejection from the metric; a dedicated error code is a\n  cross-SDK coordination item on its own.\n- Production-path plumbing: io/linux.zig already raises\n  `error.NoSpaceLeft` at the syscall layer but the write-completion\n  callback does not yet surface it to the replica. Wiring that\n  through touches journal/grid and is a larger refactor than this\n  replica-lifecycle MVP.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-04-21T16:21:05+02:00",
+          "tree_id": "258e828dded50265198f56f24d792d785b6af12e",
+          "url": "https://github.com/ArcherDB-io/archerdb/commit/90929621455799f4ec4e5e1b026c55d28b97b72c"
+        },
+        "date": 1776782452794,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "Insert Throughput",
+            "value": 1128523,
+            "unit": "events/s"
+          },
+          {
+            "name": "Insert p99 Latency",
+            "value": 8,
+            "unit": "ms"
+          },
+          {
+            "name": "Radius Query p99 Latency",
+            "value": 205,
+            "unit": "ms"
+          },
+          {
+            "name": "Polygon Query p99 Latency",
+            "value": 119,
             "unit": "ms"
           }
         ]
