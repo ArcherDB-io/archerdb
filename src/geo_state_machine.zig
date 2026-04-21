@@ -915,6 +915,27 @@ pub const QueryResponse = extern struct {
 // State Machine Implementation
 // ============================================================================
 
+/// Set of client-write operations the state machine refuses to apply while
+/// `archerdb_storage_space_exhausted == 1`. Exposed at module scope so tests can pin the
+/// policy without constructing a full state machine. Reads (`query_*`, `archerdb_*`,
+/// `get_topology`, `batch_query`, prepared-query ops) and the internal `pulse`
+/// maintenance op continue to run — the cluster stays useful for observability and
+/// existing client sessions while operators add capacity. Manual TTL mutations are
+/// rejected because they grow LSM state; `cleanup_expired` is allowed because it
+/// releases capacity rather than consuming it.
+pub fn rejectsOnSpaceExhausted(operation: @import("archerdb.zig").Operation) bool {
+    return switch (operation) {
+        .insert_events,
+        .upsert_events,
+        .delete_entities,
+        .ttl_set,
+        .ttl_extend,
+        .ttl_clear,
+        => true,
+        else => false,
+    };
+}
+
 /// Creates a GeoStateMachine type parameterized by Storage.
 /// This is the main StateMachine implementation for ArcherDB (geospatial-only).
 pub fn GeoStateMachineType(comptime Storage: type) type {
@@ -2306,6 +2327,7 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         /// ensuring bit-exact determinism.
         ///
         /// Returns the number of bytes written to the output buffer.
+        ///
         pub fn commit(
             self: *GeoStateMachine,
             client: u128,
@@ -2330,6 +2352,29 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 
             // Update commit timestamp for monotonicity check
             self.commit_timestamp = timestamp;
+
+            // Storage-space-exhausted gate: if the simulated or production storage layer
+            // has reported a capacity-drop event that has not yet been cleared by a
+            // successful write, reject client write operations and return a zero-length
+            // response. Reads continue to serve stale data from the in-memory index so
+            // the cluster stays useful for dashboards while operators scale storage.
+            //
+            // The gauge is set/cleared from the storage completion path
+            // (`testing/storage.zig:write_sectors_finish`). The counter
+            // `archerdb_storage_space_exhausted_total` preserves the event history for
+            // alerts; this `storage_space_exhausted` gauge is the current state. Scope
+            // note: a structured per-event error code (e.g. an
+            // `InsertGeoEventResult.storage_space_exhausted` variant) is deliberate
+            // follow-up work — it needs a wire-format change across all five SDKs.
+            if (@import("geo_state_machine.zig").rejectsOnSpaceExhausted(operation)) {
+                if (archerdb_metrics.Registry.storage_space_exhausted.load(.monotonic) != 0) {
+                    log.warn(
+                        "storage space exhausted: rejecting {s} op={d} client={x}",
+                        .{ @tagName(operation), op, client },
+                    );
+                    return 0;
+                }
+            }
 
             // Dispatch to operation-specific execution
             const result: usize = switch (operation) {
@@ -6393,6 +6438,39 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
 // ============================================================================
 // Tests
 // ============================================================================
+
+test "rejectsOnSpaceExhausted: write ops rejected, reads and pulse allowed" {
+    const Operation = @import("archerdb.zig").Operation;
+
+    // Writes — rejected under space pressure.
+    try std.testing.expect(rejectsOnSpaceExhausted(.insert_events));
+    try std.testing.expect(rejectsOnSpaceExhausted(.upsert_events));
+    try std.testing.expect(rejectsOnSpaceExhausted(.delete_entities));
+    try std.testing.expect(rejectsOnSpaceExhausted(.ttl_set));
+    try std.testing.expect(rejectsOnSpaceExhausted(.ttl_extend));
+    try std.testing.expect(rejectsOnSpaceExhausted(.ttl_clear));
+
+    // Reads and maintenance — allowed so the cluster stays useful.
+    try std.testing.expect(!rejectsOnSpaceExhausted(.query_uuid));
+    try std.testing.expect(!rejectsOnSpaceExhausted(.query_uuid_batch));
+    try std.testing.expect(!rejectsOnSpaceExhausted(.query_radius));
+    try std.testing.expect(!rejectsOnSpaceExhausted(.query_polygon));
+    try std.testing.expect(!rejectsOnSpaceExhausted(.query_latest));
+    try std.testing.expect(!rejectsOnSpaceExhausted(.archerdb_ping));
+    try std.testing.expect(!rejectsOnSpaceExhausted(.archerdb_get_status));
+    try std.testing.expect(!rejectsOnSpaceExhausted(.get_topology));
+    try std.testing.expect(!rejectsOnSpaceExhausted(.batch_query));
+    try std.testing.expect(!rejectsOnSpaceExhausted(.prepare_query));
+    try std.testing.expect(!rejectsOnSpaceExhausted(.execute_prepared));
+    try std.testing.expect(!rejectsOnSpaceExhausted(.deallocate_prepared));
+    try std.testing.expect(!rejectsOnSpaceExhausted(.pulse));
+
+    // `cleanup_expired` frees space rather than consuming it — explicitly allowed so
+    // the cluster can reclaim capacity under pressure without operator intervention.
+    try std.testing.expect(!rejectsOnSpaceExhausted(.cleanup_expired));
+
+    _ = Operation;
+}
 
 test "InsertGeoEventsResult size" {
     try std.testing.expectEqual(@as(usize, 8), @sizeOf(InsertGeoEventsResult));

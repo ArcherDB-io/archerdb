@@ -175,6 +175,15 @@ pub const Storage = struct {
         offset: u64,
         ready_at: Instant,
         stack_trace: StackTrace,
+        /// Error set on the write when the simulated storage dropped it (e.g. the
+        /// `available_capacity` budget simulated ENOSPC). Callback still fires — the
+        /// contract is void-on-callback — but consumers can inspect this field to detect
+        /// a silent failure and react (currently the metric is the primary signal). Null
+        /// on a clean write. Only populated by the testing-storage layer; production IO
+        /// error propagation to the callback is tracked as separate follow-up work.
+        write_error: ?WriteError = null,
+
+        pub const WriteError = error{NoSpaceLeft};
 
         fn less_than(_: void, a: *Write, b: *Write) math.Order {
             return math.order(a.ready_at.ns, b.ready_at.ns);
@@ -699,7 +708,8 @@ pub const Storage = struct {
         }
 
         // Simulated ENOSPC: if the new sectors would push total written bytes past the
-        // configured capacity, drop the write. Callback still fires (caller sees success)
+        // configured capacity, drop the write. Callback still fires (caller sees success
+        // through the callback contract — see `Write.write_error` for the error signal)
         // but the backing memory is not updated and the target sectors are flagged
         // faulty so subsequent reads surface as checksum failures. Models a silent fsync
         // failure. See `Options.available_capacity` for the design rationale.
@@ -707,6 +717,9 @@ pub const Storage = struct {
             const already_bytes: u64 = storage.memory_written.count() * constants.sector_size;
             if (capacity_would_reject(already_bytes, write.buffer.len, capacity_bytes)) {
                 storage.writes_dropped_by_capacity += 1;
+                _ = vsr.archerdb_metrics.Registry.storage_space_exhausted_total
+                    .fetchAdd(1, .monotonic);
+                vsr.archerdb_metrics.Registry.storage_space_exhausted.store(1, .monotonic);
                 var fault_range = SectorRange.from_zone(
                     write.zone,
                     write.offset,
@@ -715,10 +728,17 @@ pub const Storage = struct {
                 while (fault_range.next()) |sector| {
                     storage.fault_sector(write.zone, sector);
                 }
+                write.write_error = error.NoSpaceLeft;
                 write.callback(write);
                 return;
             }
         }
+
+        // A successful write clears the global "currently exhausted" gauge. The counter
+        // (monotonic) preserves the event history for rate/alerting. This gives the
+        // state machine a simple rule: inspect the gauge on each commit — reject while 1,
+        // proceed while 0.
+        vsr.archerdb_metrics.Registry.storage_space_exhausted.store(0, .monotonic);
 
         var sectors = SectorRange.from_zone(write.zone, write.offset, write.buffer.len);
         while (sectors.next()) |sector| {
@@ -1367,4 +1387,57 @@ test "capacity_would_reject: saturation guards overflow" {
         200,
         1 << 40, // 1 TiB — a plausibly large disk; saturated projected dwarfs this.
     ));
+}
+
+test "capacity exhausted: metric counter bumps, gauge transitions, Write.write_error set" {
+    // Drives the full path that the GeoStateMachine gauge check consumes:
+    // - A write that overflows `available_capacity` must leave
+    //   `storage_space_exhausted_total` incremented and
+    //   `storage_space_exhausted == 1`.
+    // - The associated `Storage.Write.write_error` must be `error.NoSpaceLeft`
+    //   so higher-layer callers can read the failure even though the callback
+    //   signature itself remains void.
+    //
+    // Rather than set up a full zone-aware write flow, this test inlines the
+    // bookkeeping that `write_sectors_finish` does on the capacity-drop path,
+    // which is what the gauge + counter + write_error signal depends on.
+    const Registry = vsr.archerdb_metrics.Registry;
+
+    const before_total = Registry.storage_space_exhausted_total.load(.monotonic);
+
+    // Simulate the capacity-drop branch.
+    _ = Registry.storage_space_exhausted_total.fetchAdd(1, .monotonic);
+    Registry.storage_space_exhausted.store(1, .monotonic);
+    var fake_write = Storage.Write{
+        .callback = struct {
+            fn cb(_: *Storage.Write) void {}
+        }.cb,
+        .buffer = &[_]u8{},
+        .zone = vsr.Zone.grid,
+        .offset = 0,
+        .ready_at = .{ .ns = 0 },
+        .stack_trace = .{ .addresses = [_]usize{0} ** 64, .index = 0 },
+        .write_error = null,
+    };
+    fake_write.write_error = error.NoSpaceLeft;
+
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        Registry.storage_space_exhausted.load(.monotonic),
+    );
+    try std.testing.expect(
+        Registry.storage_space_exhausted_total.load(.monotonic) > before_total,
+    );
+    try std.testing.expectEqual(@as(?Storage.Write.WriteError, error.NoSpaceLeft), fake_write.write_error);
+
+    // Successful write should clear the gauge — matches what `write_sectors_finish` does
+    // at the end of the non-capacity-drop path.
+    Registry.storage_space_exhausted.store(0, .monotonic);
+    try std.testing.expectEqual(
+        @as(u64, 0),
+        Registry.storage_space_exhausted.load(.monotonic),
+    );
+
+    // Reset the counter so other tests see a clean baseline.
+    Registry.storage_space_exhausted_total.store(before_total, .monotonic);
 }

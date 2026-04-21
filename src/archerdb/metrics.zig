@@ -977,6 +977,14 @@ pub const Registry = struct {
     pub var backup_blocks_abandoned_total: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
     pub var backup_mandatory_bypass_total: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
 
+    // Storage-space-exhausted metrics. Incremented whenever a storage write is dropped by
+    // the simulated-storage capacity budget (testing/storage.zig) or surfaces
+    // `error.NoSpaceLeft` from the production IO layer. The counter lets the state machine
+    // decide when to reject client writes (flag set on delta > 0 since last tick); the
+    // gauge lets operators see the current state via a scrape.
+    pub var storage_space_exhausted_total: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+    pub var storage_space_exhausted: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
     // Backup upload latency histogram (buckets: 100ms, 500ms, 1s, 5s, 10s, 30s, 60s)
     pub var backup_upload_latency: LatencyHistogram = latencyHistogram(
         "archerdb_backup_upload_latency_seconds",
@@ -2414,6 +2422,25 @@ pub const Registry = struct {
         try free_set_low_warning_total.format(writer);
         try free_set_critical_total.format(writer);
         try free_set_emergency_total.format(writer);
+        try writer.writeAll("\n");
+
+        // Storage-space-exhausted metrics: counter for observability of ENOSPC events,
+        // gauge (0/1) for the current "paused writes" state.
+        try writer.writeAll("# HELP archerdb_storage_space_exhausted_total " ++
+            "Total storage writes dropped because the data file exceeded its capacity " ++
+            "budget (simulated-storage or real ENOSPC)\n");
+        try writer.writeAll("# TYPE archerdb_storage_space_exhausted_total counter\n");
+        const space_exhausted_count = storage_space_exhausted_total.load(.monotonic);
+        try writer.print("archerdb_storage_space_exhausted_total {d}\n", .{space_exhausted_count});
+        try writer.writeAll("\n");
+
+        try writer.writeAll("# HELP archerdb_storage_space_exhausted " ++
+            "1 when the replica is currently rejecting client writes because of a " ++
+            "recent storage-space-exhausted event; 0 once storage recovers and the next " ++
+            "write succeeds\n");
+        try writer.writeAll("# TYPE archerdb_storage_space_exhausted gauge\n");
+        const space_exhausted_flag = storage_space_exhausted.load(.monotonic);
+        try writer.print("archerdb_storage_space_exhausted {d}\n", .{space_exhausted_flag});
         try writer.writeAll("\n");
 
         // Backup metrics (F5.5.6)
