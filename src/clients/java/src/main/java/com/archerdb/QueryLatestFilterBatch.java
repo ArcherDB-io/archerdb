@@ -61,7 +61,8 @@ public final class QueryLatestFilterBatch extends Batch {
 
     /**
      * @throws IllegalStateException if not at a {@link #isValidPosition valid position}.
-     * @see <a href="https://docs.archerdb.io/reference/query-latest-filter#_reserved_align">_reserved_align</a>
+     * @see <a href=
+     *      "https://docs.archerdb.io/reference/query-latest-filter#_reserved_align">_reserved_align</a>
      */
     public int getReservedAlign() {
         final var value = getUInt32(at(Struct.ReservedAlign));
@@ -72,7 +73,8 @@ public final class QueryLatestFilterBatch extends Batch {
      * @param reservedAlign
      * @throws IllegalStateException if not at a {@link #isValidPosition valid position}.
      * @throws IllegalStateException if a {@link #isReadOnly() read-only} batch.
-     * @see <a href="https://docs.archerdb.io/reference/query-latest-filter#_reserved_align">_reserved_align</a>
+     * @see <a href=
+     *      "https://docs.archerdb.io/reference/query-latest-filter#_reserved_align">_reserved_align</a>
      */
     public void setReservedAlign(final int reservedAlign) {
         putUInt32(at(Struct.ReservedAlign), reservedAlign);
@@ -99,7 +101,8 @@ public final class QueryLatestFilterBatch extends Batch {
 
     /**
      * @throws IllegalStateException if not at a {@link #isValidPosition valid position}.
-     * @see <a href="https://docs.archerdb.io/reference/query-latest-filter#cursor_timestamp">cursor_timestamp</a>
+     * @see <a href=
+     *      "https://docs.archerdb.io/reference/query-latest-filter#cursor_timestamp">cursor_timestamp</a>
      */
     public long getCursorTimestamp() {
         final var value = getUInt64(at(Struct.CursorTimestamp));
@@ -110,7 +113,8 @@ public final class QueryLatestFilterBatch extends Batch {
      * @param cursorTimestamp
      * @throws IllegalStateException if not at a {@link #isValidPosition valid position}.
      * @throws IllegalStateException if a {@link #isReadOnly() read-only} batch.
-     * @see <a href="https://docs.archerdb.io/reference/query-latest-filter#cursor_timestamp">cursor_timestamp</a>
+     * @see <a href=
+     *      "https://docs.archerdb.io/reference/query-latest-filter#cursor_timestamp">cursor_timestamp</a>
      */
     public void setCursorTimestamp(final long cursorTimestamp) {
         putUInt64(at(Struct.CursorTimestamp), cursorTimestamp);

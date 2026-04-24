@@ -45,7 +45,8 @@ public final class QueryRadiusFilterBatch extends Batch {
 
     /**
      * @throws IllegalStateException if not at a {@link #isValidPosition valid position}.
-     * @see <a href="https://docs.archerdb.io/reference/query-radius-filter#center_lat_nano">center_lat_nano</a>
+     * @see <a href=
+     *      "https://docs.archerdb.io/reference/query-radius-filter#center_lat_nano">center_lat_nano</a>
      */
     public long getCenterLatNano() {
         final var value = getUInt64(at(Struct.CenterLatNano));
@@ -56,7 +57,8 @@ public final class QueryRadiusFilterBatch extends Batch {
      * @param centerLatNano
      * @throws IllegalStateException if not at a {@link #isValidPosition valid position}.
      * @throws IllegalStateException if a {@link #isReadOnly() read-only} batch.
-     * @see <a href="https://docs.archerdb.io/reference/query-radius-filter#center_lat_nano">center_lat_nano</a>
+     * @see <a href=
+     *      "https://docs.archerdb.io/reference/query-radius-filter#center_lat_nano">center_lat_nano</a>
      */
     public void setCenterLatNano(final long centerLatNano) {
         putUInt64(at(Struct.CenterLatNano), centerLatNano);
@@ -64,7 +66,8 @@ public final class QueryRadiusFilterBatch extends Batch {
 
     /**
      * @throws IllegalStateException if not at a {@link #isValidPosition valid position}.
-     * @see <a href="https://docs.archerdb.io/reference/query-radius-filter#center_lon_nano">center_lon_nano</a>
+     * @see <a href=
+     *      "https://docs.archerdb.io/reference/query-radius-filter#center_lon_nano">center_lon_nano</a>
      */
     public long getCenterLonNano() {
         final var value = getUInt64(at(Struct.CenterLonNano));
@@ -75,7 +78,8 @@ public final class QueryRadiusFilterBatch extends Batch {
      * @param centerLonNano
      * @throws IllegalStateException if not at a {@link #isValidPosition valid position}.
      * @throws IllegalStateException if a {@link #isReadOnly() read-only} batch.
-     * @see <a href="https://docs.archerdb.io/reference/query-radius-filter#center_lon_nano">center_lon_nano</a>
+     * @see <a href=
+     *      "https://docs.archerdb.io/reference/query-radius-filter#center_lon_nano">center_lon_nano</a>
      */
     public void setCenterLonNano(final long centerLonNano) {
         putUInt64(at(Struct.CenterLonNano), centerLonNano);
@@ -121,7 +125,8 @@ public final class QueryRadiusFilterBatch extends Batch {
 
     /**
      * @throws IllegalStateException if not at a {@link #isValidPosition valid position}.
-     * @see <a href="https://docs.archerdb.io/reference/query-radius-filter#timestamp_min">timestamp_min</a>
+     * @see <a href=
+     *      "https://docs.archerdb.io/reference/query-radius-filter#timestamp_min">timestamp_min</a>
      */
     public long getTimestampMin() {
         final var value = getUInt64(at(Struct.TimestampMin));
@@ -132,7 +137,8 @@ public final class QueryRadiusFilterBatch extends Batch {
      * @param timestampMin
      * @throws IllegalStateException if not at a {@link #isValidPosition valid position}.
      * @throws IllegalStateException if a {@link #isReadOnly() read-only} batch.
-     * @see <a href="https://docs.archerdb.io/reference/query-radius-filter#timestamp_min">timestamp_min</a>
+     * @see <a href=
+     *      "https://docs.archerdb.io/reference/query-radius-filter#timestamp_min">timestamp_min</a>
      */
     public void setTimestampMin(final long timestampMin) {
         putUInt64(at(Struct.TimestampMin), timestampMin);
@@ -140,7 +146,8 @@ public final class QueryRadiusFilterBatch extends Batch {
 
     /**
      * @throws IllegalStateException if not at a {@link #isValidPosition valid position}.
-     * @see <a href="https://docs.archerdb.io/reference/query-radius-filter#timestamp_max">timestamp_max</a>
+     * @see <a href=
+     *      "https://docs.archerdb.io/reference/query-radius-filter#timestamp_max">timestamp_max</a>
      */
     public long getTimestampMax() {
         final var value = getUInt64(at(Struct.TimestampMax));
@@ -151,7 +158,8 @@ public final class QueryRadiusFilterBatch extends Batch {
      * @param timestampMax
      * @throws IllegalStateException if not at a {@link #isValidPosition valid position}.
      * @throws IllegalStateException if a {@link #isReadOnly() read-only} batch.
-     * @see <a href="https://docs.archerdb.io/reference/query-radius-filter#timestamp_max">timestamp_max</a>
+     * @see <a href=
+     *      "https://docs.archerdb.io/reference/query-radius-filter#timestamp_max">timestamp_max</a>
      */
     public void setTimestampMax(final long timestampMax) {
         putUInt64(at(Struct.TimestampMax), timestampMax);

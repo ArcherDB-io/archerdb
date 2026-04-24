@@ -174,6 +174,11 @@ export enum InsertGeoEventError {
   exists = 13,
   heading_out_of_range = 14,
   ttl_invalid = 15,
+  /**
+   * Replica's storage is at capacity; retry once
+   * `archerdb_storage_space_exhausted` returns to 0.
+   */
+  storage_space_exhausted = 17,
 }
 
 /**
@@ -184,6 +189,11 @@ export enum DeleteEntityError {
   linked_event_failed = 1,
   entity_id_must_not_be_zero = 2,
   entity_not_found = 3,
+  /**
+   * Replica's storage is at capacity; retry once
+   * `archerdb_storage_space_exhausted` returns to 0.
+   */
+  storage_space_exhausted = 5,
 }
 
 /**
@@ -558,6 +568,11 @@ export enum TtlOperationResult {
   invalid_ttl = 2,
   not_permitted = 3,
   entity_immutable = 4,
+  /**
+   * Replica's storage is at capacity; retry once the server's
+   * archerdb_storage_space_exhausted gauge returns to 0.
+   */
+  storage_space_exhausted = 5,
 }
 
 /**

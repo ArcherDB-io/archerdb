@@ -115,6 +115,7 @@ class InsertGeoEventResult(enum.IntEnum):
     HEADING_OUT_OF_RANGE = 14
     TTL_INVALID = 15
     ENTITY_ID_MUST_NOT_BE_INT_MAX = 16
+    STORAGE_SPACE_EXHAUSTED = 17
 
 
 class DeleteEntityResult(enum.IntEnum):
@@ -123,6 +124,7 @@ class DeleteEntityResult(enum.IntEnum):
     ENTITY_ID_MUST_NOT_BE_ZERO = 2
     ENTITY_NOT_FOUND = 3
     ENTITY_ID_MUST_NOT_BE_INT_MAX = 4
+    STORAGE_SPACE_EXHAUSTED = 5
 
 
 class ShardStatus(enum.IntEnum):
@@ -139,6 +141,7 @@ class TtlOperationResult(enum.IntEnum):
     INVALID_TTL = 2
     NOT_PERMITTED = 3
     ENTITY_IMMUTABLE = 4
+    STORAGE_SPACE_EXHAUSTED = 5
 
 
 @dataclass

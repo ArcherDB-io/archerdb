@@ -222,6 +222,8 @@ class TtlOperationResult(IntEnum):
     INVALID_TTL = 2
     NOT_PERMITTED = 3
     ENTITY_IMMUTABLE = 4
+    STORAGE_SPACE_EXHAUSTED = 5
+    """Replica's storage is at capacity; retry after mitigation."""
 
 
 class InsertGeoEventResult(IntEnum):
@@ -249,6 +251,8 @@ class InsertGeoEventResult(IntEnum):
         HEADING_OUT_OF_RANGE: Heading outside [0, 36000] centidegrees.
         TTL_INVALID: TTL value is invalid.
         ENTITY_ID_MUST_NOT_BE_INT_MAX: Entity ID cannot be maximum value.
+        STORAGE_SPACE_EXHAUSTED: Replica's storage is at capacity; transient — retry
+            once the server's archerdb_storage_space_exhausted gauge returns to 0.
     """
     OK = 0
     LINKED_EVENT_FAILED = 1
@@ -267,6 +271,7 @@ class InsertGeoEventResult(IntEnum):
     HEADING_OUT_OF_RANGE = 14
     TTL_INVALID = 15
     ENTITY_ID_MUST_NOT_BE_INT_MAX = 16
+    STORAGE_SPACE_EXHAUSTED = 17
 
 
 class DeleteEntityResult(IntEnum):
@@ -282,12 +287,15 @@ class DeleteEntityResult(IntEnum):
         ENTITY_ID_MUST_NOT_BE_ZERO: Entity ID must not be zero.
         ENTITY_NOT_FOUND: Entity does not exist.
         ENTITY_ID_MUST_NOT_BE_INT_MAX: Entity ID cannot be maximum value.
+        STORAGE_SPACE_EXHAUSTED: Replica's storage is at capacity; transient — retry
+            once the server's archerdb_storage_space_exhausted gauge returns to 0.
     """
     OK = 0
     LINKED_EVENT_FAILED = 1
     ENTITY_ID_MUST_NOT_BE_ZERO = 2
     ENTITY_NOT_FOUND = 3
     ENTITY_ID_MUST_NOT_BE_INT_MAX = 4
+    STORAGE_SPACE_EXHAUSTED = 5
 
 
 # ============================================================================

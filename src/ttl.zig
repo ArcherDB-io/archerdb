@@ -326,6 +326,11 @@ pub const TtlOperationResult = enum(u8) {
     not_permitted = 3,
     /// Entity is immutable (system entity).
     entity_immutable = 4,
+    /// Replica's storage is at capacity; the TTL mutation was refused. Transient —
+    /// retry against a healthy replica after operator mitigation. Mirrors the
+    /// `storage_space_exhausted` variants on `InsertGeoEventResult` and
+    /// `DeleteEntityResult`.
+    storage_space_exhausted = 5,
 };
 
 /// Request to set absolute TTL for an entity (64 bytes).

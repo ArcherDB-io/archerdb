@@ -102,6 +102,7 @@ const (
 	GeoEventHeadingOutOfRange              InsertGeoEventResultRaw = 14
 	GeoEventTtlInvalid                     InsertGeoEventResultRaw = 15
 	GeoEventEntityIDMustNotBeIntMax        InsertGeoEventResultRaw = 16
+	GeoEventStorageSpaceExhausted          InsertGeoEventResultRaw = 17
 )
 
 func (i InsertGeoEventResultRaw) String() string {
@@ -140,6 +141,8 @@ func (i InsertGeoEventResultRaw) String() string {
 		return "GeoEventTtlInvalid"
 	case GeoEventEntityIDMustNotBeIntMax:
 		return "GeoEventEntityIDMustNotBeIntMax"
+	case GeoEventStorageSpaceExhausted:
+		return "GeoEventStorageSpaceExhausted"
 	}
 	return "InsertGeoEventResultRaw(" + strconv.FormatInt(int64(i+1), 10) + ")"
 }
@@ -152,6 +155,7 @@ const (
 	EntityEntityIDMustNotBeZero   DeleteEntityResultRaw = 2
 	EntityEntityNotFound          DeleteEntityResultRaw = 3
 	EntityEntityIDMustNotBeIntMax DeleteEntityResultRaw = 4
+	EntityStorageSpaceExhausted   DeleteEntityResultRaw = 5
 )
 
 func (i DeleteEntityResultRaw) String() string {
@@ -166,6 +170,8 @@ func (i DeleteEntityResultRaw) String() string {
 		return "EntityEntityNotFound"
 	case EntityEntityIDMustNotBeIntMax:
 		return "EntityEntityIDMustNotBeIntMax"
+	case EntityStorageSpaceExhausted:
+		return "EntityStorageSpaceExhausted"
 	}
 	return "DeleteEntityResultRaw(" + strconv.FormatInt(int64(i+1), 10) + ")"
 }
@@ -330,11 +336,12 @@ func (i ShardStatusRaw) String() string {
 type TtlOperationResultRaw uint8
 
 const (
-	TtlSuccess         TtlOperationResultRaw = 0
-	TtlEntityNotFound  TtlOperationResultRaw = 1
-	TtlInvalidTtl      TtlOperationResultRaw = 2
-	TtlNotPermitted    TtlOperationResultRaw = 3
-	TtlEntityImmutable TtlOperationResultRaw = 4
+	TtlSuccess               TtlOperationResultRaw = 0
+	TtlEntityNotFound        TtlOperationResultRaw = 1
+	TtlInvalidTtl            TtlOperationResultRaw = 2
+	TtlNotPermitted          TtlOperationResultRaw = 3
+	TtlEntityImmutable       TtlOperationResultRaw = 4
+	TtlStorageSpaceExhausted TtlOperationResultRaw = 5
 )
 
 func (i TtlOperationResultRaw) String() string {
@@ -349,6 +356,8 @@ func (i TtlOperationResultRaw) String() string {
 		return "TtlNotPermitted"
 	case TtlEntityImmutable:
 		return "TtlEntityImmutable"
+	case TtlStorageSpaceExhausted:
+		return "TtlStorageSpaceExhausted"
 	}
 	return "TtlOperationResultRaw(" + strconv.FormatInt(int64(i+1), 10) + ")"
 }

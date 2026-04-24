@@ -12,7 +12,8 @@ public enum DeleteEntityResult {
     LinkedEventFailed((int) 1),
     EntityIdMustNotBeZero((int) 2),
     EntityNotFound((int) 3),
-    EntityIdMustNotBeIntMax((int) 4);
+    EntityIdMustNotBeIntMax((int) 4),
+    StorageSpaceExhausted((int) 5);
 
     public final int value;
 
@@ -22,13 +23,21 @@ public enum DeleteEntityResult {
 
     public static DeleteEntityResult fromValue(int value) {
         switch (value) {
-            case 0: return Ok;
-            case 1: return LinkedEventFailed;
-            case 2: return EntityIdMustNotBeZero;
-            case 3: return EntityNotFound;
-            case 4: return EntityIdMustNotBeIntMax;
-            default: throw new IllegalArgumentException(
-                String.format("Invalid DeleteEntityResult value=%d", value));
+            case 0:
+                return Ok;
+            case 1:
+                return LinkedEventFailed;
+            case 2:
+                return EntityIdMustNotBeZero;
+            case 3:
+                return EntityNotFound;
+            case 4:
+                return EntityIdMustNotBeIntMax;
+            case 5:
+                return StorageSpaceExhausted;
+            default:
+                throw new IllegalArgumentException(
+                        String.format("Invalid DeleteEntityResult value=%d", value));
         }
     }
 }

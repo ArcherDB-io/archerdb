@@ -50,6 +50,7 @@ export enum InsertGeoEventError {
   heading_out_of_range = 14,
   ttl_invalid = 15,
   entity_id_must_not_be_int_max = 16,
+  storage_space_exhausted = 17,
 }
 
 export type InsertGeoEventsError = {
@@ -63,6 +64,7 @@ export enum DeleteEntityError {
   entity_id_must_not_be_zero = 2,
   entity_not_found = 3,
   entity_id_must_not_be_int_max = 4,
+  storage_space_exhausted = 5,
 }
 
 export type DeleteEntitiesError = {
@@ -133,6 +135,7 @@ export enum TtlOperationResult {
   invalid_ttl = 2,
   not_permitted = 3,
   entity_immutable = 4,
+  storage_space_exhausted = 5,
 }
 
 export type TtlSetRequest = {

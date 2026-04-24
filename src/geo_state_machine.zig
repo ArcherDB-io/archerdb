@@ -224,6 +224,11 @@ pub const InsertGeoEventResult = enum(u32) {
     heading_out_of_range = 14,
     ttl_invalid = 15,
     entity_id_must_not_be_int_max = 16,
+    /// Replica's underlying storage is at capacity; the write was refused without
+    /// ever touching the LSM. Transient: a client retry against a healthy replica
+    /// after operator mitigation will succeed. Surfaced when
+    /// `archerdb_storage_space_exhausted == 1` at commit-time.
+    storage_space_exhausted = 17,
 
     comptime {
         const values = std.enums.values(InsertGeoEventResult);
@@ -241,6 +246,10 @@ pub const DeleteEntityResult = enum(u32) {
     entity_id_must_not_be_zero = 2,
     entity_not_found = 3,
     entity_id_must_not_be_int_max = 4,
+    /// Replica's storage is at capacity; the delete was refused. Same semantics as
+    /// `InsertGeoEventResult.storage_space_exhausted` — the client should retry once
+    /// storage recovers.
+    storage_space_exhausted = 5,
 };
 
 /// Result structure for insert operations.
@@ -2372,7 +2381,11 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
                         "storage space exhausted: rejecting {s} op={d} client={x}",
                         .{ @tagName(operation), op, client },
                     );
-                    return 0;
+                    return rejectWithSpaceExhausted(
+                        operation,
+                        message_body_used,
+                        output,
+                    );
                 }
             }
 
@@ -2429,6 +2442,98 @@ pub fn GeoStateMachineType(comptime Storage: type) type {
         // ====================================================================
         // Execute Functions (Stubs - to be implemented with Forest integration)
         // ====================================================================
+
+        /// Build a structured per-operation response signalling `storage_space_exhausted`.
+        /// Returns the byte count written to `output`. Keeps the rejection path
+        /// observable at the SDK level — every event in the batch carries the rejection
+        /// code, so the client can either surface it to callers or silently retry after
+        /// backoff rather than inferring failure from a zero-length reply.
+        ///
+        /// Shape per operation:
+        ///   - insert_events / upsert_events: `N` x `InsertGeoEventsResult`
+        ///     (`{index, result = .storage_space_exhausted}`), one per incoming event.
+        ///   - delete_entities: `N` x `DeleteEntitiesResult` with the same shape.
+        ///   - ttl_set / ttl_extend / ttl_clear: one response record with
+        ///     `result = .storage_space_exhausted` and all other fields zeroed.
+        ///
+        /// If the output buffer cannot hold the full reply we truncate to the
+        /// available capacity — callers handle partial replies the same way the
+        /// regular execute_* paths already do.
+        fn rejectWithSpaceExhausted(
+            operation: Operation,
+            input: []align(16) const u8,
+            output: []align(16) u8,
+        ) usize {
+            const ttl_mod = @import("ttl.zig");
+            switch (operation) {
+                .insert_events, .upsert_events => {
+                    const event_count = input.len / @sizeOf(GeoEvent);
+                    const max_results = output.len / @sizeOf(InsertGeoEventsResult);
+                    const emit = @min(event_count, max_results);
+                    const results = mem.bytesAsSlice(
+                        InsertGeoEventsResult,
+                        output[0 .. emit * @sizeOf(InsertGeoEventsResult)],
+                    );
+                    for (0..emit) |i| {
+                        results[i] = InsertGeoEventsResult{
+                            .index = @intCast(i),
+                            .result = .storage_space_exhausted,
+                        };
+                    }
+                    return emit * @sizeOf(InsertGeoEventsResult);
+                },
+                .delete_entities => {
+                    const id_count = input.len / @sizeOf(u128);
+                    const max_results = output.len / @sizeOf(DeleteEntitiesResult);
+                    const emit = @min(id_count, max_results);
+                    const results = mem.bytesAsSlice(
+                        DeleteEntitiesResult,
+                        output[0 .. emit * @sizeOf(DeleteEntitiesResult)],
+                    );
+                    for (0..emit) |i| {
+                        results[i] = DeleteEntitiesResult{
+                            .index = @intCast(i),
+                            .result = .storage_space_exhausted,
+                        };
+                    }
+                    return emit * @sizeOf(DeleteEntitiesResult);
+                },
+                .ttl_set => {
+                    if (output.len < @sizeOf(ttl_mod.TtlSetResponse)) return 0;
+                    const resp = mem.bytesAsValue(
+                        ttl_mod.TtlSetResponse,
+                        output[0..@sizeOf(ttl_mod.TtlSetResponse)],
+                    );
+                    resp.* = std.mem.zeroInit(ttl_mod.TtlSetResponse, .{
+                        .result = .storage_space_exhausted,
+                    });
+                    return @sizeOf(ttl_mod.TtlSetResponse);
+                },
+                .ttl_extend => {
+                    if (output.len < @sizeOf(ttl_mod.TtlExtendResponse)) return 0;
+                    const resp = mem.bytesAsValue(
+                        ttl_mod.TtlExtendResponse,
+                        output[0..@sizeOf(ttl_mod.TtlExtendResponse)],
+                    );
+                    resp.* = std.mem.zeroInit(ttl_mod.TtlExtendResponse, .{
+                        .result = .storage_space_exhausted,
+                    });
+                    return @sizeOf(ttl_mod.TtlExtendResponse);
+                },
+                .ttl_clear => {
+                    if (output.len < @sizeOf(ttl_mod.TtlClearResponse)) return 0;
+                    const resp = mem.bytesAsValue(
+                        ttl_mod.TtlClearResponse,
+                        output[0..@sizeOf(ttl_mod.TtlClearResponse)],
+                    );
+                    resp.* = std.mem.zeroInit(ttl_mod.TtlClearResponse, .{
+                        .result = .storage_space_exhausted,
+                    });
+                    return @sizeOf(ttl_mod.TtlClearResponse);
+                },
+                else => return 0,
+            }
+        }
 
         fn execute_pulse(self: *GeoStateMachine, timestamp: u64) usize {
             // Execute TTL cleanup sweep (F2.4 - TTL Retention)
