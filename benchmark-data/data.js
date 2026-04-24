@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776782453490,
+  "lastUpdate": 1776998161562,
   "repoUrl": "https://github.com/ArcherDB-io/archerdb",
   "entries": {
     "Benchmark": [
@@ -1231,6 +1231,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Polygon Query p99 Latency",
             "value": 119,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "committer": {
+            "email": "gevorg@galstyan.am",
+            "name": "Gevorg A. Galstyan",
+            "username": "gevorggalstyan"
+          },
+          "distinct": true,
+          "id": "145dc05a9bc014be8c073b90c2a66799b13ee707",
+          "message": "feat(state-machine,sdks): storage_space_exhausted wire variant across all 5 SDKs\n\nCompletes the ENOSPC replica-lifecycle work from 90929621 by giving\nclients a structured per-operation error code instead of a zero-length\nreply. A rejected insert/upsert/delete/ttl-set/ttl-extend/ttl-clear now\nreturns records stamped with `storage_space_exhausted`, so SDK callers\ncan distinguish \"storage pressure, retry after backoff\" from \"server\ndropped the connection\" without consulting the metric endpoint.\n\nZig wire-format additions:\n- `InsertGeoEventResult.storage_space_exhausted = 17`\n  (geo_state_machine.zig)\n- `DeleteEntityResult.storage_space_exhausted = 5`\n  (geo_state_machine.zig)\n- `TtlOperationResult.storage_space_exhausted = 5`\n  (ttl.zig)\n\nState machine:\n- New `rejectWithSpaceExhausted(operation, input, output)` helper\n  writes structured per-event responses for batch ops and zeroed\n  single-response records for TTL ops. Truncates to available output\n  capacity (same contract as the existing execute_* paths).\n- `commit()` now calls this helper in place of the previous `return 0`\n  stub, so the zero-length-reply fallback only fires for operations\n  outside the rejection set (currently none by construction).\n\nSDK updates (all regenerated from the updated Zig source via\n`./zig/zig build clients:{go,java,node,python}`; the C header is\nemitted by `arch_client_header.zig`):\n- C: `INSERT_GEO_EVENT_STORAGE_SPACE_EXHAUSTED = 17`,\n  `TTL_OPERATION_STORAGE_SPACE_EXHAUSTED = 5`.\n- Go: `GeoEventStorageSpaceExhausted`, `EntityStorageSpaceExhausted`,\n  `TtlStorageSpaceExhausted` raw variants + String() cases.\n- Java: `StorageSpaceExhausted` variant added to\n  `InsertGeoEventResult`, `DeleteEntityResult`, `TtlOperationResult`.\n  Incidental Javadoc re-wrapping from the generator lands alongside.\n- Node: `storage_space_exhausted` variant in `bindings.ts` (3 enums)\n  plus parallel hand-written `geo.ts` exports.\n- Python: `STORAGE_SPACE_EXHAUSTED` variant in `bindings.py` (3 enums)\n  and the parallel public `types.py` enums.\n\nVerification:\n- `./zig/zig build test:unit`: 1827/1943 pass, 116 skipped, 0 failed\n  (including the existing tidy column-width rule, which caught one\n  long doc comment in `ttl.zig` — shortened before commit).\n- Java: `mvn test` → 585/585 pass.\n- Python: direct enum-value smoke test confirms each new variant maps\n  to its expected integer in both `types.py` and `bindings.py`.\n- Go: `go test ./pkg/types/...` → ok.\n\nRemaining follow-up from the ENOSPC thread: plumb real\n`error.NoSpaceLeft` from io/linux.zig up through journal/grid so the\nreplica reacts to production ENOSPC the way it already reacts to the\nsim-storage capacity budget. That touches the VSR write-completion\ncallback contract and, as discussed, deserves its own design pass.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-04-24T04:20:03+02:00",
+          "tree_id": "7d464922a1fba030bd3a2413c8ae4e6f8742e817",
+          "url": "https://github.com/ArcherDB-io/archerdb/commit/145dc05a9bc014be8c073b90c2a66799b13ee707"
+        },
+        "date": 1776998160307,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "Insert Throughput",
+            "value": 1764147,
+            "unit": "events/s"
+          },
+          {
+            "name": "Insert p99 Latency",
+            "value": 5,
+            "unit": "ms"
+          },
+          {
+            "name": "Radius Query p99 Latency",
+            "value": 117,
+            "unit": "ms"
+          },
+          {
+            "name": "Polygon Query p99 Latency",
+            "value": 85,
             "unit": "ms"
           }
         ]
