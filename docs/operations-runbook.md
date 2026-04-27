@@ -870,11 +870,39 @@ curl -s localhost:9090/metrics > metrics-$(date +%Y%m%d).prom
 | [Capacity Planning](capacity-planning.md) | Sizing guidelines for hardware and configuration |
 | [LSM Tuning](lsm-tuning.md) | Storage engine performance optimization |
 
-### External Backup and Recovery
+### Backup and Recovery
+
+ArcherDB has built-in backup upload to local filesystem, S3 (or S3-compatible
+providers — MinIO, R2, Backblaze, LocalStack), GCS via interop, and Azure Blob
+Storage. Enable at startup:
+
+```bash
+archerdb start \
+  --backup-enabled \
+  --backup-provider=s3 \
+  --backup-region=us-east-1 \
+  --backup-bucket=my-archerdb-backups \
+  data.archerdb
+```
+
+S3 / GCS / Azure each accept their own endpoint, credential, and `url-style`
+flags — see [Backup Operations](backup-operations.md) for the full per-provider
+matrix. Restore via `archerdb restore` from any supported provider.
+
+Monitor backup health via the metrics endpoint:
+
+- `archerdb_backup_blocks_uploaded_total` — cumulative blocks durably uploaded.
+- `archerdb_backup_lag_blocks` — pending block uploads.
+- `archerdb_backup_failures_total` — upload failures.
+- `archerdb_storage_space_exhausted` — gauge that flips to 1 when the replica
+  is currently rejecting client writes due to a recent storage capacity event.
+
+Platform snapshots remain available as defense-in-depth alongside the built-in
+path.
 
 | Document | Description |
 |----------|-------------|
-| [Backup Operations](backup-operations.md) | External snapshot procedures, verification, retention |
+| [Backup Operations](backup-operations.md) | Built-in providers, credentials, retention, external snapshot procedures |
 | [Disaster Recovery](disaster-recovery.md) | DR planning, RTO/RPO targets, recovery procedures |
 | [Upgrade Guide](upgrade-guide.md) | Rolling upgrade procedures, external rollback planning, health checks |
 

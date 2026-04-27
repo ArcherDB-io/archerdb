@@ -27,7 +27,9 @@ ArcherDB expects security controls at the infrastructure boundary:
 - Authentication/authorization at your API or gateway layer
 - TLS/mTLS in gateway/service mesh or private network transport
 - Encryption at rest and key management in storage/cloud platform
-- Backup orchestration via external snapshot/backup tooling
+- Backup: ArcherDB has built-in upload to S3, GCS, and Azure Blob (see
+  [Backup Operations](backup-operations.md)); platform snapshots remain a
+  defense-in-depth option
 
 ## Installation (~2 min)
 
@@ -193,6 +195,37 @@ implementation 'com.archerdb:archerdb-java:0.1.0-SNAPSHOT'
 Use curl directly - no installation needed.
 
 </details>
+
+## Backup Configuration (Optional)
+
+ArcherDB can stream every closed LSM block to S3, GCS, or Azure Blob storage as
+the cluster runs. Append the relevant flags to `archerdb start`:
+
+```bash
+# S3 / S3-compatible (MinIO, R2, Backblaze, LocalStack)
+archerdb start \
+  --backup-enabled \
+  --backup-provider=s3 \
+  --backup-region=us-east-1 \
+  --backup-bucket=my-archerdb-backups \
+  data.archerdb
+
+# Azure Blob (SharedKey)
+archerdb start \
+  --backup-enabled \
+  --backup-provider=azure \
+  --backup-bucket=my-archerdb-container \
+  --backup-access-key-id=<account-name> \
+  --backup-secret-access-key=<base64-account-key> \
+  data.archerdb
+```
+
+S3 credentials are picked up from `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`
+when not provided on the command line. GCS uses the same flags as S3 with
+`--backup-provider=gcs` and an HMAC key issued via the Cloud Storage
+Interoperability console. Restore via `archerdb restore` from any of the
+supported providers; see [Backup Operations](backup-operations.md) and
+[Disaster Recovery](disaster-recovery.md).
 
 ## Hello World: Vehicle Tracking (~3 min)
 
